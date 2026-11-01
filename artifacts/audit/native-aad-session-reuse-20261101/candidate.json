@@ -1,0 +1,56 @@
+{
+  "base": "8c778ab9b8b2c958ba0a20526d6ad42572225fe4",
+  "branch": "dev/mldsa65-identity-closure",
+  "scope": "Unreleased isolated AAD-only candidate; old node, AOEM, harness and policies unchanged; no deployment",
+  "files": [
+    {
+      "sha256": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+      "role": "baseline_node",
+      "path": "D:/WorksArea/SUPERVM/target/native-controller-throughput-20261031/candidate-v4/novovm-node.exe"
+    },
+    {
+      "sha256": "dbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+      "role": "candidate_node",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-aad-session-reuse-20261101\\candidate\\novovm-node.exe"
+    },
+    {
+      "sha256": "754caf33e7108c1257887ddcbea19d2a1d81ad2127a5138c349be0606cfc8b49",
+      "role": "candidate_pdb",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-aad-session-reuse-20261101\\candidate\\novovm_node.pdb"
+    },
+    {
+      "sha256": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb",
+      "role": "tester",
+      "path": "D:/WorksArea/SUPERVM/target/native-controller-throughput-20261031/stability-observer/native-tests.exe"
+    },
+    {
+      "sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+      "role": "aoem",
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll"
+    },
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-aad-session-reuse-20261101\\candidate\\novovm-native-client.exe",
+      "sha256": "70b999a8726bf14ca90bbfaa21e65daf50dcab33e0040f933e8791b3ff83798e",
+      "role": "candidate_client"
+    },
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-aad-session-reuse-20261101\\candidate\\novovm_native_client.pdb",
+      "sha256": "3300bb02b68079447a90fdf59a8d9b95e6a969d54ffe33d919cc402d3707f320",
+      "role": "candidate_client_pdb"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "crates/novovm-network/src/product_overlay.rs",
+      "sha256": "120180e1256f3cbef9c9dc1edebb9443d561eac5bb9ce760030364b19402fecc"
+    },
+    {
+      "path": "crates/novovm-network/src/product_overlay/tests/aead_preparation.rs",
+      "sha256": "60f84ca2465c6ffce625e732f4627d17de35e549cfbd5609e65de3314a3e6957"
+    },
+    {
+      "path": "scripts/novovm-native-pipeline-memory-profiler.ps1",
+      "sha256": "94f25ca071263c0a83e338c40f13ee5ff6b4c5326b314c7ed7d8745c98780fcc"
+    }
+  ]
+}

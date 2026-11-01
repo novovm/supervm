@@ -277,13 +277,29 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
         .collect();
     let key = b"io/0037".to_vec();
     let reserved_bytes = 64 * (32 + 291 + 1) + key.len() + 32 + 257;
-    let service = IoService::start(
+    let (woke_tx, woke_rx) = mpsc::channel();
+    let waiters: Vec<_> = (0..2)
+        .map(|index| {
+            let woke_tx = woke_tx.clone();
+            thread::spawn(move || {
+                // Completion before park must retain its notification too.
+                thread::park();
+                let _ = woke_tx.send(index);
+            })
+        })
+        .collect();
+    let service = IoService::start_with_notify(
         config.clone(),
         OpenMode::Existing,
         IoBudget {
             requests: 2,
             bytes: reserved_bytes,
         },
+        [
+            Some(waiters[0].thread().clone()),
+            Some(waiters[1].thread().clone()),
+        ],
+        None,
     )?;
     let accounting = service.usage.clone();
     let nodes = admit_real(|| service.try_read_nodes(hashes.clone()))?;
@@ -292,6 +308,15 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
     // Both native reads really finish before shutdown returns. Their unconsumed
     // replies still retain admission permits; completion is not consumption.
     service.shutdown()?;
+    let first_wake = woke_rx.recv_timeout(Duration::from_secs(5));
+    let second_wake = woke_rx.recv_timeout(Duration::from_secs(5));
+    for waiter in &waiters {
+        waiter.thread().unpark();
+    }
+    for waiter in waiters {
+        waiter.join().expect("completion waiter panicked");
+    }
+    assert_ne!(first_wake?, second_wake?);
     assert_eq!(usage(&accounting), (2, reserved_bytes));
     assert_eq!(nodes.wait()?, expected);
     assert_eq!(usage(&accounting).0, 1);
@@ -308,5 +333,114 @@ fn real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdow
     let still_live = admit_real(|| service.try_read_value(update.root(), b"io/0037".to_vec()))?;
     assert_eq!(still_live.wait()?, Some(vec![37; 256]));
     service.shutdown()?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires explicit NOVOVM_AOEM_TEST_LIBRARY; real bounded initialization resume and conflict rejection, not process-kill acceptance"]
+fn real_io_startup_resumes_pinned_initial_content_but_rejects_conflicts() -> Result<()> {
+    use crate::native_pipeline::persistence::packet::node_key;
+    use novovm_exec::resident::StorageWrite;
+
+    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .context("explicit trusted NOVOVM_AOEM_TEST_LIBRARY is required")?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/io-tests")
+        .join(format!("startup-{}-{stamp}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let mut config = StoreConfig {
+        library: library.into(),
+        database: directory.join("state.rocksdb"),
+        domain: StorageDomain {
+            chain_id: 391,
+            genesis_config_commitment: [11; 32],
+            protocol_commitment: [12; 32],
+        },
+        storage: StorageConfig::default(),
+        packet_budget: PacketBudget::default(),
+    };
+    config.packet_budget.max_nodes = 32;
+    config.packet_budget.max_bytes = 4096;
+    let initial = || {
+        let mut changes = (0u32..130)
+            .map(|index| StateChange::Put {
+                key: index.to_be_bytes().to_vec(),
+                value: index.to_le_bytes().to_vec(),
+            })
+            .collect::<Vec<_>>();
+        changes.push(StateChange::Put {
+            key: b"genesis/account".to_vec(),
+            value: vec![7; 32],
+        });
+        stage_state_update(&Empty, empty_root(), &changes)
+    };
+    let root = initial()?.root();
+    let start = |config: StoreConfig, mode| {
+        IoService::start_with_notify(
+            config,
+            mode,
+            IoBudget::default(),
+            [None, None],
+            Some(initial()?),
+        )
+    };
+    let service = start(config.clone(), OpenMode::CreateNew)?;
+    // Readiness includes the real installation and exact pinned-node check;
+    // this request reads through that same still-open native owner.
+    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
+    assert_eq!(value.wait()?, Some(vec![7; 32]));
+    service.shutdown()?;
+    let service = start(config.clone(), OpenMode::Existing)?;
+    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
+    assert_eq!(value.wait()?, Some(vec![7; 32]));
+    service.shutdown()?;
+
+    let mut missing = config.clone();
+    missing.database = directory.join("missing.rocksdb");
+    let partial = CandidateStore::open(missing.clone(), OpenMode::CreateNew)?;
+    let written_chunk = initial()?
+        .nodes()
+        .iter()
+        .take(32)
+        .map(|(hash, value)| StorageWrite::Put {
+            key: partial.scoped_key(&node_key(*hash)),
+            value: value.clone(),
+        })
+        .collect::<Vec<_>>();
+    partial
+        .storage
+        .borrow_mut()
+        .atomic_write_batch(&written_chunk)?;
+    drop(partial);
+    let service = start(missing.clone(), OpenMode::Existing)?;
+    let value = admit_real(|| service.try_read_value(root, b"genesis/account".to_vec()))?;
+    assert_eq!(value.wait()?, Some(vec![7; 32]));
+    service.shutdown()?;
+    let store = CandidateStore::open(missing, OpenMode::Existing)?;
+    assert_eq!(
+        store.read_node(&root)?.as_ref(),
+        initial()?.nodes().get(&root)
+    );
+    drop(store);
+
+    let store = CandidateStore::open(config.clone(), OpenMode::Existing)?;
+    let key = store.scoped_key(&node_key(root));
+    let corrupted = vec![0; initial()?.nodes()[&root].len()];
+    store
+        .storage
+        .borrow_mut()
+        .atomic_write_batch(&[StorageWrite::Put {
+            key: key.clone(),
+            value: corrupted.clone(),
+        }])?;
+    drop(store);
+    assert!(start(config.clone(), OpenMode::Existing).is_err());
+    let store = CandidateStore::open(config, OpenMode::Existing)?;
+    assert_eq!(
+        store.storage.borrow_mut().get(&key)?,
+        Some(corrupted),
+        "failed startup overwrote corrupted state"
+    );
     Ok(())
 }

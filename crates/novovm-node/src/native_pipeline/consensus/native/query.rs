@@ -13,10 +13,44 @@ pub(super) struct QueryDelivery {
     object: Arc<OutgoingMessage>,
     admitted: bool,
     deadline: Instant,
+    trace: Option<QueryTrace>,
 }
 
 const QUERY_SLOTS: usize = 8;
 const QUERY_TTL: Duration = Duration::from_secs(5);
+
+/// Diagnostic correlation only; never used for admission or delivery decisions.
+#[derive(Clone, Copy)]
+struct QueryTrace {
+    session: [u8; 32],
+    sequence: u64,
+}
+impl QueryTrace {
+    fn from_request(request: &Request) -> Option<Self> {
+        if !profile::asset_enabled() || request.sequence > 128 {
+            return None;
+        }
+        Some(Self {
+            session: request.session,
+            sequence: request.sequence,
+        })
+    }
+
+    fn event(
+        self,
+        event: &'static str,
+        peer: usize,
+        fragment: Option<[u8; 32]>,
+        state: &'static str,
+    ) {
+        profile::asset_event(event, 0, || {
+            serde_json::json!({
+                "peer":peer,"request_session":self.session,"request_sequence":self.sequence,
+                "fragment":fragment,"state":state
+            })
+        });
+    }
+}
 
 /// Bounded custody AFTER transport completion. Transport DONE is not a promise
 /// that a previous application reply has retired. Retain one exact request per
@@ -34,8 +68,24 @@ struct QueryRequest {
 }
 impl QueryInbox {
     fn retire(&mut self, now: Instant, session: impl Fn(usize) -> Option<[u8; 16]>) {
-        self.entries
-            .retain(|q| now < q.deadline && session(q.peer) == Some(q.session));
+        self.entries.retain(|q| {
+            let retained = now < q.deadline && session(q.peer) == Some(q.session);
+            if !retained {
+                if let Some(trace) = QueryTrace::from_request(&q.request) {
+                    trace.event(
+                        "query_request_retired",
+                        q.peer,
+                        None,
+                        if now >= q.deadline {
+                            "expired"
+                        } else {
+                            "session_replaced"
+                        },
+                    );
+                }
+            }
+            retained
+        });
     }
     fn has_space(&self) -> bool {
         self.entries.len() < QUERY_SLOTS
@@ -97,8 +147,13 @@ impl NativeChannel {
         if !self.applications || self.query_replies.len() == QUERY_SLOTS {
             return Ok(None);
         }
-        let busy = |peer| self.query_replies.iter().any(|r| r.peer == peer);
-        if let Some(request) = self.query_inbox.take_ready(busy) {
+        if let Some(request) = self
+            .query_inbox
+            .take_ready(|peer| self.query_replies.iter().any(|r| r.peer == peer))
+        {
+            if let Some(trace) = QueryTrace::from_request(&request.1) {
+                trace.event("query_request_dispatched", request.0, None, "dispatched");
+            }
             self.io_progress.advance();
             return Ok(Some(request));
         }
@@ -107,7 +162,7 @@ impl NativeChannel {
         if !self.query_inbox.has_space() {
             return Ok(None);
         }
-        let Some(complete) = self.link.poll_complete(STREAM, now, 8)? else {
+        let Some(complete) = self.poll_complete(STREAM, now, 8)? else {
             return Ok(None);
         };
         let peer = (0..self.link.peer_count())
@@ -128,9 +183,20 @@ impl NativeChannel {
         let Frame::Request(request) = wire::decode(&bytes).map_err(anyhow::Error::msg)? else {
             anyhow::bail!("node accepts query requests only");
         };
+        if let Some(trace) = QueryTrace::from_request(&request) {
+            trace.event("query_request_received", peer, Some(complete.id), "decoded");
+        }
         self.query_inbox.insert(peer, session, request, now)?;
         self.io_progress.advance();
-        Ok(self.query_inbox.take_ready(busy))
+        let ready = self
+            .query_inbox
+            .take_ready(|peer| self.query_replies.iter().any(|r| r.peer == peer));
+        if let Some((peer, request)) = &ready {
+            if let Some(trace) = QueryTrace::from_request(request) {
+                trace.event("query_request_dispatched", *peer, None, "dispatched");
+            }
+        }
+        Ok(ready)
     }
     pub fn reply_query(&mut self, peer: usize, response: Response, now: Instant) -> Result<()> {
         let index = self
@@ -144,6 +210,18 @@ impl NativeChannel {
         // terminates quietly, but a mismatched response remains a caller error.
         // Never carry a response into a replacement authenticated session.
         if now >= request.deadline || self.link.session_id(peer) != Some(request.session) {
+            if let Some(trace) = QueryTrace::from_request(&request.request) {
+                trace.event(
+                    "query_request_retired",
+                    peer,
+                    None,
+                    if now >= request.deadline {
+                        "expired"
+                    } else {
+                        "session_replaced"
+                    },
+                );
+            }
             self.query_inbox.entries.remove(index);
             return Ok(());
         }
@@ -163,12 +241,17 @@ impl NativeChannel {
             MAX_BYTES,
             FragmentProfile::NativeUdpV2,
         )?);
+        let trace = QueryTrace::from_request(&request.request);
+        if let Some(trace) = trace {
+            trace.event("query_reply_prepared", peer, Some(object.id()), "prepared");
+        }
         self.query_replies.push_back(QueryDelivery {
             peer,
             session: request.session,
             object,
             admitted: false,
             deadline: request.deadline,
+            trace,
         });
         self.query_inbox.entries.remove(index);
         self.io_progress.advance();
@@ -202,11 +285,40 @@ impl NativeChannel {
                     ),
                 "invalid query completion"
             );
+            if let Some(trace) = self.query_replies[index].trace {
+                trace.event(
+                    "query_reply_completed",
+                    done.peer,
+                    Some(done.body.id()),
+                    match done.state {
+                        ObjectSendState::Delivered => "delivered",
+                        ObjectSendState::Expired => "expired",
+                        ObjectSendState::SessionReplaced => "session_replaced",
+                        _ => unreachable!("checked query completion state"),
+                    },
+                );
+            }
             self.query_replies.remove(index);
         }
         report.completed = other;
         self.query_replies.retain(|q| {
-            q.admitted || (now < q.deadline && self.link.session_id(q.peer) == Some(q.session))
+            let retained =
+                q.admitted || (now < q.deadline && self.link.session_id(q.peer) == Some(q.session));
+            if !retained {
+                if let Some(trace) = q.trace {
+                    trace.event(
+                        "query_reply_retired",
+                        q.peer,
+                        Some(q.object.id()),
+                        if now >= q.deadline {
+                            "expired"
+                        } else {
+                            "session_replaced"
+                        },
+                    );
+                }
+            }
+            retained
         });
         let mut admitted = false;
         for reply in &mut self.query_replies {
@@ -218,11 +330,21 @@ impl NativeChannel {
                     now,
                     reply.deadline,
                 )?;
+                if reply.admitted {
+                    if let Some(trace) = reply.trace {
+                        trace.event(
+                            "query_reply_admitted",
+                            reply.peer,
+                            Some(reply.object.id()),
+                            "admitted",
+                        );
+                    }
+                }
                 admitted |= reply.admitted;
             }
         }
         if admitted {
-            self.io_progress.advance();
+            self.note_send_admission();
         }
         Ok(report)
     }
@@ -239,6 +361,15 @@ mod tests {
             sequence,
             query: Query::Status,
         }
+    }
+
+    #[test]
+    fn query_trace_follows_explicit_flag_and_sequence_bound() {
+        assert_eq!(
+            QueryTrace::from_request(&request(128)).is_some(),
+            profile::asset_enabled()
+        );
+        assert!(QueryTrace::from_request(&request(129)).is_none());
     }
 
     #[test]
@@ -396,7 +527,7 @@ mod tests {
             std::thread::yield_now();
         }
         assert_eq!(node.query_replies.len(), 1);
-        let second = client.prepare_query(Query::Status)?;
+        let second = client.prepare_query(Query::Receipt { hash: [31; 32] })?;
         let mut second_sent = false;
         let mut delayed = NativeLinkPoll::default();
         while node.query_inbox.entries.is_empty() || delayed.completed.is_empty() {
@@ -422,18 +553,58 @@ mod tests {
         let (peer, exact) = node.poll_query(now)?.context("retained request lost")?;
         assert_eq!(exact.sequence, 2);
         let deadline_before = node.query_inbox.entries[0].deadline;
-        let mut wrong = exact.clone();
-        wrong.sequence += 1;
-        assert!(node
-            .reply_query(
-                peer,
-                Response {
+        for field in 0..3 {
+            let mut wrong = exact.clone();
+            match field {
+                0 => wrong.sequence -= 1,
+                1 => wrong.session[0] ^= 1,
+                _ => wrong.query = Query::Receipt { hash: [32; 32] },
+            }
+            assert!(node
+                .reply_query(
+                    peer,
+                    Response {
+                        request: wrong.clone(),
+                        answer: Answer::Error(QueryError::Busy)
+                    },
+                    now
+                )
+                .is_err());
+            // Inject a validly encoded but misbound serving-node response into
+            // the original delivery owner. Real encrypted UDP and DONE still
+            // run; the client must retain its pending exact request throughout.
+            let object = Arc::new(OutgoingMessage::with_profile(
+                transport::fragment_domain(
+                    node.domain.chain_id,
+                    node.domain.genesis,
+                    node.domain.protocol,
+                ),
+                wire::encode(Frame::Response(Response {
                     request: wrong,
-                    answer: Answer::Error(QueryError::Busy)
-                },
-                now
-            )
-            .is_err());
+                    answer: Answer::Error(QueryError::Busy),
+                }))
+                .map_err(anyhow::Error::msg)?,
+                MAX_BYTES,
+                FragmentProfile::NativeUdpV2,
+            )?);
+            node.query_replies.push_back(QueryDelivery {
+                peer,
+                session: node.link.session_id(peer).context("test session missing")?,
+                object,
+                admitted: false,
+                deadline: deadline_before,
+                trace: None,
+            });
+            while !node.query_replies.is_empty() {
+                let now = Instant::now();
+                ensure!(now < deadline, "misbound compact response timeout");
+                let _ = node.poll_io(wall, now, 64)?;
+                let _ = client.poll(wall, now, 64)?;
+                assert!(client.poll_query_response(&second, now)?.is_none());
+                std::thread::yield_now();
+            }
+            assert_eq!(node.query_inbox.entries[0].request, exact);
+        }
         node.reply_query(
             peer,
             Response {

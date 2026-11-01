@@ -514,6 +514,7 @@ fn setup_with_genesis(
     )?);
     let library = library()?;
     let execution_backend = test_execution_backend()?;
+    let signature_backend = crate::native_pipeline::service::config::test_signature_backend()?;
     let sockets = (0..4)
         .map(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
         .collect::<std::io::Result<Vec<_>>>()?;
@@ -538,6 +539,7 @@ fn setup_with_genesis(
             "rpc_addr":address,"signing_key_file":key_path,"genesis":genesis,"workers":4,"batch_size":batch_size,
             "transport_key_file":transport_key_path,"key_storage":"protected_v1",
             "execution_backend":execution_backend,
+            "signature_backend":signature_backend,
             "udp_addr":udp[index], "peers": (0..4).filter(|peer| *peer != index).map(|peer|
                 json!({"public_key":validator_key(peer).public_key(),"address":udp[peer]})).collect::<Vec<_>>()
         });

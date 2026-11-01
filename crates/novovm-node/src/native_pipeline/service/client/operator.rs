@@ -5,10 +5,9 @@ use super::NativeApplicationClient;
 use crate::native_pipeline::{
     consensus::{
         native::{LaneLimits, MessageDomain, ValidatorTransportBindings},
-        transport::DecodeLimits,
         wire::{Validator, ValidatorSet},
     },
-    service::{GenesisValidator, NativePeerConfig},
+    service::{native_decode_limits, GenesisValidator, NativePeerConfig},
 };
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
@@ -22,7 +21,7 @@ use novovm_network::novorudp::{
 use novovm_protocol::{
     native_query::{self, Answer, Frame, Query},
     uca_spend::MAX_SIGNED_SPEND_BYTES,
-    uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits},
+    uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -35,8 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const MAX_BYTES: usize = 512 * 1024;
-const MAX_ROWS: usize = 64; // Local CLI budget, not a protocol capacity ceiling.
+const MAX_ROWS: usize = 1024;
 const MAX_CLIENT_VALIDATORS: usize = 64;
 /// Local configuration budget shared with managed health inspection. A pretty
 /// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate 32-byte
@@ -118,6 +116,7 @@ impl ClientConfig {
 
     fn connect(&self, key: SigningKey) -> Result<NativeApplicationClient> {
         let domain = self.domain(&key)?;
+        let codec = native_decode_limits(MAX_ROWS, true);
         NativeApplicationClient::connect(
             UdpSocket::bind(self.bind_addr)?,
             key,
@@ -131,26 +130,21 @@ impl ClientConfig {
                 address: self.node.address,
             },
             domain,
-            DecodeLimits {
-                transactions: MAX_ROWS,
-                transaction_bytes: MAX_SIGNED_SPEND_BYTES,
-                body_bytes: MAX_BYTES,
-                message_bytes: MAX_BYTES,
-            },
+            codec,
             LaneLimits {
                 receive: ReassemblyLimits {
-                    max_message_bytes: MAX_BYTES,
+                    max_message_bytes: codec.message_bytes,
                     messages: 2,
-                    bytes: 2 * MAX_BYTES,
+                    bytes: 2 * codec.message_bytes,
                     peer_messages: 2,
-                    peer_bytes: 2 * MAX_BYTES,
+                    peer_bytes: 2 * codec.message_bytes,
                     ttl: Duration::from_secs(30),
                 },
                 send: NativeSendLimits {
                     messages: 2,
-                    bytes: 2 * MAX_BYTES,
+                    bytes: 2 * codec.message_bytes,
                     peer_messages: 2,
-                    peer_bytes: 2 * MAX_BYTES,
+                    peer_bytes: 2 * codec.message_bytes,
                 },
             },
             NativeSendPolicy {
@@ -203,7 +197,7 @@ fn read_client_config(path: &Path) -> Result<ClientConfig> {
 
 enum Operation {
     Query(Query),
-    Submit(Arc<UcaSpendBatch>),
+    Submit(Arc<AssetSpendBatchV3>),
 }
 
 fn receipt_view(state: native_query::ReceiptState) -> Value {
@@ -225,7 +219,7 @@ fn receipt_view(state: native_query::ReceiptState) -> Value {
 
 // Local presentation only. Never round or narrow monetary u128s through f64/u64.
 fn answer_view(answer: Answer) -> Value {
-    use native_query::UcaState;
+    use native_query::AssetState;
     match answer {
         Answer::Status(status) => json!({"Status":status}),
         Answer::Error(error) => json!({"Error":error}),
@@ -242,22 +236,26 @@ fn answer_view(answer: Answer) -> Value {
         }
         Answer::NovBalance(value) => json!({"NovBalance":value.map(|b|
             json!({"amount":b.amount.to_string(),"state_root":b.state_root,"height":b.height}))}),
-        Answer::UcaSpendState(UcaState::Present(s)) => json!({"UcaSpendState":{"Present":{
+        Answer::AssetSpendState(AssetState::Present(s)) => json!({"AssetSpendState":{"Present":{
+            "authority":s.authority,
             "state_root":s.state_root,"height":s.height,"account_active":s.account_active,
             "current_spend_epoch":s.current_spend_epoch,"grant_epoch":s.grant_epoch,
+            "management_key_ref":s.management_key_ref,"recovery_key_ref":s.recovery_key_ref,
+            "grant_present":s.grant_present,
             "permits_nov_transfer":s.permits_nov_transfer,"revoked":s.revoked,
             "not_before_height":s.not_before_height,"expires_at_height":s.expires_at_height,
             "max_debit_per_intent":s.max_debit_per_intent.to_string(),
             "remaining_debit_budget":s.remaining_debit_budget.to_string(),"next_nonce":s.next_nonce,
             "payer_balance":s.payer_balance.to_string(),"recipient_balance":s.recipient_balance.to_string()}}}),
-        Answer::UcaSpendState(UcaState::Pending) => json!({"UcaSpendState":"Pending"}),
-        Answer::UcaSpendState(UcaState::Missing { state_root, height }) => {
-            json!({"UcaSpendState":{"Missing":{"state_root":state_root,"height":height}}})
+        Answer::AssetSpendState(AssetState::Pending) => json!({"AssetSpendState":"Pending"}),
+        Answer::AssetSpendState(AssetState::Missing { state_root, height }) => {
+            json!({"AssetSpendState":{"Missing":{"state_root":state_root,"height":height}}})
         }
     }
 }
 
 fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
+    let codec = native_decode_limits(MAX_ROWS, true);
     match (action, input) {
         ("status", None) => Ok(Operation::Query(Query::Status)),
         ("query", Some(path)) => {
@@ -270,12 +268,12 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
             // The SDK supplies fresh session/sequence correlation, never replays it.
             Ok(Operation::Query(request.query))
         }
-        ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(UcaSpendBatch::decode(
-            &read_bounded(path, MAX_BYTES)?,
-            UcaSpendBatchLimits {
+        ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(AssetSpendBatchV3::decode(
+            &read_bounded(path, codec.message_bytes)?,
+            AssetSpendBatchLimitsV3 {
                 transactions: MAX_ROWS,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
-                body_bytes: MAX_BYTES,
+                body_bytes: codec.body_bytes,
             },
         )?))),
         _ => anyhow::bail!(
@@ -332,7 +330,7 @@ pub fn run(config_path: &Path, action: &str, input: Option<&Path>) -> Result<Val
         }
         Operation::Submit(batch) => {
             let rows = batch.len();
-            let prepared = client.prepare_uca(batch)?;
+            let prepared = client.prepare_asset_spend(batch)?;
             let mut sent = false;
             loop {
                 let now = Instant::now();
@@ -457,12 +455,16 @@ mod tests {
             block_hash: [2; 32],
         });
         assert_eq!(receipt["Finalized"]["charged_fee"], text);
-        let state = answer_view(Answer::UcaSpendState(native_query::UcaState::Present(
-            native_query::UcaSpendStateView {
+        let state = answer_view(Answer::AssetSpendState(native_query::AssetState::Present(
+            Box::new(native_query::AssetSpendStateViewV2 {
+                authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 state_root: [3; 32],
                 height: 1,
                 account_active: true,
                 current_spend_epoch: 1,
+                management_key_ref: [6; 32],
+                recovery_key_ref: None,
+                grant_present: true,
                 grant_epoch: 1,
                 permits_nov_transfer: true,
                 revoked: false,
@@ -473,7 +475,7 @@ mod tests {
                 next_nonce: 1,
                 payer_balance: u128::MAX,
                 recipient_balance: u128::MAX,
-            },
+            }),
         )));
         for field in [
             "max_debit_per_intent",
@@ -481,7 +483,7 @@ mod tests {
             "payer_balance",
             "recipient_balance",
         ] {
-            assert_eq!(state["UcaSpendState"]["Present"][field], text);
+            assert_eq!(state["AssetSpendState"]["Present"][field], text);
         }
     }
 

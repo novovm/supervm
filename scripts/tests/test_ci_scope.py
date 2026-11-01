@@ -4,6 +4,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -62,6 +63,7 @@ class ScopeTests(unittest.TestCase):
             out = ci.outputs_for(scope, ["Cargo.toml", "scripts/a.py", "package.json"])
             needs = {"detect": {"result": "success", "outputs": out}}
             for job, key in {"lan_script_launch": "full", "runtime_modules": "full",
+                             "runtime_modules_release": "full",
                              "rust": "has_rust", "rust_security": "security",
                              "python": "has_python", "node": "has_node"}.items():
                 needs[job] = {"result": "success" if out[key] == "true" else "skipped"}
@@ -74,6 +76,57 @@ class ScopeTests(unittest.TestCase):
                         changed[job]["result"] = wrong
                         with self.assertRaises(ValueError):
                             ci.validate_results(changed)
+                missing = copy.deepcopy(needs)
+                del missing[job]
+                if job != "detect":
+                    with self.assertRaisesRegex(ValueError, job):
+                        ci.validate_results(missing)
+
+    def test_runtime_split_retains_both_platforms_and_independent_budgets(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        for job, group in (("runtime_modules", "ci-runtime-"),
+                           ("runtime_modules_release", "ci-runtime-release-")):
+            with self.subTest(job=job):
+                block = jobs[job]
+                self.assertIn("needs: detect\n", block)
+                self.assertIn("if: needs.detect.outputs.full == 'true'\n", block)
+                self.assertIn("os: [ubuntu-latest, windows-latest]\n", block)
+                self.assertIn("fail-fast: false\n", block)
+                self.assertIn("timeout-minutes: 15\n", block)
+                self.assertIn("group: " + group + "${{ matrix.os }}-${{ github.ref }}-", block)
+                self.assertIn("&& github.run_id || 'auto'", block)
+                self.assertIn("cancel-in-progress: true\n", block)
+                self.assertIn("rustup toolchain install 1.94.0", block)
+        required = re.search(r"^    needs: \[([^\]]+)\]$", jobs["result"], re.M).group(1).split(", ")
+        self.assertIn("runtime_modules", required)
+        self.assertIn("runtime_modules_release", required)
+        self.assertIn("if: always()\n", jobs["result"])
+
+    def test_runtime_split_retains_complete_debug_and_release_commands(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        debug, release = jobs["runtime_modules"], jobs["runtime_modules_release"]
+        for command in (
+            "./scripts/tests/workspace-isolation.tests.ps1",
+            "./runtime/check-isolation.ps1",
+            "cargo fmt --manifest-path runtime/Cargo.toml --all -- --check",
+            "cargo clippy --manifest-path runtime/Cargo.toml --workspace --all-targets --locked -- -D warnings",
+            "cargo clippy --manifest-path runtime/Cargo.toml -p novovm-host --lib --no-default-features --locked -- -D warnings",
+            "cargo test --manifest-path runtime/Cargo.toml --workspace --locked",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(debug.count(command), 1)
+                self.assertNotIn(command, release)
+        command = "cargo test --manifest-path runtime/Cargo.toml --workspace --release --locked -- --include-ignored --test-threads=1"
+        self.assertEqual(release.count(command), 1)
+        self.assertNotIn(command, debug)
+        self.assertNotRegex(release, r"\s--ignored(?:\s|$)")
+        for value in ("aoem/linux/core/bin/libaoem_ffi.so", "aoem/windows/core/bin/aoem_ffi.dll",
+                      'git lfs pull --include="$env:AOEM_TEST_BINARY" --exclude=""',
+                      "$env:NOVOVM_AOEM_TEST_LIBRARY = (Resolve-Path $env:AOEM_TEST_BINARY).Path",
+                      "exit $LASTEXITCODE"):
+            self.assertIn(value, release)
 
     def test_missing_history_and_malformed_event_select_full(self):
         for raw in ("{broken", "null", "[]", json.dumps({"before": [], "after": "b" * 40}),

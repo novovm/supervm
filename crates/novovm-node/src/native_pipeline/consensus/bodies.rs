@@ -48,12 +48,16 @@ struct Body {
     context: BatchContext,
     charge: usize,
     local_round: Option<u64>,
+    requested_round: Option<u64>,
     work: Work,
 }
 
 /// Bounded input ownership only. A peer body is accepted only for an existing
 /// verified proposal/decision hint, with the exact requested body ID and parent.
 /// No arbitrary peer can fill the queue with unsolicited speculative candidates.
+/// The sole optional Lookahead additionally accepts the scheduled next leader's
+/// exact AssetBody, but uses only this owner's reproduced parent and never
+/// registers or publishes before the ordinary exact parent journal ACK.
 pub struct CandidateBodies {
     owner: Arc<()>,
     pin: BatchContext,
@@ -145,7 +149,19 @@ impl CandidateBodies {
         local: bool,
         progress: &RoundProgress,
     ) -> Result<bool> {
-        self.offer_inner(message, local, progress, None)
+        self.offer_inner(message, local, progress, None, false)
+    }
+
+    pub(super) fn offer_requested_asset(
+        &mut self,
+        message: &Arc<Message>,
+        progress: &RoundProgress,
+    ) -> Result<bool> {
+        ensure!(
+            matches!(message.as_ref(), Message::AssetBody { .. }),
+            "requested asset input required"
+        );
+        self.offer_inner(message, false, progress, None, true)
     }
 
     /// Local, process-only signature evidence. Remote bodies never carry these
@@ -161,7 +177,7 @@ impl CandidateBodies {
             Arc::ptr_eq(&self.owner, &pipeline.owner_identity()),
             "admitted body execution owner changed"
         );
-        self.offer_inner(message, true, progress, Some((pipeline, admitted)))
+        self.offer_inner(message, true, progress, Some((pipeline, admitted)), false)
     }
 
     fn offer_inner(
@@ -170,6 +186,7 @@ impl CandidateBodies {
         local: bool,
         progress: &RoundProgress,
         admitted: Option<(&CandidatePipeline, &[&AdmittedTransfer])>,
+        requested: bool,
     ) -> Result<bool> {
         ensure!(!self.frozen, "body owner frozen");
         ensure!(!progress.is_frozen(), "consensus owner frozen");
@@ -179,7 +196,7 @@ impl CandidateBodies {
         let context = match message.as_ref() {
             Message::Body { context, .. }
             | Message::ApflBody { context, .. }
-            | Message::UcaBody { context, .. } => context,
+            | Message::AssetBody { context, .. } => context,
             _ => anyhow::bail!("candidate input must be an exact body"),
         };
         ensure!(
@@ -187,13 +204,29 @@ impl CandidateBodies {
             "body parent/business pins mismatch"
         );
         ensure!(
-            matches!(message.as_ref(), Message::UcaBody { .. })
+            matches!(message.as_ref(), Message::AssetBody { .. })
                 == (self.pin.business_program == uca_program_id()),
             "candidate body wire/profile mismatch"
         );
-        let id = transport::candidate_body_id(message, self.codec)?;
+        let identity_started = crate::native_pipeline::profile::mark();
+        let (id, encoded_wire_len) =
+            transport::candidate_body_id_and_wire_len(message, self.codec)?;
+        if let Message::AssetBody { batch, .. } = message.as_ref() {
+            crate::native_pipeline::profile::asset_event("body_identified", context.height, || {
+                serde_json::json!({
+                    "source_ref":Arc::as_ptr(batch) as usize,"body":id,"rows":batch.len(),"local":local
+                })
+            });
+        }
+        crate::native_pipeline::profile::work(
+            crate::native_pipeline::profile::Phase::BodyIdentity,
+            identity_started,
+            context.height,
+            Some(id),
+            None,
+        );
         ensure!(
-            local || progress.missing_bodies().any(|(_, wanted)| wanted == id),
+            local || requested || progress.missing_bodies().any(|(_, wanted)| wanted == id),
             "unsolicited body or different ordered input"
         );
         // A parent ACK can arrive during the same lifecycle turn before the
@@ -206,21 +239,29 @@ impl CandidateBodies {
             if local {
                 known.local_round = Some(progress.round());
             }
+            if requested {
+                known.requested_round = Some(progress.round());
+            }
             return Ok(true);
         }
         // Charge canonical input plus a request copy. The pipeline separately
         // reserves its own execution/capture/output memory before taking work.
-        let mut charge = transport::encode(message, self.codec)?
-            .len()
-            .checked_mul(2)
-            .context("body charge overflow")?;
+        let charge_started = crate::native_pipeline::profile::mark();
+        let wire_bytes = match encoded_wire_len {
+            Some(len) => len,
+            None => transport::encode(message, self.codec)?.len(),
+        };
+        crate::native_pipeline::profile::work(
+            crate::native_pipeline::profile::Phase::BodyCharge,
+            charge_started,
+            context.height,
+            Some(id),
+            None,
+        );
+        let mut charge = wire_bytes.checked_mul(2).context("body charge overflow")?;
         // Structured NUAS retains a dictionary plus expanded locator pairs in
         // the request. Charge canonical input as well; compression is not quota.
-        if let Message::UcaBody { batch, .. } = message.as_ref() {
-            ensure!(
-                admitted.is_none(),
-                "V3 admission capability cannot authorize NUAS"
-            );
+        if let Message::AssetBody { batch, .. } = message.as_ref() {
             charge = charge
                 .checked_add(batch.canonical_bytes())
                 .and_then(|n| batch.len().checked_mul(64).and_then(|h| n.checked_add(h)))
@@ -245,7 +286,16 @@ impl CandidateBodies {
                 }
                 None => BatchRequest::from_apfl(batch.clone(), *context, self.policy.clone())?,
             },
-            Message::UcaBody { .. } => transport::candidate_request(message, &self.policy)?,
+            Message::AssetBody { batch, .. } => match admitted {
+                Some((pipeline, rows)) => {
+                    let checked = pipeline.rebind_admitted_uca(batch.clone(), rows)?;
+                    charge = charge
+                        .checked_add(checked.retained_metadata_bytes())
+                        .context("admitted UCA body charge overflow")?;
+                    BatchRequest::from_authenticated(checked, *context, self.policy.clone())?
+                }
+                None => transport::candidate_request(message, &self.policy)?,
+            },
             _ => unreachable!(),
         };
         if charge > self.limits.bytes.saturating_sub(self.bytes) {
@@ -258,6 +308,7 @@ impl CandidateBodies {
                 context: *context,
                 charge,
                 local_round: local.then_some(progress.round()),
+                requested_round: requested.then_some(progress.round()),
                 work: Work::Pending(Some(request)),
             },
         );
@@ -270,7 +321,9 @@ impl CandidateBodies {
     pub fn requests(&self, progress: &RoundProgress) -> Vec<(Hash, Hash)> {
         progress
             .missing_bodies()
-            .filter(|(_, id)| !self.bodies.contains_key(id))
+            .filter(|(_, id)| {
+                !self.bodies.contains_key(id) && !self.retains_promoting_successor(*id, progress)
+            })
             .collect()
     }
 
@@ -280,6 +333,7 @@ impl CandidateBodies {
         self.bodies
             .get(&id)
             .map(|b| b.message.clone())
+            .or_else(|| self.successor_response(id, progress))
             .or_else(|| progress.candidate_body(id))
     }
 
@@ -322,6 +376,13 @@ impl CandidateBodies {
                         self.integer_rows += done.observation.gpu_rows as u64;
                         self.integer_plans += done.observation.gpu_waves as u64;
                         self.apfl_rows += done.observation.apfl_view_transactions as u64;
+                        crate::native_pipeline::profile::critical_event(
+                            crate::native_pipeline::profile::CriticalEvent::CandidateExecutionDone,
+                            body.context.height,
+                            body.local_round.unwrap_or_else(|| progress.round()),
+                            None,
+                            Some(*id),
+                        );
                         body.work = Work::Ready(done.candidate().clone());
                     }
                     Err(error) => {
@@ -352,6 +413,7 @@ impl CandidateBodies {
                 continue;
             }
             if body.local_round != Some(progress.round())
+                && body.requested_round != Some(progress.round())
                 && !progress.retains_body(*id)
                 && !progress.missing_bodies().any(|(_, needed)| needed == *id)
             {
@@ -359,6 +421,12 @@ impl CandidateBodies {
                 continue;
             }
             if let Work::Ready(candidate) = &body.work {
+                if body.requested_round.is_some()
+                    && body.local_round != Some(progress.round())
+                    && !progress.missing_bodies().any(|(_, needed)| needed == *id)
+                {
+                    continue;
+                }
                 // Optional follower preparation stays on this bounded body
                 // owner until a verified proposal demands it. It must not fill
                 // the consensus candidate budget with unrelated local results.

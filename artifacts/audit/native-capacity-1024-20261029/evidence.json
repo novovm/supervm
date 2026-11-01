@@ -1,0 +1,633 @@
+{
+  "schema": "novovm-native-capacity-1024-v1",
+  "date": "2026-10-29",
+  "branch": "dev/mldsa65-identity-closure",
+  "base_commit": "acba3b2ff0ea7d861bdc9111e3e2f3accd95cfc1",
+  "scope": "Original APFL/NovoRUDP capacity adaptation; Windows one-host four-process evidence; development checkpoint, not release",
+  "acceptance": {
+    "rows_1024_and_64_heights_proven": true,
+    "all_65536_success_and_cold_checks": true,
+    "large_body_recovery_diagnostic_and_final_no_diagnostic_pass": true,
+    "earlier_query_timeout_root_cause_closed": false,
+    "historical_12k_recovered": false,
+    "multi_host": false,
+    "linux_installation": false,
+    "full_candidate_ci": false,
+    "main_changed": false,
+    "shipped_aoem_replaced": false,
+    "deployment_changed": false
+  },
+  "limits": {
+    "rows": 1024,
+    "canonical_row_bytes": 8192,
+    "expanded_body_bytes": 8388608,
+    "message_bytes": 8519680,
+    "data_lane_peer_bytes": 34078720,
+    "data_lane_total_bytes": 136314880,
+    "host_delivery_peer_bytes": 68157440,
+    "body_retention_bytes": 136314880,
+    "control_lane_message_bytes": 524288,
+    "control_lane_peer_bytes": 2097152,
+    "control_lane_total_bytes": 16777216,
+    "ttl_seconds": 30,
+    "read_and_write_keys": 32768,
+    "capture_nodes": 65536,
+    "capture_bytes": 16777216,
+    "pipeline_owner_bytes": 268435456,
+    "pipeline_batches": 2,
+    "mempool_bytes": 67108864
+  },
+  "artifacts_used": {
+    "node": {
+      "path": "target/native-capacity-1024-20261029/candidate/novovm-node.exe",
+      "sha256": "b2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0"
+    },
+    "client": {
+      "path": "target/native-capacity-1024-20261029/candidate/novovm-native-client.exe",
+      "sha256": "95383e4539a601097d962ce36b694a26ebd19d459d38e37c7f537a2170ae8765"
+    },
+    "aoem": {
+      "path": "../AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll",
+      "sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+      "manifest": "../AOEM/artifacts/mldsa-native-paired-20261027/candidate-manifest.json"
+    },
+    "performance_driver_sha256": "12616929819fb917d7e205498a1dbd06a3b4bf95b345b48d7241ccd3705d087e",
+    "batch_query_driver_sha256": "f6d9489b787eaa15fc96bb994684fdcdcf6fd6a56e363b62bdea91e89d267447",
+    "closeout_driver_sha256": "ba71596b111a5d92f2320355fbd017e65995136ec59bebca9ae144a1fbe42c81",
+    "driver_difference": "Only cfg(test) receipt observation, failure diagnostics and test Clippy changed after performance; production node and client unchanged."
+  },
+  "validation": {
+    "native_pipeline": {
+      "passed": 511,
+      "failed": 0,
+      "ignored": 110,
+      "log": "pipeline-unit-closeout.log"
+    },
+    "archive_lifecycle": {
+      "passed": 14,
+      "failed": 0,
+      "log": "archive-delivery-real.log"
+    },
+    "successor_real": {
+      "passed": 3,
+      "failed": 0,
+      "log": "successor-real.log"
+    },
+    "aab_real": {
+      "passed": 1,
+      "failed": 0,
+      "log": "aab-process-real.log"
+    },
+    "recovery": {
+      "initial_failures": 2,
+      "diagnostic_pass": 1,
+      "final_no_diagnostic_pass": 1,
+      "failed_before_late_start": true,
+      "root_cause_unresolved": true,
+      "logs": [
+        "large-process-recovery.log",
+        "large-process-recovery-batch-query.log",
+        "large-process-recovery-diagnostics.log",
+        "large-process-recovery-closeout.log"
+      ]
+    },
+    "release_node_client_build": true,
+    "strict_product_clippy": true,
+    "strict_tests_clippy": true,
+    "format": true,
+    "source_diff_check": true,
+    "existing_cargo_duplicate_bin_notice": true
+  },
+  "measurement": {
+    "business_backend": "cpu_callbacks",
+    "signature_order": [
+      "cpu",
+      "gpu_required",
+      "cpu"
+    ],
+    "workers": 24,
+    "query_batch": 128,
+    "rows_per_frame": 1024,
+    "processes": 4,
+    "physical_machines": 1,
+    "payers": 16,
+    "recipient_shared": true,
+    "continuous_outstanding_limit": 8192,
+    "validity_window_heights": 256,
+    "confirmation_endpoint": "first SDK submission attempt through all unique receipts observed finalized on all four nodes",
+    "diagnostic_times_not_aggregated_into_performance": true,
+    "generator_starved_poll_counter_includes_backpressure": true,
+    "no_competing_heavy_builds_or_benchmarks": true
+  },
+  "source_files": [
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_effects.rs",
+      "sha256": "13506c94880b6ab67e51c865ce2c19c42e2fa5f9af1a6ff73f23be9c2108eaef",
+      "git_blob": "469eef6aebfe89cecdcc62144d8edda087db5094"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/uca_spend_state.rs",
+      "sha256": "df356f5b37cf6f04b463f2374b3c31d27773ce122068bce0560d3f3453f6025f",
+      "git_blob": "0ddaf7556768faaf213a66ce129f569e68580bf3"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/uca_spend_state/tests.rs",
+      "sha256": "e34096d9e1c3dfaf5aa2429951e8da7b78f1920b303b3b594fdf281b2f8fe471",
+      "git_blob": "4c0686b5650fcad075871f542c0040cca508fd56"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs",
+      "sha256": "c90b969df80d01bf3d4cdf3224c2a84cac04e89554c37e8c581856c0e82726df",
+      "git_blob": "efef71c4df1b7da63c835a3668bceeaeb16e6a28"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/archive_delivery_tests.rs",
+      "sha256": "4685b573c4280fc598decb38beb97d631ad87839b7f8fae636ca85c9eefbc4c6",
+      "git_blob": "8bd7b98431f12926c6ed6780fbb4bbe8a24bab95"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs",
+      "sha256": "a7149e27da3f7e9b5982a19b5cc8a4220ffb21efe69186d12aabecbdab08888c",
+      "git_blob": "ee7dddab26ba9f7215cca0964e1a0402f4768d9e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_client.rs",
+      "sha256": "ebbefbe294dd406b87b009e936bf5afbc000da4bbfe5067fd10b02368f5d00f2",
+      "git_blob": "47ee9a433b9dd71e32afd8b24e737a01cb219f81"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load.rs",
+      "sha256": "e63d286202f5b54b2cd511b144b31992397407a0959065a0d71158eab9f37c21",
+      "git_blob": "9a475baf7be6147ac0ac3b2a5db8ad06bc4a9cc7"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs",
+      "sha256": "60cdb654c2931e4ecfd0a58f90afd48f314ba6e611563ec7c5576eb8257de738",
+      "git_blob": "86ed65417ae4ea2926de73724020954c883a5930"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca/rolling.rs",
+      "sha256": "8d6a19edbb28c5cb74efb4f6b69a5b995f3686aa9b0900e48b14a0cf78b71505",
+      "git_blob": "5a7e8e3a5a591c327da933568e6891766c4df46b"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_queries.rs",
+      "sha256": "18a08cdfc0436d3140bad9affa57127e72d9393abcc0641e719ad4448ec44f0f",
+      "git_blob": "5f2bba23ad2e5640c6f46005ebb318d47314dcfd"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_uca_recovery.rs",
+      "sha256": "b9ce1fca0db06f479c843343ba72594135b282bc6691397968ad38d51b38e9ac",
+      "git_blob": "9b0f555bbb814ed7b96603073d0aad94dd64e41d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/persistence/packet.rs",
+      "sha256": "0bc2156cd5ddc487d0a9ac07c03fc8179407ed110601fb403e052336f798a61e",
+      "git_blob": "64191e51a4241ef15c7519813fd4db133129ca67"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/persistence/packet/tests.rs",
+      "sha256": "62f72f942eea6b806adc670a02c2db2bc633a52bfee2460c3442733feb37f627",
+      "git_blob": "a1ba3c2e0a4d4c8ba95fc3519e069990386dab78"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service.rs",
+      "sha256": "5ddeb1ed1de9945674d83703da7d85f74ce697e37ea519267377349ee359ddf7",
+      "git_blob": "a5e71ee2fef3b24d380e67c2e3476af1e960c116"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/client/operator.rs",
+      "sha256": "21db1e1401993a6b83f23ee8d32448c020ad1804da039e525ba012c0996487f7",
+      "git_blob": "724612582848f60fa8cb33333413eeff7fba2483"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs",
+      "sha256": "116958e257a37ee86a3ed3a7a6364754fa98c02e5c9d229e98258bb9c3ce1e96",
+      "git_blob": "a963cf174355da5b9a742791aa3ca52896e2d607"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/tests.rs",
+      "sha256": "92ef2a4cecad15ee3ced5c54750f09bf937c6326ec9e620a0975562f9c25c632",
+      "git_blob": "e875393e1b9495dcd30bebc4514ab57cef8f0de9"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/state/frontier.rs",
+      "sha256": "c17acf7022342c2abfe919d540e95f43eee566c01b1ac53cb6ff2520468c704b",
+      "git_blob": "0bea0dc96aeddac61cdffc6012782b8dd6ec10d6"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/state/tree.rs",
+      "sha256": "ef7bc8f0e6bd69fdd2a0a536f54fb39624635a05d90f8fbd94ce3c785f2d60db",
+      "git_blob": "5d3a34e5d80f4f05a8546804a3e2b7db89a2a604"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/state/tree/read_batch.rs",
+      "sha256": "c6191b22c84f3b3c2b7078ff35860fd7d652b20995f945319f2c6f94a1854cec",
+      "git_blob": "251e16b20f282f0da8f58a7f09002b639ffcdf67"
+    }
+  ],
+  "performance": [
+    {
+      "report": "4096-static-paired.json",
+      "rounds": [
+        {
+          "signature_backend": "cpu",
+          "transactions": 4096,
+          "successful_tps": 2620.366697800581,
+          "elapsed_seconds": 1.56314,
+          "latency_us": {
+            "p50": 1387354,
+            "p95": 1561728,
+            "p99": 1561932,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xcfda460074310ff0b7dd1483db6c7a890cc9425a4f1fc16b810a43f68fd2c1b0",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "gpu_required",
+          "transactions": 4096,
+          "successful_tps": 404.16184076773385,
+          "elapsed_seconds": 10.134554,
+          "latency_us": {
+            "p50": 9966826,
+            "p95": 10133072,
+            "p99": 10133345,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xcfda460074310ff0b7dd1483db6c7a890cc9425a4f1fc16b810a43f68fd2c1b0",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "cpu",
+          "transactions": 4096,
+          "successful_tps": 2382.8347472688442,
+          "elapsed_seconds": 1.718961,
+          "latency_us": {
+            "p50": 1578541,
+            "p95": 1717590,
+            "p99": 1717814,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xcfda460074310ff0b7dd1483db6c7a890cc9425a4f1fc16b810a43f68fd2c1b0",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        }
+      ]
+    },
+    {
+      "report": "65536-static-paired.json",
+      "rounds": [
+        {
+          "signature_backend": "cpu",
+          "transactions": 65536,
+          "successful_tps": 2736.8534378985964,
+          "elapsed_seconds": 23.945747,
+          "latency_us": {
+            "p50": 2778495,
+            "p95": 3639349,
+            "p99": 4204646,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xb226a9cc0d8a28cf00c662a01f2ecb983820d7312e21629566fb9f29bc29a5cb",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "gpu_required",
+          "transactions": 65536,
+          "successful_tps": 3097.9327954305495,
+          "elapsed_seconds": 21.154752,
+          "latency_us": {
+            "p50": 2431777,
+            "p95": 3925821,
+            "p99": 4459370,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xb226a9cc0d8a28cf00c662a01f2ecb983820d7312e21629566fb9f29bc29a5cb",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "cpu",
+          "transactions": 65536,
+          "successful_tps": 2759.866630590529,
+          "elapsed_seconds": 23.746075,
+          "latency_us": {
+            "p50": 2913642,
+            "p95": 3859802,
+            "p99": 4083050,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xb226a9cc0d8a28cf00c662a01f2ecb983820d7312e21629566fb9f29bc29a5cb",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        }
+      ]
+    },
+    {
+      "report": "65536-continuous-paired.json",
+      "rounds": [
+        {
+          "signature_backend": "cpu",
+          "transactions": 65536,
+          "successful_tps": 2325.177672830514,
+          "elapsed_seconds": 28.185373,
+          "latency_us": {
+            "p50": 3404515,
+            "p95": 4280776,
+            "p99": 4511943,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xd5cafce554f0b883cc89eb6a206092e029b1bc9f3499cf1c7300f57191b4e496",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "gpu_required",
+          "transactions": 65536,
+          "successful_tps": 1931.036913136605,
+          "elapsed_seconds": 33.938243,
+          "latency_us": {
+            "p50": 3279596,
+            "p95": 10510630,
+            "p99": 11350680,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xd5cafce554f0b883cc89eb6a206092e029b1bc9f3499cf1c7300f57191b4e496",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "cpu",
+          "transactions": 65536,
+          "successful_tps": 2558.6334298872325,
+          "elapsed_seconds": 25.613673,
+          "latency_us": {
+            "p50": 3107121,
+            "p95": 3913960,
+            "p99": 4257437,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0xd5cafce554f0b883cc89eb6a206092e029b1bc9f3499cf1c7300f57191b4e496",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        }
+      ]
+    },
+    {
+      "report": "4096-diagnostics-paired.json",
+      "rounds": [
+        {
+          "signature_backend": "cpu",
+          "transactions": 4096,
+          "successful_tps": 2762.727194853881,
+          "elapsed_seconds": 1.482593,
+          "latency_us": {
+            "p50": 1307442,
+            "p95": 1481178,
+            "p99": 1481380,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0x5650891844150c23cab102774cfb1ccb1a55f2eaa06c3b57ab9f001221f17343",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "gpu_required",
+          "transactions": 4096,
+          "successful_tps": 402.9566551056015,
+          "elapsed_seconds": 10.164865,
+          "latency_us": {
+            "p50": 10070393,
+            "p95": 10163208,
+            "p99": 10163424,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0x5650891844150c23cab102774cfb1ccb1a55f2eaa06c3b57ab9f001221f17343",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        },
+        {
+          "signature_backend": "cpu",
+          "transactions": 4096,
+          "successful_tps": 2194.1854086670323,
+          "elapsed_seconds": 1.866752,
+          "latency_us": {
+            "p50": 1603843,
+            "p95": 1865070,
+            "p99": 1865290,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "passed": true,
+          "signed_workload_sha256": "0x5650891844150c23cab102774cfb1ccb1a55f2eaa06c3b57ab9f001221f17343",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "4096-diagnostics-paired.json",
+      "bytes": 3118171,
+      "sha256": "9abe577216d9f6e6e876fe64f2f12b60c79da724f5708afcc356aa396decdb03"
+    },
+    {
+      "path": "4096-diagnostics-paired.log",
+      "bytes": 695,
+      "sha256": "c0f1693240c9b1511223df1ae574f62f2dc7b3f3db73bb7360045644e16dd663"
+    },
+    {
+      "path": "4096-paired.log",
+      "bytes": 695,
+      "sha256": "ec83e0b5ee9c819b60a2299b81914bd7521362a32707a397628bd4c37bd4f17e"
+    },
+    {
+      "path": "4096-static-paired.json",
+      "bytes": 227021,
+      "sha256": "0402ffd1e7816d3f084f4a39616ff5527a40869efb22c8973da643580c90950b"
+    },
+    {
+      "path": "65536-continuous-paired.json",
+      "bytes": 298073,
+      "sha256": "34b1212ce2e47941170bd99b17356521e83d4944e74a0d6541925a4687f25ad3"
+    },
+    {
+      "path": "65536-continuous-paired.log",
+      "bytes": 780,
+      "sha256": "38c2901dd7209b7aa8492d0ebdb0ef9e96427efca4e5641a2d537628db34a5af"
+    },
+    {
+      "path": "65536-static-paired.json",
+      "bytes": 266598,
+      "sha256": "d52b1a5624952ab685acaeb45c2ef6d066994178188f79f6749f7aaf1ba42d9b"
+    },
+    {
+      "path": "65536-static-paired.log",
+      "bytes": 696,
+      "sha256": "ac30460f6788302a64f0087fb8cadf9e90a357f2ae24b9c64f627b601c609a4d"
+    },
+    {
+      "path": "aab-process-real.log",
+      "bytes": 387,
+      "sha256": "7afc16e386ec79773b9537137d6e791cffb5cbf7dcd8ff682c256744780c223f"
+    },
+    {
+      "path": "archive-delivery-real.log",
+      "bytes": 2279,
+      "sha256": "877b2475a3e39a295ae61c3586beb36b17cf626e2c2492c65d0dc14a9fec39c4"
+    },
+    {
+      "path": "build-node.log",
+      "bytes": 629,
+      "sha256": "b9610739239511ab9435f1c59ea0b62657c16b9c20443a157417f62c7273b167"
+    },
+    {
+      "path": "build-tests-closeout.log",
+      "bytes": 735,
+      "sha256": "49885aae533f3c8c12500efd7daa4fb3be1f83b0b32456742b216d8dd538ffe7"
+    },
+    {
+      "path": "build-tests-final.log",
+      "bytes": 735,
+      "sha256": "0132798f0944c43a3dc748989079b3250bbdf650fe15b39bfe83fcd4b193c707"
+    },
+    {
+      "path": "build-tests-recovery.log",
+      "bytes": 735,
+      "sha256": "f6d19bd22860a7360773adb6f7f455ee1c28d43688029b9edb28cb829c442bc6"
+    },
+    {
+      "path": "build-tests.log",
+      "bytes": 3435,
+      "sha256": "2aef5144cd53e61c6d20a0de0e4860c96b4e13cdb49e3bc1bd6c51c149ac6154"
+    },
+    {
+      "path": "clippy-product.log",
+      "bytes": 1155,
+      "sha256": "6deeec7d4089a42691d9e7c3ace87721ac4c6da7d7d5935e7c1fa39be5ee9cf7"
+    },
+    {
+      "path": "clippy-tests-final.log",
+      "bytes": 1748,
+      "sha256": "3b524406116b30260fc2652a4f185f0e6269126c0927ea51218607b0a6ca52d4"
+    },
+    {
+      "path": "clippy-tests-recheck.log",
+      "bytes": 629,
+      "sha256": "80f5b78309e08ff59b402650574aafcf2b1748af6344dff8f00a088b97633fac"
+    },
+    {
+      "path": "diff-check-final.log",
+      "bytes": 3425,
+      "sha256": "f91bec8656ac50f16e4bb98e7c65904c0b9c10e4d9abf375d697c3cb2c75c75a"
+    },
+    {
+      "path": "diff-check.log",
+      "bytes": 3257,
+      "sha256": "c0251f360054e5d52de5d71f654589d6cff81c888984c76773674a87257fd88b"
+    },
+    {
+      "path": "fmt-closeout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "fmt-final.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "fmt.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "large-process-recovery-batch-query.log",
+      "bytes": 19665,
+      "sha256": "69ca4b1e2ff55b0f59776d380c7d2c1db96740b0bdcff3fdb5a56a9e4846d5dc"
+    },
+    {
+      "path": "large-process-recovery-closeout.log",
+      "bytes": 424,
+      "sha256": "9d279bce2475bf7cb10756ab59091f1ca91469032961b2f92b303226a8c869ab"
+    },
+    {
+      "path": "large-process-recovery-diagnostics.log",
+      "bytes": 423,
+      "sha256": "ec4a66997cbe1f5d772c13e7dc7d2f22d495529abdbc9e57b09a0703037762a9"
+    },
+    {
+      "path": "large-process-recovery.log",
+      "bytes": 838,
+      "sha256": "e4b8171750546ff9ade28b55588326dc7d3da33851ad9a2d49e0893b035c39bd"
+    },
+    {
+      "path": "pipeline-unit-closeout.log",
+      "bytes": 94036,
+      "sha256": "fff39de6d73c5400e845250ce5489f9f3a6ab7e8cd3934b37878fa1948fd76cf"
+    },
+    {
+      "path": "pipeline-unit.log",
+      "bytes": 94036,
+      "sha256": "4097d42fce23b20d3aee4f72c60a39d367c86098f96771e20a9c6b6cc874ce5b"
+    },
+    {
+      "path": "recovery-batch-query-failure.json",
+      "bytes": 188648,
+      "sha256": "c1f59e8e11982a8a5269d92b205959257193467a5192b0b9667fab3c5fae4abf"
+    },
+    {
+      "path": "recovery-closeout-pass.json",
+      "bytes": 881292,
+      "sha256": "bb2830bc8b71e14dd4913cac1a37d5077c08b17ae8729a8cdf8b5407e32a65a4"
+    },
+    {
+      "path": "recovery-diagnostics-pass.json",
+      "bytes": 877394,
+      "sha256": "f22494be6b18bf9cf945e4e53d91136f04ea745b4cf40c51d620f1ae17e79108"
+    },
+    {
+      "path": "recovery-first-failure.json",
+      "bytes": 169928,
+      "sha256": "83c60c78932a6e7b9cddfaae4b06fd4bff6bbda46ec5d042b0b62ffd77ab5398"
+    },
+    {
+      "path": "successor-real.log",
+      "bytes": 596,
+      "sha256": "b0a6f75f691b795c01198bba17f02ac3196c082a1d22e10043a2cdbfa7bc95d7"
+    },
+    {
+      "path": "wrong-rolling-invocation.log",
+      "bytes": 505,
+      "sha256": "817f0bb1666c8b88b468cf63c3fe9864bace34aa4a4bc23653c4d6df2d37ce0e"
+    }
+  ],
+  "source_hash_scope": "sha256 identifies local Windows file bytes; git_blob identifies the staged normalized Git source independently of checkout line endings."
+}

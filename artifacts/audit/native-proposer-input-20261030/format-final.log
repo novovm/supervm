@@ -1,0 +1,15 @@
+Diff in \\?\D:\WorksArea\SUPERVM\crates\novovm-node\src\native_pipeline\service\rpc.rs:1149:
+             "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
+         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
+         if crate::native_pipeline::profile::asset_enabled() {
+-            status["native_receiver_queue"] = json!(
+-                novovm_network::snapshot_network_runtime_receiver_queue_v1(
++            status["native_receiver_queue"] =
++                json!(novovm_network::snapshot_network_runtime_receiver_queue_v1(
+                     self.node.template.chain_id
+-                )
+-            );
++                ));
+         }
+         status["archive_work"] = json!({
+             "reads_started":core.archive_reads_started,

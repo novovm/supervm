@@ -334,6 +334,16 @@ jobs:
           cargo test -p novovm-network --lib udp_ingress_ --locked -- --test-threads=1
           cargo test -p novovm-protocol --lib native_query --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_pipeline --locked -- --test-threads=1
+          # Original delivery owner: purpose takeover, bounded drain and request
+          # ordering must remain active regressions, not merely ignored files.
+          cargo test -p novovm-node --lib native_archive_ --locked -- --ignored --list > target/native-archive-test-list.txt
+          grep -q 'native_archive_delivery_inflight_takeover_retains_original_handle: test' target/native-archive-test-list.txt
+          grep -q 'native_archive_request_older_completion_cannot_replace_newer_responsibility: test' target/native-archive-test-list.txt
+          cargo test -p novovm-node --lib native_archive_ --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib native_realtime_retirement_ --locked -- --ignored --list > target/native-retirement-test-list.txt
+          grep -q 'native_realtime_retirement_partial_remote_object_drains_to_real_done: test' target/native-retirement-test-list.txt
+          grep -q 'native_realtime_retirement_auxiliary_full_preserves_four_current_controls: test' target/native-retirement-test-list.txt
+          cargo test -p novovm-node --lib native_realtime_retirement_ --locked -- --ignored --test-threads=1
           # Same native lifecycle / real AOEM: optional successor may compute,
           # never publish before exact durable parent ACK; stale tickets drain.
           cargo test -p novovm-node --lib native_successor_ --locked -- --ignored --list > target/native-successor-test-list.txt
@@ -341,7 +351,13 @@ jobs:
           grep -q 'native_successor_single_inflight_keeps_current_height_progress: test' target/native-successor-test-list.txt
           grep -q 'native_successor_auth_ticket_drains_after_source_round_changes: test' target/native-successor-test-list.txt
           grep -q 'native_successor_execution_ticket_drains_after_source_round_changes: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_uca_complete_state_waits_for_ack_and_recovers: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery: test' target/native-successor-test-list.txt
+          grep -q 'native_successor_uca_round_change_drains_auth_and_execution_without_publication: test' target/native-successor-test-list.txt
           cargo test -p novovm-node --lib native_successor_ --locked -- --ignored --test-threads=1
+          cargo test -p novovm-node --lib native_progress_early_height_ --locked -- --ignored --list > target/native-early-height-test-list.txt
+          grep -q 'native_progress_early_height_votes_survive_advance_height_ack: test' target/native-early-height-test-list.txt
+          cargo test -p novovm-node --lib native_progress_early_height_ --locked -- --ignored --test-threads=1
           # Retained test-only opaque attachment durability. This does not enable
           # the retired backend-specific product proof service or prove ZK/GPU.
           cargo test -p novovm-node --lib real_proof_storage_multichunk_reopen_immutable_and_corruption_rejection --locked -- --ignored --test-threads=1
@@ -787,13 +803,9 @@ jobs:
       group: ci-runtime-${{ matrix.os }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
       cancel-in-progress: true
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        include:
-          - os: ubuntu-latest
-            aoem_library: aoem/linux/core/bin/libaoem_ffi.so
-          - os: windows-latest
-            aoem_library: aoem/windows/core/bin/aoem_ffi.dll
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -810,6 +822,31 @@ jobs:
       - name: Shared proof relation without native dependencies (not zkVM proof)
         run: cargo clippy --manifest-path runtime/Cargo.toml -p novovm-host --lib --no-default-features --locked -- -D warnings
       - run: cargo test --manifest-path runtime/Cargo.toml --workspace --locked
+
+  # Release includes ordinary AND ignored tests. Keep this separate from the
+  # lint/debug budget; do not replace --include-ignored with --ignored.
+  runtime_modules_release:
+    name: Preserved runtime release / ${{ matrix.os }} (not chain acceptance)
+    needs: detect
+    if: needs.detect.outputs.full == 'true'
+    concurrency:
+      group: ci-runtime-release-${{ matrix.os }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            aoem_library: aoem/linux/core/bin/libaoem_ffi.so
+          - os: windows-latest
+            aoem_library: aoem/windows/core/bin/aoem_ffi.dll
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
       - name: Fetch only the platform AOEM binary
         env:
           AOEM_TEST_BINARY: ${{ matrix.aoem_library }}
@@ -829,7 +866,7 @@ jobs:
   result:
     name: CI scope result
     if: always()
-    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules]
+    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules, runtime_modules_release]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

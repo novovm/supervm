@@ -1,0 +1,12 @@
+
+running 1 test
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_delivery_admission_refreshes_idle_hint_once ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_delivery_admission_refreshes_idle_hint_once
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1780 filtered out; finished in 0.25s
+
+Error: new runnable send was classified idle before its first packet

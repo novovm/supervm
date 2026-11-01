@@ -1,0 +1,155 @@
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+index 0a6211e5..48e26401 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+@@ -32,6 +32,8 @@ mod distribution;
+ use distribution::WorkloadShape;
+ #[path = "uca/account_audit.rs"]
+ mod account_audit;
++#[path = "uca/capture_case.rs"]
++mod capture_case;
+ 
+ #[path = "uca/rolling.rs"]
+ mod rolling;
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/mod.rs b/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
+index 67fbfdf5..8b2eb3b9 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/mod.rs
+@@ -258,6 +258,13 @@ impl BatchRequest {
+         body_bytes
+             .checked_mul(3)
+             .and_then(|n| n.checked_add(config.capture.bytes))
++            .and_then(|n| {
++                config
++                    .capture
++                    .nodes
++                    .checked_mul(std::mem::size_of::<NodeHash>())
++                    .and_then(|hashes| n.checked_add(hashes))
++            })
+             .and_then(|n| {
+                 config
+                     .capture
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/tests.rs b/crates/novovm-node/src/native_pipeline/pipeline/tests.rs
+index da455baa..f2360c71 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/tests.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/tests.rs
+@@ -328,6 +328,30 @@ fn owned_admission_returns_allocations_on_domain_size_and_reservation_errors() {
+     ));
+ }
+ 
++#[test]
++fn asset_capture_hashes_are_reserved_without_losing_two_full_body_slots() -> Result<()> {
++    let mut cfg = config("unused".into());
++    cfg.capture = crate::native_pipeline::service::ASSET_CAPTURE_BUDGET;
++    cfg.max_batches = 2;
++    cfg.max_retained_bytes = 256 * 1024 * 1024;
++    let body_bytes = 8 * 1024 * 1024;
++    let reserved = BatchRequest::retained_reservation(body_bytes, &cfg)?;
++    let hashes = cfg.capture.nodes * std::mem::size_of::<NodeHash>();
++    assert_eq!(
++        reserved,
++        body_bytes * 3
++            + cfg.capture.bytes
++            + hashes
++            + cfg.capture.keys * 256
++            + cfg.store.packet_budget.max_bytes * 2
++            + 4096
++    );
++    assert!(reserved * cfg.max_batches <= cfg.max_retained_bytes);
++    cfg.capture.nodes = usize::MAX;
++    assert!(BatchRequest::retained_reservation(body_bytes, &cfg).is_err());
++    Ok(())
++}
++
+ #[test]
+ fn owned_admission_checks_sender_and_worker_before_enqueue() {
+     let (mut pipeline, receiver) = inert_pipeline(config("unused".into()));
+diff --git a/crates/novovm-node/src/native_pipeline/service.rs b/crates/novovm-node/src/native_pipeline/service.rs
+index 34d6f924..dbb73af0 100644
+--- a/crates/novovm-node/src/native_pipeline/service.rs
++++ b/crates/novovm-node/src/native_pipeline/service.rs
+@@ -30,7 +30,7 @@ use super::persistence::io::IoBudget;
+ use super::persistence::{OpenMode, PacketBudget, StorageDomain, StoreConfig};
+ use super::pipeline::{CandidatePipeline, PipelineConfig};
+ use super::state::frontier::CaptureBudget;
+-use super::state::tree::empty_root;
++use super::state::tree::{empty_root, MIN_ENCODED_STATE_NODE_BYTES};
+ use anyhow::{ensure, Context, Result};
+ pub use config::{
+     GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, NodeKeyStorage,
+@@ -326,6 +326,13 @@ fn body_byte_limit(batch_size: usize) -> usize {
+ // Expanded signed inputs, distinct from the APFL encoded network object.
+ const NATIVE_ASSET_MAX_ROWS: usize = 1024;
+ const NATIVE_ASSET_ROW_BYTES: usize = 8192;
++pub(crate) const ASSET_CAPTURE_BUDGET: CaptureBudget = CaptureBudget {
++    keys: rpc::ASSET_PLAN_ACCESS_KEYS,
++    // Distinct accounts need more path nodes than the old small genesis. Keep
++    // the 16 MiB payload bound; count cannot bind before a valid node's bytes.
++    nodes: (16 * 1024 * 1024) / MIN_ENCODED_STATE_NODE_BYTES,
++    bytes: 16 * 1024 * 1024,
++};
+ 
+ fn uca_body_byte_limit(batch_size: usize) -> usize {
+     batch_size * NATIVE_ASSET_ROW_BYTES
+@@ -444,10 +451,14 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
+             body_bytes,
+             access_keys: keys,
+         },
+-        capture: CaptureBudget {
+-            keys,
+-            nodes: 65_536,
+-            bytes: 16 * 1024 * 1024,
++        capture: if uca {
++            ASSET_CAPTURE_BUDGET
++        } else {
++            CaptureBudget {
++                keys,
++                nodes: 65_536,
++                bytes: 16 * 1024 * 1024,
++            }
+         },
+         compute_timeout: Duration::from_secs(30),
+         io: IoBudget {
+diff --git a/crates/novovm-node/src/native_pipeline/state/tree.rs b/crates/novovm-node/src/native_pipeline/state/tree.rs
+index 0b22cac6..127cd11c 100644
+--- a/crates/novovm-node/src/native_pipeline/state/tree.rs
++++ b/crates/novovm-node/src/native_pipeline/state/tree.rs
+@@ -33,6 +33,9 @@ pub use read_batch::{read_state_values, MAX_BATCH_READ_KEYS};
+ pub type NodeHash = [u8; 32];
+ pub type StateLeafVisitor<'a> = dyn FnMut(NodeHash, &[u8]) -> Result<()> + 'a;
+ pub const STATE_TREE_CODEC_V1: &str = "novovm-state-patricia-sha256/v1";
++/// Empty leaf: tag, key digest and u16 value length. Every valid node is at
++/// least this large; local capture count budgets can follow their byte budget.
++pub(crate) const MIN_ENCODED_STATE_NODE_BYTES: usize = 1 + 32 + 2;
+ const MAX_KEY_BYTES: usize = 256;
+ const MAX_VALUE_BYTES: usize = 256;
+ const MAX_BATCH_CHANGES: usize = MAX_BATCH_READ_KEYS;
+@@ -771,6 +774,28 @@ pub fn visit_state_leaves(
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn minimum_encoded_node_size_matches_the_canonical_codec() {
++        for size in 0..=MAX_VALUE_BYTES {
++            let bytes = Node::Leaf {
++                key: [7; 32],
++                value: vec![9; size],
++            }
++            .encode();
++            assert_eq!(bytes.len(), MIN_ENCODED_STATE_NODE_BYTES + size);
++            validate_state_node_bytes(&digest_node(&bytes), &bytes).unwrap();
++        }
++        let branch = Node::Branch {
++            bit: 0,
++            prefix: [0; 32],
++            left: [1; 32],
++            right: [2; 32],
++        }
++        .encode();
++        assert!(branch.len() >= MIN_ENCODED_STATE_NODE_BYTES);
++        validate_state_node_bytes(&digest_node(&branch), &branch).unwrap();
++    }
++
+     #[derive(Default)]
+     struct Memory(BTreeMap<NodeHash, Vec<u8>>);
+     impl StateNodeReader for Memory {

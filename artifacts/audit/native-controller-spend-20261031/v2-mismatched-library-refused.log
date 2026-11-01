@@ -1,0 +1,12 @@
+
+running 1 test
+test native_pipeline::business::uca_spend_state::tests::actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::business::uca_spend_state::tests::actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1841 filtered out; finished in 0.00s
+
+Error: fixture key generator must use the same qualified AOEM library

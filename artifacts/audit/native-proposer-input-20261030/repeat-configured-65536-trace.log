@@ -1,0 +1,13 @@
+
+running 1 test
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-14968-1793297573480155400
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_final_receipts_and_cold_economics ... FAILED
+Error: native receipt request deadline node=1 transaction=1024
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_final_receipts_and_cold_economics
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1773 filtered out; finished in 14.91s
+

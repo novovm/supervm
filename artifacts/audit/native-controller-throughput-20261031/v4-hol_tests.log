@@ -1,0 +1,9 @@
+
+running 2 tests
+test native_pipeline::service::rpc::admission::hol_tests::checked_future_sources_yield_late_bridge_without_rechecking_signatures_or_losing_rows ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\34948-1793422844853396000
+ok
+test native_pipeline::service::rpc::admission::hol_tests::future_nonce_pool_wait_without_source_return_holds_late_bridge ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\34948-1793422845440480300
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1841 filtered out; finished in 0.88s
+

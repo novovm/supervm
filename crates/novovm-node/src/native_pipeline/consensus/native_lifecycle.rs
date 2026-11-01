@@ -4,6 +4,7 @@
 //! body production by a fixture, or business calculation in the control loop.
 use super::{
     bodies::CandidateBodies,
+    message_evidence::VerifiedEvidence,
     native::{NativeChannel, PreparedMessage, ReceiveEvent},
     progress::RoundProgress,
     transport::Message,
@@ -14,7 +15,8 @@ use crate::native_pipeline::{
     pipeline::CandidatePipeline,
 };
 use anyhow::{ensure, Context, Result};
-use novovm_network::novorudp::object_sender::ObjectSendState;
+pub(crate) use ingress::{CheckedTransactionSource, TransactionOrigin, TransactionSource};
+use novovm_network::novorudp::{object_link::NativeSendLimits, object_sender::ObjectSendState};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
@@ -26,11 +28,41 @@ pub struct DeliveryLimits {
     pub messages_per_peer: usize,
     pub bytes_per_peer: usize,
 }
+
+/// Reserve the actual largest signed control envelope, independently of the
+/// larger data-body ceiling. Existing admitted controls keep their byte charge
+/// until their original sender returns, so reserve both current and drain work.
+fn control_reservation(
+    validators: usize,
+    codec: DecodeLimits,
+    send: &NativeSendLimits,
+) -> Result<(usize, usize)> {
+    let draining = send.messages.min(send.peer_messages);
+    let control_bytes = super::transport::durable_control_bound(validators, codec)?;
+    let messages = 4usize
+        .checked_add(draining)
+        .context("control slot reserve overflow")?;
+    let drain_bytes = draining
+        .checked_mul(control_bytes)
+        .context("control drain reserve overflow")?
+        .min(send.bytes)
+        .min(send.peer_bytes);
+    let bytes = control_bytes
+        .checked_mul(4)
+        .and_then(|n| n.checked_add(drain_bytes))
+        .context("control byte reserve overflow")?;
+    Ok((messages, bytes))
+}
 struct Delivery {
     prepared: PreparedMessage,
     admitted: bool,
     retiring: bool,
+    // Independent obligations share ONE immutable payload and send handle.
+    realtime: bool,
     archive: bool,
+    // Sticky resource class until this handle actually returns. Clearing an
+    // obligation cannot prematurely free an auxiliary reservation.
+    auxiliary: bool,
     height: u64,
 }
 struct Fanout {
@@ -40,6 +72,7 @@ struct Fanout {
 struct Incoming {
     peer: usize,
     message: Arc<Message>,
+    evidence: VerifiedEvidence,
 }
 
 /// Owns prepared messages until delivery or explicit expiry/retry. Per-peer
@@ -54,17 +87,22 @@ pub struct NativeLifecycle {
     peers: Vec<Hash>,
     peer_names: BTreeMap<String, usize>,
     limits: DeliveryLimits,
+    control_reserve_messages: usize,
+    control_reserve_bytes: usize,
     deliveries: Vec<VecDeque<Delivery>>,
     bytes: Vec<usize>,
     send_turn: usize,
     pending: [Option<Incoming>; 3],
-    transactions: Vec<VecDeque<Arc<Message>>>,
-    client_transactions: VecDeque<Arc<Message>>,
+    transactions: Vec<VecDeque<ingress::TransactionSource>>,
+    client_transactions: VecDeque<ingress::TransactionSource>,
     transaction_turn: usize,
     transaction_session: Hash,
     transaction_sequence: u64,
     outbox: Option<Fanout>,
-    requested: BTreeSet<(Hash, Hash)>,
+    successor_outbox: Option<(Hash, Fanout)>,
+    successor_announced: Option<Hash>,
+    requested:
+        BTreeMap<(Hash, Hash), Option<crate::native_pipeline::execution::plan::BatchContext>>,
     height: u64,
     round: u64,
     archives: Vec<recovery::ArchivePeer>,
@@ -74,12 +112,21 @@ pub struct NativeLifecycle {
     validators: ValidatorSet,
     codec: DecodeLimits,
     frozen: bool,
+    profile_last_io: Option<(Instant, Instant)>,
     pub rejected_messages: u64,
     pub requested_bodies: u64,
     pub served_bodies: u64,
     pub expired_sends: u64,
     pub retired_sends: u64,
     pub archive_decisions: u64,
+    pub archive_reads_started: u64,
+    pub archive_cache_reused: u64,
+    /// Logical early-body delivery obligations accepted, not wire/retransmit bytes.
+    pub successor_body_enqueued: u64,
+    pub successor_body_bytes: u64,
+    pub body_references_received: u64,
+    pub body_references_reused: u64,
+    pub body_reference_full_requests: u64,
 }
 impl NativeLifecycle {
     #[cfg(test)]
@@ -124,9 +171,11 @@ impl NativeLifecycle {
             .position(|id| *id == peer)
             .context("unknown fixture peer")?;
         ensure!(self.pending[0].is_none(), "fixture control slot occupied");
+        let evidence = self.channel.qualify_control_for_test(&message)?;
         self.pending[0] = Some(Incoming {
             peer,
             message: Arc::new(message),
+            evidence,
         });
         Ok(())
     }
@@ -140,9 +189,16 @@ impl NativeLifecycle {
         policy: DirectNovFeePolicy,
         codec: DecodeLimits,
     ) -> Result<Self> {
+        let send = channel.control_send_limits();
+        let (control_reserve_messages, control_reserve_bytes) =
+            control_reservation(validators.members().len(), codec, send)?;
         ensure!(
             (8..=4096).contains(&limits.messages_per_peer)
-                && limits.bytes_per_peer >= codec.message_bytes.saturating_mul(5),
+                && limits.messages_per_peer > control_reserve_messages
+                && limits.bytes_per_peer
+                    >= control_reserve_bytes
+                        .checked_add(codec.message_bytes)
+                        .context("delivery byte reserve overflow")?,
             "invalid native delivery budget"
         );
         progress.context().validate(validators)?;
@@ -179,6 +235,8 @@ impl NativeLifecycle {
             peers,
             peer_names,
             limits,
+            control_reserve_messages,
+            control_reserve_bytes,
             deliveries: (0..count).map(|_| VecDeque::new()).collect(),
             bytes: vec![0; count],
             send_turn: 0,
@@ -189,7 +247,9 @@ impl NativeLifecycle {
             transaction_session: rand::random(),
             transaction_sequence: 0,
             outbox: None,
-            requested: BTreeSet::new(),
+            successor_outbox: None,
+            successor_announced: None,
+            requested: BTreeMap::new(),
             height,
             round,
             archives: (0..count)
@@ -201,12 +261,20 @@ impl NativeLifecycle {
             validators: validators.clone(),
             codec,
             frozen: false,
+            profile_last_io: None,
             rejected_messages: 0,
             requested_bodies: 0,
             served_bodies: 0,
             expired_sends: 0,
             retired_sends: 0,
             archive_decisions: 0,
+            archive_reads_started: 0,
+            archive_cache_reused: 0,
+            successor_body_enqueued: 0,
+            successor_body_bytes: 0,
+            body_references_received: 0,
+            body_references_reused: 0,
+            body_reference_full_requests: 0,
         })
     }
 
@@ -252,6 +320,16 @@ impl NativeLifecycle {
     pub fn io_progress_generation(&self) -> u64 {
         self.channel.io_progress_generation()
     }
+    pub(crate) fn send_poll_evidence(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeLinkPollEvidenceV1> {
+        self.channel.send_poll_evidence()
+    }
+    pub(crate) fn receive_totals(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeReceiveTotalsV1> {
+        self.channel.receive_totals()
+    }
     pub fn is_frozen(&self) -> bool {
         self.frozen || self.progress.is_frozen() || self.bodies.is_frozen()
     }
@@ -260,7 +338,31 @@ impl NativeLifecycle {
     /// waits on a body or durable storage, sessions/ACK/repair keep progressing.
     pub fn poll_io(&mut self, wall_ms: u64, now: Instant) -> Result<()> {
         ensure!(!self.is_frozen(), "native lifecycle frozen");
+        use crate::native_pipeline::profile::{self, Phase};
+        let start = profile::mark();
+        if let Some((previous_start, previous_end)) = self.profile_last_io {
+            let height = self.progress.context().height;
+            profile::work_interval(
+                Phase::NativeIoPeriod,
+                Some(previous_start),
+                start,
+                height,
+                None,
+                None,
+            );
+            profile::work_interval(
+                Phase::NativeIoGap,
+                Some(previous_end),
+                start,
+                height,
+                None,
+                None,
+            );
+        }
         let result = self.io_inner(wall_ms, now);
+        if let (Some(start), Some(end)) = (start, profile::mark()) {
+            self.profile_last_io = Some((start, end));
+        }
         if result.is_err() {
             self.frozen = true;
         }
@@ -279,15 +381,50 @@ impl NativeLifecycle {
                 .position(|d| d.prepared.fragment_id() == completed.body.id())
                 .context("native completion lost its retained input")?;
             ensure!(queue[index].admitted, "completion without native admission");
+            let delivery = &queue[index];
+            crate::native_pipeline::profile::traffic::completed(
+                &completed,
+                delivery.prepared.height().unwrap_or(0),
+                delivery.prepared.traffic_payload,
+                u8::from(delivery.realtime) | (u8::from(delivery.archive) << 1),
+            );
             if queue[index].retiring {
                 let done = queue.remove(index).expect("retired delivery");
                 self.bytes[completed.peer] -= done.prepared.byte_len();
+                crate::native_pipeline::profile::delivery_event(
+                    match completed.state {
+                        ObjectSendState::Delivered => "retired_drained_delivered",
+                        ObjectSendState::Expired => "retired_drained_expired",
+                        ObjectSendState::SessionReplaced => "retired_session_replaced",
+                        ObjectSendState::Cancelled => "retired_cancelled",
+                        ObjectSendState::Sending => {
+                            anyhow::bail!("nonterminal retirement completion")
+                        }
+                    },
+                    done.prepared.height().unwrap_or(0),
+                    self.peers[completed.peer],
+                    done.prepared.fragment_id(),
+                    0,
+                );
                 continue;
             }
             match completed.state {
                 ObjectSendState::Delivered => {
                     let done = queue.remove(index).expect("completed delivery");
                     self.bytes[completed.peer] -= done.prepared.byte_len();
+                    crate::native_pipeline::profile::delivery_event(
+                        "delivered",
+                        done.prepared.height().unwrap_or(0),
+                        self.peers[completed.peer],
+                        done.prepared.fragment_id(),
+                        u8::from(done.realtime) | (u8::from(done.archive) << 1),
+                    );
+                    if done.archive {
+                        self.archive_delivery_completed(
+                            completed.peer,
+                            done.prepared.fragment_id(),
+                        );
+                    }
                 }
                 ObjectSendState::Expired => {
                     // Retry the SAME immutable bytes. This is not a transaction
@@ -329,6 +466,14 @@ impl NativeLifecycle {
                 attempted[lane] = true;
                 if self.channel.try_send(peer, &delivery.prepared, now)? {
                     delivery.admitted = true;
+                    self.channel.note_send_admission();
+                    crate::native_pipeline::profile::delivery_event(
+                        "admitted",
+                        delivery.prepared.height().unwrap_or(0),
+                        self.peers[peer],
+                        delivery.prepared.fragment_id(),
+                        u8::from(delivery.realtime) | (u8::from(delivery.archive) << 1),
+                    );
                 }
                 if attempted.iter().all(|attempt| *attempt) {
                     break;
@@ -339,17 +484,17 @@ impl NativeLifecycle {
     }
 
     fn fits(&self, peer: usize, prepared: &PreparedMessage, archive: bool) -> bool {
-        if self.deliveries[peer]
+        if let Some(existing) = self.deliveries[peer]
             .iter()
-            .any(|d| d.retiring && d.prepared.fragment_id() == prepared.fragment_id())
+            .find(|d| d.prepared.fragment_id() == prepared.fragment_id())
         {
-            return false;
-        }
-        if self.deliveries[peer]
-            .iter()
-            .any(|d| d.prepared.fragment_id() == prepared.fragment_id())
-        {
-            return true;
+            if existing.retiring {
+                return false;
+            }
+            // An existing body already consumes auxiliary capacity. Only a
+            // realtime durable control newly acquiring archive responsibility
+            // moves out of the reserved control class. Check BEFORE mutation.
+            return !archive || existing.auxiliary || self.fits_auxiliary(peer, prepared);
         }
         if self.deliveries[peer].len() >= self.limits.messages_per_peer
             || prepared.byte_len() > self.limits.bytes_per_peer.saturating_sub(self.bytes[peer])
@@ -359,25 +504,30 @@ impl NativeLifecycle {
         if !archive && prepared.is_durable_control() {
             return true;
         }
-        // Preserve four durable control slots (current proposal/prevote/
-        // precommit plus an immediately preceding decision) inside the existing
-        // peer budget. Requests, input,
-        // body/archive replies cannot saturate the journal's publication path.
-        // Superseded controls are locally cancelled/drained on durable advance.
+        self.fits_auxiliary(peer, prepared)
+    }
+
+    fn fits_auxiliary(&self, peer: usize, prepared: &PreparedMessage) -> bool {
+        // Preserve the current proposal/prevote/precommit/decision PLUS all
+        // possible old admitted control handles draining on the original lane.
+        // Multiple advances cannot grow that drain beyond the lane admission
+        // bound; unsent obsolete controls are removed immediately. Do not free
+        // bytes early, enlarge the peer budget, or let archive traffic consume
+        // the space required to fan out a new durable outbox to healthy peers.
         let mut auxiliary_count = 0;
         let mut auxiliary_bytes = 0usize;
         for delivery in &self.deliveries[peer] {
-            if delivery.archive || !delivery.prepared.is_durable_control() {
+            if delivery.auxiliary {
                 auxiliary_count += 1;
                 auxiliary_bytes += delivery.prepared.byte_len();
             }
         }
-        auxiliary_count < self.limits.messages_per_peer - 4
+        auxiliary_count < self.limits.messages_per_peer - self.control_reserve_messages
             && prepared.byte_len()
                 <= self
                     .limits
                     .bytes_per_peer
-                    .saturating_sub(self.codec.message_bytes.saturating_mul(4))
+                    .saturating_sub(self.control_reserve_bytes)
                     .saturating_sub(auxiliary_bytes)
     }
     fn enqueue(&mut self, peer: usize, prepared: PreparedMessage) -> bool {
@@ -385,21 +535,53 @@ impl NativeLifecycle {
     }
     fn enqueue_kind(&mut self, peer: usize, prepared: PreparedMessage, archive: bool) -> bool {
         if !self.fits(peer, &prepared, archive) {
+            if archive {
+                crate::native_pipeline::profile::delivery_event(
+                    "recovery_backpressure",
+                    prepared.height().unwrap_or(0),
+                    self.peers[peer],
+                    prepared.fragment_id(),
+                    2,
+                );
+            }
             return false;
         }
-        if !self.deliveries[peer]
-            .iter()
-            .any(|d| d.prepared.fragment_id() == prepared.fragment_id())
+        let id = prepared.fragment_id();
+        let height = prepared.height().unwrap_or(0);
+        let purposes;
+        if let Some(existing) = self.deliveries[peer]
+            .iter_mut()
+            .find(|d| d.prepared.fragment_id() == prepared.fragment_id())
         {
+            existing.archive |= archive;
+            existing.realtime |= !archive;
+            existing.auxiliary |= archive;
+            purposes = u8::from(existing.realtime) | (u8::from(existing.archive) << 1);
+        } else {
             self.bytes[peer] += prepared.byte_len();
+            let auxiliary = archive || !prepared.is_durable_control();
             self.deliveries[peer].push_back(Delivery {
                 prepared,
                 admitted: false,
                 retiring: false,
+                realtime: !archive,
                 archive,
+                auxiliary,
                 height: self.progress.context().height,
             });
+            purposes = if archive { 2 } else { 1 };
         }
+        crate::native_pipeline::profile::delivery_event(
+            if archive {
+                "recovery_owned"
+            } else {
+                "realtime_owned"
+            },
+            height,
+            self.peers[peer],
+            id,
+            purposes,
+        );
         true
     }
 
@@ -417,12 +599,17 @@ impl NativeLifecycle {
     fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
         self.progress
             .poll_recovery(pipeline, &self.policy, self.codec)?;
+        self.bodies
+            .qualify_remote_successor(&self.progress, &self.validators)?;
         self.bodies.poll(pipeline, &mut self.progress)?;
         self.progress.poll_acknowledgements(pipeline)?;
         if self.height != self.progress.context().height || self.round != self.progress.round() {
+            let height_changed = self.height != self.progress.context().height;
             self.height = self.progress.context().height;
             self.round = self.progress.round();
-            self.requested.clear();
+            self.requested.retain(|_, claim| {
+                height_changed && claim.is_some_and(|context| context.height >= self.height)
+            });
             // Genuine local advance postpones archive discovery. Do not read
             // old candidates on every healthy fast-path height just because
             // peers' latest context announcements are still in flight.
@@ -436,9 +623,13 @@ impl NativeLifecycle {
         // neither enters RoundProgress nor participates in validator fanout.
         if self.client_transactions.len() < 2 {
             match self.channel.poll_application(now, 64)? {
-                Some(ReceiveEvent::Message(message)) => self
-                    .client_transactions
-                    .push_back(Arc::new(message.message)),
+                Some(ReceiveEvent::Message(message)) => {
+                    self.client_transactions
+                        .push_back(ingress::TransactionSource::Raw {
+                            message: Arc::new(message.message),
+                            origin: ingress::TransactionOrigin::Client,
+                        })
+                }
                 Some(ReceiveEvent::Rejected { .. }) => self.rejected_messages += 1,
                 None => {}
             }
@@ -457,13 +648,35 @@ impl NativeLifecycle {
                 if self.pending[lane].is_none() {
                     match self.channel.poll_receive_lane(lane, now, 64)? {
                         Some(ReceiveEvent::Message(message)) => {
+                            if matches!(&message.message, Message::AssetBodyReference { .. }) {
+                                self.body_references_received += 1;
+                            }
                             let peer = *self
                                 .peer_names
                                 .get(&message.peer)
                                 .context("unmapped authenticated peer")?;
+                            let height = match &message.message {
+                                Message::Proposal { proposal, .. }
+                                | Message::Decision { proposal, .. } => proposal.context.height,
+                                Message::Vote(vote) => vote.context.height,
+                                Message::RequestDecision { context } => context.height,
+                                Message::Body { context, .. }
+                                | Message::ApflBody { context, .. }
+                                | Message::AssetBody { context, .. }
+                                | Message::AssetBodyReference { context, .. } => context.height,
+                                _ => 0,
+                            };
+                            crate::native_pipeline::profile::delivery_event(
+                                "received",
+                                height,
+                                self.peers[peer],
+                                message.fragment_id,
+                                0,
+                            );
                             self.pending[lane] = Some(Incoming {
                                 peer,
                                 message: Arc::new(message.message),
+                                evidence: message.evidence,
                             });
                         }
                         Some(ReceiveEvent::Rejected { .. }) => {
@@ -476,11 +689,66 @@ impl NativeLifecycle {
                 if let Some(received) = self.pending[lane].take() {
                     let peer = received.peer;
                     match received.message.as_ref() {
+                        // RPC resolves this original single-slot handoff from
+                        // its bounded pool before the next node poll. A miss
+                        // releases the lane for the original full-body reply.
+                        Message::AssetBodyReference { .. } => self.pending[lane] = Some(received),
+                        Message::AssetBody { context, .. }
+                            if context.height > self.progress.context().height =>
+                        {
+                            // Optional future input must never monopolize the
+                            // sole body handoff and block its own parent. The
+                            // original bounded body owner either takes one
+                            // future input or declines it. Real proposal/body
+                            // recovery remains available if optional capacity
+                            // was unavailable; no finality obligation is lost.
+                            match self.bodies.offer_remote_successor(
+                                &received.message,
+                                self.peers[peer],
+                                pipeline,
+                                &self.progress,
+                                &self.validators,
+                            ) {
+                                Ok(true) => {
+                                    let id = super::transport::candidate_body_id(
+                                        &received.message,
+                                        self.codec,
+                                    )?;
+                                    self.requested.remove(&(self.peers[peer], id));
+                                }
+                                Ok(false) | Err(_) => self.rejected_messages += 1,
+                            }
+                        }
                         Message::Body { .. }
                         | Message::ApflBody { .. }
-                        | Message::UcaBody { .. } => {
-                            match self.bodies.offer(&received.message, false, &self.progress) {
-                                Ok(true) => {}
+                        | Message::AssetBody { .. } => {
+                            let requested = if let Message::AssetBody { context, .. } =
+                                received.message.as_ref()
+                            {
+                                self.requested.iter().find_map(|((source, id), claim)| {
+                                    (*source == self.peers[peer] && *claim == Some(*context))
+                                        .then_some(*id)
+                                })
+                            } else {
+                                None
+                            };
+                            let requested = requested.filter(|id| {
+                                super::transport::candidate_body_id(&received.message, self.codec)
+                                    .ok()
+                                    == Some(*id)
+                            });
+                            let result = if requested.is_some() {
+                                self.bodies
+                                    .offer_requested_asset(&received.message, &self.progress)
+                            } else {
+                                self.bodies.offer(&received.message, false, &self.progress)
+                            };
+                            match result {
+                                Ok(true) => {
+                                    if let Some(id) = requested {
+                                        self.requested.remove(&(self.peers[peer], id));
+                                    }
+                                }
                                 Ok(false) => self.pending[lane] = Some(received),
                                 Err(_) => self.rejected_messages += 1,
                             }
@@ -498,7 +766,11 @@ impl NativeLifecycle {
                         Message::Proposal { .. } | Message::Vote(_) | Message::Decision { .. } => {
                             if self
                                 .progress
-                                .receive(self.peers[peer], &received.message)
+                                .receive_verified(
+                                    self.peers[peer],
+                                    &received.message,
+                                    received.evidence,
+                                )
                                 .is_err()
                             {
                                 self.rejected_messages += 1;
@@ -506,11 +778,16 @@ impl NativeLifecycle {
                         }
                         Message::Transactions { .. }
                         | Message::ApflTransactions { .. }
-                        | Message::UcaTransactions { .. } => {
+                        | Message::AssetTransactions { .. } => {
                             // Native DONE means bounded custody, never signature admission.
                             // RPC consumes these originals via the resident auth owner.
                             if self.transactions[peer].len() < 2 {
-                                self.transactions[peer].push_back(received.message);
+                                self.transactions[peer].push_back(
+                                    ingress::TransactionSource::Raw {
+                                        message: received.message,
+                                        origin: ingress::TransactionOrigin::Peer(peer),
+                                    },
+                                );
                             } else {
                                 self.pending[lane] = Some(received);
                             }
@@ -528,7 +805,7 @@ impl NativeLifecycle {
         // ACK/context first, then the bounded native ingress above, then ready
         // evidence and deadlines. A control message already in custody must
         // not lose to the timeout of the same poll and force an avoidable round.
-        self.progress.poll_after_receive(now)?;
+        self.progress.poll_after_receive(pipeline, now)?;
         if let Some(message) = self.progress.pending_message() {
             if self.outbox.is_none() {
                 self.outbox = Some(Fanout {
@@ -551,9 +828,10 @@ impl NativeLifecycle {
         self.poll_archives(pipeline)?;
         self.request_decisions(now)?;
         let missing = self.bodies.requests(&self.progress);
-        self.requested.retain(|key| missing.contains(key));
+        self.requested
+            .retain(|key, claim| claim.is_some() || missing.contains(key));
         for (source, id) in missing {
-            if self.requested.contains(&(source, id)) {
+            if self.requested.contains_key(&(source, id)) {
                 continue;
             }
             let Some(peer) = self.peers.iter().position(|p| *p == source) else {
@@ -563,10 +841,11 @@ impl NativeLifecycle {
                 .channel
                 .prepare(&Message::RequestBody { body_id: id })?;
             if self.enqueue(peer, request) {
-                self.requested.insert((source, id));
+                self.requested.insert((source, id), None);
                 self.requested_bodies += 1;
             }
         }
+        self.fanout_successor()?;
         #[cfg(test)]
         for peer in 0..self.peers.len() {
             ensure!(
@@ -590,3 +869,6 @@ mod ingress;
 mod recovery;
 mod successor;
 pub use successor::SuccessorSelection;
+
+#[cfg(test)]
+mod archive_delivery_tests;

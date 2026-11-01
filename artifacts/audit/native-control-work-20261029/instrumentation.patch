@@ -1,0 +1,473 @@
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+index 4e0e4127..ab0e11c7 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+@@ -194,7 +194,15 @@ impl CandidateBodies {
+                 == (self.pin.business_program == uca_program_id()),
+             "candidate body wire/profile mismatch"
+         );
++        let identity_started = crate::native_pipeline::profile::mark();
+         let id = transport::candidate_body_id(message, self.codec)?;
++        crate::native_pipeline::profile::work(
++            crate::native_pipeline::profile::Phase::BodyIdentity,
++            identity_started,
++            context.height,
++            Some(id),
++            None,
++        );
+         ensure!(
+             local || progress.missing_bodies().any(|(_, wanted)| wanted == id),
+             "unsolicited body or different ordered input"
+@@ -213,10 +221,16 @@ impl CandidateBodies {
+         }
+         // Charge canonical input plus a request copy. The pipeline separately
+         // reserves its own execution/capture/output memory before taking work.
+-        let mut charge = transport::encode(message, self.codec)?
+-            .len()
+-            .checked_mul(2)
+-            .context("body charge overflow")?;
++        let charge_started = crate::native_pipeline::profile::mark();
++        let wire_bytes = transport::encode(message, self.codec)?.len();
++        crate::native_pipeline::profile::work(
++            crate::native_pipeline::profile::Phase::BodyCharge,
++            charge_started,
++            context.height,
++            Some(id),
++            None,
++        );
++        let mut charge = wire_bytes.checked_mul(2).context("body charge overflow")?;
+         // Structured NUAS retains a dictionary plus expanded locator pairs in
+         // the request. Charge canonical input as well; compression is not quota.
+         if let Message::AssetBody { batch, .. } = message.as_ref() {
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+index 1e5b7276..4b7664de 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+@@ -12,6 +12,7 @@ use crate::native_pipeline::pipeline::{
+     AuthenticatedRequest, AuthenticatedSubmission, AuthenticationRequest, AuthenticationSubmission,
+     AuthenticationTicket,
+ };
++use crate::native_pipeline::profile;
+ 
+ /// Local selection hint. Its nonce overrides are read from real executed
+ /// receipts, never projected from pending transactions. Not a signing permit.
+@@ -504,7 +505,15 @@ impl CandidateBodies {
+             Message::ApflBody { context, .. } | Message::AssetBody { context, .. } => *context,
+             _ => unreachable!("structured successor checked"),
+         };
++        let identity_started = profile::mark();
+         let id = transport::candidate_body_id(message, self.codec)?;
++        profile::work(
++            profile::Phase::BodyIdentity,
++            identity_started,
++            context.height,
++            Some(id),
++            None,
++        );
+         if let Some(work) = &self.successor {
+             return Ok(!work.retired
+                 && work.id == id
+@@ -540,8 +549,16 @@ impl CandidateBodies {
+         if !pipeline.can_authenticate_background(&request)? {
+             return Ok(false);
+         }
+-        let mut charge = transport::encode(message, self.codec)?
+-            .len()
++        let charge_started = profile::mark();
++        let wire_bytes = transport::encode(message, self.codec)?.len();
++        profile::work(
++            profile::Phase::BodyCharge,
++            charge_started,
++            context.height,
++            Some(id),
++            None,
++        );
++        let mut charge = wire_bytes
+             .checked_mul(2)
+             .and_then(|n| n.checked_add(selection.nonce_after.len().checked_mul(96)?))
+             .and_then(|n| n.checked_add(metadata))
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native.rs b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+index 675cc600..7e13066e 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+@@ -6,6 +6,7 @@
+ 
+ pub use super::message_evidence::{MessageDomain, VerifiedEvidence};
+ use super::{message_evidence, transport};
++use crate::native_pipeline::profile::{self, Phase};
+ use anyhow::{ensure, Context, Result};
+ use ed25519_dalek::SigningKey;
+ #[cfg(test)]
+@@ -39,6 +40,21 @@ const STREAMS: [u64; 3] = [
+ /// validator control/body/input lanes. Payload is the existing APFL message.
+ pub const APPLICATION_STREAM: u64 = u64::from_be_bytes(*b"NVAPP001");
+ 
++fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
++    match message {
++        transport::Message::Proposal { proposal, .. } => {
++            Some((proposal.context.height, Some(proposal.round)))
++        }
++        transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
++        transport::Message::Decision { proposal, .. } => Some((proposal.context.height, None)),
++        transport::Message::Body { context, .. }
++        | transport::Message::ApflBody { context, .. }
++        | transport::Message::AssetBody { context, .. } => Some((context.height, None)),
++        transport::Message::RequestDecision { context } => Some((context.height, None)),
++        _ => None,
++    }
++}
++
+ #[derive(Clone)]
+ pub struct LaneLimits {
+     pub receive: ReassemblyLimits,
+@@ -371,12 +387,17 @@ impl NativeChannel {
+         recovery_reply: bool,
+     ) -> Result<PreparedMessage> {
+         message_evidence::verify(message, &self.domain)?;
++        let window = message_window(message);
++        let height = window.map_or(0, |(height, _)| height);
++        let started = profile::mark();
+         let bytes = if recovery_reply {
+             transport::encode_recovery_reply(message, self.codec)?
+         } else {
+             transport::encode(message, self.codec)?
+         };
++        profile::work(Phase::NativePrepareEncode, started, height, None, None);
+         let stream = STREAMS[transport::message_lane(&bytes)?];
++        let started = profile::mark();
+         let object = Arc::new(OutgoingMessage::with_profile(
+             transport::fragment_domain(
+                 self.domain.chain_id,
+@@ -387,24 +408,18 @@ impl NativeChannel {
+             self.codec.message_bytes,
+             FragmentProfile::NativeUdpV2,
+         )?);
++        profile::work(
++            Phase::NativePrepareHash,
++            started,
++            height,
++            None,
++            Some(object.id()),
++        );
+         Ok(PreparedMessage {
+             owner: self.owner.clone(),
+             stream,
+             object,
+-            window: match message {
+-                transport::Message::Proposal { proposal, .. } => {
+-                    Some((proposal.context.height, Some(proposal.round)))
+-                }
+-                transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
+-                transport::Message::Decision { proposal, .. } => {
+-                    Some((proposal.context.height, None))
+-                }
+-                transport::Message::Body { context, .. }
+-                | transport::Message::ApflBody { context, .. }
+-                | transport::Message::AssetBody { context, .. } => Some((context.height, None)),
+-                transport::Message::RequestDecision { context } => Some((context.height, None)),
+-                _ => None,
+-            },
++            window,
+             body_request: matches!(message, transport::Message::RequestBody { .. }),
+             durable_control: matches!(
+                 message,
+@@ -499,6 +514,7 @@ impl NativeChannel {
+         let Some(complete) = self.poll_complete(stream, now, quantum)? else {
+             return Ok(None);
+         };
++        let started = profile::mark();
+         let parsed = (|| -> Result<_> {
+             let size = complete
+                 .chunks
+@@ -532,6 +548,18 @@ impl NativeChannel {
+             let evidence = message_evidence::verify(&message, &self.domain)?;
+             Ok((message, evidence))
+         })();
++        let height = parsed
++            .as_ref()
++            .ok()
++            .and_then(|(message, _)| message_window(message))
++            .map_or(0, |(height, _)| height);
++        profile::work(
++            Phase::NativeDecode,
++            started,
++            height,
++            None,
++            Some(complete.id),
++        );
+         Ok(Some(match parsed {
+             Ok((message, evidence)) => ReceiveEvent::Message(Box::new(ReceivedMessage {
+                 peer: complete.peer,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
+index c0eb3a3b..77cde761 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs
+@@ -110,6 +110,7 @@ pub struct NativeLifecycle {
+     validators: ValidatorSet,
+     codec: DecodeLimits,
+     frozen: bool,
++    profile_last_io: Option<(Instant, Instant)>,
+     pub rejected_messages: u64,
+     pub requested_bodies: u64,
+     pub served_bodies: u64,
+@@ -255,6 +256,7 @@ impl NativeLifecycle {
+             validators: validators.clone(),
+             codec,
+             frozen: false,
++            profile_last_io: None,
+             rejected_messages: 0,
+             requested_bodies: 0,
+             served_bodies: 0,
+@@ -318,7 +320,31 @@ impl NativeLifecycle {
+     /// waits on a body or durable storage, sessions/ACK/repair keep progressing.
+     pub fn poll_io(&mut self, wall_ms: u64, now: Instant) -> Result<()> {
+         ensure!(!self.is_frozen(), "native lifecycle frozen");
++        use crate::native_pipeline::profile::{self, Phase};
++        let start = profile::mark();
++        if let Some((previous_start, previous_end)) = self.profile_last_io {
++            let height = self.progress.context().height;
++            profile::work_interval(
++                Phase::NativeIoPeriod,
++                Some(previous_start),
++                start,
++                height,
++                None,
++                None,
++            );
++            profile::work_interval(
++                Phase::NativeIoGap,
++                Some(previous_end),
++                start,
++                height,
++                None,
++                None,
++            );
++        }
+         let result = self.io_inner(wall_ms, now);
++        if let (Some(start), Some(end)) = (start, profile::mark()) {
++            self.profile_last_io = Some((start, end));
++        }
+         if result.is_err() {
+             self.frozen = true;
+         }
+diff --git a/crates/novovm-node/src/native_pipeline/profile.rs b/crates/novovm-node/src/native_pipeline/profile.rs
+index 35e673c5..413b4335 100644
+--- a/crates/novovm-node/src/native_pipeline/profile.rs
++++ b/crates/novovm-node/src/native_pipeline/profile.rs
+@@ -56,6 +56,8 @@ struct CriticalRecord {
+     round: Option<u64>,
+     value: Option<[u8; 32]>,
+     body: Option<[u8; 32]>,
++    duration_ns: Option<u64>,
++    fragment: Option<[u8; 32]>,
+ }
+ 
+ struct CriticalBuffer {
+@@ -104,6 +106,7 @@ static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
+ // Reuse the same bounded record/clock implementation; keep delivery diagnostics
+ // from evicting the execution/consensus timeline. No payload or signing data.
+ static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
++static CONTROL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+ 
+ fn delivery_enabled() -> bool {
+     static ENABLED: OnceLock<bool> = OnceLock::new();
+@@ -137,6 +140,8 @@ pub(crate) fn delivery_event(
+             round: Some(u64::from(purposes)),
+             value: Some(peer),
+             body: Some(fragment),
++            duration_ns: None,
++            fragment: None,
+         });
+     }
+ }
+@@ -173,6 +178,8 @@ pub(crate) fn critical_event(
+             round: Some(round),
+             value,
+             body,
++            duration_ns: None,
++            fragment: None,
+         });
+     }
+ }
+@@ -199,6 +206,8 @@ pub(crate) fn critical_projection_visible(height: u64, value: [u8; 32]) {
+             round: source.as_ref().and_then(|record| record.round),
+             value: Some(value),
+             body: source.and_then(|record| record.body),
++            duration_ns: None,
++            fragment: None,
+         });
+     }
+ }
+@@ -243,8 +252,15 @@ pub(crate) enum Phase {
+     NativeAssembly,
+     NativeQuery,
+     NativeSelection,
++    NativePrepareEncode,
++    NativePrepareHash,
++    NativeDecode,
++    BodyIdentity,
++    BodyCharge,
++    NativeIoGap,
++    NativeIoPeriod,
+ }
+-const NAMES: [&str; 32] = [
++const NAMES: [&str; 39] = [
+     "admission",
+     "authentication",
+     "bind",
+@@ -277,6 +293,13 @@ const NAMES: [&str; 32] = [
+     "native_assembly",
+     "native_query",
+     "native_selection",
++    "native_prepare_encode",
++    "native_prepare_hash",
++    "native_decode",
++    "body_identity",
++    "body_charge",
++    "native_io_gap",
++    "native_io_period",
+ ];
+ struct Counter {
+     calls: AtomicU64,
+@@ -365,7 +388,64 @@ pub(crate) fn enabled() -> bool {
+ }
+ pub(crate) struct Span(Phase, Option<Instant>);
+ pub(crate) fn mark() -> Option<Instant> {
+-    enabled().then(Instant::now)
++    enabled().then(|| {
++        CRITICAL_START.get_or_init(Instant::now);
++        Instant::now()
++    })
++}
++pub(crate) fn work(
++    phase: Phase,
++    start: Option<Instant>,
++    height: u64,
++    body: Option<[u8; 32]>,
++    fragment: Option<[u8; 32]>,
++) {
++    work_interval(phase, start, mark(), height, body, fragment);
++}
++
++pub(crate) fn work_interval(
++    phase: Phase,
++    start: Option<Instant>,
++    end: Option<Instant>,
++    height: u64,
++    body: Option<[u8; 32]>,
++    fragment: Option<[u8; 32]>,
++) {
++    let (Some(start), Some(end)) = (start, end) else {
++        return;
++    };
++    let duration_ns = end
++        .duration_since(start)
++        .as_nanos()
++        .min(u128::from(u64::MAX)) as u64;
++    COUNTERS[phase as usize].record(duration_ns);
++    if !critical_enabled() || duration_ns < 1_000_000 {
++        return;
++    }
++    let record = CriticalRecord {
++        seq: 0,
++        elapsed_ns: end
++            .duration_since(*CRITICAL_START.get_or_init(|| start))
++            .as_nanos()
++            .min(u128::from(u64::MAX)) as u64,
++        wall_unix_us: wall_unix_us(),
++        event: NAMES[phase as usize],
++        height,
++        round: None,
++        value: None,
++        body,
++        duration_ns: Some(duration_ns),
++        fragment,
++    };
++    // Keep first-height synchronous work as well as a bounded latest window.
++    if height == 1 && !matches!(phase, Phase::NativeIoGap | Phase::NativeIoPeriod) {
++        if let Ok(mut buffer) = CRITICAL.lock() {
++            buffer.push(record.clone());
++        }
++    }
++    if let Ok(mut buffer) = CONTROL.lock() {
++        buffer.push_latest(record);
++    }
+ }
+ pub(crate) fn elapsed(phase: Phase, start: Option<Instant>) {
+     drop(Span(phase, start));
+@@ -422,6 +502,8 @@ pub(crate) fn snapshot() -> Value {
+                     "round":record.round,
+                     "value":hash(record.value),
+                     "body":hash(record.body),
++                    "duration_ns":record.duration_ns,
++                    "fragment":hash(record.fragment),
+                 })).collect::<Vec<_>>()
+             })
+         }).unwrap_or_else(|| json!({"enabled":true,"capacity":CRITICAL_EVENTS,"unavailable":"lock poisoned"}))
+@@ -442,7 +524,20 @@ pub(crate) fn snapshot() -> Value {
+     } else {
+         json!({"enabled":false,"capacity":CRITICAL_EVENTS,"events":[]})
+     };
+-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery})
++    let control = if enabled() && critical_enabled() {
++        CONTROL.lock().ok().map(|buffer| json!({
++            "enabled":true, "capacity":CRITICAL_EVENTS, "evicted":buffer.dropped,
++            "scope":"latest synchronous work and IO intervals >=1ms; elapsed_ns is interval end; start=end-duration_ns; IO period includes IO, IO gap excludes previous IO; neither is CPU idle; fragment and body are distinct identifiers",
++            "events":buffer.records.iter().map(|record| json!({
++                "seq":record.seq,"elapsed_ns":record.elapsed_ns,"duration_ns":record.duration_ns,
++                "wall_unix_us":record.wall_unix_us,"event":record.event,"height":record.height,
++                "body":hash(record.body),"fragment":hash(record.fragment)
++            })).collect::<Vec<_>>()
++        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
++    } else {
++        json!({"enabled":false,"events":[]})
++    };
++    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control})
+ }
+ 
+ #[cfg(test)]
+@@ -460,7 +555,7 @@ mod tests {
+         counter.record(1);
+         assert_eq!(counter.ns.load(Ordering::Relaxed), u64::MAX);
+         assert_eq!(counter.max_ns.load(Ordering::Relaxed), u64::MAX);
+-        assert_eq!(Phase::NativeSelection as usize + 1, NAMES.len());
++        assert_eq!(Phase::NativeIoPeriod as usize + 1, NAMES.len());
+     }
+ 
+     #[test]
+@@ -476,6 +571,8 @@ mod tests {
+                 round: Some(0),
+                 value: None,
+                 body: None,
++                duration_ns: None,
++                fragment: None,
+             });
+         }
+         assert_eq!(buffer.records.len(), CRITICAL_EVENTS);
+@@ -495,6 +592,8 @@ mod tests {
+                 round: Some(2),
+                 value: None,
+                 body: None,
++                duration_ns: None,
++                fragment: None,
+             });
+         }
+         assert_eq!(buffer.records.len(), CRITICAL_EVENTS);
+diff --git a/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md b/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
+index 8a969a10..361659c8 100644
+--- a/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
++++ b/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
+@@ -1,5 +1,13 @@
+ # UCA、首发签名与服务经济：双机分工及实施顺序
+ 
++## 2026-10-29 A 认领：大正文控制线程实测
++
++已 fetch，固定 `c5c18d46`，开发分支与远端一致。A/root 负责原 profile、
++NativeLifecycle、NativeChannel 与 CandidateBodies 的默认关闭计时及唯一构建／压测槽；
++其他分工只读核对调用和证据。先测网络轮询周期、离开轮询的间隔和正文同步工作，
++再按时间线消除重复准备。容量、超时、经济规则及 APFL early/bind 不动。
++本轮不合 main、不换正式 AOEM 库、不部署；C 消费合同，D 等最终候选。
++
+ ## 2026-10-29 A 认领：固定容量后的关键路径收口
+ 
+ 已 fetch 并核对 `94da21e2` 与远端一致。固定具体资产账户、APFL、1,024 行／8 MiB

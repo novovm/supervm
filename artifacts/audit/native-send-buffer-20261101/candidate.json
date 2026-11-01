@@ -1,0 +1,72 @@
+{
+  "base": "16cb4cec8e3833c56096c55b29ea48d5928d657a",
+  "branch": "dev/mldsa65-identity-closure",
+  "scope": "Original native final-wire construction only; AAD16cb baseline, original quantum/repair/protocol/economics/MLDSA unchanged; private candidate",
+  "files": [
+    {
+      "sha256": "dbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+      "role": "baseline_node",
+      "path": "D:/WorksArea/SUPERVM/target/native-aad-session-reuse-20261101/candidate/novovm-node.exe"
+    },
+    {
+      "sha256": "a524ab3f46ac5762052873ecd37160360d5036dfa526b74a5b50898131eba7dd",
+      "role": "candidate_node",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-send-buffer-20261101\\candidate\\novovm-node.exe"
+    },
+    {
+      "sha256": "83aeeedb71662850ce2bd0296407815c4e060287fcbc833664c36dbfa45676b7",
+      "role": "candidate_pdb",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-send-buffer-20261101\\candidate\\novovm_node.pdb"
+    },
+    {
+      "sha256": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb",
+      "role": "tester",
+      "path": "D:/WorksArea/SUPERVM/target/native-controller-throughput-20261031/stability-observer/native-tests.exe"
+    },
+    {
+      "sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+      "role": "aoem",
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll"
+    },
+    {
+      "sha256": "7d0aaa403a7eafee1b4509244bcff489d5af0fd017e84323b962bcee30529c84",
+      "role": "candidate_client",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-send-buffer-20261101\\candidate\\novovm-native-client.exe"
+    },
+    {
+      "sha256": "e4fec33fe6234ae1074b8dc17bdfeca47ac04dd517703f550f998e891d781162",
+      "role": "candidate_client_pdb",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-send-buffer-20261101\\candidate\\novovm_native_client.pdb"
+    }
+  ],
+  "source_files": [
+    {
+      "path": "crates/novovm-network/src/product_overlay.rs",
+      "sha256": "b83effbedb18476dad33659c8e385dc3043b3e666c5c135287529648ff824a15"
+    },
+    {
+      "path": "crates/novovm-network/src/product_overlay/binary.rs",
+      "sha256": "6c46dabb32bc4014e433bbdd37926909c640de45e2d3db78a88dec6d5e9251a0"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/datagram.rs",
+      "sha256": "72bfdaa75f319dbfedb255372caba89d042f6c19c3b9b58672f1e4247f2b9082"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/frame.rs",
+      "sha256": "1e365f0d79c22dbbacc6cb5abcd64c44f39e2781697e0de24f442c200b9eb4ae"
+    },
+    {
+      "path": "crates/novovm-network/src/product_overlay/tests/aead_preparation.rs",
+      "sha256": "06603b54490fd2d62f6814996a9e9f3ce33874b4e1a3fc135d713b36fc10181c"
+    },
+    {
+      "path": "crates/novovm-network/src/product_overlay/tests/send_wire.rs",
+      "sha256": "a358ce2dbef71a861f3064e24d07de2940ca2667cd8f48081cd591a8c2cc2818"
+    },
+    {
+      "path": "artifacts/audit/native-aad-session-reuse-20261101/run.ps1",
+      "sha256": "5646794a28a5317b5808dde1cf721d565eb579c8a0f60b29f95996927bb9a7b5"
+    }
+  ]
+}

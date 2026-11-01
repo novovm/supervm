@@ -77,6 +77,113 @@ fn rejected(result: Result<VoteInsert>, fragment: &str) {
 }
 
 #[test]
+fn qualified_votes_and_collected_quorum_do_not_repeat_signature_work() {
+    use crate::round_bft::{crypto::ConsensusVerifier, test_vectors::FixtureVerifier};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Counting(AtomicUsize);
+    impl ConsensusVerifier for Counting {
+        fn verify_mldsa65(&self, key: &[u8], message: &[u8], signature: &[u8]) -> Result<()> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            FixtureVerifier.verify_mldsa65(key, message, signature)
+        }
+        fn is_test_only(&self) -> bool {
+            true
+        }
+    }
+    let mut f = Fixture::new(&[1; 4]);
+    let verifier = Arc::new(Counting(AtomicUsize::new(0)));
+    f.set = Arc::new((*f.set).clone().with_verifier(verifier.clone()));
+    let raw: Vec<_> = (0..3)
+        .map(|i| f.vote(i, 0, Phase::Prevote, Some(A)))
+        .collect();
+    verifier.0.store(0, Ordering::Relaxed);
+    let qualified: Vec<_> = raw
+        .iter()
+        .map(|vote| vote.verify(&f.set).unwrap())
+        .collect();
+    assert_eq!(verifier.0.load(Ordering::Relaxed), 3);
+    let mut collector = f.collector();
+    for vote in &qualified[..2] {
+        collector.insert_verified(vote).unwrap();
+    }
+    assert!(collector
+        .quorum(0, Phase::Prevote, Some(A))
+        .unwrap()
+        .is_none());
+    collector.insert_verified(&qualified[2]).unwrap();
+    for _ in 0..8 {
+        assert_eq!(
+            collector.insert_verified(&qualified[0]).unwrap(),
+            VoteInsert::Duplicate
+        );
+        let qc = collector
+            .quorum(0, Phase::Prevote, Some(A))
+            .unwrap()
+            .unwrap();
+        assert_eq!(qc.signed_weight(), 3);
+        qc.ensure_verified_by(&f.set).unwrap();
+    }
+    assert_eq!(
+        verifier.0.load(Ordering::Relaxed),
+        3,
+        "local reuse must perform no new cryptography"
+    );
+
+    let mut corrupt_duplicate = raw[0].clone();
+    corrupt_duplicate.signature[0] ^= 1;
+    assert!(collector.insert(&corrupt_duplicate).is_err());
+    assert_eq!(
+        verifier.0.load(Ordering::Relaxed),
+        4,
+        "raw duplicate still crosses signature verification"
+    );
+    assert_eq!(collector.vote_count(), 3);
+    collector
+        .quorum(0, Phase::Prevote, Some(A))
+        .unwrap()
+        .unwrap()
+        .quorum()
+        .verify(&f.set)
+        .unwrap();
+    assert_eq!(
+        verifier.0.load(Ordering::Relaxed),
+        7,
+        "exported raw QC does not carry local qualification"
+    );
+}
+
+#[test]
+fn qualified_vote_reuse_rejects_other_verifier_owner_and_current_state_conflicts() {
+    use crate::round_bft::test_vectors::FixtureVerifier;
+    let f = Fixture::new(&[1; 4]);
+    let vote = f.vote(0, 0, Phase::Prevote, Some(A));
+    let proof = vote.verify(&f.set).unwrap();
+    let fresh = Fixture::new(&[1; 4]);
+    assert_eq!(fresh.set.hash(), f.set.hash());
+    assert!(fresh.collector().insert_verified(&proof).is_err());
+    let mut replaced = Fixture::new(&[1; 4]);
+    replaced.set = Arc::new((*f.set).clone().with_verifier(Arc::new(FixtureVerifier)));
+    assert_eq!(replaced.set.hash(), f.set.hash());
+    assert!(replaced.collector().insert_verified(&proof).is_err());
+
+    let mut collector = f.collector();
+    collector.insert_verified(&proof).unwrap();
+    let conflict = f
+        .vote(0, 0, Phase::Prevote, Some(B))
+        .verify(&f.set)
+        .unwrap();
+    rejected(collector.insert_verified(&conflict), "equivocation");
+    let future = f
+        .vote(1, 9, Phase::Prevote, Some(A))
+        .verify(&f.set)
+        .unwrap();
+    rejected(collector.insert_verified(&future), "future-round span");
+    collector.reset_context(f.successor(), 0).unwrap();
+    rejected(collector.insert_verified(&proof), "context mismatch");
+    assert_eq!(collector.vote_count(), 0);
+}
+
+#[test]
 fn two_of_four_do_not_certify_three_same_value_do() {
     let f = Fixture::new(&[1; 4]);
     let mut collector = f.collector();

@@ -6,7 +6,10 @@ use super::*;
 #[cfg(test)]
 mod tests;
 
-pub const MAX_BATCH_READ_KEYS: usize = 4096;
+/// Shared read/change/packet-access ceiling. A 1,024-row asset plan can declare
+/// 31 keys per management row plus 42 policy/fee keys (31,786 total). Node and
+/// byte budgets remain independent; this is not a ledger-size limit.
+pub const MAX_BATCH_READ_KEYS: usize = 32_768;
 
 #[cfg(test)]
 thread_local! {
@@ -25,7 +28,7 @@ struct Query {
     position: usize,
 }
 
-/// Read at most 4096 keys from an already trusted, structurally validated root.
+/// Read at most `MAX_BATCH_READ_KEYS` from a trusted, structurally validated root.
 /// Results retain the supplied order, including duplicate keys. Only queried
 /// paths are loaded: missing, malformed, or misdirected accessed nodes fail the
 /// whole call, while authenticated absence returns `None` for that query.

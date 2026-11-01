@@ -1,0 +1,10 @@
+
+running 5 tests
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_carries_every_context_field_and_rejects_wrong_profile ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_keeps_commitment_distinct_from_intent_locators ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_preflights_exact_length_version_and_resource_bounds ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_roundtrip_keeps_exact_pool_order_and_body_identity ... ok
+test native_pipeline::service::rpc::uca::tests::asset_body_reference_reuses_pool_rows_without_local_target_or_authority_changes ... ignored, real AOEM asset admission; reference reconstruction uses original pool, run alone
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 1782 filtered out; finished in 0.00s
+

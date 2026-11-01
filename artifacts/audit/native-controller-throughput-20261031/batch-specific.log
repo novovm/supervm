@@ -1,0 +1,19 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Finished `release` profile [optimized] target(s) in 46.63s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_network-57d7f711b0dc108c.exe)
+
+running 6 tests
+test novorudp::object_sender::tests::batch::deferred_pending_write_never_enters_batch_or_advances_before_real_completion ... ok
+test novorudp::object_sender::tests::batch::each_batched_datagram_retains_original_authentication_and_replay_contract ... ok
+test novorudp::object_sender::tests::batch::initial_batch_commits_only_actual_prefix_and_retains_cursor_after_block_or_error ... ok
+test novorudp::object_sender::tests::batch::initial_batch_preserves_copy_cursor_short_tail_poll_quantum_and_pause ... ok
+test novorudp::object_sender::tests::batch::metered_initial_and_authenticated_gap_repair_keep_original_single_writes ... ok
+test novorudp::object_sender::tests::batch::windows_owned_socket_segmented_batch_reassembles_and_acknowledges_original_object ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 921 filtered out; finished in 0.01s
+

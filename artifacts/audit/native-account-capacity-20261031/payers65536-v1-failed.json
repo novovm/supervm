@@ -1,0 +1,105 @@
+{
+  "source": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\uca-31592-1793391637710041200\\report.json",
+  "source_sha256": "b7bbde6790fc4c979e69c3788875a65839803fb30d6734b74dd58ba13fc4ed90",
+  "archive": "payers65536-v1-failed.raw.zip",
+  "archive_sha256": "1bd0def8f5cb1313646e31a36a46934f57d7cdb60cf3ca8cc7a53695617a7b5f",
+  "same_signed_corpus_and_initial_state": null,
+  "fault_recovery": null,
+  "scope": "public reports only; raw report compressed unchanged; per-round database and signing journal retained locally; no private-key files",
+  "rounds": [
+    {
+      "label": null,
+      "signature_backend": "cpu",
+      "transactions": 65536,
+      "successful_tps": null,
+      "elapsed_seconds": null,
+      "latency_us": {
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "sample_count": 0,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "passed": false,
+      "cold_recovery_pass": false,
+      "full_fee_state_audited": false,
+      "input_hash": null,
+      "signing_domain": null,
+      "genesis_commitment": null,
+      "initial_root": null,
+      "binary_sha256": "0xe83c491ed74f188b73f5714e6bfb0f4aa97093b124f14d046cc75adf8af42a3a",
+      "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+      "business_backend": "cpu_callbacks",
+      "counts": {
+        "application_batches_sent": 0,
+        "application_batches_transport_delivered": 0,
+        "transport_failures": 0,
+        "observation_requests": 0,
+        "receipt_query_requests_by_node": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "observation_rows_received": 0,
+        "receipt_query_rows_received_by_node": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "observation_not_final": 0,
+        "receipt_query_not_final_by_node": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "observation_service_busy": 0,
+        "receipt_query_service_busy_by_node": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "successful_transactions": 0,
+        "business_failed_transactions": 0,
+        "rejected_nonce": 0,
+        "deadline_expirations": 0,
+        "maximum_outstanding": 0,
+        "query_transport_recent": [
+          [],
+          [],
+          [],
+          []
+        ],
+        "last_query_response": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "query_timeout": null
+      },
+      "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+      "signature_generation_timed": false,
+      "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+      "canonical_body_budget": 8388608,
+      "wire_message_budget": 8519680,
+      "grant_expires_at_height": 1000,
+      "static_intent_window": [
+        1,
+        257
+      ],
+      "cold_counts": null,
+      "recovered": [
+        null
+      ],
+      "diagnostic_counters": {
+        "status": "NOT_COLLECTED",
+        "scope": null,
+        "nodes": []
+      }
+    }
+  ]
+}

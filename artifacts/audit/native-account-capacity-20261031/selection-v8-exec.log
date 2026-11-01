@@ -1,0 +1,117 @@
+
+running 112 tests
+test pq_signature::owned_runtime_tests::actual_owned_mldsa_runtime_keygen_pair_and_lifetime ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; actual owned AOEM ML-DSA
+test pq_signature::semantic::tests::actual_semantic_mldsa_cpu_contract ... ignored, requires pinned NOVOVM_AOEM_TEST_LIBRARY with unified ML-DSA semantics
+test pq_signature::semantic::tests::actual_semantic_mldsa_gpu_contract ... ignored, requires pinned NOVOVM_AOEM_TEST_LIBRARY and qualified explicit GPU
+test pq_signature::semantic::tests::result_rejects_wrong_identity_shape_backend_flags_and_stale_bytes ... ok
+test pq_signature::semantic::tests::semantic_wire_preserves_framed_message_exactly_once ... ok
+test pq_signature::tests::batch_frames_once_and_keeps_invalid_input_and_signature_rows_in_original_order ... ok
+test pq_signature::tests::batch_qualification_requires_explicit_suite_mixed_kat_and_exact_result_count ... ok
+test pq_signature::tests::batch_runtime_failure_has_no_partial_success_and_work_units_are_bounded ... ok
+test pq_signature::tests::bundled_vectors_have_exact_profile_and_encoding_sizes ... ok
+test pq_signature::tests::compatibility_gate_requires_both_positive_and_negative_sentinels ... ok
+test pq_signature::tests::explicit_verifier_result_is_required_without_retry_or_fallback ... ok
+test pq_signature::tests::external_pure_mode_has_explicit_context_framing ... ok
+test pq_signature::tests::failed_or_malformed_signing_output_is_never_returned_or_retried ... ok
+test pq_signature::tests::malformed_keys_never_reach_crypto_backend ... ok
+test pq_signature::tests::malformed_signatures_never_reach_crypto_backend ... ok
+test pq_signature::tests::malformed_signing_inputs_are_rejected_before_the_backend ... ok
+test pq_signature::tests::only_explicit_canonical_parameter_sets_are_accepted ... ok
+test pq_signature::tests::parameter_set_is_not_inferred_from_input_lengths ... ok
+test pq_signature::tests::signing_borrows_the_secret_frames_once_and_requires_output_self_verification ... ok
+test pq_signature::tests::signing_capabilities_and_all_encoding_sizes_fail_closed ... ok
+test pq_signature::tests::unavailable_or_incompatible_backend_fails_closed ... ok
+test resident::tests::explicit_selection_never_falls_back_for_missing_or_directory_paths ... ok
+test resident::tests::explicit_selection_preserves_original_wire_worker_options_without_loading ... ok
+test resident::tests::resident_tasks_and_storage_writes_are_the_original_bindings_types ... ok
+test semantic_compute::session_scope::tests::compute_scope_identity_checks_runtime_environment_and_directory ... ok
+test semantic_compute::session_scope::tests::compute_scope_is_lazy_non_nested_and_thread_local ... ok
+test semantic_compute::session_scope::tests::compute_scope_real_aoem_rejects_drift_and_reopen_after_failure ... ignored, requires bundled AOEM; isolated child verifies shared poison and configuration drift
+test semantic_compute::session_scope::tests::compute_scope_real_aoem_reuses_two_batches_and_releases_normally ... ignored, requires bundled AOEM; isolated child verifies actual cross-batch session reuse
+test semantic_compute::tests::semantic_compute_callback_contains_panics_and_errors ... ok
+test semantic_compute::tests::semantic_compute_callbacks_execute_once_and_keep_input_order ... ok
+test semantic_compute::tests::semantic_compute_completion_is_owned_and_single_delivery ... ok
+test semantic_compute::tests::semantic_compute_real_aoem_no_writes_parallel_order_panic_and_cancel ... ignored, requires the bundled AOEM DLL; explicitly run for real worker acceptance
+test semantic_compute::tests::semantic_compute_real_aoem_undrained_timeout_retains_owned_capture ... ignored, requires bundled AOEM; deliberately retains one cancelled owner
+test semantic_compute::tests::semantic_compute_rejects_invalid_descriptor_and_nulls ... ok
+test semantic_compute::tests::semantic_compute_rejects_invalid_wave_before_loading_runtime ... ok
+test semantic_compute::tests::semantic_compute_session_host_unwind_retains_the_complete_flight ... ignored, requires bundled AOEM; deliberately retains a Host-unwound live graph
+test semantic_compute::tests::semantic_compute_session_reuses_graphs_and_preserves_poison_boundary ... ignored, requires bundled AOEM; explicit candidate session reuse acceptance
+test semantic_compute::tests::semantic_compute_session_timeout_retains_the_complete_flight ... ignored, requires bundled AOEM; deliberately retains an undrained cancelled owner
+test semantic_graph_v3::owner::tests::graph_owner_command_bounds_and_send_contract ... ok
+test semantic_graph_v3::owner::tests::graph_owner_real_aoem_queue_bound_scope_unwind_and_worker_failure ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::owner::tests::graph_owner_real_aoem_rejects_identity_drift_and_propagates_poison ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::owner::tests::graph_owner_real_aoem_stage_backpressure_returns_work_and_drop_does_not_cancel ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::owner::tests::graph_owner_real_aoem_stage_cannot_hide_shared_poison ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::owner::tests::graph_owner_real_aoem_stage_panic_rejects_queued_work ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::owner::tests::graph_owner_real_aoem_stage_reuses_provider_and_rejects_self_send ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::owner::tests::graph_owner_real_aoem_two_threads_one_provider_and_shutdown ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::owner::tests::graph_owner_stage_handle_reports_pending_error_and_disconnection ... ok
+test semantic_graph_v3::scope_tests::graph_scope_real_aoem_pre_admission_validation_does_not_poison_shared_owner ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::scope_tests::graph_scope_real_aoem_rejects_runtime_config_path_and_environment_drift ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::scope_tests::graph_scope_real_aoem_reuses_provider_alias_and_reopens_after_drop ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::scope_tests::graph_scope_real_aoem_shares_poison_across_handles_and_new_opens ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::scope_tests::graph_scope_real_aoem_unwind_releases_scope_and_provider ... ignored, requires bundled AOEM and isolated RocksDB; run runtime tests serially
+test semantic_graph_v3::scope_tests::graph_scope_rejects_nested_entry_and_is_thread_local ... ok
+test semantic_graph_v3::tests::graph_lifetime_all_callbacks_pin_context_and_contain_panics ... ok
+test semantic_graph_v3::tests::graph_lifetime_real_aoem_preserves_durable_marker_and_store_boundaries ... ignored, requires the bundled AOEM V3 writer and an isolated local RocksDB
+test semantic_graph_v3::tests::graph_lifetime_retains_complete_owner_on_unwind_and_releases_only_when_drained ... ok
+test semantic_graph_v3::tests::graph_lifetime_timeout_cannot_turn_cancel_race_into_success ... ok
+test semantic_graph_v3::tests::graph_lowering_is_domain_neutral_and_bounded ... ok
+test semantic_graph_v3::tests::graph_lowering_rejects_oversized_host_values ... ok
+test semantic_graph_v3::tests::storage_wire_open_and_get_codecs_match_public_contract ... ok
+test semantic_integer::composition::tests::composition_validates_before_submit_and_latches_bad_binary ... ok
+test semantic_integer::tests::binary_integer_decoder_preserves_contract_without_json_intermediate ... ok
+test semantic_integer::tests::binary_integer_wrong_result_latches_owner_and_does_not_retry_or_fall_back ... ok
+test semantic_integer::tests::dataflow_preflight_owner_edges_and_poison_preserve_binary_contract ... ok
+test semantic_integer::tests::integer_binary_real_resource_parity_and_fail_closed ... ignored, requires explicit new AOEM DLL and Vulkan; binary/legacy real parity
+test semantic_integer::tests::integer_container_is_exact_bounded_and_does_not_reimplement_ssa ... ok
+test semantic_integer::tests::integer_execution_requires_one_complete_write_before_readback ... ok
+test semantic_integer::tests::integer_outcome_real_aoem_vulkan_full_width_and_typed_rejections ... ignored, requires explicit NOVOVM_AOEM_DLL/AOEM_DLL and Vulkan shaderInt64 device; no CPU fallback
+test semantic_integer::tests::integer_profile_is_strict_separate_and_poisoned_on_mismatch ... ok
+test semantic_integer::tests::integer_projection_preserves_full_u128_and_rejects_wide_or_negative ... ok
+test semantic_integer::tests::integer_resource_control_and_run_results_require_exact_identity_and_metadata ... ok
+test semantic_integer::tests::integer_resource_incomplete_execution_never_reads_a_stale_result ... ok
+test semantic_integer::tests::integer_resource_old_loaded_library_rejects_without_fallback ... ignored, requires explicit NOVOVM_AOEM_OLD_TEST_LIBRARY lacking v7; no environment mutation
+test semantic_integer::tests::integer_resource_preflight_bounds_and_owner_checks_do_not_enter_wire ... ok
+test semantic_integer::tests::integer_resource_profile_real_bound_device_and_plain_parity ... ignored, requires explicit trusted v7 DLL; tests both unsupported and supported profile contract
+test semantic_integer::tests::integer_resource_real_v7_repeats_full_width_rejections_and_close ... ignored, requires explicit NOVOVM_AOEM_V7_TEST_LIBRARY and real Vulkan; no CPU fallback
+test semantic_integer::tests::integer_resource_uncertain_open_run_close_and_reused_id_poison_without_retry ... ok
+test semantic_integer::tests::integer_resource_unwinding_keeps_the_owner_poisoned ... ok
+test semantic_integer::tests::integer_resource_wire_is_exact_fixed_shape_and_reuses_one_result_key ... ok
+test semantic_integer::tests::integer_resources_require_explicit_capability_and_both_existing_symbols ... ok
+test semantic_integer::tests::integer_result_requires_exact_metadata_shape_and_failure_semantics ... ok
+test semantic_integer::tests::owned_result_unwrap_preserves_array_storage_and_missing_semantics ... ok
+test tests::anchor_return_code_failure_mapping_v1 ... ok
+test tests::aoem_tx_execution_artifacts_project_batch_status_and_gas ... ok
+test tests::apfl_native_transfer_bulk_payload_v0_stays_inside_opcode_114_value ... ok
+test tests::apfl_native_transfer_wire_v1_uses_unified_opcode_114 ... ok
+test tests::capability_contract_falls_back_to_legacy_gpu_field ... ok
+test tests::capability_contract_normalizes_reason_codes_and_alias_fields ... ok
+test tests::capability_contract_reads_explicit_zk_msm_fields ... ok
+test tests::capability_contract_reads_mldsa_flag ... ok
+test tests::capability_contract_reads_ringct_privacy_fields ... ok
+test tests::capability_contract_requires_state_surface_and_persistence_for_runtime_ownership ... ok
+test tests::capability_contract_treats_flat_zk_fields_as_formal ... ok
+test tests::classify_failure_from_anchor_prefers_return_code_then_name_v1 ... ok
+test tests::classify_failure_from_anchor_return_code_name_aliases_v1 ... ok
+test tests::default_dll_path_prefers_host_name_when_present ... ok
+test tests::default_dll_path_uses_host_default_when_host_binary_missing ... ok
+test tests::default_plugin_dir_prefers_variant_subdir ... ok
+test tests::eip7610_rejected_account_membership_v1 ... ok
+test tests::native_tx_batch_result_from_execution_preserves_actual_roots ... ok
+test tests::native_tx_batch_result_from_execution_rejects_fabricated_receipt_commitment ... ok
+test tests::native_tx_batch_v1_canonical_input_commitment_smoke ... ok
+test tests::native_tx_batch_v1_per_tx_receipt_shape_smoke ... ok
+test tests::native_tx_batch_v1_schema_smoke ... ok
+test tests::native_tx_batch_v1_state_delta_root_shape_smoke ... ok
+test tests::novovm_exec_capability_contract_exposes_native_tx_batch_v1_smoke ... ok
+test tests::pick_plugin_dir_prefers_newest_when_match_count_equal ... ok
+test tests::reconstruct_tx_execution_artifact_rebuilds_logs_from_runtime_code ... ok
+test tests::resolve_aoem_block_access_list_hash_derives_from_raw_bal_when_needed ... ok
+test tests::semantic_graph_v3_capability_requires_domain_neutral_host_boundary ... ok
+test tests::split_plugin_dir_list_parses_semicolon_and_comma ... ok
+test uca_spend::tests::asset_signature_fact_compacts_owned_crypto_and_rejects_all_transplants ... ignored, requires explicit trusted AOEM library; real ML-DSA-65 fact binding and compact retention
+
+test result: ok. 83 passed; 0 failed; 29 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

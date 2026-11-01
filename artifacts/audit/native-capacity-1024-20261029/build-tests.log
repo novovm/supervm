@@ -1,0 +1,55 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error[E0283]: type annotations needed
+    --> crates\novovm-node\src\native_pipeline\consensus\native_product_load\uca\rolling.rs:840:70
+     |
+ 840 |         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum());
+     |                                                                      ^^^ cannot infer type of the type parameter `S` declared on the method `sum`
+     |
+     = note: cannot satisfy `_: Sum<usize>`
+     = help: the following types implement trait `Sum<A>`:
+               `ProjectivePoint` implements `Sum<&'a ProjectivePoint>`
+               `ProjectivePoint` implements `Sum`
+               `Saturating<u128>` implements `Sum<&'a Saturating<u128>>`
+               `Saturating<u128>` implements `Sum`
+               `Saturating<u16>` implements `Sum<&'a Saturating<u16>>`
+               `Saturating<u16>` implements `Sum`
+               `Saturating<u32>` implements `Sum<&'a Saturating<u32>>`
+               `Saturating<u32>` implements `Sum`
+             and 105 others
+note: required by a bound in `std::iter::Iterator::sum`
+    --> C:\Users\leadb\.rustup\toolchains\1.94.0-x86_64-pc-windows-msvc\lib/rustlib/src/rust\library\core\src\iter\traits\iterator.rs:3597:12
+     |
+3594 |     fn sum<S>(self) -> S
+     |        --- required by a bound in this associated function
+...
+3597 |         S: Sum<Self::Item>,
+     |            ^^^^^^^^^^^^^^^ required by this bound in `Iterator::sum`
+help: consider specifying the generic argument
+     |
+ 840 |         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum::<S>());
+     |                                                                         +++++
+
+error[E0283]: type annotations needed
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_load\uca\rolling.rs:840:70
+    |
+840 |         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum());
+    |         -------------------------------------------------------------^^^---
+    |         |                                                            |
+    |         |                                                            cannot infer type of the type parameter `S` declared on the method `sum`
+    |         type must be known at this point
+    |
+    = note: multiple `impl`s satisfying `usize: PartialEq<_>` found in the following crates: `core`, `serde_json`:
+            - impl PartialEq for usize;
+            - impl PartialEq<serde_json::Value> for usize;
+help: consider specifying the generic argument
+    |
+840 |         assert_eq!(batch.canonical_bytes(), raw.iter().map(Vec::len).sum::<S>());
+    |                                                                         +++++
+
+For more information about this error, try `rustc --explain E0283`.
+error: could not compile `novovm-node` (lib test) due to 2 previous errors

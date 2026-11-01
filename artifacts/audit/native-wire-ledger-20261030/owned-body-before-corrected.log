@@ -1,0 +1,12 @@
+
+running 1 test
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_owned_body_does_not_request_second_full_copy_after_ack ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_owned_body_does_not_request_second_full_copy_after_ack
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1781 filtered out; finished in 0.40s
+
+Error: complete retained successor requested a second full copy after real parent ACK

@@ -1,0 +1,23 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+    Finished `release` profile [optimized] target(s) in 3.12s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_protocol-ca6efb7214bcb147.exe)
+
+running 10 tests
+test native_query::tests::batch_count_rejected_before_element_decode_or_allocation ... ok
+test native_query::tests::uca_read_intent_rejects_unbounded_or_invalid_body_before_ownership ... ok
+test native_query::tests::compact_response_binds_complete_request_not_only_session_and_sequence ... ok
+test native_query::tests::request_golden_bytes_are_unchanged_and_old_responses_are_rejected ... ok
+test native_query::tests::compact_batch_wire_removes_only_echoed_request_and_preserves_row_order ... ok
+test native_query::tests::uca_query_canonical_intent_full_width_and_version_binding ... ok
+test native_query::tests::batch_maximum_full_width_order_and_version_round_trip ... ok
+test native_query::tests::compact_response_rejects_oversize_malformed_counts_and_all_old_response_versions ... ok
+test native_query::tests::batch_response_count_type_and_version_are_bound_to_exact_request ... ok
+test native_query::tests::bounded_binary_query_preserves_full_width_and_rejects_malformed_frames ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.00s
+

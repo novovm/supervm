@@ -1,0 +1,28 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error[E0599]: no method named `snapshot_retention` found for reference `&std::sync::Arc<NativeTransferDiagnosticsV1>` in the current scope
+   --> crates\novovm-node\src\native_pipeline\consensus\native.rs:487:46
+    |
+487 |                         "retention":observer.snapshot_retention(),
+    |                                              ^^^^^^^^^^^^^^^^^^ method not found in `&std::sync::Arc<NativeTransferDiagnosticsV1>`
+
+error[E0599]: no method named `snapshot_retention` found for reference `&std::sync::Arc<NativeTransferDiagnosticsV1>` in the current scope
+   --> crates\novovm-node\src\native_pipeline\consensus\native.rs:515:50
+    |
+515 | ...                   "retention":observer.snapshot_retention(),
+    |                                            ^^^^^^^^^^^^^^^^^^ method not found in `&std::sync::Arc<NativeTransferDiagnosticsV1>`
+
+error[E0599]: no method named `snapshot_retention` found for reference `&std::sync::Arc<NativeTransferDiagnosticsV1>` in the current scope
+   --> crates\novovm-node\src\native_pipeline\consensus\native.rs:591:50
+    |
+591 | ...                   "retention":observer.snapshot_retention(),
+    |                                            ^^^^^^^^^^^^^^^^^^ method not found in `&std::sync::Arc<NativeTransferDiagnosticsV1>`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `novovm-node` (lib test) due to 3 previous errors

@@ -19,7 +19,9 @@ use std::collections::{BTreeMap, BTreeSet};
 mod batch;
 #[cfg(test)]
 mod batch_conformance;
+mod initial;
 mod read_batch;
+pub(crate) use initial::InitialStateBuilder;
 
 #[cfg(test)]
 // Retained for the historical controller workload comparison; native tree
@@ -33,7 +35,7 @@ pub type StateLeafVisitor<'a> = dyn FnMut(NodeHash, &[u8]) -> Result<()> + 'a;
 pub const STATE_TREE_CODEC_V1: &str = "novovm-state-patricia-sha256/v1";
 const MAX_KEY_BYTES: usize = 256;
 const MAX_VALUE_BYTES: usize = 256;
-const MAX_BATCH_CHANGES: usize = 4096;
+const MAX_BATCH_CHANGES: usize = MAX_BATCH_READ_KEYS;
 const MAX_STAGED_NODES: usize = 65_536;
 const MAX_CACHED_NODES: usize = 4096;
 // At most 256 branches, one leaf, and one collapse survivor per changed key.
@@ -119,6 +121,11 @@ const EMPTY_ROOT_V1: NodeHash = [
 thread_local! {
     static EMPTY_ROOT_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static REACHABILITY_DECODES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn take_reachability_decodes_for_test() -> usize {
+    REACHABILITY_DECODES.with(|count| count.replace(0))
 }
 
 pub fn empty_root() -> NodeHash {

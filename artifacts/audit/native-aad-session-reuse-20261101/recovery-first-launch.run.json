@@ -1,0 +1,40 @@
+{
+  "schema": "novovm-aad-session-load/v1",
+  "suite": "recovery",
+  "baseline_only": false,
+  "observed": false,
+  "scope": "Original frozen harness and native owners; no ETW; no signing/quorum/economic/timeout changes; databases/journals retained. Observer runs separately from final unobserved TPS acceptance.",
+  "begin_unix_ms": 1793503638392,
+  "end_unix_ms": 1793503642019,
+  "driver_pid": 27348,
+  "exit_code": 101,
+  "test": "native_pipeline::consensus::tests::native_product_rpc::application::queries::uca_recovery::native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery",
+  "observer": null,
+  "files": [
+    {
+      "sha256": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+      "role": "baseline_node",
+      "path": "D:/WorksArea/SUPERVM/target/native-controller-throughput-20261031/candidate-v4/novovm-node.exe"
+    },
+    {
+      "sha256": "dbb81a9c795736799f9b088e6f918ed280da678aef1dd51d14ca49f315b9ba1c",
+      "role": "candidate_node",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-aad-session-reuse-20261101\\candidate\\novovm-node.exe"
+    },
+    {
+      "sha256": "754caf33e7108c1257887ddcbea19d2a1d81ad2127a5138c349be0606cfc8b49",
+      "role": "candidate_pdb",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-aad-session-reuse-20261101\\candidate\\novovm_node.pdb"
+    },
+    {
+      "sha256": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb",
+      "role": "tester",
+      "path": "D:/WorksArea/SUPERVM/target/native-controller-throughput-20261031/stability-observer/native-tests.exe"
+    },
+    {
+      "sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+      "role": "aoem",
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll"
+    }
+  ]
+}

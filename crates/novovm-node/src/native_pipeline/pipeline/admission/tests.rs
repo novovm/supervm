@@ -22,6 +22,61 @@ fn usage(pipeline: &CandidatePipeline) -> (usize, usize, usize, usize) {
     (used.batches, used.bytes, used.background, used.ingress)
 }
 
+fn all_usage(pipeline: &CandidatePipeline) -> (usize, usize, usize, usize, usize) {
+    let used = pipeline.usage.lock().unwrap();
+    (
+        used.batches,
+        used.bytes,
+        used.background,
+        used.ingress,
+        used.authority,
+    )
+}
+
+fn rejected_output(
+    pipeline: &CandidatePipeline,
+    command: AdmissionCommand,
+) -> (
+    SignatureAdmissionOutput,
+    mpsc::Sender<Result<SignatureAdmissionOutput>>,
+) {
+    let AdmissionCommand {
+        request,
+        reply,
+        permit,
+    } = command;
+    // Channel/accounting fixture only: never manufactures signature evidence.
+    let rows = request
+        .inputs
+        .into_iter()
+        .map(|input| AdmissionRow {
+            input,
+            result: Err(anyhow::anyhow!("fixture rejection")),
+        })
+        .collect();
+    (
+        SignatureAdmissionOutput {
+            rows: AdmissionRows {
+                rows,
+                peak_callbacks: 0,
+            },
+            _permit: permit,
+            owner: pipeline.identity.clone(),
+        },
+        reply,
+    )
+}
+
+fn completed(
+    pipeline: &CandidatePipeline,
+    receiver: &mpsc::Receiver<DriverMessage>,
+) -> SignatureAdmissionOutput {
+    let mut ticket = admitted(pipeline);
+    let (output, reply) = rejected_output(pipeline, next(receiver));
+    assert!(reply.send(Ok(output)).is_ok());
+    ticket.try_take().unwrap().unwrap()
+}
+
 fn admitted(pipeline: &CandidatePipeline) -> SignatureAdmissionTicket {
     let SignatureAdmissionSubmission::Accepted(ticket) =
         pipeline.try_admit_signatures_owned(input()).unwrap()
@@ -134,6 +189,258 @@ fn unconsumed_output_keeps_ingress_permit_until_consumed_or_dropped() {
 }
 
 #[test]
+fn authority_parking_hands_off_only_one_slot_and_retains_bytes_through_last_arc() {
+    let mut config = cfg();
+    let bytes = input().reservation(&config).unwrap();
+    let reserve = BatchRequest::retained_reservation(
+        config.authentication.body_bytes.min(config.plan.body_bytes),
+        &config,
+    )
+    .unwrap();
+    config.max_retained_bytes = 2 * bytes + reserve;
+    let (pipeline, receiver) = inert_pipeline(config);
+    let mut first = completed(&pipeline, &receiver);
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 1, 0));
+    // A result held by its caller still occupies active ingress until the
+    // explicit stage handoff, even though resident compute has completed.
+    assert!(matches!(
+        pipeline.try_admit_signatures_owned(input()).unwrap(),
+        SignatureAdmissionSubmission::Backpressured(_)
+    ));
+    let retained = first._permit.clone();
+    first.park_for_authority().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
+    let mut second = completed(&pipeline, &receiver);
+    assert_eq!(all_usage(&pipeline), (0, 2 * bytes, 0, 1, 1));
+    let before = all_usage(&pipeline);
+    assert!(first.park_for_authority().is_err());
+    assert!(second.park_for_authority().is_err());
+    assert_eq!(all_usage(&pipeline), before);
+    assert!(matches!(
+        pipeline.try_admit_signatures_owned(input()).unwrap(),
+        SignatureAdmissionSubmission::Backpressured(_)
+    ));
+    let Submission::Accepted(candidate) = pipeline.try_submit_owned(request(empty_root())).unwrap()
+    else {
+        panic!("overlapping admissions consumed the reserved candidate quota")
+    };
+    let command = receiver.try_recv().unwrap();
+    let candidate_bytes = all_usage(&pipeline).1 - 2 * bytes;
+    assert_eq!(
+        all_usage(&pipeline),
+        (1, 2 * bytes + candidate_bytes, 0, 1, 1)
+    );
+    drop(first);
+    assert!(second.park_for_authority().is_err());
+    assert_eq!(all_usage(&pipeline).4, 1);
+    // The final Arc, not output/ticket consumption, retires the byte and role
+    // charge. Moving to authority must never drop an active signature charge.
+    drop(retained);
+    assert_eq!(all_usage(&pipeline), (1, bytes + candidate_bytes, 0, 1, 0));
+    second.park_for_authority().unwrap();
+    assert_eq!(all_usage(&pipeline), (1, bytes + candidate_bytes, 0, 0, 1));
+    drop((second, candidate, command));
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
+fn source_parking_preserves_bytes_and_reclaims_only_the_unique_authority_slot() {
+    let mut config = cfg();
+    let bytes = input().reservation(&config).unwrap();
+    let reserve = BatchRequest::retained_reservation(
+        config.authentication.body_bytes.min(config.plan.body_bytes),
+        &config,
+    )
+    .unwrap();
+    config.max_retained_bytes = 3 * bytes + reserve;
+    let (pipeline, receiver) = inert_pipeline(config);
+    let mut first = completed(&pipeline, &receiver);
+    first.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 0));
+    assert!(first.park_for_authority().is_err());
+    let mut second = completed(&pipeline, &receiver);
+    second.park_for_authority().unwrap();
+    let mut third = completed(&pipeline, &receiver);
+    let before = all_usage(&pipeline);
+    assert_eq!(before, (0, 3 * bytes, 0, 1, 1));
+    assert!(!first.resume_authority().unwrap());
+    first.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), before);
+    third.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, 3 * bytes, 0, 0, 1));
+    second.park_for_source().unwrap();
+    assert_eq!(all_usage(&pipeline), (0, 3 * bytes, 0, 0, 0));
+    assert!(first.resume_authority().unwrap());
+    assert!(!second.resume_authority().unwrap());
+    assert!(!third.resume_authority().unwrap());
+    assert!(first.resume_authority().is_err());
+    let retained = first._permit.clone();
+    drop((second, third, first));
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 1));
+    drop(retained);
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
+fn parked_source_charge_still_reserves_the_maximum_candidate_bytes() {
+    let mut config = cfg();
+    let bytes = input().reservation(&config).unwrap();
+    let reserve = BatchRequest::retained_reservation(
+        config.authentication.body_bytes.min(config.plan.body_bytes),
+        &config,
+    )
+    .unwrap();
+    config.max_retained_bytes = 2 * bytes + reserve - 1;
+    let (pipeline, receiver) = inert_pipeline(config);
+    let mut output = completed(&pipeline, &receiver);
+    output.park_for_source().unwrap();
+    assert!(matches!(
+        pipeline.try_admit_signatures_owned(input()).unwrap(),
+        SignatureAdmissionSubmission::Backpressured(_)
+    ));
+    assert_eq!(all_usage(&pipeline), (0, bytes, 0, 0, 0));
+    let Submission::Accepted(candidate) = pipeline.try_submit_owned(request(empty_root())).unwrap()
+    else {
+        panic!("parked bytes prevented the reserved candidate")
+    };
+    drop((output, candidate, receiver.try_recv().unwrap()));
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
+fn parked_reply_abandonment_releases_its_original_owner_only() {
+    let (pipeline, receiver) = inert_pipeline(cfg());
+    let (other, _) = inert_pipeline(cfg());
+    let ticket = admitted(&pipeline);
+    let (mut output, reply) = rejected_output(&pipeline, next(&receiver));
+    output.park_for_authority().unwrap();
+    assert_eq!(all_usage(&pipeline).4, 1);
+    assert_eq!(all_usage(&other), (0, 0, 0, 0, 0));
+    assert!(reply.send(Ok(output)).is_ok());
+    drop(ticket);
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+    assert_eq!(all_usage(&other), (0, 0, 0, 0, 0));
+}
+
+#[test]
+fn authority_handoff_rejects_non_ingress_role_without_changing_accounting() {
+    let (pipeline, _) = inert_pipeline(cfg());
+    let permit = pipeline.reserve(23, false).unwrap().unwrap();
+    assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
+    assert!(permit.park_for_authority().is_err());
+    assert!(permit.park_for_source().is_err());
+    assert!(permit.resume_authority().is_err());
+    assert_eq!(all_usage(&pipeline), (1, 23, 0, 0, 0));
+    drop(permit);
+    assert_eq!(all_usage(&pipeline), (0, 0, 0, 0, 0));
+}
+
+#[test]
+#[ignore = "real trusted AOEM; single-row APFL projection preserves exact signature fact and original owner"]
+fn admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade() -> Result<()> {
+    use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendIntentV3, SignedAssetSpendV3};
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
+    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .context("explicit trusted AOEM test library required")?;
+    let facade =
+        novovm_exec::AoemExecFacade::open(std::path::Path::new(&library), Default::default())?;
+    let runtime =
+        facade.mldsa_runtime_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
+    let key = runtime.generate_keypair()?;
+    let mut config = cfg();
+    config.authentication.transaction_bytes = 8192;
+    config.plan.transaction_bytes = 8192;
+    let signer = facade.asset_spend_signer_v3()?;
+    let rows = (0..2)
+        .map(|nonce| {
+            signer.sign(
+                AssetSpendIntentV3 {
+                    authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
+                    chain_id: config.store.domain.chain_id,
+                    genesis: config.store.domain.genesis_config_commitment,
+                    payer: vec![1; 20],
+                    recipient: vec![2; 20],
+                    asset: 1,
+                    authorization_epoch: 1,
+                    spend_key_ref: spend_key_ref_v1(&key.public_key)?,
+                    amount: 1,
+                    max_fee: 50,
+                    nonce,
+                    not_before_height: 1,
+                    expires_at_height: 50,
+                    authority_update: None,
+                    recipient_creation: None,
+                },
+                &key.public_key,
+                &key.expanded_secret_key,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let raw = rows
+        .iter()
+        .map(SignedAssetSpendV3::encode)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let source = Arc::new(AssetSpendBatchV3::from_raw(
+        &raw,
+        AssetSpendBatchLimitsV3 {
+            transactions: 2,
+            transaction_bytes: 8192,
+            body_bytes: 16 * 1024,
+        },
+    )?);
+    let weak = Arc::downgrade(&source);
+    let (pipeline, _) = inert_pipeline(config.clone());
+    let (foreign, _) = inert_pipeline(config);
+    let original = admitted_uca_for_test(pipeline.identity.clone(), &facade, source.clone(), 1)?;
+    assert!(foreign.project_admitted_uca_row(&original).is_err());
+    let v3 = admitted_for_test(&pipeline, structured(&[signed(1, 10)]), 0)?;
+    assert!(pipeline.project_admitted_uca_row(&v3).is_err());
+    let (input, projected) = pipeline.project_admitted_uca_row(&original)?;
+    let AdmissionInput::Uca { batch, index } = &input else {
+        anyhow::bail!("asset projection changed contract");
+    };
+    assert_eq!(*index, 0);
+    assert_eq!(batch.len(), 1);
+    assert!(!Arc::ptr_eq(batch, &source));
+    assert_eq!(batch.view(0)?, source.view(1)?);
+    assert!(projected.matches_uca_source(batch, 0));
+    assert!(!projected.matches_uca_source(&source, 1));
+    assert!(!original.matches_uca_source(batch, 0));
+    assert!(
+        projected
+            .checked_uca()
+            .unwrap()
+            .reattach(batch.row(0)?)?
+            .signed()
+            == &rows[1]
+    );
+    assert!(projected
+        .checked_uca()
+        .unwrap()
+        .reattach(rows[0].clone())
+        .is_err());
+    assert!(batch.retained_bytes()? + projected.retained_metadata_bytes() <= 29_184);
+    assert!(pipeline
+        .rebind_admitted_uca(batch.clone(), &[&projected])
+        .is_ok());
+    assert!(foreign
+        .rebind_admitted_uca(batch.clone(), &[&projected])
+        .is_err());
+    assert_eq!(
+        pipeline.signature_counts(),
+        (0, 0),
+        "projection/rebind must not rerun crypto"
+    );
+    drop(original);
+    drop(source);
+    assert!(
+        weak.upgrade().is_none(),
+        "single-row fact still pins the full original dictionary"
+    );
+    Ok(())
+}
+
+#[test]
 fn backpressure_and_closed_pipeline_return_the_exact_original_raw_allocation() {
     let (mut pipeline, receiver) = inert_pipeline(cfg());
     let ticket = admitted(&pipeline);
@@ -237,14 +544,14 @@ fn admitted_regrouping_uses_exact_signatures_and_releases_old_dictionaries() -> 
     assert!(
         checked.retained_metadata_bytes() > 2 * std::mem::size_of::<SignatureCheckedTransfer>()
     );
+    let AdmittedSignatures::V3(rows) = &checked.checked else {
+        panic!("V3 admission contract changed");
+    };
     assert_eq!(
-        checked.checked.transactions()[0].transfer().signature,
+        rows.transactions()[0].transfer().signature,
         first.checked().transfer().signature
     );
-    assert_eq!(
-        checked.checked.transactions()[1].tx_hash(),
-        second.checked().tx_hash()
-    );
+    assert_eq!(rows.transactions()[1].tx_hash(), second.checked().tx_hash());
     drop((original, first, second));
     assert!(
         old.upgrade().is_none(),

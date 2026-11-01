@@ -1,0 +1,39 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error[E0277]: `novovm_protocol::uca_spend::SignedAssetSpendV2` doesn't implement `std::fmt::Debug`
+   --> crates\novovm-node\src\native_pipeline\pipeline\admission\tests.rs:408:5
+    |
+408 | /     assert_eq!(
+409 | |         projected
+410 | |             .checked_uca()
+411 | |             .unwrap()
+...   |
+414 | |         &rows[1]
+415 | |     );
+    | |_____^ the trait `std::fmt::Debug` is not implemented for `novovm_protocol::uca_spend::SignedAssetSpendV2`
+    |
+    = note: this error originates in the macro `assert_eq` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0506]: cannot assign to `*corpus.signed` because it is borrowed
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_load\uca.rs:732:13
+    |
+660 |         let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
+    |                           ----------------------------------------------------------------- `*corpus.signed` is borrowed here
+...
+665 |             let signed = match corpus.signed.as_ref().filter(|_| !mode.dynamic_windows()) {
+    |                                ------------- borrow occurs due to use in closure
+...
+732 |             corpus.signed = Some(raw.clone());
+    |             ^^^^^^^^^^^^^ `*corpus.signed` is assigned to here but it was already borrowed
+...
+800 |                 &make_signed,
+    |                 ------------ borrow later used here
+
+Some errors have detailed explanations: E0277, E0506.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `novovm-node` (lib test) due to 3 previous errors

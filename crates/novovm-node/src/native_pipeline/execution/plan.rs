@@ -154,7 +154,7 @@ impl BatchPlan {
             let len = match &source {
                 BatchSource::Raw(raw) => raw[index].len(),
                 BatchSource::Apfl(batch) => batch.row(index)?.encoded_len()?,
-                BatchSource::Uca(batch) => batch.raw_transaction(index)?.len(),
+                BatchSource::Uca(batch) => batch.transaction_bytes(index)?,
             };
             if len == 0 || len > budget.transaction_bytes {
                 bail!("batch raw transaction size exceeds budget or empty");
@@ -330,7 +330,7 @@ impl BoundBatchCapture {
     pub(crate) fn advance_with_seed(
         &mut self,
         max_edge_steps: usize,
-        seed: Option<&crate::native_pipeline::state::frontier::PostStateSeed>,
+        seed: Option<&crate::native_pipeline::state::frontier::StateReadSeed>,
     ) -> Result<CaptureStep> {
         self.capture.advance_with_seed(max_edge_steps, seed)
     }
@@ -406,7 +406,7 @@ impl UnpublishedBatchEffects {
     pub(crate) fn into_poststate_seed(
         self,
         budget: CaptureBudget,
-    ) -> Result<Option<crate::native_pipeline::state::frontier::PostStateSeed>> {
+    ) -> Result<Option<crate::native_pipeline::state::frontier::StateReadSeed>> {
         self.input.into_poststate_seed(self.update, budget)
     }
 
@@ -441,7 +441,11 @@ fn framed_source_row(digest: &mut Sha256, source: &BatchSource, index: usize) ->
             digest.update(u64::try_from(row.encoded_len()?)?.to_be_bytes());
             row.update_canonical_digest(digest)
         }
-        BatchSource::Uca(batch) => framed(digest, &batch.raw_transaction(index)?),
+        BatchSource::Uca(batch) => {
+            digest.update(u64::try_from(batch.transaction_bytes(index)?)?.to_be_bytes());
+            batch.view(index)?.update_canonical_digest(digest)?;
+            Ok(())
+        }
     }
 }
 

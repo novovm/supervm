@@ -1,0 +1,42 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+    Checking novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+    Checking novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error: large size difference between variants
+  --> crates\novovm-node\src\native_pipeline\consensus\native_lifecycle\ingress.rs:29:1
+   |
+29 | / pub(crate) enum TransactionSource {
+30 | |     Raw { message: Arc<Message>, origin: TransactionOrigin },
+   | |     -------------------------------------------------------- the second-largest variant contains at least 24 bytes
+31 | |     Checked { checked: CheckedTransactionSource, origin: TransactionOrigin },
+   | |     ------------------------------------------------------------------------ the largest variant contains at least 296 bytes
+32 | | }
+   | |_^ the entire enum is at least 296 bytes
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#large_enum_variant
+   = note: `-D clippy::large-enum-variant` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::large_enum_variant)]`
+help: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+   |
+31 -     Checked { checked: CheckedTransactionSource, origin: TransactionOrigin },
+31 +     Checked { checked: Box<CheckedTransactionSource>, origin: TransactionOrigin },
+   |
+
+error: the `Err`-variant returned from this function is very large
+  --> crates\novovm-node\src\native_pipeline\consensus\native_lifecycle\ingress.rs:82:10
+   |
+82 |     ) -> std::result::Result<Option<TransactionSource>, (CheckedTransactionSource, anyhow::Error)> {
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 288 bytes
+   |
+   = help: try reducing the size of `(native_pipeline::consensus::native_lifecycle::ingress::CheckedTransactionSource, anyhow::Error)`, for example by boxing large elements or replacing it with `Box<(native_pipeline::consensus::native_lifecycle::ingress::CheckedTransactionSource, anyhow::Error)>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#result_large_err
+   = note: `-D clippy::result-large-err` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::result_large_err)]`
+
+error: could not compile `novovm-node` (lib) due to 2 previous errors

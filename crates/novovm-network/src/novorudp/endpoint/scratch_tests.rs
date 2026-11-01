@@ -94,15 +94,64 @@ fn scratch_long_then_short_authenticated_datagrams_use_only_received_prefix() ->
         if old_length != 0 {
             assert!(encrypted.len() < old_length);
         }
-        let report = endpoint.poll_with_receiver(1000, Instant::now(), 1, |wire| {
-            wire[..encrypted.len()].copy_from_slice(&encrypted);
-            Ok(Some((encrypted.len(), source)))
-        })?;
+        let report = if sequence == 0 {
+            endpoint.poll_with_receiver(1000, Instant::now(), 1, |wire| {
+                wire[..encrypted.len()].copy_from_slice(&encrypted);
+                Ok(Some((encrypted.len(), source)))
+            })?
+        } else {
+            let mut packet = Some(encrypted.clone());
+            endpoint.poll_with_owned_receiver(1000, Instant::now(), 1, || {
+                Ok(packet.take().map(|packet| (packet, source)))
+            })?
+        };
         assert_eq!(report.rejected_datagrams, 0);
         assert_eq!(report.frames.len(), 1);
         assert_eq!(report.frames[0].frame(), &frame);
         assert_eq!(endpoint.receive_scratch.as_ptr() as usize, allocation);
         old_length = encrypted.len();
+    }
+    Ok(())
+}
+
+#[test]
+fn owned_receive_retains_quantum_oversize_and_budget_accounting() -> Result<()> {
+    for owned in [false, true] {
+        let mut endpoint = listener()?;
+        let source = endpoint.local_addr()?;
+        let now = Instant::now();
+        endpoint.set_wire_budget_v1(2400, now)?;
+        endpoint.receive_scratch.fill(0xa5);
+        let mut packets = VecDeque::from([
+            None,
+            Some(vec![0; 1300]),
+            Some(vec![0; 1100]),
+            Some(vec![0; 100]),
+        ]);
+        for (quantum, rejected) in [(3, 2), (1, 1)] {
+            let report = if owned {
+                endpoint.poll_with_owned_receiver(1000, now, quantum, || {
+                    Ok(packets.pop_front().flatten().map(|wire| (wire, source)))
+                })?
+            } else {
+                endpoint.poll_with_receiver(1000, now, quantum, |scratch| {
+                    Ok(packets.pop_front().flatten().map(|wire| {
+                        scratch[..wire.len()].copy_from_slice(&wire);
+                        (wire.len(), source)
+                    }))
+                })?
+            };
+            assert_eq!(report.rejected_datagrams, rejected);
+            assert!(report.frames.is_empty());
+        }
+        assert!(packets.is_empty());
+        let usage = endpoint.wire_usage_v1(now).unwrap();
+        assert_eq!(usage.received_bytes, 2500);
+        assert_eq!(usage.admitted_receive_bytes, 2400);
+        assert_eq!(usage.receive_dropped, 1);
+        if owned {
+            assert!(endpoint.receive_scratch.iter().all(|byte| *byte == 0xa5));
+        }
     }
     Ok(())
 }

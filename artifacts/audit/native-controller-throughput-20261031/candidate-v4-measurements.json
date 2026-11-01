@@ -1,0 +1,712 @@
+{
+  "scope": "eight original-node 65K rounds; slow samples from retained observations, not internal finality; no diagnostic sampling during timed runs",
+  "paired_source": "bulk-authority-paired-29988-1793423229816.json",
+  "continuous_source": "continuous_8192_outstanding_receipt_anchored_windows-paired-33612-1793439768763.json",
+  "continuous_same_signed_bytes": false,
+  "measurements": [
+    {
+      "label": "before_cpu",
+      "source": "uca-29988-1793422985152893800",
+      "tps": 2429.7820930072357,
+      "seconds": 26.971966,
+      "latency": {
+        "p50": 3267469,
+        "p95": 4370357,
+        "p99": 4827390,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 4828749,
+        "height": 26,
+        "first_submit_us": 7953295,
+        "observed_us": [
+          12551024,
+          12472255,
+          12782044,
+          12471470
+        ],
+        "hash": [
+          6,
+          216,
+          216,
+          223,
+          149,
+          255,
+          132,
+          146,
+          80,
+          248,
+          196,
+          188,
+          138,
+          200,
+          92,
+          138,
+          103,
+          73,
+          108,
+          171,
+          118,
+          94,
+          98,
+          87,
+          63,
+          63,
+          36,
+          208,
+          13,
+          222,
+          16,
+          76
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 164710,
+      "query_rows": 21082880,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    },
+    {
+      "label": "after_cpu",
+      "source": "uca-29988-1793423040881454400",
+      "tps": 2693.216481534745,
+      "seconds": 24.333729,
+      "latency": {
+        "p50": 2913013,
+        "p95": 3861436,
+        "p99": 4033945,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 4094354,
+        "height": 8,
+        "first_submit_us": 3301,
+        "observed_us": [
+          4097655,
+          3958077,
+          3974153,
+          4061570
+        ],
+        "hash": [
+          139,
+          208,
+          189,
+          51,
+          141,
+          76,
+          190,
+          78,
+          232,
+          231,
+          84,
+          139,
+          176,
+          135,
+          166,
+          255,
+          159,
+          224,
+          109,
+          85,
+          229,
+          252,
+          57,
+          3,
+          152,
+          95,
+          228,
+          40,
+          112,
+          216,
+          144,
+          81
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 146056,
+      "query_rows": 18695168,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    },
+    {
+      "label": "before_gpu",
+      "source": "uca-29988-1793423084192637400",
+      "tps": 2363.424988538276,
+      "seconds": 27.729249,
+      "latency": {
+        "p50": 3225162,
+        "p95": 4471359,
+        "p99": 4897744,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 4901748,
+        "height": 8,
+        "first_submit_us": 3318,
+        "observed_us": [
+          4902335,
+          4870754,
+          4861281,
+          4905066
+        ],
+        "hash": [
+          139,
+          208,
+          189,
+          51,
+          141,
+          76,
+          190,
+          78,
+          232,
+          231,
+          84,
+          139,
+          176,
+          135,
+          166,
+          255,
+          159,
+          224,
+          109,
+          85,
+          229,
+          252,
+          57,
+          3,
+          152,
+          95,
+          228,
+          40,
+          112,
+          216,
+          144,
+          81
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 169592,
+      "query_rows": 21707776,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    },
+    {
+      "label": "after_gpu",
+      "source": "uca-29988-1793423135088834600",
+      "tps": 2629.244966267264,
+      "seconds": 24.925787,
+      "latency": {
+        "p50": 3028383,
+        "p95": 3611843,
+        "p99": 3765264,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 3774079,
+        "height": 49,
+        "first_submit_us": 15980841,
+        "observed_us": [
+          19445038,
+          19505409,
+          19754920,
+          19506809
+        ],
+        "hash": [
+          146,
+          215,
+          124,
+          15,
+          115,
+          173,
+          49,
+          233,
+          12,
+          255,
+          168,
+          184,
+          225,
+          202,
+          7,
+          50,
+          251,
+          136,
+          217,
+          10,
+          146,
+          222,
+          55,
+          39,
+          126,
+          27,
+          175,
+          74,
+          74,
+          131,
+          20,
+          243
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 147974,
+      "query_rows": 18940672,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    },
+    {
+      "label": "before_cpu_repeat",
+      "source": "uca-29988-1793423181340291900",
+      "tps": 2213.7905681023167,
+      "seconds": 29.603523,
+      "latency": {
+        "p50": 3608676,
+        "p95": 4391852,
+        "p99": 4593564,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 4612954,
+        "height": 14,
+        "first_submit_us": 3627967,
+        "observed_us": [
+          8107783,
+          8050587,
+          8240921,
+          8038108
+        ],
+        "hash": [
+          115,
+          97,
+          180,
+          195,
+          187,
+          162,
+          176,
+          38,
+          121,
+          248,
+          182,
+          238,
+          116,
+          187,
+          184,
+          0,
+          208,
+          137,
+          118,
+          247,
+          54,
+          5,
+          245,
+          107,
+          252,
+          27,
+          47,
+          66,
+          193,
+          221,
+          137,
+          222
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 178830,
+      "query_rows": 22890240,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    },
+    {
+      "label": "continuous_cpu",
+      "source": "uca-33612-1793439630937305500",
+      "tps": 2527.6557809230258,
+      "seconds": 25.927581,
+      "latency": {
+        "p50": 3059659,
+        "p95": 3858465,
+        "p99": 4330006,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 4353109,
+        "height": 8,
+        "first_submit_us": 3100,
+        "observed_us": [
+          4287438,
+          4356209,
+          4280202,
+          4281204
+        ],
+        "hash": [
+          49,
+          187,
+          151,
+          40,
+          187,
+          239,
+          17,
+          153,
+          16,
+          53,
+          233,
+          4,
+          48,
+          198,
+          88,
+          17,
+          57,
+          203,
+          97,
+          249,
+          205,
+          126,
+          99,
+          198,
+          121,
+          243,
+          247,
+          214,
+          176,
+          199,
+          121,
+          96
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 143245,
+      "query_rows": 18335360,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    },
+    {
+      "label": "continuous_gpu",
+      "source": "uca-33612-1793439675749198600",
+      "tps": 2608.2049249289407,
+      "seconds": 25.12686,
+      "latency": {
+        "p50": 2997594,
+        "p95": 4463882,
+        "p99": 4808843,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 4814891,
+        "height": 17,
+        "first_submit_us": 4565562,
+        "observed_us": [
+          8969298,
+          8982714,
+          9380453,
+          8971700
+        ],
+        "hash": [
+          225,
+          226,
+          84,
+          56,
+          195,
+          211,
+          193,
+          213,
+          4,
+          174,
+          128,
+          41,
+          57,
+          44,
+          178,
+          83,
+          119,
+          148,
+          53,
+          95,
+          147,
+          18,
+          226,
+          108,
+          79,
+          99,
+          99,
+          54,
+          17,
+          124,
+          140,
+          138
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 133198,
+      "query_rows": 17049344,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    },
+    {
+      "label": "continuous_cpu_repeat",
+      "source": "uca-33612-1793439723958260200",
+      "tps": 2547.242395168106,
+      "seconds": 25.728215,
+      "latency": {
+        "p50": 3119034,
+        "p95": 4023679,
+        "p99": 4140348,
+        "sample_count": 65536,
+        "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+      },
+      "max_observed": {
+        "latency_us": 4141948,
+        "height": 24,
+        "first_submit_us": 7510603,
+        "observed_us": [
+          11627245,
+          11639729,
+          11652551,
+          11628868
+        ],
+        "hash": [
+          117,
+          40,
+          1,
+          215,
+          246,
+          238,
+          143,
+          243,
+          26,
+          178,
+          193,
+          84,
+          90,
+          33,
+          238,
+          137,
+          86,
+          234,
+          129,
+          105,
+          171,
+          23,
+          71,
+          205,
+          171,
+          119,
+          25,
+          84,
+          24,
+          154,
+          221,
+          9
+        ]
+      },
+      "candidate_heights": 64,
+      "row_counts": [
+        1024
+      ],
+      "all_four_cold_heights": [
+        64,
+        64,
+        64,
+        64
+      ],
+      "passed": true,
+      "cold": true,
+      "full_fee_audit": true,
+      "all_accounts": true,
+      "account_count": 1025,
+      "successful": 65536,
+      "transport_failures": 0,
+      "expired": 0,
+      "nonce_rejects": 0,
+      "wire_delivered": 64,
+      "query_requests": 151846,
+      "query_rows": 19436288,
+      "diag": [
+        false,
+        false,
+        false
+      ],
+      "apfl_sizes": [
+        5453061
+      ]
+    }
+  ]
+}

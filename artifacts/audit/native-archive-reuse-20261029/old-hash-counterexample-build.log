@@ -1,0 +1,28 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+warning: unused `novovm_network::object_link::NativeLinkPoll` that must be used
+   --> crates\novovm-node\src\native_pipeline\consensus\native\tests.rs:153:9
+    |
+153 | /         mesh.channels[0].poll_io(
+154 | |             mesh.wall_base + mesh.start.elapsed().as_millis() as u64,
+155 | |             Instant::now(),
+156 | |             64,
+157 | |         )?;
+    | |__________^
+    |
+    = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+    |
+153 |         let _ = mesh.channels[0].poll_io(
+    |         +++++++
+
+warning: `novovm-node` (lib test) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 3m 13s
+  Executable unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_network-bf7f7dcc267366bb.exe)
+  Executable unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_node-4821773a7b14d22a.exe)

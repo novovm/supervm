@@ -1,0 +1,7 @@
+
+running 1 test
+fee-page-delta tree-only: ledger_puts=3073 full_changes=3106 delta_changes=3074 full_stages=6160 delta_stages=6148 full_loaded=6149 delta_loaded=6148 full_max_put_run=3073 delta_max_put_run=3074 full_reachability=6148 delta_reachability=0
+test native_pipeline::business::nov_transfer_batch::execution::fee_delta_tests::fee_page_delta_removes_reachability_rewalk_for_1024_account_put_run ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1826 filtered out; finished in 0.05s
+

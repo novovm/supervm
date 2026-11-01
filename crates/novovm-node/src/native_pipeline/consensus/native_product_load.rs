@@ -5,14 +5,11 @@
 use super::*;
 use crate::native_pipeline::{
     business::direct_nov_fee::{quote_transfer, TransferFeeRequest},
-    consensus::{
-        native::{LaneLimits, MessageDomain},
-        transport::DecodeLimits,
-    },
+    consensus::native::{LaneLimits, MessageDomain},
     ingress::apfl::{ApflLimits, ApflTransferBatch},
     service::{
         client::{NativeApplicationClient, PreparedApplicationInput, PreparedQuery},
-        ResidentConfig,
+        native_decode_limits, ResidentConfig,
     },
 };
 use novovm_network::novorudp::{
@@ -26,12 +23,18 @@ use novovm_protocol::native_query::{
     AccountId, Answer, Balance, Query, ReceiptState, Status, MAX_RECEIPTS, STREAM,
 };
 use serde::Serialize;
-use std::{collections::BTreeSet, net::UdpSocket};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    net::UdpSocket,
+};
 
 const WINDOW: usize = 8192;
-const MAX_MESSAGE: usize = 512 * 1024;
 // Existing endpoint/object sender/reassembly contracts all cap a turn at 64.
 const IO_QUANTUM: usize = 64;
+const RECENT_QUERY_COMPLETIONS: usize = 8;
+
+#[path = "native_product_load/uca.rs"]
+mod uca;
 
 /// Diagnostic only. The ABI opens databases read/write even for reads: callers
 /// must supply an offline COPY, never the measured store or a running signer.
@@ -209,8 +212,7 @@ fn inspect_copied_first_height_decision() -> Result<()> {
 }
 
 fn body_budget(batch: usize) -> usize {
-    // Same original service::body_byte_limit, not a wider client-only budget.
-    (batch * 1024).min(384 * 1024)
+    native_decode_limits(batch, false).body_bytes
 }
 
 fn env_count(name: &str, default: usize, max: usize) -> Result<usize> {
@@ -249,6 +251,8 @@ fn client(
     batch: usize,
 ) -> Result<NativeApplicationClient> {
     let config: ResidentConfig = serde_json::from_slice(&fs::read(&nodes.configs[index])?)?;
+    let codec = native_decode_limits(batch, config.uca_initialization.is_some());
+    let message_bytes = codec.message_bytes;
     NativeApplicationClient::connect(
         UdpSocket::bind("127.0.0.1:0")?,
         SigningKey::from_bytes(&[201; 32]),
@@ -262,26 +266,21 @@ fn client(
             protocol: config.genesis.protocol_commitment,
             validators: set,
         },
-        DecodeLimits {
-            transactions: batch,
-            transaction_bytes: 1024,
-            body_bytes: body_budget(batch),
-            message_bytes: MAX_MESSAGE,
-        },
+        codec,
         LaneLimits {
             receive: ReassemblyLimits {
-                max_message_bytes: MAX_MESSAGE,
+                max_message_bytes: message_bytes,
                 messages: 8,
-                bytes: 8 * MAX_MESSAGE,
+                bytes: 8 * message_bytes,
                 peer_messages: 8,
-                peer_bytes: 8 * MAX_MESSAGE,
+                peer_bytes: 8 * message_bytes,
                 ttl: Duration::from_secs(30),
             },
             send: NativeSendLimits {
                 messages: 8,
-                bytes: 8 * MAX_MESSAGE,
+                bytes: 8 * message_bytes,
                 peer_messages: 8,
-                peer_bytes: 8 * MAX_MESSAGE,
+                peer_bytes: 8 * message_bytes,
             },
         },
         NativeSendPolicy {
@@ -291,6 +290,11 @@ fn client(
                 batch_size: 32,
                 batch_pause_ms: 0,
                 ack_wait_ms: 10,
+                // Match the original node's bounded retry policy in BOTH
+                // layers: the sender combines window/pacing flags with OR.
+                // Keep probing temporary receiver backpressure until the
+                // unchanged object TTL, rather than abandoning after 8 polls.
+                no_progress_backoff: false,
                 ..Default::default()
             },
             pacing: NovoRudpPacingProfile {
@@ -309,8 +313,16 @@ fn client(
 }
 
 fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer> {
+    query_before(client, selector, Instant::now() + Duration::from_secs(5))
+}
+
+fn query_before(
+    client: &mut NativeApplicationClient,
+    selector: Query,
+    overall_deadline: Instant,
+) -> Result<Answer> {
     let request = client.prepare_query(selector.clone())?;
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = (Instant::now() + Duration::from_secs(5)).min(overall_deadline);
     let mut sent = false;
     loop {
         let now = Instant::now();
@@ -329,17 +341,46 @@ fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer
         std::thread::yield_now();
     }
 }
-fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> Result<Vec<Status>> {
-    let deadline = Instant::now() + Duration::from_secs(90);
+fn ready(
+    nodes: &mut ProductNodes,
+    clients: &mut [NativeApplicationClient],
+    set: Arc<ValidatorSet>,
+    batch: usize,
+) -> Result<Vec<Status>> {
+    // Untimed fixture preparation, not a node/transport/consensus timeout.
+    // Large independently approved initial states may take longer to install.
+    let seconds = env_count("NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS", 90, 3600)?;
+    let deadline = Instant::now() + Duration::from_secs(seconds as u64);
     loop {
         nodes.alive()?;
         let mut statuses = Vec::new();
-        for client in clients.iter_mut() {
-            let Answer::Status(status) = query(client, Query::Status)? else {
-                bail!("native status missing");
-            };
-            ensure!(!status.projection_failed, "native projection failure");
-            statuses.push(status);
+        for (index, connection) in clients.iter_mut().enumerate() {
+            loop {
+                let now = Instant::now();
+                ensure!(now < deadline, "native startup/recovery deadline");
+                let attempt_deadline = deadline.min(now + Duration::from_secs(5));
+                match super::application::recovery_status(nodes, connection, attempt_deadline) {
+                    Ok(status) => {
+                        statuses.push(status);
+                        break;
+                    }
+                    Err(error) if error.is::<super::application::QueryTimeout>() => {
+                        let now = Instant::now();
+                        if now >= deadline {
+                            return Err(error.context("native startup/recovery deadline"));
+                        }
+                        if connection.startup_handshake_expired(now) {
+                            // Preparation can outlive an initial handshake. No
+                            // connected session or measured load is restarted.
+                            *connection = client(nodes, index, set.clone(), batch)?;
+                            eprintln!(
+                                "native startup renewed expired unconnected client peer={index}"
+                            );
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
         }
         if statuses
             .iter()
@@ -354,18 +395,45 @@ fn ready(nodes: &mut ProductNodes, clients: &mut [NativeApplicationClient]) -> R
     }
 }
 
+#[test]
+#[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY for the existing protected identity fixture; no sleeping or node startup"]
+fn native_load_startup_client_expiry_is_not_a_lifetime_readiness_failure() -> Result<()> {
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/native-product-load")
+        .join(format!(
+            "startup-handshake-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+    fs::create_dir_all(&directory)?;
+    let (nodes, set) = setup_with_genesis(&directory, std::env::current_exe()?, genesis()?, 1)?;
+    let created_before = Instant::now();
+    let expired = client(&nodes, 0, set.clone(), 1)?;
+    assert!(!expired.startup_handshake_expired(created_before + Duration::from_secs(29)));
+    assert!(expired.startup_handshake_expired(Instant::now() + Duration::from_secs(31)));
+    let fresh_before = Instant::now();
+    let replacement = client(&nodes, 0, set, 1)?;
+    assert!(!replacement.startup_handshake_expired(fresh_before + Duration::from_secs(29)));
+    assert!(replacement.startup_handshake_expired(Instant::now() + Duration::from_secs(31)));
+    assert!(
+        nodes.processes.iter().all(Option::is_none),
+        "no node process or altered timeout is needed"
+    );
+    Ok(())
+}
+
 #[derive(Clone, Serialize)]
 struct Observation {
     hash: Hash,
     first_submit_us: Option<u64>,
-    finalized_us: [Option<u64>; 4],
+    receipt_query_observed_us: [Option<u64>; 4],
     receipt: Option<ReceiptState>,
     expected_nonce: u64,
     expected_fee: u128,
 }
 impl Observation {
     fn complete(&self) -> bool {
-        self.finalized_us.iter().all(Option::is_some)
+        self.receipt_query_observed_us.iter().all(Option::is_some)
     }
 }
 #[derive(Default, Serialize)]
@@ -374,15 +442,78 @@ struct Counts {
     application_batches_transport_delivered: usize,
     transport_failures: usize,
     observation_requests: usize,
+    receipt_query_requests_by_node: [usize; 4],
     observation_rows_received: usize,
+    receipt_query_rows_received_by_node: [usize; 4],
     observation_not_final: usize,
+    receipt_query_not_final_by_node: [usize; 4],
     observation_service_busy: usize,
+    receipt_query_service_busy_by_node: [usize; 4],
     successful_transactions: usize,
     business_failed_transactions: usize,
     rejected_nonce: usize,
     deadline_expirations: usize,
     maximum_outstanding: usize,
+    // Outbound query REQUEST completions, not replies or transaction finality.
+    // The matching response below retains that same request identity so a
+    // previous request still holding its one transport slot is distinguishable.
+    query_transport_recent: [VecDeque<QueryTransportObservation>; 4],
+    last_query_response: [Option<QueryResponseObservation>; 4],
+    query_timeout: Option<QueryTimeoutObservation>,
 }
+
+#[derive(Serialize)]
+struct QueryTransportObservation {
+    elapsed_us: u64,
+    fragment: Hash,
+    state: &'static str,
+}
+
+#[derive(Serialize)]
+struct QueryResponseObservation {
+    elapsed_us: u64,
+    sequence: u64,
+    fragment: Hash,
+}
+
+#[derive(Serialize)]
+struct QueryTimeoutObservation {
+    node: usize,
+    index: usize,
+    count: usize,
+    sent: bool,
+    elapsed_us: u64,
+    deadline_us: u64,
+    sequence: u64,
+    fragment: Hash,
+}
+
+impl Counts {
+    fn record_query_completion(
+        &mut self,
+        node: usize,
+        elapsed_us: u64,
+        fragment: Hash,
+        state: ObjectSendState,
+    ) {
+        let recent = &mut self.query_transport_recent[node];
+        if recent.len() == RECENT_QUERY_COMPLETIONS {
+            recent.pop_front();
+        }
+        recent.push_back(QueryTransportObservation {
+            elapsed_us,
+            fragment,
+            state: match state {
+                ObjectSendState::Sending => "sending",
+                ObjectSendState::Delivered => "delivered",
+                ObjectSendState::Expired => "expired",
+                ObjectSendState::SessionReplaced => "session_replaced",
+                ObjectSendState::Cancelled => "cancelled",
+            },
+        });
+    }
+}
+
 struct PendingRead {
     request: PreparedQuery,
     index: usize,
@@ -425,10 +556,10 @@ fn observe_receipt(
                 "receipt economics/nonce mismatch at {index}"
             );
             row.receipt = Some(value);
-            if row.finalized_us[node].is_some() {
+            if row.receipt_query_observed_us[node].is_some() {
                 return Ok(false);
             }
-            row.finalized_us[node] = Some(elapsed_us);
+            row.receipt_query_observed_us[node] = Some(elapsed_us);
             if row.complete() {
                 if success {
                     counts.successful_transactions += 1;
@@ -444,7 +575,7 @@ fn observe_receipt(
         }
         _ => {
             ensure!(
-                row.finalized_us[node].is_none(),
+                row.receipt_query_observed_us[node].is_none(),
                 "finalized receipt regressed at {index}"
             );
             counts.observation_not_final += 1;
@@ -467,35 +598,137 @@ fn drive(
     counts: &mut Counts,
     timeout: Duration,
 ) -> Result<Duration> {
-    let start = Instant::now();
-    let query_batch = env_count("NOVOVM_NATIVE_QUERY_BATCH", 1, MAX_RECEIPTS)?;
-    let cold = inputs.is_empty();
-    let mut dispatched = if cold { observations.len() } else { 0 };
-    let mut complete = 0;
-    let mut next_batch = 0;
-    let mut cursors = [0usize; 4];
-    let mut reads: [Option<PendingRead>; 4] = std::array::from_fn(|_| None);
-    let mut delivered = BTreeSet::new();
-    let ids: BTreeSet<_> = inputs.iter().map(PreparedApplicationInput::id).collect();
-    let mut last_alive = Instant::now();
-    while complete < observations.len() {
+    drive_at(
+        nodes,
+        clients,
+        ingress,
+        inputs,
+        batch,
+        observations,
+        counts,
+        timeout,
+        Instant::now(),
+        false,
+    )
+}
+
+// Rolling NUAS windows reuse this SAME SDK/observer. A shared origin retains
+// wave preparation/signing/head-query time and one overall deadline. Draining
+// actual input DONEs between waves prevents a prior completion being attributed
+// to the next wave; receipt timestamps remain the measurement endpoint.
+#[allow(clippy::too_many_arguments)]
+fn drive_at(
+    nodes: &mut ProductNodes,
+    clients: &mut [NativeApplicationClient],
+    ingress: usize,
+    inputs: &[PreparedApplicationInput],
+    batch: usize,
+    observations: &mut [Observation],
+    counts: &mut Counts,
+    timeout: Duration,
+    start: Instant,
+    drain_inputs: bool,
+) -> Result<Duration> {
+    let mut driver = LoadDriver::new(inputs, observations.len(), start)?;
+    while !driver.finished(observations.len(), inputs.len(), drain_inputs) {
+        driver.poll(
+            nodes,
+            clients,
+            ingress,
+            inputs,
+            batch,
+            observations,
+            counts,
+            timeout,
+        )?;
+        std::thread::yield_now();
+    }
+    observed_duration(observations, driver.cold)
+}
+
+// The same SDK send/query loop is reused by static, rolling and continuously
+// supplied workloads. Supply policy never performs business execution/finality.
+struct LoadDriver {
+    start: Instant,
+    query_batch: usize,
+    cold: bool,
+    dispatched: usize,
+    complete: usize,
+    next_batch: usize,
+    cursors: [usize; 4],
+    reads: [Option<PendingRead>; 4],
+    delivered: BTreeSet<Hash>,
+    ids: BTreeSet<Hash>,
+    last_alive: Instant,
+    finalized_heights: [u64; 4],
+}
+
+impl LoadDriver {
+    fn new(inputs: &[PreparedApplicationInput], rows: usize, start: Instant) -> Result<Self> {
+        let cold = inputs.is_empty();
+        Ok(Self {
+            start,
+            query_batch: env_count("NOVOVM_NATIVE_QUERY_BATCH", 1, MAX_RECEIPTS)?,
+            cold,
+            dispatched: if cold { rows } else { 0 },
+            complete: 0,
+            next_batch: 0,
+            cursors: [0; 4],
+            reads: std::array::from_fn(|_| None),
+            delivered: BTreeSet::new(),
+            ids: inputs.iter().map(PreparedApplicationInput::id).collect(),
+            last_alive: Instant::now(),
+            finalized_heights: [0; 4],
+        })
+    }
+
+    fn finished(&self, rows: usize, inputs: usize, drain_inputs: bool) -> bool {
+        self.complete == rows && (!drain_inputs || self.delivered.len() == inputs)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn poll(
+        &mut self,
+        nodes: &mut ProductNodes,
+        clients: &mut [NativeApplicationClient],
+        ingress: usize,
+        inputs: &[PreparedApplicationInput],
+        batch: usize,
+        observations: &mut [Observation],
+        counts: &mut Counts,
+        timeout: Duration,
+    ) -> Result<()> {
+        let start = self.start;
+        let query_batch = self.query_batch;
         let now = Instant::now();
         if start.elapsed() >= timeout {
             counts.deadline_expirations += 1;
-            bail!("native load timeout: completed={complete}/{}, dispatched={dispatched}, cursors={cursors:?}", observations.len());
+            bail!(
+                "native load timeout: completed={}/{}, dispatched={}, cursors={:?}",
+                self.complete,
+                observations.len(),
+                self.dispatched,
+                self.cursors
+            );
         }
-        if last_alive.elapsed() >= Duration::from_millis(100) {
+        if self.last_alive.elapsed() >= Duration::from_millis(100) {
             nodes.alive()?;
-            last_alive = now;
+            self.last_alive = now;
         }
         let wall = clock_ms()?;
         for (node, client) in clients.iter_mut().enumerate() {
             for done in client.poll(wall, now, IO_QUANTUM)?.completed {
                 if done.stream == STREAM {
+                    counts.record_query_completion(
+                        node,
+                        now.saturating_duration_since(start).as_micros() as u64,
+                        done.body.id(),
+                        done.state,
+                    );
                     continue;
                 }
                 if node != ingress
-                    || !ids.contains(&done.body.id())
+                    || !self.ids.contains(&done.body.id())
                     || done.state != ObjectSendState::Delivered
                 {
                     counts.transport_failures += 1;
@@ -504,31 +737,32 @@ fn drive(
                         done.state
                     );
                 }
-                if delivered.insert(done.body.id()) {
+                if self.delivered.insert(done.body.id()) {
                     counts.application_batches_transport_delivered += 1;
                 }
             }
         }
-        if !cold && next_batch < inputs.len() {
-            let end = (dispatched + batch).min(observations.len());
-            if end - complete <= WINDOW {
+        if !self.cold && self.next_batch < inputs.len() {
+            let end = (self.dispatched + batch).min(observations.len());
+            if end - self.complete <= WINDOW {
                 let elapsed = start.elapsed().as_micros() as u64;
-                for row in &mut observations[dispatched..end] {
+                for row in &mut observations[self.dispatched..end] {
                     row.first_submit_us.get_or_insert(elapsed);
                 }
-                if clients[ingress].try_send(&inputs[next_batch], now)? {
-                    dispatched = end;
-                    next_batch += 1;
+                if clients[ingress].try_send(&inputs[self.next_batch], now)? {
+                    self.dispatched = end;
+                    self.next_batch += 1;
                     counts.application_batches_sent += 1;
-                    counts.maximum_outstanding =
-                        counts.maximum_outstanding.max(dispatched - complete);
+                    counts.maximum_outstanding = counts
+                        .maximum_outstanding
+                        .max(self.dispatched - self.complete);
                 }
             }
         }
         for node in 0..4 {
-            if reads[node].is_none() && cursors[node] < dispatched {
-                let index = cursors[node];
-                let count = query_batch.min(dispatched - index);
+            if self.reads[node].is_none() && self.cursors[node] < self.dispatched {
+                let index = self.cursors[node];
+                let count = query_batch.min(self.dispatched - index);
                 let selector = if query_batch == 1 {
                     Query::Receipt {
                         hash: observations[index].hash,
@@ -543,7 +777,7 @@ fn drive(
                             .map_err(anyhow::Error::msg)?,
                     }
                 };
-                reads[node] = Some(PendingRead {
+                self.reads[node] = Some(PendingRead {
                     request: clients[node].prepare_query(selector)?,
                     index,
                     count,
@@ -551,11 +785,23 @@ fn drive(
                     deadline: now + Duration::from_secs(5),
                 });
                 counts.observation_requests += 1;
+                counts.receipt_query_requests_by_node[node] += 1;
             }
-            let Some(read) = reads[node].as_mut() else {
+            let Some(read) = self.reads[node].as_mut() else {
                 continue;
             };
             if now >= read.deadline {
+                let (sequence, fragment) = read.request.diagnostic_identity();
+                counts.query_timeout = Some(QueryTimeoutObservation {
+                    node,
+                    index: read.index,
+                    count: read.count,
+                    sent: read.sent,
+                    elapsed_us: now.saturating_duration_since(start).as_micros() as u64,
+                    deadline_us: read.deadline.saturating_duration_since(start).as_micros() as u64,
+                    sequence,
+                    fragment,
+                });
                 clients[node].abandon_query(&read.request)?;
                 counts.deadline_expirations += 1;
                 bail!(
@@ -571,20 +817,37 @@ fn drive(
             };
             let index = read.index;
             let count = read.count;
-            reads[node] = None;
+            let (sequence, fragment) = read.request.diagnostic_identity();
+            counts.last_query_response[node] = Some(QueryResponseObservation {
+                elapsed_us: now.saturating_duration_since(start).as_micros() as u64,
+                sequence,
+                fragment,
+            });
+            self.reads[node] = None;
             let states = match response.answer {
                 Answer::Receipt { state, .. } if query_batch == 1 => vec![state],
                 Answer::Receipts { states, .. } if query_batch > 1 => states.into_vec(),
                 Answer::Error(_) => {
                     counts.observation_service_busy += 1;
+                    counts.receipt_query_service_busy_by_node[node] += 1;
                     continue;
                 }
                 other => bail!("unexpected receipt answer: {other:?}"),
             };
             ensure!(states.len() == count, "native receipt batch shape mismatch");
+            counts.receipt_query_rows_received_by_node[node] += states.len();
             let elapsed_us = start.elapsed().as_micros() as u64;
             for (offset, state) in states.into_iter().enumerate() {
-                complete += usize::from(observe_receipt(
+                if let ReceiptState::Finalized { height, .. } = state {
+                    self.finalized_heights[node] = self.finalized_heights[node].max(height);
+                }
+                if !matches!(
+                    state,
+                    ReceiptState::Finalized { .. } | ReceiptState::RejectedNonce
+                ) {
+                    counts.receipt_query_not_final_by_node[node] += 1;
+                }
+                self.complete += usize::from(observe_receipt(
                     &mut observations[index + offset],
                     node,
                     index + offset,
@@ -593,17 +856,20 @@ fn drive(
                     counts,
                 )?);
             }
-            while cursors[node] < dispatched
-                && observations[cursors[node]].finalized_us[node].is_some()
+            while self.cursors[node] < self.dispatched
+                && observations[self.cursors[node]].receipt_query_observed_us[node].is_some()
             {
-                cursors[node] += 1;
+                self.cursors[node] += 1;
             }
         }
-        std::thread::yield_now();
+        Ok(())
     }
+}
+
+fn observed_duration(observations: &[Observation], cold: bool) -> Result<Duration> {
     let completed_us = observations
         .iter()
-        .flat_map(|row| row.finalized_us.iter().flatten().copied())
+        .flat_map(|row| row.receipt_query_observed_us.iter().flatten().copied())
         .max()
         .context("no finalized receipt observation")?;
     let first_submit_us = if cold {
@@ -776,7 +1042,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
                 observations.push(Observation {
                     hash: checked.tx_hash(),
                     first_submit_us: None,
-                    finalized_us: [None; 4],
+                    receipt_query_observed_us: [None; 4],
                     receipt: None,
                     expected_nonce: nonce as u64 + 1,
                     expected_fee: fee,
@@ -819,7 +1085,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         let mut clients = (0..4)
             .map(|i| client(&nodes, i, set.clone(), batch))
             .collect::<Result<Vec<_>>>()?;
-        let initial = ready(&mut nodes, &mut clients)?;
+        let initial = ready(&mut nodes, &mut clients, set.clone(), batch)?;
         ensure!(initial.iter().all(|s| s.height == 0), "not a fresh genesis");
         // Existing readiness replies only: no extra observation traffic and no
         // timer reset. These precede APFL preparation, not the first submission.
@@ -862,7 +1128,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
             "successful workload has business failures"
         );
         phase = "full native balances and head";
-        let before = ready(&mut nodes, &mut clients)?;
+        let before = ready(&mut nodes, &mut clients, set.clone(), batch)?;
         same_head(&before, before[0])?;
         ensure!(
             before.iter().all(|s| s.apfl_rows >= count as u64),
@@ -894,11 +1160,11 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         let mut clients = (0..4)
             .map(|i| client(&nodes, i, set.clone(), batch))
             .collect::<Result<Vec<_>>>()?;
-        let recovered = ready(&mut nodes, &mut clients)?;
+        let recovered = ready(&mut nodes, &mut clients, set.clone(), batch)?;
         same_head(&recovered, before[0])?;
         let mut cold = observations.clone();
         for row in &mut cold {
-            row.finalized_us = [None; 4];
+            row.receipt_query_observed_us = [None; 4];
         }
         let mut cold_counts = Counts::default();
         let cold_elapsed = drive(
@@ -930,7 +1196,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         .iter()
         .filter(|r| r.complete())
         .map(|r| {
-            r.finalized_us
+            r.receipt_query_observed_us
                 .iter()
                 .flatten()
                 .copied()
@@ -940,10 +1206,10 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         })
         .collect();
     latency.sort_unstable();
-    evidence["first_height_all_receipts_observed_us"] = json!(observations
+    evidence["first_height_all_receipt_queries_observed_us"] = json!(observations
         .iter()
         .filter(|row| matches!(row.receipt, Some(ReceiptState::Finalized { height: 1, .. })))
-        .flat_map(|row| row.finalized_us.iter().flatten())
+        .flat_map(|row| row.receipt_query_observed_us.iter().flatten())
         .max());
     evidence["phase"] = json!(phase);
     evidence["passed"] = json!(result.is_ok());
@@ -951,7 +1217,7 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
     evidence["counts"] = json!(counts);
     evidence["incomplete_timed_attempt_seconds"] =
         json!(timed_attempt.map(|start| start.elapsed().as_secs_f64()));
-    evidence["transactions_not_confirmed_on_all_four"] =
+    evidence["transactions_not_receipt_query_observed_on_all_four"] =
         json!(observations.iter().filter(|row| !row.complete()).count());
     evidence["elapsed_seconds"] = json!(measured.map(|d| d.as_secs_f64()));
     evidence["successful_tps"] =
@@ -959,8 +1225,8 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
     evidence["business_failed_tps"] =
         json!(measured.map(|d| counts.business_failed_transactions as f64 / d.as_secs_f64()));
     evidence["latency_us"] = json!({"p95":percentile(&latency,95),"p99":percentile(&latency,99),"sample_count":latency.len(),
-        "definition":"nearest-rank first native batch submission attempt to slowest of four final receipt replies; includes bounded one-query-per-session observer and submission-window scheduling"});
-    evidence["timing"]=json!("first native SDK submission attempt through all unique four-node finalized receipt responses; signatures, startup, APFL preparation, post-run economics and cold restart excluded");
+        "definition":"nearest-rank first native batch submission attempt to slowest of four receipt-query observations; includes bounded one-query-per-session observer and submission-window scheduling; not an internal finality timestamp"});
+    evidence["timing"]=json!("first native SDK submission attempt through all unique four-node receipt-query observations; signatures, startup, APFL preparation, post-run economics and cold restart excluded");
     fs::write(
         directory.join("observations.json"),
         serde_json::to_vec(&observations)?,
@@ -970,6 +1236,59 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
         serde_json::to_vec_pretty(&evidence)?,
     )?;
     result
+}
+
+#[test]
+fn native_load_query_failure_evidence_is_bounded_and_keeps_exact_request_identity() -> Result<()> {
+    let mut counts = Counts::default();
+    for n in 0..12_u8 {
+        counts.record_query_completion(0, n as u64, [n; 32], ObjectSendState::Delivered);
+    }
+    counts.record_query_completion(1, 20, [20; 32], ObjectSendState::Expired);
+    assert_eq!(
+        counts.query_transport_recent[0].len(),
+        RECENT_QUERY_COMPLETIONS
+    );
+    assert_eq!(
+        counts.query_transport_recent[0].front().unwrap().fragment,
+        [4; 32]
+    );
+    assert_eq!(
+        counts.query_transport_recent[0].back().unwrap().fragment,
+        [11; 32]
+    );
+    assert!(counts.query_transport_recent[2].is_empty());
+    counts.last_query_response[0] = Some(QueryResponseObservation {
+        elapsed_us: 21,
+        sequence: 42,
+        fragment: [42; 32],
+    });
+    counts.query_timeout = Some(QueryTimeoutObservation {
+        node: 0,
+        index: 1024,
+        count: 128,
+        sent: false,
+        elapsed_us: 5_000_022,
+        deadline_us: 5_000_022,
+        sequence: 43,
+        fragment: [43; 32],
+    });
+    let report = serde_json::to_value(&counts)?;
+    assert_eq!(
+        report["query_transport_recent"][0]
+            .as_array()
+            .unwrap()
+            .len(),
+        8
+    );
+    assert_eq!(report["query_transport_recent"][1][0]["state"], "expired");
+    assert_eq!(report["last_query_response"][0]["sequence"], 42);
+    assert_eq!(report["query_timeout"]["sequence"], 43);
+    assert_eq!(report["query_timeout"]["fragment"], json!(vec![43; 32]));
+    assert_eq!(report["query_timeout"]["sent"], false);
+    assert_eq!(report["query_timeout"]["index"], 1024);
+    assert_eq!(counts.successful_transactions, 0);
+    Ok(())
 }
 
 #[test]
@@ -990,7 +1309,7 @@ fn native_load_batch_observer_requires_every_node_and_does_not_count_retries() -
     let mut row = Observation {
         hash: [1; 32],
         first_submit_us: Some(0),
-        finalized_us: [None; 4],
+        receipt_query_observed_us: [None; 4],
         receipt: None,
         expected_nonce: 7,
         expected_fee: 45,
@@ -1019,7 +1338,10 @@ fn native_load_batch_observer_requires_every_node_and_does_not_count_retries() -
     assert!(observe_receipt(&mut row, 3, 0, good, 4, &mut counts)?);
     assert!(!observe_receipt(&mut row, 3, 0, good, 5, &mut counts)?);
     assert_eq!(counts.successful_transactions, 1);
-    assert_eq!(row.finalized_us, [Some(2), Some(2), Some(2), Some(4)]);
+    assert_eq!(
+        row.receipt_query_observed_us,
+        [Some(2), Some(2), Some(2), Some(4)]
+    );
     let wrong = ReceiptState::Finalized {
         success: false,
         nonce_after: 7,
@@ -1030,7 +1352,7 @@ fn native_load_batch_observer_requires_every_node_and_does_not_count_retries() -
     assert!(observe_receipt(&mut row, 3, 0, wrong, 6, &mut counts).is_err());
     assert!(observe_receipt(&mut row, 3, 0, ReceiptState::NotRecent, 6, &mut counts).is_err());
     let mut failed = row.clone();
-    failed.finalized_us = [None; 4];
+    failed.receipt_query_observed_us = [None; 4];
     failed.receipt = None;
     for node in 0..4 {
         assert_eq!(

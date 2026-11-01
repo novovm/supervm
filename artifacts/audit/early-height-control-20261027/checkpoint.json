@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-27",
+  "status": "BOUNDED_CORRECTNESS_FIX; PERFORMANCE_RECOVERY_NOT_ACHIEVED",
+  "branch": "dev/mldsa65-identity-closure",
+  "source_parent": "8625decc9dc86d0a482e92d24147ac671a3dae44",
+  "main_changed": false,
+  "cloud_ci_triggered": false,
+  "deployment_performed": false,
+  "reuse": {
+    "owner": "NativeLifecycle -> RoundProgress -> original ValidatorJournal and CandidatePipeline",
+    "replaced_work": "Dropping authenticated next-height control evidence while local parent journal ACK is pending, then depending on retransmission of already-completed native objects",
+    "change": "Extend existing future_offers custody to current/next height, keyed by height/peer/proposal-or-decision; promote only after original journal ACK and exact full-context match",
+    "bound": "Conservative maximum 4 entries per configured validator, independent of number of rounds; no future votes",
+    "authority": "Retained evidence is not a candidate, permission to sign, or permission to publish; original independent execution and journal remain mandatory",
+    "unchanged": ["ML-DSA-65", "UCA authorization and economic rules", "quorum", "production timeouts", "transport completion TTL", "384 KiB body budget", "AOEM", "Auto", "UCA successor guards", "shipped runtime library"]
+  },
+  "identities": {
+    "before_node_sha256": "fd1f4166692483ab8571de032008baa75b7ae5e0233a894739807af6da3cbcd7",
+    "after_node_sha256": "79291cc87e796b29d964cbdb08ccedfd211109a73890bda3ab86e13d4c826055",
+    "measured_test_client_sha256": "8ac5e7b13c20d69261758d607b210e600479109b820140208696223ffead2970",
+    "final_test_client_sha256": "09fd187be86b72c5e82c93b3bc2ae476d144ab80f16e3cdf203a7583d7747485",
+    "tracked_source_patch_sha256": "a269ef73c6aa48a6f961d21539874c3288c3d79b0ab9c53df2ca42fb614dfa90",
+    "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+    "aoem_scope": "explicit isolated candidate, not replacement of shipped SDK",
+    "post_measurement_test_only_change": "Clippy: enumerate mutable drivers instead of range indexing; no production source change"
+  },
+  "validation": {
+    "deterministic_old_production_new_tests": {"passed": 1, "failed": 2, "failure": "early next-height evidence lost after original parent ACK; no retransmission supplied"},
+    "deterministic_fixed": {"passed": 3, "failed": 0},
+    "related_original_progress_real_aoem": {"passed": 6, "failed": 0, "includes_three_new_tests": true},
+    "native_pipeline_default": {"passed": 459, "failed": 0, "ignored": 78},
+    "gpu_required_four_process_recovery": {
+      "passed": true, "real_machines": 1, "real_processes": 4, "offline_heights": 40,
+      "late_start_ms": 104034, "crash_at_durable_height": 1,
+      "target_archive_absent_at_crash": true, "final_height": 41,
+      "credited_respend_and_cold_recovery": true,
+      "source": "process-recovery-report.json"
+    },
+    "strict_clippy": "PASS: cargo clippy -p novovm-node --release --all-targets --locked --offline --no-deps -- -D warnings; 35.86s",
+    "clippy_first_attempt": "FAILED: new test needless_range_loop; corrected without lint suppression",
+    "format_and_diff_check": "PASS after test-only iterator correction",
+    "post_clippy_test_rebuild": "PASS; original progress group re-run 6 passed / 0 failed in 16.66s",
+    "initial_diagnostic_wrapper_failure": "Windows PowerShell 5 wrapper stopped on native stderr NativeCommandError; no product performance conclusion. Repeated with pwsh 7 and preserved both logs."
+  },
+  "measurement_contract": {
+    "transactions": 4096, "real_machines": 1, "real_processes": 4,
+    "asset_signature": "ML-DSA-65", "business_backend": "cpu_callbacks",
+    "diagnostics_enabled": true, "frame_rows": 32, "query_batch": 32,
+    "deadline_seconds": 90, "workers": 24, "battery_status_before_run": 2,
+    "stopwatch": "first native submission attempt including first-height wait through all-four receipt-query observations",
+    "not_timed": "startup, signing, post-load economics and cold reopen; same boundaries in compared rounds",
+    "warning": "Diagnostic runs, not release performance qualification; component times are overlapping and not additive"
+  },
+  "same_corpus_before_after": {
+    "input_sha256": "410e3137229ceb9ef3ada08d04dddfc4d91daad1ee3c79fc5c2ccdba7c2ae9ca",
+    "before_cpu": {"tps": 1079.4946615615565, "p95_us": 1676064, "p99_us": 1714870, "passed": true},
+    "after_cpu": {"tps": 956.1671144809362, "p95_us": 2125543, "p99_us": 2159672, "passed": true},
+    "before_gpu": {"passed": false, "deadline_seconds": 90, "observed_elapsed_seconds": 90.2392606, "completed": 2156, "dispatched": 4096, "successful_tps": null},
+    "after_gpu_and_before_cpu_repeat": "NOT_EXECUTED: harness stopped on old GPU deadline failure",
+    "result": "CPU negative sample retained; complete before/after series not obtained"
+  },
+  "separate_after_cpu_gpu_cpu": {
+    "input_sha256": "a224836f3f67218c79e8ea24163cf55a14590890aa33d894bbac577e4feb8e36",
+    "not_same_input_as_before_after_series": true,
+    "rounds": [
+      {"backend": "cpu", "tps": 153.25003056769407, "p95_us": 24189765, "p99_us": 24207779, "final_height": 78},
+      {"backend": "gpu_required", "tps": 569.5997810600842, "p95_us": 3818818, "p99_us": 3993537, "final_height": 76},
+      {"backend": "cpu", "tps": 1112.459437056415, "p95_us": 1702361, "p99_us": 1717286, "final_height": 73}
+    ],
+    "all_economic_and_cold_checks": "PASS",
+    "critical_events_dropped": 0,
+    "result": "Slow round remains; no stable throughput improvement demonstrated"
+  },
+  "remaining_slow_round": {
+    "report": "after-diagnostic-report.json round 0",
+    "node": 2, "height": 56, "consecutive_durable_ack_gap_ms": 21304.56,
+    "healthy_nodes": [0, 1, 3], "healthy_round_one_wait_heights": [58, 62],
+    "healthy_wait_ms_approx": 10040,
+    "observed": "Laggard has no current-round proposal_received event at h56, executes another local body, later obtains correct body and QC; rejected messages and expired sends are zero",
+    "wall_alignment": "h56 proposal origin is about 38ms AFTER laggard h55 durable ACK, unlike the deterministic early-parent-ACK defect",
+    "conclusion": "The proven early-height defect is not a complete explanation or fix for slow product runs. Exact remaining control/body/recovery delivery cause is OPEN. Do not attribute it to GPU, lookup copies, or Lookahead without evidence.",
+    "next_falsifiable_check": "native_lifecycle retirement cancels superseded realtime deliveries; recovery repeats identical RequestDecision/RequestBody every 250ms, while fragments/object_receiver completion history acknowledges Duplicate without redelivering to application. Determine whether this prevents needed recovery request processing after readiness/body-hint changes. Current h56 has no per-object cancellation/dedup trace: hypothesis, not established root cause. requested_bodies=178 counts enqueue, not 178 server deliveries.",
+    "specific_ownership_counterexample_to_add": "enqueue_kind deduplicates an archive reply against identical queued realtime bytes but does not promote Delivery.archive. The archive caller clears decision_pending/body_request on true; realtime retirement may then cancel that delivery. Verify this exact ownership window before changing it; not yet demonstrated as the h56 cause."
+  },
+  "open": [
+    "Residual slow-round control/body delivery attribution and fix",
+    "Prior network default-concurrency failures remain unresolved; serial pass is not a fix",
+    "UCA exact-parent state reuse and successor integration not changed",
+    "65,536 workload and stable TPS/P95/P99 recovery not qualified",
+    "Full candidate CI, Linux artifact and multi-host acceptance not performed"
+  ],
+  "raw_evidence": "Selected unmodified reports/logs in raw-evidence.tar.gz; no node configs, private keys, databases, signing journals or protected knowledge included",
+  "raw_evidence_sha256": "2b81668a2ac6f34e07e71e73deea1e3447f7da17eaaf64d095e2ba4a9c2f6af6"
+}

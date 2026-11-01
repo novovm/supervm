@@ -102,6 +102,7 @@ def validate_results(needs):
     selected = {
         "lan_script_launch": out["full"],
         "runtime_modules": out["full"],
+        "runtime_modules_release": out["full"],
         "rust": out["has_rust"],
         "rust_security": out["security"],
         "python": out["has_python"],
@@ -111,8 +112,9 @@ def validate_results(needs):
         if enabled not in ("true", "false"):
             raise ValueError(f"invalid selection: {job}")
         expected = "success" if enabled == "true" else "skipped"
-        if needs[job]["result"] != expected:
-            raise ValueError(f"{job}: expected {expected}, got {needs[job]['result']}")
+        actual = needs.get(job, {}).get("result")
+        if actual != expected:
+            raise ValueError(f"{job}: expected {expected}, got {actual}")
     return scope
 
 

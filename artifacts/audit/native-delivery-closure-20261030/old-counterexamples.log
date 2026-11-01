@@ -1,0 +1,29 @@
+
+running 2 tests
+test novorudp::object_sender::tests::progress::nonfinal_window_unconfirmed_tail_waits_without_delaying_proven_gap ... FAILED
+test novorudp::object_sender::tests::progress::progressing_ack_does_not_resend_repairs_still_in_flight ... FAILED
+
+failures:
+
+---- novorudp::object_sender::tests::progress::nonfinal_window_unconfirmed_tail_waits_without_delaying_proven_gap stdout ----
+
+thread 'novorudp::object_sender::tests::progress::nonfinal_window_unconfirmed_tail_waits_without_delaying_proven_gap' (24036) panicked at crates\novovm-network\src\novorudp\object_sender\tests\progress.rs:49:5:
+assertion `left == right` failed
+  left: 8
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- novorudp::object_sender::tests::progress::progressing_ack_does_not_resend_repairs_still_in_flight stdout ----
+
+thread 'novorudp::object_sender::tests::progress::progressing_ack_does_not_resend_repairs_still_in_flight' (30132) panicked at crates\novovm-network\src\novorudp\object_sender\tests\progress.rs:39:5:
+assertion `left == right` failed
+  left: 1
+ right: 8
+
+
+failures:
+    novorudp::object_sender::tests::progress::nonfinal_window_unconfirmed_tail_waits_without_delaying_proven_gap
+    novorudp::object_sender::tests::progress::progressing_ack_does_not_resend_repairs_still_in_flight
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 898 filtered out; finished in 0.01s
+

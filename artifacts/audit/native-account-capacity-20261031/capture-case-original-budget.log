@@ -1,0 +1,13 @@
+
+running 1 test
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::capture_case::inspect_original_asset_capture_frontier_for_stopped_case ... {"scope":"stopped fixture, original bounded BulkCapture and sole IoService; read requests only, no signature authority, candidate writes or finality claim; declarations match pre-pool asset admission, excluding candidate policy/fee keys","rows":1024,"declaration_keys":10240,"node_budget":65536,"byte_budget":16777216,"accepted_nodes":65536,"accepted_bytes":6200559,"io_requests":1030,"elapsed_seconds":1.3978574,"complete":false,"error":"input capture node budget exceeded"}
+Error: input capture node budget exceeded
+FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::capture_case::inspect_original_asset_capture_frontier_for_stopped_case
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1802 filtered out; finished in 13.28s
+

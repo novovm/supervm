@@ -1,0 +1,713 @@
+
+running 708 tests
+test native_pipeline::business::direct_nov_fee::tests::asset_aliases_preserve_wire_projection_and_other_assets_fail_without_effects ... ok
+test native_pipeline::business::direct_nov_fee::tests::business_failure_self_transfer_and_fee_failure_compose_without_a_second_fee_debit ... ok
+test native_pipeline::business::direct_nov_fee::tests::deterministic_ordered_settlement_matches_small_frozen_reference_across_2048_cases ... ok
+test native_pipeline::business::direct_nov_fee::tests::each_fee_rounds_separately_risk_gets_remainder_and_nov_bypasses_non_nov_gates ... ok
+test native_pipeline::business::direct_nov_fee::tests::every_monetary_and_sequence_overflow_is_checked_before_any_debit ... ok
+test native_pipeline::business::direct_nov_fee::tests::exact_u128_and_sequence_maxima_are_valid_without_truncating_money ... ok
+test native_pipeline::business::direct_nov_fee::tests::insufficient_payer_precedes_capacity_failure_and_does_not_insert_absent_treasury_leaves ... ok
+test native_pipeline::business::direct_nov_fee::tests::journal_effects_are_per_transaction_and_do_not_accumulate_history_in_fee_state ... ok
+test native_pipeline::business::direct_nov_fee::tests::paused_settlement_refreshes_window_and_quote_before_rejecting_and_precedes_expiry ... ok
+test native_pipeline::business::direct_nov_fee::tests::policy_and_state_codec_are_explicit_bounded_and_do_not_invent_fallback ... ok
+test native_pipeline::business::direct_nov_fee::tests::prepared_quotation_rejects_rebinding_and_invalid_inputs ... ok
+test native_pipeline::business::direct_nov_fee::tests::prepared_quotation_removes_requoting_not_prefix_capacity_checks ... ok
+test native_pipeline::business::direct_nov_fee::tests::prepared_quotation_reuses_only_invariants_and_matches_ordered_fee_effects ... ok
+test native_pipeline::business::direct_nov_fee::tests::prepared_quotes_validate_every_fee_metadata_field_before_any_effects ... ok
+test native_pipeline::business::direct_nov_fee::tests::quote_expiry_is_strict_and_zero_ttl_and_synthetic_extremes_preserve_old_rules ... ok
+test native_pipeline::business::direct_nov_fee::tests::quote_failure_does_not_refresh_day_or_erase_previous_successful_quote ... ok
+test native_pipeline::business::direct_nov_fee::tests::quote_preserves_frozen_transfer_projection_cost_and_unsigned_cap_sentinel ... ok
+test native_pipeline::business::direct_nov_fee::tests::signed_zero_fee_cap_is_not_the_legacy_unlimited_sentinel ... ok
+test native_pipeline::business::direct_nov_fee::tests::successful_fee_preserves_old_clearing_failure_and_saturating_diagnostic_counts ... ok
+test native_pipeline::business::fixed_supply::tests::exact_totals_do_not_wrap_at_u128_boundary ... ok
+test native_pipeline::business::fixed_supply::tests::failures_may_keep_diagnostics_but_cannot_hide_balance_changes ... ok
+test native_pipeline::business::fixed_supply::tests::fixed_genesis_supply_has_no_mint_burn_or_precision_override ... ok
+test native_pipeline::business::fixed_supply::tests::minted_burned_or_wrong_fee_outputs_are_rejected ... ok
+test native_pipeline::business::fixed_supply::tests::missing_extra_or_removed_account_outputs_are_rejected ... ok
+test native_pipeline::business::fixed_supply::tests::shared_receiver_and_self_transfer_do_not_duplicate_asset_count ... ok
+test native_pipeline::business::fixed_supply::tests::snapshot_codec_does_not_turn_cumulative_views_into_assets ... ok
+test native_pipeline::business::fixed_supply::tests::transfer_and_fee_count_single_owner_not_accounting_views ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::bind_preserves_all_original_domain_shape_rejections ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::body_bind_and_compatibility_compile_match_original_plan_and_complete_effects ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::compiler_owns_original_policy_and_signed_bytes_and_is_send ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::each_parent_requires_new_exact_capture_and_nonce_is_not_preapproved ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::native_apfl_views_match_raw_execution_failures_fees_nonce_and_proof_input ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; structured input parity, not TPS
+test native_pipeline::business::nov_transfer_batch::body_tests::native_body_capture_matches_original_compiler_for_each_exact_parent ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; parent-bound economic component, not chain TPS
+test native_pipeline::business::nov_transfer_batch::body_tests::plan_budget_boundaries_match_canonical_constructor_without_relaxation ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::resident_complete_plan_windows_diagnostics_and_capacity_edges ... ignored, requires trusted AOEM and Vulkan; full-plan windows/diagnostics parity
+test native_pipeline::business::nov_transfer_batch::body_tests::resident_integer_matches_cpu_complete_effects_and_global_fee_dependency_repair ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY and Vulkan; complete mixed-backend effects, not TPS
+test native_pipeline::business::nov_transfer_batch::body_tests::signed_fields_cannot_be_replaced_before_independent_preparation ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::unsupported_signed_assets_and_wrong_local_policies_do_not_prepare_or_bind ... ok
+test native_pipeline::business::nov_transfer_batch::body_tests::valid_context_fields_are_late_bound_but_all_change_the_commitment ... ok
+test native_pipeline::business::nov_transfer_batch::execution::fee_delta_tests::fee_page_delta_removes_reachability_rewalk_for_1024_account_put_run ... ok
+test native_pipeline::business::nov_transfer_batch::execution::fee_delta_tests::fee_record_delta_preserves_real_settlement_varints_and_tail_shrink ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::compiler_symbols_are_compact_exact_full_width_and_candidate_local ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::complete_plan_work_shares_values_not_transaction_effects ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::controller_complete_plan_needs_no_grant_or_synthetic_budget ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::export_projection_preserves_width_reference_identity_order_and_multiplicity ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::expression_sharing_matches_reference_keys_for_all_program_shapes ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::pure_sharing_binds_program_guard_full_width_and_dependency_identity ... ok
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::resident_complete_plan_contention_cost ... ignored, explicit AOEM library and Vulkan; isolated complete-plan contention diagnosis
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::resident_complete_plan_tile_cost_and_output_equivalence ... ignored, requires trusted AOEM and Vulkan; complete-plan tile cost experiment
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::resident_shared_and_unshared_complete_plans_match_every_export ... ignored, requires trusted AOEM and Vulkan; shared/unshared complete plans
+test native_pipeline::business::nov_transfer_batch::full_effects::tests::resident_uca_authorization_guards_nonce_budget_and_diagnostics ... ignored, requires trusted AOEM and Vulkan; complete UCA authorization/budget effects
+test native_pipeline::business::nov_transfer_batch::integer::tests::resident_integer_rows_match_current_quoted_transfer_full_u128 ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY and Vulkan; current business operator parity, not TPS
+test native_pipeline::business::nov_transfer_batch::tests::credit_guard_checks_entire_possible_sum_before_relaxing_dependencies ... ok
+test native_pipeline::business::nov_transfer_batch::tests::serialized_accounts_cannot_bypass_exact_identity_width ... ok
+test native_pipeline::business::nov_transfer_batch::tests::shared_credit_is_not_a_conflict_but_payer_dependencies_are ... ok
+test native_pipeline::business::nov_transfer_batch::tests::signer_alias_dependency_is_independent_of_balance_account_width ... ok
+test native_pipeline::business::nov_transfer_batch::tests::transitive_dependencies_keep_original_order_without_assuming_contiguity ... ok
+test native_pipeline::business::nov_transfer_batch::tests::zero_and_self_transfers_have_no_unsafe_pure_credit_classification ... ok
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::actual_mldsa_capture_uca_cpu_atomic_effects ... ignored, explicit packaged AOEM ML-DSA-65; seeded UCA candidate, not active native spending
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::actual_mldsa_capture_uca_cpu_integer_atomic_effect_equivalence ... ignored, explicit packaged AOEM ML-DSA-65 and Vulkan; seeded UCA candidate, not active native spending
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::asset_authority_metadata_is_bounded_before_prefix_allocation ... ok
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::controller_tests::actual_mldsa_controller_cpu_atomic_effects ... ignored, explicit qualified AOEM ML-DSA-65; real controller/delegated seeded-tree effects
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::controller_tests::actual_mldsa_controller_cpu_integer_atomic_effect_equivalence ... ignored, explicit qualified AOEM ML-DSA-65 and Vulkan; controller/delegated full-plan equivalence
+test native_pipeline::business::quoted_transfer::tests::bounded_exhaustive_small_values_preserve_failure_rules_and_conservation ... ok
+test native_pipeline::business::quoted_transfer::tests::checked_integer_readback_preserves_current_failure_encoding_and_rejects_malformed_values ... ok
+test native_pipeline::business::quoted_transfer::tests::economic_failures_charge_affordable_fee_and_consume_nonce ... ok
+test native_pipeline::business::quoted_transfer::tests::exact_account_width_and_owned_thread_bounds_are_preserved ... ok
+test native_pipeline::business::quoted_transfer::tests::exact_u128_maximum_is_allowed_but_overflow_is_never_saturated ... ok
+test native_pipeline::business::quoted_transfer::tests::fee_quote_cap_and_unaffordable_fee_consume_nonce_without_payment ... ok
+test native_pipeline::business::quoted_transfer::tests::global_rejection_restores_pre_fee_balances_not_nonce_or_dependent_predictions ... ok
+test native_pipeline::business::quoted_transfer::tests::invalid_nonce_and_state_are_errors_even_when_quote_was_rejected ... ok
+test native_pipeline::business::quoted_transfer::tests::last_nonce_is_checked_and_shared_signer_does_not_alias_balance_accounts ... ok
+test native_pipeline::business::quoted_transfer::tests::ordered_pending_funding_checks_overflow_without_mutating_deltas ... ok
+test native_pipeline::business::quoted_transfer::tests::self_transfer_has_one_balance_and_requires_full_amount_plus_fee ... ok
+test native_pipeline::business::quoted_transfer::tests::success_matches_known_vector_and_does_not_mutate_inputs ... ok
+test native_pipeline::business::quoted_transfer::tests::zero_cap_is_literal_and_zero_amount_does_not_invent_a_fee_policy ... ok
+test native_pipeline::business::record_pages::delta_tests::parent_record_delta_keeps_full_unknown_updates_and_real_tail_deletions ... ok
+test native_pipeline::business::record_pages::tests::bad_profile_prefix_and_content_fail_before_source_read ... ok
+test native_pipeline::business::record_pages::tests::bounded_records_roundtrip_at_page_boundaries ... ok
+test native_pipeline::business::record_pages::tests::bounded_tail_reads_and_source_errors_never_return_successful_prefix ... ok
+test native_pipeline::business::record_pages::tests::declarations_cover_absent_tails_and_only_writable_pages_allow_delete ... ok
+test native_pipeline::business::record_pages::tests::missing_header_or_any_used_page_is_not_implicit_zero ... ok
+test native_pipeline::business::record_pages::tests::paged_record_shrinks_through_real_owned_frontier_and_tree_without_live_reads ... ok
+test native_pipeline::business::record_pages::tests::rejects_noncanonical_headers_pages_and_hidden_tail_even_when_empty ... ok
+test native_pipeline::business::record_pages::tests::shrink_explicitly_deletes_old_tail_and_exact_last_page_remains_canonical ... ok
+test native_pipeline::business::uca_spend_state::tests::actual_mldsa_signature_and_same_parent_preflight_reject_stale_authority ... ignored, explicit trusted AOEM signature runtime; captured-tree foundation, not native spend
+test native_pipeline::business::uca_spend_state::tests::canonical_pages_tails_nonce_shape_and_account_identity_are_checked ... ok
+test native_pipeline::business::uca_spend_state::tests::captured_batch_shares_material_but_checks_each_intent_and_parent ... ok
+test native_pipeline::business::uca_spend_state::tests::compact_accounts_fit_existing_tree_pages_without_identity_reads ... ok
+test native_pipeline::business::uca_spend_state::tests::controller_capture_does_not_read_grant_pages_or_promote_a_delegate ... ok
+test native_pipeline::business::uca_spend_state::tests::identity_status_and_binding_changes_are_outside_asset_authority ... ok
+test native_pipeline::business::uca_spend_state::tests::independent_1024_asset_accounts_capture_and_stage_above_old_key_limit ... ok
+test native_pipeline::business::uca_spend_state::tests::missing_records_and_undeclared_input_are_not_empty_authority ... ok
+test native_pipeline::business::uca_spend_state::tests::one_parent_resolves_original_accounts_grant_nonce_and_balances ... ok
+test native_pipeline::business::uca_spend_state::tests::oversized_account_encoding_fails_in_fixed_buffer ... ok
+test native_pipeline::business::uca_spend_state::tests::page_delta_tests::grant_page_delta_1024_independent_records_share_one_original_tree_put_run ... ok
+test native_pipeline::business::uca_spend_state::tests::page_delta_tests::grant_page_delta_budget_and_varint_changes_match_complete_record_updates ... ok
+test native_pipeline::business::uca_spend_state::tests::page_delta_tests::grant_page_delta_uses_captured_epoch_and_keeps_unknown_parent_full_range ... ok
+test native_pipeline::business::uca_spend_state::tests::page_delta_tests::record_page_delta_preserves_real_tail_shrink_growth_and_original_profile ... ok
+test native_pipeline::business::uca_spend_state::tests::self_binding_is_one_account_and_tampered_tree_is_not_trusted ... ok
+test native_pipeline::business::uca_spend_state::tests::shared_identity_does_not_share_spend_keys_balance_or_nonce ... ok
+test native_pipeline::business::uca_spend_state::tests::unsigned_location_changes_rejected_and_identity_associations_do_not_authorize ... ok
+test native_pipeline::consensus::bodies::successor::tests::only_exact_ack_promotes_all_parent_fields_and_context ... ok
+test native_pipeline::consensus::bodies::successor::tests::optional_auth_and_execution_leave_one_current_slot ... ok
+test native_pipeline::consensus::bodies::successor::tests::source_round_recovery_and_overflow_do_not_reuse_successor_hint ... ok
+test native_pipeline::consensus::bodies::successor::tests::successor_body_must_bind_exact_business_and_parent_but_keeps_explicit_time ... ok
+test native_pipeline::consensus::chain::replay_tests::head_check_rejects_rollback_and_replacement_but_allows_forward_progress ... ok
+test native_pipeline::consensus::chain::replay_tests::head_record_must_bind_full_ceiling_and_exact_archive_digest ... ok
+test native_pipeline::consensus::chain::replay_tests::historical_read_is_pinned_to_requested_height_and_fixed_domain ... ok
+test native_pipeline::consensus::chain::replay_tests::rehashed_outbox_cannot_authorize_bad_signature_wrong_value_or_prevote ... ok
+test native_pipeline::consensus::chain::replay_tests::replay_outbox_preserves_exact_verified_proposal_and_quorum ... ok
+test native_pipeline::consensus::chain::replay_tests::request_rejects_zero_future_height_missing_head_and_wrong_set ... ok
+test native_pipeline::consensus::chain::tests::archive_encoding_is_bounded_canonical_and_all_bytes_bound ... ok
+test native_pipeline::consensus::chain::tests::decision_identity_binds_value_and_all_context_but_not_local_proof_locator ... ok
+test native_pipeline::consensus::chain::tests::malformed_parent_height_version_and_decision_are_not_repaired ... ok
+test native_pipeline::consensus::message_evidence::tests::qualified_control_reuse_requires_exact_payload_domain_and_verifier_owner ... ok
+test native_pipeline::consensus::message_evidence::tests::qualified_decision_reuse_requires_exact_precommit_certificate ... ok
+test native_pipeline::consensus::message_evidence::tests::qualified_proposal_reuse_rejects_spliced_valid_round_evidence ... ok
+test native_pipeline::consensus::native::query::tests::busy_peer_request_is_retained_while_another_peer_can_advance ... ok
+test native_pipeline::consensus::native::query::tests::query_custody_has_fixed_capacity_deadline_and_transport_generation ... ok
+test native_pipeline::consensus::native::query::tests::query_trace_follows_explicit_flag_and_sequence_bound ... ok
+test native_pipeline::consensus::native::query::tests::real_query_request_survives_delayed_previous_reply_done_handoff ... ok
+test native_pipeline::consensus::native::tests::hostile_signed_domain_wrong_lane_and_bad_signature_cannot_become_evidence ... ok
+test native_pipeline::consensus::native::tests::io_hint_ignores_duplicate_rejected_and_stalled_io ... ok
+test native_pipeline::consensus::native::tests::io_hint_tracks_new_fragments_sends_and_query_completion ... ok
+test native_pipeline::consensus::native::tests::io_hint_tracks_real_hash_continuation_but_not_missing_fragments ... ok
+test native_pipeline::consensus::native::tests::io_hint_wrap_is_a_change_token_not_a_permit_counter ... ok
+test native_pipeline::consensus::native::tests::original_signed_vote_crosses_native_channel_without_relabeling ... ok
+test native_pipeline::consensus::native::tests::original_transport_rejects_unbound_local_and_remote_identities ... ok
+test native_pipeline::consensus::native::tests::original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery ... ok
+test native_pipeline::consensus::native::tests::recovery_namespace::native_recovery_namespace_body_redelivers_exact_bytes_before_history_expiry ... ok
+test native_pipeline::consensus::native::tests::recovery_namespace::native_recovery_namespace_decision_redelivers_exact_evidence_before_history_expiry ... ok
+test native_pipeline::consensus::native::tests::unconsumed_native_input_lane_does_not_block_control_completion ... ok
+test native_pipeline::consensus::native::tests::validator_transport_bindings_are_bijective_separated_and_canonical ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_cancel_drain_keeps_auxiliary_budget_charge ... ignored, real native handle; auxiliary charge persists until bounded drain
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_inflight_takeover_retains_original_handle ... ignored, real AOEM and native admitted handle; no fabricated ACK
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_new_request_preserves_current_realtime_obligation ... ignored, real AOEM; retiring archive purpose preserves current realtime obligation
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_promotion_respects_auxiliary_byte_budget ... ignored, real AOEM; reclassification preserves reserved control byte budget
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_promotion_respects_auxiliary_message_budget ... ignored, real AOEM; reclassification preserves reserved control capacity
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_realtime_duplicate_preserves_archive_and_bytes ... ignored, real AOEM; realtime duplicate cannot erase archive or double-charge
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_requested_live_body_survives_advance_and_first_archive_request ... ignored, real AOEM; requested live body retains its response obligation
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_retiring_object_refuses_takeover_until_returned ... ignored, real native bounded retirement drain; no resurrection of old handle
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_same_height_context_refresh_preserves_archive_only_reply ... ignored, real AOEM; same-height archive context refresh preserves reply
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_archive_delivery_unsent_takeover_survives_realtime_retirement ... ignored, real AOEM; original delivery ownership and retirement
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_control_reserve_keeps_current_controls_and_exact_bounded_drain ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_control_reserve_tracks_signed_evidence_not_expanded_body_capacity ... ok
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_delivery_admission_refreshes_idle_hint_once ... ignored, real AOEM/native sender; new send admission refreshes idle hint once
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_realtime_retirement_admitted_handle_keeps_original_deadline ... ignored, real native sender; retirement must not strand remote partial objects
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_realtime_retirement_auxiliary_full_preserves_four_current_controls ... ignored, real native handles; current control capacity coexists with bounded old drain
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_realtime_retirement_partial_remote_object_drains_to_real_done ... ignored, real UDP partial ML-DSA object; original send must drain instead of orphaning
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_realtime_retirement_unadmitted_work_releases_immediately ... ignored, real lifecycle fixture; unsent superseded work releases immediately
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_reference_reply_unsent_survives_parent_request_then_retires ... ignored, real full-body wire and delivery owner; parent archive refresh cannot erase child reply
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_reference_request_unsent_retains_target_height_then_retires ... ignored, real native delivery owner; a queued reference request survives its parent height
+test native_pipeline::consensus::native_lifecycle::ingress::tests::auxiliary_full_is_backpressure_not_a_reservation ... ok
+test native_pipeline::consensus::native_lifecycle::ingress::tests::completed_raw_sources_prefer_earlier_preparation_without_waiting_for_gaps ... ok
+test native_pipeline::consensus::native_lifecycle::ingress::tests::exact_auxiliary_backpressure_isolated_to_that_recipient ... ok
+test native_pipeline::consensus::native_lifecycle::ingress::tests::native_input_fanout_omits_only_full_peer_and_survives_height_advance ... ignored, real AOEM lifecycle; per-peer input reservation and height retirement
+test native_pipeline::consensus::native_lifecycle::ingress::tests::native_input_full_peer_reopens_only_after_original_transport_done ... ignored, real native UDP/DONE releases input reservation; no transaction authorization claim
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_coalesces_before_queue_handoff ... ignored, real AOEM fixture; bounded archive continuation ownership
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_context_replacement_retires_old_cache ... ignored, real AOEM fixture; one current archive cache and no stale continuation
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_rearms_after_previous_body_completion ... ignored, real AOEM fixture; completion history must not suppress a new continuation
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_requires_exact_current_decision ... ignored, real AOEM fixture; unit qualification, not a fabricated network ACK
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_retains_responsibility_when_auxiliary_full ... ignored, real AOEM fixture; original auxiliary count and byte budgets
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_continuation_survives_competing_body_hint ... ignored, real AOEM fixture; RequestBody hints cannot overwrite archive obligation
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_nonvoter_retained_decision_requires_completion_then_gets_full_body ... ignored, real AOEM delivery fixture; no verified voter possession, no body before decision completion
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_coalesces_same_context_across_peers ... ignored, real AOEM/four native nodes; shared verified archive read, not synthetic finality
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_drains_changed_requester_read_for_same_context_waiter ... ignored, real AOEM/four native nodes; drain read after requester advance and serve remaining peer
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_reuse_keeps_independent_pending_and_delivery_budget ... ignored, real AOEM/four native nodes; immutable reuse keeps per-peer ACK and auxiliary budget
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_reuse_requires_full_context_and_published_height ... ignored, real AOEM/four native nodes; same height alone cannot reuse a verified archive
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_request_older_completion_cannot_replace_newer_responsibility ... ignored, real AOEM fixture; reordered archive requests retain current ownership
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_request_same_height_parent_and_invalid_context_keep_original_checks ... ignored, real AOEM fixture; archive request ordering grants no parent authority
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_verified_precommit_skips_automatic_body_but_serves_explicit_request ... ignored, real AOEM/four native nodes; verified archive voters reuse durable input, explicit requests stay full
+test native_pipeline::consensus::progress::future_vote_tests::future_vote_custody_deduplicates_by_signed_context_signer_phase ... ok
+test native_pipeline::consensus::progress::future_vote_tests::future_vote_custody_preserves_current_quorum_within_original_total_budget ... ok
+test native_pipeline::consensus::progress::future_vote_tests::future_vote_custody_promotes_exact_parent_once_and_retires_other_branches ... ok
+test native_pipeline::consensus::progress::future_vote_tests::future_vote_custody_rejects_invalid_domain_signer_signature_height_and_round ... ok
+test native_pipeline::consensus::statement::tests::hash_binds_every_batch_context_field ... ok
+test native_pipeline::consensus::statement::tests::hash_binds_extra_consensus_domain_and_every_execution_output_field ... ok
+test native_pipeline::consensus::statement::tests::hash_does_not_recursively_commit_its_cached_output ... ok
+test native_pipeline::consensus::statement::tests::parent_validation_rejects_each_of_the_six_independent_mismatches ... ok
+test native_pipeline::consensus::tests::chain_integration::native_udp_apfl_full_algebraic_plan_three_heights_and_recovery ... ignored, requires real AOEM integer backend; four native sockets/stores in one process, not TPS
+test native_pipeline::consensus::tests::chain_integration::native_udp_apfl_three_heights_durable_votes_publication_and_cold_recovery ... ignored, requires real AOEM; four native UDP sockets and stores in ONE process, not node processes or TPS
+test native_pipeline::consensus::tests::chain_integration::real_three_heights_different_qc_subsets_lost_ack_recovery_and_corruption_rejection ... ignored, requires real AOEM; four local stores, not network or production finality
+test native_pipeline::consensus::tests::journal_recovery_integration::real_late_quorum_reopen_preserves_both_votes_old_proposal_proof_and_locked_candidate ... ignored, requires real AOEM; exact undecided journal replay and corruption, not network finality
+test native_pipeline::consensus::tests::native_product_rpc::application::native_application_apfl_fees_failure_and_cold_restart_without_http_submission ... ignored, real AOEM/original node binary; native nonvalidator client; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::native_recovery_client_retains_bounded_repair_until_original_deadline ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::aab::aab_fixed_supply_oracle_accepts_original_reserve_field_and_rejects_tampering ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::aab::native_only_a_a_b_real_honest_signers_recover_and_restart ... ignored, three current original nodes + one Byzantine native peer; real AOEM; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_genesis_transactions_queries_and_cold_recovery ... ignored, four actual original nodes, real AOEM; native-only; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_minority_and_pending_signature_conflict_recover ... ignored, two then four actual nodes, real AOEM, no HTTP; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_status_readiness_survives_first_query_timeout ... ignored, actual delayed original node, real AOEM and NovoRUDP; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_deadline_does_not_restart_for_another_peer ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_fatal_errors_are_not_retried ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_rejected_and_wrong_answers_are_not_retried ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_retries_only_typed_timeouts_with_shared_deadline ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_status_readiness_successful_peer_does_not_refresh_remaining_budget ... ok
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::recovery::native_only_recovery_late_highest_validator_original_database_and_minority ... ignored, current original node, real AOEM, 31s+ offline/crash recovery; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::recovery::native_only_recovery_late_lowest_validator_original_database_and_minority ... ignored, current original node, real AOEM, 31s+ offline/crash recovery; run alone
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::uca_recovery::native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery ... ignored, real four original-node processes, trusted AOEM, 40-height offline with 1024-row archive and interrupted NUAS replay; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::inspect_copied_first_height_decision ... ignored, requires explicit offline database copy and its original config
+test native_pipeline::consensus::tests::native_product_rpc::native_load::native_load_batch_observer_requires_every_node_and_does_not_count_retries ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::native_load_query_failure_evidence_is_bounded_and_keeps_exact_request_identity ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::native_load_startup_client_expiry_is_not_a_lifetime_readiness_failure ... ignored, requires trusted NOVOVM_AOEM_TEST_LIBRARY for the existing protected identity fixture; no sleeping or node startup
+test native_pipeline::consensus::tests::native_product_rpc::native_load::native_load_wallet_identity_and_percentile_contract ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::original_native_sdk_65536_final_receipts_and_cold_economics ... ignored, four actual original-tick nodes, AOEM, native-only 65536 signed transactions and cold restart; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::distribution::four_account_distributions_keep_independent_nonces_and_conserved_credits ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::late_bridge_delivery_order_preserves_every_original_observation ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_late_nonce_bridge_before_after ... ignored, real original-node late bridge: old pool must stall and candidate must finish the exact same signed input; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_load_final_receipts_and_cold_economics ... ignored, real four original nodes; bounded ML-DSA-65 NUAS load, all receipts and cold economics; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_bulk_authority_before_after ... ignored, isolated same-corpus before/after original-node authority capture; retains all journals; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_signature_cpu_gpu_cpu ... ignored, isolated laboratory CPU/GPU/CPU replay of one NUAS corpus on four original processes; never deployment keys; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::paired_authority_comparison_excludes_only_schedule_metadata ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_1024_apfl_frame_sizes_and_lossless_roundtrip ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_final_receipts_and_cold_economics ... ignored, four original processes; continuous bounded 65536 legal signed load and cold economics; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_signature_cpu_gpu_cpu ... ignored, CPU/GPU/CPU continuous 65536 load, same logical business not byte-identical dynamic windows; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_uca_rolling_65536_final_receipts_and_cold_economics ... ignored, four original processes; legal rolling 65536 NUAS intents and cold economics; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_uca_rolling_65536_signature_cpu_gpu_cpu ... ignored, CPU/GPU/CPU rolling 65536 NUAS business comparison, not byte-identical input; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_uca_rolling_observer_keeps_signing_and_between_wave_waits ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_uca_rolling_rows_keep_account_nonce_and_exact_ordered_hash ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_uca_rolling_window_and_original_funding_contract ... ok
+test native_pipeline::consensus::tests::native_product_rpc::native_product_minority_cannot_publish_and_pending_signature_is_not_cached_by_hash ... ignored, real AOEM and original node binary; 2/4 must not finalize; run alone
+test native_pipeline::consensus::tests::native_product_rpc::native_product_single_rpc_fees_nonce_finality_and_cold_restart ... ignored, real AOEM plus NOVOVM_RESIDENT_NODE_BINARY; four original node processes; run alone
+test native_pipeline::consensus::tests::pacemaker_integration::real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery ... ignored, requires explicit real AOEM library; local durable timer/catch-up integration, not network finality
+test native_pipeline::consensus::tests::progress_integration::deadline::native_lifecycle_ready_proposal_wins_deadline_without_disabling_timeout ... ignored, real AOEM; native ready proposal must precede same-poll timeout
+test native_pipeline::consensus::tests::progress_integration::deadline::native_lifecycle_second_ready_control_wins_deadline_without_disabling_timeout ... ignored, real AOEM; queued socket proposal behind rejected control must precede timeout
+test native_pipeline::consensus::tests::progress_integration::early_height::native_progress_early_height_decision_survives_parent_ack ... ignored, real AOEM; early next-height decision survives original parent publication
+test native_pipeline::consensus::tests::progress_integration::early_height::native_progress_early_height_proposal_survives_parent_ack ... ignored, real AOEM; early next-height proposal survives original parent publication
+test native_pipeline::consensus::tests::progress_integration::early_height::native_progress_early_height_wrong_parent_is_not_promoted ... ignored, real AOEM; authenticated wrong-parent early proposal grants no body demand
+test native_pipeline::consensus::tests::progress_integration::early_vote::native_progress_eager_submit_keeps_ack_and_owner_boundary ... ignored, real AOEM journal; eager enqueue never consumes ACK or releases a failed submission
+test native_pipeline::consensus::tests::progress_integration::early_vote::native_progress_early_height_votes_survive_advance_height_ack ... ignored, real AOEM; next-height votes survive the original AdvanceHeight ACK window
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_algebraic ... ignored, real AOEM algebraic execution; no synthetic proposal or QC
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_follower_preparation_cpu ... ignored, real AOEM; follower preparation before a real native leader proposal
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_single_body_three_heights_algebraic ... ignored, real AOEM full algebraic backend; not a performance measurement
+test native_pipeline::consensus::tests::progress_integration::lifecycle::native_lifecycle_single_body_three_heights_cpu ... ignored, real AOEM; four native sockets, exact-body retrieval and autonomous execution
+test native_pipeline::consensus::tests::progress_integration::native_progress_algebraic_three_heights_with_unresolved_restart ... ignored, real AOEM integer backend; autonomous native rounds, not performance acceptance
+test native_pipeline::consensus::tests::progress_integration::native_progress_three_heights_with_unresolved_restart ... ignored, real AOEM; autonomous rounds over four UDP sockets/stores, not independent processes/TPS
+test native_pipeline::consensus::tests::progress_integration::published_projection::published_projection_requires_local_ack_exact_head_and_matches_cold_receipts ... ignored, real AOEM; ACK-bound warm projection, bounded fallback and cold recovery, not TPS
+test native_pipeline::consensus::tests::progress_integration::split::native_progress_aab_split_recovers_without_external_qc ... ignored, real AOEM; three autonomous honest drivers and one equivocating native peer, not process acceptance
+test native_pipeline::consensus::tests::progress_integration::successor::drain::native_successor_auth_ticket_drains_after_source_round_changes ... ignored, real AOEM; accepted auth ticket retired after verified durable round change
+test native_pipeline::consensus::tests::progress_integration::successor::drain::native_successor_execution_ticket_drains_after_source_round_changes ... ignored, real AOEM; accepted execution ticket retired after verified durable round change
+test native_pipeline::consensus::tests::progress_integration::successor::native_successor_early_completion_waits_for_parent_ack_and_recovers ... ignored, real AOEM; native two-node hold, exact parent ACK, four-store publication and cold failure nonce
+test native_pipeline::consensus::tests::progress_integration::successor::native_successor_single_inflight_keeps_current_height_progress ... ignored, real AOEM; one body inflight disables optional work without blocking current native publication
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_owned_body_does_not_request_second_full_copy_after_ack ... ignored, real AOEM parent journal ACK; explicit fixture proposal tests request ownership, not finality or TPS
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_complete_state_waits_for_ack_and_recovers ... ignored, real AOEM and native sockets; full UCA speculative root, ACK, credits and cold recovery, not TPS
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_local_ready_discards_different_decided_parent ... ignored, real AOEM; a different real parent decision discards the private local-ready successor
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_local_ready_prepares_before_parent_proposal ... ignored, real AOEM; local durable asset preparation overlaps the missing parent proposal without signing
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_full_reply_survives_parent_ack_before_proposal ... ignored, real AOEM/UDP parent ACK; scheduled decoded full reply precedes the next leader's proposal
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_missing_input_uses_live_body_reply ... ignored, real AOEM/UDP; missing local rows request the live successor body without blocking its lane
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_reuses_exact_local_input ... ignored, real AOEM/UDP; exact local asset rows reconstruct the original body without full-body fallback
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_signature_mismatch_uses_full_body ... ignored, real AOEM/UDP; intent hash hits with different signature bytes fall back to the original complete body
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_remote_body_waits_for_own_parent_without_blocking_current_body ... ignored, real AOEM/native sockets; one next-leader body prepares all followers before exact parent ACK
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_remote_wrong_parent_never_executes_and_real_body_recovers ... ignored, real AOEM/native sockets; remote successor source/domain and independently reproduced parent are mandatory
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery ... ignored, real AOEM and native sockets; reused signature facts recapture full UCA successor state
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_round_change_drains_auth_and_execution_without_publication ... ignored, real AOEM/native UCA; original background auth/execution tickets drain after durable round change
+test native_pipeline::consensus::tests::real_four_validator_journals_persist_before_emit_recover_and_reject_stale ... ignored, requires explicit real AOEM library; same-process durable consensus integration, not network/canonical finality
+test native_pipeline::consensus::tests::real_lost_signing_ack_recovers_exact_vote_without_second_prevote ... ignored, requires explicit real AOEM library; deterministic lost durable-ACK recovery, not crash/power-loss evidence
+test native_pipeline::consensus::tests::uca_publication_integration::actual_mldsa_uca_initialized_spend_respend_journal_recovery ... ignored, real packaged AOEM; ML-DSA UCA pipeline/journal recovery, not native network or mainnet
+test native_pipeline::consensus::transport::apfl::tests::structured_tags_versions_truncation_trailing_and_canonical_budgets_are_strict ... ok
+test native_pipeline::consensus::transport::apfl::tests::structured_wire_preserves_raw_body_and_early_commitments_with_distinct_fragment_ids ... ok
+test native_pipeline::consensus::transport::early_tests::announcement_identity_binds_complete_scope_order_framing_and_bytes_not_limits ... ok
+test native_pipeline::consensus::transport::early_tests::binding_checks_announced_domain_and_height_but_does_not_approve_roots_or_program ... ok
+test native_pipeline::consensus::transport::early_tests::both_new_payloads_reject_every_truncation_trailing_data_and_unknown_versions ... ok
+test native_pipeline::consensus::transport::early_tests::original_six_tags_and_full_body_hash_keep_their_exact_original_bytes ... ok
+test native_pipeline::consensus::transport::early_tests::raw_count_lengths_aggregate_and_actual_envelope_are_bounded_before_retention ... ok
+test native_pipeline::consensus::transport::early_tests::scopes_reject_zero_domains_bad_parent_shapes_nonadjacent_and_exhausted_heights ... ok
+test native_pipeline::consensus::transport::early_tests::versioned_early_and_binding_bytes_roundtrip_with_exact_lane_and_header_sizes ... ok
+test native_pipeline::consensus::transport::recovery_tests::control_reservation_matches_original_codec_not_body_ceiling ... ok
+test native_pipeline::consensus::transport::recovery_tests::recovery_reply_namespace_preserves_canonical_payload_lane_and_body_identity ... ok
+test native_pipeline::consensus::transport::recovery_tests::recovery_reply_namespace_preserves_limits_and_rejects_truncation_or_trailing_bytes ... ok
+test native_pipeline::consensus::transport::recovery_tests::recovery_reply_namespace_rejects_requests_votes_proposals_and_input ... ok
+test native_pipeline::consensus::transport::tests::all_development_message_variants_roundtrip_without_execution_authority ... ok
+test native_pipeline::consensus::transport::tests::body_identity_binds_every_context_field_original_bytes_and_order_not_budgets ... ok
+test native_pipeline::consensus::transport::tests::bounded_preflight_rejects_huge_count_lengths_empty_total_and_trailing_input ... ok
+test native_pipeline::consensus::transport::tests::decision_request_binds_exact_parent_and_rejects_unbounded_or_ambiguous_input ... ok
+test native_pipeline::consensus::transport::tests::prepared_large_body_fragments_reassemble_exact_bytes_under_local_domain ... ok
+test native_pipeline::consensus::transport::tests::rejects_unknown_version_kind_optional_tag_and_oversized_signed_blob ... ok
+test native_pipeline::consensus::transport::transactions::tests::raw_and_taken_roundtrip_are_versioned_distinct_and_exact ... ok
+test native_pipeline::consensus::transport::transactions::tests::raw_count_lengths_and_empty_identity_fail_closed ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_carries_every_context_field_and_rejects_wrong_profile ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_keeps_commitment_distinct_from_intent_locators ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_preflights_exact_length_version_and_resource_bounds ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_roundtrip_keeps_exact_pool_order_and_body_identity ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_application_input_limits_charge_original_bytes_not_compressed_size ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_application_input_pins_domain_without_granting_spend_authority ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_application_input_uses_structural_tag15_not_candidate_authority ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_identity_commits_order_signatures_signed_accounts_and_parent ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_identity_reuses_exact_wire_length_without_changing_transcript ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_profile_and_policy_cannot_reinterpret_v3 ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_uses_explicit_tag_and_existing_bounded_body_lane ... ok
+test native_pipeline::execution::plan::tests::admission_limits_are_inclusive_and_do_not_change_identity ... ok
+test native_pipeline::execution::plan::tests::apfl_plan_preserves_duplicate_bounds_order_and_signature_binding ... ok
+test native_pipeline::execution::plan::tests::apfl_plan_retains_shared_source_and_exact_raw_commitment ... ok
+test native_pipeline::execution::plan::tests::asset_plan_keeps_original_columns_and_exact_raw_commitment_order_and_domain ... ok
+test native_pipeline::execution::plan::tests::capture_budget_does_not_change_statement_or_effect_identity ... ok
+test native_pipeline::execution::plan::tests::capture_reads_the_plan_root_not_an_alternative_reader_root ... ok
+test native_pipeline::execution::plan::tests::declarations_are_order_canonical_but_keys_and_each_permission_are_bound ... ok
+test native_pipeline::execution::plan::tests::domain_commitments_and_semantic_version_cannot_be_empty ... ok
+test native_pipeline::execution::plan::tests::dropped_source_is_not_used_by_threaded_plan_bound_effects ... ok
+test native_pipeline::execution::plan::tests::duplicate_raw_or_key_declarations_are_rejected_not_merged ... ok
+test native_pipeline::execution::plan::tests::empty_inputs_and_invalid_keys_fail_but_maximum_key_is_accepted ... ok
+test native_pipeline::execution::plan::tests::every_context_field_changes_the_canonical_encoding ... ok
+test native_pipeline::execution::plan::tests::first_block_parent_convention_and_height_continuity_are_explicit ... ok
+test native_pipeline::execution::plan::tests::height_and_state_version_overflow_reject_without_wrapping ... ok
+test native_pipeline::execution::plan::tests::identical_plan_commitment_does_not_certify_the_resulting_effects ... ok
+test native_pipeline::execution::plan::tests::missing_or_corrupt_source_is_not_authenticated_absence ... ok
+test native_pipeline::execution::plan::tests::plan_input_and_effects_are_send_sync_static ... ok
+test native_pipeline::execution::plan::tests::raw_order_bytes_count_and_length_boundaries_are_bound ... ok
+test native_pipeline::execution::plan::tests::unknown_keys_and_undeclared_effects_are_rejected_even_when_sibling_is_captured ... ok
+test native_pipeline::ingress::apfl::tests::changed_shared_index_residual_and_signature_never_reuse_authority ... ok
+test native_pipeline::ingress::apfl::tests::expanded_budget_cannot_be_bypassed_by_shared_values_or_false_header ... ok
+test native_pipeline::ingress::apfl::tests::heterogeneous_real_v3_rows_and_original_digests_round_trip ... ok
+test native_pipeline::ingress::apfl::tests::rejects_noncanonical_dictionaries_indexes_versions_and_truncation ... ok
+test native_pipeline::ingress::apfl::tests::retained_owner_accounts_for_capacity_not_only_logical_wire ... ok
+test native_pipeline::ingress::apfl::tests::selected_structured_rows_keep_exact_wire_without_raw_reconstruction ... ok
+test native_pipeline::ingress::apfl::tests::shared_real_signed_fields_compress_without_a_fixture_generator ... ok
+test native_pipeline::ingress::apfl::tests::strict_v3_view_preserves_minimum_and_rejects_overlong_scalar ... ok
+test native_pipeline::ingress::authentication::tests::admission_rejects_every_tested_non_96_byte_signature_payload ... ok
+test native_pipeline::ingress::authentication::tests::authenticated_values_are_owned_send_sync_inputs_not_live_handles ... ok
+test native_pipeline::ingress::authentication::tests::chain_domain_nonce_exhaustion_and_input_budget_are_hard_gates ... ok
+test native_pipeline::ingress::authentication::tests::cryptographically_valid_signature_cannot_authorize_another_payer ... ok
+test native_pipeline::ingress::authentication::tests::every_signed_transfer_field_is_authenticated ... ok
+test native_pipeline::ingress::authentication::tests::malformed_public_key_and_noncanonical_signature_encodings_are_rejected ... ok
+test native_pipeline::ingress::authentication::tests::ordered_nonce_planning_shares_aliases_and_preserves_independent_signers ... ok
+test native_pipeline::ingress::authentication::tests::real_signatures_bind_both_account_widths_to_one_chain_separated_nonce_identity ... ok
+test native_pipeline::ingress::authentication::tests::replay_gap_and_missing_parent_fail_the_entire_nonce_plan_without_reserving_prefix ... ok
+test native_pipeline::ingress::authentication::tests::structured_rows_keep_original_authority_without_owned_expansion ... ok
+test native_pipeline::ingress::authentication::tests::weak_identity_key_passes_ordinary_verify_but_is_rejected_by_strict_admission ... ok
+test native_pipeline::ingress::delivery::tests::later_invalid_signature_rejects_whole_body ... ok
+test native_pipeline::ingress::delivery::tests::real_udp_original_frame_delivers_signed_structure_without_expansion ... ok
+test native_pipeline::ingress::delivery::tests::wire_and_expanded_limits_and_chain_are_independent ... ok
+test native_pipeline::ingress::wire::tests::borrowed_fields_preserve_utf8_empty_and_long_symbols_without_normalization ... ok
+test native_pipeline::ingress::wire::tests::bounded_native_v3_seeded_malformed_input_never_panics ... ok
+test native_pipeline::ingress::wire::tests::decoder_rejects_wrong_versions_kinds_magic_and_trailing_bytes ... ok
+test native_pipeline::ingress::wire::tests::every_transfer_field_is_in_the_complete_signed_intent ... ok
+test native_pipeline::ingress::wire::tests::exact_canonical_match_rejects_all_byte_changes_and_signature_hash_aliases ... ok
+test native_pipeline::ingress::wire::tests::existing_postcard_transfer_golden_bytes_are_unchanged ... ok
+test native_pipeline::ingress::wire::tests::frozen_old_wire_and_all_three_preimages_match_at_integer_boundaries ... ok
+test native_pipeline::ingress::wire::tests::genuine_old_oracle_signatures_verify_new_messages_and_reject_tampering ... ok
+test native_pipeline::ingress::wire::tests::hostile_declared_lengths_do_not_require_owned_field_allocation ... ok
+test native_pipeline::ingress::wire::tests::invalid_account_or_signature_sizes_cannot_cross_decode ... ok
+test native_pipeline::ingress::wire::tests::invalid_utf8_is_rejected_in_borrowed_decode ... ok
+test native_pipeline::ingress::wire::tests::malformed_streaming_view_errors_before_changing_digest ... ok
+test native_pipeline::ingress::wire::tests::noncanonical_varints_are_rejected_not_given_a_second_raw_identity ... ok
+test native_pipeline::ingress::wire::tests::signature_bytes_are_excluded_but_not_confused_with_a_signed_admission ... ok
+test native_pipeline::ingress::wire::tests::streaming_canonical_projection_matches_frozen_wire_and_preserves_outer_framing ... ok
+test native_pipeline::persistence::io::frontier_query_tests::query_frontier_counts_one_bounded_reply_and_keeps_candidate_quota_separate ... ok
+test native_pipeline::persistence::io::tests::completed_unconsumed_reply_still_applies_count_and_byte_backpressure ... ok
+test native_pipeline::persistence::io::tests::dropping_ticket_never_removes_accepted_command_or_its_live_permit ... ok
+test native_pipeline::persistence::io::tests::error_and_disconnected_replies_release_ticket_without_inventing_success ... ok
+test native_pipeline::persistence::io::tests::full_or_disconnected_command_queue_returns_its_admission_budget ... ok
+test native_pipeline::persistence::io::tests::local_validation_and_accounting_contention_admit_nothing ... ok
+test native_pipeline::persistence::io::tests::permit_count_and_bytes_remain_reserved_until_last_owner_releases ... ok
+test native_pipeline::persistence::io::tests::poisoned_admission_accounting_rejects_without_channel_submission ... ok
+test native_pipeline::persistence::io::tests::real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdown ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; real local I/O, not node/TPS evidence
+test native_pipeline::persistence::io::tests::real_io_startup_resumes_pinned_initial_content_but_rejects_conflicts ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; real bounded initialization resume and conflict rejection, not process-kill acceptance
+test native_pipeline::persistence::metadata::tests::construction_bounds_expected_and_new_bytes_without_weakening_append_only_keys ... ok
+test native_pipeline::persistence::metadata::tests::guards_share_total_bounds_and_cannot_overlap_mutations_or_each_other ... ok
+test native_pipeline::persistence::metadata::tests::keys_are_closed_separated_and_sequence_is_fixed_width ... ok
+test native_pipeline::persistence::metadata::tests::real_guards_do_not_write_absent_keys_and_empty_is_not_absent ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; guard absence differs from empty
+test native_pipeline::persistence::metadata::tests::real_head_guard_rejects_stale_votes_including_exact_replay_and_blocks_are_append_only ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; head guards and immutable blocks
+test native_pipeline::persistence::metadata::tests::real_metadata_same_database_atomic_compare_replay_and_append_only_outbox ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; local metadata CAS, not finality
+test native_pipeline::persistence::metadata::tests::real_oversized_metadata_is_rejected_and_cannot_be_repaired_by_transition ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; actual corruption freezes writes
+test native_pipeline::persistence::metadata::tests::real_partial_replay_never_completes_missing_outbox_or_mutates_other_keys ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; genuine mixed CAS rejection
+test native_pipeline::persistence::packet::tests::altered_marker_document_and_node_or_hidden_tail_are_rejected ... ok
+test native_pipeline::persistence::packet::tests::each_resource_boundary_is_measured_once_and_rechecked_at_store_admission ... ok
+test native_pipeline::persistence::packet::tests::exact_packet_roundtrip_keeps_body_access_receipts_nodes_and_all_commitments ... ok
+test native_pipeline::persistence::packet::tests::immutable_nonce_projection_keeps_last_actual_receipt_and_one_allocation ... ok
+test native_pipeline::persistence::packet::tests::independently_changed_context_body_or_commitments_are_rejected ... ok
+test native_pipeline::persistence::packet::tests::malformed_counts_and_lengths_fail_before_allocating_declared_content ... ok
+test native_pipeline::persistence::packet::tests::manifest_order_and_content_hash_are_not_accepted_on_trust ... ok
+test native_pipeline::persistence::packet::tests::marker_absence_is_not_completion_but_completed_missing_records_never_repair ... ok
+test native_pipeline::persistence::packet::tests::packet_access_capacity_matches_tree_without_widening_other_limits ... ok
+test native_pipeline::persistence::packet::tests::reads_are_bounded_and_response_count_errors_never_become_absence ... ok
+test native_pipeline::persistence::packet::tests::receipt_codec_refuses_trailing_bytes_and_unknown_variants ... ok
+test native_pipeline::persistence::packet::tests::receipt_hash_accounts_signer_nonce_fee_and_journal_relations_are_checked ... ok
+test native_pipeline::persistence::packet::tests::receipt_projection_codec_preserves_u128_and_distinct_failure_conditions ... ok
+test native_pipeline::persistence::packet::tests::structured_plan_keeps_exact_archive_receipts_and_cold_recovery ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::asset_management_packet_rejects_budget_nonce_fee_and_signed_account_tampering ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::asset_structural_packet_reuses_plan_and_matches_independent_cold_decoder ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::controller_packet_cannot_claim_a_delegated_budget ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::typed_asset_preparation_keeps_commitment_root_and_writable_access_checks ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::uca_packet_commitment_covers_effect_tail_and_rejects_unknown_codes ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::uca_packet_enforces_signed_reservation_even_when_actual_fee_is_zero ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::uca_packet_rejects_authorization_effects_and_budget_prefix_changes ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::uca_packet_rejects_domain_relabel_old_document_and_missing_outputs ... ok
+test native_pipeline::persistence::packet::tests::uca_tests::uca_packet_roundtrip_preserves_authorization_budget_and_unchanged_nonce ... ok
+test native_pipeline::persistence::proof::tests::proof_storage_chunk_roundtrip_empty_and_maximum_preserve_exact_bytes ... ok
+test native_pipeline::persistence::proof::tests::proof_storage_marker_binds_version_candidate_image_and_resource_bounds ... ok
+test native_pipeline::persistence::proof::tests::proof_storage_missing_corrupt_orphan_and_late_tail_never_return_success ... ok
+test native_pipeline::persistence::proof::tests::real_proof_storage_multichunk_reopen_immutable_and_corruption_rejection ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; real opaque attachment storage, not cryptographic proof
+test native_pipeline::persistence::store::guard_tests::database_or_ancestor_redirect_cannot_bypass_guard ... ok
+test native_pipeline::persistence::store::guard_tests::guard_requires_exact_bounded_format_and_every_domain_field_before_loader ... ok
+test native_pipeline::persistence::store::guard_tests::legacy_store_without_guard_is_rejected_without_opening_or_migration ... ok
+test native_pipeline::persistence::store::guard_tests::matching_guard_still_requires_current_and_does_not_replace_database_validation ... ok
+test native_pipeline::persistence::store::guard_tests::new_store_guard_is_exclusive_synced_and_incomplete_creation_is_not_repaired ... ok
+test native_pipeline::persistence::store::guard_tests::redirected_guard_and_current_are_rejected_without_following_them ... ok
+test native_pipeline::pipeline::admission::tests::admission_has_one_independent_slot_and_preserves_maximum_candidate_budget ... ok
+test native_pipeline::pipeline::admission::tests::admitted_asset_row_projection_retains_exact_fact_without_pin_or_downgrade ... ignored, real trusted AOEM; single-row APFL projection preserves exact signature fact and original owner
+test native_pipeline::pipeline::admission::tests::admitted_rebinding_rejects_same_hash_changed_signature_duplicates_and_foreign_owner ... ok
+test native_pipeline::pipeline::admission::tests::admitted_regrouping_uses_exact_signatures_and_releases_old_dictionaries ... ok
+test native_pipeline::pipeline::admission::tests::admitted_request_owner_is_rechecked_at_both_real_enqueue_boundaries ... ok
+test native_pipeline::pipeline::admission::tests::admitted_requests_keep_original_current_and_background_budget_rules ... ok
+test native_pipeline::pipeline::admission::tests::authority_handoff_rejects_non_ingress_role_without_changing_accounting ... ok
+test native_pipeline::pipeline::admission::tests::authority_parking_hands_off_only_one_slot_and_retains_bytes_through_last_arc ... ok
+test native_pipeline::pipeline::admission::tests::backpressure_and_closed_pipeline_return_the_exact_original_raw_allocation ... ok
+test native_pipeline::pipeline::admission::tests::consumed_admitted_capability_does_not_pin_the_single_ingress_permit ... ok
+test native_pipeline::pipeline::admission::tests::dropped_ticket_does_not_cancel_admitted_work_and_error_reply_retains_budget ... ok
+test native_pipeline::pipeline::admission::tests::parked_reply_abandonment_releases_its_original_owner_only ... ok
+test native_pipeline::pipeline::admission::tests::parked_source_charge_still_reserves_the_maximum_candidate_bytes ... ok
+test native_pipeline::pipeline::admission::tests::real_admitted_rows_reuse_strict_checks_without_trusting_peer_claims ... ignored, requires explicit trusted AOEM; actual admission/preparation owner and counters, not finalized TPS
+test native_pipeline::pipeline::admission::tests::real_resident_admission_keeps_good_bad_duplicate_rows_and_reuses_same_owner ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; resident signature graph, not state admission or TPS
+test native_pipeline::pipeline::admission::tests::source_parking_preserves_bytes_and_reclaims_only_the_unique_authority_slot ... ok
+test native_pipeline::pipeline::admission::tests::structured_subrows_charge_each_whole_source_once_and_check_indices ... ok
+test native_pipeline::pipeline::admission::tests::unconsumed_output_keeps_ingress_permit_until_consumed_or_dropped ... ok
+test native_pipeline::pipeline::authentication::tests::apfl_authentication_reserves_expanded_body_and_returns_same_shared_source ... ok
+test native_pipeline::pipeline::authentication::tests::authentication_and_existing_successor_share_one_background_permit ... ok
+test native_pipeline::pipeline::authentication::tests::background_bind_keeps_exact_permit_at_full_quota_and_does_not_take_current_slot ... ok
+test native_pipeline::pipeline::authentication::tests::completed_reply_body_bind_and_backpressure_keep_the_original_permit ... ok
+test native_pipeline::pipeline::authentication::tests::dropped_authentication_ticket_and_unconsumed_error_retain_live_job_budget ... ok
+test native_pipeline::pipeline::authentication::tests::july_apfl_complete_plan_persists_and_recovers_on_original_pipeline ... ignored, requires trusted AOEM/Vulkan; actual APFL to full plan to durable candidate and cold recovery, not finality/TPS
+test native_pipeline::pipeline::authentication::tests::native_socket_handoff_retains_structured_work_when_authentication_is_full ... ok
+test native_pipeline::pipeline::authentication::tests::optional_authentication_reserves_current_slot_and_worst_case_bytes ... ok
+test native_pipeline::pipeline::authentication::tests::original_node_receives_1024_signed_apfl_rows_over_native_encrypted_datagrams ... ok
+test native_pipeline::pipeline::authentication::tests::real_background_bind_keeps_original_permit_through_shutdown_and_unconsumed_success ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; real background bind/retained reply/cold records, not finality or native preemption
+test native_pipeline::pipeline::authentication::tests::real_parent_independent_authentication_rebinds_only_through_fresh_capture_and_recovers ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; real two-stage local pipeline and database reopen, not finality/TPS
+test native_pipeline::pipeline::authentication::tests::uca::asset_authentication_retains_signed_accounts_and_charges_them_once ... ok
+test native_pipeline::pipeline::authentication::tests::unaccepted_authentication_keeps_exact_allocation_on_busy_full_or_invalid_input ... ok
+test native_pipeline::pipeline::authentication::tests::wrong_owner_and_domain_return_same_body_without_releasing_or_substituting_it ... ok
+test native_pipeline::pipeline::compute::lanes::tests::both_lanes_share_queue_cap_and_release_on_consume_or_disconnect ... ok
+test native_pipeline::pipeline::compute::lanes::tests::outer_lane_unwind_is_latched_but_normal_exit_is_not ... ok
+test native_pipeline::pipeline::compute::lanes::tests::peer_unwind_latches_all_work_and_discards_racing_success ... ok
+test native_pipeline::pipeline::compute::lanes::tests::single_channel_is_bounded_without_shared_permits_and_keeps_failure_latch ... ok
+test native_pipeline::pipeline::compute::tests::all_cross_owner_payloads_are_owned_send_types ... ok
+test native_pipeline::pipeline::compute::tests::configured_domain_cannot_be_replaced_by_request_or_capture ... ok
+test native_pipeline::pipeline::compute::tests::full_channel_returns_the_original_allocation_without_running_a_session ... ok
+test native_pipeline::pipeline::compute::tests::ordinary_rejection_does_not_latch_but_unwind_rejects_all_later_work ... ok
+test native_pipeline::pipeline::compute::tests::real_compute_owner_gpu_selection_rejects_old_library_without_cpu_fallback ... ignored, requires explicit NOVOVM_AOEM_OLD_TEST_LIBRARY without v7; real startup fail-closed
+test native_pipeline::pipeline::compute::tests::real_integer_lane_does_not_block_authentication_and_drains_accepted_work ... ignored, requires real AOEM/Vulkan; held integer lane, real concurrent authentication and drain
+test native_pipeline::pipeline::compute::tests::real_resident_owner_authenticates_and_executes_repeated_owned_captures ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; resident owner, not node/TPS evidence
+test native_pipeline::pipeline::compute::tests::tickets_are_nonblocking_and_consumed_exactly_once_even_on_error ... ok
+test native_pipeline::pipeline::compute::tests::uca_reuse::actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance ... ignored, actual packaged AOEM; signature reuse with new-root authority, not genesis or TPS acceptance
+test native_pipeline::pipeline::driver::tests::completed_jobs_do_not_skip_or_promote_background_in_the_next_round ... ok
+test native_pipeline::pipeline::driver::tests::ordinary_admissions_precede_background_without_reordering_ordinary_jobs ... ok
+test native_pipeline::pipeline::driver::tests::typed_background_bind_stays_after_ordinary_and_priority_is_not_permit_class ... ok
+test native_pipeline::pipeline::driver::tests::typed_signature_admission_never_takes_current_candidate_scheduling_priority ... ok
+test native_pipeline::pipeline::seed::tests::captured_seed_pressure_is_an_optional_miss_without_batch_or_byte_leak ... ok
+test native_pipeline::pipeline::seed::tests::captured_seed_requires_full_parent_and_domain_and_never_binds_another_head ... ok
+test native_pipeline::pipeline::seed::tests::captured_seed_shared_slot_keeps_byte_lease_until_last_reader_and_checks_owner ... ok
+test native_pipeline::pipeline::seed::tests::optional_seed_declines_unrepresentable_maximum_and_poisoned_accounting ... ok
+test native_pipeline::pipeline::seed::tests::real_two_height_seed_matches_full_capture_and_reopens_with_original_budgets ... ignored, requires explicit NOVOVM_AOEM_TEST_LIBRARY; real two-height seed hits, fallback and cold economics, not finality/TPS
+test native_pipeline::pipeline::seed::tests::seed_byte_lease_inclusive_bound_preserves_live_batch_accounting ... ok
+test native_pipeline::pipeline::seed::tests::seed_leaves_maximum_background_and_ordinary_admission_without_using_slots ... ok
+test native_pipeline::pipeline::seed::tests::seed_refuses_wrong_postroot_exceeded_bounds_and_busy_accounting ... ok
+test native_pipeline::pipeline::seed::tests::seed_wrong_context_never_supplies_bytes_or_parent_authority ... ok
+test native_pipeline::pipeline::tests::background_admission_reserves_an_ordinary_slot_and_worst_case_content ... ok
+test native_pipeline::pipeline::tests::background_reply_and_abandoned_ticket_never_release_live_work_early ... ok
+test native_pipeline::pipeline::tests::full_queue_returns_exact_input_and_domain_byte_limits_precede_admission ... ok
+test native_pipeline::pipeline::tests::owned_admission_checks_sender_and_worker_before_enqueue ... ok
+test native_pipeline::pipeline::tests::owned_admission_returns_allocations_on_domain_size_and_reservation_errors ... ok
+test native_pipeline::pipeline::tests::owned_disconnected_and_poisoned_admission_return_request_without_leaking_quota ... ok
+test native_pipeline::pipeline::tests::owned_full_and_busy_admission_preserve_allocation_and_release_unused_permits ... ok
+test native_pipeline::pipeline::tests::owned_success_is_accepted_even_when_the_reply_is_later_lost ... ok
+test native_pipeline::pipeline::tests::real_paused_compute_does_not_block_control_or_aoem_storage_queries ... ignored, requires real AOEM; explicit worker latch proves control isolation, NOT natural concurrency or TPS
+test native_pipeline::pipeline::tests::unconsumed_error_reply_and_lost_ticket_keep_whole_job_reservations ... ok
+test native_pipeline::pipeline::uca_input_tests::actual_mldsa_uca_async_admission_keeps_source_owner_and_row_failures ... ignored, actual packaged AOEM ML-DSA admission; not spend authority or finality
+test native_pipeline::pipeline::uca_input_tests::actual_mldsa_uca_rebind_checks_full_rows_order_domain_and_owner ... ignored, actual packaged AOEM; exact NUAS signature reuse, not asset authority
+test native_pipeline::pipeline::uca_input_tests::asset_request_charges_signed_accounts_once_in_raw_bytes ... ok
+test native_pipeline::pipeline::uca_input_tests::asset_request_rejects_empty_and_oversized_wire_before_acceptance ... ok
+test native_pipeline::profile::tests::asset_ids_bind_existing_id_order_without_signed_payload ... ok
+test native_pipeline::profile::tests::asset_trace_only_builds_details_when_explicitly_enabled ... ok
+test native_pipeline::profile::tests::counters_are_bounded_and_keep_maximum_without_overflow ... ok
+test native_pipeline::profile::tests::critical_buffer_is_fixed_capacity_and_counts_drops ... ok
+test native_pipeline::profile::tests::delivery_buffer_retains_latest_window_and_counts_evictions ... ok
+test native_pipeline::proof::receipt::tests::missing_image_guest_and_malformed_inputs_fail_closed ... ok
+test native_pipeline::proof::receipt::tests::prepared_candidate_and_executed_have_identical_independent_journal ... ok
+test native_pipeline::proof::receipt::tests::proof_output_is_verified_with_independent_image_and_all_journal_bytes ... ok
+test native_pipeline::proof::tests::all_wire_truncations_bad_version_and_trailing_bytes_are_rejected ... ok
+test native_pipeline::proof::tests::apfl_source_encodes_exact_original_proof_bytes_at_final_boundary ... ok
+test native_pipeline::proof::tests::bad_signature_wrong_chain_nonce_and_duplicate_transactions_are_rejected ... ok
+test native_pipeline::proof::tests::invalid_height_and_exhausted_state_version_are_rejected ... ok
+test native_pipeline::proof::tests::journal_has_fixed_versioned_size ... ok
+test native_pipeline::proof::tests::legal_transaction_reordering_and_different_parent_economics_change_journal ... ok
+test native_pipeline::proof::tests::oversized_noncanonical_and_invalid_policy_encoding_is_rejected ... ok
+test native_pipeline::proof::tests::signed_parent_relation_matches_direct_result_and_fixed_journal_fields ... ok
+test native_pipeline::proof::tests::valid_alternate_contexts_change_journal_instead_of_claiming_rejection ... ok
+test native_pipeline::proof::tests::wire_count_field_body_and_total_limits_are_checked_before_admission ... ok
+test native_pipeline::proof::tests::wire_roundtrip_preserves_context_raw_policy_and_original_parent_witness ... ok
+test native_pipeline::proof::tests::wrong_business_profile_and_parent_policy_are_rejected ... ok
+test native_pipeline::proof::tests::wrong_parent_or_corrupted_missing_and_trailing_witness_are_rejected ... ok
+test native_pipeline::service::client::operator::tests::native_operator_domain_rejects_foreign_target_and_validator_client ... ok
+test native_pipeline::service::client::operator::tests::native_operator_files_are_bounded_and_wrong_wire_is_rejected ... ok
+test native_pipeline::service::client::operator::tests::native_operator_full_width_money_is_decimal_text ... ok
+test native_pipeline::service::client::operator::tests::native_operator_mldsa_pretty_config_budget_roundtrip_and_rejection ... ok
+test native_pipeline::service::client::operator::tests::native_operator_requires_explicit_operation_and_input ... ok
+test native_pipeline::service::config::tests::duplicate_allocations_bad_numbers_and_missing_quorum_profile_are_rejected ... ok
+test native_pipeline::service::config::tests::execution_backend_is_explicit_and_never_auto_falls_back ... ok
+test native_pipeline::service::config::tests::genesis_commits_transport_binding_and_rejects_same_key_or_partial_mapping ... ok
+test native_pipeline::service::config::tests::genesis_derivation_binds_economics_validator_weights_and_protocol ... ok
+test native_pipeline::service::config::tests::hex_is_bounded_and_not_lossily_decoded ... ok
+test native_pipeline::service::config::tests::real_resident_startup_reopen_preserves_genesis_and_refuses_recreate ... ignored, requires explicit trusted NOVOVM_AOEM_TEST_LIBRARY; opens a real fresh AOEM database
+test native_pipeline::service::config::tests::relative_paths_follow_configuration_directory ... ok
+test native_pipeline::service::config::tests::retired_direct_risc0_proof_config_is_never_silently_accepted ... ok
+test native_pipeline::service::config::tests::signature_backend_is_independent_explicit_and_defaults_to_auto ... ok
+test native_pipeline::service::config::tests::windows_native_paths_preserve_disk_and_unc_targets ... ok
+test native_pipeline::service::config::uca_genesis::tests::actual_65_account_initialization_requires_independent_approvals ... ignored, requires trusted NOVOVM_AOEM_TEST_LIBRARY; genuine independent ML-DSA approvals above 32 accounts, not deployment
+test native_pipeline::service::config::uca_genesis::tests::allocated_accounts_page_out_of_header_and_round_trip_without_changing_domain ... ok
+test native_pipeline::service::config::uca_genesis::tests::approval_json_is_compact_exact_and_bounded_without_changing_signed_bytes ... ok
+test native_pipeline::service::config::uca_genesis::tests::initialization_has_no_32_account_ceiling_and_approval_work_is_linear ... ok
+test native_pipeline::service::config::uca_genesis::tests::obsolete_genesis_approval_shape_is_not_reinterpreted_as_asset_authority ... ok
+test native_pipeline::service::config::uca_genesis::tests::one_identity_has_independent_asset_accounts_and_subject_bound_approvals ... ok
+test native_pipeline::service::config::uca_genesis::tests::ordinary_controller_manifest_needs_no_grant_but_retains_subject_approval ... ok
+test native_pipeline::service::config::uca_genesis::tests::paged_initialization_preserves_pins_and_rejects_mixed_or_tampered_material ... ok
+test native_pipeline::service::config::uca_genesis::tests::uca_manifest_canonical_order_and_every_authority_field_are_bound ... ok
+test native_pipeline::service::config::uca_genesis::tests::uca_manifest_new_tags_do_not_relabel_legacy_key_or_proof ... ok
+test native_pipeline::service::config::uca_genesis::tests::uca_manifest_rejects_alias_owners_wrong_keys_and_grant_shapes ... ok
+test native_pipeline::service::config::uca_genesis::tests::validator_key_cannot_also_manage_or_spend_genesis_assets ... ok
+test native_pipeline::service::config::uca_startup_tests::actual_uca_startup_protected_windows_keys_and_cold_reopen ... ignored, requires trusted NOVOVM_AOEM_TEST_LIBRARY; real Windows DPAPI purpose custody through original fresh/reopen service, not deployment
+test native_pipeline::service::config::uca_startup_tests::actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection ... ignored, requires trusted NOVOVM_AOEM_TEST_LIBRARY; actual fresh original service and reopen, not asset activation
+test native_pipeline::service::rpc::admission::hol_tests::checked_future_sources_yield_late_bridge_without_rechecking_signatures_or_losing_rows ... ignored, real trusted AOEM; original two-slot source exchange, exact bridge projection and four services, run alone
+test native_pipeline::service::rpc::admission::hol_tests::checked_source_carrier_stays_inside_original_signature_header_reservation ... ok
+test native_pipeline::service::rpc::admission::hol_tests::future_nonce_pool_wait_without_source_return_holds_late_bridge ... ignored, real trusted AOEM; original pool_wait counterexample, run alone
+test native_pipeline::service::rpc::admission::hol_tests::maximum_shape_single_row_projection_fits_original_bridge_allowance ... ok
+test native_pipeline::service::rpc::admission::tests::cached_final_chunk_does_not_release_an_older_unfinished_authority_prefix ... ok
+test native_pipeline::service::rpc::admission::tests::completed_signature_error_retains_the_existing_work_slot_and_selection_gate ... ok
+test native_pipeline::service::rpc::admission::tests::uca_capture_counters_accumulate_and_saturate_without_clock_samples ... ok
+test native_pipeline::service::rpc::admission::tests::uca_capture_status_starts_empty_and_reports_diagnostic_clock_policy ... ok
+test native_pipeline::service::rpc::admitted_tests::actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects ... ignored, explicit packaged AOEM; retained NUAS pool evidence, not asset authorization
+test native_pipeline::service::rpc::admitted_tests::admitted_metadata_shares_original_pool_byte_budget_and_releases_per_row ... ok
+test native_pipeline::service::rpc::admitted_tests::body_capability_reuse_requires_complete_signed_rows_not_canonical_hashes ... ok
+test native_pipeline::service::rpc::admitted_tests::equal_signed_row_from_another_dictionary_is_not_retained_under_input_budget ... ok
+test native_pipeline::service::rpc::admitted_tests::raw_pool_discards_decoded_capability_instead_of_pinning_an_extra_source ... ok
+test native_pipeline::service::rpc::admitted_tests::regrouped_candidate_does_not_pin_retired_pool_dictionaries ... ok
+test native_pipeline::service::rpc::gossip::tests::hints_isolate_full_peer_without_retransmitting_reserved_recipients ... ok
+test native_pipeline::service::rpc::gossip::tests::hints_remain_bounded_by_pool_entries_and_round_robin_peers ... ok
+test native_pipeline::service::rpc::gossip::tests::repair_reuses_only_retained_originals_with_same_body_budget_and_order ... ok
+test native_pipeline::service::rpc::gossip::tests::repair_selects_signed_structural_rows_without_raw_projection ... ok
+test native_pipeline::service::rpc::gossip::tests::repair_shares_one_original_fanout_with_all_identically_missing_peers ... ignored, real signed asset pool and original multi-peer UDP fanout, run alone
+test native_pipeline::service::rpc::gossip::tests::retained_fresh_offer_requeues_live_rows_in_order_without_reviving_retired_input ... ignored, real trusted AOEM; original pool retirement and UDP/DONE, no fabricated finality, run alone
+test native_pipeline::service::rpc::gossip::tests::retained_fresh_offer_yields_reopened_slot_to_older_missing_input ... ignored, real trusted AOEM; original asset admission, gossip owner and UDP/DONE, run alone
+test native_pipeline::service::rpc::history::tests::historical_backpressure_never_discards_pending_and_reclaims_abandoned_results ... ok
+test native_pipeline::service::rpc::history::tests::historical_failures_are_cached_errors_never_unknown_or_finalized_and_can_be_evicted ... ok
+test native_pipeline::service::rpc::history::tests::historical_poll_has_one_attempt_per_turn_and_round_robin_survives_ready_eviction ... ok
+test native_pipeline::service::rpc::history::tests::historical_queries_deduplicate_exact_locator_and_retain_completed_batch_results ... ok
+test native_pipeline::service::rpc::history::tests::historical_query_checks_local_ceiling_before_allocation_or_ready_eviction ... ok
+test native_pipeline::service::rpc::history::tests::historical_single_metadata_slot_completion_leaves_next_control_turn_free ... ok
+test native_pipeline::service::rpc::history::tests::receipt_locator_preserves_hash_only_and_accepts_exact_positive_height ... ok
+test native_pipeline::service::rpc::history::tests::receipt_locator_rejects_malformed_or_ambiguous_requests ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::absent_records_are_not_malformed_or_unavailable_reads ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::asset_batch_capture_deduplicates_all_10_keys_and_preserves_order_and_revocation ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::asset_hash_ordered_read_turns_reduce_frontier_loads_and_preserve_1024_rows ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::asset_hash_ordering_charges_temporary_metadata_and_keeps_tail_rejection ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::batch_capture_bad_alias_is_row_local_and_all_invalid_needs_no_io ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::batch_capture_does_not_mix_roots_or_accept_reordered_node_replies ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::batch_capture_keeps_tail_checks_missing_and_budget_failures_distinct ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::controller_query_is_explicit_and_has_no_synthetic_unlimited_budget ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::observation_uses_same_record_codec_and_never_turns_revoked_grant_into_permission ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::read_queue_bounds_deduplicates_and_reports_pending_not_absence ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::uca_local_turn_caps_work_and_preserves_progress_without_a_real_clock ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::uca_local_turn_captured_rows_match_single_steps_including_corrupt_pages ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::uca_local_turn_preserves_terminal_result_and_error_after_local_progress ... ok
+test native_pipeline::service::rpc::native_query::uca::tests::uca_local_turn_yields_at_pending_admitted_and_completed_io_boundaries ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::bulk_nonce_observation_cannot_change_parent_or_replace_a_conflicting_fact ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::bulk_observed_nonce_avoids_point_read_and_retires_redundant_notification ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::cache_eviction_is_not_a_chain_lifetime_subject_limit ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::every_parent_binding_change_discards_old_reads_and_values ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::evicted_old_subject_waits_for_real_parent_nonce_then_rejects_replay ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::fully_known_gap_window_rotates_to_ready_work_but_unknown_window_does_not ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::missing_unready_absent_and_present_zero_are_distinct ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::published_prefetch_cannot_install_a_private_successor_override ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::published_prefix_updates_preserve_untouched_values_but_not_old_root_tickets ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::read_errors_and_malformed_nonce_records_never_mean_absence ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::selection_revision_changes_only_for_new_nonce_facts_or_parent_binding ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::source_wait_keeps_original_nonce_ticket_progress_and_wakes_on_completion ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::state_reads_are_bounded_and_never_replaced_by_pending_nonce_claims ... ok
+test native_pipeline::service::rpc::nonce_cache::tests::uca_cache_requires_initialized_nonce_even_after_eviction ... ok
+test native_pipeline::service::rpc::selection_budget_tests::actual_asset_no_ready_wait_preserves_progress_until_nonce_bridge_arrives ... ignored, real trusted AOEM and original native pool/admission owners; run alone
+test native_pipeline::service::rpc::selection_budget_tests::asset_full_known_stream_does_not_skip_an_older_unknown_nonce_subject ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_local_gap_never_parks_over_ready_or_unknown_tail ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_metadata_or_capacity_exit_is_not_known_empty ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_nonce_window_keeps_low_load_and_missing_predecessor_behavior ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_selection_1024_rows_at_8m_preserves_queued_nonce_suffix ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_selection_refuses_invalid_row_and_length_before_nonce_credit ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_selection_wait_binds_full_parent_round_and_successor_source ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_source_wait_reuses_only_unchanged_partial_selection ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_successor_window_fills_past_queued_predecessor_rows_without_nonce_credit ... ok
+test native_pipeline::service::rpc::selection_budget_tests::asset_whole_pool_gap_wait_wakes_for_same_size_nonce_bridge ... ok
+test native_pipeline::service::rpc::selection_budget_tests::eight_grant_openings_respect_original_access_budget_and_preserve_suffix ... ok
+test native_pipeline::service::rpc::tests::abandoned_completed_balance_results_do_not_exhaust_query_slots ... ok
+test native_pipeline::service::rpc::tests::apfl_pending_prefix_uses_exact_original_signature_and_nonce_not_codec_trust ... ok
+test native_pipeline::service::rpc::tests::balance_backpressure_preserves_all_unfinished_slots_and_only_evicts_completed ... ok
+test native_pipeline::service::rpc::tests::batch_selection_obeys_network_byte_limit_without_dropping_pending_or_nonce_credit ... ok
+test native_pipeline::service::rpc::tests::batch_selection_preserves_nonce_gaps_successor_prefix_and_count_cap ... ok
+test native_pipeline::service::rpc::tests::business_failure_is_not_counted_as_success_or_zk ... ok
+test native_pipeline::service::rpc::tests::durable_successor_nonce_overlay_keeps_published_projection_and_pending_unchanged ... ok
+test native_pipeline::service::rpc::tests::early_selection_uses_exact_verified_bytes_and_never_mutates_parent_nonces ... ok
+test native_pipeline::service::rpc::tests::full_signed_transfer_hex_reaches_the_real_authenticator ... ok
+test native_pipeline::service::rpc::tests::idle_handoff_is_bounded_by_time_and_turns_and_only_progress_resets_it ... ok
+test native_pipeline::service::rpc::tests::pending_apfl_selection_preserves_shared_rows_signature_and_nonce_order ... ok
+test native_pipeline::service::rpc::tests::pool_retention_keeps_full_owner_charged_until_last_row_and_rejects_without_mutation ... ok
+test native_pipeline::service::rpc::tests::prepared_selection_identity_includes_full_parent_and_source_round ... ok
+test native_pipeline::service::rpc::tests::raw_and_hash_requests_are_bounded_and_canonical ... ok
+test native_pipeline::service::rpc::tests::raw_pool_retention_charges_capacity_not_only_visible_length ... ok
+test native_pipeline::service::rpc::uca::tests::asset_body_reference_reuses_pool_rows_without_local_target_or_authority_changes ... ignored, real AOEM asset admission; reference reconstruction uses original pool, run alone
+test native_pipeline::service::rpc::uca::tests::asset_pool_compact_facts_charge_one_source_without_owned_crypto_copies ... ignored, real AOEM/native admission; compact facts and exactly-once original APFL pool retention
+test native_pipeline::service::tests::asset_local_proposal_target_does_not_reduce_peer_validation_or_capture_capacity ... ok
+test native_pipeline::service::tests::gpu_deployment_selection_reaches_the_same_original_pipeline_without_protocol_change ... ok
+test native_pipeline::service::tests::local_or_missing_peer_routes_reject_before_native_startup ... ok
+test native_pipeline::service::tests::mismatched_transport_key_rejects_before_native_startup ... ok
+test native_pipeline::service::tests::native_asset_capacity_covers_1024_rows_without_growing_control_or_ttl ... ok
+test native_pipeline::service::tests::protected_custody_never_falls_back_to_raw_keys_before_native_startup ... ok
+test native_pipeline::service::tests::resident_config_reads_large_mldsa_metadata_but_rejects_oversized_documents ... ok
+test native_pipeline::service::tests::retired_ed25519_validator_rejects_before_native_startup ... ok
+test native_pipeline::service::tests::rpc_pipeline_budget_covers_real_independent_accounts_not_only_shared_receiver ... ok
+test native_pipeline::service::tests::signature_selection_reaches_original_pipeline_without_changing_business_or_domain ... ok
+test native_pipeline::service::uca_native_tests::actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures ... ignored, real trusted AOEM; four original services, bounded pool pressure and real publication, run alone
+test native_pipeline::service::uca_native_tests::actual_native_uca_single_client_respend_and_cold_recovery ... ignored, real trusted AOEM; four original services and DBs in one process, actual UDP, run alone
+test native_pipeline::state::frontier::capture::tests::bad_reply_is_atomic_terminal_and_is_never_an_absent_application_key ... ok
+test native_pipeline::state::frontier::capture::tests::bounded_plan_capture_retains_original_body_root_and_permissions ... ok
+test native_pipeline::state::frontier::capture::tests::deletion_sibling_placement_is_checked_without_reading_its_descendants ... ok
+test native_pipeline::state::frontier::capture::tests::empty_parent_finishes_without_io_but_keeps_exact_access_permissions ... ok
+test native_pipeline::state::frontier::capture::tests::incomplete_unsolicited_duplicate_and_invalid_declarations_are_rejected ... ok
+test native_pipeline::state::frontier::capture::tests::incremental_reads_are_deduplicated_bounded_and_never_replay_prior_edges ... ok
+test native_pipeline::state::frontier::capture::tests::precise_limits_are_inclusive_and_smaller_limits_fail_closed ... ok
+test native_pipeline::state::frontier::capture::tests::shared_cached_node_is_revalidated_on_every_incoming_edge ... ok
+test native_pipeline::state::frontier::capture::tests::source_drop_and_threaded_delete_insert_repeated_changes_match_full_reader ... ok
+test native_pipeline::state::frontier::seed::tests::captured_read_seed_budget_miss_is_optional_but_tampering_is_rejected ... ok
+test native_pipeline::state::frontier::seed::tests::captured_read_seed_moves_nodes_without_inheriting_access_and_fills_misses ... ok
+test native_pipeline::state::frontier::seed::tests::complete_seed_recaptures_put_delete_and_absence_without_any_source ... ok
+test native_pipeline::state::frontier::seed::tests::partial_seed_uses_bulk_storage_misses_and_never_invents_absence ... ok
+test native_pipeline::state::frontier::seed::tests::seed_does_not_inherit_permissions_or_bypass_child_capture_bounds ... ok
+test native_pipeline::state::frontier::seed::tests::seed_limits_are_inclusive_and_optional_but_corruption_is_an_error ... ok
+test native_pipeline::state::frontier::seed::tests::seed_moves_both_maps_and_charges_every_hash_and_duplicate_allocation ... ok
+test native_pipeline::state::frontier::seed::tests::seeded_shared_node_is_rechecked_at_each_incoming_edge ... ok
+test native_pipeline::state::frontier::seed::tests::wrong_seed_root_is_only_a_cache_miss ... ok
+test native_pipeline::state::frontier::tests::authenticated_absence_is_not_unknown_key_or_missing_frontier_content ... ok
+test native_pipeline::state::frontier::tests::batch_read_failure_does_not_turn_missing_captured_content_into_absence ... ok
+test native_pipeline::state::frontier::tests::batch_reads_do_not_expose_captured_deletion_siblings_or_a_successful_prefix ... ok
+test native_pipeline::state::frontier::tests::batch_reads_preserve_absence_order_duplicates_and_source_independence ... ok
+test native_pipeline::state::frontier::tests::capture_rejects_missing_corrupt_and_failing_source_instead_of_absence ... ok
+test native_pipeline::state::frontier::tests::declared_permissions_and_unknown_writes_fail_without_partial_effects ... ok
+test native_pipeline::state::frontier::tests::deletion_capture_includes_the_other_leaf_needed_for_branch_collapse ... ok
+test native_pipeline::state::frontier::tests::deterministic_mixed_changes_match_full_reader_across_128_parent_plans ... ok
+test native_pipeline::state::frontier::tests::duplicate_empty_and_invalid_key_declarations_fail_before_reading_source ... ok
+test native_pipeline::state::frontier::tests::empty_parent_needs_no_source_and_supports_insert_delete_and_noop ... ok
+test native_pipeline::state::frontier::tests::key_node_and_byte_budgets_are_inclusive_and_count_unique_content ... ok
+test native_pipeline::state::frontier::tests::owned_input_is_send_sync_and_static ... ok
+test native_pipeline::state::frontier::tests::repeated_changes_preserve_order_and_exact_full_reader_result ... ok
+test native_pipeline::state::frontier::tests::threaded_computation_uses_no_source_after_capture_and_drop ... ok
+test native_pipeline::state::frontier::witness::tests::canonical_roundtrip_retains_exact_access_and_real_update_after_source_drop ... ok
+test native_pipeline::state::frontier::witness::tests::every_truncation_and_changed_byte_and_trailing_payload_fail_closed ... ok
+test native_pipeline::state::frontier::witness::tests::exact_node_byte_budget_excludes_bounded_framing_and_limits_are_inclusive ... ok
+test native_pipeline::state::frontier::witness::tests::independent_access_rejects_missing_extra_duplicate_keys_and_changed_permissions ... ok
+test native_pipeline::state::frontier::witness::tests::leaf_minimum_maximum_and_declared_length_limits_match_patricia_v1 ... ok
+test native_pipeline::state::frontier::witness::tests::missing_absence_path_or_delete_sibling_is_not_absence ... ok
+test native_pipeline::state::frontier::witness::tests::ordered_unique_nodes_reject_detached_extras_and_candidate_output_substitution ... ok
+test native_pipeline::state::frontier::witness::tests::rehashed_wrong_child_direction_is_rejected_not_just_individual_hash_checked ... ok
+test native_pipeline::state::frontier::witness::tests::trusted_empty_parent_has_empty_frontier_but_still_exact_permissions ... ok
+test native_pipeline::state::tree::batch::tests::all_noop_puts_stage_nothing_and_empty_batch_does_not_read_parent ... ok
+test native_pipeline::state::tree::batch::tests::cache_hit_still_checks_each_incoming_parent_edge ... ok
+test native_pipeline::state::tree::batch::tests::deletes_and_duplicate_digests_are_not_coalesced ... ok
+test native_pipeline::state::tree::batch::tests::duplicate_run_fallback_and_delete_positions_are_preserved ... ok
+test native_pipeline::state::tree::batch::tests::each_shared_ancestor_is_staged_once_on_build_and_replacement ... ok
+test native_pipeline::state::tree::batch::tests::full_256_branch_depth_preserves_roots_and_noop_staging ... ok
+test native_pipeline::state::tree::batch::tests::large_put_runs_still_batch_with_intervening_deletes_and_ordered_duplicate_run ... ok
+test native_pipeline::state::tree::batch::tests::later_put_run_cannot_hide_a_delete_collapse_missing_parent_node ... ok
+test native_pipeline::state::tree::batch::tests::missing_or_corrupt_existing_root_cannot_be_hidden_by_new_prefixes ... ok
+test native_pipeline::state::tree::batch::tests::noop_runs_separated_by_absent_deletes_do_not_stage_anything ... ok
+test native_pipeline::state::tree::batch::tests::original_input_and_internal_resource_bounds_are_preserved ... ok
+test native_pipeline::state::tree::batch::tests::sorted_inputs_mixed_with_old_leaves_cover_shallower_and_deepest_splits ... ok
+test native_pipeline::state::tree::batch::tests::untouched_child_is_not_loaded_but_touched_child_stays_required ... ok
+test native_pipeline::state::tree::batch_conformance::detached_sparse_frontier_supports_bulk_puts_without_authority_or_extra_reads ... ok
+test native_pipeline::state::tree::batch_conformance::duplicate_and_delete_sequences_keep_the_original_ordered_contract ... ok
+test native_pipeline::state::tree::batch_conformance::every_original_accessed_parent_node_remains_required_and_authenticated ... ok
+test native_pipeline::state::tree::batch_conformance::intermediate_versions_still_use_reachability_pruning ... ok
+test native_pipeline::state::tree::batch_conformance::many_parent_versions_and_put_orders_match_original_root_and_node_bytes ... ok
+test native_pipeline::state::tree::batch_conformance::shared_empty_commitment_removes_per_edge_hashing_without_changing_codec ... ok
+test native_pipeline::state::tree::batch_conformance::unique_noop_puts_still_check_parent_edges_and_do_not_restage ... ok
+test native_pipeline::state::tree::batch_conformance::unique_put_batch_preserves_all_input_bounds_including_late_invalid_items ... ok
+test native_pipeline::state::tree::initial::tests::batched_initialization_matches_one_original_tree_update ... ok
+test native_pipeline::state::tree::initial::tests::large_mixed_initialization_matches_original_planner_chunks ... ok
+test native_pipeline::state::tree::read_batch::tests::absent_endpoints_do_not_discard_matching_middle_or_duplicate_outputs ... ok
+test native_pipeline::state::tree::read_batch::tests::cached_wrong_edge_is_rejected_before_compressed_prefix_absence ... ok
+test native_pipeline::state::tree::read_batch::tests::every_node_required_by_point_reads_remains_required_and_hash_checked ... ok
+test native_pipeline::state::tree::read_batch::tests::full_256_branch_depth_and_last_bit_absence_remain_bounded ... ok
+test native_pipeline::state::tree::read_batch::tests::query_key_node_and_cumulative_reader_limits_are_preserved ... ok
+test native_pipeline::state::tree::read_batch::tests::shared_512_key_traversal_reads_each_reachable_node_once ... ok
+test native_pipeline::state::tree::read_batch::tests::thread_local_counters_record_successful_calls_and_original_query_count_only ... ok
+test native_pipeline::state::tree::read_batch::tests::unordered_duplicates_present_and_absent_match_independent_point_reads ... ok
+test native_pipeline::state::tree::read_batch::tests::untouched_child_is_not_loaded_and_empty_queries_do_not_validate_root ... ok
+test native_pipeline::state::tree::read_batch::tests::wrong_branch_placement_is_checked_before_filtering_all_queries_as_absent ... ok
+test native_pipeline::state::tree::tests::capture_delete_includes_the_survivor_missing_from_a_query_path ... ok
+test native_pipeline::state::tree::tests::capture_rejects_missing_misdirected_and_malformed_siblings ... ok
+test native_pipeline::state::tree::tests::capture_stops_at_immediate_sibling_root_and_proves_absence ... ok
+test native_pipeline::state::tree::tests::captured_parent_closes_repeated_planned_puts_and_deletes_without_live_reads ... ok
+test native_pipeline::state::tree::tests::collapsing_a_branch_checks_survivor_availability_and_direction ... ok
+test native_pipeline::state::tree::tests::corrupt_missing_and_noncanonical_nodes_fail_closed ... ok
+test native_pipeline::state::tree::tests::current_state_larger_than_eight_mib_has_bounded_single_key_updates ... ignored, large incremental-state capacity fixture; explicitly run
+test native_pipeline::state::tree::tests::deletion_compresses_paths_and_restores_canonical_empty_root ... ok
+test native_pipeline::state::tree::tests::invalid_child_direction_is_not_reported_as_absence ... ok
+test native_pipeline::state::tree::tests::no_op_changes_do_not_restage_ancestor_nodes ... ok
+test native_pipeline::state::tree::tests::node_validation_and_reader_budget_are_local_and_bounded ... ok
+test native_pipeline::state::tree::tests::randomized_changes_match_ordered_map_across_batch_boundaries ... ok
+test native_pipeline::state::tree::tests::roots_are_order_independent_and_old_versions_remain_readable ... ok
+test native_pipeline::state::tree::tests::streaming_scan_validates_all_child_paths_and_respects_budget ... ok
+test native_pipeline::state::tree::tests::updates_are_bounded_and_never_write_to_reader ... ok
+
+test result: ok. 563 passed; 0 failed; 145 ignored; 0 measured; 1136 filtered out; finished in 9.49s
+

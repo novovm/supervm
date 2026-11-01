@@ -273,3 +273,142 @@ fn regrouped_candidate_does_not_pin_retired_pool_dictionaries() -> Result<()> {
     assert!(matches!(message, Message::ApflBody { .. }));
     Ok(())
 }
+
+#[test]
+#[ignore = "explicit packaged AOEM; retained NUAS pool evidence, not asset authorization"]
+fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Result<()> {
+    use crate::native_pipeline::pipeline::admitted_uca_for_test;
+    use novovm_protocol::uca_spend::{
+        spend_key_ref_v1, AssetSpendIntentV3, MAX_SIGNED_SPEND_BYTES,
+    };
+    use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
+    let library: std::path::PathBuf = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .context("explicit trusted AOEM library required")?
+        .into();
+    let facade = novovm_exec::AoemExecFacade::open(&library, Default::default())?;
+    let keys = facade.mldsa_keygen_v1(novovm_exec::pq_signature::AoemMldsaParameterSet::MlDsa65)?;
+    let signer = facade.asset_spend_signer_v3()?;
+    let mut signed = Vec::new();
+    for nonce in 0..2 {
+        signed.push(signer.sign(
+            AssetSpendIntentV3 {
+                authority: novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
+                asset: 1,
+                authority_update: None,
+                recipient_creation: None,
+                chain_id: 71,
+                genesis: [1; 32],
+                payer: vec![1; 20],
+                authorization_epoch: 1,
+                spend_key_ref: spend_key_ref_v1(&keys.public_key)?,
+                recipient: vec![2; 20],
+                amount: 30,
+                max_fee: 50,
+                nonce,
+                not_before_height: 1,
+                expires_at_height: 50,
+            },
+            &keys.public_key,
+            &keys.expanded_secret_key,
+        )?);
+    }
+    let raws = signed
+        .iter()
+        .map(|s| s.encode())
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let limits = AssetSpendBatchLimitsV3 {
+        transactions: 16,
+        transaction_bytes: MAX_SIGNED_SPEND_BYTES,
+        body_bytes: 65536,
+    };
+    let make = |raws: &[Vec<u8>]| -> Result<_> {
+        Ok(Arc::new(AssetSpendBatchV3::from_raw(raws, limits)?))
+    };
+    let source = make(&raws)?;
+    let owner = Arc::new(());
+    let mut pending = BTreeMap::new();
+    for (index, row) in signed.iter().enumerate() {
+        pending.insert(
+            uca::hash(row)?,
+            Pending {
+                input: AdmissionInput::Uca {
+                    batch: source.clone(),
+                    index,
+                },
+                admitted: Some(admitted_uca_for_test(
+                    owner.clone(),
+                    &facade,
+                    source.clone(),
+                    index,
+                )?),
+                canonical_len: raws[index].len(),
+                signer: row.intent.nonce_identity()?,
+                nonce: row.intent.nonce,
+                gossip_missing: 0,
+            },
+        );
+    }
+    let Message::ApflBody { context, .. } = body(apfl_batch(&raw(1), 8)?) else {
+        unreachable!()
+    };
+    let message = |batch| Message::AssetBody { context, batch };
+    let selected = message(make(&raws)?);
+    let reused = admitted_for_body(&selected, &pending)?.context("exact UCA rows should reuse")?;
+    assert_eq!(reused.len(), 2);
+    assert_eq!(reused[0].checked_uca().unwrap().intent().nonce, 0);
+    let reversed = message(make(&[raws[1].clone(), raws[0].clone()])?);
+    assert_eq!(
+        admitted_for_body(&reversed, &pending)?.unwrap()[0]
+            .checked_uca()
+            .unwrap()
+            .intent()
+            .nonce,
+        1
+    );
+    // Both rows individually have real valid signature evidence in this pool,
+    // but repeating the same intent must decline optional reuse. Otherwise a
+    // remote successor reaches rebind's duplicate rejection as a poll error.
+    let duplicate = message(make(&[raws[0].clone(), raws[0].clone()])?);
+    assert!(
+        admitted_for_body(&duplicate, &pending)?.is_none(),
+        "duplicate signed rows must remain on the original strict path"
+    );
+    let mut tampered = signed[0].clone();
+    tampered.signature[0] ^= 1;
+    assert_eq!(
+        uca::hash(&tampered)?,
+        uca::hash(&signed[0])?,
+        "intent hash is not signature evidence"
+    );
+    assert!(admitted_for_body(
+        &message(make(&[tampered.encode()?, raws[1].clone()])?),
+        &pending
+    )?
+    .is_none());
+    let mut changed_account = signed[0].clone();
+    changed_account.intent.payer[0] ^= 1;
+    assert!(admitted_for_body(
+        &message(make(&[changed_account.encode()?, raws[1].clone()])?),
+        &pending
+    )?
+    .is_none());
+    let first = uca::hash(&signed[0])?;
+    pending.get_mut(&first).unwrap().input = AdmissionInput::Uca {
+        batch: make(&raws)?,
+        index: 0,
+    };
+    assert!(
+        admitted_for_body(&selected, &pending)?.is_none(),
+        "equal bytes cannot pin a different uncharged source"
+    );
+    pending.get_mut(&first).unwrap().input = AdmissionInput::Uca {
+        batch: source,
+        index: 0,
+    };
+    pending.get_mut(&first).unwrap().admitted = None;
+    assert!(
+        admitted_for_body(&selected, &pending)?.is_none(),
+        "missing evidence uses original strict authentication"
+    );
+    Ok(())
+}

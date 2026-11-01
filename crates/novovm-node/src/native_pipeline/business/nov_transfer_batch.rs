@@ -355,7 +355,7 @@ impl NovTransferCapture {
     pub(crate) fn advance_with_seed(
         &mut self,
         max_edge_steps: usize,
-        seed: Option<&crate::native_pipeline::state::frontier::PostStateSeed>,
+        seed: Option<&crate::native_pipeline::state::frontier::StateReadSeed>,
     ) -> Result<CaptureStep> {
         self.capture.advance_with_seed(max_edge_steps, seed)
     }

@@ -1,0 +1,6 @@
+
+running 1 test
+test transport::tests::udp_drain_consumes_retained_batch_before_prefetching_again ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 896 filtered out; finished in 0.00s
+

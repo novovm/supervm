@@ -6,12 +6,12 @@ use crate::native_pipeline::{
     persistence::StoredCandidate,
     pipeline::BatchRequest,
 };
-use novovm_protocol::uca_spend_batch::{UcaSpendBatch, UcaSpendBatchLimits};
+use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 
-const VERSION: u16 = 1;
+const VERSION: u16 = 2;
 
-fn batch_limits(limits: DecodeLimits) -> UcaSpendBatchLimits {
-    UcaSpendBatchLimits {
+fn batch_limits(limits: DecodeLimits) -> AssetSpendBatchLimitsV3 {
+    AssetSpendBatchLimitsV3 {
         transactions: limits.transactions,
         transaction_bytes: limits.transaction_bytes,
         body_bytes: limits.body_bytes,
@@ -28,7 +28,7 @@ fn uca_profile(context: &BatchContext) -> Result<()> {
     Ok(())
 }
 
-fn validate(batch: &UcaSpendBatch, limits: DecodeLimits) -> Result<()> {
+fn validate(batch: &AssetSpendBatchV3, limits: DecodeLimits) -> Result<()> {
     limits.validate()?;
     ensure!(
         !batch.is_empty()
@@ -43,7 +43,7 @@ fn validate(batch: &UcaSpendBatch, limits: DecodeLimits) -> Result<()> {
 pub(super) fn append_body(
     out: &mut Vec<u8>,
     context: &BatchContext,
-    batch: &UcaSpendBatch,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<()> {
     uca_profile(context)?;
@@ -62,24 +62,118 @@ pub(super) fn append_body(
     Ok(())
 }
 
-/// A distinct versioned identity commits both exact signed input and locator
-/// hints via the canonical structural codec. Hints remain non-authoritative.
+/// The v3 body commits exact signed asset accounts, authority mode and canonical input.
 pub fn uca_body_id(
     context: &BatchContext,
-    batch: &UcaSpendBatch,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<Hash> {
+    uca_body_id_and_wire_len(context, batch, limits).map(|(id, _)| id)
+}
+
+pub(crate) fn uca_body_reference(
+    context: &BatchContext,
+    batch: &AssetSpendBatchV3,
+    limits: DecodeLimits,
+) -> Result<Message> {
+    let body_id = uca_body_id(context, batch, limits)?;
+    reference_size(batch.len(), limits)?;
+    let transactions = (0..batch.len())
+        .map(|index| {
+            // Exactly the existing pool's intent key. Public keys/signatures
+            // remain committed by body_id, never authenticated by this locator.
+            Ok(Sha256::digest(batch.view(index)?.signing_bytes()?).into())
+        })
+        .collect::<Result<Vec<Hash>>>()?;
+    Ok(Message::AssetBodyReference {
+        context: *context,
+        body_id,
+        transactions,
+    })
+}
+
+fn reference_size(count: usize, limits: DecodeLimits) -> Result<usize> {
+    limits.validate()?;
+    ensure!(
+        count > 0 && count <= limits.transactions,
+        "NUAS reference transaction count exceeds budget or empty"
+    );
+    let hashes = count
+        .checked_mul(32)
+        .context("NUAS reference size overflow")?;
+    // Only reference metadata exists here. Reconstructing the complete batch
+    // must separately enforce its original expanded and per-row byte budgets.
+    ensure!(
+        hashes <= limits.body_bytes,
+        "NUAS reference exceeds byte budget"
+    );
+    let size = hashes
+        .checked_add(PREFIX_BYTES + 2 + CONTEXT_BYTES + 32 + 4)
+        .context("NUAS reference envelope overflow")?;
+    ensure!(
+        size <= limits.message_bytes,
+        "NUAS reference envelope budget"
+    );
+    Ok(size)
+}
+
+pub(super) fn append_reference(
+    out: &mut Vec<u8>,
+    context: &BatchContext,
+    body_id: &Hash,
+    transactions: &[Hash],
+    limits: DecodeLimits,
+) -> Result<()> {
+    uca_profile(context)?;
+    reference_size(transactions.len(), limits)?;
+    out.extend_from_slice(&VERSION.to_be_bytes());
+    append_context(out, context);
+    out.extend_from_slice(body_id);
+    out.extend_from_slice(&u32::try_from(transactions.len())?.to_be_bytes());
+    for hash in transactions {
+        out.extend_from_slice(hash);
+    }
+    Ok(())
+}
+
+pub(super) fn decode_reference(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Message> {
+    ensure!(
+        reader.u16()? == VERSION,
+        "NUAS reference payload version mismatch"
+    );
+    let context = read_context(reader)?;
+    uca_profile(&context)?;
+    let body_id = reader.hash()?;
+    let count = reader.u32()? as usize;
+    reference_size(count, limits)?;
+    ensure!(
+        count.checked_mul(32) == Some(reader.remaining()),
+        "NUAS reference row bytes mismatch"
+    );
+    let transactions = (0..count)
+        .map(|_| reader.hash())
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Message::AssetBodyReference {
+        context,
+        body_id,
+        transactions,
+    })
+}
+
+fn uca_body_id_and_wire_len(
+    context: &BatchContext,
+    batch: &AssetSpendBatchV3,
+    limits: DecodeLimits,
+) -> Result<(Hash, usize)> {
     let mut bytes = Vec::new();
     append_body(&mut bytes, context, batch, limits)?;
-    ensure!(
-        bytes.len().saturating_add(PREFIX_BYTES) <= limits.message_bytes,
-        "NUAS envelope budget"
-    );
+    let wire_len = bytes.len().saturating_add(PREFIX_BYTES);
+    ensure!(wire_len <= limits.message_bytes, "NUAS envelope budget");
     let mut digest = Sha256::new();
-    digest.update(b"novovm-round-bft-transport/v1/nuas-body/1\0");
+    digest.update(b"novovm-round-bft-transport/v1/nuas-body/2\0");
     digest.update((bytes.len() as u64).to_be_bytes());
     digest.update(bytes);
-    Ok(digest.finalize().into())
+    Ok((digest.finalize().into(), wire_len))
 }
 
 pub(super) fn decode(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Message> {
@@ -89,9 +183,9 @@ pub(super) fn decode(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Me
     );
     let context = read_context(reader)?;
     uca_profile(&context)?;
-    let batch = UcaSpendBatch::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
+    let batch = AssetSpendBatchV3::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
     validate(&batch, limits)?;
-    Ok(Message::UcaBody {
+    Ok(Message::AssetBody {
         context,
         batch: Arc::new(batch),
     })
@@ -100,7 +194,7 @@ pub(super) fn decode(reader: &mut Reader<'_>, limits: DecodeLimits) -> Result<Me
 pub(super) fn append_transactions(
     out: &mut Vec<u8>,
     scope: &TransactionsScope,
-    batch: &UcaSpendBatch,
+    batch: &AssetSpendBatchV3,
     limits: DecodeLimits,
 ) -> Result<()> {
     scope.validate_shape()?;
@@ -124,9 +218,9 @@ pub(super) fn decode_transactions(
     limits: DecodeLimits,
 ) -> Result<Message> {
     let scope = transactions::read_scope(reader)?;
-    let batch = UcaSpendBatch::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
+    let batch = AssetSpendBatchV3::decode(reader.take(reader.remaining())?, batch_limits(limits))?;
     validate(&batch, limits)?;
-    Ok(Message::UcaTransactions {
+    Ok(Message::AssetTransactions {
         scope,
         batch: Arc::new(batch),
     })
@@ -139,8 +233,21 @@ pub(crate) fn candidate_body_id(message: &Message, limits: DecodeLimits) -> Resu
             raw_transactions,
         } => body_id(context, raw_transactions, limits),
         Message::ApflBody { context, batch } => apfl_body_id(context, batch, limits),
-        Message::UcaBody { context, batch } => uca_body_id(context, batch, limits),
+        Message::AssetBody { context, batch } => uca_body_id(context, batch, limits),
         _ => anyhow::bail!("candidate input must be an exact body"),
+    }
+}
+
+/// Reuse the full NUAS encoding already needed for its body identity. Other
+/// body formats retain their existing ID and later resource-charge path.
+pub(crate) fn candidate_body_id_and_wire_len(
+    message: &Message,
+    limits: DecodeLimits,
+) -> Result<(Hash, Option<usize>)> {
+    match message {
+        Message::AssetBody { context, batch } => uca_body_id_and_wire_len(context, batch, limits)
+            .map(|(id, wire_len)| (id, Some(wire_len))),
+        _ => candidate_body_id(message, limits).map(|id| (id, None)),
     }
 }
 
@@ -151,7 +258,7 @@ pub(crate) fn candidate_request(
     policy: &DirectNovFeePolicy,
 ) -> Result<BatchRequest> {
     match message {
-        Message::UcaBody { context, batch } => {
+        Message::AssetBody { context, batch } => {
             uca_profile(context)?;
             ensure!(
                 context.effect_contract == uca_effect_contract(policy)?,
@@ -191,16 +298,10 @@ pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Res
     let context = *stored.context();
     if context.business_program == uca_program_id() {
         uca_profile(&context)?;
-        let hints = stored
-            .uca_account_hints()?
-            .into_iter()
-            .map(|(payer, recipient)| (payer.as_bytes().to_vec(), recipient.as_bytes().to_vec()))
-            .collect::<Vec<_>>();
-        Ok(Message::UcaBody {
+        Ok(Message::AssetBody {
             context,
-            batch: Arc::new(UcaSpendBatch::from_raw(
+            batch: Arc::new(AssetSpendBatchV3::from_raw(
                 stored.raw_transactions(),
-                &hints,
                 batch_limits(limits),
             )?),
         })
@@ -227,4 +328,4 @@ pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Res
 
 #[cfg(test)]
 #[path = "uca_tests.rs"]
-mod tests;
+pub(super) mod tests;

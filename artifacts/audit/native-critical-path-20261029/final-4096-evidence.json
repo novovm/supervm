@@ -1,0 +1,471 @@
+{
+  "schema": "novovm.native-critical-path.final-4096-evidence.v1",
+  "date": "2026-10-29",
+  "qualification": "FINAL_STAGE2_CANDIDATE_4096_STRICT_BEFORE_AFTER_ONLY",
+  "repository_base": "94da21e2",
+  "measured_source_snapshot": {
+    "path": "final-stage2-source.patch",
+    "sha256": "5ad500e1d27f141b5d077695969f0091bd2f939686b425f3b7f0d198b2be99be"
+  },
+  "artifacts": {
+    "node_sha256": "861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+    "client_sha256": "6603c105ffb35288aaca8f111d394c5cf1aeca93baa597d9c41ac690e0c3df04",
+    "node_tests_sha256": "0152953a2dd8c308605d0ec9817e9a8d642c94dab84c8ab0e6000212a63d4b2b",
+    "network_tests_sha256": "3fb19b9dd92dca27e7b2218550c5a55a4a836f22612ddb72a11113b036d38568",
+    "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+    "baseline_node_sha256": "b2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+    "stage1_node_sha256_not_this_candidate": "307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b"
+  },
+  "raw_report": {
+    "source": "target/native-product-load/bulk-authority-paired-25848-1793233164582.json",
+    "copy": "final-4096-before-after.json",
+    "sha256": "bfa81d6b083143870f010f7156417f46f1b71ffcc0b0b18127a63a7c79b932fb"
+  },
+  "contract": {
+    "scope": "one-host four-process laboratory before/after; no deployed identity or journal reset",
+    "same_signed_corpus_and_initial_state": true,
+    "all_round_databases_and_journals_retained": true,
+    "business_backend_unchanged": true,
+    "full_65536": false
+  },
+  "rounds": [
+    {
+      "label": "before_cpu",
+      "report": {
+        "transactions": 4096,
+        "binary_sha256": "0xb2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2193.7752697899045,
+        "elapsed_seconds": 1.867101,
+        "latency_us": {
+          "p50": 1709999,
+          "p95": 1865735,
+          "p99": 1865931,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x1949d8d321d3488c0c6dda369d985b045d2b9821a38f9bbe5e99b8e29abb3124",
+        "initial_root": "0x8679f6366c4093a313afd882bdc529d7f07465cef186b5e4c2a9a05c7d110207",
+        "signing_domain": "0x2be4f61d26fdc55af4bb8c467b103362b57bfa9ccfb4fad5c9fa6814c76e4029",
+        "genesis_commitment": "0x9e504616c63aa633949b1edd85457ea7bbe8cc1b7ed1aab1ffe6110c7b6ec19f",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 596613,
+        "four_process_startup_ready_seconds": 0.2864949,
+        "startup_through_four_receipts_seconds": 2.4311556,
+        "cold_receipt_observation_seconds": 0.364275,
+        "first_height_all_receipt_queries_observed_us": 1450840,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 6102,
+          "receipt_query_requests_by_node": [
+            1553,
+            1391,
+            1750,
+            1408
+          ],
+          "observation_rows_received": 781056,
+          "receipt_query_rows_received_by_node": [
+            198784,
+            178048,
+            224000,
+            180224
+          ],
+          "observation_not_final": 764672,
+          "receipt_query_not_final_by_node": [
+            194688,
+            173952,
+            219904,
+            176128
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "effective_outstanding_limit": 8192
+      }
+    },
+    {
+      "label": "after_cpu",
+      "report": {
+        "transactions": 4096,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2503.281890564534,
+        "elapsed_seconds": 1.636252,
+        "latency_us": {
+          "p50": 1461116,
+          "p95": 1631822,
+          "p99": 1635096,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x1949d8d321d3488c0c6dda369d985b045d2b9821a38f9bbe5e99b8e29abb3124",
+        "initial_root": "0x8679f6366c4093a313afd882bdc529d7f07465cef186b5e4c2a9a05c7d110207",
+        "signing_domain": "0x2be4f61d26fdc55af4bb8c467b103362b57bfa9ccfb4fad5c9fa6814c76e4029",
+        "genesis_commitment": "0x9e504616c63aa633949b1edd85457ea7bbe8cc1b7ed1aab1ffe6110c7b6ec19f",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 20495,
+        "four_process_startup_ready_seconds": 0.381887,
+        "startup_through_four_receipts_seconds": 2.2953293,
+        "cold_receipt_observation_seconds": 0.348022,
+        "first_height_all_receipt_queries_observed_us": 1262440,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 4504,
+          "receipt_query_requests_by_node": [
+            748,
+            1301,
+            1339,
+            1116
+          ],
+          "observation_rows_received": 576512,
+          "receipt_query_rows_received_by_node": [
+            95744,
+            166528,
+            171392,
+            142848
+          ],
+          "observation_not_final": 560128,
+          "receipt_query_not_final_by_node": [
+            91648,
+            162432,
+            167296,
+            138752
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "effective_outstanding_limit": 8192
+      }
+    },
+    {
+      "label": "before_gpu",
+      "report": {
+        "transactions": 4096,
+        "binary_sha256": "0xb2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 814.2946887947007,
+        "elapsed_seconds": 5.03012,
+        "latency_us": {
+          "p50": 4823227,
+          "p95": 5028734,
+          "p99": 5028982,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x1949d8d321d3488c0c6dda369d985b045d2b9821a38f9bbe5e99b8e29abb3124",
+        "initial_root": "0x8679f6366c4093a313afd882bdc529d7f07465cef186b5e4c2a9a05c7d110207",
+        "signing_domain": "0x2be4f61d26fdc55af4bb8c467b103362b57bfa9ccfb4fad5c9fa6814c76e4029",
+        "genesis_commitment": "0x9e504616c63aa633949b1edd85457ea7bbe8cc1b7ed1aab1ffe6110c7b6ec19f",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 19698,
+        "four_process_startup_ready_seconds": 0.2581272,
+        "startup_through_four_receipts_seconds": 5.5655364,
+        "cold_receipt_observation_seconds": 0.503638,
+        "first_height_all_receipt_queries_observed_us": 4601384,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 11439,
+          "receipt_query_requests_by_node": [
+            2557,
+            2550,
+            3565,
+            2767
+          ],
+          "observation_rows_received": 1464192,
+          "receipt_query_rows_received_by_node": [
+            327296,
+            326400,
+            456320,
+            354176
+          ],
+          "observation_not_final": 1447808,
+          "receipt_query_not_final_by_node": [
+            323200,
+            322304,
+            452224,
+            350080
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "effective_outstanding_limit": 8192
+      }
+    },
+    {
+      "label": "after_gpu",
+      "report": {
+        "transactions": 4096,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2796.0800268685816,
+        "elapsed_seconds": 1.4649079999999999,
+        "latency_us": {
+          "p50": 1263226,
+          "p95": 1445948,
+          "p99": 1463624,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x1949d8d321d3488c0c6dda369d985b045d2b9821a38f9bbe5e99b8e29abb3124",
+        "initial_root": "0x8679f6366c4093a313afd882bdc529d7f07465cef186b5e4c2a9a05c7d110207",
+        "signing_domain": "0x2be4f61d26fdc55af4bb8c467b103362b57bfa9ccfb4fad5c9fa6814c76e4029",
+        "genesis_commitment": "0x9e504616c63aa633949b1edd85457ea7bbe8cc1b7ed1aab1ffe6110c7b6ec19f",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 19668,
+        "four_process_startup_ready_seconds": 1.1849664,
+        "startup_through_four_receipts_seconds": 2.9199871,
+        "cold_receipt_observation_seconds": 0.045067,
+        "first_height_all_receipt_queries_observed_us": 1063909,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 5553,
+          "receipt_query_requests_by_node": [
+            957,
+            1444,
+            1634,
+            1518
+          ],
+          "observation_rows_received": 710784,
+          "receipt_query_rows_received_by_node": [
+            122496,
+            184832,
+            209152,
+            194304
+          ],
+          "observation_not_final": 694400,
+          "receipt_query_not_final_by_node": [
+            118400,
+            180736,
+            205056,
+            190208
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "effective_outstanding_limit": 8192
+      }
+    },
+    {
+      "label": "before_cpu_repeat",
+      "report": {
+        "transactions": 4096,
+        "binary_sha256": "0xb2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2124.374447966052,
+        "elapsed_seconds": 1.928097,
+        "latency_us": {
+          "p50": 1632823,
+          "p95": 1926229,
+          "p99": 1926979,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x1949d8d321d3488c0c6dda369d985b045d2b9821a38f9bbe5e99b8e29abb3124",
+        "initial_root": "0x8679f6366c4093a313afd882bdc529d7f07465cef186b5e4c2a9a05c7d110207",
+        "signing_domain": "0x2be4f61d26fdc55af4bb8c467b103362b57bfa9ccfb4fad5c9fa6814c76e4029",
+        "genesis_commitment": "0x9e504616c63aa633949b1edd85457ea7bbe8cc1b7ed1aab1ffe6110c7b6ec19f",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 19773,
+        "four_process_startup_ready_seconds": 0.2595238,
+        "startup_through_four_receipts_seconds": 2.4655607,
+        "cold_receipt_observation_seconds": 0.467939,
+        "first_height_all_receipt_queries_observed_us": 1102761,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 6241,
+          "receipt_query_requests_by_node": [
+            1113,
+            1464,
+            1538,
+            2126
+          ],
+          "observation_rows_received": 798848,
+          "receipt_query_rows_received_by_node": [
+            142464,
+            187392,
+            196864,
+            272128
+          ],
+          "observation_not_final": 782464,
+          "receipt_query_not_final_by_node": [
+            138368,
+            183296,
+            192768,
+            268032
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "effective_outstanding_limit": 8192
+      }
+    }
+  ],
+  "calculated_sample_changes": {
+    "cpu_after_vs_before_tps_percent": 14.108401395384075,
+    "cpu_after_vs_baseline_repeat_tps_percent": 17.836189046674946,
+    "gpu_after_vs_before_tps_percent": 243.37446447148903,
+    "cpu_startup_through_receipts_seconds_before_after": [
+      2.4311556,
+      2.2953293
+    ],
+    "gpu_startup_through_receipts_seconds_before_after": [
+      5.5655364,
+      2.9199871
+    ],
+    "scope": "Arithmetic from this exact five-round sample; not independent experiments, sustained throughput or statistical confidence."
+  },
+  "limitations": [
+    "All five 4096-row runs passed with cold recovery and complete fee state audit; this does not reclassify the earlier stage1 CURRENT rename failure as passing.",
+    "Same signed input, initial state, candidate capacity, query endpoint and CPU callbacks business backend within this group. Baseline is the prior b2047e capacity candidate, NOT historical Ed25519/V3 12K and NOT stage1 307d57.",
+    "Timing is first submission attempt through every unique four-node receipt-query observation. Latency is client observation, not internal durable publication time.",
+    "Startup and initial signing/APFL preparation are outside primary TPS. Final candidate qualifies the GPU at startup; baseline can initialize lazily. Therefore the large GPU before/after delta includes placement of initialization and is not a pure steady-state algorithm or overlap gain.",
+    "4096 transactions yield four 1024-row candidates, and actual maximum outstanding is 4096 although the configured ceiling remains 8192. This is not the full 65536 workload.",
+    "Diagnostics are off in this strict five-round group. Stage1 diagnostics-on and independent random-corpus groups are not exact paired comparisons with it.",
+    "Four processes share one Windows host and one GPU for GPU-required; no multi-machine or production claim.",
+    "A single candidate sample per backend does not prove stable improvement across repetitions or restore 12K. 65536 and final candidate diagnostic data must be reported separately.",
+    "Logical APFL bytes do not establish physical wire bytes, retransmission rate or peak memory.",
+    "Full CI and release qualification are not established by these local results."
+  ],
+  "supporting_validation": {
+    "pipeline": {
+      "path": "pipeline-unit-final.log",
+      "passed": 515,
+      "failed": 0,
+      "ignored": 115
+    },
+    "network": {
+      "path": "network-default-final.log",
+      "passed": 883,
+      "failed": 0,
+      "ignored": 11
+    },
+    "real_successor": {
+      "path": "successor-real-final.log",
+      "passed": 7,
+      "failed": 0,
+      "ignored": 0
+    },
+    "other_targeted_real_logs": [
+      "reuse-duplicate-final.log",
+      "startup-ready-final.log",
+      "io-startup-final.log",
+      "genesis-startup-final.log"
+    ],
+    "strict_clippy": "clippy-final.log"
+  },
+  "phase1_evidence": "stage1-evidence.json",
+  "diagnostics": "Separate final candidate three-round evidence: final-4096-diagnostic-evidence.json; not part of this strict before/after comparison.",
+  "phase1_to_phase2_controlled_comparison": "final-stage1-stage2-4096-evidence.json; retains the CPU negative comparison and baseline repeat.",
+  "final_65536_continuous": "final-65536-evidence.json; all functional rounds pass but CPU repeat tail latency remains a performance failure.",
+  "not_copied": "No node configs, private keys, signing journals or databases; original evidence remains at raw-report referenced paths."
+}

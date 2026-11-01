@@ -1,0 +1,20 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+warning: method `retain_body_reply_for_test` is never used
+   --> crates\novovm-node\src\native_pipeline\consensus\native_lifecycle\successor.rs:177:19
+    |
+  6 | impl NativeLifecycle {
+    | -------------------- method in this implementation
+...
+177 |     pub(crate) fn retain_body_reply_for_test(&mut self, source: Hash, message: Arc<Message>) -> Result<()> {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `novovm-node` (lib test) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 2m 30s
+  Executable unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_node-4821773a7b14d22a.exe)

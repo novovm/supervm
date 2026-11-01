@@ -8,6 +8,7 @@ use super::{
     datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES},
     diagnostics::{NativeRejectCountsV1, NativeRejectReasonV1},
     handshake::NativeHandshake,
+    handshake_continuation::{self, Received as ContinuationReceived},
     object_sender::NativeObjectSender,
     wire_budget::{NativeWireBudget, NativeWireUsage},
     NovoRudpTransportFrameV0,
@@ -79,6 +80,11 @@ struct OpenAdmission {
     retire_clients: bool,
 }
 
+enum ReceivedDatagram {
+    Borrowed(usize, NativeRoute),
+    Owned(Vec<u8>, NativeRoute),
+}
+
 /// A fresh authenticated generation replaced the old one. Application owners
 /// must retire old operations as unknown, never relabel them as new requests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +109,7 @@ pub struct NativeReceivedFrame {
     peer: usize,
     identity: Arc<str>,
     frame: NovoRudpTransportFrameV0,
+    pub(crate) wire_bytes: usize,
 }
 impl NativeReceivedFrame {
     pub fn peer(&self) -> usize {
@@ -179,6 +186,7 @@ pub struct NativeEndpoint {
     configured: Option<ConfiguredAdmission>,
     wire_budget: Option<NativeWireBudget>,
     traffic_started: bool,
+    continuation: handshake_continuation::Receiver,
 }
 
 impl NativeEndpoint {
@@ -234,6 +242,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            continuation: handshake_continuation::Receiver::new(Instant::now()),
         })
     }
     /// Explicit bounded application listener, with no pre-enrolled client or
@@ -286,6 +295,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            continuation: handshake_continuation::Receiver::new(Instant::now()),
         };
         endpoint.allow_clients(identity, clients, streams, budget)?;
         Ok(endpoint)
@@ -315,8 +325,19 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<Self> {
-        ensure!(!peers.is_empty(), "native endpoint peer bound");
         socket.set_nonblocking(true)?;
+        Self::bind_with_io(socket, identity, peers, budget, wall_ms, now)
+    }
+
+    pub(crate) fn bind_with_io(
+        io: Arc<dyn NativeDatagramIo>,
+        identity: SigningKey,
+        peers: Vec<NativePeer>,
+        budget: NativeHandshakeBudget,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<Self> {
+        ensure!(!peers.is_empty(), "native endpoint peer bound");
         let mut sources = BTreeMap::new();
         let mut ids = BTreeSet::new();
         let mut owned = BTreeMap::new();
@@ -351,8 +372,18 @@ impl NativeEndpoint {
                 },
             );
         }
+        let continuation = handshake_continuation::Receiver::with_routes(
+            now,
+            sources.keys().filter_map(|route| {
+                if let NativeRoute::Udp(address) = route {
+                    Some(*address)
+                } else {
+                    None
+                }
+            }),
+        );
         Ok(Self {
-            io: socket,
+            io,
             receive_scratch: vec![0; 65536],
             local_key: identity.verifying_key().to_bytes(),
             next_peer: owned.len(),
@@ -369,6 +400,7 @@ impl NativeEndpoint {
             }),
             wire_budget: None,
             traffic_started: false,
+            continuation,
         })
     }
 
@@ -492,6 +524,16 @@ impl NativeEndpoint {
                 },
             );
         }
+        let continuation = handshake_continuation::Receiver::with_routes(
+            now,
+            sources.keys().filter_map(|route| {
+                if let NativeRoute::Udp(address) = route {
+                    Some(*address)
+                } else {
+                    None
+                }
+            }),
+        );
         Ok(Self {
             io,
             receive_scratch: vec![0; 65536],
@@ -506,6 +548,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            continuation,
         })
     }
 
@@ -798,10 +841,46 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
         quantum: usize,
-        receiver: F,
+        mut receiver: F,
     ) -> Result<NativePoll>
     where
         F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>>,
+    {
+        self.poll_with_packet_receiver(wall_ms, now, quantum, |wire| {
+            receiver(wire).map(|packet| {
+                packet.map(|(length, source)| ReceivedDatagram::Borrowed(length, source))
+            })
+        })
+    }
+
+    /// Transfer the original socket owner's allocation through the same bounded
+    /// authentication path; this does not accept already-authenticated frames.
+    pub fn poll_with_owned_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        mut receiver: F,
+    ) -> Result<NativePoll>
+    where
+        F: FnMut() -> std::io::Result<Option<(Vec<u8>, SocketAddr)>>,
+    {
+        self.poll_with_packet_receiver(wall_ms, now, quantum, |_| {
+            receiver().map(|packet| {
+                packet.map(|(wire, source)| ReceivedDatagram::Owned(wire, NativeRoute::Udp(source)))
+            })
+        })
+    }
+
+    fn poll_with_packet_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        receiver: F,
+    ) -> Result<NativePoll>
+    where
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<ReceivedDatagram>>,
     {
         ensure!(
             (1..=64).contains(&quantum),
@@ -825,7 +904,7 @@ impl NativeEndpoint {
         wire: &mut [u8],
     ) -> Result<NativePoll>
     where
-        F: FnMut(&mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>>,
+        F: FnMut(&mut [u8]) -> std::io::Result<Option<ReceivedDatagram>>,
     {
         ensure!(
             wire.len() == 65536,
@@ -834,6 +913,7 @@ impl NativeEndpoint {
         self.traffic_started = true;
         let mut result = NativePoll::default();
         self.expire_reconnects(now);
+        self.continuation.expire(now);
         self.admit_waiting_clients(now)?;
         self.renew_configured_handshakes(wall_ms, now)?;
         // Full UDP payload buffer ensures even oversized rejected datagrams
@@ -845,7 +925,7 @@ impl NativeEndpoint {
             .keys()
             .all(|route| matches!(route, NativeRoute::Udp(_)));
         for _ in 0..quantum {
-            let (length, source) = match receiver(wire) {
+            let packet = match receiver(wire) {
                 Ok(Some(value)) => value,
                 Ok(None) => continue,
                 Err(error) if error.kind() == ErrorKind::WouldBlock => break,
@@ -873,6 +953,10 @@ impl NativeEndpoint {
                 }
                 Err(error) => return Err(error.into()),
             };
+            let (length, source) = match &packet {
+                ReceivedDatagram::Borrowed(length, source) => (*length, *source),
+                ReceivedDatagram::Owned(bytes, source) => (bytes.len(), *source),
+            };
             // Keep the original budget-first short circuit: rejected oversized
             // datagrams are still charged before their shape is examined.
             let wire_refused = self
@@ -888,9 +972,13 @@ impl NativeEndpoint {
                 });
                 continue;
             }
-            if wire[..length].starts_with(b"NVHSHK01") {
+            let bytes = match &packet {
+                ReceivedDatagram::Borrowed(..) => &wire[..length],
+                ReceivedDatagram::Owned(bytes, _) => bytes.as_slice(),
+            };
+            if bytes.starts_with(handshake_continuation::MAGIC) {
                 if self
-                    .receive_handshake(source, &wire[..length], wall_ms, now)
+                    .receive_continuation(source, bytes, wall_ms, now, &mut result)
                     .is_err()
                 {
                     result.rejected_datagrams += 1;
@@ -900,7 +988,16 @@ impl NativeEndpoint {
                 }
                 continue;
             }
-            if let Some((frame, change)) = self.confirm_reconnect(source, &wire[..length], now) {
+            if bytes.starts_with(b"NVHSHK01") {
+                if self.receive_handshake(source, bytes, wall_ms, now).is_err() {
+                    result.rejected_datagrams += 1;
+                    result
+                        .rejection_reasons
+                        .record(NativeRejectReasonV1::Handshake);
+                }
+                continue;
+            }
+            if let Some((frame, change)) = self.confirm_reconnect(source, bytes, now) {
                 result.frames.push(frame);
                 result.session_changes.extend(change);
                 continue;
@@ -914,7 +1011,11 @@ impl NativeEndpoint {
             };
             let peer = self.peers.get_mut(&index).expect("known native peer");
             if let Some(session) = &mut peer.session {
-                match session.open_route(source, &wire[..length]) {
+                let opened = match packet {
+                    ReceivedDatagram::Borrowed(..) => session.open_route(source, &wire[..length]),
+                    ReceivedDatagram::Owned(bytes, _) => session.open_route_owned(source, bytes),
+                };
+                match opened {
                     Ok(frame)
                         if peer
                             .streams
@@ -926,6 +1027,7 @@ impl NativeEndpoint {
                             peer: index,
                             identity: peer.id.clone(),
                             frame,
+                            wire_bytes: length,
                         })
                     }
                     Ok(_) => {
@@ -995,6 +1097,70 @@ impl NativeEndpoint {
         Ok(result)
     }
 
+    fn receive_continuation(
+        &mut self,
+        source: NativeRoute,
+        wire: &[u8],
+        wall_ms: u64,
+        now: Instant,
+        result: &mut NativePoll,
+    ) -> Result<()> {
+        let NativeRoute::Udp(address) = source else {
+            anyhow::bail!("bound carriers must use their original Finished handshake");
+        };
+        match self.continuation.receive(address, wire, now)? {
+            ContinuationReceived::Reply(reply) => {
+                match super::wire_budget::try_send_datagram(
+                    self.io.as_ref(),
+                    &reply,
+                    source,
+                    now,
+                    self.wire_budget.as_mut(),
+                ) {
+                    Ok(true) => result.handshakes_sent += 1,
+                    Ok(false) => {}
+                    Err(_) => result.handshake_send_failures += 1,
+                }
+            }
+            ContinuationReceived::Challenge => {
+                let index = self
+                    .sources
+                    .get(&source)
+                    .copied()
+                    .or_else(|| {
+                        self.peers.iter().find_map(|(index, peer)| {
+                            peer.reconnect
+                                .as_ref()
+                                .is_some_and(|pending| pending.source == source)
+                                .then_some(*index)
+                        })
+                    })
+                    .context("unsolicited continuation source")?;
+                let peer = self.peers.get_mut(&index).context("unknown native peer")?;
+                if let Some(pending) = peer.reconnect.as_mut() {
+                    if pending
+                        .handshake
+                        .receive_continuation_challenge(source, wire, now)
+                        .is_ok()
+                    {
+                        return Ok(());
+                    }
+                }
+                peer.handshake
+                    .as_mut()
+                    .context("no outgoing native handshake")?
+                    .receive_continuation_challenge(source, wire, now)?;
+            }
+            ContinuationReceived::Complete(transcript) => {
+                // A valid cookie and digest do NOT authenticate a peer. Keep
+                // the same admission/replay/reconnect and signed expiry checks.
+                self.receive_handshake(source, &transcript, wall_ms, now)?;
+            }
+            ContinuationReceived::Pending => {}
+        }
+        Ok(())
+    }
+
     pub fn try_send(&mut self, peer: usize, frame: &NovoRudpTransportFrameV0) -> Result<bool> {
         self.traffic_started = true;
         let session = self
@@ -1004,12 +1170,14 @@ impl NativeEndpoint {
             .session
             .as_mut()
             .context("native peer not authenticated")?;
-        session.try_send_limited(
-            self.io.as_ref(),
-            frame,
-            Instant::now(),
-            self.wire_budget.as_mut(),
-        )
+        session
+            .try_send_limited(
+                self.io.as_ref(),
+                frame,
+                Instant::now(),
+                self.wire_budget.as_mut(),
+            )
+            .map(|sent| sent.is_some())
     }
 
     pub(crate) fn uses_deferred_writes(&self) -> bool {
@@ -1124,3 +1292,6 @@ mod retirement_tests;
 mod scratch_tests;
 #[cfg(test)]
 mod validator_reconnect_tests;
+
+#[cfg(test)]
+mod continuation_tests;

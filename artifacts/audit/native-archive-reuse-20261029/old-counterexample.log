@@ -1,0 +1,13 @@
+
+running 1 test
+real archive starts=3 reused=0
+Error: Condition failed: `node.archive_reads_started == started + 1` (3 vs 1)
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_coalesces_same_context_across_peers ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_coalesces_same_context_across_peers
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1769 filtered out; finished in 0.27s
+

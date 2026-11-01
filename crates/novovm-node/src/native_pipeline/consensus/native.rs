@@ -6,14 +6,16 @@
 
 pub use super::message_evidence::{MessageDomain, VerifiedEvidence};
 use super::{message_evidence, transport};
+use crate::native_pipeline::profile::{self, Phase};
 use anyhow::{ensure, Context, Result};
 use ed25519_dalek::SigningKey;
 #[cfg(test)]
 use novovm_network::novorudp::{endpoint::NativeEndpoint, object_link::NativeObjectLink};
 use novovm_network::{
     novorudp::{
+        diagnostics::{transfer_tag_v1, NativeTransferDiagnosticsV1},
         endpoint::{NativeHandshakeBudget, NativePeer},
-        fragments::{FragmentProfile, OutgoingMessage, ReassemblyLimits},
+        fragments::{CompletedMessage, FragmentProfile, OutgoingMessage, ReassemblyLimits},
         object_link::{NativeLaneConfig, NativeLinkPoll, NativeSendLimits, NativeSendPolicy},
     },
     product_overlay::peer_id_from_ed25519_public_key_v1,
@@ -39,6 +41,45 @@ const STREAMS: [u64; 3] = [
 /// validator control/body/input lanes. Payload is the existing APFL message.
 pub const APPLICATION_STREAM: u64 = u64::from_be_bytes(*b"NVAPP001");
 
+fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
+    match message {
+        transport::Message::Proposal { proposal, .. } => {
+            Some((proposal.context.height, Some(proposal.round)))
+        }
+        transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
+        transport::Message::Decision { proposal, .. } => Some((proposal.context.height, None)),
+        transport::Message::Body { context, .. }
+        | transport::Message::ApflBody { context, .. }
+        | transport::Message::AssetBody { context, .. }
+        | transport::Message::AssetBodyReference { context, .. } => Some((context.height, None)),
+        transport::Message::RequestDecision { context } => Some((context.height, None)),
+        _ => None,
+    }
+}
+
+fn profile_asset_message(event: &'static str, message: &transport::Message, fragment: [u8; 32]) {
+    match message {
+        transport::Message::AssetTransactions { scope, batch } => {
+            profile::asset_event(event, 0, || {
+                serde_json::json!({
+                    "kind":"asset_transactions", "source_ref":Arc::as_ptr(batch) as usize,
+                    "rows":batch.len(), "session":scope.session, "sequence":scope.sequence,
+                    "fragment":fragment
+                })
+            });
+        }
+        transport::Message::AssetBody { context, batch } => {
+            profile::asset_event(event, context.height, || {
+                serde_json::json!({
+                    "kind":"asset_body", "source_ref":Arc::as_ptr(batch) as usize,
+                    "rows":batch.len(), "fragment":fragment
+                })
+            });
+        }
+        _ => {}
+    }
+}
+
 #[derive(Clone)]
 pub struct LaneLimits {
     pub receive: ReassemblyLimits,
@@ -57,8 +98,19 @@ pub struct PreparedMessage {
     window: Option<(u64, Option<u64>)>,
     body_request: bool,
     durable_control: bool,
+    // Diagnostic only: excludes the live/recovery tag, includes full context
+    // and ordered body bytes. Never used for deduplication or authority.
+    pub(super) traffic_payload: Option<[u8; 32]>,
 }
 impl PreparedMessage {
+    /// A reference miss is owed until its target body height, not merely the
+    /// height at which the request was queued. Wire identity is unchanged.
+    pub(super) fn retain_body_request_until(mut self, height: u64) -> Self {
+        self.window = Some((height, None));
+        self.body_request = false;
+        self
+    }
+
     pub(super) fn is_durable_control(&self) -> bool {
         self.durable_control
     }
@@ -72,6 +124,9 @@ impl PreparedMessage {
     }
     pub fn fragment_id(&self) -> [u8; 32] {
         self.object.id()
+    }
+    pub(super) fn height(&self) -> Option<u64> {
+        self.window.map(|(height, _)| height)
     }
     pub(crate) fn lane(&self) -> usize {
         STREAMS
@@ -135,6 +190,7 @@ pub struct NativeChannel {
     domain: MessageDomain,
     bindings: ValidatorTransportBindings,
     codec: transport::DecodeLimits,
+    control_send: NativeSendLimits,
     owner: Arc<()>,
     receive_turn: usize,
     applications: bool,
@@ -142,6 +198,7 @@ pub struct NativeChannel {
     query_inbox: QueryInbox,
     ingress_observation: NativeIngressObservation,
     io_progress: IoProgressHint,
+    input_trace: Option<Arc<NativeTransferDiagnosticsV1>>,
 }
 impl NativeChannel {
     // Explicit deployment budgets and domains remain distinct at owner transfer.
@@ -162,6 +219,7 @@ impl NativeChannel {
             "UDP transport chain differs from pinned native domain"
         );
         let applications = client_slots > 0;
+        let control_send = lanes[0].send.clone();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         bindings.validate_for(&domain.validators)?;
         let local_peer = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
@@ -208,7 +266,14 @@ impl NativeChannel {
         }
         #[cfg(test)]
         let link = ChannelLink::Original(link);
-        Ok(Self::with_link(link, domain, bindings, codec, applications))
+        Ok(Self::with_link(
+            link,
+            domain,
+            bindings,
+            codec,
+            applications,
+            control_send,
+        ))
     }
 
     #[cfg(test)]
@@ -222,6 +287,7 @@ impl NativeChannel {
     ) -> Result<Self> {
         endpoint.enable_configured_reconnect_v1()?;
         let applications = endpoint.accepts_clients();
+        let control_send = lanes[0].send.clone();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         bindings.validate_for(&domain.validators)?;
         bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(
@@ -236,6 +302,7 @@ impl NativeChannel {
             bindings,
             codec,
             applications,
+            control_send,
         ))
     }
 
@@ -284,17 +351,24 @@ impl NativeChannel {
     }
 
     fn with_link(
-        link: ChannelLink,
+        mut link: ChannelLink,
         domain: MessageDomain,
         bindings: ValidatorTransportBindings,
         codec: transport::DecodeLimits,
         applications: bool,
+        control_send: NativeSendLimits,
     ) -> Self {
+        let input_trace = profile::asset_enabled().then(|| {
+            let observer = Arc::new(NativeTransferDiagnosticsV1::for_stream(STREAMS[2]));
+            link.set_diagnostics_v1(observer.clone());
+            observer
+        });
         Self {
             link,
             domain,
             bindings,
             codec,
+            control_send,
             owner: Arc::new(()),
             receive_turn: 0,
             applications,
@@ -302,13 +376,31 @@ impl NativeChannel {
             query_inbox: QueryInbox::default(),
             ingress_observation: NativeIngressObservation::default(),
             io_progress: IoProgressHint::default(),
+            input_trace,
         }
     }
     pub fn ingress_observation(&self) -> NativeIngressObservation {
         self.ingress_observation
     }
+    pub(super) fn control_send_limits(&self) -> &NativeSendLimits {
+        &self.control_send
+    }
     pub fn io_progress_generation(&self) -> u64 {
         self.io_progress.0
+    }
+    // Only the owner's false -> true handoff counts; duplicate try_send success does not.
+    pub(super) fn note_send_admission(&mut self) {
+        self.io_progress.advance();
+    }
+    pub(super) fn send_poll_evidence(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeLinkPollEvidenceV1> {
+        self.input_trace.as_ref()?.snapshot_send_polls()
+    }
+    pub(super) fn receive_totals(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeReceiveTotalsV1> {
+        self.input_trace.as_ref()?.snapshot_receive_totals()
     }
     pub fn peer_count(&self) -> usize {
         self.link.peer_count()
@@ -326,9 +418,50 @@ impl NativeChannel {
     /// Full-body work, not the consensus tick. Reuses the reviewed canonical
     /// message and evidence contracts; only the fragment profile is native.
     pub fn prepare(&self, message: &transport::Message) -> Result<PreparedMessage> {
+        self.prepare_kind(message, false)
+    }
+
+    #[cfg(test)]
+    pub(super) fn qualify_control_for_test(
+        &self,
+        message: &transport::Message,
+    ) -> Result<VerifiedEvidence> {
+        message_evidence::verify(message, &self.domain)
+    }
+
+    /// Only solicited decision/body replies may use the recovery completion
+    /// namespace. Evidence, execution identity and resource limits are unchanged.
+    pub(super) fn prepare_recovery_reply(
+        &self,
+        message: &transport::Message,
+    ) -> Result<PreparedMessage> {
+        self.prepare_kind(message, true)
+    }
+
+    fn prepare_kind(
+        &self,
+        message: &transport::Message,
+        recovery_reply: bool,
+    ) -> Result<PreparedMessage> {
         message_evidence::verify(message, &self.domain)?;
-        let bytes = transport::encode(message, self.codec)?;
+        let window = message_window(message);
+        let height = window.map_or(0, |(height, _)| height);
+        let started = profile::mark();
+        let bytes = if recovery_reply {
+            transport::encode_recovery_reply(message, self.codec)?
+        } else {
+            transport::encode(message, self.codec)?
+        };
+        profile::work(Phase::NativePrepareEncode, started, height, None, None);
         let stream = STREAMS[transport::message_lane(&bytes)?];
+        let traffic_payload =
+            if stream == STREAMS[1] && novovm_network::novorudp::diagnostics::io_cost_enabled() {
+                use sha2::{Digest, Sha256};
+                Some(Sha256::digest(&bytes[11..]).into())
+            } else {
+                None
+            };
+        let started = profile::mark();
         let object = Arc::new(OutgoingMessage::with_profile(
             transport::fragment_domain(
                 self.domain.chain_id,
@@ -339,24 +472,20 @@ impl NativeChannel {
             self.codec.message_bytes,
             FragmentProfile::NativeUdpV2,
         )?);
+        profile::work(
+            Phase::NativePrepareHash,
+            started,
+            height,
+            None,
+            Some(object.id()),
+        );
+        profile_asset_message("asset_prepared", message, object.id());
         Ok(PreparedMessage {
             owner: self.owner.clone(),
             stream,
             object,
-            window: match message {
-                transport::Message::Proposal { proposal, .. } => {
-                    Some((proposal.context.height, Some(proposal.round)))
-                }
-                transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
-                transport::Message::Decision { proposal, .. } => {
-                    Some((proposal.context.height, None))
-                }
-                transport::Message::Body { context, .. }
-                | transport::Message::ApflBody { context, .. }
-                | transport::Message::UcaBody { context, .. } => Some((context.height, None)),
-                transport::Message::RequestDecision { context } => Some((context.height, None)),
-                _ => None,
-            },
+            window,
+            traffic_payload,
             body_request: matches!(message, transport::Message::RequestBody { .. }),
             durable_control: matches!(
                 message,
@@ -366,6 +495,7 @@ impl NativeChannel {
             ),
         })
     }
+
     /// False is backpressure/handshake pending, not acceptance or loss.
     pub fn try_send(
         &mut self,
@@ -377,15 +507,25 @@ impl NativeChannel {
             Arc::ptr_eq(&message.owner, &self.owner),
             "foreign native channel prepared handle"
         );
-        self.link
-            .try_send(peer, message.stream, &message.object, now)
-    }
-    pub(super) fn cancel_send(&mut self, peer: usize, message: &PreparedMessage) -> Result<bool> {
-        ensure!(
-            Arc::ptr_eq(&message.owner, &self.owner),
-            "foreign cancellation owner"
-        );
-        Ok(self.link.cancel_send(peer, message.stream, &message.object))
+        let admitted = self
+            .link
+            .try_send(peer, message.stream, &message.object, now)?;
+        if admitted && message.stream == STREAMS[2] {
+            if let (Some(observer), Some(session)) = (&self.input_trace, self.session_id(peer)) {
+                let tag = transfer_tag_v1(session, message.stream, message.fragment_id());
+                profile::asset_event("input_transport_admitted", 0, || {
+                    serde_json::json!({
+                        "peer": self.peer_id(peer).ok(), "peer_index":peer,
+                        "fragment":message.fragment_id(), "tag":tag,
+                        "observer_elapsed_us":observer.elapsed_us(Instant::now()),
+                        "retention":observer.snapshot_retention(),
+                        "rejections_cumulative":observer.snapshot_rejections(),
+                        "evidence":observer.snapshot_transfer(tag)
+                    })
+                });
+            }
+        }
+        Ok(admitted)
     }
     pub fn poll_io(
         &mut self,
@@ -398,6 +538,23 @@ impl NativeChannel {
             protocol,
             rejected_protocol,
         } = self.link.poll(wall_ms, now, quantum)?;
+        if let Some(observer) = &self.input_trace {
+            for completion in &native.completed {
+                if let Some(tag) = completion.diagnostic_tag {
+                    profile::asset_event("input_transport_returned", 0, || {
+                        serde_json::json!({
+                            "peer":self.peer_id(completion.peer).ok(),"peer_index":completion.peer,
+                            "fragment":completion.body.id(), "tag":tag,
+                            "state":format!("{:?}",completion.state),
+                            "observer_elapsed_us":observer.elapsed_us(Instant::now()),
+                            "retention":observer.snapshot_retention(),
+                            "rejections_cumulative":observer.snapshot_rejections(),
+                            "evidence":observer.snapshot_transfer(tag)
+                        })
+                    });
+                }
+            }
+        }
         // Observe before query completions leave the protocol report. Otherwise
         // a query-only turn can make real progress while appearing idle above.
         self.io_progress.observe(&native);
@@ -454,9 +611,28 @@ impl NativeChannel {
         now: Instant,
         quantum: usize,
     ) -> Result<Option<ReceiveEvent>> {
-        let Some(complete) = self.link.poll_complete(stream, now, quantum)? else {
+        let Some(complete) = self.poll_complete(stream, now, quantum)? else {
             return Ok(None);
         };
+        if stream == STREAMS[2] {
+            if let Some(observer) = &self.input_trace {
+                let peer = (0..self.peer_count())
+                    .find(|peer| self.peer_id(*peer).is_ok_and(|name| name == complete.peer));
+                if let Some(session) = peer.and_then(|peer| self.session_id(peer)) {
+                    let tag = transfer_tag_v1(session, stream, complete.id);
+                    profile::asset_event("input_transport_complete", 0, || {
+                        serde_json::json!({
+                            "peer":complete.peer,"peer_index":peer,"fragment":complete.id,"tag":tag,
+                            "observer_elapsed_us":observer.elapsed_us(Instant::now()),
+                            "retention":observer.snapshot_retention(),
+                            "rejections_cumulative":observer.snapshot_rejections(),
+                            "evidence":observer.snapshot_transfer(tag)
+                        })
+                    });
+                }
+            }
+        }
+        let started = profile::mark();
         let parsed = (|| -> Result<_> {
             let size = complete
                 .chunks
@@ -483,13 +659,28 @@ impl NativeChannel {
                     || matches!(
                         &message,
                         transport::Message::ApflTransactions { .. }
-                            | transport::Message::UcaTransactions { .. }
+                            | transport::Message::AssetTransactions { .. }
                     ),
                 "application lane accepts only signed structural transaction inputs"
             );
             let evidence = message_evidence::verify(&message, &self.domain)?;
             Ok((message, evidence))
         })();
+        let height = parsed
+            .as_ref()
+            .ok()
+            .and_then(|(message, _)| message_window(message))
+            .map_or(0, |(height, _)| height);
+        profile::work(
+            Phase::NativeDecode,
+            started,
+            height,
+            None,
+            Some(complete.id),
+        );
+        if let Ok((message, _)) = &parsed {
+            profile_asset_message("asset_received", message, complete.id);
+        }
         Ok(Some(match parsed {
             Ok((message, evidence)) => ReceiveEvent::Message(Box::new(ReceivedMessage {
                 peer: complete.peer,
@@ -503,6 +694,27 @@ impl NativeChannel {
             },
         }))
     }
+
+    /// All native assembly consumers, including queries, share this existing
+    /// scheduling hint. Their independent custody and decoding rules stay at
+    /// the caller; missing fragments are never reported as completed work.
+    fn poll_complete(
+        &mut self,
+        stream: u64,
+        now: Instant,
+        quantum: usize,
+    ) -> Result<Option<CompletedMessage>> {
+        let (complete, hash_progress) = self
+            .link
+            .poll_complete_with_progress(stream, now, quantum)?;
+        if hash_progress {
+            // Hashing already-received fragments is real bounded work even
+            // when the full object is not yet ready. Preserve the original
+            // idle policy instead of parking between these continuation turns.
+            self.io_progress.advance();
+        }
+        Ok(complete)
+    }
 }
 
 /// Only old unit fixtures may own a standalone NativeObjectLink. Production
@@ -514,10 +726,10 @@ enum ChannelLink {
 }
 #[cfg(test)]
 impl ChannelLink {
-    fn cancel_send(&mut self, peer: usize, stream: u64, body: &Arc<OutgoingMessage>) -> bool {
+    fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
         match self {
-            Self::Original(link) => link.cancel_send(peer, stream, body),
-            Self::HistoricalFixture(link) => link.cancel_send(peer, stream, body),
+            Self::Original(link) => link.set_diagnostics_v1(observer),
+            Self::HistoricalFixture(link) => link.set_diagnostics_v1(observer),
         }
     }
     fn peer_count(&self) -> usize {
@@ -573,15 +785,18 @@ impl ChannelLink {
             }),
         }
     }
-    fn poll_complete(
+    fn poll_complete_with_progress(
         &mut self,
         stream: u64,
         now: Instant,
         quantum: usize,
-    ) -> Result<Option<novovm_network::novorudp::fragments::CompletedMessage>> {
+    ) -> Result<(
+        Option<novovm_network::novorudp::fragments::CompletedMessage>,
+        bool,
+    )> {
         match self {
-            Self::Original(link) => link.poll_complete(stream, now, quantum),
-            Self::HistoricalFixture(link) => link.poll_complete(stream, now, quantum),
+            Self::Original(link) => link.poll_complete_with_progress(stream, now, quantum),
+            Self::HistoricalFixture(link) => link.poll_complete_with_progress(stream, now, quantum),
         }
     }
 }

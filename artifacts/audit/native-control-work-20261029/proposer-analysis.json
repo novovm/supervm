@@ -1,0 +1,1079 @@
+{
+  "report": "D:\\WorksArea\\SUPERVM\\target\\native-product-load\\uca-30568-1793266847381725300\\report.json",
+  "binary_sha256": "0xa354c36d9d76b1d5792452452c0ace81a5812b24243f5bfed058746118d1620a",
+  "transactions": 65536,
+  "successful_tps": 2038.0671612416945,
+  "target_height": 52,
+  "target_round": 0,
+  "target_body_id": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+  "proposer_node": 2,
+  "proposer_validator_id": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+  "proposer_derivation": "SHA256(validator-id domain || public key); sort IDs; (height - activation_height 1 + round) modulo member count",
+  "public_node_mapping": [
+    {
+      "node": 0,
+      "udp_addr": "127.0.0.1:55675",
+      "validator_id": "126bc056c472e067aecf930270ea74ea7103444eae3ed0e005cf95128028fc7d"
+    },
+    {
+      "node": 1,
+      "udp_addr": "127.0.0.1:55676",
+      "validator_id": "3c5d88f96eb343558ce9f9ef5a6ba81bf0e806f7f934657a27fc33272aefaedc"
+    },
+    {
+      "node": 2,
+      "udp_addr": "127.0.0.1:55677",
+      "validator_id": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537"
+    },
+    {
+      "node": 3,
+      "udp_addr": "127.0.0.1:55678",
+      "validator_id": "101a0935e494aca92a48529e5e91066486a237fe227c3cc55e6ca792bdb8b997"
+    }
+  ],
+  "wall_origin_unix_us": 1793266872897192,
+  "nodes": [
+    {
+      "node": 0,
+      "validator_id": "126bc056c472e067aecf930270ea74ea7103444eae3ed0e005cf95128028fc7d",
+      "is_target_proposer": false,
+      "critical_dropped": 0,
+      "control_evicted": 3134,
+      "delivery_evicted": 3272,
+      "parent_ack": {
+        "event": "decision_durable_ack",
+        "height": 51,
+        "round": 0,
+        "wall_unix_us": 1793266872916253,
+        "offset_from_proposer_parent_ack_ms": 19.061,
+        "elapsed_ns": 24708309300,
+        "duration_ns": null,
+        "body": "3341719ac452249c1717b82604036fc1d5415615d18ff1f6f1b738fa154e7475",
+        "fragment": null
+      },
+      "same_body_identity_end": {
+        "event": "body_identity",
+        "height": 52,
+        "round": null,
+        "wall_unix_us": 1793266872950780,
+        "offset_from_proposer_parent_ack_ms": 53.588,
+        "elapsed_ns": 24742835600,
+        "duration_ns": 2337100,
+        "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+        "fragment": null
+      },
+      "same_body_critical": [
+        {
+          "event": "candidate_execution_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266873026270,
+          "offset_from_proposer_parent_ack_ms": 129.078,
+          "elapsed_ns": 24818326500,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "proposal_received",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875530328,
+          "offset_from_proposer_parent_ack_ms": 2633.136,
+          "elapsed_ns": 27322384700,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "candidate_registered",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875530861,
+          "offset_from_proposer_parent_ack_ms": 2633.669,
+          "elapsed_ns": 27322917100,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "prevote_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875533283,
+          "offset_from_proposer_parent_ack_ms": 2636.091,
+          "elapsed_ns": 27325339100,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "precommit_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875537118,
+          "offset_from_proposer_parent_ack_ms": 2639.926,
+          "elapsed_ns": 27329174100,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_staged",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875537170,
+          "offset_from_proposer_parent_ack_ms": 2639.978,
+          "elapsed_ns": 27329226700,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_durable_ack",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875538583,
+          "offset_from_proposer_parent_ack_ms": 2641.391,
+          "elapsed_ns": 27330639700,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "receipt_projection_visible",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875541176,
+          "offset_from_proposer_parent_ack_ms": 2643.984,
+          "elapsed_ns": 27333231500,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        }
+      ],
+      "execution_to_proposal_ms": 2504.058,
+      "identity_end_to_execution_ms": 75.49,
+      "context_only_admission_activity_NOT_same_body_proof": [
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266873630314,
+          "offset_from_proposer_parent_ack_ms": 733.122,
+          "elapsed_ns": 25422370900,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266873659510,
+          "offset_from_proposer_parent_ack_ms": 762.318,
+          "elapsed_ns": 25451566400,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874345906,
+          "offset_from_proposer_parent_ack_ms": 1448.714,
+          "elapsed_ns": 26137962200,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874378266,
+          "offset_from_proposer_parent_ack_ms": 1481.074,
+          "elapsed_ns": 26170322200,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874796250,
+          "offset_from_proposer_parent_ack_ms": 1899.058,
+          "elapsed_ns": 26588306700,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874836995,
+          "offset_from_proposer_parent_ack_ms": 1939.803,
+          "elapsed_ns": 26629051300,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874837012,
+          "offset_from_proposer_parent_ack_ms": 1939.82,
+          "elapsed_ns": 26629068100,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874870117,
+          "offset_from_proposer_parent_ack_ms": 1972.925,
+          "elapsed_ns": 26662172900,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875056768,
+          "offset_from_proposer_parent_ack_ms": 2159.576,
+          "elapsed_ns": 26848824100,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875087962,
+          "offset_from_proposer_parent_ack_ms": 2190.77,
+          "elapsed_ns": 26880017800,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875228004,
+          "offset_from_proposer_parent_ack_ms": 2330.812,
+          "elapsed_ns": 27020060000,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875260440,
+          "offset_from_proposer_parent_ack_ms": 2363.248,
+          "elapsed_ns": 27052495900,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875303662,
+          "offset_from_proposer_parent_ack_ms": 2406.47,
+          "elapsed_ns": 27095718800,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875542759,
+          "offset_from_proposer_parent_ack_ms": 2645.567,
+          "elapsed_ns": 27334815300,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        }
+      ],
+      "pre_proposal_received_context_objects_NOT_body_identified": [
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873156726,
+          "peer": "3c5d88f96eb343558ce9f9ef5a6ba81bf0e806f7f934657a27fc33272aefaedc",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873220938,
+          "peer": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873225160,
+          "peer": "101a0935e494aca92a48529e5e91066486a237fe227c3cc55e6ca792bdb8b997",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266875530327,
+          "peer": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+          "fragment": "0eec506e4d87046ffb3708098db83cf096fea2f6ca7e904d1843ddf3a9bc8b34",
+          "purposes": 0
+        }
+      ],
+      "context_decode_records_NOT_body_identified": [
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876148430,
+          "offset_from_proposer_parent_ack_ms": 3251.238,
+          "elapsed_ns": 27940485800,
+          "duration_ns": 2710700,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876162571,
+          "offset_from_proposer_parent_ack_ms": 3265.379,
+          "elapsed_ns": 27954627300,
+          "duration_ns": 2704100,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876335097,
+          "offset_from_proposer_parent_ack_ms": 3437.905,
+          "elapsed_ns": 28127152800,
+          "duration_ns": 2605700,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        }
+      ]
+    },
+    {
+      "node": 1,
+      "validator_id": "3c5d88f96eb343558ce9f9ef5a6ba81bf0e806f7f934657a27fc33272aefaedc",
+      "is_target_proposer": false,
+      "critical_dropped": 0,
+      "control_evicted": 2795,
+      "delivery_evicted": 2685,
+      "parent_ack": {
+        "event": "decision_durable_ack",
+        "height": 51,
+        "round": 0,
+        "wall_unix_us": 1793266872883371,
+        "offset_from_proposer_parent_ack_ms": -13.821,
+        "elapsed_ns": 24665179900,
+        "duration_ns": null,
+        "body": "3341719ac452249c1717b82604036fc1d5415615d18ff1f6f1b738fa154e7475",
+        "fragment": null
+      },
+      "same_body_identity_end": {
+        "event": "body_identity",
+        "height": 52,
+        "round": null,
+        "wall_unix_us": 1793266875354582,
+        "offset_from_proposer_parent_ack_ms": 2457.39,
+        "elapsed_ns": 27136389900,
+        "duration_ns": 2425500,
+        "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+        "fragment": null
+      },
+      "same_body_critical": [
+        {
+          "event": "candidate_execution_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875432439,
+          "offset_from_proposer_parent_ack_ms": 2535.247,
+          "elapsed_ns": 27214247600,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "proposal_received",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875529454,
+          "offset_from_proposer_parent_ack_ms": 2632.262,
+          "elapsed_ns": 27311263300,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "candidate_registered",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875529556,
+          "offset_from_proposer_parent_ack_ms": 2632.364,
+          "elapsed_ns": 27311365000,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "prevote_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875535699,
+          "offset_from_proposer_parent_ack_ms": 2638.507,
+          "elapsed_ns": 27317508000,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "precommit_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875537608,
+          "offset_from_proposer_parent_ack_ms": 2640.416,
+          "elapsed_ns": 27319417200,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_staged",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875537653,
+          "offset_from_proposer_parent_ack_ms": 2640.461,
+          "elapsed_ns": 27319461900,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_durable_ack",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875539227,
+          "offset_from_proposer_parent_ack_ms": 2642.035,
+          "elapsed_ns": 27321035900,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "receipt_projection_visible",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875541203,
+          "offset_from_proposer_parent_ack_ms": 2644.011,
+          "elapsed_ns": 27323010600,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        }
+      ],
+      "execution_to_proposal_ms": 97.015,
+      "identity_end_to_execution_ms": 77.857,
+      "context_only_admission_activity_NOT_same_body_proof": [
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875307416,
+          "offset_from_proposer_parent_ack_ms": 2410.224,
+          "elapsed_ns": 27089225100,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875348944,
+          "offset_from_proposer_parent_ack_ms": 2451.752,
+          "elapsed_ns": 27130752700,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        }
+      ],
+      "pre_proposal_received_context_objects_NOT_body_identified": [
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873172313,
+          "peer": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873199224,
+          "peer": "101a0935e494aca92a48529e5e91066486a237fe227c3cc55e6ca792bdb8b997",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873217379,
+          "peer": "126bc056c472e067aecf930270ea74ea7103444eae3ed0e005cf95128028fc7d",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266875529453,
+          "peer": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+          "fragment": "0eec506e4d87046ffb3708098db83cf096fea2f6ca7e904d1843ddf3a9bc8b34",
+          "purposes": 0
+        }
+      ],
+      "context_decode_records_NOT_body_identified": [
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876008390,
+          "offset_from_proposer_parent_ack_ms": 3111.198,
+          "elapsed_ns": 27790198800,
+          "duration_ns": 2748100,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876222331,
+          "offset_from_proposer_parent_ack_ms": 3325.139,
+          "elapsed_ns": 28004139500,
+          "duration_ns": 2567000,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876888766,
+          "offset_from_proposer_parent_ack_ms": 3991.574,
+          "elapsed_ns": 28670574000,
+          "duration_ns": 2702400,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        }
+      ]
+    },
+    {
+      "node": 2,
+      "validator_id": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+      "is_target_proposer": true,
+      "critical_dropped": 0,
+      "control_evicted": 3395,
+      "delivery_evicted": 2557,
+      "parent_ack": {
+        "event": "decision_durable_ack",
+        "height": 51,
+        "round": 0,
+        "wall_unix_us": 1793266872897192,
+        "offset_from_proposer_parent_ack_ms": 0.0,
+        "elapsed_ns": 24667935600,
+        "duration_ns": null,
+        "body": "3341719ac452249c1717b82604036fc1d5415615d18ff1f6f1b738fa154e7475",
+        "fragment": null
+      },
+      "same_body_identity_end": {
+        "event": "body_identity",
+        "height": 52,
+        "round": null,
+        "wall_unix_us": 1793266875448042,
+        "offset_from_proposer_parent_ack_ms": 2550.85,
+        "elapsed_ns": 27218784800,
+        "duration_ns": 2558300,
+        "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+        "fragment": null
+      },
+      "same_body_critical": [
+        {
+          "event": "candidate_execution_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875517094,
+          "offset_from_proposer_parent_ack_ms": 2619.902,
+          "elapsed_ns": 27287836900,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "candidate_registered",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875517097,
+          "offset_from_proposer_parent_ack_ms": 2619.905,
+          "elapsed_ns": 27287840600,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "proposal_received",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875518738,
+          "offset_from_proposer_parent_ack_ms": 2621.546,
+          "elapsed_ns": 27289480800,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "prevote_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875531513,
+          "offset_from_proposer_parent_ack_ms": 2634.321,
+          "elapsed_ns": 27302256400,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "precommit_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875537985,
+          "offset_from_proposer_parent_ack_ms": 2640.793,
+          "elapsed_ns": 27308727700,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_staged",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875538066,
+          "offset_from_proposer_parent_ack_ms": 2640.874,
+          "elapsed_ns": 27308809500,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_durable_ack",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875539429,
+          "offset_from_proposer_parent_ack_ms": 2642.237,
+          "elapsed_ns": 27310171900,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "receipt_projection_visible",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875541188,
+          "offset_from_proposer_parent_ack_ms": 2643.996,
+          "elapsed_ns": 27311931100,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        }
+      ],
+      "execution_to_proposal_ms": 1.644,
+      "identity_end_to_execution_ms": 69.052,
+      "context_only_admission_activity_NOT_same_body_proof": [
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875431103,
+          "offset_from_proposer_parent_ack_ms": 2533.911,
+          "elapsed_ns": 27201846300,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875442229,
+          "offset_from_proposer_parent_ack_ms": 2545.037,
+          "elapsed_ns": 27212971800,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        }
+      ],
+      "pre_proposal_received_context_objects_NOT_body_identified": [
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873140883,
+          "peer": "3c5d88f96eb343558ce9f9ef5a6ba81bf0e806f7f934657a27fc33272aefaedc",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873187055,
+          "peer": "101a0935e494aca92a48529e5e91066486a237fe227c3cc55e6ca792bdb8b997",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873217565,
+          "peer": "126bc056c472e067aecf930270ea74ea7103444eae3ed0e005cf95128028fc7d",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        }
+      ],
+      "context_decode_records_NOT_body_identified": [
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876106633,
+          "offset_from_proposer_parent_ack_ms": 3209.441,
+          "elapsed_ns": 27877375600,
+          "duration_ns": 2691500,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876269538,
+          "offset_from_proposer_parent_ack_ms": 3372.346,
+          "elapsed_ns": 28040280600,
+          "duration_ns": 2723200,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876794574,
+          "offset_from_proposer_parent_ack_ms": 3897.382,
+          "elapsed_ns": 28565315900,
+          "duration_ns": 2733000,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        }
+      ]
+    },
+    {
+      "node": 3,
+      "validator_id": "101a0935e494aca92a48529e5e91066486a237fe227c3cc55e6ca792bdb8b997",
+      "is_target_proposer": false,
+      "critical_dropped": 0,
+      "control_evicted": 3234,
+      "delivery_evicted": 2607,
+      "parent_ack": {
+        "event": "decision_durable_ack",
+        "height": 51,
+        "round": 0,
+        "wall_unix_us": 1793266872891016,
+        "offset_from_proposer_parent_ack_ms": -6.176,
+        "elapsed_ns": 24661834600,
+        "duration_ns": null,
+        "body": "3341719ac452249c1717b82604036fc1d5415615d18ff1f6f1b738fa154e7475",
+        "fragment": null
+      },
+      "same_body_identity_end": {
+        "event": "body_identity",
+        "height": 52,
+        "round": null,
+        "wall_unix_us": 1793266874088998,
+        "offset_from_proposer_parent_ack_ms": 1191.806,
+        "elapsed_ns": 25859815400,
+        "duration_ns": 2379000,
+        "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+        "fragment": null
+      },
+      "same_body_critical": [
+        {
+          "event": "candidate_execution_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874158618,
+          "offset_from_proposer_parent_ack_ms": 1261.426,
+          "elapsed_ns": 25929436800,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "proposal_received",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875520120,
+          "offset_from_proposer_parent_ack_ms": 2622.928,
+          "elapsed_ns": 27290938300,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "candidate_registered",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875520667,
+          "offset_from_proposer_parent_ack_ms": 2623.475,
+          "elapsed_ns": 27291485700,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "prevote_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875532266,
+          "offset_from_proposer_parent_ack_ms": 2635.074,
+          "elapsed_ns": 27303084700,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "precommit_qc_available",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875538972,
+          "offset_from_proposer_parent_ack_ms": 2641.78,
+          "elapsed_ns": 27309790100,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_staged",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875539041,
+          "offset_from_proposer_parent_ack_ms": 2641.849,
+          "elapsed_ns": 27309859100,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "decision_durable_ack",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875566883,
+          "offset_from_proposer_parent_ack_ms": 2669.691,
+          "elapsed_ns": 27337701200,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        },
+        {
+          "event": "receipt_projection_visible",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875568929,
+          "offset_from_proposer_parent_ack_ms": 2671.737,
+          "elapsed_ns": 27339746500,
+          "duration_ns": null,
+          "body": "9f124b285bb6b49b4dce768b7d6d4a38e791d62b094cf7fcc36c451fdd81c1a6",
+          "fragment": null
+        }
+      ],
+      "execution_to_proposal_ms": 1361.502,
+      "identity_end_to_execution_ms": 69.62,
+      "context_only_admission_activity_NOT_same_body_proof": [
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874073307,
+          "offset_from_proposer_parent_ack_ms": 1176.115,
+          "elapsed_ns": 25844125500,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266874083426,
+          "offset_from_proposer_parent_ack_ms": 1186.234,
+          "elapsed_ns": 25854243900,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875365902,
+          "offset_from_proposer_parent_ack_ms": 2468.71,
+          "elapsed_ns": 27136720000,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875391023,
+          "offset_from_proposer_parent_ack_ms": 2493.831,
+          "elapsed_ns": 27161840600,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "signature_batch_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875450694,
+          "offset_from_proposer_parent_ack_ms": 2553.502,
+          "elapsed_ns": 27221512100,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        },
+        {
+          "event": "authority_admission_done",
+          "height": 52,
+          "round": 0,
+          "wall_unix_us": 1793266875487460,
+          "offset_from_proposer_parent_ack_ms": 2590.268,
+          "elapsed_ns": 27258277700,
+          "duration_ns": null,
+          "body": null,
+          "fragment": null
+        }
+      ],
+      "pre_proposal_received_context_objects_NOT_body_identified": [
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873143550,
+          "peer": "3c5d88f96eb343558ce9f9ef5a6ba81bf0e806f7f934657a27fc33272aefaedc",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873173420,
+          "peer": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266873196998,
+          "peer": "126bc056c472e067aecf930270ea74ea7103444eae3ed0e005cf95128028fc7d",
+          "fragment": "9a7ef1b05bcb4cafe255a5a559c941d8defd89193338549dec0689f8758423d6",
+          "purposes": 0
+        },
+        {
+          "event": "received",
+          "height": 52,
+          "wall_unix_us": 1793266875520119,
+          "peer": "f004609758f2b41672085942fab13bc0769e633f563b0cf7d9a3f75292b02537",
+          "fragment": "0eec506e4d87046ffb3708098db83cf096fea2f6ca7e904d1843ddf3a9bc8b34",
+          "purposes": 0
+        }
+      ],
+      "context_decode_records_NOT_body_identified": [
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266875998394,
+          "offset_from_proposer_parent_ack_ms": 3101.202,
+          "elapsed_ns": 27769211500,
+          "duration_ns": 2761300,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876008671,
+          "offset_from_proposer_parent_ack_ms": 3111.479,
+          "elapsed_ns": 27779487100,
+          "duration_ns": 3102300,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        },
+        {
+          "event": "native_decode",
+          "height": 52,
+          "round": null,
+          "wall_unix_us": 1793266876717653,
+          "offset_from_proposer_parent_ack_ms": 3820.461,
+          "elapsed_ns": 28488469700,
+          "duration_ns": 2637500,
+          "body": null,
+          "fragment": "b5b5b0b8f7df6a1509616238e986f713c168c225acad3a40326b216f7b9c4775"
+        }
+      ]
+    }
+  ],
+  "source_rules": [
+    "round_bft/wire.rs: Validator::new and ValidatorSet::leader define ID and sorted-ID round robin",
+    "service/config.rs: GenesisConfig::prepare constructs ValidatorSet with activation_height=1",
+    "consensus/bodies.rs: follower Ready candidate waits for verified proposal demand before registration",
+    "consensus/progress.rs::drive_consensus: proposer without an existing valid certificate selects a registered candidate with local_round == current round",
+    "native_lifecycle/successor.rs: proactive AssetBody fanout covers selected successor; current-height prepared follower results do not grant remote execution or proposal authority"
+  ],
+  "interpretation_limits": [
+    "body ID matches bind identity/execute/proposal/ACK observations to the same candidate; context-only signature/authority events do not identify the batch",
+    "received events contain fragment ID and peer but not message variant or candidate body ID; they cannot establish that the target body arrived early",
+    "native_decode records are thresholded and bounded; absence is not proof of no arrival or no decode",
+    "wall clock supports cross-process alignment only; per-node monotonic durations remain the ordering authority",
+    "late proposer body preparation is observed; the upstream cause (gossip delivery, pending nonce availability, capture or scheduling) is not established by these records"
+  ]
+}

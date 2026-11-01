@@ -1,0 +1,7 @@
+
+running 1 test
+test native_pipeline::service::rpc::uca::tests::asset_body_reference_reuses_pool_rows_without_local_target_or_authority_changes ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\26024-1793381467555300100
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1792 filtered out; finished in 0.43s
+

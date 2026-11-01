@@ -194,7 +194,7 @@ fn missing_mismatched_and_unsupported_root_binding_fail_closed() {
 fn local_preparation_checks_device_and_policy_before_root_signer() {
     let (account, tx, proof) = fixture();
     let ctx = context(&account);
-    let prepared = prepare_uca_delegation_v1(proof.claims.clone(), &tx, &ctx, |message| {
+    let prepared = prepare_asset_spend_delegation_v1(proof.claims.clone(), &tx, &ctx, |message| {
         Ok(SigningKey::from_bytes(&[31; 32]).sign(message).to_bytes())
     })
     .unwrap();
@@ -202,15 +202,20 @@ fn local_preparation_checks_device_and_policy_before_root_signer() {
     let mut bad_tx = tx.clone();
     bad_tx.signature[60] ^= 1;
     assert!(
-        prepare_uca_delegation_v1(proof.claims.clone(), &bad_tx, &ctx, |_| panic!(
+        prepare_asset_spend_delegation_v1(proof.claims.clone(), &bad_tx, &ctx, |_| panic!(
             "invalid intent must never reach root signer"
         ))
         .is_err()
     );
-    assert!(prepare_uca_delegation_v1(proof.claims.clone(), &tx, &ctx, |_| Ok([0; 64])).is_err());
     assert!(
-        prepare_uca_delegation_v1(proof.claims, &tx, &ctx, |_| anyhow::bail!("owner refused"))
+        prepare_asset_spend_delegation_v1(proof.claims.clone(), &tx, &ctx, |_| Ok([0; 64]))
             .is_err()
+    );
+    assert!(
+        prepare_asset_spend_delegation_v1(proof.claims, &tx, &ctx, |_| anyhow::bail!(
+            "owner refused"
+        ))
+        .is_err()
     );
 }
 

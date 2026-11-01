@@ -1,0 +1,13 @@
+
+running 1 test
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-14608-1793221412328598100
+Error: native load timeout: completed=9856/17920, dispatched=17920, cursors=[9856, 9856, 9856, 9856]
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_final_receipts_and_cold_economics ... FAILED
+
+failures:
+
+failures:
+    native_pipeline::consensus::tests::native_product_rpc::native_load::uca::rolling::native_asset_continuous_65536_final_receipts_and_cold_economics
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1747 filtered out; finished in 91.16s
+

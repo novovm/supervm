@@ -83,11 +83,15 @@ fn deadline_ready_proposal(backlog: bool) -> Result<()> {
     }
     if backlog {
         // The SECOND message uses the original socket/reassembly owner, not
-        // another fixture queue. Leave it unconsumed until the deadline poll.
+        // another fixture queue. Wait for ALL fragments of the ML-DSA proposal
+        // while leaving the object unconsumed until the deadline poll.
         let prepared = mesh.channels[leader].prepare(&proposal)?;
+        let expected_fragments = prepared
+            .byte_len()
+            .div_ceil(novovm_network::novorudp::fragments::UDP_CHUNK_BYTES);
         ensure!(
-            prepared.byte_len() <= 1024,
-            "fixture proposal must be one fragment"
+            expected_fragments > 1 && expected_fragments <= 64,
+            "ML-DSA fixture proposal must span multiple fragments within the existing receive quantum"
         );
         let peer = (0..ids.len())
             .filter(|i| *i != leader)
@@ -98,8 +102,8 @@ fn deadline_ready_proposal(backlog: bool) -> Result<()> {
             "fixture socket send backpressure"
         );
         let deadline = Instant::now() + DEADLINE;
-        let mut received = false;
-        while !received {
+        let mut received_fragments = 0;
+        while received_fragments < expected_fragments {
             ensure!(Instant::now() < deadline, "socket proposal arrival timeout");
             for (i, channel) in mesh.channels.iter_mut().enumerate() {
                 let report = channel.poll_io(
@@ -111,8 +115,14 @@ fn deadline_ready_proposal(backlog: bool) -> Result<()> {
                     report.rejected == 0 && report.backpressured == 0,
                     "fixture socket rejection"
                 );
-                if i == ready && report.accepted_fragments > 0 {
-                    received = true;
+                if i == ready {
+                    // Accepted excludes duplicate/retransmitted fragments.
+                    // No other new object is sent to this receiver here.
+                    received_fragments += report.accepted_fragments;
+                    ensure!(
+                        received_fragments <= expected_fragments,
+                        "unexpected object entered the deadline fixture receiver"
+                    );
                 }
             }
             std::thread::yield_now();

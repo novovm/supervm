@@ -27,10 +27,10 @@ use super::consensus::{
 use super::execution::plan::{BatchContext, PlanBudget};
 use super::ingress::batch::AuthenticationBudget;
 use super::persistence::io::IoBudget;
-use super::persistence::{CandidateStore, OpenMode, PacketBudget, StorageDomain, StoreConfig};
+use super::persistence::{OpenMode, PacketBudget, StorageDomain, StoreConfig};
 use super::pipeline::{CandidatePipeline, PipelineConfig};
 use super::state::frontier::CaptureBudget;
-use super::state::tree::{empty_root, StateNodeReader};
+use super::state::tree::empty_root;
 use anyhow::{ensure, Context, Result};
 pub use config::{
     GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, NodeKeyStorage,
@@ -111,24 +111,6 @@ impl ResidentNode {
             identities,
         } = prepared;
         let pipeline_config = pipeline_config(&config);
-        {
-            let store = CandidateStore::open(
-                pipeline_config.store.clone(),
-                match mode {
-                    StartMode::CreateNew => OpenMode::CreateNew,
-                    StartMode::Existing => OpenMode::Existing,
-                },
-            )?;
-            if mode == StartMode::CreateNew {
-                store.install_unpublished_state(&initial)?;
-            }
-            for (hash, expected) in initial.nodes() {
-                ensure!(
-                    store.read_node(hash)?.as_ref() == Some(expected),
-                    "pinned genesis content missing or altered; explicit recovery required"
-                );
-            }
-        }
         let template = BatchContext {
             chain_id: config.genesis.chain_id,
             genesis_config_commitment: config.genesis.genesis_config_commitment,
@@ -158,7 +140,14 @@ impl ResidentNode {
             slot: 0,
             timestamp_unix_ms: config.genesis.timestamp_unix_ms,
         };
-        let pipeline = CandidatePipeline::start(pipeline_config, OpenMode::Existing)?;
+        let pipeline = CandidatePipeline::start_with_initial_state(
+            pipeline_config,
+            match mode {
+                StartMode::CreateNew => OpenMode::CreateNew,
+                StartMode::Existing => OpenMode::Existing,
+            },
+            initial,
+        )?;
         let result = start_native(
             &config,
             &pipeline,
@@ -221,9 +210,16 @@ struct StartupPreparation {
 }
 
 fn prepare_startup(config: &ResidentConfig) -> Result<StartupPreparation> {
-    let (metadata, reference_initial) = config.genesis.prepare()?;
+    let (metadata, reference_initial) = if config.uca_initialization.is_some() {
+        // The approved initializer below constructs the complete asset tree.
+        // Validate the same allocations here without staging a discarded copy.
+        (config.genesis.validated_allocations()?.0, None)
+    } else {
+        let (metadata, initial) = config.genesis.prepare()?;
+        (metadata, Some(initial))
+    };
     // Authenticate the independent transport key and complete routing binding
-    // before loading AOEM. A credential error cannot start a socket or a store.
+    // before loading AOEM. A credential error cannot activate a signer or store.
     let transport = read_key(
         &config.transport_key_file,
         config.key_storage,
@@ -265,7 +261,7 @@ fn prepare_startup(config: &ResidentConfig) -> Result<StartupPreparation> {
     let initial = if let Some(material) = &config.uca_initialization {
         material.verify(&config.genesis, &runtime)?.into_state()
     } else {
-        reference_initial
+        reference_initial.expect("reference initial state prepared with validator metadata")
     };
     Ok(StartupPreparation {
         validators,
@@ -327,26 +323,95 @@ fn body_byte_limit(batch_size: usize) -> usize {
     (batch_size * 1024).min(384 * 1024)
 }
 
-// Canonical ML-DSA-65 input is >5 KiB. Keep the original total native object
-// ceiling; signature width must not be confused with the V3 1 KiB row bound.
+// Expanded signed inputs, distinct from the APFL encoded network object.
+const NATIVE_ASSET_MAX_ROWS: usize = 1024;
+const NATIVE_ASSET_ROW_BYTES: usize = 8192;
+
 fn uca_body_byte_limit(batch_size: usize) -> usize {
-    (batch_size * 8192).min(384 * 1024)
+    batch_size * NATIVE_ASSET_ROW_BYTES
+}
+
+/// Shared original node/client acceptance capacity. An asset node's local
+/// proposal target must not reject a larger valid candidate from another node.
+/// The historical V3 reference keeps its configured bounds.
+pub(crate) fn native_decode_limits(batch_size: usize, asset_accounts: bool) -> DecodeLimits {
+    let rows = if asset_accounts {
+        NATIVE_ASSET_MAX_ROWS
+    } else {
+        batch_size
+    };
+    let body_bytes = if asset_accounts {
+        uca_body_byte_limit(rows)
+    } else {
+        body_byte_limit(rows)
+    };
+    DecodeLimits {
+        transactions: rows,
+        transaction_bytes: if asset_accounts {
+            NATIVE_ASSET_ROW_BYTES
+        } else {
+            1024
+        },
+        body_bytes,
+        // Fourteen APFL columns add at most two u32 fields per cell, plus
+        // dictionary counts and the existing frame/context header. At 1024
+        // rows that overhead is below 128 KiB, even without shared values.
+        message_bytes: if asset_accounts {
+            (body_bytes + 128 * 1024).max(512 * 1024)
+        } else {
+            512 * 1024
+        },
+    }
+}
+
+fn native_lane_limits(message_bytes: usize) -> LaneLimits {
+    LaneLimits {
+        receive: ReassemblyLimits {
+            max_message_bytes: message_bytes,
+            messages: 32,
+            bytes: (16 * message_bytes).max(16 * 1024 * 1024),
+            peer_messages: 4,
+            peer_bytes: 4 * message_bytes,
+            ttl: Duration::from_secs(30),
+        },
+        send: NativeSendLimits {
+            messages: 32,
+            bytes: (16 * message_bytes).max(16 * 1024 * 1024),
+            peer_messages: 4,
+            peer_bytes: 4 * message_bytes,
+        },
+    }
+}
+
+fn native_body_retention_limit(codec: DecodeLimits) -> usize {
+    // Previous decided input + current body + successor retain encoded and
+    // expanded inputs/signature facts. Keep the existing ordinary-body reserve
+    // too; increasing wire capacity alone must not disable lookahead.
+    (16 * codec.message_bytes).max(64 * 1024 * 1024)
 }
 
 fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
-    let size = config.batch_size;
     // Arbitrary RPC transfers may have three distinct keys each (payer,
     // recipient and signer nonce), not the load fixture's shared recipient.
     let uca = config.uca_initialization.is_some();
-    let row_bytes = if uca { 8192 } else { 1024 };
+    let size = if uca {
+        NATIVE_ASSET_MAX_ROWS
+    } else {
+        config.batch_size
+    };
+    let row_bytes = if uca { NATIVE_ASSET_ROW_BYTES } else { 1024 };
     let body_bytes = if uca {
         uca_body_byte_limit(size)
     } else {
         size * 1024
     };
-    // UCA uses existing paged identity/grant declarations, not only balances.
+    // Asset transactions do not read UCA identity mappings. The largest
+    // Ordinary account-management fits 31 keys; policy/fee adds 42 per batch.
+    // Rich opening rows select fewer rows within this SAME common key budget.
+    // Charge actual supported access, not 128 old identity pages per row: the
+    // latter would unnecessarily consume the second candidate's reservation.
     let keys = if uca {
-        128 * size + 128
+        rpc::ASSET_PLAN_ACCESS_KEYS
     } else {
         3 * size + 128
     };
@@ -364,6 +429,8 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
         },
         workers: config.workers,
         execution_backend: config.execution_backend,
+        signature_backend: config.signature_backend,
+        prepare_asset_signatures: uca,
         max_batches: 2,
         max_retained_bytes: 256 * 1024 * 1024,
         authentication: AuthenticationBudget {
@@ -436,20 +503,7 @@ fn start_native(
         std::thread::sleep(Duration::from_millis(1));
     };
 
-    let codec = DecodeLimits {
-        transactions: config.batch_size,
-        transaction_bytes: if config.uca_initialization.is_some() {
-            8192
-        } else {
-            1024
-        },
-        body_bytes: if config.uca_initialization.is_some() {
-            uca_body_byte_limit(config.batch_size)
-        } else {
-            body_byte_limit(config.batch_size)
-        },
-        message_bytes: 512 * 1024,
-    };
+    let codec = native_decode_limits(config.batch_size, config.uca_initialization.is_some());
     let progress = RoundProgress::new(
         journal,
         pipeline,
@@ -477,7 +531,7 @@ fn start_native(
         codec,
         BodyLimits {
             bodies: (validators.members().len() * 2 + 4).min(64),
-            bytes: 64 * 1024 * 1024,
+            bytes: native_body_retention_limit(codec),
             inflight: 2,
         },
     )?;
@@ -503,21 +557,14 @@ fn start_native(
             validators: validators.clone(),
         },
         codec,
-        std::array::from_fn(|_| LaneLimits {
-            receive: ReassemblyLimits {
-                max_message_bytes: codec.message_bytes,
-                messages: 32,
-                bytes: 16 * 1024 * 1024,
-                peer_messages: 4,
-                peer_bytes: 2 * 1024 * 1024,
-                ttl: Duration::from_secs(30),
-            },
-            send: NativeSendLimits {
-                messages: 32,
-                bytes: 16 * 1024 * 1024,
-                peer_messages: 4,
-                peer_bytes: 2 * 1024 * 1024,
-            },
+        // Control evidence does not grow with transaction bodies. Keep its
+        // original lane ceiling; body/ingress lanes share the larger policy.
+        std::array::from_fn(|lane| {
+            native_lane_limits(if lane == 0 {
+                512 * 1024
+            } else {
+                codec.message_bytes
+            })
         }),
         NativeSendPolicy {
             window: NovoRudpWindowConfig {
@@ -547,7 +594,7 @@ fn start_native(
         &validators,
         DeliveryLimits {
             messages_per_peer: 32,
-            bytes_per_peer: 4 * 1024 * 1024,
+            bytes_per_peer: 8 * codec.message_bytes,
         },
         config.genesis.policy.clone(),
         codec,

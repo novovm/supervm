@@ -76,6 +76,7 @@ fn config(size: usize) -> ResidentConfig {
         uca_initialization: None,
         workers: 1,
         execution_backend: Default::default(),
+        signature_backend: Default::default(),
         batch_size: size,
         genesis: GenesisConfig {
             chain_id: 71,
@@ -313,6 +314,24 @@ fn gpu_deployment_selection_reaches_the_same_original_pipeline_without_protocol_
 }
 
 #[test]
+fn signature_selection_reaches_original_pipeline_without_changing_business_or_domain() {
+    use novovm_exec::pq_signature::MldsaVerificationBackendV1 as Backend;
+    let original = config(71);
+    let baseline = pipeline_config(&original);
+    for backend in [Backend::Auto, Backend::Cpu, Backend::GpuRequired] {
+        let mut selected = original.clone();
+        selected.signature_backend = backend;
+        let pipeline = pipeline_config(&selected);
+        assert_eq!(pipeline.signature_backend, backend);
+        assert_eq!(pipeline.execution_backend, baseline.execution_backend);
+        assert_eq!(pipeline.store.domain, baseline.store.domain);
+        assert_eq!(pipeline.store.library, baseline.store.library);
+        assert_eq!(pipeline.plan.transactions, baseline.plan.transactions);
+        assert_eq!(pipeline.workers, baseline.workers);
+    }
+}
+
+#[test]
 fn rpc_pipeline_budget_covers_real_independent_accounts_not_only_shared_receiver() -> Result<()> {
     for size in [1, 128, 1024] {
         let config = config(size);
@@ -366,4 +385,76 @@ fn rpc_pipeline_budget_covers_real_independent_accounts_not_only_shared_receiver
         }
     }
     Ok(())
+}
+
+#[test]
+fn native_asset_capacity_covers_1024_rows_without_growing_control_or_ttl() -> Result<()> {
+    use crate::native_pipeline::consensus::transport::{encode, Message};
+    let control = native_lane_limits(512 * 1024);
+    assert_eq!(control.receive.bytes, 16 * 1024 * 1024);
+    assert_eq!(control.send.peer_bytes, 2 * 1024 * 1024);
+    for rows in [1, 8, 64, 1024] {
+        let codec = native_decode_limits(rows, true);
+        assert_eq!(codec.transactions, 1024);
+        assert_eq!(codec.body_bytes, 8 * 1024 * 1024);
+        assert!(codec.message_bytes >= codec.body_bytes + 128 * 1024);
+        encode(&Message::RequestBody { body_id: [1; 32] }, codec)?;
+        let lane = native_lane_limits(codec.message_bytes);
+        assert_eq!(lane.receive.max_message_bytes, codec.message_bytes);
+        assert_eq!(lane.receive.peer_bytes, 4 * codec.message_bytes);
+        assert_eq!(lane.send.peer_bytes, lane.receive.peer_bytes);
+        assert_eq!(lane.send.messages, 32);
+        assert_eq!(lane.send.peer_messages, 4);
+        assert_eq!(lane.receive.ttl, Duration::from_secs(30));
+        assert!(lane.receive.bytes >= lane.receive.peer_bytes * 4);
+    }
+    let maximum = native_decode_limits(1024, true);
+    assert_eq!(maximum.body_bytes, 8 * 1024 * 1024);
+    assert_eq!(maximum.message_bytes, 8 * 1024 * 1024 + 128 * 1024);
+    // Unrelated historical V3/reference capacity is not changed by this migration.
+    let reference = native_decode_limits(1024, false);
+    assert_eq!(reference.body_bytes, 384 * 1024);
+    assert_eq!(reference.message_bytes, 512 * 1024);
+    assert_eq!(native_body_retention_limit(reference), 64 * 1024 * 1024);
+    assert_eq!(
+        native_body_retention_limit(native_decode_limits(1024, true)),
+        130 * 1024 * 1024
+    );
+    Ok(())
+}
+
+#[test]
+fn asset_local_proposal_target_does_not_reduce_peer_validation_or_capture_capacity() {
+    use super::config::uca_genesis::UcaInitializationConfigV2;
+
+    for target in [1, 64, 1024] {
+        let mut selected = config(target);
+        // Budget construction only; this deliberately unsigned initializer
+        // cannot activate a node or confer asset authority.
+        selected.uca_initialization = Some(UcaInitializationConfigV2 {
+            pages: vec![],
+            identities: Vec::new(),
+            accounts: Vec::new(),
+            approvals: Vec::new(),
+            expected_signing_domain: [0; 32],
+            expected_initial_root: [0; 32],
+            expected_final_commitment: [0; 32],
+        });
+        let codec = native_decode_limits(selected.batch_size, true);
+        let pipeline = pipeline_config(&selected);
+        assert_eq!(
+            selected.batch_size, target,
+            "local selection target changed"
+        );
+        assert_eq!(codec.transactions, 1024);
+        assert_eq!(codec.body_bytes, 8 * 1024 * 1024);
+        assert_eq!(pipeline.authentication.transactions, codec.transactions);
+        assert_eq!(pipeline.authentication.body_bytes, codec.body_bytes);
+        assert_eq!(pipeline.plan.transactions, codec.transactions);
+        assert_eq!(pipeline.plan.body_bytes, codec.body_bytes);
+        assert_eq!(pipeline.plan.access_keys, 31 * 1024 + 42);
+        assert_eq!(pipeline.capture.keys, pipeline.plan.access_keys);
+        assert_eq!(pipeline.capture.nodes, 65_536);
+        assert_eq!(pipeline.capture.bytes, 16 * 1024 * 1024);
+    }
 }

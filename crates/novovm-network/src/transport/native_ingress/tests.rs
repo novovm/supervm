@@ -137,6 +137,11 @@ fn native_only_policy_rejects_plain_protocol_before_legacy_side_effects() -> Res
     }
     let start = Instant::now();
     let mut owner = transport.into_authenticated_objects_v1(config(), 1000, start)?;
+    assert!(owner
+        .send_protocol(NodeId(84), &messages[0])
+        .unwrap_err()
+        .to_string()
+        .contains("native-only ownership"));
     let mut rejected = 0;
     while rejected < messages.len() {
         ensure!(

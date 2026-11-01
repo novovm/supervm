@@ -11,6 +11,10 @@ use novovm_exec::resident::{ComputeSession, ComputeTask};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[cfg(test)]
+#[path = "execution/fee_delta_tests.rs"]
+mod fee_delta_tests;
+
 /// A new ordered receipt encoding. The final state binds diagnostics; this
 /// receipt binds each quote, rejection and full successful fee journal entry.
 /// It deliberately has no `safe`, `finalized`, old prev-seal or fake proof flag.
@@ -63,7 +67,7 @@ impl ExecutedNovBatch {
     pub(crate) fn into_poststate_seed(
         self,
         budget: CaptureBudget,
-    ) -> Result<Option<crate::native_pipeline::state::frontier::PostStateSeed>> {
+    ) -> Result<Option<crate::native_pipeline::state::frontier::StateReadSeed>> {
         self.effects.into_poststate_seed(budget)
     }
 
@@ -305,17 +309,20 @@ fn speculate(
             recipient_balance: balances[&request.recipient],
             next_nonce: nonces[&prepared.identities[index]],
         };
-        // UCA nonce/budget depend on effective authorized predecessors. Never
-        // pre-increment or reject a later row using the parent's nonce here.
-        let outcome = if prepared.spend.is_some() {
-            None
-        } else {
-            let outcome = compute_outcome(&intent, &snapshot, rejection.as_deref())?;
+        // These are tentative component-local money effects, never authority
+        // or budget consumption. Ordered settlement checks the actual prefix
+        // before reuse; an earlier rejected grant or fee invalidates dependent
+        // snapshots. A speculative asset nonce gap is not a batch rejection.
+        let outcome = match compute_outcome(&intent, &snapshot, rejection.as_deref()) {
+            Ok(outcome) => Some(outcome),
+            Err(_) if prepared.spend.is_some() => None,
+            Err(error) => return Err(error.into()),
+        };
+        if let Some(outcome) = &outcome {
             balances.insert(request.payer.clone(), outcome.delta().payer.after);
             balances.insert(request.recipient.clone(), outcome.delta().recipient.after);
             nonces.insert(prepared.identities[index], outcome.delta().nonce_after);
-            Some(outcome)
-        };
+        }
         predictions.push(Prediction {
             index,
             snapshot,
@@ -356,7 +363,24 @@ fn finish(
         .map(|s| {
             s.grants
                 .iter()
-                .map(|(id, g)| (*id, g.record.remaining_debit_budget))
+                .map(|(id, g)| {
+                    (
+                        *id,
+                        g.record.as_ref().map_or(0, |g| g.remaining_debit_budget),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut authority_versions = BTreeMap::<Account, usize>::new();
+    let mut grant_presence: BTreeMap<_, _> = prepared
+        .spend
+        .as_ref()
+        .map(|spend| {
+            spend
+                .grants
+                .iter()
+                .map(|(id, grant)| (*id, grant.record.is_some()))
                 .collect()
         })
         .unwrap_or_default();
@@ -376,11 +400,24 @@ fn finish(
         if let Some(spend) = &prepared.spend {
             use novovm_adapter_api::uca_spend_policy::SpendPolicyError;
             let e = &spend.entries[index];
-            let failure = e.static_failure.or_else(|| {
+            let version = authority_versions.get(&request.payer).copied().unwrap_or(0);
+            let option = e
+                .authority_options
+                .iter()
+                .find(|option| option.version == version)
+                .context("asset authority prefix missing")?;
+            let static_failure = if e.intent.uses_grant() && !grant_presence[&e.grant_id] {
+                option.absent_failure
+            } else if version == 0 {
+                e.static_failure
+            } else {
+                option.failure
+            };
+            let failure = static_failure.or_else(|| {
                 if prepared.tx_nonces[index] != actual.next_nonce {
                     Some(SpendPolicyError::NonceMismatch)
-                } else if e.reserve > budgets[&e.grant_id]
-                    || e.reserve > spend.grants[&e.grant_id].record.max_debit_per_intent
+                } else if e.intent.uses_grant()
+                    && (e.reserve > budgets[&e.grant_id] || e.reserve > option.limit)
                 {
                     Some(SpendPolicyError::LimitExceeded)
                 } else {
@@ -393,7 +430,11 @@ fn finish(
                 ));
                 spend_outputs.as_mut().unwrap().push(SpendOutput {
                     failure: Some(failure),
-                    remaining: budgets[&e.grant_id],
+                    remaining: if e.intent.uses_grant() {
+                        budgets[&e.grant_id]
+                    } else {
+                        0
+                    },
                 });
                 continue;
             }
@@ -462,19 +503,35 @@ fn finish(
         }
         nonces.insert(identity, delta.nonce_after);
         if let Some(spend) = &prepared.spend {
-            let id = spend.entries[index].grant_id;
-            let debit = if outcome.is_success() {
-                request
-                    .amount
-                    .checked_add(delta.fee_funding_delta)
-                    .context("UCA actual debit overflow")?
+            let entry = &spend.entries[index];
+            let id = entry.grant_id;
+            let remaining = if entry.intent.authority_update.is_some() {
+                if outcome.is_success() {
+                    authority_versions.insert(request.payer.clone(), index + 1);
+                    for grant in super::uca_effects::update_grants(&entry.intent) {
+                        let id = super::uca_effects::grant_id(&entry.intent, &grant.key_ref)?;
+                        grant_presence.insert(id, true);
+                        budgets.insert(id, grant.remaining_debit_budget);
+                    }
+                }
+                0
+            } else if entry.intent.uses_grant() {
+                let debit = if outcome.is_success() {
+                    request
+                        .amount
+                        .checked_add(delta.fee_funding_delta)
+                        .context("UCA actual debit overflow")?
+                } else {
+                    delta.fee_funding_delta
+                };
+                let remaining = budgets[&id]
+                    .checked_sub(debit)
+                    .context("UCA approved budget underflow")?;
+                budgets.insert(id, remaining);
+                remaining
             } else {
-                delta.fee_funding_delta
+                0
             };
-            let remaining = budgets[&id]
-                .checked_sub(debit)
-                .context("UCA approved budget underflow")?;
-            budgets.insert(id, remaining);
             spend_outputs.as_mut().unwrap().push(SpendOutput {
                 failure: None,
                 remaining,
@@ -530,37 +587,128 @@ pub(super) fn stage_results(
             .iter()
             .filter_map(|receipt| receipt.journal.as_ref().map(|entry| entry.settled_nov)),
     )?;
-    let mut changes =
-        record_pages::record_changes(FEE_PREFIX, &postcard::to_allocvec(&fees)?, FEE_BYTES)?;
+    let mut changes = record_pages::record_changes_from_parent(
+        FEE_PREFIX,
+        &postcard::to_allocvec(&fees)?,
+        FEE_BYTES,
+        Some(&postcard::to_allocvec(&prepared.fees)?),
+    )?;
     ensure!(
         prepared.spend.is_some() == spend_outputs.is_some(),
         "UCA effect output missing/unexpected"
     );
+    let mut opened = BTreeMap::new();
     if let (Some(spend), Some(outputs)) = (&prepared.spend, &spend_outputs) {
         ensure!(
-            outputs.len() == spend.entries.len(),
+            outputs.len() == spend.entries.len() && receipts.len() == spend.entries.len(),
             "UCA effect output shape"
         );
-        let mut final_budgets = BTreeMap::new();
-        for (entry, output) in spend.entries.iter().zip(outputs) {
-            final_budgets.insert(entry.grant_id, output.remaining);
+        let mut final_grants: BTreeMap<_, _> = spend
+            .grants
+            .iter()
+            .filter_map(|(id, grant)| {
+                grant
+                    .record
+                    .clone()
+                    .map(|record| (*id, (grant.intent.clone(), record)))
+            })
+            .collect();
+        let mut authorities = BTreeMap::new();
+        for ((entry, output), receipt) in spend.entries.iter().zip(outputs).zip(&receipts) {
+            if output.failure.is_some() {
+                continue;
+            }
+            if entry.creates_recipient && receipt.failure.is_none() && receipt.fee_failure.is_none()
+            {
+                // A creation address commits the whole initial descriptor.
+                // Concurrent identical openings only initialize once; subsequent
+                // deposits never reset an existing account's keys or nonce.
+                opened.insert(receipt.delta.recipient.account.clone(), &entry.intent);
+            }
+            if let Some(authority) = super::uca_effects::update_authority(&entry.intent) {
+                // Project the already executed success bit; do not re-run
+                // authorization or choose an alternative Host state transition.
+                if receipt.failure.is_none() && receipt.fee_failure.is_none() {
+                    authorities.insert(
+                        entry.intent.payer.clone(),
+                        (entry.intent.clone(), authority),
+                    );
+                    for record in super::uca_effects::update_grants(&entry.intent) {
+                        let id = super::uca_effects::grant_id(&entry.intent, &record.key_ref)?;
+                        let mut location = entry.intent.clone();
+                        location.authority =
+                            novovm_protocol::uca_spend::AssetSpendAuthorityV3::DelegatedGrant;
+                        location.authority_update = None;
+                        location.authorization_epoch = record.authorization_epoch;
+                        location.spend_key_ref = record.key_ref;
+                        final_grants.insert(id, (location, record));
+                    }
+                }
+            } else if entry.intent.uses_grant() {
+                final_grants
+                    .get_mut(&entry.grant_id)
+                    .context("successful spend has no effective asset grant")?
+                    .1
+                    .remaining_debit_budget = output.remaining;
+            }
         }
-        for (id, remaining) in final_budgets {
-            let grant = &spend.grants[&id];
-            if remaining != grant.record.remaining_debit_budget {
-                let mut record = grant.record.clone();
-                record.remaining_debit_budget = remaining;
+        for (_, (intent, authority)) in authorities {
+            changes.extend(
+                crate::native_pipeline::business::uca_spend_state::account_record_changes(
+                    intent.chain_id,
+                    &intent.genesis,
+                    &authority,
+                )?,
+            );
+        }
+        for intent in opened.values() {
+            let authority =
+                crate::native_pipeline::business::uca_spend_state::creation_authority(intent)
+                    .context("successful opening descriptor missing")?;
+            changes.extend(
+                crate::native_pipeline::business::uca_spend_state::account_record_changes(
+                    intent.chain_id,
+                    &intent.genesis,
+                    &authority,
+                )?,
+            );
+            let mut location =
+                crate::native_pipeline::business::uca_spend_state::creation_location(intent);
+            changes.push(StateChange::Put {
+                key: nonce_key(&location.nonce_identity()?),
+                value: 0u64.to_le_bytes().to_vec(),
+            });
+            for grant in crate::native_pipeline::business::uca_spend_state::creation_grants(intent)
+            {
+                location.spend_key_ref = grant.key_ref;
                 changes.extend(
                     crate::native_pipeline::business::uca_spend_state::grant_record_changes(
-                        &grant.intent,
+                        &location, &grant,
+                    )?,
+                );
+            }
+        }
+        for (id, (intent, record)) in final_grants {
+            if spend
+                .grants
+                .get(&id)
+                .and_then(|grant| grant.record.as_ref())
+                != Some(&record)
+            {
+                changes.extend(
+                    crate::native_pipeline::business::uca_spend_state::grant_record_changes_from_parent(
+                        &intent,
                         &record,
+                        spend.grants.get(&id).and_then(|previous| {
+                            previous.record.as_ref().map(|record| (&previous.intent, record))
+                        }),
                     )?,
                 );
             }
         }
     }
     for (account, after) in balances {
-        if after != prepared.balances[&account] {
+        if after != prepared.balances[&account] || opened.contains_key(&account) {
             changes.push(StateChange::Put {
                 key: balance_key(&account),
                 value: after
@@ -588,7 +736,7 @@ pub(super) fn stage_results(
         digest.update(bytes);
     }
     if let Some(outputs) = &spend_outputs {
-        digest.update(b"uca-authorized-effects/v1\0");
+        digest.update(b"asset-authorized-effects/v3\0");
         for output in outputs {
             digest.update(super::uca_effects::authorization_code(output.failure).to_be_bytes());
             digest.update(output.remaining.to_be_bytes());

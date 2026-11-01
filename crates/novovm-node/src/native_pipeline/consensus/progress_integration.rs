@@ -1,6 +1,8 @@
 //! Four real UDP sockets/AOEM stores. The fixture supplies business input and
 //! pumps I/O; it never calls propose/vote/observe_prevotes/observe_decision,
-//! constructs a QC, clears a lock, or advances a journal height.
+//! constructs a QC, clears a lock, or advances a journal height. The separately
+//! named delivery-ownership wrapper below uses explicit fixture votes/QC solely
+//! to test object identities and custody, never to establish execution/finality.
 use super::*;
 use crate::native_pipeline::consensus::{
     collector::CollectorLimits,
@@ -19,6 +21,10 @@ use std::collections::VecDeque;
 
 #[path = "native_deadline_integration.rs"]
 mod deadline;
+#[path = "native_early_height_integration.rs"]
+mod early_height;
+#[path = "native_early_vote_integration.rs"]
+mod early_vote;
 #[path = "native_lifecycle_integration.rs"]
 mod lifecycle;
 #[path = "published_projection_integration.rs"]
@@ -80,6 +86,15 @@ struct Fixture {
     drivers: Vec<RoundProgress>,
 }
 fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
+    fixture_with(backend, codec(), initialize, pipeline_config)
+}
+
+fn fixture_with(
+    backend: ExecutionBackend,
+    codec: transport::DecodeLimits,
+    initialize: impl Fn(&Path) -> Result<Hash>,
+    configure: impl Fn(&Path) -> Result<PipelineConfig>,
+) -> Result<Fixture> {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/runtime-rebuild/consensus-tests")
         .join(format!(
@@ -114,7 +129,7 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
             )
         })
         .collect();
-    let mesh = Mesh::new(
+    let mesh = Mesh::with_codec(
         &keys,
         MessageDomain {
             chain_id: CHAIN,
@@ -122,6 +137,7 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
             protocol: PROTOCOL,
             validators: set.clone(),
         },
+        codec,
     )?;
     let mut services = Services::default();
     let mut anchor = None;
@@ -139,7 +155,7 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
             anchor.unwrap().state_root == root,
             "different fixture genesis"
         );
-        let mut config = pipeline_config(path)?;
+        let mut config = configure(path)?;
         config.execution_backend = backend;
         services
             .0
@@ -169,6 +185,264 @@ fn fixture(backend: ExecutionBackend) -> Result<Fixture> {
         anchor,
         drivers,
     })
+}
+
+/// Reuse the real store/journal/socket fixture for delivery ownership tests.
+/// The signed proposal below is explicitly fixture material, not evidence of
+/// execution or finality. The callback controls delivery timing only.
+pub(crate) fn with_delivery_lifecycle_for_test(
+    check: impl FnOnce(
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        Message,
+    ) -> Result<()>,
+) -> Result<()> {
+    with_delivery_fixture_for_test(|node, message, _| check(node, message))
+}
+
+pub(crate) fn with_delivery_live_body_for_test(
+    check: impl FnOnce(
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        &CandidatePipeline,
+        Arc<Message>,
+    ) -> Result<()>,
+) -> Result<()> {
+    with_delivery_fixture_for_test(|node, _, pipeline| {
+        let raw = super::chain_integration::raw_at(1)?;
+        let body = Arc::new(Message::ApflBody {
+            context: batch_context(node.progress.parent().state_root),
+            batch: Arc::new(ApflTransferBatch::from_raw(
+                &raw,
+                ApflLimits {
+                    transactions: 8,
+                    transaction_bytes: 1024,
+                    body_bytes: 8192,
+                },
+            )?),
+        });
+        check(node, pipeline, body)
+    })
+}
+
+/// Delivery-only fixture: a correctly signed Decision wire with a canonical
+/// matching body ID. Its value is NOT an independently executed block statement;
+/// callers must not feed it to publication or claim a genuine decided block.
+pub(crate) fn with_archive_lifecycle_for_test(
+    check: impl FnOnce(
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        Message,
+        Arc<Message>,
+    ) -> Result<()>,
+) -> Result<()> {
+    with_delivery_live_body_for_test(|node, _, body| {
+        let keys: Vec<_> = (0..4).map(component_validator_key).collect();
+        let members = keys
+            .iter()
+            .map(|key| Validator::new(key.verifying_key().to_bytes(), 1))
+            .collect::<Result<Vec<_>>>()?;
+        let set = ValidatorSet::new_for_test(CHAIN, 1, 1, members)?;
+        let context = node.progress.context();
+        ensure!(set.hash() == context.validator_set_hash);
+        let leader = set.leader(context.height, 0)?;
+        let key = keys
+            .iter()
+            .find(|key| {
+                Validator::new(key.verifying_key().to_bytes(), 1)
+                    .is_ok_and(|validator| validator.id() == leader)
+            })
+            .context("missing archive fixture leader")?;
+        let body_id = transport::candidate_body_id(&body, codec())?;
+        let proposal = novovm_consensus::round_bft::test_vectors::sign_proposal(
+            context, 0, body_id, None, &set, key,
+        )?;
+        let votes = keys
+            .iter()
+            .take(3)
+            .map(|key| {
+                novovm_consensus::round_bft::test_vectors::sign_vote(
+                    context,
+                    0,
+                    Phase::Precommit,
+                    Some(proposal.value),
+                    &set,
+                    key,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let certificate = Quorum::from_votes(&set, votes)?;
+        certificate.verify(&set)?;
+        check(
+            node,
+            Message::Decision {
+                proposal,
+                certificate,
+                body_id,
+            },
+            body,
+        )
+    })
+}
+
+fn with_delivery_fixture_for_test(
+    check: impl FnOnce(
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        Message,
+        &CandidatePipeline,
+    ) -> Result<()>,
+) -> Result<()> {
+    with_delivery_nodes_for_test(|nodes, leader, message, pipelines| {
+        check(&mut nodes[leader], message, &pipelines[leader])
+    })
+}
+
+/// Publish through the original four-node sockets, independent execution and
+/// actual journal ACK before exposing an archive poll fixture. Unlike the
+/// delivery-only wrapper, no fixture-signed proposal/QC establishes this head.
+pub(crate) fn with_published_archive_lifecycle_for_test(
+    check: impl FnOnce(
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        &CandidatePipeline,
+        ConsensusContext,
+    ) -> Result<()>,
+) -> Result<()> {
+    with_delivery_nodes_for_test(|nodes, leader, _, pipelines| {
+        let now = Instant::now();
+        let deadline = now + DEADLINE;
+        // This fixture isolates archive work AFTER actual publication. Reuse
+        // the existing discovery deadline instead of starting and discarding
+        // setup archive reads/caches or fabricating a journal head.
+        for node in nodes.iter_mut() {
+            node.defer_archive_discovery_until_for_test(deadline);
+        }
+        let context = nodes[leader].progress.context();
+        let raw = super::chain_integration::raw_at(1)?;
+        let body = Arc::new(Message::ApflBody {
+            context: batch_context(nodes[leader].progress.parent().state_root),
+            batch: Arc::new(ApflTransferBatch::from_raw(
+                &raw,
+                ApflLimits {
+                    transactions: 8,
+                    transaction_bytes: 1024,
+                    body_bytes: 8192,
+                },
+            )?),
+        });
+        ensure!(nodes[leader].offer(&body)?, "archive fixture input full");
+        loop {
+            ensure!(Instant::now() < deadline, "archive fixture did not publish");
+            for (index, node) in nodes.iter_mut().enumerate() {
+                node.poll_io(1000 + now.elapsed().as_millis() as u64, Instant::now())?;
+                // This is not a deadline test: keep protocol time fixed while
+                // actual I/O/execution/journal work completes under the finite
+                // wall-clock guard, as in the existing preparation fixture.
+                node.poll(&pipelines[index], now)?;
+                ensure!(!node.is_frozen());
+            }
+            if nodes.iter().all(|node| {
+                node.progress.head().is_some_and(|head| head.height == 1)
+                    && node.pending_deliveries() == 0
+            }) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let head = nodes[leader].progress.head();
+        ensure!(nodes.iter().all(|node| node.progress.head() == head));
+        check(&mut nodes[leader], &pipelines[leader], context)
+    })
+}
+
+/// Expose only the original sender and its first configured peer, so retirement
+/// tests can stop after one actual received fragment without fabricating ACKs.
+pub(crate) fn with_delivery_peer_lifecycle_for_test(
+    check: impl FnOnce(
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        &mut crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle,
+        Message,
+    ) -> Result<()>,
+) -> Result<()> {
+    with_delivery_nodes_for_test(|nodes, leader, message, _| {
+        if leader == 0 {
+            let (sender, peers) = nodes.split_at_mut(1);
+            check(&mut sender[0], &mut peers[0], message)
+        } else {
+            let (peers, sender) = nodes.split_at_mut(leader);
+            check(&mut sender[0], &mut peers[0], message)
+        }
+    })
+}
+
+fn with_delivery_nodes_for_test(
+    check: impl FnOnce(
+        &mut [crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle],
+        usize,
+        Message,
+        &[CandidatePipeline],
+    ) -> Result<()>,
+) -> Result<()> {
+    use crate::native_pipeline::consensus::{
+        bodies::{BodyLimits, CandidateBodies},
+        native_lifecycle::{DeliveryLimits, NativeLifecycle},
+    };
+    let Fixture {
+        keys,
+        ids,
+        set,
+        genesis,
+        mut mesh,
+        mut services,
+        anchor,
+        drivers,
+        ..
+    } = fixture(ExecutionBackend::CpuCallbacks)?;
+    let leader_id = set.leader(1, 0)?;
+    let leader = ids
+        .iter()
+        .position(|id| *id == leader_id)
+        .context("missing fixture leader")?;
+    let message = Message::Proposal {
+        proposal: novovm_consensus::round_bft::test_vectors::sign_proposal(
+            genesis,
+            0,
+            [0x43; 32],
+            None,
+            &set,
+            &keys[leader],
+        )?,
+        valid_quorum: None,
+        body_id: [0x42; 32],
+    };
+    let mut nodes = Vec::new();
+    for (i, (driver, channel)) in drivers
+        .into_iter()
+        .zip(std::mem::take(&mut mesh.channels))
+        .enumerate()
+    {
+        nodes.push(NativeLifecycle::new(
+            driver,
+            CandidateBodies::new(
+                &services.0[i],
+                batch_context(anchor.state_root),
+                policy(),
+                codec(),
+                BodyLimits {
+                    bodies: 8,
+                    bytes: 256 * 1024,
+                    inflight: 2,
+                },
+            )?,
+            channel,
+            &set,
+            DeliveryLimits {
+                messages_per_peer: 32,
+                bytes_per_peer: 512 * 1024,
+            },
+            policy(),
+            codec(),
+        )?);
+    }
+    check(&mut nodes, leader, message, &services.0)?;
+    drop(nodes);
+    services.shutdown()
 }
 
 fn run(backend: ExecutionBackend) -> Result<()> {

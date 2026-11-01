@@ -1,0 +1,1853 @@
+{
+  "schema": "novovm.native-critical-path.final-4096-diagnostic-evidence.v1",
+  "date": "2026-10-29",
+  "qualification": "DIAGNOSTIC_COUNTERS_AND_STAGE_OBSERVATIONS_NOT_CAUSAL_THROUGHPUT_PROOF",
+  "raw_report": {
+    "source": "target/native-product-load/paired-14692-1793233199494.json",
+    "copy": "final-4096-diagnostics-paired.json",
+    "sha256": "0abec0d04503adda8a73ac5456a465ee2b3a7c65963cee428bf87c0531816722"
+  },
+  "final_node_sha256": "861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+  "rounds": [
+    {
+      "metrics": {
+        "transactions": 4096,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2189.2457578018607,
+        "elapsed_seconds": 1.8709639999999998,
+        "latency_us": {
+          "p50": 1548848,
+          "p95": 1867108,
+          "p99": 1869792,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0xdeeed21070a50970f798a4be9e8f257c5865fb8e4090585bc914f2644c0b1128",
+        "initial_root": "0xfeb9abaa450fd1843c534e26a644f598dde0c646057949c2e2adb4a9693d84c5",
+        "signing_domain": "0x538e8d4afe4a3055e4c044b315a07d9297bf26d3b693002d7b800eb026a16441",
+        "genesis_commitment": "0x4f91fa86a4d74e9c86d61d56dae1b798ec0767ee4266f3cb804f4ef227cd7f48",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "four_process_startup_ready_seconds": 0.2494272,
+        "startup_through_four_receipts_seconds": 2.3941685,
+        "first_height_all_receipt_queries_observed_us": 812490,
+        "diagnostics_enabled": true,
+        "critical_path_diagnostics_enabled": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 5900,
+          "receipt_query_requests_by_node": [
+            699,
+            1995,
+            1924,
+            1282
+          ],
+          "observation_rows_received": 755200,
+          "receipt_query_rows_received_by_node": [
+            89472,
+            255360,
+            246272,
+            164096
+          ],
+          "observation_not_final": 738816,
+          "receipt_query_not_final_by_node": [
+            85376,
+            251264,
+            242176,
+            160000
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+      },
+      "nodes": [
+        {
+          "node": 0,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 9,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 22777,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 1,
+            "execution_started": 1,
+            "completed_before_parent": 1,
+            "promoted": 1,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 3,
+            "early_body_enqueued_bytes": 10315155,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 1,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 10,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 29245,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 0,
+            "execution_started": 0,
+            "completed_before_parent": 0,
+            "promoted": 0,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 0,
+            "early_body_enqueued_bytes": 0,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 2,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 1,
+          "served_bodies": 9,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 24386,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 0,
+            "execution_started": 0,
+            "completed_before_parent": 0,
+            "promoted": 0,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 0,
+            "early_body_enqueued_bytes": 0,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 3,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 7,
+          "served_bodies": 6,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 24339,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 1,
+            "execution_started": 0,
+            "completed_before_parent": 0,
+            "promoted": 1,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 3,
+            "early_body_enqueued_bytes": 10315155,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        }
+      ],
+      "aggregate": {
+        "early_peer_enqueue_obligations": 6,
+        "early_logical_bytes": 20630310,
+        "promoted": 2,
+        "completed_before_parent": 1,
+        "discarded": 0,
+        "requested_bodies": 8
+      }
+    },
+    {
+      "metrics": {
+        "transactions": 4096,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 3061.100187507333,
+        "elapsed_seconds": 1.338081,
+        "latency_us": {
+          "p50": 1230104,
+          "p95": 1333963,
+          "p99": 1336853,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0xdeeed21070a50970f798a4be9e8f257c5865fb8e4090585bc914f2644c0b1128",
+        "initial_root": "0xfeb9abaa450fd1843c534e26a644f598dde0c646057949c2e2adb4a9693d84c5",
+        "signing_domain": "0x538e8d4afe4a3055e4c044b315a07d9297bf26d3b693002d7b800eb026a16441",
+        "genesis_commitment": "0x4f91fa86a4d74e9c86d61d56dae1b798ec0767ee4266f3cb804f4ef227cd7f48",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "four_process_startup_ready_seconds": 3.3554557,
+        "startup_through_four_receipts_seconds": 4.9665234,
+        "first_height_all_receipt_queries_observed_us": 905571,
+        "diagnostics_enabled": true,
+        "critical_path_diagnostics_enabled": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 5662,
+          "receipt_query_requests_by_node": [
+            1099,
+            1419,
+            1662,
+            1482
+          ],
+          "observation_rows_received": 724736,
+          "receipt_query_rows_received_by_node": [
+            140672,
+            181632,
+            212736,
+            189696
+          ],
+          "observation_not_final": 708352,
+          "receipt_query_not_final_by_node": [
+            136576,
+            177536,
+            208640,
+            185600
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+      },
+      "nodes": [
+        {
+          "node": 0,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 3,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 3200626,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 1,
+            "execution_started": 1,
+            "completed_before_parent": 0,
+            "promoted": 1,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 3,
+            "early_body_enqueued_bytes": 10315155,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 1,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 3,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 3201684,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 1,
+            "execution_started": 1,
+            "completed_before_parent": 0,
+            "promoted": 1,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 3,
+            "early_body_enqueued_bytes": 10315155,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 2,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 3,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 3181929,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 0,
+            "execution_started": 0,
+            "completed_before_parent": 0,
+            "promoted": 0,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 0,
+            "early_body_enqueued_bytes": 0,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 3,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 3,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 3183796,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 1,
+            "execution_started": 1,
+            "completed_before_parent": 0,
+            "promoted": 1,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 3,
+            "early_body_enqueued_bytes": 10315155,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        }
+      ],
+      "aggregate": {
+        "early_peer_enqueue_obligations": 9,
+        "early_logical_bytes": 30945465,
+        "promoted": 3,
+        "completed_before_parent": 0,
+        "discarded": 0,
+        "requested_bodies": 0
+      }
+    },
+    {
+      "metrics": {
+        "transactions": 4096,
+        "binary_sha256": "0x861066e7ec35dd905ba7a1d36d9b524eb7bda6ee7a2b9e1bf4e39489c2003b52",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "successful_tps": 2323.6156730600137,
+        "elapsed_seconds": 1.76277,
+        "latency_us": {
+          "p50": 1386974,
+          "p95": 1746581,
+          "p99": 1761627,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0xdeeed21070a50970f798a4be9e8f257c5865fb8e4090585bc914f2644c0b1128",
+        "initial_root": "0xfeb9abaa450fd1843c534e26a644f598dde0c646057949c2e2adb4a9693d84c5",
+        "signing_domain": "0x538e8d4afe4a3055e4c044b315a07d9297bf26d3b693002d7b800eb026a16441",
+        "genesis_commitment": "0x4f91fa86a4d74e9c86d61d56dae1b798ec0767ee4266f3cb804f4ef227cd7f48",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "four_process_startup_ready_seconds": 0.2550571,
+        "startup_through_four_receipts_seconds": 2.2910564,
+        "first_height_all_receipt_queries_observed_us": 836459,
+        "diagnostics_enabled": true,
+        "critical_path_diagnostics_enabled": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 5200,
+          "receipt_query_requests_by_node": [
+            806,
+            1467,
+            1655,
+            1272
+          ],
+          "observation_rows_received": 665600,
+          "receipt_query_rows_received_by_node": [
+            103168,
+            187776,
+            211840,
+            162816
+          ],
+          "observation_not_final": 649216,
+          "receipt_query_not_final_by_node": [
+            99072,
+            183680,
+            207744,
+            158720
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+      },
+      "nodes": [
+        {
+          "node": 0,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 6,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 25663,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 1,
+            "execution_started": 1,
+            "completed_before_parent": 0,
+            "promoted": 1,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 3,
+            "early_body_enqueued_bytes": 10315155,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 1,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 6,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 23831,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 0,
+            "execution_started": 0,
+            "completed_before_parent": 0,
+            "promoted": 0,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 0,
+            "early_body_enqueued_bytes": 0,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 2,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 6,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 23485,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 0,
+            "execution_started": 0,
+            "completed_before_parent": 0,
+            "promoted": 0,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 0,
+            "early_body_enqueued_bytes": 0,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        },
+        {
+          "node": 3,
+          "matched_final_head": true,
+          "current_height": 5,
+          "round": 0,
+          "requested_bodies": 0,
+          "served_bodies": 6,
+          "expired_sends": 0,
+          "signature": {
+            "strict_verified_rows": 4096,
+            "reused_rows": 4096,
+            "uca_batch_calls": 4,
+            "asset_prepared_at_startup": true,
+            "asset_startup_us": 25758,
+            "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+          },
+          "successor": {
+            "authentication_started": 1,
+            "execution_started": 1,
+            "completed_before_parent": 0,
+            "promoted": 1,
+            "discarded": 0,
+            "early_body_enqueued_peer_obligations": 3,
+            "early_body_enqueued_bytes": 10315155,
+            "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+          },
+          "critical_events_dropped": 0
+        }
+      ],
+      "aggregate": {
+        "early_peer_enqueue_obligations": 6,
+        "early_logical_bytes": 20630310,
+        "promoted": 2,
+        "completed_before_parent": 0,
+        "discarded": 0,
+        "requested_bodies": 0
+      }
+    }
+  ],
+  "stage_event_comparison": [
+    {
+      "file": "artifacts/audit/native-critical-path-20261029/stage1-4096-diagnostics-paired.json",
+      "round": 1,
+      "signature_backend": "cpu",
+      "successful_tps": 2890.7812590425137,
+      "first_height_all_receipt_queries_observed_us": 1032128,
+      "nodes": [
+        {
+          "node": 0,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1351.4908,
+              "proposal_ms": 1352.7983,
+              "prevote_ms": 1356.273,
+              "precommit_ms": 1358.9587,
+              "ack_ms": 1360.7379,
+              "execution_to_proposal_ms": 1.3075,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 7.9396
+            },
+            {
+              "height": 2,
+              "execution_ms": 1512.0798,
+              "proposal_ms": 1377.7832,
+              "prevote_ms": 1532.923,
+              "precommit_ms": 1539.0451,
+              "ack_ms": 1540.7923,
+              "execution_to_proposal_ms": -134.2966,
+              "execution_relative_parent_ack_ms": 151.3419,
+              "proposal_to_ack_ms": 163.0091
+            },
+            {
+              "height": 3,
+              "execution_ms": 1635.5879,
+              "proposal_ms": 1654.8675,
+              "prevote_ms": 1662.0082,
+              "precommit_ms": 1669.0781,
+              "ack_ms": 1672.2977,
+              "execution_to_proposal_ms": 19.2796,
+              "execution_relative_parent_ack_ms": 94.7956,
+              "proposal_to_ack_ms": 17.4302
+            },
+            {
+              "height": 4,
+              "execution_ms": 1768.2642,
+              "proposal_ms": 1728.1436,
+              "prevote_ms": 1771.8955,
+              "precommit_ms": 1779.3905,
+              "ack_ms": 1781.2587,
+              "execution_to_proposal_ms": -40.1206,
+              "execution_relative_parent_ack_ms": 95.9665,
+              "proposal_to_ack_ms": 53.1151
+            }
+          ]
+        },
+        {
+          "node": 1,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 783.6182,
+              "proposal_ms": 1353.3385,
+              "prevote_ms": 1356.4665,
+              "precommit_ms": 1358.9311,
+              "ack_ms": 1360.0297,
+              "execution_to_proposal_ms": 569.7203,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 6.6912
+            },
+            {
+              "height": 2,
+              "execution_ms": null,
+              "proposal_ms": 1365.4444,
+              "prevote_ms": 1530.2368,
+              "precommit_ms": 1538.904,
+              "ack_ms": 1541.9742,
+              "execution_to_proposal_ms": null,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 176.5298
+            },
+            {
+              "height": 3,
+              "execution_ms": 1637.7373,
+              "proposal_ms": 1663.3148,
+              "prevote_ms": 1672.2322,
+              "precommit_ms": 1680.1351,
+              "ack_ms": 1681.7808,
+              "execution_to_proposal_ms": 25.5775,
+              "execution_relative_parent_ack_ms": 95.7631,
+              "proposal_to_ack_ms": 18.466
+            },
+            {
+              "height": 4,
+              "execution_ms": 1773.4286,
+              "proposal_ms": 1729.8281,
+              "prevote_ms": 1775.0645,
+              "precommit_ms": 1779.2525,
+              "ack_ms": 1780.7175,
+              "execution_to_proposal_ms": -43.6005,
+              "execution_relative_parent_ack_ms": 91.6478,
+              "proposal_to_ack_ms": 50.8894
+            }
+          ]
+        },
+        {
+          "node": 2,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1317.4324,
+              "proposal_ms": 1338.157,
+              "prevote_ms": 1340.8479,
+              "precommit_ms": 1343.9616,
+              "ack_ms": 1345.795,
+              "execution_to_proposal_ms": 20.7246,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 7.638
+            },
+            {
+              "height": 2,
+              "execution_ms": 1498.8282,
+              "proposal_ms": 1361.9199,
+              "prevote_ms": 1512.7462,
+              "precommit_ms": 1523.2094,
+              "ack_ms": 1524.919,
+              "execution_to_proposal_ms": -136.9083,
+              "execution_relative_parent_ack_ms": 153.0332,
+              "proposal_to_ack_ms": 162.9991
+            },
+            {
+              "height": 3,
+              "execution_ms": 1618.3085,
+              "proposal_ms": 1641.7519,
+              "prevote_ms": 1647.5539,
+              "precommit_ms": 1662.0178,
+              "ack_ms": 1664.5163,
+              "execution_to_proposal_ms": 23.4434,
+              "execution_relative_parent_ack_ms": 93.3895,
+              "proposal_to_ack_ms": 22.7644
+            },
+            {
+              "height": 4,
+              "execution_ms": 1710.3252,
+              "proposal_ms": 1711.9335,
+              "prevote_ms": 1764.3572,
+              "precommit_ms": 1766.4441,
+              "ack_ms": 1767.8731,
+              "execution_to_proposal_ms": 1.6083,
+              "execution_relative_parent_ack_ms": 45.8089,
+              "proposal_to_ack_ms": 55.9396
+            }
+          ]
+        },
+        {
+          "node": 3,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1382.5818,
+              "proposal_ms": 1352.2293,
+              "prevote_ms": null,
+              "precommit_ms": 1382.6005,
+              "ack_ms": 1384.0722,
+              "execution_to_proposal_ms": -30.3525,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 31.8429
+            },
+            {
+              "height": 2,
+              "execution_ms": 1534.9808,
+              "proposal_ms": null,
+              "prevote_ms": null,
+              "precommit_ms": 1535.0134,
+              "ack_ms": 1563.0892,
+              "execution_to_proposal_ms": null,
+              "execution_relative_parent_ack_ms": 150.9086,
+              "proposal_to_ack_ms": null
+            },
+            {
+              "height": 3,
+              "execution_ms": 1630.1215,
+              "proposal_ms": 1636.6121,
+              "prevote_ms": 1646.6242,
+              "precommit_ms": 1653.7862,
+              "ack_ms": 1656.0883,
+              "execution_to_proposal_ms": 6.4906,
+              "execution_relative_parent_ack_ms": 67.0323,
+              "proposal_to_ack_ms": 19.4762
+            },
+            {
+              "height": 4,
+              "execution_ms": 1754.5673,
+              "proposal_ms": 1713.0927,
+              "prevote_ms": 1755.8848,
+              "precommit_ms": 1779.9932,
+              "ack_ms": 1782.1784,
+              "execution_to_proposal_ms": -41.4746,
+              "execution_relative_parent_ack_ms": 98.479,
+              "proposal_to_ack_ms": 69.0857
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "artifacts/audit/native-critical-path-20261029/stage1-4096-diagnostics-paired.json",
+      "round": 2,
+      "signature_backend": "gpu_required",
+      "successful_tps": 2405.225257918717,
+      "first_height_all_receipt_queries_observed_us": 710634,
+      "nodes": [
+        {
+          "node": 0,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 947.6686,
+              "proposal_ms": 949.2158,
+              "prevote_ms": 953.0752,
+              "precommit_ms": 955.8958,
+              "ack_ms": 956.8209,
+              "execution_to_proposal_ms": 1.5472,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 7.6051
+            },
+            {
+              "height": 2,
+              "execution_ms": 1473.8412,
+              "proposal_ms": 969.8673,
+              "prevote_ms": null,
+              "precommit_ms": 1473.8714,
+              "ack_ms": 1475.6026,
+              "execution_to_proposal_ms": -503.9739,
+              "execution_relative_parent_ack_ms": 517.0203,
+              "proposal_to_ack_ms": 505.7353
+            },
+            {
+              "height": 3,
+              "execution_ms": 1699.8662,
+              "proposal_ms": null,
+              "prevote_ms": null,
+              "precommit_ms": 1699.8793,
+              "ack_ms": 1702.4119,
+              "execution_to_proposal_ms": null,
+              "execution_relative_parent_ack_ms": 224.2636,
+              "proposal_to_ack_ms": null
+            },
+            {
+              "height": 4,
+              "execution_ms": 1819.0677,
+              "proposal_ms": null,
+              "prevote_ms": 1822.0785,
+              "precommit_ms": 1824.6662,
+              "ack_ms": 1826.2,
+              "execution_to_proposal_ms": null,
+              "execution_relative_parent_ack_ms": 116.6558,
+              "proposal_to_ack_ms": null
+            }
+          ]
+        },
+        {
+          "node": 1,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 687.539,
+              "proposal_ms": 1011.8151,
+              "prevote_ms": 1015.5208,
+              "precommit_ms": 1018.048,
+              "ack_ms": 1021.0207,
+              "execution_to_proposal_ms": 324.2761,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 9.2056
+            },
+            {
+              "height": 2,
+              "execution_ms": null,
+              "proposal_ms": 1028.7348,
+              "prevote_ms": 1428.6279,
+              "precommit_ms": 1431.6436,
+              "ack_ms": 1432.7989,
+              "execution_to_proposal_ms": null,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 404.0641
+            },
+            {
+              "height": 3,
+              "execution_ms": 1586.8204,
+              "proposal_ms": 1559.0644,
+              "prevote_ms": 1693.1214,
+              "precommit_ms": 1704.4007,
+              "ack_ms": 1706.6585,
+              "execution_to_proposal_ms": -27.756,
+              "execution_relative_parent_ack_ms": 154.0215,
+              "proposal_to_ack_ms": 147.5941
+            },
+            {
+              "height": 4,
+              "execution_ms": 1822.0715,
+              "proposal_ms": 1724.4897,
+              "prevote_ms": 1839.1826,
+              "precommit_ms": 1897.9591,
+              "ack_ms": 1899.5668,
+              "execution_to_proposal_ms": -97.5818,
+              "execution_relative_parent_ack_ms": 115.413,
+              "proposal_to_ack_ms": 175.0771
+            }
+          ]
+        },
+        {
+          "node": 2,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 977.3039,
+              "proposal_ms": 1011.7596,
+              "prevote_ms": 1014.4907,
+              "precommit_ms": 1017.9469,
+              "ack_ms": 1020.3358,
+              "execution_to_proposal_ms": 34.4557,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 8.5762
+            },
+            {
+              "height": 2,
+              "execution_ms": 1405.5596,
+              "proposal_ms": 1031.4795,
+              "prevote_ms": 1428.4339,
+              "precommit_ms": 1436.6539,
+              "ack_ms": 1438.0551,
+              "execution_to_proposal_ms": -374.0801,
+              "execution_relative_parent_ack_ms": 385.2238,
+              "proposal_to_ack_ms": 406.5756
+            },
+            {
+              "height": 3,
+              "execution_ms": 1562.5703,
+              "proposal_ms": 1536.8909,
+              "prevote_ms": 1697.1575,
+              "precommit_ms": 1704.9832,
+              "ack_ms": 1714.0299,
+              "execution_to_proposal_ms": -25.6794,
+              "execution_relative_parent_ack_ms": 124.5152,
+              "proposal_to_ack_ms": 177.139
+            },
+            {
+              "height": 4,
+              "execution_ms": null,
+              "proposal_ms": 1722.6582,
+              "prevote_ms": 1903.3831,
+              "precommit_ms": 1906.2912,
+              "ack_ms": 1908.1523,
+              "execution_to_proposal_ms": null,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 185.4941
+            }
+          ]
+        },
+        {
+          "node": 3,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 919.4352,
+              "proposal_ms": 950.0003,
+              "prevote_ms": 953.2113,
+              "precommit_ms": 956.2376,
+              "ack_ms": 957.847,
+              "execution_to_proposal_ms": 30.5651,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 7.8467
+            },
+            {
+              "height": 2,
+              "execution_ms": 1354.0284,
+              "proposal_ms": 969.5336,
+              "prevote_ms": 1367.3525,
+              "precommit_ms": 1375.3937,
+              "ack_ms": 1377.2685,
+              "execution_to_proposal_ms": -384.4948,
+              "execution_relative_parent_ack_ms": 396.1814,
+              "proposal_to_ack_ms": 407.7349
+            },
+            {
+              "height": 3,
+              "execution_ms": 1471.3962,
+              "proposal_ms": 1473.6364,
+              "prevote_ms": 1635.4799,
+              "precommit_ms": 1643.429,
+              "ack_ms": 1645.8764,
+              "execution_to_proposal_ms": 2.2402,
+              "execution_relative_parent_ack_ms": 94.1277,
+              "proposal_to_ack_ms": 172.24
+            },
+            {
+              "height": 4,
+              "execution_ms": 1770.2178,
+              "proposal_ms": 1663.7234,
+              "prevote_ms": 1781.913,
+              "precommit_ms": 1826.7135,
+              "ack_ms": 1828.0313,
+              "execution_to_proposal_ms": -106.4944,
+              "execution_relative_parent_ack_ms": 124.3414,
+              "proposal_to_ack_ms": 164.3079
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "artifacts/audit/native-critical-path-20261029/stage1-4096-diagnostics-paired.json",
+      "round": 3,
+      "signature_backend": "cpu",
+      "successful_tps": 2935.371658470654,
+      "first_height_all_receipt_queries_observed_us": 984427,
+      "nodes": [
+        {
+          "node": 0,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1314.3894,
+              "proposal_ms": 1316.3565,
+              "prevote_ms": 1336.6799,
+              "precommit_ms": 1341.528,
+              "ack_ms": 1344.3501,
+              "execution_to_proposal_ms": 1.9671,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 27.9936
+            },
+            {
+              "height": 2,
+              "execution_ms": 1497.9508,
+              "proposal_ms": 1360.4956,
+              "prevote_ms": 1528.2071,
+              "precommit_ms": 1534.0429,
+              "ack_ms": 1535.8503,
+              "execution_to_proposal_ms": -137.4552,
+              "execution_relative_parent_ack_ms": 153.6007,
+              "proposal_to_ack_ms": 175.3547
+            },
+            {
+              "height": 3,
+              "execution_ms": 1630.56,
+              "proposal_ms": 1602.647,
+              "prevote_ms": 1643.9379,
+              "precommit_ms": 1648.1005,
+              "ack_ms": 1650.3375,
+              "execution_to_proposal_ms": -27.913,
+              "execution_relative_parent_ack_ms": 94.7097,
+              "proposal_to_ack_ms": 47.6905
+            },
+            {
+              "height": 4,
+              "execution_ms": 1746.3784,
+              "proposal_ms": 1734.0226,
+              "prevote_ms": 1752.2959,
+              "precommit_ms": 1754.5445,
+              "ack_ms": 1756.6566,
+              "execution_to_proposal_ms": -12.3558,
+              "execution_relative_parent_ack_ms": 96.0409,
+              "proposal_to_ack_ms": 22.634
+            }
+          ]
+        },
+        {
+          "node": 1,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 768.9513,
+              "proposal_ms": 1327.836,
+              "prevote_ms": null,
+              "precommit_ms": 1352.8803,
+              "ack_ms": 1355.0295,
+              "execution_to_proposal_ms": 558.8847,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 27.1935
+            },
+            {
+              "height": 2,
+              "execution_ms": null,
+              "proposal_ms": 1360.5358,
+              "prevote_ms": 1515.1775,
+              "precommit_ms": 1553.559,
+              "ack_ms": 1554.6905,
+              "execution_to_proposal_ms": null,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 194.1547
+            },
+            {
+              "height": 3,
+              "execution_ms": 1649.0111,
+              "proposal_ms": 1612.0816,
+              "prevote_ms": 1651.9498,
+              "precommit_ms": 1665.3498,
+              "ack_ms": 1666.8594,
+              "execution_to_proposal_ms": -36.9295,
+              "execution_relative_parent_ack_ms": 94.3206,
+              "proposal_to_ack_ms": 54.7778
+            },
+            {
+              "height": 4,
+              "execution_ms": 1765.1843,
+              "proposal_ms": 1747.0486,
+              "prevote_ms": null,
+              "precommit_ms": 1766.6628,
+              "ack_ms": 1768.2262,
+              "execution_to_proposal_ms": -18.1357,
+              "execution_relative_parent_ack_ms": 98.3249,
+              "proposal_to_ack_ms": 21.1776
+            }
+          ]
+        },
+        {
+          "node": 2,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1328.8137,
+              "proposal_ms": 1316.3581,
+              "prevote_ms": 1330.1088,
+              "precommit_ms": 1331.7301,
+              "ack_ms": 1332.7883,
+              "execution_to_proposal_ms": -12.4556,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 16.4302
+            },
+            {
+              "height": 2,
+              "execution_ms": 1489.8443,
+              "proposal_ms": 1350.7214,
+              "prevote_ms": 1494.8564,
+              "precommit_ms": 1525.1519,
+              "ack_ms": 1527.3946,
+              "execution_to_proposal_ms": -139.1229,
+              "execution_relative_parent_ack_ms": 157.056,
+              "proposal_to_ack_ms": 176.6732
+            },
+            {
+              "height": 3,
+              "execution_ms": 1621.5676,
+              "proposal_ms": 1599.5357,
+              "prevote_ms": null,
+              "precommit_ms": 1646.1671,
+              "ack_ms": 1647.7395,
+              "execution_to_proposal_ms": -22.0319,
+              "execution_relative_parent_ack_ms": 94.173,
+              "proposal_to_ack_ms": 48.2038
+            },
+            {
+              "height": 4,
+              "execution_ms": 1718.0538,
+              "proposal_ms": 1723.8423,
+              "prevote_ms": 1742.5355,
+              "precommit_ms": 1745.5684,
+              "ack_ms": 1747.699,
+              "execution_to_proposal_ms": 5.7885,
+              "execution_relative_parent_ack_ms": 70.3143,
+              "proposal_to_ack_ms": 23.8567
+            }
+          ]
+        },
+        {
+          "node": 3,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1315.5547,
+              "proposal_ms": 1306.9528,
+              "prevote_ms": 1317.2921,
+              "precommit_ms": 1322.6174,
+              "ack_ms": 1325.3266,
+              "execution_to_proposal_ms": -8.6019,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 18.3738
+            },
+            {
+              "height": 2,
+              "execution_ms": 1478.9245,
+              "proposal_ms": 1340.9011,
+              "prevote_ms": null,
+              "precommit_ms": 1535.344,
+              "ack_ms": 1555.4057,
+              "execution_to_proposal_ms": -138.0234,
+              "execution_relative_parent_ack_ms": 153.5979,
+              "proposal_to_ack_ms": 214.5046
+            },
+            {
+              "height": 3,
+              "execution_ms": 1573.2425,
+              "proposal_ms": 1574.6915,
+              "prevote_ms": 1625.2173,
+              "precommit_ms": 1634.1262,
+              "ack_ms": 1636.4601,
+              "execution_to_proposal_ms": 1.449,
+              "execution_relative_parent_ack_ms": 17.8368,
+              "proposal_to_ack_ms": 61.7686
+            },
+            {
+              "height": 4,
+              "execution_ms": 1731.0856,
+              "proposal_ms": 1717.0185,
+              "prevote_ms": 1732.6688,
+              "precommit_ms": 1748.8312,
+              "ack_ms": 1749.8841,
+              "execution_to_proposal_ms": -14.0671,
+              "execution_relative_parent_ack_ms": 94.6255,
+              "proposal_to_ack_ms": 32.8656
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "target/native-product-load/paired-14692-1793233199494.json",
+      "round": 1,
+      "signature_backend": "cpu",
+      "successful_tps": 2189.2457578018607,
+      "first_height_all_receipt_queries_observed_us": 812490,
+      "nodes": [
+        {
+          "node": 0,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 751.7791,
+              "proposal_ms": 1148.6903,
+              "prevote_ms": 1154.6899,
+              "precommit_ms": 1157.8428,
+              "ack_ms": 1159.7115,
+              "execution_to_proposal_ms": 396.9112,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 11.0212
+            },
+            {
+              "height": 2,
+              "execution_ms": 1317.7892,
+              "proposal_ms": 1347.4014,
+              "prevote_ms": 1497.5572,
+              "precommit_ms": 1510.3603,
+              "ack_ms": 1511.4266,
+              "execution_to_proposal_ms": 29.6122,
+              "execution_relative_parent_ack_ms": 158.0777,
+              "proposal_to_ack_ms": 164.0252
+            },
+            {
+              "height": 3,
+              "execution_ms": 1667.8123,
+              "proposal_ms": 1984.6688,
+              "prevote_ms": 1989.0939,
+              "precommit_ms": 1992.0475,
+              "ack_ms": 1993.9406,
+              "execution_to_proposal_ms": 316.8565,
+              "execution_relative_parent_ack_ms": 156.3857,
+              "proposal_to_ack_ms": 9.2718
+            },
+            {
+              "height": 4,
+              "execution_ms": 1770.5031,
+              "proposal_ms": 2004.6488,
+              "prevote_ms": 2127.9961,
+              "precommit_ms": 2158.8768,
+              "ack_ms": 2160.7636,
+              "execution_to_proposal_ms": 234.1457,
+              "execution_relative_parent_ack_ms": -223.4375,
+              "proposal_to_ack_ms": 156.1148
+            }
+          ]
+        },
+        {
+          "node": 1,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1081.892,
+              "proposal_ms": 1138.5181,
+              "prevote_ms": 1142.0694,
+              "precommit_ms": 1149.2658,
+              "ack_ms": 1152.6055,
+              "execution_to_proposal_ms": 56.6261,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 14.0874
+            },
+            {
+              "height": 2,
+              "execution_ms": 1321.077,
+              "proposal_ms": 1334.5194,
+              "prevote_ms": 1487.299,
+              "precommit_ms": 1492.2897,
+              "ack_ms": 1493.6239,
+              "execution_to_proposal_ms": 13.4424,
+              "execution_relative_parent_ack_ms": 168.4715,
+              "proposal_to_ack_ms": 159.1045
+            },
+            {
+              "height": 3,
+              "execution_ms": 1657.5589,
+              "proposal_ms": 1973.6176,
+              "prevote_ms": 1977.718,
+              "precommit_ms": 1983.7162,
+              "ack_ms": 1985.2642,
+              "execution_to_proposal_ms": 316.0587,
+              "execution_relative_parent_ack_ms": 163.935,
+              "proposal_to_ack_ms": 11.6466
+            },
+            {
+              "height": 4,
+              "execution_ms": 2111.6068,
+              "proposal_ms": 2007.3637,
+              "prevote_ms": 2143.8622,
+              "precommit_ms": 2161.3121,
+              "ack_ms": 2163.48,
+              "execution_to_proposal_ms": -104.2431,
+              "execution_relative_parent_ack_ms": 126.3426,
+              "proposal_to_ack_ms": 156.1163
+            }
+          ]
+        },
+        {
+          "node": 2,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1120.7823,
+              "proposal_ms": 1122.0812,
+              "prevote_ms": 1127.9724,
+              "precommit_ms": 1133.4082,
+              "ack_ms": 1134.8542,
+              "execution_to_proposal_ms": 1.2989,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 12.773
+            },
+            {
+              "height": 2,
+              "execution_ms": 1466.8544,
+              "proposal_ms": 1344.5348,
+              "prevote_ms": 1469.6012,
+              "precommit_ms": 1498.4459,
+              "ack_ms": 1499.9745,
+              "execution_to_proposal_ms": -122.3196,
+              "execution_relative_parent_ack_ms": 332.0002,
+              "proposal_to_ack_ms": 155.4397
+            },
+            {
+              "height": 3,
+              "execution_ms": 1664.5663,
+              "proposal_ms": 1958.3779,
+              "prevote_ms": 1961.5619,
+              "precommit_ms": 1968.6381,
+              "ack_ms": 1970.5465,
+              "execution_to_proposal_ms": 293.8116,
+              "execution_relative_parent_ack_ms": 164.5918,
+              "proposal_to_ack_ms": 12.1686
+            },
+            {
+              "height": 4,
+              "execution_ms": 2094.1711,
+              "proposal_ms": 1989.9195,
+              "prevote_ms": 2102.5965,
+              "precommit_ms": 2145.3898,
+              "ack_ms": 2147.7066,
+              "execution_to_proposal_ms": -104.2516,
+              "execution_relative_parent_ack_ms": 123.6246,
+              "proposal_to_ack_ms": 157.7871
+            }
+          ]
+        },
+        {
+          "node": 3,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1105.1981,
+              "proposal_ms": 1132.7713,
+              "prevote_ms": null,
+              "precommit_ms": 1134.9606,
+              "ack_ms": 1136.5446,
+              "execution_to_proposal_ms": 27.5732,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 3.7733
+            },
+            {
+              "height": 2,
+              "execution_ms": 1864.1347,
+              "proposal_ms": 1321.5687,
+              "prevote_ms": null,
+              "precommit_ms": 1864.1783,
+              "ack_ms": 1877.6062,
+              "execution_to_proposal_ms": -542.566,
+              "execution_relative_parent_ack_ms": 727.5901,
+              "proposal_to_ack_ms": 556.0375
+            },
+            {
+              "height": 3,
+              "execution_ms": 1953.1508,
+              "proposal_ms": 1956.3883,
+              "prevote_ms": 1963.186,
+              "precommit_ms": 1971.9145,
+              "ack_ms": 1974.2611,
+              "execution_to_proposal_ms": 3.2375,
+              "execution_relative_parent_ack_ms": 75.5446,
+              "proposal_to_ack_ms": 17.8728
+            },
+            {
+              "height": 4,
+              "execution_ms": 2139.7438,
+              "proposal_ms": 1993.7146,
+              "prevote_ms": null,
+              "precommit_ms": 2139.7577,
+              "ack_ms": 2153.4374,
+              "execution_to_proposal_ms": -146.0292,
+              "execution_relative_parent_ack_ms": 165.4827,
+              "proposal_to_ack_ms": 159.7228
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "target/native-product-load/paired-14692-1793233199494.json",
+      "round": 2,
+      "signature_backend": "gpu_required",
+      "successful_tps": 3061.100187507333,
+      "first_height_all_receipt_queries_observed_us": 905571,
+      "nodes": [
+        {
+          "node": 0,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 687.8976,
+              "proposal_ms": 1170.4102,
+              "prevote_ms": 1173.4999,
+              "precommit_ms": 1176.3508,
+              "ack_ms": 1178.1389,
+              "execution_to_proposal_ms": 482.5126,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 7.7287
+            },
+            {
+              "height": 2,
+              "execution_ms": 1315.4781,
+              "proposal_ms": 1344.9951,
+              "prevote_ms": 1359.4271,
+              "precommit_ms": 1366.419,
+              "ack_ms": 1368.1898,
+              "execution_to_proposal_ms": 29.517,
+              "execution_relative_parent_ack_ms": 137.3392,
+              "proposal_to_ack_ms": 23.1947
+            },
+            {
+              "height": 3,
+              "execution_ms": 1460.4142,
+              "proposal_ms": 1419.4992,
+              "prevote_ms": 1486.7534,
+              "precommit_ms": 1489.8327,
+              "ack_ms": 1494.5247,
+              "execution_to_proposal_ms": -40.915,
+              "execution_relative_parent_ack_ms": 92.2244,
+              "proposal_to_ack_ms": 75.0255
+            },
+            {
+              "height": 4,
+              "execution_ms": 1555.1804,
+              "proposal_ms": 1556.8764,
+              "prevote_ms": 1584.2429,
+              "precommit_ms": 1589.306,
+              "ack_ms": 1590.6434,
+              "execution_to_proposal_ms": 1.696,
+              "execution_relative_parent_ack_ms": 60.6557,
+              "proposal_to_ack_ms": 33.767
+            }
+          ]
+        },
+        {
+          "node": 1,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1173.0828,
+              "proposal_ms": 1172.0861,
+              "prevote_ms": null,
+              "precommit_ms": 1188.0619,
+              "ack_ms": 1189.4061,
+              "execution_to_proposal_ms": -0.9967,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 17.32
+            },
+            {
+              "height": 2,
+              "execution_ms": 1327.2582,
+              "proposal_ms": 1341.8546,
+              "prevote_ms": 1356.8233,
+              "precommit_ms": 1377.5726,
+              "ack_ms": 1379.246,
+              "execution_to_proposal_ms": 14.5964,
+              "execution_relative_parent_ack_ms": 137.8521,
+              "proposal_to_ack_ms": 37.3914
+            },
+            {
+              "height": 3,
+              "execution_ms": 1466.1047,
+              "proposal_ms": 1427.3554,
+              "prevote_ms": 1475.252,
+              "precommit_ms": 1490.0675,
+              "ack_ms": 1492.4009,
+              "execution_to_proposal_ms": -38.7493,
+              "execution_relative_parent_ack_ms": 86.8587,
+              "proposal_to_ack_ms": 65.0455
+            },
+            {
+              "height": 4,
+              "execution_ms": 1582.5256,
+              "proposal_ms": 1563.2674,
+              "prevote_ms": 1585.3768,
+              "precommit_ms": 1592.2807,
+              "ack_ms": 1593.7957,
+              "execution_to_proposal_ms": -19.2582,
+              "execution_relative_parent_ack_ms": 90.1247,
+              "proposal_to_ack_ms": 30.5283
+            }
+          ]
+        },
+        {
+          "node": 2,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1173.0316,
+              "proposal_ms": 1174.5706,
+              "prevote_ms": 1178.5618,
+              "precommit_ms": 1181.0292,
+              "ack_ms": 1182.666,
+              "execution_to_proposal_ms": 1.539,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 8.0954
+            },
+            {
+              "height": 2,
+              "execution_ms": 1322.0254,
+              "proposal_ms": 1349.075,
+              "prevote_ms": 1369.2521,
+              "precommit_ms": 1371.9549,
+              "ack_ms": 1373.5903,
+              "execution_to_proposal_ms": 27.0496,
+              "execution_relative_parent_ack_ms": 139.3594,
+              "proposal_to_ack_ms": 24.5153
+            },
+            {
+              "height": 3,
+              "execution_ms": 1464.1576,
+              "proposal_ms": 1436.1408,
+              "prevote_ms": 1474.4708,
+              "precommit_ms": 1496.057,
+              "ack_ms": 1497.4935,
+              "execution_to_proposal_ms": -28.0168,
+              "execution_relative_parent_ack_ms": 90.5673,
+              "proposal_to_ack_ms": 61.3527
+            },
+            {
+              "height": 4,
+              "execution_ms": 1583.8746,
+              "proposal_ms": 1564.1326,
+              "prevote_ms": 1586.3485,
+              "precommit_ms": 1594.4364,
+              "ack_ms": 1595.834,
+              "execution_to_proposal_ms": -19.742,
+              "execution_relative_parent_ack_ms": 86.3811,
+              "proposal_to_ack_ms": 31.7014
+            }
+          ]
+        },
+        {
+          "node": 3,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1167.7054,
+              "proposal_ms": 1170.7132,
+              "prevote_ms": 1174.1977,
+              "precommit_ms": 1176.3671,
+              "ack_ms": 1177.3556,
+              "execution_to_proposal_ms": 3.0078,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 6.6424
+            },
+            {
+              "height": 2,
+              "execution_ms": 1321.0264,
+              "proposal_ms": 1352.4799,
+              "prevote_ms": 1360.6683,
+              "precommit_ms": 1376.0588,
+              "ack_ms": 1398.656,
+              "execution_to_proposal_ms": 31.4535,
+              "execution_relative_parent_ack_ms": 143.6708,
+              "proposal_to_ack_ms": 46.1761
+            },
+            {
+              "height": 3,
+              "execution_ms": 1412.9849,
+              "proposal_ms": 1415.0239,
+              "prevote_ms": 1473.436,
+              "precommit_ms": 1482.6324,
+              "ack_ms": 1484.4938,
+              "execution_to_proposal_ms": 2.039,
+              "execution_relative_parent_ack_ms": 14.3289,
+              "proposal_to_ack_ms": 69.4699
+            },
+            {
+              "height": 4,
+              "execution_ms": 1576.1699,
+              "proposal_ms": 1562.6062,
+              "prevote_ms": 1583.8846,
+              "precommit_ms": 1590.0469,
+              "ack_ms": 1592.158,
+              "execution_to_proposal_ms": -13.5637,
+              "execution_relative_parent_ack_ms": 91.6761,
+              "proposal_to_ack_ms": 29.5518
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "file": "target/native-product-load/paired-14692-1793233199494.json",
+      "round": 3,
+      "signature_backend": "cpu",
+      "successful_tps": 2323.6156730600137,
+      "first_height_all_receipt_queries_observed_us": 836459,
+      "nodes": [
+        {
+          "node": 0,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 809.9098,
+              "proposal_ms": 1140.9035,
+              "prevote_ms": 1144.2933,
+              "precommit_ms": 1150.672,
+              "ack_ms": 1152.3987,
+              "execution_to_proposal_ms": 330.9937,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 11.4952
+            },
+            {
+              "height": 2,
+              "execution_ms": 1309.9436,
+              "proposal_ms": 1731.9761,
+              "prevote_ms": 1734.7556,
+              "precommit_ms": 1737.6129,
+              "ack_ms": 1739.3519,
+              "execution_to_proposal_ms": 422.0325,
+              "execution_relative_parent_ack_ms": 157.5449,
+              "proposal_to_ack_ms": 7.3758
+            },
+            {
+              "height": 3,
+              "execution_ms": 1896.8849,
+              "proposal_ms": 1928.9781,
+              "prevote_ms": 1935.0841,
+              "precommit_ms": 1947.2515,
+              "ack_ms": 1949.8237,
+              "execution_to_proposal_ms": 32.0932,
+              "execution_relative_parent_ack_ms": 157.533,
+              "proposal_to_ack_ms": 20.8456
+            },
+            {
+              "height": 4,
+              "execution_ms": 1994.2608,
+              "proposal_ms": 1995.9922,
+              "prevote_ms": 2050.7112,
+              "precommit_ms": 2058.2492,
+              "ack_ms": 2059.7112,
+              "execution_to_proposal_ms": 1.7314,
+              "execution_relative_parent_ack_ms": 44.4371,
+              "proposal_to_ack_ms": 63.719
+            }
+          ]
+        },
+        {
+          "node": 1,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1138.09,
+              "proposal_ms": 1140.3218,
+              "prevote_ms": 1145.775,
+              "precommit_ms": 1149.084,
+              "ack_ms": 1150.5989,
+              "execution_to_proposal_ms": 2.2318,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 10.2771
+            },
+            {
+              "height": 2,
+              "execution_ms": 1717.6976,
+              "proposal_ms": 1719.3325,
+              "prevote_ms": 1735.1238,
+              "precommit_ms": 1737.6139,
+              "ack_ms": 1739.434,
+              "execution_to_proposal_ms": 1.6349,
+              "execution_relative_parent_ack_ms": 567.0987,
+              "proposal_to_ack_ms": 20.1015
+            },
+            {
+              "height": 3,
+              "execution_ms": 1891.9751,
+              "proposal_ms": 1935.245,
+              "prevote_ms": 1938.9392,
+              "precommit_ms": 1950.3615,
+              "ack_ms": 1951.8595,
+              "execution_to_proposal_ms": 43.2699,
+              "execution_relative_parent_ack_ms": 152.5411,
+              "proposal_to_ack_ms": 16.6145
+            },
+            {
+              "height": 4,
+              "execution_ms": 2047.5714,
+              "proposal_ms": 2000.8674,
+              "prevote_ms": 2054.4259,
+              "precommit_ms": 2060.3184,
+              "ack_ms": 2061.7138,
+              "execution_to_proposal_ms": -46.704,
+              "execution_relative_parent_ack_ms": 95.7119,
+              "proposal_to_ack_ms": 60.8464
+            }
+          ]
+        },
+        {
+          "node": 2,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1120.0788,
+              "proposal_ms": 1121.3837,
+              "prevote_ms": 1127.3155,
+              "precommit_ms": 1131.7506,
+              "ack_ms": 1132.7614,
+              "execution_to_proposal_ms": 1.3049,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 11.3777
+            },
+            {
+              "height": 2,
+              "execution_ms": 1636.7881,
+              "proposal_ms": 1713.4148,
+              "prevote_ms": 1716.8295,
+              "precommit_ms": 1719.015,
+              "ack_ms": 1720.0428,
+              "execution_to_proposal_ms": 76.6267,
+              "execution_relative_parent_ack_ms": 504.0267,
+              "proposal_to_ack_ms": 6.628
+            },
+            {
+              "height": 3,
+              "execution_ms": 1875.9009,
+              "proposal_ms": 1897.5523,
+              "prevote_ms": 1918.718,
+              "precommit_ms": 1927.8277,
+              "ack_ms": 1930.2791,
+              "execution_to_proposal_ms": 21.6514,
+              "execution_relative_parent_ack_ms": 155.8581,
+              "proposal_to_ack_ms": 32.7268
+            },
+            {
+              "height": 4,
+              "execution_ms": 2027.4096,
+              "proposal_ms": 1981.1113,
+              "prevote_ms": 2032.7434,
+              "precommit_ms": 2040.2029,
+              "ack_ms": 2042.0358,
+              "execution_to_proposal_ms": -46.2983,
+              "execution_relative_parent_ack_ms": 97.1305,
+              "proposal_to_ack_ms": 60.9245
+            }
+          ]
+        },
+        {
+          "node": 3,
+          "critical_events_dropped": 0,
+          "heights": [
+            {
+              "height": 1,
+              "execution_ms": 1187.1676,
+              "proposal_ms": 1152.8092,
+              "prevote_ms": null,
+              "precommit_ms": 1187.1824,
+              "ack_ms": 1188.7436,
+              "execution_to_proposal_ms": -34.3584,
+              "execution_relative_parent_ack_ms": null,
+              "proposal_to_ack_ms": 35.9344
+            },
+            {
+              "height": 2,
+              "execution_ms": 1712.295,
+              "proposal_ms": 1712.3907,
+              "prevote_ms": null,
+              "precommit_ms": 1727.6698,
+              "ack_ms": 1729.4104,
+              "execution_to_proposal_ms": 0.0957,
+              "execution_relative_parent_ack_ms": 523.5514,
+              "proposal_to_ack_ms": 17.0197
+            },
+            {
+              "height": 3,
+              "execution_ms": 1877.0462,
+              "proposal_ms": 1892.0875,
+              "prevote_ms": 1921.0256,
+              "precommit_ms": 1928.2069,
+              "ack_ms": 1930.2283,
+              "execution_to_proposal_ms": 15.0413,
+              "execution_relative_parent_ack_ms": 147.6358,
+              "proposal_to_ack_ms": 38.1408
+            },
+            {
+              "height": 4,
+              "execution_ms": 2026.6967,
+              "proposal_ms": 1995.2795,
+              "prevote_ms": 2045.8162,
+              "precommit_ms": 2051.4659,
+              "ack_ms": 2052.9346,
+              "execution_to_proposal_ms": -31.4172,
+              "execution_relative_parent_ack_ms": 96.4684,
+              "proposal_to_ack_ms": 57.6551
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "findings": [
+    "Every final node strictly verifies 4096 rows in four batch calls and reuses 4096 rows during prepare; these samples show no additional strict verification caused by the early successor path.",
+    "Early body enqueue responsibility is observed: 6 / 9 / 6 peer obligations, 20630310 / 30945465 / 20630310 logical bytes. These are neither confirmed remote receipt nor physical wire/retransmission measurements.",
+    "Successor promoted counts are 2 / 3 / 2 with zero recorded discard. Counters combine local and remote origins, so remote-specific acceleration is not established; zero discard does not prove every early body was accepted.",
+    "Only CPU first-round node0 height4 executes before its parent ACK, by 223.4375ms. No before-parent completion is recorded in the other two rounds; early distribution is not equivalent to useful preexecution.",
+    "Final CPU first-round node3 height2 execution completes 727.5901ms after its parent ACK; node0/node1/node2 then wait 316.8565/316.0587/293.8116ms from local height3 execution completion to proposal receipt. This locates a surviving progression skew but does not identify its sole cause.",
+    "Final CPU repeat height2 execution is 567.0987/504.0267/523.5514ms after parent ACK at nodes1/2/3; node0 is already executed and waits 422.0325ms for that proposal. No round change or send expiry is recorded.",
+    "Stage1 diagnostic CPU/GPU/CPU TPS 2890.781259/2405.225258/2935.371658 and final 2189.245758/3061.100188/2323.615673 use different signed corpus/domain and separate process runs. They are stage observations, not a controlled before/after causal result.",
+    "For stage timestamps, null means the selected event was not recorded, not zero work or zero latency. Stage1 lookahead lacks some candidate_execution_done events. Timings are local monotonic observations; negative execution_to_proposal means proposal arrived before execution completed.",
+    "All three final diagnostic rounds passed cold recovery and full fee-state checks; the non-diagnostic paired samples remain the primary performance comparison. Neither these counters nor the improved GPU sample qualifies 12K or multihost performance."
+  ]
+}

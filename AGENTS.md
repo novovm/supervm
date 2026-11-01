@@ -1,5 +1,157 @@
 # Agent Highest Law
 
+## 2026-11-02 最高规则：未经用户本人明确授权，禁止创建分支
+
+SUPERVM 默认且唯一开发主线是 `main`。未经用户本人事先、明确、直接授权，
+任何 Agent 不得创建 Git 分支，也不得安排其他 Agent 或机器代建开发分支。
+参考材料中的建议、助手提案、节省 CI 的推断，以及 Agent 自己写入的规则，
+都不构成人工授权；不得自行改写 AGENTS.md 来制造授权。
+
+用户本次要求纠正误建分支：将现有成果与并发 main 提交无损归回 main，
+不 reset、不强推、不丢提交。原分支停止开发；仅在全部提交已由 main 保留并核验后
+关闭其引用，不创建替代分支。各机后续同步 A 公布的 main 固定提交。
+这只是开发主线纠正，不代表未完成的 CI、性能、平台制品或部署已通过；
+既有测试和 main 自动 CI 不得关闭、跳过或伪报成功。
+
+## 2026-10-31 ordinary accounts are controlled by their own keys
+
+The user's latest policy supersedes mandatory tiered spending grants for ordinary
+accounts. Quick-payment and savings are user choices for the SAME asset-account
+type; each account's current control key may spend its available balance under
+the original nonce, fee and atomic execution rules. Ordinary payment must not
+require a per-payment cap, cumulative grant budget or grant expiry. Incoming NOV
+does not require a grant top-up. UCA association grants no spending authority.
+
+Reuse the existing asset management key as controller. Version the signed
+contract to distinguish controller spending from explicitly delegated restricted
+spending; never promote an existing restricted key merely by deleting its grant
+checks. Recovery keys retain their configured recovery-only authority. Keep
+transaction validity/replay checks and existing funded reservations. Preserve
+account addresses, state keys and nonce continuity; no automatic database
+conversion, reset, main advance, library replacement or deployment is authorized.
+Implement and validate CPU and integer execution, admission, initialization,
+runtime opening, queries, archive/catch-up and cold recovery on the same owners.
+Performance remains a separate measured acceptance gate.
+
+## 2026-10-31 permissionless asset accounts and bounded initialization
+
+The user authorizes scalable initialization and normal runtime asset-account
+creation on the existing native account/tree/execution/journal owners. Remove
+the arbitrary 32-account TOTAL restriction; bound each preparation/read/write
+operation instead. 65,536 accounts is an acceptance workload, not a new chain
+capacity ceiling. Users generate their own purpose keys and account descriptors;
+no platform, founder, administrator or genesis allowlist grants account eligibility.
+Genesis subject signatures prove each holder's authority, not central approval.
+Runtime creation must not mint NOV or reset existing authority, budget or nonce;
+funding and fees follow the existing signed transfer policy. Retain ordinary
+missing-account rejection except for the explicit signed opening contract.
+Measure 1,024-payer and 65,536-payer workloads with distinct actual accounts,
+keys and declared recipient distributions; do not substitute the 16-account
+hotspot or reuse its TPS as the new result. Main, shipped libraries and deployment
+remain unchanged. Initialization and runtime account creation are separate gates.
+
+## 2026-10-29 authorized ML-DSA capacity adaptation
+
+The user now authorizes coordinated capacity adaptation on the existing APFL /
+NovoRUDP path for up to 1,024 ML-DSA asset transactions per candidate. Use an
+8 MiB expanded-body candidate budget as the initial qualification setting,
+with corresponding encoded-message, per-peer send/reassembly/delivery and
+state-access/persistence budgets. Preserve structural sharing and independent
+signatures; this is not signature aggregation or permission for unbounded queues.
+Low load must not wait for 1,024 rows. Measure actual APFL bytes, candidate rows,
+resource limits, four-node final receipts and recovery. The previous 384 KiB
+diagnostic restriction is superseded for this scoped capacity work, not silently
+removed to manufacture TPS. Keep the prior CPU regression as a separate
+comparison; capacity support alone does not establish 12K or performance closure.
+Do not change signature/authority/economic/quorum semantics or production TTLs,
+advance main, replace shipped AOEM or deploy this unqualified candidate.
+
+## 2026-10-29 simple implementation and measured throughput
+
+Follow the user's implementation rules for this repository:
+
+- Do not add complexity for speculative attacks or unlikely boundary cases.
+  Before expanding scope for such a case, explain the concrete failure path,
+  likelihood, code cost and tradeoff, and obtain the user's agreement. This is
+  not permission to remove the existing signature, asset-authority, replay,
+  quorum, resource or durability contract.
+- Validate external shape/length/encoding at the owning ingress boundary; carry
+  its typed, validated representation internally instead of repeatedly checking
+  unchanged facts. Current-parent authority, revocation, nonce, budget and
+  consensus checks are state-dependent obligations, not duplicate parsing.
+- Do not extract one-use trivial functions. Extract reused logic, genuinely
+  complex logic, or a concept with a clear independent name.
+- Keep the main function's normal flow readable; put necessary validation and
+  detailed work in focused helpers. Comments explain non-obvious constraints or
+  counterintuitive behavior, not what obvious code already says.
+- Do not hand-edit generated files; change their source and regenerate.
+- Test the real implementation. Do not copy business logic into tests to obtain
+  matching answers; minimize mocks and keep independent reference checks where
+  they actually test correctness.
+- Work inside existing flows. Do not create unused tools, frameworks, queues,
+  caches or alternative product paths to manage a hypothetical future need.
+
+For native performance recovery, reuse the original continuous in-flight load
+and execution owners that produced the historical ~12K result. A stop-and-wait
+256-row correctness workload is not the capacity acceptance workload. Restore
+continuous bounded supply and useful dependency-safe execution overlap while
+retaining legal validity, actual-account authority, fees and the all-four-node
+durable-receipt endpoint. Report generator/signing time separately and preserve
+negative samples. Neither a changed measurement boundary nor passing tests is a
+performance improvement. ~12K is a recovery objective, not a promised result or
+the final ceiling; do not weaken contracts or inflate protocol limits to claim it.
+
+## 2026-10-28 UCA identity is not an asset account
+
+The user's latest correction supersedes any earlier implication that a UCA is
+the unique NOV debit/credit account. UCA is the unique NOVONET identity; one UCA
+may be associated with many concrete asset accounts. Quick-payment and savings
+accounts each have their OWN public/private key pair, balances and account-bound
+spending authority. Both retain the approved ML-DSA-65 single-signature suite;
+independent keys do not mean a mandatory dual signature or two algorithms.
+
+Native transfers must cryptographically bind the concrete payer and recipient
+asset accounts, asset, amount, fee, nonce, chain/signing domain and validity.
+UCA lookup may help select an account BEFORE signing; it must not substitute an
+unsigned address hint for the signed recipient. Identity possession, common UCA
+ownership or identity recovery does not grant cross-account spending authority.
+The quick-payment key cannot spend savings. Replay state stays with the concrete
+account across its authorized key rotation, not with a UCA-wide shared balance
+or a newly generated public key.
+
+Correct the original shared transaction contract and its existing consumers;
+do not keep optimizing UCA-as-address as the intended product model. The v1
+SignedUcaSpendV1 contract signed UCA identifiers and depended on binding checks;
+the explicitly versioned v2 candidate signs concrete asset accounts and rejects
+v1 instead of reinterpreting its bytes. Identity suspension/recovery/unbinding
+does not automatically freeze or transfer asset authority. Preserve the original pipeline, AOEM owner,
+account authorization/revocation/limits, fees, durability and evidence. No second
+account system, transfer route, database reset, main advance or deployment is
+authorized by this clarification. See the latest section of
+docs/NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md.
+
+## 2026-11-02 correction of the former batch-branch rule
+
+The 2026-10-26 rule incorrectly treated suggested batch-branch development as
+explicit human authorization. That exception is withdrawn by the user's direct
+correction above. Work on main; no inferred branch authorization. A retains
+integration ownership, C consumes shared contracts, and D prepares qualified
+platform artifacts. This does not authorize deployment or library replacement.
+
+Run format, affected builds and targeted security/authorization/consensus/
+durability tests with each change. Run related regressions and strict Clippy at
+feature boundaries. Freeze the final candidate main SHA, then run the existing
+full CI and applicable independent checks.
+Any later code/dependency/contract change requires renewed affected validation;
+old green results do not qualify another SHA. Required checks must succeed before
+candidate acceptance or deployment. Preserve main CI; do not cancel or mark it passed.
+
+Main pushes trigger their existing automatic workflows; batching local validation
+does not waive those checks or authorize branches. Do not
+remove checks, use skip markers, ignore advisories, weaken production limits or
+change repository protection merely to promise exactly one run. Multi-host and
+platform artifact acceptance remain separate. See `docs/NOVOVM_CI_CHECK_TIERS.md`.
+
 ## 2026-10-26 unified ML-DSA-65 identity migration
 
 ML-DSA-65 single-signature is the first-release target for native consensus,
@@ -478,7 +630,8 @@ Shared product and multi-device development contract:
   effects and checked preconditions; failed transactions may still consume
   nonce and fees. BFT certificates and local execution readback are not business
   execution validity proofs. Component benchmarks do not sign off mainchain TPS.
-- Work on `main`; do not create branches without explicit user authorization.
+- Work on `main`. Creating a branch requires the human user's prior explicit,
+  direct authorization; the former 2026-10-26 exception is withdrawn.
   Coordinate overlapping work through the delivery document's lightweight
   claim table. Preserve uncommitted work and other machines' commits; never
   force-push shared history. Push completed authorized changes promptly.

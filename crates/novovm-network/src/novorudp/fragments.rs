@@ -142,6 +142,19 @@ pub enum FragmentAdmission {
     Backpressure,
 }
 
+/// Facts from the authoritative reassembler, not a second diagnostic bitmap.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FragmentObservation {
+    Accepted {
+        started: bool,
+        received: usize,
+        total: usize,
+    },
+    Duplicate {
+        completed: bool,
+    },
+}
+
 struct Entry {
     length: usize,
     created: Instant,
@@ -168,6 +181,11 @@ pub struct Reassembler {
     entries: BTreeMap<Key, Entry>,
     // Optional transport-only completion history. No payload or execution result.
     completed: BTreeMap<Key, (usize, Instant)>,
+    // Conservative earliest creation across both collections. Removal may leave
+    // it early; insertion must never leave it later than a retained object.
+    oldest_created: Option<Instant>,
+    #[cfg(test)]
+    expiry_scans: usize,
     completion_cache: bool,
     reserved: usize,
     turn: usize,
@@ -264,6 +282,9 @@ impl Reassembler {
             peers,
             entries: BTreeMap::new(),
             completed: BTreeMap::new(),
+            oldest_created: None,
+            #[cfg(test)]
+            expiry_scans: 0,
             completion_cache: false,
             reserved: 0,
             turn: 0,
@@ -315,6 +336,7 @@ impl Reassembler {
             }
         }
         self.completed.insert(key, (length, now));
+        self.oldest_created = Some(self.oldest_created.map_or(now, |oldest| oldest.min(now)));
     }
 
     /// Bounded ACK work: the missing prefix advances once per admitted chunk;
@@ -388,6 +410,16 @@ impl Reassembler {
     /// Reserve the declared WHOLE message before retaining its first chunk.
     /// Duplicate fragments do not prolong a peer's resource lease.
     pub fn push(&mut self, peer: &str, frame: &[u8], now: Instant) -> Result<FragmentAdmission> {
+        self.push_observed(peer, frame, now, |_| {})
+    }
+
+    pub(crate) fn push_observed(
+        &mut self,
+        peer: &str,
+        frame: &[u8],
+        now: Instant,
+        observe: impl FnOnce(FragmentObservation),
+    ) -> Result<FragmentAdmission> {
         ensure!(self.peers.contains(peer), "fragment from unconfigured peer");
         ensure!(
             frame.len() > HEADER && frame.len() <= HEADER + self.profile.chunk_bytes(),
@@ -419,12 +451,15 @@ impl Reassembler {
                 *completed_length == length,
                 "completed object shape mismatch"
             );
+            observe(FragmentObservation::Duplicate { completed: true });
             return Ok(FragmentAdmission::Duplicate);
         }
+        let mut started = false;
         if let Some(entry) = self.entries.get(&key) {
             ensure!(entry.length == length, "mixed message length");
             if let Some(old) = &entry.chunks[index] {
                 ensure!(old == &frame[HEADER..], "conflicting fragment duplicate");
+                observe(FragmentObservation::Duplicate { completed: false });
                 return Ok(FragmentAdmission::Duplicate);
             }
         } else {
@@ -454,7 +489,9 @@ impl Reassembler {
                     hash: digest(self.domain, length),
                 },
             );
+            self.oldest_created = Some(self.oldest_created.map_or(now, |oldest| oldest.min(now)));
             self.reserved += length;
+            started = true;
         }
         let entry = self
             .entries
@@ -467,20 +504,46 @@ impl Reassembler {
         {
             entry.first_missing += 1;
         }
+        observe(FragmentObservation::Accepted {
+            started,
+            received: entry.received,
+            total: entry.chunks.len(),
+        });
         Ok(FragmentAdmission::Accepted)
     }
 
     pub fn expire(&mut self, now: Instant) -> usize {
-        self.completed
-            .retain(|_, (_, created)| now.saturating_duration_since(*created) < self.limits.ttl);
+        if self
+            .oldest_created
+            .is_none_or(|created| now.saturating_duration_since(created) < self.limits.ttl)
+        {
+            return 0;
+        }
+        #[cfg(test)]
+        {
+            self.expiry_scans += 1;
+        }
+        let mut oldest_created: Option<Instant> = None;
+        self.completed.retain(|_, (_, created)| {
+            let retain = now.saturating_duration_since(*created) < self.limits.ttl;
+            if retain {
+                oldest_created =
+                    Some(oldest_created.map_or(*created, |oldest| oldest.min(*created)));
+            }
+            retain
+        });
         let before = self.entries.len();
         self.entries.retain(|_, entry| {
             let retain = now.saturating_duration_since(entry.created) < self.limits.ttl;
-            if !retain {
+            if retain {
+                oldest_created =
+                    Some(oldest_created.map_or(entry.created, |oldest| oldest.min(entry.created)));
+            } else {
                 self.reserved -= entry.length;
             }
             retain
         });
+        self.oldest_created = oldest_created;
         before - self.entries.len()
     }
 

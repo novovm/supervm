@@ -3,7 +3,7 @@
 use super::*;
 use novovm_protocol::native_query::{Answer, Query, QueryError, Response, Status};
 mod uca;
-pub(super) use uca::{UcaQueries, UcaReadResult, UcaStateRead};
+pub(super) use uca::{UcaBatchStateRead, UcaCaptureStats, UcaQueries, UcaReadResult};
 
 impl RpcLifecycle {
     fn recent_receipt(&self, hash: Hash) -> ReceiptState {
@@ -99,7 +99,7 @@ impl RpcLifecycle {
                         Err(_) => Answer::Error(QueryError::Busy),
                     }
                 }
-                Query::UcaSpendState { intent, .. } => {
+                Query::AssetSpendState { intent, .. } => {
                     let intent_value = intent.intent();
                     if intent_value.chain_id != self.node.template.chain_id
                         || intent_value.genesis != self.node.template.genesis_config_commitment

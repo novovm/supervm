@@ -6,6 +6,7 @@
 
 use super::carrier::{NativeDatagramIo, NativeRoute};
 use super::datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES};
+use super::handshake_continuation;
 use super::wire_budget::{try_send_datagram, NativeWireBudget};
 use crate::product_overlay::{
     handshake_wire::{self, HandshakeMessage},
@@ -26,6 +27,7 @@ pub struct NativeHandshake {
     cached_offer: Option<Vec<u8>>,
     cached_response: Option<Vec<u8>>,
     outgoing: Option<Vec<u8>>,
+    continuation: Option<handshake_continuation::Sender>,
     next_send: Instant,
     deadline: Instant,
     ttl_ms: u64,
@@ -99,6 +101,7 @@ impl NativeHandshake {
             cached_offer: None,
             cached_response: None,
             outgoing,
+            continuation: None,
             next_send: now,
             deadline: now
                 .checked_add(ttl)
@@ -137,16 +140,56 @@ impl NativeHandshake {
         let Some(wire) = &self.outgoing else {
             return Ok(false);
         };
-        ensure!(
-            wire.len() <= MAX_DATAGRAM_BYTES,
-            "handshake datagram too large"
-        );
+        if wire.len() > MAX_DATAGRAM_BYTES {
+            ensure!(
+                matches!(self.remote, NativeRoute::Udp(_)),
+                "continuation requires UDP"
+            );
+            if self.continuation.is_none() {
+                self.continuation = Some(handshake_continuation::Sender::new(wire)?);
+            }
+            let sender = self
+                .continuation
+                .as_mut()
+                .expect("initialized continuation");
+            let datagram = sender.datagram(wire)?;
+            if !try_send_datagram(io, &datagram, self.remote, now, budget)? {
+                return Ok(false);
+            }
+            if sender.sent() {
+                self.next_send = now + self.retry;
+            }
+            return Ok(true);
+        }
         if try_send_datagram(io, wire, self.remote, now, budget)? {
             self.next_send = now + self.retry;
             Ok(true)
         } else {
             Ok(false)
         }
+    }
+
+    pub(super) fn receive_continuation_challenge(
+        &mut self,
+        source: NativeRoute,
+        wire: &[u8],
+        now: Instant,
+    ) -> Result<()> {
+        ensure!(
+            source == self.remote && now < self.deadline,
+            "unexpected/expired continuation challenge"
+        );
+        let newly_accepted = self
+            .continuation
+            .as_mut()
+            .context("no large outgoing handshake")?
+            .challenge(wire)?;
+        // The challenge unlocks the current cached flight, not a new transcript
+        // or peer; it does not extend either signed expiry or attempt deadline.
+        if newly_accepted {
+            self.next_send = now;
+        }
+        Ok(())
     }
 
     pub fn receive(
@@ -201,6 +244,7 @@ impl NativeHandshake {
                 )?;
                 self.outgoing_expiry = responder.response().expires_at_ms;
                 self.outgoing = Some(handshake_wire::encode_response(responder.response())?);
+                self.continuation = None;
                 self.session = Some(NativeUdpSession::new_route(
                     responder.into_channel(),
                     self.remote,
@@ -229,6 +273,7 @@ impl NativeHandshake {
                         self.cached_response = Some(wire.to_vec());
                         self.ready = true;
                         self.outgoing = None;
+                        self.continuation = None;
                     }
                     Err(failure) => {
                         let (initiator, error) = *failure;

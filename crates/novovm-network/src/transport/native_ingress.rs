@@ -2,6 +2,7 @@
 //! ownership adapter, not another listener, scheduler or execution authority.
 use super::{NetworkError, NodeId, ProtocolMessage, UdpIngressV1, UdpTransport};
 use crate::novorudp::{
+    diagnostics::NativeTransferDiagnosticsV1,
     endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
     fragments::{CompletedMessage, OutgoingMessage},
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
@@ -98,23 +99,24 @@ impl UdpTransport {
             lifetime: handshake.lifetime,
             retry: handshake.retry,
         };
+        // Check before creating the endpoint's Arc. Existing public clones and
+        // legacy writers keep ordinary single-datagram semantics.
+        let exclusive = !observe_legacy_protocol
+            && Arc::strong_count(&self.socket) == 1
+            && Arc::weak_count(&self.socket) == 0;
+        self.socket.set_nonblocking(true)?;
+        let io = crate::novorudp::carrier::owned_udp_io(Arc::clone(&self.socket), exclusive);
         let mut endpoint = if peers.is_empty() {
-            NativeEndpoint::listen_clients_shared(
-                Arc::clone(&self.socket),
+            NativeEndpoint::listen_clients_with_io(
+                io,
                 identity,
                 client_slots,
                 client_streams,
                 handshake,
             )?
         } else {
-            let mut endpoint = NativeEndpoint::bind_shared(
-                Arc::clone(&self.socket),
-                identity.clone(),
-                peers,
-                handshake,
-                wall_ms,
-                now,
-            )?;
+            let mut endpoint =
+                NativeEndpoint::bind_with_io(io, identity.clone(), peers, handshake, wall_ms, now)?;
             if client_slots > 0 {
                 endpoint.allow_clients(identity, client_slots, client_streams, client_budget)?;
             }
@@ -139,6 +141,10 @@ impl UdpTransport {
 }
 
 impl AuthenticatedUdpIngressV1 {
+    /// The original link's bounded local observer; no second ingress owner.
+    pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
+        self.link.set_diagnostics_v1(observer);
+    }
     pub fn accepts_clients(&self) -> bool {
         self.accepts_clients
     }
@@ -160,6 +166,10 @@ impl AuthenticatedUdpIngressV1 {
         self.link.enable_configured_reconnect_v1()
     }
     pub fn send_protocol(&self, peer: NodeId, message: &ProtocolMessage) -> Result<()> {
+        ensure!(
+            self.observe_legacy_protocol,
+            "legacy sends disabled by native-only ownership"
+        );
         // Compatibility sends retain main's original transaction stamping and
         // signing contract; the adapter does not introduce an unsigned bypass.
         Ok(super::Transport::send(
@@ -208,18 +218,14 @@ impl AuthenticatedUdpIngressV1 {
         let mut rejected_protocol = 0;
         let native = self
             .link
-            .poll_with_receiver(wall_ms, now, quantum, |buffer| {
+            .poll_with_owned_receiver(wall_ms, now, quantum, || {
                 let Some((packet, source)) = transport.receive_packet_v1()? else {
                     return Err(io::ErrorKind::WouldBlock.into());
                 };
                 // Reserve whole wire families, including invalid versions. The
                 // existing endpoint applies its own strict codec/authentication.
                 if packet.starts_with(b"NVHSHK") || packet.starts_with(b"NVRLY") {
-                    if packet.len() > buffer.len() {
-                        return Err(io::Error::other("UDP datagram exceeds receive buffer"));
-                    }
-                    buffer[..packet.len()].copy_from_slice(&packet);
-                    return Ok(Some((packet.len(), source)));
+                    return Ok(Some((packet, source)));
                 }
                 // Native-only mode rejects before the legacy decoder can learn
                 // peers, write pending work, advance observations or send sync.
@@ -254,6 +260,20 @@ impl AuthenticatedUdpIngressV1 {
     ) -> Result<Option<CompletedMessage>> {
         self.link
             .poll_complete(stream, now, quantum)
+            .context("native object completion")
+    }
+
+    /// The same bounded completion operation, with actual incremental hash
+    /// work reported to its assembly owner's existing idle policy. Retained
+    /// objects waiting for missing fragments do not constitute progress.
+    pub fn poll_complete_with_progress(
+        &mut self,
+        stream: u64,
+        now: Instant,
+        quantum: usize,
+    ) -> Result<(Option<CompletedMessage>, bool)> {
+        self.link
+            .poll_complete_with_progress(stream, now, quantum)
             .context("native object completion")
     }
 }

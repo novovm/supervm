@@ -1,0 +1,16 @@
+
+running 11 tests
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_complete_state_waits_for_ack_and_recovers ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_local_ready_discards_different_decided_parent ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_local_ready_prepares_before_parent_proposal ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_full_reply_survives_parent_ack_before_proposal ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_missing_input_uses_live_body_reply ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_reuses_exact_local_input ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reference_signature_mismatch_uses_full_body ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_remote_body_waits_for_own_parent_without_blocking_current_body ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_remote_wrong_parent_never_executes_and_real_body_recovers ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_reused_signatures_keep_budget_nonce_fee_and_recovery ... ok
+test native_pipeline::consensus::tests::progress_integration::successor::uca::native_successor_uca_round_change_drains_auth_and_execution_without_publication ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 4.94s
+

@@ -1,0 +1,193 @@
+{
+  "status": "REJECTED_INSUFFICIENT_LOAD_OVERLAP",
+  "source_capture": "target/native-ingress-hot-thread-20261101/20261101-054438-36312",
+  "same_signed_input": true,
+  "unique_input_hashes": [
+    "0x62f4390733bfab9aaab5ea44d8374e916feef390a7889b0fa7598b0d7bf017b6"
+  ],
+  "scope": "Zero-loss header is true, but all five ETLs start after the original drive CPU envelope ended. None qualify for transaction hot-thread attribution or Running/Ready/Waiting analysis. No raw system ETL/PDB uploaded.",
+  "windows": [
+    {
+      "round": 0,
+      "backend": "cpu",
+      "profile": "NativeCpuStacks",
+      "etl_bytes": 62914560,
+      "etl_sha256": "e77e8bd38cd0558b11f499f22f2799da92e2c1c7b76eb803bca784ba2e34f970",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_zero_loss": true,
+      "coverage": {
+        "round": 0,
+        "loss": 0,
+        "trace_start_unix_ms": 1793483140411,
+        "load_end_unix_ms": 1793483138929,
+        "coverage": {
+          "overlap_seconds": 0,
+          "minimum_seconds": 4,
+          "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+        }
+      },
+      "load_start_unix_ms": 1793483109102,
+      "load_end_unix_ms": 1793483138929,
+      "transaction_tps_diagnostic_only": 2197.3148206698606,
+      "p99_us": 5466868,
+      "passed": true,
+      "cold": true,
+      "fee_audit": true,
+      "transactions": 65536,
+      "ingress_index": 0,
+      "original_node_pids": [
+        19904,
+        28732,
+        25376,
+        28304
+      ]
+    },
+    {
+      "round": 1,
+      "backend": "gpu_required",
+      "profile": "NativeCpuStacks",
+      "etl_bytes": 61865984,
+      "etl_sha256": "25a2e5dca50b6555984352e0a477c807684e42b8b39104e2dcb6bf47fcff0f83",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_zero_loss": true,
+      "coverage": {
+        "round": 1,
+        "loss": 0,
+        "trace_start_unix_ms": 1793483186878,
+        "load_end_unix_ms": 1793483185850,
+        "coverage": {
+          "overlap_seconds": 0,
+          "minimum_seconds": 4,
+          "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+        }
+      },
+      "load_start_unix_ms": 1793483160952,
+      "load_end_unix_ms": 1793483185850,
+      "transaction_tps_diagnostic_only": 2632.3266713543203,
+      "p99_us": 4240755,
+      "passed": true,
+      "cold": true,
+      "fee_audit": true,
+      "transactions": 65536,
+      "ingress_index": 0,
+      "original_node_pids": [
+        31616,
+        36588,
+        26924,
+        36368
+      ]
+    },
+    {
+      "round": 2,
+      "backend": "cpu",
+      "profile": "NativeSchedule",
+      "etl_bytes": 57671680,
+      "etl_sha256": "66d0e9a89010c9acda3239ffc52a9536cec4018faebb0002f903447f39154626",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_zero_loss": true,
+      "coverage": {
+        "round": 2,
+        "loss": 0,
+        "trace_start_unix_ms": 1793483231817,
+        "load_end_unix_ms": 1793483230474,
+        "coverage": {
+          "overlap_seconds": 0,
+          "minimum_seconds": 3,
+          "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+        }
+      },
+      "load_start_unix_ms": 1793483205903,
+      "load_end_unix_ms": 1793483230474,
+      "transaction_tps_diagnostic_only": 2667.3486986988373,
+      "p99_us": 3966939,
+      "passed": true,
+      "cold": true,
+      "fee_audit": true,
+      "transactions": 65536,
+      "ingress_index": 0,
+      "original_node_pids": [
+        28304,
+        21736,
+        36380,
+        13752
+      ]
+    },
+    {
+      "round": 3,
+      "backend": "gpu_required",
+      "profile": "NativeSchedule",
+      "etl_bytes": 59768832,
+      "etl_sha256": "4d3090eaeeeee51a3e8ab37dcd1c1f83cf1a40170268ebd08cc3e5f864a51628",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_zero_loss": true,
+      "coverage": {
+        "round": 3,
+        "loss": 0,
+        "trace_start_unix_ms": 1793483277519,
+        "load_end_unix_ms": 1793483276211,
+        "coverage": {
+          "overlap_seconds": 0,
+          "minimum_seconds": 3,
+          "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+        }
+      },
+      "load_start_unix_ms": 1793483250312,
+      "load_end_unix_ms": 1793483276211,
+      "transaction_tps_diagnostic_only": 2530.584720451786,
+      "p99_us": 4126710,
+      "passed": true,
+      "cold": true,
+      "fee_audit": true,
+      "transactions": 65536,
+      "ingress_index": 0,
+      "original_node_pids": [
+        36368,
+        13324,
+        28752,
+        34920
+      ]
+    },
+    {
+      "round": 4,
+      "backend": "cpu",
+      "profile": "NativeCpuStacks",
+      "etl_bytes": 61865984,
+      "etl_sha256": "8baa62c5c33b25ccaf86a79ae85f210edd4fe365932576b1e1a5884f344774e3",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "header_zero_loss": true,
+      "coverage": {
+        "round": 4,
+        "loss": 0,
+        "trace_start_unix_ms": 1793483321942,
+        "load_end_unix_ms": 1793483320761,
+        "coverage": {
+          "overlap_seconds": 0,
+          "minimum_seconds": 4,
+          "coverage": "REJECTED_INSUFFICIENT_LOAD_OVERLAP"
+        }
+      },
+      "load_start_unix_ms": 1793483295849,
+      "load_end_unix_ms": 1793483320761,
+      "transaction_tps_diagnostic_only": 2630.761735904535,
+      "p99_us": 3998150,
+      "passed": true,
+      "cold": true,
+      "fee_audit": true,
+      "transactions": 65536,
+      "ingress_index": 0,
+      "original_node_pids": [
+        33872,
+        26544,
+        31844,
+        27332
+      ]
+    }
+  ],
+  "trigger_correction": "Original spawn owner creates create stdout files before Command.spawn; select file existence and CreationTimeUtc, not stdout Length/LastWrite. Real original three-round CPU/GPU/CPU65K NOETW trigger validation is separate; not actual ETW acceptance.",
+  "remaining": "AdminV3 capture still needs actual recording, target-thread/symbol/frequency/edge validation; node/AOEM/tester binaries unchanged."
+}

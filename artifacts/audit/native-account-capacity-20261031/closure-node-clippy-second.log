@@ -1,0 +1,23 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error[E0506]: cannot assign to `*corpus.signed` because it is borrowed
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_load\uca.rs:732:13
+    |
+660 |         let make_signed = |index: usize, window: SpendWindow| -> Result<SignedAssetSpendV2> {
+    |                           ----------------------------------------------------------------- `*corpus.signed` is borrowed here
+...
+665 |             let signed = match corpus.signed.as_ref().filter(|_| !mode.dynamic_windows()) {
+    |                                ------------- borrow occurs due to use in closure
+...
+732 |             corpus.signed = Some(raw.clone());
+    |             ^^^^^^^^^^^^^ `*corpus.signed` is assigned to here but it was already borrowed
+...
+800 |                 &make_signed,
+    |                 ------------ borrow later used here
+
+For more information about this error, try `rustc --explain E0506`.
+error: could not compile `novovm-node` (lib test) due to 1 previous error

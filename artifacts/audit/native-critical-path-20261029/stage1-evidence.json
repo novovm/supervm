@@ -1,0 +1,1297 @@
+{
+  "schema": "novovm.native-critical-path.stage1-evidence.v1",
+  "recorded_date": "2026-10-29",
+  "qualification": "STAGE1_ONLY_NOT_CURRENT_STAGE2_NOT_RELEASE_ACCEPTANCE",
+  "source_revision_boundary": {
+    "repository_base": "94da21e2",
+    "measured_candidate": "uncommitted stage1 candidate identified by binary SHA-256; stage2 changes are not covered",
+    "main_advanced": false,
+    "deployment_or_packaged_library_changed": false
+  },
+  "artifacts": [
+    {
+      "path": "target/native-critical-path-20261029/stage1/novovm-node.exe",
+      "sha256": "307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b"
+    },
+    {
+      "path": "target/native-critical-path-20261029/stage1/novovm-native-client.exe",
+      "sha256": "8e9db17f0702d3aee6e659b3d035a47d0c5e53c003e8a1f1968fa4bc4db21989"
+    },
+    {
+      "path": "target/native-critical-path-20261029/stage1/native-tests.exe",
+      "sha256": "00ebf2feba805e5e05c7381c24af85277c40449b2babcc1eef9016fd2fc28bc9"
+    },
+    {
+      "path": "target/native-critical-path-20261029/stage1/network-tests.exe",
+      "sha256": "3fb19b9dd92dca27e7b2218550c5a55a4a836f22612ddb72a11113b036d38568"
+    }
+  ],
+  "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+  "baseline_node_sha256": "b2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+  "raw_reports": [
+    {
+      "source": "target/native-product-load/uca-11184-1793230878357413700/report.json",
+      "copy": "artifacts/audit/native-critical-path-20261029/stage1-4096-before-cpu.json",
+      "sha256": "ba9a37655d633c5db145cae86c5991834532351f7b76060ded0ead6587d3d840"
+    },
+    {
+      "source": "target/native-product-load/uca-11184-1793230883237886100/report.json",
+      "copy": "artifacts/audit/native-critical-path-20261029/stage1-4096-after-cpu.json",
+      "sha256": "21e2a202a7c8ce06e5a0f4bda928784d80c75bceb5c1f0f0e1c9a43958bc968f"
+    },
+    {
+      "source": "target/native-product-load/uca-11184-1793230887417120100/report.json",
+      "copy": "artifacts/audit/native-critical-path-20261029/stage1-4096-before-gpu.json",
+      "sha256": "072f8e55f982957be5c75db367f6b713f44f872d704fb93d2d25da2fdbd34350"
+    },
+    {
+      "source": "target/native-product-load/uca-11184-1793230894699440700/report.json",
+      "copy": "artifacts/audit/native-critical-path-20261029/stage1-4096-after-gpu-cold-failure.json",
+      "sha256": "55666da8caa1ead758aa25ec43431a9be8d14e556cbe5b3fd7dc46fd18cff5a0"
+    },
+    {
+      "source": "target/native-product-load/paired-18488-1793231067971.json",
+      "copy": "artifacts/audit/native-critical-path-20261029/stage1-4096-diagnostics-paired.json",
+      "sha256": "b4ead1efa798ac7e3df5683adc9dc6381b214f3c233e79874d49df63e9cee54e"
+    },
+    {
+      "source": "target/native-product-load/paired-228-1793231227350.json",
+      "copy": "artifacts/audit/native-critical-path-20261029/stage1-65536-static-paired.json",
+      "sha256": "9f52b103c46e1fbb17a1a75d18bcf63edf1774b83c3c714e8c6be8f488609a9b"
+    },
+    {
+      "source": "target/native-product-load/continuous_8192_outstanding_receipt_anchored_windows-paired-12504-1793231455047.json",
+      "copy": "artifacts/audit/native-critical-path-20261029/stage1-65536-continuous-paired.json",
+      "sha256": "bff48a6781a8b08070d22ba9c94944e11f905d081346b0774ba858e29e79857b"
+    }
+  ],
+  "measurement_contract": {
+    "topology": "Windows one host, four original native node processes and independent fixture databases; not four physical machines",
+    "payment_contract": "Concrete asset accounts, ML-DSA-65, original NovoRUDP/APFL ingress, CPU callbacks business execution",
+    "unchanged_limits": {
+      "max_candidate_rows": 1024,
+      "expanded_candidate_bytes": 8388608,
+      "encoded_message_bytes": 8519680,
+      "outstanding_rows_ceiling": 8192,
+      "query_rows": 128,
+      "overall_seconds": 90
+    },
+    "primary_timing": "First SDK submission attempt through all unique transaction receipt observations on ALL FOUR nodes; startup, initial signing/APFL preparation, final economics audit and cold recovery are excluded. Later continuous-mode signing/preparation remains inside the one uninterrupted clock.",
+    "latency": "Each row's first wire-frame submission attempt to slowest of four receipt-query observations. This is client observation latency, not an internal journal timestamp.",
+    "cold_startup_accounting": "GPU startup qualification is outside the primary TPS window in the stage1 candidate; startup readiness and startup-through-four-receipts are reported separately. Comparison with baseline lazy qualification is not pure steady-state execution speedup.",
+    "static_same_bytes": "Static paired runs replay the identical signed corpus and initial state within each group. Different groups have different random fixtures/domains and cannot be spliced into an exact before/after.",
+    "continuous_same_bytes": "Continuous runs share approved synthetic genesis and logical workload, but receipt-anchored validity and signatures are not guaranteed identical. First CPU/GPU hashes happened to match; CPU repeat differs. Raw reports preserve exact hashes.",
+    "continuous_generator_metric_caveat": "continuous_generator_starved_poll_us counts complete driver poll turns when prepared frames are exhausted while more rows remain, including four-receipt/inflight gating; it is NOT isolated signer wait time. Generation task wall overlaps polling and must not be added or subtracted.",
+    "physical_bytes_peak_memory_and_retransmissions": "NOT_MEASURED",
+    "gpu_contention": "All four node processes share one local GPU when gpu_required; not one GPU per independent host",
+    "historical_12k": "Not recovered. Historical V3/Ed25519 result used a different account/transaction/signature contract and is a performance objective, not an exact causal comparison."
+  },
+  "partial_before_after_4096": {
+    "overall_passed": false,
+    "attempted_order": [
+      "before_cpu",
+      "after_cpu",
+      "before_gpu",
+      "after_gpu",
+      "before_cpu_repeat"
+    ],
+    "not_executed": [
+      "before_cpu_repeat"
+    ],
+    "same_signed_workload_sha256": "0x2def0112d0df98fff5923728dac0ce699535a8f0f822881b0badc48ec38879db",
+    "interpretation": "CPU sample improves slightly; GPU timed transaction phase completes faster but subsequent cold recovery fails, so this incomplete before/after series is NOT a green candidate acceptance or stable performance proof.",
+    "failure": {
+      "phase": "cold restart",
+      "error": "RocksDB could not rename validator-0.rocksdb/000031.dbtmp to CURRENT (access denied); product node 0 exited",
+      "source_log": "target/native-product-load/uca-11184-1793230894699440700/existing-0-1793230898216552000.stderr.log",
+      "copied_log": "stage1-4096-after-gpu-cold-failure.stderr.log",
+      "root_cause": "Not established by this filesystem error alone; later passing groups do not erase this failure"
+    },
+    "rounds": [
+      {
+        "label": "before_cpu",
+        "raw_report": "artifacts/audit/native-critical-path-20261029/stage1-4096-before-cpu.json",
+        "transactions": 4096,
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "senders": 16,
+        "effective_outstanding_limit": 8192,
+        "binary_sha256": "0xb2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "phase": "cold restart all receipts balances and authorizations",
+        "successful_tps": 2548.8725781510097,
+        "elapsed_seconds": 1.6069849999999999,
+        "latency_us": {
+          "p50": 1409466,
+          "p95": 1605553,
+          "p99": 1605797,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x2def0112d0df98fff5923728dac0ce699535a8f0f822881b0badc48ec38879db",
+        "initial_root": "0x95d07030178c44c68892d29512c48e20e395433874c4a0d77d0cddabc1604a6c",
+        "signing_domain": "0xe6728961a726e04c954761c287f21536fdf8cb4ec7e57f3cb4e5daceb7a7fab1",
+        "genesis_commitment": "0x66c7d3a6828906edd7393cf957358ced63f703c37ecd49b6f10d27827df1782b",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 606248,
+        "four_process_startup_ready_seconds": 0.2850064,
+        "startup_through_four_receipts_seconds": 2.1704589,
+        "cold_receipt_observation_seconds": 0.406783,
+        "first_height_all_receipt_queries_observed_us": 1175647,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "continuous_timed_generation_task_us": null,
+        "continuous_timed_structure_preparation_us": null,
+        "continuous_generator_starved_poll_us": null,
+        "continuous_no_outstanding_poll_us": null,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 4685,
+          "receipt_query_requests_by_node": [
+            814,
+            1152,
+            1421,
+            1298
+          ],
+          "observation_rows_received": 599680,
+          "receipt_query_rows_received_by_node": [
+            104192,
+            147456,
+            181888,
+            166144
+          ],
+          "observation_not_final": 583296,
+          "receipt_query_not_final_by_node": [
+            100096,
+            143360,
+            177792,
+            162048
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "candidate_blocks": 4,
+        "candidate_rows_min": 1024,
+        "candidate_rows_max": 1024
+      },
+      {
+        "label": "after_cpu",
+        "raw_report": "artifacts/audit/native-critical-path-20261029/stage1-4096-after-cpu.json",
+        "transactions": 4096,
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "senders": 16,
+        "effective_outstanding_limit": 8192,
+        "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "phase": "cold restart all receipts balances and authorizations",
+        "successful_tps": 2618.8437830272583,
+        "elapsed_seconds": 1.564049,
+        "latency_us": {
+          "p50": 1399360,
+          "p95": 1562715,
+          "p99": 1562915,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x2def0112d0df98fff5923728dac0ce699535a8f0f822881b0badc48ec38879db",
+        "initial_root": "0x95d07030178c44c68892d29512c48e20e395433874c4a0d77d0cddabc1604a6c",
+        "signing_domain": "0xe6728961a726e04c954761c287f21536fdf8cb4ec7e57f3cb4e5daceb7a7fab1",
+        "genesis_commitment": "0x66c7d3a6828906edd7393cf957358ced63f703c37ecd49b6f10d27827df1782b",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 20702,
+        "four_process_startup_ready_seconds": 0.427064,
+        "startup_through_four_receipts_seconds": 2.2687424,
+        "cold_receipt_observation_seconds": 0.253574,
+        "first_height_all_receipt_queries_observed_us": 1189519,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "continuous_timed_generation_task_us": null,
+        "continuous_timed_structure_preparation_us": null,
+        "continuous_generator_starved_poll_us": null,
+        "continuous_no_outstanding_poll_us": null,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 4516,
+          "receipt_query_requests_by_node": [
+            986,
+            1103,
+            1244,
+            1183
+          ],
+          "observation_rows_received": 578048,
+          "receipt_query_rows_received_by_node": [
+            126208,
+            141184,
+            159232,
+            151424
+          ],
+          "observation_not_final": 561664,
+          "receipt_query_not_final_by_node": [
+            122112,
+            137088,
+            155136,
+            147328
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "candidate_blocks": 4,
+        "candidate_rows_min": 1024,
+        "candidate_rows_max": 1024
+      },
+      {
+        "label": "before_gpu",
+        "raw_report": "artifacts/audit/native-critical-path-20261029/stage1-4096-before-gpu.json",
+        "transactions": 4096,
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "senders": 16,
+        "effective_outstanding_limit": 8192,
+        "binary_sha256": "0xb2047ed7bbeed84f8602f9b2cad0c1f43cc173cc384d6219819c973c3cbf89d0",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "passed": true,
+        "error": null,
+        "phase": "cold restart all receipts balances and authorizations",
+        "successful_tps": 811.9249897072253,
+        "elapsed_seconds": 5.044801,
+        "latency_us": {
+          "p50": 4872070,
+          "p95": 5043241,
+          "p99": 5043439,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x2def0112d0df98fff5923728dac0ce699535a8f0f822881b0badc48ec38879db",
+        "initial_root": "0x95d07030178c44c68892d29512c48e20e395433874c4a0d77d0cddabc1604a6c",
+        "signing_domain": "0xe6728961a726e04c954761c287f21536fdf8cb4ec7e57f3cb4e5daceb7a7fab1",
+        "genesis_commitment": "0x66c7d3a6828906edd7393cf957358ced63f703c37ecd49b6f10d27827df1782b",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 20737,
+        "four_process_startup_ready_seconds": 0.258967,
+        "startup_through_four_receipts_seconds": 5.5803539,
+        "cold_receipt_observation_seconds": 0.144912,
+        "first_height_all_receipt_queries_observed_us": 4604381,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "continuous_timed_generation_task_us": null,
+        "continuous_timed_structure_preparation_us": null,
+        "continuous_generator_starved_poll_us": null,
+        "continuous_no_outstanding_poll_us": null,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 14831,
+          "receipt_query_requests_by_node": [
+            4079,
+            3591,
+            3675,
+            3486
+          ],
+          "observation_rows_received": 1898368,
+          "receipt_query_rows_received_by_node": [
+            522112,
+            459648,
+            470400,
+            446208
+          ],
+          "observation_not_final": 1881984,
+          "receipt_query_not_final_by_node": [
+            518016,
+            455552,
+            466304,
+            442112
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "candidate_blocks": 4,
+        "candidate_rows_min": 1024,
+        "candidate_rows_max": 1024
+      },
+      {
+        "label": "after_gpu_cold_failure",
+        "raw_report": "artifacts/audit/native-critical-path-20261029/stage1-4096-after-gpu-cold-failure.json",
+        "transactions": 4096,
+        "configured_candidate_batch_limit": 1024,
+        "wire_frame_rows": 1024,
+        "senders": 16,
+        "effective_outstanding_limit": 8192,
+        "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "passed": false,
+        "error": "product node 0 exited; logs=D:\\WorksArea\\SUPERVM\\target\\native-product-load\\uca-11184-1793230894699440700",
+        "phase": "cold restart all receipts balances and authorizations",
+        "successful_tps": 3102.750585363895,
+        "elapsed_seconds": 1.320119,
+        "latency_us": {
+          "p50": 1175728,
+          "p95": 1318640,
+          "p99": 1318858,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x2def0112d0df98fff5923728dac0ce699535a8f0f822881b0badc48ec38879db",
+        "initial_root": "0x95d07030178c44c68892d29512c48e20e395433874c4a0d77d0cddabc1604a6c",
+        "signing_domain": "0xe6728961a726e04c954761c287f21536fdf8cb4ec7e57f3cb4e5daceb7a7fab1",
+        "genesis_commitment": "0x66c7d3a6828906edd7393cf957358ced63f703c37ecd49b6f10d27827df1782b",
+        "cold_recovery_pass": false,
+        "full_fee_state_audited": true,
+        "initial_signed_corpus_rows": 4096,
+        "initial_signed_corpus_preparation_us": 19997,
+        "four_process_startup_ready_seconds": 1.2413978,
+        "startup_through_four_receipts_seconds": 2.8309653,
+        "cold_receipt_observation_seconds": null,
+        "first_height_all_receipt_queries_observed_us": 913551,
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "continuous_timed_generation_task_us": null,
+        "continuous_timed_structure_preparation_us": null,
+        "continuous_generator_starved_poll_us": null,
+        "continuous_no_outstanding_poll_us": null,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 5452,
+          "receipt_query_requests_by_node": [
+            1097,
+            1438,
+            1463,
+            1454
+          ],
+          "observation_rows_received": 697856,
+          "receipt_query_rows_received_by_node": [
+            140416,
+            184064,
+            187264,
+            186112
+          ],
+          "observation_not_final": 681472,
+          "receipt_query_not_final_by_node": [
+            136320,
+            179968,
+            183168,
+            182016
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "candidate_blocks": 4,
+        "candidate_rows_min": 1024,
+        "candidate_rows_max": 1024
+      }
+    ]
+  },
+  "candidate_groups": [
+    {
+      "label": "4096_diagnostics_on",
+      "raw_report": "artifacts/audit/native-critical-path-20261029/stage1-4096-diagnostics-paired.json",
+      "contract": {
+        "scope": "one-host four-process isolated laboratory acceptance replay, not a deployment reset recipe",
+        "same_signed_corpus_and_initial_state": true,
+        "signature_backend_order": [
+          "cpu",
+          "gpu_required",
+          "cpu"
+        ],
+        "business_backend_unchanged": true,
+        "committed_economics_equal_excluding_height_and_root": true,
+        "all_round_databases_and_journals_retained": true,
+        "fresh_fixture_stores_same_synthetic_domain": true,
+        "deployment_custody_used": false,
+        "full_65536_workload": false,
+        "validity": "all static intents retain [1,257); no automatic renewal if actual packing takes too many heights",
+        "confirmation_time": "client all-four receipt observations, not internal durable timestamp"
+      },
+      "rounds": [
+        {
+          "transactions": 4096,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "cpu",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 2890.7812590425137,
+          "elapsed_seconds": 1.416918,
+          "latency_us": {
+            "p50": 1261462,
+            "p95": 1415438,
+            "p99": 1415636,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0xc53d82027135db7878acdcabd23d88f4778539ef774c2a5330203527f7698f25",
+          "initial_root": "0xef2317185404547e50801560590202fef094087b0da2294be34b6678f97315c1",
+          "signing_domain": "0xe1169a3ef55853d9e94be9ec23cb3f08f52da352a41eab3af4fd4e80fa649d84",
+          "genesis_commitment": "0x686b5db515fbf8a8f7c11a2213b92da61c85bd84ba2888e3d2dc856afa81b9d4",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 4096,
+          "initial_signed_corpus_preparation_us": 597133,
+          "four_process_startup_ready_seconds": 0.3056514,
+          "startup_through_four_receipts_seconds": 1.997544,
+          "cold_receipt_observation_seconds": 0.112891,
+          "first_height_all_receipt_queries_observed_us": 1032128,
+          "diagnostics_enabled": true,
+          "critical_path_diagnostics_enabled": true,
+          "continuous_timed_generation_task_us": null,
+          "continuous_timed_structure_preparation_us": null,
+          "continuous_generator_starved_poll_us": null,
+          "continuous_no_outstanding_poll_us": null,
+          "counts": {
+            "application_batches_sent": 4,
+            "application_batches_transport_delivered": 4,
+            "transport_failures": 0,
+            "observation_requests": 5397,
+            "receipt_query_requests_by_node": [
+              1619,
+              999,
+              1403,
+              1376
+            ],
+            "observation_rows_received": 690816,
+            "receipt_query_rows_received_by_node": [
+              207232,
+              127872,
+              179584,
+              176128
+            ],
+            "observation_not_final": 674432,
+            "receipt_query_not_final_by_node": [
+              203136,
+              123776,
+              175488,
+              172032
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 4096,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 4096
+          },
+          "candidate_blocks": 4,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        },
+        {
+          "transactions": 4096,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "gpu_required",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 2405.225257918717,
+          "elapsed_seconds": 1.702959,
+          "latency_us": {
+            "p50": 1204859,
+            "p95": 1697292,
+            "p99": 1701647,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0xc53d82027135db7878acdcabd23d88f4778539ef774c2a5330203527f7698f25",
+          "initial_root": "0xef2317185404547e50801560590202fef094087b0da2294be34b6678f97315c1",
+          "signing_domain": "0xe1169a3ef55853d9e94be9ec23cb3f08f52da352a41eab3af4fd4e80fa649d84",
+          "genesis_commitment": "0x686b5db515fbf8a8f7c11a2213b92da61c85bd84ba2888e3d2dc856afa81b9d4",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 4096,
+          "initial_signed_corpus_preparation_us": 20713,
+          "four_process_startup_ready_seconds": 3.4839911,
+          "startup_through_four_receipts_seconds": 5.4553493,
+          "cold_receipt_observation_seconds": 0.034295,
+          "first_height_all_receipt_queries_observed_us": 710634,
+          "diagnostics_enabled": true,
+          "critical_path_diagnostics_enabled": true,
+          "continuous_timed_generation_task_us": null,
+          "continuous_timed_structure_preparation_us": null,
+          "continuous_generator_starved_poll_us": null,
+          "continuous_no_outstanding_poll_us": null,
+          "counts": {
+            "application_batches_sent": 4,
+            "application_batches_transport_delivered": 4,
+            "transport_failures": 0,
+            "observation_requests": 5815,
+            "receipt_query_requests_by_node": [
+              1725,
+              647,
+              1646,
+              1797
+            ],
+            "observation_rows_received": 744320,
+            "receipt_query_rows_received_by_node": [
+              220800,
+              82816,
+              210688,
+              230016
+            ],
+            "observation_not_final": 727936,
+            "receipt_query_not_final_by_node": [
+              216704,
+              78720,
+              206592,
+              225920
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 4096,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 4096
+          },
+          "candidate_blocks": 4,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        },
+        {
+          "transactions": 4096,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "cpu",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 2935.371658470654,
+          "elapsed_seconds": 1.395394,
+          "latency_us": {
+            "p50": 1281490,
+            "p95": 1394029,
+            "p99": 1394223,
+            "sample_count": 4096,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0xc53d82027135db7878acdcabd23d88f4778539ef774c2a5330203527f7698f25",
+          "initial_root": "0xef2317185404547e50801560590202fef094087b0da2294be34b6678f97315c1",
+          "signing_domain": "0xe1169a3ef55853d9e94be9ec23cb3f08f52da352a41eab3af4fd4e80fa649d84",
+          "genesis_commitment": "0x686b5db515fbf8a8f7c11a2213b92da61c85bd84ba2888e3d2dc856afa81b9d4",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 4096,
+          "initial_signed_corpus_preparation_us": 21146,
+          "four_process_startup_ready_seconds": 0.2932819,
+          "startup_through_four_receipts_seconds": 1.9627796,
+          "cold_receipt_observation_seconds": 0.083437,
+          "first_height_all_receipt_queries_observed_us": 984427,
+          "diagnostics_enabled": true,
+          "critical_path_diagnostics_enabled": true,
+          "continuous_timed_generation_task_us": null,
+          "continuous_timed_structure_preparation_us": null,
+          "continuous_generator_starved_poll_us": null,
+          "continuous_no_outstanding_poll_us": null,
+          "counts": {
+            "application_batches_sent": 4,
+            "application_batches_transport_delivered": 4,
+            "transport_failures": 0,
+            "observation_requests": 5777,
+            "receipt_query_requests_by_node": [
+              1564,
+              1134,
+              1650,
+              1429
+            ],
+            "observation_rows_received": 739456,
+            "receipt_query_rows_received_by_node": [
+              200192,
+              145152,
+              211200,
+              182912
+            ],
+            "observation_not_final": 723072,
+            "receipt_query_not_final_by_node": [
+              196096,
+              141056,
+              207104,
+              178816
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 4096,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 4096
+          },
+          "candidate_blocks": 4,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        }
+      ]
+    },
+    {
+      "label": "65536_static_same_signed_bytes",
+      "raw_report": "artifacts/audit/native-critical-path-20261029/stage1-65536-static-paired.json",
+      "contract": {
+        "scope": "one-host four-process isolated laboratory acceptance replay, not a deployment reset recipe",
+        "same_signed_corpus_and_initial_state": true,
+        "signature_backend_order": [
+          "cpu",
+          "gpu_required",
+          "cpu"
+        ],
+        "business_backend_unchanged": true,
+        "committed_economics_equal_excluding_height_and_root": true,
+        "all_round_databases_and_journals_retained": true,
+        "fresh_fixture_stores_same_synthetic_domain": true,
+        "deployment_custody_used": false,
+        "full_65536_workload": true,
+        "validity": "all static intents retain [1,257); no automatic renewal if actual packing takes too many heights",
+        "confirmation_time": "client all-four receipt observations, not internal durable timestamp"
+      },
+      "rounds": [
+        {
+          "transactions": 65536,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "cpu",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 2767.687251340599,
+          "elapsed_seconds": 23.678976,
+          "latency_us": {
+            "p50": 2983519,
+            "p95": 3748385,
+            "p99": 4087197,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0x5a67909665de2ab307594c0a2bc8b8a1f99ad40c20602e413ea47e28375392f3",
+          "initial_root": "0xc08ba5dd3e02a5c478edad9381108fbdb9d43e9f8267aaf4b7245e007ed8aa6c",
+          "signing_domain": "0xec58c94e38bb68ef5b0305d557f571f0e25f8fafbfc55774530f046ef0150725",
+          "genesis_commitment": "0x325cfe2cdbc04971b9461c42e0087295fc7f1af751f75dbd0e09fd52c9ab854f",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 65536,
+          "initial_signed_corpus_preparation_us": 9780246,
+          "four_process_startup_ready_seconds": 0.3087484,
+          "startup_through_four_receipts_seconds": 24.6277535,
+          "cold_receipt_observation_seconds": 3.17831,
+          "first_height_all_receipt_queries_observed_us": 1897864,
+          "diagnostics_enabled": false,
+          "critical_path_diagnostics_enabled": false,
+          "continuous_timed_generation_task_us": null,
+          "continuous_timed_structure_preparation_us": null,
+          "continuous_generator_starved_poll_us": null,
+          "continuous_no_outstanding_poll_us": null,
+          "counts": {
+            "application_batches_sent": 64,
+            "application_batches_transport_delivered": 64,
+            "transport_failures": 0,
+            "observation_requests": 57792,
+            "receipt_query_requests_by_node": [
+              4523,
+              20528,
+              18888,
+              13853
+            ],
+            "observation_rows_received": 7397376,
+            "receipt_query_rows_received_by_node": [
+              578944,
+              2627584,
+              2417664,
+              1773184
+            ],
+            "observation_not_final": 7135232,
+            "receipt_query_not_final_by_node": [
+              513408,
+              2562048,
+              2352128,
+              1707648
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 65536,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 8192
+          },
+          "candidate_blocks": 64,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        },
+        {
+          "transactions": 65536,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "gpu_required",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 3020.9561315093156,
+          "elapsed_seconds": 21.693794,
+          "latency_us": {
+            "p50": 2769552,
+            "p95": 3478492,
+            "p99": 3652365,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0x5a67909665de2ab307594c0a2bc8b8a1f99ad40c20602e413ea47e28375392f3",
+          "initial_root": "0xc08ba5dd3e02a5c478edad9381108fbdb9d43e9f8267aaf4b7245e007ed8aa6c",
+          "signing_domain": "0xec58c94e38bb68ef5b0305d557f571f0e25f8fafbfc55774530f046ef0150725",
+          "genesis_commitment": "0x325cfe2cdbc04971b9461c42e0087295fc7f1af751f75dbd0e09fd52c9ab854f",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 65536,
+          "initial_signed_corpus_preparation_us": 346160,
+          "four_process_startup_ready_seconds": 3.4858731,
+          "startup_through_four_receipts_seconds": 25.8305832,
+          "cold_receipt_observation_seconds": 0.704526,
+          "first_height_all_receipt_queries_observed_us": 1432481,
+          "diagnostics_enabled": false,
+          "critical_path_diagnostics_enabled": false,
+          "continuous_timed_generation_task_us": null,
+          "continuous_timed_structure_preparation_us": null,
+          "continuous_generator_starved_poll_us": null,
+          "continuous_no_outstanding_poll_us": null,
+          "counts": {
+            "application_batches_sent": 64,
+            "application_batches_transport_delivered": 64,
+            "transport_failures": 0,
+            "observation_requests": 63412,
+            "receipt_query_requests_by_node": [
+              4437,
+              20500,
+              22470,
+              16005
+            ],
+            "observation_rows_received": 8116736,
+            "receipt_query_rows_received_by_node": [
+              567936,
+              2624000,
+              2876160,
+              2048640
+            ],
+            "observation_not_final": 7854592,
+            "receipt_query_not_final_by_node": [
+              502400,
+              2558464,
+              2810624,
+              1983104
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 65536,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 8192
+          },
+          "candidate_blocks": 64,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        },
+        {
+          "transactions": 65536,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "cpu",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 2749.717396217007,
+          "elapsed_seconds": 23.833722,
+          "latency_us": {
+            "p50": 2853306,
+            "p95": 3533513,
+            "p99": 4012405,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0x5a67909665de2ab307594c0a2bc8b8a1f99ad40c20602e413ea47e28375392f3",
+          "initial_root": "0xc08ba5dd3e02a5c478edad9381108fbdb9d43e9f8267aaf4b7245e007ed8aa6c",
+          "signing_domain": "0xec58c94e38bb68ef5b0305d557f571f0e25f8fafbfc55774530f046ef0150725",
+          "genesis_commitment": "0x325cfe2cdbc04971b9461c42e0087295fc7f1af751f75dbd0e09fd52c9ab854f",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 65536,
+          "initial_signed_corpus_preparation_us": 332462,
+          "four_process_startup_ready_seconds": 0.2963882,
+          "startup_through_four_receipts_seconds": 24.7837596,
+          "cold_receipt_observation_seconds": 3.305785,
+          "first_height_all_receipt_queries_observed_us": 2703640,
+          "diagnostics_enabled": false,
+          "critical_path_diagnostics_enabled": false,
+          "continuous_timed_generation_task_us": null,
+          "continuous_timed_structure_preparation_us": null,
+          "continuous_generator_starved_poll_us": null,
+          "continuous_no_outstanding_poll_us": null,
+          "counts": {
+            "application_batches_sent": 64,
+            "application_batches_transport_delivered": 64,
+            "transport_failures": 0,
+            "observation_requests": 51081,
+            "receipt_query_requests_by_node": [
+              4461,
+              16086,
+              13928,
+              16606
+            ],
+            "observation_rows_received": 6538368,
+            "receipt_query_rows_received_by_node": [
+              571008,
+              2059008,
+              1782784,
+              2125568
+            ],
+            "observation_not_final": 6276224,
+            "receipt_query_not_final_by_node": [
+              505472,
+              1993472,
+              1717248,
+              2060032
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 65536,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 8192
+          },
+          "candidate_blocks": 64,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        }
+      ]
+    },
+    {
+      "label": "65536_continuous_receipt_anchored",
+      "raw_report": "artifacts/audit/native-critical-path-20261029/stage1-65536-continuous-paired.json",
+      "contract": {
+        "scope": "continuous_8192_outstanding_receipt_anchored_windows",
+        "same_signed_corpus": false,
+        "same_approved_genesis_and_logical_business_workload": true,
+        "signature_backend_order": [
+          "cpu",
+          "gpu_required",
+          "cpu"
+        ],
+        "expiry_and_randomized_signature_bytes_may_differ": true,
+        "single_unpaused_wall_per_run": true,
+        "post_first_submit_signing_included": true,
+        "all_round_databases_and_journals_retained": true
+      },
+      "rounds": [
+        {
+          "transactions": 65536,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "cpu",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 2621.1076435507975,
+          "elapsed_seconds": 25.00317,
+          "latency_us": {
+            "p50": 2964527,
+            "p95": 3793556,
+            "p99": 4423911,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0x92b8e7c1b9ee7efe9f1fea505d26bf3ca54ebaabd220bd1fdfd934743d76b0a2",
+          "initial_root": "0x818551834734c56561d5277c53e7b131f30a5a7fa9bc973df6afa4c267ec6e6d",
+          "signing_domain": "0xe6dc2c539df02c8b7b46cc9657659aef5bca60c403d8f96edf12ace310d86330",
+          "genesis_commitment": "0xfaeb1ad89d74214ec43e30ddef9dc7dde2f8ce8a3798723ab78019b8f063d2d5",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 8192,
+          "initial_signed_corpus_preparation_us": 324797,
+          "four_process_startup_ready_seconds": 0.2921583,
+          "startup_through_four_receipts_seconds": 25.6012521,
+          "cold_receipt_observation_seconds": 2.267979,
+          "first_height_all_receipt_queries_observed_us": 2796504,
+          "diagnostics_enabled": false,
+          "critical_path_diagnostics_enabled": false,
+          "continuous_timed_generation_task_us": 2488877,
+          "continuous_timed_structure_preparation_us": 638926,
+          "continuous_generator_starved_poll_us": 20661225,
+          "continuous_no_outstanding_poll_us": 90,
+          "counts": {
+            "application_batches_sent": 64,
+            "application_batches_transport_delivered": 64,
+            "transport_failures": 0,
+            "observation_requests": 53674,
+            "receipt_query_requests_by_node": [
+              4174,
+              17135,
+              14905,
+              17460
+            ],
+            "observation_rows_received": 6870272,
+            "receipt_query_rows_received_by_node": [
+              534272,
+              2193280,
+              1907840,
+              2234880
+            ],
+            "observation_not_final": 6608128,
+            "receipt_query_not_final_by_node": [
+              468736,
+              2127744,
+              1842304,
+              2169344
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 65536,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 8192
+          },
+          "candidate_blocks": 64,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        },
+        {
+          "transactions": 65536,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "gpu_required",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 3025.0894184508393,
+          "elapsed_seconds": 21.664153,
+          "latency_us": {
+            "p50": 2650930,
+            "p95": 3343033,
+            "p99": 4036933,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0x92b8e7c1b9ee7efe9f1fea505d26bf3ca54ebaabd220bd1fdfd934743d76b0a2",
+          "initial_root": "0x818551834734c56561d5277c53e7b131f30a5a7fa9bc973df6afa4c267ec6e6d",
+          "signing_domain": "0xe6dc2c539df02c8b7b46cc9657659aef5bca60c403d8f96edf12ace310d86330",
+          "genesis_commitment": "0xfaeb1ad89d74214ec43e30ddef9dc7dde2f8ce8a3798723ab78019b8f063d2d5",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 8192,
+          "initial_signed_corpus_preparation_us": 323935,
+          "four_process_startup_ready_seconds": 3.5102508,
+          "startup_through_four_receipts_seconds": 25.476497,
+          "cold_receipt_observation_seconds": 0.710453,
+          "first_height_all_receipt_queries_observed_us": 1426058,
+          "diagnostics_enabled": false,
+          "critical_path_diagnostics_enabled": false,
+          "continuous_timed_generation_task_us": 2427329,
+          "continuous_timed_structure_preparation_us": 642933,
+          "continuous_generator_starved_poll_us": 17208142,
+          "continuous_no_outstanding_poll_us": 91,
+          "counts": {
+            "application_batches_sent": 64,
+            "application_batches_transport_delivered": 64,
+            "transport_failures": 0,
+            "observation_requests": 63634,
+            "receipt_query_requests_by_node": [
+              3609,
+              17523,
+              21192,
+              21310
+            ],
+            "observation_rows_received": 8145152,
+            "receipt_query_rows_received_by_node": [
+              461952,
+              2242944,
+              2712576,
+              2727680
+            ],
+            "observation_not_final": 7883008,
+            "receipt_query_not_final_by_node": [
+              396416,
+              2177408,
+              2647040,
+              2662144
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 65536,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 8192
+          },
+          "candidate_blocks": 64,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        },
+        {
+          "transactions": 65536,
+          "configured_candidate_batch_limit": 1024,
+          "wire_frame_rows": 1024,
+          "senders": 16,
+          "effective_outstanding_limit": 8192,
+          "binary_sha256": "0x307d57b15dd099ba93ada370d44d6fc9fa245228b5b96a9505a6ff572116ac1b",
+          "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "signature_backend": "cpu",
+          "backend": "cpu_callbacks",
+          "passed": true,
+          "error": null,
+          "phase": "cold restart all receipts balances and authorizations",
+          "successful_tps": 2666.8719776115577,
+          "elapsed_seconds": 24.574108,
+          "latency_us": {
+            "p50": 2982289,
+            "p95": 3863200,
+            "p99": 4033761,
+            "sample_count": 65536,
+            "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+          },
+          "signed_workload_sha256": "0x77f7548a41d40f86fb77fa30896a05627a2cb637db988219cb900c4106f94504",
+          "initial_root": "0x818551834734c56561d5277c53e7b131f30a5a7fa9bc973df6afa4c267ec6e6d",
+          "signing_domain": "0xe6dc2c539df02c8b7b46cc9657659aef5bca60c403d8f96edf12ace310d86330",
+          "genesis_commitment": "0xfaeb1ad89d74214ec43e30ddef9dc7dde2f8ce8a3798723ab78019b8f063d2d5",
+          "cold_recovery_pass": true,
+          "full_fee_state_audited": true,
+          "initial_signed_corpus_rows": 8192,
+          "initial_signed_corpus_preparation_us": 320575,
+          "four_process_startup_ready_seconds": 0.2679874,
+          "startup_through_four_receipts_seconds": 25.1490015,
+          "cold_receipt_observation_seconds": 2.071108,
+          "first_height_all_receipt_queries_observed_us": 2030012,
+          "diagnostics_enabled": false,
+          "critical_path_diagnostics_enabled": false,
+          "continuous_timed_generation_task_us": 2557648,
+          "continuous_timed_structure_preparation_us": 641303,
+          "continuous_generator_starved_poll_us": 19830700,
+          "continuous_no_outstanding_poll_us": 87,
+          "counts": {
+            "application_batches_sent": 64,
+            "application_batches_transport_delivered": 64,
+            "transport_failures": 0,
+            "observation_requests": 48525,
+            "receipt_query_requests_by_node": [
+              3958,
+              15302,
+              15283,
+              13982
+            ],
+            "observation_rows_received": 6211200,
+            "receipt_query_rows_received_by_node": [
+              506624,
+              1958656,
+              1956224,
+              1789696
+            ],
+            "observation_not_final": 5949056,
+            "receipt_query_not_final_by_node": [
+              441088,
+              1893120,
+              1890688,
+              1724160
+            ],
+            "observation_service_busy": 0,
+            "receipt_query_service_busy_by_node": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "successful_transactions": 65536,
+            "business_failed_transactions": 0,
+            "rejected_nonce": 0,
+            "deadline_expirations": 0,
+            "maximum_outstanding": 8192
+          },
+          "candidate_blocks": 64,
+          "candidate_rows_min": 1024,
+          "candidate_rows_max": 1024
+        }
+      ]
+    }
+  ],
+  "validation_logs": {
+    "targeted_pipeline": {
+      "path": "pipeline-unit.log",
+      "passed": 514,
+      "failed": 0,
+      "ignored": 112,
+      "scope": "affected native pipeline filtered tests; ignored real AOEM/process tests are not counted as passed"
+    },
+    "network_default": {
+      "path": "network-default.log",
+      "passed": 883,
+      "failed": 0,
+      "ignored": 11
+    },
+    "real_successor": {
+      "path": "successor-all-real.log",
+      "passed": 5,
+      "failed": 0,
+      "ignored": 0
+    },
+    "actual_aoem_startup": {
+      "path": "asset-startup-ready-real.log",
+      "passed": 1,
+      "failed": 0
+    },
+    "old_library_negative": {
+      "path": "asset-startup-reject-old-library-pinned.log",
+      "test_process_result": "FAILED intentionally with explicit incompatible AOEM; rejected before business operation",
+      "message": "AOEM ML-DSA batch verification capability unavailable"
+    },
+    "clippy": "clippy.log",
+    "build": "build-node.log",
+    "full_ci": "NOT_RUN_FOR_STAGE1"
+  },
+  "negative_results": [
+    "4096 before/after after_gpu run failed cold recovery despite 3102.750585363895 timed TPS; no overall paired summary or CPU-repeat completed.",
+    "4096 diagnostics GPU 2405.225257918717 TPS is slower than both CPU samples 2890.7812590425137 and 2935.371658470654; diagnostics-on is not comparable to diagnostics-off groups.",
+    "GPU startup readiness is about 3.48-3.51 seconds in final three-run groups versus CPU about 0.27-0.31 seconds. Excluded startup cost is not eliminated.",
+    "65,536 static and continuous runs are about 2.62K-3.03K TPS, well below historical approximately 12K.",
+    "No phase2 early-remote-body/preverified-capability/persistence optimization is measured by these phase1 binaries."
+  ],
+  "preserved_elsewhere": "Per-node progress, original logs, observations and independent fixture databases remain in each referenced target/native-product-load directory. Only report JSON and the failure stderr were copied; no config, keys, database or secrets were copied."
+}

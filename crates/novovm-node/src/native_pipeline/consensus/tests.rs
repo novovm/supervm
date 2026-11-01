@@ -21,7 +21,7 @@ mod native_product_rpc;
 #[path = "pacemaker_integration.rs"]
 mod pacemaker_integration;
 #[path = "progress_integration.rs"]
-mod progress_integration;
+pub(crate) mod progress_integration;
 #[path = "uca_publication_integration.rs"]
 mod uca_publication_integration;
 
@@ -126,6 +126,8 @@ fn pipeline_config(directory: &Path) -> Result<PipelineConfig> {
         store: store_config(directory)?,
         workers: 4,
         execution_backend: Default::default(),
+        signature_backend: Default::default(),
+        prepare_asset_signatures: false,
         max_batches: 2,
         max_retained_bytes: 256 * 1024 * 1024,
         authentication: AuthenticationBudget {

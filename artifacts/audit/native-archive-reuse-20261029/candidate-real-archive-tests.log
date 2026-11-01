@@ -1,0 +1,10 @@
+
+running 4 tests
+real archive starts=1 reused=0
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_coalesces_same_context_across_peers ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_drains_changed_requester_read_for_same_context_waiter ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_reuse_keeps_independent_pending_and_delivery_budget ... ok
+test native_pipeline::consensus::native_lifecycle::recovery::tests::native_archive_poll_reuse_requires_full_context_and_published_height ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1766 filtered out; finished in 1.04s
+

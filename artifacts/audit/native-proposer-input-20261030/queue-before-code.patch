@@ -1,0 +1,1541 @@
+diff --git a/crates/novovm-network/Cargo.toml b/crates/novovm-network/Cargo.toml
+index 7a745b2e..e892075d 100644
+--- a/crates/novovm-network/Cargo.toml
++++ b/crates/novovm-network/Cargo.toml
+@@ -42,6 +42,7 @@ sha1 = "=0.10.6"
+ sha2 = "0.10"
+ sha3 = "0.10"
+ snap = "1"
++socket2 = "0.6"
+ thiserror = "1"
+ tokio = { version = "1", features = ["sync", "time", "rt", "rt-multi-thread", "macros", "io-util"] }
+ tokio-rustls = { version = "=0.26.6", optional = true, default-features = false, features = ["aws_lc_rs"] }
+@@ -59,7 +60,6 @@ rustix = { version = "1.1", features = ["fs"] }
+ [dev-dependencies]
+ tempfile = "3.23"
+ rcgen = "=0.12.1"
+-socket2 = "0.6"
+ 
+ [[example]]
+ name = "mailbox_peer_probe"
+diff --git a/crates/novovm-network/src/runtime_status.rs b/crates/novovm-network/src/runtime_status.rs
+index a9bcda0f..8887c8be 100644
+--- a/crates/novovm-network/src/runtime_status.rs
++++ b/crates/novovm-network/src/runtime_status.rs
+@@ -1872,6 +1872,34 @@ pub fn observe_network_runtime_receiver_recv_loop_iteration_v1(chain_id: u64) {
+         state.receiver_recv_loop_iteration_count.saturating_add(1);
+ }
+ 
++/// Numeric observation of the existing receiver owner; not a flow-control input.
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
++pub struct NetworkRuntimeReceiverQueueV1 {
++    pub requested_bytes: Option<u64>,
++    pub effective_bytes: Option<u64>,
++    pub enqueued: u64,
++    pub dequeued: u64,
++    pub max_depth: u64,
++}
++
++/// Read only the existing observation map, without initialization, cleanup or a clock read.
++pub fn snapshot_network_runtime_receiver_queue_v1(
++    chain_id: u64,
++) -> Option<NetworkRuntimeReceiverQueueV1> {
++    let guard = NETWORK_RUNTIME_RECEIVER_DECODE_ATTRIBUTION
++        .get()?
++        .lock()
++        .ok()?;
++    let state = guard.get(&chain_id)?;
++    Some(NetworkRuntimeReceiverQueueV1 {
++        requested_bytes: state.receiver_rcvbuf_requested_bytes,
++        effective_bytes: state.receiver_rcvbuf_effective_bytes,
++        enqueued: state.receiver_drain_queue_enqueued_count,
++        dequeued: state.receiver_drain_queue_dequeued_count,
++        max_depth: state.receiver_drain_queue_max_depth,
++    })
++}
++
+ pub fn observe_network_runtime_receiver_drain_first_config_v1(
+     chain_id: u64,
+     enabled: bool,
+@@ -7910,6 +7938,49 @@ mod tests {
+     use super::*;
+     use novovm_protocol::NovTxKindV1;
+ 
++    #[test]
++    fn receiver_queue_snapshot_copies_existing_numbers_without_mutation() {
++        let chain_id = rand::random::<u64>();
++        assert_eq!(snapshot_network_runtime_receiver_queue_v1(chain_id), None);
++        observe_network_runtime_receiver_drain_first_config_v1(
++            chain_id,
++            true,
++            64,
++            Some(4096),
++            Some(8192),
++        );
++        observe_network_runtime_receiver_drain_first_enqueue_v1(chain_id, 3, 3);
++        observe_network_runtime_receiver_drain_first_dequeue_v1(chain_id);
++        let before = runtime_receiver_decode_attribution_map()
++            .lock()
++            .unwrap()
++            .get(&chain_id)
++            .unwrap()
++            .clone();
++        let expected = Some(NetworkRuntimeReceiverQueueV1 {
++            requested_bytes: Some(4096),
++            effective_bytes: Some(8192),
++            enqueued: 3,
++            dequeued: 1,
++            max_depth: 3,
++        });
++        assert_eq!(
++            snapshot_network_runtime_receiver_queue_v1(chain_id),
++            expected
++        );
++        assert_eq!(
++            snapshot_network_runtime_receiver_queue_v1(chain_id),
++            expected
++        );
++        assert_eq!(
++            runtime_receiver_decode_attribution_map()
++                .lock()
++                .unwrap()
++                .get(&chain_id),
++            Some(&before)
++        );
++    }
++
+     fn build_native_repair_payload_for_test(chain_id: u64, sequence: u64) -> Vec<u8> {
+         let tx = novovm_protocol::NovNativeTxWireV1 {
+             chain_id,
+diff --git a/crates/novovm-network/src/transport.rs b/crates/novovm-network/src/transport.rs
+index e6ad1fe1..7d252873 100644
+--- a/crates/novovm-network/src/transport.rs
++++ b/crates/novovm-network/src/transport.rs
+@@ -9906,16 +9906,33 @@ impl UdpTransport {
+             parse_env_usize("NOVOVM_NOVORUDP_RECEIVER_DRAIN_FIRST_BATCH_MAX", 4096).max(1);
+         let drain_queue_limit =
+             parse_env_usize("NOVOVM_NOVORUDP_RECEIVER_DRAIN_FIRST_QUEUE_LIMIT", 65_536).max(1);
+-        let rcvbuf_requested_bytes = Some(parse_env_u64(
+-            "NOVOVM_NOVORUDP_RECEIVER_RCVBUF_BYTES",
+-            16 * 1024 * 1024,
+-        ));
++        let rcvbuf_requested =
++            parse_env_u64("NOVOVM_NOVORUDP_RECEIVER_RCVBUF_BYTES", 16 * 1024 * 1024);
++        let socket_ref = socket2::SockRef::from(&socket);
++        if rcvbuf_requested > 0 {
++            // SO_RCVBUF takes a signed C integer; do not let socket2's usize
++            // conversion silently truncate an out-of-range configuration.
++            let requested = i32::try_from(rcvbuf_requested).map_err(|_| {
++                NetworkError::Io("UDP receive buffer request exceeds SO_RCVBUF range".into())
++            })?;
++            socket_ref
++                .set_recv_buffer_size(requested as usize)
++                .map_err(|e| NetworkError::Io(e.to_string()))?;
++        }
++        // Zero preserves the OS default. Always report the actual value,
++        // including platform clamping/scaling, rather than the request.
++        let rcvbuf_requested_bytes = Some(rcvbuf_requested);
++        let rcvbuf_effective_bytes = Some(
++            socket_ref
++                .recv_buffer_size()
++                .map_err(|e| NetworkError::Io(e.to_string()))? as u64,
++        );
+         observe_network_runtime_receiver_drain_first_config_v1(
+             chain_id,
+             drain_first_enabled,
+             drain_batch_max.try_into().unwrap_or(u64::MAX),
+             rcvbuf_requested_bytes,
+-            None,
++            rcvbuf_effective_bytes,
+         );
+         Ok(Self {
+             node,
+@@ -9933,7 +9950,7 @@ impl UdpTransport {
+             drain_batch_max,
+             drain_queue_limit,
+             rcvbuf_requested_bytes,
+-            rcvbuf_effective_bytes: None,
++            rcvbuf_effective_bytes,
+         })
+     }
+ 
+@@ -16157,6 +16174,62 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn udp_receive_buffer_configuration_matches_kernel_and_runtime_summary() {
++        let chain_id = rand::random::<u64>();
++        let rx = UdpTransport::bind_for_chain(NodeId(chain_id), "127.0.0.1:0", chain_id).unwrap();
++        let actual = socket2::SockRef::from(rx.socket.as_ref())
++            .recv_buffer_size()
++            .unwrap() as u64;
++        eprintln!(
++            "original UDP receive buffer requested={:?} effective={actual}",
++            rx.rcvbuf_requested_bytes
++        );
++        assert!(actual > 0);
++        // The OS may clamp or scale SO_RCVBUF. Read the real socket rather
++        // than substituting the requested number for the effective value.
++        assert_eq!(rx.rcvbuf_effective_bytes, Some(actual));
++        let summary = snapshot_network_runtime_native_pending_tx_summary_v1(chain_id);
++        assert_eq!(summary.receiver_rcvbuf_effective_bytes, Some(actual));
++        assert_eq!(summary.receiver_socket_recv_buffer_bytes, Some(actual));
++        let reference = UdpSocket::bind("127.0.0.1:0").unwrap();
++        let reference = socket2::SockRef::from(&reference);
++        if let Some(requested) = rx.rcvbuf_requested_bytes.filter(|bytes| *bytes > 0) {
++            reference
++                .set_recv_buffer_size(usize::try_from(requested).unwrap())
++                .unwrap();
++        }
++        assert_eq!(actual, reference.recv_buffer_size().unwrap() as u64);
++    }
++
++    #[test]
++    fn udp_drain_consumes_retained_batch_before_prefetching_again() {
++        let chain = rand::random::<u64>();
++        let mut rx = UdpTransport::bind_for_chain(NodeId(chain), "127.0.0.1:0", chain).unwrap();
++        rx.drain_first_enabled = true;
++        rx.drain_batch_max = 2;
++        rx.drain_queue_limit = 8;
++        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
++        let address = rx.local_addr().unwrap();
++        for value in [0_u8, 1] {
++            sender.send_to(&[value], address).unwrap();
++        }
++        assert_eq!(rx.receive_packet_v1().unwrap().unwrap().0, vec![0]);
++        assert_eq!(rx.drain_queue.lock().unwrap().len(), 1);
++        for value in [2_u8, 3] {
++            sender.send_to(&[value], address).unwrap();
++        }
++        assert_eq!(rx.receive_packet_v1().unwrap().unwrap().0, vec![1]);
++        assert_eq!(
++            rx.drain_queue.lock().unwrap().len(),
++            0,
++            "consume retained FIFO work before refilling from the socket"
++        );
++        assert_eq!(rx.receive_packet_v1().unwrap().unwrap().0, vec![2]);
++        assert_eq!(rx.receive_packet_v1().unwrap().unwrap().0, vec![3]);
++        assert!(rx.receive_packet_v1().unwrap().is_none());
++    }
++
+     #[test]
+     fn udp_ingress_same_socket_preserves_protocol_and_marks_native_untrusted() {
+         use crate::novorudp::NovoRudpTransportFrameKindV0;
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+index ff15a960..4430db7a 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies.rs
+@@ -197,6 +197,13 @@ impl CandidateBodies {
+         let identity_started = crate::native_pipeline::profile::mark();
+         let (id, encoded_wire_len) =
+             transport::candidate_body_id_and_wire_len(message, self.codec)?;
++        if let Message::AssetBody { batch, .. } = message.as_ref() {
++            crate::native_pipeline::profile::asset_event("body_identified", context.height, || {
++                serde_json::json!({
++                    "source_ref":Arc::as_ptr(batch) as usize,"body":id,"rows":batch.len(),"local":local
++                })
++            });
++        }
+         crate::native_pipeline::profile::work(
+             crate::native_pipeline::profile::Phase::BodyIdentity,
+             identity_started,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+index aeade4f9..50e0e088 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/bodies/successor.rs
+@@ -508,6 +508,13 @@ impl CandidateBodies {
+         let identity_started = profile::mark();
+         let (id, encoded_wire_len) =
+             transport::candidate_body_id_and_wire_len(message, self.codec)?;
++        if let Message::AssetBody { batch, .. } = message.as_ref() {
++            profile::asset_event("body_identified", context.height, || {
++                serde_json::json!({
++                    "source_ref":Arc::as_ptr(batch) as usize,"body":id,"rows":batch.len(),"local":local_origin
++                })
++            });
++        }
+         profile::work(
+             profile::Phase::BodyIdentity,
+             identity_started,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native.rs b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+index 7e13066e..4acbc724 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native.rs
+@@ -55,6 +55,29 @@ fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
+     }
+ }
+ 
++fn profile_asset_message(event: &'static str, message: &transport::Message, fragment: [u8; 32]) {
++    match message {
++        transport::Message::AssetTransactions { scope, batch } => {
++            profile::asset_event(event, 0, || {
++                serde_json::json!({
++                    "kind":"asset_transactions", "source_ref":Arc::as_ptr(batch) as usize,
++                    "rows":batch.len(), "session":scope.session, "sequence":scope.sequence,
++                    "fragment":fragment
++                })
++            });
++        }
++        transport::Message::AssetBody { context, batch } => {
++            profile::asset_event(event, context.height, || {
++                serde_json::json!({
++                    "kind":"asset_body", "source_ref":Arc::as_ptr(batch) as usize,
++                    "rows":batch.len(), "fragment":fragment
++                })
++            });
++        }
++        _ => {}
++    }
++}
++
+ #[derive(Clone)]
+ pub struct LaneLimits {
+     pub receive: ReassemblyLimits,
+@@ -415,6 +438,7 @@ impl NativeChannel {
+             None,
+             Some(object.id()),
+         );
++        profile_asset_message("asset_prepared", message, object.id());
+         Ok(PreparedMessage {
+             owner: self.owner.clone(),
+             stream,
+@@ -560,6 +584,9 @@ impl NativeChannel {
+             None,
+             Some(complete.id),
+         );
++        if let Ok((message, _)) = &parsed {
++            profile_asset_message("asset_received", message, complete.id);
++        }
+         Ok(Some(match parsed {
+             Ok((message, evidence)) => ReceiveEvent::Message(Box::new(ReceivedMessage {
+                 peer: complete.peer,
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native/query.rs b/crates/novovm-node/src/native_pipeline/consensus/native/query.rs
+index 8f7ec302..b7b79602 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native/query.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native/query.rs
+@@ -13,11 +13,45 @@ pub(super) struct QueryDelivery {
+     object: Arc<OutgoingMessage>,
+     admitted: bool,
+     deadline: Instant,
++    trace: Option<QueryTrace>,
+ }
+ 
+ const QUERY_SLOTS: usize = 8;
+ const QUERY_TTL: Duration = Duration::from_secs(5);
+ 
++/// Diagnostic correlation only; never used for admission or delivery decisions.
++#[derive(Clone, Copy)]
++struct QueryTrace {
++    session: [u8; 32],
++    sequence: u64,
++}
++impl QueryTrace {
++    fn from_request(request: &Request) -> Option<Self> {
++        if !profile::asset_enabled() || request.sequence > 128 {
++            return None;
++        }
++        Some(Self {
++            session: request.session,
++            sequence: request.sequence,
++        })
++    }
++
++    fn event(
++        self,
++        event: &'static str,
++        peer: usize,
++        fragment: Option<[u8; 32]>,
++        state: &'static str,
++    ) {
++        profile::asset_event(event, 0, || {
++            serde_json::json!({
++                "peer":peer,"request_session":self.session,"request_sequence":self.sequence,
++                "fragment":fragment,"state":state
++            })
++        });
++    }
++}
++
+ /// Bounded custody AFTER transport completion. Transport DONE is not a promise
+ /// that a previous application reply has retired. Retain one exact request per
+ /// peer until its reply can be owned, without blocking another ready peer.
+@@ -34,8 +68,24 @@ struct QueryRequest {
+ }
+ impl QueryInbox {
+     fn retire(&mut self, now: Instant, session: impl Fn(usize) -> Option<[u8; 16]>) {
+-        self.entries
+-            .retain(|q| now < q.deadline && session(q.peer) == Some(q.session));
++        self.entries.retain(|q| {
++            let retained = now < q.deadline && session(q.peer) == Some(q.session);
++            if !retained {
++                if let Some(trace) = QueryTrace::from_request(&q.request) {
++                    trace.event(
++                        "query_request_retired",
++                        q.peer,
++                        None,
++                        if now >= q.deadline {
++                            "expired"
++                        } else {
++                            "session_replaced"
++                        },
++                    );
++                }
++            }
++            retained
++        });
+     }
+     fn has_space(&self) -> bool {
+         self.entries.len() < QUERY_SLOTS
+@@ -101,6 +151,9 @@ impl NativeChannel {
+             .query_inbox
+             .take_ready(|peer| self.query_replies.iter().any(|r| r.peer == peer))
+         {
++            if let Some(trace) = QueryTrace::from_request(&request.1) {
++                trace.event("query_request_dispatched", request.0, None, "dispatched");
++            }
+             self.io_progress.advance();
+             return Ok(Some(request));
+         }
+@@ -130,11 +183,20 @@ impl NativeChannel {
+         let Frame::Request(request) = wire::decode(&bytes).map_err(anyhow::Error::msg)? else {
+             anyhow::bail!("node accepts query requests only");
+         };
++        if let Some(trace) = QueryTrace::from_request(&request) {
++            trace.event("query_request_received", peer, Some(complete.id), "decoded");
++        }
+         self.query_inbox.insert(peer, session, request, now)?;
+         self.io_progress.advance();
+-        Ok(self
++        let ready = self
+             .query_inbox
+-            .take_ready(|peer| self.query_replies.iter().any(|r| r.peer == peer)))
++            .take_ready(|peer| self.query_replies.iter().any(|r| r.peer == peer));
++        if let Some((peer, request)) = &ready {
++            if let Some(trace) = QueryTrace::from_request(request) {
++                trace.event("query_request_dispatched", *peer, None, "dispatched");
++            }
++        }
++        Ok(ready)
+     }
+     pub fn reply_query(&mut self, peer: usize, response: Response, now: Instant) -> Result<()> {
+         let index = self
+@@ -148,6 +210,18 @@ impl NativeChannel {
+         // terminates quietly, but a mismatched response remains a caller error.
+         // Never carry a response into a replacement authenticated session.
+         if now >= request.deadline || self.link.session_id(peer) != Some(request.session) {
++            if let Some(trace) = QueryTrace::from_request(&request.request) {
++                trace.event(
++                    "query_request_retired",
++                    peer,
++                    None,
++                    if now >= request.deadline {
++                        "expired"
++                    } else {
++                        "session_replaced"
++                    },
++                );
++            }
+             self.query_inbox.entries.remove(index);
+             return Ok(());
+         }
+@@ -167,12 +241,17 @@ impl NativeChannel {
+             MAX_BYTES,
+             FragmentProfile::NativeUdpV2,
+         )?);
++        let trace = QueryTrace::from_request(&request.request);
++        if let Some(trace) = trace {
++            trace.event("query_reply_prepared", peer, Some(object.id()), "prepared");
++        }
+         self.query_replies.push_back(QueryDelivery {
+             peer,
+             session: request.session,
+             object,
+             admitted: false,
+             deadline: request.deadline,
++            trace,
+         });
+         self.query_inbox.entries.remove(index);
+         self.io_progress.advance();
+@@ -206,11 +285,40 @@ impl NativeChannel {
+                     ),
+                 "invalid query completion"
+             );
++            if let Some(trace) = self.query_replies[index].trace {
++                trace.event(
++                    "query_reply_completed",
++                    done.peer,
++                    Some(done.body.id()),
++                    match done.state {
++                        ObjectSendState::Delivered => "delivered",
++                        ObjectSendState::Expired => "expired",
++                        ObjectSendState::SessionReplaced => "session_replaced",
++                        _ => unreachable!("checked query completion state"),
++                    },
++                );
++            }
+             self.query_replies.remove(index);
+         }
+         report.completed = other;
+         self.query_replies.retain(|q| {
+-            q.admitted || (now < q.deadline && self.link.session_id(q.peer) == Some(q.session))
++            let retained =
++                q.admitted || (now < q.deadline && self.link.session_id(q.peer) == Some(q.session));
++            if !retained {
++                if let Some(trace) = q.trace {
++                    trace.event(
++                        "query_reply_retired",
++                        q.peer,
++                        Some(q.object.id()),
++                        if now >= q.deadline {
++                            "expired"
++                        } else {
++                            "session_replaced"
++                        },
++                    );
++                }
++            }
++            retained
+         });
+         let mut admitted = false;
+         for reply in &mut self.query_replies {
+@@ -222,6 +330,16 @@ impl NativeChannel {
+                     now,
+                     reply.deadline,
+                 )?;
++                if reply.admitted {
++                    if let Some(trace) = reply.trace {
++                        trace.event(
++                            "query_reply_admitted",
++                            reply.peer,
++                            Some(reply.object.id()),
++                            "admitted",
++                        );
++                    }
++                }
+                 admitted |= reply.admitted;
+             }
+         }
+@@ -245,6 +363,15 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn query_trace_follows_explicit_flag_and_sequence_bound() {
++        assert_eq!(
++            QueryTrace::from_request(&request(128)).is_some(),
++            profile::asset_enabled()
++        );
++        assert!(QueryTrace::from_request(&request(129)).is_none());
++    }
++
+     #[test]
+     fn busy_peer_request_is_retained_while_another_peer_can_advance() -> Result<()> {
+         let now = Instant::now();
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_product_load.rs b/crates/novovm-node/src/native_pipeline/consensus/native_product_load.rs
+index 9a475baf..b156e2c5 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_product_load.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_product_load.rs
+@@ -23,11 +23,15 @@ use novovm_protocol::native_query::{
+     AccountId, Answer, Balance, Query, ReceiptState, Status, MAX_RECEIPTS, STREAM,
+ };
+ use serde::Serialize;
+-use std::{collections::BTreeSet, net::UdpSocket};
++use std::{
++    collections::{BTreeSet, VecDeque},
++    net::UdpSocket,
++};
+ 
+ const WINDOW: usize = 8192;
+ // Existing endpoint/object sender/reassembly contracts all cap a turn at 64.
+ const IO_QUANTUM: usize = 64;
++const RECENT_QUERY_COMPLETIONS: usize = 8;
+ 
+ #[path = "native_product_load/uca.rs"]
+ mod uca;
+@@ -392,7 +396,66 @@ struct Counts {
+     rejected_nonce: usize,
+     deadline_expirations: usize,
+     maximum_outstanding: usize,
++    // Outbound query REQUEST completions, not replies or transaction finality.
++    // The matching response below retains that same request identity so a
++    // previous request still holding its one transport slot is distinguishable.
++    query_transport_recent: [VecDeque<QueryTransportObservation>; 4],
++    last_query_response: [Option<QueryResponseObservation>; 4],
++    query_timeout: Option<QueryTimeoutObservation>,
++}
++
++#[derive(Serialize)]
++struct QueryTransportObservation {
++    elapsed_us: u64,
++    fragment: Hash,
++    state: &'static str,
++}
++
++#[derive(Serialize)]
++struct QueryResponseObservation {
++    elapsed_us: u64,
++    sequence: u64,
++    fragment: Hash,
++}
++
++#[derive(Serialize)]
++struct QueryTimeoutObservation {
++    node: usize,
++    index: usize,
++    count: usize,
++    sent: bool,
++    elapsed_us: u64,
++    deadline_us: u64,
++    sequence: u64,
++    fragment: Hash,
++}
++
++impl Counts {
++    fn record_query_completion(
++        &mut self,
++        node: usize,
++        elapsed_us: u64,
++        fragment: Hash,
++        state: ObjectSendState,
++    ) {
++        let recent = &mut self.query_transport_recent[node];
++        if recent.len() == RECENT_QUERY_COMPLETIONS {
++            recent.pop_front();
++        }
++        recent.push_back(QueryTransportObservation {
++            elapsed_us,
++            fragment,
++            state: match state {
++                ObjectSendState::Sending => "sending",
++                ObjectSendState::Delivered => "delivered",
++                ObjectSendState::Expired => "expired",
++                ObjectSendState::SessionReplaced => "session_replaced",
++                ObjectSendState::Cancelled => "cancelled",
++            },
++        });
++    }
+ }
++
+ struct PendingRead {
+     request: PreparedQuery,
+     index: usize,
+@@ -598,6 +661,12 @@ impl LoadDriver {
+         for (node, client) in clients.iter_mut().enumerate() {
+             for done in client.poll(wall, now, IO_QUANTUM)?.completed {
+                 if done.stream == STREAM {
++                    counts.record_query_completion(
++                        node,
++                        now.saturating_duration_since(start).as_micros() as u64,
++                        done.body.id(),
++                        done.state,
++                    );
+                     continue;
+                 }
+                 if node != ingress
+@@ -664,6 +733,17 @@ impl LoadDriver {
+                 continue;
+             };
+             if now >= read.deadline {
++                let (sequence, fragment) = read.request.diagnostic_identity();
++                counts.query_timeout = Some(QueryTimeoutObservation {
++                    node,
++                    index: read.index,
++                    count: read.count,
++                    sent: read.sent,
++                    elapsed_us: now.saturating_duration_since(start).as_micros() as u64,
++                    deadline_us: read.deadline.saturating_duration_since(start).as_micros() as u64,
++                    sequence,
++                    fragment,
++                });
+                 clients[node].abandon_query(&read.request)?;
+                 counts.deadline_expirations += 1;
+                 bail!(
+@@ -679,6 +759,12 @@ impl LoadDriver {
+             };
+             let index = read.index;
+             let count = read.count;
++            let (sequence, fragment) = read.request.diagnostic_identity();
++            counts.last_query_response[node] = Some(QueryResponseObservation {
++                elapsed_us: now.saturating_duration_since(start).as_micros() as u64,
++                sequence,
++                fragment,
++            });
+             self.reads[node] = None;
+             let states = match response.answer {
+                 Answer::Receipt { state, .. } if query_batch == 1 => vec![state],
+@@ -1094,6 +1180,59 @@ fn original_native_sdk_65536_final_receipts_and_cold_economics() -> Result<()> {
+     result
+ }
+ 
++#[test]
++fn native_load_query_failure_evidence_is_bounded_and_keeps_exact_request_identity() -> Result<()> {
++    let mut counts = Counts::default();
++    for n in 0..12_u8 {
++        counts.record_query_completion(0, n as u64, [n; 32], ObjectSendState::Delivered);
++    }
++    counts.record_query_completion(1, 20, [20; 32], ObjectSendState::Expired);
++    assert_eq!(
++        counts.query_transport_recent[0].len(),
++        RECENT_QUERY_COMPLETIONS
++    );
++    assert_eq!(
++        counts.query_transport_recent[0].front().unwrap().fragment,
++        [4; 32]
++    );
++    assert_eq!(
++        counts.query_transport_recent[0].back().unwrap().fragment,
++        [11; 32]
++    );
++    assert!(counts.query_transport_recent[2].is_empty());
++    counts.last_query_response[0] = Some(QueryResponseObservation {
++        elapsed_us: 21,
++        sequence: 42,
++        fragment: [42; 32],
++    });
++    counts.query_timeout = Some(QueryTimeoutObservation {
++        node: 0,
++        index: 1024,
++        count: 128,
++        sent: false,
++        elapsed_us: 5_000_022,
++        deadline_us: 5_000_022,
++        sequence: 43,
++        fragment: [43; 32],
++    });
++    let report = serde_json::to_value(&counts)?;
++    assert_eq!(
++        report["query_transport_recent"][0]
++            .as_array()
++            .unwrap()
++            .len(),
++        8
++    );
++    assert_eq!(report["query_transport_recent"][1][0]["state"], "expired");
++    assert_eq!(report["last_query_response"][0]["sequence"], 42);
++    assert_eq!(report["query_timeout"]["sequence"], 43);
++    assert_eq!(report["query_timeout"]["fragment"], json!(vec![43; 32]));
++    assert_eq!(report["query_timeout"]["sent"], false);
++    assert_eq!(report["query_timeout"]["index"], 1024);
++    assert_eq!(counts.successful_transactions, 0);
++    Ok(())
++}
++
+ #[test]
+ fn native_load_wallet_identity_and_percentile_contract() {
+     let domain = b"novovm/controller-workload/sender/v1\0";
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+index 90025d6a..b13a7ac8 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs
+@@ -386,6 +386,10 @@ fn run_native_uca_load_mode(
+         "RAYON_NUM_THREADS",
+         "NOVOVM_PROFILE_STAGES",
+         "NOVOVM_PROFILE_CRITICAL_PATH",
++        "NOVOVM_PROFILE_ASSET_TRACE",
++        "NOVOVM_NOVORUDP_RECEIVER_RCVBUF_BYTES",
++        "NOVOVM_NOVORUDP_RECEIVER_DRAIN_FIRST_DISABLED",
++        "NOVOVM_NOVORUDP_RECEIVER_DRAIN_FIRST_BATCH_MAX",
+         "NOVOVM_NATIVE_LOAD_DIAGNOSTICS",
+         "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
+         "NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND",
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/admission.rs b/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
+index 8d2a5ad7..4853d5a3 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/admission.rs
+@@ -7,6 +7,56 @@ use crate::native_pipeline::ingress::batch::{
+     admission_retained_bytes, admission_sizes, AdmissionRows, CheckedAdmission,
+     SignatureCheckedBatch,
+ };
++use crate::native_pipeline::profile;
++
++/// Process-local diagnostic joins only. The original source Arc remains the
++/// authority/retention boundary; this address is neither a content identity nor
++/// stable across processes or after that source is released.
++pub(super) fn admission_input_profile<'a>(
++    inputs: impl IntoIterator<Item = &'a AdmissionInput>,
++    include_indices: bool,
++) -> Option<serde_json::Value> {
++    let mut rows = 0usize;
++    let mut source = None;
++    let mut first = None;
++    let mut last = None;
++    let mut multiple_sources = false;
++    let mut indices = include_indices.then(Vec::new);
++    for input in inputs {
++        rows += 1;
++        if let AdmissionInput::Uca { batch, index } = input {
++            let current = Arc::as_ptr(batch) as usize;
++            if let Some(source) = source {
++                multiple_sources |= source != current;
++            } else {
++                source = Some(current);
++                first = Some(*index);
++            }
++            last = Some(*index);
++            if let Some(indices) = &mut indices {
++                indices.push(*index);
++            }
++        }
++    }
++    source.map(|source| {
++        serde_json::json!({
++            "source_ref":source, "rows":rows, "first_index":first, "last_index":last,
++            "multiple_sources":multiple_sources, "indices":indices
++        })
++    })
++}
++
++fn profile_admission_inputs<'a>(
++    event: &'static str,
++    inputs: impl IntoIterator<Item = &'a AdmissionInput>,
++) {
++    if !profile::asset_enabled() {
++        return;
++    }
++    if let Some(detail) = admission_input_profile(inputs, false) {
++        profile::asset_event(event, 0, || detail);
++    }
++}
+ 
+ /// Immutable evidence from THIS pipeline's strict verifier. It grants neither
+ /// a nonce lease nor spend/publication authority. Its source must stay charged
+@@ -216,6 +266,10 @@ pub struct SignatureAdmissionRequest {
+ }
+ 
+ impl SignatureAdmissionRequest {
++    pub(crate) fn profile_event(&self, event: &'static str) {
++        profile_admission_inputs(event, &self.inputs);
++    }
++
+     pub fn new(inputs: Vec<AdmissionInput>) -> Result<Self> {
+         ensure!(!inputs.is_empty(), "empty signature admission request");
+         let uca = matches!(&inputs[0], AdmissionInput::Uca { .. });
+@@ -349,6 +403,10 @@ pub struct SignatureAdmissionOutput {
+ }
+ 
+ impl SignatureAdmissionOutput {
++    pub(crate) fn profile_event(&self, event: &'static str) {
++        profile_admission_inputs(event, self.rows.rows.iter().map(|row| &row.input));
++    }
++
+     /// Hand this result to the single bounded authority-capture stage, making
+     /// the existing signature slot available without releasing any source byte
+     /// charge. This is scheduling credit only, never asset authorization. The
+@@ -509,6 +567,9 @@ impl CandidatePipeline {
+             Err(error) => return Err(RejectedSignatureAdmissionSubmission { request, error }),
+         };
+         let (reply, receiver) = mpsc::channel();
++        let admission_profile = profile::asset_enabled()
++            .then(|| admission_input_profile(&request.inputs, true))
++            .flatten();
+         let command = AdmissionCommand {
+             request,
+             reply,
+@@ -517,6 +578,9 @@ impl CandidatePipeline {
+         match sender.try_send(DriverMessage::Admission(command)) {
+             Ok(()) => {
+                 worker.thread().unpark();
++                if let Some(detail) = admission_profile {
++                    profile::asset_event("signature_submit_accepted", 0, || detail);
++                }
+                 Ok(SignatureAdmissionSubmission::Accepted(
+                     SignatureAdmissionTicket {
+                         receiver,
+diff --git a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+index 101f52d7..f357c3b8 100644
+--- a/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
++++ b/crates/novovm-node/src/native_pipeline/pipeline/compute.rs
+@@ -785,6 +785,12 @@ fn run_owner(
+                 reply,
+             } => {
+                 profile::elapsed(profile::Phase::QueueAdmission, queued);
++                let admission_profile = profile::asset_enabled()
++                    .then(|| super::admission::admission_input_profile(&inputs, false))
++                    .flatten();
++                if let Some(detail) = &admission_profile {
++                    profile::asset_event("signature_compute_begin", 0, || detail.clone());
++                }
+                 let _span = crate::native_pipeline::profile::span(
+                     crate::native_pipeline::profile::Phase::Admission,
+                 );
+@@ -804,6 +810,10 @@ fn run_owner(
+                         Some(config.signatures.strict_verified.clone()),
+                     )
+                 });
++                if let Some(mut detail) = admission_profile {
++                    detail["ok"] = serde_json::json!(result.is_ok());
++                    profile::asset_event("signature_compute_reply_ready", 0, || detail);
++                }
+                 let _ = reply.send(result);
+             }
+             Command::Authenticate {
+diff --git a/crates/novovm-node/src/native_pipeline/profile.rs b/crates/novovm-node/src/native_pipeline/profile.rs
+index 7cad8ce6..66d6772c 100644
+--- a/crates/novovm-node/src/native_pipeline/profile.rs
++++ b/crates/novovm-node/src/native_pipeline/profile.rs
+@@ -107,6 +107,56 @@ static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
+ // from evicting the execution/consensus timeline. No payload or signing data.
+ static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+ static CONTROL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
++const ASSET_EVENTS: usize = 8192;
++static ASSET: std::sync::Mutex<(VecDeque<Value>, u64)> =
++    std::sync::Mutex::new((VecDeque::new(), 0));
++
++pub(crate) fn asset_enabled() -> bool {
++    static ENABLED: OnceLock<bool> = OnceLock::new();
++    enabled()
++        && critical_enabled()
++        && *ENABLED.get_or_init(|| {
++            std::env::var("NOVOVM_PROFILE_ASSET_TRACE").ok().as_deref() == Some("1")
++        })
++}
++
++pub(crate) fn asset_track(id: &[u8; 32]) -> bool {
++    asset_enabled() && id[0] == 0
++}
++
++/// Diagnostic identity of existing ordered transaction IDs, not signed bytes
++/// or a signature/authority cache key. Never participates in admission.
++pub(crate) fn asset_ids(ids: &[[u8; 32]]) -> String {
++    use sha2::{Digest, Sha256};
++    let mut digest = Sha256::new();
++    for id in ids {
++        digest.update(id);
++    }
++    hash(Some(digest.finalize().into()))
++        .as_str()
++        .unwrap()
++        .to_owned()
++}
++
++pub(crate) fn asset_event(event: &'static str, height: u64, detail: impl FnOnce() -> Value) {
++    if !asset_enabled() {
++        return;
++    }
++    let started = CRITICAL_START.get_or_init(Instant::now);
++    let elapsed_ns = started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64;
++    let wall_unix_us = wall_unix_us();
++    let detail = detail();
++    if let Ok(mut buffer) = ASSET.lock() {
++        if buffer.0.len() == ASSET_EVENTS {
++            buffer.0.pop_front();
++            buffer.1 = buffer.1.saturating_add(1);
++        }
++        buffer.0.push_back(
++            json!({"event":event,"height":height,"elapsed_ns":elapsed_ns,
++            "wall_unix_us":wall_unix_us,"detail":detail}),
++        );
++    }
++}
+ 
+ fn delivery_enabled() -> bool {
+     static ENABLED: OnceLock<bool> = OnceLock::new();
+@@ -540,12 +590,42 @@ pub(crate) fn snapshot() -> Value {
+     } else {
+         json!({"enabled":false,"events":[]})
+     };
+-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control})
++    let asset = if asset_enabled() {
++        ASSET.lock().ok().map(|buffer| json!({
++            "enabled":true,"capacity":ASSET_EVENTS,"evicted":buffer.1,
++            "scope":"local source_ref is only the live Arc address, never global identity or authority; correlate its lifetime with scope/fragment/row; sampled row IDs have first byte zero; batch counts and ordered-ID digests cover full inputs; diagnostic metadata is not signature evidence",
++            "events":buffer.0
++        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
++    } else {
++        json!({"enabled":false,"events":[]})
++    };
++    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control,"asset_ingress":asset})
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++    #[test]
++    fn asset_ids_bind_existing_id_order_without_signed_payload() {
++        use sha2::{Digest, Sha256};
++        let ids = [[1; 32], [2; 32]];
++        let expected = Sha256::digest(ids.concat());
++        let expected: [u8; 32] = expected.into();
++        assert_eq!(asset_ids(&ids), hash(Some(expected)).as_str().unwrap());
++        assert_ne!(asset_ids(&ids), asset_ids(&[ids[1], ids[0]]));
++        assert_ne!(asset_ids(&ids), asset_ids(&ids[..1]));
++    }
++
++    #[test]
++    fn asset_trace_only_builds_details_when_explicitly_enabled() {
++        let called = std::cell::Cell::new(false);
++        asset_event("test_asset_detail", 0, || {
++            called.set(true);
++            json!({"test":true})
++        });
++        assert_eq!(called.get(), asset_enabled());
++    }
++
+     #[test]
+     fn counters_are_bounded_and_keep_maximum_without_overflow() {
+         let counter = Counter::new();
+diff --git a/crates/novovm-node/src/native_pipeline/service/client.rs b/crates/novovm-node/src/native_pipeline/service/client.rs
+index f01f181e..40e36f67 100644
+--- a/crates/novovm-node/src/native_pipeline/service/client.rs
++++ b/crates/novovm-node/src/native_pipeline/service/client.rs
+@@ -32,6 +32,14 @@ pub struct PreparedQuery {
+     body: Arc<OutgoingMessage>,
+ }
+ 
++#[cfg(test)]
++impl PreparedQuery {
++    /// Existing immutable request identity, not a receipt or delivery promise.
++    pub(crate) fn diagnostic_identity(&self) -> (u64, [u8; 32]) {
++        (self.request.sequence, self.body.id())
++    }
++}
++
+ pub struct PreparedApplicationInput {
+     owner: Arc<()>,
+     body: Arc<OutgoingMessage>,
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc.rs b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+index 6babb952..f6f37985 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc.rs
+@@ -235,6 +235,20 @@ struct Position {
+     source: Option<(VoteContext, u64)>,
+ }
+ 
++/// Last observation only: never consulted by selection, admission or execution.
++#[derive(Clone, Copy, PartialEq, Eq)]
++struct SelectionDiagnostic {
++    reason: &'static str,
++    position: Position,
++    indexed_height: u64,
++    window_len: usize,
++    selected: usize,
++    budget_full: Option<bool>,
++    boundary: bool,
++    awaiting_admission: bool,
++    pending: usize,
++}
++
+ struct GossipOffer {
+     hashes: Vec<Hash>,
+     message: Arc<Message>,
+@@ -257,6 +271,7 @@ pub struct RpcLifecycle {
+     // References into the existing pool, not a second transaction queue. A
+     // cold nonce cache must not turn a 1,024-row input into eight-row blocks.
+     nonce_window: Option<(Position, VecDeque<Hash>)>,
++    selection_diagnostic: Option<SelectionDiagnostic>,
+     receipts: BTreeMap<Hash, ReceiptState>,
+     recent: VecDeque<Hash>,
+     indexed_height: u64,
+@@ -306,6 +321,7 @@ impl RpcLifecycle {
+             nonces,
+             nonce_scan: 0,
+             nonce_window: None,
++            selection_diagnostic: None,
+             receipts: BTreeMap::new(),
+             recent: VecDeque::new(),
+             indexed_height: 0,
+@@ -370,11 +386,23 @@ impl RpcLifecycle {
+             self.poll_gossip()?;
+         }
+         if self.projection_error.is_some() || self.node.controller.is_recovering() {
++            self.record_selection_gate(
++                if self.projection_error.is_some() {
++                    "projection_error"
++                } else {
++                    "recovering"
++                },
++                None,
++                0,
++                None,
++                None,
++            );
+             return Ok(());
+         }
+         // The durable parent receipt overlay is meaningful only on top of this
+         // exact published projection. Neither it nor selection mutates nonces.
+         if self.indexed_height != self.node.controller.parent().height {
++            self.record_selection_gate("projection_pending", None, 0, None, None);
+             return Ok(());
+         }
+         let awaiting_admission = self.incoming.is_some()
+@@ -421,12 +449,15 @@ impl RpcLifecycle {
+             // checks all grants, balances, fees and nonce at that exact root,
+             // and promotion still requires the original parent journal ACK.
+             let Some(next_height) = current_height.checked_add(1) else {
++                self.record_selection_gate("height_exhausted", None, 0, None, None);
+                 return Ok(());
+             };
+             if self.node.controller.has_successor_target(next_height) {
++                self.record_selection_gate("successor_target_exists", None, 0, None, None);
+                 return Ok(());
+             }
+             let Some(selection) = self.node.controller.successor_selection()? else {
++                self.record_selection_gate("successor_unavailable", None, 0, None, None);
+                 return Ok(());
+             };
+             Some(selection)
+@@ -446,6 +477,7 @@ impl RpcLifecycle {
+             source: successor.as_ref().map(|s| (s.source, s.source_round)),
+         };
+         if self.offered == Some(position) {
++            self.record_selection_gate("position_offered", Some(position), 0, None, None);
+             return Ok(());
+         }
+         if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
+@@ -474,6 +506,13 @@ impl RpcLifecycle {
+                 next,
+                 self.batch_size,
+             ) else {
++                self.record_selection_gate(
++                    "nonce_pending",
++                    Some(position),
++                    0,
++                    None,
++                    successor.as_ref().map(|selection| &selection.nonce_after),
++                );
+                 return Ok(());
+             };
+             let window_len = window.len();
+@@ -484,6 +523,13 @@ impl RpcLifecycle {
+             {
+                 // All reads for the old window are complete. Include newly
+                 // admitted suffix rows before releasing a whole-body turn.
++                self.record_selection_gate(
++                    "window_expand",
++                    Some(position),
++                    selected.len(),
++                    Some(budget_full),
++                    None,
++                );
+                 self.nonce_window = None;
+                 return Ok(());
+             }
+@@ -495,6 +541,13 @@ impl RpcLifecycle {
+                 // Do not turn the first 32-row authentication quantum of a
+                 // finite source into a small block. Only completed, ordered
+                 // pool rows count toward fullness, never raw pending count.
++                self.record_selection_gate(
++                    "source_boundary_pending",
++                    Some(position),
++                    selected.len(),
++                    Some(budget_full),
++                    None,
++                );
+                 return Ok(());
+             }
+             // Once per prepared window, not once per eight I/O completions.
+@@ -502,6 +555,13 @@ impl RpcLifecycle {
+             // needs a pool-wide cleanup. Publication retains its own cleanup.
+             self.retire_stale_pending();
+             if selected.is_empty() {
++                self.record_selection_gate(
++                    "no_ordered_rows",
++                    Some(position),
++                    0,
++                    Some(budget_full),
++                    None,
++                );
+                 self.ingress_batch_boundary = false;
+                 // All required reads are known: these are actual gaps/stale
+                 // entries, not temporary I/O. Try another finite window next
+@@ -534,6 +594,43 @@ impl RpcLifecycle {
+                     batch: selected_apfl_batch(&selected, &self.pending, self.batch_size)?,
+                 }
+             };
++            if crate::native_pipeline::profile::asset_enabled() {
++                if let Message::AssetBody { batch, .. } = &body {
++                    crate::native_pipeline::profile::asset_event(
++                        "selection_body_prepared",
++                        position.height,
++                        || {
++                            json!({"source_ref": Arc::as_ptr(batch) as usize,
++                                "rows": selected.len(), "round": position.round,
++                                "parent_height": parent.height,
++                                "parent_state_root": hex(&parent.state_root),
++                                "ordered_ids": crate::native_pipeline::profile::asset_ids(&selected),
++                                "budget_full": budget_full,
++                                "successor": position.source.is_some()})
++                        },
++                    );
++                    for hash in &selected {
++                        if !crate::native_pipeline::profile::asset_track(hash) {
++                            continue;
++                        }
++                        if let Some(entry) = self.pending.get(hash) {
++                            if let AdmissionInput::Uca { batch, index } = &entry.input {
++                                crate::native_pipeline::profile::asset_event(
++                                    "selection_row",
++                                    position.height,
++                                    || {
++                                        json!({"source_ref": Arc::as_ptr(batch) as usize,
++                                        "index": index, "tx": hex(hash),
++                                            "nonce": entry.nonce,
++                                        "signer": hex(&entry.signer),
++                                        "parent_state_root": hex(&parent.state_root)})
++                                    },
++                                );
++                            }
++                        }
++                    }
++                }
++            }
+             self.offer = Some((position, Arc::new(body)));
+         }
+         let message = &self.offer.as_ref().expect("prepared native body").1;
+@@ -563,9 +660,90 @@ impl RpcLifecycle {
+             // backpressure above must not erase an unserved opportunity.
+             self.ingress_batch_boundary = false;
+         }
++        self.record_selection_gate(
++            if accepted {
++                "body_owner_accepted"
++            } else {
++                "body_owner_backpressure"
++            },
++            Some(position),
++            match self.offer.as_ref().map(|(_, message)| message.as_ref()) {
++                Some(Message::AssetBody { batch, .. }) => batch.len(),
++                _ => 0,
++            },
++            None,
++            None,
++        );
+         Ok(())
+     }
+ 
++    fn record_selection_gate(
++        &mut self,
++        reason: &'static str,
++        position: Option<Position>,
++        selected: usize,
++        budget_full: Option<bool>,
++        nonce_after: Option<&BTreeMap<Hash, u64>>,
++    ) {
++        if !crate::native_pipeline::profile::asset_enabled() || !self.is_uca() {
++            return;
++        }
++        let position = position.unwrap_or(Position {
++            height: self.node.controller.context().height,
++            round: self.node.controller.round(),
++            parent: self.node.controller.parent(),
++            source: None,
++        });
++        let state = SelectionDiagnostic {
++            reason,
++            position,
++            indexed_height: self.indexed_height,
++            window_len: self.nonce_window.as_ref().map_or(0, |(_, rows)| rows.len()),
++            selected,
++            budget_full,
++            boundary: self.ingress_batch_boundary,
++            awaiting_admission: self.incoming.is_some()
++                || self.admission.has_pending_native_admission(),
++            pending: self.pending.len(),
++        };
++        if self.selection_diagnostic == Some(state) {
++            return;
++        }
++        self.selection_diagnostic = Some(state);
++        // Only a changed, enabled nonce-wait observation may inspect this
++        // existing bounded window. Do not recreate ordered selection or infer
++        // later rows' expected nonce from an unadvanced parent nonce.
++        let first_unknown = (reason == "nonce_pending")
++            .then(|| {
++                self.nonce_window.as_ref().and_then(|(_, window)| {
++                    window.iter().find_map(|hash| {
++                        let entry = self.pending.get(hash)?;
++                        (!self.nonces.values.contains_key(&entry.signer)
++                            && !nonce_after.is_some_and(|next| next.contains_key(&entry.signer)))
++                        .then_some((*hash, entry.nonce, entry.signer))
++                    })
++                })
++            })
++            .flatten();
++        crate::native_pipeline::profile::asset_event("selection_gate", position.height, || {
++            json!({"reason": reason, "round": position.round,
++                "parent_height": position.parent.height,
++                "parent_state_root": hex(&position.parent.state_root),
++                "parent_block_hash": hex(&position.parent.block_hash),
++                "parent_state_version": position.parent.state_version,
++                "successor": position.source.is_some(),
++                "indexed_height": state.indexed_height,
++                "window_len": state.window_len,
++                "window_first_tx": self.nonce_window.as_ref().and_then(|(_, rows)| rows.front()).map(|hash| hex(hash)),
++                "nonce_scan": self.nonce_scan, "selected": selected,
++                "budget_full": budget_full, "boundary": state.boundary,
++                "awaiting_admission": state.awaiting_admission, "pending": state.pending,
++                "first_unknown_nonce": first_unknown.map(|(hash, nonce, signer)|
++                    json!({"tx": hex(&hash), "actual": nonce, "expected": null,
++                        "signer": hex(&signer)}))})
++        });
++    }
++
+     fn poll_projection(&mut self) -> Result<()> {
+         let Some(head) = self.node.controller.head() else {
+             return Ok(());
+@@ -970,6 +1148,13 @@ impl RpcLifecycle {
+             "asset_prepared_at_startup":asset_prepared_at_startup,"asset_startup_us":asset_startup_us,
+             "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
+         status["stage_profile"] = crate::native_pipeline::profile::snapshot();
++        if crate::native_pipeline::profile::asset_enabled() {
++            status["native_receiver_queue"] = json!(
++                novovm_network::snapshot_network_runtime_receiver_queue_v1(
++                    self.node.template.chain_id
++                )
++            );
++        }
+         status["archive_work"] = json!({
+             "reads_started":core.archive_reads_started,
+             "verified_material_reused":core.archive_cache_reused,
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs b/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
+index 9f75283a..464d2fc0 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/admission.rs
+@@ -94,6 +94,28 @@ struct UcaWork {
+     complete_body: bool,
+     detached_body: bool,
+     broadcast: bool,
++    trace: Option<UcaTrace>,
++}
++
++struct UcaTrace {
++    source_ref: usize,
++    rows: usize,
++    accepted_results: usize,
++    rejected_results: usize,
++}
++
++impl UcaWork {
++    fn profile_event(&self, event: &'static str, parent: ParentPoint) {
++        let Some(trace) = &self.trace else { return };
++        crate::native_pipeline::profile::asset_event(event, parent.height + 1, || {
++            json!({
++                "source_ref":trace.source_ref,"rows":trace.rows,"remaining":self.rows.len(),
++                "accepted_results":trace.accepted_results,"rejected_results":trace.rejected_results,
++                "parent_height":parent.height,"parent_root":hex(&parent.state_root),
++                "pool_wait":self.pool_wait,"scope":"accepted results include exact duplicates; only row_pool_insert is a new pool insertion"
++            })
++        });
++    }
+ }
+ 
+ #[derive(Default)]
+@@ -726,6 +748,9 @@ impl RpcLifecycle {
+                         self.admission.work = Some(work);
+                     }
+                     output => {
++                        if let Ok(Some(output)) = &output {
++                            output.profile_event("signature_control_observed");
++                        }
+                         self.admission.made_progress = true;
+                         self.admission.completed_batches += 1;
+                         if self.admission.uca.is_some() {
+@@ -974,13 +999,15 @@ impl RpcLifecycle {
+             return Ok(None);
+         }
+         let rows = inputs.len();
++        let request = SignatureAdmissionRequest::new(inputs)?;
++        request.profile_event("signature_queued");
+         Ok(Some(Work {
+             target: Target::Gossip {
+                 complete_body,
+                 detached_body,
+                 broadcast: self.incoming_from_client,
+             },
+-            phase: Phase::Queued(SignatureAdmissionRequest::new(inputs)?),
++            phase: Phase::Queued(request),
+             rows,
+         }))
+     }
+@@ -1007,6 +1034,7 @@ impl RpcLifecycle {
+                 },
+                 Ok(mut output),
+             ) => {
++                output.profile_event("authority_queued");
+                 ensure!(rows <= self.batch_size, "UCA admission batch limit");
+                 ensure!(self.admission.uca.is_none(), "UCA authority slot occupied");
+                 output.park_for_authority()?;
+@@ -1026,6 +1054,19 @@ impl RpcLifecycle {
+                         }
+                     }
+                 }
++                let trace = if crate::native_pipeline::profile::asset_enabled() {
++                    checked_rows.front().and_then(|(input, _)| match input {
++                        AdmissionInput::Uca { batch, .. } => Some(UcaTrace {
++                            source_ref: Arc::as_ptr(batch) as usize,
++                            rows: checked_rows.len(),
++                            accepted_results: 0,
++                            rejected_results: 0,
++                        }),
++                        _ => None,
++                    })
++                } else {
++                    None
++                };
+                 self.admission.uca = Some(UcaWork {
+                     _output: output,
+                     rows: checked_rows,
+@@ -1037,6 +1078,7 @@ impl RpcLifecycle {
+                     complete_body: *complete_body,
+                     detached_body: *detached_body,
+                     broadcast: *broadcast,
++                    trace,
+                 });
+                 self.admission.record_retained_stages();
+                 return Ok(());
+@@ -1130,6 +1172,7 @@ impl RpcLifecycle {
+         let parent = self.node.controller.parent();
+         if work.parent != Some(parent) {
+             if work.parent.is_some() {
++                work.profile_event("authority_parent_retry", parent);
+                 self.admission.uca_capture.parent_restarts =
+                     self.admission.uca_capture.parent_restarts.saturating_add(1);
+             }
+@@ -1159,6 +1202,7 @@ impl RpcLifecycle {
+         if work.states.is_none() {
+             let result = (|| {
+                 if work.read.is_none() {
++                    work.profile_event("authority_capture_begin", parent);
+                     work.capture_started = crate::native_pipeline::profile::mark();
+                     let inputs = work
+                         .rows
+@@ -1191,11 +1235,16 @@ impl RpcLifecycle {
+                     return Ok(());
+                 }
+                 Ok(Some(states)) if states.len() == work.rows.len() => {
++                    work.profile_event("authority_state_ready", parent);
+                     work.states = Some(states.into());
+                 }
+                 // Missing/corrupt I/O or an invalid result shape rejects this
+                 // snapshot, never fabricates absent accounts or a prefix.
+                 _ => {
++                    if let Some(trace) = &mut work.trace {
++                        trace.rejected_results += work.rows.len();
++                    }
++                    work.profile_event("authority_capture_rejected", parent);
+                     self.gossip_rejected += work.rows.len() as u64;
+                     self.admission.rejected_rows += work.rows.len() as u64;
+                     work.rows.clear();
+@@ -1221,6 +1270,9 @@ impl RpcLifecycle {
+             };
+             match admitted {
+                 Ok(uca::UcaAdmission::Accepted) => {
++                    if let Some(trace) = &mut work.trace {
++                        trace.accepted_results += 1;
++                    }
+                     self.gossip_verified += 1;
+                 }
+                 Ok(uca::UcaAdmission::Backpressured(input, checked)) => {
+@@ -1235,6 +1287,7 @@ impl RpcLifecycle {
+                         self.pending_retention.bytes,
+                     ));
+                     self.admission.backpressured_polls += 1;
++                    work.profile_event("authority_pool_backpressure", parent);
+                     // A body boundary is a batching preference, not permission
+                     // to deadlock a full pool. Only its accepted prefix exists
+                     // in `pending`; the suffix retains its original permit.
+@@ -1243,6 +1296,9 @@ impl RpcLifecycle {
+                     return Ok(());
+                 }
+                 Err(_) => {
++                    if let Some(trace) = &mut work.trace {
++                        trace.rejected_results += 1;
++                    }
+                     self.gossip_rejected += 1;
+                     self.admission.rejected_rows += 1;
+                 }
+@@ -1253,6 +1309,7 @@ impl RpcLifecycle {
+     }
+ 
+     fn finish_uca_admission(&mut self, work: UcaWork) {
++        work.profile_event("authority_drained", self.node.controller.parent());
+         if self.admission.authority_body_completed(work.complete_body) {
+             if !work.detached_body && work.complete_body {
+                 self.incoming = None;
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs b/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
+index dc4cfb41..95134945 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs
+@@ -175,6 +175,19 @@ impl RpcLifecycle {
+                             self.batch_size,
+                         )?)?
+                 };
++                if let Message::AssetTransactions { scope, batch } = message.as_ref() {
++                    crate::native_pipeline::profile::asset_event(
++                        "gossip_batch_prepared",
++                        self.node.controller.context().height,
++                        || {
++                            json!({"source_ref": Arc::as_ptr(batch) as usize,
++                            "rows": hashes.len(), "session": hex(&scope.session),
++                                "sequence": scope.sequence,
++                                "ordered_ids": crate::native_pipeline::profile::asset_ids(&hashes),
++                                "repair_peer": repair_peer})
++                        },
++                    );
++                }
+                 self.gossip_offer = Some(GossipOffer {
+                     hashes,
+                     message,
+diff --git a/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs b/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
+index 9de0fa59..e607e02f 100644
+--- a/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
++++ b/crates/novovm-node/src/native_pipeline/service/rpc/uca.rs
+@@ -48,6 +48,18 @@ impl RpcLifecycle {
+             "UCA input chain/signing domain mismatch"
+         );
+         let id = hash(&signed)?;
++        if crate::native_pipeline::profile::asset_track(&id) {
++            crate::native_pipeline::profile::asset_event(
++                "row_seen",
++                self.node.controller.context().height,
++                || {
++                    json!({
++                        "source_ref":Arc::as_ptr(batch) as usize,"index":index,"tx":hex(&id),
++                        "nonce":signed.intent.nonce,"payer":hex(&signed.intent.payer),"broadcast":broadcast
++                    })
++                },
++            );
++        }
+         if let Some(entry) = self.pending.get(&id) {
+             if let AdmissionInput::Uca {
+                 batch: old,
+@@ -159,6 +171,19 @@ impl RpcLifecycle {
+             return Err(error);
+         }
+         self.pending_bytes += canonical_len;
++        if crate::native_pipeline::profile::asset_track(&id) {
++            crate::native_pipeline::profile::asset_event(
++                "row_pool_insert",
++                parent.height + 1,
++                || {
++                    json!({
++                        "source_ref":Arc::as_ptr(batch) as usize,"index":index,"tx":hex(&id),
++                        "nonce":nonce,"signer":hex(&signer),"parent_height":parent.height,
++                        "parent_root":hex(&parent.state_root),"parent_nonce":state.next_nonce()
++                    })
++                },
++            );
++        }
+         self.pending.insert(
+             id,
+             Pending {
+diff --git a/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md b/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
+index ef23fe2c..ae5c232b 100644
+--- a/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
++++ b/docs/NOVONET_UCA_PQ_IMPLEMENTATION_HANDOFF_2026-10-24.md
+@@ -1,5 +1,14 @@
+ # UCA、首发签名与服务经济：双机分工及实施顺序
+ 
++## 2026-10-30 A 认领：提案者输入到选批的同源定位
++
++已 fetch，固定 `6008bb32`，开发分支与远端一致。沿原输入 Arc/行号、已算交易 ID、
++TransactionsScope 和 fragment 关联接收、验签、捕获、入池及选批；不重新编码正文。
++root 负责 profile、RPC 准入集成及唯一构建/测量槽；分工分别负责原 native/pipeline
++计时及原 RPC 选批/gossip 原因记录；另分工只读分析。诊断默认关闭、有界，不授予权限。
++发现实际等待后才修原 owner；不改 GPU、容量、经济规则、生产超时或 APFL early/bind。
++不合 main、不换正式库、不部署，C/D 继续等待候选验收。
++
+ ## 2026-10-29 A 认领：大正文控制线程实测
+ 
+ 已 fetch，固定 `c5c18d46`，开发分支与远端一致。A/root 负责原 profile、

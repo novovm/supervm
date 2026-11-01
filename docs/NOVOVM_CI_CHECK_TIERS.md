@@ -3,6 +3,129 @@
 2026-10-25. Source baseline: `91a9a587`. This is CI scheduling, not a change to
 NOVOVM execution, economic rules, signatures, quorum or release authorization.
 
+## 2026-11-02 correction: main-only development, explicit human branch approval
+
+The former text incorrectly called a suggested temporary branch explicitly
+authorized. The user has directed its correction: preserve all existing work and
+concurrent main commits through a normal history-preserving merge, then develop
+on main only. No new branch may be created without the human user's prior,
+explicit, direct authorization. CI batching is not such authorization.
+This mainline correction does not qualify the accumulated candidate for release,
+performance or deployment. Existing main push checks remain enabled and failures
+must be reported honestly; do not use skip markers or weaken any workflow.
+
+| Boundary | Required evidence |
+| --- | --- |
+| Each code change | Local formatting, affected compilation and targeted tests. Signature, authorization, quorum and durable-state changes need their own positive and adversarial tests immediately. |
+| A coherent feature boundary | Relevant regression groups, strict Clippy and cross-module integration; retain failures and fix causes, not assertions or production timeouts. |
+| Final candidate | One planned full candidate CI on a frozen SHA, required independent workflows, Windows/Linux original-node recovery, matching artifacts and separately recorded installation/multi-host evidence. |
+
+The batch comprises bounded pre-authentication ML-DSA handshake carriage;
+transport/device/service/receipt producer and consumer migration; purpose
+separation and downgrade rejection; compatible platform artifacts and offline
+A-D shared-configuration validation. Existing UCA, consensus, registration,
+custody, NovoRUDP/APFL and AOEM owners remain the only implementation path.
+Do not claim individual codec/interface commits close the whole batch.
+
+Actual trigger audit of all three workflows:
+
+- `ci.yml`: push is limited to `main`; all PRs can trigger it. Ordinary batch
+  branch pushes alone do not run it. Manual `profile=full` already exists.
+- `native-auth-relation.yml`: push is limited to `main` plus its path filters;
+  matching PRs and manual dispatch also run it.
+- `mainline-nightly-soak.yml`: schedule/manual only, on its existing historical
+  comparison owner; not product mainchain acceptance.
+- Scheduled runs still exist on the default branch. Do not imply batching
+  disables them or makes unvalidated branch commits eligible for deployment.
+
+At freeze, fetch and incorporate current main without overwriting other work,
+finish local validation, and record the exact candidate SHA. For the existing
+workflow, the integration owner runs:
+
+```powershell
+gh workflow run ci.yml --repo novovm/supervm --ref main -f profile=full
+```
+
+Verify the run's actual `headSha` equals the frozen candidate; do not identify a
+run only by a moving branch name. Run the independent host-rules workflow when
+its contract/dependencies were affected; its success is not a business ZK proof.
+Do not run these commands for every checkpoint. If CI fails, inspect the actual
+failure and rerun the necessary corrected candidate; "once" is a planning goal,
+not a prohibition on required verification after a fix.
+
+After all required results pass, qualify only that reviewed main SHA for the
+next delivery stage. A concurrent change that changes the candidate must be
+integrated and revalidated, not force-pushed.
+Current main protection was read-only checked: no required status checks or PR
+review were configured; this does not waive the above delivery gate, and no
+protection settings were changed.
+
+**Main's automatic checks remain enabled.** A manual candidate run followed by
+a main push can still produce a second run. This change removes repeated
+intermediate runs; it does not promise exactly one cloud run, bypass main's
+checks with skip markers, or introduce an unreviewed result-reuse controller.
+
+### Baseline run observation, not whole-run signoff
+
+On 2026-10-26 (Asia/Shanghai), run `40222837834` for `384afc4e` was still running.
+The Linux `Integrated original tick and native SDK closure` and `NUAS
+original-node process recovery and credited NOV respend` steps both succeeded.
+Security and the Linux preserved-component job succeeded. The Windows
+preserved-component job `121257995233` was cancelled with the explicit annotation
+`The job has exceeded the maximum execution time of 15m0s`; ordinary tests had
+passed, and the later release/include-ignored step was interrupted. This is not
+an assertion failure or a passed job. It must be addressed before final batch
+qualification; do not silently increase product protocol deadlines to fix a CI
+job wall-clock budget. The current run is not cancelled/restarted by this branch
+preparation, and neither the new branch nor D's package is deployment-qualified.
+
+### Preserve coverage while separating lint/debug and release budgets
+
+The completed Windows job's API timestamps and raw log identify a cumulative
+job-budget failure, not a failing Rust assertion:
+
+| Original phase | Observed duration in job `121257995233` |
+| --- | --- |
+| Checkout, pinned toolchain, boundary checks and fmt | About 68 seconds from job start |
+| Workspace Clippy plus no-default-features host Clippy | 110 seconds |
+| Entire debug workspace test step | 309 seconds, passed; includes 157 seconds of compilation |
+| Platform AOEM fetch | 4 seconds |
+| Release step | Started 8m11s after job start, leaving only 6m49s of the existing 15-minute budget |
+| Release compilation | 4m35s, succeeded |
+| Release tests before cancellation | AOEM 32/32 and host 414/414 passed, as did the five host integration targets (11 tests); network's 211-test suite was still running when the runner cancelled the job |
+
+Sources: [job and its step timestamps](https://github.com/novovm/supervm/actions/runs/40222837834/job/121257995233)
+and its raw job log. The unfinished network suite and later doc tests are NOT
+counted as passed. This observation does not establish that the last displayed
+network test was hung, or that transport/signature semantics caused the timeout.
+
+The workflow now keeps two independent jobs, each with the original 15-minute
+CI job limit and both Ubuntu/Windows platforms. Both depend on scope selection,
+not on one another; their concurrency groups are distinct. Matrix fail-fast is
+disabled so one platform failure does not cancel evidence from the other.
+
+| Original coverage | Current owner on **each** platform |
+| --- | --- |
+| Original/preserved workspace boundary scripts, fmt, full all-targets strict Clippy, no-default-features host Clippy | `runtime_modules` (existing job name retained) |
+| `cargo test --manifest-path runtime/Cargo.toml --workspace --locked` | `runtime_modules`; unchanged debug workspace command |
+| Fetch the platform-specific AOEM library, set its explicit absolute test path | `runtime_modules_release` |
+| `cargo test --manifest-path runtime/Cargo.toml --workspace --release --locked -- --include-ignored --test-threads=1` | `runtime_modules_release`; unchanged entire release workspace command, ordinary **and** ignored tests, integration targets and doc tests |
+
+No package list or test-name filter is introduced: future workspace members
+remain selected by `--workspace`. `--include-ignored` is not replaced by
+`--ignored`. No product, consensus, recovery or network deadline changes.
+Both jobs are required by `CI scope result`; failure, cancellation, missing
+result or unexpected skip in either fails the selected full scope. Both remain
+skipped for docs/security-only scope. The original root-product Rust job and
+independent workflows are unchanged.
+
+This removes the measured shared-budget contention; it does not claim fewer
+total billed runner minutes or guarantee a future runner completes within its
+budget. Separate runners repeat setup/dependency work. Local validation covers
+the workflow, complete command/platform mapping and fail-closed result routing;
+the final frozen candidate still needs an actual complete cloud run. This slice
+does not dispatch or cancel CI and does not rebuild Rust locally.
+
 ## Reused checks, conservative selection
 
 The existing `.github/workflows/ci.yml` still owns all existing test commands.
@@ -61,12 +184,16 @@ do not use workflow-level path skipping that leaves required runs pending.
 
 ## Validation and limits
 
-- All 11 local Python unit/fixture tests pass, covering reviewed prose, unknown/embedded docs,
+- All 13 local Python unit/fixture tests pass, covering reviewed prose, unknown/embedded docs,
   code/config/dependency changes, schedules, manual profiles, missing history,
   malformed payloads, missing product manifest, real Git rename/PR/push ranges,
-  earlier code hidden behind a later prose commit, and result failure/cancellation.
-- Parsed old/new workflow comparison confirms all 78 non-router steps are
-  unchanged. Actual ranges `41782197..e4018716` (four files) and
+  earlier code hidden behind a later prose commit, result failure/cancellation/missing
+  jobs, and the retained debug/release workspace commands, platform matrices,
+  independent budgets and required result dependencies.
+- The original routing change's parsed old/new workflow comparison confirmed all
+  78 non-router steps unchanged; the later budget split above relocates the same
+  runtime release command and adds its independent runner setup. Actual historical
+  ranges `41782197..e4018716` (four files) and
   `e4018716..91a9a587` (three files) both select docs.
 - `actionlint` 1.7.12 validates the workflow (shellcheck/pyflakes disabled locally);
   downloaded Windows tool archive was checked against upstream release SHA-256.

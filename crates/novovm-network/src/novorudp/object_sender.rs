@@ -65,6 +65,11 @@ pub struct NativeObjectSender {
     copy: u64,
     repair: Option<RepairCursor>,
     repair_generation: u64,
+    // Keep successful writes in the current repair pass across ACK snapshots.
+    // The original retry wait, not a changing ACK, reopens already sent gaps.
+    repair_floor: u64,
+    retry_tail_end: Option<u64>,
+    repair_turn: bool,
     pending: Option<PendingSend>,
     last_plan: Option<NovoRudpRepairPlan>,
     last_missing: Option<u64>,
@@ -72,9 +77,14 @@ pub struct NativeObjectSender {
     next_send: Instant,
     deferred_batch_sent: usize,
     feedback_deadline: Instant,
+    // Already written repairs keep their original feedback wait even while
+    // unrelated initial fragments are still making progress.
+    repair_feedback_deadline: Option<Instant>,
     deadline: Instant,
     attempts: u64,
     acknowledged_best: u64,
+    diagnostic_progress: Option<diagnostics::NativeSendProgressV1>,
+    traffic: Option<diagnostics::NativeObjectTraffic>,
 }
 
 impl NativeObjectSender {
@@ -117,6 +127,9 @@ impl NativeObjectSender {
             copy: 0,
             repair: None,
             repair_generation: 0,
+            repair_floor: 0,
+            retry_tail_end: None,
+            repair_turn: false,
             pending: None,
             last_plan: None,
             last_missing: None,
@@ -124,13 +137,32 @@ impl NativeObjectSender {
             next_send: now,
             deferred_batch_sent: 0,
             feedback_deadline: now,
+            repair_feedback_deadline: None,
             deadline: now.checked_add(ttl).context("object TTL overflow")?,
             attempts: 0,
             acknowledged_best: 0,
+            diagnostic_progress: None,
+            traffic: diagnostics::io_cost_enabled().then(diagnostics::NativeObjectTraffic::default),
         })
     }
     pub(crate) fn acknowledged_best_v1(&self) -> u64 {
         self.acknowledged_best
+    }
+    pub(crate) fn feedback_state_v1(&self) -> (u64, u64, Option<u64>) {
+        (
+            self.state.latest_ack_epoch,
+            self.last_missing.unwrap_or(self.body.frame_count() as u64),
+            self.state.active_window.map(|w| w.start),
+        )
+    }
+    pub(crate) fn enable_diagnostics_v1(&mut self) {
+        self.diagnostic_progress = Some(diagnostics::NativeSendProgressV1::default());
+    }
+    pub(crate) fn diagnostic_progress_v1(&self) -> Option<diagnostics::NativeSendProgressV1> {
+        self.diagnostic_progress
+    }
+    pub(crate) fn traffic(&self) -> Option<diagnostics::NativeObjectTraffic> {
+        self.traffic
     }
     pub fn status(&self) -> ObjectSendState {
         self.terminal
@@ -203,43 +235,37 @@ impl NativeObjectSender {
                     .last_plan
                     .as_ref()
                     .is_some_and(|old| old.window == plan.window);
-                if !same {
-                    // Once ack_wait has armed a full tail repair, genuine ACK
-                    // progress must not turn its remaining tail back into an
-                    // unconfirmed/in-flight run. A trimmed internal-gap plan
-                    // also has a final window, so check the actual last range.
-                    let repairing_tail = self.initial == self.body.frame_count()
-                        && self.repair.as_ref().is_some_and(|repair| {
-                            repair
-                                .plan
-                                .window
-                                .missing_ranges
-                                .last()
-                                .is_some_and(|range| {
-                                    range.end_inclusive + 1 == self.body.frame_count() as u64
-                                })
-                        });
-                    self.repair_generation = self
-                        .repair_generation
-                        .checked_add(1)
-                        .context("native repair generation exhausted")?;
+                if !same || progress {
+                    let previous = self.repair.as_ref().map(|r| (r.index, r.copy));
+                    if let Some((index, copy)) = previous {
+                        if copy >= plan.packet_copies {
+                            self.repair_floor = self.repair_floor.max(index + 1);
+                        }
+                    }
+                    let previous_write = self
+                        .repair
+                        .as_ref()
+                        .map(|r| (r.index, r.copy, r.plan.packet_copies));
                     self.last_plan = Some(plan.clone());
-                    // UDP receivers ACK after almost every fragment, so the
-                    // final window's trailing missing run is usually still in
-                    // flight or not yet sent. Repair only gaps behind the
-                    // receiver's newest fragment now; the ack_wait retry
-                    // repairs a genuinely lost tail from the full last_plan.
-                    let next_plan = if repairing_tail {
-                        Some(plan.clone())
-                    } else {
-                        trim_unconfirmed_tail(plan, self.body.frame_count() as u64)
-                    };
-                    self.repair = next_plan.map(|plan| RepairCursor {
-                        index: plan.window.missing_ranges[0].start,
+                    self.repair = trim_unconfirmed_tail(
                         plan,
-                        range: 0,
-                        copy: 0,
-                    });
+                        self.body.frame_count() as u64,
+                        ack.missing_count,
+                        self.retry_tail_end,
+                    )
+                    .and_then(|plan| repair_cursor(plan, self.repair_floor, previous));
+                    let next_write = self
+                        .repair
+                        .as_ref()
+                        .map(|r| (r.index, r.copy, r.plan.packet_copies));
+                    // A held carrier frame still completes this exact cursor if
+                    // only later gaps changed. Do not discard its completion.
+                    if next_write != previous_write {
+                        self.repair_generation = self
+                            .repair_generation
+                            .checked_add(1)
+                            .context("native repair generation exhausted")?;
+                    }
                 }
             }
         }
@@ -248,6 +274,13 @@ impl NativeObjectSender {
             .acknowledged_best
             .max(self.body.frame_count() as u64 - ack.missing_count);
         self.last_missing = Some(ack.missing_count);
+        if ack
+            .current_window_missing_ranges
+            .first()
+            .is_none_or(|range| range.start >= self.repair_floor)
+        {
+            self.repair_feedback_deadline = None;
+        }
         if progress {
             self.attempts = 0;
             self.feedback_deadline = self.feedback_due(now);
@@ -276,10 +309,26 @@ impl NativeObjectSender {
         mut wire_budget: Option<&mut wire_budget::NativeWireBudget>,
     ) -> Result<usize> {
         ensure!((1..=64).contains(&budget), "invalid datagram quantum");
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::SenderPoll);
         ensure!(
             session.session_id() == self.session,
             "object sender session changed"
         );
+        if let Some(p) = &mut self.diagnostic_progress {
+            p.polls.calls = p.polls.calls.saturating_add(1);
+            p.polls.offered_budget = p.polls.offered_budget.saturating_add(budget as u64);
+            if self.initial < self.body.frame_count() {
+                p.polls.initial_calls = p.polls.initial_calls.saturating_add(1);
+                if let Some(last) = p.last_poll {
+                    p.polls.initial_max_gap_us = p.polls.initial_max_gap_us.max(
+                        now.saturating_duration_since(last)
+                            .as_micros()
+                            .min(u128::from(u64::MAX)) as u64,
+                    );
+                }
+            }
+            p.last_poll = Some(now);
+        }
         if self.terminal != ObjectSendState::Sending {
             return Ok(0);
         }
@@ -288,30 +337,69 @@ impl NativeObjectSender {
             return Ok(0);
         }
         if now < self.next_send {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.pacing_wait = p.polls.pacing_wait.saturating_add(1);
+            }
             return Ok(0);
         }
         let initial = self.initial < self.body.frame_count();
-        let retry = self.pending.is_none() && !initial && self.repair.is_none();
-        if retry && now < self.feedback_deadline {
+        let idle_cursor = self.pending.is_none() && self.repair.is_none();
+        let ordinary_retry = idle_cursor && !initial && now >= self.feedback_deadline;
+        let gap_plan = if !ordinary_retry
+            && idle_cursor
+            && self.repair_feedback_deadline.is_some_and(|due| now >= due)
+        {
+            self.last_plan
+                .as_ref()
+                .and_then(|plan| {
+                    trim_unconfirmed_tail(
+                        plan,
+                        self.body.frame_count() as u64,
+                        self.last_missing.expect("repair ACK retained"),
+                        None,
+                    )
+                })
+                .filter(|plan| plan.window.missing_ranges[0].start < self.repair_floor)
+        } else {
+            None
+        };
+        let retry = ordinary_retry || gap_plan.is_some();
+        if idle_cursor && !initial && !retry {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.feedback_wait = p.polls.feedback_wait.saturating_add(1);
+            }
             return Ok(0);
         }
-        if retry
-            && self.attempts >= self.config.max_window_retries
-            && (self.config.no_progress_backoff || self.pacing.no_progress_backoff)
-        {
+        let backoff = self.attempts >= self.config.max_window_retries
+            && (self.config.no_progress_backoff || self.pacing.no_progress_backoff);
+        if retry && backoff && !initial {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.backoff_wait = p.polls.backoff_wait.saturating_add(1);
+            }
             // Suppress repeated no-progress work, not the retained intent.
             // Fresh progress reopens the cursor; only its explicit TTL expires it.
             return Ok(0);
         }
-        if retry {
+        if retry && !backoff {
             self.retry_pending = true;
+            self.repair_floor = 0;
+            self.retry_tail_end = None;
+            self.repair_feedback_deadline = None;
             if let Some(plan) = &self.last_plan {
-                self.repair = Some(RepairCursor {
-                    plan: plan.clone(),
-                    range: 0,
-                    index: plan.window.missing_ranges[0].start,
-                    copy: 0,
-                });
+                self.repair_generation = self
+                    .repair_generation
+                    .checked_add(1)
+                    .context("native repair generation exhausted")?;
+                let retry_plan = if ordinary_retry {
+                    self.retry_tail_end =
+                        plan.window.missing_ranges.last().map(|r| r.end_inclusive);
+                    Some(plan.clone())
+                } else {
+                    // A lost early repair may retry before initial completion;
+                    // that is not permission to send the unconfirmed tail early.
+                    gap_plan
+                };
+                self.repair = retry_plan.and_then(|plan| repair_cursor(plan, 0, None));
             }
         }
         let batch =
@@ -325,9 +413,84 @@ impl NativeObjectSender {
             .map(|r| r.plan.batch_pause_ms)
             .unwrap_or(self.config.batch_pause_ms.max(self.pacing.batch_pause_ms));
         let mut sent = 0;
+        // Reuse the same initial cursor and poll quantum. Repairs, retained
+        // writes and metered carriers keep their existing per-frame decisions;
+        // no shadow repair scheduler or persistent batch queue is introduced.
+        let bulk = io.send_batch_limit() > 1
+            && budget.min(batch) > 1
+            && !io.deferred_writes()
+            && wire_budget.is_none()
+            && self.pending.is_none()
+            && self.repair.is_none()
+            && self.initial + 1 < self.body.frame_count();
+        let mut completed = if bulk {
+            let copies = self.config.packet_copies.max(self.pacing.packet_copies);
+            let mut index = self.initial;
+            let mut copy = self.copy;
+            let mut packets = Vec::new();
+            for _ in 0..budget.min(batch).min(io.send_batch_limit()) {
+                if index == self.body.frame_count() {
+                    break;
+                }
+                let frame = {
+                    let _cost =
+                        super::diagnostics::io_span(super::diagnostics::IoPhase::FramePrepare);
+                    NovoRudpTransportFrameV0::new(
+                        NovoRudpTransportFrameKindV0::Data,
+                        self.session,
+                        self.stream,
+                        u64::from_be_bytes(self.body.id()[..8].try_into()?),
+                        index as u64,
+                        self.state.latest_ack_epoch,
+                        self.body.frame(index)?,
+                    )
+                };
+                packets.push(frame);
+                copy += 1;
+                if copy == copies {
+                    index += 1;
+                    copy = 0;
+                }
+            }
+            let lengths = session.try_send_batch(io, &packets)?;
+            if lengths.is_empty() {
+                if let Some(p) = &mut self.diagnostic_progress {
+                    p.polls.send_blocked = p.polls.send_blocked.saturating_add(1);
+                    p.polls.udp_would_block = p.polls.udp_would_block.saturating_add(1);
+                }
+            }
+            packets
+                .into_iter()
+                .zip(lengths)
+                .collect::<Vec<_>>()
+                .into_iter()
+        } else {
+            Vec::new().into_iter()
+        };
         for _ in 0..budget.min(batch) {
+            let batch_wire = if bulk {
+                let Some((frame, length)) = completed.next() else {
+                    break;
+                };
+                self.pending = Some(PendingSend {
+                    frame,
+                    cursor: PendingCursor::Initial {
+                        index: self.initial,
+                        copy: self.copy,
+                        copies: self.config.packet_copies.max(self.pacing.packet_copies),
+                    },
+                });
+                Some(length)
+            } else {
+                None
+            };
             if self.pending.is_none() {
-                let (index, copies, kind) = if self.initial < self.body.frame_count() {
+                let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::FramePrepare);
+                // Proven gaps need not wait for the whole multi-MiB initial
+                // body. Alternate the existing cursors within the same quantum.
+                let send_initial = self.initial < self.body.frame_count()
+                    && (!self.repair_turn || self.repair.is_none());
+                let (index, copies, kind) = if send_initial {
                     (
                         self.initial,
                         self.config.packet_copies.max(self.pacing.packet_copies),
@@ -359,7 +522,7 @@ impl NativeObjectSender {
                     self.state.latest_ack_epoch,
                     self.body.frame(index)?,
                 );
-                let cursor = if self.initial < self.body.frame_count() {
+                let cursor = if send_initial {
                     PendingCursor::Initial {
                         index: self.initial,
                         copy: self.copy,
@@ -378,12 +541,65 @@ impl NativeObjectSender {
                 self.pending = Some(PendingSend { frame, cursor });
             }
             let pending = self.pending.as_ref().expect("prepared native frame");
-            if !session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())? {
+            let Some(wire_bytes) = (match batch_wire {
+                Some(length) => Some(length),
+                None => {
+                    session.try_send_limited(io, &pending.frame, now, wire_budget.as_deref_mut())?
+                }
+            }) else {
+                if let Some(p) = &mut self.diagnostic_progress {
+                    p.polls.send_blocked = p.polls.send_blocked.saturating_add(1);
+                    if wire_budget.is_none() && !io.deferred_writes() {
+                        p.polls.udp_would_block = p.polls.udp_would_block.saturating_add(1);
+                    }
+                }
                 break;
-            }
+            };
             let pending = self.pending.take().expect("completed native frame");
             sent += 1;
-            if self.retry_pending {
+            if let Some(traffic) = &mut self.traffic {
+                let (counter, event) = match pending.cursor {
+                    PendingCursor::Initial { .. } => {
+                        (&mut traffic.initial, diagnostics::Traffic::InitialSent)
+                    }
+                    PendingCursor::Repair { .. } => {
+                        (&mut traffic.repair, diagnostics::Traffic::RepairSent)
+                    }
+                    PendingCursor::Probe => (&mut traffic.probe, diagnostics::Traffic::ProbeSent),
+                };
+                counter.record(wire_bytes);
+                diagnostics::frame_traffic(event, &pending.frame, wire_bytes);
+            }
+            self.repair_turn = matches!(pending.cursor, PendingCursor::Initial { .. });
+            if let Some(progress) = &mut self.diagnostic_progress {
+                let observed_at = Instant::now();
+                match &pending.cursor {
+                    PendingCursor::Initial { .. } => {
+                        progress.initial_packets = progress.initial_packets.saturating_add(1);
+                        progress.first_initial.get_or_insert(observed_at);
+                        progress.last_initial = Some(observed_at);
+                    }
+                    PendingCursor::Repair { index, .. } => {
+                        progress.repair_packets = progress.repair_packets.saturating_add(1);
+                        progress.first_repair.get_or_insert(observed_at);
+                        progress.first_repair_index.get_or_insert(*index);
+                        if self.retry_pending {
+                            progress.repair_retry_passes =
+                                progress.repair_retry_passes.saturating_add(1);
+                            progress.first_repair_retry.get_or_insert(observed_at);
+                            progress.first_repair_retry_index.get_or_insert(*index);
+                        }
+                        progress.last_repair = Some(observed_at);
+                        progress.last_repair_index = Some(*index);
+                    }
+                    PendingCursor::Probe => {
+                        progress.probe_packets = progress.probe_packets.saturating_add(1);
+                        progress.first_probe.get_or_insert(observed_at);
+                        progress.last_probe = Some(observed_at);
+                    }
+                }
+            }
+            if self.retry_pending && !matches!(pending.cursor, PendingCursor::Initial { .. }) {
                 self.attempts = self.attempts.saturating_add(1);
                 self.retry_pending = false;
             }
@@ -401,6 +617,11 @@ impl NativeObjectSender {
                     if self.copy == copies {
                         self.copy = 0;
                         self.initial += 1;
+                        if self.initial == self.body.frame_count() {
+                            if let Some(progress) = &mut self.diagnostic_progress {
+                                progress.initial_complete = progress.last_initial;
+                            }
+                        }
                     }
                 }
                 PendingCursor::Repair {
@@ -415,6 +636,9 @@ impl NativeObjectSender {
                         }
                         continue;
                     }
+                    // Wait after the last actual repair write in this bounded
+                    // pass; unrelated initial writes/ACKs cannot extend it.
+                    self.repair_feedback_deadline = Some(self.feedback_due(now));
                     let repair = self.repair.as_mut().expect("current repair cursor");
                     ensure!(
                         repair.index == index && repair.copy == copy,
@@ -424,6 +648,7 @@ impl NativeObjectSender {
                     if repair.copy == copies {
                         repair.copy = 0;
                         repair.index += 1;
+                        self.repair_floor = repair.index;
                         if repair.index
                             > repair.plan.window.missing_ranges[repair.range].end_inclusive
                         {
@@ -443,6 +668,11 @@ impl NativeObjectSender {
             // pending feedback can run before this object queues another frame.
             if io.deferred_writes() {
                 break;
+            }
+        }
+        if sent == batch && batch < budget {
+            if let Some(p) = &mut self.diagnostic_progress {
+                p.polls.batch_limited = p.polls.batch_limited.saturating_add(1);
             }
         }
         if sent > 0 {
@@ -482,18 +712,26 @@ impl NativeObjectSender {
     }
 }
 
-/// In the object's final window, drop the trailing missing run: fragments after
-/// the receiver's newest one are not yet known lost. Earlier gaps are kept, and
-/// non-final windows are unchanged. `None` means no gap needs repair now.
-fn trim_unconfirmed_tail(plan: &NovoRudpRepairPlan, total: u64) -> Option<NovoRudpRepairPlan> {
+/// Trim unconfirmed trailing data in any window, not just the object's final
+/// window. Preserve the unsent tail already armed by the original retry wait.
+fn trim_unconfirmed_tail(
+    plan: &NovoRudpRepairPlan,
+    total: u64,
+    missing: u64,
+    armed_end: Option<u64>,
+) -> Option<NovoRudpRepairPlan> {
     let ranges = &plan.window.missing_ranges;
     let last = ranges.last()?;
-    if plan.window.range.end_inclusive.saturating_add(1) != total
-        || last.end_inclusive.saturating_add(1) != total
+    let after_window = total - plan.window.range.end_inclusive - 1;
+    if last.end_inclusive != plan.window.range.end_inclusive
+        || missing.saturating_sub(plan.window.missing_count) != after_window
     {
         return Some(plan.clone());
     }
-    let gaps = ranges[..ranges.len() - 1].to_vec();
+    let mut gaps = ranges[..ranges.len() - 1].to_vec();
+    if let Some(end) = armed_end.filter(|end| *end >= last.start) {
+        gaps.push(NovoRudpRange::new(last.start, last.end_inclusive.min(end)));
+    }
     if gaps.is_empty() {
         return None;
     }
@@ -501,6 +739,28 @@ fn trim_unconfirmed_tail(plan: &NovoRudpRepairPlan, total: u64) -> Option<NovoRu
     trimmed.window.missing_count = missing_count(&gaps);
     trimmed.window.missing_ranges = gaps;
     Some(trimmed)
+}
+
+fn repair_cursor(
+    mut plan: NovoRudpRepairPlan,
+    floor: u64,
+    previous: Option<(u64, u64)>,
+) -> Option<RepairCursor> {
+    plan.window.missing_ranges.retain_mut(|range| {
+        range.start = range.start.max(floor);
+        range.start <= range.end_inclusive
+    });
+    let index = plan.window.missing_ranges.first()?.start;
+    plan.window.missing_count = missing_count(&plan.window.missing_ranges);
+    let copy = previous
+        .filter(|(old, _)| *old == index)
+        .map_or(0, |(_, copy)| copy);
+    Some(RepairCursor {
+        plan,
+        range: 0,
+        index,
+        copy,
+    })
 }
 
 #[cfg(test)]

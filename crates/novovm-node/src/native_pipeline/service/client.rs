@@ -19,17 +19,27 @@ use novovm_network::novorudp::{
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
 };
 use novovm_protocol::native_query::{self as query, Frame, Query, Request, Response};
-use novovm_protocol::uca_spend_batch::UcaSpendBatch;
+use novovm_protocol::uca_spend_batch::AssetSpendBatchV3;
 use std::{
     net::UdpSocket,
     sync::Arc,
     time::{Duration, Instant},
 };
 
+const INITIAL_HANDSHAKE_LIFETIME: Duration = Duration::from_secs(30);
+
 pub struct PreparedQuery {
     owner: Arc<()>,
     request: Request,
     body: Arc<OutgoingMessage>,
+}
+
+#[cfg(test)]
+impl PreparedQuery {
+    /// Existing immutable request identity, not a receipt or delivery promise.
+    pub(crate) fn diagnostic_identity(&self) -> (u64, [u8; 32]) {
+        (self.request.sequence, self.body.id())
+    }
 }
 
 pub struct PreparedApplicationInput {
@@ -53,6 +63,8 @@ pub struct NativeApplicationClient {
     session: [u8; 32],
     sequence: u64,
     query_pending: Option<Request>,
+    #[cfg(test)]
+    connected_at: Instant,
 }
 impl NativeApplicationClient {
     #[allow(clippy::too_many_arguments)]
@@ -82,7 +94,7 @@ impl NativeApplicationClient {
             identity,
             node,
             NativeHandshakeBudget {
-                lifetime: Duration::from_secs(30),
+                lifetime: INITIAL_HANDSHAKE_LIFETIME,
                 retry: Duration::from_millis(50),
             },
             wall_ms,
@@ -115,7 +127,17 @@ impl NativeApplicationClient {
             session: rand::random(),
             sequence: 0,
             query_pending: None,
+            #[cfg(test)]
+            connected_at: now,
         })
+    }
+
+    /// Fixture preparation can outlast an unanswered initial handshake. This
+    /// does not expire an authenticated session or renew a production attempt.
+    #[cfg(test)]
+    pub(crate) fn startup_handshake_expired(&self, now: Instant) -> bool {
+        self.link.session_id(0).is_none()
+            && now.saturating_duration_since(self.connected_at) >= INITIAL_HANDSHAKE_LIFETIME
     }
 
     /// Preserve APFL columns and original transaction signatures through the
@@ -125,9 +147,13 @@ impl NativeApplicationClient {
     }
 
     /// Shared canonical ML-DSA-65 input on the same native application lane.
-    /// Hints locate state only; the receiving UCA owner establishes authority.
-    pub fn prepare_uca(&mut self, batch: Arc<UcaSpendBatch>) -> Result<PreparedApplicationInput> {
-        self.prepare_input(|scope| Message::UcaTransactions { scope, batch })
+    /// Actual payer/recipient accounts are signed. The receiving native owner
+    /// independently checks current asset authority at its trusted parent.
+    pub fn prepare_asset_spend(
+        &mut self,
+        batch: Arc<AssetSpendBatchV3>,
+    ) -> Result<PreparedApplicationInput> {
+        self.prepare_input(|scope| Message::AssetTransactions { scope, batch })
     }
 
     fn prepare_input(
@@ -180,7 +206,7 @@ impl NativeApplicationClient {
     }
 
     /// One outstanding read per client; independent of transaction admission.
-    /// The request echoes session, generation and exact selector in the reply.
+    /// Replies commit to the complete session, generation and exact selector.
     pub fn prepare_query(&mut self, query: Query) -> Result<PreparedQuery> {
         ensure!(
             self.query_pending.is_none(),
@@ -242,12 +268,11 @@ impl NativeApplicationClient {
             );
             bytes.extend_from_slice(&chunk);
         }
-        let Frame::Response(response) = query::decode(&bytes).map_err(anyhow::Error::msg)? else {
-            anyhow::bail!("client expected native query response");
-        };
-        if response.request != request.request {
+        let Some(response) =
+            query::decode_response(&bytes, &request.request).map_err(anyhow::Error::msg)?
+        else {
             return Ok(None);
-        } // Late old generation cannot satisfy a new read.
+        }; // Late old generation or another selector cannot satisfy a new read.
         self.query_pending = None;
         Ok(Some(response))
     }

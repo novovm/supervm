@@ -1,0 +1,151 @@
+{
+  "schema": "novovm.asset-account-correction.evidence.v1",
+  "date": "2026-10-28",
+  "branch": "dev/mldsa65-identity-closure",
+  "followup_scope": "Only cfg(test) RLPx timing fixture isolation and evidence after measured code commit; affected network checks renewed",
+  "measured_source_commit": "c6810b4934f91259cf611575a0813e6d43d979e7",
+  "baseline_commit": "8d92bbb12bf1e72b73311eb6fe3d86c6f5db95af",
+  "main_unchanged": "384afc4e008fc5ad8d5a48a92e34d8d9893f12da",
+  "implementation": {
+    "suite": "ML-DSA-65 single signature; no Ed25519 asset fallback",
+    "spend_contract": "AssetSpendIntentV2 / SignedAssetSpendV2 / NUAS v2",
+    "canonical_batch": "NUAPFL02",
+    "state_query": "NVQUERY4 / AssetSpendState",
+    "archive_packet": "NVCAND03",
+    "signed_actual_payer_and_recipient": true,
+    "unsigned_account_hints_removed": true,
+    "uca_identity_not_spending_principal": true,
+    "nonce_owner": "chain/signing-domain plus stable actual payer account",
+    "normal_distinct_account_logical_state_keys": 10,
+    "identity_recovery_implies_asset_recovery": false,
+    "management_and_recovery_use_original_candidate_and_journal": true,
+    "unknown_recovery_permission_default": "deny",
+    "old_database_automatic_conversion": false,
+    "incompatible_database_preopen_deny_guard": true,
+    "dynamic_asset_account_onboarding_delivered": false
+  },
+  "artifact_identities": {
+    "final_measured_node_sha256": "03105a3c2d9b9231792ad1fc3372c48949edac7c32453c1c160f701b74136d9e",
+    "final_measured_client_sha256": "607c1fec00c7c821b5a925e069ec2498d658b48a0424e1de653b3634ad43eb34",
+    "genesis_cli_sha256": "ada18750291265c09f2a45079b8452ea9036a56c13ba5ccfae9e77eab4978f24",
+    "native_libtest_sha256": "31eeeb5b6901cce5e975d19ca1f0b756c2da492e5bd551736c15307d0fecb834",
+    "isolated_aoem_dll_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+    "shipped_windows_dll_sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947",
+    "shipped_linux_so_sha256": "4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309",
+    "aoem_head_without_frozen_candidate_implementation": "4c57372ad0cc12123df5ca9e163a130039bfb599",
+    "shipped_libraries_missing_export": "aoem_compute_result_take_v1",
+    "shipped_library_gate_result": "FAILED: AOEM ML-DSA batch verification capability unavailable",
+    "formal_sdk_replaced": false
+  },
+  "validation": {
+    "counts_are_per_command_not_additive": true,
+    "native_pipeline": { "passed": 501, "failed": 0, "ignored": 106 },
+    "protocol": { "passed": 61, "failed": 0 },
+    "adapter_api": { "passed": 20, "failed": 0 },
+    "adapter_novovm": { "passed": 82, "failed": 0 },
+    "round_bft": { "passed": 89, "failed": 0 },
+    "actual_mldsa_cpu_integer_authority": { "passed": 2, "failed": 0 },
+    "genesis_cli": { "passed": 10, "failed": 0, "ignored": 1 },
+    "explicit_actual_genesis_approvals": { "passed": 1, "failed": 0 },
+    "actual_startup_and_cold_reopen": { "passed": 2, "failed": 0 },
+    "actual_pipeline_journal_respend_recovery": { "passed": 1, "failed": 0 },
+    "actual_management_native_services": {
+      "passed": 1, "failed": 0, "real_services": 4, "real_databases": 4,
+      "processes": 1, "machines": 1, "rotation_freeze_recovery_and_respend": true,
+      "rejected_identity_and_cross_account_keys": true,
+      "replay_and_repeated_cold_recovery": true,
+      "management_publish_crash_injection": false,
+      "management_offline_catchup_combination": false,
+      "report": "native-management-report.json"
+    },
+    "four_process_recovery": {
+      "passed": 1, "failed": 0, "processes": 4, "machines": 1, "quorum": 3,
+      "offline_healthy_heights": 40, "late_start_ms": 106252,
+      "catchup_kill_durable_height": 1, "target_height": 40,
+      "target_archive_absent_at_kill": true,
+      "same_database_and_signing_outbox": true,
+      "database_copy": false, "wallet_replay_to_laggard": false,
+      "final_heights": [41, 41, 41, 41], "cold_reopen_verified": true,
+      "elapsed_seconds": 121.29, "report": "four-process-final-report.json"
+    },
+    "default_parallel_network": {
+      "earlier_pass": { "passed": 875, "failed": 0, "ignored": 11 },
+      "latest_before_timing_isolation": { "passed": 860, "failed": 15, "ignored": 11 },
+      "first_failure": "real_rlpx_parallel_bootstrap_bounds_slow_connects_v1 exceeded original 3s",
+      "poisoned_test_lock_cascade": 14,
+      "isolated_original_test": "passed in 0.27s, not a substitute for parallel suite",
+      "final_result": "PASSED_TWICE_DEFAULT_PARALLEL",
+      "final_runs": [
+        { "passed": 875, "failed": 0, "ignored": 11, "elapsed_seconds": 20.02 },
+        { "passed": 875, "failed": 0, "ignored": 11, "elapsed_seconds": 20.13 }
+      ],
+      "original_deadline_seconds_unchanged": 3,
+      "six_real_auth_requests_and_timeouts_checked": true,
+      "one_test_process_isolated_not_whole_suite_serialized": true,
+      "production_cross_chain_global_lock_repaired": false,
+      "affected_network_strict_clippy_after_test_change": "PASSED"
+    },
+    "strict_release_clippy_all_targets_seven_affected_packages": "PASSED",
+    "format_check": "PASSED",
+    "maximum_startup_text_bytes": 16689665,
+    "startup_text_limit_unchanged": 16777216,
+    "maximum_canonical_manifest_bytes": 709378,
+    "canonical_manifest_limit_unchanged": 1048576,
+    "full_candidate_ci": "NOT_EXECUTED_BLOCKED_BY_UNQUALIFIED_SHIPPED_AOEM",
+    "checks_or_security_advisories_removed": false
+  },
+  "final_performance": {
+    "machines": 1, "node_processes": 4, "business_backend": "cpu_callbacks",
+    "signature_order": ["cpu", "gpu_required", "cpu"],
+    "all_four_receipt_observation_endpoint": true,
+    "internal_durable_timestamps_measured": false,
+    "all_economic_and_cold_checks_passed": true,
+    "body_budget_bytes_unchanged": 393216,
+    "canonical_bytes_per_signed_transfer": 5448,
+    "max_rows_at_this_size": 72,
+    "minimum_nonempty_heights_for_65536": 911,
+    "same_byte_4096": {
+      "report": "paired-4096-final-report.json",
+      "same_signed_bytes": true,
+      "rounds": [
+        { "backend": "cpu", "successful_tps": 1860.0376185342575, "elapsed_seconds": 2.202106, "p95_ms": 1067.159, "p99_ms": 1086.461 },
+        { "backend": "gpu_required", "successful_tps": 709.3665128435864, "elapsed_seconds": 5.774166, "p95_ms": 3724.015, "p99_ms": 4135.800 },
+        { "backend": "cpu", "successful_tps": 1640.6746313088465, "elapsed_seconds": 2.496534, "p95_ms": 1432.374, "p99_ms": 1441.395 }
+      ]
+    },
+    "legal_rolling_65536": {
+      "report": "rolling-65536-final-report.json",
+      "same_signed_bytes": false, "same_economic_intents": true,
+      "transactions_per_wave": 256, "validity_rule_relaxed": false,
+      "subsequent_signing_preparation_and_head_wait_included": true,
+      "rounds": [
+        { "backend": "cpu", "successful_tps": 1286.5080724573218, "elapsed_seconds": 50.940994, "p95_ms": 158.684, "p99_ms": 187.240, "heights": 1477 },
+        { "backend": "gpu_required", "successful_tps": 1186.4208471319296, "elapsed_seconds": 55.238409, "p95_ms": 162.064, "p99_ms": 198.969, "heights": 1497 },
+        { "backend": "cpu", "successful_tps": 1265.816672522279, "elapsed_seconds": 51.773690, "p95_ms": 164.334, "p99_ms": 199.879, "heights": 1499 }
+      ]
+    },
+    "historical_12k_restored": false,
+    "strict_same_byte_65536_exit_satisfied": false,
+    "gpu_default_changed": false,
+    "physical_network_bytes": null, "retransmissions": null, "peak_memory_bytes": null,
+    "negative_samples_retained": true
+  },
+  "remaining_gates": [
+    "Reproducible unified-semantic AOEM source plus qualified Windows/Linux artifacts and approved SDK update",
+    "Foreign-chain RLPx global session lock holds blocking I/O; test isolation is not its production repair",
+    "Historical throughput restoration and strict same-byte legal 65536 workload",
+    "Management publish crash and offline management catchup combinations",
+    "Multi-host and platform installation/mobile acceptance, remaining native transport/device/service ML-DSA migration",
+    "Dynamic asset-account onboarding, privacy/proof and final economic/genesis approvals"
+  ],
+  "deployment_or_genesis_activated": false,
+  "existing_user_databases_or_service_identities_modified": false,
+  "private_keys_in_evidence": false,
+  "raw_log_bundle": {
+    "file": "validation-logs.zip",
+    "sha256": "26d28059a6d674de864017b29186401a5849c3f90ae1becae3887312842e0d75",
+    "logs": 49,
+    "every_zip_entry_sha256_matches_original": true
+  },
+  "full_task_or_release_signoff": false
+}

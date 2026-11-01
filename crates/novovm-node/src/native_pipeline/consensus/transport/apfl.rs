@@ -184,7 +184,7 @@ pub(super) fn decode(tag: u8, reader: &mut Reader<'_>, limits: DecodeLimits) -> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::native_pipeline::ingress::authentication::authenticate_transfer_v3;
     use crate::native_pipeline::ingress::wire::{
@@ -266,6 +266,11 @@ mod tests {
             .collect::<Vec<_>>();
         let batch = Arc::new(ApflTransferBatch::from_raw(&raw, batch_limits(limits)).unwrap());
         (context, scope, raw, batch, limits)
+    }
+
+    pub(in super::super) fn recovery_specimen() -> (Message, DecodeLimits) {
+        let (context, _, _, batch, limits) = fixture();
+        (Message::ApflBody { context, batch }, limits)
     }
 
     #[test]

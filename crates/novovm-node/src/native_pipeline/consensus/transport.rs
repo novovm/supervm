@@ -29,7 +29,10 @@ mod apfl;
 pub use apfl::{apfl_body_id, apfl_early_body_id};
 mod uca;
 pub use uca::uca_body_id;
-pub(crate) use uca::{candidate_body_id, candidate_request, stored_body};
+pub(crate) use uca::{
+    candidate_body_id, candidate_body_id_and_wire_len, candidate_request, stored_body,
+    uca_body_reference,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
@@ -98,15 +101,22 @@ pub enum Message {
     },
     /// Explicit NUAS structural body (tag 14), not a V3 reinterpretation.
     /// Locator hints are untrusted; execution rechecks the exact parent state.
-    UcaBody {
+    AssetBody {
         context: BatchContext,
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     },
     /// NUAS structural application input (tag 15). Transport custody is not
     /// signature admission or UCA spending authority.
-    UcaTransactions {
+    AssetTransactions {
         scope: TransactionsScope,
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
+    },
+    /// Ordered pool locators for an exact v2 body (tag 20), not a candidate or
+    /// signature proof. Reconstructed rows must match the full body commitment.
+    AssetBodyReference {
+        context: BatchContext,
+        body_id: Hash,
+        transactions: Vec<Hash>,
     },
 }
 
@@ -131,6 +141,16 @@ impl DecodeLimits {
         );
         Ok(())
     }
+}
+
+/// Largest verified Proposal/Vote/Decision envelope. Derive from the original
+/// evidence codec, including a full-set QC, not from a historical signature size.
+pub(super) fn durable_control_bound(validators: usize, limits: DecodeLimits) -> Result<usize> {
+    let (vote, proposal, quorum) = wire::evidence_wire_bounds(validators)?;
+    let proposal_with_qc = PREFIX_BYTES + 4 + proposal + 1 + 4 + quorum + 32;
+    Ok(proposal_with_qc
+        .max(PREFIX_BYTES + 4 + vote)
+        .min(limits.message_bytes))
 }
 
 /// Derive once from the locally pinned chain, never from an incoming message.
@@ -189,8 +209,9 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::ApflBody { .. } => 11,
         Message::ApflEarlyBody { .. } => 12,
         Message::ApflTransactions { .. } => 13,
-        Message::UcaBody { .. } => 14,
-        Message::UcaTransactions { .. } => 15,
+        Message::AssetBody { .. } => 14,
+        Message::AssetTransactions { .. } => 15,
+        Message::AssetBodyReference { .. } => 20,
     });
     match message {
         Message::Body {
@@ -262,18 +283,41 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::ApflTransactions { scope, batch } => {
             apfl::append_transactions(&mut out, scope, batch, limits)?;
         }
-        Message::UcaBody { context, batch } => {
+        Message::AssetBody { context, batch } => {
             uca::append_body(&mut out, context, batch, limits)?;
         }
-        Message::UcaTransactions { scope, batch } => {
+        Message::AssetTransactions { scope, batch } => {
             uca::append_transactions(&mut out, scope, batch, limits)?;
         }
+        Message::AssetBodyReference {
+            context,
+            body_id,
+            transactions,
+        } => uca::append_reference(&mut out, context, body_id, transactions, limits)?,
     }
     ensure!(
         out.len() <= limits.message_bytes,
         "host network message exceeds byte budget"
     );
     Ok(out)
+}
+
+/// Solicited recovery has its own transport-completion identity. A realtime
+/// object may have been consumed while outside the bounded consensus window;
+/// that DONE must not suppress the later reply to an exact current request.
+/// Tags 16--19 preserve every signed/body payload byte and the existing lanes.
+/// This is NOT a new candidate identity or permission to execute/publish.
+pub(crate) fn encode_recovery_reply(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
+    let tag = match message {
+        Message::Decision { .. } => 16,
+        Message::Body { .. } => 17,
+        Message::ApflBody { .. } => 18,
+        Message::AssetBody { .. } => 19,
+        _ => anyhow::bail!("recovery reply requires exact decision or body"),
+    };
+    let mut bytes = encode(message, limits)?;
+    bytes[10] = tag;
+    Ok(bytes)
 }
 
 /// Allocation-free lane classification for the ingress owner's reservation.
@@ -291,8 +335,8 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
         "host network protocol/version mismatch"
     );
     match bytes[10] {
-        1 | 7 | 11 | 12 | 14 => Ok(1),
-        2..=6 | 8 | 10 => Ok(0),
+        1 | 7 | 11 | 12 | 14 | 17..=20 => Ok(1),
+        2..=6 | 8 | 10 | 16 => Ok(0),
         9 | 13 | 15 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
@@ -309,7 +353,17 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         reader.take(8)? == MAGIC && reader.take(2)? == 1u16.to_be_bytes(),
         "host network protocol/version mismatch"
     );
-    let message = match reader.byte()? {
+    // Reply envelopes differ only in delivery purpose. Reuse all original
+    // payload preflights/readers; canonical business/evidence identity does not
+    // include this transport namespace. Unknown kinds still fail closed.
+    let kind = match reader.byte()? {
+        16 => 4,
+        17 => 1,
+        18 => 11,
+        19 => 14,
+        kind => kind,
+    };
+    let message = match kind {
         1 => {
             let context = read_context(&mut reader)?;
             let count = reader.u32()? as usize;
@@ -382,6 +436,7 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         tag @ (11..=13) => apfl::decode(tag, &mut reader, limits)?,
         14 => uca::decode(&mut reader, limits)?,
         15 => uca::decode_transactions(&mut reader, limits)?,
+        20 => uca::decode_reference(&mut reader, limits)?,
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(
@@ -528,3 +583,7 @@ mod tests;
 #[cfg(test)]
 #[path = "transport/early_tests.rs"]
 mod early_tests;
+
+#[cfg(test)]
+#[path = "transport/recovery_tests.rs"]
+mod recovery_tests;

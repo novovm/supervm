@@ -61,6 +61,142 @@ const DOMAIN: Hash = [0x31; 32];
 const PEERS: [&str; 3] = ["validator-a", "validator-b", "validator-c"];
 
 #[test]
+fn expiry_skips_repeated_polls_until_the_first_exact_deadline() -> Result<()> {
+    let now = Instant::now();
+    let ttl = limits().ttl;
+    let done = message(17, 41);
+    let pending = message(CHUNK_BYTES + 1, 42);
+    let mut receiver = receiver().with_completion_history();
+    push_all(&mut receiver, PEERS[0], &done, now);
+    assert!(receiver.poll_complete(now, 64)?.is_some());
+    receiver.push(PEERS[1], &pending.frame(0)?, now + Duration::from_secs(1))?;
+    let before_deadline = now + ttl - Duration::from_nanos(1);
+    for _ in 0..64 {
+        assert_eq!(receiver.expire(before_deadline), 0);
+        assert!(receiver.poll_complete(before_deadline, 64)?.is_none());
+        assert_eq!(
+            receiver.push(PEERS[0], &done.frame(0)?, before_deadline)?,
+            FragmentAdmission::Duplicate
+        );
+    }
+    assert_eq!(receiver.expiry_scans, 0);
+    assert_eq!(receiver.completed.len(), 1);
+    assert_eq!(receiver.reserved_bytes(), pending.byte_len());
+    assert_eq!(receiver.expire(now + ttl), 0);
+    assert_eq!(receiver.expiry_scans, 1);
+    assert!(receiver.completed.is_empty());
+    assert_eq!(receiver.oldest_created, Some(now + Duration::from_secs(1)));
+    assert_eq!(receiver.expire(now + ttl + Duration::from_secs(1)), 1);
+    assert_eq!(receiver.expiry_scans, 2);
+    assert_eq!(receiver.reserved_bytes(), 0);
+    assert_eq!(receiver.oldest_created, None);
+    Ok(())
+}
+
+#[test]
+fn completion_moves_to_history_ttl_and_repairs_an_early_expiry_hint() -> Result<()> {
+    let now = Instant::now();
+    let ttl = limits().ttl;
+    let completed_at = now + Duration::from_secs(1);
+    let body = message(19, 43);
+    let mut receiver = receiver().with_completion_history();
+    push_all(&mut receiver, PEERS[0], &body, now);
+    assert!(receiver.poll_complete(completed_at, 64)?.is_some());
+    assert_eq!(receiver.reserved_bytes(), 0);
+    // Removal leaves an early hint, never a late one. The full scan repairs it.
+    assert_eq!(receiver.oldest_created, Some(now));
+    assert_eq!(receiver.expire(now + ttl), 0);
+    assert_eq!(receiver.expiry_scans, 1);
+    assert_eq!(receiver.oldest_created, Some(completed_at));
+    let before_deadline = completed_at + ttl - Duration::from_nanos(1);
+    assert_eq!(receiver.expire(before_deadline), 0);
+    assert_eq!(receiver.expiry_scans, 1);
+    assert_eq!(
+        receiver.push(PEERS[0], &body.frame(0)?, before_deadline)?,
+        FragmentAdmission::Duplicate
+    );
+    assert_eq!(receiver.expire(completed_at + ttl), 0);
+    assert!(receiver.completed.is_empty());
+    assert_eq!(receiver.oldest_created, None);
+    assert_eq!(
+        receiver.push(PEERS[0], &body.frame(0)?, completed_at + ttl)?,
+        FragmentAdmission::Accepted
+    );
+    Ok(())
+}
+
+#[test]
+fn history_eviction_and_session_retirement_leave_only_conservative_expiry_hints() -> Result<()> {
+    let now = Instant::now();
+    let ttl = limits().ttl;
+    let mut settings = limits();
+    settings.messages = 2;
+    settings.peer_messages = 1;
+    let mut receiver = receiver_with(settings).with_completion_history();
+    let first = message(20, 44);
+    let second = message(21, 45);
+    let pending = message(CHUNK_BYTES + 1, 46);
+    push_all(&mut receiver, PEERS[0], &first, now);
+    assert!(receiver.poll_complete(now, 64)?.is_some());
+    let second_at = now + Duration::from_secs(1);
+    push_all(&mut receiver, PEERS[0], &second, second_at);
+    assert!(receiver.poll_complete(second_at, 64)?.is_some());
+    assert!(receiver
+        .completed_total(PEERS[0], first.id(), second_at)
+        .is_none());
+    assert_eq!(
+        receiver.completed_total(PEERS[0], second.id(), second_at),
+        Some(1)
+    );
+    let pending_at = now + Duration::from_secs(2);
+    // The evicted object can be received again. Session retirement must release
+    // its new reservation as well as the newer completion history.
+    receiver.push(PEERS[0], &first.frame(0)?, pending_at)?;
+    receiver.push(PEERS[1], &pending.frame(0)?, pending_at)?;
+    assert_eq!(receiver.retire_peer_session(PEERS[0]), 1);
+    assert!(receiver.completed.is_empty());
+    assert_eq!(receiver.oldest_created, Some(now));
+    assert_eq!(receiver.expire(now + ttl), 0);
+    assert_eq!(receiver.oldest_created, Some(pending_at));
+    assert_eq!(receiver.reserved_bytes(), pending.byte_len());
+    assert_eq!(receiver.expire(pending_at + ttl), 1);
+    assert_eq!(receiver.reserved_bytes(), 0);
+    assert_eq!(receiver.oldest_created, None);
+    Ok(())
+}
+
+#[test]
+fn earlier_clock_input_updates_hint_and_does_not_hide_expired_objects() -> Result<()> {
+    let now = Instant::now();
+    let ttl = limits().ttl;
+    let future = now + Duration::from_secs(3);
+    let mut receiver = receiver().with_completion_history();
+    let later = message(CHUNK_BYTES + 1, 47);
+    let earlier = message(22, 48);
+    let middle = message(CHUNK_BYTES + 2, 49);
+    receiver.push(PEERS[0], &later.frame(0)?, future)?;
+    push_all(&mut receiver, PEERS[1], &earlier, now);
+    assert!(receiver.poll_complete(now, 64)?.is_some());
+    assert_eq!(receiver.oldest_created, Some(now));
+    assert_eq!(receiver.expire(now + ttl), 0);
+    assert!(receiver.completed.is_empty());
+    assert_eq!(receiver.oldest_created, Some(future));
+    let scans = receiver.expiry_scans;
+    assert_eq!(receiver.expire(now), 0);
+    assert_eq!(receiver.expiry_scans, scans);
+    let middle_at = now + Duration::from_secs(1);
+    receiver.push(PEERS[2], &middle.frame(0)?, middle_at)?;
+    assert_eq!(receiver.oldest_created, Some(middle_at));
+    assert_eq!(receiver.expire(middle_at + ttl), 1);
+    assert_eq!(receiver.reserved_bytes(), later.byte_len());
+    assert_eq!(receiver.oldest_created, Some(future));
+    assert_eq!(receiver.expire(future + ttl), 1);
+    assert_eq!(receiver.reserved_bytes(), 0);
+    assert_eq!(receiver.oldest_created, None);
+    Ok(())
+}
+
+#[test]
 fn completion_history_is_hash_checked_bounded_peer_isolated_and_does_not_renew() -> Result<()> {
     let now = Instant::now();
     let mut settings = limits();
@@ -540,6 +676,56 @@ fn duplicate_and_new_chunks_do_not_extend_original_ttl() {
     assert_eq!(receiver.pending_messages(), 0);
     assert_eq!(receiver.reserved_bytes(), 0);
     assert!(receiver.poll_complete(now + ttl, 64).unwrap().is_none());
+}
+
+#[test]
+fn observed_reassembly_does_not_combine_expired_generations_or_count_duplicates() {
+    use super::super::diagnostics::NativeTransferDiagnosticsV1;
+    let now = Instant::now();
+    let outgoing = message(CHUNK_BYTES * 2 + 17, 1);
+    let mut receiver = receiver().with_completion_history();
+    let observer = NativeTransferDiagnosticsV1::new();
+    let tag = outgoing.id();
+    let mut accept = |index, at, repair| {
+        receiver
+            .push_observed(PEERS[0], &outgoing.frame(index).unwrap(), at, |fact| {
+                observer.fragment(tag, fact, index as u64, repair, at)
+            })
+            .unwrap()
+    };
+    assert_eq!(accept(0, now, false), FragmentAdmission::Accepted);
+    assert_eq!(accept(0, now, true), FragmentAdmission::Duplicate);
+    let later = now + limits().ttl;
+    assert_eq!(accept(1, later, false), FragmentAdmission::Accepted);
+    assert_eq!(accept(2, later, false), FragmentAdmission::Accepted);
+    let partial = observer.snapshot_transfer(tag).unwrap();
+    assert_eq!(partial.assemblies_started, 2);
+    assert_eq!(partial.fragments, 2);
+    assert_eq!(partial.duplicate_repair, 1);
+    assert!(partial.fragments_complete_us.is_none());
+    assert_eq!(accept(0, later, true), FragmentAdmission::Accepted);
+    assert_eq!(accept(0, later, false), FragmentAdmission::Duplicate);
+    let complete = observer.snapshot_transfer(tag).unwrap();
+    assert_eq!(complete.fragments, 3);
+    assert_eq!(complete.repair_fragments, 1);
+    assert_eq!(complete.duplicate_data, 1);
+    assert!(complete.fragments_complete_us.is_some());
+    assert!(receiver.poll_complete(later, 64).unwrap().is_some());
+    assert_eq!(
+        receiver
+            .push_observed(PEERS[0], &outgoing.frame(1).unwrap(), later, |fact| {
+                observer.fragment(tag, fact, 1, true, later)
+            })
+            .unwrap(),
+        FragmentAdmission::Duplicate
+    );
+    assert_eq!(
+        observer
+            .snapshot_transfer(tag)
+            .unwrap()
+            .completed_history_hits,
+        1
+    );
 }
 
 #[test]

@@ -12,7 +12,9 @@ use super::store::{PersistProgress, BULK_KEYS};
 use super::{
     CandidateStore, OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig, StoredCandidate,
 };
-use crate::native_pipeline::state::tree::{read_state_value, validate_state_node_bytes, NodeHash};
+use crate::native_pipeline::state::tree::{
+    read_state_value, validate_state_node_bytes, NodeHash, StagedStateUpdate,
+};
 use anyhow::{ensure, Context, Result};
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
@@ -41,7 +43,7 @@ impl Default for IoBudget {
 struct Usage {
     requests: usize,
     bytes: usize,
-    notify: Option<thread::Thread>,
+    notify: [Option<thread::Thread>; 2],
 }
 
 struct Permit {
@@ -56,7 +58,7 @@ impl Drop for Permit {
         usage.bytes -= self.bytes;
         let notify = usage.notify.clone();
         drop(usage);
-        if let Some(thread) = &notify {
+        for thread in notify.iter().flatten() {
             thread.unpark();
         }
     }
@@ -207,6 +209,24 @@ impl IoMetadataClient {
 }
 
 impl IoReadClient {
+    /// Bounded frontier batches on the same read-only lane and storage owner.
+    /// This does not borrow candidate-capture/write permits or add parallel I/O.
+    pub(crate) fn try_read_nodes(
+        &self,
+        hashes: Vec<NodeHash>,
+    ) -> Result<Option<IoTicket<NodeReadReply>>> {
+        ensure!(
+            !hashes.is_empty() && hashes.len() <= BULK_KEYS,
+            "I/O node request must contain 1..=64 hashes"
+        );
+        let bytes = hashes.len() * (32 + 291 + 1);
+        enqueue(
+            &self.sender,
+            reserve(&self.usage, self.budget, bytes)?,
+            |reply| Operation::Nodes { hashes, reply },
+        )
+    }
+
     pub(crate) fn try_read_value(
         &self,
         root: NodeHash,
@@ -276,16 +296,17 @@ impl IoService {
     /// Blocking initialization on a new thread; call before activating network
     /// service. Opening never transfers a live native handle across threads.
     pub fn start(config: StoreConfig, mode: OpenMode, budget: IoBudget) -> Result<Self> {
-        Self::start_with_notify(config, mode, budget, None)
+        Self::start_with_notify(config, mode, budget, [None, None], None)
     }
 
-    /// Completion wakeup for the resident pipeline coordinator. Notification
+    /// Completion wakeups for the pipeline and its control thread. Notification
     /// has no data/authority; the receiving ticket still owns the exact result.
     pub(crate) fn start_with_notify(
         config: StoreConfig,
         mode: OpenMode,
         budget: IoBudget,
-        notify: Option<thread::Thread>,
+        notify: [Option<thread::Thread>; 2],
+        initial: Option<StagedStateUpdate>,
     ) -> Result<Self> {
         ensure!(
             budget.requests > 0 && budget.requests <= 65_536 && budget.bytes > 0,
@@ -305,20 +326,39 @@ impl IoService {
         }));
         let worker = thread::Builder::new()
             .name("novovm-candidate-io".into())
-            .spawn(move || match CandidateStore::open(config, mode) {
-                Ok(store) => {
-                    if ready_tx.send(Ok(())).is_ok() {
-                        run_owner(store, receiver, notify);
+            .spawn(move || {
+                let opened = (|| {
+                    let store = CandidateStore::open(config, mode)?;
+                    if let Some(initial) = initial {
+                        // Reinstall only the immutable content of the fully
+                        // approved/pinned initializer. This resumes a partial
+                        // startup write, never replaces a journal or chain head.
+                        store.install_unpublished_state(&initial)?;
                     }
-                }
-                Err(error) => {
-                    let _ = ready_tx.send(Err(error));
+                    Ok::<_, anyhow::Error>(store)
+                })();
+                match opened {
+                    Ok(store) => {
+                        if ready_tx.send(Ok(())).is_ok() {
+                            run_owner(store, receiver, notify);
+                        }
+                    }
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error));
+                    }
                 }
             })
             .context("start candidate I/O owner")?;
-        ready_rx
+        if let Err(error) = ready_rx
             .recv()
-            .context("candidate I/O owner failed during startup")??;
+            .context("candidate I/O owner failed during startup")
+            .and_then(|result| result)
+        {
+            // A failed startup must finish relinquishing the native owner
+            // before its caller can attempt a separate recovery operation.
+            let _ = worker.join();
+            return Err(error);
+        }
         Ok(Self {
             sender,
             worker,
@@ -345,7 +385,11 @@ impl IoService {
     pub(crate) fn read_client(&self) -> Result<IoReadClient> {
         let budget = IoBudget {
             requests: self.budget.requests,
-            bytes: self.budget.requests * (256 + 32 + 257),
+            // A lane ticket can own either one point result or one existing
+            // 64-node frontier reply, never both. Keep the request count and
+            // owner unchanged while accounting for the actual reply shape.
+            bytes: (self.budget.requests * (256 + 32 + 257).max(BULK_KEYS * (32 + 291 + 1)))
+                .min(self.budget.bytes),
         };
         let notify = self
             .usage
@@ -436,7 +480,7 @@ impl IoService {
 fn run_owner(
     store: CandidateStore,
     receiver: mpsc::Receiver<Command>,
-    notify: Option<thread::Thread>,
+    notify: [Option<thread::Thread>; 2],
 ) {
     let mut pending = VecDeque::new();
     let mut active: Option<WriteJob> = None;
@@ -544,7 +588,7 @@ fn run_owner(
             }
         }
         if completed {
-            if let Some(thread) = &notify {
+            for thread in notify.iter().flatten() {
                 thread.unpark();
             }
         }
@@ -553,3 +597,61 @@ fn run_owner(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod frontier_query_tests {
+    use super::*;
+
+    #[test]
+    fn query_frontier_counts_one_bounded_reply_and_keeps_candidate_quota_separate() {
+        let (sender, receiver) = mpsc::sync_channel(2);
+        let mut service = IoService {
+            sender,
+            worker: thread::spawn(|| {}),
+            usage: Arc::new(Mutex::new(Usage::default())),
+            budget: IoBudget {
+                requests: 1,
+                bytes: 128 * 1024,
+            },
+            recovery_bytes: 1024,
+        };
+        let client = service.read_client().unwrap();
+        assert_eq!(client.budget.requests, 1);
+        assert_eq!(client.budget.bytes, BULK_KEYS * (32 + 291 + 1));
+        assert!(client.try_read_nodes(Vec::new()).is_err());
+        assert!(client.try_read_nodes(vec![[1; 32]; 65]).is_err());
+        let mut ticket = client.try_read_nodes(vec![[1; 32]; 64]).unwrap().unwrap();
+        assert!(client.try_read_nodes(vec![[2; 32]]).unwrap().is_none());
+        // The held query permit cannot reserve the internal candidate quota.
+        let candidate = service.try_read_nodes(vec![[3; 32]]).unwrap().unwrap();
+        assert_eq!(service.usage.lock().unwrap().requests, 1);
+        assert_eq!(client.usage.lock().unwrap().requests, 1);
+        let Command { operation, permit } = receiver.recv().unwrap();
+        let Operation::Nodes { hashes, reply } = operation else {
+            panic!("frontier lane changed operation")
+        };
+        assert_eq!(hashes.len(), 64);
+        reply.send(Ok(vec![None; 64])).unwrap();
+        drop(permit);
+        // Completed but unconsumed data still owns the full reply reservation.
+        assert!(client.try_read_nodes(vec![[2; 32]]).unwrap().is_none());
+        assert_eq!(ticket.try_take().unwrap().unwrap().len(), 64);
+        assert_eq!(client.usage.lock().unwrap().requests, 0);
+        assert!(ticket.try_take().is_err());
+        drop(candidate);
+        // Reply-shape accounting must not override an owner's smaller limit
+        // or multiply a large request count into an unconfigured byte budget.
+        service.budget.bytes = 1024;
+        let limited = service.read_client().unwrap();
+        assert_eq!(limited.budget.bytes, 1024);
+        assert!(limited.try_read_nodes(vec![[4; 32]; 64]).is_err());
+        drop(limited);
+        service.budget.requests = 65_536;
+        service.budget.bytes = 128 * 1024 * 1024;
+        let many = service.read_client().unwrap();
+        assert_eq!(many.budget.bytes, service.budget.bytes);
+        drop(many);
+        drop(receiver);
+        service.shutdown().unwrap();
+    }
+}

@@ -1,0 +1,172 @@
+warning: in the working copy of 'crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs', LF will be replaced by CRLF the next time Git touches it
+diff --git a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
+index c0a2f52c..e1b5787f 100644
+--- a/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
++++ b/crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs
+@@ -41,6 +41,48 @@ pub(crate) enum TransactionSource {
+     },
+ }
+ 
++/// Reassembly can finish two prepared inputs in reverse order. Prefer the
++/// earlier one already present in this SAME bounded source queue; never wait
++/// for a missing sequence (queries also consume sequence numbers). This is a
++/// preparation hint, not nonce ordering or permission to skip admission.
++fn pop_transaction_source(queue: &mut VecDeque<TransactionSource>) -> Option<TransactionSource> {
++    let earlier_second = match (queue.front(), queue.get(1)) {
++        (
++            Some(TransactionSource::Raw {
++                message: first,
++                origin: first_origin,
++            }),
++            Some(TransactionSource::Raw {
++                message: second,
++                origin: second_origin,
++            }),
++        ) if first_origin == second_origin => match (first.as_ref(), second.as_ref()) {
++            (Message::Transactions { scope: a, .. }, Message::Transactions { scope: b, .. })
++            | (
++                Message::ApflTransactions { scope: a, .. },
++                Message::ApflTransactions { scope: b, .. },
++            )
++            | (
++                Message::AssetTransactions { scope: a, .. },
++                Message::AssetTransactions { scope: b, .. },
++            ) => {
++                b.sequence < a.sequence
++                    && TransactionsScope {
++                        sequence: a.sequence,
++                        ..*b
++                    } == *a
++            }
++            _ => false,
++        },
++        _ => false,
++    };
++    if earlier_second {
++        queue.remove(1)
++    } else {
++        queue.pop_front()
++    }
++}
++
+ /// The cheap availability hint retains its existing conservative bounds. Only
+ /// this exact, prepared-message check grants the final local reservation; the
+ /// auxiliary/control split can be tighter than the half-budget hint.
+@@ -79,7 +121,7 @@ impl NativeLifecycle {
+     /// The product's existing admission owner must independently authenticate
+     /// each transaction and disseminate accepted input to validator peers.
+     pub(crate) fn take_client_transactions(&mut self) -> Option<TransactionSource> {
+-        self.client_transactions.pop_front()
++        pop_transaction_source(&mut self.client_transactions)
+     }
+ 
+     /// Return to the SAME two-slot source queue. A full queue exchanges its
+@@ -349,7 +391,7 @@ impl NativeLifecycle {
+         for _ in 0..self.transactions.len() {
+             let peer = self.transaction_turn;
+             self.transaction_turn = (peer + 1) % self.transactions.len();
+-            if let Some(input) = self.transactions[peer].pop_front() {
++            if let Some(input) = pop_transaction_source(&mut self.transactions[peer]) {
+                 return Some(input);
+             }
+         }
+@@ -364,6 +406,98 @@ mod tests {
+         with_delivery_live_body_for_test, with_delivery_peer_lifecycle_for_test,
+     };
+ 
++    #[test]
++    fn completed_raw_sources_prefer_earlier_preparation_without_waiting_for_gaps() {
++        let scope = TransactionsScope {
++            chain_id: 1,
++            genesis: [1; 32],
++            protocol: [2; 32],
++            epoch: 3,
++            validator_set_hash: [4; 32],
++            session: [5; 32],
++            sequence: 7,
++        };
++        // Transport-only input: this test grants no signature or spend authority.
++        let raw = |scope| {
++            Arc::new(Message::Transactions {
++                scope,
++                raw_transactions: vec![vec![1]],
++            })
++        };
++        let source = |message| TransactionSource::Raw {
++            message,
++            origin: TransactionOrigin::Client,
++        };
++        let first = raw(scope);
++        let second = raw(TransactionsScope {
++            sequence: 5,
++            ..scope
++        });
++        let mut queue = VecDeque::from([source(first.clone()), source(second.clone())]);
++        let take = |queue: &mut VecDeque<TransactionSource>| {
++            let TransactionSource::Raw { message, .. } = pop_transaction_source(queue).unwrap()
++            else {
++                panic!("raw source changed kind");
++            };
++            message
++        };
++        assert!(Arc::ptr_eq(&take(&mut queue), &second));
++        assert!(Arc::ptr_eq(&take(&mut queue), &first));
++        assert!(queue.is_empty());
++
++        let same = raw(scope);
++        let mut queue = VecDeque::from([source(first.clone()), source(same)]);
++        assert!(
++            Arc::ptr_eq(&take(&mut queue), &first),
++            "equal sequence must retain FIFO"
++        );
++
++        for other in [
++            TransactionsScope {
++                chain_id: 2,
++                ..scope
++            },
++            TransactionsScope {
++                genesis: [2; 32],
++                ..scope
++            },
++            TransactionsScope {
++                protocol: [3; 32],
++                ..scope
++            },
++            TransactionsScope { epoch: 4, ..scope },
++            TransactionsScope {
++                validator_set_hash: [5; 32],
++                ..scope
++            },
++            TransactionsScope {
++                session: [6; 32],
++                ..scope
++            },
++        ] {
++            let second = raw(TransactionsScope {
++                sequence: 1,
++                ..other
++            });
++            let mut queue = VecDeque::from([source(first.clone()), source(second)]);
++            assert!(
++                Arc::ptr_eq(&take(&mut queue), &first),
++                "unrelated flow must retain FIFO"
++            );
++        }
++        let mut queue = VecDeque::from([
++            source(first.clone()),
++            TransactionSource::Raw {
++                message: second,
++                origin: TransactionOrigin::Peer(0),
++            },
++        ]);
++        assert!(
++            Arc::ptr_eq(&take(&mut queue), &first),
++            "unrelated source must retain FIFO"
++        );
++    }
++
+     #[test]
+     #[ignore = "real AOEM lifecycle; per-peer input reservation and height retirement"]
+     fn native_input_fanout_omits_only_full_peer_and_survives_height_advance() -> Result<()> {
+

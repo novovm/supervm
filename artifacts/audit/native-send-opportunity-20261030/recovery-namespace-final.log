@@ -1,0 +1,7 @@
+
+running 2 tests
+test native_pipeline::consensus::native::tests::recovery_namespace::native_recovery_namespace_body_redelivers_exact_bytes_before_history_expiry ... ok
+test native_pipeline::consensus::native::tests::recovery_namespace::native_recovery_namespace_decision_redelivers_exact_evidence_before_history_expiry ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1779 filtered out; finished in 0.01s
+

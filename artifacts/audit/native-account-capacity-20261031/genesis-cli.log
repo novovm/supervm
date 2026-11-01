@@ -1,0 +1,28 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+   Compiling novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+    Finished `release` profile [optimized] target(s) in 1m 44s
+     Running tests\native_genesis_cli.rs (target/runtime-rebuild\release\deps\native_genesis_cli-12bfeaf1f058ce77.exe)
+
+running 12 tests
+test actual_aoem_approvals_match_original_startup_and_reject_forgery ... ignored, requires trusted NOVOVM_AOEM_TEST_LIBRARY; uses real AOEM test keys only in memory, never activates a chain
+test maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound ... ok
+test prepare_matches_original_canonical_domain_without_authorizing_or_writing ... ok
+test prepare_preserves_full_width_values_instead_of_rounding_through_json_value ... ok
+test prepare_reads_paged_manifest_above_32_accounts_without_rounding_money ... ok
+test prepare_rejects_duplicate_top_level_and_grant_fields ... ok
+test prepare_rejects_oversized_and_trailing_json ... ok
+test prepare_rejects_unknown_nested_grant_field ... ok
+test prepare_selects_one_domain_bound_subject_and_rejects_out_of_range ... ok
+test reordered_manifest_keeps_original_bytes_and_domain ... ok
+test wrong_domain_rejects_before_approvals_or_library_access ... ok
+test wrong_library_hash_rejects_before_loading_invalid_library ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.94s
+

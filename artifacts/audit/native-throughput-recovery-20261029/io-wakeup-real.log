@@ -1,0 +1,6 @@
+
+running 1 test
+test native_pipeline::persistence::io::tests::real_io_bulk_reads_keep_order_missing_values_and_reply_budget_through_shutdown ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1747 filtered out; finished in 0.11s
+

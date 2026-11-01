@@ -1,0 +1,7 @@
+
+running 1 test
+test native_pipeline::service::rpc::uca::tests::asset_pool_compact_facts_charge_one_source_without_owned_crypto_copies ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\25588-1793404537641411500
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1820 filtered out; finished in 0.27s
+

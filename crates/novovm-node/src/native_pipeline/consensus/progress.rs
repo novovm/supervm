@@ -13,6 +13,7 @@ use super::statement::ParentPoint;
 use super::transport::Message;
 use super::wire::{
     Context as VoteContext, Hash, Phase, ValidatorSet, VerifiedProposal, VerifiedQuorum,
+    VerifiedVote,
 };
 use super::{DurableMessage, TimeoutStep, ValidatorJournal};
 use crate::native_pipeline::pipeline::{CandidatePipeline, DurableCandidate};
@@ -30,6 +31,8 @@ mod recovery;
 pub struct ProgressLimits {
     pub candidates: usize,
     pub candidate_bytes: usize,
+    /// Total vote custody: original collector plus the next-height ACK window.
+    /// Two entries per validator are taken FROM this budget, not added to it.
     pub votes: CollectorLimits,
 }
 
@@ -58,6 +61,98 @@ struct ReplayOffer {
     local: bool,
 }
 
+/// Extension of the original future-control custody, not a second collector.
+/// Each authenticated signer owns one next-height tip per phase; no weight,
+/// QC, timer, signing or publication decision is made before journal ACK.
+#[derive(Default)]
+struct FutureVotes {
+    tips: BTreeMap<(Hash, u8), VerifiedVote>,
+}
+
+impl FutureVotes {
+    fn retain(
+        &mut self,
+        current: VoteContext,
+        max_round_span: u64,
+        verified: &VerifiedVote,
+    ) -> Result<()> {
+        let vote = verified.vote();
+        ensure!(
+            current.height.checked_add(1) == Some(vote.context.height),
+            "future vote is not at the immediately next height"
+        );
+        ensure!(
+            vote.round <= max_round_span,
+            "next-height vote exceeds retained-round span"
+        );
+        // Use the signed validator, never the relaying transport peer. A peer
+        // cannot spend another signer's phase slot by relaying duplicates.
+        let key = (vote.validator_id, u8::from(vote.phase == Phase::Precommit));
+        if let Some(old) = self.tips.get(&key) {
+            let old = old.vote();
+            ensure!(
+                old.context == vote.context,
+                "next-height validator signed conflicting contexts"
+            );
+            ensure!(vote.round >= old.round, "stale next-height vote tip");
+            if vote.round == old.round {
+                ensure!(
+                    old.value == vote.value,
+                    "next-height validator equivocation"
+                );
+                return Ok(());
+            }
+        }
+        self.tips.insert(key, verified.clone());
+        Ok(())
+    }
+
+    /// Only the existing journal ACK calls this with its new full context.
+    /// Removing custody first makes promotion one-shot. The original collector
+    /// rechecks every exact-context vote and its local verification owner, with
+    /// unchanged quorum rules and without repeating its signature arithmetic.
+    fn promote(&mut self, collector: &mut VoteCollector) -> Result<()> {
+        for (_, verified) in std::mem::take(&mut self.tips) {
+            let vote = verified.vote();
+            if vote.context == *collector.context() {
+                collector.insert_verified(&verified)?;
+                crate::native_pipeline::profile::critical_event(
+                    crate::native_pipeline::profile::CriticalEvent::VoteReceived,
+                    vote.context.height,
+                    vote.round,
+                    vote.value,
+                    None,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+fn collector_limits_with_future_custody(
+    total: CollectorLimits,
+    validators: usize,
+) -> Result<CollectorLimits> {
+    let reserved = validators
+        .checked_mul(2)
+        .context("future vote budget overflow")?;
+    let collector = total
+        .max_votes
+        .checked_sub(reserved)
+        .context("vote budget cannot reserve next-height custody")?;
+    ensure!(
+        collector
+            >= validators
+                .checked_mul(5)
+                .context("collector budget overflow")?,
+        "vote budget cannot preserve current/future-round/witness reservations"
+    );
+    Ok(CollectorLimits {
+        max_votes: collector,
+        ..total
+    })
+}
+
 /// A single retained outbox slot applies backpressure before observing another
 /// journal ACK. The caller must retain a taken message until transport custody
 /// or an explicit retry/error; take_message is NOT delivery acknowledgement.
@@ -73,9 +168,13 @@ pub struct RoundProgress {
     published: Option<PublishedCandidate>,
     offers: BTreeMap<(Hash, bool), Offered>,
     // Native object completion is acknowledged once. An authenticated future
-    // proposal must survive a pending local round ACK, not rely on repeating
-    // the same completed transport object. One tip per proposer; never votes.
-    future_offers: BTreeMap<Hash, Offered>,
+    // control must survive a pending local round/height ACK, not rely on
+    // repeating a completed transport object. Only current/next height,
+    // one proposal and one decision per authenticated peer/height. Votes use
+    // the signer's separate bounded phase slots below, never relay-peer slots.
+    // These are evidence hints, not another execution or publication owner.
+    future_offers: BTreeMap<(u64, Hash, bool), Offered>,
+    future_votes: FutureVotes,
     proposed_round: Option<u64>,
     recovery_roots: BTreeMap<Hash, CandidateLocator>,
     recovery_offers: Vec<ReplayOffer>,
@@ -116,9 +215,11 @@ impl RoundProgress {
             protocol: context.protocol_commitment,
             validators: validators.clone(),
         };
+        let vote_limits =
+            collector_limits_with_future_custody(limits.votes, validators.members().len())?;
         let records = journal.take_replay_records();
         let mut this = Self {
-            collector: VoteCollector::new(context, validators, journal.round(), limits.votes)?,
+            collector: VoteCollector::new(context, validators, journal.round(), vote_limits)?,
             pacemaker: Pacemaker::new(timeouts)?,
             journal,
             domain,
@@ -129,6 +230,7 @@ impl RoundProgress {
             published: None,
             offers: BTreeMap::new(),
             future_offers: BTreeMap::new(),
+            future_votes: FutureVotes::default(),
             proposed_round: None,
             recovery_roots: BTreeMap::new(),
             recovery_offers: Vec::new(),
@@ -205,6 +307,11 @@ impl RoundProgress {
     }
     pub fn pending_message(&self) -> Option<&Message> {
         self.outbox.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_durable_message_for_test(&self) -> Option<&DurableMessage> {
+        self.journal.last_durable_message()
     }
     pub fn take_message(&mut self) -> Option<Message> {
         self.outbox.take()
@@ -297,6 +404,13 @@ impl RoundProgress {
         );
         self.candidate_bytes += bytes;
         self.recovery_roots.remove(&value);
+        crate::native_pipeline::profile::critical_event(
+            crate::native_pipeline::profile::CriticalEvent::CandidateRegistered,
+            self.context().height,
+            self.round(),
+            Some(value),
+            Some(body_id),
+        );
         Ok(true)
     }
 
@@ -304,6 +418,19 @@ impl RoundProgress {
     /// the existing native session, NOT an identity claimed in the payload.
     /// Invalid peer input is returned as an error, never freezes local signing.
     pub fn receive(&mut self, peer: Hash, message: &Message) -> Result<()> {
+        let evidence = message_evidence::verify(message, &self.domain)?;
+        self.receive_verified(peer, message, evidence)
+    }
+
+    /// NativeChannel already qualified the exact message. Reuse that fact, not
+    /// a prior consensus decision: peer, domain, context, round, equivocation,
+    /// custody budgets and execution/publication authority remain local checks.
+    pub(super) fn receive_verified(
+        &mut self,
+        peer: Hash,
+        message: &Message,
+        evidence: VerifiedEvidence,
+    ) -> Result<()> {
         ensure!(!self.is_frozen(), "progress frozen");
         ensure!(
             self.domain
@@ -313,10 +440,24 @@ impl RoundProgress {
                 .any(|v| v.id() == peer),
             "progress source is outside validator set"
         );
-        match (message, message_evidence::verify(message, &self.domain)?) {
-            (Message::Vote(vote), VerifiedEvidence::Vote(_)) => {
+        evidence.ensure_matches(message, &self.domain)?;
+        match (message, evidence) {
+            (Message::Vote(vote), VerifiedEvidence::Vote(verified)) => {
                 if vote.context == self.context() {
-                    self.collector.insert(vote)?;
+                    self.collector.insert_verified(&verified)?;
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::VoteReceived,
+                        vote.context.height,
+                        vote.round,
+                        vote.value,
+                        None,
+                    );
+                } else if self.context().height.checked_add(1) == Some(vote.context.height) {
+                    self.future_votes.retain(
+                        self.context(),
+                        self.limits.votes.max_future_round_span,
+                        &verified,
+                    )?;
                 }
             }
             (
@@ -332,6 +473,13 @@ impl RoundProgress {
                     "proposal body hint is not from proposer"
                 );
                 if p.context == self.context() && p.round == self.round() {
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::ProposalReceived,
+                        p.context.height,
+                        p.round,
+                        Some(p.value),
+                        Some(*body_id),
+                    );
                     self.offers.insert(
                         (peer, false),
                         Offered {
@@ -346,21 +494,29 @@ impl RoundProgress {
                         p.round - self.round() <= self.limits.votes.max_future_round_span,
                         "future proposal exceeds retained-round span"
                     );
-                    if self
-                        .future_offers
-                        .get(&peer)
-                        .is_none_or(|old| old.proposal.proposal().round <= p.round)
-                    {
-                        self.future_offers.insert(
-                            peer,
-                            Offered {
-                                proposal,
-                                valid: valid_quorum,
-                                decision: None,
-                                body_id: *body_id,
-                            },
-                        );
-                    }
+                    self.retain_future_offer(
+                        peer,
+                        Offered {
+                            proposal,
+                            valid: valid_quorum,
+                            decision: None,
+                            body_id: *body_id,
+                        },
+                    );
+                } else if self.context().height.checked_add(1) == Some(p.context.height) {
+                    ensure!(
+                        p.round <= self.limits.votes.max_future_round_span,
+                        "next-height proposal exceeds retained-round span"
+                    );
+                    self.retain_future_offer(
+                        peer,
+                        Offered {
+                            proposal,
+                            valid: valid_quorum,
+                            decision: None,
+                            body_id: *body_id,
+                        },
+                    );
                 }
             }
             (
@@ -380,6 +536,18 @@ impl RoundProgress {
                             body_id: *body_id,
                         },
                     );
+                } else if self.context().height.checked_add(1)
+                    == Some(proposal.proposal().context.height)
+                {
+                    self.retain_future_offer(
+                        peer,
+                        Offered {
+                            proposal,
+                            valid: None,
+                            decision: Some(certificate),
+                            body_id: *body_id,
+                        },
+                    );
                 }
             }
             _ => {
@@ -389,12 +557,44 @@ impl RoundProgress {
         Ok(())
     }
 
+    fn retain_future_offer(&mut self, peer: Hash, offer: Offered) {
+        let proposal = offer.proposal.proposal();
+        let key = (proposal.context.height, peer, offer.decision.is_some());
+        if self
+            .future_offers
+            .get(&key)
+            .is_none_or(|old| old.proposal.proposal().round <= proposal.round)
+        {
+            self.future_offers.insert(key, offer);
+        }
+    }
+
+    // Called only after the ORIGINAL journal acknowledges a local transition.
+    // A matching height is insufficient: parent block/decision and the entire
+    // domain must match the newly authoritative context before any body demand.
+    fn promote_future_offers(&mut self) {
+        let context = self.context();
+        let round = self.round();
+        for (key, offer) in std::mem::take(&mut self.future_offers) {
+            let proposal = offer.proposal.proposal();
+            if proposal.context == context {
+                if offer.decision.is_some() || proposal.round == round {
+                    self.offers.insert((key.1, key.2), offer);
+                } else if proposal.round > round {
+                    self.future_offers.insert(key, offer);
+                }
+            } else if context.height.checked_add(1) == Some(proposal.context.height) {
+                self.future_offers.insert(key, offer);
+            }
+        }
+    }
+
     /// Never blocks on transport or AOEM completion. A local persistence error
     /// latches until explicit reopening/recovery; it cannot be retried as a new
     /// signer. Peer rejection is intentionally outside this failure boundary.
     pub fn poll(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
         self.poll_acknowledgements(pipeline)?;
-        self.poll_after_receive(now)
+        self.poll_after_receive(pipeline, now)
     }
 
     /// Advance durable ACK/context and recovery before receiving control for
@@ -414,7 +614,11 @@ impl RoundProgress {
 
     /// Process already qualified proposals/QCs before the unchanged local
     /// timer. Outbox/recovery backpressure still prevents another transition.
-    pub(crate) fn poll_after_receive(&mut self, now: Instant) -> Result<()> {
+    pub(crate) fn poll_after_receive(
+        &mut self,
+        pipeline: &CandidatePipeline,
+        now: Instant,
+    ) -> Result<()> {
         let _phase = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::Consensus,
         );
@@ -426,6 +630,13 @@ impl RoundProgress {
             self.drive_consensus()?;
             self.pacemaker
                 .poll(&mut self.journal, &self.collector, now)?;
+            if self.journal.is_pending() {
+                // Submit the existing transition before the rest of this Host
+                // turn. Enqueue is NOT an ACK: only poll_acknowledgements may
+                // adopt durable state and expose the original signed outbox.
+                // Backpressure retains that same private ticket/transition.
+                self.journal.enqueue_pending(pipeline)?;
+            }
             Ok(())
         })();
         if result.is_err() {
@@ -459,24 +670,47 @@ impl RoundProgress {
         // Capture it before that ACK retires the old collector buckets.
         self.pin_decisions()?;
         if let Some(message) = self.journal.poll(pipeline)? {
+            match &message {
+                Some(DurableMessage::Vote(vote)) => {
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::LocalVoteDurable,
+                        vote.context.height,
+                        vote.round,
+                        vote.value,
+                        None,
+                    );
+                }
+                Some(DurableMessage::Decision { proposal, .. }) => {
+                    let body = self.candidate(proposal.value).map(|candidate| candidate.0);
+                    crate::native_pipeline::profile::critical_event(
+                        crate::native_pipeline::profile::CriticalEvent::DecisionDurableAck,
+                        proposal.context.height,
+                        proposal.round,
+                        Some(proposal.value),
+                        body,
+                    );
+                }
+                Some(DurableMessage::Proposal(_)) | None => {}
+            }
             if let Some(DurableMessage::Decision { proposal, .. }) = &message {
                 self.retain_published(proposal, context, parent)?;
             }
             if self.context() != context {
                 self.collector.reset_context(self.context(), self.round())?;
+                self.future_votes.promote(&mut self.collector)?;
                 self.candidates.clear();
                 let height = self.context().height;
                 self.recovered_bodies.retain(|_, body| match body.as_ref() {
                     Message::Body { context, .. }
                     | Message::ApflBody { context, .. }
-                    | Message::UcaBody { context, .. } => {
+                    | Message::AssetBody { context, .. } => {
                         context.height.saturating_add(1) >= height
                     }
                     _ => false,
                 });
                 self.candidate_bytes = 0;
                 self.offers.clear();
-                self.future_offers.clear();
+                self.promote_future_offers();
                 self.proposed_round = None;
             } else if self.round() != round {
                 self.collector
@@ -488,17 +722,7 @@ impl RoundProgress {
                 // Promote only after the same durable journal acknowledges
                 // this round. Retaining a proposal does not grant catch-up,
                 // an execution capability, a lock change or signing authority.
-                for (peer, offer) in std::mem::take(&mut self.future_offers) {
-                    match offer.proposal.proposal().round.cmp(&current) {
-                        std::cmp::Ordering::Equal => {
-                            self.offers.insert((peer, false), offer);
-                        }
-                        std::cmp::Ordering::Greater => {
-                            self.future_offers.insert(peer, offer);
-                        }
-                        std::cmp::Ordering::Less => {}
-                    }
-                }
+                self.promote_future_offers();
                 let valid = self
                     .journal
                     .verified_valid_certificate()
@@ -826,8 +1050,22 @@ impl RoundProgress {
                     .quorum(p.round, Phase::Precommit, Some(p.value))?,
             };
             if let Some(qc) = decision {
+                crate::native_pipeline::profile::critical_event(
+                    crate::native_pipeline::profile::CriticalEvent::PrecommitQcAvailable,
+                    p.context.height,
+                    p.round,
+                    Some(p.value),
+                    Some(offer.body_id),
+                );
                 self.journal
                     .observe_decision(&offer.proposal, &candidate, &qc)?;
+                crate::native_pipeline::profile::critical_event(
+                    crate::native_pipeline::profile::CriticalEvent::DecisionStaged,
+                    p.context.height,
+                    p.round,
+                    Some(p.value),
+                    Some(offer.body_id),
+                );
 
                 return Ok(());
             }
@@ -879,6 +1117,13 @@ impl RoundProgress {
                         continue;
                     };
                     if let Some(qc) = self.collector.quorum(round, Phase::Prevote, Some(value))? {
+                        crate::native_pipeline::profile::critical_event(
+                            crate::native_pipeline::profile::CriticalEvent::PrevoteQcAvailable,
+                            offer.proposal.proposal().context.height,
+                            round,
+                            Some(value),
+                            Some(offer.body_id),
+                        );
                         self.journal
                             .observe_prevotes(&qc, Some((&offer.proposal, &candidate)))?;
 
@@ -892,6 +1137,274 @@ impl RoundProgress {
                 }
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod future_vote_tests {
+    use super::*;
+    use novovm_consensus::round_bft::{
+        test_vectors::{sign_vote, FixtureSigningKey},
+        wire::{Validator, Vote},
+    };
+
+    struct Fixture {
+        keys: Vec<FixtureSigningKey>,
+        domain: MessageDomain,
+        parent: VoteContext,
+        child: VoteContext,
+    }
+
+    impl Fixture {
+        fn new() -> Result<Self> {
+            let keys: Vec<_> = (1..=4)
+                .map(|seed| FixtureSigningKey::from_bytes(&[seed; 32]))
+                .collect();
+            let members = keys
+                .iter()
+                .map(|key| Validator::new(key.verifying_key().to_bytes(), 1))
+                .collect::<Result<Vec<_>>>()?;
+            let set = Arc::new(ValidatorSet::new_for_test(7, 1, 1, members)?);
+            let parent = VoteContext {
+                chain_id: 7,
+                genesis_config_commitment: [1; 32],
+                protocol_commitment: [2; 32],
+                epoch: 1,
+                validator_set_hash: set.hash(),
+                height: 1,
+                parent_block_hash: [0; 32],
+                parent_decision_hash: [0; 32],
+            };
+            Ok(Self {
+                keys,
+                domain: MessageDomain {
+                    chain_id: 7,
+                    genesis: parent.genesis_config_commitment,
+                    protocol: parent.protocol_commitment,
+                    validators: set,
+                },
+                parent,
+                child: VoteContext {
+                    height: 2,
+                    parent_block_hash: [3; 32],
+                    parent_decision_hash: [4; 32],
+                    ..parent
+                },
+            })
+        }
+
+        fn vote(&self, signer: usize, context: VoteContext, round: u64, phase: Phase) -> Vote {
+            // Explicit consensus rule fixture, not actual ML-DSA qualification.
+            sign_vote(
+                context,
+                round,
+                phase,
+                Some([9; 32]),
+                &self.domain.validators,
+                &self.keys[signer],
+            )
+            .unwrap()
+        }
+
+        fn receive(&self, retained: &mut FutureVotes, vote: Vote) -> Result<()> {
+            let VerifiedEvidence::Vote(verified) =
+                message_evidence::verify(&Message::Vote(vote), &self.domain)?
+            else {
+                anyhow::bail!("vote fixture evidence mismatch");
+            };
+            retained.retain(self.parent, 32, &verified)
+        }
+
+        fn collector(&self, context: VoteContext) -> VoteCollector {
+            VoteCollector::new(
+                context,
+                self.domain.validators.clone(),
+                0,
+                collector_limits_with_future_custody(
+                    CollectorLimits {
+                        max_retained_rounds: 2,
+                        max_future_round_span: 32,
+                        max_votes: 28,
+                    },
+                    4,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        }
+    }
+
+    #[test]
+    fn future_vote_custody_rejects_invalid_domain_signer_signature_height_and_round() -> Result<()>
+    {
+        let f = Fixture::new()?;
+        let original = f.vote(0, f.child, 0, Phase::Prevote);
+        let mut retained = FutureVotes::default();
+        for field in 0..4 {
+            let mut vote = original.clone();
+            match field {
+                0 => vote.context.genesis_config_commitment = [17; 32],
+                1 => vote.context.protocol_commitment = [18; 32],
+                2 => vote.validator_id = [19; 32],
+                _ => vote.signature[0] ^= 1,
+            }
+            assert!(f.receive(&mut retained, vote).is_err());
+            assert!(retained.tips.is_empty());
+        }
+        for context in [
+            VoteContext {
+                genesis_config_commitment: [17; 32],
+                ..f.child
+            },
+            VoteContext {
+                protocol_commitment: [18; 32],
+                ..f.child
+            },
+        ] {
+            // A genuine signature under the same set cannot change the pinned
+            // local genesis/protocol domain at the existing receive boundary.
+            let foreign = f.vote(0, context, 0, Phase::Prevote);
+            assert!(foreign.verify(&f.domain.validators).is_ok());
+            assert!(f.receive(&mut retained, foreign).is_err());
+            assert!(retained.tips.is_empty());
+        }
+        // Even validly signed inputs cannot expand the one-height/round bound.
+        for (context, round) in [
+            (f.parent, 0),
+            (
+                VoteContext {
+                    height: 3,
+                    ..f.child
+                },
+                0,
+            ),
+            (f.child, 33),
+        ] {
+            assert!(f
+                .receive(&mut retained, f.vote(0, context, round, Phase::Prevote))
+                .is_err());
+            assert!(retained.tips.is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn future_vote_custody_deduplicates_by_signed_context_signer_phase() -> Result<()> {
+        let f = Fixture::new()?;
+        let mut retained = FutureVotes::default();
+        let vote = f.vote(0, f.child, 0, Phase::Prevote);
+        for _ in 0..8 {
+            f.receive(&mut retained, vote.clone())?;
+        }
+        assert_eq!(retained.tips.len(), 1);
+        let conflict = sign_vote(
+            f.child,
+            0,
+            Phase::Prevote,
+            Some([10; 32]),
+            &f.domain.validators,
+            &f.keys[0],
+        )?;
+        assert!(f.receive(&mut retained, conflict).is_err());
+        assert!(f
+            .receive(
+                &mut retained,
+                f.vote(
+                    0,
+                    VoteContext {
+                        parent_decision_hash: [11; 32],
+                        ..f.child
+                    },
+                    1,
+                    Phase::Prevote,
+                )
+            )
+            .is_err());
+        assert_eq!(
+            retained.tips.values().next().map(VerifiedVote::vote),
+            Some(&vote)
+        );
+        f.receive(&mut retained, f.vote(0, f.child, 1, Phase::Prevote))?;
+        assert!(f.receive(&mut retained, vote).is_err());
+        f.receive(&mut retained, f.vote(0, f.child, 0, Phase::Precommit))?;
+        assert_eq!(retained.tips.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn future_vote_custody_preserves_current_quorum_within_original_total_budget() -> Result<()> {
+        let f = Fixture::new()?;
+        let total = CollectorLimits {
+            max_retained_rounds: 2,
+            max_future_round_span: 32,
+            max_votes: 28,
+        };
+        assert_eq!(
+            collector_limits_with_future_custody(total, 4)?.max_votes,
+            20
+        );
+        assert!(collector_limits_with_future_custody(
+            CollectorLimits {
+                max_votes: 27,
+                ..total
+            },
+            4
+        )
+        .is_err());
+        let mut retained = FutureVotes::default();
+        let mut current = f.collector(f.parent);
+        for round in 0..=32 {
+            for signer in 0..4 {
+                for phase in [Phase::Prevote, Phase::Precommit] {
+                    f.receive(&mut retained, f.vote(signer, f.child, round, phase))?;
+                }
+            }
+            assert_eq!(retained.tips.len(), 8);
+            assert!(current.vote_count() + retained.tips.len() <= total.max_votes);
+        }
+        for signer in 0..4 {
+            for phase in [Phase::Prevote, Phase::Precommit] {
+                current.insert(&f.vote(signer, f.parent, 0, phase))?;
+            }
+        }
+        assert!(current.quorum(0, Phase::Prevote, Some([9; 32]))?.is_some());
+        assert!(current
+            .quorum(0, Phase::Precommit, Some([9; 32]))?
+            .is_some());
+        assert!(current.vote_count() + retained.tips.len() <= total.max_votes);
+        Ok(())
+    }
+
+    #[test]
+    fn future_vote_custody_promotes_exact_parent_once_and_retires_other_branches() -> Result<()> {
+        let f = Fixture::new()?;
+        let mut retained = FutureVotes::default();
+        for signer in 0..3 {
+            f.receive(&mut retained, f.vote(signer, f.child, 0, Phase::Prevote))?;
+        }
+        let wrong = VoteContext {
+            parent_block_hash: [77; 32],
+            ..f.child
+        };
+        f.receive(&mut retained, f.vote(3, wrong, 0, Phase::Prevote))?;
+        let mut child = f.collector(f.child);
+        assert_eq!(child.vote_count(), 0);
+        retained.promote(&mut child)?;
+        assert_eq!(child.vote_count(), 3);
+        assert!(retained.tips.is_empty());
+        assert!(child.quorum(0, Phase::Prevote, Some([9; 32]))?.is_some());
+        retained.promote(&mut child)?;
+        assert_eq!(child.vote_count(), 3);
+        child.reset_context(
+            VoteContext {
+                height: 3,
+                ..f.child
+            },
+            0,
+        )?;
+        retained.promote(&mut child)?;
+        assert_eq!(child.vote_count(), 0);
         Ok(())
     }
 }

@@ -16,7 +16,7 @@ mod driver;
 mod seed;
 pub use crate::native_pipeline::ingress::batch::{AdmissionInput, AdmissionRow};
 #[cfg(test)]
-pub(crate) use admission::admitted_apfl_for_test;
+pub(crate) use admission::{admitted_apfl_for_test, admitted_uca_for_test};
 pub use admission::{
     AdmittedBatch, AdmittedRow, AdmittedTransfer, RejectedSignatureAdmissionSubmission,
     SignatureAdmissionOutput, SignatureAdmissionRequest, SignatureAdmissionSubmission,
@@ -27,6 +27,7 @@ pub use authentication::{
     AuthenticationSubmission, AuthenticationTicket, RejectedAuthenticatedSubmission,
     RejectedAuthenticationSubmission,
 };
+pub(crate) use seed::ReadSeedLease;
 
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use crate::native_pipeline::business::nov_transfer_batch::ExecutionObservation;
@@ -43,9 +44,9 @@ use crate::native_pipeline::persistence::{
     OpenMode, PersistedCandidate, PreparedCandidate, StoreConfig,
 };
 use crate::native_pipeline::state::frontier::CaptureBudget;
-use crate::native_pipeline::state::tree::NodeHash;
+use crate::native_pipeline::state::tree::{NodeHash, StagedStateUpdate};
 use anyhow::{ensure, Context, Result};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{mpsc, Arc, Mutex, TryLockError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -66,6 +67,10 @@ pub struct PipelineConfig {
     pub store: StoreConfig,
     pub workers: u32,
     pub execution_backend: ExecutionBackend,
+    pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
+    /// Required capability of this consumer, qualified before startup readiness.
+    /// Reference V3 pipelines do not open an unused asset verifier.
+    pub prepare_asset_signatures: bool,
     pub max_batches: usize,
     pub max_retained_bytes: usize,
     pub authentication: AuthenticationBudget,
@@ -132,25 +137,15 @@ pub struct BatchRequest {
 
 impl BatchRequest {
     /// Preserve the immutable structural batch until the resident verifier
-    /// consumes each canonical row. Hints locate state; they grant no authority.
+    /// consumes each canonical row, including its signed asset accounts.
     pub fn from_uca_batch(
-        batch: Arc<novovm_protocol::uca_spend_batch::UcaSpendBatch>,
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
         context: BatchContext,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {
-        let hints = (0..batch.len())
-            .map(|index| {
-                let (payer, recipient) = batch.account_hints(index)?;
-                Ok((
-                    payer.try_into().map_err(anyhow::Error::msg)?,
-                    recipient.try_into().map_err(anyhow::Error::msg)?,
-                ))
-            })
-            .collect::<Result<Vec<_>>>()?;
         Self::from_input(
             compute::CandidateInput::Uca {
                 source: BatchSource::Uca(batch),
-                hints,
             },
             context,
             policy,
@@ -160,21 +155,12 @@ impl BatchRequest {
     /// owner. This does not activate a public native listener or grant authority.
     pub fn from_uca(
         raw_transactions: Vec<Vec<u8>>,
-        hints: Vec<(
-            crate::native_pipeline::business::quoted_transfer::Account,
-            crate::native_pipeline::business::quoted_transfer::Account,
-        )>,
         context: BatchContext,
         policy: DirectNovFeePolicy,
     ) -> Result<Self> {
-        ensure!(
-            raw_transactions.len() == hints.len(),
-            "UCA input/hint shape mismatch"
-        );
         Self::from_input(
             compute::CandidateInput::Uca {
                 source: BatchSource::Raw(raw_transactions),
-                hints,
             },
             context,
             policy,
@@ -225,15 +211,7 @@ impl BatchRequest {
             "empty pipeline request"
         );
         policy.validate()?;
-        let (mut body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
-        if let compute::CandidateInput::Uca { hints, .. } = &raw_transactions {
-            for (payer, recipient) in hints {
-                body_bytes = body_bytes
-                    .checked_add(payer.as_bytes().len())
-                    .and_then(|n| n.checked_add(recipient.as_bytes().len()))
-                    .context("UCA input/hint byte budget overflow")?;
-            }
-        }
+        let (body_bytes, max_transaction_bytes) = raw_transactions.source().sizes()?;
         let transaction_count = raw_transactions.source().len();
         Ok(Self {
             request: Box::new(compute::PrepareRequest {
@@ -414,12 +392,91 @@ struct Usage {
     bytes: usize,
     background: usize,
     ingress: usize,
+    authority: usize,
 }
+const ADMISSION_INGRESS: u8 = 0;
+const ADMISSION_AUTHORITY: u8 = 1;
+const ADMISSION_SOURCE: u8 = 2;
+
 struct Permit {
     usage: Arc<Mutex<Usage>>,
     bytes: usize,
     background: bool,
     ingress: bool,
+    admission_role: AtomicU8,
+}
+impl Permit {
+    fn park_for_authority(&self) -> Result<()> {
+        ensure!(
+            self.ingress && !self.background,
+            "non-ingress authority permit"
+        );
+        let mut usage = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
+        ensure!(
+            self.admission_role.load(Ordering::Relaxed) == ADMISSION_INGRESS,
+            "signature output already parked for authority"
+        );
+        ensure!(usage.authority == 0, "authority admission slot occupied");
+        ensure!(usage.ingress == 1, "signature admission slot not owned");
+        // The immutable ingress role still owns every retained byte. Only its
+        // scheduling phase changes, under the same mutex as issuance and drop.
+        usage.ingress -= 1;
+        usage.authority += 1;
+        self.admission_role
+            .store(ADMISSION_AUTHORITY, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn park_for_source(&self) -> Result<()> {
+        ensure!(
+            self.ingress && !self.background,
+            "non-ingress source permit"
+        );
+        let mut usage = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
+        match self.admission_role.load(Ordering::Relaxed) {
+            ADMISSION_INGRESS => {
+                ensure!(usage.ingress == 1, "signature admission slot not owned");
+                usage.ingress -= 1;
+            }
+            ADMISSION_AUTHORITY => {
+                ensure!(usage.authority == 1, "authority admission slot not owned");
+                usage.authority -= 1;
+            }
+            ADMISSION_SOURCE => return Ok(()),
+            _ => unreachable!("private admission role"),
+        }
+        self.admission_role
+            .store(ADMISSION_SOURCE, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn resume_authority(&self) -> Result<bool> {
+        ensure!(
+            self.ingress && !self.background,
+            "non-ingress authority resume"
+        );
+        let mut usage = self
+            .usage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("pipeline admission accounting poisoned"))?;
+        ensure!(
+            self.admission_role.load(Ordering::Relaxed) == ADMISSION_SOURCE,
+            "authority resume requires a parked source"
+        );
+        if usage.authority != 0 {
+            return Ok(false);
+        }
+        usage.authority += 1;
+        self.admission_role
+            .store(ADMISSION_AUTHORITY, Ordering::Relaxed);
+        Ok(true)
+    }
 }
 impl Drop for Permit {
     fn drop(&mut self) {
@@ -427,7 +484,14 @@ impl Drop for Permit {
         usage.batches -= usize::from(!self.ingress);
         usage.bytes -= self.bytes;
         usage.background -= usize::from(self.background);
-        usage.ingress -= usize::from(self.ingress);
+        if self.ingress {
+            match self.admission_role.load(Ordering::Relaxed) {
+                ADMISSION_INGRESS => usage.ingress -= 1,
+                ADMISSION_AUTHORITY => usage.authority -= 1,
+                ADMISSION_SOURCE => {}
+                _ => unreachable!("private admission role"),
+            }
+        }
     }
 }
 
@@ -480,6 +544,9 @@ enum DriverMessage {
 pub(crate) struct SignatureWork {
     strict_verified: Arc<AtomicU64>,
     reused: AtomicU64,
+    uca_batch_calls: AtomicU64,
+    asset_prepared_at_startup: AtomicBool,
+    asset_startup_us: AtomicU64,
 }
 
 pub struct CandidatePipeline {
@@ -491,6 +558,7 @@ pub struct CandidatePipeline {
     metadata: Option<IoMetadataClient>,
     identity: Arc<()>,
     usage: Arc<Mutex<Usage>>,
+    seed: seed::SeedSlot,
     signatures: Arc<SignatureWork>,
 }
 
@@ -503,6 +571,20 @@ impl CandidatePipeline {
             self.signatures.reused.load(Ordering::Relaxed),
         )
     }
+    /// Business verification calls only, excluding capability qualification/KAT.
+    /// A failed call is counted; this is neither successful rows nor finality.
+    pub fn signature_batch_calls(&self) -> u64 {
+        self.signatures.uca_batch_calls.load(Ordering::Relaxed)
+    }
+    /// Startup qualification is separate from timed business verification calls.
+    pub fn signature_startup(&self) -> (bool, u64) {
+        (
+            self.signatures
+                .asset_prepared_at_startup
+                .load(Ordering::Relaxed),
+            self.signatures.asset_startup_us.load(Ordering::Relaxed),
+        )
+    }
     pub fn execution_backend(&self) -> ExecutionBackend {
         self.config.execution_backend
     }
@@ -510,24 +592,46 @@ impl CandidatePipeline {
     /// Blocking startup before network activation. Each native session is opened
     /// once inside its dedicated owner. No engine is initialized in try_submit.
     pub fn start(config: PipelineConfig, mode: OpenMode) -> Result<Self> {
+        Self::start_inner(config, mode, None)
+    }
+
+    /// Verify pinned genesis content on the eventual I/O owner before readiness,
+    /// retaining that same open store for all later reads and durable writes.
+    pub(crate) fn start_with_initial_state(
+        config: PipelineConfig,
+        mode: OpenMode,
+        initial: StagedStateUpdate,
+    ) -> Result<Self> {
+        Self::start_inner(config, mode, Some(initial))
+    }
+
+    fn start_inner(
+        config: PipelineConfig,
+        mode: OpenMode,
+        initial: Option<StagedStateUpdate>,
+    ) -> Result<Self> {
         config.validate()?;
         let (sender, receiver) = mpsc::sync_channel(config.max_batches + 1);
         let (ready, ready_receiver) = mpsc::sync_channel(1);
         let worker_config = config.clone();
         let identity = Arc::new(());
         let worker_identity = identity.clone();
+        let seed = Arc::new(Mutex::new(None));
+        let worker_seed = seed.clone();
         let signatures = Arc::new(SignatureWork::default());
         let worker_signatures = signatures.clone();
+        let control = thread::current();
         let worker = thread::Builder::new()
             .name("novovm-candidate-pipeline".into())
             .spawn(move || {
                 driver::start(
                     worker_config,
-                    mode,
+                    (mode, initial),
                     receiver,
                     ready,
                     worker_identity,
                     worker_signatures,
+                    (worker_seed, control),
                 )
             })
             .context("start candidate pipeline")?;
@@ -545,6 +649,7 @@ impl CandidatePipeline {
             metadata: Some(metadata),
             identity,
             usage: Arc::new(Mutex::new(Usage::default())),
+            seed,
             signatures,
         })
     }
@@ -690,6 +795,7 @@ impl CandidatePipeline {
             bytes,
             background,
             ingress: false,
+            admission_role: AtomicU8::new(ADMISSION_INGRESS),
         })))
     }
 
@@ -702,6 +808,22 @@ impl CandidatePipeline {
             .as_ref()
             .context("pipeline I/O closed")?
             .try_read_value(root, key)
+    }
+
+    pub(crate) fn capture_budget(&self) -> CaptureBudget {
+        self.config.capture
+    }
+
+    /// Read-only frontier capture uses the same immutable-tree I/O owner and
+    /// bounded query lane, without reserving candidate publication permits.
+    pub(crate) fn try_read_state_nodes(
+        &self,
+        hashes: Vec<NodeHash>,
+    ) -> Result<Option<IoTicket<crate::native_pipeline::persistence::io::NodeReadReply>>> {
+        self.queries
+            .as_ref()
+            .context("pipeline I/O closed")?
+            .try_read_nodes(hashes)
     }
 
     pub(crate) fn try_read_consensus_metadata(

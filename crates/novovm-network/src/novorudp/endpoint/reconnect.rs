@@ -327,6 +327,7 @@ impl NativeEndpoint {
                 peer: index,
                 identity: peer.id.clone(),
                 frame,
+                wire_bytes: wire.len(),
             },
             previous.map(|previous| NativeSessionChange {
                 peer: index,

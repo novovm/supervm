@@ -1,0 +1,1343 @@
+{
+  "status": "QUALIFIED_BOUNDED_LOAD_WINDOWS_WITH_STATED_SYMBOL_AND_STACK_LIMITS",
+  "source_capture": "target/native-ingress-hot-thread-20261101/20261101-080217-5308",
+  "scope": "Diagnostic only; frozen production, AOEM, tester and policies unchanged. No new TPS acceptance. No raw system ETL/PDB/all-system CSV included.",
+  "sample_denominator": "Every percentage uses all raw SampledProfile events for the selected original PID/TID, including samples absent from the xperf stack report. Inclusive scopes overlap: do not add them or add exclusive leaves to their parent. 1ms CPU samples are not end-to-end latency or elapsed wall stages.",
+  "symbol_limits": "Microsoft OS PDBs and the matching frozen native/AOEM PDBs resolve most leaves. Public-only optimized Rust PDB names can label unnamed/inline functions incorrectly; rpc::error is not evidence HTTP/JSON processing. Exact RVAs, unwind boundaries, direct calls and source callsites are used for the native admission interpretation. Raw-sample versus stack-hit difference is retained unassigned, not silently renormalized.",
+  "files": [
+    {
+      "sha": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+      "role": "node",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-throughput-20261031\\candidate-v4\\novovm-node.exe"
+    },
+    {
+      "sha": "647a058adb28dbc1b6a134bbaace33f8a942ea6c2fb5b38abb4e69b335025ecb",
+      "role": "driver",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-throughput-20261031\\stability-observer\\native-tests.exe"
+    },
+    {
+      "sha": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+      "role": "aoem",
+      "path": "D:/WorksArea/AOEM/artifacts/mldsa-native-paired-20261027/aoem_ffi.dll"
+    },
+    {
+      "sha": "76832311a5279cab395bad164d446f2bd97c4bb47a5a864795b4d8671ae18dfe",
+      "role": "node_symbols",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\runtime-rebuild\\release\\novovm_node.pdb"
+    },
+    {
+      "sha": "c38757c548dad6179f4c431ef4bc279087716d0081b8d496000c5196417186a8",
+      "role": "driver_symbols",
+      "path": "D:\\WorksArea\\SUPERVM\\target\\runtime-rebuild\\release\\deps\\novovm_node-9c742166f7d138ac.pdb"
+    },
+    {
+      "sha": "cd59bc926dfa27632d22e948f46155582277f1a3579549f078bdeaeb36e05d78",
+      "role": "aoem_symbols",
+      "path": "D:/WorksArea/AOEM/cargo-target-ci-local/release/aoem_ffi.pdb"
+    }
+  ],
+  "input_identity": "one in-memory signed corpus replayed byte-identically across CPU/GPU/CPU",
+  "exact_address_symbol_review": {
+    "scope": "Read-only exact-address verification on frozen candidate-v4 node PE and matching PDB. Raw system traces stay private. No production source changed.",
+    "capture": "20261101-080217-5308",
+    "round": 0,
+    "pid": 9360,
+    "tid": 33260,
+    "node_image_base": "0x00007ff748830000",
+    "node_sha256": "6ed28e989a0d11a78a4943e57e437de112bd7261b1ea57b7c87c282b53200a74",
+    "pdb_sha256": "76832311a5279cab395bad164d446f2bd97c4bb47a5a864795b4d8671ae18dfe",
+    "pdb_limit": "llvm-pdbutil dump --symbols --modi=1 reports module stream not present. llvm-symbolizer resolves nearest public names but returns empty FileName and Line=0; no private function/inline source identity can be inferred from a public label alone.",
+    "raw_tick_sample_events": 8389,
+    "raw_exact_address_crosscheck": {
+      "method": "Stream original PerfInfo SampledProfile/Stack records, target PID9360/TID33260; each inclusive range counted once per sample event, no symbol names used. Stack-only missing/unrepresented samples remain in raw denominator.",
+      "actual_json_error_and_cleanup_range": [
+        "0x5c8450",
+        "0x5c8ed1"
+      ],
+      "actual_json_error_pc_samples": 0,
+      "actual_json_error_stack_samples": 0,
+      "unnamed_admission_range": [
+        "0x5ca840",
+        "0x5d016c"
+      ],
+      "unnamed_admission_pc_samples": 11,
+      "unnamed_admission_stack_samples": 1336,
+      "native_aad_range": [
+        "0x1f72c80",
+        "0x1f7303c"
+      ],
+      "native_aad_pc_samples": 7,
+      "native_aad_stack_samples": 184,
+      "limit": "The unnamed admission range is one verified machine function, not the complete nearest-public rpc::error aggregate; other private functions can share that label. These raw-address counts do not replace the parent report normalization or missing-stack accounting."
+    },
+    "native_admission_alias": {
+      "misleading_public": "novovm_node::native_pipeline::service::rpc::error::ha5f169b704c97770",
+      "public_rva": "0x5c8450",
+      "actual_error_unwind_range": [
+        "0x5c8450",
+        "0x5c8b6b"
+      ],
+      "actual_error_disassembly": "At RVA0x5c8507/0x5c850e/0x5c8549/0x5c854d machine instructions store jsonrpc and 2.0 literals, confirming actual JSON error body at its own entry.",
+      "raw_sample_time_us": 10577,
+      "raw_stack_caller_rvas": [
+        "0xb1ce2d",
+        "0x5cb11a",
+        "0x5b220b",
+        "0x8cdea"
+      ],
+      "raw_stack_caller_addresses": [
+        "0x00007ff74934ce2d",
+        "0x00007ff748dfb11a",
+        "0x00007ff748de220b",
+        "0x00007ff7488bcdea"
+      ],
+      "raw_stack_source": "workload-round-0-perf-dump.csv; same caller chain also observed at sample18755us",
+      "actual_native_admission_unwind_range": [
+        "0x5ca840",
+        "0x5d016c"
+      ],
+      "direct_call_proof": [
+        {
+          "rva": "0x5b2206",
+          "bytes": "e8 35 86 01 00",
+          "target_rva": "0x5ca840",
+          "return_rva": "0x5b220b",
+          "caller": "RpcLifecycle::poll"
+        },
+        {
+          "rva": "0x5cb115",
+          "bytes": "e8 76 1c 55 00",
+          "target_rva": "0xb1cd90",
+          "return_rva": "0x5cb11a",
+          "callee": "UcaBatchStateRead::poll"
+        }
+      ],
+      "source_correspondence": [
+        "crates/novovm-node/src/native_pipeline/service/rpc.rs:528 calls poll_admission, followed by poll_native_query",
+        "crates/novovm-node/src/native_pipeline/service/rpc/admission.rs:723 defines poll_admission and invokes poll_uca_admission",
+        "crates/novovm-node/src/native_pipeline/service/rpc/admission.rs:1193 defines poll_uca_admission, which creates/polls UcaBatchStateRead"
+      ],
+      "conclusion": "The raw UcaBatchStateRead caller is outside the actual JSON error body, inside an unnamed native admission function. Treat the aggregate rpc::error bucket as a nearest-public attribution artifact, not proof of HTTP/JSON processing. Current source/control-call correspondence identifies native admission, but exact original private/inline name is unavailable in this PDB. Do not claim all grouped hits belong to a source line."
+    },
+    "secure_aad_alias": {
+      "misleading_public": "novovm_network::eth_rlpx::eth_rlpx_build_get_block_headers_by_hash_payload_v1::h8b1061951be710f3",
+      "public_rva": "0x1f72490",
+      "actual_public_function_unwind_range": [
+        "0x1f72490",
+        "0x1f72972"
+      ],
+      "actual_aad_helper_unwind_range": [
+        "0x1f72c80",
+        "0x1f7303c"
+      ],
+      "raw_samples": [
+        {
+          "time_us": 139684,
+          "caller_rvas": [
+            "0x1f3b801",
+            "0x1f72fcf",
+            "0x15a8f35"
+          ],
+          "known_parent": "E2eSecureChannelV1::open_novorudp_frame_owned"
+        },
+        {
+          "time_us": 163002,
+          "caller_rvas": [
+            "0x1f3b801",
+            "0x1f72fcf",
+            "0x15a858b"
+          ],
+          "known_parent": "E2eSecureChannelV1::seal_novorudp_frame"
+        }
+      ],
+      "direct_call_proof": [
+        {
+          "rva": "0x15a8586",
+          "bytes": "e8 f5 a6 9c 00",
+          "target_rva": "0x1f72c80",
+          "return_rva": "0x15a858b",
+          "caller": "seal_novorudp_frame"
+        },
+        {
+          "rva": "0x15a8f30",
+          "bytes": "e8 4b 9d 9c 00",
+          "target_rva": "0x1f72c80",
+          "return_rva": "0x15a8f35",
+          "caller": "open_novorudp_frame_owned"
+        },
+        {
+          "rva": "0x1f72fca",
+          "bytes": "e8 c1 87 fc ff",
+          "target_rva": "0x1f3b790",
+          "return_rva": "0x1f72fcf",
+          "callee": "alloc::raw_vec::RawVecInner::reserve::do_reserve_and_handle"
+        }
+      ],
+      "machine_code_correspondence": "Helper builds Vec<u8>, appends an8-byte length38 then the domain literal ending frame-v1, version/session/peer/sequence/nonce fields, and grows Vec during append. These match the existing secure_frame_aad_v1 body rather than RLP header payload generation.",
+      "source_correspondence": [
+        "crates/novovm-network/src/product_overlay.rs:22 domain novovm-product-overlay-secure-frame-v1 length38",
+        "crates/novovm-network/src/product_overlay.rs:506 seal calls secure_frame_aad_v1",
+        "crates/novovm-network/src/product_overlay.rs:558 open calls secure_frame_aad_v1",
+        "crates/novovm-network/src/product_overlay.rs:771 secure_frame_aad_v1 builds Vec and appends the exact envelope fields"
+      ],
+      "conclusion": "The raw sampled return address0x1f72fcf is beyond the named eth_rlpx function and within the actual shared AAD-preparation helper. This is native NovoRUDP authenticated-envelope preparation/allocation, not evidence of foreign-chain/HTTP/WSS traffic."
+    },
+    "tools": [
+      "xperf -i round-0.etl -o workload-round-0-perf-dump.csv -a dumper -stacktimeshifting -provider {ce1dbfb4-137e-4da6-87b0-3f59aa102cbc}",
+      "llvm-symbolizer --obj=<frozen-node> --relative-address --inlines --output-style=JSON <RVAs>; CWD contains matching novovm_node.pdb",
+      "llvm-pdbutil dump --publics / --symbols --modi=1 <matching-PDB>",
+      "llvm-readobj --unwind <frozen-node>",
+      "llvm-objdump -d --start-address=<PE-VA> --stop-address=<PE-VA> <frozen-node>"
+    ]
+  },
+  "same_signed_corpus_and_initial_state": true,
+  "windows": [
+    {
+      "round": 0,
+      "profile": "NativeCpuStacks",
+      "backend": "cpu",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "trace_start_unix_ms": 1793491374214,
+      "trace_end_unix_ms": 1793491382737,
+      "drive_start_unix_ms": 1793491367800,
+      "drive_end_unix_ms": 1793491394852,
+      "overlap_seconds": 8.523,
+      "etl_sha256": "c5059c20e4cf5caaa33b1e030b60478229247bc5e9f26c58305e2b8db7a3ce04",
+      "node_pids": [
+        9360,
+        11400,
+        25008,
+        2932
+      ],
+      "diagnostic_tps": 2422.7633283775913,
+      "p95_us": 4162820,
+      "p99_us": 4760825,
+      "successful_transactions": 65536,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 1,
+      "profile": "NativeCpuStacks",
+      "backend": "gpu_required",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "trace_start_unix_ms": 1793491419433,
+      "trace_end_unix_ms": 1793491427960,
+      "drive_start_unix_ms": 1793491416323,
+      "drive_end_unix_ms": 1793491441884,
+      "overlap_seconds": 8.527,
+      "etl_sha256": "595c9fbc9063a792d8d59be87270e7523b3392f4855d4d8287c45015ff06a8f2",
+      "node_pids": [
+        17884,
+        28096,
+        30516,
+        22236
+      ],
+      "diagnostic_tps": 2564.0721672697146,
+      "p95_us": 4155454,
+      "p99_us": 4377570,
+      "successful_transactions": 65536,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 2,
+      "profile": "NativeSchedule",
+      "backend": "cpu",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "trace_start_unix_ms": 1793491467826,
+      "trace_end_unix_ms": 1793491473311,
+      "drive_start_unix_ms": 1793491461360,
+      "drive_end_unix_ms": 1793491487912,
+      "overlap_seconds": 5.485,
+      "etl_sha256": "f096e358d3224803f405698052ee2b0d2ca75db1490847feae27a96c5feedcc1",
+      "node_pids": [
+        36392,
+        20792,
+        18240,
+        35816
+      ],
+      "diagnostic_tps": 2468.3081377787184,
+      "p95_us": 4288184,
+      "p99_us": 4452492,
+      "successful_transactions": 65536,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 3,
+      "profile": "NativeSchedule",
+      "backend": "gpu_required",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "trace_start_unix_ms": 1793491512722,
+      "trace_end_unix_ms": 1793491518224,
+      "drive_start_unix_ms": 1793491509531,
+      "drive_end_unix_ms": 1793491534533,
+      "overlap_seconds": 5.502,
+      "etl_sha256": "73be7de5ae43a7fe5d48503a58476027751964063d77f1adb99cb72c55830a42",
+      "node_pids": [
+        35356,
+        28848,
+        11384,
+        23828
+      ],
+      "diagnostic_tps": 2621.2701416948184,
+      "p95_us": 3981192,
+      "p99_us": 4346663,
+      "successful_transactions": 65536,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    },
+    {
+      "round": 4,
+      "profile": "NativeCpuStacks",
+      "backend": "cpu",
+      "lost_events": 0,
+      "lost_buffers": 0,
+      "trace_start_unix_ms": 1793491560724,
+      "trace_end_unix_ms": 1793491569327,
+      "drive_start_unix_ms": 1793491554243,
+      "drive_end_unix_ms": 1793491580373,
+      "overlap_seconds": 8.603,
+      "etl_sha256": "b03f026e8ac9969e3aabfe065668f6290f1526c9ea03c5e4032ec3b34ba2b961",
+      "node_pids": [
+        24200,
+        11772,
+        17520,
+        31988
+      ],
+      "diagnostic_tps": 2508.1552551777013,
+      "p95_us": 3785726,
+      "p99_us": 4071443,
+      "successful_transactions": 65536,
+      "workload_passed": true,
+      "cold_recovery_passed": true,
+      "fee_audit_passed": true
+    }
+  ],
+  "cpu": [
+    {
+      "round": 0,
+      "backend": "cpu",
+      "pid": 9360,
+      "tid": 33260,
+      "thread_name": "novovm-native-tick",
+      "sample_period_us": 1000,
+      "raw_sample_count": 8389,
+      "xperf_stack_hits": 8191,
+      "samples_not_represented_in_stack_report": 198,
+      "stack_report_coverage_percent": 97.63976636071045,
+      "unresolved_leaf_hits": 3,
+      "metrics": {
+        "native_network": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle7poll_io17h943eb9fc4aea01cdE",
+          "hits": 5332,
+          "percent_of_all_target_samples": 63.55942305399929
+        },
+        "object_send": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp13object_sender18NativeObjectSender17poll_send_limited17h94374dd1dfde342cE",
+          "hits": 3668,
+          "percent_of_all_target_samples": 43.723924186434616
+        },
+        "system_send": {
+          "symbol": "novovm-node.exe!std::sys::net::connection::socket::UdpSocket::send_to",
+          "hits": 1833,
+          "percent_of_all_target_samples": 21.850041721301704
+        },
+        "system_receive": {
+          "symbol": "novovm-node.exe!std::net::udp::UdpSocket::recv_from",
+          "hits": 304,
+          "percent_of_all_target_samples": 3.623793062343545
+        },
+        "loopback_enqueue": {
+          "symbol": "tcpip.sys!IppLoopbackEnqueue",
+          "hits": 1266,
+          "percent_of_all_target_samples": 15.091190845154367
+        },
+        "secure_seal": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network15product_overlay18E2eSecureChannelV119seal_novorudp_frame17hf3265fb3291b3c93E",
+          "hits": 1487,
+          "percent_of_all_target_samples": 17.7255930385028
+        },
+        "secure_open": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network15product_overlay18E2eSecureChannelV125open_novorudp_frame_owned17hfae616d50fb27fccE",
+          "hits": 897,
+          "percent_of_all_target_samples": 10.692573608296579
+        },
+        "aead_encrypt": {
+          "symbol": "novovm-node.exe!_ZN4aead11AeadInPlace16encrypt_in_place17hde4fe07625b56f49E",
+          "hits": 1149,
+          "percent_of_all_target_samples": 13.696507331028728
+        },
+        "aead_decrypt": {
+          "symbol": "novovm-node.exe!_ZN4aead11AeadInPlace16decrypt_in_place17h9ddec7392551665cE",
+          "hits": 682,
+          "percent_of_all_target_samples": 8.129693646441769
+        },
+        "frame_checksum": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp5frame36novorudp_transport_frame_checksum_v017hcdcdc13a9a3818bbE.llvm.6155027136601634322",
+          "hits": 412,
+          "percent_of_all_target_samples": 4.9111932292287515
+        },
+        "admission_state_poll": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query3uca17UcaBatchStateRead4poll17h9dc922512c3f138cE",
+          "hits": 1079,
+          "percent_of_all_target_samples": 12.862081296936465
+        },
+        "admission_state_prepare": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query3uca17UcaBatchStateRead3new17hc07d5fd9c9ff3f8fE",
+          "hits": 156,
+          "percent_of_all_target_samples": 1.8595780188341875
+        },
+        "bulk_capture": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE",
+          "hits": 729,
+          "percent_of_all_target_samples": 8.689951126475146
+        },
+        "tree_node_decode": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E",
+          "hits": 425,
+          "percent_of_all_target_samples": 5.066158064131601
+        },
+        "sha256_compress": {
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE",
+          "hits": 858,
+          "percent_of_all_target_samples": 10.227679103588033
+        },
+        "consensus_poll": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle4poll17hefc1d9c8173afa16E",
+          "hits": 666,
+          "percent_of_all_target_samples": 7.938967695792108
+        },
+        "mldsa_bridge_on_this_thread": {
+          "symbol": "aoem_ffi.dll!aoem_mldsa_bridge_verify",
+          "hits": 33,
+          "percent_of_all_target_samples": 0.3933722732149243
+        }
+      },
+      "exclusive_top": [
+        {
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE",
+          "hits": 858,
+          "percent_of_all_target_samples": 10.227679103588033
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN8chacha208backends4avx25inner17h593b9e86687be917E.llvm.2543196795479789641",
+          "hits": 443,
+          "percent_of_all_target_samples": 5.280724758612468
+        },
+        {
+          "symbol": "ntdll.dll!RtlpLowFragHeapAllocFromContext",
+          "hits": 336,
+          "percent_of_all_target_samples": 4.005244963642865
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E",
+          "hits": 333,
+          "percent_of_all_target_samples": 3.969483847896054
+        },
+        {
+          "symbol": "vcruntime140.dll!MoveSmall4",
+          "hits": 333,
+          "percent_of_all_target_samples": 3.969483847896054
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN8poly13057backend4avx25State13compute_block17hd6b4d91242e20db1E",
+          "hits": 302,
+          "percent_of_all_target_samples": 3.5999523185123374
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx227_mm256_permutevar8x32_epi3217hd1094ad843e43e28E.llvm.11371739752038881803",
+          "hits": 279,
+          "percent_of_all_target_samples": 3.3257837644534507
+        },
+        {
+          "symbol": "ntdll.dll!RtlFreeHeap",
+          "hits": 268,
+          "percent_of_all_target_samples": 3.1946596733818096
+        },
+        {
+          "symbol": "vcruntime140.dll!memcmp",
+          "hits": 220,
+          "percent_of_all_target_samples": 2.622481821432829
+        },
+        {
+          "symbol": "vcruntime140.dll!Mov0YmmBlocks",
+          "hits": 185,
+          "percent_of_all_target_samples": 2.205268804386697
+        },
+        {
+          "symbol": "tcpip.sys!WfpGetProfileIdFromInterface",
+          "hits": 149,
+          "percent_of_all_target_samples": 1.7761354154249613
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi3217hbbc35e272b29b261E.llvm.11371739752038881803",
+          "hits": 141,
+          "percent_of_all_target_samples": 1.6807724401001312
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE",
+          "hits": 127,
+          "percent_of_all_target_samples": 1.5138872332816784
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_and_si25617h5c4306ee304279e6E.llvm.11371739752038881803",
+          "hits": 125,
+          "percent_of_all_target_samples": 1.4900464894504708
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KzRaiseIrql",
+          "hits": 121,
+          "percent_of_all_target_samples": 1.4423650017880558
+        },
+        {
+          "symbol": "ntdll.dll!memcpy",
+          "hits": 113,
+          "percent_of_all_target_samples": 1.3470020264632256
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KeAcquireInStackQueuedSpinLock",
+          "hits": 100,
+          "percent_of_all_target_samples": 1.1920371915603767
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx218_mm256_blend_epi3217h56bb5e03e2d4f246E.llvm.11371739752038881803",
+          "hits": 94,
+          "percent_of_all_target_samples": 1.120514960066754
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KeReleaseInStackQueuedSpinLock",
+          "hits": 93,
+          "percent_of_all_target_samples": 1.1085945881511503
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi6417hd60155779c71b8fdE.llvm.11371739752038881803",
+          "hits": 87,
+          "percent_of_all_target_samples": 1.0370723566575277
+        }
+      ],
+      "sha256_immediate_callers": [
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp5frame36novorudp_transport_frame_checksum_v017hcdcdc13a9a3818bbE.llvm.6155027136601634322",
+          "hits": 327,
+          "percent_of_all_target_samples": 3.8979616164024318
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree17decode_state_node17hf47d90390b277947E.llvm.2706430040075246553",
+          "hits": 115,
+          "percent_of_all_target_samples": 1.3708427702944332
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp9fragments15OutgoingMessage12with_profile17h8e67346968b290d5E",
+          "hits": 98,
+          "percent_of_all_target_samples": 1.168196447729169
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17h2eccd979542198fcE.llvm.2706430040075246553",
+          "hits": 80,
+          "percent_of_all_target_samples": 0.9536297532483013
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus9transport3uca24uca_body_id_and_wire_len17ha7f701edea5f9f1aE.llvm.7767145631326574623",
+          "hits": 62,
+          "percent_of_all_target_samples": 0.7390630587674335
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp9fragments11Reassembler27poll_complete_with_progress17h4fac003069fab6b1E",
+          "hits": 55,
+          "percent_of_all_target_samples": 0.6556204553582072
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17hfeb30a2c5bc7b10dE.llvm.6155027136601634322",
+          "hits": 45,
+          "percent_of_all_target_samples": 0.5364167362021696
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18SignedAssetSpendV38validate17he8d130a722f50892E",
+          "hits": 25,
+          "percent_of_all_target_samples": 0.29800929789009417
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_exec17semantic_graph_v313session_scope4open17h1b61cd84a9c70cadE",
+          "hits": 24,
+          "percent_of_all_target_samples": 0.2860889259744904
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree10digest_key17h913ac5c83e0c7b61E",
+          "hits": 14,
+          "percent_of_all_target_samples": 0.16688520681845273
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17h2eccd979542198fcE.llvm.18172072907733460216",
+          "hits": 5,
+          "percent_of_all_target_samples": 0.059601859578018834
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18AssetSpendIntentV314nonce_identity17h5ab990dc55414b11E",
+          "hits": 2,
+          "percent_of_all_target_samples": 0.02384074383120753
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core3ptr64drop_in_place$LT$novovm_protocol..tx_wire..NovNativeTxWireV1$GT$17hb33539771644bdd6E.llvm.4698628592647793878",
+          "hits": 2,
+          "percent_of_all_target_samples": 0.02384074383120753
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus9statement14BlockStatement7checked17h28c1bf1a70cc807cE.llvm.15246534377537268124",
+          "hits": 1,
+          "percent_of_all_target_samples": 0.011920371915603765
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17h2eccd979542198fcE.llvm.7767145631326574623",
+          "hits": 1,
+          "percent_of_all_target_samples": 0.011920371915603765
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN16novovm_consensus9round_bft7journal5codec24decode_archived_decision17h7ee56c00cd0fa550E",
+          "hits": 1,
+          "percent_of_all_target_samples": 0.011920371915603765
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18SignedAssetSpendV36encode17h1f804bba32c55aecE",
+          "hits": 1,
+          "percent_of_all_target_samples": 0.011920371915603765
+        }
+      ],
+      "system_send_immediate_callers": [
+        {
+          "symbol": "novovm-node.exe!_ZN121_$LT$novovm_network..novorudp..carrier..SegmentedUdpIo$u20$as$u20$novovm_network..novorudp..carrier..NativeDatagramIo$GT$8try_send17h53e41f2c50544357E",
+          "hits": 987,
+          "percent_of_all_target_samples": 11.765407080700918
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN16novovm_udp_batch9segmented24send_udp_segmented_batch17h715902002363535fE",
+          "hits": 846,
+          "percent_of_all_target_samples": 10.084634640600786
+        }
+      ],
+      "private_export_hashes": {
+        "stack_html": "10984e83c1d092df13b0db558682bc02b84161babe9a79a1bbec52464c4d49ce",
+        "sample_events": "1ce99ae8ededca2dbab0d732719c63b7070459199c13ab03c7f071bd1f6b72f7"
+      }
+    },
+    {
+      "round": 1,
+      "backend": "gpu_required",
+      "pid": 17884,
+      "tid": 13856,
+      "thread_name": "novovm-native-tick",
+      "sample_period_us": 1000,
+      "raw_sample_count": 8384,
+      "xperf_stack_hits": 8178,
+      "samples_not_represented_in_stack_report": 206,
+      "stack_report_coverage_percent": 97.54293893129771,
+      "unresolved_leaf_hits": 4,
+      "metrics": {
+        "native_network": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle7poll_io17h943eb9fc4aea01cdE",
+          "hits": 5341,
+          "percent_of_all_target_samples": 63.704675572519086
+        },
+        "object_send": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp13object_sender18NativeObjectSender17poll_send_limited17h94374dd1dfde342cE",
+          "hits": 3628,
+          "percent_of_all_target_samples": 43.27290076335878
+        },
+        "system_send": {
+          "symbol": "novovm-node.exe!std::sys::net::connection::socket::UdpSocket::send_to",
+          "hits": 1795,
+          "percent_of_all_target_samples": 21.40982824427481
+        },
+        "system_receive": {
+          "symbol": "novovm-node.exe!std::net::udp::UdpSocket::recv_from",
+          "hits": 318,
+          "percent_of_all_target_samples": 3.7929389312977095
+        },
+        "loopback_enqueue": {
+          "symbol": "tcpip.sys!IppLoopbackEnqueue",
+          "hits": 1252,
+          "percent_of_all_target_samples": 14.933206106870228
+        },
+        "secure_seal": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network15product_overlay18E2eSecureChannelV119seal_novorudp_frame17hf3265fb3291b3c93E",
+          "hits": 1472,
+          "percent_of_all_target_samples": 17.557251908396946
+        },
+        "secure_open": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network15product_overlay18E2eSecureChannelV125open_novorudp_frame_owned17hfae616d50fb27fccE",
+          "hits": 931,
+          "percent_of_all_target_samples": 11.104484732824428
+        },
+        "aead_encrypt": {
+          "symbol": "novovm-node.exe!_ZN4aead11AeadInPlace16encrypt_in_place17hde4fe07625b56f49E",
+          "hits": 1102,
+          "percent_of_all_target_samples": 13.144083969465647
+        },
+        "aead_decrypt": {
+          "symbol": "novovm-node.exe!_ZN4aead11AeadInPlace16decrypt_in_place17h9ddec7392551665cE",
+          "hits": 689,
+          "percent_of_all_target_samples": 8.218034351145038
+        },
+        "frame_checksum": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp5frame36novorudp_transport_frame_checksum_v017hcdcdc13a9a3818bbE.llvm.6155027136601634322",
+          "hits": 461,
+          "percent_of_all_target_samples": 5.498568702290076
+        },
+        "admission_state_poll": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query3uca17UcaBatchStateRead4poll17h9dc922512c3f138cE",
+          "hits": 1197,
+          "percent_of_all_target_samples": 14.277194656488549
+        },
+        "admission_state_prepare": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query3uca17UcaBatchStateRead3new17hc07d5fd9c9ff3f8fE",
+          "hits": 171,
+          "percent_of_all_target_samples": 2.0395992366412217
+        },
+        "bulk_capture": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE",
+          "hits": 750,
+          "percent_of_all_target_samples": 8.945610687022901
+        },
+        "tree_node_decode": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E",
+          "hits": 431,
+          "percent_of_all_target_samples": 5.14074427480916
+        },
+        "sha256_compress": {
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE",
+          "hits": 853,
+          "percent_of_all_target_samples": 10.174141221374047
+        },
+        "consensus_poll": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle4poll17hefc1d9c8173afa16E",
+          "hits": 555,
+          "percent_of_all_target_samples": 6.619751908396947
+        },
+        "mldsa_bridge_on_this_thread": {
+          "symbol": "aoem_ffi.dll!aoem_mldsa_bridge_verify",
+          "hits": 23,
+          "percent_of_all_target_samples": 0.2743320610687023
+        }
+      },
+      "exclusive_top": [
+        {
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE",
+          "hits": 853,
+          "percent_of_all_target_samples": 10.174141221374047
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN8chacha208backends4avx25inner17h593b9e86687be917E.llvm.2543196795479789641",
+          "hits": 477,
+          "percent_of_all_target_samples": 5.689408396946565
+        },
+        {
+          "symbol": "ntdll.dll!RtlpLowFragHeapAllocFromContext",
+          "hits": 372,
+          "percent_of_all_target_samples": 4.437022900763359
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E",
+          "hits": 317,
+          "percent_of_all_target_samples": 3.7810114503816794
+        },
+        {
+          "symbol": "vcruntime140.dll!MoveSmall4",
+          "hits": 308,
+          "percent_of_all_target_samples": 3.6736641221374047
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN8poly13057backend4avx25State13compute_block17hd6b4d91242e20db1E",
+          "hits": 287,
+          "percent_of_all_target_samples": 3.4231870229007635
+        },
+        {
+          "symbol": "ntdll.dll!RtlFreeHeap",
+          "hits": 273,
+          "percent_of_all_target_samples": 3.2562022900763354
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx227_mm256_permutevar8x32_epi3217hd1094ad843e43e28E.llvm.11371739752038881803",
+          "hits": 270,
+          "percent_of_all_target_samples": 3.2204198473282446
+        },
+        {
+          "symbol": "vcruntime140.dll!memcmp",
+          "hits": 241,
+          "percent_of_all_target_samples": 2.874522900763359
+        },
+        {
+          "symbol": "tcpip.sys!WfpGetProfileIdFromInterface",
+          "hits": 177,
+          "percent_of_all_target_samples": 2.1111641221374047
+        },
+        {
+          "symbol": "vcruntime140.dll!Mov0YmmBlocks",
+          "hits": 176,
+          "percent_of_all_target_samples": 2.099236641221374
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi3217hbbc35e272b29b261E.llvm.11371739752038881803",
+          "hits": 146,
+          "percent_of_all_target_samples": 1.7414122137404582
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE",
+          "hits": 131,
+          "percent_of_all_target_samples": 1.5625
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KzRaiseIrql",
+          "hits": 113,
+          "percent_of_all_target_samples": 1.3478053435114503
+        },
+        {
+          "symbol": "ntdll.dll!memcpy",
+          "hits": 107,
+          "percent_of_all_target_samples": 1.2762404580152673
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_and_si25617h5c4306ee304279e6E.llvm.11371739752038881803",
+          "hits": 100,
+          "percent_of_all_target_samples": 1.1927480916030535
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KeAcquireInStackQueuedSpinLock",
+          "hits": 95,
+          "percent_of_all_target_samples": 1.1331106870229006
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KeReleaseInStackQueuedSpinLock",
+          "hits": 93,
+          "percent_of_all_target_samples": 1.1092557251908397
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi6417hd60155779c71b8fdE.llvm.11371739752038881803",
+          "hits": 88,
+          "percent_of_all_target_samples": 1.049618320610687
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx218_mm256_blend_epi3217h56bb5e03e2d4f246E.llvm.11371739752038881803",
+          "hits": 66,
+          "percent_of_all_target_samples": 0.7872137404580152
+        }
+      ],
+      "sha256_immediate_callers": [
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp5frame36novorudp_transport_frame_checksum_v017hcdcdc13a9a3818bbE.llvm.6155027136601634322",
+          "hits": 350,
+          "percent_of_all_target_samples": 4.174618320610687
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree17decode_state_node17hf47d90390b277947E.llvm.2706430040075246553",
+          "hits": 96,
+          "percent_of_all_target_samples": 1.1450381679389312
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp9fragments15OutgoingMessage12with_profile17h8e67346968b290d5E",
+          "hits": 81,
+          "percent_of_all_target_samples": 0.9661259541984734
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17h2eccd979542198fcE.llvm.2706430040075246553",
+          "hits": 66,
+          "percent_of_all_target_samples": 0.7872137404580152
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus9transport3uca24uca_body_id_and_wire_len17ha7f701edea5f9f1aE.llvm.7767145631326574623",
+          "hits": 63,
+          "percent_of_all_target_samples": 0.7514312977099237
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp9fragments11Reassembler27poll_complete_with_progress17h4fac003069fab6b1E",
+          "hits": 56,
+          "percent_of_all_target_samples": 0.6679389312977099
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17hfeb30a2c5bc7b10dE.llvm.6155027136601634322",
+          "hits": 52,
+          "percent_of_all_target_samples": 0.6202290076335878
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18SignedAssetSpendV38validate17he8d130a722f50892E",
+          "hits": 26,
+          "percent_of_all_target_samples": 0.3101145038167939
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_exec17semantic_graph_v313session_scope4open17h1b61cd84a9c70cadE",
+          "hits": 25,
+          "percent_of_all_target_samples": 0.2981870229007634
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree10digest_key17h913ac5c83e0c7b61E",
+          "hits": 21,
+          "percent_of_all_target_samples": 0.2504770992366412
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17h2eccd979542198fcE.llvm.18172072907733460216",
+          "hits": 4,
+          "percent_of_all_target_samples": 0.047709923664122134
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core3ptr64drop_in_place$LT$novovm_protocol..tx_wire..NovNativeTxWireV1$GT$17hb33539771644bdd6E.llvm.4698628592647793878",
+          "hits": 4,
+          "percent_of_all_target_samples": 0.047709923664122134
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus9statement14BlockStatement7checked17h28c1bf1a70cc807cE.llvm.15246534377537268124",
+          "hits": 3,
+          "percent_of_all_target_samples": 0.0357824427480916
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18SignedAssetSpendV36encode17h1f804bba32c55aecE",
+          "hits": 3,
+          "percent_of_all_target_samples": 0.0357824427480916
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18AssetSpendIntentV314nonce_identity17h5ab990dc55414b11E",
+          "hits": 2,
+          "percent_of_all_target_samples": 0.023854961832061067
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc5error17ha5f169b704c97770E",
+          "hits": 1,
+          "percent_of_all_target_samples": 0.011927480916030533
+        }
+      ],
+      "system_send_immediate_callers": [
+        {
+          "symbol": "novovm-node.exe!_ZN121_$LT$novovm_network..novorudp..carrier..SegmentedUdpIo$u20$as$u20$novovm_network..novorudp..carrier..NativeDatagramIo$GT$8try_send17h53e41f2c50544357E",
+          "hits": 978,
+          "percent_of_all_target_samples": 11.665076335877862
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN16novovm_udp_batch9segmented24send_udp_segmented_batch17h715902002363535fE",
+          "hits": 817,
+          "percent_of_all_target_samples": 9.744751908396946
+        }
+      ],
+      "private_export_hashes": {
+        "stack_html": "55963468a8e5a8bc32afca64dd1ed46fdd0bcc3cb3e7f3128d92dff67cf95747",
+        "sample_events": "6b3ed39da7114eade0ecfffbfcbf19d9d90fc0bc4f07374402267e28ac27d7c6"
+      }
+    },
+    {
+      "round": 4,
+      "backend": "cpu",
+      "pid": 24200,
+      "tid": 26324,
+      "thread_name": "novovm-native-tick",
+      "sample_period_us": 1000,
+      "raw_sample_count": 8443,
+      "xperf_stack_hits": 8206,
+      "samples_not_represented_in_stack_report": 237,
+      "stack_report_coverage_percent": 97.19294089778515,
+      "unresolved_leaf_hits": 4,
+      "metrics": {
+        "native_network": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle7poll_io17h943eb9fc4aea01cdE",
+          "hits": 5339,
+          "percent_of_all_target_samples": 63.235816652848506
+        },
+        "object_send": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp13object_sender18NativeObjectSender17poll_send_limited17h94374dd1dfde342cE",
+          "hits": 3962,
+          "percent_of_all_target_samples": 46.92644794504323
+        },
+        "system_send": {
+          "symbol": "novovm-node.exe!std::sys::net::connection::socket::UdpSocket::send_to",
+          "hits": 1916,
+          "percent_of_all_target_samples": 22.6933554423783
+        },
+        "system_receive": {
+          "symbol": "novovm-node.exe!std::net::udp::UdpSocket::recv_from",
+          "hits": 240,
+          "percent_of_all_target_samples": 2.842591495913775
+        },
+        "loopback_enqueue": {
+          "symbol": "tcpip.sys!IppLoopbackEnqueue",
+          "hits": 1304,
+          "percent_of_all_target_samples": 15.444747127798175
+        },
+        "secure_seal": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network15product_overlay18E2eSecureChannelV119seal_novorudp_frame17hf3265fb3291b3c93E",
+          "hits": 1588,
+          "percent_of_all_target_samples": 18.80848039796281
+        },
+        "secure_open": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network15product_overlay18E2eSecureChannelV125open_novorudp_frame_owned17hfae616d50fb27fccE",
+          "hits": 763,
+          "percent_of_all_target_samples": 9.03707213075921
+        },
+        "aead_encrypt": {
+          "symbol": "novovm-node.exe!_ZN4aead11AeadInPlace16encrypt_in_place17hde4fe07625b56f49E",
+          "hits": 1196,
+          "percent_of_all_target_samples": 14.165580954636978
+        },
+        "aead_decrypt": {
+          "symbol": "novovm-node.exe!_ZN4aead11AeadInPlace16decrypt_in_place17h9ddec7392551665cE",
+          "hits": 564,
+          "percent_of_all_target_samples": 6.68009001539737
+        },
+        "frame_checksum": {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp5frame36novorudp_transport_frame_checksum_v017hcdcdc13a9a3818bbE.llvm.6155027136601634322",
+          "hits": 474,
+          "percent_of_all_target_samples": 5.614118204429705
+        },
+        "admission_state_poll": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query3uca17UcaBatchStateRead4poll17h9dc922512c3f138cE",
+          "hits": 1197,
+          "percent_of_all_target_samples": 14.177425085869952
+        },
+        "admission_state_prepare": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline7service3rpc12native_query3uca17UcaBatchStateRead3new17hc07d5fd9c9ff3f8fE",
+          "hits": 159,
+          "percent_of_all_target_samples": 1.8832168660428756
+        },
+        "bulk_capture": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE",
+          "hits": 802,
+          "percent_of_all_target_samples": 9.498993248845197
+        },
+        "tree_node_decode": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E",
+          "hits": 419,
+          "percent_of_all_target_samples": 4.962690986616132
+        },
+        "sha256_compress": {
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE",
+          "hits": 923,
+          "percent_of_all_target_samples": 10.932133128035058
+        },
+        "consensus_poll": {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus16native_lifecycle15NativeLifecycle4poll17hefc1d9c8173afa16E",
+          "hits": 598,
+          "percent_of_all_target_samples": 7.082790477318489
+        },
+        "mldsa_bridge_on_this_thread": {
+          "symbol": "aoem_ffi.dll!aoem_mldsa_bridge_verify",
+          "hits": 17,
+          "percent_of_all_target_samples": 0.20135023096055907
+        }
+      },
+      "exclusive_top": [
+        {
+          "symbol": "novovm-node.exe!_ZN4sha26sha2567x86_sha8compress17hcc05bc6f38975acfE",
+          "hits": 923,
+          "percent_of_all_target_samples": 10.932133128035058
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN8chacha208backends4avx25inner17h593b9e86687be917E.llvm.2543196795479789641",
+          "hits": 476,
+          "percent_of_all_target_samples": 5.637806466895653
+        },
+        {
+          "symbol": "ntdll.dll!RtlpLowFragHeapAllocFromContext",
+          "hits": 359,
+          "percent_of_all_target_samples": 4.252043112637688
+        },
+        {
+          "symbol": "vcruntime140.dll!MoveSmall4",
+          "hits": 341,
+          "percent_of_all_target_samples": 4.0388487504441555
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree4Node6decode17h66a2762fd8329e80E",
+          "hits": 325,
+          "percent_of_all_target_samples": 3.8493426507165704
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN8poly13057backend4avx25State13compute_block17hd6b4d91242e20db1E",
+          "hits": 301,
+          "percent_of_all_target_samples": 3.565083501125192
+        },
+        {
+          "symbol": "ntdll.dll!RtlFreeHeap",
+          "hits": 276,
+          "percent_of_all_target_samples": 3.268980220300841
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx227_mm256_permutevar8x32_epi3217hd1094ad843e43e28E.llvm.11371739752038881803",
+          "hits": 252,
+          "percent_of_all_target_samples": 2.9847210707094636
+        },
+        {
+          "symbol": "vcruntime140.dll!memcmp",
+          "hits": 209,
+          "percent_of_all_target_samples": 2.4754234276915787
+        },
+        {
+          "symbol": "vcruntime140.dll!Mov0YmmBlocks",
+          "hits": 195,
+          "percent_of_all_target_samples": 2.309605590429942
+        },
+        {
+          "symbol": "tcpip.sys!WfpGetProfileIdFromInterface",
+          "hits": 161,
+          "percent_of_all_target_samples": 1.9069051285088239
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state8frontier7capture11BulkCapture17advance_with_seed17h152a05be98f2c16aE",
+          "hits": 156,
+          "percent_of_all_target_samples": 1.8476844723439536
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KzRaiseIrql",
+          "hits": 131,
+          "percent_of_all_target_samples": 1.551581191519602
+        },
+        {
+          "symbol": "ntdll.dll!memcpy",
+          "hits": 111,
+          "percent_of_all_target_samples": 1.3146985668601208
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_and_si25617h5c4306ee304279e6E.llvm.11371739752038881803",
+          "hits": 111,
+          "percent_of_all_target_samples": 1.3146985668601208
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi3217hbbc35e272b29b261E.llvm.11371739752038881803",
+          "hits": 111,
+          "percent_of_all_target_samples": 1.3146985668601208
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KeAcquireInStackQueuedSpinLock",
+          "hits": 108,
+          "percent_of_all_target_samples": 1.2791661731611985
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx216_mm256_add_epi6417hd60155779c71b8fdE.llvm.11371739752038881803",
+          "hits": 85,
+          "percent_of_all_target_samples": 1.0067511548027952
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core9core_arch3x864avx218_mm256_blend_epi3217h56bb5e03e2d4f246E.llvm.11371739752038881803",
+          "hits": 84,
+          "percent_of_all_target_samples": 0.9949070235698212
+        },
+        {
+          "symbol": "ntkrnlmp.exe!KeReleaseInStackQueuedSpinLock",
+          "hits": 82,
+          "percent_of_all_target_samples": 0.9712187611038731
+        }
+      ],
+      "sha256_immediate_callers": [
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp5frame36novorudp_transport_frame_checksum_v017hcdcdc13a9a3818bbE.llvm.6155027136601634322",
+          "hits": 386,
+          "percent_of_all_target_samples": 4.571834655927988
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp9fragments15OutgoingMessage12with_profile17h8e67346968b290d5E",
+          "hits": 117,
+          "percent_of_all_target_samples": 1.3857633542579653
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree17decode_state_node17hf47d90390b277947E.llvm.2706430040075246553",
+          "hits": 108,
+          "percent_of_all_target_samples": 1.2791661731611985
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17h2eccd979542198fcE.llvm.2706430040075246553",
+          "hits": 75,
+          "percent_of_all_target_samples": 0.8883098424730547
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN14novovm_network8novorudp9fragments11Reassembler27poll_complete_with_progress17h4fac003069fab6b1E",
+          "hits": 68,
+          "percent_of_all_target_samples": 0.8054009238422363
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline9consensus9transport3uca24uca_body_id_and_wire_len17ha7f701edea5f9f1aE.llvm.7767145631326574623",
+          "hits": 55,
+          "percent_of_all_target_samples": 0.6514272178135734
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17hfeb30a2c5bc7b10dE.llvm.6155027136601634322",
+          "hits": 43,
+          "percent_of_all_target_samples": 0.5092976430178846
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_node15native_pipeline5state4tree10digest_key17h913ac5c83e0c7b61E",
+          "hits": 22,
+          "percent_of_all_target_samples": 0.26057088712542936
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN11novovm_exec17semantic_graph_v313session_scope4open17h1b61cd84a9c70cadE",
+          "hits": 19,
+          "percent_of_all_target_samples": 0.22503849342650717
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18SignedAssetSpendV38validate17he8d130a722f50892E",
+          "hits": 16,
+          "percent_of_all_target_samples": 0.18950609972758498
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18SignedAssetSpendV36encode17h1f804bba32c55aecE",
+          "hits": 5,
+          "percent_of_all_target_samples": 0.05922065616487031
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN4core3ptr64drop_in_place$LT$novovm_protocol..tx_wire..NovNativeTxWireV1$GT$17hb33539771644bdd6E.llvm.4698628592647793878",
+          "hits": 4,
+          "percent_of_all_target_samples": 0.047376524931896244
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN6digest11FixedOutput14finalize_fixed17h2eccd979542198fcE.llvm.18172072907733460216",
+          "hits": 2,
+          "percent_of_all_target_samples": 0.023688262465948122
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN15novovm_protocol9uca_spend18AssetSpendIntentV314nonce_identity17h5ab990dc55414b11E",
+          "hits": 2,
+          "percent_of_all_target_samples": 0.023688262465948122
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN111_$LT$$RF$mut$u20$postcard..ser..serializer..Serializer$LT$F$GT$$u20$as$u20$serde_core..ser..SerializeStruct$GT$15serialize_field17h02c2f1a84d1b2282E.llvm.12800057647233014947",
+          "hits": 1,
+          "percent_of_all_target_samples": 0.011844131232974061
+        }
+      ],
+      "system_send_immediate_callers": [
+        {
+          "symbol": "novovm-node.exe!_ZN121_$LT$novovm_network..novorudp..carrier..SegmentedUdpIo$u20$as$u20$novovm_network..novorudp..carrier..NativeDatagramIo$GT$8try_send17h53e41f2c50544357E",
+          "hits": 1041,
+          "percent_of_all_target_samples": 12.329740613525999
+        },
+        {
+          "symbol": "novovm-node.exe!_ZN16novovm_udp_batch9segmented24send_udp_segmented_batch17h715902002363535fE",
+          "hits": 875,
+          "percent_of_all_target_samples": 10.363614828852304
+        }
+      ],
+      "private_export_hashes": {
+        "stack_html": "3446692b461e47001271e2e7c88dfe5aac687a8dc9fb7f8d1118780e018df5a3",
+        "sample_events": "01e405ebb6586b6224eacb49000d5afbc45a823cef9dbb8a594736a49d9817d0"
+      }
+    }
+  ],
+  "scheduling": [
+    {
+      "round": 2,
+      "backend": "cpu",
+      "pid": 36392,
+      "tid": 17660,
+      "thread_name": "novovm-native-tick",
+      "range_us": [
+        300000,
+        5200000
+      ],
+      "duration_us": 4900000,
+      "first_reliable_cswitch_us": 18054,
+      "state_us": {
+        "Running": 4812880,
+        "Ready": 84586,
+        "Waiting": 577,
+        "Unknown": 1957
+      },
+      "state_percent": {
+        "Running": 98.22204081632653,
+        "Ready": 1.7262448979591838,
+        "Waiting": 0.011775510204081633,
+        "Unknown": 0.03993877551020408
+      },
+      "waiting_reason_us": {
+        "WrAlertByThreadId": 577
+      },
+      "intervals": {
+        "Running": {
+          "count": 1725,
+          "p50_us": 224,
+          "p95_us": 14144,
+          "p99_us": 41350,
+          "max_us": 221176
+        },
+        "Ready": {
+          "count": 1621,
+          "p50_us": 8,
+          "p95_us": 277,
+          "p99_us": 661,
+          "max_us": 2799
+        },
+        "Waiting": {
+          "count": 20,
+          "p50_us": 5,
+          "p95_us": 23,
+          "p99_us": 432,
+          "max_us": 432
+        }
+      },
+      "scope": "4.9s interior slice after both FirstReliableCSwitch timestamps; context-switch wall intervals, not CPU useful work. Missing-pair interval left Unknown; ReadyThread racing before switchout does not imply on-CPU waiting. Waiting reason is scheduler classification, not wait callsite. DPC/ISR not excluded; no corresponding events captured. Leading/trailing clip makes interval maxima bounded, not full lifetimes.",
+      "independent_xperf_running_us": 4814785
+    },
+    {
+      "round": 3,
+      "backend": "gpu_required",
+      "pid": 35356,
+      "tid": 15908,
+      "thread_name": "novovm-native-tick",
+      "range_us": [
+        300000,
+        5200000
+      ],
+      "duration_us": 4900000,
+      "first_reliable_cswitch_us": 244022,
+      "state_us": {
+        "Running": 4805459,
+        "Ready": 88715,
+        "Waiting": 4593,
+        "Unknown": 1233
+      },
+      "state_percent": {
+        "Running": 98.07059183673469,
+        "Ready": 1.8105102040816328,
+        "Waiting": 0.09373469387755101,
+        "Unknown": 0.02516326530612245
+      },
+      "waiting_reason_us": {
+        "WrAlertByThreadId": 4593
+      },
+      "intervals": {
+        "Running": {
+          "count": 1863,
+          "p50_us": 234,
+          "p95_us": 12702,
+          "p99_us": 30732,
+          "max_us": 284625
+        },
+        "Ready": {
+          "count": 1769,
+          "p50_us": 10,
+          "p95_us": 282,
+          "p99_us": 515,
+          "max_us": 943
+        },
+        "Waiting": {
+          "count": 20,
+          "p50_us": 5,
+          "p95_us": 815,
+          "p99_us": 1854,
+          "max_us": 1854
+        }
+      },
+      "scope": "4.9s interior slice after both FirstReliableCSwitch timestamps; context-switch wall intervals, not CPU useful work. Missing-pair interval left Unknown; ReadyThread racing before switchout does not imply on-CPU waiting. Waiting reason is scheduler classification, not wait callsite. DPC/ISR not excluded; no corresponding events captured. Leading/trailing clip makes interval maxima bounded, not full lifetimes.",
+      "independent_xperf_running_us": 4805213
+    }
+  ],
+  "limits": [
+    "Single Windows machine with four native processes and loopback; kernel send cost includes local receive delivery, not wire latency or NIC bandwidth.",
+    "CPU stack and scheduling profiles cover different rounds and short windows, not simultaneous full-round measurements.",
+    "Running context-switch residency includes possible spin/poll and DPC/ISR time; it is not useful work. No waiting stacks or allocator event tracing.",
+    "Low ML-DSA presence on the ingress thread does not measure worker/device cryptography or prove/disprove asset GPU execution.",
+    "No full historical 12K-versus-current causal decomposition or performance improvement is established by this diagnosis."
+  ]
+}

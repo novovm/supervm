@@ -1,39 +1,167 @@
-//! Shared ML-DSA-65 NOV spend intent. Encoding is not signature verification or
-//! authority. Native ingress activation and trusted UCA state are separate gates.
+//! Shared ML-DSA-65 NOV asset-account spend intent. UCA identity lookup is not
+//! transaction addressing. Encoding is not signature verification or authority.
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const MLDSA65_PUBLIC_KEY_BYTES: usize = 1952;
 pub const MLDSA65_SIGNATURE_BYTES: usize = 3309;
-pub const SPEND_CONTEXT_V1: &[u8] = b"NOVOVM/UCA/NOV-spend/v1";
+pub const SPEND_CONTEXT_V3: &[u8] = b"NOVOVM/asset/NOV-spend/v3";
+pub const NATIVE_NOV_ASSET: u8 = 1;
+// Identity management retains this bound; asset intents contain no UCA id.
 pub const MAX_UCA_ID_BYTES: usize = 128;
 pub const MAX_SPEND_WINDOW: u64 = 256;
-// NUAS, version=1, suite=65 (ML-DSA external pure), purpose=1 (NOV transfer).
-const HEADER: &[u8] = b"NUAS\x01\x41\x01";
+pub const MAX_ASSET_GRANTS: usize = 8;
+const MAX_AUTHORITY_UPDATE_BYTES: usize = 1 + 8 + 1 + 32 + 33 + 1 + MAX_ASSET_GRANTS * 81;
+// NUAS v3 signs the authority mode. Neither v1 UCA-addressed nor v2 grant-only
+// transactions may acquire controller authority by reinterpretation.
+const HEADER: &[u8] = b"NUAS\x03\x41\x01";
+const CREATE_HEADER: &[u8] = b"NUAS\x03\x41\x02";
 pub const MAX_SIGNED_SPEND_BYTES: usize = 7
+    + 1
     + 8
     + 32
-    + 129
+    + 33
     + 8
     + 32
-    + 129
+    + 33
+    + 1
     + 16
     + 16
     + 8
     + 8
     + 8
+    + 1
+    + MAX_AUTHORITY_UPDATE_BYTES
     + MLDSA65_PUBLIC_KEY_BYTES
     + MLDSA65_SIGNATURE_BYTES;
+pub const MIN_SIGNED_SPEND_BYTES: usize = MAX_SIGNED_SPEND_BYTES - MAX_AUTHORITY_UPDATE_BYTES - 24;
+
+/// The signature commits to either the account controller or an explicitly
+/// restricted delegation. A missing or expired grant never selects Controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(u8)]
+pub enum AssetSpendAuthorityV3 {
+    Controller = 0,
+    DelegatedGrant = 1,
+}
+
+impl TryFrom<u8> for AssetSpendAuthorityV3 {
+    type Error = SpendEncodingError;
+
+    fn try_from(value: u8) -> Result<Self> {
+        match value {
+            0 => Ok(Self::Controller),
+            1 => Ok(Self::DelegatedGrant),
+            _ => Err(SpendEncodingError),
+        }
+    }
+}
+
+/// Complete replacement grant set for an account-authorized management action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetGrantConfigV2 {
+    pub key_ref: [u8; 32],
+    pub permits_nov_transfer: bool,
+    pub not_before_height: u64,
+    pub expires_at_height: u64,
+    pub max_debit_per_intent: u128,
+    pub remaining_debit_budget: u128,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UcaSpendIntentV1 {
+pub struct AssetAuthorityUpdateV2 {
+    pub use_recovery: bool,
+    pub next_epoch: u64,
+    pub active: bool,
+    pub management_key_ref: [u8; 32],
+    pub recovery_key_ref: Option<[u8; 32]>,
+    pub grants: Vec<AssetGrantConfigV2>,
+}
+
+/// Initial permissions committed by the new account's address, not authority
+/// borrowed from the funding payer or a NOVONET identity. After creation the
+/// address remains stable across ordinary authorized key rotation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetAccountCreationV2 {
+    pub management_key_ref: [u8; 32],
+    pub recovery_key_ref: Option<[u8; 32]>,
+    pub grants: Vec<AssetGrantConfigV2>,
+}
+
+impl AssetAccountCreationV2 {
+    pub fn validate(&self) -> Result<()> {
+        AssetAuthorityUpdateV2 {
+            use_recovery: false,
+            next_epoch: 1,
+            active: true,
+            management_key_ref: self.management_key_ref,
+            recovery_key_ref: self.recovery_key_ref,
+            grants: self.grants.clone(),
+        }
+        .validate()?;
+        if self
+            .grants
+            .windows(2)
+            .any(|pair| pair[0].key_ref >= pair[1].key_ref)
+        {
+            return Err(SpendEncodingError);
+        }
+        Ok(())
+    }
+
+    pub fn account(&self, chain_id: u64, genesis: &[u8; 32]) -> Result<[u8; 32]> {
+        self.validate()?;
+        if chain_id == 0 || *genesis == [0; 32] {
+            return Err(SpendEncodingError);
+        }
+        let mut h = Sha256::new();
+        h.update(b"NOVOVM/asset/account-opening/v2\0");
+        h.update(chain_id.to_be_bytes());
+        h.update(genesis);
+        h.update(encode_asset_action_v2(&None, &Some(self.clone()))?);
+        Ok(h.finalize().into())
+    }
+}
+
+impl AssetAuthorityUpdateV2 {
+    pub fn validate(&self) -> Result<()> {
+        if self.next_epoch == 0
+            || self.management_key_ref == [0; 32]
+            || self.recovery_key_ref == Some([0; 32])
+            || self.recovery_key_ref == Some(self.management_key_ref)
+            || self.grants.len() > MAX_ASSET_GRANTS
+        {
+            return Err(SpendEncodingError);
+        }
+        let mut keys = std::collections::BTreeSet::new();
+        for grant in &self.grants {
+            if grant.key_ref == [0; 32]
+                || grant.key_ref == self.management_key_ref
+                || Some(grant.key_ref) == self.recovery_key_ref
+                || !keys.insert(grant.key_ref)
+                || grant.expires_at_height <= grant.not_before_height
+                || grant.max_debit_per_intent == 0
+                || grant.remaining_debit_budget == 0
+            {
+                return Err(SpendEncodingError);
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssetSpendIntentV3 {
+    pub authority: AssetSpendAuthorityV3,
     pub chain_id: u64,
     pub genesis: [u8; 32],
-    /// Existing stable UCA identifier, never a new address derived from this key.
-    pub account_id: String,
+    /// Stable concrete account. Key rotation never changes this balance/nonce owner.
+    pub payer: Vec<u8>,
     pub authorization_epoch: u64,
     pub spend_key_ref: [u8; 32],
-    pub recipient_uca: String,
+    pub recipient: Vec<u8>,
+    /// This native transfer contract supports NOV only. Unknown assets fail closed.
+    pub asset: u8,
     /// Native NOV base units (nine decimal places). No implicit foreign asset.
     pub amount: u128,
     pub max_fee: u128,
@@ -41,26 +169,27 @@ pub struct UcaSpendIntentV1 {
     pub not_before_height: u64,
     /// Exclusive, checked against execution height by the state policy consumer.
     pub expires_at_height: u64,
+    /// Account management uses the same native pipeline, never UCA identity authority.
+    pub authority_update: Option<AssetAuthorityUpdateV2>,
+    /// Explicit funded opening of the signed recipient. Absence retains the
+    /// ordinary rule that both asset accounts must already exist.
+    pub recipient_creation: Option<AssetAccountCreationV2>,
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct SignedUcaSpendV1 {
-    pub intent: UcaSpendIntentV1,
+pub struct SignedAssetSpendV3 {
+    pub intent: AssetSpendIntentV3,
     pub public_key: Vec<u8>,
     pub signature: Vec<u8>,
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]
-#[error("invalid ML-DSA-65 UCA spend encoding, key binding or bounds")]
+#[error("invalid ML-DSA-65 asset spend encoding, key binding or bounds")]
 pub struct SpendEncodingError;
 type Result<T> = std::result::Result<T, SpendEncodingError>;
 
-fn valid_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_UCA_ID_BYTES
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+fn valid_account(value: &[u8]) -> bool {
+    matches!(value.len(), 20 | 32)
 }
 
 /// Asset-purpose key reference, intentionally distinct from the administrative
@@ -75,18 +204,40 @@ pub fn spend_key_ref_v1(public_key: &[u8]) -> Result<[u8; 32]> {
     Ok(h.finalize().into())
 }
 
-impl UcaSpendIntentV1 {
+impl AssetSpendIntentV3 {
+    pub fn uses_grant(&self) -> bool {
+        self.authority == AssetSpendAuthorityV3::DelegatedGrant && self.authority_update.is_none()
+    }
+
+    /// Actual retained heap, including spare capacity. No UCA material is held.
+    pub fn retained_heap_bytes(&self) -> usize {
+        self.payer
+            .capacity()
+            .saturating_add(self.recipient.capacity())
+            .saturating_add(self.authority_update.as_ref().map_or(0, |update| {
+                update
+                    .grants
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<AssetGrantConfigV2>())
+            }))
+            .saturating_add(self.recipient_creation.as_ref().map_or(0, |creation| {
+                creation.grants.capacity() * std::mem::size_of::<AssetGrantConfigV2>()
+            }))
+    }
+
     /// Decode the existing canonical intent, without claiming a signature or
     /// spending authority. Used by bounded native read requests.
     pub fn decode_signing_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_SIGNED_SPEND_BYTES - MLDSA65_PUBLIC_KEY_BYTES - MLDSA65_SIGNATURE_BYTES
-            || !bytes.starts_with(HEADER)
+            || !(bytes.starts_with(HEADER) || bytes.starts_with(CREATE_HEADER))
         {
             return Err(SpendEncodingError);
         }
         let mut reader = Reader(&bytes[HEADER.len()..]);
         let value = reader.intent()?;
-        if !reader.0.is_empty() {
+        if !reader.0.is_empty()
+            || bytes.starts_with(CREATE_HEADER) != value.recipient_creation.is_some()
+        {
             return Err(SpendEncodingError);
         }
         Ok(value)
@@ -95,8 +246,9 @@ impl UcaSpendIntentV1 {
     pub fn validate(&self) -> Result<()> {
         if self.chain_id == 0
             || self.genesis == [0; 32]
-            || !valid_id(&self.account_id)
-            || !valid_id(&self.recipient_uca)
+            || !valid_account(&self.payer)
+            || !valid_account(&self.recipient)
+            || self.asset != NATIVE_NOV_ASSET
             || self.authorization_epoch == 0
             || self.spend_key_ref == [0; 32]
             || self.expires_at_height <= self.not_before_height
@@ -106,31 +258,59 @@ impl UcaSpendIntentV1 {
         {
             return Err(SpendEncodingError);
         }
+        if let Some(update) = &self.authority_update {
+            update.validate()?;
+            if self.authority != AssetSpendAuthorityV3::Controller
+                || self.amount != 0
+                || self.recipient != self.payer
+                || self.authorization_epoch.checked_add(1) != Some(update.next_epoch)
+            {
+                return Err(SpendEncodingError);
+            }
+        }
+        if let Some(creation) = &self.recipient_creation {
+            if self.authority_update.is_some()
+                || self.payer == self.recipient
+                || self.recipient.as_slice() != creation.account(self.chain_id, &self.genesis)?
+            {
+                return Err(SpendEncodingError);
+            }
+        }
         Ok(())
     }
 
-    /// Unframed message for external-pure ML-DSA with SPEND_CONTEXT_V1. The
+    /// Unframed message for external-pure ML-DSA with SPEND_CONTEXT_V3. The
     /// existing exec signer adds FIPS 204's external-pure framing exactly once.
-    /// All integers use big endian; identifiers use u8 length + exact ASCII.
+    /// All integers use big endian; accounts use u8 length + exact bytes.
     pub fn signing_bytes(&self) -> Result<Vec<u8>> {
         self.validate()?;
         let mut out = Vec::with_capacity(
             MAX_SIGNED_SPEND_BYTES - MLDSA65_PUBLIC_KEY_BYTES - MLDSA65_SIGNATURE_BYTES,
         );
-        out.extend_from_slice(HEADER);
+        out.extend_from_slice(if self.recipient_creation.is_some() {
+            CREATE_HEADER
+        } else {
+            HEADER
+        });
+        out.push(self.authority as u8);
         out.extend_from_slice(&self.chain_id.to_be_bytes());
         out.extend_from_slice(&self.genesis);
-        out.push(self.account_id.len() as u8);
-        out.extend_from_slice(self.account_id.as_bytes());
+        out.push(self.payer.len() as u8);
+        out.extend_from_slice(&self.payer);
         out.extend_from_slice(&self.authorization_epoch.to_be_bytes());
         out.extend_from_slice(&self.spend_key_ref);
-        out.push(self.recipient_uca.len() as u8);
-        out.extend_from_slice(self.recipient_uca.as_bytes());
+        out.push(self.recipient.len() as u8);
+        out.extend_from_slice(&self.recipient);
+        out.push(self.asset);
         out.extend_from_slice(&self.amount.to_be_bytes());
         out.extend_from_slice(&self.max_fee.to_be_bytes());
         out.extend_from_slice(&self.nonce.to_be_bytes());
         out.extend_from_slice(&self.not_before_height.to_be_bytes());
         out.extend_from_slice(&self.expires_at_height.to_be_bytes());
+        out.extend_from_slice(&encode_asset_action_v2(
+            &self.authority_update,
+            &self.recipient_creation,
+        )?);
         Ok(out)
     }
 
@@ -139,16 +319,16 @@ impl UcaSpendIntentV1 {
     pub fn nonce_identity(&self) -> Result<[u8; 32]> {
         self.validate()?;
         let mut h = Sha256::new();
-        h.update(b"novovm-uca-nov-spend-nonce/v1\0");
+        h.update(b"novovm-asset-spend-nonce/v2\0");
         h.update(self.chain_id.to_be_bytes());
         h.update(self.genesis);
-        h.update([self.account_id.len() as u8]);
-        h.update(self.account_id.as_bytes());
+        h.update([self.payer.len() as u8]);
+        h.update(&self.payer);
         Ok(h.finalize().into())
     }
 }
 
-impl SignedUcaSpendV1 {
+impl SignedAssetSpendV3 {
     pub fn validate(&self) -> Result<()> {
         self.intent.validate()?;
         if self.signature.len() != MLDSA65_SIGNATURE_BYTES
@@ -168,11 +348,16 @@ impl SignedUcaSpendV1 {
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > MAX_SIGNED_SPEND_BYTES || !bytes.starts_with(HEADER) {
+        if bytes.len() > MAX_SIGNED_SPEND_BYTES
+            || !(bytes.starts_with(HEADER) || bytes.starts_with(CREATE_HEADER))
+        {
             return Err(SpendEncodingError);
         }
         let mut r = Reader(&bytes[HEADER.len()..]);
         let intent = r.intent()?;
+        if bytes.starts_with(CREATE_HEADER) != intent.recipient_creation.is_some() {
+            return Err(SpendEncodingError);
+        }
         // Check the entire fixed tail before allocating either crypto field.
         if r.0.len() != MLDSA65_PUBLIC_KEY_BYTES + MLDSA65_SIGNATURE_BYTES {
             return Err(SpendEncodingError);
@@ -191,20 +376,25 @@ impl SignedUcaSpendV1 {
 
 struct Reader<'a>(&'a [u8]);
 impl<'a> Reader<'a> {
-    fn intent(&mut self) -> Result<UcaSpendIntentV1> {
-        let value = UcaSpendIntentV1 {
+    fn intent(&mut self) -> Result<AssetSpendIntentV3> {
+        let mut value = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::try_from(self.array::<1>()?[0])?,
             chain_id: u64::from_be_bytes(self.array()?),
             genesis: self.array()?,
-            account_id: self.id()?,
+            payer: self.account()?,
             authorization_epoch: u64::from_be_bytes(self.array()?),
             spend_key_ref: self.array()?,
-            recipient_uca: self.id()?,
+            recipient: self.account()?,
+            asset: self.array::<1>()?[0],
             amount: u128::from_be_bytes(self.array()?),
             max_fee: u128::from_be_bytes(self.array()?),
             nonce: u64::from_be_bytes(self.array()?),
             not_before_height: u64::from_be_bytes(self.array()?),
             expires_at_height: u64::from_be_bytes(self.array()?),
+            authority_update: None,
+            recipient_creation: None,
         };
+        (value.authority_update, value.recipient_creation) = self.asset_action()?;
         value.validate()?;
         Ok(value)
     }
@@ -220,17 +410,153 @@ impl<'a> Reader<'a> {
     fn array<const N: usize>(&mut self) -> Result<[u8; N]> {
         self.take(N)?.try_into().map_err(|_| SpendEncodingError)
     }
-    fn id(&mut self) -> Result<String> {
+    fn account(&mut self) -> Result<Vec<u8>> {
         let len = self.array::<1>()?[0] as usize;
-        if len == 0 || len > MAX_UCA_ID_BYTES {
+        if !matches!(len, 20 | 32) {
             return Err(SpendEncodingError);
         }
-        let value = std::str::from_utf8(self.take(len)?).map_err(|_| SpendEncodingError)?;
-        if !valid_id(value) {
-            return Err(SpendEncodingError);
-        }
-        Ok(value.to_owned())
+        Ok(self.take(len)?.to_vec())
     }
+
+    fn boolean(&mut self) -> Result<bool> {
+        match self.array::<1>()?[0] {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(SpendEncodingError),
+        }
+    }
+
+    fn asset_action(
+        &mut self,
+    ) -> Result<(
+        Option<AssetAuthorityUpdateV2>,
+        Option<AssetAccountCreationV2>,
+    )> {
+        let tag = self.array::<1>()?[0];
+        if tag == 0 {
+            return Ok((None, None));
+        }
+        if !matches!(tag, 1 | 2) {
+            return Err(SpendEncodingError);
+        }
+        let use_recovery = self.boolean()?;
+        let next_epoch = u64::from_be_bytes(self.array()?);
+        let active = self.boolean()?;
+        let management_key_ref = self.array()?;
+        let recovery_key_ref = if self.boolean()? {
+            Some(self.array()?)
+        } else {
+            None
+        };
+        let count = self.array::<1>()?[0] as usize;
+        if count > MAX_ASSET_GRANTS || count > self.0.len() / 81 {
+            return Err(SpendEncodingError);
+        }
+        let mut grants = Vec::with_capacity(count);
+        for _ in 0..count {
+            grants.push(AssetGrantConfigV2 {
+                key_ref: self.array()?,
+                permits_nov_transfer: self.boolean()?,
+                not_before_height: u64::from_be_bytes(self.array()?),
+                expires_at_height: u64::from_be_bytes(self.array()?),
+                max_debit_per_intent: u128::from_be_bytes(self.array()?),
+                remaining_debit_budget: u128::from_be_bytes(self.array()?),
+            });
+        }
+        let update = AssetAuthorityUpdateV2 {
+            use_recovery,
+            next_epoch,
+            active,
+            management_key_ref,
+            recovery_key_ref,
+            grants,
+        };
+        update.validate()?;
+        if tag == 1 {
+            Ok((Some(update), None))
+        } else {
+            if update.use_recovery || update.next_epoch != 1 || !update.active {
+                return Err(SpendEncodingError);
+            }
+            let creation = AssetAccountCreationV2 {
+                management_key_ref: update.management_key_ref,
+                recovery_key_ref: update.recovery_key_ref,
+                grants: update.grants,
+            };
+            creation.validate()?;
+            Ok((None, Some(creation)))
+        }
+    }
+}
+
+pub(crate) fn encode_authority_update_v2(
+    value: &Option<AssetAuthorityUpdateV2>,
+) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let Some(value) = value else {
+        out.push(0);
+        return Ok(out);
+    };
+    value.validate()?;
+    out.push(1);
+    out.push(u8::from(value.use_recovery));
+    out.extend_from_slice(&value.next_epoch.to_be_bytes());
+    out.push(u8::from(value.active));
+    out.extend_from_slice(&value.management_key_ref);
+    out.push(u8::from(value.recovery_key_ref.is_some()));
+    if let Some(key) = value.recovery_key_ref {
+        out.extend_from_slice(&key);
+    }
+    out.push(value.grants.len() as u8);
+    for grant in &value.grants {
+        out.extend_from_slice(&grant.key_ref);
+        out.push(u8::from(grant.permits_nov_transfer));
+        out.extend_from_slice(&grant.not_before_height.to_be_bytes());
+        out.extend_from_slice(&grant.expires_at_height.to_be_bytes());
+        out.extend_from_slice(&grant.max_debit_per_intent.to_be_bytes());
+        out.extend_from_slice(&grant.remaining_debit_budget.to_be_bytes());
+    }
+    Ok(out)
+}
+
+pub(crate) fn encode_asset_action_v2(
+    update: &Option<AssetAuthorityUpdateV2>,
+    creation: &Option<AssetAccountCreationV2>,
+) -> Result<Vec<u8>> {
+    let Some(creation) = creation else {
+        return encode_authority_update_v2(update);
+    };
+    creation.validate()?;
+    if update.is_some() {
+        return Err(SpendEncodingError);
+    }
+    let mut bytes = encode_authority_update_v2(&Some(AssetAuthorityUpdateV2 {
+        use_recovery: false,
+        next_epoch: 1,
+        active: true,
+        management_key_ref: creation.management_key_ref,
+        recovery_key_ref: creation.recovery_key_ref,
+        grants: creation.grants.clone(),
+    }))?;
+    bytes[0] = 2;
+    Ok(bytes)
+}
+
+pub(crate) fn decode_asset_action_v2(
+    bytes: &[u8],
+) -> Result<(
+    Option<AssetAuthorityUpdateV2>,
+    Option<AssetAccountCreationV2>,
+)> {
+    if bytes.len() > 1 + MAX_AUTHORITY_UPDATE_BYTES {
+        return Err(SpendEncodingError);
+    }
+    let mut reader = Reader(bytes);
+    let update = reader.asset_action()?;
+    if !reader.0.is_empty() {
+        return Err(SpendEncodingError);
+    }
+    Ok(update)
 }
 
 #[cfg(test)]

@@ -1,0 +1,7 @@
+
+running 2 tests
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::controller_tests::actual_mldsa_controller_cpu_atomic_effects ... ok
+test native_pipeline::business::nov_transfer_batch::uca_effects_tests::controller_tests::actual_mldsa_controller_cpu_integer_atomic_effect_equivalence ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1840 filtered out; finished in 3.61s
+

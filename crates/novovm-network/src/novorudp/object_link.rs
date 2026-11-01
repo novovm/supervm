@@ -16,8 +16,8 @@ use super::{
     object_ack::{encode_object_ack, OBJECT_WINDOW},
     object_receiver::NativeObjectReceiver,
     object_sender::{NativeObjectSender, ObjectSendState},
-    NovoRudpPacingProfile, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
-    NovoRudpWindowConfig,
+    NovoRudpPacingProfile, NovoRudpSenderRepairDecision, NovoRudpTransportFrameKindV0,
+    NovoRudpTransportFrameV0, NovoRudpWindowConfig,
 };
 use anyhow::{ensure, Context, Result};
 use std::{
@@ -139,6 +139,7 @@ impl NativeSendCancellation {
 struct PendingFeedback {
     frame: NovoRudpTransportFrameV0,
     dirty: bool,
+    evidence: Option<(u64, u64, Option<u64>)>,
 }
 struct Lane {
     config: NativeLaneConfig,
@@ -171,6 +172,12 @@ pub struct NativeSendCompletion {
     pub stream: u64,
     pub state: ObjectSendState,
     pub body: Arc<OutgoingMessage>,
+    /// Optional local observer binding to the actual send job's session, which
+    /// may already have been replaced by the time completion is handed back.
+    pub diagnostic_tag: Option<[u8; 32]>,
+    /// Opt-in actual writes by this attempt; not bytes delivered or finalized.
+    /// Deferred terminal drain writes are in sealed_sent, not sender cursors.
+    pub traffic: Option<super::diagnostics::NativeObjectTraffic>,
 }
 #[must_use]
 #[derive(Default)]
@@ -300,7 +307,12 @@ impl NativeObjectLink {
         id: [u8; 32],
         now: Instant,
     ) {
-        if let (Some(d), Some(request)) = (&self.diagnostics, request) {
+        if let (Some(d), Some(request)) = (
+            self.diagnostics
+                .as_ref()
+                .filter(|d| d.tracks_stream(stream)),
+            request,
+        ) {
             d.response(request, transfer_tag_v1(session, stream, id), now);
         }
     }
@@ -313,6 +325,7 @@ impl NativeObjectLink {
     ) -> Option<[u8; 32]> {
         self.diagnostics
             .as_ref()
+            .filter(|d| d.tracks_stream(stream))
             .map(|_| transfer_tag_v1(session, stream, id))
     }
     #[cfg(feature = "iroh-transport")]
@@ -521,7 +534,7 @@ impl NativeObjectLink {
         {
             return Ok(false);
         }
-        let sender = NativeObjectSender::new(
+        let mut sender = NativeObjectSender::new(
             body.clone(),
             session,
             stream,
@@ -530,6 +543,19 @@ impl NativeObjectLink {
             now,
             self.policy.ttl.min(deadline.duration_since(now)),
         )?;
+        if let Some(d) = self
+            .diagnostics
+            .as_ref()
+            .filter(|d| d.tracks_stream(stream))
+        {
+            sender.enable_diagnostics_v1();
+            d.progress(
+                transfer_tag_v1(session, stream, body.id()),
+                NativeProgressStageV1::SendAdmitted,
+                body.frame_count() as u64,
+                now,
+            );
+        }
         lane.usage.add(bytes);
         lane.peers
             .get_mut(&peer)
@@ -602,6 +628,22 @@ impl NativeObjectLink {
         let received = self
             .endpoint
             .poll_with_receiver(wall_ms, now, quantum, receiver)?;
+        self.process_poll(received, now, quantum)
+    }
+
+    pub fn poll_with_owned_receiver<F>(
+        &mut self,
+        wall_ms: u64,
+        now: Instant,
+        quantum: usize,
+        receiver: F,
+    ) -> Result<NativeLinkPoll>
+    where
+        F: FnMut() -> std::io::Result<Option<(Vec<u8>, SocketAddr)>>,
+    {
+        let received = self
+            .endpoint
+            .poll_with_owned_receiver(wall_ms, now, quantum, receiver)?;
         self.process_poll(received, now, quantum)
     }
 
@@ -692,14 +734,45 @@ impl NativeObjectLink {
                     }
                     if sender.status() == ObjectSendState::Sending {
                         let before = sender.acknowledged_best_v1();
-                        if sender.on_ack(frame, now).is_err() {
+                        let decision = {
+                            let _cost =
+                                super::diagnostics::io_span(super::diagnostics::IoPhase::AckAccept);
+                            sender.on_ack(frame, now)
+                        };
+                        if let Some(d) = self
+                            .diagnostics
+                            .as_ref()
+                            .filter(|d| d.tracks_stream(stream))
+                        {
+                            if matches!(&decision, Ok(result) if !matches!(result, NovoRudpSenderRepairDecision::StaleAck { .. }))
+                            {
+                                let (epoch, missing, first_missing) = sender.feedback_state_v1();
+                                d.feedback(
+                                    transfer_tag_v1(
+                                        sender.session_id(),
+                                        stream,
+                                        sender.body().id(),
+                                    ),
+                                    false,
+                                    epoch,
+                                    missing,
+                                    first_missing,
+                                    Instant::now(),
+                                );
+                            }
+                        }
+                        if decision.is_err() {
                             report.rejected += 1;
                             report
                                 .rejection_reasons
                                 .record(NativeRejectReasonV1::ObjectAck);
                         } else if sender.acknowledged_best_v1() > before {
                             report.ack_progress += 1;
-                            if let Some(d) = &self.diagnostics {
+                            if let Some(d) = self
+                                .diagnostics
+                                .as_ref()
+                                .filter(|d| d.tracks_stream(stream))
+                            {
                                 d.progress(
                                     transfer_tag_v1(
                                         sender.session_id(),
@@ -708,30 +781,61 @@ impl NativeObjectLink {
                                     ),
                                     NativeProgressStageV1::AckProgress,
                                     sender.acknowledged_best_v1(),
-                                    now,
+                                    Instant::now(),
                                 );
                             }
                         }
                     }
                 }
             } else {
-                match lane.receiver.accept_received(&received, now) {
-                    Ok(FragmentAdmission::Backpressure) => report.backpressured += 1,
-                    Ok(admission) => {
-                        if admission == FragmentAdmission::Accepted {
-                            report.accepted_fragments += 1;
-                            if let Some(d) = &self.diagnostics {
-                                d.progress(
+                let admission =
+                    lane.receiver
+                        .accept_received_observed(&received, now, |observation| {
+                            use super::diagnostics::{frame_traffic, Traffic};
+                            use super::fragments::FragmentObservation;
+                            let event = match observation {
+                                FragmentObservation::Accepted { .. } => Traffic::FragmentAccepted,
+                                FragmentObservation::Duplicate { completed: false } => {
+                                    Traffic::FragmentDuplicate
+                                }
+                                FragmentObservation::Duplicate { completed: true } => {
+                                    Traffic::FragmentHistory
+                                }
+                            };
+                            frame_traffic(event, frame, received.wire_bytes);
+                            if let Some(d) = self
+                                .diagnostics
+                                .as_ref()
+                                .filter(|d| d.tracks_stream(stream))
+                            {
+                                // The callback only runs after the original binding/shape checks.
+                                d.fragment(
                                     transfer_tag_v1(
                                         frame.session_id,
                                         stream,
-                                        frame.payload[40..72].try_into()?,
+                                        frame.payload[40..72]
+                                            .try_into()
+                                            .expect("validated fragment"),
                                     ),
-                                    NativeProgressStageV1::Fragment,
-                                    1,
-                                    now,
+                                    observation,
+                                    frame.sequence,
+                                    frame.kind == NovoRudpTransportFrameKindV0::Repair,
+                                    Instant::now(),
                                 );
                             }
+                        });
+                match admission {
+                    Ok(FragmentAdmission::Backpressure) => {
+                        report.backpressured += 1;
+                        super::diagnostics::frame_traffic(
+                            super::diagnostics::Traffic::FragmentBackpressure,
+                            frame,
+                            received.wire_bytes,
+                        );
+                    }
+                    Ok(admission) => {
+                        if admission == FragmentAdmission::Accepted {
+                            report.accepted_fragments += 1;
                         } else {
                             report.duplicate_fragments += 1;
                         }
@@ -749,6 +853,11 @@ impl NativeObjectLink {
                         }
                     }
                     Err(_) => {
+                        super::diagnostics::frame_traffic(
+                            super::diagnostics::Traffic::FragmentRejected,
+                            frame,
+                            received.wire_bytes,
+                        );
                         report.rejected += 1;
                         report
                             .rejection_reasons
@@ -762,7 +871,10 @@ impl NativeObjectLink {
         }
         self.poll_feedback(now, quantum, &mut report)?;
         // Fair across retained jobs, with no per-object wait for an ACK.
+        let queued = self.order.len();
+        let mut visited = 0;
         for _ in 0..quantum.min(self.order.len()) {
+            visited += 1;
             let key = self.order.pop_front().expect("bounded job count");
             let sender = self.jobs.get_mut(&key).expect("retained send job");
             let cancelled = self
@@ -773,10 +885,19 @@ impl NativeObjectLink {
                 sender.cancel();
             }
             if sender.status() == ObjectSendState::Sending {
-                match self
-                    .endpoint
-                    .poll_object(key.0, sender, now, quantum - report.data_sent)
+                let sent =
+                    self.endpoint
+                        .poll_object(key.0, sender, now, quantum - report.data_sent);
+                if let (Some(d), Some(progress)) =
+                    (&self.diagnostics, sender.diagnostic_progress_v1())
                 {
+                    d.send_progress(
+                        transfer_tag_v1(sender.session_id(), key.1, key.2),
+                        progress,
+                        now,
+                    );
+                }
+                match sent {
                     Ok(sent) => report.data_sent += sent,
                     Err(error) if error.downcast_ref::<std::io::Error>().is_some() => {
                         report.send_failures += 1
@@ -824,16 +945,36 @@ impl NativeObjectLink {
             let sender = self.jobs.remove(&key).expect("finished send job");
             self.cancellations.remove(&key);
             let state = sender.status();
+            let diagnostic_tag = self
+                .diagnostics
+                .as_ref()
+                .filter(|d| d.tracks_stream(key.1))
+                .map(|d| {
+                    let tag = transfer_tag_v1(sender.session_id(), key.1, key.2);
+                    d.send_finished(
+                        tag,
+                        match state {
+                            ObjectSendState::Sending => unreachable!("completed active sender"),
+                            ObjectSendState::Delivered => "delivered",
+                            ObjectSendState::Expired => "expired",
+                            ObjectSendState::SessionReplaced => "session_replaced",
+                            ObjectSendState::Cancelled => "cancelled",
+                        },
+                        Instant::now(),
+                    );
+                    tag
+                });
             if state == ObjectSendState::Delivered {
-                if let Some(d) = &self.diagnostics {
+                if let Some(d) = self.diagnostics.as_ref().filter(|d| d.tracks_stream(key.1)) {
                     d.progress(
                         transfer_tag_v1(sender.session_id(), key.1, key.2),
                         NativeProgressStageV1::TransportDone,
                         0,
-                        now,
+                        Instant::now(),
                     );
                 }
             }
+            let traffic = sender.traffic();
             let body = sender.into_body();
             let lane = self.lanes.get_mut(&key.1).expect("configured lane");
             lane.usage.remove(body.byte_len());
@@ -846,9 +987,20 @@ impl NativeObjectLink {
                 stream: key.1,
                 state,
                 body,
+                diagnostic_tag,
+                traffic,
             });
         }
         // ACK-first alone can starve data, and data-first alone can starve ACKs.
+        if let Some(d) = &self.diagnostics {
+            d.send_poll(
+                queued,
+                visited,
+                quantum,
+                report.data_sent,
+                self.endpoint.uses_deferred_writes(),
+            );
+        }
         // A deferred completion releases one slot: give feedback one bounded
         // opportunity after data completion instead of queuing another body.
         if self.endpoint.uses_deferred_writes()
@@ -866,13 +1018,21 @@ impl NativeObjectLink {
         report: &mut NativeLinkPoll,
     ) -> Result<()> {
         // Control/body/ingress feedback have independent bounded hint queues.
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::Feedback);
+        let mut empty_lanes = 0;
         for _ in 0..quantum {
             let stream = self.streams[self.feedback_turn];
             self.feedback_turn = (self.feedback_turn + 1) % self.streams.len();
             let lane = self.lanes.get_mut(&stream).expect("configured lane");
             let Some((peer, id)) = lane.feedback.pop_front() else {
+                empty_lanes += 1;
+                // A complete empty round cannot produce work in this poll.
+                if empty_lanes == self.streams.len() {
+                    break;
+                }
                 continue;
             };
+            empty_lanes = 0;
             lane.queued.remove(&(peer, id));
             let Some(session) = self.endpoint.session_id(peer) else {
                 continue;
@@ -889,14 +1049,17 @@ impl NativeObjectLink {
             };
             // Also checks receiver TTL/history expiry. Never keep a blocked ACK
             // alive after the object it describes has left the receiver state.
-            let Some(ack) = lane.receiver.transport_feedback(
-                self.endpoint.peer_id(peer)?,
-                id,
-                session,
-                epoch,
-                now,
-            )?
-            else {
+            let ack = {
+                let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::AckPrepare);
+                lane.receiver.transport_feedback(
+                    self.endpoint.peer_id(peer)?,
+                    id,
+                    session,
+                    epoch,
+                    now,
+                )?
+            };
+            let Some(ack) = ack else {
                 if let Err(error) = self.endpoint.cancel_feedback_send(peer, stream, id) {
                     lane.requeue_feedback(peer, id);
                     return Err(error);
@@ -910,6 +1073,17 @@ impl NativeObjectLink {
                 entry.insert(PendingFeedback {
                     frame: encode_object_ack(id, stream, &ack)?,
                     dirty: false,
+                    evidence: self
+                        .diagnostics
+                        .as_ref()
+                        .filter(|d| d.tracks_stream(stream))
+                        .map(|_| {
+                            (
+                                ack.header.epoch,
+                                ack.missing_count,
+                                ack.current_window.map(|w| w.start),
+                            )
+                        }),
                 });
             }
             let pending = lane
@@ -923,6 +1097,18 @@ impl NativeObjectLink {
                         .pending_feedback
                         .remove(&key)
                         .expect("completed native ACK");
+                    if let (Some(d), Some((epoch, missing, first_missing))) =
+                        (&self.diagnostics, pending.evidence)
+                    {
+                        d.feedback(
+                            transfer_tag_v1(session, stream, id),
+                            true,
+                            epoch,
+                            missing,
+                            first_missing,
+                            Instant::now(),
+                        );
+                    }
                     if pending.dirty {
                         lane.feedback(peer, id);
                     }
@@ -957,14 +1143,18 @@ impl NativeObjectLink {
     }
     /// An assembly owner can immediately continue real hash work without
     /// mistaking incomplete output for an idle transport. Missing input waits.
-    pub(crate) fn poll_complete_with_progress(
+    pub fn poll_complete_with_progress(
         &mut self,
         stream: u64,
         now: Instant,
         quantum: usize,
     ) -> Result<(Option<CompletedMessage>, bool)> {
         let lane = self.lanes.get_mut(&stream).context("unknown native lane")?;
-        let (item, progress) = if let Some(d) = &self.diagnostics {
+        let (item, progress) = if let Some(d) = self
+            .diagnostics
+            .as_ref()
+            .filter(|d| d.tracks_stream(stream))
+        {
             let endpoint = &self.endpoint;
             let peers = &self.peers;
             lane.receiver
@@ -974,7 +1164,7 @@ impl NativeObjectLink {
                             transfer_tag_v1(session, stream, id),
                             NativeProgressStageV1::Hash,
                             1,
-                            now,
+                            Instant::now(),
                         );
                     }
                 })?
@@ -987,12 +1177,17 @@ impl NativeObjectLink {
                 .get(&item.peer)
                 .context("completed unknown peer")?;
             lane.feedback(peer, item.id);
-            if let (Some(d), Some(session)) = (&self.diagnostics, self.endpoint.session_id(peer)) {
+            if let (Some(d), Some(session)) = (
+                self.diagnostics
+                    .as_ref()
+                    .filter(|d| d.tracks_stream(stream)),
+                self.endpoint.session_id(peer),
+            ) {
                 d.progress(
                     transfer_tag_v1(session, stream, item.id),
                     NativeProgressStageV1::Verified,
                     0,
-                    now,
+                    Instant::now(),
                 );
             }
         }

@@ -1,20 +1,22 @@
-//! Native application reads: unchanged single-item v1 and bounded batch v2.
+//! Native application reads: typed requests and compact, request-bound v6 replies.
 //! Binary, bounded, read-only; carried by
 //! the existing authenticated NovoRUDP session, not a second transport or ledger.
 //! Replies are the authenticated serving node's observations, NOT light-client
 //! execution proofs. Received is volatile; NotRecent is not proof of absence.
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const STREAM: u64 = u64::from_be_bytes(*b"NVQUERY1");
 pub const MAX_V1_BYTES: usize = 1024;
 pub const MAX_RECEIPTS: usize = 128;
-// Largest batch response echoes 128 hashes and 128 finalized states. Each
-// state uses at most 73 bytes (tag/bool/u64/u128/u64/hash), plus <128 bytes of
-// envelope/lengths. 128 * (32 + 73) + 128 < 32 KiB; no numeric narrowing.
+// Each finalized state uses at most 73 bytes (tag/bool/u64/u128/u64/hash).
+// Keep the existing admission budget; compact replies remove the echoed hash
+// list without increasing either the maximum row count or numeric widths.
 pub const MAX_BYTES: usize = 32 * 1024;
 const MAGIC_V1: &[u8; 8] = b"NVQUERY1";
 const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
-const MAGIC_V3: &[u8; 8] = b"NVQUERY3";
+const MAGIC_V4: &[u8; 8] = b"NVQUERY4";
+const MAGIC_RESPONSE_V6: &[u8; 8] = b"NVQUERY6";
 pub type Hash = [u8; 32];
 
 /// Nonempty bounded sequence. Its wire representation is an ordinary postcard
@@ -108,52 +110,50 @@ pub enum Query {
     NovBalance {
         account: AccountId,
     },
-    /// Order is part of the exact echoed request. Only NVQUERY2 may carry it.
+    /// Order is part of the complete request commitment in the reply.
     Receipts {
         hashes: ReceiptBatch<Hash>,
     },
     /// Read-only observation at a published root; NEVER a spend permission.
-    /// Hints locate state and must match authoritative binding records.
-    UcaSpendState {
-        intent: UcaReadIntent,
-        payer_hint: AccountId,
-        recipient_hint: AccountId,
+    /// Concrete accounts and authority mode are committed by the v3 intent.
+    AssetSpendState {
+        intent: AssetReadIntentV2,
     },
 }
 
 /// The original NUAS intent bytes, bounded and validated BEFORE ownership.
 /// This is neither a signed transaction nor a new signing transcript.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UcaReadIntent(Vec<u8>);
-impl UcaReadIntent {
-    pub fn new(intent: &crate::uca_spend::UcaSpendIntentV1) -> Result<Self, &'static str> {
+pub struct AssetReadIntentV2(Vec<u8>);
+impl AssetReadIntentV2 {
+    pub fn new(intent: &crate::uca_spend::AssetSpendIntentV3) -> Result<Self, &'static str> {
         intent
             .signing_bytes()
             .map(Self)
             .map_err(|_| "invalid UCA read intent")
     }
-    pub fn intent(&self) -> crate::uca_spend::UcaSpendIntentV1 {
-        crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&self.0)
+    pub fn intent(&self) -> crate::uca_spend::AssetSpendIntentV3 {
+        crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&self.0)
             .expect("validated immutable UCA read intent")
     }
 }
-impl Serialize for UcaReadIntent {
+impl Serialize for AssetReadIntentV2 {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_bytes(&self.0)
     }
 }
-impl<'de> Deserialize<'de> for UcaReadIntent {
+impl<'de> Deserialize<'de> for AssetReadIntentV2 {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct IntentVisitor;
         impl<'de> serde::de::Visitor<'de> for IntentVisitor {
-            type Value = UcaReadIntent;
+            type Value = AssetReadIntentV2;
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str("bounded canonical NUAS intent")
             }
             fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Self::Value, E> {
-                crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(value)
+                crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(value)
                     .map_err(|_| E::custom("invalid UCA read intent"))?;
-                Ok(UcaReadIntent(value.to_vec()))
+                Ok(AssetReadIntentV2(value.to_vec()))
             }
         }
         deserializer.deserialize_bytes(IntentVisitor)
@@ -163,11 +163,15 @@ impl<'de> Deserialize<'de> for UcaReadIntent {
 /// Serving-node observation only, not a proof or reservation. All fields are
 /// read from the SAME published root, not assembled from caller declarations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct UcaSpendStateView {
+pub struct AssetSpendStateViewV2 {
+    pub authority: crate::uca_spend::AssetSpendAuthorityV3,
     pub state_root: Hash,
     pub height: u64,
     pub account_active: bool,
     pub current_spend_epoch: u64,
+    pub management_key_ref: Hash,
+    pub recovery_key_ref: Option<Hash>,
+    pub grant_present: bool,
     pub grant_epoch: u64,
     pub permits_nov_transfer: bool,
     pub revoked: bool,
@@ -180,8 +184,8 @@ pub struct UcaSpendStateView {
     pub recipient_balance: u128,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UcaState {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AssetState {
     Pending,
     /// A required account or grant record was absent at this exact root. Not
     /// unknown IO, malformed state or a claim that the UCA never existed.
@@ -189,7 +193,7 @@ pub enum UcaState {
         state_root: Hash,
         height: u64,
     },
-    Present(UcaSpendStateView),
+    Present(Box<AssetSpendStateViewV2>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -256,7 +260,7 @@ pub enum Answer {
         states: ReceiptBatch<ReceiptState>,
         indexed_height: u64,
     },
-    UcaSpendState(UcaState),
+    AssetSpendState(AssetState),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -269,6 +273,22 @@ pub enum Frame {
     Response(Response),
 }
 
+#[derive(Serialize, Deserialize)]
+struct CompactResponse {
+    session: Hash,
+    sequence: u64,
+    request_digest: Hash,
+    answer: Answer,
+}
+
+fn request_digest(request: &Request) -> Result<Hash, &'static str> {
+    let canonical = postcard::to_allocvec(request).map_err(|_| "native query encode")?;
+    let mut digest = Sha256::new();
+    digest.update(b"NOVOVM-NATIVE-QUERY-RESPONSE-V6\0");
+    digest.update(canonical);
+    Ok(digest.finalize().into())
+}
+
 fn request(frame: &Frame) -> &Request {
     match frame {
         Frame::Request(r) => r,
@@ -279,7 +299,7 @@ fn is_batch(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::Receipts { .. })
 }
 fn is_uca(frame: &Frame) -> bool {
-    matches!(request(frame).query, Query::UcaSpendState { .. })
+    matches!(request(frame).query, Query::AssetSpendState { .. })
 }
 fn valid(frame: &Frame) -> bool {
     let request = request(frame);
@@ -287,18 +307,21 @@ fn valid(frame: &Frame) -> bool {
         return false;
     }
     match frame {
-        Frame::Response(Response { request, answer }) => match (&request.query, answer) {
-            (_, Answer::Error(_))
-            | (Query::Status, Answer::Status(_))
-            | (Query::Receipt { .. }, Answer::Receipt { .. })
-            | (Query::NovBalance { .. }, Answer::NovBalance(_))
-            | (Query::UcaSpendState { .. }, Answer::UcaSpendState(_)) => true,
-            (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
-                hashes.len() == states.len()
-            }
-            _ => false,
-        },
+        Frame::Response(Response { request, answer }) => answer_matches(request, answer),
         _ => true,
+    }
+}
+fn answer_matches(request: &Request, answer: &Answer) -> bool {
+    match (&request.query, answer) {
+        (_, Answer::Error(_))
+        | (Query::Status, Answer::Status(_))
+        | (Query::Receipt { .. }, Answer::Receipt { .. })
+        | (Query::NovBalance { .. }, Answer::NovBalance(_))
+        | (Query::AssetSpendState { .. }, Answer::AssetSpendState(_)) => true,
+        (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
+            hashes.len() == states.len()
+        }
+        _ => false,
     }
 }
 pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
@@ -306,22 +329,34 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
         return Err("invalid native query binding");
     }
     let batch = is_batch(&frame);
-    let mut bytes = if is_uca(&frame) {
-        MAGIC_V3
+    let mut bytes = if matches!(frame, Frame::Response(_)) {
+        MAGIC_RESPONSE_V6
+    } else if is_uca(&frame) {
+        MAGIC_V4
     } else if batch {
         MAGIC_V2
     } else {
         MAGIC_V1
     }
     .to_vec();
-    bytes.extend(postcard::to_allocvec(&frame).map_err(|_| "native query encode")?);
+    let encoded = match frame {
+        Frame::Response(response) => postcard::to_allocvec(&CompactResponse {
+            session: response.request.session,
+            sequence: response.request.sequence,
+            request_digest: request_digest(&response.request)?,
+            answer: response.answer,
+        }),
+        request => postcard::to_allocvec(&request),
+    }
+    .map_err(|_| "native query encode")?;
+    bytes.extend(encoded);
     if bytes.len() > if batch { MAX_BYTES } else { MAX_V1_BYTES } {
         return Err("native query size");
     }
     Ok(bytes)
 }
 pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
-    let uca = bytes.starts_with(MAGIC_V3);
+    let uca = bytes.starts_with(MAGIC_V4);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
@@ -337,23 +372,116 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     // Fixed fields and checked length prefixes only; no unbounded Vec/String.
     let (frame, tail): (Frame, _) =
         postcard::take_from_bytes(&bytes[8..]).map_err(|_| "native query decode")?;
-    if !tail.is_empty() || !valid(&frame) || is_batch(&frame) != batch || is_uca(&frame) != uca {
+    if !tail.is_empty()
+        || !matches!(frame, Frame::Request(_))
+        || !valid(&frame)
+        || is_batch(&frame) != batch
+        || is_uca(&frame) != uca
+    {
         return Err("native query trailing bytes/binding");
     }
     Ok(frame)
 }
 
+/// Reconstruct the typed reply only from the client's exact pending request.
+/// A valid reply for another request is stale, not an answer to the current one.
+/// There is no fallback to the former full-request response wire formats.
+pub fn decode_response(bytes: &[u8], expected: &Request) -> Result<Option<Response>, &'static str> {
+    if !bytes.starts_with(MAGIC_RESPONSE_V6) || bytes.len() > MAX_BYTES {
+        return Err("native query response header/size");
+    }
+    let (response, tail): (CompactResponse, _) =
+        postcard::take_from_bytes(&bytes[8..]).map_err(|_| "native query response decode")?;
+    if !tail.is_empty() || response.session == [0; 32] || response.sequence == 0 {
+        return Err("native query response trailing bytes/binding");
+    }
+    if response.session != expected.session
+        || response.sequence != expected.sequence
+        || response.request_digest != request_digest(expected)?
+    {
+        return Ok(None);
+    }
+    let limit = if matches!(expected.query, Query::Receipts { .. }) {
+        MAX_BYTES
+    } else {
+        MAX_V1_BYTES
+    };
+    if bytes.len() > limit || !answer_matches(expected, &response.answer) {
+        return Err("native query response size/answer binding");
+    }
+    Ok(Some(Response {
+        request: expected.clone(),
+        answer: response.answer,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn uca_intent() -> crate::uca_spend::UcaSpendIntentV1 {
-        crate::uca_spend::UcaSpendIntentV1 {
+
+    #[test]
+    fn account_query_commits_authority_mode_and_rejects_the_old_grant_only_intent() {
+        let delegated = uca_intent();
+        let mut controller = delegated.clone();
+        controller.authority = crate::uca_spend::AssetSpendAuthorityV3::Controller;
+        let request = |intent: &crate::uca_spend::AssetSpendIntentV3| Request {
+            session: [7; 32],
+            sequence: 1,
+            query: Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(intent).unwrap(),
+            },
+        };
+        let delegated_request = request(&delegated);
+        let controller_request = request(&controller);
+        assert_ne!(
+            request_digest(&delegated_request).unwrap(),
+            request_digest(&controller_request).unwrap()
+        );
+        let reply = encode(Frame::Response(Response {
+            request: controller_request.clone(),
+            answer: Answer::AssetSpendState(AssetState::Pending),
+        }))
+        .unwrap();
+        assert!(reply.starts_with(b"NVQUERY6"));
+        assert!(decode_response(&reply, &controller_request)
+            .unwrap()
+            .is_some());
+        assert!(decode_response(&reply, &delegated_request)
+            .unwrap()
+            .is_none());
+        let mut old = delegated.signing_bytes().unwrap();
+        old[4] = 2;
+        old.remove(7);
+        assert!(
+            postcard::from_bytes::<AssetReadIntentV2>(&postcard::to_allocvec(&old).unwrap())
+                .is_err()
+        );
+    }
+
+    fn assert_response_round_trip(bytes: &[u8], frame: &Frame) {
+        let Frame::Response(response) = frame else {
+            panic!("expected response fixture");
+        };
+        assert!(bytes.starts_with(MAGIC_RESPONSE_V6));
+        assert_eq!(
+            decode_response(bytes, &response.request).unwrap(),
+            Some(response.clone())
+        );
+        assert!(decode(bytes).is_err(), "request ingress rejects a reply");
+    }
+
+    fn uca_intent() -> crate::uca_spend::AssetSpendIntentV3 {
+        crate::uca_spend::AssetSpendIntentV3 {
+            authority: crate::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
+            asset: 1,
+            authority_update: None,
+            recipient_creation: None,
             chain_id: 7,
             genesis: [2; 32],
-            account_id: "uca:alice".into(),
+            payer: vec![1; 20],
             authorization_epoch: 3,
             spend_key_ref: [4; 32],
-            recipient_uca: "uca:bob".into(),
+            recipient: vec![2; 32],
             amount: u128::MAX - 1,
             max_fee: 1,
             nonce: u64::MAX - 1,
@@ -367,35 +495,39 @@ mod tests {
         let intent = uca_intent();
         let raw = intent.signing_bytes().unwrap();
         assert_eq!(
-            crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&raw).unwrap(),
+            crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&raw).unwrap(),
             intent
         );
         for len in 0..raw.len() {
-            assert!(crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&raw[..len]).is_err());
+            assert!(
+                crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&raw[..len]).is_err()
+            );
         }
         let mut tail = raw.clone();
         tail.push(0);
-        assert!(crate::uca_spend::UcaSpendIntentV1::decode_signing_bytes(&tail).is_err());
+        assert!(crate::uca_spend::AssetSpendIntentV3::decode_signing_bytes(&tail).is_err());
         let request = Request {
             session: [7; 32],
             sequence: 1,
-            query: Query::UcaSpendState {
-                intent: UcaReadIntent::new(&intent).unwrap(),
-                payer_hint: AccountId::Bytes20([1; 20]),
-                recipient_hint: AccountId::Bytes32([2; 32]),
+            query: Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(&intent).unwrap(),
             },
         };
         for answer in [
-            UcaState::Pending,
-            UcaState::Missing {
+            AssetState::Pending,
+            AssetState::Missing {
                 state_root: [9; 32],
                 height: 1,
             },
-            UcaState::Present(UcaSpendStateView {
+            AssetState::Present(Box::new(AssetSpendStateViewV2 {
+                authority: crate::uca_spend::AssetSpendAuthorityV3::DelegatedGrant,
                 state_root: [9; 32],
                 height: u64::MAX,
                 account_active: false,
                 current_spend_epoch: u64::MAX,
+                management_key_ref: [6; 32],
+                recovery_key_ref: None,
+                grant_present: true,
                 grant_epoch: u64::MAX,
                 permits_nov_transfer: false,
                 revoked: true,
@@ -406,19 +538,19 @@ mod tests {
                 next_nonce: u64::MAX,
                 payer_balance: u128::MAX,
                 recipient_balance: u128::MAX,
-            }),
+            })),
         ] {
             let frame = Frame::Response(Response {
                 request: request.clone(),
-                answer: Answer::UcaSpendState(answer),
+                answer: Answer::AssetSpendState(answer),
             });
             let bytes = encode(frame.clone()).unwrap();
-            assert!(bytes.starts_with(MAGIC_V3));
-            assert_eq!(decode(&bytes).unwrap(), frame);
-            for label in [MAGIC_V1, MAGIC_V2] {
+            assert_response_round_trip(&bytes, &frame);
+            for label in [MAGIC_V1, MAGIC_V2, b"NVQUERY3"] {
                 let mut wrong = bytes.clone();
                 wrong[..8].copy_from_slice(label);
                 assert!(decode(&wrong).is_err());
+                assert!(decode_response(&wrong, &request).is_err());
             }
         }
         assert!(encode(Frame::Response(Response {
@@ -432,14 +564,13 @@ mod tests {
     fn uca_read_intent_rejects_unbounded_or_invalid_body_before_ownership() {
         let mut raw = uca_intent().signing_bytes().unwrap();
         for bytes in [vec![0; 4096], {
-            raw[7] = 0;
-            raw[14] = 0;
+            raw[7] = 255;
             raw
         }] {
             let encoded = postcard::to_allocvec(&bytes).unwrap();
-            assert!(postcard::from_bytes::<UcaReadIntent>(&encoded).is_err());
+            assert!(postcard::from_bytes::<AssetReadIntentV2>(&encoded).is_err());
         }
-        assert!(postcard::from_bytes::<UcaReadIntent>(
+        assert!(postcard::from_bytes::<AssetReadIntentV2>(
             &postcard::to_allocvec(&usize::MAX).unwrap()
         )
         .is_err());
@@ -465,14 +596,14 @@ mod tests {
             },
         });
         let bytes = encode(frame.clone()).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), frame);
+        assert_response_round_trip(&bytes, &frame);
         for n in 0..bytes.len() {
-            assert!(decode(&bytes[..n]).is_err());
+            assert!(decode_response(&bytes[..n], &request).is_err());
         }
         let mut trailing = bytes.clone();
         trailing.push(0);
-        assert!(decode(&trailing).is_err());
-        assert!(decode(&vec![0; MAX_BYTES + 1]).is_err());
+        assert!(decode_response(&trailing, &request).is_err());
+        assert!(decode_response(&vec![0; MAX_BYTES + 1], &request).is_err());
         assert!(encode(Frame::Request(Request {
             sequence: 0,
             ..request.clone()
@@ -520,24 +651,23 @@ mod tests {
                 },
             });
             let bytes = encode(frame.clone()).unwrap();
-            assert!(bytes.starts_with(MAGIC_V2));
-            assert!(bytes.len() <= MAX_RECEIPTS * (32 + 73) + 128);
-            assert_eq!(decode(&bytes).unwrap(), frame);
+            assert!(bytes.len() <= MAX_RECEIPTS * 73 + 128);
+            assert_response_round_trip(&bytes, &frame);
             assert_eq!(
                 decode(&encode(Frame::Request(request.clone())).unwrap()).unwrap(),
                 Frame::Request(request.clone())
             );
             let error = Frame::Response(Response {
-                request,
+                request: request.clone(),
                 answer: Answer::Error(QueryError::Busy),
             });
-            assert_eq!(decode(&encode(error.clone()).unwrap()).unwrap(), error);
+            assert_response_round_trip(&encode(error.clone()).unwrap(), &error);
             let mut old_label = bytes.clone();
             old_label[..8].copy_from_slice(MAGIC_V1);
-            assert!(decode(&old_label).is_err());
+            assert!(decode_response(&old_label, &request).is_err());
             let mut trailing = bytes;
             trailing.push(0);
-            assert!(decode(&trailing).is_err());
+            assert!(decode_response(&trailing, &request).is_err());
         }
         let frame = Frame::Request(batch_request(2));
         let mut reversed = batch_request(2);
@@ -596,6 +726,20 @@ mod tests {
             let mut bytes = MAGIC_V2.to_vec();
             bytes.extend(postcard::to_allocvec(&frame).unwrap());
             assert!(decode(&bytes).is_err());
+            let Frame::Response(response) = frame else {
+                unreachable!();
+            };
+            let mut bytes = MAGIC_RESPONSE_V6.to_vec();
+            bytes.extend(
+                postcard::to_allocvec(&CompactResponse {
+                    session: response.request.session,
+                    sequence: response.request.sequence,
+                    request_digest: request_digest(&response.request).unwrap(),
+                    answer: response.answer,
+                })
+                .unwrap(),
+            );
+            assert!(decode_response(&bytes, &response.request).is_err());
         }
         let single = Frame::Request(Request {
             session: [7; 32],
@@ -611,7 +755,7 @@ mod tests {
     }
 
     #[test]
-    fn original_v1_request_and_receipt_golden_bytes_are_unchanged() {
+    fn request_golden_bytes_are_unchanged_and_old_responses_are_rejected() {
         // Frozen postcard v1 enum ordinals and fixed-width byte fields; these
         // expected bytes do not serialize the new Query/Frame implementation.
         for (query, query_bytes) in [
@@ -645,15 +789,28 @@ mod tests {
             expected.extend(&query_bytes);
             assert_eq!(encode(Frame::Request(request.clone())).unwrap(), expected);
             assert_eq!(decode(&expected).unwrap(), Frame::Request(request.clone()));
+            let mut digest = Sha256::new();
+            digest.update(b"NOVOVM-NATIVE-QUERY-RESPONSE-V6\0");
+            digest.update(&expected[9..]); // Frozen complete Request, no Frame tag.
+            let compact = [
+                MAGIC_RESPONSE_V6.to_vec(),
+                vec![7; 32],
+                vec![1],
+                digest.finalize().to_vec(),
+                vec![3, 0], // Answer::Error(QueryError::Busy)
+            ]
+            .concat();
             expected[8] = 1; // Frame::Response echoes exactly the same request
             expected.extend([3, 0]); // Answer::Error(QueryError::Busy)
+            assert!(decode(&expected).is_err());
+            assert!(decode_response(&expected, &request).is_err());
             assert_eq!(
                 encode(Frame::Response(Response {
-                    request,
+                    request: request.clone(),
                     answer: Answer::Error(QueryError::Busy)
                 }))
                 .unwrap(),
-                expected
+                compact
             );
         }
         let frame = Frame::Response(Response {
@@ -684,10 +841,166 @@ mod tests {
             vec![4],
         ]
         .concat();
-        assert_eq!(encode(frame.clone()).unwrap(), expected);
-        assert_eq!(decode(&expected).unwrap(), frame);
+        let Frame::Response(response) = &frame else {
+            unreachable!();
+        };
+        assert!(decode(&expected).is_err());
+        assert!(decode_response(&expected, &response.request).is_err());
+        assert_response_round_trip(&encode(frame.clone()).unwrap(), &frame);
         let mut oversized = expected;
         oversized.resize(MAX_V1_BYTES + 1, 0);
         assert!(decode(&oversized).is_err());
+    }
+
+    #[test]
+    fn compact_batch_wire_removes_only_echoed_request_and_preserves_row_order() {
+        let mut request = batch_request(MAX_RECEIPTS);
+        request.sequence = 1;
+        let response = Response {
+            request: request.clone(),
+            answer: Answer::Receipts {
+                states: ReceiptBatch::try_from(vec![ReceiptState::Received; MAX_RECEIPTS]).unwrap(),
+                indexed_height: 1,
+            },
+        };
+        let frame = Frame::Response(response);
+        let compact = encode(frame.clone()).unwrap();
+        let old_bytes = 8 + postcard::to_allocvec(&frame).unwrap().len();
+        assert_eq!(old_bytes, 4273);
+        assert_eq!(compact.len(), 205);
+        assert_eq!(old_bytes - compact.len(), 4068);
+        assert_response_round_trip(&compact, &frame);
+
+        let frame = Frame::Response(Response {
+            request: batch_request(MAX_RECEIPTS),
+            answer: Answer::Receipts {
+                states: ReceiptBatch::try_from(vec![finalized(); MAX_RECEIPTS]).unwrap(),
+                indexed_height: u64::MAX,
+            },
+        });
+        let compact = encode(frame.clone()).unwrap();
+        assert_eq!(compact.len(), 9439);
+        assert_response_round_trip(&compact, &frame);
+
+        let frame = Frame::Response(Response {
+            request: batch_request(4),
+            answer: Answer::Receipts {
+                states: ReceiptBatch::try_from(vec![
+                    ReceiptState::Received,
+                    finalized(),
+                    ReceiptState::NotRecent,
+                    ReceiptState::RejectedNonce,
+                ])
+                .unwrap(),
+                indexed_height: 3,
+            },
+        });
+        assert_response_round_trip(&encode(frame.clone()).unwrap(), &frame);
+    }
+
+    #[test]
+    fn compact_response_binds_complete_request_not_only_session_and_sequence() {
+        let request = batch_request(2);
+        let bytes = encode(Frame::Response(Response {
+            request: request.clone(),
+            answer: Answer::Receipts {
+                states: ReceiptBatch::try_from(vec![ReceiptState::Received; 2]).unwrap(),
+                indexed_height: 1,
+            },
+        }))
+        .unwrap();
+        for change in 0..6 {
+            let mut wrong = request.clone();
+            match change {
+                0 => wrong.session[0] ^= 1,
+                1 => wrong.sequence -= 1,
+                2 => wrong.query = Query::Status,
+                3..=5 => {
+                    let Query::Receipts { hashes } = &mut wrong.query else {
+                        unreachable!();
+                    };
+                    match change {
+                        3 => hashes.0[0][31] ^= 1,
+                        4 => hashes.0.reverse(),
+                        _ => {
+                            hashes.0.pop();
+                        }
+                    }
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(decode_response(&bytes, &wrong).unwrap(), None);
+        }
+        for query in [
+            Query::NovBalance {
+                account: AccountId::Bytes20([3; 20]),
+            },
+            Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(&uca_intent()).unwrap(),
+            },
+        ] {
+            let mut expected = Request {
+                session: [7; 32],
+                sequence: 1,
+                query,
+            };
+            let bytes = encode(Frame::Response(Response {
+                request: expected.clone(),
+                answer: Answer::Error(QueryError::Unavailable),
+            }))
+            .unwrap();
+            match &mut expected.query {
+                Query::NovBalance { account } => *account = AccountId::Bytes32([3; 32]),
+                Query::AssetSpendState { intent } => {
+                    let mut other = intent.intent();
+                    other.chain_id += 1;
+                    *intent = AssetReadIntentV2::new(&other).unwrap();
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(decode_response(&bytes, &expected).unwrap(), None);
+        }
+        let mut bad_digest = bytes;
+        // Eight-byte magic, fixed session, and ten-byte u64::MAX sequence.
+        bad_digest[8 + 32 + 10] ^= 1;
+        assert_eq!(decode_response(&bad_digest, &request).unwrap(), None);
+    }
+
+    #[test]
+    fn compact_response_rejects_oversize_malformed_counts_and_all_old_response_versions() {
+        let request = batch_request(2);
+        for count in [0, 1, MAX_RECEIPTS + 1] {
+            let compact = CompactResponse {
+                session: request.session,
+                sequence: request.sequence,
+                request_digest: request_digest(&request).unwrap(),
+                answer: Answer::Receipts {
+                    states: ReceiptBatch(vec![ReceiptState::Received; count]),
+                    indexed_height: 1,
+                },
+            };
+            let mut bytes = MAGIC_RESPONSE_V6.to_vec();
+            bytes.extend(postcard::to_allocvec(&compact).unwrap());
+            assert!(decode_response(&bytes, &request).is_err());
+        }
+        let frame = Frame::Response(Response {
+            request: request.clone(),
+            answer: Answer::Error(QueryError::Busy),
+        });
+        let bytes = encode(frame.clone()).unwrap();
+        for length in 0..bytes.len() {
+            assert!(decode_response(&bytes[..length], &request).is_err());
+        }
+        let mut oversized = bytes;
+        oversized.resize(MAX_BYTES + 1, 0);
+        assert!(decode_response(&oversized, &request).is_err());
+        for magic in [MAGIC_V1, MAGIC_V2, MAGIC_V4, b"NVQUERY5"] {
+            let mut legacy = magic.to_vec();
+            legacy.extend(postcard::to_allocvec(&frame).unwrap());
+            assert!(decode(&legacy).is_err());
+            assert!(decode_response(&legacy, &request).is_err());
+        }
+        let request_bytes = encode(Frame::Request(request.clone())).unwrap();
+        assert!(decode_response(&request_bytes, &request).is_err());
     }
 }

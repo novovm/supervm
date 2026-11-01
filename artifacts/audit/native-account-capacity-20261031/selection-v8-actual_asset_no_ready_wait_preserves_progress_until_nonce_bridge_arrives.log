@@ -1,0 +1,7 @@
+
+running 1 test
+test native_pipeline::service::rpc::selection_budget_tests::actual_asset_no_ready_wait_preserves_progress_until_nonce_bridge_arrives ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\15884-1793409467210457500
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1834 filtered out; finished in 0.28s
+

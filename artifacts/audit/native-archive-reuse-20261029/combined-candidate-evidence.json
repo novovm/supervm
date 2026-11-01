@@ -1,0 +1,2010 @@
+{
+  "schema": "novovm-native-archive-and-hash-progress-evidence/v1",
+  "status": "COMBINED_FUNCTIONAL_AND_FAULT_RECOVERY_PASS_PERFORMANCE_UNMET_NOT_RELEASE_ACCEPTED",
+  "reviewed_on": "2026-10-29",
+  "qualification": {
+    "base_source_commit": "0897c596da3edf95ab6ab71f63d18222c7248a78",
+    "source_patch": "combined-final-source.patch",
+    "source_patch_sha256": "59ecfe62f075cd7de770f3b54df5171151cea95183d4cd3bb6e02e2118dcea26",
+    "before_archive_only_node_sha256": "f286eff9d60fa5689ff749352eb8624a7cbd5653ae40d41a8c3aaa953707c486",
+    "combined_node_sha256": "ec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+    "combined_client_sha256": "96f3b2754ec536bf35643fcf3edb015647e4a9d0ba9a3c982d63ba9c954b44e1",
+    "combined_native_tests_sha256": "278d3f0e40b5c15a4d5113b58bc96415bd750f624458fb1736720947fd8479b8",
+    "combined_network_tests_sha256": "b60283369018b02316579b7053944ed48d8b883b573cec6912f67a61827022d1",
+    "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+    "normal_build": {
+      "status": "PASS",
+      "log": "combined-node-build.log",
+      "frozen_directory": "target/native-archive-reuse-20261029/with-hash-progress"
+    },
+    "strict_clippy": {
+      "status": "PASS",
+      "log": "combined-clippy.log"
+    },
+    "format": {
+      "status": "PASS",
+      "log": "combined-final-fmt.log",
+      "source": "Parent-integrator completed command; saved log empty."
+    },
+    "targeted_proof": "hash-progress-proof-evidence.json",
+    "earlier_proof_build_pending_scope": "The previous proof JSON records the earlier checkpoint while normal binaries were building. This later evidence records the completed normal binary hashes; it does not reinterpret earlier archive-only F286 performance.",
+    "four_process_fault_recovery": {
+      "status": "PASS_CPU_AND_GPU_REQUIRED",
+      "reports": [
+        {
+          "mode": "cpu",
+          "completed": true,
+          "scope": "four_original_node_processes_one_host_nuas_recovery",
+          "real_processes": 4,
+          "real_machines": 1,
+          "http_listeners": 0,
+          "fixed_quorum": 3,
+          "shared_identity_distinct_asset_accounts": true,
+          "missing_validator": 0,
+          "offline_heights": 40,
+          "mainnet": false,
+          "tps_acceptance": false,
+          "offline_transactions": 1063,
+          "total_transactions": 1064,
+          "large_body_height": 40,
+          "large_body_rows": 1024,
+          "wallet_replay_to_laggard": false,
+          "database_copy": false,
+          "business_proof_verified": false,
+          "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+          "library_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "late_start_after_ms": 111692,
+          "catchup_crash": {
+            "durable_interrupted_height": 1,
+            "target_height": 40,
+            "target_archive_absent_at_crash": true,
+            "qc_signatures": 3,
+            "outbox_revision": 1,
+            "outbox_sha256": "0xc080a5d2ad4c1c2d88c49d3360c7f26bf106227f78d901cff24f784aecc9f5c3",
+            "source": "original stopped database; no copy or mutation"
+          },
+          "large_body_archives": [
+            {
+              "node": 0,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x9c9c3f3dfd098470681bcb73a5815842d57f4a5569ac6c4dd2e43c8c70d7c022",
+              "exact_submitted_bytes": true
+            },
+            {
+              "node": 1,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x9c9c3f3dfd098470681bcb73a5815842d57f4a5569ac6c4dd2e43c8c70d7c022",
+              "exact_submitted_bytes": true
+            },
+            {
+              "node": 2,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x9c9c3f3dfd098470681bcb73a5815842d57f4a5569ac6c4dd2e43c8c70d7c022",
+              "exact_submitted_bytes": true
+            },
+            {
+              "node": 3,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x9c9c3f3dfd098470681bcb73a5815842d57f4a5569ac6c4dd2e43c8c70d7c022",
+              "exact_submitted_bytes": true
+            }
+          ],
+          "final_heights": [
+            41,
+            41,
+            41,
+            41
+          ],
+          "fee_accounting": {
+            "treasury_reserve_nov": 47880,
+            "settled_nov_total": 47880,
+            "settled_by_asset_nov": 47880,
+            "reserve_bucket_nov": 32984,
+            "fee_bucket_nov": 9576,
+            "risk_buffer_nov": 5320,
+            "settlements": 1064,
+            "journal_next_seq": 1064,
+            "daily_window_day": 21990,
+            "daily_nov_used": 0
+          },
+          "same_config_and_signing_outbox_preserved": true,
+          "cold_reopen_verified": true,
+          "elapsed_ms": 136897,
+          "report": "combined-recovery-cpu.json",
+          "report_sha256": "11eb0e11d7337c863d96f33c019be3e24c10c131afa16f3a59bdca71e8032b51"
+        },
+        {
+          "mode": "gpu",
+          "completed": true,
+          "scope": "four_original_node_processes_one_host_nuas_recovery",
+          "real_processes": 4,
+          "real_machines": 1,
+          "http_listeners": 0,
+          "fixed_quorum": 3,
+          "shared_identity_distinct_asset_accounts": true,
+          "missing_validator": 2,
+          "offline_heights": 40,
+          "mainnet": false,
+          "tps_acceptance": false,
+          "offline_transactions": 1063,
+          "total_transactions": 1064,
+          "large_body_height": 40,
+          "large_body_rows": 1024,
+          "wallet_replay_to_laggard": false,
+          "database_copy": false,
+          "business_proof_verified": false,
+          "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+          "library_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+          "late_start_after_ms": 106873,
+          "catchup_crash": {
+            "durable_interrupted_height": 1,
+            "target_height": 40,
+            "target_archive_absent_at_crash": true,
+            "qc_signatures": 3,
+            "outbox_revision": 1,
+            "outbox_sha256": "0x74299fce36372dd6a782d207f3971653f9de215b0544e44e60de086907bdd8a9",
+            "source": "original stopped database; no copy or mutation"
+          },
+          "large_body_archives": [
+            {
+              "node": 0,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x7fd90c49c3fb77c7a4f1175ca2834db1e3b7926254223836711cc6035d00c372",
+              "exact_submitted_bytes": true
+            },
+            {
+              "node": 1,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x7fd90c49c3fb77c7a4f1175ca2834db1e3b7926254223836711cc6035d00c372",
+              "exact_submitted_bytes": true
+            },
+            {
+              "node": 2,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x7fd90c49c3fb77c7a4f1175ca2834db1e3b7926254223836711cc6035d00c372",
+              "exact_submitted_bytes": true
+            },
+            {
+              "node": 3,
+              "height": 40,
+              "transactions": 1024,
+              "canonical_expanded_bytes": 5578752,
+              "apfl_encoded_bytes": 3402960,
+              "apfl_sha256": "0x7fd90c49c3fb77c7a4f1175ca2834db1e3b7926254223836711cc6035d00c372",
+              "exact_submitted_bytes": true
+            }
+          ],
+          "final_heights": [
+            41,
+            41,
+            41,
+            41
+          ],
+          "fee_accounting": {
+            "treasury_reserve_nov": 47880,
+            "settled_nov_total": 47880,
+            "settled_by_asset_nov": 47880,
+            "reserve_bucket_nov": 32984,
+            "fee_bucket_nov": 9576,
+            "risk_buffer_nov": 5320,
+            "settlements": 1064,
+            "journal_next_seq": 1064,
+            "daily_window_day": 21990,
+            "daily_nov_used": 0
+          },
+          "same_config_and_signing_outbox_preserved": true,
+          "cold_reopen_verified": true,
+          "elapsed_ms": 132359,
+          "report": "combined-recovery-gpu.json",
+          "report_sha256": "175b5c282c0a5a7260d83298fbf3ae64c8d400f494b10b5a8d93326b52047343"
+        }
+      ],
+      "scope": "Four real original node processes on one Windows host, quorum unchanged at 3. Late start, durable-height-1 interruption before target-height-40 archive exists, same original database/outbox restart, 1024-row height-40 archive equality, recipient respending and cold reopen are independently checked. Not four physical hosts or TPS acceptance.",
+      "aab": {
+        "log": "combined-aab.log",
+        "name": "native_only_a_a_b_real_honest_signers_recover_and_restart",
+        "passed": 1,
+        "failed": 0,
+        "elapsed_seconds": 18.58
+      }
+    },
+    "complete_ci": "NOT_RECORDED",
+    "production_or_multihost_acceptance": false
+  },
+  "raw_reports": {
+    "four_k": {
+      "source": "target/native-product-load/bulk-authority-paired-13284-1793236985475.json",
+      "copy": "combined-4096-hash-before-after-paired.json",
+      "sha256": "3cf5b7f212bf370e104bf06c4f77bae6485d3b70664ce1bffa6d28a938a3b13c",
+      "log": "combined-4096-hash-before-after.log"
+    },
+    "continuous_65k": {
+      "source": "target/native-product-load/continuous_8192_outstanding_receipt_anchored_windows-paired-10992-1793237151139.json",
+      "copy": "combined-65536-continuous-paired.json",
+      "sha256": "41928e290fffe44424721761f4a4774e73ea7b716a36b190af0cdd9eb2b25b4d",
+      "log": "combined-65536-continuous.log"
+    }
+  },
+  "four_k": {
+    "scope": "one-host four-process laboratory before/after; no deployed identity or journal reset",
+    "same_signed_corpus_and_initial_state": true,
+    "business_backend_unchanged": true,
+    "rounds": [
+      {
+        "label": "before_cpu",
+        "transactions": 4096,
+        "binary_sha256": "0xf286eff9d60fa5689ff749352eb8624a7cbd5653ae40d41a8c3aaa953707c486",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "cpu",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 1.572569,
+        "successful_tps": 2604.655185241474,
+        "latency_us": {
+          "p50": 1390231,
+          "p95": 1566993,
+          "p99": 1571324,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "signed_workload_sha256": "0x1583f5cdce2af46a078e88aa5157ae57f06eb345f3eb94f58b240227701a03d8",
+        "initial_root": "0xd5715d03856f1ef12536ec2cb0c0943dd08b01d67be69f30da33426b9da48a3d",
+        "signing_domain": "0x2900c926aedf0c647fda9ee20a4bc89013b88eb61db7cc92b7a00d2066a23539",
+        "genesis_commitment": "0x49727f28485bb2602ec5d825a79259044039a047e4805a5cf696f06e5ac1a17c",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 5185,
+          "receipt_query_requests_by_node": [
+            1276,
+            1018,
+            1686,
+            1205
+          ],
+          "observation_rows_received": 663680,
+          "receipt_query_rows_received_by_node": [
+            163328,
+            130304,
+            215808,
+            154240
+          ],
+          "observation_not_final": 647296,
+          "receipt_query_not_final_by_node": [
+            159232,
+            126208,
+            211712,
+            150144
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "signature_generation_timing": "all workload signing excluded before first submission",
+        "first_height_all_receipt_queries_observed_us": 1207542,
+        "four_process_startup_ready_seconds": 0.2724732,
+        "startup_through_four_receipts_seconds": 2.1244856,
+        "candidate_blocks": 4,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 184320,
+          "settled_nov_total": 184320,
+          "settled_by_asset_nov": 184320,
+          "reserve_bucket_nov": 126976,
+          "fee_bucket_nov": 36864,
+          "risk_buffer_nov": 20480,
+          "settlements": 4096,
+          "journal_next_seq": 4096,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 4096,
+        "initial_signed_corpus_rows": 4096
+      },
+      {
+        "label": "after_cpu",
+        "transactions": 4096,
+        "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "cpu",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 1.742078,
+        "successful_tps": 2351.2150431840596,
+        "latency_us": {
+          "p50": 1206086,
+          "p95": 1740346,
+          "p99": 1740892,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "signed_workload_sha256": "0x1583f5cdce2af46a078e88aa5157ae57f06eb345f3eb94f58b240227701a03d8",
+        "initial_root": "0xd5715d03856f1ef12536ec2cb0c0943dd08b01d67be69f30da33426b9da48a3d",
+        "signing_domain": "0x2900c926aedf0c647fda9ee20a4bc89013b88eb61db7cc92b7a00d2066a23539",
+        "genesis_commitment": "0x49727f28485bb2602ec5d825a79259044039a047e4805a5cf696f06e5ac1a17c",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 4382,
+          "receipt_query_requests_by_node": [
+            378,
+            1403,
+            1465,
+            1136
+          ],
+          "observation_rows_received": 560896,
+          "receipt_query_rows_received_by_node": [
+            48384,
+            179584,
+            187520,
+            145408
+          ],
+          "observation_not_final": 544512,
+          "receipt_query_not_final_by_node": [
+            44288,
+            175488,
+            183424,
+            141312
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "signature_generation_timing": "all workload signing excluded before first submission",
+        "first_height_all_receipt_queries_observed_us": 1060359,
+        "four_process_startup_ready_seconds": 0.3835785,
+        "startup_through_four_receipts_seconds": 2.3992265,
+        "candidate_blocks": 4,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 184320,
+          "settled_nov_total": 184320,
+          "settled_by_asset_nov": 184320,
+          "reserve_bucket_nov": 126976,
+          "fee_bucket_nov": 36864,
+          "risk_buffer_nov": 20480,
+          "settlements": 4096,
+          "journal_next_seq": 4096,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 4096,
+        "initial_signed_corpus_rows": 4096
+      },
+      {
+        "label": "before_gpu",
+        "transactions": 4096,
+        "binary_sha256": "0xf286eff9d60fa5689ff749352eb8624a7cbd5653ae40d41a8c3aaa953707c486",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "gpu_required",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 1.384894,
+        "successful_tps": 2957.627081928292,
+        "latency_us": {
+          "p50": 1120538,
+          "p95": 1381090,
+          "p99": 1383575,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "signed_workload_sha256": "0x1583f5cdce2af46a078e88aa5157ae57f06eb345f3eb94f58b240227701a03d8",
+        "initial_root": "0xd5715d03856f1ef12536ec2cb0c0943dd08b01d67be69f30da33426b9da48a3d",
+        "signing_domain": "0x2900c926aedf0c647fda9ee20a4bc89013b88eb61db7cc92b7a00d2066a23539",
+        "genesis_commitment": "0x49727f28485bb2602ec5d825a79259044039a047e4805a5cf696f06e5ac1a17c",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 4817,
+          "receipt_query_requests_by_node": [
+            306,
+            1350,
+            1586,
+            1575
+          ],
+          "observation_rows_received": 616576,
+          "receipt_query_rows_received_by_node": [
+            39168,
+            172800,
+            203008,
+            201600
+          ],
+          "observation_not_final": 600192,
+          "receipt_query_not_final_by_node": [
+            35072,
+            168704,
+            198912,
+            197504
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "signature_generation_timing": "all workload signing excluded before first submission",
+        "first_height_all_receipt_queries_observed_us": 685959,
+        "four_process_startup_ready_seconds": 3.4848801,
+        "startup_through_four_receipts_seconds": 5.1436029,
+        "candidate_blocks": 4,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 184320,
+          "settled_nov_total": 184320,
+          "settled_by_asset_nov": 184320,
+          "reserve_bucket_nov": 126976,
+          "fee_bucket_nov": 36864,
+          "risk_buffer_nov": 20480,
+          "settlements": 4096,
+          "journal_next_seq": 4096,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 4096,
+        "initial_signed_corpus_rows": 4096
+      },
+      {
+        "label": "after_gpu",
+        "transactions": 4096,
+        "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "gpu_required",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 1.249522,
+        "successful_tps": 3278.0535276689807,
+        "latency_us": {
+          "p50": 1069689,
+          "p95": 1240786,
+          "p99": 1248350,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "signed_workload_sha256": "0x1583f5cdce2af46a078e88aa5157ae57f06eb345f3eb94f58b240227701a03d8",
+        "initial_root": "0xd5715d03856f1ef12536ec2cb0c0943dd08b01d67be69f30da33426b9da48a3d",
+        "signing_domain": "0x2900c926aedf0c647fda9ee20a4bc89013b88eb61db7cc92b7a00d2066a23539",
+        "genesis_commitment": "0x49727f28485bb2602ec5d825a79259044039a047e4805a5cf696f06e5ac1a17c",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 4526,
+          "receipt_query_requests_by_node": [
+            980,
+            1081,
+            1289,
+            1176
+          ],
+          "observation_rows_received": 579328,
+          "receipt_query_rows_received_by_node": [
+            125440,
+            138368,
+            164992,
+            150528
+          ],
+          "observation_not_final": 562944,
+          "receipt_query_not_final_by_node": [
+            121344,
+            134272,
+            160896,
+            146432
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "signature_generation_timing": "all workload signing excluded before first submission",
+        "first_height_all_receipt_queries_observed_us": 882094,
+        "four_process_startup_ready_seconds": 1.2196628,
+        "startup_through_four_receipts_seconds": 2.7510335,
+        "candidate_blocks": 4,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 184320,
+          "settled_nov_total": 184320,
+          "settled_by_asset_nov": 184320,
+          "reserve_bucket_nov": 126976,
+          "fee_bucket_nov": 36864,
+          "risk_buffer_nov": 20480,
+          "settlements": 4096,
+          "journal_next_seq": 4096,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 4096,
+        "initial_signed_corpus_rows": 4096
+      },
+      {
+        "label": "before_cpu_repeat",
+        "transactions": 4096,
+        "binary_sha256": "0xf286eff9d60fa5689ff749352eb8624a7cbd5653ae40d41a8c3aaa953707c486",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "cpu",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 1.517877,
+        "successful_tps": 2698.5058736643355,
+        "latency_us": {
+          "p50": 1148358,
+          "p95": 1516497,
+          "p99": 1516707,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "signed_workload_sha256": "0x1583f5cdce2af46a078e88aa5157ae57f06eb345f3eb94f58b240227701a03d8",
+        "initial_root": "0xd5715d03856f1ef12536ec2cb0c0943dd08b01d67be69f30da33426b9da48a3d",
+        "signing_domain": "0x2900c926aedf0c647fda9ee20a4bc89013b88eb61db7cc92b7a00d2066a23539",
+        "genesis_commitment": "0x49727f28485bb2602ec5d825a79259044039a047e4805a5cf696f06e5ac1a17c",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 4,
+          "application_batches_transport_delivered": 4,
+          "transport_failures": 0,
+          "observation_requests": 4761,
+          "receipt_query_requests_by_node": [
+            482,
+            1405,
+            1515,
+            1359
+          ],
+          "observation_rows_received": 609408,
+          "receipt_query_rows_received_by_node": [
+            61696,
+            179840,
+            193920,
+            173952
+          ],
+          "observation_not_final": 593024,
+          "receipt_query_not_final_by_node": [
+            57600,
+            175744,
+            189824,
+            169856
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 4096,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 4096
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "signature_generation_timing": "all workload signing excluded before first submission",
+        "first_height_all_receipt_queries_observed_us": 896888,
+        "four_process_startup_ready_seconds": 0.2539962,
+        "startup_through_four_receipts_seconds": 2.049867,
+        "candidate_blocks": 4,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 184320,
+          "settled_nov_total": 184320,
+          "settled_by_asset_nov": 184320,
+          "reserve_bucket_nov": 126976,
+          "fee_bucket_nov": 36864,
+          "risk_buffer_nov": 20480,
+          "settlements": 4096,
+          "journal_next_seq": 4096,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 4096,
+        "initial_signed_corpus_rows": 4096
+      }
+    ],
+    "comparison": {
+      "cpu_tps_change_vs_before_percent": -9.730276141481598,
+      "cpu_tps_change_vs_before_repeat_percent": -12.8697452123269,
+      "gpu_tps_change_vs_before_percent": 10.83390288446302,
+      "cpu_p99_change_us": 169568,
+      "gpu_p99_change_us": -135225
+    },
+    "conclusion": "CPU regression retained; GPU sample improved. Five same-byte/same-state rounds do not establish stable general performance improvement."
+  },
+  "continuous_65k": {
+    "scope": "continuous_8192_outstanding_receipt_anchored_windows",
+    "same_signed_corpus": false,
+    "same_approved_genesis_and_logical_business_workload": true,
+    "expiry_and_randomized_signature_bytes_may_differ": true,
+    "single_unpaused_wall_per_run": true,
+    "post_first_submit_signing_included": true,
+    "rounds": [
+      {
+        "label": "cpu",
+        "transactions": 65536,
+        "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "cpu",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 25.106624,
+        "successful_tps": 2610.307144441244,
+        "latency_us": {
+          "p50": 2867125,
+          "p95": 4392637,
+          "p99": 4717310,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not guaranteed byte-identical across backend runs; compare the actual signed_workload_sha256",
+        "signed_workload_sha256": "0xf4d5fb913ec8ff9fee76993b5df72c7993afb20cde1aef036ca9cd2f262a16be",
+        "initial_root": "0xfc344d9e7d65fbd7f1307d7659173f74dc5050e6330ff823bf9616fd4cb86775",
+        "signing_domain": "0xb1542ff133168b620541172f74467ea67f388498b2a56797f30d1ecf881734c3",
+        "genesis_commitment": "0xcea6bf81304ed7d9fe3e1d3ed3034f22e9db8824ee8c0f2b36abcb181f88a104",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 57736,
+          "receipt_query_requests_by_node": [
+            4430,
+            16557,
+            19651,
+            17098
+          ],
+          "observation_rows_received": 7390208,
+          "receipt_query_rows_received_by_node": [
+            567040,
+            2119296,
+            2515328,
+            2188544
+          ],
+          "observation_not_final": 7128064,
+          "receipt_query_not_final_by_node": [
+            501504,
+            2053760,
+            2449792,
+            2123008
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "continuous_8192_outstanding_receipt_anchored_windows",
+        "signature_generation_timed": true,
+        "signature_generation_timing": "initial bounded input preparation excluded before first submission; ALL later signing/preparation remain inside the uninterrupted wall; continuous mode overlaps signing with original SDK polling",
+        "first_height_all_receipt_queries_observed_us": 2281757,
+        "four_process_startup_ready_seconds": 0.2784257,
+        "startup_through_four_receipts_seconds": 25.6980231,
+        "candidate_blocks": 64,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 2949120,
+          "settled_nov_total": 2949120,
+          "settled_by_asset_nov": 2949120,
+          "reserve_bucket_nov": 2031616,
+          "fee_bucket_nov": 589824,
+          "risk_buffer_nov": 327680,
+          "settlements": 65536,
+          "journal_next_seq": 65536,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 65536,
+        "initial_signed_corpus_rows": 8192,
+        "continuous_signer_workers": 4,
+        "continuous_generation_batch_rows": 1024,
+        "continuous_timed_generation_task_us": 2440943,
+        "continuous_timed_structure_preparation_us": 612225,
+        "continuous_generator_starved_poll_us": 21200839,
+        "continuous_no_outstanding_poll_us": 85,
+        "continuous_phase_timing_scope": "generation task wall overlaps original SDK polling; phase times are not additive and never subtracted from TPS; poll starvation excludes yield scheduling"
+      },
+      {
+        "label": "gpu_required",
+        "transactions": 65536,
+        "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "gpu_required",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 23.452849,
+        "successful_tps": 2794.3726580936927,
+        "latency_us": {
+          "p50": 2716725,
+          "p95": 3456244,
+          "p99": 3650558,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not guaranteed byte-identical across backend runs; compare the actual signed_workload_sha256",
+        "signed_workload_sha256": "0xf4d5fb913ec8ff9fee76993b5df72c7993afb20cde1aef036ca9cd2f262a16be",
+        "initial_root": "0xfc344d9e7d65fbd7f1307d7659173f74dc5050e6330ff823bf9616fd4cb86775",
+        "signing_domain": "0xb1542ff133168b620541172f74467ea67f388498b2a56797f30d1ecf881734c3",
+        "genesis_commitment": "0xcea6bf81304ed7d9fe3e1d3ed3034f22e9db8824ee8c0f2b36abcb181f88a104",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 71842,
+          "receipt_query_requests_by_node": [
+            3820,
+            21444,
+            23721,
+            22857
+          ],
+          "observation_rows_received": 9195776,
+          "receipt_query_rows_received_by_node": [
+            488960,
+            2744832,
+            3036288,
+            2925696
+          ],
+          "observation_not_final": 8933632,
+          "receipt_query_not_final_by_node": [
+            423424,
+            2679296,
+            2970752,
+            2860160
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "continuous_8192_outstanding_receipt_anchored_windows",
+        "signature_generation_timed": true,
+        "signature_generation_timing": "initial bounded input preparation excluded before first submission; ALL later signing/preparation remain inside the uninterrupted wall; continuous mode overlaps signing with original SDK polling",
+        "first_height_all_receipt_queries_observed_us": 1723018,
+        "four_process_startup_ready_seconds": 3.402748,
+        "startup_through_four_receipts_seconds": 27.1707214,
+        "candidate_blocks": 64,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 2949120,
+          "settled_nov_total": 2949120,
+          "settled_by_asset_nov": 2949120,
+          "reserve_bucket_nov": 2031616,
+          "fee_bucket_nov": 589824,
+          "risk_buffer_nov": 327680,
+          "settlements": 65536,
+          "journal_next_seq": 65536,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 65536,
+        "initial_signed_corpus_rows": 8192,
+        "continuous_signer_workers": 4,
+        "continuous_generation_batch_rows": 1024,
+        "continuous_timed_generation_task_us": 2432254,
+        "continuous_timed_structure_preparation_us": 607344,
+        "continuous_generator_starved_poll_us": 18710433,
+        "continuous_no_outstanding_poll_us": 82,
+        "continuous_phase_timing_scope": "generation task wall overlaps original SDK polling; phase times are not additive and never subtracted from TPS; poll starvation excludes yield scheduling"
+      },
+      {
+        "label": "cpu_repeat",
+        "transactions": 65536,
+        "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "backend": "cpu_callbacks",
+        "signature_backend": "cpu",
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 25.925825,
+        "successful_tps": 2527.826983326471,
+        "latency_us": {
+          "p50": 2897285,
+          "p95": 4391794,
+          "p99": 4661326,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "timing": "original native SDK continuous bounded supply: first submission attempt through final unique four-node receipt observation on ONE unpaused clock; later parallel signing and preparation overlap client polling and remain included; initial bounded preparation/startup/final audit/cold recovery excluded; receipt-anchored signatures are not guaranteed byte-identical across backend runs; compare the actual signed_workload_sha256",
+        "signed_workload_sha256": "0xf4d5fb913ec8ff9fee76993b5df72c7993afb20cde1aef036ca9cd2f262a16be",
+        "initial_root": "0xfc344d9e7d65fbd7f1307d7659173f74dc5050e6330ff823bf9616fd4cb86775",
+        "signing_domain": "0xb1542ff133168b620541172f74467ea67f388498b2a56797f30d1ecf881734c3",
+        "genesis_commitment": "0xcea6bf81304ed7d9fe3e1d3ed3034f22e9db8824ee8c0f2b36abcb181f88a104",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 55663,
+          "receipt_query_requests_by_node": [
+            3642,
+            17774,
+            15499,
+            18748
+          ],
+          "observation_rows_received": 7124864,
+          "receipt_query_rows_received_by_node": [
+            466176,
+            2275072,
+            1983872,
+            2399744
+          ],
+          "observation_not_final": 6862720,
+          "receipt_query_not_final_by_node": [
+            400640,
+            2209536,
+            1918336,
+            2334208
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "diagnostics_enabled": false,
+        "critical_path_diagnostics_enabled": false,
+        "progress_reports_enabled": false,
+        "progress_status": "NOT_ENABLED",
+        "wire_frame_rows": 1024,
+        "window": 8192,
+        "effective_outstanding_limit": 8192,
+        "load_strategy": "continuous_8192_outstanding_receipt_anchored_windows",
+        "signature_generation_timed": true,
+        "signature_generation_timing": "initial bounded input preparation excluded before first submission; ALL later signing/preparation remain inside the uninterrupted wall; continuous mode overlaps signing with original SDK polling",
+        "first_height_all_receipt_queries_observed_us": 2220156,
+        "four_process_startup_ready_seconds": 0.2388912,
+        "startup_through_four_receipts_seconds": 26.4721199,
+        "candidate_blocks": 64,
+        "candidate_rows_unique": 1024,
+        "fee_accounting": {
+          "treasury_reserve_nov": 2949120,
+          "settled_nov_total": 2949120,
+          "settled_by_asset_nov": 2949120,
+          "reserve_bucket_nov": 2031616,
+          "fee_bucket_nov": 589824,
+          "risk_buffer_nov": 327680,
+          "settlements": 65536,
+          "journal_next_seq": 65536,
+          "daily_window_day": 21990,
+          "daily_nov_used": 0
+        },
+        "all_four_fee_pages_match": true,
+        "archived_transactions": 65536,
+        "initial_signed_corpus_rows": 8192,
+        "continuous_signer_workers": 4,
+        "continuous_generation_batch_rows": 1024,
+        "continuous_timed_generation_task_us": 2452417,
+        "continuous_timed_structure_preparation_us": 607636,
+        "continuous_generator_starved_poll_us": 21458383,
+        "continuous_no_outstanding_poll_us": 100,
+        "continuous_phase_timing_scope": "generation task wall overlaps original SDK polling; phase times are not additive and never subtracted from TPS; poll starvation excludes yield scheduling"
+      }
+    ],
+    "actual_same_signed_workload_hash_in_this_group": true,
+    "actual_same_genesis_root_domain_in_this_group": true,
+    "actual_signed_workload_sha256": "0xf4d5fb913ec8ff9fee76993b5df72c7993afb20cde1aef036ca9cd2f262a16be",
+    "driver_identity_scope": "Generic driver permits dynamic expiry/signature bytes to differ; all three actual recorded hashes match here. This is not a promise for another group.",
+    "historical_12k_restored": false
+  },
+  "strict_static_65536_hash_only": {
+    "scope": "one-host four-process laboratory before/after; no deployed identity or journal reset",
+    "same_signed_corpus_and_initial_state": true,
+    "business_backend_unchanged": true,
+    "full_65536": true,
+    "rounds": [
+      {
+        "label": "before_cpu",
+        "binary_sha256": "0xf286eff9d60fa5689ff749352eb8624a7cbd5653ae40d41a8c3aaa953707c486",
+        "transactions": 65536,
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 24.99905,
+        "successful_tps": 2621.5396185055033,
+        "latency_us": {
+          "p50": 2991620,
+          "p95": 3827044,
+          "p99": 4199327,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x45156d6318d03c3182c55ce5b14571c6b5479c2ee440f0f436252aa712fe7d93",
+        "initial_root": "0x8e23e736d128eae77f14b7e0e755b67b58c361d064739b8994f5e18f897f1e87",
+        "signing_domain": "0xd42d569e870be3516d26c7965c5fed5488d943bf8ee6901502e1db806db1e87f",
+        "genesis_commitment": "0xb6b109340d1e675a128aff3031fce749de846cc6d94d1a3b412fcb8dea5320a2",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "progress_status": "NOT_ENABLED",
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 64579,
+          "receipt_query_requests_by_node": [
+            5724,
+            20245,
+            18895,
+            19715
+          ],
+          "observation_rows_received": 8266112,
+          "receipt_query_rows_received_by_node": [
+            732672,
+            2591360,
+            2418560,
+            2523520
+          ],
+          "observation_not_final": 8003968,
+          "receipt_query_not_final_by_node": [
+            667136,
+            2525824,
+            2353024,
+            2457984
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "candidate_blocks": 64,
+        "candidate_row_sizes": [
+          1024
+        ],
+        "all_four_fee_pages_match": true,
+        "window": 8192,
+        "wire_frame_rows": 1024,
+        "startup_ready_seconds": 0.2702483,
+        "startup_through_four_receipts_seconds": 25.914044
+      },
+      {
+        "label": "after_cpu",
+        "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "transactions": 65536,
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 25.396348,
+        "successful_tps": 2580.5285074846197,
+        "latency_us": {
+          "p50": 3002873,
+          "p95": 4043700,
+          "p99": 4546147,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x45156d6318d03c3182c55ce5b14571c6b5479c2ee440f0f436252aa712fe7d93",
+        "initial_root": "0x8e23e736d128eae77f14b7e0e755b67b58c361d064739b8994f5e18f897f1e87",
+        "signing_domain": "0xd42d569e870be3516d26c7965c5fed5488d943bf8ee6901502e1db806db1e87f",
+        "genesis_commitment": "0xb6b109340d1e675a128aff3031fce749de846cc6d94d1a3b412fcb8dea5320a2",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "progress_status": "NOT_ENABLED",
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 65107,
+          "receipt_query_requests_by_node": [
+            3851,
+            21068,
+            20054,
+            20134
+          ],
+          "observation_rows_received": 8333696,
+          "receipt_query_rows_received_by_node": [
+            492928,
+            2696704,
+            2566912,
+            2577152
+          ],
+          "observation_not_final": 8071552,
+          "receipt_query_not_final_by_node": [
+            427392,
+            2631168,
+            2501376,
+            2511616
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "candidate_blocks": 64,
+        "candidate_row_sizes": [
+          1024
+        ],
+        "all_four_fee_pages_match": true,
+        "window": 8192,
+        "wire_frame_rows": 1024,
+        "startup_ready_seconds": 0.2608858,
+        "startup_through_four_receipts_seconds": 26.3194559
+      },
+      {
+        "label": "before_gpu",
+        "binary_sha256": "0xf286eff9d60fa5689ff749352eb8624a7cbd5653ae40d41a8c3aaa953707c486",
+        "transactions": 65536,
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 23.783374,
+        "successful_tps": 2755.5383857647785,
+        "latency_us": {
+          "p50": 2836265,
+          "p95": 3710321,
+          "p99": 3860121,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x45156d6318d03c3182c55ce5b14571c6b5479c2ee440f0f436252aa712fe7d93",
+        "initial_root": "0x8e23e736d128eae77f14b7e0e755b67b58c361d064739b8994f5e18f897f1e87",
+        "signing_domain": "0xd42d569e870be3516d26c7965c5fed5488d943bf8ee6901502e1db806db1e87f",
+        "genesis_commitment": "0xb6b109340d1e675a128aff3031fce749de846cc6d94d1a3b412fcb8dea5320a2",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "progress_status": "NOT_ENABLED",
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 74962,
+          "receipt_query_requests_by_node": [
+            3836,
+            24239,
+            21293,
+            25594
+          ],
+          "observation_rows_received": 9595136,
+          "receipt_query_rows_received_by_node": [
+            491008,
+            3102592,
+            2725504,
+            3276032
+          ],
+          "observation_not_final": 9332992,
+          "receipt_query_not_final_by_node": [
+            425472,
+            3037056,
+            2659968,
+            3210496
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "candidate_blocks": 64,
+        "candidate_row_sizes": [
+          1024
+        ],
+        "all_four_fee_pages_match": true,
+        "window": 8192,
+        "wire_frame_rows": 1024,
+        "startup_ready_seconds": 3.4349838999999998,
+        "startup_through_four_receipts_seconds": 27.8772668
+      },
+      {
+        "label": "after_gpu",
+        "binary_sha256": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "transactions": 65536,
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 23.201858,
+        "successful_tps": 2824.6013745968103,
+        "latency_us": {
+          "p50": 2580845,
+          "p95": 3809734,
+          "p99": 4175719,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x45156d6318d03c3182c55ce5b14571c6b5479c2ee440f0f436252aa712fe7d93",
+        "initial_root": "0x8e23e736d128eae77f14b7e0e755b67b58c361d064739b8994f5e18f897f1e87",
+        "signing_domain": "0xd42d569e870be3516d26c7965c5fed5488d943bf8ee6901502e1db806db1e87f",
+        "genesis_commitment": "0xb6b109340d1e675a128aff3031fce749de846cc6d94d1a3b412fcb8dea5320a2",
+        "signature_backend": "gpu_required",
+        "backend": "cpu_callbacks",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "progress_status": "NOT_ENABLED",
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 79853,
+          "receipt_query_requests_by_node": [
+            2902,
+            23675,
+            26828,
+            26448
+          ],
+          "observation_rows_received": 10221184,
+          "receipt_query_rows_received_by_node": [
+            371456,
+            3030400,
+            3433984,
+            3385344
+          ],
+          "observation_not_final": 9959040,
+          "receipt_query_not_final_by_node": [
+            305920,
+            2964864,
+            3368448,
+            3319808
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "candidate_blocks": 64,
+        "candidate_row_sizes": [
+          1024
+        ],
+        "all_four_fee_pages_match": true,
+        "window": 8192,
+        "wire_frame_rows": 1024,
+        "startup_ready_seconds": 1.1434164,
+        "startup_through_four_receipts_seconds": 25.0245775
+      },
+      {
+        "label": "before_cpu_repeat",
+        "binary_sha256": "0xf286eff9d60fa5689ff749352eb8624a7cbd5653ae40d41a8c3aaa953707c486",
+        "transactions": 65536,
+        "passed": true,
+        "error": null,
+        "elapsed_seconds": 24.230472,
+        "successful_tps": 2704.693495033857,
+        "latency_us": {
+          "p50": 2838777,
+          "p95": 3823658,
+          "p99": 3956617,
+          "sample_count": 65536,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "signed_workload_sha256": "0x45156d6318d03c3182c55ce5b14571c6b5479c2ee440f0f436252aa712fe7d93",
+        "initial_root": "0x8e23e736d128eae77f14b7e0e755b67b58c361d064739b8994f5e18f897f1e87",
+        "signing_domain": "0xd42d569e870be3516d26c7965c5fed5488d943bf8ee6901502e1db806db1e87f",
+        "genesis_commitment": "0xb6b109340d1e675a128aff3031fce749de846cc6d94d1a3b412fcb8dea5320a2",
+        "signature_backend": "cpu",
+        "backend": "cpu_callbacks",
+        "aoem_sha256": "0x8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671",
+        "load_strategy": "static_signed_corpus_8192_outstanding_limit",
+        "signature_generation_timed": false,
+        "timing": "same native load drive: first SDK submission attempt through every unique four-node receipt-query observation; startup/keygen/signing/structure preparation/untimed economics/cold recovery excluded",
+        "cold_recovery_pass": true,
+        "full_fee_state_audited": true,
+        "progress_status": "NOT_ENABLED",
+        "counts": {
+          "application_batches_sent": 64,
+          "application_batches_transport_delivered": 64,
+          "transport_failures": 0,
+          "observation_requests": 61575,
+          "receipt_query_requests_by_node": [
+            4634,
+            21670,
+            22193,
+            13078
+          ],
+          "observation_rows_received": 7881600,
+          "receipt_query_rows_received_by_node": [
+            593152,
+            2773760,
+            2840704,
+            1673984
+          ],
+          "observation_not_final": 7619456,
+          "receipt_query_not_final_by_node": [
+            527616,
+            2708224,
+            2775168,
+            1608448
+          ],
+          "observation_service_busy": 0,
+          "receipt_query_service_busy_by_node": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "successful_transactions": 65536,
+          "business_failed_transactions": 0,
+          "rejected_nonce": 0,
+          "deadline_expirations": 0,
+          "maximum_outstanding": 8192
+        },
+        "candidate_blocks": 64,
+        "candidate_row_sizes": [
+          1024
+        ],
+        "all_four_fee_pages_match": true,
+        "window": 8192,
+        "wire_frame_rows": 1024,
+        "startup_ready_seconds": 0.2622709,
+        "startup_through_four_receipts_seconds": 25.141282
+      }
+    ],
+    "raw_report": {
+      "source": "target/native-product-load/bulk-authority-paired-17280-1793238098988.json",
+      "copy": "combined-65536-hash-same-input-before-after-paired.json",
+      "sha256": "4dcac1976848d6d77246a8ef6fdd0aa6ca96afc2146fa64cd1468e4f5149746b"
+    },
+    "comparison": {
+      "cpu_tps_change_vs_before_percent": -1.5643902816263155,
+      "cpu_tps_change_vs_before_repeat_percent": -4.590723044116418,
+      "gpu_tps_change_vs_before_percent": 2.506333759994561,
+      "cpu_p99_change_us": 346820,
+      "gpu_p99_change_us": 315598
+    },
+    "conclusion": "Hash-progress-only strict same-input comparison F286 to EC146: CPU throughput lower and GPU throughput slightly higher in this sequence; BOTH CPU and GPU P99 worsen. Not stable performance closure, not 12K.",
+    "denominator_scope": "All 65536 signatures/preparation are outside the static first-submission-to-four-receipts wall. Do not conflate this with post-submit-signing-included continuous supply."
+  },
+  "diagnostic_4096": {
+    "status": "DIAGNOSTIC_ONLY_NOT_PRIMARY_PERFORMANCE_SCORE",
+    "raw_report": {
+      "source": "target/native-product-load/paired-13032-1793238115429.json",
+      "copy": "combined-4096-diagnostic-paired.json",
+      "sha256": "8959cfa41d1f3f2996ac8bbda45530372a89e6c9da680de57a6364341eddb40c"
+    },
+    "transactions_per_round": 4096,
+    "rounds": [
+      {
+        "backend": "cpu",
+        "tps": 2690.5328844732735,
+        "passed": true,
+        "elapsed": 1.522375,
+        "latency": {
+          "p50": 1319491,
+          "p95": 1517444,
+          "p99": 1521162,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "binary": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "signed_workload_sha256": "0x868895a8f788652be23ab4446444e511f6b946992252a9bd898a778ff7c889bc",
+        "cold": true,
+        "fees": true,
+        "progress_status": "COMPLETE",
+        "progress_capture_seconds": 0.0022178,
+        "nodes": [
+          {
+            "index": 0,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 1,
+              "verified_material_reused": 2,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 23729,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 1,
+              "execution_started": 1,
+              "completed_before_parent": 1,
+              "promoted": 1,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 3,
+              "early_body_enqueued_bytes": 10315155,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 4,
+            "expired": 0,
+            "io_recover": {
+              "calls": 1,
+              "wall_ns": 26300000,
+              "max_wall_ns": 26300000
+            }
+          },
+          {
+            "index": 1,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 1,
+              "verified_material_reused": 2,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 30972,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 2,
+              "execution_started": 2,
+              "completed_before_parent": 0,
+              "promoted": 2,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 3,
+              "early_body_enqueued_bytes": 10315155,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 3,
+            "expired": 0,
+            "io_recover": {
+              "calls": 1,
+              "wall_ns": 27364100,
+              "max_wall_ns": 27364100
+            }
+          },
+          {
+            "index": 2,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 1,
+              "verified_material_reused": 2,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 27892,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 1,
+              "execution_started": 1,
+              "completed_before_parent": 0,
+              "promoted": 1,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 0,
+              "early_body_enqueued_bytes": 0,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 3,
+            "expired": 0,
+            "io_recover": {
+              "calls": 1,
+              "wall_ns": 26879200,
+              "max_wall_ns": 26879200
+            }
+          },
+          {
+            "index": 3,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 1,
+              "verified_material_reused": 2,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 29566,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 2,
+              "execution_started": 2,
+              "completed_before_parent": 1,
+              "promoted": 2,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 3,
+              "early_body_enqueued_bytes": 10315155,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 1,
+            "served_bodies": 3,
+            "expired": 0,
+            "io_recover": {
+              "calls": 1,
+              "wall_ns": 29471100,
+              "max_wall_ns": 29471100
+            }
+          }
+        ],
+        "label": "cpu",
+        "totals": {
+          "archive_reads_started": 4,
+          "archive_verified_material_reused": 8,
+          "io_recover_calls": 4,
+          "strict_verified_rows": 16384,
+          "reused_rows": 16384,
+          "successor_authentication_started": 6,
+          "successor_execution_started": 6,
+          "successor_promoted": 6,
+          "successor_discarded": 0,
+          "early_body_logical_peer_obligations": 9,
+          "early_body_logical_bytes": 30945465
+        }
+      },
+      {
+        "backend": "gpu_required",
+        "tps": 2842.849290120543,
+        "passed": true,
+        "elapsed": 1.440808,
+        "latency": {
+          "p50": 924608,
+          "p95": 1436183,
+          "p99": 1439530,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "binary": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "signed_workload_sha256": "0x868895a8f788652be23ab4446444e511f6b946992252a9bd898a778ff7c889bc",
+        "cold": true,
+        "fees": true,
+        "progress_status": "COMPLETE",
+        "progress_capture_seconds": 0.0023632,
+        "nodes": [
+          {
+            "index": 0,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 3292004,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 1,
+              "execution_started": 1,
+              "completed_before_parent": 1,
+              "promoted": 1,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 3,
+              "early_body_enqueued_bytes": 10315155,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 6,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 58242200,
+              "max_wall_ns": 32992200
+            }
+          },
+          {
+            "index": 1,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 3289227,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 2,
+              "execution_started": 2,
+              "completed_before_parent": 0,
+              "promoted": 2,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 3,
+              "early_body_enqueued_bytes": 10315155,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 6,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 60810200,
+              "max_wall_ns": 31729800
+            }
+          },
+          {
+            "index": 2,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 3265408,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 1,
+              "execution_started": 1,
+              "completed_before_parent": 0,
+              "promoted": 1,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 0,
+              "early_body_enqueued_bytes": 0,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 6,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 59674300,
+              "max_wall_ns": 30624600
+            }
+          },
+          {
+            "index": 3,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 3293215,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 1,
+              "execution_started": 1,
+              "completed_before_parent": 0,
+              "promoted": 1,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 0,
+              "early_body_enqueued_bytes": 0,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 6,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 61809600,
+              "max_wall_ns": 32657100
+            }
+          }
+        ],
+        "label": "gpu_required",
+        "totals": {
+          "archive_reads_started": 8,
+          "archive_verified_material_reused": 16,
+          "io_recover_calls": 8,
+          "strict_verified_rows": 16384,
+          "reused_rows": 16384,
+          "successor_authentication_started": 5,
+          "successor_execution_started": 5,
+          "successor_promoted": 5,
+          "successor_discarded": 0,
+          "early_body_logical_peer_obligations": 6,
+          "early_body_logical_bytes": 20630310
+        }
+      },
+      {
+        "backend": "cpu",
+        "tps": 2424.6887299923224,
+        "passed": true,
+        "elapsed": 1.689289,
+        "latency": {
+          "p50": 1045539,
+          "p95": 1674316,
+          "p99": 1688117,
+          "sample_count": 4096,
+          "definition": "first native wire-frame submission attempt to slowest of four receipt-query observations; includes initial execution/consensus wait and bounded observer; not an internal finality timestamp"
+        },
+        "binary": "0xec1465e2955b6e16b22b0fc9518ab4375452aa4f299fdc854865e60ec7a84504",
+        "signed_workload_sha256": "0x868895a8f788652be23ab4446444e511f6b946992252a9bd898a778ff7c889bc",
+        "cold": true,
+        "fees": true,
+        "progress_status": "COMPLETE",
+        "progress_capture_seconds": 0.0022121,
+        "nodes": [
+          {
+            "index": 0,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 23196,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 2,
+              "execution_started": 2,
+              "completed_before_parent": 1,
+              "promoted": 2,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 3,
+              "early_body_enqueued_bytes": 10315155,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 7,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 56958000,
+              "max_wall_ns": 29632600
+            }
+          },
+          {
+            "index": 1,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 27065,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 2,
+              "execution_started": 2,
+              "completed_before_parent": 1,
+              "promoted": 2,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 3,
+              "early_body_enqueued_bytes": 10315155,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 7,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 59200300,
+              "max_wall_ns": 31483200
+            }
+          },
+          {
+            "index": 2,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 25810,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 1,
+              "execution_started": 1,
+              "completed_before_parent": 0,
+              "promoted": 1,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 0,
+              "early_body_enqueued_bytes": 0,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 0,
+            "served_bodies": 6,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 58717300,
+              "max_wall_ns": 30334500
+            }
+          },
+          {
+            "index": 3,
+            "matched_final_head": true,
+            "archive_work": {
+              "reads_started": 2,
+              "verified_material_reused": 4,
+              "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+            },
+            "signature_work": {
+              "strict_verified_rows": 4096,
+              "reused_rows": 4096,
+              "uca_batch_calls": 4,
+              "asset_prepared_at_startup": true,
+              "asset_startup_us": 23908,
+              "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+            },
+            "successor": {
+              "authentication_started": 1,
+              "execution_started": 0,
+              "completed_before_parent": 0,
+              "promoted": 1,
+              "discarded": 0,
+              "early_body_enqueued_peer_obligations": 0,
+              "early_body_enqueued_bytes": 0,
+              "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+            },
+            "requested_bodies": 2,
+            "served_bodies": 6,
+            "expired": 0,
+            "io_recover": {
+              "calls": 2,
+              "wall_ns": 63475500,
+              "max_wall_ns": 33893600
+            }
+          }
+        ],
+        "label": "cpu_repeat",
+        "totals": {
+          "archive_reads_started": 8,
+          "archive_verified_material_reused": 16,
+          "io_recover_calls": 8,
+          "strict_verified_rows": 16384,
+          "reused_rows": 16384,
+          "successor_authentication_started": 6,
+          "successor_execution_started": 5,
+          "successor_promoted": 6,
+          "successor_discarded": 0,
+          "early_body_logical_peer_obligations": 6,
+          "early_body_logical_bytes": 20630310
+        }
+      }
+    ],
+    "interpretation": [
+      "All 12 node snapshots matched final head. Measured archive read/reuse counters prove this workload used the verified archive material reuse path; they do not prove its isolated TPS contribution.",
+      "Per node first CPU records reads_started=1, verified_material_reused=2, io_recover.calls=1; GPU and CPU-repeat each record 2/4/2. Counts of archive starts and io_recover agree in these snapshots.",
+      "Every node in all three rounds records strict_verified_rows=4096 and reused_rows=4096, uca_batch_calls=4. These count local successful verification and consumed proof rows, not 8192 distinct transactions per node.",
+      "Successor promotion and early body enqueue obligations are recorded separately. Logical bytes/obligations are not actual wire traffic, retransmission counts or delivery completion.",
+      "Phase wall totals can include nested/overlapping work. No timings are subtracted from TPS and no counter-to-latency causal conclusion is made.",
+      "These are diagnostic 4K samples, not 65K acceptance or an explanation of every prior long-tail event."
+    ]
+  },
+  "measurement_limits": [
+    "All eight rounds report pass, cold recovery and full fees, zero transport failures/business failures/nonce rejection/deadline expiry. This is measured local load correctness, not full release acceptance.",
+    "65K rounds have 64 blocks of 1024 rows, maximum 8192 in flight, the original slowest-of-four receipt observation endpoint, and an uninterrupted denominator including post-submit signing/preparation.",
+    "4K static input excludes all signing/preparation before the first submission. Continuous 65K excludes only initial bounded preparation and includes later work. The two modes are separate evidence.",
+    "Headline TPS excludes startup; startup-through-four-receipts remains separately recorded, including GPU startup qualification. Neither is an internal durable finality timestamp.",
+    "The primary 4K/65K performance groups have diagnostics/progress disabled and final_local_progress=NOT_ENABLED. Their archive read/reuse counts and stage-gap causality are NOT_MEASURED, not zero. The separately appended diagnostic_4096 group records its own counters and is not substituted for those performance runs.",
+    "continuous_generator_starved_poll_us covers measured SDK poll wall while no prepared tail is available, not isolated signer time. Generation, polling and prepare times overlap and are not added or subtracted from TPS.",
+    "Current combined continuous 65K genesis/corpus differs from prior archive-only continuous 65K groups. Cross-group TPS differences are not a strict isolated patch-effect experiment. Strict same-input before/after evidence is separately recorded for both the 4K and static 65K groups.",
+    "Retain the 4K CPU negative, earlier F286 CPU negative and prior 17.325802-second P99 sample. These passing runs do not prove those slow-round causes closed.",
+    "65K remains approximately 2.5K to 2.8K TPS, far below historical approximately 12K. Functional tests, graph wiring and bounded-work progress proof are not performance completion.",
+    "One Windows host, four independent processes; no Linux or four-physical-machine result, no production deployment and no main promotion."
+  ]
+}

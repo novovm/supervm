@@ -1,0 +1,302 @@
+{
+  "base": "a7759d70b27cc9981d7b10b70bdc43ddd594b914",
+  "branch": "dev/mldsa65-identity-closure",
+  "captured_at": "2026-10-31T10:57:52.4041359+08:00",
+  "scope": "isolated candidate; fixed production files plus finalized tests; no shipped DLL replacement or deployment",
+  "hardware": "Intel Core Ultra 9 275HX 24 logical CPUs; RTX 5090 Laptop GPU; driver 592.01",
+  "rustc": "1.94.0 x86_64-pc-windows-msvc",
+  "environment": {
+    "NOVOVM_AOEM_TEST_LIBRARY": "D:\\WorksArea\\AOEM\\artifacts\\mldsa-native-paired-20261027\\aoem_ffi.dll",
+    "NOVOVM_AOEM_DLL": "D:\\WorksArea\\AOEM\\artifacts\\mldsa-native-paired-20261027\\aoem_ffi.dll",
+    "AOEM_SEMANTIC_GRAPH_V2_WORKERS": "24",
+    "RAYON_NUM_THREADS": "24",
+    "AOEM_MLDSA_VERIFY_BATCH_PAR_MIN": "128",
+    "NOVOVM_RESIDENT_TEST_EXECUTION_BACKEND": "cpu_callbacks",
+    "NOVOVM_RESIDENT_TEST_SIGNATURE_BACKEND": "gpu_required",
+    "NOVOVM_RESIDENT_NODE_BINARY": "D:/WorksArea/SUPERVM/target/native-controller-spend-20261031/final-v1/novovm-node.exe",
+    "NOVOVM_NATIVE_LOAD_SIGNERS": "4",
+    "NOVOVM_NATIVE_PREPARATION_TIMEOUT_SECONDS": "90",
+    "NOVOVM_NATIVE_LOAD_TIMEOUT_SECONDS": "600",
+    "NOVOVM_NATIVE_UCA_LOAD_TRANSACTIONS": "65536",
+    "NOVOVM_NATIVE_UCA_FRAME_ROWS": "1024",
+    "NOVOVM_NATIVE_QUERY_BATCH": "128",
+    "NOVOVM_NATIVE_UCA_PAYERS": "1024",
+    "NOVOVM_NATIVE_UCA_RECIPIENT_DISTRIBUTION": "shared",
+    "NOVOVM_NATIVE_UCA_LATE_BRIDGE": "0",
+    "NOVOVM_PROFILE_STAGES": "0",
+    "NOVOVM_PROFILE_CRITICAL_PATH": "0",
+    "NOVOVM_PROFILE_ASSET_TRACE": "0",
+    "NOVOVM_NATIVE_LOAD_DIAGNOSTICS": "0"
+  },
+  "source_files": [
+    {
+      "path": "crates/novovm-adapter-api/src/uca_spend_policy_tests.rs",
+      "sha256": "834224833e333cb9dcb2989c40df48b572c542e0ab9afa6b75660c1c29ff8909"
+    },
+    {
+      "path": "crates/novovm-adapter-api/src/uca_spend_policy.rs",
+      "sha256": "5b6136cf9aa4b340a6cfa5fbfde63ed65dcfc4fc0edc880af90b3b702c524d42"
+    },
+    {
+      "path": "crates/novovm-exec/examples/uca_semantic_entry_compare.rs",
+      "sha256": "e12a2e71bf703bd4953484cb56fad5a048a85c899e76b2ecbaeba70c9b354cbc"
+    },
+    {
+      "path": "crates/novovm-exec/examples/uca_spend_batch_perf.rs",
+      "sha256": "a94f4082320bd7f02423b44857ff354cdff1a491744b80f2f417e88432ca502a"
+    },
+    {
+      "path": "crates/novovm-exec/src/uca_spend.rs",
+      "sha256": "37d1a0aded08c2ebd6630d414dfeeeabd9ab53c355cf0ef459918547944947a7"
+    },
+    {
+      "path": "crates/novovm-exec/src/uca_spend/tests.rs",
+      "sha256": "c7f07ef6794a2569100ae5f6e20752e32a26c64f863b35a2f7b657685df4a271"
+    },
+    {
+      "path": "crates/novovm-exec/tests/uca_spend_runtime.rs",
+      "sha256": "85c30659ce6f83b911e99228301e2443b27b5a12fa95f95256c76d7b342e5856"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/execution.rs",
+      "sha256": "bc232fe79a4d114f33de4a0320c2dc30b13f85708eadf857e9fbe420d8f20da0"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects_tests.rs",
+      "sha256": "0f4381826048e2e0a8f1142f41e1661458d584fbd7bbb34b5c4b5150854c8c68"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs",
+      "sha256": "0aec27bfb6fd4ee6c2f4996018d3ac2929d56b920e6e26a387228349970e60bb"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_controller_tests.rs",
+      "sha256": "0ed3979f97fb0d9b53b131821e001100ec3087b22ec3a250d9baece84b84b320"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_creation_tests.rs",
+      "sha256": "166a110ef893f3f209fbca8028b01b90e7fb8db70d29bcea040aea97d994d3d6"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_effects_tests.rs",
+      "sha256": "2e5ddbd3622f353a68a6f20c4e4ecbd27212b2bb5fc6a833479eef28bcf086f5"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/uca_effects.rs",
+      "sha256": "e94b34764e688f194f377b9be1de8267b6cd2efab6690500e82d4ebdeead54b4"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/uca_spend_state.rs",
+      "sha256": "cd4c0fb3ee3d7d7580339ddc69acae86966227a51d8734a13d5e2d41458ab904"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/business/uca_spend_state/tests.rs",
+      "sha256": "f1cb3030b457cd379f69d2d99ecb7fd2e4201ed1efc33ba5d21e106ceb96e768"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/ingress.rs",
+      "sha256": "41effd4c532b70ad8303ef789fcde113190ac6ad1f9a1f1214817a534c989b3d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/successor.rs",
+      "sha256": "2dce934295267e9cca1f54690626b0935ef79cb2e289d05216684f58e731b332"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca.rs",
+      "sha256": "ff6713167d6f06cb5c314dae834f5e32fc06fe56d3418873c4a8b205b9dec59e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca/account_audit.rs",
+      "sha256": "76cb5c7a99bc61b5c9bdf3acbf234f08466a64ef75672dbc326d0771bb94916e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca/distribution.rs",
+      "sha256": "ff9811c1ac2e6d8ac6d1deb81233a8f3d4191bfdef90bacb73740aba97a3d235"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_load/uca/rolling.rs",
+      "sha256": "d6d4de0e9e6f06433c278a17a9e270ea678803a359e82bb3495f5f9f34dbfb85"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_uca_opening.rs",
+      "sha256": "3376aec735d016f8e4aa332ad66c411107dbb74271012063cebf2dbd8e0e11ab"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_product_uca_recovery.rs",
+      "sha256": "1fc850652c3e9434b769e42619267c0317f5dcfd3d64a2c1064b0443421188b0"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_successor_uca_integration.rs",
+      "sha256": "7163f4f34ddabf6f0a4f88b166678731e1e70d1a56151704b7cd718ea9e057c8"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/transport.rs",
+      "sha256": "737710d6d596423d2c650c7b7f3cc7209789aeb8b23ab2e727cb5ace30b6445b"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/transport/uca_tests.rs",
+      "sha256": "760673eb245de896d3f3d692ccc419a44794a1c81ff7de9022e70b2b7dc21c02"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/transport/uca.rs",
+      "sha256": "0ca4cdb6acc69d5e9929753773f3561877b8487f993029f039569b977026e42f"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/uca_publication_integration.rs",
+      "sha256": "4841c322674c716e4ea020987695a1e8ed1b95f6e136924a1648ab9d7f458cd0"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/execution/plan/tests.rs",
+      "sha256": "f93f1466bb804fae56e9c8e3fbbeebb27c81ef65f5e360a4ae743a9e0092ea0d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/ingress/batch.rs",
+      "sha256": "9868a321147942c8fa13ddb356809ab877c21df1224efd2f169060cf62bb5672"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/persistence/packet/uca_tests.rs",
+      "sha256": "6bd7ba89caa3f128415b1b16f6fef6d434bb6b580fd9c544357e0a8f2387a2cf"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/persistence/packet/uca.rs",
+      "sha256": "0928b93651124f6ce672c17a8dbcbdf0c933f8abe6804df166b21f899aac10ce"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/admission.rs",
+      "sha256": "c155b09b896a0a0a6f6e64c92e31e3d3e59396787569a3446da53a83d0a7e491"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/admission/tests.rs",
+      "sha256": "fb213ce53376f7d7ec83c6a38956d3ada30bd7c9a30a31a3c4cef03c336450f9"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/authentication.rs",
+      "sha256": "1ca0953d62e4f2323cf1c60060b0c74911f68ada98af872afb9b261b78f9d450"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/authentication/tests/uca.rs",
+      "sha256": "d4020b1a34753a3ae5e66d04f4554cd3d6b6ee6a3b6e01d21204a2edd13469c8"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute.rs",
+      "sha256": "5046fabf0491f36762beb0b60af273f55c4b44e27c269c8a5f5b27fbf0059459"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/compute/tests/uca_reuse.rs",
+      "sha256": "0ff67582c15385d272ba8d617fddec480d63386cc8ee7004cc681a5d8ca484d7"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/mod.rs",
+      "sha256": "3e9e35102d64481600defe6162521cd067dfcc94f577e5bc6f66b9b12b298719"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/pipeline/uca_input_tests.rs",
+      "sha256": "2f1d6d02a716e9d67908333417209be9791431765a84e2a465c811e877a6e1da"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/client.rs",
+      "sha256": "c5438d14c8b983e8d3cdca2ba52c0d11bffa254a20eb209bcf04ae70fc3f0d2b"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/client/operator.rs",
+      "sha256": "14be24f83d86f80729165bb4648adab2f961a77c0042f32ab2d1740201df424e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/config/uca_genesis.rs",
+      "sha256": "9858e4661da77e95335303b42a7b48cd95e16045d3002c9442f3c7bd933819bf"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/config/uca_startup_tests.rs",
+      "sha256": "634a8eb2148d4de8f36e57762c32929f6ac728e5612d65f8b37e599199357c53"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "sha256": "7922c4106877cd566af3bd235c7f5102233cc7c692cdc1a5edb731ce505490a3"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/admission.rs",
+      "sha256": "f3b633a7469d7261fd2bb536f4ae442e884fe24e3c2d171aa9dfe4ec085155be"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/admission/hol_tests.rs",
+      "sha256": "0337d1139efacf1b633058e756231cc4f7b071c2b111dcdd0893306b6ed1df03"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/admitted_tests.rs",
+      "sha256": "a324d6ea2542ef8e23a4a94f54a1c4a4aeb56fe0c5164e517fa475ee9c48f2d1"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/gossip.rs",
+      "sha256": "b2882218643e771f478c861ddb764fc398c08aa7f7fdff67e630bf06b92737c9"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca.rs",
+      "sha256": "909e84ebe41c6a751e4a46335c1f50c4542b12e94ca4df3e3c2e8ae8990a0644"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/native_query/uca/tests.rs",
+      "sha256": "7508edc4c01792e6213255ddfd1fcde7c5bad8c7849e1eed73cda85bfd41b46e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/selection_budget_tests.rs",
+      "sha256": "f8292463ad08df460b640e4bdd4b8434a0e87324e59e96f8a76b848ff196c66d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc/uca.rs",
+      "sha256": "ec6d583b9c4a5243506670fc4473221f620e638ab7ebb1f59f6c2ad406c3175d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/uca_native_tests.rs",
+      "sha256": "bdf4204c7174742d150b66b3d2a21b494bb46549946bc1578c170c00d260ba76"
+    },
+    {
+      "path": "crates/novovm-protocol/src/native_query.rs",
+      "sha256": "a980856ed2d8d4bbe18139a2be95ced15f8242b0c81cfb217e3de02850fb97ea"
+    },
+    {
+      "path": "crates/novovm-protocol/src/uca_spend_batch.rs",
+      "sha256": "15414022c3cf8ec6a71fb04df1a6c666d2b5ff4febe6a4e1e435073a43d69292"
+    },
+    {
+      "path": "crates/novovm-protocol/src/uca_spend_tests.rs",
+      "sha256": "964b9e938c9af1e8f1e7dc4379cdc3d0a8b9094c12de534a3c734f4f807754ab"
+    },
+    {
+      "path": "crates/novovm-protocol/src/uca_spend.rs",
+      "sha256": "59868e4ae6153cd90a2adb21d07c29b8a2887904f6124fdd7b757d36da718cbc"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-spend-20261031\\final-v1\\exec-tests.exe",
+      "sha256": "97750f91ece6411c6ea9220e49fc33b0da6dafb3a55585772f7dfd576892b60c",
+      "bytes": 2923520
+    },
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-spend-20261031\\final-v1\\native-tests.exe",
+      "sha256": "a97d4d5ec11d4ad43343820160cf5328680139a42e8334e11d3f70d3c020df76",
+      "bytes": 71550976
+    },
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-spend-20261031\\final-v1\\novovm-native-client.exe",
+      "sha256": "cfa17a7e21f890b7e87c4035b3877782bdc930b9a867adbeda4b1db669cbe237",
+      "bytes": 7076352
+    },
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-spend-20261031\\final-v1\\novovm-node.exe",
+      "sha256": "ad402c2ec020c8d4fad9ee5d86a836c089cdf77f91b1122db2adfe19a28fb83d",
+      "bytes": 41257472
+    },
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-spend-20261031\\final-v1\\policy-tests.exe",
+      "sha256": "733baca783389df075095c479e30b4b6a677d3efd167a2ffaf612516cab03465",
+      "bytes": 987136
+    },
+    {
+      "path": "D:\\WorksArea\\SUPERVM\\target\\native-controller-spend-20261031\\final-v1\\protocol-tests.exe",
+      "sha256": "18e8a75214d81121d0930ba7740266b7158a0f8b1e524e9709d70af325e32c03",
+      "bytes": 1508352
+    }
+  ],
+  "aoem_sha256": "8779d014f08dae0069830ade207aad083173cf963734fe9689b55b8a72455671"
+}

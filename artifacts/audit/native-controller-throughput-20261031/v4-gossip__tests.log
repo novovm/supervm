@@ -1,0 +1,11 @@
+
+running 3 tests
+test native_pipeline::service::rpc::gossip::tests::repair_shares_one_original_fanout_with_all_identically_missing_peers ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\7260-1793422840661694600
+ok
+test native_pipeline::service::rpc::gossip::tests::retained_fresh_offer_requeues_live_rows_in_order_without_reviving_retired_input ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\7260-1793422844182806300
+ok
+test native_pipeline::service::rpc::gossip::tests::retained_fresh_offer_yields_reopened_slot_to_older_missing_input ... UCA original native service evidence=D:\WorksArea\SUPERVM\target\runtime-rebuild\consensus-tests\uca-native-services\7260-1793422844486911100
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1840 filtered out; finished in 4.15s
+

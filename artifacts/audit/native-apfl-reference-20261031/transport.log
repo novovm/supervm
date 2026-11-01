@@ -1,0 +1,38 @@
+
+running 33 tests
+test native_pipeline::consensus::transport::apfl::tests::structured_tags_versions_truncation_trailing_and_canonical_budgets_are_strict ... ok
+test native_pipeline::consensus::transport::apfl::tests::structured_wire_preserves_raw_body_and_early_commitments_with_distinct_fragment_ids ... ok
+test native_pipeline::consensus::transport::early_tests::announcement_identity_binds_complete_scope_order_framing_and_bytes_not_limits ... ok
+test native_pipeline::consensus::transport::early_tests::binding_checks_announced_domain_and_height_but_does_not_approve_roots_or_program ... ok
+test native_pipeline::consensus::transport::early_tests::both_new_payloads_reject_every_truncation_trailing_data_and_unknown_versions ... ok
+test native_pipeline::consensus::transport::early_tests::original_six_tags_and_full_body_hash_keep_their_exact_original_bytes ... ok
+test native_pipeline::consensus::transport::early_tests::raw_count_lengths_aggregate_and_actual_envelope_are_bounded_before_retention ... ok
+test native_pipeline::consensus::transport::early_tests::scopes_reject_zero_domains_bad_parent_shapes_nonadjacent_and_exhausted_heights ... ok
+test native_pipeline::consensus::transport::early_tests::versioned_early_and_binding_bytes_roundtrip_with_exact_lane_and_header_sizes ... ok
+test native_pipeline::consensus::transport::recovery_tests::control_reservation_matches_original_codec_not_body_ceiling ... ok
+test native_pipeline::consensus::transport::recovery_tests::recovery_reply_namespace_preserves_canonical_payload_lane_and_body_identity ... ok
+test native_pipeline::consensus::transport::recovery_tests::recovery_reply_namespace_preserves_limits_and_rejects_truncation_or_trailing_bytes ... ok
+test native_pipeline::consensus::transport::recovery_tests::recovery_reply_namespace_rejects_requests_votes_proposals_and_input ... ok
+test native_pipeline::consensus::transport::tests::all_development_message_variants_roundtrip_without_execution_authority ... ok
+test native_pipeline::consensus::transport::tests::body_identity_binds_every_context_field_original_bytes_and_order_not_budgets ... ok
+test native_pipeline::consensus::transport::tests::bounded_preflight_rejects_huge_count_lengths_empty_total_and_trailing_input ... ok
+test native_pipeline::consensus::transport::tests::decision_request_binds_exact_parent_and_rejects_unbounded_or_ambiguous_input ... ok
+test native_pipeline::consensus::transport::tests::prepared_large_body_fragments_reassemble_exact_bytes_under_local_domain ... ok
+test native_pipeline::consensus::transport::tests::rejects_unknown_version_kind_optional_tag_and_oversized_signed_blob ... ok
+test native_pipeline::consensus::transport::transactions::tests::raw_and_taken_roundtrip_are_versioned_distinct_and_exact ... ok
+test native_pipeline::consensus::transport::transactions::tests::raw_count_lengths_and_empty_identity_fail_closed ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_carries_every_context_field_and_rejects_wrong_profile ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_keeps_commitment_distinct_from_intent_locators ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_preflights_exact_length_version_and_resource_bounds ... ok
+test native_pipeline::consensus::transport::uca::tests::asset_body_reference_roundtrip_keeps_exact_pool_order_and_body_identity ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_application_input_limits_charge_original_bytes_not_compressed_size ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_application_input_pins_domain_without_granting_spend_authority ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_application_input_uses_structural_tag15_not_candidate_authority ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_identity_commits_order_signatures_signed_accounts_and_parent ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_identity_reuses_exact_wire_length_without_changing_transcript ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_profile_and_policy_cannot_reinterpret_v3 ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_rejects_versions_truncation_trailing_and_each_resource_limit ... ok
+test native_pipeline::consensus::transport::uca::tests::nuas_body_uses_explicit_tag_and_existing_bounded_body_lane ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 1758 filtered out; finished in 0.01s
+

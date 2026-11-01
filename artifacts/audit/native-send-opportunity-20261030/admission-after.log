@@ -1,0 +1,6 @@
+
+running 1 test
+test native_pipeline::consensus::native_lifecycle::archive_delivery_tests::native_delivery_admission_refreshes_idle_hint_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1780 filtered out; finished in 0.25s
+

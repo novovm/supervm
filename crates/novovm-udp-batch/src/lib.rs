@@ -3,6 +3,20 @@
 use std::io;
 use std::net::{SocketAddr, UdpSocket};
 
+mod cpu_clock;
+pub use cpu_clock::{read_process_cpu_time, ProcessCpuTime};
+
+mod segmented;
+pub use segmented::{
+    send_udp_segmented_batch, send_udp_segmented_batch_observed, set_udp_send_segment_size,
+    SegmentedBatchObservation, MAX_UDP_SEGMENTED_BATCH_BYTES, MAX_UDP_SEGMENTED_DATAGRAMS,
+};
+
+#[cfg(windows)]
+mod poll_timer;
+#[cfg(windows)]
+pub use poll_timer::NativePollTimer;
+
 #[cfg(target_os = "linux")]
 use std::mem;
 #[cfg(target_os = "linux")]

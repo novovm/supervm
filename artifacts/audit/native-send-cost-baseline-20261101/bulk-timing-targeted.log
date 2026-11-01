@@ -1,0 +1,92 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Finished `release` profile [optimized] target(s) in 52.46s
+     Running unittests src\lib.rs (target/runtime-rebuild\release\deps\novovm_network-57d7f711b0dc108c.exe)
+
+running 1 test
+test novorudp::object_sender::tests::batch::initial_batch_preserves_copy_cursor_short_tail_poll_quantum_and_pause ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 934 filtered out; finished in 0.00s
+
+     Running tests\mailbox_continuous.rs (target/runtime-rebuild\release\deps\mailbox_continuous-13beaa3965964c19.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mailbox_multiplex.rs (target/runtime-rebuild\release\deps\mailbox_multiplex-23f1d240aaa988b1.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mailbox_native_carrier.rs (target/runtime-rebuild\release\deps\mailbox_native_carrier-4587ce54e7c80da3.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mailbox_native_node.rs (target/runtime-rebuild\release\deps\mailbox_native_node-5ce1eba4a13688bf.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mailbox_platform_owner.rs (target/runtime-rebuild\release\deps\mailbox_platform_owner-492df304b56bdb0d.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mailbox_replicas.rs (target/runtime-rebuild\release\deps\mailbox_replicas-a23e2d8f6ab663d3.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests\mailbox_runtime.rs (target/runtime-rebuild\release\deps\mailbox_runtime-7487103ff2c185f3.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mailbox_seal.rs (target/runtime-rebuild\release\deps\mailbox_seal-061c8df132643c0e.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\mailbox_store.rs (target/runtime-rebuild\release\deps\mailbox_store-8b5e0e585b24d279.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
+
+     Running tests\mailbox_tls_node.rs (target/runtime-rebuild\release\deps\mailbox_tls_node-4aa257fb231304c2.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\native_application_transport.rs (target/runtime-rebuild\release\deps\native_application_transport-1a1e973fa96b6802.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests\native_mailbox_session.rs (target/runtime-rebuild\release\deps\native_mailbox_session-8c969624075723af.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\service_file_platform.rs (target/runtime-rebuild\release\deps\service_file_platform-d36b1bd6f612c58a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

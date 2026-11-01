@@ -19,7 +19,7 @@ fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer
 }
 
 #[derive(Debug)]
-struct QueryTimeout(Query);
+pub(crate) struct QueryTimeout(Query);
 
 impl std::fmt::Display for QueryTimeout {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -36,19 +36,38 @@ fn query_until(
     mut alive: impl FnMut() -> Result<()>,
 ) -> Result<Answer> {
     let request = client.prepare_query(selector.clone())?;
+    let started = Instant::now();
     let mut sent = false;
+    let mut poll_max_us = 0u128;
+    // Bounded diagnostic counters only; no delivery outcome changes retries.
+    let mut completions = [0u64; 5];
     loop {
         alive()?;
         let now = Instant::now();
         if now >= deadline {
             client.abandon_query(&request)?;
-            return Err(QueryTimeout(selector).into());
+            return Err(anyhow::Error::new(QueryTimeout(selector)).context(format!(
+                "query transport: elapsed_ms={} sent={sent} poll_max_us={poll_max_us} completions[sending,delivered,expired,session_replaced,cancelled]={completions:?}",
+                started.elapsed().as_millis(),
+            )));
         }
-        let _ = client.poll(
+        let poll_started = Instant::now();
+        let report = client.poll(
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
             now,
             64,
         )?;
+        poll_max_us = poll_max_us.max(poll_started.elapsed().as_micros());
+        for completion in report.completed {
+            let index = match completion.state {
+                ObjectSendState::Sending => 0,
+                ObjectSendState::Delivered => 1,
+                ObjectSendState::Expired => 2,
+                ObjectSendState::SessionReplaced => 3,
+                ObjectSendState::Cancelled => 4,
+            };
+            completions[index] += 1;
+        }
         if !sent {
             sent = client.try_send_query(&request, now)?;
         }
@@ -101,7 +120,7 @@ fn retry_status_until<T>(
     }
 }
 
-fn recovery_status(
+pub(super) fn recovery_status(
     nodes: &mut ProductNodes,
     client: &mut NativeApplicationClient,
     deadline: Instant,
@@ -171,6 +190,79 @@ fn native_status_readiness_deadline_does_not_restart_for_another_peer() {
 }
 
 #[test]
+fn native_status_readiness_successful_peer_does_not_refresh_remaining_budget() -> Result<()> {
+    let start = Instant::now();
+    let clock = std::cell::Cell::new(start);
+    let deadline = start + Duration::from_secs(90);
+    let mut first_attempts = 0;
+    retry_status_until(
+        deadline,
+        || clock.get(),
+        |until| {
+            first_attempts += 1;
+            if first_attempts == 1 {
+                assert_eq!(until, start + Duration::from_secs(5));
+                clock.set(until);
+                Err(QueryTimeout(Query::Status).into())
+            } else {
+                assert_eq!(until, start + Duration::from_secs(10));
+                clock.set(start + Duration::from_secs(6));
+                Ok(())
+            }
+        },
+    )?;
+    assert_eq!(first_attempts, 2);
+
+    // Another peer has only the original remaining 84 seconds, even though
+    // the previous peer eventually became ready. Its last attempt gets four
+    // seconds, not a refreshed five-second or ninety-second timeout.
+    let mut attempts = Vec::new();
+    let result: Result<()> = retry_status_until(
+        deadline,
+        || clock.get(),
+        |until| {
+            attempts.push(until);
+            clock.set(until);
+            Err(QueryTimeout(Query::Status).into())
+        },
+    );
+    assert!(result.unwrap_err().is::<QueryTimeout>());
+    assert_eq!(attempts.len(), 17);
+    assert_eq!(attempts[0], start + Duration::from_secs(11));
+    assert_eq!(attempts[15], start + Duration::from_secs(86));
+    assert_eq!(attempts[16], deadline);
+    let result: Result<()> = retry_status_until(
+        deadline,
+        || clock.get(),
+        |_| panic!("the next peer cannot renew the exhausted recovery budget"),
+    );
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn native_status_readiness_rejected_and_wrong_answers_are_not_retried() {
+    use novovm_protocol::native_query::QueryError;
+    for answer in [
+        Answer::Error(QueryError::Busy),
+        Answer::Error(QueryError::Unavailable),
+        Answer::NovBalance(None),
+    ] {
+        let mut attempts = 0;
+        let result = retry_status_until(
+            Instant::now() + Duration::from_secs(90),
+            Instant::now,
+            |_| {
+                attempts += 1;
+                checked_status(answer.clone())
+            },
+        );
+        assert_eq!(result.unwrap_err().to_string(), "native status missing");
+        assert_eq!(attempts, 1);
+    }
+}
+
+#[test]
 fn native_status_readiness_fatal_errors_are_not_retried() {
     for message in [
         "child exited",
@@ -236,34 +328,100 @@ fn receipts_until(
     hashes: &[[u8; 32]],
     deadline: Instant,
 ) -> Result<Vec<ReceiptState>> {
+    let batched = hashes.len() > novovm_protocol::native_query::MAX_RECEIPTS;
     loop {
         nodes.alive()?;
         let mut all = Vec::new();
-        for client in clients.iter_mut() {
+        for (client_index, client) in clients.iter_mut().enumerate() {
             let mut rows = Vec::new();
-            for hash in hashes {
-                if let Answer::Receipt {
-                    state: state @ ReceiptState::Finalized { .. },
-                    ..
-                } = query_until(
-                    client,
-                    Query::Receipt { hash: *hash },
-                    deadline.min(Instant::now() + Duration::from_secs(5)),
-                    || nodes.alive(),
-                )? {
-                    rows.push(state);
+            if batched {
+                // The original typed batch query preserves every selector's
+                // position, including unfinished rows. It does not restart
+                // the shared observation deadline between chunks or peers.
+                for (chunk_index, chunk) in hashes
+                    .chunks(novovm_protocol::native_query::MAX_RECEIPTS)
+                    .enumerate()
+                {
+                    let Answer::Receipts { states, .. } = query_until(
+                        client,
+                        Query::Receipts {
+                            hashes: chunk.to_vec().try_into().map_err(anyhow::Error::msg)?,
+                        },
+                        deadline.min(Instant::now() + Duration::from_secs(5)),
+                        || nodes.alive(),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "receipt observation: client={client_index} chunk_offset={} chunk_rows={} total_rows={} shared_deadline_remaining_ms={}",
+                            chunk_index * novovm_protocol::native_query::MAX_RECEIPTS,
+                            chunk.len(),
+                            hashes.len(),
+                            deadline.saturating_duration_since(Instant::now()).as_millis(),
+                        )
+                    })?
+                    else {
+                        anyhow::bail!("native batch receipt missing");
+                    };
+                    ensure!(states.len() == chunk.len(), "native batch receipt count");
+                    rows.extend_from_slice(states.as_slice());
+                }
+            } else {
+                for (row, hash) in hashes.iter().enumerate() {
+                    if let Answer::Receipt {
+                        state: state @ ReceiptState::Finalized { .. },
+                        ..
+                    } = query_until(
+                        client,
+                        Query::Receipt { hash: *hash },
+                        deadline.min(Instant::now() + Duration::from_secs(5)),
+                        || nodes.alive(),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "receipt observation: client={client_index} row={row} total_rows={} shared_deadline_remaining_ms={}",
+                            hashes.len(),
+                            deadline.saturating_duration_since(Instant::now()).as_millis(),
+                        )
+                    })? {
+                        rows.push(state);
+                    }
                 }
             }
             all.push(rows);
         }
-        if all.iter().all(|rows| rows.len() == hashes.len()) {
+        if all.iter().all(|rows| {
+            rows.len() == hashes.len()
+                && rows
+                    .iter()
+                    .all(|state| matches!(state, ReceiptState::Finalized { .. }))
+        }) {
             ensure!(
                 all.iter().all(|rows| rows == &all[0]),
                 "four native receipts differ: {all:?}"
             );
+            if batched {
+                // Large recovery checks every row through v2 above; only the
+                // first and last selectors are independently compared with v1.
+                for (client, rows) in clients.iter_mut().zip(&all) {
+                    for index in [0, hashes.len() - 1] {
+                        let Answer::Receipt { state, .. } = query_until(
+                            client,
+                            Query::Receipt {
+                                hash: hashes[index],
+                            },
+                            deadline.min(Instant::now() + Duration::from_secs(5)),
+                            || nodes.alive(),
+                        )?
+                        else {
+                            anyhow::bail!("native single receipt missing");
+                        };
+                        ensure!(state == rows[index], "native v1/v2 receipt sample differs");
+                    }
+                }
+            }
             // Maximum-size v2 response crosses real object fragments. Ordered
-            // duplicates and an unknown hash must agree with the v1 projection,
-            // including failed business receipts, before and after cold reopen.
+            // duplicates and an unknown hash must agree with the full ordered
+            // projection, including failed business receipts and cold reopen.
             let selectors: Vec<_> = (0..127)
                 .map(|i| hashes[hashes.len() - 1 - i % hashes.len()])
                 .chain(std::iter::once([0xa7; 32]))
@@ -286,7 +444,7 @@ fn receipts_until(
                 };
                 ensure!(
                     states.as_slice() == expected.as_slice(),
-                    "native batch projection differs from single reads"
+                    "native batch projection differs from ordered receipts"
                 );
             }
             return Ok(all.remove(0));

@@ -25,6 +25,21 @@ impl AuthenticationRequest {
         Self::from_source(BatchSource::Apfl(batch), policy)
     }
 
+    /// Preserve the original body and its signed actual asset accounts. Only
+    /// signatures are prepared here; binding later captures the complete UCA
+    /// authority/budget/nonce/balance/fee state at the supplied exact parent.
+    pub fn from_uca_batch(
+        batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        Self::from_input(
+            compute::CandidateInput::Uca {
+                source: BatchSource::Uca(batch),
+            },
+            policy,
+        )
+    }
+
     fn from_source(raw_transactions: BatchSource, policy: DirectNovFeePolicy) -> Result<Self> {
         Self::from_input(
             compute::CandidateInput::Unverified(raw_transactions),

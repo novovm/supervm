@@ -573,3 +573,229 @@ fn signing_borrows_the_secret_frames_once_and_requires_output_self_verification(
         }
     }
 }
+
+struct BatchBackend {
+    parameters: AoemMldsaParameterSet,
+    expected_key: Vec<u8>,
+    expected_message: Vec<u8>,
+    expected_signature: Vec<u8>,
+    mode: u8,
+    calls: Cell<usize>,
+    rows: Cell<usize>,
+}
+
+impl BatchBackend {
+    fn known_answer(parameters: AoemMldsaParameterSet) -> Self {
+        let vector = compatibility_vector(parameters).unwrap();
+        Self {
+            parameters,
+            expected_key: vector_bytes(&vector.public_key).unwrap(),
+            expected_message: frame_pure_message(
+                &vector_bytes(&vector.message).unwrap(),
+                &vector_bytes(&vector.context).unwrap(),
+            )
+            .unwrap(),
+            expected_signature: vector_bytes(&vector.signature).unwrap(),
+            mode: 0,
+            calls: Cell::new(0),
+            rows: Cell::new(0),
+        }
+    }
+}
+
+impl MldsaBackend for BatchBackend {
+    fn available(&self) -> bool {
+        self.mode != 1
+    }
+    fn sizes(&self, level: u32) -> Result<(usize, usize), PqVerificationError> {
+        assert_eq!(level, self.parameters.level());
+        if self.mode == 2 {
+            Ok((32, 64))
+        } else {
+            Ok((
+                self.parameters.public_key_bytes(),
+                self.parameters.signature_bytes(),
+            ))
+        }
+    }
+    fn verify(&self, _: u32, _: &[u8], _: &[u8], _: &[u8]) -> Result<bool, PqVerificationError> {
+        panic!("batch must not retry/fall back to scalar verification")
+    }
+}
+
+impl MldsaBatchBackend for BatchBackend {
+    fn batch_available(&self) -> bool {
+        self.mode != 3
+    }
+    fn verify_batch(
+        &self,
+        items: &[AoemMldsaVerifyItemRef<'_>],
+    ) -> Result<Vec<bool>, PqVerificationError> {
+        self.calls.set(self.calls.get() + 1);
+        self.rows.set(self.rows.get() + items.len());
+        if self.mode == 4 {
+            return Err(PqVerificationError::RuntimeFailure);
+        }
+        let mut results: Vec<_> = items
+            .iter()
+            .map(|item| {
+                assert_eq!(item.level, self.parameters.level());
+                match self.mode {
+                    5 => true,
+                    6 => false,
+                    _ => {
+                        item.pubkey == self.expected_key
+                            && item.message == self.expected_message
+                            && item.signature == self.expected_signature
+                    }
+                }
+            })
+            .collect();
+        if self.mode == 7 {
+            results.pop();
+        }
+        if self.mode == 8 {
+            results.push(true);
+        }
+        Ok(results)
+    }
+}
+
+#[test]
+fn batch_qualification_requires_explicit_suite_mixed_kat_and_exact_result_count() {
+    for parameters in PARAMETER_SETS {
+        for (mode, expected) in [
+            (0, Ok(())),
+            (1, Err(PqVerificationError::RuntimeUnavailable)),
+            (2, Err(PqVerificationError::RuntimeContractMismatch)),
+            (3, Err(PqVerificationError::BatchUnavailable)),
+            (4, Err(PqVerificationError::RuntimeFailure)),
+            (5, Err(PqVerificationError::RuntimeIncompatible)),
+            (6, Err(PqVerificationError::RuntimeIncompatible)),
+            (7, Err(PqVerificationError::RuntimeContractMismatch)),
+            (8, Err(PqVerificationError::RuntimeContractMismatch)),
+        ] {
+            let mut backend = BatchBackend::known_answer(parameters);
+            backend.mode = mode;
+            assert_eq!(
+                ensure_batch_compatible_backend(&backend, parameters),
+                expected
+            );
+            assert_eq!(backend.calls.get(), usize::from(!matches!(mode, 1..=3)));
+        }
+    }
+}
+
+#[test]
+fn batch_frames_once_and_keeps_invalid_input_and_signature_rows_in_original_order() {
+    let parameters = AoemMldsaParameterSet::MlDsa65;
+    let backend = BatchBackend::known_answer(parameters);
+    let vector = compatibility_vector(parameters).unwrap();
+    let message = vector_bytes(&vector.message).unwrap();
+    let context = vector_bytes(&vector.context).unwrap();
+    let mut bad_signature = backend.expected_signature.clone();
+    bad_signature[0] ^= 1;
+    let good = MldsaVerifyInput {
+        public_key: &backend.expected_key,
+        message: &message,
+        context: &context,
+        signature: &backend.expected_signature,
+    };
+    let inputs = [
+        good,
+        MldsaVerifyInput {
+            public_key: &[0; 32],
+            ..good
+        },
+        MldsaVerifyInput {
+            signature: &bad_signature,
+            ..good
+        },
+        MldsaVerifyInput {
+            context: &[0; 256],
+            ..good
+        },
+        good,
+        MldsaVerifyInput {
+            signature: &[0; 64],
+            ..good
+        },
+        MldsaVerifyInput {
+            message: b"wrong canonical message",
+            ..good
+        },
+    ];
+    assert_eq!(
+        verify_batch_with_backend(&backend, parameters, &inputs).unwrap(),
+        [
+            Ok(()),
+            Err(PqVerificationError::InvalidPublicKeyLength),
+            Err(PqVerificationError::InvalidSignature),
+            Err(PqVerificationError::InvalidContextLength),
+            Ok(()),
+            Err(PqVerificationError::InvalidSignatureLength),
+            Err(PqVerificationError::InvalidSignature),
+        ]
+    );
+    assert_eq!(backend.calls.get(), 1);
+    assert_eq!(
+        backend.rows.get(),
+        4,
+        "malformed shapes never enter the FFI"
+    );
+}
+
+#[test]
+fn batch_runtime_failure_has_no_partial_success_and_work_units_are_bounded() {
+    let parameters = AoemMldsaParameterSet::MlDsa65;
+    let mut backend = BatchBackend::known_answer(parameters);
+    let public_key = backend.expected_key.clone();
+    let signature = backend.expected_signature.clone();
+    let input = MldsaVerifyInput {
+        public_key: &public_key,
+        message: b"message",
+        context: b"context",
+        signature: &signature,
+    };
+    assert_eq!(
+        verify_batch_with_backend(&backend, parameters, &[]).unwrap(),
+        []
+    );
+    assert_eq!(
+        verify_batch_with_backend(
+            &backend,
+            parameters,
+            &vec![input; MLDSA_VERIFY_BATCH_MAX_ITEMS + 1]
+        ),
+        Err(PqVerificationError::BatchTooLarge)
+    );
+    let oversized_message = vec![0; MLDSA_VERIFY_BATCH_MAX_MESSAGE_BYTES];
+    assert_eq!(
+        verify_batch_with_backend(
+            &backend,
+            parameters,
+            &[MldsaVerifyInput {
+                message: &oversized_message,
+                ..input
+            }]
+        ),
+        Err(PqVerificationError::BatchTooLarge)
+    );
+    assert_eq!(backend.calls.get(), 0);
+    backend.mode = 4;
+    assert_eq!(
+        verify_batch_with_backend(
+            &backend,
+            parameters,
+            &[
+                input,
+                MldsaVerifyInput {
+                    public_key: &[0; 32],
+                    ..input
+                }
+            ]
+        ),
+        Err(PqVerificationError::RuntimeFailure)
+    );
+    assert_eq!(backend.calls.get(), 1);
+}

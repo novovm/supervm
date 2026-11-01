@@ -14,15 +14,20 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 use crate::native_pipeline::execution::plan::{BatchContext, BatchPlan, PlanBudget};
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
 use crate::native_pipeline::state::frontier::DeclaredAccess;
-use crate::native_pipeline::state::tree::{validate_state_node_bytes, NodeHash};
+use crate::native_pipeline::state::tree::{
+    validate_state_node_bytes, NodeHash, MAX_BATCH_READ_KEYS,
+};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 const DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND01";
 // UCA extends the same candidate document, never re-labels a V3 body/receipt.
-const UCA_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND02";
+const UCA_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND03";
 mod uca;
 const MARKER_MAGIC: &[u8; 8] = b"NVCOMP01";
 const MARKER_BYTES: usize = 8 + 32 + 8 + 4 + 32;
@@ -51,7 +56,7 @@ impl Default for PacketBudget {
             max_nodes: TREE_MAX_NODES,
             max_transactions: 1024,
             max_transaction_bytes: 1024 * 1024,
-            max_access_keys: 4096,
+            max_access_keys: MAX_BATCH_READ_KEYS,
             max_receipt_bytes: 1024 * 1024,
         }
     }
@@ -89,6 +94,8 @@ pub struct PreparedCandidate {
     // charged below against the existing 2x maximum-packet reservation.
     // Not serialized or added to any business/consensus commitment.
     receipt_projection: Vec<ReceiptProjection>,
+    // Same verified receipt facts, indexed once for repeated local selection.
+    nonce_projection: Arc<BTreeMap<NodeHash, u64>>,
 }
 
 struct Resources {
@@ -113,7 +120,7 @@ impl PreparedCandidate {
         capture: crate::native_pipeline::state::frontier::CaptureBudget,
     ) -> Result<(
         Self,
-        Option<crate::native_pipeline::state::frontier::PostStateSeed>,
+        Option<crate::native_pipeline::state::frontier::StateReadSeed>,
     )> {
         let packet = Self::prepare_executed(&batch, budget)?;
         let seed = batch.into_poststate_seed(capture)?;
@@ -153,8 +160,8 @@ impl PreparedCandidate {
     pub fn record_bytes(&self) -> usize {
         self.resources.total_bytes
     }
-    /// Logical record content plus the actual capacity of the read-only receipt
-    /// projection. Runtime owners use this for retention, not storage encoding.
+    /// Logical records, receipt capacity and conservatively charged nonce index.
+    /// Runtime owners use this for retention, not storage encoding or exact RSS.
     pub(crate) fn retained_bytes(&self) -> usize {
         self.resources.retained_bytes
     }
@@ -163,6 +170,9 @@ impl PreparedCandidate {
     }
     pub(crate) fn receipt_projection(&self) -> &[ReceiptProjection] {
         &self.receipt_projection
+    }
+    pub(crate) fn nonce_projection(&self) -> &Arc<BTreeMap<NodeHash, u64>> {
+        &self.nonce_projection
     }
     pub fn context(&self) -> &BatchContext {
         &self.summary.context
@@ -338,36 +348,6 @@ impl StoredCandidate {
     /// Content-checked UCA receipt effects, not authorization or finality proof.
     pub fn spend_outputs(&self) -> Option<&[SpendOutput]> {
         self.spend_outputs.as_deref()
-    }
-    /// Recover only balance-location hints from the content-checked UCA archive.
-    /// These are NOT spending authority or an executed capability. Replaying a
-    /// candidate must independently verify its signatures and both bindings,
-    /// reverse owners, grants and economic effects against the exact parent root.
-    pub(crate) fn uca_account_hints(
-        &self,
-    ) -> Result<
-        Vec<(
-            crate::native_pipeline::business::quoted_transfer::Account,
-            crate::native_pipeline::business::quoted_transfer::Account,
-        )>,
-    > {
-        use crate::native_pipeline::business::quoted_transfer::Account;
-        ensure!(
-            uca::is_profile(self.context()) && self.spend_outputs.is_some(),
-            "balance-location hints require a UCA candidate"
-        );
-        self.receipts
-            .iter()
-            .map(|bytes| {
-                let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
-                ensure!(tail.is_empty(), "trailing UCA receipt bytes");
-                Ok((
-                    Account::try_from(receipt.delta.payer.account).map_err(anyhow::Error::msg)?,
-                    Account::try_from(receipt.delta.recipient.account)
-                        .map_err(anyhow::Error::msg)?,
-                ))
-            })
-            .collect()
     }
     /// Query-only view of an already content-checked stored receipt. This cannot
     /// construct an executed batch, durable candidate or signing permission.
@@ -601,13 +581,19 @@ fn prepare_with_spend(
         }
     }
     let document = document.bytes;
-    // The codec's independent recovery validator also checks structural receipt
-    // relations, not business execution. Preparation never manufactures success.
-    decode_document(&document, plan.commitment(), budget)?;
-    let receipt_projection = receipts
-        .iter()
-        .map(|bytes| ReceiptProjection::decode(bytes))
-        .collect::<Result<Vec<_>>>()?;
+    // The immutable plan already owns its canonical body/access commitment.
+    // Validate the same receipt/economic relations as cold recovery without
+    // decoding a second full plan from bytes that this function just encoded.
+    let mut receipt_projection = Vec::with_capacity(receipts.len());
+    validate_effects(
+        plan,
+        root,
+        receipts,
+        spend_outputs,
+        (receipt_commitment, statement_commitment),
+        budget,
+        Some(&mut receipt_projection),
+    )?;
     let digest = document_hash(&document);
     let mut records = BTreeMap::new();
     for (hash, bytes) in nodes {
@@ -632,9 +618,24 @@ fn prepare_with_spend(
     for (key, value) in &records {
         account_record(&mut total, key, value, budget)?;
     }
+    // Keep the last ACTUAL receipt nonce, including unchanged/failure rows.
+    // The immutable packet owns this once; selection only shares its Arc.
+    let nonce_projection: BTreeMap<_, _> = receipt_projection
+        .iter()
+        .map(|receipt| (receipt.signer_identity, receipt.nonce_after))
+        .collect();
+    // Match the existing successor's conservative logical per-entry charge.
+    // Map/Arc headers are included; this is not allocator-exact RSS accounting.
+    let nonce_projection_bytes = nonce_projection
+        .len()
+        .checked_mul(96)
+        .and_then(|bytes| bytes.checked_add(std::mem::size_of::<BTreeMap<NodeHash, u64>>()))
+        .and_then(|bytes| bytes.checked_add(2 * std::mem::size_of::<usize>()))
+        .context("nonce projection size overflow")?;
     let projection_bytes = receipt_projection
         .capacity()
         .checked_mul(std::mem::size_of::<ReceiptProjection>())
+        .and_then(|bytes| bytes.checked_add(nonce_projection_bytes))
         .context("receipt projection size overflow")?;
     // Existing pipeline reservation contains 2 * maximum packet bytes. The
     // extra projection cannot silently widen that admitted memory contract.
@@ -673,6 +674,7 @@ fn prepare_with_spend(
         records,
         resources,
         receipt_projection,
+        nonce_projection: Arc::new(nonce_projection),
     })
 }
 
@@ -934,23 +936,15 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         None
     };
     input.finish()?;
-    if let Some(outputs) = &spend_outputs {
-        uca::validate_receipts(&plan, &receipts, outputs, budget)?;
-    } else {
-        validate_receipts(&plan, &receipts, budget)?;
-    }
-    ensure!(
-        uca::receipt_hash_with_spend(
-            plan.context().receipt_codec,
-            &receipts,
-            spend_outputs.as_deref()
-        ) == receipt_commitment,
-        "candidate ordered receipt commitment mismatch"
-    );
-    ensure!(
-        statement_hash(id, state_root, receipt_commitment) == statement_commitment,
-        "candidate execution statement mismatch"
-    );
+    validate_effects(
+        &plan,
+        state_root,
+        &receipts,
+        spend_outputs.as_deref(),
+        (receipt_commitment, statement_commitment),
+        budget,
+        None,
+    )?;
     Ok(Decoded {
         plan,
         state_root,
@@ -960,6 +954,53 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         receipts,
         spend_outputs,
     })
+}
+
+// Shared structural/economic checks, not signature verification or authority.
+// Recovery reaches this only after independently decoding and hashing the plan;
+// preparation carries the original immutable plan produced by execution.
+fn validate_effects(
+    plan: &BatchPlan,
+    state_root: NodeHash,
+    receipts: &[Vec<u8>],
+    spend_outputs: Option<&[SpendOutput]>,
+    commitments: (NodeHash, NodeHash),
+    budget: PacketBudget,
+    projection: Option<&mut Vec<ReceiptProjection>>,
+) -> Result<()> {
+    let (receipt_commitment, statement_commitment) = commitments;
+    let context = plan.context();
+    let is_uca = uca::is_profile(context);
+    ensure!(
+        is_uca
+            || (context.business_program == program_id()
+                && context.receipt_codec == receipt_codec()
+                && context.semantic_version == SEMANTIC_VERSION),
+        "unsupported candidate business/receipt profile"
+    );
+    ensure!(
+        is_uca == spend_outputs.is_some(),
+        "candidate document/profile mismatch"
+    );
+    ensure!(
+        state_root != [0; 32],
+        "candidate output root must be nonzero"
+    );
+    if let Some(outputs) = spend_outputs {
+        uca::validate_receipts(plan, receipts, outputs, budget, projection)?;
+    } else {
+        validate_receipts(plan, receipts, budget, projection)?;
+    }
+    ensure!(
+        uca::receipt_hash_with_spend(plan.context().receipt_codec, receipts, spend_outputs)
+            == receipt_commitment,
+        "candidate ordered receipt commitment mismatch"
+    );
+    ensure!(
+        statement_hash(plan.commitment(), state_root, receipt_commitment) == statement_commitment,
+        "candidate execution statement mismatch"
+    );
+    Ok(())
 }
 
 /// Read-only projection; never execution, publication or signing authority.
@@ -973,16 +1014,21 @@ pub(crate) struct ReceiptProjection {
     pub charged_fee: u128,
 }
 impl ReceiptProjection {
+    #[cfg(test)]
     fn decode(bytes: &[u8]) -> Result<Self> {
         let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
         ensure!(tail.is_empty(), "trailing executed receipt bytes");
-        Ok(Self {
+        Ok(Self::from_receipt(&receipt))
+    }
+
+    fn from_receipt(receipt: &ReceiptRef<'_>) -> Self {
+        Self {
             tx_hash: receipt.tx_hash,
             signer_identity: receipt.signer_identity,
             nonce_after: receipt.delta.nonce_after,
             success: receipt.failure.is_none() && receipt.fee_failure.is_none(),
             charged_fee: receipt.delta.fee_funding_delta,
-        })
+        }
     }
 }
 
@@ -1081,7 +1127,12 @@ fn identity_hex(identity: &NodeHash) -> String {
     value
 }
 
-fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudget) -> Result<()> {
+fn validate_receipts(
+    plan: &BatchPlan,
+    receipts: &[Vec<u8>],
+    budget: PacketBudget,
+    mut projection: Option<&mut Vec<ReceiptProjection>>,
+) -> Result<()> {
     let mut hashes = BTreeSet::new();
     let mut nonces = BTreeMap::new();
     let mut journal_seq: Option<u64> = None;
@@ -1165,6 +1216,9 @@ fn validate_receipts(plan: &BatchPlan, receipts: &[Vec<u8>], budget: PacketBudge
             plan.context(),
             &mut journal_seq,
         )?;
+        if let Some(projection) = projection.as_deref_mut() {
+            projection.push(ReceiptProjection::from_receipt(&receipt));
+        }
     }
     Ok(())
 }

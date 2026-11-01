@@ -1,0 +1,9 @@
+
+running 4 tests
+test native_pipeline::consensus::native::query::tests::busy_peer_request_is_retained_while_another_peer_can_advance ... ok
+test native_pipeline::consensus::native::query::tests::query_custody_has_fixed_capacity_deadline_and_transport_generation ... ok
+test native_pipeline::consensus::native::query::tests::query_trace_follows_explicit_flag_and_sequence_bound ... ok
+test native_pipeline::consensus::native::query::tests::real_query_request_survives_delayed_previous_reply_done_handoff ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1778 filtered out; finished in 0.00s
+

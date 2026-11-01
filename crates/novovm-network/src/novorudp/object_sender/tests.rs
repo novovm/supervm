@@ -2,6 +2,8 @@ use super::*;
 use crate::product_overlay::*;
 use ed25519_dalek::SigningKey;
 
+mod batch;
+mod progress;
 mod tail;
 
 fn link() -> Result<(UdpSocket, UdpSocket, NativeUdpSession, NativeUdpSession)> {
@@ -88,6 +90,8 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind() 
         now,
         Duration::from_secs(5),
     )?;
+    assert!(sender.diagnostic_progress_v1().is_none());
+    sender.enable_diagnostics_v1();
     let peer = b.remote_peer_id().to_owned();
     let mut objects = Reassembler::with_profile(
         [1; 32],
@@ -113,6 +117,10 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind() 
         }
     }
     let (total, missing) = objects.missing_ranges(&peer, body.id()).unwrap();
+    let observed = sender.diagnostic_progress_v1().unwrap();
+    assert_eq!(observed.initial_packets, 100);
+    assert_eq!(observed.repair_packets, 0);
+    assert!(observed.initial_complete.is_some());
     let window = select_first_missing_window(&missing, total, &config).unwrap();
     assert_eq!(window.range.start, 5); // Preserve original non-grid window rule.
     let mut ack = NovoRudpAckFrame {
@@ -148,6 +156,11 @@ fn one_ack_drives_all_repair_polls_and_new_identical_snapshot_does_not_rewind() 
         objects.push(&peer, &frame.payload, now)?;
     }
     assert_eq!(received, (5..=12).collect::<Vec<_>>());
+    let observed = sender.diagnostic_progress_v1().unwrap();
+    assert_eq!(observed.initial_packets, 100);
+    assert_eq!(observed.repair_packets, 8);
+    assert_eq!(observed.probe_packets, 0);
+    assert_eq!(observed.last_repair_index, Some(12));
     assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 0);
     let mut complete = None;
     for _ in 0..=body.frame_count().div_ceil(64) {
@@ -196,6 +209,7 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
         now,
         Duration::from_secs(5),
     )?;
+    sender.enable_diagnostics_v1();
     assert_eq!(sender.poll_send(&left, &mut a, now, 8)?, 1);
     receive(&right, &mut b)?;
     for ms in [10, 20] {
@@ -208,6 +222,10 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
             NovoRudpTransportFrameKindV0::Repair
         );
     }
+    let observed = sender.diagnostic_progress_v1().unwrap();
+    assert_eq!(observed.initial_packets, 1);
+    assert_eq!(observed.repair_packets, 0);
+    assert_eq!(observed.probe_packets, 2);
     assert_eq!(
         sender.poll_send(&left, &mut a, now + Duration::from_millis(30), 8)?,
         0
@@ -219,6 +237,135 @@ fn bounded_no_feedback_retries_return_original_body_without_fake_delivery() -> R
     );
     assert_eq!(sender.status(), ObjectSendState::Expired);
     assert!(Arc::ptr_eq(&sender.into_body(), &body));
+    Ok(())
+}
+
+#[test]
+fn native_read_request_recovers_after_initial_loss_with_both_backoff_flags_disabled() -> Result<()>
+{
+    use super::super::fragments::{Reassembler, ReassemblyLimits};
+    use novovm_protocol::native_query::{self as query, Frame, Query, Request};
+
+    // Reproduce the old process fixture's window default / pacing override,
+    // then the service/operator's explicit two-flag policy. No changed retry
+    // count, ACK interval, operation deadline, object TTL or sender algorithm.
+    for window_backoff in [true, false] {
+        let (left, right, mut a, mut b) = link()?;
+        let now = Instant::now();
+        let request = Frame::Request(Request {
+            session: [9; 32],
+            sequence: 40,
+            query: Query::Receipt { hash: [4; 32] },
+        });
+        let bytes = query::encode(request.clone()).map_err(anyhow::Error::msg)?;
+        let body = Arc::new(OutgoingMessage::with_profile(
+            [1; 32],
+            bytes.clone(),
+            query::MAX_BYTES,
+            FragmentProfile::NativeUdpV2,
+        )?);
+        assert_eq!(body.frame_count(), 1);
+        let config = NovoRudpWindowConfig {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: window_backoff,
+            ..Default::default()
+        };
+        assert_eq!(config.max_window_retries, 8);
+        let pacing = NovoRudpPacingProfile {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+        };
+        let mut sender = NativeObjectSender::new(
+            body.clone(),
+            a.session_id(),
+            query::STREAM,
+            config,
+            pacing,
+            now,
+            Duration::from_secs(30),
+        )?;
+        // Drop actual authenticated packets before they reach reassembly.
+        // Supplying monotonic timestamps makes the loss window deterministic,
+        // without sleeping or fabricating transport success/ACK progress.
+        for attempt in 0..=8 {
+            let at = now + Duration::from_millis(attempt * 10);
+            assert_eq!(sender.poll_send(&left, &mut a, at, 64)?, 1);
+            let dropped = receive(&right, &mut b)?;
+            assert_eq!(dropped.stream_id, query::STREAM);
+            assert_eq!(sender.status(), ObjectSendState::Sending);
+        }
+        let recovered_at = now + Duration::from_millis(90);
+        assert!(recovered_at < now + Duration::from_secs(5));
+        if window_backoff {
+            // A false pacing flag does not undo a true window flag: no more
+            // request packets arrive even after the network recovers.
+            for at in [recovered_at, now + Duration::from_secs(5)] {
+                assert_eq!(sender.poll_send(&left, &mut a, at, 64)?, 0);
+                assert_eq!(sender.status(), ObjectSendState::Sending);
+            }
+            assert_eq!(
+                sender.poll_send(&left, &mut a, now + Duration::from_secs(30), 64)?,
+                0
+            );
+            assert_eq!(sender.status(), ObjectSendState::Expired);
+            assert!(Arc::ptr_eq(&sender.into_body(), &body));
+            continue;
+        }
+        assert_eq!(sender.poll_send(&left, &mut a, recovered_at, 64)?, 1);
+        let received = receive(&right, &mut b)?;
+        let peer = b.remote_peer_id().to_owned();
+        let mut objects = Reassembler::with_profile(
+            [1; 32],
+            vec![peer.clone()],
+            ReassemblyLimits {
+                max_message_bytes: query::MAX_BYTES,
+                messages: 1,
+                bytes: query::MAX_BYTES,
+                peer_messages: 1,
+                peer_bytes: query::MAX_BYTES,
+                ttl: Duration::from_secs(5),
+            },
+            FragmentProfile::NativeUdpV2,
+        )?;
+        objects.push(&peer, &received.payload, recovered_at)?;
+        let complete = objects
+            .poll_complete(recovered_at, 64)?
+            .context("recovered original query missing")?;
+        let decoded = complete.chunks.concat();
+        assert_eq!(decoded, bytes);
+        assert_eq!(
+            query::decode(&decoded).map_err(anyhow::Error::msg)?,
+            request
+        );
+        assert_eq!(sender.status(), ObjectSendState::Sending);
+        let ack = NovoRudpAckFrame {
+            header: NovoRudpFrameHeader {
+                version: 1,
+                kind: NovoRudpFrameKind::Ack,
+                session_id: a.session_id(),
+                epoch: 1,
+                sequence: None,
+                window_id: None,
+            },
+            expected_total: 1,
+            receiver_done: true,
+            missing_count: 0,
+            current_window: None,
+            current_window_missing_ranges: vec![],
+        };
+        assert!(b.try_send(&right, &encode_object_ack(body.id(), query::STREAM, &ack)?)?);
+        sender.on_ack(&receive(&left, &mut a)?, recovered_at)?;
+        assert_eq!(sender.status(), ObjectSendState::Delivered);
+        assert!(Arc::ptr_eq(&sender.into_body(), &body));
+    }
     Ok(())
 }
 

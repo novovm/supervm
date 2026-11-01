@@ -250,11 +250,21 @@ pub(crate) fn try_send_datagram(
     if let Some(budget) = budget.as_deref_mut() {
         budget.advance(now);
         if !budget.fits(wire.len() as u64) {
+            super::diagnostics::traffic(
+                super::diagnostics::Traffic::SendBudgetDeferred,
+                0,
+                3,
+                wire.len(),
+            );
             budget.usage.send_deferred = budget.usage.send_deferred.saturating_add(1);
             return Ok(false);
         }
     }
-    match io.try_send(wire, remote.into()) {
+    let sent = {
+        let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::SocketSend);
+        io.try_send(wire, remote.into())
+    };
+    match sent {
         Ok(count) => {
             ensure!(
                 count <= wire.len(),
@@ -265,9 +275,18 @@ pub(crate) fn try_send_datagram(
                 budget.usage.sent_bytes = budget.usage.sent_bytes.saturating_add(count as u64);
             }
             ensure!(count == wire.len(), "partial native UDP datagram");
+            super::diagnostics::traffic(super::diagnostics::Traffic::WireSent, 0, 3, count);
             Ok(true)
         }
-        Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(false),
+        Err(error) if error.kind() == ErrorKind::WouldBlock => {
+            super::diagnostics::traffic(
+                super::diagnostics::Traffic::SendWouldBlock,
+                0,
+                3,
+                wire.len(),
+            );
+            Ok(false)
+        }
         Err(error) => Err(error.into()),
     }
 }

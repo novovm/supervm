@@ -1,0 +1,12 @@
+
+running 1 test
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-34108-1793382296639298000
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-34108-1793382339665089200
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-34108-1793382369078048400
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-34108-1793382404420094600
+NUAS native load artifacts=D:\WorksArea\SUPERVM\target\native-product-load\uca-34108-1793382435777222600
+NUAS bulk authority paired report=D:\WorksArea\SUPERVM\crates\novovm-node\../../target/native-product-load\bulk-authority-paired-34108-1793382466816.json
+test native_pipeline::consensus::tests::native_product_rpc::native_load::uca::native_uca_same_corpus_bulk_authority_before_after ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1792 filtered out; finished in 170.21s
+

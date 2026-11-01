@@ -1,4 +1,4 @@
-//! Explicit UCA candidate archive extension on the original packet/store.
+//! Explicit asset-account v3 archive extension on the original packet/store.
 //! These are bounded content/continuity checks, not cryptographic verification,
 //! a trusted-parent proof or a reconstruction of the economic execution plan.
 use super::*;
@@ -10,7 +10,7 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 };
 use crate::native_pipeline::business::quoted_transfer::Account;
 use novovm_adapter_api::uca_spend_policy::SpendPolicyError;
-use novovm_protocol::uca_spend::SignedUcaSpendV1;
+use novovm_protocol::uca_spend::SignedAssetSpendV3;
 
 pub(super) fn is_profile(context: &BatchContext) -> bool {
     context.business_program == uca_program_id()
@@ -34,7 +34,7 @@ pub(super) fn receipt_hash_with_spend(
         hash.update((bytes.len() as u64).to_be_bytes());
         hash.update(bytes);
     }
-    hash.update(b"uca-authorized-effects/v1\0");
+    hash.update(b"asset-authorized-effects/v3\0");
     for output in outputs {
         hash.update(authorization_code(output.failure).to_be_bytes());
         hash.update(output.remaining.to_be_bytes());
@@ -47,6 +47,7 @@ pub(super) fn validate_receipts(
     receipts: &[Vec<u8>],
     outputs: &[SpendOutput],
     budget: PacketBudget,
+    mut projection: Option<&mut Vec<ReceiptProjection>>,
 ) -> Result<()> {
     ensure!(
         is_profile(plan.context()),
@@ -73,7 +74,7 @@ pub(super) fn validate_receipts(
             raw.len() <= budget.max_transaction_bytes,
             "UCA transaction exceeds budget"
         );
-        let signed = SignedUcaSpendV1::decode(raw.as_ref())?;
+        let signed = SignedAssetSpendV3::decode(raw.as_ref())?;
         ensure!(
             signed.encode()?.as_slice() == raw.as_ref(),
             "noncanonical UCA transaction"
@@ -91,6 +92,11 @@ pub(super) fn validate_receipts(
         ensure!(
             tail.is_empty() && postcard::to_allocvec(&receipt)? == *bytes,
             "noncanonical UCA receipt"
+        );
+        ensure!(
+            receipt.delta.payer.account == intent.payer.as_slice()
+                && receipt.delta.recipient.account == intent.recipient.as_slice(),
+            "asset receipt accounts differ from signed transaction"
         );
         ensure!(
             receipt.tx_hash == tx_hash
@@ -215,6 +221,34 @@ pub(super) fn validate_receipts(
                 fee
             }
         };
+        if !intent.uses_grant() {
+            ensure!(
+                output.remaining == 0,
+                "controller cannot report delegated spend budget"
+            );
+            if output.failure.is_none()
+                && receipt.failure.is_none()
+                && receipt.fee_failure.is_none()
+            {
+                if let Some(update) = &intent.authority_update {
+                    for grant in &update.grants {
+                        remaining.insert((identity, grant.key_ref), grant.remaining_debit_budget);
+                    }
+                }
+            }
+            balances.insert(
+                receipt.delta.payer.account.to_vec(),
+                receipt.delta.payer.after,
+            );
+            balances.insert(
+                receipt.delta.recipient.account.to_vec(),
+                receipt.delta.recipient.after,
+            );
+            if let Some(projection) = projection.as_deref_mut() {
+                projection.push(ReceiptProjection::from_receipt(&receipt));
+            }
+            continue;
+        }
         // Grant identity intentionally excludes submitted epoch, as the captured
         // grant and its budget survive an obsolete rejected intent in this batch.
         let grant = (identity, intent.spend_key_ref);
@@ -255,6 +289,9 @@ pub(super) fn validate_receipts(
             receipt.delta.recipient.account.to_vec(),
             receipt.delta.recipient.after,
         );
+        if let Some(projection) = projection.as_deref_mut() {
+            projection.push(ReceiptProjection::from_receipt(&receipt));
+        }
     }
     Ok(())
 }

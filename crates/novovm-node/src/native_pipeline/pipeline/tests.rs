@@ -27,6 +27,8 @@ pub(super) fn config(database: PathBuf) -> PipelineConfig {
         },
         workers: 2,
         execution_backend: Default::default(),
+        signature_backend: Default::default(),
+        prepare_asset_signatures: false,
         max_batches: 1,
         max_retained_bytes: 128 * 1024 * 1024,
         authentication: AuthenticationBudget {
@@ -65,6 +67,7 @@ pub(super) fn inert_pipeline(
             metadata: None,
             identity: Arc::new(()),
             usage: Arc::new(Mutex::new(Usage::default())),
+            seed: Arc::new(Mutex::new(None)),
             signatures: Arc::new(SignatureWork::default()),
         },
         receiver,
@@ -482,6 +485,8 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
             library: cfg.store.library.clone(),
             workers: cfg.workers,
             execution_backend: cfg.execution_backend,
+            signature_backend: cfg.signature_backend,
+            prepare_asset_signatures: cfg.prepare_asset_signatures,
             queue_capacity: cfg.max_batches,
             authentication: cfg.authentication,
             plan: cfg.plan,
@@ -499,6 +504,8 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
     let worker_io = io.clone();
     let identity = Arc::new(());
     let worker_identity = identity.clone();
+    let seed = Arc::new(Mutex::new(None));
+    let worker_seed = seed.clone();
     let worker = thread::spawn(move || {
         driver::run(
             &worker_config,
@@ -506,6 +513,8 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
             &compute,
             receiver,
             &worker_identity,
+            &worker_seed,
+            &thread::current(),
         );
         compute.shutdown()
     });
@@ -520,6 +529,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
         metadata: Some(metadata),
         identity,
         usage: Arc::new(Mutex::new(Usage::default())),
+        seed,
         signatures: Arc::new(SignatureWork::default()),
     };
     let mut ticket = admitted(&pipeline, request(update.root()));

@@ -1,0 +1,16 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+   Compiling novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Finished `release` profile [optimized] target(s) in 4.64s
+     Running tests\uca_spend_runtime.rs (target/runtime-rebuild\release\deps\uca_spend_runtime-312e2da87bb7aea9.exe)
+
+running 2 tests
+test packaged_facade_signs_and_checks_the_single_shared_spend_contract ... ignored, requires the trusted packaged AOEM runtime; run explicitly, no silent skip
+test packaged_uca_batch_matches_scalar_mixed_rows_and_preserves_qualified_owner ... ignored, requires the trusted packaged AOEM runtime; run explicitly, no silent skip
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

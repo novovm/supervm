@@ -98,12 +98,12 @@ impl NativeUdpSession {
             frame.payload.len() <= MAX_DATAGRAM_BYTES - 96 - 16,
             "native payload too large"
         );
-        let envelope = match &mut self.channel {
-            NativeChannel::Udp(channel) => channel.seal_novorudp_frame(frame)?,
+        match &mut self.channel {
+            NativeChannel::Udp(channel) => channel.seal_novorudp_wire(frame, MAX_DATAGRAM_BYTES),
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => {
                 let envelope = channel.seal_novorudp_frame(frame)?;
-                crate::product_overlay::SecureNovoRudpEnvelopeV1 {
+                let envelope = crate::product_overlay::SecureNovoRudpEnvelopeV1 {
                     version: envelope.version,
                     session_id: envelope.session_id,
                     sender_peer_id: envelope.sender_peer_id,
@@ -111,10 +111,12 @@ impl NativeUdpSession {
                     sequence: envelope.sequence,
                     nonce: envelope.nonce,
                     ciphertext: envelope.ciphertext,
-                }
+                };
+                let _cost =
+                    super::diagnostics::io_span(super::diagnostics::IoPhase::EnvelopeEncode);
+                binary::encode(&envelope, MAX_DATAGRAM_BYTES)
             }
-        };
-        binary::encode(&envelope, MAX_DATAGRAM_BYTES)
+        }
     }
 
     pub fn open(&mut self, source: SocketAddr, wire: &[u8]) -> Result<NovoRudpTransportFrameV0> {
@@ -126,14 +128,37 @@ impl NativeUdpSession {
         source: NativeRoute,
         wire: &[u8],
     ) -> Result<NovoRudpTransportFrameV0> {
+        self.open_decoded(source, wire.len(), || {
+            binary::decode(wire, MAX_DATAGRAM_BYTES)
+        })
+    }
+
+    pub(crate) fn open_route_owned(
+        &mut self,
+        source: NativeRoute,
+        wire: Vec<u8>,
+    ) -> Result<NovoRudpTransportFrameV0> {
+        self.open_decoded(source, wire.len(), || {
+            binary::decode_owned(wire, MAX_DATAGRAM_BYTES)
+        })
+    }
+
+    fn open_decoded(
+        &mut self,
+        source: NativeRoute,
+        wire_bytes: usize,
+        decode: impl FnOnce() -> Result<crate::product_overlay::SecureNovoRudpEnvelopeV1>,
+    ) -> Result<NovoRudpTransportFrameV0> {
         if source != self.remote {
             return Err(anyhow::anyhow!("native packet source mismatch")
                 .context(NativeRejectReasonV1::SecureRoute));
         }
-        let envelope =
-            binary::decode(wire, MAX_DATAGRAM_BYTES).context(NativeRejectReasonV1::WireOrFrame)?;
+        let envelope = {
+            let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::EnvelopeDecode);
+            decode().context(NativeRejectReasonV1::WireOrFrame)?
+        };
         let frame = match &mut self.channel {
-            NativeChannel::Udp(channel) => channel.open_novorudp_frame(&envelope)?,
+            NativeChannel::Udp(channel) => channel.open_novorudp_frame_owned(envelope)?,
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => {
                 channel.open_novorudp_frame(&crate::duplex::SecureNovoRudpEnvelopeV1 {
@@ -151,6 +176,11 @@ impl NativeUdpSession {
             return Err(anyhow::anyhow!("inner frame session mismatch")
                 .context(NativeRejectReasonV1::SecureRoute));
         }
+        super::diagnostics::frame_traffic(
+            super::diagnostics::Traffic::AuthenticatedReceived,
+            &frame,
+            wire_bytes,
+        );
         Ok(frame)
     }
 
@@ -162,6 +192,7 @@ impl NativeUdpSession {
         frame: &NovoRudpTransportFrameV0,
     ) -> Result<bool> {
         self.try_send_limited(socket, frame, Instant::now(), None)
+            .map(|sent| sent.is_some())
     }
 
     pub(crate) fn try_send_limited(
@@ -170,14 +201,14 @@ impl NativeUdpSession {
         frame: &NovoRudpTransportFrameV0,
         now: Instant,
         mut budget: Option<&mut NativeWireBudget>,
-    ) -> Result<bool> {
+    ) -> Result<Option<usize>> {
         if io.deferred_writes() {
             if self.pending.is_none() {
                 let wire = self.encode(frame)?;
                 let reservation = match budget.as_deref_mut() {
                     Some(budget) => match budget.reserve_send(wire.len(), now)? {
                         Some(reservation) => Some(reservation),
-                        None => return Ok(false),
+                        None => return Ok(None),
                     },
                     None => None,
                 };
@@ -189,17 +220,22 @@ impl NativeUdpSession {
             }
             let pending = self.pending.as_ref().expect("retained write");
             if pending.frame != *frame {
-                return Ok(false);
+                return Ok(None);
             }
             let result = io.try_send(&pending.wire, self.remote);
             if matches!(&result, Err(error) if error.kind() == ErrorKind::WouldBlock) {
-                return Ok(false);
+                return Ok(None);
             }
             let pending = self.pending.take().expect("retained write");
             match result {
                 Ok(count) if count == pending.wire.len() => {
                     finish_reservation(pending.reservation, budget, count, false, now)?;
-                    return Ok(true);
+                    super::diagnostics::frame_traffic(
+                        super::diagnostics::Traffic::SealedSent,
+                        frame,
+                        count,
+                    );
+                    return Ok(Some(count));
                 }
                 Ok(count) => {
                     let known = if count < pending.wire.len() { count } else { 0 };
@@ -217,7 +253,74 @@ impl NativeUdpSession {
             }
         }
         let wire = self.encode(frame)?;
-        try_send_datagram(io, &wire, self.remote, now, budget)
+        if try_send_datagram(io, &wire, self.remote, now, budget)? {
+            super::diagnostics::frame_traffic(
+                super::diagnostics::Traffic::SealedSent,
+                frame,
+                wire.len(),
+            );
+            Ok(Some(wire.len()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// One existing unmetered UDP poll quantum, still independently sealed per
+    /// frame. Metered/deferred owners retain their original per-packet path.
+    /// No failed or unsent suffix advances an object cursor or byte counter.
+    pub(crate) fn try_send_batch(
+        &mut self,
+        io: &dyn NativeDatagramIo,
+        frames: &[NovoRudpTransportFrameV0],
+    ) -> Result<Vec<usize>> {
+        ensure!(
+            !io.deferred_writes() && self.pending.is_none(),
+            "batch on deferred carrier"
+        );
+        ensure!(
+            !frames.is_empty() && frames.len() <= io.send_batch_limit().min(64),
+            "invalid native send batch"
+        );
+        let wires = frames
+            .iter()
+            .map(|frame| self.encode(frame))
+            .collect::<Result<Vec<_>>>()?;
+        // The final fragment can be shorter; stop before it rather than combine
+        // unequal middle segments (packet_copies may repeat that short tail).
+        let count = wires
+            .iter()
+            .take_while(|wire| wire.len() == wires[0].len())
+            .count();
+        let refs = wires[..count].iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let sent = {
+            let _cost = super::diagnostics::io_span(super::diagnostics::IoPhase::SocketBatchSend);
+            io.try_send_batch(&refs, self.remote)
+        };
+        let sent = match sent {
+            Ok(sent) => sent,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                super::diagnostics::traffic(
+                    super::diagnostics::Traffic::SendWouldBlock,
+                    0,
+                    3,
+                    refs[0].len(),
+                );
+                0
+            }
+            Err(error) => return Err(error.into()),
+        };
+        ensure!(sent <= count, "native batch write count exceeds input");
+        let mut lengths = Vec::with_capacity(sent);
+        for (frame, wire) in frames.iter().zip(&wires).take(sent) {
+            super::diagnostics::traffic(super::diagnostics::Traffic::WireSent, 0, 3, wire.len());
+            super::diagnostics::frame_traffic(
+                super::diagnostics::Traffic::SealedSent,
+                frame,
+                wire.len(),
+            );
+            lengths.push(wire.len());
+        }
+        Ok(lengths)
     }
 
     /// A verified complete object can still have one repair frame in flight.
@@ -246,6 +349,7 @@ impl NativeUdpSession {
         }
         let frame = frame.clone();
         self.try_send_limited(io, &frame, now, budget)
+            .map(|sent| sent.is_some())
     }
 
     pub(crate) fn cancel_send(
@@ -277,6 +381,13 @@ impl NativeUdpSession {
         let pending = self.pending.take().expect("matched pending write");
         match io.cancel_send(&pending.wire, self.remote) {
             Ok(count) if count == 0 || count == pending.wire.len() => {
+                if count != 0 {
+                    super::diagnostics::frame_traffic(
+                        super::diagnostics::Traffic::SealedSent,
+                        &pending.frame,
+                        count,
+                    );
+                }
                 finish_reservation(pending.reservation, budget, count, false, now)
             }
             result => {
@@ -298,7 +409,10 @@ impl NativeUdpSession {
     pub fn try_receive(&mut self, socket: &UdpSocket) -> Result<Option<NovoRudpTransportFrameV0>> {
         let mut wire = [0u8; MAX_DATAGRAM_BYTES + 1];
         match socket.recv_from(&mut wire) {
-            Ok((count, source)) => Ok(Some(self.open(source, &wire[..count])?)),
+            Ok((count, source)) => {
+                super::diagnostics::traffic(super::diagnostics::Traffic::WireReceived, 0, 3, count);
+                Ok(Some(self.open(source, &wire[..count])?))
+            }
             Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(None),
             Err(error) => Err(error.into()),
         }

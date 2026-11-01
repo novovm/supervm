@@ -53,7 +53,7 @@ fn parent(count: u32) -> (Memory, NodeHash) {
     (Memory(update.nodes().clone()), update.root())
 }
 
-fn seeded_parent(count: u32) -> (Memory, PostStateSeed) {
+fn seeded_parent(count: u32) -> (Memory, StateReadSeed) {
     let (mut memory, root) = parent(count);
     let input =
         OwnedStateInput::capture(&memory, root, &declarations(count + 1), budget()).unwrap();
@@ -74,7 +74,7 @@ fn seeded_parent(count: u32) -> (Memory, PostStateSeed) {
 
 fn drive(
     capture: &mut BulkCapture,
-    seed: &PostStateSeed,
+    seed: &StateReadSeed,
     memory: &Memory,
     quantum: usize,
 ) -> Result<usize> {
@@ -99,9 +99,69 @@ fn drive(
 }
 
 #[test]
+fn captured_read_seed_moves_nodes_without_inheriting_access_and_fills_misses() -> Result<()> {
+    let (memory, root) = parent(32);
+    let read_only = [DeclaredAccess {
+        key: key(0),
+        may_put: false,
+        may_delete: false,
+    }];
+    let input = OwnedStateInput::capture(&memory, root, &read_only, budget())?;
+    let (&hash, bytes) = input.nodes.iter().next().unwrap();
+    let pointer = bytes.as_ptr();
+    let seed = input.into_read_seed(budget())?.unwrap();
+    assert_eq!(seed.root(), root);
+    assert!(
+        seed.update.is_none(),
+        "read material is not a staged update"
+    );
+    assert_eq!(seed.witness[&hash].as_ptr(), pointer);
+    let mut capture = BulkCapture::new(root, &declarations(32), budget())?;
+    assert!(
+        drive(&mut capture, &seed, &memory, 8)? > 0,
+        "missing nodes require real reads"
+    );
+    assert!(capture.seed_hits() > 0);
+    let input = capture.finish()?;
+    assert_eq!(input.read(&key(31))?, Some(vec![7]));
+    assert!(
+        input.stage(&[put(0, 9)]).is_ok(),
+        "new plan owns its own permissions"
+    );
+
+    let mut restricted = BulkCapture::new(root, &read_only, budget())?;
+    assert_eq!(drive(&mut restricted, &seed, &memory, 8)?, 0);
+    let restricted = restricted.finish()?;
+    assert!(restricted.read(&key(1)).is_err());
+    assert!(restricted.stage(&[put(0, 9)]).is_err());
+    let (other_memory, other_root) = parent(33);
+    let mut changed = BulkCapture::new(other_root, &read_only, budget())?;
+    assert!(drive(&mut changed, &seed, &other_memory, 8)? > 0);
+    assert_eq!(changed.seed_hits(), 0);
+    Ok(())
+}
+
+#[test]
+fn captured_read_seed_budget_miss_is_optional_but_tampering_is_rejected() -> Result<()> {
+    let (memory, root) = parent(4);
+    let capture = || OwnedStateInput::capture(&memory, root, &declarations(4), budget());
+    let seed = capture()?.into_read_seed(budget())?.unwrap();
+    let mut small = budget();
+    small.bytes = seed.retained_bytes() - 1;
+    assert!(capture()?.into_read_seed(small)?.is_none());
+    small = budget();
+    small.nodes = seed.node_count() - 1;
+    assert!(capture()?.into_read_seed(small)?.is_none());
+    let mut corrupt = capture()?;
+    corrupt.nodes.values_mut().next().unwrap()[0] ^= 1;
+    assert!(corrupt.into_read_seed(budget()).is_err());
+    Ok(())
+}
+
+#[test]
 fn seed_moves_both_maps_and_charges_every_hash_and_duplicate_allocation() {
     fn owned<T: Send + Sync + 'static>() {}
-    owned::<PostStateSeed>();
+    owned::<StateReadSeed>();
     let (memory, root) = parent(8);
     let mut input = OwnedStateInput::capture(&memory, root, &declarations(8), budget()).unwrap();
     let update = input.stage(&[put(0, 9)]).unwrap();
@@ -132,7 +192,10 @@ fn seed_moves_both_maps_and_charges_every_hash_and_duplicate_allocation() {
     assert_eq!(seed.node_count(), nodes);
     assert_eq!(seed.retained_bytes(), bytes);
     assert_eq!(seed.witness[&duplicate].as_ptr(), witness_pointer);
-    assert_eq!(seed.update.nodes()[&duplicate].as_ptr(), update_pointer);
+    assert_eq!(
+        seed.update.as_ref().unwrap().nodes()[&duplicate].as_ptr(),
+        update_pointer
+    );
 }
 
 #[test]

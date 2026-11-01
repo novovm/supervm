@@ -1,0 +1,15 @@
+{
+  "known_damaged_trace": {
+    "read_exit": 0,
+    "lost_events": 269327509,
+    "lost_buffers": 0,
+    "integrity": "REJECTED_EVENT_LOSS"
+  },
+  "missing_trace": {
+    "read_exit": -2147418113,
+    "lost_events": null,
+    "lost_buffers": null,
+    "integrity": "UNKNOWN"
+  },
+  "result": "PASS: real xperf damaged/missing inputs are rejected; no ETW started and no load run"
+}

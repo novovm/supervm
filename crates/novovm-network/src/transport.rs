@@ -11277,14 +11277,19 @@ impl UdpTransport {
     }
 
     fn receive_packet_v1(&self) -> std::io::Result<Option<(Vec<u8>, SocketAddr)>> {
-        observe_network_runtime_receiver_recv_loop_iteration_v1(self.chain_id);
-        observe_network_runtime_receiver_drain_first_config_v1(
-            self.chain_id,
-            self.drain_first_enabled,
-            self.drain_batch_max.try_into().unwrap_or(u64::MAX),
-            self.rcvbuf_requested_bytes,
-            self.rcvbuf_effective_bytes,
-        );
+        use crate::novorudp::diagnostics::{io_span, IoPhase};
+        let _cost = io_span(IoPhase::ReceivePacket);
+        {
+            let _cost = io_span(IoPhase::ReceiveAccounting);
+            observe_network_runtime_receiver_recv_loop_iteration_v1(self.chain_id);
+            observe_network_runtime_receiver_drain_first_config_v1(
+                self.chain_id,
+                self.drain_first_enabled,
+                self.drain_batch_max.try_into().unwrap_or(u64::MAX),
+                self.rcvbuf_requested_bytes,
+                self.rcvbuf_effective_bytes,
+            );
+        }
 
         // The original receive owner already owns this scratch buffer. Keep its
         // initialized capacity across empty polls and retain only received bytes
@@ -11302,14 +11307,27 @@ impl UdpTransport {
             while queue.len() < self.drain_queue_limit
                 && drained < self.drain_batch_max.try_into().unwrap_or(u64::MAX)
             {
-                match self.socket.recv_from(scratch.as_mut_slice()) {
+                let received = {
+                    let _cost = io_span(IoPhase::SocketReceive);
+                    self.socket.recv_from(scratch.as_mut_slice())
+                };
+                match received {
                     Ok((n, src)) => {
-                        let packet = scratch[..n].to_vec();
-                        observe_network_runtime_receiver_udp_packet_recv_v1(
-                            self.chain_id,
-                            src,
-                            packet.as_slice(),
+                        crate::novorudp::diagnostics::traffic(
+                            crate::novorudp::diagnostics::Traffic::WireReceived,
+                            0,
+                            3,
+                            n,
                         );
+                        let packet = scratch[..n].to_vec();
+                        {
+                            let _cost = io_span(IoPhase::ReceiveAccounting);
+                            observe_network_runtime_receiver_udp_packet_recv_v1(
+                                self.chain_id,
+                                src,
+                                packet.as_slice(),
+                            );
+                        }
                         queue.push_back((packet, src));
                         drained = drained.saturating_add(1);
                     }
@@ -11329,6 +11347,7 @@ impl UdpTransport {
                 }
             }
             if drained > 0 {
+                let _cost = io_span(IoPhase::ReceiveAccounting);
                 observe_network_runtime_receiver_drain_first_enqueue_v1(
                     self.chain_id,
                     drained,
@@ -11337,18 +11356,32 @@ impl UdpTransport {
             }
             let popped = queue.pop_front();
             if popped.is_some() {
+                let _cost = io_span(IoPhase::ReceiveAccounting);
                 observe_network_runtime_receiver_drain_first_dequeue_v1(self.chain_id);
             }
             popped
         } else {
-            match self.socket.recv_from(scratch.as_mut_slice()) {
+            let received = {
+                let _cost = io_span(IoPhase::SocketReceive);
+                self.socket.recv_from(scratch.as_mut_slice())
+            };
+            match received {
                 Ok((n, src)) => {
-                    let packet = scratch[..n].to_vec();
-                    observe_network_runtime_receiver_udp_packet_recv_v1(
-                        self.chain_id,
-                        src,
-                        packet.as_slice(),
+                    crate::novorudp::diagnostics::traffic(
+                        crate::novorudp::diagnostics::Traffic::WireReceived,
+                        0,
+                        3,
+                        n,
                     );
+                    let packet = scratch[..n].to_vec();
+                    {
+                        let _cost = io_span(IoPhase::ReceiveAccounting);
+                        observe_network_runtime_receiver_udp_packet_recv_v1(
+                            self.chain_id,
+                            src,
+                            packet.as_slice(),
+                        );
+                    }
                     Some((packet, src))
                 }
                 Err(e)
@@ -11774,6 +11807,43 @@ mod tests {
         let previous = std::env::var_os(key);
         std::env::remove_var(key);
         EnvVarRestoreV1 { key, previous }
+    }
+
+    #[test]
+    fn runtime_fixture_chain_cleanup_preserves_other_chain_requests() {
+        let cleared_chain = 20_271_110_u64;
+        let retained_chain = 20_271_111_u64;
+        let peer = 71;
+        let request_id = 73;
+        let height = 75;
+        for chain in [cleared_chain, retained_chain] {
+            clear_network_runtime_native_snapshots_for_chain_v1(chain);
+            mark_eth_fullnode_native_header_inflight_v1(chain, peer, request_id, height, 0, false);
+        }
+        clear_network_runtime_native_snapshots_for_chain_v1(cleared_chain);
+        clear_eth_fullnode_native_header_inflight_peer_v1(cleared_chain, peer);
+        {
+            let inflight = eth_fullnode_native_header_inflight_v1()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            assert!(!inflight.contains_key(&(cleared_chain, height, 0, false, peer)));
+            assert_eq!(
+                inflight
+                    .get(&(retained_chain, height, 0, false, peer))
+                    .expect("another chain's request must remain in flight")
+                    .request_id,
+                request_id
+            );
+        }
+        assert!(!should_dispatch_eth_fullnode_native_header_request_v1(
+            retained_chain,
+            peer,
+            height,
+            0,
+            false
+        ));
+        clear_eth_fullnode_native_header_inflight_peer_v1(retained_chain, peer);
+        clear_network_runtime_native_snapshots_for_chain_v1(retained_chain);
     }
 
     const LIVE_MAINNET_BOOTNODES: [&str; 4] = [
@@ -12918,7 +12988,7 @@ mod tests {
 
     #[test]
     fn rlpx_block_headers_ingest_rejects_unrequested_response_v1() {
-        let chain_id = 9_928_u64;
+        let chain_id = 20_271_101_u64;
         let mut session = dummy_rlpx_live_session(chain_id);
         let header = crate::EthRlpxBlockHeaderRecordV1 {
             number: 120,
@@ -13256,7 +13326,7 @@ mod tests {
 
     #[test]
     fn rlpx_small_header_batch_import_requests_current_first_body_suffix_at_highest_v1() {
-        let chain_id = 9_928_003_u64;
+        let chain_id = 20_271_102_u64;
         let peer_id = 79_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         set_network_runtime_sync_status(
@@ -13338,7 +13408,7 @@ mod tests {
 
     #[test]
     fn rlpx_product_header_batch_requests_current_body_at_known_highest_v1() {
-        let chain_id = 9_928_004_u64;
+        let chain_id = 20_271_103_u64;
         let peer_id = 80_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         set_network_runtime_sync_status(
@@ -13422,7 +13492,7 @@ mod tests {
 
     #[test]
     fn rlpx_response_ingest_rejects_unrequested_response_messages_v1() {
-        let chain_id = 9_929_u64;
+        let chain_id = 20_271_104_u64;
         let mut session = dummy_rlpx_live_session(chain_id);
         let mut report = EthFullnodeNativeRlpxPeerTickReportV1::default();
         let tx_hash = [0xa1; 32];
@@ -14819,7 +14889,7 @@ mod tests {
 
     #[test]
     fn rlpx_missing_body_recovery_rebuilds_batch_from_retained_headers() {
-        let chain_id = 9_926_107_u64;
+        let chain_id = 20_271_105_u64;
         let peer_id = 1_300_108_u64;
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
 
@@ -15611,7 +15681,7 @@ mod tests {
 
     #[test]
     fn real_rlpx_worker_recovers_missing_body_before_read_timeout_v1() {
-        let chain_id = 9_926_106_u64;
+        let chain_id = 20_271_106_u64;
         let local = NodeId(1_300_106);
         let remote = NodeId(1_300_107);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -17875,7 +17945,7 @@ mod tests {
 
     #[test]
     fn native_peer_worker_plan_is_multi_peer_but_budget_bounded() {
-        let chain_id = 9_914_u64;
+        let chain_id = 20_271_107_u64;
         let local = NodeId(1_100);
         let peers = vec![NodeId(1_101), NodeId(1_102), NodeId(1_103), NodeId(1_104)];
         let mut budget = default_eth_fullnode_budget_hooks_v1();
@@ -18042,6 +18112,7 @@ mod tests {
         let local = NodeId(1_111);
         let bad_peer = NodeId(1_112);
         let good_peer = NodeId(1_113);
+        let (observed, ready_to_close) = std::sync::mpsc::sync_channel::<()>(0);
 
         let responder_signing = k256::ecdsa::SigningKey::generate();
         let responder_nodekey: [u8; 32] = responder_signing.to_bytes().into();
@@ -18131,7 +18202,10 @@ mod tests {
                 peer_status_code,
                 crate::ETH_RLPX_BASE_PROTOCOL_OFFSET + crate::ETH_RLPX_ETH_STATUS_MSG
             );
-            thread::sleep(Duration::from_millis(300));
+            // Keep the peer alive until the test observes the bootstrap result.
+            // A fixed sleep could expire before the concurrent test runner
+            // reached its ready-state assertion and correctly record disconnect.
+            let _ = ready_to_close.recv_timeout(Duration::from_secs(5));
         });
 
         let mut budget = default_eth_fullnode_budget_hooks_v1();
@@ -18173,6 +18247,7 @@ mod tests {
         assert_eq!(report.lifecycle_summary.permanently_rejected_count, 1);
         assert!(report.lifecycle_summary.ready_count >= 1);
 
+        observed.send(()).expect("release observed bootstrap peer");
         server.join().expect("server join");
     }
 
@@ -18224,9 +18299,70 @@ mod tests {
 
     #[test]
     fn real_rlpx_parallel_bootstrap_bounds_slow_connects_v1() {
+        const CHILD_ENV: &str = "NOVOVM_TEST_RLPX_PARALLEL_BOOTSTRAP_CHILD_V1";
+        const CHILD_COMPLETE: &str = "RLPX_PARALLEL_BOOTSTRAP_CHILD_COMPLETE_V1";
+        if std::env::var_os(CHILD_ENV).as_deref() != Some(std::ffi::OsStr::new("1")) {
+            // This strict elapsed-time test owns six real peers, but the RLPx
+            // session map is process-global and other test chains hold its lock
+            // across socket reads. Isolate the ORIGINAL worker, not its clock or
+            // limits, from unrelated test fixtures. This does NOT establish
+            // production cross-chain lock independence. Never hold/mutate the
+            // parent's shared environment while the child is running.
+            let mut command = std::process::Command::new(
+                std::env::current_exe().expect("current network test executable"),
+            );
+            command
+                .args([
+                    "--exact",
+                    "transport::tests::real_rlpx_parallel_bootstrap_bounds_slow_connects_v1",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env(CHILD_ENV, "1")
+                .env("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS", "250")
+                .env("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS", "1000")
+                .env("NOVOVM_ETH_RLPX_BOOTSTRAP_JOBS_PER_TICK", "16")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            let mut child = command.spawn().expect("spawn isolated bootstrap test");
+            // Process startup/fixture cleanup watchdog, NOT the 3s worker gate.
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut timed_out = false;
+            loop {
+                if child
+                    .try_wait()
+                    .expect("poll bootstrap test child")
+                    .is_some()
+                {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    timed_out = true;
+                    let _ = child.kill();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            let output = child.wait_with_output().expect("reap bootstrap test child");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                !timed_out && output.status.success() && stderr.contains(CHILD_COMPLETE),
+                "isolated bootstrap test failed: status={} watchdog={timed_out}\n{stdout}\n{stderr}",
+                output.status
+            );
+            eprintln!("{stderr}");
+            return;
+        }
         let _guard = eth_rlpx_env_test_lock_v1()
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .expect("isolated bootstrap test environment must not be poisoned");
         let _connect_timeout = set_test_env_var_v1("NOVOVM_ETH_RLPX_CONNECT_TIMEOUT_MS", "250");
         let _tick_budget = set_test_env_var_v1("NOVOVM_ETH_RLPX_BOOTSTRAP_TICK_BUDGET_MS", "1000");
 
@@ -18259,6 +18395,59 @@ mod tests {
             listeners.push(listener);
         }
 
+        // Explicitly accept and consume the bounded auth request, then withhold
+        // the ACK until the ORIGINAL client times out. Merely leaving sockets in
+        // listen() gives no evidence that each attempt reached the auth read.
+        let mut stalled_peers = Vec::new();
+        for listener in listeners {
+            listener.set_nonblocking(true).expect("nonblocking accept");
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            let handle = thread::spawn(move || -> Result<usize, String> {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if Instant::now() >= deadline {
+                                return Err("stalled peer accept deadline".into());
+                            }
+                            match released.try_recv() {
+                                Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                    return Err("bootstrap ended before peer accepted".into());
+                                }
+                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                            }
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        Err(error) => return Err(format!("stalled peer accept: {error}")),
+                    }
+                };
+                stream
+                    .set_nonblocking(false)
+                    .map_err(|error| format!("stalled peer blocking stream: {error}"))?;
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .map_err(|error| format!("stalled peer read timeout: {error}"))?;
+                let mut prefix = [0; 2];
+                stream
+                    .read_exact(&mut prefix)
+                    .map_err(|error| format!("stalled peer auth prefix: {error}"))?;
+                let length = usize::from(u16::from_be_bytes(prefix));
+                if length == 0 || length > crate::ETH_RLPX_HANDSHAKE_MAX_BYTES {
+                    return Err(format!("stalled peer auth size: {length}"));
+                }
+                let mut auth = vec![0; length];
+                stream
+                    .read_exact(&mut auth)
+                    .map_err(|error| format!("stalled peer auth body: {error}"))?;
+                released
+                    .recv_timeout(Duration::from_secs(5))
+                    .map_err(|error| format!("stalled peer release deadline: {error}"))?;
+                Ok(length)
+            });
+            stalled_peers.push((release, handle));
+        }
+
         let mut budget = default_eth_fullnode_budget_hooks_v1();
         budget.active_native_peer_soft_limit = 6;
         budget.active_native_peer_hard_limit = 6;
@@ -18275,15 +18464,44 @@ mod tests {
         });
 
         let started = Instant::now();
-        let report = worker
-            .drive_real_network_once()
-            .expect("bootstrap tick should be budgeted");
+        let result = worker.drive_real_network_once();
+        let elapsed = started.elapsed();
+        // Release ALL accepted sockets before joining any helper, even when the
+        // worker result fails. Every helper has bounded accept/read/release work.
+        for (release, _) in &stalled_peers {
+            let _ = release.send(());
+        }
+        let mut peer_results = Vec::with_capacity(stalled_peers.len());
+        for (_, handle) in stalled_peers {
+            peer_results.push(
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("stalled peer thread panicked".into())),
+            );
+        }
+        let observed_auth = peer_results
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("all six peers must receive real bounded auth requests");
+        let report = result.expect("bootstrap tick should be budgeted");
         assert_eq!(report.scheduled_bootstrap_peers, 6);
         assert_eq!(
             report.attempted_bootstrap_peers, report.scheduled_bootstrap_peers,
             "parallel bootstrap should attempt the selected public fanout in one tick"
         );
         assert_eq!(report.skipped_bootstrap_budget_peers, 0);
+        assert_eq!(observed_auth.len(), 6);
+        assert_eq!(report.connected_peers, 0);
+        assert_eq!(report.failed_bootstrap_peers, 6);
+        assert_eq!(report.peer_failures.len(), 6);
+        assert!(
+            report.peer_failures.iter().all(|failure| {
+                failure.lifecycle_class == Some(crate::EthPeerFailureClassV1::Timeout)
+                    && failure.reason_name.as_deref() == Some("auth_timeout")
+            }),
+            "stalled peers must fail on auth timeout, not connect/parse/remote close: {:?}",
+            report.peer_failures
+        );
         assert_eq!(
             report.attempted_bootstrap_peers
                 + report.skipped_bootstrap_budget_peers
@@ -18291,10 +18509,13 @@ mod tests {
             report.scheduled_bootstrap_peers
         );
         assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "bootstrap tick should stay bounded even with stalled local peers"
+            elapsed < Duration::from_secs(3),
+            "bootstrap tick should stay bounded even with stalled local peers: {elapsed:?}"
         );
-        drop(listeners);
+        eprintln!(
+            "{CHILD_COMPLETE} elapsed={elapsed:?} received_auth={}",
+            observed_auth.len()
+        );
     }
 
     #[test]
@@ -19211,7 +19432,7 @@ mod tests {
 
     #[test]
     fn evm_protocol_observable_equivalence_network_rlpx_header_body_service_gate_v3() {
-        let chain_id = 9_925_u64;
+        let chain_id = 20_271_108_u64;
         let local = NodeId(1_290);
         let remote = NodeId(1_291);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -21416,7 +21637,7 @@ mod tests {
 
     #[test]
     fn evm_protocol_observable_equivalence_network_rlpx_bal_request_materializes_gate_v3() {
-        let chain_id = 9_925_u64;
+        let chain_id = 20_271_109_u64;
         let local = NodeId(1_282);
         let remote = NodeId(1_283);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
@@ -24493,6 +24714,7 @@ mod tests {
         let chain_id = 9_945_u64;
         let local = NodeId(1_450);
         let remote = NodeId(1_451);
+        let (observed, ready_to_close) = std::sync::mpsc::sync_channel::<()>(0);
         clear_network_runtime_native_snapshots_for_chain_v1(chain_id);
         set_network_runtime_sync_status(
             chain_id,
@@ -24604,7 +24826,9 @@ mod tests {
                 payload.as_slice(),
             )
             .expect("write block range update");
-            thread::sleep(Duration::from_millis(250));
+            // The assertion below requires a live peer, not just a retained
+            // highest-block hint. Close only after that observation completes.
+            let _ = ready_to_close.recv_timeout(Duration::from_secs(5));
         });
 
         let mut budget = default_eth_fullnode_budget_hooks_v1();
@@ -24644,6 +24868,9 @@ mod tests {
             snapshot_network_runtime_eth_peer_sessions_for_peers_v1(chain_id, &[remote])[0].clone();
         assert_eq!(snapshot.last_head_height, 512);
 
+        observed
+            .send(())
+            .expect("release observed block-range peer");
         server.join().expect("server join");
     }
 

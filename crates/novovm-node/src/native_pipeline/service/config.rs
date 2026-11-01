@@ -6,9 +6,7 @@ use crate::native_pipeline::business::nov_transfer_batch::{
 use crate::native_pipeline::business::quoted_transfer::Account;
 use crate::native_pipeline::consensus::native::ValidatorTransportBindings;
 use crate::native_pipeline::consensus::wire::{Hash, Validator, ValidatorSet};
-use crate::native_pipeline::state::tree::{
-    empty_root, stage_state_update, StagedStateUpdate, StateChange, StateNodeReader,
-};
+use crate::native_pipeline::state::tree::{InitialStateBuilder, StagedStateUpdate, StateChange};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -18,6 +16,10 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+type ValidatedGenesisAllocations = Vec<(Account, u128)>;
+
+#[cfg(test)]
+pub(crate) mod test_asset_genesis;
 #[cfg(test)]
 pub(crate) mod test_custody;
 pub mod uca_genesis;
@@ -27,10 +29,8 @@ pub const PROFILE: &str = "native-resident-udp-v1";
 pub const ORIGINAL_PROFILE: &str = "native_execution_tick";
 
 /// Bounded local JSON document, not canonical wire or an economic capacity
-/// limit. Includes 64 ML-DSA validator keys, their routes, and the existing
-/// bounded 32-account/8-grant UCA initialization plus management approvals.
-/// Pretty JSON arrays expand these binary keys; canonical manifest limits and
-/// all member/authorization bounds remain independently enforced.
+/// limit. Large initialization material uses bounded external pages instead of
+/// enlarging this deployment document or imposing a total-account ceiling.
 pub const MAX_STARTUP_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Local deployment settings do not enter the genesis commitment.
@@ -56,7 +56,7 @@ pub struct ResidentConfig {
     /// Explicitly pinned new-domain UCA initialization, not an asset ingress
     /// switch. Omission preserves the original development reference contract.
     #[serde(default)]
-    pub uca_initialization: Option<uca_genesis::UcaInitializationConfigV1>,
+    pub uca_initialization: Option<uca_genesis::UcaInitializationConfigV2>,
     /// AOEM ingress workers, not the V2 semantic callback pool size. The latter
     /// uses AOEM_SEMANTIC_GRAPH_V2_WORKERS (or available parallelism) at context
     /// creation. Co-located validators need an explicit process resource budget;
@@ -65,7 +65,22 @@ pub struct ResidentConfig {
     /// Local explicit backend; old configurations preserve the measured CPU path.
     #[serde(default)]
     pub execution_backend: crate::native_pipeline::pipeline::ExecutionBackend,
+    /// Signature execution policy, independent of business execution. Auto
+    /// keeps AOEM's qualified default; explicit GPU is required, never fallback.
+    #[serde(default)]
+    pub signature_backend: novovm_exec::pq_signature::MldsaVerificationBackendV1,
     pub batch_size: usize,
+}
+
+/// Test-driver input only; the running node reads the typed configuration,
+/// never this environment variable. Does not select an algorithm or bypass.
+#[cfg(test)]
+pub(crate) fn test_signature_backend(
+) -> Result<novovm_exec::pq_signature::MldsaVerificationBackendV1> {
+    let value =
+        std::env::var("NOVOVM_RESIDENT_TEST_SIGNATURE_BACKEND").unwrap_or_else(|_| "auto".into());
+    serde_json::from_value(serde_json::Value::String(value))
+        .context("invalid explicit resident test signature backend")
 }
 
 /// Explicit key custody, never a fallback after protected-key failure. Raw
@@ -122,7 +137,7 @@ pub struct GenesisAllocation {
 pub fn protocol_commitment() -> Hash {
     let mut hash = Sha256::new();
     hash.update(
-        b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v2/fixed-nov-1e17\0",
+        b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v2/fixed-nov-1e17/asset-accounts-nuas-v2\0",
     );
     hash.update(program_id());
     hash.update(SEMANTIC_VERSION.to_be_bytes());
@@ -158,6 +173,9 @@ impl ResidentConfig {
             &mut config.transport_key_file,
         ] {
             resolve_relative(base, target);
+        }
+        if let Some(initialization) = &mut config.uca_initialization {
+            initialization.hydrate_pages_with_genesis(base, &mut config.genesis)?;
         }
         config.normalize_native_paths();
         config.validate()?;
@@ -291,13 +309,6 @@ pub(crate) fn native_path(path: &Path) -> PathBuf {
     }
 }
 
-struct Empty;
-impl StateNodeReader for Empty {
-    fn read_node(&self, _: &Hash) -> Result<Option<Vec<u8>>> {
-        Ok(None)
-    }
-}
-
 impl GenesisConfig {
     /// Call when authoring the genesis file, then independently distribute/pin
     /// this value on every node. The claimed genesis field is excluded from its
@@ -338,6 +349,23 @@ impl GenesisConfig {
     }
 
     pub(super) fn prepare(&self) -> Result<(Arc<ValidatorSet>, StagedStateUpdate)> {
+        let (set, allocations) = self.validated_allocations()?;
+        let mut initial = InitialStateBuilder::new();
+        initial.extend(fee_record_changes(&self.policy, &FeeState::default())?)?;
+        for (account, amount) in allocations {
+            initial.extend([StateChange::Put {
+                key: balance_key(&account),
+                value: amount.to_le_bytes().to_vec(),
+            }])?;
+        }
+        Ok((set, initial.finish()?))
+    }
+
+    /// Shared pure validation for manifest commitments and actual staging.
+    /// Reviewing a manifest must not construct the entire allocation tree.
+    pub(super) fn validated_allocations(
+        &self,
+    ) -> Result<(Arc<ValidatorSet>, ValidatedGenesisAllocations)> {
         ensure!(self.protocol_commitment == protocol_commitment(), "resident protocol pin mismatch; old V3 and arbitrary protocol domains are not accepted");
         ensure!(
             self.chain_id != 0 && self.validator_epoch != 0 && self.timestamp_unix_ms > 0,
@@ -348,8 +376,8 @@ impl GenesisConfig {
             "resident profile requires 4..64 explicitly configured validators"
         );
         ensure!(
-            !self.allocations.is_empty() && self.allocations.len() <= 8192,
-            "resident genesis allocation count out of range"
+            !self.allocations.is_empty(),
+            "resident genesis allocations missing"
         );
         self.policy.validate()?;
         let set = Arc::new(ValidatorSet::new(
@@ -362,7 +390,7 @@ impl GenesisConfig {
                 .collect::<Result<Vec<_>>>()?,
         )?);
         self.transport_bindings(&set)?;
-        let mut changes = fee_record_changes(&self.policy, &FeeState::default())?;
+        let mut allocations = Vec::with_capacity(self.allocations.len());
         let mut accounts = BTreeSet::new();
         let mut supply = 0u128;
         for allocation in &self.allocations {
@@ -383,14 +411,10 @@ impl GenesisConfig {
             supply = supply
                 .checked_add(amount)
                 .context("genesis allocation supply overflow")?;
-            changes.push(StateChange::Put {
-                key: balance_key(&account),
-                value: amount.to_le_bytes().to_vec(),
-            });
+            allocations.push((account, amount));
         }
         crate::native_pipeline::business::fixed_supply::validate_genesis_supply([supply])?;
-        let state = stage_state_update(&Empty, empty_root(), &changes)?;
-        Ok((set, state))
+        Ok((set, allocations))
     }
 }
 
@@ -667,6 +691,41 @@ mod tests {
     }
 
     #[test]
+    fn signature_backend_is_independent_explicit_and_defaults_to_auto() {
+        use novovm_exec::pq_signature::MldsaVerificationBackendV1 as Backend;
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Selection {
+            #[serde(default)]
+            signature_backend: Backend,
+        }
+        let default: Selection = serde_json::from_str("{}").unwrap();
+        assert_eq!(default.signature_backend, Backend::Auto);
+        for (name, expected) in [
+            ("auto", Backend::Auto),
+            ("cpu", Backend::Cpu),
+            ("gpu_required", Backend::GpuRequired),
+        ] {
+            let actual: Selection =
+                serde_json::from_value(serde_json::json!({"signature_backend": name})).unwrap();
+            assert_eq!(actual.signature_backend, expected);
+        }
+        for value in [
+            "gpu",
+            "ed25519",
+            "cpu_callbacks",
+            "fallback",
+            "GPU_REQUIRED",
+        ] {
+            assert!(serde_json::from_value::<Selection>(
+                serde_json::json!({"signature_backend": value}),
+            )
+            .is_err());
+        }
+        assert!(serde_json::from_str::<Selection>(r#"{"signatures_backend":"cpu"}"#).is_err());
+    }
+
+    #[test]
     #[ignore = "requires explicit trusted NOVOVM_AOEM_TEST_LIBRARY; opens a real fresh AOEM database"]
     fn real_resident_startup_reopen_preserves_genesis_and_refuses_recreate() -> Result<()> {
         use super::super::{ResidentNode, StartMode};
@@ -747,6 +806,7 @@ mod tests {
             uca_initialization: None,
             workers: 2,
             execution_backend: Default::default(),
+            signature_backend: Default::default(),
             batch_size: 2,
         };
         let first = ResidentNode::start(config.clone(), StartMode::CreateNew)?;

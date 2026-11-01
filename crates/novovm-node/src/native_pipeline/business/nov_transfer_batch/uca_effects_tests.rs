@@ -2,18 +2,21 @@
 //! durable publication, mobile custody, or mainchain performance qualification.
 use super::*;
 use crate::native_pipeline::business::uca_spend_state::{
-    account_record_changes, grant_record_changes, UcaSpendAccountStateV1, UcaSpendStateAccessV1,
+    account_record_changes, grant_record_changes, AssetAccountAuthorityV2, AssetSpendStateAccessV2,
 };
 use crate::native_pipeline::state::frontier::OwnedStateInput;
 use crate::native_pipeline::state::tree::{empty_root, stage_state_update};
-use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedSpendGrantV1};
-use novovm_adapter_api::unified_account::{
-    BindingState, PersonaBinding, PersonaType, UcaAccount, UcaStatus,
-};
+use novovm_adapter_api::uca_spend_policy::{SpendPolicyError, SuppliedAssetSpendGrantV2};
 use novovm_exec::resident::ComputeSession;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
-use novovm_protocol::uca_spend::{spend_key_ref_v1, UcaSpendIntentV1};
+use novovm_protocol::uca_spend::{spend_key_ref_v1, AssetSpendAuthorityV3, AssetSpendIntentV3};
 use std::time::Duration;
+
+#[path = "uca_creation_tests.rs"]
+mod creation_tests;
+
+#[path = "uca_controller_tests.rs"]
+mod controller_tests;
 
 #[derive(Default)]
 struct Memory(BTreeMap<NodeHash, Vec<u8>>);
@@ -31,32 +34,19 @@ fn capture_budget() -> CaptureBudget {
     }
 }
 
-fn account(id: &str, address: Vec<u8>) -> UcaSpendAccountStateV1 {
-    UcaSpendAccountStateV1 {
-        account: UcaAccount {
-            uca_id: id.into(),
-            primary_key_ref: vec![8; 32],
-            primary_key_binding: None,
-            status: UcaStatus::Active,
-            created_at: 1,
-            updated_at: 2,
-        },
-        binding: PersonaBinding {
-            uca_id: id.into(),
-            persona_type: PersonaType::Web30,
-            chain_id: 7,
-            external_address: address,
-            binding_state: BindingState::Bound,
-            bound_at: 1,
-            revoked_at: None,
-            cooldown_until: None,
-        },
+fn account(_id: &str, address: Vec<u8>) -> AssetAccountAuthorityV2 {
+    AssetAccountAuthorityV2 {
+        account: address,
+        asset: 1,
+        active: true,
         current_spend_epoch: 3,
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
     }
 }
 
 fn fixture(
-    i: &UcaSpendIntentV1,
+    i: &AssetSpendIntentV3,
     budget: u128,
     policy: &DirectNovFeePolicy,
     case: &str,
@@ -95,9 +85,10 @@ fn fixture(
     Ok((Memory(staged.nodes().clone()), staged.root()))
 }
 
-fn grant(i: &UcaSpendIntentV1, budget: u128, case: &str) -> SuppliedSpendGrantV1 {
-    SuppliedSpendGrantV1 {
-        account_id: i.account_id.clone(),
+fn grant(i: &AssetSpendIntentV3, budget: u128, case: &str) -> SuppliedAssetSpendGrantV2 {
+    SuppliedAssetSpendGrantV2 {
+        account: i.payer.clone(),
+        asset: i.asset,
         key_ref: i.spend_key_ref,
         authorization_epoch: 3,
         permits_nov_transfer: true,
@@ -130,6 +121,46 @@ fn context(root: NodeHash, policy: &DirectNovFeePolicy) -> Result<BatchContext> 
 }
 
 #[test]
+fn asset_authority_metadata_is_bounded_before_prefix_allocation() -> Result<()> {
+    use novovm_protocol::uca_spend::AssetAuthorityUpdateV2;
+    let mut intent = AssetSpendIntentV3 {
+        authority: AssetSpendAuthorityV3::DelegatedGrant,
+        chain_id: 7,
+        genesis: [2; 32],
+        payer: vec![11; 20],
+        recipient: vec![12; 32],
+        asset: 1,
+        authorization_epoch: 3,
+        spend_key_ref: [4; 32],
+        amount: 30,
+        max_fee: 50,
+        nonce: 0,
+        not_before_height: 10,
+        expires_at_height: 20,
+        authority_update: None,
+        recipient_creation: None,
+    };
+    super::uca_effects::validate_authority_metadata(71, |_| &intent, 384 * 1024)?;
+    assert!(super::uca_effects::validate_authority_metadata(1, |_| &intent, 1).is_err());
+    intent.amount = 0;
+    intent.authority = AssetSpendAuthorityV3::Controller;
+    intent.recipient = intent.payer.clone();
+    intent.authority_update = Some(AssetAuthorityUpdateV2 {
+        use_recovery: false,
+        next_epoch: 4,
+        active: true,
+        management_key_ref: [8; 32],
+        recovery_key_ref: Some([9; 32]),
+        grants: vec![],
+    });
+    assert!(
+        super::uca_effects::validate_authority_metadata(1024, |_| &intent, 384 * 1024).is_err(),
+        "bounded row count alone is not a bound on quadratic prefix material"
+    );
+    Ok(())
+}
+
+#[test]
 #[ignore = "explicit packaged AOEM ML-DSA-65 and Vulkan; seeded UCA candidate, not active native spending"]
 fn actual_mldsa_capture_uca_cpu_integer_atomic_effect_equivalence() -> Result<()> {
     run_actual_mldsa_effects(true)
@@ -141,7 +172,7 @@ fn actual_mldsa_capture_uca_cpu_atomic_effects() -> Result<()> {
     run_actual_mldsa_effects(false)
 }
 
-fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
+fn actual_mldsa_facade() -> Result<(std::path::PathBuf, AoemExecFacade)> {
     let (platform, name) = if cfg!(target_os = "windows") {
         ("windows", "aoem_ffi.dll")
     } else if cfg!(target_os = "macos") {
@@ -149,35 +180,51 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
     } else {
         ("linux", "libaoem_ffi.so")
     };
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../aoem")
-        .join(platform)
-        .join("core/bin")
-        .join(name);
+    // Preserve packaged-library coverage by default. Isolated candidate gates
+    // can name one explicit library, but fixture key generation and execution
+    // must still load that SAME owner through normal manifest/capability checks.
+    let path = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../aoem")
+                .join(platform)
+                .join("core/bin")
+                .join(name)
+        });
     ensure!(
         aoem_bindings::default_host_dll_path().canonicalize()? == path.canonicalize()?,
-        "fixture generator and execution must use the same packaged AOEM"
+        "fixture generator and execution must use the same qualified AOEM"
     );
     let facade = AoemExecFacade::open(&path, AoemExecOpenOptions::default())?;
-    let signer = facade.uca_spend_signer_v1()?;
-    let verifier = facade.uca_spend_verifier_v1()?;
+    Ok((path, facade))
+}
+
+fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
+    let (path, facade) = actual_mldsa_facade()?;
+    let signer = facade.asset_spend_signer_v3()?;
+    let verifier = facade.asset_spend_verifier_v3()?;
     let (public, mut secret) = aoem_bindings::mldsa_keygen_v1_auto(65)?
         .context("packaged ML-DSA-65 key generation unavailable")?;
     let (other_public, mut other_secret) = aoem_bindings::mldsa_keygen_v1_auto(65)?
         .context("second packaged ML-DSA-65 fixture key unavailable")?;
     let result = (|| -> Result<()> {
-        let base = UcaSpendIntentV1 {
+        let base = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::DelegatedGrant,
             chain_id: 7,
             genesis: [2; 32],
-            account_id: "uca:alice".into(),
+            payer: vec![11; 20],
             authorization_epoch: 3,
             spend_key_ref: spend_key_ref_v1(&public)?,
-            recipient_uca: "uca:bob".into(),
+            recipient: vec![12; 32],
+            asset: 1,
             amount: 30,
             max_fee: 50,
             nonce: 0,
             not_before_height: 10,
             expires_at_height: 20,
+            authority_update: None,
+            recipient_creation: None,
         };
         let policy = super::body_tests::policy();
         let mut cpu_session = ComputeSession::open(&path, 4)?;
@@ -190,6 +237,8 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
             "budget-prefix",
             "sufficient-budget",
             "stale-epoch",
+            "rejected-limit-prefix",
+            "nonce-gap-prefix",
             "zero-max-fee",
             "revoked",
             "expired",
@@ -209,6 +258,14 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                 intents[0].authorization_epoch = 2;
                 intents[1].nonce = 0; // Rejected authorization cannot consume it.
             }
+            if case == "rejected-limit-prefix" {
+                intents[0].amount = 60; // 60 + max fee 50 exceeds the grant's 100 cap.
+                intents[1].nonce = 0;
+            }
+            if case == "nonce-gap-prefix" {
+                intents[0].nonce = 2;
+                intents[1].nonce = 0;
+            }
             if case == "zero-max-fee" {
                 intents.truncate(1);
                 intents[0].max_fee = 0;
@@ -219,7 +276,7 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
             }
             if case == "self-transfer-gross" {
                 for i in &mut intents {
-                    i.recipient_uca = i.account_id.clone();
+                    i.recipient = i.payer.clone();
                 }
             }
             if case == "two-grants-shared-nonce" {
@@ -267,7 +324,6 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                     .collect::<Result<Vec<_>>>()?;
                 NovTransferInput::capture_uca(
                     checked,
-                    vec![([11; 20].into(), recipient.clone()); intents.len()],
                     context(root, &policy)?,
                     policy.clone(),
                     &memory,
@@ -281,6 +337,11 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                 )
             };
             let cpu = capture()?.execute(&mut cpu_session, Duration::from_secs(30))?;
+            assert_eq!(
+                cpu.observation().recomputed_transactions,
+                usize::from(matches!(case, "stale-epoch" | "rejected-limit-prefix")),
+                "{case}: reuse useful component outcomes; repair only a changed prefix"
+            );
             if let Some(integer) = &mut integer {
                 let gpu = capture()?.execute_integer_plan(integer)?;
                 assert_eq!(
@@ -343,6 +404,23 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                     assert_eq!(accepted.len(), 1);
                     assert!(receipts[1].failure.is_none());
                     assert_eq!(receipts[1].delta.nonce_after, 1);
+                }
+                "rejected-limit-prefix" | "nonce-gap-prefix" => {
+                    assert_eq!(
+                        outputs[0].failure,
+                        Some(if case == "rejected-limit-prefix" {
+                            SpendPolicyError::LimitExceeded
+                        } else {
+                            SpendPolicyError::NonceMismatch
+                        })
+                    );
+                    assert_eq!(receipts[0].delta.nonce_after, 0);
+                    assert_eq!(receipts[0].delta.fee_funding_delta, 0);
+                    assert!(receipts[0].journal.is_none());
+                    assert!(receipts[1].failure.is_none());
+                    assert_eq!(receipts[1].delta.nonce_before, 0);
+                    assert_eq!(receipts[1].delta.nonce_after, 1);
+                    assert_eq!(accepted.len(), 1);
                 }
                 "zero-max-fee" => {
                     assert!(accepted.is_empty(), "zero max fee is not unlimited");
@@ -458,14 +536,17 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
             after.0.extend(cpu.effects().update().nodes().clone());
             let mut read_intent = base.clone();
             if case == "self-transfer-gross" {
-                read_intent.recipient_uca = read_intent.account_id.clone();
+                read_intent.recipient = read_intent.payer.clone();
             }
-            let access = UcaSpendStateAccessV1::new(read_intent, [11; 20].into(), recipient)?;
+            let access = AssetSpendStateAccessV2::new(read_intent, [11; 20].into(), recipient)?;
             let root = cpu.effects().update().root();
             let captured =
                 OwnedStateInput::capture(&after, root, access.declarations(), capture_budget())?;
             let state = access.read(&captured, root)?;
-            assert_eq!(state.grant().remaining_debit_budget, expected_budget);
+            assert_eq!(
+                state.grant().unwrap().remaining_debit_budget,
+                expected_budget
+            );
             let payer_before = 1000;
             let expected_balances = if case == "self-transfer-gross" {
                 // Budget consumes gross transfer + fee, despite net money only paying the fee.
@@ -489,7 +570,7 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                 receipts.last().unwrap().delta.nonce_after
             );
             if case == "two-grants-shared-nonce" {
-                let second_access = UcaSpendStateAccessV1::new(
+                let second_access = AssetSpendStateAccessV2::new(
                     intents[1].clone(),
                     [11; 20].into(),
                     [12; 32].into(),
@@ -501,9 +582,12 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                     capture_budget(),
                 )?;
                 let second_state = second_access.read(&second_capture, root)?;
-                assert_eq!(second_state.grant().key_ref, intents[1].spend_key_ref);
                 assert_eq!(
-                    second_state.grant().remaining_debit_budget,
+                    second_state.grant().unwrap().key_ref,
+                    intents[1].spend_key_ref
+                );
+                assert_eq!(
+                    second_state.grant().unwrap().remaining_debit_budget,
                     200 - 30 - receipts[1].delta.fee_funding_delta
                 );
                 assert_eq!(second_state.next_nonce(), 2);
@@ -511,9 +595,537 @@ fn run_actual_mldsa_effects(compare_integer: bool) -> Result<()> {
                 assert_eq!(second_state.balances(), state.balances());
             }
         }
+        run_asset_management_cases(&path, &facade, compare_integer)?;
+        run_asset_component_cases(&path, &facade, compare_integer)?;
+        creation_tests::run_asset_creation_cases(&path, &facade, compare_integer)?;
         Ok(())
     })();
     secret.fill(0); // Ephemeral test key, including ordinary error returns.
     other_secret.fill(0);
+    result
+}
+
+fn run_asset_component_cases(
+    path: &std::path::Path,
+    facade: &AoemExecFacade,
+    compare_integer: bool,
+) -> Result<()> {
+    use crate::native_pipeline::business::direct_nov_fee::{FeeAccounting, FeeFailureCode};
+    let signer = facade.asset_spend_signer_v3()?;
+    let verifier = facade.asset_spend_verifier_v3()?;
+    let mut keys = (0..2)
+        .map(|_| aoem_bindings::mldsa_keygen_v1_auto(65)?.context("component fixture key missing"))
+        .collect::<Result<Vec<_>>>()?;
+    let result = (|| -> Result<()> {
+        let policy = super::body_tests::policy();
+        let mut session = ComputeSession::open(path, 4)?;
+        let mut integer = if compare_integer {
+            Some(ResidentTransferResources::new(path, 4, 2)?)
+        } else {
+            None
+        };
+        for case in [
+            "independent-credit",
+            "incoming-respend",
+            "rejected-incoming",
+        ] {
+            let dependent = case != "independent-credit";
+            let intents = [0usize, 1]
+                .into_iter()
+                .map(|index| {
+                    Ok(AssetSpendIntentV3 {
+                        authority: AssetSpendAuthorityV3::DelegatedGrant,
+                        chain_id: 7,
+                        genesis: [2; 32],
+                        payer: vec![11 + index as u8; 20],
+                        recipient: vec![if dependent && index == 0 { 12 } else { 13 }; 20],
+                        asset: 1,
+                        authorization_epoch: 3,
+                        spend_key_ref: spend_key_ref_v1(&keys[index].0)?,
+                        amount: if index == 0 { 50 } else { 1 },
+                        max_fee: 50,
+                        nonce: 0,
+                        not_before_height: 10,
+                        expires_at_height: 20,
+                        authority_update: None,
+                        recipient_creation: None,
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let mut fees = FeeState::default();
+            if case == "rejected-incoming" {
+                fees.accounting = FeeAccounting {
+                    treasury_reserve_nov: Some(u128::MAX),
+                    ..FeeAccounting::default()
+                };
+            }
+            let mut changes = fee_record_changes(&policy, &fees)?;
+            for (address, balance) in [
+                (11, 1000u128),
+                (12, if dependent { 0 } else { 1000 }),
+                (13, 7),
+            ] {
+                changes.extend(account_record_changes(
+                    7,
+                    &[2; 32],
+                    &account("component-fixture", vec![address; 20]),
+                )?);
+                changes.push(StateChange::Put {
+                    key: balance_key(&Account::from([address; 20])),
+                    value: balance.to_le_bytes().to_vec(),
+                });
+            }
+            for intent in &intents {
+                changes.extend(grant_record_changes(intent, &grant(intent, 1000, case))?);
+                changes.push(StateChange::Put {
+                    key: nonce_key(&intent.nonce_identity()?),
+                    value: 0u64.to_le_bytes().to_vec(),
+                });
+            }
+            let staged = stage_state_update(&Memory::default(), empty_root(), &changes)?;
+            let root = staged.root();
+            let memory = Memory(staged.nodes().clone());
+            let signed = intents
+                .iter()
+                .enumerate()
+                .map(|(index, intent)| signer.sign(intent.clone(), &keys[index].0, &keys[index].1))
+                .collect::<Result<Vec<_>>>()?;
+            let capture = || -> Result<NovTransferInput> {
+                NovTransferInput::capture_uca(
+                    signed
+                        .iter()
+                        .cloned()
+                        .map(|tx| verifier.verify(tx))
+                        .collect::<Result<Vec<_>>>()?,
+                    context(root, &policy)?,
+                    policy.clone(),
+                    &memory,
+                    PlanBudget {
+                        transactions: 2,
+                        transaction_bytes: 8192,
+                        body_bytes: 16384,
+                        access_keys: 4096,
+                    },
+                    capture_budget(),
+                )
+            };
+            let cpu = capture()?.execute(&mut session, Duration::from_secs(30))?;
+            assert_eq!(cpu.observation().components, if dependent { 1 } else { 2 });
+            assert_eq!(cpu.observation().credit_only_accounts, 1);
+            assert_eq!(
+                cpu.observation().recomputed_transactions,
+                usize::from(case == "rejected-incoming"),
+                "{case}: global fee failure invalidates only the dependent prediction"
+            );
+            let receipts = cpu.receipts();
+            assert!(receipts.iter().all(|r| r.delta.nonce_after == 1));
+            if case == "rejected-incoming" {
+                assert_eq!(
+                    receipts[0].fee_failure.as_ref().unwrap().code,
+                    FeeFailureCode::AmountOverflow
+                );
+                assert_eq!(
+                    receipts[1].fee_failure.as_ref().unwrap().code,
+                    FeeFailureCode::InsufficientUserBalance
+                );
+                assert!(receipts.iter().all(|r| r.delta.fee_funding_delta == 0));
+                assert!(cpu
+                    .spend_outputs()
+                    .unwrap()
+                    .iter()
+                    .all(|o| o.remaining == 1000));
+            } else {
+                assert!(receipts.iter().all(|r| r.failure.is_none()));
+                if dependent {
+                    assert_eq!(receipts[1].delta.payer.before, 50);
+                } else {
+                    assert_eq!(receipts[1].delta.recipient.before, 57);
+                }
+            }
+            if let Some(integer) = &mut integer {
+                let gpu = capture()?.execute_integer_plan(integer)?;
+                assert_eq!(cpu.receipts(), gpu.receipts(), "{case}: money/fees/nonce");
+                assert_eq!(cpu.spend_outputs(), gpu.spend_outputs(), "{case}: budgets");
+                assert_eq!(cpu.fees(), gpu.fees(), "{case}: complete fee state");
+                assert_eq!(cpu.effects().update().root(), gpu.effects().update().root());
+                assert_eq!(
+                    cpu.effects().update().nodes(),
+                    gpu.effects().update().nodes()
+                );
+                assert_eq!(
+                    cpu.receipt_batch_commitment(),
+                    gpu.receipt_batch_commitment()
+                );
+                assert_eq!(cpu.statement_commitment(), gpu.statement_commitment());
+            }
+        }
+        Ok(())
+    })();
+    for (_, secret) in &mut keys {
+        secret.fill(0);
+    }
+    result
+}
+
+fn run_asset_management_cases(
+    path: &std::path::Path,
+    facade: &AoemExecFacade,
+    compare_integer: bool,
+) -> Result<()> {
+    use novovm_protocol::uca_spend::{AssetAuthorityUpdateV2, AssetGrantConfigV2};
+    let signer = facade.asset_spend_signer_v3()?;
+    let verifier = facade.asset_spend_verifier_v3()?;
+    let mut keys = (0..4)
+        .map(|_| {
+            aoem_bindings::mldsa_keygen_v1_auto(65)?
+                .context("asset lifecycle fixture key unavailable")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let result = (|| -> Result<()> {
+        let refs = keys
+            .iter()
+            .map(|(pk, _)| spend_key_ref_v1(pk))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let base = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::DelegatedGrant,
+            chain_id: 7,
+            genesis: [2; 32],
+            payer: vec![11; 20],
+            recipient: vec![12; 32],
+            asset: 1,
+            authorization_epoch: 3,
+            spend_key_ref: refs[0],
+            amount: 30,
+            max_fee: 50,
+            nonce: 0,
+            not_before_height: 10,
+            expires_at_height: 20,
+            authority_update: None,
+            recipient_creation: None,
+        };
+        let policy = super::body_tests::policy();
+        let mut session = ComputeSession::open(path, 4)?;
+        let mut integer = if compare_integer {
+            Some(ResidentTransferResources::new(path, 4, 8)?)
+        } else {
+            None
+        };
+        for case in [
+            "rotate",
+            "freeze",
+            "recovery",
+            "wrong-manager",
+            "fee-failure",
+            "missing-recovery",
+            "manager-rotation",
+            "same-key-reset",
+            "same-key-reset-failure",
+            "failed-create-then-omit",
+        ] {
+            let (mut memory, mut root) = fixture(&base, 1000, &policy, case)?;
+            let mut authority = account("uca:alice", base.payer.clone());
+            authority.management_key_ref = refs[2];
+            authority.recovery_key_ref = if case == "missing-recovery" {
+                None
+            } else {
+                Some(refs[3])
+            };
+            authority.active = case != "recovery";
+            let update = stage_state_update(
+                &memory,
+                root,
+                &account_record_changes(7, &base.genesis, &authority)?,
+            )?;
+            root = update.root();
+            memory.0.extend(update.nodes().clone());
+            let mut management = base.clone();
+            management.authority = AssetSpendAuthorityV3::Controller;
+            management.recipient = management.payer.clone();
+            management.amount = 0;
+            management.spend_key_ref =
+                if matches!(case, "wrong-manager" | "failed-create-then-omit") {
+                    refs[0]
+                } else if matches!(case, "recovery" | "missing-recovery") {
+                    refs[3]
+                } else {
+                    refs[2]
+                };
+            if matches!(case, "fee-failure" | "same-key-reset-failure") {
+                management.max_fee = 0;
+            }
+            management.authority_update = Some(AssetAuthorityUpdateV2 {
+                use_recovery: matches!(case, "recovery" | "missing-recovery"),
+                next_epoch: 4,
+                active: case != "freeze",
+                management_key_ref: if case == "manager-rotation" {
+                    refs[0]
+                } else {
+                    refs[2]
+                },
+                recovery_key_ref: Some(refs[3]),
+                grants: if case == "freeze" {
+                    vec![]
+                } else {
+                    vec![AssetGrantConfigV2 {
+                        key_ref: if case.starts_with("same-key-reset") {
+                            refs[0]
+                        } else {
+                            refs[1]
+                        },
+                        permits_nov_transfer: true,
+                        not_before_height: 1,
+                        expires_at_height: 30,
+                        max_debit_per_intent: 100,
+                        remaining_debit_budget: 200,
+                    }]
+                },
+            });
+            let successful_update = !matches!(
+                case,
+                "wrong-manager"
+                    | "fee-failure"
+                    | "missing-recovery"
+                    | "same-key-reset-failure"
+                    | "failed-create-then-omit"
+            );
+            let mut old_spend = base.clone();
+            old_spend.nonce = if matches!(case, "wrong-manager" | "missing-recovery") {
+                0
+            } else {
+                1
+            };
+            let mut new_spend = base.clone();
+            new_spend.spend_key_ref = if case.starts_with("same-key-reset") {
+                refs[0]
+            } else {
+                refs[1]
+            };
+            new_spend.authorization_epoch = 4;
+            new_spend.nonce = if successful_update {
+                1
+            } else {
+                old_spend.nonce + 1
+            };
+            let mut intents = vec![management, old_spend, new_spend];
+            if case == "failed-create-then-omit" {
+                let mut omit = intents[0].clone();
+                omit.spend_key_ref = refs[2];
+                omit.authority_update.as_mut().unwrap().grants.clear();
+                intents[1] = omit;
+                intents[2].nonce = 1;
+            }
+            if case == "manager-rotation" {
+                let mut obsolete_manager = intents[0].clone();
+                obsolete_manager.authorization_epoch = 4;
+                obsolete_manager.nonce = 2;
+                obsolete_manager
+                    .authority_update
+                    .as_mut()
+                    .unwrap()
+                    .next_epoch = 5;
+                intents.push(obsolete_manager.clone());
+                obsolete_manager.spend_key_ref = refs[0];
+                intents.push(obsolete_manager);
+            }
+            let signed = intents
+                .iter()
+                .map(|intent| {
+                    let key = refs
+                        .iter()
+                        .position(|key| *key == intent.spend_key_ref)
+                        .context("fixture signer missing")?;
+                    signer.sign(intent.clone(), &keys[key].0, &keys[key].1)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let capture = || -> Result<NovTransferInput> {
+                NovTransferInput::capture_uca(
+                    signed
+                        .iter()
+                        .cloned()
+                        .map(|tx| verifier.verify(tx))
+                        .collect::<Result<Vec<_>>>()?,
+                    context(root, &policy)?,
+                    policy.clone(),
+                    &memory,
+                    PlanBudget {
+                        transactions: 8,
+                        transaction_bytes: 8192,
+                        body_bytes: 65536,
+                        access_keys: 4096,
+                    },
+                    capture_budget(),
+                )
+            };
+            let cpu = capture()?.execute(&mut session, Duration::from_secs(30))?;
+            if let Some(integer) = &mut integer {
+                let gpu = capture()?.execute_integer_plan(integer)?;
+                assert_eq!(
+                    cpu.receipts(),
+                    gpu.receipts(),
+                    "{case}: all ordered money/fee/nonce effects"
+                );
+                assert_eq!(
+                    cpu.spend_outputs(),
+                    gpu.spend_outputs(),
+                    "{case}: authority effects"
+                );
+                assert_eq!(cpu.fees(), gpu.fees(), "{case}: fee state");
+                assert_eq!(
+                    cpu.effects().update().root(),
+                    gpu.effects().update().root(),
+                    "{case}: atomic authority+money root"
+                );
+                assert_eq!(
+                    cpu.effects().update().nodes(),
+                    gpu.effects().update().nodes(),
+                    "{case}: atomic write set"
+                );
+                assert_eq!(
+                    cpu.receipt_batch_commitment(),
+                    gpu.receipt_batch_commitment()
+                );
+                assert_eq!(gpu.observation().gpu_waves, 1);
+                assert_eq!(gpu.observation().recomputed_transactions, 0);
+            }
+            let receipts = cpu.receipts();
+            let outputs = cpu.spend_outputs().unwrap();
+            assert_eq!(
+                outputs[0].remaining, 0,
+                "management never consumes ordinary spend budget"
+            );
+            if case == "failed-create-then-omit" {
+                assert_eq!(outputs[0].failure, Some(SpendPolicyError::WrongKey));
+                assert!(receipts[1].failure.is_none());
+                assert_eq!(
+                    outputs[2].failure,
+                    Some(SpendPolicyError::StateUnavailable),
+                    "a failed create must not turn an absent key into a stale existing grant"
+                );
+                assert_eq!(receipts[2].delta.nonce_after, 1);
+                let mut after = Memory(memory.0.clone());
+                after.0.extend(cpu.effects().update().nodes().clone());
+                let root = cpu.effects().update().root();
+                let read = AssetSpendStateAccessV2::new(
+                    intents[2].clone(),
+                    [11; 20].into(),
+                    [12; 32].into(),
+                )?;
+                let captured =
+                    OwnedStateInput::capture(&after, root, read.declarations(), capture_budget())?;
+                let state = read.read(&captured, root)?;
+                assert!(state.grant().is_none());
+                assert_eq!(state.static_failure(10), outputs[2].failure);
+                continue;
+            }
+            if successful_update {
+                assert!(receipts[0].failure.is_none(), "{case}");
+                assert!(
+                    receipts[1].failure.is_some(),
+                    "old key cannot inherit replacement authority"
+                );
+                assert_eq!(receipts[1].delta.fee_funding_delta, 0);
+                assert_eq!(receipts[1].delta.nonce_after, 1);
+                if case == "freeze" {
+                    assert!(receipts[2].failure.is_some());
+                    assert_eq!(receipts[2].delta.nonce_after, 1);
+                } else {
+                    assert!(
+                        receipts[2].failure.is_none(),
+                        "{case}: newly authorized key after exact prefix"
+                    );
+                    assert_eq!(receipts[2].delta.nonce_after, 2);
+                }
+            } else {
+                assert!(receipts[0].failure.is_some());
+                assert!(
+                    receipts[1].failure.is_none(),
+                    "failed update cannot revoke old authority"
+                );
+                assert!(
+                    receipts[2].failure.is_some(),
+                    "failed update cannot grant new authority"
+                );
+                if !matches!(case, "fee-failure" | "same-key-reset-failure") {
+                    assert_eq!(outputs[0].failure, Some(SpendPolicyError::WrongKey));
+                    assert_eq!(receipts[0].delta.fee_funding_delta, 0);
+                    assert_eq!(receipts[0].delta.nonce_after, 0);
+                }
+            }
+            if case == "manager-rotation" {
+                assert_eq!(outputs[3].failure, Some(SpendPolicyError::WrongKey));
+                assert_eq!(receipts[3].delta.nonce_after, 2);
+                assert!(receipts[4].failure.is_none());
+                assert_eq!(receipts[4].delta.nonce_after, 3);
+            }
+            let mut after = Memory(memory.0.clone());
+            after.0.extend(cpu.effects().update().nodes().clone());
+            let read =
+                AssetSpendStateAccessV2::new(base.clone(), [11; 20].into(), [12; 32].into())?;
+            let root = cpu.effects().update().root();
+            let captured =
+                OwnedStateInput::capture(&after, root, read.declarations(), capture_budget())?;
+            let state = read.read(&captured, root)?;
+            assert_eq!(
+                state.payer().current_spend_epoch,
+                if case == "manager-rotation" {
+                    5
+                } else if successful_update {
+                    4
+                } else {
+                    3
+                }
+            );
+            assert_eq!(state.payer().active, case != "freeze");
+            assert_eq!(
+                state.next_nonce(),
+                receipts.last().unwrap().delta.nonce_after
+            );
+            let fees: u128 = receipts.iter().map(|r| r.delta.fee_funding_delta).sum();
+            let paid: u128 = intents
+                .iter()
+                .zip(receipts)
+                .filter(|(_, r)| r.failure.is_none())
+                .map(|(i, _)| i.amount)
+                .sum();
+            assert_eq!(state.balances(), (1000 - fees - paid, 7 + paid));
+            let ordinary_debit = if successful_update {
+                0
+            } else {
+                receipts[1].delta.fee_funding_delta + base.amount
+            };
+            let expected_budget = if case == "same-key-reset" {
+                200 - base.amount - receipts[2].delta.fee_funding_delta
+            } else {
+                1000 - ordinary_debit
+            };
+            assert_eq!(
+                state.grant().unwrap().remaining_debit_budget,
+                expected_budget,
+                "management resets only on success; management fees never consume spend budget"
+            );
+            if case == "same-key-reset" {
+                assert_eq!(outputs[2].remaining, expected_budget);
+                assert!(expected_budget < 200);
+            } else if case == "same-key-reset-failure" {
+                assert_eq!(outputs[1].remaining, expected_budget);
+                assert_eq!(outputs[2].remaining, expected_budget);
+                assert!(
+                    expected_budget > 200,
+                    "failed reset preserves previous budget"
+                );
+            }
+            if successful_update {
+                assert_eq!(
+                    state.static_failure(10),
+                    outputs[1].failure,
+                    "same-batch stale-key refusal matches reading its durable poststate"
+                );
+            }
+        }
+        Ok(())
+    })();
+    for (_, secret) in &mut keys {
+        secret.fill(0);
+    }
     result
 }

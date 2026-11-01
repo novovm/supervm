@@ -1,0 +1,17 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+error[E0277]: `novovm_protocol::uca_spend::SignedAssetSpendV2` doesn't implement `std::fmt::Debug`
+   --> crates\novovm-node\src\native_pipeline\consensus\native_product_load\uca\rolling.rs:693:9
+    |
+693 |         assert_eq!(signed, &make_signed(index, SpendWindow::after(0)?)?);
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `std::fmt::Debug` is not implemented for `novovm_protocol::uca_spend::SignedAssetSpendV2`
+    |
+    = note: this error originates in the macro `assert_eq` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `novovm-node` (lib test) due to 2 previous errors

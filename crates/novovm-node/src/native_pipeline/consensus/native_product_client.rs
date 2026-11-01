@@ -3,12 +3,9 @@
 //! verifies submission AND observation over the native original-node socket.
 use super::*;
 use crate::native_pipeline::{
-    consensus::{
-        native::{LaneLimits, MessageDomain},
-        transport::DecodeLimits,
-    },
+    consensus::native::{LaneLimits, MessageDomain},
     ingress::apfl::{ApflLimits, ApflTransferBatch},
-    service::{client::NativeApplicationClient, ResidentConfig},
+    service::{client::NativeApplicationClient, native_decode_limits, ResidentConfig},
 };
 use novovm_network::novorudp::{
     endpoint::NativePeer,
@@ -21,6 +18,18 @@ use std::net::UdpSocket;
 
 #[path = "native_product_queries.rs"]
 mod queries;
+pub(super) use queries::QueryTimeout;
+
+// One typed readiness/recovery policy for the process fixtures. In particular,
+// the load fixture must not turn its first unanswered Status into early failure
+// or restart the caller's shared deadline. Asset/receipt reads remain strict.
+pub(super) fn recovery_status(
+    nodes: &mut ProductNodes,
+    client: &mut NativeApplicationClient,
+    deadline: Instant,
+) -> Result<novovm_protocol::native_query::Status> {
+    queries::recovery_status(nodes, client, deadline)
+}
 
 fn connect(
     nodes: &ProductNodes,
@@ -28,11 +37,12 @@ fn connect(
     set: Arc<ValidatorSet>,
 ) -> Result<NativeApplicationClient> {
     let config: ResidentConfig = serde_json::from_slice(&fs::read(&nodes.configs[ingress])?)?;
-    let transaction_bytes = if config.uca_initialization.is_some() {
-        novovm_protocol::uca_spend::MAX_SIGNED_SPEND_BYTES
-    } else {
-        1024
-    };
+    let asset_accounts = config.uca_initialization.is_some();
+    let codec = native_decode_limits(
+        if asset_accounts { config.batch_size } else { 2 },
+        asset_accounts,
+    );
+    let message_bytes = codec.message_bytes;
     // This device key is NOT in genesis and is never added to a node allowlist.
     let key = SigningKey::from_bytes(&[201; 32]);
     ensure!(
@@ -55,50 +65,64 @@ fn connect(
             protocol: config.genesis.protocol_commitment,
             validators: set,
         },
-        DecodeLimits {
-            transactions: 2,
-            transaction_bytes,
-            body_bytes: 2 * transaction_bytes,
-            message_bytes: 512 * 1024,
-        },
+        codec,
         LaneLimits {
             receive: ReassemblyLimits {
-                max_message_bytes: 512 * 1024,
+                max_message_bytes: message_bytes,
                 messages: 2,
-                bytes: 1024 * 1024,
+                bytes: 2 * message_bytes,
                 peer_messages: 2,
-                peer_bytes: 1024 * 1024,
+                peer_bytes: 2 * message_bytes,
                 ttl: Duration::from_secs(30),
             },
             send: NativeSendLimits {
                 messages: 2,
-                bytes: 1024 * 1024,
+                bytes: 2 * message_bytes,
                 peer_messages: 2,
-                peer_bytes: 1024 * 1024,
+                peer_bytes: 2 * message_bytes,
             },
         },
-        NativeSendPolicy {
-            window: NovoRudpWindowConfig {
-                packet_copies: 1,
-                tail_packet_copies: 1,
-                batch_size: 32,
-                batch_pause_ms: 0,
-                ack_wait_ms: 10,
-                ..Default::default()
-            },
-            pacing: NovoRudpPacingProfile {
-                packet_copies: 1,
-                tail_packet_copies: 1,
-                batch_size: 32,
-                batch_pause_ms: 0,
-                ack_wait_ms: 10,
-                no_progress_backoff: false,
-            },
-            ttl: Duration::from_secs(30),
-        },
+        client_policy(),
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
         Instant::now(),
     )
+}
+
+// One configuration for the real fixture consumer and its policy regression.
+fn client_policy() -> NativeSendPolicy {
+    NativeSendPolicy {
+        window: NovoRudpWindowConfig {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+            ..Default::default()
+        },
+        pacing: NovoRudpPacingProfile {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+        },
+        ttl: Duration::from_secs(30),
+    }
+}
+
+#[test]
+fn native_recovery_client_retains_bounded_repair_until_original_deadline() {
+    let policy = client_policy();
+    assert!(!policy.window.no_progress_backoff);
+    assert!(!policy.pacing.no_progress_backoff);
+    assert_eq!(policy.window.max_window_retries, 8);
+    assert_eq!(policy.window.ack_wait_ms, 10);
+    assert_eq!(policy.pacing.ack_wait_ms, 10);
+    assert_eq!(policy.window.batch_size, 32);
+    assert_eq!(policy.pacing.batch_size, 32);
+    assert_eq!(policy.ttl, Duration::from_secs(30));
 }
 
 fn send(client: &mut NativeApplicationClient, raw: &[Vec<u8>]) -> Result<()> {
