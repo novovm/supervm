@@ -13,7 +13,7 @@ The [Chinese baseline](../../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-
 | Previous rule | Current decision |
 | --- | --- |
 | Former pay-as-you-go default | Monthly subscription debited once; unused entitlements are non-refundable; wallet NOV persists; the pool settles verified providers daily |
-| Minimum USD 5-equivalent founder share per paid month | Cancelled; no such minimum share or minimum monthly spend |
+| Founder subscription share, including the old USD 5 minimum | No minimum or percentage-based founder subscription cut; do not restore it through foundation/platform labeling. Independent operating budgets require separate approval |
 | Subscription resources | Monthly subscriptions and awarded free trials honor the resources promised at activation; normally unused monthly subscription entitlements expire without refund |
 | Ambiguous inflation proposal | Moderate service-price adjustments only; no change to fixed native NOV supply |
 | Native NOV emission and fee burn | Target: all 100,000,000 NOV issued at genesis; subsequent transfers/unlocks only, no mint or burn |
@@ -38,7 +38,7 @@ These supersede conflicting current requirements in the October 13 contribution 
 
 For included subscription services, the communication settlement pool funds task reservations and provider payments below; the subscriber wallet is not debited again.
 
-The authoritative contract also records a **proposal awaiting user confirmation** for decentralized subscription enforcement: non-transferable resource entitlements, real NOV in the settlement pool, consensus-backed bounded allocations across providers, batched claims and separate used/reserved/remaining progress with synchronization status. It is not an approved interface, a second token, proof of anonymous usage, or delivered functionality. An entitlement certificate alone cannot prevent concurrent overspending without shared reservations and verified state. Provider evidence, reservation release, chain time and settlement-trigger rules still need specification and validation.
+The authoritative contract also records the **accepted discussion baseline; specifications still await finalization** for decentralized subscription enforcement: non-transferable resource entitlements, real NOV in the settlement pool, consensus-backed bounded allocations across providers, batched claims and separate used/reserved/remaining progress with synchronization status. It is not an approved interface, a second token, proof of anonymous usage, or delivered functionality. An entitlement certificate alone cannot prevent concurrent overspending without shared reservations and verified state. Provider evidence, reservation release, chain time and settlement-trigger rules still need specification and validation.
 
 Accepting a task atomically reserves its funded maximum cost and binds provider, payee account, quote and obligation. Verified performance earns the contracted increment. Purchased, verifiable capacity can be work even before it carries traffic; online status or self-reported capacity cannot.
 
@@ -86,7 +86,7 @@ Protocol clearing price, market execution price, UI reference valuation and prov
 - A USD 5 service event yields USD 2.50 at 50% provider share or USD 4.00 at 80%; only the latter exceeds that assumed cost. This does not approve the split or price.
 - `5 * (0.8 + 0.1 + 0.1) = 5` demonstrates conservation only.
 - `(4000 + 500 + 1800 + 1200) * 1.25 = USD 9,375` is a reference-value scenario, not necessarily that much cash fundraising.
-- 80/10/10, USD 5, 5 GiB, 1,000 trial slots and USD 9,375 are not launch parameters or authorized expenditure. Pay-as-you-go revenue cannot be forecast as user count multiplied by USD 5. USD 0.05 or USD 1 issuance-price scenarios do not establish market liquidity/value.
+- 80/10/10, USD 5, 5 GiB, 1,000 trial slots and USD 9,375 are not launch parameters or authorized expenditure. Neither the subscription price nor paid customer count is approved; user count multiplied by the old USD 5 example is not actual revenue. USD 0.05 or USD 1 issuance-price scenarios do not establish market liquidity/value.
 
 ## Reuse, implementation gaps and pending decisions
 

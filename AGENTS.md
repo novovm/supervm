@@ -2,6 +2,8 @@
 
 ## 2026-11-02 latest customer billing: monthly subscription, provider daily settlement
 
+The user explicitly confirms no founder subscription share: neither a minimum nor a percentage-based founder cut, including the same cut relabeled as a foundation/platform fee. Independently approved operating budgets remain separate and pending. The four entitlement/budget/receipt/daily-settlement specifications are a discussion baseline, not frozen or implemented.
+
 The user supersedes default pay-as-you-go customer debits: the chosen NOV quick wallet pays the monthly subscription once; normally unused monthly entitlements expire without refund, while unspent wallet NOV persists. Included usage must not debit the customer again. The main treasury communication settlement pool records verified provider liabilities promptly and settles them daily. Preserve existing resource metering, deduplication, funded obligations and ML-DSA-65 account authority. Price/entitlements, excess usage, renewal authorization, daily/monthly cutoffs, pool funding and splits remain pending. No billing activation. The authoritative contract is docs/NOVOVM-ECONOMICS/NOV-COMMUNICATION-SUBSCRIPTION-DAILY-SETTLEMENT-2026-11-02.md; this section supersedes older default-pay-as-you-go wording, not fixed supply or asset permissions.
 
 ## 2026-11-02 最高规则：未经用户本人明确授权，禁止创建分支
