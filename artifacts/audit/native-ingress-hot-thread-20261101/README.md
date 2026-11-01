@@ -1,6 +1,8 @@
 # Native Ingress Hot Thread Attribution：有效交易窗口已完成函数与调度归因
 
-当前冻结节点、AOEM、账户/共识、AEAD、补片、候选、线程数量和生产调度不变。
+该诊断轮固定节点、AOEM、账户/共识、AEAD、补片、候选、线程数量和生产调度不变。
+后续实现见[会话AAD复用](../native-aad-session-reuse-20261101/README.md)；本页函数份额
+仍只属于原冻结v4，不能当作修改后候选的新占比。
 这是原冻结程序的诊断，不是NOVOVM程序提速或回退。最新有效复核见
 [QUALIFIED-TRACE-REVIEW.md](QUALIFIED-TRACE-REVIEW.md)及[计数证据](QUALIFIED-TRACE-RESULTS.json)。
 前次无交集记录见[ZERO-LOSS-COVERAGE-REVIEW.md](ZERO-LOSS-COVERAGE-REVIEW.md)；首次丢事件记录见

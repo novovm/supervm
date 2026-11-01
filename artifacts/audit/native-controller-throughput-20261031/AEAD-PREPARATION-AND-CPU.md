@@ -1,5 +1,9 @@
 # AEAD准备隔离实验与每笔成功交易CPU成本
 
+后续：[会话AAD准备/缓冲复用](../native-aad-session-reuse-20261101/README.md)已进入原
+候选seal/open；初代PreparedSeal原型已替换为实际方法测试和独立未缓存参考。
+下文是本轮历史实验，不能据其“未接入”描述推断当前开发分支状态。
+
 基线`6c86f0ba`。本轮新增的是**测试原型和CPU计量**，没有接入新的生产AEAD路径。
 原节点仍为v4 `6ed28e98…`，AOEM仍为`8779d014…`；完整身份见
 [制品/源码清单](aead-cpu-manifest.json)。不改账户、ML-DSA、APFL、NovoRUDP、

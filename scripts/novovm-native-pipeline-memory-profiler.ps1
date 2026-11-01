@@ -4,7 +4,7 @@ param(
     [int]$TargetPid = 0,
     [string]$Label = "sample",
     [string]$ArtifactDir = "artifacts/native-pipeline/memory-profiler",
-    [string]$NodeBinary = "",
+    [string[]]$NodeBinary = @(),
     [ValidateRange(1, 900)]
     [int]$DurationSeconds = 900,
     [ValidateRange(500, 5000)]
@@ -132,7 +132,7 @@ Do not sign memory plateau from these artifacts alone.
         if ($TargetPid -le 0 -or -not $NodeBinary) {
             throw "series requires the live test-driver -TargetPid and frozen -NodeBinary."
         }
-        $binary = (Resolve-Path -LiteralPath $NodeBinary).ProviderPath
+        $binaries = @($NodeBinary | ForEach-Object { (Resolve-Path -LiteralPath $_).ProviderPath })
         $driver = Get-Process -Id $TargetPid -ErrorAction Stop
         $driverStart = $driver.StartTime
         $observer = Get-Process -Id $PID
@@ -155,7 +155,7 @@ Do not sign memory plateau from these artifacts alone.
             $processes.Add((Read-SeriesProcess -Process $driver -Role "driver"))
             foreach ($node in @(Get-Process -Name "novovm-node" -ErrorAction SilentlyContinue)) {
                 try {
-                    if ([string]::Equals($node.Path, $binary, [StringComparison]::OrdinalIgnoreCase)) {
+                    if ($binaries -icontains $node.Path) {
                         $processes.Add((Read-SeriesProcess -Process $node -Role "node"))
                     }
                 } catch {
@@ -179,7 +179,8 @@ Do not sign memory plateau from these artifacts alone.
         [ordered]@{
             schema = "novovm-native-pipeline-process-series/v1"
             target_driver_pid = $TargetPid
-            node_binary = $binary
+            node_binary = $(if ($binaries.Count -eq 1) { $binaries[0] } else { $null })
+            node_binaries = $binaries
             logical_processors = [Environment]::ProcessorCount
             elapsed_ms = $clock.Elapsed.TotalMilliseconds
             interval_ms = $SampleIntervalMilliseconds

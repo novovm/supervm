@@ -140,6 +140,8 @@ pub struct E2eSecureChannelV1 {
     outbound_nonce_prefix: [u8; 4],
     inbound_nonce_prefix: [u8; 4],
     outbound_sequence: u64,
+    outbound_aad: Vec<u8>,
+    inbound_aad: Vec<u8>,
     #[zeroize(skip)]
     inbound_replay: SlidingReplayWindowV1,
 }
@@ -450,6 +452,16 @@ impl E2eSecureChannelV1 {
             outbound_nonce_prefix: secrets.initiator_nonce_prefix,
             inbound_nonce_prefix: secrets.responder_nonce_prefix,
             outbound_sequence: 0,
+            outbound_aad: prepared_frame_aad_v1(
+                &offer.session_id,
+                &offer.initiator_peer_id,
+                &offer.responder_peer_id,
+            ),
+            inbound_aad: prepared_frame_aad_v1(
+                &offer.session_id,
+                &offer.responder_peer_id,
+                &offer.initiator_peer_id,
+            ),
             inbound_replay: SlidingReplayWindowV1::new(128),
         }
     }
@@ -464,6 +476,16 @@ impl E2eSecureChannelV1 {
             outbound_nonce_prefix: secrets.responder_nonce_prefix,
             inbound_nonce_prefix: secrets.initiator_nonce_prefix,
             outbound_sequence: 0,
+            outbound_aad: prepared_frame_aad_v1(
+                &offer.session_id,
+                &offer.responder_peer_id,
+                &offer.initiator_peer_id,
+            ),
+            inbound_aad: prepared_frame_aad_v1(
+                &offer.session_id,
+                &offer.initiator_peer_id,
+                &offer.responder_peer_id,
+            ),
             inbound_replay: SlidingReplayWindowV1::new(128),
         }
     }
@@ -503,7 +525,7 @@ impl E2eSecureChannelV1 {
             nonce,
             ciphertext: Vec::new(),
         };
-        let aad = secure_frame_aad_v1(&envelope);
+        update_frame_aad_v1(&mut self.outbound_aad, sequence, &nonce);
         let cipher = ChaCha20Poly1305::new((&self.outbound_key).into());
         envelope.ciphertext = {
             let _cost = io_span(IoPhase::FrameEncode);
@@ -512,7 +534,11 @@ impl E2eSecureChannelV1 {
         {
             let _cost = io_span(IoPhase::SealAead);
             cipher
-                .encrypt_in_place(Nonce::from_slice(&nonce), &aad, &mut envelope.ciphertext)
+                .encrypt_in_place(
+                    Nonce::from_slice(&nonce),
+                    &self.outbound_aad,
+                    &mut envelope.ciphertext,
+                )
                 .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)?;
         }
         Ok(envelope)
@@ -555,7 +581,9 @@ impl E2eSecureChannelV1 {
         if !self.inbound_replay.would_accept(envelope.sequence) {
             return Err(ProductOverlayErrorV1::SecureFrameReplay);
         }
-        let aad = secure_frame_aad_v1(envelope);
+        // Route/version/nonce/replay checks above bind the prepared prefix to
+        // this exact envelope; only its sequence and nonce vary in the session.
+        update_frame_aad_v1(&mut self.inbound_aad, envelope.sequence, &envelope.nonce);
         let cipher = ChaCha20Poly1305::new((&self.inbound_key).into());
         // Borrowed callers copy only ciphertext, after route/nonce/replay
         // checks. The native owner passes its existing buffer without a copy.
@@ -563,7 +591,11 @@ impl E2eSecureChannelV1 {
         {
             let _cost = io_span(IoPhase::OpenAead);
             cipher
-                .decrypt_in_place(Nonce::from_slice(&envelope.nonce), &aad, &mut plaintext)
+                .decrypt_in_place(
+                    Nonce::from_slice(&envelope.nonce),
+                    &self.inbound_aad,
+                    &mut plaintext,
+                )
                 .map_err(|_| ProductOverlayErrorV1::SecureFrameAuthenticationFailed)?;
         }
         if !self.inbound_replay.mark_authenticated(envelope.sequence) {
@@ -768,6 +800,34 @@ fn secure_frame_nonce_v1(prefix: [u8; 4], sequence: u64) -> [u8; 12] {
     nonce
 }
 
+fn prepared_frame_aad_v1(session_id: &[u8; 16], sender: &str, recipient: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        8 + PRODUCT_OVERLAY_SECURE_FRAME_DOMAIN_V1.len()
+            + 2
+            + 16
+            + 8
+            + sender.len()
+            + 8
+            + recipient.len()
+            + 20,
+    );
+    append_field_v1(&mut out, PRODUCT_OVERLAY_SECURE_FRAME_DOMAIN_V1);
+    out.extend_from_slice(&PRODUCT_OVERLAY_PROTOCOL_VERSION_V1.to_be_bytes());
+    out.extend_from_slice(session_id);
+    append_field_v1(&mut out, sender.as_bytes());
+    append_field_v1(&mut out, recipient.as_bytes());
+    out.resize(out.len() + 20, 0);
+    out
+}
+
+fn update_frame_aad_v1(aad: &mut [u8], sequence: u64, nonce: &[u8; 12]) {
+    let suffix = aad.len() - 20;
+    aad[suffix..suffix + 8].copy_from_slice(&sequence.to_be_bytes());
+    aad[suffix + 8..].copy_from_slice(nonce);
+}
+
+// Independent uncached wire-contract oracle, not another production route.
+#[cfg(test)]
 fn secure_frame_aad_v1(envelope: &SecureNovoRudpEnvelopeV1) -> Vec<u8> {
     let mut out = Vec::new();
     append_field_v1(&mut out, PRODUCT_OVERLAY_SECURE_FRAME_DOMAIN_V1);
