@@ -1,16 +1,21 @@
-# Native Ingress Hot Thread Attribution：第二次录制零丢失，但未覆盖交易
+# Native Ingress Hot Thread Attribution：有效交易窗口已完成函数与调度归因
 
 当前冻结节点、AOEM、账户/共识、AEAD、补片、候选、线程数量和生产调度不变。
-这是诊断工具的修正，不是NOVOVM程序提速或回退。最新复核见
-[ZERO-LOSS-COVERAGE-REVIEW.md](ZERO-LOSS-COVERAGE-REVIEW.md)；首次丢事件记录见
+这是原冻结程序的诊断，不是NOVOVM程序提速或回退。最新有效复核见
+[QUALIFIED-TRACE-REVIEW.md](QUALIFIED-TRACE-REVIEW.md)及[计数证据](QUALIFIED-TRACE-RESULTS.json)。
+前次无交集记录见[ZERO-LOSS-COVERAGE-REVIEW.md](ZERO-LOSS-COVERAGE-REVIEW.md)；首次丢事件记录见
 [FIRST-TRACE-REVIEW.md](FIRST-TRACE-REVIEW.md)。
 
 ## 当前结论
 
-用户第二次管理员采集 `20261101-054438-36312` 的五个短窗均零丢事件，
-但实际ETL全部晚于各自交易drive结束，重叠均为0。**采集脚本等待stdout长度/修改时间
-的触发条件有误**；本次仍不能报告交易忙线程函数占比或Ready/Wait时长。
-节点、AOEM和测试器制品未变，五轮交易及冷恢复通过不等于采集通过。
+用户第三次管理员采集 `20261101-080217-5308` 的五窗均零丢失且覆盖交易drive。
+三窗CPU函数栈和两窗内部调度已分析：原网络poll_io约占入口线程全部CPU样本
+63.24%–63.70%，准入UcaBatchStateRead::poll约12.86%–14.28%；两窗调度Running约98%。
+这些不是整链时间份额或TPS提升。原系统ETL/PDB/全机导出仍只留本机，不再要求重录。
+
+三个CPU窗完整系统符号栈报告覆盖约97.2%–97.6%的目标线程原始CPU样本；
+百分比分母含未归属样本。优化版PDB的nearest-public错误标签已用实际地址/机器码核对，
+不能把rpc模块名或eth_rlpx标签误当HTTP、WSS或外链路径。详见最新复核。
 
 首次默认详细profile产生28,413,263,872字节ETL、丢269,327,509事件；
 第二次最小profile把五份负载窗口文件降至约57–63MB并保持零丢失，解决的是本轮
@@ -34,9 +39,9 @@ PDB可用，残留样本确实能解析原Rust函数。三组PE/PDB GUID、Age�
 系统provider仍是全机录制，**没有伪称在录制端按NOVOVM PID过滤**；只在离线分析筛目标。
 不改全局采样周期、系统策略、亲和性、worker或节点参数。
 
-## 只需重新运行同一个管理员命令
+## 采集方式与复现（本次已完成）
 
-在管理员PowerShell执行：
+以下为本次实际使用的管理员命令，当前没有要求再次运行：
 
 ```powershell
 & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File 'D:\WorksArea\SUPERVM\artifacts\audit\native-ingress-hot-thread-20261101\capture.ps1'
@@ -87,7 +92,8 @@ wpr -stop <etl路径> -skipPdbGen -instancename <session>
 新触发器还在原冻结CPU/GPU/CPU三轮各65K的真实负载中验证，三个约8秒观察窗
 全部落在drive内，见[实测触发验证](trigger-live-validation.json)。此验证**未录ETW**，
 不证明符号/采样/调度分析通过，也不作为新的TPS成绩。
-**修正后的v3管理员ETW仍待采集**。当前代理进程仍无WPR权限，不自动提权。
+**修正后的v3管理员ETW已由用户执行，并通过本次零丢失和交易交集验收**。
+函数/调度结果及符号、样本缺口、短窗/回环局限见最新报告；不自动提权或改系统策略。
 
 ## 分析门槛
 
