@@ -1,0 +1,77 @@
+{
+  "role": "validator-C",
+  "measured_local": "2026-11-02T20:45:06.5677128+08:00",
+  "timezone": "China Standard Time",
+  "read_commit": "3dfda6ce21cb6f9eb2fb2142309acaa482f7882e",
+  "adapter": {
+    "name": "以太网",
+    "description": "Realtek PCIe GbE Family Controller",
+    "index": 24,
+    "status": "Up",
+    "link_bps": 1000000000,
+    "link_speed": "1 Gbps"
+  },
+  "ipv4": [
+    {
+      "IPAddress": "192.168.71.125",
+      "PrefixLength": 24,
+      "PrefixOrigin": "Dhcp"
+    }
+  ],
+  "gateway": [
+    "192.168.71.1"
+  ],
+  "w32time": {
+    "start_type": "Manual",
+    "source": {
+      "exit_code": 2147942405,
+      "stdout": "发生下列错误: 拒绝访问。 (0x80070005)\n",
+      "stderr": ""
+    },
+    "query_status": {
+      "exit_code": 0,
+      "stdout": "Leap 指示符: 3(未同步)\n层次: 0 (未指定)\n精度: -23 (每刻度 119.209ns)\n根延迟: 0.0000000s\n根分散: 0.0000000s\n引用 ID: 0x00000000 (未指定)\n上次成功同步时间: 未指定\n源: Local CMOS Clock\n轮询间隔: 10 (1024s)\n\n相位偏移: 0.0000000s\nClockRate: 0.0156250s\n计算机状态: 0 (unset)\n时间源标志:0 (无)\n服务器角色: 0 (无)\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\n上次成功同步时间后的时间: 10322.6502938s\n\n",
+      "stderr": ""
+    },
+    "status": "Running"
+  },
+  "ordinary_resync": {
+    "exit_code_signed": -2147024891,
+    "hresult": "0x80070005",
+    "result": "Access denied"
+  },
+  "admin_sync": {
+    "method": "Standard Windows RunAs UAC, existing configured NTP only",
+    "result_file_exists": false,
+    "outcome": "PENDING_OS_CONSENT_OR_PROCESS_RESULT"
+  },
+  "configured_ntp": {
+    "type": "NTP",
+    "server": "time.windows.com,0x9",
+    "client_enabled": true
+  },
+  "stripchart": {
+    "target": "time.windows.com",
+    "resolved_ip": "52.231.114.183",
+    "exit_code": 0,
+    "local_sample_times": [
+      "2026-11-02 20:44:19",
+      "2026-11-02 20:44:21",
+      "2026-11-02 20:44:24"
+    ],
+    "reported_offsets_seconds": [
+      2.0888456,
+      2.10032,
+      2.0914182
+    ],
+    "meaning": "Read-only NTP source sampling; not a successful OS sync or inter-host offset measurement"
+  },
+  "scope": {
+    "full_hardware_inventory_repeated": false,
+    "ntp_config_changed": false,
+    "nodes_started": false,
+    "firewall_routes_changed": false,
+    "phones_keys_genesis_databases_changed": false,
+    "remote_A_D_executed_by_C": false
+  }
+}

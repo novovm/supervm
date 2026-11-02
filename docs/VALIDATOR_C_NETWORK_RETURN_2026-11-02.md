@@ -1,5 +1,21 @@
 # validator-C：用户授权公开的完整网络资料补交
 
+## 20:45 本机网卡/IP与校时执行增量（不重复整机清点）
+
+交接：`C-ACD-OS-CLOCK-SYNC-20261102`。C已同步并阅读A的`3dfda6ce21cb6f9eb2fb2142309acaa482f7882e`，包含`831d13f3`最新校时授权、A实际同步结果及B网络增量。本机仍为validator-C，不是mobile-B。
+
+- 当前接口：Realtek PCIe GbE Family Controller，ifIndex24，Up/**1 Gbps**。
+- 当前IP：**`192.168.71.125/24`**，DHCP，网关`192.168.71.1`；本次未改变地址或路由。
+- 本机时区：China Standard Time（UTC+08）。20:45回读W32Time **Running/Manual**，Leap3、Stratum0、Local CMOS Clock、上次成功同步未指定；verbose最后同步错误1（无可用时间数据）。仍是**未同步**，不把Running或query exit0当成功。
+- 原配置为NTP、`time.windows.com,0x9`，NtpClient已启用。普通会话`w32tm /resync /rediscover`返回**0x80070005拒绝访问**；`/query /source`也被拒绝，但status允许读取。
+- 已按用户授权通过标准Windows RunAs/UAC发起窄脚本：仅当W32Time未运行时启动，沿用原时间源resync，并读取结果；不重设时间源/启动类型/时区，不手工设钟。20:45尚无管理员脚本结果文件，记为**等待系统管理员确认或进程结果**，不宣称校时成功。
+- 同一配置源的只读stripchart于20:44:19/21/24返回三次偏差 **+2.0888456 / +2.1003200 / +2.0914182秒**（52.231.114.183:123）。这证明该采样路径收到时间响应；不是W32Time已同步、不是各机相对偏差，也不能排除服务NTP通道与采样路径差异。
+
+[本次有限JSON](evidence/validator-C-clock-sync-2026-11-02.json)，Git/LF字节SHA256 `13c5eab8c08005767f8aef7a4f401e5064f3af6d313ef410f6494cf2b39f8158`。未重复CPU/内存/磁盘或全量端口清点。原历史JSON及哈希保持不变；没有节点启动、密钥/创世/数据库/手机操作或防火墙/路由修改。
+
+A已在最新上游记录20:38:50同步成功（Leap0/Stratum5）；C接收该结果，不能代签D。D按统一交接顶部同项本机指令并行执行即可，不需等待C或重交整机清单。C的管理员执行结果到达后，再补真实成功/失败及最后同步；当前Git回传不是A/D已经签收。
+
+
 ## 20:21 换线后本机只读增量（C-WIRED-REFRESH-20261102）
 
 已同步并阅读A共同草案`fdd897c1`。本机实测当前有线Realtek PCIe GbE为Up/1 Gbps，ifIndex24；LAN已由旧候选`192.168.71.102`变为**`192.168.71.125/24`**，DHCP分配，网关`192.168.71.1`。本地对1.1.1.1的选路查询走该有线接口，未发送跨机探测；WLAN已断开。该地址是当前LAN候选，不是公网或永久静态地址。
