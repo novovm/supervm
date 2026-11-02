@@ -1,5 +1,46 @@
 # A–G 设备交接：原生 NUAS 多机公测
 
+## 2026-11-02 20:39最新授权：A/C/D启动并同步系统时间服务
+
+用户明确授权同时启动并同步A/C/D的W32Time。这仅覆盖校时，取代下方历史“不得修改时间服务”限制；
+不授权改时区、手工设钟、替换NTP源、防火墙扩容、身份生成或启链。
+A已通过正常管理员确认执行，20:38:50成功同步，20:39回读Running/Manual、Leap0、Stratum5、
+source `time.windows.com,0x9`、最后同步错误0。B已同步，本轮不改。
+
+**C/D各机Codex执行：** 保护本机已有工作后读取本节，在本机管理员PowerShell执行以下原命令。
+若当前进程未提权，使用正常Windows管理员确认，不绕过UAC；不要启用远程管理或复制其他机器身份。
+
+```powershell
+Get-Service W32Time | Format-List Name,Status,StartType
+Start-Service -Name W32Time -ErrorAction Stop
+w32tm /resync /rediscover
+w32tm /query /status /verbose
+w32tm /query /source
+Get-Service W32Time | Format-List Name,Status,StartType
+```
+
+回传节点标签、执行时间、命令退出码、Running状态、时间源、Leap/Stratum、最后成功同步和最后错误。
+仅“服务已运行”不算同步成功。若Disabled、权限失败或无可用时间数据，保留错误并回传，
+不要自行`/unregister`/重置服务、替换NTP源、关防火墙或重复强制设钟；沿原配置核对后再处理。
+启动类型保持原样。顺便按下文既有只读命令回传当前接口/IP，C预期192.168.71.125，D旧候选192.168.71.59。
+两机执行/回传前仍记PENDING；推送本指令不等于对端已读或已同步，不构成四机时差/网络验收。
+
+**2026-11-02 20:31后实施增量（优先于下方旧快照）：** 用户授权A配置B防火墙。
+B UFW已精确放行`114.92.30.222/32 → UDP41050`，用户随后确认云安全组按同样指引配置；
+云端尚无A独立回读，不记认证可达性通过。C由用户更新为`192.168.71.125`，A ICMP 2/2、5/7 ms。
+原B邮箱/Relay/Web/Docker均active且PID不变，无节点启动。完整实施记录见共同草案第3节。
+
+下一步不是直接65K压测：先收齐C/D当前接口/IP/时钟的只读差额，然后处理校时及用途身份准备。
+A本轮源码核对发现原`product_nat_runtime.rs`仍加载Ed25519钥，`product_nat.rs`的
+`SignedObservedEndpointProbeV1/AckV1`也固定32字节Ed25519公钥/签名校验；
+不能直接把该工具作为ML-DSA-65认证UDP验收，也不以旧overlay gate或另写UDP echo替代。
+后续接线须沿原身份/密码owner迁接及验证，不改补片/共识，不复用B服务身份。
+这是所列探测入口的源码差额，不据此声称整个网络已完成或未完成某种算法迁移。
+
+C/D各机Codex现在只需运行共同草案第3节已有只读命令，回传当前Up接口/IP、
+W32Time状态/来源/最后同步及41050占用；C按新地址核对，不重做基础清点、不开远程管理。
+该次核对未执行校时；后续校时授权/实际结果见顶部最新条目。用途钥生成、创世批准或启链仍未执行，不能由防火墙放行自动推定授权。
+
 **2026-11-02 A已汇总唯一共同草案：** 已读取C的`397dc5f6`与当前Windows D的
 `bfa239e7`及网络JSON，不再要求重复交基础回执。固定身份、证据哈希、四机链路/时钟、
 端点候选、制品、共同域/公钥缺项和实施顺序统一见
