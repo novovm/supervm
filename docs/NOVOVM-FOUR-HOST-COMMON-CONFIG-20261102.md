@@ -1,0 +1,149 @@
+# NOVOVM 四机共同配置草案
+
+编号：`NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102`。汇总负责人：validator-A。
+状态：**草案已汇总，非可运行配置，未授权接线或启链。**
+证据/源码核对基线：main `2623eb815505b20a75c08da40301a6896f8dd2ea`，
+不是最终运行源码或制品冻结。这里不生成密钥、创世、资金或伪造缺失参数。
+本文件是本轮唯一共同草案；各机回执保留为证据，不再各自设计另一份共同规则。
+
+## 1. 回执接收与唯一角色
+
+| 节点 | 当前物理角色/系统 | CPU与内存快照 | 接收依据 |
+| --- | --- | --- | --- |
+| A | 当前共享实现/集成主机；Windows 11家庭版26200，x86_64 | Ultra 9 275HX，24核/24逻辑CPU；可见63.43 GiB，可用43.06 GiB | 11月2日本机清点；本轮18:54北京时间只读刷新 |
+| B | 阿里云Ubuntu 24.04.4，x86_64，云VM | 2 vCPU；3499 MiB总内存，约1.3 GiB可用为安装时快照；仍有原服务负载 | [既有访问清点](VALIDATOR_B_ALIYUN_ACCESS_HANDOFF_2026-10-25.md)及[本轮安装](../artifacts/audit/validator-b-program-install-20261102/README.md) |
+| C | Windows LENOVO手机调试笔记本，x86_64 | i9-14900HX，24核/32逻辑CPU；31.73 GiB，可用3.94 GiB为早前清点快照 | [基础回执](VALIDATOR_C_READONLY_RETURN_2026-11-02.md)、[网络补交](VALIDATOR_C_NETWORK_RETURN_2026-11-02.md) |
+| D | Windows 11 Pro ASUS `SUPERVM-L2-01`，x86_64 | Ryzen 9 9950X，16核/32逻辑CPU；约64 GB，可用约14.8 GiB为08:54快照 | [当前D回执](VALIDATOR_D_NETWORK_RETURN_2026-11-02.md) |
+
+A已接收C的`397dc5f6389970d54944e83b4f18cbb429a7ed94`和D的
+`bfa239e7bb0098283acb390ad6ad590e3c00fd9d`，不再要求重复提交基础清点。
+C网络JSON的Git字节SHA256为`07c54d31921ad8e91e2226c72fd4ae01ee6cb4947e3071e63698ca23fc23cc01`。
+D网络JSON的Git/LF字节SHA256为`12f039e4a037d6e9d06eccdba64aa1c45cb8f6e87af6ad24227e9994860ee579`；
+回执声明的`06d19284e52ca7154012a1e0ab0c1dd872f66c429caf4c0549e5cccd9e44114a`
+已核对为同内容Windows/CRLF版本，不将两种字节形式误记为同一哈希。
+
+本轮D仅指上述Windows机器；历史DGX Spark、Ryzen Linux及其包/密钥不作为本轮D。
+不自动给旧机器分配新角色，不复制签票身份。mobile-A/mobile-B是手机标签，不是验证机A/B。
+
+## 2. 链路与时钟：A、C的Wi-Fi同样必须纳入
+
+| 节点 | 当前已知物理链路 | LAN/公网候选 | 时钟证据及待处理项 |
+| --- | --- | --- | --- |
+| A | BE200 Wi-Fi；本轮`Get-NetAdapter`为866.7 Mbps，旧780 Mbps是历史快照；I226-V有线未连接 | LAN `192.168.71.74/24`，网关`192.168.71.1`；公网映射未知 | W32Time已Running/Manual；18:54查询Leap=3、Stratum=0、Local CMOS Clock，仍未同步；source单独查询拒绝访问 |
+| B | 云VM虚拟网卡；实例带宽上限、突发/计费和实际链路能力尚未核对，不编造千兆 | 公网`47.103.59.206`；内网`172.16.0.48`来自既有回执 | 安装时NTP synced=yes；正式实验前保留新的源/同步证据 |
+| C | AX211 Wi-Fi，06:57网络回执协商144.4 Mbps；Realtek有线未连接 | LAN `192.168.71.102/24`；公网/NAT映射未知 | 回执W32Time stopped，未取得同步/偏差证明 |
+| D | Marvell AQtion网卡，08:54实际协商100 Mbps，不是10 Gbps | LAN `192.168.71.59/24`；公网/NAT映射未知 | W32Time运行但Free-running、Leap=3/Stratum=0，未同步 |
+
+这些值不是同时采样、不是独占可用带宽，也不是应用吞吐。Wi-Fi可能受共享空口、
+信号、重试和双向竞争影响，不能仅以866.7/144.4与100的数字判定谁实际更快。
+尤其不能只修D，就把C的144.4 Mbps Wi-Fi视为已经足够。
+
+拟分开记录两种实验条件，均保留B的公网云链路：
+
+- 当前混合拓扑：如实标明A/C Wi-Fi、D100 Mbps、VPN/NAT及各自负载；结果不称有线容量上限。
+- 受控容量拓扑：条件允许时A/C接入有线、D检查线缆/交换机端口并重新协商至至少千兆；
+  B先核对云带宽。由用户实际设置或批准操作后再验，不在草案阶段修改。
+
+不强制所有普通用户使用有线，也不靠强制网卡速率、关闭防火墙/VPN或扩大超时换成绩。
+A/C/D时钟需沿原系统时间服务处理，B同时核对；记录源、最后同步和可测偏差，
+不自创新的协议时差阈值。交易耗时用驱动单调时钟，跨机墙钟仅辅助对齐，不直接相减当微秒性能。
+
+## 3. 路由、端口与规则草案
+
+拟用原NovoRUDP UDP41050，**仅为候选，未批准/预留/放行**。各机最终`peers`可因所在网络而用不同地址；
+不能把B的视角也填成三台家庭LAN地址。
+
+| 节点 | 拟bind | LAN视角候选advertised | 从公网/B可达端点 |
+| --- | --- | --- | --- |
+| A | `0.0.0.0:41050` | `192.168.71.74:41050` | 未确定：需要实际公网/NAT或原承载路径证明 |
+| B | `0.0.0.0:41050` | 不把云内网直接给家庭LAN使用 | `47.103.59.206:41050`，云安全组/主机策略未验 |
+| C | `0.0.0.0:41050` | `192.168.71.102:41050` | 未确定：需要实际公网/NAT或原承载路径证明 |
+| D | `0.0.0.0:41050` | `192.168.71.59:41050` | 未确定：需要实际公网/NAT或原承载路径证明 |
+
+A本轮本地路由查询：到C/D走WLAN、同网段on-link；到B公网走Meta，源`198.18.0.1`。
+D回执到B也选Meta。路由选择不是实际发包或可达证明；TUN虚拟地址不能公告为公网端点。
+A本轮41050未见UDP监听；C/D为各自采样时未监听，B仅有较早候选记录，均需实施前再次核对，
+不再请求整份基础回执。B现有41000、43171/43173等原服务端口保留，不挪用。
+
+配置实施前所需的最小差额：
+
+- A/C/D：按最终node程序路径、实际网络profile、选定UDP端口和明确peer来源核对主机规则；
+  C的TCP443放行不等于UDP41050，D现有宽泛规则不等于完整有效策略已验。本轮不删除旧规则。
+- B：核对对应UDP端口的主机规则与阿里云安全组、实际NAT出口来源；不擅自放开全网。
+- 家庭网关：确认公网可达条件与必要UDP映射；若是CGNAT，明确记录直接入站不可用，
+  评估原有路径适配而不是假填WAN地址、另建UDP或静默走WSS/Relay。
+- 获准接线后，逐一记录A↔B、A↔C、A↔D、B↔C、B↔D、C↔D的认证UDP双向结果，当前全部未验。
+
+## 4. 制品与原入口
+
+唯一运行链为`novovm-node(native_execution_tick) → novovm-exec → aoem-bindings → AOEM`，
+网络仍是原NativeChannel/NativeLifecycle/NovoRUDP/APFL；不新增HTTP交易入口或另一套执行器。
+
+| 平台/节点 | 已有制品身份 | 本轮可作的结论 |
+| --- | --- | --- |
+| B Linux | 源码`14333419ee495e5d216761d31827271a252d9df5`；原11程序；包SHA256 `7d4f4dc184300eb3e19081db8e5199bf32bc1d729fb6a81be0071bdbc339229a` | 已隔离安装，未启链；[完整清单及运行检查](../artifacts/audit/validator-b-program-install-20261102/release-manifest.json) |
+| B AOEM核心 | SHA256 `d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33` | 实际统一语义CPU ML-DSA验签通过；不代表全链/所有sidecars已验 |
+| A Windows node | 当前文件`target/runtime-rebuild/release/novovm-node.exe`，SHA256 `24de0d1e0b1f508741b4fdabd9d089609c9924bdb2cfdbce2e766cefeb6f2078` | 仅现存文件身份，尚未定为本轮共同制品 |
+| A Windows client | 同目录`novovm-native-client.exe`，SHA256 `62e4fa50819e4281995a0b2ef755ad141e7f0e728132cbdb1d7d59bcc5f1f293` | 同上；不凭文件存在推断源SHA/运行资格 |
+| A/C/D随包Windows AOEM | SHA256 `31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947`；A本轮复核、C/D各自回执 | 匹配随包manifest，不自动取得B新SO或其他Windows候选的资格 |
+| C/D node/client | 回执未发现当前目标目录内的程序 | 待A固定同一源码后准备Windows制品，不要求各机重复实现 |
+
+从B包源码到本次读取基线，`crates/ scripts/ Cargo.toml Cargo.lock`未见差异，
+这不把文档提交重新标成B实际构建SHA，也不替代最终冻结与CI。
+同一平台可共用经过核验的程序包；Windows DLL、Linux SO和不同平台exe不要求同SHA，
+要求同一共享合同及各自明确来源/能力证据。D现在需要Windows x86_64包，不是ARM64或旧Linux包。
+
+## 5. 共同规则与尚缺的实际输入
+
+| 项目 | 固定原则/原owner | 当前值 |
+| --- | --- | --- |
+| 验证者集合 | 本轮固定A/B/C/D，沿原四节点等权3/4，不因D慢或B资源少改成2/3 | 标签已明确；公钥及正式集合承诺待汇总 |
+| 验证者用途公钥 | 原`novovmctl native-identity`；ML-DSA-65 validator与独立transport用途分离 | 本轮未收到合格共同域公钥清单，待获准生成/核验，不用历史服务钥代填 |
+| Chain ID/epoch/创世时间 | 新的共同`chain_id:u64`、`validator_epoch`、`timestamp_unix_ms`，不复用清空日志旧域 | PENDING_APPROVAL，不取示例71或当前采样时间充数 |
+| 协议/初始状态/创世承诺 | 原`ResidentConfig`/`GenesisConfig`、`protocol_commitment()`及原初始化编译器 | 等原始清单齐后计算，不手填零根/假承诺 |
+| NOV与账户 | 1亿NOV、9位小数、以后不增发/销毁；普通账户自身控制钥，UCA只关联身份；现行NUAS/APFL v3 | 获批分配、具体账户、控制/恢复配置、费用与初始化批准材料未齐 |
+| 订阅经济 | 最新月订阅/池日结与整体80/20/0原则见[现行规格](NOVOVM-ECONOMICS/NOV-COMMUNICATION-SUBSCRIPTION-DAILY-SETTLEMENT-2026-11-02.md) | 不是创世分配、完整经济参数或收费激活批准，不把旧按量/80-10-10作为默认 |
+| 容量/执行 | 最多1024行、8 MiB展开预算，保留APFL及独立签名，低负载不等满；原费用/nonce/持久发布 | 沿原实现；不为本次实验改协议预算或生产超时 |
+| 资源与后端 | 同一业务`execution_backend`；验签`signature_backend`独立；各机workers/内存按原owner预算 | 本轮先拟全CPU基线，具体本机预算待资格检查；B不能照搬A的24核资源设置 |
+
+公钥生成需在用户批准阶段由各机原custody完成，只回传公钥/用途/指纹与批准材料，
+私钥和credential留本机。调用顺序复用原`native-genesis prepare`与
+`native-genesis verify-approvals`，见[原身份/初始化入口](NOVOVM_PURPOSE_IDENTITY_PREPARATION.md)。
+普通资产账户和身份权限不因同一UCA合并，收款无需对方在线签名，创世批准不等于准许任意开户扣款。
+
+本草案不输出能误运行的`genesis:null`、空peer或fixture资金JSON。输入齐后才装配原
+`native-node.json`、节点env、client配置和`unified-node.json`；共同创世/协议承诺相同，
+每机的路径、端点、钥匙、DB/journal及资源设置分别绑定，不复制整份运行库/签票状态。
+
+## 6. 实施、回滚与恢复顺序（本轮未执行）
+
+1. A完成此草案与缺项表；用户确认拟用拓扑和下一阶段操作。当前不改网卡、时钟、规则或服务。
+2. 获准后处理A/C/D链路与时钟、核对B云带宽/规则，再沿原认证路径验证所有必要方向。
+3. A冻结共同源码，核验Windows/Linux程序、AOEM及实际共享合同；各机只消费固定包。
+   Windows统一SCM/task安装目前仍被原`novovmctl lifecycle`拒绝，不能用`sc create`假装已交付；
+   需沿原平台适配收口。B既有邮箱/Relay/Web/Docker不迁移，不混用其服务单元。
+4. 经批准才准备独立用途身份、完成资金/权限清单批准并计算唯一初始状态/创世，四机核对相同承诺。
+5. 激活另行批准；拟B→A→C→D逐机按原owner启动，等四机均就绪才供给交易。
+   这不改变法定门槛、不赋予B特殊共识权；常规重启保持原库`existing`，不自动`create`或重创世。
+6. 先验真实转账、到账再消费、费用/余额/nonce/权限/回执，再做独立重启、落后追赶和追赶中强杀恢复。
+   保留原库/journal/用途身份，不复制别机DB；2/4不得最终确认、3/4故障推进与四方收敛分别记录。
+7. 未激活时只保留/撤销本次程序选择，不改账本；激活后先停止问题候选的原owner、保全DB与签票日志，
+   首选相同合格版本开原库恢复。未证明跨版本兼容就暂停处理，不拿旧二进制强开新库、清库或倒退签票。
+
+原实现位置：[配置](../crates/novovm-node/src/native_pipeline/service/config.rs)、
+[初始化](../crates/novovm-node/src/native_pipeline/service/config/uca_genesis.rs)、
+[原lifecycle](../crates/novovmctl/src/commands/lifecycle/unified.rs)、
+[原Linux打包器](../scripts/novovm-package-product-linux.ps1)。不另建部署框架。
+
+## 7. 真实四机性能验收出口
+
+沿原负载器/SDK适配真实外部四节点的最终回执和恢复汇总；现有本地`ProductNodes`
+及transport-delivery成功不等于外部四机最终确认，这项适配尚未交付，不能靠替换四个IP宣称可跑。
+固定65536笔、1024付款账户×64笔、明确收款分布、1024行上限和8192持续在途；
+同字节与持续供给分别计时，签名/准备时间分别报告，保持四节点全部最终回执终点及完整经济核对。
+先全CPU，再对已经取得资格的GPU节点作明确覆盖范围对照；B没有GPU资格时仍显式CPU，
+不把局部GPU组叫“四机全GPU”，不同时切换业务执行后端。保留负向/慢样本、TPS/P95/P99、
+实际线上字节/包/补片、每节点CPU及链路条件。当前混合Wi-Fi/100M/公网与后续有线条件分别报告。
+
+**当前结论：基础回执已齐，统一草案已形成；还缺网络实施/可达性、共同制品资格、
+用途公钥与获批创世输入、Windows服务适配及外部四机负载闭环。不是新TPS、启链或正式发布签收。**
