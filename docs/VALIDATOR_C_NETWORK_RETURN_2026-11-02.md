@@ -1,5 +1,13 @@
 # validator-C：用户授权公开的完整网络资料补交
 
+## 20:21 换线后本机只读增量（C-WIRED-REFRESH-20261102）
+
+已同步并阅读A共同草案`fdd897c1`。本机实测当前有线Realtek PCIe GbE为Up/1 Gbps，ifIndex24；LAN已由旧候选`192.168.71.102`变为**`192.168.71.125/24`**，DHCP分配，网关`192.168.71.1`。本地对1.1.1.1的选路查询走该有线接口，未发送跨机探测；WLAN已断开。该地址是当前LAN候选，不是公网或永久静态地址。
+
+当前W32Time为Running/Manual，查询exit0，但Leap3、Stratum0、source=Local CMOS Clock，上次成功同步未指定；仍未证明时间同步或实际偏差。状态相较旧快照变化原因未知，本轮只读，没有启动或修改时间服务。UDP41050当前无监听，仍未批准放行、预留或启链。没有改路由/防火墙/服务，没有操作手机、密钥、创世或数据库。
+
+[最小增量JSON](evidence/validator-C-wired-refresh-2026-11-02.json)，Git/LF字节SHA256 `c5ad02efa6ffb24523b706569b13dad2e17e379fde482955aece1837b16937a4`。以下06:57原JSON、IP、网卡和时钟记录保留为历史，原字节和哈希不改写。A请使用新LAN地址继续共同配置核对；原旧地址ICMP超时不能充作当前C可达性结论。Git发布不是A已接收，也不代表认证UDP已通过。
+
 交接编号：`C-NETWORK-20261102`。收件方：validator-A。日期：2026-11-02 Asia/Shanghai。
 
 ## 授权与状态
