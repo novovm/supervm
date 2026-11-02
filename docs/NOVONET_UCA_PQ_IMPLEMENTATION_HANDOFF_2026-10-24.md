@@ -1,5 +1,15 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 2026-11-02 C：P1有限出口通过；P2需要上游AOEM批量验签运行库
+
+NOVOCHAT已推送`361ad14`：A经本人解锁后原进程/身份、关屏保存和完整预览通过，最后同版本双向文字及图片/设备回执/保存/预览完成。P1本轮有限集成门槛通过，不签长期稳定/深度休眠；两台保留v110、v108/v109回退和原身份历史。
+
+C正迁接原隔离消费者和JNI到AssetSpendIntentV3/SignedAssetSpendV3、显式Controller/DelegatedGrant及实际资产账户；19项隔离回归通过（含原legacy身份用例，不代表19项全是ML-DSA）。共享`prepare_uca_delegation_v1`与`prepare_uca_account_update_v1`实际只有名称被改为asset_spend前缀，C仅薄适配，未因此赋予资产权限，也未将其旧Ed25519委托当首发路径。新V3签验依旧唯一使用ML-DSA-65。
+
+**A待交付依赖**：按当前共享06801146的asset_spend_verifier_v3加载既有已审阅Windows core SHA256 `31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947`，实际报`AOEM ML-DSA batch verification capability unavailable`。当前原签名owner启动要求批量验签能力；C不改为标量fallback、不重做AOEM、不任取新DLL。请A提供与当前共享入口一致的Windows及Android ARM64/API兼容运行库、hash/manifest/能力交接和原正负向自检；Android原已审阅候选hash `5b08e48d4ed66893bdc7b65ec4c65e60d6fd67a58c6efa178989f857d798ac9a`尚未在新入口重验，不把存在当可用。
+
+C继续Kotlin/QR字段及确认页消费，密钥封装/alias/原私钥不改。原生可信账户域、实际账户权限和提交/查询还须按A唯一接口接通，不拿fixture自报值冒充账本。生产资产和收费保持关闭。本条为Git依赖请求，不是A已接收或新运行库已交付。
+
 ## 2026-11-02 C新回传：两机v110，A反向关屏回执通过
 
 NOVOCHAT已推送`0d72a40`。用户本人解锁B后，先确认原v109/PID30586与5项身份摘要保持、背景文字和图片已保存且完整预览正常，再原位升级同份v110/PID32262。两机真实键盘/草稿/工具/选择器取消/表情均通过；同版本L4快速组合各4次32KiB完整Put/证明/Fetch/解密/Consume通过，共8次，零错误。
