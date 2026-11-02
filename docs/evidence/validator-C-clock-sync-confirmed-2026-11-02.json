@@ -1,0 +1,192 @@
+{
+  "scope": "C finite NIC/IP and authorized OS time synchronization only",
+  "metadata": {
+    "measured_local": "2026-11-02T23:26:33.2720136+08:00",
+    "read_commit": "2bed397463e3d2b2a139b8c8f2043656ced1ba31",
+    "role": "validator-C",
+    "timezone": "China Standard Time",
+    "adapter": {
+      "name": "以太网",
+      "description": "Realtek PCIe GbE Family Controller",
+      "index": 24,
+      "status": "Up",
+      "link_speed": "1 Gbps"
+    },
+    "ipv4": [
+      {
+        "IPAddress": "192.168.71.125",
+        "PrefixLength": 24,
+        "Origin": "Dhcp"
+      }
+    ],
+    "gateway": [
+      "192.168.71.1"
+    ],
+    "service": {
+      "status": "Running",
+      "start_type": "Manual"
+    }
+  },
+  "success_result": {
+    "role": "validator-C",
+    "started_local": "2026-11-02T23:24:29.2989798+08:00",
+    "configured_source_changed": false,
+    "startup_changed": false,
+    "samples": [
+      {
+        "time": "2026-11-02T23:24:29.5213995+08:00",
+        "service": "Running",
+        "startup": "Manual",
+        "query_exit": 0,
+        "status_text": "Leap 指示符: 0(无警告)\r\n层次: 5 (次引用 - 与(S)NTP 同步)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.1183353s\r\n根分散: 7.7840859s\r\n引用 ID: 0x34E772B7 (源 IP:  52.231.114.183)\r\n上次成功同步时间: 2026/11/2 23:24:29\r\n源: time.windows.com,0x9 \r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0140598s\r\nClockRate: 0.0156250s\r\n计算机状态: 1 (等候)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 0 (成功地执行了命令。)\r\n上次成功同步时间后的时间: 0.0158509s\r\n\r\n"
+      }
+    ],
+    "synchronized": true,
+    "prior_debug": {
+      "FileLogName": "",
+      "FileLogEntries": "",
+      "FileLogSize": 0
+    },
+    "debug_enable": "正在将启用专用日志命令发送到本地计算机...\r\n成功地执行了命令。\r\n",
+    "reload_text": "成功地执行了命令。\r\n",
+    "reload_exit": 0,
+    "resync_text": "将 resync 命令发送到本地计算机\r\n成功地执行了命令。\r\n",
+    "resync_exit": 0,
+    "debug_disable": "正在向本地计算机发送禁用专用日志命令...成功地执行了命令。\r\n",
+    "finished_local": "2026-11-02T23:24:29.5484493+08:00"
+  },
+  "independent_recheck": {
+    "sample_local": "2026-11-02T23:25:15.452375+08:00",
+    "exit_code": 0,
+    "status_text": "Leap 指示符: 0(无警告)\n层次: 5 (次引用 - 与(S)NTP 同步)\n精度: -23 (每刻度 119.209ns)\n根延迟: 0.1183353s\n根分散: 7.7840859s\n引用 ID: 0x34E772B7 (源 IP:  52.231.114.183)\n上次成功同步时间: 2026/11/2 23:24:29\n源: time.windows.com,0x9 \n轮询间隔: 10 (1024s)\n\n相位偏移: 0.0140598s\nClockRate: 0.0156250s\n计算机状态: 1 (等候)\n时间源标志:0 (无)\n服务器角色: 0 (无)\n上次同步错误: 0 (成功地执行了命令。)\n上次成功同步时间后的时间: 45.9500844s\n\n"
+  },
+  "historical_attempts": {
+    "first_admin_attempt": {
+      "started_local": "2026-11-02T23:08:40.7754407+08:00",
+      "before": {
+        "local_time": "2026-11-02T23:08:40.8390622+08:00",
+        "service_status": "Running",
+        "service_start_type": "Manual",
+        "status_exit": 0,
+        "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n",
+        "source_exit": 0,
+        "source_text": "Local CMOS Clock\r\n"
+      },
+      "resync_exit": 0,
+      "resync_text": "将 resync 命令发送到本地计算机\r\n此计算机没有重新同步，因为时间服务被停止。\r\n",
+      "after": {
+        "local_time": "2026-11-02T23:08:53.4982692+08:00",
+        "service_status": "Stopped",
+        "service_start_type": "Manual",
+        "status_exit": -2147023834,
+        "status_text": "发生下列错误: 服务尚未启动。 (0x80070426)\r\n",
+        "source_exit": -2147023834,
+        "source_text": "发生下列错误: 服务尚未启动。 (0x80070426)\r\n"
+      },
+      "finished_local": "2026-11-02T23:08:53.4991328+08:00"
+    },
+    "restart_and_nowait": {
+      "started_local": "2026-11-02T23:11:16.2423254+08:00",
+      "resync_exit": 0,
+      "resync_text": "将 resync 命令发送到本地计算机\r\n成功地执行了命令。\r\n",
+      "first_sample": {
+        "time": "2026-11-02T23:11:16.5756561+08:00",
+        "service_status": "Running",
+        "startup_type": "Manual",
+        "query_exit": 0,
+        "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 0.0175961s\r\n\r\n"
+      },
+      "last_sample": {
+        "time": "2026-11-02T23:11:24.4741977+08:00",
+        "service_status": "Running",
+        "startup_type": "Manual",
+        "query_exit": 0,
+        "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 7.9210646s\r\n\r\n"
+      },
+      "finished_local": "2026-11-02T23:11:25.1922184+08:00"
+    },
+    "bounded_resync_retry": {
+      "role": "validator-C",
+      "started_local": "2026-11-02T23:14:20.9040897+08:00",
+      "source_changed": false,
+      "startup_changed": false,
+      "synchronized": false,
+      "source_text": "Local CMOS Clock\r\n",
+      "source_exit": 0,
+      "finished_local": "2026-11-02T23:15:57.6983418+08:00",
+      "attempts": [
+        {
+          "started": "2026-11-02T23:14:20.9172103+08:00",
+          "resync_text": "将 resync 命令发送到本地计算机\r\n此计算机没有重新同步，因为没有可用的时间数据。\r\n",
+          "resync_exit": 0,
+          "samples_count": 8,
+          "first_sample": {
+            "time": "2026-11-02T23:14:37.0008036+08:00",
+            "service": "Running",
+            "startup": "Manual",
+            "query_exit": 0,
+            "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 16.0512184s\r\n\r\n"
+          },
+          "last_sample": {
+            "time": "2026-11-02T23:14:51.2014974+08:00",
+            "service": "Running",
+            "startup": "Manual",
+            "query_exit": 0,
+            "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 30.2576854s\r\n\r\n"
+          }
+        },
+        {
+          "started": "2026-11-02T23:14:53.2099924+08:00",
+          "resync_text": "将 resync 命令发送到本地计算机\r\n此计算机没有重新同步，因为没有可用的时间数据。\r\n",
+          "resync_exit": 0,
+          "samples_count": 8,
+          "first_sample": {
+            "time": "2026-11-02T23:15:09.2551714+08:00",
+            "service": "Running",
+            "startup": "Manual",
+            "query_exit": 0,
+            "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 16.0242406s\r\n\r\n"
+          },
+          "last_sample": {
+            "time": "2026-11-02T23:15:23.4349660+08:00",
+            "service": "Running",
+            "startup": "Manual",
+            "query_exit": 0,
+            "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 30.2040702s\r\n\r\n"
+          }
+        },
+        {
+          "started": "2026-11-02T23:15:25.4384420+08:00",
+          "resync_text": "将 resync 命令发送到本地计算机\r\n此计算机没有重新同步，因为没有可用的时间数据。\r\n",
+          "resync_exit": 0,
+          "samples_count": 8,
+          "first_sample": {
+            "time": "2026-11-02T23:15:41.4741476+08:00",
+            "service": "Running",
+            "startup": "Manual",
+            "query_exit": 0,
+            "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 16.0196096s\r\n\r\n"
+          },
+          "last_sample": {
+            "time": "2026-11-02T23:15:55.6509374+08:00",
+            "service": "Running",
+            "startup": "Manual",
+            "query_exit": 0,
+            "status_text": "Leap 指示符: 3(未同步)\r\n层次: 0 (未指定)\r\n精度: -23 (每刻度 119.209ns)\r\n根延迟: 0.0000000s\r\n根分散: 0.0000000s\r\n引用 ID: 0x00000000 (未指定)\r\n上次成功同步时间: 未指定\r\n源: Local CMOS Clock\r\n轮询间隔: 10 (1024s)\r\n\r\n相位偏移: 0.0000000s\r\nClockRate: 0.0156250s\r\n计算机状态: 0 (unset)\r\n时间源标志:0 (无)\r\n服务器角色: 0 (无)\r\n上次同步错误: 1 (此计算机没有重新同步，因为没有可用的时间数据。)\r\n上次成功同步时间后的时间: 30.1965446s\r\n\r\n"
+          }
+        }
+      ]
+    }
+  },
+  "bounds": {
+    "ntp_source_changed": false,
+    "service_startup_type_changed": false,
+    "temporary_debug_logging_closed": true,
+    "full_hardware_inventory_repeated": false,
+    "firewall_routes_changed": false,
+    "validator_nodes_started": false,
+    "keys_genesis_databases_phones_changed": false,
+    "A_D_executed_remotely_by_C": false,
+    "group_relative_clock_offsets_verified": false
+  }
+}
