@@ -1,0 +1,112 @@
+{
+  "handoff_id": "D-NETWORK-CLOCK-REFRESH-20261102",
+  "host_label": "validator-D",
+  "hostname": "SUPERVM-L2-01",
+  "read_doc_commit": "fb4b8fa7084fe1e99be8210b35329a3ecb35e89a",
+  "checked_at_host_local": "2026-11-02T20:38:47.4038994+08:00",
+  "inventory_scope": "current adapters, IP configuration and Windows Time only; not a repeated machine inventory",
+  "interface": {
+    "alias": "以太网 2",
+    "description": "Marvell AQtion 10Gbit Network Adapter",
+    "ifIndex": 16,
+    "status": "Up",
+    "receive_link_bps": 1000000000,
+    "transmit_link_bps": 1000000000,
+    "ipv4": "192.168.71.59",
+    "prefix_length": 24,
+    "gateway": "192.168.71.1",
+    "actual_throughput_measured": false
+  },
+  "other_interfaces": [
+    {
+      "description": "Intel(R) Ethernet Controller I226-V",
+      "ifIndex": 8,
+      "status": "Disconnected"
+    },
+    {
+      "description": "Meta Tunnel",
+      "ifIndex": 44,
+      "status": "Up",
+      "ipv4": "198.18.0.1",
+      "prefix_length": 30,
+      "gateway": "198.18.0.2",
+      "virtual_reported_link_bps": 100000000000,
+      "physical_or_measured_throughput": false
+    },
+    {
+      "description": "Hyper-V Virtual Ethernet Adapter",
+      "ifIndex": 58,
+      "status": "Up",
+      "ipv4": "172.21.96.1",
+      "prefix_length": 20,
+      "virtual_reported_link_bps": 10000000000,
+      "physical_or_measured_throughput": false
+    }
+  ],
+  "clock_before": {
+    "service": "W32Time",
+    "status": "Running",
+    "start_type": "Auto",
+    "configured_type": "NTP",
+    "configured_peer": "time.windows.com,0x9",
+    "ntp_client_enabled": 1,
+    "special_poll_interval_seconds": 16384,
+    "status_query_exit": 0,
+    "leap_indicator": 3,
+    "stratum": 0,
+    "source": "Free-running System Clock",
+    "last_successful_sync_host_local": "2026/11/1 4:45:34",
+    "last_sync_error": 2,
+    "last_sync_error_detail": "Only stale time data was available",
+    "reported_phase_offset_seconds": -0.0037038,
+    "reported_phase_offset_is_current_cross_host_offset": false,
+    "actual_cross_host_clock_offset": "unknown",
+    "source_query_exit": -2147024891,
+    "source_query_error": "Access denied (0x80070005)",
+    "followup_status_checked_at_host_local": "2026-11-02T20:40:59.7312825+08:00",
+    "followup_status_unchanged": true,
+    "host_wall_clock_is_synchronized": false
+  },
+  "time_sync_authorization": {
+    "source": "Direct user instruction in validator-D chat on 2026-11-02",
+    "hosts": ["validator-A", "validator-C", "validator-D"],
+    "scope": "Start existing system time service if stopped, request synchronization and verify actual result",
+    "remote_management_enabled": false,
+    "a_and_c_action_delivery": "Shared Git handoff; local agents must execute and return results",
+    "a_and_c_executed_from_d": false,
+    "a_status_from_newly_fetched_handoff": "A reports successful local sync at 20:38:50, Leap 0, Stratum 5; not executed or independently measured by D",
+    "c_sync_result_from_shared_handoff": "pending"
+  },
+  "local_resync_attempt": {
+    "command": "w32tm /resync /rediscover",
+    "process_elevated": false,
+    "exit_code": -2147024891,
+    "error": "Access denied (0x80070005)",
+    "normal_uac_elevation_requested": true,
+    "elevated_process_started": false,
+    "elevated_result": "Start-Process RunAs returned: operation canceled by the user; no elevated resync executed",
+    "synchronization_accepted": false
+  },
+  "clock_after": {
+    "checked_at_host_local": "2026-11-02T20:43:13.5382435+08:00",
+    "service": "W32Time",
+    "status": "Running",
+    "start_type": "Auto",
+    "status_query_exit": 0,
+    "leap_indicator": 3,
+    "stratum": 0,
+    "source": "Free-running System Clock",
+    "last_successful_sync_host_local": "2026/11/1 4:45:34",
+    "last_sync_error": 2,
+    "reported_phase_offset_seconds": -0.0037828,
+    "reported_phase_offset_is_current_cross_host_offset": false,
+    "actual_cross_host_clock_offset": "unknown",
+    "host_wall_clock_is_synchronized": false,
+    "status_raw": "Leap 指示符: 3(未同步)\n层次: 0 (未指定)\n精度: -23 (每刻度 119.209ns)\n根延迟: 0.1228364s\n根分散: 4.1344055s\n引用 ID: 0x00000000 (未指定)\n上次成功同步时间: 2026/11/1 4:45:34\n源: Free-running System Clock\n轮询间隔: 10 (1024s)\n\n相位偏移: -0.0037828s\nClockRate: 0.0156250s\n计算机状态: 2 (同步)\n时间源标志:0 (无)\n服务器角色: 0 (无)\n上次同步错误: 2 (此计算机没有重新同步，因为只有陈旧的时间数据。)\n上次成功同步时间后的时间: 51700.5791346s\n\n"
+  },
+  "peer_connectivity_tested": false,
+  "local_time_service_started_or_reconfigured_by_this_round": false,
+  "routes_firewall_or_ntp_peer_configuration_changed": false,
+  "validator_or_other_application_service_controlled": false,
+  "keys_genesis_or_databases_created": false
+}

@@ -3,6 +3,33 @@
 Handoff: `A-PHYSICAL-4HOST-PREP-20261102`; return: `D-NETWORK-20261102`.
 Recipient: validator-A. Date: 2026-11-02, Asia/Shanghai.
 
+## Latest minimal adapter/IP and clock return
+
+At 20:38-20:43 on 2026-11-02 this D re-read only the current adapters, IPs and
+Windows Time, not the full machine inventory. Marvell interface 16 is Up with
+1 Gbps receive/transmit, IPv4 `192.168.71.59/24`, gateway `192.168.71.1`.
+Meta remains Up; its advertised virtual rate is not measured physical capacity.
+The original 100 Mbps observation below remains historical, not current.
+
+W32Time is already Running/Auto but still Leap 3, Stratum 0 and
+`Free-running System Clock`. The existing NTP peer is `time.windows.com,0x9`.
+The non-elevated `w32tm /resync /rediscover` returned access denied
+`0x80070005`. Normal UAC elevation was requested, but Start-Process returned
+"operation canceled by the user" and no elevated resync process started.
+The 20:43 follow-up still reports Leap 3, Stratum 0, Free-running and the old
+last successful sync `2026/11/1 4:45:34`; last sync error 2 reports stale data.
+This is not a successful synchronization or a measured cross-host offset;
+the retained phase-offset field is not current cross-host evidence.
+The user now explicitly authorizes A/C/D to start their original system time
+service and synchronize, without enabling remote management. The newly fetched
+A handoff records its own 20:38:50 success (Leap 0, Stratum 5); C's sync result
+is still pending. D did not execute either host's action. See the shared draft's time authorization
+and [minimal evidence](evidence/validator-D-network-clock-refresh-2026-11-02.json).
+No time-service start/reconfiguration, network rules, NTP peer configuration,
+application services or chain state were changed by this round. D still needs
+normal administrator confirmation before it can perform the authorized resync;
+A's acknowledgment of this new D return has not yet been received.
+
 ## User authorization and role correction
 
 The user explicitly designated THIS computer as validator-D and authorized
