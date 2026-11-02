@@ -1,0 +1,38 @@
+{
+  "handoff_id": "C-WIRED-REFRESH-20261102",
+  "host_label": "validator-C",
+  "read_doc_commit": "fdd897c1f72bc565bc9bf5a115a2bc3cefe4c458",
+  "checked_at_host_local": "2026-11-02T20:21:41.6828624+08:00",
+  "host_wall_clock_is_synchronized": false,
+  "interface": {
+    "alias": "以太网",
+    "description": "Realtek PCIe GbE Family Controller",
+    "ifIndex": 24,
+    "status": "Up",
+    "negotiated_link_bps": 1000000000,
+    "ipv4": "192.168.71.125",
+    "prefix_length": 24,
+    "origin": "DHCP",
+    "gateway": "192.168.71.1",
+    "selected_for_remote_route": "1.1.1.1 (local route lookup only; no connection test)"
+  },
+  "wlan": "Disconnected",
+  "superseded_lan_candidate": "192.168.71.102",
+  "clock": {
+    "service": "W32Time",
+    "status": "Running",
+    "start_type": "Manual",
+    "query_exit": 0,
+    "leap_indicator": 3,
+    "stratum": 0,
+    "source": "Local CMOS Clock",
+    "last_successful_sync": "unspecified",
+    "actual_clock_offset": "unknown"
+  },
+  "candidate_udp_port": 41050,
+  "candidate_udp_listener_count": 0,
+  "public_endpoint_or_NAT_mapping": "unknown",
+  "peer_connectivity_tested": false,
+  "services_routes_firewall_or_clock_changed": false,
+  "keys_genesis_or_databases_created": false
+}
