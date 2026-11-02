@@ -1,7 +1,7 @@
 # NOVOVM 四机共同配置草案
 
 编号：`NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102`。汇总负责人：validator-A。
-状态：**草案已汇总，非可运行配置，未授权接线或启链。**
+状态：**草案已汇总，所列只读核对已执行；非可运行配置，未部署或启链。**
 证据/源码核对基线：main `2623eb815505b20a75c08da40301a6896f8dd2ea`，
 不是最终运行源码或制品冻结。这里不生成密钥、创世、资金或伪造缺失参数。
 本文件是本轮唯一共同草案；各机回执保留为证据，不再各自设计另一份共同规则。
@@ -34,8 +34,8 @@ A尚未重新读取两机当前接口，若切换网卡，接线前只需复核�
 
 | 节点 | 当前已知物理链路 | LAN/公网候选 | 时钟证据及待处理项 |
 | --- | --- | --- | --- |
-| A | BE200 Wi-Fi；本轮`Get-NetAdapter`为866.7 Mbps，旧780 Mbps是历史快照；I226-V有线未连接 | LAN `192.168.71.74/24`，网关`192.168.71.1`；公网映射未知 | W32Time已Running/Manual；18:54查询Leap=3、Stratum=0、Local CMOS Clock，仍未同步；source单独查询拒绝访问 |
-| B | 云VM虚拟网卡；实例带宽上限、突发/计费和实际链路能力尚未核对，不编造千兆 | 公网`47.103.59.206`；内网`172.16.0.48`来自既有回执 | 安装时NTP synced=yes；正式实验前保留新的源/同步证据 |
+| A | BE200 Wi-Fi；20:04再次读取为866.7 Mbps，旧780 Mbps是历史快照；I226-V有线未连接 | LAN `192.168.71.74/24`，网关`192.168.71.1`；公网映射未知 | 20:04 W32Time为Stopped/Manual，status返回0x80070426；18:54 Running但未同步为历史，不推断停止原因或实际偏差 |
+| B | 用户随后提供同一实例控制台截图：公网带宽10 Mbps（峰值）、按使用流量计费；内网规格另见本节核对 | 公网`47.103.59.206`；SSH再次核对内网`172.16.0.48` | 20:04/20:06 NTP synced=yes；chrony stratum3、Leap Normal，系统对源偏差约+22.426微秒，不是四机对时证明 |
 | C | 用户最新确认1000 Mbps；当前接口未回读。06:57的AX211 Wi-Fi144.4 Mbps/有线未连接仅作历史 | 旧LAN候选`192.168.71.102/24`，实施前复核是否变化；公网/NAT映射未知 | 回执W32Time stopped，尚无后续同步/偏差证明 |
 | D | 用户最新确认1000 Mbps；08:54的Marvell AQtion100 Mbps仅作历史 | 旧LAN候选`192.168.71.59/24`，实施前复核是否变化；公网/NAT映射未知 | 回执W32Time运行但Free-running、Leap=3/Stratum=0，尚无后续同步证明 |
 
@@ -48,11 +48,33 @@ C/D原144.4/100 Mbps的低速状态不再列为当前待修阻断，也不把千
 - 当前混合拓扑：A仍为Wi-Fi快照，C/D已由用户确认千兆，当前接口待回读；
   如实标注VPN/NAT及各自负载，不把混合条件称全有线容量上限。
 - 受控容量拓扑：条件允许时A接入有线；C/D在已有千兆条件下核对实际接口与稳定性，
-  不再要求重复升速。B核对云带宽；需修改的事项另按批准操作，不在草案阶段修改。
+  不再要求重复升速。B当前公网峰值10 Mbps，不能把该限制下的成绩当无限带宽容量；
+  是否调高峰值及相应费用另行确认，不自行更改计费或采购配置。
 
 不强制所有普通用户使用有线，也不靠强制网卡速率、关闭防火墙/VPN或扩大超时换成绩。
 A/C/D时钟需沿原系统时间服务处理，B同时核对；记录源、最后同步和可测偏差，
 不自创新的协议时差阈值。交易耗时用驱动单调时钟，跨机墙钟仅辅助对齐，不直接相减当微秒性能。
+
+### 20:04—20:12实际核对（本轮未修配置）
+
+- A本机读取接口/IP/时间服务；经原严格host-key SSH核对B，无新密钥或管理通道。
+  B原邮箱、Relay、Nginx、Docker仍active且PID分别为944911/958/3967403/1414，未重启。
+- B `chronyc tracking`最后参考时间为UTC11:59:52，Leap Normal、Stratum3；
+  `ethtool eth0`只返回Link detected=yes，Speed/duplex unknown，不能据虚拟网卡推断公网千兆。
+- B白名单元数据查询只读取实例规格和网络字段：型号`ecs.u1-c1m2.large`，
+  `instance/max-netbw-egress=1024000`，`public-ipv4`查询404。没有读取RAM凭证、user-data或口令。
+  [阿里云字段定义](https://help.aliyun.com/en/ecs/user-guide/view-instance-metadata/)说明这个值是
+  **实例规格最大内网出带宽，单位Kbit/s**，不是公网购买值；404也不推翻已核验的公网SSH地址。
+- 服务器无aliyun CLI；浏览器访问工具返回native pipe拒绝访问/browser access host unavailable，
+  没有读取到控制台页面。用户随后发来的已登录同一实例截图直接显示**公网10 Mbps（峰值）、按流量计费**，
+  此项现已确认，不再请求用户重复提供，也不声称A已实际操作控制台。
+  [阿里云带宽说明](https://www.alibabacloud.com/help/en/ecs/user-guide/network-bandwidth/)区分公网购买的出带宽与内网带宽。
+  入方向限制/实际吞吐仍不能由这两项值直接推定。
+- A对D回执地址`192.168.71.59`发送2次ICMP，2次回应，3—5 ms；
+  对C旧地址`192.168.71.102`发送2次均超时，随后邻居状态Unreachable。
+  这不证明C掉线或防火墙一定拦截，尤其C可能在切换网卡后换了IP；D结果也仅证明该地址ICMP往返。
+- 这些结果只约束接下来的真实四机实验；**B公网10 Mbps不能解释此前单机四进程的2.6K成绩**。
+  无带宽升级、时间同步、规则修改、监听器/节点启动或吞吐压测。
 
 ## 3. 路由、端口与规则草案
 
@@ -68,8 +90,10 @@ A/C/D时钟需沿原系统时间服务处理，B同时核对；记录源、最�
 
 A本轮本地路由查询：到C/D走WLAN、同网段on-link；到B公网走Meta，源`198.18.0.1`。
 D回执到B也选Meta。路由选择不是实际发包或可达证明；TUN虚拟地址不能公告为公网端点。
-A本轮41050未见UDP监听；C/D为各自采样时未监听，B仅有较早候选记录，均需实施前再次核对，
-不再请求整份基础回执。B现有41000、43171/43173等原服务端口保留，不挪用。
+A本轮41050未见UDP监听；B本轮`ss -lun`也未见41050监听，41000/43171/43173仍被原服务使用。
+B `ufw status verbose`显示active、默认deny incoming，当前显式规则未列41050；
+`iptables -S INPUT`为DROP并跳转UFW链。主机端尚无该候选端口的新入站放行，云安全组未核验。
+C/D仍仅有旧监听快照，接线前复核，不再请求整份基础回执。不挪用B原服务端口。
 
 配置实施前所需的最小差额：
 
@@ -79,6 +103,21 @@ A本轮41050未见UDP监听；C/D为各自采样时未监听，B仅有较早候�
 - 家庭网关：确认公网可达条件与必要UDP映射；若是CGNAT，明确记录直接入站不可用，
   评估原有路径适配而不是假填WAN地址、另建UDP或静默走WSS/Relay。
 - 获准接线后，逐一记录A↔B、A↔C、A↔D、B↔C、B↔D、C↔D的认证UDP双向结果，当前全部未验。
+
+现有A SSH配置只有B，没有可供本轮使用的C/D远程管理入口。
+因此A不能从ping推断两机当前网卡、时间服务或UDP监听。C/D的Codex只需在本机执行下列
+只读增量并回传节点标签、时间和结果，不重做基础清点、不启用远程管理、不发私钥：
+
+```powershell
+Get-NetAdapter | Where-Object Status -eq Up | Select-Object Name,InterfaceDescription,ifIndex,LinkSpeed
+Get-NetIPConfiguration | Where-Object IPv4DefaultGateway | Select-Object InterfaceAlias,@{n='IPv4';e={$_.IPv4Address.IPAddress}},@{n='Gateway';e={$_.IPv4DefaultGateway.NextHop}}
+Get-Service W32Time | Select-Object Name,Status,StartType
+w32tm /query /status
+Get-NetUDPEndpoint | Where-Object LocalPort -eq 41050 | Select-Object LocalAddress,LocalPort,OwningProcess
+```
+
+原认证UDP探测需要两端原owner和合法身份。当前41050无监听、尚无共同用途身份，不能把
+裸发包/超时当认证结果，不另写UDP echo、不生成旧算法探测钥来绕开原入口。
 
 ## 4. 制品与原入口
 
@@ -124,7 +163,8 @@ A本轮41050未见UDP监听；C/D为各自采样时未监听，B仅有较早候�
 ## 6. 实施、回滚与恢复顺序（本轮未执行）
 
 1. A完成此草案与缺项表；用户确认拟用拓扑和下一阶段操作。当前不改网卡、时钟、规则或服务。
-2. 获准后复核A/C/D实际接口/IP与时钟、核对B云带宽/规则，再沿原认证路径验证所有必要方向。
+2. 用户已要求立即核对：A/B当前状态与所列ICMP已读测，C/D本机只读增量待回传；
+   时钟/精确规则等实际变更另获批准后执行，再沿原认证路径验证所有必要方向。
    C/D已由用户确认千兆，不再按旧144.4/100 Mbps安排重复升速。
 3. A冻结共同源码，核验Windows/Linux程序、AOEM及实际共享合同；各机只消费固定包。
    Windows统一SCM/task安装目前仍被原`novovmctl lifecycle`拒绝，不能用`sc create`假装已交付；
