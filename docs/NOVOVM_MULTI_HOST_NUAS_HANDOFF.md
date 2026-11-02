@@ -1,5 +1,12 @@
 # A–G 设备交接：原生 NUAS 多机公测
 
+**2026-11-02 当前validator-D角色更正与授权网络回传：** 用户在本机明确将
+Windows/ASUS `SUPERVM-L2-01`指定为validator-D，并允许将本次网络资料推GitHub交A。
+已从`41782197`快进到`46054c8e`，只读清点及公开网络JSON见
+[D回传](VALIDATOR_D_NETWORK_RETURN_2026-11-02.md)。本机不是下方历史Linux/Ryzen或
+DGX Spark D；原回执和制品保留但不替本机背书，A需协调旧设备标签，不能共用签票身份。
+本次仅登记角色，不改系统主机名/密钥，不构建、部署、改规则或启链；A尚待接收回执。
+
 **2026-11-02 C网络资料补交（用户明确允许上传GitHub）：** 本轮允许公开C地址、端口、路由及相关网络规则，覆盖下方对此次元数据仅私下交付的限制；秘密材料仍禁止。完整本机实测和B历史管理入口见[C网络回传](VALIDATOR_C_NETWORK_RETURN_2026-11-02.md)及随附JSON。A请合并本轮A/D与B当前安全组，回传接收提交/证据哈希和下一阶段；未改规则、未跨机探测、未部署启链，不是四机已通。
 
 **2026-11-02 validator-C 更新回传：** 本机再次确认角色validator-C，main已快进到`384afc4e`并读取最新统一提示/模板；实测资源、变更的LAN地址、时钟和待输入项见[C同步回执](VALIDATOR_C_SYNC_RECEIPT_2026-11-02.md)。没有构建/启链/清理或操作手机，不以本次同步替代全组固定版本确认。
@@ -49,7 +56,7 @@ B实际统一语义CPU验签通过；未启链、未注册/启用新服务、未
 | A | 当前Windows共享实现/集成主机 | 2026-11-02本机只读清点完成，见下表 |
 | B | 用户确认既有阿里云设备；历史系统Ubuntu，保留邮箱、Relay、Web | 身份不再待定；当前资源/版本由B回传 |
 | C | Windows手机调试笔记本；保护NOVOCHAT/ADB/手机 | 11月2日本机回执已到main，A已读取，见下链 |
-| D | 用户更正为NVIDIA DGX Spark / Ubuntu，保护AI任务 | ARM64平台与工具链/库由D回报，不套用旧Ryzen包 |
+| D | 用户本轮指定当前Windows/ASUS `SUPERVM-L2-01`；Ryzen 9 9950X/x86_64 | [本轮回传](VALIDATOR_D_NETWORK_RETURN_2026-11-02.md)；历史Linux/DGX标签待A协调，不复用其包/密钥或平台资格 |
 
 参考材料曾误列B为Windows、C为Linux，不据此交换既有标签。
 [C本机回执](VALIDATOR_C_SYNC_RECEIPT_2026-11-02.md)在`537b04f8`已随main保留；
