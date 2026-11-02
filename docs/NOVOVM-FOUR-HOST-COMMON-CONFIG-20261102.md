@@ -40,7 +40,7 @@ C已在20:21由本机回读有线接口和变化的LAN地址，见[C最小增量
 | A | BE200 Wi-Fi；20:04再次读取为866.7 Mbps，旧780 Mbps是历史快照；I226-V有线未连接 | LAN `192.168.71.74/24`，网关`192.168.71.1`；公网映射未知 | 用户授权后20:38:50同步成功；Running/Manual，time.windows.com，Leap0/Stratum5，最后同步错误0；不是四机相对偏差证明 |
 | B | 用户随后提供同一实例控制台截图：公网带宽10 Mbps（峰值）、按使用流量计费；内网规格另见本节核对 | 公网`47.103.59.206`；SSH再次核对内网`172.16.0.48` | 20:04/20:06 NTP synced=yes；chrony stratum3、Leap Normal，系统对源偏差约+22.426微秒，不是四机对时证明 |
 | C | 本机20:21实读Realtek PCIe GbE有线Up/1 Gbps，ifIndex24；WLAN断开，旧AX211144.4 Mbps保留为历史 | 当前LAN `192.168.71.125/24`（DHCP），网关`192.168.71.1`；A随后ICMP往返通过；公网/NAT映射未知 | 20:21 W32Time Running/Manual、Leap3/Stratum0、Local CMOS Clock；最新已获校时授权，待本机执行回传 |
-| D | 20:38/20:43本机实读Marvell AQtion有线Up/1 Gbps收发，ifIndex16；旧100 Mbps仅作历史 | 当前LAN `192.168.71.59/24`，网关`192.168.71.1`；公网/NAT映射未知 | W32Time Running/Auto，20:43仍Free-running、Leap3/Stratum0；普通resync被0x80070005拒绝，正常UAC启动返回操作已取消，未执行提升权限校时，尚未同步 |
+| D | 20:38/20:43本机实读Marvell AQtion有线Up/1 Gbps收发，ifIndex16；旧100 Mbps仅作历史 | 当前LAN `192.168.71.59/24`，网关`192.168.71.1`；公网/NAT映射未知 | 用户返回后重试正常UAC，23:08:46同步成功；23:08/23:09两次复核Running/Auto、time.windows.com、Leap0/Stratum5、最后错误0；旧权限失败/取消记录保留，不是四机偏差证明 |
 
 这些值不是同时采样、不是独占可用带宽，也不是应用吞吐。Wi-Fi可能受共享空口、
 信号、重试和双向竞争影响，不能直接按协商数字比较实际吞吐。
@@ -170,8 +170,12 @@ D已按授权尝试原命令：普通权限返回`0x80070005`，随后正常UAC�
 “操作已被用户取消”，提升权限进程未启动。20:43复核仍Running/Auto、Leap3/Stratum0、
 Free-running，最后成功记录仍为11月1日04:45:34，最后错误2为陈旧时间数据。
 [D最小证据](evidence/validator-D-network-clock-refresh-2026-11-02.json)保留前后状态和失败，
-不把旧phase offset当本次跨机偏差。D仍需正常管理员确认，不重设服务、换NTP源或绕过UAC；
-A的成功不能代签C/D，Git回传不等于A已接收本轮D结果。
+不把旧phase offset当本次跨机偏差。上述失败保留为历史：用户返回后明确要求重试，
+正常UAC获准，原resync命令exit0；23:08:57和23:09:43均回读Leap0/Stratum5、
+Running/Auto、source `time.windows.com,0x9`（参考IP52.231.114.183）、最后成功23:08:46、
+最后错误0。服务本已运行，无重启/启动类型/时间源变更；`-0.3831968s`仅是报告的源相位值，
+不是四机互相偏差或长期精度验收。D的待管理员确认阻断已解除，C结果仍按自身回执；
+Git回传不等于A已接收本次D成功，也不替代认证UDP与全组验收。
 
 唯一运行链为`novovm-node(native_execution_tick) → novovm-exec → aoem-bindings → AOEM`，
 网络仍是原NativeChannel/NativeLifecycle/NovoRUDP/APFL；不新增HTTP交易入口或另一套执行器。
@@ -215,7 +219,7 @@ A的成功不能代签C/D，Git回传不等于A已接收本轮D结果。
 ## 6. 实施、回滚与恢复顺序（本轮未执行）
 
 1. A完成此草案与缺项表；用户确认拟用拓扑和下一阶段操作。A/C/D原系统校时及B精确规则已按上文分别获准，不扩展到其他网络/服务变更。
-2. A/B当前状态与所列ICMP已核对，C/D本机网卡/IP/时钟增量已回传；A已同步，C结果待回传，D校时受权限确认阻断。
+2. A/B当前状态与所列ICMP已核对，C/D本机网卡/IP/时钟增量已回传；A与D各自报告同步成功，C结果待回传，不等于全组对时已验。
    继续原授权校时并回传实际结果；其他规则等变更另获批准后执行，再沿原认证路径验证所有必要方向。
    C/D已由用户确认千兆，不再按旧144.4/100 Mbps安排重复升速。
 3. A冻结共同源码，核验Windows/Linux程序、AOEM及实际共享合同；各机只消费固定包。

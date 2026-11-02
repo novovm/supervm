@@ -5,13 +5,25 @@ Recipient: validator-A. Date: 2026-11-02, Asia/Shanghai.
 
 ## Latest minimal adapter/IP and clock return
 
+**23:08-23:09 update:** The user returned and explicitly requested another normal
+UAC attempt. `w32tm /resync /rediscover` then exited 0. Status queries at
+23:08:57 and 23:09:43 both exited 0 and reported Running/Auto, Leap 0,
+Stratum 5, source `time.windows.com,0x9` (reference IP `52.231.114.183`),
+last successful sync `2026/11/2 23:08:46` and last sync error 0.
+The original service was already running; no restart, startup-type or NTP-peer
+change was needed. The reported phase offset `-0.3831968s` is a source-relative
+status field, not a measured A/C/D offset or a long-term accuracy qualification.
+This successful D result supersedes the pending D state below; the earlier
+permission failure and canceled UAC request remain historical evidence in the
+same JSON. No A acknowledgment of this new success has yet been received.
+
 At 20:38-20:43 on 2026-11-02 this D re-read only the current adapters, IPs and
 Windows Time, not the full machine inventory. Marvell interface 16 is Up with
 1 Gbps receive/transmit, IPv4 `192.168.71.59/24`, gateway `192.168.71.1`.
 Meta remains Up; its advertised virtual rate is not measured physical capacity.
 The original 100 Mbps observation below remains historical, not current.
 
-W32Time is already Running/Auto but still Leap 3, Stratum 0 and
+At that earlier sampling W32Time was Running/Auto but still Leap 3, Stratum 0 and
 `Free-running System Clock`. The existing NTP peer is `time.windows.com,0x9`.
 The non-elevated `w32tm /resync /rediscover` returned access denied
 `0x80070005`. Normal UAC elevation was requested, but Start-Process returned
@@ -26,9 +38,9 @@ A handoff records its own 20:38:50 success (Leap 0, Stratum 5); C's sync result
 is still pending. D did not execute either host's action. See the shared draft's time authorization
 and [minimal evidence](evidence/validator-D-network-clock-refresh-2026-11-02.json).
 No time-service start/reconfiguration, network rules, NTP peer configuration,
-application services or chain state were changed by this round. D still needs
-normal administrator confirmation before it can perform the authorized resync;
-A's acknowledgment of this new D return has not yet been received.
+application services or chain state were changed by the earlier failed attempt.
+Its administrator-confirmation blocker was resolved by the successful retry
+recorded above; the original failure is not erased or retroactively marked passed.
 
 ## User authorization and role correction
 
