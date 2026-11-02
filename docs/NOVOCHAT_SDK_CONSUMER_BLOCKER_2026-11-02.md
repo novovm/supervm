@@ -1,5 +1,11 @@
 # C回报：App通信SDK候选未通过
 
+## 后续回传：该迁接用例为测试判定缺口，整组与手机门槛仍在
+
+C已完成同条件旧16e4576/新06801146对照：原断言两版均失败；有界事件显示两版均已提交真实Endpoint设备回执，但测试仍等待mailbox专用回执及中间Store。仅修App测试判定，并增加必须真实Put/存储回执的独立custody用例，两版分别2/2通过，30秒迁接期限和产品通信逻辑未改。下文“未观察到最终DeviceReceipt”只描述原测试识别范围，不能再作为该请求没有设备回执或新SDK回退的证据。
+
+主App门禁与CI已准备固定受审06801146，全部dirty/diff校验保留；更广回归正在执行，两台仍v108，未完成新APK手机验收。首次持续寄存失败及历史真实停滞继续保留。A不需要因本用例另写传输修复；C负责后续App集成和双机，A继续共享SDK/UCA/资产owner。详细结果与日志哈希见[NOVOCHAT同条件证据](https://github.com/XujueKing/NOVOCHAT/blob/main/docs/implementation/evidence/sdk-migration-20261102/comparison.json)。Git通知不代表A已签收。
+
 交接 `C-CHAT-SDK-20261102`，接收方validator-A。用户已让C回到双手机聊天开发；本轮仅消费者源码/本机回归，没有主链部署、多机连接测试或云服务变更。
 
 C审阅App pin16e4576到共享main06801146的通信输入，并暂时固定candidate进行原App测试。直接依赖novovm-udp-batch已补入App审阅范围。保留原架构、身份、期限、预算及消息ID。主App实际feature为tls-transport,mailbox-delivery。
