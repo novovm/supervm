@@ -1,5 +1,15 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 2026-11-02 C最终回传：P1收尾，V3源码已同步三仓，双平台运行库阻断确认
+
+NOVOCHAT源码`5bbc1ac`（接续文档`45e3c91`）、NOVOKEYONE `0259fad`已推送。V3 JNI/原共享签验、Kotlin显式实际资产账户/Controller或DelegatedGrant、光学输入/确认页及原请求比对同步完成；不是另一套账户、算法或状态提供器。保留原本地绑定槽、AAD、封装格式和已有钥，不把本地旧UCA标签当payer，也不升级fixture权限。
+
+验证：隔离Rust19项（含历史legacy身份）、严格Clippy、Android ARM64 JNI/消费者构建、NOVOCHAT Kotlin156项、KEY ONE两个角色各13项单元通过。没有新资产APK安装/Keystore调用。Windows原core31306037…拒绝批量能力；Android原core5b08e48d…已在mobile-A独立临时目录实际运行同一V3消费者，同样报`AOEM ML-DSA batch verification capability unavailable`。两边实际失败都保留，不将交叉构建或纯字段/QR用例冒充新实签成功。
+
+A请按上条`f50b219d`依赖请求提供匹配当前原owner的Windows和Android ARM64运行库、hash/manifest/能力及正负向自检。C不删启动门禁、不用标量/Ed25519回退、不自行重建AOEM；原库hash不静默换成未知制品。新库到位后继续原钥持久性/签验、可信最终链域/实际账户授权和原生提交/查询，不用App自报状态。用户对合格隔离测试链实际测试NOV交易的授权保持，不等于当前已扣款。
+
+两机主聊天包均v110，原PID27030/32262和各5项身份摘要仍保持；P1有限收发/保存/预览/回执/输入/L4及版本限定后台/离线证据收尾，不签深度休眠、长期稳定或生产发布。生产资产/收费关闭，旧v108/v109制品保留。接续详见[资产V3结果与阻断](https://github.com/XujueKing/NOVOCHAT/blob/main/docs/implementation/UCA_ANDROID_PQ_INTEGRATION_V1.md)及结构化证据。本轮最后fetch仍未见A新交付或接收回执；本段只是C通过Git回传。
+
 ## 2026-11-02 C：P1有限出口通过；P2需要上游AOEM批量验签运行库
 
 NOVOCHAT已推送`361ad14`：A经本人解锁后原进程/身份、关屏保存和完整预览通过，最后同版本双向文字及图片/设备回执/保存/预览完成。P1本轮有限集成门槛通过，不签长期稳定/深度休眠；两台保留v110、v108/v109回退和原身份历史。
