@@ -12,8 +12,8 @@ use crate::{
 #[tokio::test(flavor = "current_thread")]
 async fn drained_network_hash_progress_starts_real_work_without_idle_timer() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let server_key = SigningKey::from_bytes(&[61; 32]);
-    let client_key = SigningKey::from_bytes(&[62; 32]);
+    let server_key = TransportIdentity::from_bytes(&[61; 32]);
+    let client_key = TransportIdentity::from_bytes(&[62; 32]);
     let server_socket = UdpSocket::bind("127.0.0.1:0")?;
     let client_socket = UdpSocket::bind("127.0.0.1:0")?;
     let server_address = server_socket.local_addr()?;
@@ -38,7 +38,7 @@ async fn drained_network_hash_progress_starts_real_work_without_idle_timer() -> 
         endpoint(
             server_socket,
             server_key.clone(),
-            client_key.verifying_key().to_bytes(),
+            client_key.public_key().to_vec(),
             client_address,
         )?,
         false,
@@ -47,7 +47,7 @@ async fn drained_network_hash_progress_starts_real_work_without_idle_timer() -> 
         endpoint(
             client_socket,
             client_key,
-            server_key.verifying_key().to_bytes(),
+            server_key.public_key().to_vec(),
             server_address,
         )?,
         false,
@@ -73,7 +73,7 @@ async fn drained_network_hash_progress_starts_real_work_without_idle_timer() -> 
     let service = MailboxServiceV1::new(store, server_key.clone());
     service.set_resources_available(true).await?;
     let mut client =
-        NativeMailboxClient::attach(&mut client_link, 0, server_key.verifying_key().to_bytes())?;
+        NativeMailboxClient::attach(&mut client_link, 0, server_key.public_key().to_vec())?;
     let request = client.begin(
         0,
         vec![MailboxRequestV1::Put {
@@ -124,7 +124,10 @@ async fn drained_network_hash_progress_starts_real_work_without_idle_timer() -> 
         readiness,
         &service,
         &stop,
-        Admission::Udp(admission),
+        Admission::Udp {
+            slots: admission,
+            wire_ceiling: None,
+        },
         None,
         || Ok(()),
     ));

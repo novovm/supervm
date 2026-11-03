@@ -2276,11 +2276,11 @@ mod tests {
     use crate::duplex::{
         novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
         product_overlay::{
-            peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
+            peer_id_from_mldsa65_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
             NodeHandshakeInitiatorV1, NodeHandshakeResponderV1,
         },
     };
-    use ed25519_dalek::SigningKey;
+    use crate::product_overlay::TransportIdentity;
 
     #[derive(Default)]
     struct DeliveryWakeCounter(AtomicUsize);
@@ -2296,12 +2296,11 @@ mod tests {
     }
 
     pub(super) fn authenticate_to_relay(
-        node_identity: &SigningKey,
-        relay_identity: &SigningKey,
+        node_identity: &TransportIdentity,
+        relay_identity: &TransportIdentity,
         now_ms: u64,
     ) -> AuthenticatedPeerV1 {
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(node_identity, relay_peer_id, now_ms, 5_000)
                 .expect("start relay auth");
@@ -2319,12 +2318,11 @@ mod tests {
     }
 
     fn peer_channels(
-        initiator_identity: &SigningKey,
-        responder_identity: &SigningKey,
+        initiator_identity: &TransportIdentity,
+        responder_identity: &TransportIdentity,
         now_ms: u64,
     ) -> (E2eSecureChannelV1, E2eSecureChannelV1) {
-        let responder_peer_id =
-            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let responder_peer_id = peer_id_from_mldsa65_public_key_v1(responder_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(initiator_identity, responder_peer_id, now_ms, 5_000)
                 .expect("start peer handshake");
@@ -2377,9 +2375,9 @@ mod tests {
 
     #[tokio::test]
     async fn armed_lookahead_retains_quota_and_both_lane_receive_orders() {
-        let relay = SigningKey::from_bytes(&[130; 32]);
-        let source = SigningKey::from_bytes(&[131; 32]);
-        let target = SigningKey::from_bytes(&[132; 32]);
+        let relay = TransportIdentity::from_bytes(&[130; 32]);
+        let source = TransportIdentity::from_bytes(&[131; 32]);
+        let target = TransportIdentity::from_bytes(&[132; 32]);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
             session_queue_capacity: 4,
             active_queue_total: 8,
@@ -2514,9 +2512,9 @@ mod tests {
 
     #[tokio::test]
     async fn empty_armed_inbox_wakes_for_both_lanes_but_not_rejected_source() {
-        let relay = SigningKey::from_bytes(&[133; 32]);
-        let source = SigningKey::from_bytes(&[134; 32]);
-        let target = SigningKey::from_bytes(&[135; 32]);
+        let relay = TransportIdentity::from_bytes(&[133; 32]);
+        let source = TransportIdentity::from_bytes(&[134; 32]);
+        let target = TransportIdentity::from_bytes(&[135; 32]);
         let manager =
             ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default()).unwrap();
         let (registration, _source_inbox) = manager
@@ -2601,9 +2599,9 @@ mod tests {
 
     #[tokio::test]
     async fn replaced_session_lookahead_stays_owned_and_counted_until_drop() {
-        let relay = SigningKey::from_bytes(&[136; 32]);
-        let source = SigningKey::from_bytes(&[137; 32]);
-        let target = SigningKey::from_bytes(&[138; 32]);
+        let relay = TransportIdentity::from_bytes(&[136; 32]);
+        let source = TransportIdentity::from_bytes(&[137; 32]);
+        let target = TransportIdentity::from_bytes(&[138; 32]);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
             session_queue_capacity: 1,
             active_queue_total: 1,
@@ -2709,9 +2707,9 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_sessions_forward_end_to_end_ciphertext() {
-        let relay_identity = SigningKey::from_bytes(&[60u8; 32]);
-        let node_a_identity = SigningKey::from_bytes(&[61u8; 32]);
-        let node_b_identity = SigningKey::from_bytes(&[62u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[60u8; 32]);
+        let node_a_identity = TransportIdentity::from_bytes(&[61u8; 32]);
+        let node_b_identity = TransportIdentity::from_bytes(&[62u8; 32]);
         let auth_a = authenticate_to_relay(&node_a_identity, &relay_identity, 1_000);
         let auth_b = authenticate_to_relay(&node_b_identity, &relay_identity, 1_000);
         let (mut channel_a, mut channel_b) =
@@ -2754,9 +2752,9 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_sessions_relay_signed_peer_handshake_without_payload_access() {
-        let relay_identity = SigningKey::from_bytes(&[73u8; 32]);
-        let node_a_identity = SigningKey::from_bytes(&[74u8; 32]);
-        let node_b_identity = SigningKey::from_bytes(&[75u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[73u8; 32]);
+        let node_a_identity = TransportIdentity::from_bytes(&[74u8; 32]);
+        let node_b_identity = TransportIdentity::from_bytes(&[75u8; 32]);
         let auth_a = authenticate_to_relay(&node_a_identity, &relay_identity, 5_000);
         let auth_b = authenticate_to_relay(&node_b_identity, &relay_identity, 5_000);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default())
@@ -2769,8 +2767,7 @@ mod tests {
             .register_authenticated_session(auth_b, 5_100)
             .await
             .expect("register b");
-        let node_b_peer_id =
-            peer_id_from_ed25519_public_key_v1(&node_b_identity.verifying_key().to_bytes());
+        let node_b_peer_id = peer_id_from_mldsa65_public_key_v1(node_b_identity.public_key());
         let offer =
             NodeHandshakeInitiatorV1::start(&node_a_identity, node_b_peer_id.clone(), 5_200, 5_000)
                 .expect("start peer offer")
@@ -2798,9 +2795,9 @@ mod tests {
 
     #[tokio::test]
     async fn stale_replaced_session_cannot_send() {
-        let relay_identity = SigningKey::from_bytes(&[63u8; 32]);
-        let node_identity = SigningKey::from_bytes(&[64u8; 32]);
-        let target_identity = SigningKey::from_bytes(&[65u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[63u8; 32]);
+        let node_identity = TransportIdentity::from_bytes(&[64u8; 32]);
+        let target_identity = TransportIdentity::from_bytes(&[65u8; 32]);
         let first = authenticate_to_relay(&node_identity, &relay_identity, 2_000);
         let second = authenticate_to_relay(&node_identity, &relay_identity, 2_100);
         let target = authenticate_to_relay(&target_identity, &relay_identity, 2_100);
@@ -2840,9 +2837,9 @@ mod tests {
 
     #[tokio::test]
     async fn offline_queue_drains_on_authenticated_reconnect() {
-        let relay_identity = SigningKey::from_bytes(&[66u8; 32]);
-        let node_a_identity = SigningKey::from_bytes(&[67u8; 32]);
-        let node_b_identity = SigningKey::from_bytes(&[68u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[66u8; 32]);
+        let node_a_identity = TransportIdentity::from_bytes(&[67u8; 32]);
+        let node_b_identity = TransportIdentity::from_bytes(&[68u8; 32]);
         let auth_a = authenticate_to_relay(&node_a_identity, &relay_identity, 3_000);
         let auth_b = authenticate_to_relay(&node_b_identity, &relay_identity, 3_100);
         let (mut channel_a, mut channel_b) =
@@ -2884,9 +2881,9 @@ mod tests {
 
     #[tokio::test]
     async fn rate_limit_backpressure_expiry_and_shutdown_are_enforced() {
-        let relay_identity = SigningKey::from_bytes(&[69u8; 32]);
-        let node_a_identity = SigningKey::from_bytes(&[70u8; 32]);
-        let node_b_identity = SigningKey::from_bytes(&[71u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[69u8; 32]);
+        let node_a_identity = TransportIdentity::from_bytes(&[70u8; 32]);
+        let node_b_identity = TransportIdentity::from_bytes(&[71u8; 32]);
         let auth_a = authenticate_to_relay(&node_a_identity, &relay_identity, 4_000);
         let auth_b = authenticate_to_relay(&node_b_identity, &relay_identity, 4_000);
         let (mut channel_a, _channel_b) = peer_channels(&node_a_identity, &node_b_identity, 4_100);
@@ -2974,9 +2971,9 @@ mod tests {
 
     #[tokio::test]
     async fn session_cap_allows_replacement_and_stale_session_releases_capacity() {
-        let relay_identity = SigningKey::from_bytes(&[80u8; 32]);
-        let node_a = SigningKey::from_bytes(&[81u8; 32]);
-        let node_b = SigningKey::from_bytes(&[82u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[80u8; 32]);
+        let node_a = TransportIdentity::from_bytes(&[81u8; 32]);
+        let node_b = TransportIdentity::from_bytes(&[82u8; 32]);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
             max_sessions: 1,
             max_tracked_sources: 4,
@@ -3030,7 +3027,7 @@ mod tests {
 
     #[tokio::test]
     async fn source_budget_tracking_is_hard_bounded_under_identity_churn() {
-        let relay_identity = SigningKey::from_bytes(&[83u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[83u8; 32]);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
             max_sessions: 1,
             max_tracked_sources: 4,
@@ -3039,7 +3036,7 @@ mod tests {
         })
         .unwrap();
         for seed in 84u8..96u8 {
-            let identity = SigningKey::from_bytes(&[seed; 32]);
+            let identity = TransportIdentity::from_bytes(&[seed; 32]);
             let now_ms = 2_000 + u64::from(seed);
             let (registration, inbox) = manager
                 .register_authenticated_session(
@@ -3063,10 +3060,10 @@ mod tests {
 
     #[tokio::test]
     async fn byte_budgets_survive_reconnect_and_aggregate_limit_blocks_identity_spread() {
-        let relay_identity = SigningKey::from_bytes(&[96u8; 32]);
-        let node_a = SigningKey::from_bytes(&[97u8; 32]);
-        let node_b = SigningKey::from_bytes(&[98u8; 32]);
-        let node_c = SigningKey::from_bytes(&[99u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[96u8; 32]);
+        let node_a = TransportIdentity::from_bytes(&[97u8; 32]);
+        let node_b = TransportIdentity::from_bytes(&[98u8; 32]);
+        let node_c = TransportIdentity::from_bytes(&[99u8; 32]);
         let node_a_peer_id = node_b_auth_peer_id_v1(&node_a);
         let node_b_peer_id = node_b_auth_peer_id_v1(&node_b);
         let node_c_peer_id = node_b_auth_peer_id_v1(&node_c);
@@ -3171,12 +3168,12 @@ mod tests {
 
     #[tokio::test]
     async fn data_and_control_share_offline_limits_and_expire_together() {
-        let relay_identity = SigningKey::from_bytes(&[100u8; 32]);
-        let source_a = SigningKey::from_bytes(&[101u8; 32]);
-        let source_d = SigningKey::from_bytes(&[102u8; 32]);
-        let target_b = SigningKey::from_bytes(&[103u8; 32]);
-        let target_c = SigningKey::from_bytes(&[104u8; 32]);
-        let target_e = SigningKey::from_bytes(&[105u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[100u8; 32]);
+        let source_a = TransportIdentity::from_bytes(&[101u8; 32]);
+        let source_d = TransportIdentity::from_bytes(&[102u8; 32]);
+        let target_b = TransportIdentity::from_bytes(&[103u8; 32]);
+        let target_c = TransportIdentity::from_bytes(&[104u8; 32]);
+        let target_e = TransportIdentity::from_bytes(&[105u8; 32]);
         let source_a_peer_id = node_b_auth_peer_id_v1(&source_a);
         let source_d_peer_id = node_b_auth_peer_id_v1(&source_d);
         let target_b_peer_id = node_b_auth_peer_id_v1(&target_b);
@@ -3314,8 +3311,8 @@ mod tests {
 
     #[tokio::test]
     async fn raw_wire_admission_is_charged_once_and_malformed_payload_is_accounted() {
-        let relay_identity = SigningKey::from_bytes(&[127u8; 32]);
-        let source = SigningKey::from_bytes(&[128u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[127u8; 32]);
+        let source = TransportIdentity::from_bytes(&[128u8; 32]);
         let source_peer_id = node_b_auth_peer_id_v1(&source);
         let manager =
             ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default()).unwrap();
@@ -3340,11 +3337,11 @@ mod tests {
 
     #[tokio::test]
     async fn aggregate_frame_budget_spans_authenticated_sources() {
-        let relay_identity = SigningKey::from_bytes(&[129u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[129u8; 32]);
         let sources = [
-            SigningKey::from_bytes(&[130u8; 32]),
-            SigningKey::from_bytes(&[131u8; 32]),
-            SigningKey::from_bytes(&[132u8; 32]),
+            TransportIdentity::from_bytes(&[130u8; 32]),
+            TransportIdentity::from_bytes(&[131u8; 32]),
+            TransportIdentity::from_bytes(&[132u8; 32]),
         ];
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
             max_sessions: 3,
@@ -3387,9 +3384,9 @@ mod tests {
 
     #[tokio::test]
     async fn active_data_and_control_share_count_and_refill_without_reconnect() {
-        let relay_identity = SigningKey::from_bytes(&[106u8; 32]);
-        let node_a = SigningKey::from_bytes(&[107u8; 32]);
-        let node_b = SigningKey::from_bytes(&[108u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[106u8; 32]);
+        let node_a = TransportIdentity::from_bytes(&[107u8; 32]);
+        let node_b = TransportIdentity::from_bytes(&[108u8; 32]);
         let node_a_peer_id = node_b_auth_peer_id_v1(&node_a);
         let node_b_peer_id = node_b_auth_peer_id_v1(&node_b);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
@@ -3463,9 +3460,9 @@ mod tests {
 
     #[tokio::test]
     async fn active_and_offline_byte_caps_release_and_refill_without_reconnect() {
-        let relay_identity = SigningKey::from_bytes(&[112u8; 32]);
-        let node_a = SigningKey::from_bytes(&[113u8; 32]);
-        let node_b = SigningKey::from_bytes(&[114u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[112u8; 32]);
+        let node_a = TransportIdentity::from_bytes(&[113u8; 32]);
+        let node_b = TransportIdentity::from_bytes(&[114u8; 32]);
         let node_a_peer_id = node_b_auth_peer_id_v1(&node_a);
         let node_b_peer_id = node_b_auth_peer_id_v1(&node_b);
         let first_envelope = opaque_envelope(&node_a_peer_id, &node_b_peer_id, 1, 32);
@@ -3631,9 +3628,9 @@ mod tests {
 
     #[tokio::test]
     async fn replacement_held_inboxes_remain_globally_counted_until_drop_or_recv() {
-        let relay_identity = SigningKey::from_bytes(&[115u8; 32]);
-        let source = SigningKey::from_bytes(&[116u8; 32]);
-        let target = SigningKey::from_bytes(&[117u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[115u8; 32]);
+        let source = TransportIdentity::from_bytes(&[116u8; 32]);
+        let target = TransportIdentity::from_bytes(&[117u8; 32]);
         let source_peer_id = node_b_auth_peer_id_v1(&source);
         let target_peer_id = node_b_auth_peer_id_v1(&target);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
@@ -3739,9 +3736,9 @@ mod tests {
 
     #[tokio::test]
     async fn disconnect_and_ttl_keep_real_payload_counted_until_inbox_drop() {
-        let relay_identity = SigningKey::from_bytes(&[118u8; 32]);
-        let source = SigningKey::from_bytes(&[119u8; 32]);
-        let target = SigningKey::from_bytes(&[120u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[118u8; 32]);
+        let source = TransportIdentity::from_bytes(&[119u8; 32]);
+        let target = TransportIdentity::from_bytes(&[120u8; 32]);
         let source_peer_id = node_b_auth_peer_id_v1(&source);
         let target_peer_id = node_b_auth_peer_id_v1(&target);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
@@ -3829,9 +3826,9 @@ mod tests {
 
     #[tokio::test]
     async fn replacement_held_inbox_obeys_global_byte_limit_and_refills_after_drop() {
-        let relay_identity = SigningKey::from_bytes(&[121u8; 32]);
-        let source = SigningKey::from_bytes(&[122u8; 32]);
-        let target = SigningKey::from_bytes(&[123u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[121u8; 32]);
+        let source = TransportIdentity::from_bytes(&[122u8; 32]);
+        let target = TransportIdentity::from_bytes(&[123u8; 32]);
         let source_peer_id = node_b_auth_peer_id_v1(&source);
         let target_peer_id = node_b_auth_peer_id_v1(&target);
         let first_envelope = opaque_envelope(&source_peer_id, &target_peer_id, 1, 64);
@@ -3939,9 +3936,9 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_keeps_real_payload_counted_until_inbox_drop() {
-        let relay_identity = SigningKey::from_bytes(&[124u8; 32]);
-        let source = SigningKey::from_bytes(&[125u8; 32]);
-        let target = SigningKey::from_bytes(&[126u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[124u8; 32]);
+        let source = TransportIdentity::from_bytes(&[125u8; 32]);
+        let target = TransportIdentity::from_bytes(&[126u8; 32]);
         let source_peer_id = node_b_auth_peer_id_v1(&source);
         let target_peer_id = node_b_auth_peer_id_v1(&target);
         let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1 {
@@ -3988,9 +3985,9 @@ mod tests {
 
     #[tokio::test]
     async fn delivery_wrapper_must_fit_wire_limit_before_admission_ack() {
-        let relay_identity = SigningKey::from_bytes(&[109u8; 32]);
-        let node_a = SigningKey::from_bytes(&[110u8; 32]);
-        let node_b = SigningKey::from_bytes(&[111u8; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[109u8; 32]);
+        let node_a = TransportIdentity::from_bytes(&[110u8; 32]);
+        let node_b = TransportIdentity::from_bytes(&[111u8; 32]);
         let node_a_peer_id = node_b_auth_peer_id_v1(&node_a);
         let node_b_peer_id = node_b_auth_peer_id_v1(&node_b);
         let mut low = 0usize;
@@ -4051,7 +4048,7 @@ mod tests {
         assert_eq!(snapshot.wire_message_too_large_total, 1);
     }
 
-    fn node_b_auth_peer_id_v1(identity: &SigningKey) -> String {
-        peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes())
+    fn node_b_auth_peer_id_v1(identity: &TransportIdentity) -> String {
+        peer_id_from_mldsa65_public_key_v1(identity.public_key())
     }
 }

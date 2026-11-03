@@ -1,7 +1,8 @@
 #![cfg(feature = "iroh-transport")]
 //! Real localhost QUIC/SQLite fixtures. Not phone, independent-replica or E2EE evidence.
 use anyhow::{ensure, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use novovm_network::{
     carrier_stream::CarrierStreamV1,
     iroh_transport::*,
@@ -21,10 +22,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use transport_identity::key;
 
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
-}
 fn config() -> IrohConfigV1 {
     IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
         .unwrap()
@@ -69,8 +68,8 @@ async fn contributor_roundtrip(open: bool) -> Result<()> {
     let (peer_address, outbound_address) = tokio::sync::oneshot::channel();
     let (host_ended, wait_host_ended) = tokio::sync::oneshot::channel();
     let trust = SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [key(1).verifying_key().to_bytes()].into(),
+        version: 2,
+        node_pins: [key(1).public_key().to_vec()].into(),
     };
     let activate = move |endpoint: &IrohServiceEndpointV1, expires: u64| {
         let now = now_ms()?;
@@ -82,7 +81,12 @@ async fn contributor_roundtrip(open: bool) -> Result<()> {
             expires,
             1,
         )?;
-        let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now)?;
+        let mut book = ServiceLeaseBookV1::new_self_owned(
+            trust,
+            vec![record],
+            now,
+            crate::transport_identity::key(90),
+        )?;
         let checkpoint = book.checkpoint()?;
         let file =
             ServiceLeaseFileV1::create(&journal, zeroize::Zeroizing::new([91; 32]), &checkpoint)?;
@@ -108,7 +112,7 @@ async fn contributor_roundtrip(open: bool) -> Result<()> {
         Box::pin(run_self_owned_node_on_endpoint_v1(
             &owner,
             key(1),
-            [key(2).verifying_key().to_bytes()].into(),
+            [key(2).public_key().to_vec()].into(),
             stop.clone(),
             Some(service.clone()),
             activate,
@@ -143,7 +147,7 @@ async fn contributor_roundtrip(open: bool) -> Result<()> {
     let original_read = Capability::from_bytes(*grant.read.as_bytes())?;
     let expires = (now_ms()? / 1000) as i64 + 60;
     let identity = key(2);
-    let pin = key(1).verifying_key().to_bytes();
+    let pin = key(1).public_key().to_vec();
     let client_service = service.clone();
     let client_stop = stop.clone();
     let client = peer.with_continuous_service_v4(
@@ -157,7 +161,7 @@ async fn contributor_roundtrip(open: bool) -> Result<()> {
                         scope.connect(&route.address).await?.into();
                     let _group = request_mailbox_multiplex_v5(&mut stream).await?;
                     let mut session =
-                        MailboxClientSessionV2::begin_continuous_v4(&mut stream, &identity, pin)
+                        MailboxClientSessionV2::begin_continuous_v4(&mut stream, &identity, pin.clone())
                             .await?;
                     ensure!(matches!(
                         session
@@ -179,7 +183,7 @@ async fn contributor_roundtrip(open: bool) -> Result<()> {
                     };
                     match session.request(put([7; 32])).await? {
                         MailboxReplyV1::Stored(receipt) => {
-                            receipt.verify(pin, grant.id, [7; 32], &[7; 32], expires)?
+                            receipt.verify(&pin, grant.id, [7; 32], &[7; 32], expires, &crate::transport_identity::key(90))?
                         }
                         _ => anyhow::bail!("no durable storage receipt"),
                     }
@@ -214,7 +218,7 @@ async fn contributor_roundtrip(open: bool) -> Result<()> {
                         let mut other: CarrierStreamV1<'_> = scope.connect(&route.address).await?.into();
                         let _other_group = request_mailbox_multiplex_v5(&mut other).await?;
                         let mut reader = MailboxClientSessionV2::begin_continuous_v4(
-                            &mut other, &key(3), pin,
+                            &mut other, &key(3), pin.clone(),
                         ).await?;
                         ensure!(matches!(reader.request(MailboxRequestV1::Fetch {
                             mailbox: grant.id, read: [98;32],

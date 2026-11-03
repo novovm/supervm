@@ -2,9 +2,10 @@
 //! record byte-for-byte at the field level. Not a new directory/signature format.
 use super::{fixed, u64_value, Reader};
 use crate::product_directory::{PeerSignedRelayRecordV1, RelayEndpointV1, RelayTransportV1};
+use crate::product_overlay::{MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES, MLDSA65_SUITE};
 use anyhow::{ensure, Result};
 
-const MAX_RECORD_BYTES: usize = 8192;
+const MAX_RECORD_BYTES: usize = 16 * 1024;
 const MAX_ID_BYTES: usize = 256;
 const MAX_PEER_BYTES: usize = 128;
 const MAX_URI_BYTES: usize = 2048;
@@ -18,7 +19,10 @@ fn text_bounds(value: &str, max: usize) -> Result<()> {
     Ok(())
 }
 pub(crate) fn validate(record: &PeerSignedRelayRecordV1) -> Result<()> {
-    ensure!(record.version == 1, "mailbox locator record version");
+    ensure!(
+        record.version == 2 && record.suite == MLDSA65_SUITE,
+        "mailbox locator record version/suite"
+    );
     text_bounds(&record.record_id, MAX_ID_BYTES)?;
     text_bounds(&record.relay_peer_id, MAX_PEER_BYTES)?;
     ensure!(
@@ -26,7 +30,9 @@ pub(crate) fn validate(record: &PeerSignedRelayRecordV1) -> Result<()> {
         "mailbox locator endpoint count"
     );
     ensure!(
-        record.signature.len() == 64 && record.issued_at_ms < record.expires_at_ms,
+        record.relay_public_key.len() == MLDSA65_PUBLIC_KEY_BYTES
+            && record.signature.len() == MLDSA65_SIGNATURE_BYTES
+            && record.issued_at_ms < record.expires_at_ms,
         "mailbox locator signature/lifetime shape"
     );
     for endpoint in &record.endpoints {
@@ -51,6 +57,7 @@ pub(super) fn encode(record: &PeerSignedRelayRecordV1) -> Result<Vec<u8>> {
     validate(record)?;
     let mut out = Vec::new();
     out.extend_from_slice(&record.version.to_le_bytes());
+    out.extend_from_slice(&record.suite.to_le_bytes());
     put_text(&mut out, &record.record_id);
     put_text(&mut out, &record.relay_peer_id);
     out.extend_from_slice(&record.relay_public_key);
@@ -82,10 +89,14 @@ pub(super) fn decode(bytes: &[u8]) -> Result<PeerSignedRelayRecordV1> {
     );
     let mut r = Reader(bytes);
     let version = u16::from_le_bytes(fixed(r.take(2)?)?);
-    ensure!(version == 1, "mailbox locator record version");
+    let suite = u16::from_le_bytes(fixed(r.take(2)?)?);
+    ensure!(
+        version == 2 && suite == MLDSA65_SUITE,
+        "mailbox locator record version/suite"
+    );
     let record_id = text(&mut r, MAX_ID_BYTES)?;
     let relay_peer_id = text(&mut r, MAX_PEER_BYTES)?;
-    let relay_public_key = fixed(r.take(32)?)?;
+    let relay_public_key = r.take(MLDSA65_PUBLIC_KEY_BYTES)?.to_vec();
     let count = r.byte()? as usize;
     ensure!(
         (1..=MAX_ENDPOINTS).contains(&count),
@@ -111,6 +122,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<PeerSignedRelayRecordV1> {
     }
     let record = PeerSignedRelayRecordV1 {
         version,
+        suite,
         record_id,
         relay_peer_id,
         relay_public_key,
@@ -118,7 +130,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<PeerSignedRelayRecordV1> {
         issued_at_ms: u64_value(r.take(8)?)?,
         expires_at_ms: u64_value(r.take(8)?)?,
         sequence: u64_value(r.take(8)?)?,
-        signature: r.take(64)?.to_vec(),
+        signature: r.take(MLDSA65_SIGNATURE_BYTES)?.to_vec(),
     };
     r.end()?;
     validate(&record)?;

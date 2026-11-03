@@ -8,13 +8,14 @@
 //! carrier owner's responsibility, including before it opens any connection.
 
 use crate::duplex::{
-    peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
+    peer_id_from_mldsa65_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
     NodeHandshakeInitiatorV1, NodeHandshakeOfferV1, NodeHandshakeResponderV1,
     NodeHandshakeResponseV1, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
-    ProductOverlayErrorV1, SecureNovoRudpEnvelopeV1, PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1,
+    ProductOverlayErrorV1, SecureNovoRudpEnvelopeV1, TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES,
+    MLDSA65_SIGNATURE_BYTES, MLDSA65_SUITE, PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1,
     PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
 };
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -23,20 +24,23 @@ use zeroize::Zeroize;
 pub mod session_clock;
 pub mod structured;
 
-pub const BOUND_TRANSPORT_ALPN_V1: &[u8] = b"novovm/bound-carrier/1";
-pub const BOUND_TRANSPORT_EXPORTER_LABEL_V1: &[u8] = b"EXPORTER-NOVOVM-bound-carrier-v1";
+pub const BOUND_TRANSPORT_ALPN_V1: &[u8] = b"novovm/bound-carrier/3";
+pub const BOUND_TRANSPORT_EXPORTER_LABEL_V1: &[u8] = b"EXPORTER-NOVOVM-bound-carrier-v3";
 /// Legacy carriers use this exact context. Explicit NVMBOX05 Iroh streams append
 /// a versioned domain and their actual QUIC stream ID on both ends before export.
 pub const BOUND_TRANSPORT_EXPORTER_CONTEXT_V1: &[u8] = BOUND_TRANSPORT_ALPN_V1;
-pub const BOUND_HANDSHAKE_VERSION_V1: u16 = 1;
-pub const BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1: usize = 8 * 1024;
+pub const BOUND_HANDSHAKE_VERSION_V1: u16 = 3;
+// The current APFL bound proof fits the unchanged Iroh/TLS frame budget.
+pub const BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1: usize = 16 * 1024;
 pub const BOUND_HANDSHAKE_MAX_TTL_MS_V1: u64 = 30_000;
 pub const BOUND_CHANNEL_MAX_PAYLOAD_BYTES_V1: usize = 64 * 1024;
-const PEER_ID_BYTES: usize = b"novovm-ed25519:".len() + 32 * 2;
+const PEER_ID_BYTES: usize = b"novovm-mldsa65:".len() + 32 * 2;
 const FINISHED_STREAM: u64 = u64::MAX;
-const PURPOSE: &[u8] = b"novovm.network.bound-reliable-carrier.v1";
-const SESSION_CLOCK_PURPOSE_V2: &[u8] = b"novovm.network.bound-reliable-carrier.session-clock.v2";
-const FINISHED_DOMAIN: &[u8] = b"novovm.bound-carrier.finished.v1";
+const PURPOSE: &[u8] = b"novovm.network.bound-reliable-carrier.mldsa65.v3";
+const SESSION_CLOCK_PURPOSE_V2: &[u8] =
+    b"novovm.network.bound-reliable-carrier.session-clock.mldsa65.v4";
+const FINISHED_DOMAIN: &[u8] = b"novovm.bound-carrier.finished.mldsa65.v3";
+const SIGNATURE_CONTEXT: &[u8] = b"NOVOVM/bound-carrier/ML-DSA-65/v3";
 
 /// Selected by an explicit local entry, never inferred as a fallback from a
 /// peer's version. Both signatures and Finished commit to version and purpose.
@@ -49,8 +53,8 @@ enum BoundClockMode {
 impl BoundClockMode {
     fn version(self) -> u16 {
         match self {
-            Self::UtcV1 => 1,
-            Self::SessionV2 => 2,
+            Self::UtcV1 => 3,
+            Self::SessionV2 => 4,
         }
     }
     fn purpose(self) -> &'static [u8] {
@@ -61,8 +65,8 @@ impl BoundClockMode {
     }
     fn from_validated_version(version: u16) -> Result<Self> {
         match version {
-            1 => Ok(Self::UtcV1),
-            2 => Ok(Self::SessionV2),
+            3 => Ok(Self::UtcV1),
+            4 => Ok(Self::SessionV2),
             _ => Err(TransportBindingErrorV1::Invalid("bound channel mode")),
         }
     }
@@ -169,18 +173,19 @@ impl VerifiedTransportBinding {
     }
 
     #[cfg(test)]
-    fn context(&self, initiator: [u8; 32], responder: [u8; 32]) -> Result<BoundHandshakeContextV1> {
+    fn context(&self, initiator: Vec<u8>, responder: Vec<u8>) -> Result<BoundHandshakeContextV1> {
         self.context_for_mode(initiator, responder, BoundClockMode::UtcV1)
     }
 
     fn context_for_mode(
         &self,
-        initiator: [u8; 32],
-        responder: [u8; 32],
+        initiator: Vec<u8>,
+        responder: Vec<u8>,
         mode: BoundClockMode,
     ) -> Result<BoundHandshakeContextV1> {
         let context = BoundHandshakeContextV1 {
             version: mode.version(),
+            signature_suite: MLDSA65_SUITE,
             purpose: Sha256::digest(mode.purpose()).into(),
             initiator_identity_public_key: initiator,
             responder_identity_public_key: responder,
@@ -199,9 +204,10 @@ impl VerifiedTransportBinding {
 #[serde(deny_unknown_fields)]
 pub struct BoundHandshakeContextV1 {
     pub version: u16,
+    pub signature_suite: u16,
     pub purpose: [u8; 32],
-    pub initiator_identity_public_key: [u8; 32],
-    pub responder_identity_public_key: [u8; 32],
+    pub initiator_identity_public_key: Vec<u8>,
+    pub responder_identity_public_key: Vec<u8>,
     pub initiator_transport_public_key: [u8; 32],
     pub responder_transport_public_key: [u8; 32],
     pub connection_binding: [u8; 32],
@@ -224,6 +230,7 @@ pub struct BoundNodeHandshakeResponseV1 {
     pub signature: Vec<u8>,
 }
 
+#[cfg(test)]
 impl BoundNodeHandshakeOfferV1 {
     pub fn encode_json(&self) -> Result<Vec<u8>> {
         check_offer_shape(self)?;
@@ -240,6 +247,7 @@ impl BoundNodeHandshakeOfferV1 {
     }
 }
 
+#[cfg(test)]
 impl BoundNodeHandshakeResponseV1 {
     pub fn encode_json(&self) -> Result<Vec<u8>> {
         check_response_shape(self)?;
@@ -258,14 +266,15 @@ pub struct BoundHandshakeInitiatorV1 {
     inner: NodeHandshakeInitiatorV1,
     offer: BoundNodeHandshakeOfferV1,
     mode: BoundClockMode,
+    identity: TransportIdentity,
 }
 
 impl BoundHandshakeInitiatorV1 {
     /// `identity` is a separate NOVOVM device/network key, never a wallet key.
     /// `expected_remote_key` must come from an independently authorized pin.
     pub fn start(
-        identity: &SigningKey,
-        expected_remote_key: [u8; 32],
+        identity: &TransportIdentity,
+        expected_remote_key: Vec<u8>,
         binding: VerifiedTransportBinding,
         now_ms: u64,
         ttl_ms: u64,
@@ -281,8 +290,8 @@ impl BoundHandshakeInitiatorV1 {
     }
 
     fn start_with_mode(
-        identity: &SigningKey,
-        expected_remote_key: [u8; 32],
+        identity: &TransportIdentity,
+        expected_remote_key: Vec<u8>,
         binding: VerifiedTransportBinding,
         now_ms: u64,
         ttl_ms: u64,
@@ -301,13 +310,13 @@ impl BoundHandshakeInitiatorV1 {
             )?;
         }
         let context = binding.context_for_mode(
-            identity.verifying_key().to_bytes(),
-            expected_remote_key,
+            identity.public_key().to_vec(),
+            expected_remote_key.clone(),
             mode,
         )?;
         let inner = NodeHandshakeInitiatorV1::start(
             identity,
-            peer_id_from_ed25519_public_key_v1(&expected_remote_key),
+            peer_id_from_mldsa65_public_key_v1(&expected_remote_key),
             now_ms,
             ttl_ms,
         )?;
@@ -317,11 +326,15 @@ impl BoundHandshakeInitiatorV1 {
             signature: Vec::new(),
         };
         offer.signature = identity
-            .sign(&offer_signing_digest(&offer))
-            .to_bytes()
-            .to_vec();
+            .sign(&offer_signing_digest(&offer), SIGNATURE_CONTEXT)
+            .map_err(|_| TransportBindingErrorV1::InvalidSignature)?;
         check_offer_shape_for_mode(&offer, mode)?;
-        Ok(Self { inner, offer, mode })
+        Ok(Self {
+            inner,
+            offer,
+            mode,
+            identity: identity.clone(),
+        })
     }
 
     #[must_use]
@@ -351,6 +364,7 @@ impl BoundHandshakeInitiatorV1 {
             return Err(TransportBindingErrorV1::BindingMismatch);
         }
         verify_signature(
+            &self.identity,
             &self.offer.context.responder_identity_public_key,
             &response_signing_digest(response),
             &response.signature,
@@ -364,6 +378,7 @@ impl BoundHandshakeInitiatorV1 {
             transcript,
             true,
             expires_at_ms,
+            self.identity,
         ))
     }
 }
@@ -376,8 +391,8 @@ pub struct BoundHandshakeResponderV1 {
 impl BoundHandshakeResponderV1 {
     pub fn respond(
         offer: &BoundNodeHandshakeOfferV1,
-        identity: &SigningKey,
-        expected_remote_key: [u8; 32],
+        identity: &TransportIdentity,
+        expected_remote_key: Vec<u8>,
         binding: VerifiedTransportBinding,
         now_ms: u64,
         ttl_ms: u64,
@@ -400,8 +415,8 @@ impl BoundHandshakeResponderV1 {
     #[allow(clippy::too_many_arguments)]
     fn respond_with_mode(
         offer: &BoundNodeHandshakeOfferV1,
-        identity: &SigningKey,
-        expected_remote_key: [u8; 32],
+        identity: &TransportIdentity,
+        expected_remote_key: Vec<u8>,
         binding: VerifiedTransportBinding,
         now_ms: u64,
         ttl_ms: u64,
@@ -423,14 +438,15 @@ impl BoundHandshakeResponderV1 {
         check_offer_shape_for_mode(offer, mode)?;
         check_window(offer.e2e.issued_at_ms, offer.e2e.expires_at_ms, now_ms)?;
         let context = binding.context_for_mode(
-            expected_remote_key,
-            identity.verifying_key().to_bytes(),
+            expected_remote_key.clone(),
+            identity.public_key().to_vec(),
             mode,
         )?;
         if offer.context != context {
             return Err(TransportBindingErrorV1::BindingMismatch);
         }
         verify_signature(
+            identity,
             &expected_remote_key,
             &offer_signing_digest(offer),
             &offer.signature,
@@ -451,9 +467,8 @@ impl BoundHandshakeResponderV1 {
             signature: Vec::new(),
         };
         response.signature = identity
-            .sign(&response_signing_digest(&response))
-            .to_bytes()
-            .to_vec();
+            .sign(&response_signing_digest(&response), SIGNATURE_CONTEXT)
+            .map_err(|_| TransportBindingErrorV1::InvalidSignature)?;
         check_response_shape_for_mode(&response, mode)?;
         let transcript = transcript_hash(offer, &response);
         let expires_at_ms = offer.e2e.expires_at_ms.min(response.e2e.expires_at_ms);
@@ -466,6 +481,7 @@ impl BoundHandshakeResponderV1 {
                 transcript,
                 false,
                 expires_at_ms,
+                identity.clone(),
             ),
         })
     }
@@ -494,6 +510,7 @@ pub struct PendingBoundChannelV1 {
     local_finished: bool,
     remote_finished: bool,
     failed: bool,
+    identity: TransportIdentity,
 }
 
 impl PendingBoundChannelV1 {
@@ -503,6 +520,7 @@ impl PendingBoundChannelV1 {
         transcript: [u8; 32],
         initiator: bool,
         expires_at_ms: u64,
+        identity: TransportIdentity,
     ) -> Self {
         Self {
             channel,
@@ -513,6 +531,7 @@ impl PendingBoundChannelV1 {
             local_finished: false,
             remote_finished: false,
             failed: false,
+            identity,
         }
     }
 
@@ -567,6 +586,7 @@ impl PendingBoundChannelV1 {
             channel: self.channel,
             context: self.context,
             initiator: self.initiator,
+            identity: self.identity,
         })
     }
 
@@ -603,9 +623,16 @@ pub struct BoundSecureChannelV1 {
     channel: E2eSecureChannelV1,
     context: BoundHandshakeContextV1,
     initiator: bool,
+    identity: TransportIdentity,
 }
 
 impl BoundSecureChannelV1 {
+    /// Retain the already qualified runtime for receipt verification after the
+    /// same channel is adopted by the native object owner. No library is reopened.
+    pub(crate) fn identity_verifier(&self) -> &TransportIdentity {
+        &self.identity
+    }
+
     /// Locally verified handshake mode, not a version supplied by a new frame.
     /// Explicit time-aware services must reject a completed legacy channel.
     pub fn uses_session_clock_v2(&self) -> bool {
@@ -625,8 +652,8 @@ impl BoundSecureChannelV1 {
         if self.initiator != binding.local_is_initiator
             || self.context
                 != binding.context_for_mode(
-                    self.context.initiator_identity_public_key,
-                    self.context.responder_identity_public_key,
+                    self.context.initiator_identity_public_key.clone(),
+                    self.context.responder_identity_public_key.clone(),
                     mode,
                 )?
         {
@@ -636,11 +663,11 @@ impl BoundSecureChannelV1 {
     }
 
     #[must_use]
-    pub fn local_identity_public_key(&self) -> [u8; 32] {
+    pub fn local_identity_public_key(&self) -> &[u8] {
         if self.initiator {
-            self.context.initiator_identity_public_key
+            &self.context.initiator_identity_public_key
         } else {
-            self.context.responder_identity_public_key
+            &self.context.responder_identity_public_key
         }
     }
 
@@ -697,23 +724,27 @@ fn check_public_key(bytes: &[u8; 32]) -> Result<()> {
 
 fn check_context_for_mode(context: &BoundHandshakeContextV1, mode: BoundClockMode) -> Result<()> {
     if context.version != mode.version()
+        || context.signature_suite != MLDSA65_SUITE
         || context.purpose != <[u8; 32]>::from(Sha256::digest(mode.purpose()))
     {
         return Err(TransportBindingErrorV1::Invalid("version or purpose"));
     }
-    let keys = [
-        context.initiator_identity_public_key,
-        context.responder_identity_public_key,
-        context.initiator_transport_public_key,
-        context.responder_transport_public_key,
-    ];
-    for (index, key) in keys.iter().enumerate() {
-        check_public_key(key)?;
-        if keys[..index].contains(key) {
-            return Err(TransportBindingErrorV1::Invalid(
-                "identity/transport key reuse",
-            ));
+    for key in [
+        &context.initiator_identity_public_key,
+        &context.responder_identity_public_key,
+    ] {
+        if key.len() != MLDSA65_PUBLIC_KEY_BYTES || key.iter().all(|&b| b == 0) {
+            return Err(TransportBindingErrorV1::Invalid("ML-DSA-65 identity key"));
         }
+    }
+    check_public_key(&context.initiator_transport_public_key)?;
+    check_public_key(&context.responder_transport_public_key)?;
+    if context.initiator_identity_public_key == context.responder_identity_public_key
+        || context.initiator_transport_public_key == context.responder_transport_public_key
+    {
+        return Err(TransportBindingErrorV1::Invalid(
+            "identity/transport key reuse",
+        ));
     }
     Ok(())
 }
@@ -743,6 +774,7 @@ fn check_window(issued_at_ms: u64, expires_at_ms: u64, now_ms: u64) -> Result<()
     Ok(())
 }
 
+#[cfg(test)]
 fn check_offer_shape(offer: &BoundNodeHandshakeOfferV1) -> Result<()> {
     check_offer_shape_for_mode(offer, BoundClockMode::UtcV1)
 }
@@ -756,20 +788,21 @@ fn check_offer_shape_for_mode(
     check_lifetime(e.issued_at_ms, e.expires_at_ms)?;
     mode.check_times(e.issued_at_ms, e.expires_at_ms)?;
     if e.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1
-        || e.signature.len() != 64
-        || offer.signature.len() != 64
+        || e.signature.len() != MLDSA65_SIGNATURE_BYTES
+        || offer.signature.len() != MLDSA65_SIGNATURE_BYTES
         || e.initiator_ephemeral_public_key.len() != 33
         || e.initiator_identity_public_key != offer.context.initiator_identity_public_key
         || e.initiator_peer_id
-            != peer_id_from_ed25519_public_key_v1(&offer.context.initiator_identity_public_key)
+            != peer_id_from_mldsa65_public_key_v1(&offer.context.initiator_identity_public_key)
         || e.responder_peer_id
-            != peer_id_from_ed25519_public_key_v1(&offer.context.responder_identity_public_key)
+            != peer_id_from_mldsa65_public_key_v1(&offer.context.responder_identity_public_key)
     {
         return Err(TransportBindingErrorV1::Invalid("offer fields"));
     }
     Ok(())
 }
 
+#[cfg(test)]
 fn check_response_shape(response: &BoundNodeHandshakeResponseV1) -> Result<()> {
     check_response_shape_for_mode(response, BoundClockMode::UtcV1)
 }
@@ -783,14 +816,14 @@ fn check_response_shape_for_mode(
     check_lifetime(e.issued_at_ms, e.expires_at_ms)?;
     mode.check_times(e.issued_at_ms, e.expires_at_ms)?;
     if e.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1
-        || e.signature.len() != 64
-        || response.signature.len() != 64
+        || e.signature.len() != MLDSA65_SIGNATURE_BYTES
+        || response.signature.len() != MLDSA65_SIGNATURE_BYTES
         || e.responder_ephemeral_public_key.len() != 33
         || e.responder_identity_public_key != response.context.responder_identity_public_key
         || e.initiator_peer_id
-            != peer_id_from_ed25519_public_key_v1(&response.context.initiator_identity_public_key)
+            != peer_id_from_mldsa65_public_key_v1(&response.context.initiator_identity_public_key)
         || e.responder_peer_id
-            != peer_id_from_ed25519_public_key_v1(&response.context.responder_identity_public_key)
+            != peer_id_from_mldsa65_public_key_v1(&response.context.responder_identity_public_key)
     {
         return Err(TransportBindingErrorV1::Invalid("response fields"));
     }
@@ -807,29 +840,29 @@ fn check_envelope_shape(envelope: &SecureNovoRudpEnvelopeV1) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn check_wire_length(bytes: &[u8]) -> Result<()> {
-    if bytes.is_empty() || bytes.len() > BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1 {
+    if bytes.is_empty() || bytes.len() > 64 * 1024 {
         return Err(TransportBindingErrorV1::ResourceLimit);
     }
     Ok(())
 }
 
+#[cfg(test)]
 fn encode_bounded(value: &impl Serialize) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(value)?;
     check_wire_length(&bytes)?;
     Ok(bytes)
 }
 
-fn verify_signature(public_key: &[u8; 32], digest: &[u8; 32], signature: &[u8]) -> Result<()> {
-    let bytes: [u8; 64] = signature
-        .try_into()
-        .map_err(|_| TransportBindingErrorV1::InvalidSignature)?;
-    let key = VerifyingKey::from_bytes(public_key)
-        .map_err(|_| TransportBindingErrorV1::InvalidSignature)?;
-    if key.is_weak() {
-        return Err(TransportBindingErrorV1::InvalidSignature);
-    }
-    key.verify_strict(digest, &Signature::from_bytes(&bytes))
+fn verify_signature(
+    identity: &TransportIdentity,
+    public_key: &[u8],
+    digest: &[u8; 32],
+    signature: &[u8],
+) -> Result<()> {
+    identity
+        .verify(public_key, digest, SIGNATURE_CONTEXT, signature)
         .map_err(|_| TransportBindingErrorV1::InvalidSignature)
 }
 
@@ -844,9 +877,10 @@ fn domain_hash(domain: &[u8]) -> Sha256 {
 
 fn hash_context(hash: &mut Sha256, context: &BoundHandshakeContextV1) {
     hash.update(context.version.to_be_bytes());
+    hash.update(context.signature_suite.to_be_bytes());
     hash.update(context.purpose);
-    hash.update(context.initiator_identity_public_key);
-    hash.update(context.responder_identity_public_key);
+    hash.update(&context.initiator_identity_public_key);
+    hash.update(&context.responder_identity_public_key);
     hash.update(context.initiator_transport_public_key);
     hash.update(context.responder_transport_public_key);
     hash.update(context.connection_binding);
@@ -858,7 +892,7 @@ fn inner_offer_hash(e: &NodeHandshakeOfferV1) -> [u8; 32] {
     hash.update(e.session_id);
     hash.update(Sha256::digest(e.initiator_peer_id.as_bytes()));
     hash.update(Sha256::digest(e.responder_peer_id.as_bytes()));
-    hash.update(e.initiator_identity_public_key);
+    hash.update(&e.initiator_identity_public_key);
     hash.update(&e.initiator_ephemeral_public_key);
     hash.update(e.challenge);
     hash.update(e.issued_at_ms.to_be_bytes());
@@ -873,7 +907,7 @@ fn inner_response_hash(e: &NodeHandshakeResponseV1) -> [u8; 32] {
     hash.update(e.session_id);
     hash.update(Sha256::digest(e.initiator_peer_id.as_bytes()));
     hash.update(Sha256::digest(e.responder_peer_id.as_bytes()));
-    hash.update(e.responder_identity_public_key);
+    hash.update(&e.responder_identity_public_key);
     hash.update(&e.responder_ephemeral_public_key);
     hash.update(e.challenge);
     hash.update(e.response_nonce);
@@ -930,20 +964,25 @@ mod tests {
     const NOW: u64 = 100_000;
     const TTL: u64 = 10_000;
 
-    fn key(seed: u8) -> SigningKey {
-        SigningKey::from_bytes(&[seed; 32])
+    fn key(seed: u8) -> TransportIdentity {
+        TransportIdentity::from_bytes(&[seed; 32])
     }
-    fn public(seed: u8) -> [u8; 32] {
-        key(seed).verifying_key().to_bytes()
+    fn public(seed: u8) -> Vec<u8> {
+        key(seed).public_key().to_vec()
+    }
+    fn carrier_public(seed: u8) -> [u8; 32] {
+        ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+            .verifying_key()
+            .to_bytes()
     }
 
     // Test-only connection evidence. Production can construct the private
     // evidence type only inside the authenticated carrier's crate boundary.
     fn binding(initiator: bool, exporter: u8) -> VerifiedTransportBinding {
         let (local, remote) = if initiator {
-            (public(3), public(4))
+            (carrier_public(3), carrier_public(4))
         } else {
-            (public(4), public(3))
+            (carrier_public(4), carrier_public(3))
         };
         VerifiedTransportBinding::from_authenticated_transport(
             local,
@@ -1000,14 +1039,15 @@ mod tests {
     #[test]
     fn authenticated_bound_handshake_finished_and_bidirectional_business() {
         let initiator = start();
-        let wire = initiator.offer().encode_json().unwrap();
+        let wire = structured::encode_offer(initiator.offer()).unwrap();
         assert!(wire.len() < BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1);
-        let offer = BoundNodeHandshakeOfferV1::decode_json(&wire).unwrap();
+        let offer = structured::decode_offer(&wire).unwrap();
         assert_eq!(&offer, initiator.offer());
         let responder = respond(&offer);
-        let response =
-            BoundNodeHandshakeResponseV1::decode_json(&responder.response().encode_json().unwrap())
-                .unwrap();
+        let response = structured::decode_response(
+            &structured::encode_response(responder.response()).unwrap(),
+        )
+        .unwrap();
         let mut left = initiator
             .complete(&response, NOW, &mut HandshakeReplayCacheV1::new(8))
             .unwrap();
@@ -1050,8 +1090,8 @@ mod tests {
         assert!(left.verify_transport_binding(&binding(true, 8)).is_err());
         assert!(left.verify_transport_binding(&binding(false, 7)).is_err());
         let different_peer = VerifiedTransportBinding::from_authenticated_transport(
-            public(3),
-            public(5),
+            carrier_public(3),
+            carrier_public(5),
             [7; 32],
             BOUND_TRANSPORT_ALPN_V1,
             true,
@@ -1130,7 +1170,7 @@ mod tests {
         assert_eq!(endpoint.local_identity(), public(1));
         assert_eq!(
             endpoint.peer_id(0).unwrap(),
-            peer_id_from_ed25519_public_key_v1(&public(2))
+            peer_id_from_mldsa65_public_key_v1(&public(2))
         );
         assert!(!endpoint.accepts_clients());
         assert!(endpoint.local_addr().is_err());
@@ -1217,7 +1257,7 @@ mod tests {
             );
             let old_offer = crate::product_overlay::NodeHandshakeInitiatorV1::start(
                 &key(2),
-                peer_id_from_ed25519_public_key_v1(&public(1)),
+                peer_id_from_mldsa65_public_key_v1(&public(1)),
                 NOW,
                 TTL,
             )
@@ -1253,7 +1293,7 @@ mod tests {
     fn peer_id_wire_bound_matches_existing_identity_encoder() {
         for seed in [1, 2, 255] {
             assert_eq!(
-                peer_id_from_ed25519_public_key_v1(&public(seed)).len(),
+                peer_id_from_mldsa65_public_key_v1(&public(seed)).len(),
                 PEER_ID_BYTES
             );
         }
@@ -1289,8 +1329,8 @@ mod tests {
             binding(true, 8).connection_binding
         );
         let swapped = VerifiedTransportBinding::from_authenticated_transport(
-            public(4),
-            public(3),
+            carrier_public(4),
+            carrier_public(3),
             [7; 32],
             BOUND_TRANSPORT_ALPN_V1,
             true,
@@ -1298,24 +1338,24 @@ mod tests {
         .unwrap();
         assert_ne!(first.connection_binding, swapped.connection_binding);
         assert!(VerifiedTransportBinding::from_authenticated_transport(
-            public(3),
-            public(4),
+            carrier_public(3),
+            carrier_public(4),
             [7; 32],
             b"legacy",
             true
         )
         .is_err());
         assert!(VerifiedTransportBinding::from_authenticated_transport(
-            public(3),
-            public(4),
+            carrier_public(3),
+            carrier_public(4),
             [0; 32],
             BOUND_TRANSPORT_ALPN_V1,
             true
         )
         .is_err());
         assert!(VerifiedTransportBinding::from_authenticated_transport(
-            public(3),
-            public(3),
+            carrier_public(3),
+            carrier_public(3),
             [7; 32],
             BOUND_TRANSPORT_ALPN_V1,
             true
@@ -1323,7 +1363,7 @@ mod tests {
         .is_err());
         assert!(VerifiedTransportBinding::from_authenticated_transport(
             [0; 32],
-            public(3),
+            carrier_public(3),
             [7; 32],
             BOUND_TRANSPORT_ALPN_V1,
             true
@@ -1394,21 +1434,22 @@ mod tests {
     }
 
     #[test]
-    fn transport_identity_reuse_and_reflection_are_forbidden() {
+    fn separate_carrier_keys_do_not_replace_identity_pins_and_reflection_is_forbidden() {
         assert!(
             BoundHandshakeInitiatorV1::start(&key(3), public(2), binding(true, 7), NOW, TTL)
-                .is_err()
+                .is_ok()
         );
         assert!(
             BoundHandshakeInitiatorV1::start(&key(1), public(4), binding(true, 7), NOW, TTL)
-                .is_err()
+                .is_ok()
         );
         assert!(
             BoundHandshakeInitiatorV1::start(&key(1), public(1), binding(true, 7), NOW, TTL)
                 .is_err()
         );
         assert!(
-            BoundHandshakeInitiatorV1::start(&key(1), [0; 32], binding(true, 7), NOW, TTL).is_err()
+            BoundHandshakeInitiatorV1::start(&key(1), vec![0; 32], binding(true, 7), NOW, TTL)
+                .is_err()
         );
         assert!(
             BoundHandshakeInitiatorV1::start(&key(1), public(2), binding(false, 7), NOW, TTL)
@@ -1419,13 +1460,13 @@ mod tests {
     #[test]
     fn offer_signature_covers_purpose_version_session_and_all_inner_fields() {
         let initiator = start();
-        for field in 0..14 {
+        for field in 0..15 {
             let mut offer = initiator.offer().clone();
             match field {
                 0 => offer.context.purpose[0] ^= 1,
                 1 => offer.context.version += 1,
                 2 => offer.context.connection_binding[0] ^= 1,
-                3 => offer.context.initiator_transport_public_key = public(5),
+                3 => offer.context.initiator_transport_public_key = carrier_public(5),
                 4 => offer.e2e.session_id[0] ^= 1,
                 5 => offer.e2e.challenge[0] ^= 1,
                 6 => offer.e2e.issued_at_ms += 1,
@@ -1436,6 +1477,7 @@ mod tests {
                 11 => offer.context.responder_identity_public_key = public(5),
                 12 => offer.e2e.responder_peer_id.push('0'),
                 13 => offer.e2e.initiator_identity_public_key = public(5),
+                14 => offer.context.signature_suite = 1,
                 _ => unreachable!(),
             }
             assert!(
@@ -1460,9 +1502,8 @@ mod tests {
         let mut offer = initiator.offer().clone();
         offer.e2e.signature[0] ^= 1;
         offer.signature = key(1)
-            .sign(&offer_signing_digest(&offer))
-            .to_bytes()
-            .to_vec();
+            .sign(&offer_signing_digest(&offer), SIGNATURE_CONTEXT)
+            .unwrap();
         assert!(matches!(
             BoundHandshakeResponderV1::respond(
                 &offer,
@@ -1481,7 +1522,7 @@ mod tests {
 
     #[test]
     fn response_signature_and_link_reject_tamper_and_cross_role_signature() {
-        for field in 0..13 {
+        for field in 0..14 {
             let initiator = start();
             let mut response = respond(initiator.offer()).response().clone();
             match field {
@@ -1498,6 +1539,7 @@ mod tests {
                 10 => response.signature = initiator.offer().signature.clone(),
                 11 => response.e2e.version += 1,
                 12 => response.context.responder_identity_public_key = public(5),
+                13 => response.context.signature_suite = 87,
                 _ => unreachable!(),
             }
             assert!(
@@ -1515,9 +1557,8 @@ mod tests {
         let mut response = respond(initiator.offer()).response().clone();
         response.e2e.signature[0] ^= 1;
         response.signature = key(2)
-            .sign(&response_signing_digest(&response))
-            .to_bytes()
-            .to_vec();
+            .sign(&response_signing_digest(&response), SIGNATURE_CONTEXT)
+            .unwrap();
         assert!(matches!(
             initiator.complete(&response, NOW, &mut HandshakeReplayCacheV1::new(8)),
             Err(TransportBindingErrorV1::Overlay(

@@ -106,7 +106,19 @@ if ($ExpectedSha256 -notmatch '^[a-fA-F0-9]{64}$' -or -not (Test-Path -LiteralPa
 }
 if ((Get-FileHash -LiteralPath $SourceBinary -Algorithm SHA256).Hash -ne $ExpectedSha256) { throw 'Source binary hash differs.' }
 $config = Get-Content -LiteralPath $Configuration -Raw | ConvertFrom-Json
-if ($config.version -ne 1 -or $config.epoch.engineering_direct_allowed -ne $true) { throw 'Explicit engineering configuration required.' }
+if ($config.version -ne 2 -or $config.epoch.version -ne 3 -or $config.epoch.engineering_direct_allowed -ne $true) {
+    throw 'Explicit protected ML-DSA-65 epoch owner v2/daemon v3 configuration required; old policy is not migrated by installation.'
+}
+if ($config.epoch.chain_id -le 0 -or $config.epoch.library_sha256 -notmatch '^[a-fA-F0-9]{64}$' -or
+    -not [IO.Path]::IsPathFullyQualified($config.epoch.library) -or
+    -not [IO.Path]::IsPathFullyQualified($config.epoch.relay_identity_key_path)) {
+    throw 'Explicit chain, qualified library pin and absolute protected transport identity are required.'
+}
+# Validate the full current purpose/chain/library-pin contract on the supplied
+# executable before stopping a service or changing installation files.
+$configurationPath = [IO.Path]::GetFullPath($Configuration)
+$check = Start-Process -FilePath ([IO.Path]::GetFullPath($SourceBinary)) -ArgumentList @('--check',('"'+$configurationPath+'"')) -WindowStyle Hidden -Wait -PassThru
+if ($check.ExitCode -ne 0) { throw 'Configuration validation failed; existing service and files remain unchanged.' }
 $config.epoch.journal_path = Join-Path $stateRoot 'service.journal'
 $config.epoch.source_path = Join-Path $stateRoot 'authority.json'
 $encoded = $config | ConvertTo-Json -Depth 30

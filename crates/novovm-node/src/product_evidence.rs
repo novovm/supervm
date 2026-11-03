@@ -1,9 +1,10 @@
 //! Signed, content-validated evidence manifests for product overlay runs.
 
 use anyhow::{bail, Context, Result};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use novovm_network::{
-    peer_id_from_ed25519_public_key_v1, validate_strategy_receipt_v1, SignedStrategyReceiptV1,
+    peer_id_from_mldsa65_public_key_v1,
+    product_overlay::{TransportIdentity, TransportVerifier},
+    validate_strategy_receipt_v1, SignedStrategyReceiptV1,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -16,8 +17,8 @@ use std::{
 
 use crate::product_relay_daemon::{ProductRelayDaemonReportV1, PRODUCT_RELAY_DAEMON_VERSION_V2};
 
-pub const PRODUCT_EVIDENCE_VERSION_V1: u16 = 1;
-const PRODUCT_EVIDENCE_DOMAIN_V1: &[u8] = b"novovm-product-overlay-evidence-v1";
+pub const PRODUCT_EVIDENCE_VERSION_V1: u16 = 2;
+const PRODUCT_EVIDENCE_DOMAIN_V1: &[u8] = b"novovm-product-overlay-evidence-mldsa65-v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProductEvidenceArtifactV1 {
@@ -28,10 +29,11 @@ pub struct ProductEvidenceArtifactV1 {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProductEvidenceManifestV1 {
     pub version: u16,
+    pub signature_suite: u16,
     pub scope: String,
     pub created_at_ms: u64,
     pub signer_peer_id: String,
-    pub signer_public_key: [u8; 32],
+    pub signer_public_key: Vec<u8>,
     pub artifacts: Vec<ProductEvidenceArtifactV1>,
     pub signature: Vec<u8>,
 }
@@ -51,7 +53,7 @@ pub struct ProductEvidenceVerificationV1 {
 pub fn build_product_evidence_manifest_v1(
     root: &Path,
     report_paths: &[PathBuf],
-    signing_key: &SigningKey,
+    signing_key: &TransportIdentity,
     created_at_ms: u64,
 ) -> Result<ProductEvidenceManifestV1> {
     let root = canonical_root_v1(root)?;
@@ -61,7 +63,7 @@ pub fn build_product_evidence_manifest_v1(
     let mut artifacts = Vec::new();
     for path in report_paths {
         let absolute = canonical_artifact_path_v1(&root, path)?;
-        validate_product_report_v1(&absolute)?;
+        validate_product_report_v1(&absolute, signing_key)?;
         let relative_path = absolute
             .strip_prefix(&root)
             .context("evidence artifact escaped root")?
@@ -73,20 +75,21 @@ pub fn build_product_evidence_manifest_v1(
     }
     artifacts.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     artifacts.dedup_by(|left, right| left.relative_path == right.relative_path);
-    let signer_public_key = signing_key.verifying_key().to_bytes();
+    let signer_public_key = signing_key.public_key().to_vec();
     let mut manifest = ProductEvidenceManifestV1 {
         version: PRODUCT_EVIDENCE_VERSION_V1,
+        signature_suite: 65,
         scope: "novovm_product_overlay_evidence_v1".into(),
         created_at_ms,
-        signer_peer_id: peer_id_from_ed25519_public_key_v1(&signer_public_key),
+        signer_peer_id: peer_id_from_mldsa65_public_key_v1(&signer_public_key),
         signer_public_key,
         artifacts,
         signature: Vec::new(),
     };
-    manifest.signature = signing_key
-        .sign(&manifest_signing_bytes_v1(&manifest))
-        .to_bytes()
-        .to_vec();
+    manifest.signature = signing_key.sign(
+        &manifest_signing_bytes_v1(&manifest),
+        PRODUCT_EVIDENCE_DOMAIN_V1,
+    )?;
     Ok(manifest)
 }
 
@@ -105,8 +108,9 @@ pub fn write_product_evidence_manifest_v1(
 pub fn verify_product_evidence_manifest_v1(
     root: &Path,
     manifest_path: &Path,
+    verifier: &dyn TransportVerifier,
 ) -> ProductEvidenceVerificationV1 {
-    match verify_product_evidence_manifest_inner_v1(root, manifest_path) {
+    match verify_product_evidence_manifest_inner_v1(root, manifest_path, verifier) {
         Ok((checksums, reports)) => ProductEvidenceVerificationV1 {
             accepted: true,
             scope: "novovm_product_overlay_evidence_v1".into(),
@@ -137,6 +141,7 @@ pub fn verify_product_evidence_manifest_v1(
 fn verify_product_evidence_manifest_inner_v1(
     root: &Path,
     manifest_path: &Path,
+    verifier: &dyn TransportVerifier,
 ) -> Result<(usize, usize)> {
     let root = canonical_root_v1(root)?;
     let bytes = fs::read(manifest_path)
@@ -144,19 +149,21 @@ fn verify_product_evidence_manifest_inner_v1(
     let manifest: ProductEvidenceManifestV1 =
         serde_json::from_slice(&bytes).context("decode evidence manifest")?;
     if manifest.version != PRODUCT_EVIDENCE_VERSION_V1
+        || manifest.signature_suite != 65
         || manifest.scope != "novovm_product_overlay_evidence_v1"
     {
         bail!("unsupported product evidence manifest");
     }
-    if manifest.signer_peer_id != peer_id_from_ed25519_public_key_v1(&manifest.signer_public_key) {
+    if manifest.signer_peer_id != peer_id_from_mldsa65_public_key_v1(&manifest.signer_public_key) {
         bail!("evidence signer peer id does not match public key");
     }
-    let verifying_key = VerifyingKey::from_bytes(&manifest.signer_public_key)
-        .context("decode evidence signer key")?;
-    let signature =
-        Signature::from_slice(&manifest.signature).context("decode evidence signature")?;
-    verifying_key
-        .verify(&manifest_signing_bytes_v1(&manifest), &signature)
+    verifier
+        .verify(
+            &manifest.signer_public_key,
+            &manifest_signing_bytes_v1(&manifest),
+            PRODUCT_EVIDENCE_DOMAIN_V1,
+            &manifest.signature,
+        )
         .context("evidence signature invalid")?;
     if manifest.artifacts.is_empty() {
         bail!("evidence manifest has no artifacts");
@@ -170,13 +177,13 @@ fn verify_product_evidence_manifest_inner_v1(
                 artifact.relative_path.display()
             );
         }
-        validate_product_report_v1(&path)?;
+        validate_product_report_v1(&path, verifier)?;
         report_count = report_count.saturating_add(1);
     }
     Ok((manifest.artifacts.len(), report_count))
 }
 
-fn validate_product_report_v1(path: &Path) -> Result<()> {
+fn validate_product_report_v1(path: &Path, verifier: &dyn TransportVerifier) -> Result<()> {
     let bytes =
         fs::read(path).with_context(|| format!("read product report: {}", path.display()))?;
     let value: Value = serde_json::from_slice(&bytes)
@@ -195,6 +202,44 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
         }
     }
     match scope {
+        "novovm_native_authenticated_endpoint_v2" => {
+            if value.get("network_only").and_then(Value::as_bool) != Some(true)
+                || value.get("aoem_called").and_then(Value::as_bool) != Some(true)
+                || value.get("handshake_version").and_then(Value::as_u64) != Some(2)
+                || value.get("signature_suite").and_then(Value::as_u64) != Some(65)
+                || value
+                    .get("authenticated_exchanges")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+                    == 0
+                || value.get("session_id").is_none_or(Value::is_null)
+            {
+                bail!("native authenticated endpoint report is incomplete");
+            }
+            let exchanges = value["authenticated_exchanges"].as_u64().unwrap_or(0);
+            let requests = value["authenticated_requests"].as_u64();
+            let replies = value["local_replies_submitted"].as_u64();
+            let round_trip = value["round_trip_confirmed"].as_bool();
+            let valid_stage = match value["mode"].as_str() {
+                Some("probe") => {
+                    round_trip == Some(true)
+                        && exchanges == 1
+                        && requests == Some(0)
+                        && replies == Some(0)
+                }
+                Some("observer") => {
+                    round_trip == Some(false)
+                        && replies == Some(exchanges)
+                        && requests.is_some_and(|n| n >= exchanges)
+                }
+                _ => false,
+            };
+            if !valid_stage || value["local_peer_id"].as_str().is_none_or(str::is_empty) {
+                bail!(
+                    "native endpoint report confuses local submission with a confirmed round trip"
+                );
+            }
+        }
         "novovm_product_relay_daemon_v1" => {
             if value
                 .get("relay_is_trusted_authority")
@@ -211,20 +256,6 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
                 .context("decode bounded relay daemon report")?;
             validate_relay_daemon_report_v2(&report)?;
         }
-        "novovm_product_nat_runtime_v1" => {
-            if value.get("network_only").and_then(Value::as_bool) != Some(true) {
-                bail!("NAT report is not network-only");
-            }
-            if let Some(attempt) = value.get("punch_attempt") {
-                let path = attempt
-                    .get("selected_path_after_punch")
-                    .and_then(Value::as_str);
-                let ack_valid = attempt.get("ack_valid").and_then(Value::as_bool);
-                if path == Some("punched_direct") && ack_valid != Some(true) {
-                    bail!("NAT direct path lacks a valid signed ACK");
-                }
-            }
-        }
         "novovm_product_node_overlay_runtime_v1" => {
             let receipt: SignedStrategyReceiptV1 = serde_json::from_value(
                 value
@@ -235,7 +266,8 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
                     .clone(),
             )
             .context("decode node strategy receipt")?;
-            validate_strategy_receipt_v1(&receipt).context("node strategy receipt invalid")?;
+            validate_strategy_receipt_v1(&receipt, verifier)
+                .context("node strategy receipt invalid")?;
             if value
                 .get("centralized_control_plane_required")
                 .and_then(Value::as_bool)
@@ -244,7 +276,7 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
                 bail!("node overlay report requires centralized control plane");
             }
         }
-        "novovm_product_peer_runtime_v1" => {
+        "novovm_product_peer_runtime_v2" => {
             let role = value
                 .get("role")
                 .and_then(Value::as_str)
@@ -283,7 +315,18 @@ fn validate_product_report_v1(path: &Path) -> Result<()> {
             {
                 bail!("peer report relay or end-to-end boundary invalid");
             }
-            for field in ["apfl_interpreted", "aoem_called", "ledger_semantics"] {
+            if value
+                .get("transport_signature_suite")
+                .and_then(Value::as_u64)
+                != Some(65)
+                || value
+                    .get("transport_handshake_version")
+                    .and_then(Value::as_u64)
+                    != Some(2)
+            {
+                bail!("peer report lacks the explicit native authentication contract");
+            }
+            for field in ["apfl_interpreted", "ledger_semantics"] {
                 if value.get(field).and_then(Value::as_bool) != Some(false) {
                     bail!("peer report non-network boundary invalid: {field}");
                 }
@@ -459,6 +502,7 @@ fn manifest_signing_bytes_v1(manifest: &ProductEvidenceManifestV1) -> Vec<u8> {
     let mut bytes = Vec::new();
     append_field_v1(&mut bytes, PRODUCT_EVIDENCE_DOMAIN_V1);
     append_field_v1(&mut bytes, &manifest.version.to_be_bytes());
+    append_field_v1(&mut bytes, &manifest.signature_suite.to_be_bytes());
     append_field_v1(&mut bytes, manifest.scope.as_bytes());
     append_field_v1(&mut bytes, &manifest.created_at_ms.to_be_bytes());
     append_field_v1(&mut bytes, manifest.signer_peer_id.as_bytes());
@@ -476,21 +520,6 @@ fn manifest_signing_bytes_v1(manifest: &ProductEvidenceManifestV1) -> Vec<u8> {
 fn append_field_v1(destination: &mut Vec<u8>, value: &[u8]) {
     destination.extend_from_slice(&(value.len() as u32).to_be_bytes());
     destination.extend_from_slice(value);
-}
-
-pub fn load_evidence_signing_key_v1(path: &Path) -> Result<SigningKey> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("read evidence signing key: {}", path.display()))?;
-    let text = text.trim();
-    if text.len() != 64 {
-        bail!("evidence signing key must contain exactly 64 hexadecimal characters");
-    }
-    let mut secret = [0u8; 32];
-    for (index, output) in secret.iter_mut().enumerate() {
-        *output = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
-            .context("decode evidence signing key hex")?;
-    }
-    Ok(SigningKey::from_bytes(&secret))
 }
 
 pub fn now_ms_v1() -> u64 {
@@ -596,38 +625,54 @@ mod tests {
         let report_path = root.join("relay.json");
         let mut report = bounded_relay_report_v2();
         fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
-        validate_product_report_v1(&report_path).unwrap();
+        validate_product_report_v1(
+            &report_path,
+            &crate::native_pipeline::consensus::crypto::component_transport_identity([130; 32]),
+        )
+        .unwrap();
 
         report["daemon_version"] = Value::from(1);
         fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_product_report_v1(&report_path)
-            .unwrap_err()
-            .to_string()
-            .contains("daemon_version=2"));
+        assert!(validate_product_report_v1(
+            &report_path,
+            &crate::native_pipeline::consensus::crypto::component_transport_identity([130; 32])
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("daemon_version=2"));
 
         report = bounded_relay_report_v2();
         report["relay_runtime"]["limits"]["max_frames_per_window"] = Value::from(99);
         fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_product_report_v1(&report_path)
-            .unwrap_err()
-            .to_string()
-            .contains("limit snapshot"));
+        assert!(validate_product_report_v1(
+            &report_path,
+            &crate::native_pipeline::consensus::crypto::component_transport_identity([130; 32])
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("limit snapshot"));
 
         report = bounded_relay_report_v2();
         report["relay_runtime"]["queued_frame_count"] = Value::from(1);
         fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_product_report_v1(&report_path)
-            .unwrap_err()
-            .to_string()
-            .contains("contradicts"));
+        assert!(validate_product_report_v1(
+            &report_path,
+            &crate::native_pipeline::consensus::crypto::component_transport_identity([130; 32])
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("contradicts"));
 
         report = bounded_relay_report_v2();
         report["transport"] = Value::from("ws");
         fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_product_report_v1(&report_path)
-            .unwrap_err()
-            .to_string()
-            .contains("transport or semantic"));
+        assert!(validate_product_report_v1(
+            &report_path,
+            &crate::native_pipeline::consensus::crypto::component_transport_identity([130; 32])
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("transport or semantic"));
 
         let active_session = serde_json::json!({
             "peer_id": "peer-a",
@@ -644,10 +689,13 @@ mod tests {
         report["relay_runtime"]["active_peer_ids"] = serde_json::json!(["peer-a"]);
         report["relay_runtime"]["active_sessions"] = serde_json::json!([active_session]);
         fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_product_report_v1(&report_path)
-            .unwrap_err()
-            .to_string()
-            .contains("contradicts"));
+        assert!(validate_product_report_v1(
+            &report_path,
+            &crate::native_pipeline::consensus::crypto::component_transport_identity([130; 32])
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("contradicts"));
 
         let mut session_a = report["relay_runtime"]["active_sessions"][0].clone();
         session_a["queued_frame_count"] = Value::from(0);
@@ -657,11 +705,43 @@ mod tests {
         report["relay_runtime"]["active_sessions"] =
             serde_json::json!([session_a.clone(), session_a]);
         fs::write(&report_path, serde_json::to_vec(&report).unwrap()).unwrap();
-        assert!(validate_product_report_v1(&report_path)
-            .unwrap_err()
-            .to_string()
-            .contains("identity snapshot"));
+        assert!(validate_product_report_v1(
+            &report_path,
+            &crate::native_pipeline::consensus::crypto::component_transport_identity([130; 32])
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("identity snapshot"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn native_observer_local_submission_is_not_a_confirmed_round_trip() {
+        let root =
+            std::env::temp_dir().join(format!("novovm-native-stage-evidence-{}", now_ms_v1()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("observer.json");
+        let verifier =
+            crate::native_pipeline::consensus::crypto::component_transport_identity([134; 32]);
+        let mut report = serde_json::json!({
+            "accepted": true, "scope": "novovm_native_authenticated_endpoint_v2",
+            "payload_treated_opaque": true, "novorudp_wire_changed": false,
+            "network_only": true, "aoem_called": true, "handshake_version": 2,
+            "signature_suite": 65, "session_id": vec![1; 16], "mode": "observer",
+            "local_peer_id": verifier.peer_id(), "authenticated_exchanges": 1,
+            "authenticated_requests": 1, "local_replies_submitted": 1,
+            "round_trip_confirmed": true
+        });
+        fs::write(&path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&path, &verifier).is_err());
+        report["round_trip_confirmed"] = Value::from(false);
+        fs::write(&path, serde_json::to_vec(&report).unwrap()).unwrap();
+        validate_product_report_v1(&path, &verifier).unwrap();
+        report["mode"] = Value::from("probe");
+        fs::write(&path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert!(validate_product_report_v1(&path, &verifier).is_err());
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(root).unwrap();
     }
 
     #[test]
@@ -670,10 +750,15 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let report_path = root.join("nat.json");
         fs::write(&report_path, serde_json::to_vec(&serde_json::json!({
-            "accepted": true, "scope": "novovm_product_nat_runtime_v1", "network_only": true,
-            "payload_treated_opaque": true, "novorudp_wire_changed": false, "punch_attempt": null
+            "accepted": true, "scope": "novovm_native_authenticated_endpoint_v2", "network_only": true,
+            "payload_treated_opaque": true, "novorudp_wire_changed": false,
+            "aoem_called": true, "handshake_version": 2, "signature_suite": 65,
+            "authenticated_exchanges": 1, "session_id": vec![1; 16], "mode": "probe",
+            "authenticated_requests": 0, "local_replies_submitted": 0,
+            "round_trip_confirmed": true, "local_peer_id": "component-fixture-peer"
         })).unwrap()).unwrap();
-        let signer = SigningKey::from_bytes(&[131; 32]);
+        let signer =
+            crate::native_pipeline::consensus::crypto::component_transport_identity([131; 32]);
         let manifest = build_product_evidence_manifest_v1(
             &root,
             std::slice::from_ref(&report_path),
@@ -683,9 +768,9 @@ mod tests {
         .unwrap();
         let manifest_path = root.join("evidence.json");
         write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
-        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
+        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path, &signer).accepted);
         fs::write(&report_path, b"{}".as_slice()).unwrap();
-        assert!(!verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
+        assert!(!verify_product_evidence_manifest_v1(&root, &manifest_path, &signer).accepted);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -698,7 +783,7 @@ mod tests {
             &report_path,
             serde_json::to_vec(&serde_json::json!({
                 "accepted": true,
-                "scope": "novovm_product_peer_runtime_v1",
+                "scope": "novovm_product_peer_runtime_v2",
                 "role": "sender",
                 "local_peer_id": "peer-a",
                 "remote_peer_id": "peer-b",
@@ -714,19 +799,21 @@ mod tests {
                 "relay_is_trusted_authority": false,
                 "network_only": true,
                 "apfl_interpreted": false,
-                "aoem_called": false,
+                "transport_signature_suite": 65,
+                "transport_handshake_version": 2,
                 "ledger_semantics": false,
                 "novorudp_wire_changed": false
             }))
             .unwrap(),
         )
         .unwrap();
-        let signer = SigningKey::from_bytes(&[132; 32]);
+        let signer =
+            crate::native_pipeline::consensus::crypto::component_transport_identity([132; 32]);
         let manifest =
             build_product_evidence_manifest_v1(&root, &[report_path], &signer, 1_000).unwrap();
         let manifest_path = root.join("evidence.json");
         write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
-        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
+        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path, &signer).accepted);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -752,12 +839,13 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let signer = SigningKey::from_bytes(&[133; 32]);
+        let signer =
+            crate::native_pipeline::consensus::crypto::component_transport_identity([133; 32]);
         let manifest =
             build_product_evidence_manifest_v1(&root, &[report_path], &signer, 1_000).unwrap();
         let manifest_path = root.join("evidence.json");
         write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
-        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path).accepted);
+        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path, &signer).accepted);
         let _ = fs::remove_dir_all(root);
     }
 }

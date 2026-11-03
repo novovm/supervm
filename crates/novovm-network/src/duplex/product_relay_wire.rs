@@ -353,8 +353,8 @@ mod iroh_envelope_tests {
         SecureNovoRudpEnvelopeV1 {
             version: 1,
             session_id,
-            sender_peer_id: format!("novovm-ed25519:{}", "11".repeat(32)),
-            recipient_peer_id: format!("novovm-ed25519:{}", "22".repeat(32)),
+            sender_peer_id: format!("novovm-mldsa65:{}", "11".repeat(32)),
+            recipient_peer_id: format!("novovm-mldsa65:{}", "22".repeat(32)),
             sequence: 1,
             nonce,
             ciphertext,

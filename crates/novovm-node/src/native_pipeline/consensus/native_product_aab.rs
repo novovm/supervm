@@ -76,7 +76,7 @@ impl FaultPeer {
                         .genesis
                         .validators
                         .iter()
-                        .map(|v| (v.public_key.clone(), v.transport_public_key)),
+                        .map(|v| (v.public_key.clone(), v.transport_public_key.clone())),
                 )?;
                 let peers = config
                     .peers
@@ -89,13 +89,13 @@ impl FaultPeer {
                             .find(|v| v.public_key == peer.public_key)
                             .context("fault fixture peer binding missing")?;
                         Ok(NativePeer {
-                            key: binding.transport_public_key,
+                            key: binding.transport_public_key.clone(),
                             address: peer.address,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let identity = transport_key(faulty);
-                let public = identity.verifying_key().to_bytes();
+                let public = identity.public_key();
                 let transport = UdpTransport::bind_for_chain(
                     NodeId(u64::from_le_bytes(public[..8].try_into()?)),
                     &config.udp_addr.to_string(),

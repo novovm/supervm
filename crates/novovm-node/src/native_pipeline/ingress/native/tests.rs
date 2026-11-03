@@ -1,48 +1,21 @@
 use super::*;
+use crate::native_pipeline::consensus::crypto::component_transport_identity;
 use anyhow::Context;
-use ed25519_dalek::SigningKey;
 use novovm_network::{
     novorudp::{
-        handshake::NativeHandshake,
+        datagram::NativeUdpSession,
         object_ack::encode_object_ack,
         object_sender::{NativeObjectSender, ObjectSendState},
         NovoRudpPacingProfile,
     },
-    product_overlay::HandshakeReplayCacheV1,
+    product_overlay::{HandshakeReplayCacheV1, NodeHandshakeInitiatorV1, NodeHandshakeResponderV1},
 };
 use std::{io::ErrorKind, net::UdpSocket, sync::Arc, time::Duration};
 
-fn pump_handshake(
-    socket: &UdpSocket,
-    handshake: &mut NativeHandshake,
-    cache: &mut HandshakeReplayCacheV1,
-    start: Instant,
-) -> Result<()> {
-    let mut buffer = [0; 1201];
-    for _ in 0..8 {
-        match socket.recv_from(&mut buffer) {
-            Ok((count, source)) => {
-                let result = handshake.receive(
-                    source,
-                    &buffer[..count],
-                    1000 + start.elapsed().as_millis() as u64,
-                    Instant::now(),
-                    cache,
-                );
-                if !handshake.is_ready() {
-                    result?;
-                }
-            }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
-            Err(e) => return Err(e.into()),
-        }
-    }
-    Ok(())
-}
-
-/// Actual original-node ingress consumers with native UDP handshake, bounded
-/// send/ACK/repair polls and APFL assembly. No test-created channel/ACK shortcut;
-/// consensus and the executable's continuous lifecycle remain separate.
+/// Lower-level ingress consumer component: the original handshake establishes
+/// channels in memory, then real UDP carries data/ACK/repair and APFL assembly.
+/// Full socket handshake/continuation coverage is in native/socket/tests.rs;
+/// this fixture is not real ML-DSA cryptography or process/consensus acceptance.
 pub(crate) fn deliver(
     wire: Vec<u8>,
     limits: ApflLimits,
@@ -52,50 +25,16 @@ pub(crate) fn deliver(
     let right = UdpSocket::bind("127.0.0.1:0")?;
     left.set_nonblocking(true)?;
     right.set_nonblocking(true)?;
-    let a = SigningKey::from_bytes(&[23; 32]);
-    let b = SigningKey::from_bytes(&[47; 32]);
-    let a_key = a.verifying_key().to_bytes();
-    let b_key = b.verifying_key().to_bytes();
-    let start = Instant::now();
-    let mut left_handshake = NativeHandshake::start(
-        a,
-        b_key,
-        right.local_addr()?,
-        1000,
-        start,
-        Duration::from_secs(5),
-        Duration::from_millis(10),
-    )?;
-    let mut right_handshake = NativeHandshake::start(
-        b,
-        a_key,
-        left.local_addr()?,
-        1000,
-        start,
-        Duration::from_secs(5),
-        Duration::from_millis(10),
-    )?;
-    let mut left_cache = HandshakeReplayCacheV1::default();
+    let a = component_transport_identity([23; 32]);
+    let b = component_transport_identity([47; 32]);
+    let initiator = NodeHandshakeInitiatorV1::start(&a, b.peer_id(), 1000, 5000)?;
     let mut right_cache = HandshakeReplayCacheV1::default();
-    while !(left_handshake.is_ready() && right_handshake.is_ready()) {
-        ensure!(
-            start.elapsed() < Duration::from_secs(5),
-            "native test handshake timeout"
-        );
-        let now = Instant::now();
-        let wall = 1000 + start.elapsed().as_millis() as u64;
-        left_handshake.try_send(&left, wall, now)?;
-        right_handshake.try_send(&right, wall, now)?;
-        pump_handshake(&left, &mut left_handshake, &mut left_cache, start)?;
-        pump_handshake(&right, &mut right_handshake, &mut right_cache, start)?;
-        std::thread::yield_now();
-    }
-    let mut sender = left_handshake
-        .take_session()
-        .context("left session missing")?;
-    let mut receiver = right_handshake
-        .take_session()
-        .context("right session missing")?;
+    let responder =
+        NodeHandshakeResponderV1::respond(initiator.offer(), &b, 1000, 5000, &mut right_cache)?;
+    let mut left_cache = HandshakeReplayCacheV1::default();
+    let channel = initiator.complete(responder.response(), 1000, &mut left_cache)?;
+    let mut sender = NativeUdpSession::new(channel, right.local_addr()?)?;
+    let mut receiver = NativeUdpSession::new(responder.into_channel(), left.local_addr()?)?;
     let peer = receiver.remote_peer_id().to_owned();
     let domain = [0x31; 32];
     let message = Arc::new(OutgoingMessage::with_profile(

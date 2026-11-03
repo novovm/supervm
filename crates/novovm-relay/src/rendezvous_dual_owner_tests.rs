@@ -20,11 +20,11 @@ mod dual_owner_tests {
         session: NativeMailboxClient,
     }
     impl<'a> CarrierClient<'a> {
-        async fn attach(stream: &'a mut CarrierStreamV1<'_>, pin: [u8; 32]) -> Result<Self> {
+        async fn attach(stream: &'a mut CarrierStreamV1<'_>, pin: Vec<u8>) -> Result<Self> {
             let (channel, observed) = authenticate_mailbox_native_v8(
                 stream,
-                &SigningKey::from_bytes(&[41; 32]),
-                pin,
+                &component_key(41),
+                pin.clone(),
                 Instant::now() + Duration::from_secs(5),
                 &mut HandshakeReplayCacheV1::new(8),
                 &mut |_, _| Ok(()),
@@ -131,7 +131,7 @@ mod dual_owner_tests {
         expires: i64,
     ) -> Result<(StoreReceiptV1, u64)> {
         let owner = fixture.open()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let direct_only = matches!(owner.policy.carrier_mode, Some(CarrierMode::DirectOnly));
         #[cfg(feature = "tls-transport")]
         let tls_enabled = owner.policy.tls_listener.is_some();
@@ -169,10 +169,14 @@ mod dual_owner_tests {
                     serde_json::from_slice(&std::fs::read(root.join("status.json"))?)?;
                 ensure!(status["relayServicesEnabled"] == false);
             }
-            let mut book =
-                ServiceLeaseBookV1::new_self_owned(trust(pin), vec![record.clone()], now_ms()?)?;
-            book.check_native_carrier_route_v8(pin, &carrier, now_ms()?)?;
-            book.check_continuous_peer_v4(pin, route.address.endpoint_key, now_ms()?)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(pin.clone()),
+                vec![record.clone()],
+                now_ms()?,
+                component_key(71),
+            )?;
+            book.check_native_carrier_route_v8(&pin, &carrier, now_ms()?)?;
+            book.check_continuous_peer_v4(&pin, route.address.endpoint_key, now_ms()?)?;
             let mut udp = Client::connect(&record).await?;
             if prior.is_some() {
                 // Read before any Put on either carrier: cannot manufacture
@@ -193,7 +197,14 @@ mod dual_owner_tests {
             let Reply::Stored(receipt) = udp.request(put(expires)).await? else {
                 anyhow::bail!("UDP did not issue durable StoreReceipt")
             };
-            receipt.verify(pin, [1; 32], [4; 32], &vec![8; 256], expires)?;
+            receipt.verify(
+                &pin,
+                [1; 32],
+                [4; 32],
+                &vec![8; 256],
+                expires,
+                &component_key(71),
+            )?;
             if let Some(previous) = prior {
                 ensure!(receipt.signature == previous.signature);
             }
@@ -205,19 +216,29 @@ mod dual_owner_tests {
             )
             .await?;
             let expected = receipt.signature.clone();
+            let carrier_pin = pin.clone();
             let result = endpoint
                 .with_continuous_service_v4(
                     || Ok(()),
                     move |scope| {
+                        let pin = carrier_pin;
                         Box::pin(async move {
                             let mut stream: CarrierStreamV1<'_> =
                                 scope.connect(&route.address).await?.into();
-                            let mut client = CarrierClient::attach(&mut stream, pin).await?;
+                            let mut client =
+                                CarrierClient::attach(&mut stream, pin.clone()).await?;
                             check_object(client.request(fetch()).await?, expires)?;
                             let Reply::Stored(same) = client.request(put(expires)).await? else {
                                 anyhow::bail!("V8 did not return the original custody receipt")
                             };
-                            same.verify(pin, [1; 32], [4; 32], &vec![8; 256], expires)?;
+                            same.verify(
+                                &pin,
+                                [1; 32],
+                                [4; 32],
+                                &vec![8; 256],
+                                expires,
+                                &component_key(71),
+                            )?;
                             ensure!(
                                 same.signature == expected,
                                 "carriers do not share receipt history"
@@ -247,7 +268,14 @@ mod dual_owner_tests {
                             else {
                                 anyhow::bail!("V8 Put failed")
                             };
-                            other.verify(pin, [11; 32], [14; 32], &vec![18; 256], expires)?;
+                            other.verify(
+                                &pin,
+                                [11; 32],
+                                [14; 32],
+                                &vec![18; 256],
+                                expires,
+                                &component_key(71),
+                            )?;
                             Ok(())
                         })
                     },
@@ -264,18 +292,25 @@ mod dual_owner_tests {
                 let tls = TlsServiceEndpointV1::from_record(&record)?
                     .context("dual owner silently dropped configured TLS entry")?;
                 ensure!(tls.native_mailbox_v8);
-                book.check_tls_route_v1(pin, &tls, now_ms()?)?;
-                book.check_continuous_native_tls_v8(pin, &tls, now_ms()?)?;
+                book.check_tls_route_v1(&pin, &tls, now_ms()?)?;
+                book.check_continuous_native_tls_v8(&pin, &tls, now_ms()?)?;
                 let scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
                 let tcp = tokio::net::TcpStream::connect(tls.address).await?;
                 tcp.set_nodelay(true)?;
                 let mut stream = CarrierStreamV1::from(scope.connect(tcp, tls.endpoint_key).await?);
-                let mut client = CarrierClient::attach(&mut stream, pin).await?;
+                let mut client = CarrierClient::attach(&mut stream, pin.clone()).await?;
                 check_object(client.request(fetch()).await?, expires)?;
                 let Reply::Stored(tls_receipt) = client.request(put(expires)).await? else {
                     anyhow::bail!("configured TLS entry did not serve native custody")
                 };
-                tls_receipt.verify(pin, [1; 32], [4; 32], &vec![8; 256], expires)?;
+                tls_receipt.verify(
+                    &pin,
+                    [1; 32],
+                    [4; 32],
+                    &vec![8; 256],
+                    expires,
+                    &component_key(71),
+                )?;
                 ensure!(tls_receipt.signature == receipt.signature);
             }
             let Reply::Object {

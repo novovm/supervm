@@ -9,7 +9,7 @@ use crate::product_relay_client::{
 };
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use ed25519_dalek::SigningKey;
+use novovm_network::product_overlay::TransportIdentity;
 use novovm_network::{
     HandshakeReplayCacheV1, NodeHandshakeResponderV1, ProductRelayRuntimeConfigV1,
     ProductRelaySessionManagerV1, ProductRelayWireMessageV1,
@@ -40,7 +40,8 @@ const PRODUCT_RELAY_WEBSOCKET_PATH_V1: &str = "/novovm";
 // reservation: unauthenticated slow connections can still consume it.
 const DEFAULT_MAX_CONNECTIONS_V1: usize = 512;
 const DEFAULT_HANDSHAKE_TIMEOUT_MS_V1: u64 = 5_000;
-const MAX_HANDSHAKE_WIRE_MESSAGE_BYTES_V1: usize = 16 * 1024;
+// Full ML-DSA-65 public keys/signatures retain the original JSON carrier here.
+const MAX_HANDSHAKE_WIRE_MESSAGE_BYTES_V1: usize = 32 * 1024;
 const MAX_WEBSOCKET_CONTROL_FRAME_BYTES_V1: usize = 125;
 const PRODUCT_RELAY_FRAME_DEADLINE_MS_V1: u64 = 10_000;
 const PRODUCT_RELAY_MAINTENANCE_INTERVAL_MS_V1: u64 = 1_000;
@@ -69,6 +70,9 @@ pub struct ProductRelayDaemonConfigV1 {
     pub tls_cert_path: PathBuf,
     pub tls_key_path: PathBuf,
     pub relay_identity_key_path: PathBuf,
+    pub chain_id: u64,
+    pub library: PathBuf,
+    pub library_sha256: String,
     pub report_path: PathBuf,
     #[serde(default = "default_report_interval_ms_v1")]
     pub report_interval_ms: u64,
@@ -162,7 +166,7 @@ struct ProductRelayConnectionPermitV1 {
 #[derive(Clone)]
 struct ProductRelayConnectionContextV1 {
     tls_config: Arc<rustls::ServerConfig>,
-    relay_identity: SigningKey,
+    relay_identity: TransportIdentity,
     manager: ProductRelaySessionManagerV1,
     runtime: Arc<Runtime>,
     replay_cache: Arc<Mutex<HandshakeReplayCacheV1>>,
@@ -240,6 +244,20 @@ pub fn run_product_relay_daemon_with_shutdown_v1(
     config: ProductRelayDaemonConfigV1,
     stopping: Arc<AtomicBool>,
 ) -> Result<()> {
+    let identity = novovm_relay::transport_identity::load_transport_identity(
+        &config.relay_identity_key_path,
+        config.chain_id,
+        &config.library,
+        &config.library_sha256,
+    )?;
+    run_product_relay_with_identity_v1(config, stopping, identity)
+}
+
+fn run_product_relay_with_identity_v1(
+    config: ProductRelayDaemonConfigV1,
+    stopping: Arc<AtomicBool>,
+    relay_identity: TransportIdentity,
+) -> Result<()> {
     if config.report_interval_ms == 0 {
         bail!("report_interval_ms must be positive");
     }
@@ -254,7 +272,6 @@ pub fn run_product_relay_daemon_with_shutdown_v1(
         config.max_connections,
         relay_runtime_config.max_sessions,
     ))?;
-    let relay_identity = load_ed25519_signing_key_v1(&config.relay_identity_key_path)?;
     let tls_config = Arc::new(build_server_tls_config_v1(
         &config.tls_cert_path,
         &config.tls_key_path,
@@ -1008,19 +1025,41 @@ fn load_private_key_v1(bytes: &[u8]) -> Result<PrivateKeyDer<'static>> {
         .context("relay TLS key file contains no supported key")
 }
 
-fn load_ed25519_signing_key_v1(path: &Path) -> Result<SigningKey> {
-    let encoded = fs::read_to_string(path)
-        .with_context(|| format!("read relay identity key: {}", path.display()))?;
-    let encoded = encoded.trim();
-    if encoded.len() != 64 {
-        bail!("relay identity key must be exactly 32 bytes encoded as 64 hexadecimal characters");
+/// Shared executable selector prepares the same protected identity for the
+/// original duplex runtime; neither executable loads a raw Ed25519 fallback.
+pub fn prepare_product_relay_identity_v1(path: &Path) -> Result<TransportIdentity> {
+    let config = ProductRelayIdentityInputs::load(path)?;
+    novovm_relay::transport_identity::load_transport_identity(
+        &config.relay_identity_key_path,
+        config.chain_id,
+        &config.library,
+        &config.library_sha256,
+    )
+}
+
+// The selected runtime owns its complete configuration. All original relay
+// entrypoints share only these explicit custody and runtime inputs.
+#[derive(Deserialize)]
+struct ProductRelayIdentityInputs {
+    relay_identity_key_path: PathBuf,
+    chain_id: u64,
+    library: PathBuf,
+    library_sha256: String,
+}
+
+impl ProductRelayIdentityInputs {
+    fn load(path: &Path) -> Result<Self> {
+        let mut inputs: Self =
+            serde_json::from_slice(&fs::read(path)?).context("decode relay identity inputs")?;
+        let base = path.parent().unwrap_or_else(|| Path::new("."));
+        if inputs.relay_identity_key_path.is_relative() {
+            inputs.relay_identity_key_path = base.join(&inputs.relay_identity_key_path);
+        }
+        if inputs.library.is_relative() {
+            inputs.library = base.join(&inputs.library);
+        }
+        Ok(inputs)
     }
-    let mut secret = [0u8; 32];
-    for (index, output) in secret.iter_mut().enumerate() {
-        *output = u8::from_str_radix(&encoded[index * 2..index * 2 + 2], 16)
-            .context("decode relay identity key hex")?;
-    }
-    Ok(SigningKey::from_bytes(&secret))
 }
 
 struct ProductRelayReadDeadlineV1<'a> {
@@ -1636,10 +1675,41 @@ fn default_report_interval_ms_v1() -> u64 {
 }
 
 #[cfg(test)]
+pub(crate) fn component_identity_from_seed_fixture(path: &Path) -> Result<TransportIdentity> {
+    let text = fs::read_to_string(path)?;
+    let text = text.trim();
+    anyhow::ensure!(text.len() == 64, "component seed fixture width");
+    let mut seed = [0u8; 32];
+    for (index, byte) in seed.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&text[2 * index..2 * index + 2], 16)?;
+    }
+    Ok(crate::product_relay_client::component_identity(&seed))
+}
+
+#[cfg(test)]
+pub(crate) fn run_component_relay_daemon_with_shutdown_v1(
+    config: ProductRelayDaemonConfigV1,
+    stopping: Arc<AtomicBool>,
+) -> Result<()> {
+    let identity = component_identity_from_seed_fixture(&config.relay_identity_key_path)?;
+    run_product_relay_with_identity_v1(config, stopping, identity)
+}
+
+#[cfg(test)]
+pub(crate) fn run_component_relay_daemon_v1(config: ProductRelayDaemonConfigV1) -> Result<()> {
+    run_component_relay_daemon_with_shutdown_v1(config, Arc::new(AtomicBool::new(false)))
+}
+
+#[cfg(test)]
 mod tests {
+    use novovm_network::product_overlay::TransportIdentity;
+    fn component_key(seed: &[u8; 32]) -> TransportIdentity {
+        crate::product_relay_client::component_identity(seed)
+    }
+
     use super::*;
     use novovm_network::{
-        peer_id_from_ed25519_public_key_v1, AuthenticatedPeerV1, E2eSecureChannelV1,
+        peer_id_from_mldsa65_public_key_v1, AuthenticatedPeerV1, E2eSecureChannelV1,
         HandshakeReplayCacheV1, NodeHandshakeInitiatorV1, NodeHandshakeResponderV1,
         NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0, RelayPeerHandshakeV1,
     };
@@ -1647,6 +1717,38 @@ mod tests {
     use std::{cell::Cell, collections::VecDeque, io::Cursor, net::SocketAddr, time::Instant};
 
     type TestClientWebSocketV1 = rustls::StreamOwned<rustls::ClientConnection, TcpStream>;
+
+    #[test]
+    fn identity_inputs_do_not_require_another_carriers_configuration() -> Result<()> {
+        let root = std::env::temp_dir().join(format!(
+            "novovm-relay-identity-inputs-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        ));
+        fs::create_dir(&root)?;
+        let path = root.join("rendezvous.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 3,
+                "engineering_direct_allowed": true,
+                "relay_identity_key_path": "transport.key",
+                "chain_id": 73,
+                "library": "runtime/aoem.dll",
+                "library_sha256": "ab".repeat(32)
+            }))?,
+        )?;
+        let inputs = ProductRelayIdentityInputs::load(&path)?;
+        assert_eq!(inputs.chain_id, 73);
+        assert_eq!(inputs.relay_identity_key_path, root.join("transport.key"));
+        assert_eq!(inputs.library, root.join("runtime/aoem.dll"));
+        assert_eq!(inputs.library_sha256, "ab".repeat(32));
+        fs::write(&path, b"{\"relay_identity_key_path\":\"old-raw-seed\"}")?;
+        assert!(ProductRelayIdentityInputs::load(&path).is_err());
+        fs::remove_file(path)?;
+        fs::remove_dir(root)?;
+        Ok(())
+    }
 
     include!("product_relay_daemon_io_tests.rs");
 
@@ -1681,6 +1783,9 @@ mod tests {
                 "tls_cert_path": certificate_path,
                 "tls_key_path": key_path,
                 "relay_identity_key_path": identity_path,
+                "chain_id": 7,
+                "library": "component-fixture-not-runtime",
+                "library_sha256": "0".repeat(64),
                 "report_path": report_path,
                 "report_interval_ms": 10,
                 "run_for_ms": run_for_ms,
@@ -1694,7 +1799,7 @@ mod tests {
             let worker_stopping = Arc::clone(&stopping);
             let spawned_at = Instant::now();
             let worker = thread::spawn(move || {
-                run_product_relay_daemon_with_shutdown_v1(config, worker_stopping)
+                run_component_relay_daemon_with_shutdown_v1(config, worker_stopping)
             });
             Self {
                 root,
@@ -2032,9 +2137,9 @@ mod tests {
             .unwrap();
         let manager =
             ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default()).unwrap();
-        let relay_identity = SigningKey::from_bytes(&[151; 32]);
-        let node_a = SigningKey::from_bytes(&[152; 32]);
-        let node_b = SigningKey::from_bytes(&[153; 32]);
+        let relay_identity = component_key(&[151; 32]);
+        let node_a = component_key(&[152; 32]);
+        let node_b = component_key(&[153; 32]);
         let now = now_ms_v1();
         let authenticated_a = authenticate_test_peer_v1(&node_a, &relay_identity, now);
         let authenticated_b = authenticate_test_peer_v1(&node_b, &relay_identity, now);
@@ -2180,6 +2285,9 @@ mod tests {
             tls_cert_path: "cert.pem".into(),
             tls_key_path: "key.pem".into(),
             relay_identity_key_path: "identity.key".into(),
+            chain_id: 7,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             report_path: "report.json".into(),
             report_interval_ms: 1_000,
             run_for_ms: None,
@@ -2273,6 +2381,9 @@ mod tests {
             tls_cert_path: certificate_path,
             tls_key_path: key_path,
             relay_identity_key_path: identity_path,
+            chain_id: 7,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             report_path: report_path.clone(),
             report_interval_ms: 25,
             run_for_ms: Some(1_500),
@@ -2298,14 +2409,13 @@ mod tests {
             source_bytes_per_minute: Some(16 * 1024 * 1024),
             max_bytes_per_minute: Some(32 * 1024 * 1024),
         };
-        let daemon = thread::spawn(move || run_product_relay_daemon_v1(config));
+        let daemon = thread::spawn(move || run_component_relay_daemon_v1(config));
         let client_config = test_client_tls_config_v1(certificate_der);
         let address: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-        let relay_identity = SigningKey::from_bytes(&[21; 32]);
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
-        let node_a = SigningKey::from_bytes(&[22; 32]);
-        let node_b = SigningKey::from_bytes(&[23; 32]);
+        let relay_identity = component_key(&[21; 32]);
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
+        let node_a = component_key(&[22; 32]);
+        let node_b = component_key(&[23; 32]);
         let now = now_ms_v1();
 
         let mut client_b = connect_and_register_test_client_v1(
@@ -2323,8 +2433,8 @@ mod tests {
             now,
         );
 
-        let node_a_peer_id = peer_id_from_ed25519_public_key_v1(&node_a.verifying_key().to_bytes());
-        let node_b_peer_id = peer_id_from_ed25519_public_key_v1(&node_b.verifying_key().to_bytes());
+        let node_a_peer_id = peer_id_from_mldsa65_public_key_v1(node_a.public_key());
+        let node_b_peer_id = peer_id_from_mldsa65_public_key_v1(node_b.public_key());
         let peer_initiator =
             NodeHandshakeInitiatorV1::start(&node_a, node_b_peer_id.clone(), now_ms_v1(), 5_000)
                 .unwrap();
@@ -2441,12 +2551,11 @@ mod tests {
     }
 
     fn authenticate_test_peer_v1(
-        node_identity: &SigningKey,
-        relay_identity: &SigningKey,
+        node_identity: &TransportIdentity,
+        relay_identity: &TransportIdentity,
         now_ms: u64,
     ) -> AuthenticatedPeerV1 {
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(node_identity, relay_peer_id, now_ms, 5_000).unwrap();
         let mut replay = HandshakeReplayCacheV1::default();
@@ -2463,12 +2572,11 @@ mod tests {
     }
 
     fn test_peer_channels_v1(
-        initiator_identity: &SigningKey,
-        responder_identity: &SigningKey,
+        initiator_identity: &TransportIdentity,
+        responder_identity: &TransportIdentity,
         now_ms: u64,
     ) -> (E2eSecureChannelV1, E2eSecureChannelV1) {
-        let responder_peer_id =
-            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let responder_peer_id = peer_id_from_mldsa65_public_key_v1(responder_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(initiator_identity, responder_peer_id, now_ms, 5_000)
                 .unwrap();
@@ -2505,7 +2613,7 @@ mod tests {
     fn connect_and_register_test_client_v1(
         address: SocketAddr,
         client_config: Arc<rustls::ClientConfig>,
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         relay_peer_id: &str,
         now_ms: u64,
     ) -> TestClientWebSocketV1 {

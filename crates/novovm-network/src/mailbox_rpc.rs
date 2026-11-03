@@ -2,6 +2,7 @@
 //! Native V7/V8 APFL callers enter through mailbox_structured/native_session and
 //! request_local_v1; the JSON send/receive helpers below are not their wire path.
 //! Owner admits the service path; credentials are never sent before peer authentication.
+use crate::product_overlay::TransportIdentity;
 use crate::{
     bound_session::{
         authenticate_allowed_service_client, authenticate_bound_session,
@@ -21,7 +22,6 @@ use crate::{
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Result};
-use ed25519_dalek::SigningKey;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
 use zeroize::{Zeroize, Zeroizing};
@@ -241,7 +241,7 @@ pub enum MailboxRejectionV1 {
 /// runs off the socket executor; cancellation cannot manufacture/undo a commit.
 pub struct MailboxServiceV1 {
     store: Arc<Mutex<MailboxStore>>,
-    signer: SigningKey,
+    signer: TransportIdentity,
     slots: Arc<tokio::sync::Semaphore>,
     changed: tokio::sync::watch::Sender<u64>,
     // Shared across V4 connections, so reconnecting cannot reset the budget.
@@ -315,10 +315,10 @@ impl RequestBudgetV4 {
     }
 }
 impl MailboxServiceV1 {
-    pub(crate) fn identity_public_key(&self) -> [u8; 32] {
-        self.signer.verifying_key().to_bytes()
+    pub(crate) fn identity_public_key(&self) -> &[u8] {
+        self.signer.public_key()
     }
-    pub fn new(store: MailboxStore, signer: SigningKey) -> Self {
+    pub fn new(store: MailboxStore, signer: TransportIdentity) -> Self {
         Self {
             store: Arc::new(Mutex::new(store)),
             signer,
@@ -369,7 +369,11 @@ impl MailboxServiceV1 {
             record.relay_public_key == self.identity_public_key(),
             "mailbox locator node mismatch"
         );
-        validate_relay_record_v1(&record, crate::product_rendezvous_daemon::now_ms()?)?;
+        validate_relay_record_v1(
+            &record,
+            crate::product_rendezvous_daemon::now_ms()?,
+            &self.signer,
+        )?;
         // Parse the complete canonical service inventory before checking either
         // native capability. A UDP entry cannot hide a malformed carrier/TLS
         // alternative, and a legacy Iroh address never implies NVMBOX07.
@@ -759,7 +763,7 @@ impl MailboxServiceV1 {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("mailbox store unavailable"))?;
             drop(waiting);
-            let result = (|| -> std::result::Result<MailboxReplyV1, StoreError> {
+            let result = (|| -> Result<MailboxReplyV1> {
                 let now = now().map_err(|_| StoreError::Invalid)?;
                 match &request {
                     MailboxRequestV1::EndpointDeliverV1 { .. }
@@ -768,7 +772,7 @@ impl MailboxServiceV1 {
                     | MailboxRequestV1::BeginSession
                     | MailboxRequestV1::BeginContinuousV4
                     | MailboxRequestV1::BeginContinuousV6
-                    | MailboxRequestV1::EndSession => Err(StoreError::Invalid),
+                    | MailboxRequestV1::EndSession => Err(StoreError::Invalid.into()),
                     MailboxRequestV1::Watch { .. }
                     | MailboxRequestV1::WatchFetchV6 { .. }
                     | MailboxRequestV1::WatchFetchBulkV1 { .. } => {
@@ -818,9 +822,13 @@ impl MailboxServiceV1 {
                         } else {
                             store.put(mailbox, &capability, object, ciphertext, *expires, now)?;
                         }
+                        // Custody is durable even if the qualified signer later
+                        // fails. Preserve Watch progress and return that runtime
+                        // error, never a fabricated storage receipt.
+                        changed.send_modify(|value| *value = value.wrapping_add(1));
                         Ok(MailboxReplyV1::Stored(StoreReceiptV1::committed(
                             &signer, *mailbox, *object, ciphertext, *expires,
-                        )))
+                        )?))
                     }
                     MailboxRequestV1::Fetch { mailbox, read }
                     | MailboxRequestV1::FetchBulkV1 { mailbox, read } => {
@@ -869,39 +877,39 @@ impl MailboxServiceV1 {
             if result.is_ok()
                 && matches!(
                     &request,
-                    MailboxRequestV1::Put { .. }
-                        | MailboxRequestV1::PutBulkV1 { .. }
-                        | MailboxRequestV1::Revoke { .. }
-                        | MailboxRequestV1::Register { .. }
+                    MailboxRequestV1::Revoke { .. } | MailboxRequestV1::Register { .. }
                 )
             {
                 changed.send_modify(|value| *value = value.wrapping_add(1));
             }
             Ok(match result {
                 Ok(reply) => reply,
-                Err(error) => MailboxReplyV1::Rejected(match error {
-                    StoreError::Unauthorized => MailboxRejectionV1::Unauthorized,
-                    StoreError::Invalid | StoreError::Random => MailboxRejectionV1::Invalid,
-                    StoreError::Quota => {
-                        if let Some(timing) = &timing {
-                            timing.note_store_rejection(false);
+                Err(error) => {
+                    let error = error.downcast::<StoreError>()?;
+                    MailboxReplyV1::Rejected(match error {
+                        StoreError::Unauthorized => MailboxRejectionV1::Unauthorized,
+                        StoreError::Invalid | StoreError::Random => MailboxRejectionV1::Invalid,
+                        StoreError::Quota => {
+                            if let Some(timing) = &timing {
+                                timing.note_store_rejection(false);
+                            }
+                            MailboxRejectionV1::Quota
                         }
-                        MailboxRejectionV1::Quota
-                    }
-                    StoreError::Conflict => MailboxRejectionV1::Conflict,
-                    StoreError::Consumed => MailboxRejectionV1::Consumed,
-                    StoreError::Database(rusqlite::Error::SqliteFailure(code, _))
-                        if code.code == rusqlite::ErrorCode::DiskFull =>
-                    {
-                        if let Some(timing) = &timing {
-                            timing.note_store_rejection(true);
+                        StoreError::Conflict => MailboxRejectionV1::Conflict,
+                        StoreError::Consumed => MailboxRejectionV1::Consumed,
+                        StoreError::Database(rusqlite::Error::SqliteFailure(code, _))
+                            if code.code == rusqlite::ErrorCode::DiskFull =>
+                        {
+                            if let Some(timing) = &timing {
+                                timing.note_store_rejection(true);
+                            }
+                            MailboxRejectionV1::Quota
                         }
-                        MailboxRejectionV1::Quota
-                    }
-                    StoreError::Database(_) | StoreError::ClockRollback => {
-                        MailboxRejectionV1::Storage
-                    }
-                }),
+                        StoreError::Database(_) | StoreError::ClockRollback => {
+                            MailboxRejectionV1::Storage
+                        }
+                    })
+                }
             })
         })
         .await?
@@ -1132,8 +1140,8 @@ async fn receive_with_first<T: serde::de::DeserializeOwned>(
 /// as its verified signed service offer. Errors drop it, never downgrade/retry.
 pub async fn request_mailbox_v1(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    pinned_node: [u8; 32],
+    identity: &TransportIdentity,
+    pinned_node: Vec<u8>,
     request: MailboxRequestV1,
 ) -> Result<MailboxReplyV1> {
     let mut channel = authenticate_bound_session(
@@ -1151,12 +1159,12 @@ pub async fn request_mailbox_v1(
 }
 pub async fn serve_mailbox_v1(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     service: &MailboxServiceV1,
 ) -> Result<()> {
     ensure!(
-        identity.verifying_key() == service.signer.verifying_key(),
+        identity.public_key() == service.signer.public_key(),
         "mailbox service signer mismatch"
     );
     let (mut channel, _) = authenticate_allowed_service_client(
@@ -1198,8 +1206,8 @@ pub struct MailboxClientSessionV2<'stream, 'scope> {
 impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
     pub async fn begin(
         stream: &'stream mut CarrierStreamV1<'scope>,
-        identity: &SigningKey,
-        pinned_node: [u8; 32],
+        identity: &TransportIdentity,
+        pinned_node: Vec<u8>,
     ) -> Result<Self> {
         Self::begin_inner(stream, identity, pinned_node, false, false).await
     }
@@ -1208,8 +1216,8 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
     /// Local peer trust/revocation and privacy remain the owner's live checks.
     pub async fn begin_continuous_v4(
         stream: &'stream mut CarrierStreamV1<'scope>,
-        identity: &SigningKey,
-        pinned_node: [u8; 32],
+        identity: &TransportIdentity,
+        pinned_node: Vec<u8>,
     ) -> Result<Self> {
         Self::begin_inner(stream, identity, pinned_node, true, false).await
     }
@@ -1217,15 +1225,15 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
     /// Explicit encrypted V6 negotiation on NVMBOX06. No old-version fallback.
     pub async fn begin_continuous_v6(
         stream: &'stream mut CarrierStreamV1<'scope>,
-        identity: &SigningKey,
-        pinned_node: [u8; 32],
+        identity: &TransportIdentity,
+        pinned_node: Vec<u8>,
     ) -> Result<Self> {
         Self::begin_inner(stream, identity, pinned_node, true, true).await
     }
     async fn begin_inner(
         stream: &'stream mut CarrierStreamV1<'scope>,
-        identity: &SigningKey,
-        pinned_node: [u8; 32],
+        identity: &TransportIdentity,
+        pinned_node: Vec<u8>,
         continuous: bool,
         prefetch: bool,
     ) -> Result<Self> {
@@ -1366,8 +1374,8 @@ impl<'stream, 'scope> MailboxClientSessionV2<'stream, 'scope> {
 /// The host supplies the unchanged signed-offer authority, checked per request.
 pub async fn serve_mailbox_session_v2(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
@@ -1387,8 +1395,8 @@ pub async fn serve_mailbox_session_v2(
 /// request-budget reset or replay-state reset occurs within the session.
 pub async fn serve_mailbox_window_v3(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
     deadline: std::time::Instant,
@@ -1417,8 +1425,8 @@ pub async fn serve_mailbox_window_v3(
 /// The same identity handshake, operations, receipts and storage are reused.
 pub async fn serve_mailbox_continuous_v4(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
@@ -1436,7 +1444,7 @@ pub async fn serve_mailbox_continuous_v4(
 /// Open admission does not bypass the store's capabilities or global budgets.
 pub async fn serve_mailbox_continuous_with_policy_v4(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
@@ -1458,7 +1466,7 @@ pub async fn serve_mailbox_continuous_with_policy_v4(
 /// not turn TLS into a multiplexed connection or grant another lane's identity.
 pub async fn serve_mailbox_continuous_with_policy_v6(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
@@ -1476,7 +1484,7 @@ pub async fn serve_mailbox_continuous_with_policy_v6(
 
 async fn serve_continuous(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
@@ -1509,8 +1517,8 @@ enum SessionMode {
 /// service owns storage/rate budgets across ALL connections and lanes.
 pub async fn serve_mailbox_multiplex_v5(
     first: CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
 ) -> Result<()> {
@@ -1528,7 +1536,7 @@ pub async fn serve_mailbox_multiplex_v5(
 /// All lanes and identities share the SAME node resource accounting.
 pub async fn serve_mailbox_multiplex_with_policy_v5(
     first: CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
@@ -1537,7 +1545,7 @@ pub async fn serve_mailbox_multiplex_with_policy_v5(
 }
 pub async fn serve_mailbox_multiplex_with_policy_v6(
     first: CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
@@ -1551,7 +1559,7 @@ pub async fn serve_mailbox_multiplex_with_policy_v6(
 /// carrier never selects a weaker peer policy or bypasses V6 authentication.
 pub async fn serve_mailbox_prefetch_with_policy_v6(
     mut first: CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
@@ -1565,7 +1573,7 @@ pub async fn serve_mailbox_prefetch_with_policy_v6(
 }
 async fn serve_multiplex(
     mut first: CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
@@ -1629,14 +1637,14 @@ async fn serve_multiplex(
 
 async fn serve_session(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     authority: impl Fn() -> Result<()>,
     mode: SessionMode,
 ) -> Result<()> {
     ensure!(
-        identity.verifying_key() == service.signer.verifying_key(),
+        identity.public_key() == service.signer.public_key(),
         "mailbox service signer mismatch"
     );
     authority()?;
@@ -1786,8 +1794,8 @@ mod notification_tests {
     #[tokio::test]
     async fn continuous_replay_is_rejected_with_original_counters() -> Result<()> {
         use crate::iroh_transport::{with_iroh_owned_listener_v1, IrohEndpointOwnerV1};
-        fn key(n: u8) -> SigningKey {
-            SigningKey::from_bytes(&[n; 32])
+        fn key(n: u8) -> TransportIdentity {
+            TransportIdentity::from_bytes(&[n; 32])
         }
         fn config() -> crate::iroh_transport::IrohConfigV1 {
             crate::iroh_transport::IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
@@ -1812,7 +1820,7 @@ mod notification_tests {
                     let result = serve_mailbox_continuous_v4(
                         &mut stream,
                         &key(1),
-                        &[key(2).verifying_key().to_bytes()],
+                        &[key(2).public_key().to_vec()],
                         &service,
                         || Ok(()),
                     )
@@ -1832,7 +1840,7 @@ mod notification_tests {
                     let mut channel = authenticate_bound_session(
                         &mut stream,
                         &key(2),
-                        key(1).verifying_key().to_bytes(),
+                        key(1).public_key().to_vec(),
                         true,
                         &mut HandshakeReplayCacheV1::new(8),
                     )
@@ -1904,7 +1912,7 @@ mod notification_tests {
         let dir = tempfile::tempdir()?;
         let service = MailboxServiceV1::new(
             MailboxStore::open(dir.path().join("rate.db"), Default::default())?,
-            SigningKey::from_bytes(&[76; 32]),
+            TransportIdentity::from_bytes(&[76; 32]),
         );
         let controller = rate_controller();
         service.bind_default_request_rate_v1(controller.clone())?;
@@ -1980,7 +1988,7 @@ mod notification_tests {
         let dir = tempfile::tempdir()?;
         let service = MailboxServiceV1::new(
             MailboxStore::open(dir.path().join("fixed.db"), Default::default())?,
-            SigningKey::from_bytes(&[77; 32]),
+            TransportIdentity::from_bytes(&[77; 32]),
         )
         .with_continuous_request_rate_v4(1, 1)?;
         let controller = rate_controller();
@@ -2020,7 +2028,7 @@ mod notification_tests {
         let dir = tempfile::tempdir()?;
         let mut store = MailboxStore::open(dir.path().join("watch.db"), Default::default())?;
         let grant = store.create(now()?, 600)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[78; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[78; 32]));
         let reply = service
             .request_local_v1(MailboxRequestV1::WatchFetchBulkV1 {
                 boxes: vec![MailboxWatchV1 {
@@ -2048,7 +2056,7 @@ mod notification_tests {
         let dir = tempfile::tempdir()?;
         let mut store = MailboxStore::open(dir.path().join("timing.db"), Default::default())?;
         let grant = store.create(now()?, 600)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[73; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[73; 32]));
         let controller = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
             cpu_parallelism: 2,
             available_memory_bytes: 1024 * 1024 * 1024,
@@ -2090,7 +2098,7 @@ mod notification_tests {
         let dir = tempfile::tempdir()?;
         let service = MailboxServiceV1::new(
             MailboxStore::open(dir.path().join("rate.db"), Default::default())?,
-            SigningKey::from_bytes(&[74; 32]),
+            TransportIdentity::from_bytes(&[74; 32]),
         )
         .with_continuous_request_rate_v4(1, 1)?;
         service.admit_request_v4().await?;
@@ -2139,7 +2147,7 @@ mod notification_tests {
         let mut store =
             MailboxStore::open(dir.path().join("cancel-timing.db"), Default::default())?;
         let grant = store.create(now()?, 600)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[75; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[75; 32]));
         let controller = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
             cpu_parallelism: 2,
             available_memory_bytes: 1024 * 1024 * 1024,
@@ -2147,29 +2155,32 @@ mod notification_tests {
         });
         let permit = controller.try_acquire_work(4096).unwrap();
         let timing = permit.execution_timing();
-        let held_store = service.store.lock().unwrap();
         {
-            let work = timing.measure(service.request_local_timed(
-                MailboxRequestV1::Put {
-                    mailbox: grant.id,
-                    write: *grant.write.as_bytes(),
-                    object: [6; 32],
-                    ciphertext: vec![7; 32],
-                    expires: now()? + 300,
-                },
-                Some(&timing),
-            ));
-            tokio::pin!(work);
-            assert!(futures_util::poll!(&mut work).is_pending());
-            assert_eq!(
-                service.slots.available_permits(),
-                0,
-                "blocking commit owns the store slot but cannot pass the held lock"
-            );
-        } // dropping JoinHandle cannot undo an already submitted durable worker
-        drop(permit);
-        assert_eq!(controller.snapshot().completed_work, 0);
-        drop(held_store);
+            let _held_store = service.store.lock().unwrap();
+            {
+                let work = timing.measure(service.request_local_timed(
+                    MailboxRequestV1::Put {
+                        mailbox: grant.id,
+                        write: *grant.write.as_bytes(),
+                        object: [6; 32],
+                        ciphertext: vec![7; 32],
+                        expires: now()? + 300,
+                    },
+                    Some(&timing),
+                ));
+                tokio::pin!(work);
+                let mut context =
+                    std::task::Context::from_waker(futures_util::task::noop_waker_ref());
+                assert!(std::future::Future::poll(work.as_mut(), &mut context).is_pending());
+                assert_eq!(
+                    service.slots.available_permits(),
+                    0,
+                    "blocking commit owns the store slot but cannot pass the held lock"
+                );
+            } // dropping JoinHandle cannot undo an already submitted durable worker
+            drop(permit);
+            assert_eq!(controller.snapshot().completed_work, 0);
+        }
         // Same fair store slot gives a deterministic completion barrier: no sleeps.
         let reply = service
             .execute(MailboxRequestV1::Fetch {
@@ -2194,7 +2205,7 @@ mod notification_tests {
         let budget = novovm_storage_budget::DiskBudget::configure(dir.path())?;
         let mut store = MailboxStore::open(dir.path().join("custody.db"), Default::default())?;
         let grant = store.create(now()?, 900)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[1; 32]));
         let expires = now()? + 600;
         let put = || MailboxRequestV1::Put {
             mailbox: grant.id,
@@ -2220,11 +2231,12 @@ mod notification_tests {
             anyhow::bail!("original object did not resume");
         };
         receipt.verify(
-            SigningKey::from_bytes(&[1; 32]).verifying_key().to_bytes(),
+            TransportIdentity::from_bytes(&[1; 32]).public_key(),
             grant.id,
             [7; 32],
             &vec![8; 60 * 1024],
             expires,
+            &crate::test_identity::key(250),
         )?;
         Ok(())
     }
@@ -2241,7 +2253,7 @@ mod notification_tests {
             store.set_resources_available(true);
             let expiry = now()? + 600;
             let grant = store.create(now()?, 900)?;
-            let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+            let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[1; 32]));
             let put = || MailboxRequestV1::Put {
                 mailbox: grant.id,
                 write: *grant.write.as_bytes(),
@@ -2280,11 +2292,12 @@ mod notification_tests {
                     anyhow::bail!("committed Put lost")
                 };
                 receipt.verify(
-                    SigningKey::from_bytes(&[1; 32]).verifying_key().to_bytes(),
+                    TransportIdentity::from_bytes(&[1; 32]).public_key(),
                     grant.id,
                     [3; 32],
                     &[4; 8],
                     expiry,
+                    &crate::test_identity::key(250),
                 )?;
                 // Owner stop cannot invalidate a committed receipt, even if its
                 // first response was lost. The original commitment is replayed.
@@ -2322,7 +2335,7 @@ mod notification_tests {
         let dir = tempfile::tempdir()?;
         let service = MailboxServiceV1::new(
             MailboxStore::open(dir.path().join("contention.db"), Default::default())?,
-            SigningKey::from_bytes(&[2; 32]),
+            TransportIdentity::from_bytes(&[2; 32]),
         );
         let held = service.slots.clone().acquire_owned().await?;
         let request = service.execute(MailboxRequestV1::Register {
@@ -2388,7 +2401,7 @@ mod notification_tests {
         let mut store = MailboxStore::open(dir.path().join("watch.db"), Default::default())?;
         let now = now()?;
         let grant = store.create(now, 600)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[1; 32]));
         let initial = vec![MailboxWatchV1 {
             mailbox: grant.id,
             read: *grant.read.as_bytes(),
@@ -2460,7 +2473,7 @@ mod notification_tests {
         let mut store = MailboxStore::open(dir.path().join("watch.db"), Default::default())?;
         let grant = store.create(now()?, 600)?;
         let (cursor, _) = store.observe(&grant.id, &grant.read, now()?)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[1; 32]));
         let query = vec![MailboxWatchV1 {
             mailbox: grant.id,
             read: *grant.read.as_bytes(),
@@ -2504,8 +2517,8 @@ mod session_failure_tests {
         sync::atomic::{AtomicBool, Ordering},
         time::{Duration, Instant},
     };
-    fn key(n: u8) -> SigningKey {
-        SigningKey::from_bytes(&[n; 32])
+    fn key(n: u8) -> TransportIdentity {
+        TransportIdentity::from_bytes(&[n; 32])
     }
     fn config() -> IrohConfigV1 {
         IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
@@ -2558,7 +2571,7 @@ mod session_failure_tests {
                     let result = serve_mailbox_session_v2(
                         &mut stream,
                         &key(1),
-                        &[key(2).verifying_key().to_bytes()],
+                        &[key(2).public_key().to_vec()],
                         &service,
                         || {
                             ensure!(host.load(Ordering::Acquire), "fixture revoked");
@@ -2576,7 +2589,7 @@ mod session_failure_tests {
                     let mut session = MailboxClientSessionV2::begin(
                         &mut stream,
                         &key(2),
-                        key(1).verifying_key().to_bytes(),
+                        key(1).public_key().to_vec(),
                     )
                     .await?;
                     if cancel {
@@ -2638,7 +2651,7 @@ mod session_failure_tests {
                 let result = serve_mailbox_session_v2(
                     &mut stream,
                     &key(1),
-                    &[key(2).verifying_key().to_bytes()],
+                    &[key(2).public_key().to_vec()],
                     &service,
                     || Ok(()),
                 )
@@ -2653,7 +2666,7 @@ mod session_failure_tests {
                 let mut channel = authenticate_bound_session(
                     &mut stream,
                     &key(2),
-                    key(1).verifying_key().to_bytes(),
+                    key(1).public_key().to_vec(),
                     true,
                     &mut HandshakeReplayCacheV1::new(8),
                 )
@@ -2705,7 +2718,7 @@ mod prefetch_tests {
         let data = vec![255; 64 * 1024];
         store.put(&a.id, &a.write, &[7; 32], &data, expires, now()?)?;
         store.put(&b.id, &b.write, &[8; 32], &data, expires, now()?)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[1; 32]));
         let mut queries = vec![
             MailboxWatchV1 {
                 mailbox: a.id,
@@ -2750,7 +2763,7 @@ mod prefetch_tests {
         assert!(store.fetch_one(&a.id, &a.read, now()?)?.is_none());
         assert!(store.fetch_one(&b.id, &b.read, now()?)?.is_some());
         store.revoke(&b.id, &b.read, now()?)?;
-        let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[1; 32]));
+        let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[1; 32]));
         assert!(matches!(
             service.watch_inner(&queries, 0, true).await?,
             MailboxReplyV1::Rejected(MailboxRejectionV1::Unauthorized)

@@ -301,7 +301,9 @@ mod tests {
             serde_json::to_vec_pretty(&json!({
                 "chain_id": 77,
                 "role": "duplex",
-                "identity_key_path": format!("node-{index}.hex"),
+                "identity_key_path": format!("node-{index}.protected"),
+                "library": "not-loaded-topology-fixture.dll",
+                "library_sha256": "00".repeat(32),
                 "peers": peers,
                 "overlay": {
                     "cache_path": format!("node-{index}-cache.json"),

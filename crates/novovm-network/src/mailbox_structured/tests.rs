@@ -1,6 +1,29 @@
 use super::*;
+
+#[test]
+fn stored_receipt_codec_requires_explicit_mldsa65_shape() -> Result<()> {
+    let key = crate::test_identity::key(70);
+    let receipt = StoreReceiptV1::committed(&key, [1; 32], [2; 32], b"ciphertext", 600)?;
+    let wire = encode_replies(CONTEXT, &[Reply::Stored(receipt.clone())])?;
+    let replies = decode_replies(&wire, CONTEXT, 1)?;
+    let Reply::Stored(decoded) = &replies[0] else {
+        anyhow::bail!("receipt reply lost")
+    };
+    decoded.verify(key.public_key(), [1; 32], [2; 32], b"ciphertext", 600, &key)?;
+    for field in 0..4 {
+        let mut invalid = receipt.clone();
+        match field {
+            0 => invalid.version = 1,
+            1 => invalid.suite = 44,
+            2 => invalid.node.truncate(32),
+            _ => invalid.signature.truncate(64),
+        }
+        assert!(encode_replies(CONTEXT, &[Reply::Stored(invalid)]).is_err());
+    }
+    Ok(())
+}
 use crate::mailbox_store::MailboxStore;
-use ed25519_dalek::SigningKey;
+use crate::product_overlay::TransportIdentity;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -92,14 +115,15 @@ fn all_operational_rows_roundtrip_without_json_on_the_wire() -> Result<()> {
     let replies = vec![
         Reply::Registered,
         Reply::Stored(StoreReceiptV1 {
-            version: 1,
-            node: [1; 32],
+            version: 2,
+            suite: MLDSA65_SUITE,
+            node: vec![1; MLDSA65_PUBLIC_KEY_BYTES],
             mailbox: [2; 32],
             object: [3; 32],
             digest: [4; 32],
             bytes: 128,
             expires: i64::MAX,
-            signature: vec![6; 64],
+            signature: vec![6; MLDSA65_SIGNATURE_BYTES],
         }),
         Reply::Object {
             object: [3; 32],
@@ -259,8 +283,8 @@ async fn run(service: &MailboxServiceV1, requests: &[Request]) -> Result<Vec<Rep
 async fn original_owner_receipts_retries_capabilities_and_restart_custody() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("mailbox.db");
-    let key = SigningKey::from_bytes(&[71; 32]);
-    let pin = key.verifying_key().to_bytes();
+    let key = TransportIdentity::from_bytes(&[71; 32]);
+    let pin = key.public_key().to_vec();
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(&path, Default::default(), true)?,
         key.clone(),
@@ -286,7 +310,14 @@ async fn original_owner_receipts_retries_capabilities_and_restart_custody() -> R
         let Reply::Stored(receipt) = r else {
             anyhow::bail!("missing durable receipt")
         };
-        receipt.verify(pin, [1; 32], [4; 32], &[4; 128], expires)?;
+        receipt.verify(
+            &pin,
+            [1; 32],
+            [4; 32],
+            &[4; 128],
+            expires,
+            &crate::test_identity::key(250),
+        )?;
     }
     let mut bad = put(5, expires);
     if let Request::Put { write, .. } = &mut bad {
@@ -360,7 +391,14 @@ async fn original_owner_receipts_retries_capabilities_and_restart_custody() -> R
     else {
         anyhow::bail!("new storage receipt requires actual retained custody")
     };
-    recovered.verify(pin, [1; 32], [4; 32], &[4; 128], expires)?;
+    recovered.verify(
+        &pin,
+        [1; 32],
+        [4; 32],
+        &[4; 128],
+        expires,
+        &crate::test_identity::key(250),
+    )?;
     assert_eq!(*object, [4; 32]);
     assert_eq!(ciphertext, &vec![4; 128]);
     assert_eq!(*retained_until, expires);
@@ -399,7 +437,7 @@ async fn validates_whole_batch_before_effects_and_does_not_fake_rollback_after_a
     let dir = tempfile::tempdir()?;
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(dir.path().join("mailbox.db"), Default::default(), true)?,
-        SigningKey::from_bytes(&[71; 32]),
+        TransportIdentity::from_bytes(&[71; 32]),
     );
     service.set_resources_available(true).await?;
     let expires = now() + 600;

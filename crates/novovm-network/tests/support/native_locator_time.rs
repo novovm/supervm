@@ -164,7 +164,7 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
     let client = async {
         let mut link = Client::connect_link(&route, 174).await?;
         let (driver, handle) =
-            NativeMailboxDriver::attach(&mut link, 0, key(17).verifying_key().to_bytes())?;
+            NativeMailboxDriver::attach(&mut link, 0, key(17).public_key().to_vec())?;
         let authority: NativeRequestAuthority = Arc::new(|| Ok(()));
         let original_deadline = Instant::now() + Duration::from_secs(5);
         let operations = async {
@@ -224,7 +224,7 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
                 bail!("missing signed future metadata");
             };
             assert!(matches!(
-                validate_relay_record_v1(record, now_ms()?),
+                validate_relay_record_v1(record, now_ms()?, &crate::transport_identity::key(90)),
                 Err(ProductDirectoryErrorV1::NotYetValid)
             ));
             // These reuse the successfully completed slot with fresh request
@@ -241,7 +241,7 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
                 bail!("missing signed expired metadata");
             };
             assert!(matches!(
-                validate_relay_record_v1(record, now_ms()?),
+                validate_relay_record_v1(record, now_ms()?, &crate::transport_identity::key(90)),
                 Err(ProductDirectoryErrorV1::Expired)
             ));
             let valid = handle
@@ -255,7 +255,7 @@ async fn run_temporal_fixture(forged: bool) -> Result<()> {
             let [Reply::ServiceRecordV7 { record }] = valid.as_slice() else {
                 bail!("missing signed current metadata");
             };
-            validate_relay_record_v1(record, now_ms()?)?;
+            validate_relay_record_v1(record, now_ms()?, &crate::transport_identity::key(90))?;
             let business = handle
                 .request(
                     0,

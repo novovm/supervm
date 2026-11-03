@@ -5,8 +5,8 @@ use sha2::{Digest, Sha256};
 async fn local_client_shares_remote_commits_notifications_and_retained_custody() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("mailbox.db");
-    let signer = SigningKey::from_bytes(&[71; 32]);
-    let pin = signer.verifying_key().to_bytes();
+    let signer = TransportIdentity::from_bytes(&[71; 32]);
+    let pin = signer.public_key().to_vec();
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(&path, Default::default(), true)?,
         signer.clone(),
@@ -62,7 +62,14 @@ async fn local_client_shares_remote_commits_notifications_and_retained_custody()
     let MailboxReplyV1::Stored(receipt) = stored? else {
         anyhow::bail!("store proof")
     };
-    receipt.verify(pin, [1; 32], [4; 32], &[9; 64], expires)?;
+    receipt.verify(
+        &pin,
+        [1; 32],
+        [4; 32],
+        &[9; 64],
+        expires,
+        &crate::test_identity::key(250),
+    )?;
     let MailboxReplyV1::NoticeObjectV6 {
         object: Some(row), ..
     } = notice?
@@ -127,7 +134,7 @@ async fn local_client_cannot_negotiate_transport_or_bypass_rate_and_revocation()
     let directory = tempfile::tempdir()?;
     let mut store = MailboxStore::open(directory.path().join("mailbox.db"), Default::default())?;
     let grant = store.create(now()?, 600)?;
-    let service = MailboxServiceV1::new(store, SigningKey::from_bytes(&[72; 32]))
+    let service = MailboxServiceV1::new(store, TransportIdentity::from_bytes(&[72; 32]))
         .with_continuous_request_rate_v4(1, 10)?;
     for request in [
         MailboxRequestV1::BeginSession,

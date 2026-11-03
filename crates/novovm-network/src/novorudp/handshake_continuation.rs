@@ -19,11 +19,10 @@ pub(super) const MAGIC: &[u8; 8] = b"NVHCONT1";
 const INIT: u8 = 1;
 const CHALLENGE: u8 = 2;
 const PART: u8 = 3;
-// Current fixed response (426), replacing Ed key/signature with ML-DSA-65.
-// A future transcript/schema change MUST revise this bound and its tests.
-pub(super) const MAX_TRANSCRIPT_BYTES: usize = 426 - 32 - 64 + 1952 + 3309;
-// Smallest existing signed offer. No empty/tiny unauthenticated object API.
-const MIN_TRANSCRIPT_BYTES: usize = 362;
+// Share the active codec's exact bounds, including explicit version and suite.
+pub(super) const MAX_TRANSCRIPT_BYTES: usize =
+    crate::product_overlay::handshake_wire::RESPONSE_BYTES;
+const MIN_TRANSCRIPT_BYTES: usize = crate::product_overlay::handshake_wire::OFFER_BYTES;
 const HEADER: usize = 8 + 1 + 16 + 32 + 2 + 8 + 32;
 const CHUNK: usize = 1024;
 const MAX_PARTS: usize = MAX_TRANSCRIPT_BYTES.div_ceil(CHUNK);
@@ -196,15 +195,17 @@ pub(super) enum Received {
     Complete(Vec<u8>),
 }
 
-/// Endpoint-local, no allocation on Init. At most one assembly per source:
-/// 32 anonymous assemblies (178,912 payload bytes), plus one reserved assembly
-/// per locally configured route. Retries never extend an assembly deadline.
+/// Endpoint-local, no allocation on Init. Anonymous sources retain one flight;
+/// locally configured routes can overlap an old and a fresh handshake flight.
+/// Anonymous payload remains bounded to 32 assemblies (178,976 bytes).
+/// Retries never extend an assembly deadline.
 pub(super) struct Receiver {
     secret: Zeroizing<[u8; 32]>,
     epoch: Instant,
-    pending: BTreeMap<SocketAddr, Assembly>,
+    pending: BTreeMap<(SocketAddr, [u8; 16]), Assembly>,
     // Only populated by local configuration, never by a cookie or wire field.
-    // One reserved assembly per configured route, separate from anonymous load.
+    // At most two reserved assemblies per configured route, separate from
+    // anonymous load; the existing completion budget also reserves their slots.
     reserved: BTreeSet<SocketAddr>,
     // Retain only metadata until its original cookie expires. A delayed tail
     // cannot recreate a partial assembly after completion and block a new one.
@@ -269,15 +270,30 @@ impl Receiver {
         let packet = Packet::parse(wire)?;
         self.expire(now);
         let ticks = self.ticks(now)?;
+        let flight = (source, packet.commitment.transfer);
         match packet.tag {
             INIT => {
-                let expiry = if let Some(old) = self.pending.get(&source) {
+                let expiry = if let Some(old) = self.pending.get(&flight) {
                     ensure!(
                         old.commitment == packet.commitment,
                         "source already has a different handshake flight"
                     );
                     old.expiry
                 } else {
+                    let source_pending = self
+                        .pending
+                        .keys()
+                        .filter(|(address, _)| *address == source)
+                        .count();
+                    ensure!(
+                        source_pending
+                            < if self.reserved.contains(&source) {
+                                2
+                            } else {
+                                1
+                            },
+                        "source handshake flight budget full"
+                    );
                     ticks
                         .checked_add(LIFETIME.as_millis() as u64)
                         .context("cookie deadline overflow")?
@@ -309,18 +325,33 @@ impl Receiver {
                 }) {
                     return Ok(Received::Pending);
                 }
-                if let Some(old) = self.pending.get(&source) {
+                if let Some(old) = self.pending.get(&flight) {
                     ensure!(
                         old.commitment == packet.commitment && old.expiry == packet.expiry,
                         "source already has a different handshake flight"
                     );
                 } else {
+                    let source_pending = self
+                        .pending
+                        .keys()
+                        .filter(|(address, _)| *address == source)
+                        .count();
+                    ensure!(
+                        source_pending
+                            < if self.reserved.contains(&source) {
+                                2
+                            } else {
+                                1
+                            },
+                        "source handshake flight budget full"
+                    );
                     if self.reserved.contains(&source) {
                         ensure!(
                             self.completed
                                 .iter()
                                 .filter(|(address, _, _)| *address == source)
                                 .count()
+                                + source_pending
                                 < MAX_PINNED_COMPLETIONS,
                             "pinned handshake completion budget full"
                         );
@@ -328,7 +359,7 @@ impl Receiver {
                         let anonymous_pending = self
                             .pending
                             .keys()
-                            .filter(|address| !self.reserved.contains(address))
+                            .filter(|(address, _)| !self.reserved.contains(address))
                             .count();
                         ensure!(
                             anonymous_pending < MAX_ASSEMBLIES,
@@ -351,7 +382,7 @@ impl Receiver {
                         .checked_add(Duration::from_millis(packet.expiry - ticks))
                         .context("assembly deadline overflow")?;
                     self.pending.insert(
-                        source,
+                        flight,
                         Assembly {
                             bytes: vec![0; usize::from(packet.commitment.length)],
                             commitment: packet.commitment.clone(),
@@ -361,7 +392,7 @@ impl Receiver {
                         },
                     );
                 }
-                let assembly = self.pending.get_mut(&source).expect("inserted assembly");
+                let assembly = self.pending.get_mut(&flight).expect("inserted assembly");
                 let index = usize::from(packet.body[0]);
                 let start = index * CHUNK;
                 let destination = &mut assembly.bytes[start..start + packet.body.len() - 1];
@@ -377,7 +408,7 @@ impl Receiver {
                 if assembly.seen != (1 << assembly.commitment.parts()) - 1 {
                     return Ok(Received::Pending);
                 }
-                let complete = self.pending.remove(&source).expect("complete assembly");
+                let complete = self.pending.remove(&flight).expect("complete assembly");
                 self.completed
                     .push((source, complete.commitment.clone(), complete.expiry));
                 ensure!(

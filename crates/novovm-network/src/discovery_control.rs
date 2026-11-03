@@ -4,6 +4,7 @@
 //! before creating a scope and keep network/identity generations supervised.
 use crate::bound_session::BoundSessionStage;
 use crate::carrier_stream::{is_carrier_io_failure, CarrierStreamV1};
+use crate::product_overlay::TransportIdentity;
 use crate::{
     duplex::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
     iroh_transport::{decode_iroh_envelope_v1, encode_iroh_envelope_v1},
@@ -11,7 +12,6 @@ use crate::{
     transport_binding::BoundSecureChannelV1,
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use sha2::{Digest, Sha256};
 use std::{
     sync::{Arc, Mutex},
@@ -247,8 +247,8 @@ pub struct DiscoveryClient<'a, 'scope> {
 impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
     pub async fn connect(
         stream: &'a mut CarrierStreamV1<'scope>,
-        identity: &SigningKey,
-        pinned_node: [u8; 32],
+        identity: &TransportIdentity,
+        pinned_node: Vec<u8>,
         instance: [u8; 32],
     ) -> Result<Self> {
         Self::connect_observed(stream, identity, pinned_node, instance, &mut |_, _| Ok(())).await
@@ -259,8 +259,8 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
     /// an RPC client. The same stream is authenticated and used for all RPCs.
     pub async fn connect_observed<O>(
         stream: &'a mut CarrierStreamV1<'scope>,
-        identity: &SigningKey,
-        pinned_node: [u8; 32],
+        identity: &TransportIdentity,
+        pinned_node: Vec<u8>,
         instance: [u8; 32],
         observer: &mut O,
     ) -> Result<Self>
@@ -282,8 +282,8 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
     // tests exercise the real incomplete handshake without eight-second sleeps.
     async fn connect_observed_with_timeout<O>(
         stream: &'a mut CarrierStreamV1<'scope>,
-        identity: &SigningKey,
-        pinned_node: [u8; 32],
+        identity: &TransportIdentity,
+        pinned_node: Vec<u8>,
         instance: [u8; 32],
         observer: &mut O,
         timeout: Duration,
@@ -441,10 +441,10 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
 /// enclosing carrier authority remain effective across all client sessions.
 pub async fn serve_rendezvous(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     store: Arc<Mutex<RendezvousStoreV1>>,
-) -> Result<[u8; 32]> {
+) -> Result<Vec<u8>> {
     serve_rendezvous_observed(stream, identity, allowed, store, &mut |_, _| Ok(())).await
 }
 
@@ -454,11 +454,11 @@ pub async fn serve_rendezvous(
 /// authentication budget or the same-stream identity binding.
 pub async fn serve_rendezvous_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     store: Arc<Mutex<RendezvousStoreV1>>,
     observer: &mut O,
-) -> Result<[u8; 32]>
+) -> Result<Vec<u8>>
 where
     O: FnMut(BoundSessionStage, &'static str) -> Result<()> + Send + ?Sized,
 {
@@ -482,12 +482,12 @@ where
 /// Both observers must be fast and nonblocking; any observer error is terminal.
 pub async fn serve_rendezvous_delayed_lookup_for_diagnostic<O, D>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     store: Arc<Mutex<RendezvousStoreV1>>,
     observer: &mut O,
     delay_observer: &mut D,
-) -> Result<[u8; 32]>
+) -> Result<Vec<u8>>
 where
     O: FnMut(BoundSessionStage, &'static str) -> Result<()> + Send + ?Sized,
     D: FnMut(DiscoveryLookupDelayStage) -> Result<()> + Send + ?Sized,
@@ -508,13 +508,13 @@ where
 // permits short real-socket tests without an unbounded runtime delay option.
 async fn serve_rendezvous_inner<O, D>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     store: Arc<Mutex<RendezvousStoreV1>>,
     observer: &mut O,
     mut lookup_delay: Option<Duration>,
     delay_observer: &mut D,
-) -> Result<[u8; 32]>
+) -> Result<Vec<u8>>
 where
     O: FnMut(BoundSessionStage, &'static str) -> Result<()> + Send + ?Sized,
     D: FnMut(DiscoveryLookupDelayStage) -> Result<()> + Send + ?Sized,
@@ -530,6 +530,12 @@ where
         ),
     )
     .await??;
+    // The existing ephemeral store indexes an opaque owner, not a public key.
+    // Bind that stable index to the authenticated ML-DSA identity, never a hint.
+    let mut owner_hash = Sha256::new();
+    owner_hash.update(b"NOVONET/discovery-owner/ML-DSA-65/v2\0");
+    owner_hash.update(&owner);
+    let owner_id: [u8; 32] = owner_hash.finalize().into();
     for sequence in 1..=MAX_REQUESTS {
         let request = receive(stream, &mut channel, sequence, REQUEST).await?;
         if request.kind == GET
@@ -592,7 +598,7 @@ where
             match request.kind {
                 PUT if request.revision > 0 && (1..=30_000).contains(&request.ttl_ms) => {
                     if let Ok(receipt) = store.put(
-                        owner,
+                        owner_id,
                         request.slot,
                         request.revision,
                         Duration::from_millis(u64::from(request.ttl_ms)),
@@ -654,7 +660,6 @@ mod tests {
     use super::*;
     use crate::bound_session::BoundSessionError;
     use crate::iroh_transport::{with_iroh_scope_v1, IrohAddressV1, IrohConfigV1, IrohControlV1};
-    use crate::transport_binding::BoundNodeHandshakeOfferV1;
     use tokio::sync::oneshot;
 
     use crate::SERVICE_TEST_SERIAL as SERIAL;
@@ -670,10 +675,10 @@ mod tests {
     async fn real_quic_diagnostic_delay_precedes_lookup_once_without_holding_store() -> Result<()> {
         let _permit = SERIAL.acquire().await?;
         assert_eq!(DIAGNOSTIC_LOOKUP_DELAY, Duration::from_secs(10));
-        let client_identity = SigningKey::from_bytes(&[101; 32]);
-        let node_identity = SigningKey::from_bytes(&[102; 32]);
-        let client_pin = client_identity.verifying_key().to_bytes();
-        let node_pin = node_identity.verifying_key().to_bytes();
+        let client_identity = TransportIdentity::from_bytes(&[101; 32]);
+        let node_identity = TransportIdentity::from_bytes(&[102; 32]);
+        let client_pin = client_identity.public_key().to_vec();
+        let node_pin = node_identity.public_key().to_vec();
         let instance = [103; 32];
         let first_slot = [104; 32];
         let second_slot = [105; 32];
@@ -703,7 +708,7 @@ mod tests {
                     let owner = serve_rendezvous_inner(
                         &mut stream,
                         &node_identity,
-                        &[client_pin],
+                        std::slice::from_ref(&client_pin),
                         node_store,
                         &mut |_, _| Ok(()),
                         Some(delay),
@@ -794,10 +799,10 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
 
         let _permit = SERIAL.acquire().await?;
-        let client_identity = SigningKey::from_bytes(&[111; 32]);
-        let node_identity = SigningKey::from_bytes(&[112; 32]);
-        let client_pin = client_identity.verifying_key().to_bytes();
-        let node_pin = node_identity.verifying_key().to_bytes();
+        let client_identity = TransportIdentity::from_bytes(&[111; 32]);
+        let node_identity = TransportIdentity::from_bytes(&[112; 32]);
+        let client_pin = client_identity.public_key().to_vec();
+        let node_pin = node_identity.public_key().to_vec();
         let instance = [113; 32];
         let deadline = Instant::now() + Duration::from_secs(10);
         let store = Arc::new(Mutex::new(RendezvousStoreV1::new(instance, deadline)?));
@@ -829,7 +834,7 @@ mod tests {
                     serve_rendezvous_inner(
                         &mut stream,
                         &node_identity,
-                        &[client_pin],
+                        std::slice::from_ref(&client_pin),
                         store,
                         &mut |_, _| Ok(()),
                         Some(Duration::from_millis(150)),
@@ -1011,8 +1016,10 @@ mod tests {
         let _permit = SERIAL.acquire().await?;
         // Real local QUIC streams with explicit fixture keys, no relay or DNS.
         // The node receives an actual bound offer before the test may complete.
-        let client_identity = SigningKey::from_bytes(&[81; 32]);
-        let node_pin = SigningKey::from_bytes(&[82; 32]).verifying_key().to_bytes();
+        let client_identity = TransportIdentity::from_bytes(&[81; 32]);
+        let node_pin = TransportIdentity::from_bytes(&[82; 32])
+            .public_key()
+            .to_vec();
         let deadline = Instant::now() + Duration::from_secs(10);
         let (node_tx, node_rx) = oneshot::channel();
         let (client_tx, client_rx) = oneshot::channel();
@@ -1027,7 +1034,9 @@ mod tests {
                     let peer: IrohAddressV1 = client_rx.await?;
                     let mut stream: CarrierStreamV1<'_> =
                         (scope.accept(peer.endpoint_key).await?).into();
-                    BoundNodeHandshakeOfferV1::decode_json(&stream.read_frame().await?)?;
+                    crate::transport_binding::structured::decode_offer(
+                        &stream.read_frame().await?,
+                    )?;
                     offer_tx.send(()).unwrap();
                     if matches!(fixture, ClientRejectionFixture::MalformedResponse) {
                         stream.write_frame(b"{}").await?;
@@ -1155,10 +1164,10 @@ mod tests {
         // These explicit identities and local QUIC sockets belong only to this
         // test. The initial successful GET proves both Finished messages were
         // accepted before exercising the service's RPC/transport distinction.
-        let client_identity = SigningKey::from_bytes(&[91; 32]);
-        let node_identity = SigningKey::from_bytes(&[92; 32]);
-        let client_pin = client_identity.verifying_key().to_bytes();
-        let node_pin = node_identity.verifying_key().to_bytes();
+        let client_identity = TransportIdentity::from_bytes(&[91; 32]);
+        let node_identity = TransportIdentity::from_bytes(&[92; 32]);
+        let client_pin = client_identity.public_key().to_vec();
+        let node_pin = node_identity.public_key().to_vec();
         let instance = [93; 32];
         let deadline = Instant::now() + Duration::from_secs(10);
         let store = Arc::new(Mutex::new(RendezvousStoreV1::new(instance, deadline)?));
@@ -1174,9 +1183,14 @@ mod tests {
                     let peer: IrohAddressV1 = client_rx.await?;
                     let mut stream: CarrierStreamV1<'_> =
                         (scope.accept(peer.endpoint_key).await?).into();
-                    let error = serve_rendezvous(&mut stream, &node_identity, &[client_pin], store)
-                        .await
-                        .expect_err("broken or malformed service session completed");
+                    let error = serve_rendezvous(
+                        &mut stream,
+                        &node_identity,
+                        std::slice::from_ref(&client_pin),
+                        store,
+                    )
+                    .await
+                    .expect_err("broken or malformed service session completed");
                     done_tx.send(()).unwrap();
                     Ok(error)
                 })
@@ -1338,10 +1352,10 @@ mod tests {
         let _permit = SERIAL.acquire().await?;
         // Independent, explicit localhost fixture identities; never UCA or
         // production discovery credentials. No relay or DNS is contacted.
-        let client_identity = SigningKey::from_bytes(&[71; 32]);
-        let node_identity = SigningKey::from_bytes(&[72; 32]);
-        let client_pin = client_identity.verifying_key().to_bytes();
-        let node_pin = node_identity.verifying_key().to_bytes();
+        let client_identity = TransportIdentity::from_bytes(&[71; 32]);
+        let node_identity = TransportIdentity::from_bytes(&[72; 32]);
+        let client_pin = client_identity.public_key().to_vec();
+        let node_pin = node_identity.public_key().to_vec();
         let instance = [73; 32];
         let deadline = Instant::now() + Duration::from_secs(10);
         let store = Arc::new(Mutex::new(RendezvousStoreV1::new(instance, deadline)?));
@@ -1361,7 +1375,7 @@ mod tests {
                     let owner = serve_rendezvous_observed(
                         &mut stream,
                         &node_identity,
-                        &[client_pin],
+                        std::slice::from_ref(&client_pin),
                         node_store,
                         &mut |stage, path| {
                             ensure!(matches!(path, "direct" | "relay" | "other" | "unknown"));

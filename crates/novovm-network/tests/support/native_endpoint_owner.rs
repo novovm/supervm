@@ -58,7 +58,12 @@ async fn borrowed_l4_endpoint_shares_udp_custody_and_preserves_carrier() -> Resu
                 until,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], now)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![record],
+                now,
+                crate::transport_identity::key(90),
+            )?;
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([91; 32]), &checkpoint)?;
             book.attach_persistence(file, &checkpoint)?;
@@ -79,12 +84,16 @@ async fn borrowed_l4_endpoint_shares_udp_custody_and_preserves_carrier() -> Resu
         let route =
             NativeMailboxEndpointV7::from_record(&record)?.context("missing UDP locator")?;
         ensure!(route == expected);
-        let pin = key(17).verifying_key().to_bytes();
-        let mut book =
-            ServiceLeaseBookV1::new_self_owned(trust(), vec![record.clone()], now_ms()?)?;
-        book.check_native_mailbox_route_v7(pin, &route, now_ms()?)?;
+        let pin = key(17).public_key().to_vec();
+        let mut book = ServiceLeaseBookV1::new_self_owned(
+            trust(),
+            vec![record.clone()],
+            now_ms()?,
+            crate::transport_identity::key(90),
+        )?;
+        book.check_native_mailbox_route_v7(&pin, &route, now_ms()?)?;
         let carrier = IrohServiceEndpointV1::from_record(&record)?;
-        book.check_continuous_peer_v4(pin, carrier.address.endpoint_key, now_ms()?)?;
+        book.check_continuous_peer_v4(&pin, carrier.address.endpoint_key, now_ms()?)?;
         let mut udp = Client::connect(&route, 83).await?;
         let expires = (now_ms()? / 1000) as i64 + 60;
         ensure!(matches!(
@@ -100,23 +109,30 @@ async fn borrowed_l4_endpoint_shares_udp_custody_and_preserves_carrier() -> Resu
         let Reply::Stored(original) = udp.request(put(expires, 4)).await? else {
             bail!("native custody missing")
         };
-        original.verify(pin, [1; 32], [4; 32], &vec![9; 9000], expires)?;
+        original.verify(
+            &pin,
+            [1; 32],
+            [4; 32],
+            &vec![9; 9000],
+            expires,
+            &crate::transport_identity::key(90),
+        )?;
         let custody = service.clone();
         peer.with_continuous_service_v4(|| Ok(()), move |scope| Box::pin(async move {
             let mut stream: CarrierStreamV1<'_> = scope.connect(&carrier.address).await?.into();
             request_mailbox_continuous_v4(&mut stream).await?;
             // A different key is not pre-enrolled. Capabilities still determine access.
             let identity = key(84);
-            let mut session = MailboxClientSessionV2::begin_continuous_v4(&mut stream, &identity, pin).await?;
+            let mut session = MailboxClientSessionV2::begin_continuous_v4(&mut stream, &identity, pin.clone()).await?;
             ensure!(matches!(session.request(fetch(99)).await?, Reply::Rejected(MailboxRejectionV1::Unauthorized)));
             ensure!(matches!(session.request(fetch(3)).await?, Reply::Object { object, ciphertext, expires: ttl, .. }
                 if object == [4;32] && ciphertext == vec![9;9000] && ttl == expires));
             let Reply::Stored(duplicate) = session.request(put(expires, 4)).await? else {
                 bail!("carrier did not recover same custody")
             };
-            ensure!(duplicate.signature == original.signature);
+            ensure!((duplicate.version, duplicate.suite, &duplicate.node, duplicate.mailbox, duplicate.object, duplicate.digest, duplicate.bytes, duplicate.expires) == (original.version, original.suite, &original.node, original.mailbox, original.object, original.digest, original.bytes, original.expires));
             let Reply::Stored(second) = session.request(put(expires, 5)).await? else { bail!("carrier Put failed") };
-            second.verify(pin, [1;32], [5;32], &vec![9;9000], expires)?;
+            second.verify(&pin, [1;32], [5;32], &vec![9;9000], expires, &crate::transport_identity::key(90))?;
             ensure!(matches!(session.request(Request::Consume {
                 mailbox:[1;32], read:[3;32], object:[4;32], digest: original.digest,
             }).await?, Reply::Consumed));

@@ -8,19 +8,19 @@ use super::carrier::{NativeDatagramIo, NativeRoute};
 use super::datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES};
 use super::handshake_continuation;
 use super::wire_budget::{try_send_datagram, NativeWireBudget};
+use crate::product_overlay::TransportIdentity;
 use crate::product_overlay::{
     handshake_wire::{self, HandshakeMessage},
     *,
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use std::{
     net::{SocketAddr, UdpSocket},
     time::{Duration, Instant},
 };
 
 pub struct NativeHandshake {
-    identity: SigningKey,
+    identity: TransportIdentity,
     remote_peer: String,
     remote: NativeRoute,
     initiator: Option<NodeHandshakeInitiatorV1>,
@@ -39,8 +39,8 @@ pub struct NativeHandshake {
 
 impl NativeHandshake {
     pub fn start(
-        identity: SigningKey,
-        remote_key: [u8; 32],
+        identity: TransportIdentity,
+        remote_key: Vec<u8>,
         remote: SocketAddr,
         wall_ms: u64,
         now: Instant,
@@ -50,12 +50,12 @@ impl NativeHandshake {
         Self::start_role(identity, remote_key, remote, wall_ms, now, ttl, retry, None)
     }
 
-    /// Client/server roles reuse the exact signed V1 transcript. Validator
+    /// Client/server roles reuse the exact signed ML-DSA-65 transcript. Validator
     /// peers keep deterministic election; an application always initiates.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_role(
-        identity: SigningKey,
-        remote_key: [u8; 32],
+        identity: TransportIdentity,
+        remote_key: Vec<u8>,
         remote: impl Into<NativeRoute>,
         wall_ms: u64,
         now: Instant,
@@ -71,8 +71,12 @@ impl NativeHandshake {
         );
         let ttl_ms = u64::try_from(ttl.as_millis())?;
         ensure!(ttl_ms > 0, "submillisecond handshake lifetime");
-        let remote_peer = peer_id_from_ed25519_public_key_v1(&remote_key);
-        let local = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+        ensure!(
+            remote_key.len() == crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES,
+            "native handshake requires an ML-DSA-65 public key"
+        );
+        let remote_peer = peer_id_from_mldsa65_public_key_v1(&remote_key);
+        let local = identity.peer_id();
         ensure!(local != remote_peer, "native self handshake");
         // One deterministic initiator, not two competing sessions per peer.
         let initiator = if initiate.unwrap_or(local < remote_peer) {
@@ -287,6 +291,10 @@ impl NativeHandshake {
     }
     pub fn take_session(&mut self) -> Option<NativeUdpSession> {
         self.session.take()
+    }
+    #[cfg(test)]
+    pub(super) fn outgoing_wire_for_test(&self) -> Option<&[u8]> {
+        self.outgoing.as_deref()
     }
     pub fn is_ready(&self) -> bool {
         self.ready

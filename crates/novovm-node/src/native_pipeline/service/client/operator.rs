@@ -1,6 +1,6 @@
 //! Bounded operator CLI adapter over NativeApplicationClient. Configuration and
 //! stdout JSON are local presentation only; network payloads retain native wire.
-//! No signing, account initialization, database access or validator lifecycle.
+//! No transaction signing, account initialization, database access or validator lifecycle.
 use super::NativeApplicationClient;
 use crate::native_pipeline::{
     consensus::{
@@ -10,7 +10,6 @@ use crate::native_pipeline::{
     service::{native_decode_limits, GenesisValidator, NativePeerConfig},
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use novovm_network::novorudp::{
     endpoint::NativePeer,
     fragments::ReassemblyLimits,
@@ -18,6 +17,7 @@ use novovm_network::novorudp::{
     object_sender::ObjectSendState,
     NovoRudpPacingProfile, NovoRudpWindowConfig,
 };
+use novovm_network::product_overlay::TransportIdentity;
 use novovm_protocol::{
     native_query::{self, Answer, Frame, Query},
     uca_spend::MAX_SIGNED_SPEND_BYTES,
@@ -37,10 +37,10 @@ use std::{
 const MAX_ROWS: usize = 1024;
 const MAX_CLIENT_VALIDATORS: usize = 64;
 /// Local configuration budget shared with managed health inspection. A pretty
-/// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate 32-byte
+/// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate ML-DSA-65
 /// transport keys and the target identity fits with field/path headroom. This
 /// does not enlarge transaction input, network/output budgets or wire::MAX_VALIDATORS.
-pub const MAX_CLIENT_CONFIG_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_CLIENT_CONFIG_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,14 +52,21 @@ pub struct ClientConfig {
     pub validators: Vec<GenesisValidator>,
     pub node: NativePeerConfig,
     pub bind_addr: SocketAddr,
-    /// Existing nonvalidator transport-purpose key, exactly 32 raw bytes.
+    /// Existing protected nonvalidator transport-purpose key. Raw keys are rejected.
     /// Never supply a validator signer, UCA management or ML-DSA spend key.
     pub transport_key_file: PathBuf,
+    pub library: PathBuf,
+    /// Independently approved lowercase SHA-256; no implicit installed-library selection.
+    pub library_sha256: String,
     pub timeout_ms: u64,
 }
 
 impl ClientConfig {
-    fn domain(&self, key: &SigningKey) -> Result<MessageDomain> {
+    fn domain(&self, public_key: &[u8]) -> Result<MessageDomain> {
+        ensure!(
+            public_key.len() == 1952,
+            "native client transport identity must be ML-DSA-65"
+        );
         ensure!(
             (1..=MAX_CLIENT_VALIDATORS).contains(&self.validators.len()),
             "native client configuration supports 1..={MAX_CLIENT_VALIDATORS} validators; this is a local resource budget, not the protocol limit"
@@ -87,8 +94,7 @@ impl ClientConfig {
         ensure!(
             self.validators
                 .iter()
-                .all(|v| v.public_key != key.verifying_key().to_bytes()
-                    && v.transport_public_key != key.verifying_key().to_bytes()),
+                .all(|v| v.public_key != public_key && v.transport_public_key != public_key),
             "client must not use a validator signing or transport key"
         );
         let validators = ValidatorSet::new(
@@ -104,7 +110,7 @@ impl ClientConfig {
             &validators,
             self.validators
                 .iter()
-                .map(|v| (v.public_key.clone(), v.transport_public_key)),
+                .map(|v| (v.public_key.clone(), v.transport_public_key.clone())),
         )?;
         Ok(MessageDomain {
             chain_id: self.chain_id,
@@ -114,8 +120,22 @@ impl ClientConfig {
         })
     }
 
-    fn connect(&self, key: SigningKey) -> Result<NativeApplicationClient> {
-        let domain = self.domain(&key)?;
+    fn identity(&self, base: &Path) -> Result<(TransportIdentity, MessageDomain)> {
+        let identity = novovm_relay::transport_identity::load_transport_identity(
+            &base.join(&self.transport_key_file),
+            self.chain_id,
+            &base.join(&self.library),
+            &self.library_sha256,
+        )?;
+        let domain = self.domain(identity.public_key())?;
+        Ok((identity, domain))
+    }
+
+    fn connect(
+        &self,
+        key: TransportIdentity,
+        domain: MessageDomain,
+    ) -> Result<NativeApplicationClient> {
         let codec = native_decode_limits(MAX_ROWS, true);
         NativeApplicationClient::connect(
             UdpSocket::bind(self.bind_addr)?,
@@ -126,7 +146,8 @@ impl ClientConfig {
                     .iter()
                     .find(|v| v.public_key == self.node.public_key)
                     .context("target node lacks approved transport binding")?
-                    .transport_public_key,
+                    .transport_public_key
+                    .clone(),
                 address: self.node.address,
             },
             domain,
@@ -288,14 +309,8 @@ pub fn run(config_path: &Path, action: &str, input: Option<&Path>) -> Result<Val
     let operation = operation(action, input)?; // Reject malformed input before opening a socket.
     let config_path = config_path.canonicalize()?;
     let config = read_client_config(&config_path)?;
-    let key_path = config_path
-        .parent()
-        .context("config directory")?
-        .join(&config.transport_key_file);
-    let key_bytes: [u8; 32] = read_bounded(&key_path, 32)?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("transport key must contain exactly 32 raw bytes"))?;
-    let mut client = config.connect(SigningKey::from_bytes(&key_bytes))?;
+    let (identity, domain) = config.identity(config_path.parent().context("config directory")?)?;
+    let mut client = config.connect(identity, domain)?;
     let started = Instant::now();
     let deadline = started + Duration::from_millis(config.timeout_ms);
     let result = match operation {
@@ -378,9 +393,7 @@ mod tests {
                 public_key[..8].copy_from_slice(&(index as u64).to_be_bytes());
                 GenesisValidator {
                     public_key,
-                    transport_public_key: SigningKey::from_bytes(&[(index + 16) as u8; 32])
-                        .verifying_key()
-                        .to_bytes(),
+                    transport_public_key: vec![(index + 16) as u8; 1952],
                     weight: 1,
                 }
             })
@@ -397,6 +410,8 @@ mod tests {
             validators,
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             transport_key_file: "client.key".into(),
+            library: "qualified-aoem-not-loaded.dll".into(),
+            library_sha256: "00".repeat(32),
             timeout_ms: 5000,
         }
     }
@@ -408,7 +423,7 @@ mod tests {
             .join(format!("mldsa-config-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&directory)?;
         let path = directory.join("client.json");
-        let client = SigningKey::from_bytes(&[2; 32]);
+        let client = vec![2; 1952];
         for count in [4, MAX_CLIENT_VALIDATORS] {
             let config = metadata_client_config(count);
             let bytes = serde_json::to_vec_pretty(&config)?;
@@ -515,8 +530,8 @@ mod tests {
     }
     #[test]
     fn native_operator_domain_rejects_foreign_target_and_validator_client() {
-        let transport = SigningKey::from_bytes(&[13; 32]);
-        let client = SigningKey::from_bytes(&[4; 32]);
+        let transport = vec![13; 1952];
+        let client = vec![4; 1952];
         let public_key = vec![3; 1952]; // Metadata-only client configuration.
         let mut config = ClientConfig {
             chain_id: 7,
@@ -525,7 +540,7 @@ mod tests {
             validator_epoch: 1,
             validators: vec![GenesisValidator {
                 public_key: public_key.clone(),
-                transport_public_key: transport.verifying_key().to_bytes(),
+                transport_public_key: transport.clone(),
                 weight: 1,
             }],
             node: NativePeerConfig {
@@ -534,6 +549,8 @@ mod tests {
             },
             bind_addr: "127.0.0.1:0".parse().unwrap(),
             transport_key_file: "client.key".into(),
+            library: "qualified-aoem-not-loaded.dll".into(),
+            library_sha256: "00".repeat(32),
             timeout_ms: 5000,
         };
         assert!(config.domain(&client).is_ok());
@@ -541,7 +558,7 @@ mod tests {
         config.timeout_ms = 30_001;
         assert!(config.domain(&client).is_err());
         config.timeout_ms = 5000;
-        config.node.public_key = client.verifying_key().to_bytes().to_vec();
+        config.node.public_key = client.clone();
         assert!(config.domain(&client).is_err());
         config.node.public_key = public_key;
         config.genesis = [0; 32];

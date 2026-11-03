@@ -35291,7 +35291,7 @@ mod product_mainline_peer_ingress_tests {
     ) -> ProductMainlineOverlayRecipientAckV1 {
         // The helper tests the typed storage boundary, not signature verification.
         ProductMainlineOverlayRecipientAckV1 {
-            version: 1,
+            version: 2,
             chain_id: 7_991_337,
             payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
             object_hash: [0x11; 32],
@@ -35301,7 +35301,9 @@ mod product_mainline_peer_ingress_tests {
             recipient_peer_id: "55".repeat(32),
             accepted_at_ms: 123_456,
             disposition,
-            signature: [0; 64],
+            suite: 65,
+            recipient_public_key: vec![0; 1952],
+            signature: vec![0; 3309],
         }
     }
 
@@ -43888,7 +43890,7 @@ fn run_fresh_genesis_confirmation_v1(
             })?;
         }
         for event in runtime.drain_events(128) {
-            lifecycle.observe_transaction_transport_event(&event);
+            lifecycle.observe_transaction_transport_event(&event, runtime.identity_verifier());
             match event {
                 ProductMainlineOverlayEventV1::Inbound(inbound) => {
                     #[cfg(test)]

@@ -1,15 +1,14 @@
 use super::*;
 use crate::novorudp::{fragments::*, *};
 use crate::product_overlay::*;
-use ed25519_dalek::SigningKey;
 use std::time::{Duration, Instant};
 
 fn channels() -> (E2eSecureChannelV1, E2eSecureChannelV1) {
-    let a = SigningKey::from_bytes(&[31; 32]);
-    let b = SigningKey::from_bytes(&[47; 32]);
+    let a = crate::test_identity::key(31);
+    let b = crate::test_identity::key(47);
     let initiator = NodeHandshakeInitiatorV1::start(
         &a,
-        peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(b.public_key()),
         1000,
         5000,
     )

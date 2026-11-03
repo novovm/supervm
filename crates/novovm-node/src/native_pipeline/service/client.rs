@@ -12,12 +12,12 @@ use crate::native_pipeline::{
     ingress::apfl::ApflTransferBatch,
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use novovm_network::novorudp::{
     endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
     fragments::{FragmentProfile, OutgoingMessage},
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
 };
+use novovm_network::product_overlay::TransportIdentity;
 use novovm_protocol::native_query::{self as query, Frame, Query, Request, Response};
 use novovm_protocol::uca_spend_batch::AssetSpendBatchV3;
 use std::{
@@ -70,7 +70,7 @@ impl NativeApplicationClient {
     #[allow(clippy::too_many_arguments)]
     pub fn connect(
         socket: UdpSocket,
-        identity: SigningKey,
+        identity: TransportIdentity,
         node: NativePeer,
         domain: MessageDomain,
         codec: DecodeLimits,

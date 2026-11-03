@@ -1,9 +1,9 @@
-//! Explicit V2 identity/liveness proof on the original authenticated carrier.
+//! Session-clock identity/liveness proof on the original authenticated carrier.
 //!
 //! The inner ECDH/signature/Finished primitives retain their original checks.
-//! V2 signs a separate purpose/version and canonical protocol-relative epoch,
-//! not a claim about UTC. Only this closed adapter supplies logical zero; V1
-//! public entries keep their original wall-clock rules. One immutable local
+//! ML-DSA wire V4 signs a separate purpose/version and protocol-relative epoch,
+//! not a claim about UTC. Only this closed adapter supplies logical zero; UTC
+//! entries keep their original wall-clock rules. One immutable local
 //! deadline bounds the WHOLE exchange, never each message separately.
 //! This proves key possession, not UTC, service freshness, TTL or entitlement.
 
@@ -46,8 +46,8 @@ pub struct SessionClockInitiatorV2 {
 
 impl SessionClockInitiatorV2 {
     pub fn start(
-        identity: &SigningKey,
-        expected_remote_key: [u8; 32],
+        identity: &TransportIdentity,
+        expected_remote_key: Vec<u8>,
         binding: VerifiedTransportBinding,
         deadline: SessionClockDeadlineV2,
     ) -> Result<Self> {
@@ -91,8 +91,8 @@ pub struct SessionClockResponderV2 {
 impl SessionClockResponderV2 {
     pub fn respond(
         offer: &BoundNodeHandshakeOfferV1,
-        identity: &SigningKey,
-        expected_remote_key: [u8; 32],
+        identity: &TransportIdentity,
+        expected_remote_key: Vec<u8>,
         binding: VerifiedTransportBinding,
         deadline: SessionClockDeadlineV2,
         replay: &mut HandshakeReplayCacheV1,

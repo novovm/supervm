@@ -4,14 +4,14 @@ use super::super::tests::{
 };
 use super::*;
 use crate::duplex::{
-    peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, NodeHandshakeResponderV1,
+    peer_id_from_mldsa65_public_key_v1, E2eSecureChannelV1, NodeHandshakeResponderV1,
     NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
 };
 
 fn envelopes(count: usize, size: usize) -> (Vec<SecureNovoRudpEnvelopeV1>, E2eSecureChannelV1) {
-    let source = SigningKey::from_bytes(&[218; 32]);
-    let target = SigningKey::from_bytes(&[219; 32]);
-    let target_id = peer_id_from_ed25519_public_key_v1(&target.verifying_key().to_bytes());
+    let source = TransportIdentity::from_bytes(&[218; 32]);
+    let target = TransportIdentity::from_bytes(&[219; 32]);
+    let target_id = peer_id_from_mldsa65_public_key_v1(target.public_key());
     let now = now_ms_v1();
     let initiator = NodeHandshakeInitiatorV1::start(&source, target_id, now, 30_000).unwrap();
     let responder = NodeHandshakeResponderV1::respond(
@@ -107,11 +107,13 @@ fn duplicate_and_mismatched_outcomes_are_terminal_not_another_ticket_completion(
             }
             Ok(())
         });
-        let mut pipeline =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[218; 32]), &fixture.config)
-                .unwrap()
-                .into_pipeline()
-                .unwrap();
+        let mut pipeline = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[218; 32]),
+            &fixture.config,
+        )
+        .unwrap()
+        .into_pipeline()
+        .unwrap();
         assert_eq!(
             pipeline
                 .try_submit_envelope(originals.pop().unwrap())
@@ -152,7 +154,7 @@ fn metadata_capacity_and_oldest_deadline_remain_bounded_without_ack() {
         Ok(())
     });
     let mut pipeline =
-        ProductRelayClientV1::connect(&SigningKey::from_bytes(&[218; 32]), &fixture.config)
+        ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[218; 32]), &fixture.config)
             .unwrap()
             .into_pipeline()
             .unwrap();
@@ -197,7 +199,7 @@ fn handshake_is_single_flight_while_data_remains_pipelineable() {
         Ok(())
     });
     let mut pipeline =
-        ProductRelayClientV1::connect(&SigningKey::from_bytes(&[218; 32]), &fixture.config)
+        ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[218; 32]), &fixture.config)
             .unwrap()
             .into_pipeline()
             .unwrap();
@@ -234,11 +236,13 @@ fn handshake_is_single_flight_while_data_remains_pipelineable() {
 fn partial_inbound_and_write_stall_deadlines_survive_other_progress() {
     for expire_read in [true, false] {
         let fixture = delayed_test_relay_v1(|_| Ok(()));
-        let mut pipeline =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[218; 32]), &fixture.config)
-                .unwrap()
-                .into_pipeline()
-                .unwrap();
+        let mut pipeline = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[218; 32]),
+            &fixture.config,
+        )
+        .unwrap()
+        .into_pipeline()
+        .unwrap();
         let original = Instant::now() + Duration::from_secs(1);
         pipeline.client.stream.sock.frame_deadline = Some(original);
         assert!(pipeline.try_heartbeat().unwrap());
@@ -279,11 +283,13 @@ fn actual_tls_close_notify_delivers_complete_last_event_but_rejects_partial_ws()
             }
             Ok(())
         });
-        let mut pipeline =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[218; 32]), &fixture.config)
-                .unwrap()
-                .into_pipeline()
-                .unwrap();
+        let mut pipeline = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[218; 32]),
+            &fixture.config,
+        )
+        .unwrap()
+        .into_pipeline()
+        .unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         let mut events = 0;
         loop {
@@ -315,11 +321,13 @@ fn actual_tls_close_notify_delivers_complete_last_event_but_rejects_partial_ws()
 fn incremental_partial_write_failure_never_resends_or_completes_an_obligation() {
     for partial in [false, true] {
         let fixture = delayed_test_relay_v1(|_| Ok(()));
-        let mut pipeline =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[218; 32]), &fixture.config)
-                .unwrap()
-                .into_pipeline()
-                .unwrap();
+        let mut pipeline = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[218; 32]),
+            &fixture.config,
+        )
+        .unwrap()
+        .into_pipeline()
+        .unwrap();
         let (mut originals, _) = envelopes(1, 512);
         pipeline
             .try_submit_envelope(originals.pop().unwrap())
@@ -415,7 +423,7 @@ fn real_wss_large_read_progresses_during_unfinished_write_with_fixed_socket_buff
         Ok(())
     });
     let client =
-        ProductRelayClientV1::connect(&SigningKey::from_bytes(&[219; 32]), &fixture.config)
+        ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[219; 32]), &fixture.config)
             .unwrap();
     client
         .stream
@@ -480,9 +488,9 @@ fn real_wss_eight_large_inflight_forwards_receive_seven_deliveries_before_revers
     const OUTGOING: usize = 8;
     const INCOMING: usize = 7;
     assert_eq!(MAX_FORWARDS, OUTGOING);
-    let remote = SigningKey::from_bytes(&[218; 32]);
-    let local = SigningKey::from_bytes(&[219; 32]);
-    let local_id = peer_id_from_ed25519_public_key_v1(&local.verifying_key().to_bytes());
+    let remote = TransportIdentity::from_bytes(&[218; 32]);
+    let local = TransportIdentity::from_bytes(&[219; 32]);
+    let local_id = peer_id_from_mldsa65_public_key_v1(local.public_key());
     let now = now_ms_v1();
     let initiator = NodeHandshakeInitiatorV1::start(&remote, local_id, now, 30_000).unwrap();
     let responder = NodeHandshakeResponderV1::respond(
@@ -683,10 +691,10 @@ fn real_worker_retains_originals_and_serves_inbound_before_reverse_order_acks() 
     use crate::duplex::worker::{
         NetworkWorker, NetworkWorkerConfig, Outbound, SendAdmission, WorkerLimits,
     };
-    let local = SigningKey::from_bytes(&[218; 32]);
-    let remote = SigningKey::from_bytes(&[219; 32]);
-    let remote_id = peer_id_from_ed25519_public_key_v1(&remote.verifying_key().to_bytes());
-    let local_id = peer_id_from_ed25519_public_key_v1(&local.verifying_key().to_bytes());
+    let local = TransportIdentity::from_bytes(&[218; 32]);
+    let remote = TransportIdentity::from_bytes(&[219; 32]);
+    let remote_id = peer_id_from_mldsa65_public_key_v1(remote.public_key());
+    let local_id = peer_id_from_mldsa65_public_key_v1(local.public_key());
     let (arrived, arrival) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel();
     let fixture = delayed_test_relay_v1(move |stream| {

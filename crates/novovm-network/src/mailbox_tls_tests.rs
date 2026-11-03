@@ -13,7 +13,7 @@ use tokio::net::{TcpListener, TcpStream};
 // This fixture exposes only V6, never issues a legacy lease on negotiation error.
 async fn serve_entry(
     mut stream: CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
 ) -> Result<()> {
@@ -37,8 +37,8 @@ async fn serve_entry(
 async fn tls_notification_wait_does_not_serialize_an_independent_put_lane() -> Result<()> {
     let _serial = crate::tls_transport::TLS_TEST_SERIAL.acquire().await?;
     let directory = tempfile::tempdir()?;
-    let identity = SigningKey::from_bytes(&[63; 32]);
-    let user = SigningKey::from_bytes(&[64; 32]);
+    let identity = TransportIdentity::from_bytes(&[63; 32]);
+    let user = TransportIdentity::from_bytes(&[64; 32]);
     let service = MailboxServiceV1::new(
         MailboxStore::open(directory.path().join("lanes.db"), Default::default())?,
         identity.clone(),
@@ -67,7 +67,7 @@ async fn tls_notification_wait_does_not_serialize_an_independent_put_lane() -> R
     let mut watch_stream = clients.pop().unwrap();
     let put_server = servers.pop().unwrap();
     let watch_server = servers.pop().unwrap();
-    let allowed = [user.verifying_key().to_bytes()];
+    let allowed = [user.public_key().to_vec()];
     let host = async {
         tokio::try_join!(
             serve_entry(
@@ -90,14 +90,14 @@ async fn tls_notification_wait_does_not_serialize_an_independent_put_lane() -> R
         let mut put = MailboxClientSessionV2::begin_continuous_v6(
             &mut put_stream,
             &user,
-            identity.verifying_key().to_bytes(),
+            identity.public_key().to_vec(),
         )
         .await?;
         request_mailbox_continuous_v6(&mut watch_stream).await?;
         let mut watch = MailboxClientSessionV2::begin_continuous_v6(
             &mut watch_stream,
             &user,
-            identity.verifying_key().to_bytes(),
+            identity.public_key().to_vec(),
         )
         .await?;
         assert!(matches!(
@@ -169,8 +169,8 @@ async fn tls_notification_wait_does_not_serialize_an_independent_put_lane() -> R
 async fn tls_v6_idle_then_durable_put_notify_consume_and_cross_carrier_custody() -> Result<()> {
     let _serial = crate::tls_transport::TLS_TEST_SERIAL.acquire().await?;
     let directory = tempfile::tempdir()?;
-    let identity = SigningKey::from_bytes(&[61; 32]);
-    let client_identity = SigningKey::from_bytes(&[62; 32]);
+    let identity = TransportIdentity::from_bytes(&[61; 32]);
+    let client_identity = TransportIdentity::from_bytes(&[62; 32]);
     let service = std::sync::Arc::new(MailboxServiceV1::new(
         MailboxStore::open(directory.path().join("tls.db"), Default::default())?,
         identity.clone(),
@@ -191,7 +191,7 @@ async fn tls_v6_idle_then_durable_put_notify_consume_and_cross_carrier_custody()
     )?;
     let mut client = CarrierStreamV1::from(client);
     let server = CarrierStreamV1::from(server);
-    let allowed = [client_identity.verifying_key().to_bytes()];
+    let allowed = [client_identity.public_key().to_vec()];
     let serving = serve_entry(
         server,
         &identity,
@@ -204,7 +204,7 @@ async fn tls_v6_idle_then_durable_put_notify_consume_and_cross_carrier_custody()
         let mut session = MailboxClientSessionV2::begin_continuous_v6(
             &mut client,
             &client_identity,
-            identity.verifying_key().to_bytes(),
+            identity.public_key().to_vec(),
         )
         .await?;
         assert!(matches!(
@@ -239,11 +239,12 @@ async fn tls_v6_idle_then_durable_put_notify_consume_and_cross_carrier_custody()
             anyhow::bail!("no durable receipt")
         };
         receipt.verify(
-            identity.verifying_key().to_bytes(),
+            identity.public_key(),
             grant.id,
             [7; 32],
             &ciphertext,
             expires,
+            &crate::test_identity::key(250),
         )?;
         assert!(matches!(
             session
@@ -324,8 +325,8 @@ async fn tls_v6_idle_then_durable_put_notify_consume_and_cross_carrier_custody()
 }
 
 async fn fetch_over_quic(
-    identity: &SigningKey,
-    user: &SigningKey,
+    identity: &TransportIdentity,
+    user: &TransportIdentity,
     service: std::sync::Arc<MailboxServiceV1>,
     grant: &MailboxGrant,
     retained_expires: i64,
@@ -335,7 +336,7 @@ async fn fetch_over_quic(
         || IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?);
     let (tx, rx) = tokio::sync::oneshot::channel();
     let server_key = identity.clone();
-    let allowed = [user.verifying_key().to_bytes()];
+    let allowed = [user.public_key().to_vec()];
     let server = with_iroh_owned_listener_v1(
         config()?.with_owned_service_identity(zeroize::Zeroizing::new([65; 32]))?,
         || Ok(()),
@@ -356,7 +357,7 @@ async fn fetch_over_quic(
     );
     let owner = IrohEndpointOwnerV1::bind(config()?, || Ok(())).await?;
     let client_key = user.clone();
-    let pin = identity.verifying_key().to_bytes();
+    let pin = identity.public_key().to_vec();
     let mailbox = grant.id;
     let read = *grant.read.as_bytes();
     let client = owner.with_continuous_service_v4(

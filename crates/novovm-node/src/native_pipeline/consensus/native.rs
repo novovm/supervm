@@ -8,7 +8,6 @@ pub use super::message_evidence::{MessageDomain, VerifiedEvidence};
 use super::{message_evidence, transport};
 use crate::native_pipeline::profile::{self, Phase};
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 #[cfg(test)]
 use novovm_network::novorudp::{endpoint::NativeEndpoint, object_link::NativeObjectLink};
 use novovm_network::{
@@ -18,7 +17,7 @@ use novovm_network::{
         fragments::{CompletedMessage, FragmentProfile, OutgoingMessage, ReassemblyLimits},
         object_link::{NativeLaneConfig, NativeLinkPoll, NativeSendLimits, NativeSendPolicy},
     },
-    product_overlay::peer_id_from_ed25519_public_key_v1,
+    product_overlay::{peer_id_from_mldsa65_public_key_v1, TransportIdentity},
     AuthenticatedUdpIngressV1, NativeUdpIngressConfigV1, NativeUdpPollV1, UdpTransport,
 };
 use std::{
@@ -205,7 +204,7 @@ impl NativeChannel {
     #[allow(clippy::too_many_arguments)]
     pub fn from_transport(
         transport: UdpTransport,
-        identity: SigningKey,
+        identity: TransportIdentity,
         bindings: ValidatorTransportBindings,
         peers: Vec<NativePeer>,
         client_slots: usize,
@@ -222,12 +221,12 @@ impl NativeChannel {
         let control_send = lanes[0].send.clone();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         bindings.validate_for(&domain.validators)?;
-        let local_peer = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+        let local_peer = identity.peer_id();
         let local_validator = bindings.validator_for_peer(&local_peer)?;
         let mut seen = BTreeSet::new();
         for peer in &peers {
             let remote =
-                bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(&peer.key))?;
+                bindings.validator_for_peer(&peer_id_from_mldsa65_public_key_v1(&peer.key))?;
             ensure!(
                 remote != local_validator && seen.insert(remote),
                 "duplicate or local native validator route"
@@ -290,8 +289,8 @@ impl NativeChannel {
         let control_send = lanes[0].send.clone();
         let configs = Self::lane_configs(&domain, codec, lanes, applications)?;
         bindings.validate_for(&domain.validators)?;
-        bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(
-            &endpoint.local_identity(),
+        bindings.validator_for_peer(&peer_id_from_mldsa65_public_key_v1(
+            endpoint.local_identity(),
         ))?;
         for peer in 0..endpoint.peer_count() {
             bindings.validator_for_peer(endpoint.peer_id(peer)?)?;

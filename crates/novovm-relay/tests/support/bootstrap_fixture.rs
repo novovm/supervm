@@ -1,7 +1,10 @@
 //! Real executables and Windows custody. The parent never signs an authority
 //! manifest. All directories, policies and client keys are isolated TEST data.
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+use novovm_network::product_overlay::TransportIdentity;
+#[path = "transport_fixture.rs"]
+mod transport_fixture;
+const PROCESS_CHAIN_ID: u64 = 47;
 use novovm_network::{
     discovery_control::DiscoveryClient,
     iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
@@ -21,8 +24,8 @@ use std::{
 
 const PUBLISHER: &str = env!("CARGO_BIN_EXE_novovm-bootstrap-publisher");
 const NODE: &str = env!("CARGO_BIN_EXE_novovm-rendezvous-service");
-pub fn client() -> SigningKey {
-    SigningKey::from_bytes(&[91; 32])
+pub fn client() -> TransportIdentity {
+    transport_fixture::identity(91)
 }
 pub fn command(binary: &str) -> Command {
     let mut cmd = Command::new(binary);
@@ -68,7 +71,9 @@ impl Process {
 }
 pub struct Fixture {
     pub root: PathBuf,
-    pub publisher_pin: [u8; 32],
+    pub publisher_pin: Vec<u8>,
+    pub library: PathBuf,
+    pub library_sha256: String,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -93,6 +98,10 @@ pub async fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T>
     }
 }
 impl Fixture {
+    pub fn verifier(&self) -> TransportIdentity {
+        client()
+    }
+
     pub fn new() -> Result<Self> {
         let root = std::env::temp_dir().join(format!(
             "novovm-publisher-process-{}-{}",
@@ -102,10 +111,33 @@ impl Fixture {
         std::fs::create_dir(&root)?;
         std::fs::create_dir(root.join("publisher"))?;
         std::fs::create_dir(root.join("node"))?;
-        once("--initialize", &root.join("publisher"), true)?;
+        let library = transport_fixture::library();
+        let library_sha256 = transport_fixture::digest();
+        let publisher_pin = transport_fixture::protect_for_chain(
+            71,
+            &root.join("publisher-purpose.protected"),
+            PROCESS_CHAIN_ID,
+        )?;
+        let node_pin = transport_fixture::protect_for_chain(
+            72,
+            &root.join("node-purpose.protected"),
+            PROCESS_CHAIN_ID,
+        )?;
+        json_file(
+            &root.join("publisher-config.json"),
+            &json!({
+                "version":2, "state_directory":root.join("publisher"), "exchange_directory":root.join("node"),
+                "transport_identity_path":root.join("publisher-purpose.protected"),
+                "chain_id":PROCESS_CHAIN_ID, "library":library, "library_sha256":library_sha256,
+                "publisher_public_key":publisher_pin, "node_public_key":node_pin,
+                "record_id":"publisher-process-test-node", "manifest_id":"test-independent-publisher",
+                "allowed_relays":[], "max_grant_ms":10000
+            }),
+        )?;
+        once("--initialize", &root.join("publisher-config.json"), true)?;
         let identity: Value =
             serde_json::from_slice(&std::fs::read(root.join("publisher/identity.json"))?)?;
-        let publisher_pin: [u8; 32] =
+        let publisher_pin: Vec<u8> =
             serde_json::from_value(identity["publisher_public_key"].clone())?;
         std::fs::write(
             root.join("node/initialize.request"),
@@ -114,9 +146,11 @@ impl Fixture {
         json_file(
             &root.join("node-config.json"),
             &json!({
-                "version":1,"prepare_before_ms":5000,"epoch":{
-                    "version":2,"engineering_direct_allowed":true,"trusted_signers":[publisher_pin],
-                    "minimum_signatures":1,"allowed_clients":[client().verifying_key().to_bytes()],"relays":[],
+                "version":2,"prepare_before_ms":5000,"epoch":{
+                    "version":3,"engineering_direct_allowed":true,
+                    "relay_identity_key_path":root.join("node-purpose.protected"), "chain_id":PROCESS_CHAIN_ID,
+                    "library":library, "library_sha256":library_sha256,"trusted_signers":[publisher_pin],
+                    "minimum_signatures":1,"allowed_clients":[client().public_key().to_vec()],"relays":[],
                     "nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
                     "journal_path":root.join("node/service.journal"),"source_path":root.join("node/authority.json"),
                     "enroll":false,"record_id":"publisher-process-test-node","grant_sequence":1,"run_for_ms":10000,"max_sessions":64
@@ -140,6 +174,8 @@ impl Fixture {
         Ok(Self {
             root,
             publisher_pin,
+            library,
+            library_sha256,
         })
     }
     pub fn launch_node(&self, epochs: u8) -> Result<Process> {
@@ -160,12 +196,14 @@ impl Fixture {
                 .spawn()?,
         ))
     }
-    pub fn enroll(&self, node: [u8; 32]) -> Result<()> {
+    pub fn enroll(&self, node: Vec<u8>) -> Result<()> {
         let config = self.root.join("publisher-config.json");
         json_file(
             &config,
             &json!({
-                "version":1,"state_directory":self.root.join("publisher"),"exchange_directory":self.root.join("node"),
+                "version":2,"state_directory":self.root.join("publisher"),
+                "transport_identity_path":self.root.join("publisher-purpose.protected"),
+                "chain_id":PROCESS_CHAIN_ID, "library":self.library, "library_sha256":self.library_sha256,"exchange_directory":self.root.join("node"),
                 "publisher_public_key":self.publisher_pin,"node_public_key":node,
                 "record_id":"publisher-process-test-node","manifest_id":"test-independent-publisher",
                 "allowed_relays":[],"max_grant_ms":10000
@@ -204,11 +242,11 @@ impl Fixture {
     pub async fn exchange(&self, record: &PeerSignedRelayRecordV1) -> Result<()> {
         let sources = self.source(record).await?;
         let endpoint = IrohServiceEndpointV1::from_record(record)?;
-        let policy = BootstrapTrustPolicyV1::single_signer(self.publisher_pin);
-        let node = record.relay_public_key;
-        let mut book = ServiceLeaseBookV1::new(policy, sources, now_ms()?)?;
+        let policy = BootstrapTrustPolicyV1::single_signer(self.publisher_pin.clone());
+        let node = record.relay_public_key.clone();
+        let mut book = ServiceLeaseBookV1::new(policy, sources, now_ms()?, self.verifier())?;
         book.check_route(
-            node,
+            &node,
             endpoint.address.endpoint_key,
             endpoint.instance,
             now_ms()?,
@@ -225,14 +263,18 @@ impl Fixture {
                     let offer = request_service_offer_v2(&mut stream).await?;
                     book.accept_offer(
                         offer,
-                        node,
+                        &node,
                         endpoint.address.endpoint_key,
                         endpoint.instance,
                         now_ms()?,
                     )?;
-                    let mut rpc =
-                        DiscoveryClient::connect(&mut stream, &client(), node, endpoint.instance)
-                            .await?;
+                    let mut rpc = DiscoveryClient::connect(
+                        &mut stream,
+                        &client(),
+                        node.clone(),
+                        endpoint.instance,
+                    )
+                    .await?;
                     rpc.put([21; 32], 1, 2000, vec![22; 128]).await?;
                     let value = rpc.get([21; 32]).await?.context("missing opaque object")?;
                     ensure!(

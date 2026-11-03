@@ -5,6 +5,13 @@ per-recipient 的持久投递 obligation、签名 recipient ACK 和重启恢复�
 Host journal 或 ACK 提升为 AOEM、共识或最终性证明。Product Overlay 仍为 opt-in；真实公网
 拓扑与安装包证据必须独立签收。
 
+2026-11-03 签名合同同步：标题中的 v1 是该 journal/职责说明名称，不表示仍接收旧 ACK1。
+当前原 recipient ACK wire 为 `NOVACK02`、version2、suite65，完整 recipient 公钥1952字节，
+ML-DSA-65 签名3309字节；使用原受保护 Transport 用途与合格统一语义验签 owner。
+原签名域为 `novovm-product-mainline-recipient-ack/v2`，旧版本/套件/裸Ed签名拒绝，
+不自动转换、不清空 journal。以下稳定投递身份及 pending-only/最终性边界保持原义。
+本段是源码候选同步，不宣称四机、平台包或正式部署已通过。
+
 ## 1. 语义边界
 
 三种容易混淆的成功事件必须分开：

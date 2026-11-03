@@ -1,14 +1,27 @@
-//! Fixed-size native carrier for the EXISTING signed handshake V1 structs.
-//! No new cryptography or signing preimage. The carrier version is explicit;
-//! raw JSON and variable-sized keys/signatures are not accepted on UDP.
+//! Fixed-size ML-DSA-65 carrier for the original signed handshake owner.
+//! The explicit version and suite are checked before any owned field is built;
+//! raw JSON and legacy key/signature encodings are not accepted on UDP.
 
-use super::{NodeHandshakeOfferV1, NodeHandshakeResponseV1};
+use super::{
+    NodeHandshakeOfferV1, NodeHandshakeResponseV1, MLDSA65_PUBLIC_KEY_BYTES,
+    MLDSA65_SIGNATURE_BYTES, PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+};
 use anyhow::{ensure, Context, Result};
 
-const MAGIC: &[u8; 8] = b"NVHSHK01";
-const PEER_BYTES: usize = 79;
-const OFFER_BYTES: usize = 8 + 1 + 2 + 16 + 2 * PEER_BYTES + 32 + 33 + 32 + 8 + 8 + 64;
-const RESPONSE_BYTES: usize = OFFER_BYTES + 32 + 32;
+const MAGIC: &[u8; 8] = b"NVHSHK02";
+const SUITE: u16 = 65;
+const PEER_PREFIX: &[u8] = b"novovm-mldsa65:";
+const PEER_BYTES: usize = PEER_PREFIX.len() + 64;
+const PEERS_OFFSET: usize = 8 + 1 + 2 + 2 + 16;
+pub(crate) const OFFER_BYTES: usize = PEERS_OFFSET
+    + 2 * PEER_BYTES
+    + MLDSA65_PUBLIC_KEY_BYTES
+    + 33
+    + 32
+    + 8
+    + 8
+    + MLDSA65_SIGNATURE_BYTES;
+pub(crate) const RESPONSE_BYTES: usize = OFFER_BYTES + 32 + 32;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum HandshakeMessage {
@@ -19,8 +32,8 @@ pub enum HandshakeMessage {
 fn peer(bytes: &[u8]) -> Result<&str> {
     ensure!(
         bytes.len() == PEER_BYTES
-            && bytes.starts_with(b"novovm-ed25519:")
-            && bytes[15..]
+            && bytes.starts_with(PEER_PREFIX)
+            && bytes[PEER_PREFIX.len()..]
                 .iter()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b)),
         "noncanonical native peer id"
@@ -35,12 +48,17 @@ fn common(
     initiator: &str,
     responder: &str,
 ) -> Result<Vec<u8>> {
+    ensure!(
+        version == PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+        "unsupported native handshake version"
+    );
     peer(initiator.as_bytes())?;
     peer(responder.as_bytes())?;
     let mut out = Vec::with_capacity(RESPONSE_BYTES);
     out.extend_from_slice(MAGIC);
     out.push(tag);
     out.extend_from_slice(&version.to_be_bytes());
+    out.extend_from_slice(&SUITE.to_be_bytes());
     out.extend_from_slice(session);
     out.extend_from_slice(initiator.as_bytes());
     out.extend_from_slice(responder.as_bytes());
@@ -49,7 +67,9 @@ fn common(
 
 pub fn encode_offer(value: &NodeHandshakeOfferV1) -> Result<Vec<u8>> {
     ensure!(
-        value.initiator_ephemeral_public_key.len() == 33 && value.signature.len() == 64,
+        value.initiator_identity_public_key.len() == MLDSA65_PUBLIC_KEY_BYTES
+            && value.initiator_ephemeral_public_key.len() == 33
+            && value.signature.len() == MLDSA65_SIGNATURE_BYTES,
         "invalid handshake field size"
     );
     let mut out = common(
@@ -71,7 +91,9 @@ pub fn encode_offer(value: &NodeHandshakeOfferV1) -> Result<Vec<u8>> {
 
 pub fn encode_response(value: &NodeHandshakeResponseV1) -> Result<Vec<u8>> {
     ensure!(
-        value.responder_ephemeral_public_key.len() == 33 && value.signature.len() == 64,
+        value.responder_identity_public_key.len() == MLDSA65_PUBLIC_KEY_BYTES
+            && value.responder_ephemeral_public_key.len() == 33
+            && value.signature.len() == MLDSA65_SIGNATURE_BYTES,
         "invalid handshake field size"
     );
     let mut out = common(
@@ -110,14 +132,24 @@ pub fn decode(wire: &[u8]) -> Result<HandshakeMessage> {
         (tag == 1 && wire.len() == OFFER_BYTES) || (tag == 2 && wire.len() == RESPONSE_BYTES),
         "native handshake size/tag mismatch"
     );
-    peer(&wire[27..106])?;
-    peer(&wire[106..185])?;
+    let version = u16::from_be_bytes(wire[9..11].try_into()?);
+    ensure!(
+        version == PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+        "unsupported native handshake version"
+    );
+    ensure!(
+        u16::from_be_bytes(wire[11..13].try_into()?) == SUITE,
+        "unsupported native handshake signature suite"
+    );
+    peer(&wire[PEERS_OFFSET..PEERS_OFFSET + PEER_BYTES])?;
+    peer(&wire[PEERS_OFFSET + PEER_BYTES..PEERS_OFFSET + 2 * PEER_BYTES])?;
     let mut input = Cursor(&wire[9..]);
     let version = u16::from_be_bytes(input.array()?);
+    let _suite = input.array::<2>()?;
     let session_id = input.array()?;
     let initiator_peer_id = peer(&input.array::<PEER_BYTES>()?)?.to_owned();
     let responder_peer_id = peer(&input.array::<PEER_BYTES>()?)?.to_owned();
-    let identity = input.array()?;
+    let identity = input.array::<MLDSA65_PUBLIC_KEY_BYTES>()?.to_vec();
     let ephemeral = input.array::<33>()?.to_vec();
     let challenge = input.array()?;
     let message = if tag == 1 {
@@ -131,7 +163,7 @@ pub fn decode(wire: &[u8]) -> Result<HandshakeMessage> {
             challenge,
             issued_at_ms: u64::from_be_bytes(input.array()?),
             expires_at_ms: u64::from_be_bytes(input.array()?),
-            signature: input.array::<64>()?.to_vec(),
+            signature: input.array::<MLDSA65_SIGNATURE_BYTES>()?.to_vec(),
         })
     } else {
         HandshakeMessage::Response(NodeHandshakeResponseV1 {
@@ -146,7 +178,7 @@ pub fn decode(wire: &[u8]) -> Result<HandshakeMessage> {
             offer_hash: input.array()?,
             issued_at_ms: u64::from_be_bytes(input.array()?),
             expires_at_ms: u64::from_be_bytes(input.array()?),
-            signature: input.array::<64>()?.to_vec(),
+            signature: input.array::<MLDSA65_SIGNATURE_BYTES>()?.to_vec(),
         })
     };
     ensure!(input.0.is_empty(), "trailing native handshake bytes");

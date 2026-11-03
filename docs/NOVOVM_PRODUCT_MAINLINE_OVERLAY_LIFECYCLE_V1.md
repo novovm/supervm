@@ -1,5 +1,9 @@
 # NOVOVM Product Mainline Overlay Lifecycle v1
 
+2026-11-03 identity-contract update: the examples below describe the current
+ML-DSA-65 source candidate, not an installed package, four-host acceptance or
+activation approval. Old raw Ed25519/hex identity files are retired.
+
 Status: resource-bounded implementation candidate and opt-in only. Relay and
 Overlay process-memory admission is closed by
 [`Product Relay Admission & Resource Bounds v1`](NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md),
@@ -40,36 +44,39 @@ NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=<path-to-config.json>
 ```
 
 The config path is supplied by the operator. No repository, drive-letter, or
-workspace-parent absolute path is built into the runtime. Relative identity,
+workspace-parent absolute path is built into the runtime. Relative identity, AOEM library,
 delivery-journal, bootstrap-cache, and explicit-CA paths inside the config are
 resolved from the config file's own directory, not from the process working
 directory.
 
-Recommended duplex config:
+Duplex configuration template (placeholders are deliberately not executable
+deployment identities, approved chain domains or artifact hashes):
 
-```json
+```jsonc
 {
-  "chain_id": 1,
+  "chain_id": "<APPROVED_NONZERO_CHAIN_ID_INTEGER>",
   "role": "duplex",
-  "identity_key_path": "runtime/node-ed25519.hex",
+  "identity_key_path": "runtime/transport.protected",
+  "library": "artifacts/<APPROVED_PLATFORM_AOEM_LIBRARY>",
+  "library_sha256": "<APPROVED_64_LOWERCASE_HEX_SHA256>",
   "delivery_journal_path": "runtime/novovm-product-delivery-journal.rocksdb",
   "peers": [
     {
-      "peer_id": "novovm-ed25519:<peer-b-public-key>",
+      "peer_id": "novovm-mldsa65:<APPROVED_PEER_B_CANONICAL_64_HEX_ID>",
       "metric_peer_id": 9991002
     },
     {
-      "peer_id": "novovm-ed25519:<peer-c-public-key>",
+      "peer_id": "novovm-mldsa65:<APPROVED_PEER_C_CANONICAL_64_HEX_ID>",
       "metric_peer_id": 9991003
     },
     {
-      "peer_id": "novovm-ed25519:<peer-d-public-key>",
+      "peer_id": "novovm-mldsa65:<APPROVED_PEER_D_CANONICAL_64_HEX_ID>",
       "metric_peer_id": 9991004
     }
   ],
   "overlay": {
     "cache_path": "runtime/bootstrap-cache.json",
-    "trusted_signer_public_keys": [[1, 2, 3]],
+    "trusted_signer_public_keys": [[ /* approved publisher public key: 1952 byte integers */ ]],
     "minimum_bootstrap_signatures": 1,
     "embedded_sources": []
   },
@@ -132,25 +139,42 @@ accepted when `peers` is omitted.
 
 The original one-way compatibility roles remain available. A responder uses:
 
-```json
+```jsonc
 {
-  "chain_id": 1,
+  "chain_id": "<SAME_APPROVED_NONZERO_CHAIN_ID_INTEGER>",
   "role": "responder",
-  "identity_key_path": "runtime/node-ed25519.hex",
+  "identity_key_path": "runtime/transport.protected",
+  "library": "artifacts/<APPROVED_PLATFORM_AOEM_LIBRARY>",
+  "library_sha256": "<APPROVED_64_LOWERCASE_HEX_SHA256>",
   "delivery_journal_path": "runtime/novovm-product-delivery-journal.rocksdb",
-  "expected_source_peer_id": "novovm-ed25519:<peer-public-key>",
+  "expected_source_peer_id": "novovm-mldsa65:<APPROVED_SOURCE_CANONICAL_64_HEX_ID>",
   "overlay": {
     "cache_path": "runtime/bootstrap-cache.json",
-    "trusted_signer_public_keys": [[1, 2, 3]],
+    "trusted_signer_public_keys": [[ /* approved publisher public key: 1952 byte integers */ ]],
     "minimum_bootstrap_signatures": 1,
     "embedded_sources": []
   }
 }
 ```
 
-The public key arrays above are abbreviated examples; each key must contain
-exactly 32 bytes, and a trusted signed manifest must be available from the
-embedded source or unexpired local cache.
+Replace all placeholders with independently reviewed public material; each
+trusted signer public-key array must contain exactly **1,952 byte integers**,
+not a 32-byte hash. A trusted version-2/suite-65 signed manifest must be available
+from the embedded source or unexpired local cache. The local identity file is an
+already-protected Transport purpose envelope (`NVPK0003`, version 3, suite 65)
+for the same configured chain. The original custody/runtime loader pins the
+approved AOEM SHA-256; incoming signatures use the shared unified-semantic
+verifier. Signing/key generation remain existing shared primitives. No raw-key,
+old envelope or failed-verification downgrade is selected.
+
+Each peer label must be the canonical `novovm-mldsa65:` ID produced by
+`peer_id_from_mldsa65_public_key_v1` from the expected complete public key,
+including its domain-separated hash rule—not an arbitrary name or an Ed label.
+The current `peers` config stores that canonical ID, not an invented
+`peer_public_key` field; the original handshake supplies the full 1,952-byte key
+and validates its binding to that ID. Bootstrap trust pins remain the full public
+keys above, and signed relay records contain their full signing keys.
+See [purpose preparation](NOVOVM_PURPOSE_IDENTITY_PREPARATION.md).
 
 An `initiator` owns outbound propagation and a `responder` owns inbound
 delivery. They remain useful for constrained or staged deployments, but
@@ -236,6 +260,12 @@ proves durable Host journal acceptance plus pending-only native ingress
 acceptance; it does not prove AOEM execution or persistence, an AOEM receipt, a
 candidate block, proof seal, validator vote, QC, fork choice, safe or finalized
 status.
+
+The current ACK wire is `NOVACK02`, version 2 / suite 65, with the complete
+1,952-byte recipient key and a 3,309-byte ML-DSA-65 signature. Its original
+delivery binding and disposition remain signed; old ACK1/Ed bytes are rejected,
+not reinterpreted. This does not change the journal's authority or turn ACKs
+into execution/finality evidence.
 
 The worker queue and the durable journal therefore have different release
 points:

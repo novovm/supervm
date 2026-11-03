@@ -2,17 +2,22 @@ use super::*;
 
 const NOW: u64 = 100_000;
 const TTL: u64 = 10_000;
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8) -> TransportIdentity {
+    TransportIdentity::from_bytes(&[seed; 32])
 }
-fn public(seed: u8) -> [u8; 32] {
-    key(seed).verifying_key().to_bytes()
+fn public(seed: u8) -> Vec<u8> {
+    key(seed).public_key().to_vec()
+}
+fn carrier_public(seed: u8) -> [u8; 32] {
+    ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+        .verifying_key()
+        .to_bytes()
 }
 fn binding(initiator: bool, exporter: u8) -> VerifiedTransportBinding {
     let (local, remote) = if initiator {
-        (public(3), public(4))
+        (carrier_public(3), carrier_public(4))
     } else {
-        (public(4), public(3))
+        (carrier_public(4), carrier_public(3))
     };
     VerifiedTransportBinding::from_authenticated_transport(
         local,
@@ -146,7 +151,16 @@ fn structured_wire_rejects_wrong_schema_version_width_extra_fields_trailing_and_
     assert!(decode_response(&wire).is_err());
     assert!(decode_offer(&a.offer().encode_json().unwrap()).is_err());
     assert!(decode_offer(&rebuild(&wire, OFFER_SCHEMA, 0, &2u16.to_le_bytes())).is_err());
-    assert!(decode_offer(&rebuild(&wire, OFFER_SCHEMA, 6, &2u16.to_le_bytes())).is_err());
+    assert!(decode_offer(&rebuild(&wire, OFFER_SCHEMA, 6, &1u16.to_le_bytes())).is_err());
+    for suite in [0u16, 1, 44, 87, u16::MAX] {
+        assert!(decode_offer(&rebuild(&wire, OFFER_SCHEMA, 14, &suite.to_le_bytes())).is_err());
+    }
+    for schema in [
+        u64::from_be_bytes(*b"NVBOFR01"),
+        u64::from_be_bytes(*b"NVBOFR02"),
+    ] {
+        assert!(decode_offer(&reschema(&wire, OFFER_SCHEMA, schema)).is_err());
+    }
     assert!(decode_offer(&rebuild(&wire, OFFER_SCHEMA, 8, &[8; 32])).is_err());
     assert!(decode_offer(&rebuild(&wire, OFFER_SCHEMA, 12, &[8; 63])).is_err());
     assert!(decode_offer(&rebuild(&wire, OFFER_SCHEMA, 11, &(NOW - 1).to_le_bytes())).is_err());
@@ -215,7 +229,7 @@ fn finished_binary_rejects_wrong_kind_version_sequence_bounds_and_trailing() {
     for field in 0..4 {
         let mut bad = envelope.clone();
         match field {
-            0 => bad.version = 2,
+            0 => bad.version = 1,
             1 => bad.sequence = 1,
             2 => bad.ciphertext = vec![0; 513],
             _ => bad.sender_peer_id.clear(),

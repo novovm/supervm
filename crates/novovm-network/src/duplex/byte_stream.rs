@@ -11,7 +11,7 @@
 //! all memory used by TLS, DNS, or the relay implementation.
 
 use super::{
-    peer_id_from_ed25519_public_key_v1,
+    peer_id_from_mldsa65_public_key_v1,
     product_relay_client::{
         pipeline::{PipelineProgress, ProductRelayPipelineV1},
         ProductRelayClientConfigV1, ProductRelayClientControlV1, ProductRelayClientEventV1,
@@ -21,8 +21,8 @@ use super::{
     NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0, RelayForwardDispositionV1,
     RelayPeerHandshakeV1, SecureNovoRudpEnvelopeV1,
 };
+use crate::product_overlay::TransportIdentity;
 use anyhow::{ensure, Result};
-use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::{
     collections::VecDeque,
     io,
@@ -288,9 +288,9 @@ pub struct RelayByteStreamV1 {
 }
 impl RelayByteStreamV1 {
     pub async fn connect(
-        identity: SigningKey,
+        identity: TransportIdentity,
         mut config: ProductRelayClientConfigV1,
-        remote_peer_key: [u8; 32],
+        remote_peer_key: Vec<u8>,
         initiator: bool,
         control: RelayByteStreamControlV1,
     ) -> Result<Self> {
@@ -302,7 +302,7 @@ impl RelayByteStreamV1 {
             ),
             "relay byte stream requires certificate validation"
         );
-        validate_remote(&remote_peer_key, &identity.verifying_key().to_bytes())?;
+        validate_remote(&remote_peer_key, identity.public_key())?;
         let permit = Permit::acquire()?;
         // The pipeline's existing wait uses this timeout. Clamping the private
         // config copy keeps idle revocation checks bounded without altering the
@@ -530,14 +530,11 @@ impl AsyncWrite for RelayByteStreamV1 {
     }
 }
 
-fn validate_remote(remote: &[u8; 32], local: &[u8; 32]) -> Result<()> {
-    let key = VerifyingKey::from_bytes(remote)?;
-    let point = key.to_edwards();
+fn validate_remote(remote: &[u8], local: &[u8]) -> Result<()> {
     ensure!(
         remote != local
-            && !key.is_weak()
-            && point.is_torsion_free()
-            && point.compress().to_bytes() == *remote,
+            && remote.len() == crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES
+            && remote.iter().any(|&b| b != 0),
         "invalid relay byte-stream peer key"
     );
     Ok(())
@@ -618,9 +615,9 @@ impl ReceiveOrder {
 
 fn run_worker(
     shared: &Arc<Shared>,
-    identity: SigningKey,
+    identity: TransportIdentity,
     config: ProductRelayClientConfigV1,
-    remote_key: [u8; 32],
+    remote_key: Vec<u8>,
     initiator: bool,
     ready: &mut Option<oneshot::Sender<()>>,
 ) -> WorkResult<()> {
@@ -639,8 +636,8 @@ fn run_worker(
         .into_pipeline()
         .map_err(|_| Failure::protocol("relay byte-stream pipeline unavailable"))?;
     shared.state().relay_waker = Some(relay.read_waker());
-    let local = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
-    let remote = peer_id_from_ed25519_public_key_v1(&remote_key);
+    let local = peer_id_from_mldsa65_public_key_v1(identity.public_key());
+    let remote = peer_id_from_mldsa65_public_key_v1(&remote_key);
     let handshake_deadline = (Instant::now() + HANDSHAKE_LIMIT).min(shared.control.deadline);
     let ttl = handshake_deadline
         .saturating_duration_since(Instant::now())

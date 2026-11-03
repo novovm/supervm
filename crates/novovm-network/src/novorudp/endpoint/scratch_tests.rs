@@ -4,7 +4,7 @@ use crate::novorudp::NovoRudpTransportFrameKindV0;
 fn listener() -> Result<NativeEndpoint> {
     NativeEndpoint::listen_clients(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[93; 32]),
+        crate::test_identity::key(93),
         1,
         vec![17],
         NativeHandshakeBudget {
@@ -53,9 +53,9 @@ fn scratch_long_then_short_authenticated_datagrams_use_only_received_prefix() ->
     let now = Instant::now();
     let mut client = NativeEndpoint::connect_client(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[94; 32]),
+        crate::test_identity::key(94),
         NativePeer {
-            key: SigningKey::from_bytes(&[93; 32]).verifying_key().to_bytes(),
+            key: crate::test_identity::key(93).public_key().to_vec(),
             address: endpoint.local_addr()?,
         },
         NativeHandshakeBudget {

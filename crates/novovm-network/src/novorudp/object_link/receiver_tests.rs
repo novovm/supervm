@@ -1,6 +1,5 @@
 use super::*;
 use crate::novorudp::endpoint::{NativeHandshakeBudget, NativePeer};
-use ed25519_dalek::SigningKey;
 use std::net::UdpSocket;
 
 fn lanes() -> Vec<NativeLaneConfig> {
@@ -55,8 +54,8 @@ fn pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<UdpSocket>)> {
     let right = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
     let left_address = left.local_addr()?;
     let right_address = right.local_addr()?;
-    let left_key = SigningKey::from_bytes(&[81; 32]);
-    let right_key = SigningKey::from_bytes(&[82; 32]);
+    let left_key = crate::test_identity::key(81);
+    let right_key = crate::test_identity::key(82);
     let budget = || NativeHandshakeBudget {
         lifetime: Duration::from_secs(5),
         retry: Duration::from_millis(10),
@@ -66,7 +65,7 @@ fn pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<UdpSocket>)> {
         left,
         left_key.clone(),
         vec![NativePeer {
-            key: right_key.verifying_key().to_bytes(),
+            key: right_key.public_key().to_vec(),
             address: right_address,
         }],
         budget(),
@@ -77,7 +76,7 @@ fn pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<UdpSocket>)> {
         Arc::clone(&right),
         right_key,
         vec![NativePeer {
-            key: left_key.verifying_key().to_bytes(),
+            key: left_key.public_key().to_vec(),
             address: left_address,
         }],
         budget(),

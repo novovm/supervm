@@ -2,11 +2,11 @@ use super::*;
 use crate::novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
 use std::io::ErrorKind;
 
-fn keys() -> (SigningKey, SigningKey) {
-    let a = SigningKey::from_bytes(&[31; 32]);
-    let b = SigningKey::from_bytes(&[47; 32]);
-    if peer_id_from_ed25519_public_key_v1(&a.verifying_key().to_bytes())
-        < peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes())
+fn keys() -> (TransportIdentity, TransportIdentity) {
+    let a = crate::test_identity::key(31);
+    let b = crate::test_identity::key(47);
+    if peer_id_from_mldsa65_public_key_v1(a.public_key())
+        < peer_id_from_mldsa65_public_key_v1(b.public_key())
     {
         (a, b)
     } else {
@@ -29,6 +29,34 @@ fn receive(socket: &UdpSocket) -> Result<(Vec<u8>, SocketAddr)> {
     }
 }
 
+fn receive_handshake(
+    sender: &mut NativeHandshake,
+    source_socket: &UdpSocket,
+    destination: &UdpSocket,
+    wall_ms: u64,
+    now: Instant,
+) -> Result<(Vec<u8>, SocketAddr)> {
+    let mut receiver = handshake_continuation::Receiver::new(now);
+    for _ in 0..32 {
+        let (wire, source) = receive(destination)?;
+        match receiver.receive(source, &wire, now)? {
+            handshake_continuation::Received::Reply(reply) => {
+                destination.send_to(&reply, source)?;
+                let (challenge, source) = receive(source_socket)?;
+                sender.receive_continuation_challenge(source.into(), &challenge, now)?;
+            }
+            handshake_continuation::Received::Pending => {}
+            handshake_continuation::Received::Complete(wire) => return Ok((wire, source)),
+            handshake_continuation::Received::Challenge => anyhow::bail!("unexpected challenge"),
+        }
+        ensure!(
+            sender.try_send(source_socket, wall_ms, now)?,
+            "handshake continuation stalled"
+        );
+    }
+    anyhow::bail!("handshake continuation exceeded test packet bound")
+}
+
 #[test]
 fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry() -> Result<()> {
     let (ka, kb) = keys();
@@ -39,7 +67,7 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
     let now = Instant::now();
     let mut left = NativeHandshake::start(
         ka.clone(),
-        kb.verifying_key().to_bytes(),
+        kb.public_key().to_vec(),
         b.local_addr()?,
         1000,
         now,
@@ -48,7 +76,7 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
     )?;
     let mut right = NativeHandshake::start(
         kb.clone(),
-        ka.verifying_key().to_bytes(),
+        ka.public_key().to_vec(),
         a.local_addr()?,
         1000,
         now,
@@ -59,17 +87,17 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
     let mut right_cache = HandshakeReplayCacheV1::default();
     assert!(left.try_send(&a, 1000, now)?);
     assert!(!right.try_send(&b, 1000, now)?);
-    let (offer, source) = receive(&b)?;
+    let (offer, source) = receive_handshake(&mut left, &a, &b, 1000, now)?;
     assert!(right
         .receive("127.0.0.1:1".parse()?, &offer, 1000, now, &mut right_cache)
         .is_err());
     right.receive(source, &offer, 1000, now, &mut right_cache)?;
     let mut right_channel = right.take_session().context("responder channel missing")?;
     assert!(right.try_send(&b, 1000, now)?);
-    let (lost_response, _) = receive(&a)?; // Deliberately lose the first response.
+    let (lost_response, _) = receive_handshake(&mut right, &b, &a, 1000, now)?;
     let later = now + Duration::from_millis(10);
     assert!(left.try_send(&a, 1010, later)?);
-    let (retry, source) = receive(&b)?;
+    let (retry, source) = receive_handshake(&mut left, &a, &b, 1010, later)?;
     assert_eq!(retry, offer);
     right.receive(source, &retry, 1010, later, &mut right_cache)?;
     assert!(
@@ -77,7 +105,7 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
         "retry recreated encryption sequence state"
     );
     assert!(right.try_send(&b, 1010, later)?);
-    let (response, source) = receive(&a)?;
+    let (response, source) = receive_handshake(&mut right, &b, &a, 1010, later)?;
     assert_eq!(response, lost_response);
     let mut forged = response.clone();
     *forged.last_mut().unwrap() ^= 1;
@@ -99,7 +127,7 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
     // A second offer cannot replace this session, even with a valid signature.
     let fresh = NodeHandshakeInitiatorV1::start(
         &ka,
-        peer_id_from_ed25519_public_key_v1(&kb.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(kb.public_key()),
         1011,
         5000,
     )?;
@@ -131,7 +159,7 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
     // Explicit new attempt still shares replay history, not a fresh verifier.
     let mut another = NativeHandshake::start(
         kb,
-        ka.verifying_key().to_bytes(),
+        ka.public_key().to_vec(),
         a.local_addr()?,
         1012,
         later,
@@ -151,7 +179,7 @@ fn pending_handshake_has_bounded_lifetime_and_never_accepts_unknown_identity() -
     let address = "127.0.0.1:1234".parse()?;
     let mut left = NativeHandshake::start(
         a.clone(),
-        b.verifying_key().to_bytes(),
+        b.public_key().to_vec(),
         address,
         1000,
         now,
@@ -160,10 +188,10 @@ fn pending_handshake_has_bounded_lifetime_and_never_accepts_unknown_identity() -
     )?;
     assert!(left.is_expired(now + Duration::from_secs(1)));
     assert!(left.take_session().is_none());
-    let unknown = SigningKey::from_bytes(&[88; 32]);
+    let unknown = crate::test_identity::key(88);
     let offer = NodeHandshakeInitiatorV1::start(
         &unknown,
-        peer_id_from_ed25519_public_key_v1(&a.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(a.public_key()),
         1000,
         1000,
     )?;
@@ -177,9 +205,22 @@ fn pending_handshake_has_bounded_lifetime_and_never_accepts_unknown_identity() -
         )
         .is_err());
     assert!(!left.is_ready());
+    assert!(
+        NativeHandshake::start(
+            a.clone(),
+            vec![47; 32],
+            address,
+            1000,
+            now,
+            Duration::from_secs(1),
+            Duration::from_millis(10),
+        )
+        .is_err(),
+        "legacy remote key must not be inferred as ML-DSA-65"
+    );
     assert!(NativeHandshake::start(
         a.clone(),
-        a.verifying_key().to_bytes(),
+        a.public_key().to_vec(),
         address,
         1000,
         now,

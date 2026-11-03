@@ -8,16 +8,17 @@ description = "Standalone deployment of the existing SuperVM opaque relay runtim
 [features]
 default = []
 iroh-transport = ["novovm-network/iroh-transport", "dep:futures-util"]
-tls-transport = ["iroh-transport", "novovm-network/tls-transport", "dep:hkdf", "dep:sha2"]
+tls-transport = ["iroh-transport", "novovm-network/tls-transport", "dep:hkdf"]
 
 [dependencies]
 futures-util = { version = "0.3", optional = true }
 hkdf = { version = "0.12", optional = true }
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.10" }
 anyhow = "1"
 base64 = "0.22"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 novovm-network = { path = "../novovm-network" }
+novovm-exec = { path = "../novovm-exec" }
 rand = "0.8"
 rustls = "0.23.45"
 rustls-native-certs = "0.8.4"
@@ -38,6 +39,8 @@ windows-service = "0.8.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
+chacha20poly1305 = "0.10"
+novovm-consensus = { path = "../novovm-consensus", features = ["test-vectors"] }
 rcgen = "0.12"
 socket2 = "0.6"
 
@@ -59,3 +62,11 @@ required-features = ["iroh-transport"]
 name = "novovm-bootstrap-mirror"
 path = "src/bootstrap_mirror.rs"
 required-features = ["iroh-transport"]
+
+[[example]]
+name = "mailbox_peer_probe"
+required-features = ["iroh-transport"]
+
+[[example]]
+name = "mailbox_native_peer_probe"
+required-features = ["iroh-transport", "tls-transport"]

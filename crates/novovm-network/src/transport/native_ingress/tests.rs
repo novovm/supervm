@@ -3,6 +3,7 @@ use crate::novorudp::{
     fragments::{FragmentProfile, ReassemblyLimits},
     object_link::NativeSendLimits,
 };
+use crate::test_identity::SigningKey;
 use crate::{NovoRudpPacingProfile, NovoRudpWindowConfig, Transport};
 use std::{net::UdpSocket, time::Duration};
 
@@ -170,7 +171,7 @@ fn native_only_policy_rejects_plain_protocol_before_legacy_side_effects() -> Res
 fn open_client_cannot_deliver_on_validator_lane_but_application_remains_live() -> Result<()> {
     let original = UdpTransport::bind(NodeId(82), "127.0.0.1:0")?;
     let remote = NativePeer {
-        key: config().identity.verifying_key().to_bytes(),
+        key: config().identity.public_key().to_vec(),
         address: original.local_addr()?,
     };
     let start = Instant::now();

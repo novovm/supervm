@@ -11,8 +11,18 @@ const MAILBOX_REQUEST_V6: &[u8] = b"NVMBOX06";
 const MAILBOX_REQUEST_V7: &[u8; 8] = b"NVMBOX07";
 const MAILBOX_REQUEST_V8: &[u8; 8] = b"NVMBOX08";
 const MAILBOX_REQUEST_V5: &[u8; 8] = b"NVMBOX05";
-const RESPONSE_V2: &[u8; 8] = b"NVLSRS02";
-const MAX_OFFER_BYTES: usize = 16 * 1024;
+const RESPONSE_CHUNK_V3: &[u8; 8] = b"NVLSRS03";
+// Reuse the existing mailbox control-message chunk size on the same framed
+// reliable carrier. This pre-Finished offer does not borrow mailbox AEAD state.
+const OFFER_CHUNK: usize = 8192;
+const OFFER_CHUNK_HEADER: usize = 16;
+const _: () = assert!(OFFER_CHUNK + OFFER_CHUNK_HEADER <= crate::iroh_transport::IROH_MAX_FRAME_V1);
+#[cfg(feature = "tls-transport")]
+const _: () = assert!(OFFER_CHUNK + OFFER_CHUNK_HEADER <= crate::tls_transport::TLS_MAX_FRAME_V1);
+// At most four sources with eight ML-DSA signatures and two records each.
+// 4 sources * (8 signatures * <22KiB + 2 records * 32KiB + <2KiB
+// metadata), plus one 32KiB online lease, fits below 1MiB.
+pub(super) const MAX_OFFER_BYTES: usize = 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,7 +33,7 @@ pub struct ServiceLeaseOfferV2 {
 }
 
 pub struct ServiceLeaseHostV1 {
-    key: SigningKey,
+    key: TransportIdentity,
     book: Mutex<ServiceLeaseBookV1>,
     lease_ms: u64,
 }
@@ -33,7 +43,7 @@ impl ServiceLeaseHostV1 {
         self.book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
-            .check_continuous_native_carrier_v7(self.key.verifying_key().to_bytes(), transport, now)
+            .check_continuous_native_carrier_v7(self.key.public_key(), transport, now)
     }
 
     /// Explicit publication/removal of NVMBOX07 on the existing carrier.
@@ -53,7 +63,7 @@ impl ServiceLeaseHostV1 {
         ensure!(book.is_self_owned(), "self-owned policy required");
         let entry = book
             .entries
-            .get(&self.key.verifying_key().to_bytes())
+            .get(self.key.public_key())
             .context("service revoked")?;
         let route = IrohServiceEndpointV1::from_record(&entry.current)?;
         if !enabled {
@@ -95,7 +105,7 @@ impl ServiceLeaseHostV1 {
         self.book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
-            .check_continuous_native_carrier_v8(self.key.verifying_key().to_bytes(), transport, now)
+            .check_continuous_native_carrier_v8(self.key.public_key(), transport, now)
     }
 
     /// Explicit publication/removal of NVMBOX08 on the existing carrier.
@@ -133,7 +143,7 @@ impl ServiceLeaseHostV1 {
         ensure!(book.is_self_owned(), "self-owned policy required");
         let entry = book
             .entries
-            .get(&self.key.verifying_key().to_bytes())
+            .get(self.key.public_key())
             .context("service revoked")?;
         let route = IrohServiceEndpointV1::from_record(&entry.current)?;
         let bulk = bulk.unwrap_or(NativeCarrierMailboxEndpointV8::supports_bulk_v1(
@@ -181,7 +191,7 @@ impl ServiceLeaseHostV1 {
         self.book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
-            .check_continuous_native_peer_v7(self.key.verifying_key().to_bytes(), now)
+            .check_continuous_native_peer_v7(self.key.public_key(), now)
     }
 
     /// Publish/remove an explicitly running native listener using the SAME
@@ -200,7 +210,7 @@ impl ServiceLeaseHostV1 {
         ensure!(book.is_self_owned(), "self-owned policy required");
         let entry = book
             .entries
-            .get(&self.key.verifying_key().to_bytes())
+            .get(self.key.public_key())
             .context("service revoked")?;
         let mut endpoints: Vec<_> = entry
             .current
@@ -236,7 +246,7 @@ impl ServiceLeaseHostV1 {
         self.book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
-            .check_continuous_tls_peer_v1(self.key.verifying_key().to_bytes(), endpoint, now)
+            .check_continuous_tls_peer_v1(self.key.public_key(), endpoint, now)
     }
     pub fn check_continuous_native_tls_v8(
         &self,
@@ -246,7 +256,7 @@ impl ServiceLeaseHostV1 {
         self.book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
-            .check_continuous_native_tls_v8(self.key.verifying_key().to_bytes(), endpoint, now)
+            .check_continuous_native_tls_v8(self.key.public_key(), endpoint, now)
     }
     /// Local stable service identity supervision for the explicit V4 protocol.
     /// It issues no lease, updates no locator and does not bypass tombstones.
@@ -254,26 +264,26 @@ impl ServiceLeaseHostV1 {
         self.book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
-            .check_continuous_peer_v4(self.key.verifying_key().to_bytes(), endpoint, now)
+            .check_continuous_peer_v4(self.key.public_key(), endpoint, now)
     }
     /// Fast local supervision; does not renew or perform file/network IO.
     pub fn check_route(&self, endpoint: [u8; 32], instance: [u8; 32], now: u64) -> Result<()> {
         self.book
             .lock()
             .map_err(|_| anyhow::anyhow!("host unavailable"))?
-            .check_route(self.key.verifying_key().to_bytes(), endpoint, instance, now)
+            .check_route(self.key.public_key(), endpoint, instance, now)
     }
     /// Only an already durable book is accepted. The caller must explicitly
     /// enroll or restore it with the install owner's unchanged trust policy.
-    pub fn new(key: SigningKey, book: ServiceLeaseBookV1) -> Result<Self> {
+    pub fn new(key: TransportIdentity, book: ServiceLeaseBookV1) -> Result<Self> {
         ensure!(
             book.persistence.is_some() && !book.failed,
             "durable host required"
         );
         // A revoked host may reopen solely to publish the signed revocation.
-        let pin = key.verifying_key().to_bytes();
+        let pin = key.public_key();
         ensure!(
-            book.entries.contains_key(&pin) || book.tombstones.contains(&pin),
+            book.entries.contains_key(pin) || book.tombstones.contains(pin),
             "host not enrolled"
         );
         Ok(Self {
@@ -317,10 +327,10 @@ impl ServiceLeaseHostV1 {
         book.observe(now)?;
         // Do not serve expired source sets, even when a lease was once valid.
         if let ServiceTrustV1::Endorsed(policy) = &book.policy {
-            validated_sources(&book.sources, policy, now)?;
+            validated_sources(&book.sources, policy, now, &book.verifier)?;
         }
-        let pin = self.key.verifying_key().to_bytes();
-        let lease = match book.entries.get(&pin) {
+        let pin = self.key.public_key();
+        let lease = match book.entries.get(pin) {
             Some(entry) => {
                 ensure!(entry.expires > now, "host authority expired");
                 let record = directory::sign_relay_record_v1(
@@ -375,7 +385,7 @@ impl ServiceLeaseHostV1 {
             .map_err(|_| anyhow::anyhow!("host unavailable"))?;
         let entry = book
             .entries
-            .get(&self.key.verifying_key().to_bytes())
+            .get(self.key.public_key())
             .context("service revoked")?;
         let tls = TlsServiceEndpointV1::from_record(&entry.current)?;
         self.rotate_with_routes(&mut book, endpoint, tls.as_ref(), None, now, expires)
@@ -434,8 +444,8 @@ impl ServiceLeaseHostV1 {
         expires: u64,
     ) -> Result<PeerSignedRelayRecordV1> {
         ensure!(book.is_self_owned(), "self-owned policy required");
-        let pin = self.key.verifying_key().to_bytes();
-        let entry = book.entries.get(&pin).context("service revoked")?;
+        let pin = self.key.public_key();
+        let entry = book.entries.get(pin).context("service revoked")?;
         ensure!(
             IrohServiceEndpointV1::from_record(&entry.current)?
                 .address
@@ -525,7 +535,7 @@ impl ServiceLeaseBookV1 {
             updates.len() == self.sources.len(),
             "incomplete bootstrap refresh"
         );
-        validated_sources(&updates, self.policy.endorsed()?, now)?;
+        validated_sources(&updates, self.policy.endorsed()?, now, &self.verifier)?;
         let mut sources = self.sources();
         for update in updates {
             let source = sources
@@ -543,7 +553,7 @@ impl ServiceLeaseBookV1 {
     pub fn accept_offer(
         &mut self,
         offer: ServiceLeaseOfferV2,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: [u8; 32],
         instance: [u8; 32],
         now: u64,
@@ -558,7 +568,7 @@ impl ServiceLeaseBookV1 {
     fn accept_offer_sources(
         &mut self,
         offer: &ServiceLeaseOfferV2,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: [u8; 32],
         instance: [u8; 32],
         now: u64,
@@ -574,7 +584,7 @@ impl ServiceLeaseBookV1 {
         }
         // A peer only refreshes source IDs the install owner already admitted.
         // Missing sources are not revocations: retain independent publishers.
-        validated_sources(&offer.sources, self.policy.endorsed()?, now)?;
+        validated_sources(&offer.sources, self.policy.endorsed()?, now, &self.verifier)?;
         let mut sources = self.sources();
         for update in &offer.sources {
             let source = sources
@@ -599,7 +609,7 @@ impl ServiceLeaseBookV1 {
 pub async fn accept_service_offer_with_activation_v2(
     book: &Mutex<ServiceLeaseBookV1>,
     offer: ServiceLeaseOfferV2,
-    pin: [u8; 32],
+    pin: &[u8],
     expected: &IrohServiceEndpointV1,
     now: impl Fn() -> Result<u64>,
     check: impl Fn() -> Result<()>,
@@ -637,14 +647,19 @@ pub async fn accept_service_offer_with_activation_v2(
         // This verification at issued_at only checks the candidate signature,
         // shape and lifetime. It does not publish it, advance the book clock,
         // confer authority, or qualify the candidate for application traffic.
-        let address = verify(&record, record.issued_at_ms, MAX_SERVICE_LEASE_MS)?;
+        let address = verify(
+            &record,
+            record.issued_at_ms,
+            MAX_SERVICE_LEASE_MS,
+            &owner.verifier,
+        )?;
         ensure!(
             record.relay_public_key == pin
                 && address.address.endpoint_key == expected.address.endpoint_key
                 && address.instance == expected.instance,
             "renewal identity differs"
         );
-        let entry = owner.entries.get(&pin).context("service revoked")?;
+        let entry = owner.entries.get(pin).context("service revoked")?;
         ensure!(
             record.expires_at_ms <= entry.expires,
             "renewal exceeds authority"
@@ -690,10 +705,86 @@ pub async fn accept_service_offer_with_activation_v2(
 }
 
 fn encode(offer: &ServiceLeaseOfferV2) -> Result<Vec<u8>> {
-    let mut bytes = RESPONSE_V2.to_vec();
-    bytes.extend_from_slice(&serde_json::to_vec(offer)?);
+    let bytes = serde_json::to_vec(offer)?;
     ensure!(bytes.len() <= MAX_OFFER_BYTES, "service offer budget");
     Ok(bytes)
+}
+
+pub(super) async fn write_control_message(
+    stream: &mut CarrierStreamV1<'_>,
+    tag: &[u8; 8],
+    bytes: &[u8],
+    limit: usize,
+) -> Result<()> {
+    ensure!(
+        !bytes.is_empty() && bytes.len() <= limit,
+        "service offer budget"
+    );
+    for (index, chunk) in bytes.chunks(OFFER_CHUNK).enumerate() {
+        let mut frame = Vec::with_capacity(OFFER_CHUNK_HEADER + chunk.len());
+        frame.extend_from_slice(tag);
+        frame.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&((index * OFFER_CHUNK) as u32).to_be_bytes());
+        frame.extend_from_slice(chunk);
+        stream.write_frame(&frame).await?;
+    }
+    Ok(())
+}
+
+fn append_control_chunk(
+    bytes: &[u8],
+    tag: &[u8; 8],
+    body: &mut Vec<u8>,
+    total: &mut usize,
+    limit: usize,
+) -> Result<()> {
+    ensure!(
+        bytes.len() > OFFER_CHUNK_HEADER
+            && bytes.len() <= OFFER_CHUNK_HEADER + OFFER_CHUNK
+            && bytes.starts_with(tag),
+        "service offer response version/chunk"
+    );
+    let length = u32::from_be_bytes(bytes[8..12].try_into()?) as usize;
+    let offset = u32::from_be_bytes(bytes[12..16].try_into()?) as usize;
+    ensure!(
+        length > 0 && length <= limit && offset == body.len(),
+        "service offer response size/offset"
+    );
+    if body.is_empty() {
+        *total = length;
+    }
+    ensure!(
+        length == *total
+            && body.len() < *total
+            && bytes.len() - OFFER_CHUNK_HEADER == (*total - body.len()).min(OFFER_CHUNK),
+        "service offer response framing"
+    );
+    if body.is_empty() {
+        body.reserve_exact(length);
+    }
+    body.extend_from_slice(&bytes[OFFER_CHUNK_HEADER..]);
+    Ok(())
+}
+
+pub(super) async fn read_control_message(
+    stream: &mut CarrierStreamV1<'_>,
+    tag: &[u8; 8],
+    limit: usize,
+) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut total = 0;
+    for _ in 0..limit.div_ceil(OFFER_CHUNK) {
+        let frame = stream
+            .read_frame()
+            .await
+            .context(ServiceOfferStepV2::Read)?;
+        append_control_chunk(&frame, tag, &mut bytes, &mut total, limit)
+            .context(ServiceOfferStepV2::Decode)?;
+        if bytes.len() == total {
+            return Ok(bytes);
+        }
+    }
+    anyhow::bail!("service control response incomplete")
 }
 
 /// Explicit V2, with no V1 probing/fallback. This precedes the existing
@@ -732,16 +823,9 @@ async fn request_offer(
         .write_frame(request)
         .await
         .context(ServiceOfferStepV2::Write)?;
-    let bytes = stream
-        .read_frame()
-        .await
-        .context(ServiceOfferStepV2::Read)?;
+    let bytes = read_control_message(stream, RESPONSE_CHUNK_V3, MAX_OFFER_BYTES).await?;
     (|| {
-        ensure!(
-            bytes.len() > 8 && bytes.len() <= MAX_OFFER_BYTES && bytes.starts_with(RESPONSE_V2),
-            "service offer version/size"
-        );
-        let offer: ServiceLeaseOfferV2 = serde_json::from_slice(&bytes[8..])?;
+        let offer: ServiceLeaseOfferV2 = serde_json::from_slice(&bytes)?;
         ensure!(offer.version == 2, "service offer version");
         Ok(offer)
     })()
@@ -779,7 +863,7 @@ pub async fn serve_service_offer_selected_v2<T>(
         "service offer request version"
     );
     let (offer, selected) = select()?;
-    stream.write_frame(&encode(&offer)?).await?;
+    write_control_message(stream, RESPONSE_CHUNK_V3, &encode(&offer)?, MAX_OFFER_BYTES).await?;
     Ok(selected)
 }
 
@@ -1015,7 +1099,8 @@ async fn dispatch_self_owned_node<T>(
         }
         _ => {
             let (offer, selected) = select()?;
-            stream.write_frame(&encode(&offer)?).await?;
+            write_control_message(stream, RESPONSE_CHUNK_V3, &encode(&offer)?, MAX_OFFER_BYTES)
+                .await?;
             Ok((kind, Some(selected), None))
         }
     }
@@ -1029,7 +1114,7 @@ pub async fn serve_node_offer_selected_v1<T>(
 ) -> Result<(NodeServiceV1, T)> {
     let kind = legacy_node_service(&stream.read_frame().await?)?;
     let (offer, selected) = select()?;
-    stream.write_frame(&encode(&offer)?).await?;
+    write_control_message(stream, RESPONSE_CHUNK_V3, &encode(&offer)?, MAX_OFFER_BYTES).await?;
     Ok((kind, selected))
 }
 
@@ -1065,7 +1150,7 @@ pub async fn serve_bootstrap_sources_v2(
         stream.read_frame().await?.as_slice() == REQUEST_V2,
         "bootstrap request version"
     );
-    stream.write_frame(&bytes).await
+    write_control_message(stream, RESPONSE_CHUNK_V3, &bytes, MAX_OFFER_BYTES).await
 }
 
 pub(crate) async fn accept_mailbox_multiplex_lane(
@@ -1105,6 +1190,141 @@ mod v8_selector_tests {
                 assert!(self_owned_node_service(invalid, allow_v8).is_err());
             }
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod control_chunk_tests {
+    use super::*;
+
+    fn frame(total: usize, offset: usize, bytes: &[u8]) -> Vec<u8> {
+        let mut frame = b"NVLSRS03".to_vec();
+        frame.extend_from_slice(&(total as u32).to_be_bytes());
+        frame.extend_from_slice(&(offset as u32).to_be_bytes());
+        frame.extend_from_slice(bytes);
+        frame
+    }
+
+    #[test]
+    fn control_chunks_require_complete_canonical_order_and_bound_total_before_allocation(
+    ) -> Result<()> {
+        let payload = vec![17; OFFER_CHUNK * 2 + 7];
+        let mut body = Vec::new();
+        let mut total = 0;
+        for (index, bytes) in payload.chunks(OFFER_CHUNK).enumerate() {
+            append_control_chunk(
+                &frame(payload.len(), index * OFFER_CHUNK, bytes),
+                RESPONSE_CHUNK_V3,
+                &mut body,
+                &mut total,
+                MAX_OFFER_BYTES,
+            )?;
+        }
+        assert_eq!(body, payload);
+        assert_eq!(body.len(), total);
+        for bytes in [
+            b"NVLSRS02{\"version\":2}".to_vec(),
+            frame(MAX_OFFER_BYTES + 1, 0, &[1]),
+            frame(1, 1, &[1]),
+            frame(OFFER_CHUNK + 1, 0, &[1]),
+            frame(1, 0, &[1, 2]),
+        ] {
+            let mut body = Vec::new();
+            let mut total = 0;
+            assert!(append_control_chunk(
+                &bytes,
+                RESPONSE_CHUNK_V3,
+                &mut body,
+                &mut total,
+                MAX_OFFER_BYTES
+            )
+            .is_err());
+            assert!(body.is_empty());
+            assert_eq!(body.capacity(), 0);
+        }
+        let first = frame(OFFER_CHUNK + 1, 0, &vec![1; OFFER_CHUNK]);
+        let mut body = Vec::new();
+        let mut total = 0;
+        append_control_chunk(
+            &first,
+            RESPONSE_CHUNK_V3,
+            &mut body,
+            &mut total,
+            MAX_OFFER_BYTES,
+        )?;
+        assert!(body.len() < total); // Partial receipt is not a completed message.
+        assert!(append_control_chunk(
+            &first,
+            RESPONSE_CHUNK_V3,
+            &mut body,
+            &mut total,
+            MAX_OFFER_BYTES
+        )
+        .is_err());
+        assert!(append_control_chunk(
+            &frame(OFFER_CHUNK + 2, OFFER_CHUNK, &[2]),
+            RESPONSE_CHUNK_V3,
+            &mut body,
+            &mut total,
+            MAX_OFFER_BYTES
+        )
+        .is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn control_chunks_truncated_carrier_never_produces_a_complete_offer() -> Result<()> {
+        use crate::iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1};
+        use std::time::{Duration, Instant};
+        let end = Instant::now() + Duration::from_secs(10);
+        let config = || {
+            IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let server = with_iroh_scope_v1(
+            config()?,
+            IrohControlV1::new(end, || Ok(()))?,
+            move |scope| {
+                Box::pin(async move {
+                    tx.send(scope.address()?)
+                        .map_err(|_| anyhow::anyhow!("fixture receiver ended"))?;
+                    let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
+                    assert_eq!(stream.read_frame().await?, REQUEST_V2);
+                    stream
+                        .write_frame(&frame(OFFER_CHUNK + 1, 0, &vec![1; OFFER_CHUNK]))
+                        .await?;
+                    let _ = stream.finish().await; // Deliberately omit the final byte.
+                    Ok(())
+                })
+            },
+        );
+        let receiver = async move {
+            let address = rx.await?;
+            with_iroh_scope_v1(
+                config()?,
+                IrohControlV1::new(end, || Ok(()))?,
+                move |scope| {
+                    Box::pin(async move {
+                        let mut stream: CarrierStreamV1<'_> = scope.connect(&address).await?.into();
+                        let error = request_service_offer_v2(&mut stream)
+                            .await
+                            .err()
+                            .context("truncated offer accepted")?;
+                        assert!(crate::carrier_stream::is_carrier_io_failure(&error));
+                        assert!(matches!(
+                            error.downcast_ref::<ServiceOfferStepV2>(),
+                            Some(ServiceOfferStepV2::Read)
+                        ));
+                        Ok(())
+                    })
+                },
+            )
+            .await
+        };
+        let (s, c) = tokio::join!(server, receiver);
+        s?;
+        c?;
         Ok(())
     }
 }

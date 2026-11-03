@@ -103,6 +103,7 @@ def validate_results(needs):
         "lan_script_launch": out["full"],
         "runtime_modules": out["full"],
         "runtime_modules_release": out["full"],
+        "native_transport_qualification": out["full"],
         "rust": out["has_rust"],
         "rust_security": out["security"],
         "python": out["has_python"],

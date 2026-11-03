@@ -2029,6 +2029,7 @@ fn identity_guard_key_v1(chain_id: u64, epoch: u64, validator_id: &[u8; 32]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::product_relay_client::component_transport_peer;
     use crate::{
         native_block_ledger::{
             NovNativeBlockCandidateInputV1, NovNativeBlockCommitInputV1, NovNativeDurableBlockV1,
@@ -2037,7 +2038,6 @@ mod tests {
         native_block_seal::{NovNativeSealLocalProposalRequestV1, NovNativeSealValidatorV1},
     };
     use ed25519_dalek::SigningKey;
-    use novovm_network::peer_id_from_ed25519_public_key_v1;
     use novovm_protocol::NovBlockExecutionContextV1;
     use std::{
         fs,
@@ -2197,7 +2197,7 @@ mod tests {
             .iter()
             .map(|validator| NovNativeSealValidatorTransportBindingV1 {
                 validator_id: validator.validator_id,
-                transport_peer_id: peer_id_from_ed25519_public_key_v1(&validator.public_key),
+                transport_peer_id: component_transport_peer(&validator.public_key),
             })
             .collect();
         NovNativeSealEpochAuthorityV1::derive_operator_pinned_genesis_epoch(
@@ -2973,7 +2973,7 @@ mod tests {
             .iter()
             .map(|validator| NovNativeSealValidatorTransportBindingV1 {
                 validator_id: validator.validator_id,
-                transport_peer_id: peer_id_from_ed25519_public_key_v1(&validator.public_key),
+                transport_peer_id: component_transport_peer(&validator.public_key),
             })
             .collect();
         assert!(

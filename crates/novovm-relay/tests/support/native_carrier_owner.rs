@@ -21,7 +21,7 @@ use novovm_network::{
 async fn configure(f: &Fixture, value: &str, success: bool) -> Result<()> {
     use std::os::windows::process::CommandExt;
     let mut process = Process(
-        Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"))
+        service_command()
             .arg("--set-self-owned-native-carrier")
             .arg(f.0.join("owned.json"))
             .arg(value)
@@ -88,11 +88,12 @@ fn fetch() -> Request {
 fn book(record: &PeerSignedRelayRecordV1) -> Result<ServiceLeaseBookV1> {
     ServiceLeaseBookV1::new_self_owned(
         SelfOwnedTrustV1 {
-            version: 1,
-            node_pins: [record.relay_public_key].into(),
+            version: 2,
+            node_pins: [record.relay_public_key.clone()].into(),
         },
         vec![record.clone()],
         now_ms()?,
+        key(73),
     )
 }
 fn client_config() -> Result<IrohConfigV1> {
@@ -126,7 +127,7 @@ async fn store_before_activation(
                     let mut client = MailboxClientSessionV2::begin_continuous_v6(
                         &mut stream,
                         &key(73),
-                        record.relay_public_key,
+                        record.relay_public_key.clone(),
                     )
                     .await
                     .context("legacy custody authentication")?;
@@ -150,11 +151,12 @@ async fn store_before_activation(
                         anyhow::bail!("original mailbox did not acknowledge custody")
                     };
                     receipt.verify(
-                        record.relay_public_key,
+                        &record.relay_public_key,
                         [81; 32],
                         [84; 32],
                         &vec![85; 9000],
                         expires,
+                        &key(73),
                     )?;
                     client.finish().await.context("legacy custody finish")?;
                     Ok(receipt)
@@ -176,14 +178,14 @@ struct Client<'a> {
     session: NativeMailboxClient,
 }
 impl<'a> Client<'a> {
-    async fn attach(stream: &'a mut CarrierStreamV1<'_>, node: [u8; 32]) -> Result<Self> {
+    async fn attach(stream: &'a mut CarrierStreamV1<'_>, node: Vec<u8>) -> Result<Self> {
         request_mailbox_native_v7(stream)
             .await
             .context("native carrier selection")?;
         let channel = authenticate_structured_bound_session_observed(
             stream,
             &key(73),
-            node,
+            node.clone(),
             true,
             &mut HandshakeReplayCacheV1::new(8),
             &mut |_, _| Ok(()),
@@ -267,7 +269,7 @@ impl<'a> Client<'a> {
     }
     async fn record(
         &mut self,
-        node: [u8; 32],
+        node: &[u8],
         history: &mut ServiceLeaseBookV1,
     ) -> Result<PeerSignedRelayRecordV1> {
         let Reply::ServiceRecordV7 { record } = self.request(3, Request::ServiceRecordV7).await?
@@ -289,10 +291,10 @@ async fn native_custody(
     cross_epoch: bool,
 ) -> Result<(u64, StoreReceiptV1)> {
     let mut history = book(&record)?;
-    let node = record.relay_public_key;
+    let node = record.relay_public_key.clone();
     let route =
         NativeCarrierMailboxEndpointV7::from_record(&record)?.context("native carrier absent")?;
-    history.check_native_carrier_route_v7(node, &route, now_ms()?)?;
+    history.check_native_carrier_route_v7(&node, &route, now_ms()?)?;
     let owner = IrohEndpointOwnerV1::bind(client_config()?, || Ok(())).await?;
     let result = tokio::time::timeout(
         Duration::from_secs(90),
@@ -301,8 +303,8 @@ async fn native_custody(
             move |scope| {
                 Box::pin(async move {
                     let mut stream = scope.connect(&route.iroh.address).await?.into();
-                    let mut client = Client::attach(&mut stream, node).await?;
-                    let first = client.record(node, &mut history).await?;
+                    let mut client = Client::attach(&mut stream, node.clone()).await?;
+                    let first = client.record(&node, &mut history).await?;
                     let original_session = client.link.session_id(0);
                     let mut last = first.clone();
                     if cross_epoch {
@@ -313,7 +315,7 @@ async fn native_custody(
                                 "unsolicited native business reply"
                             );
                         }
-                        last = client.record(node, &mut history).await?;
+                        last = client.record(&node, &mut history).await?;
                         ensure!(
                             last.sequence > first.sequence,
                             "normal node rotation did not advance"
@@ -353,7 +355,7 @@ async fn native_custody(
                     else {
                         anyhow::bail!("duplicate native Put did not retain receipt")
                     };
-                    replayed.verify(node, [81; 32], object, &ciphertext, expires)?;
+                    replayed.verify(&node, [81; 32], object, &ciphertext, expires, &key(73))?;
                     ensure!(
                         replayed.signature == original.signature,
                         "original durable receipt changed"
@@ -382,7 +384,14 @@ async fn native_custody(
                         else {
                             anyhow::bail!("native Put did not commit new custody")
                         };
-                        stored.verify(node, [81; 32], [86; 32], &vec![87; 9000], expires)?;
+                        stored.verify(
+                            &node,
+                            [81; 32],
+                            [86; 32],
+                            &vec![87; 9000],
+                            expires,
+                            &key(73),
+                        )?;
                         stored
                     } else {
                         replayed
@@ -463,7 +472,7 @@ async fn windows_native_carrier_cli_preserves_identity_custody_and_rotation() ->
             .owned_record(latest - 1)
             .await
             .context("rotated disk publication")?;
-        validate_relay_record_v1(&published, now_ms()?)?;
+        validate_relay_record_v1(&published, now_ms()?, &key(73))?;
         ensure!(NativeCarrierMailboxEndpointV7::from_record(&published)?.is_some());
         drop(running); // Abrupt real process exit after confirmed durable custody.
         let restarted = f.launch_owned("--foreground")?;
@@ -492,7 +501,7 @@ async fn windows_native_carrier_cli_preserves_identity_custody_and_rotation() ->
             .owned_record(last)
             .await
             .context("disabled carrier publication")?;
-        validate_relay_record_v1(&fourth, now_ms()?)?;
+        validate_relay_record_v1(&fourth, now_ms()?, &key(73))?;
         ensure!(fourth.relay_public_key == first.relay_public_key);
         ensure!(
             IrohServiceEndpointV1::from_record(&fourth)?

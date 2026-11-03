@@ -8,6 +8,7 @@ use crate::mailbox_rpc::{
     MailboxRequestV1 as Request, MailboxServiceV1, MailboxWatchV1,
 };
 use crate::mailbox_store::MailboxCursorV1;
+use crate::product_overlay::{MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES, MLDSA65_SUITE};
 use anyhow::{ensure, Context, Result};
 use novovm_protocol::{
     apfl_batch::{self, BatchView, Limits},
@@ -499,6 +500,7 @@ pub fn encode_replies(context: [u8; 32], replies: &[Reply]) -> Result<Zeroizing<
             Reply::Registered => (1, Vec::new(), Vec::new()),
             Reply::Stored(r) => {
                 let mut n = vec![r.version];
+                n.extend_from_slice(&r.suite.to_le_bytes());
                 n.extend_from_slice(&r.bytes.to_le_bytes());
                 n.extend_from_slice(&r.expires.to_le_bytes());
                 (2, n, Vec::new())
@@ -610,8 +612,23 @@ fn validate_reply_bound(f: &Fields<'_>, object_limit: usize) -> Result<()> {
     match f[0][0] {
         1 | 4 | 5 | 6 | 7 => shape(f, [s(1), s(0), s(0), s(0), s(0), s(0), s(0), s(0)])?,
         2 => {
-            shape(f, [s(1), s(32), s(32), s(32), s(32), s(17), s(64), s(0)])?;
-            ensure!(f[5][0] == 1, "storage receipt version");
+            shape(
+                f,
+                [
+                    s(1),
+                    s(MLDSA65_PUBLIC_KEY_BYTES),
+                    s(32),
+                    s(32),
+                    s(32),
+                    s(19),
+                    s(MLDSA65_SIGNATURE_BYTES),
+                    s(0),
+                ],
+            )?;
+            ensure!(
+                f[5][0] == 2 && u16::from_le_bytes(fixed(&f[5][1..3])?) == MLDSA65_SUITE,
+                "storage receipt version/suite"
+            );
         }
         13 => {
             shape(f, [s(1), s(32), s(32), s(8), None, s(0), s(0), s(0)])?;
@@ -706,13 +723,14 @@ pub fn decode_replies(bytes: &[u8], context: [u8; 32], expected: usize) -> Resul
             },
             1 => Reply::Registered,
             2 => Reply::Stored(StoreReceiptV1 {
-                version: 1,
-                node: fixed(f[1])?,
+                version: 2,
+                suite: MLDSA65_SUITE,
+                node: f[1].to_vec(),
                 mailbox: fixed(f[2])?,
                 object: fixed(f[3])?,
                 digest: fixed(f[4])?,
-                bytes: u64_value(&f[5][1..9])?,
-                expires: i64_value(&f[5][9..17])?,
+                bytes: u64_value(&f[5][3..11])?,
+                expires: i64_value(&f[5][11..19])?,
                 signature: f[6].to_vec(),
             }),
             3 => Reply::Object {

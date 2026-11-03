@@ -80,7 +80,10 @@ $checks++
 # Cargo's plain hardlinked file is permitted only at its reported leaf, never
 # as a general relaxation of output/ancestor redirect checks.
 $elf = Join-Path $linkTarget 'cargo-elf'
-[IO.File]::WriteAllBytes($elf, [byte[]]@(0x7f, 0x45, 0x4c, 0x46))
+$elfBytes = [byte[]]::new(20)
+$elfBytes[0]=0x7f; $elfBytes[1]=0x45; $elfBytes[2]=0x4c; $elfBytes[3]=0x46
+$elfBytes[4]=2; $elfBytes[5]=1; $elfBytes[18]=62
+[IO.File]::WriteAllBytes($elf, $elfBytes)
 $hardLink = Join-Path $linkTarget 'cargo-elf-hardlink'
 New-Item -ItemType HardLink -Path $hardLink -Target $elf | Out-Null
 Expect-Rejection { Assert-PlainPackagePath $hardLink } '*links/reparse points*'
@@ -88,6 +91,23 @@ Assert-PlainPackagePath $hardLink -AllowFileHardLink
 $messages = @(@{reason='compiler-artifact';target=@{name='fixture';kind=@('bin')};executable=$hardLink} | ConvertTo-Json -Compress)
 if ((Get-CargoExecutable $messages 'fixture') -ne $hardLink) { throw 'Cargo hardlink rejected or replaced' }
 $checks++
+Expect-Rejection { Get-CargoExecutable $messages 'fixture' 'x86_64-pc-windows-msvc' } '*not an AMD64 PE32+ Windows artifact*'
+$pe = Join-Path $linkTarget 'cargo-pe.exe'
+$peBytes = [byte[]]::new(90)
+$peBytes[0]=0x4d; $peBytes[1]=0x5a; $peBytes[60]=64
+$peBytes[64]=0x50; $peBytes[65]=0x45; $peBytes[68]=0x64; $peBytes[69]=0x86
+$peBytes[88]=0x0b; $peBytes[89]=0x02
+[IO.File]::WriteAllBytes($pe, $peBytes)
+$peMessages = @(@{reason='compiler-artifact';target=@{name='fixture';kind=@('bin')};executable=$pe} | ConvertTo-Json -Compress)
+if ((Get-CargoExecutable $peMessages 'fixture' 'x86_64-pc-windows-msvc') -ne $pe) { throw 'AMD64 PE32+ fixture rejected' }
+$checks++
+Expect-Rejection { Get-CargoExecutable $peMessages 'fixture' 'x86_64-unknown-linux-gnu' } '*not an x86_64 ELF Linux artifact*'
+$peBytes[68]=0x4c; $peBytes[69]=0x01
+[IO.File]::WriteAllBytes($pe, $peBytes)
+Expect-Rejection { Get-CargoExecutable $peMessages 'fixture' 'x86_64-pc-windows-msvc' } '*not an AMD64 PE32+ Windows artifact*'
+$peBytes[68]=0x64; $peBytes[69]=0x86; $peBytes[88]=0x0b; $peBytes[89]=0x01
+[IO.File]::WriteAllBytes($pe, $peBytes)
+Expect-Rejection { Get-CargoExecutable $peMessages 'fixture' 'x86_64-pc-windows-msvc' } '*not PE32+*'
 Expect-Rejection { Assert-PlainPackagePath (Join-Path $link 'cargo-elf-hardlink') -AllowFileHardLink } '*links/reparse points*'
 # Directory links are covered above on both platforms; file symlinks require
 # elevation on some Windows runners, so exercise the actual file case on Linux.

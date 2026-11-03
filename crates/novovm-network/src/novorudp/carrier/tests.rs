@@ -51,9 +51,9 @@ fn authenticated_route_provenance_does_not_authorize_bare_native_handshake() -> 
     );
     assert!(NativeEndpoint::connect_clients_with_io(
         socket,
-        SigningKey::from_bytes(&[21; 32]),
+        crate::test_identity::key(21),
         vec![NativeRoutePeer {
-            key: SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes(),
+            key: crate::test_identity::key(22).public_key().to_vec(),
             route
         }],
         NativeHandshakeBudget {
@@ -65,8 +65,8 @@ fn authenticated_route_provenance_does_not_authorize_bare_native_handshake() -> 
     )
     .is_err());
     assert!(NativeHandshake::start_role(
-        SigningKey::from_bytes(&[21; 32]),
-        SigningKey::from_bytes(&[22; 32]).verifying_key().to_bytes(),
+        crate::test_identity::key(21),
+        crate::test_identity::key(22).public_key().to_vec(),
         route,
         1000,
         Instant::now(),

@@ -1,7 +1,9 @@
 //! Actual AOEM, ML-DSA spending and four original resident pipelines/journals.
 //! In-process consensus message delivery, NOT native SDK/network activation.
 //! Reopening after an unobserved ACK is not physical power-cut injection.
-use super::native_product_rpc::{complete_test_supply, process_crypto, validator_key};
+use super::native_product_rpc::{
+    complete_test_supply, process_crypto, transport_key, validator_key,
+};
 use super::*;
 use crate::native_pipeline::business::direct_nov_fee::{quote_and_settle, TransferFeeRequest};
 use crate::native_pipeline::business::nov_transfer_batch::{
@@ -199,9 +201,7 @@ fn actual_mldsa_uca_initialized_spend_respend_journal_recovery() -> Result<()> {
             validators: (0..4)
                 .map(|i| GenesisValidator {
                     public_key: validator_key(i).public_key().to_vec(),
-                    transport_public_key: SigningKey::from_bytes(&[151 + i as u8; 32])
-                        .verifying_key()
-                        .to_bytes(),
+                    transport_public_key: transport_key(i).public_key().to_vec(),
                     weight: 1,
                 })
                 .collect(),

@@ -9,6 +9,7 @@ use novovm_network::{
     iroh_transport::{with_iroh_listener_v1, IrohAddressV1, IrohConfigV1},
     product_bootstrap_refresh::{validate_bootstrap_refresh_peers_v1, BootstrapRefreshPeerV1},
     product_directory::{BootstrapSourceV1, BootstrapTrustPolicyV1},
+    product_overlay::MLDSA65_PUBLIC_KEY_BYTES,
     product_rendezvous_daemon::now_ms,
     product_service_lease::{serve_bootstrap_sources_v2, ServiceLeaseBookV1, ServiceLeaseFileV1},
 };
@@ -34,7 +35,9 @@ pub struct Config {
     pub engineering_direct_allowed: bool,
     pub state_directory: PathBuf,
     pub source_path: PathBuf,
-    pub trust_anchors: Vec<[u8; 32]>,
+    pub trust_anchors: Vec<Vec<u8>>,
+    pub library: PathBuf,
+    pub library_sha256: String,
     pub minimum_signatures: usize,
     pub source_ids: Vec<String>,
     pub relays: Vec<String>,
@@ -45,10 +48,16 @@ pub struct Config {
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let value: Self = serde_json::from_slice(&read_bounded(path, 8192)?)?;
+        let value: Self = serde_json::from_slice(&read_bounded(path, 128 * 1024)?)?;
         ensure!(
-            value.version == 1 && value.engineering_direct_allowed,
+            value.version == 2 && value.engineering_direct_allowed,
             "explicit engineering mirror required"
+        );
+        ensure!(
+            value.library.is_absolute()
+                && value.library_sha256.len() == 64
+                && value.library_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "qualified read-only verifier required"
         );
         check_path(&value.state_directory)?;
         check_path(&value.source_path)?;
@@ -84,16 +93,13 @@ impl Config {
         );
         let mut ids = BTreeSet::new();
         for key in &self.trust_anchors {
-            let vk = ed25519_dalek::VerifyingKey::from_bytes(key)?;
             ensure!(
-                !vk.is_weak()
-                    && vk.to_edwards().is_torsion_free()
-                    && vk.to_edwards().compress().to_bytes() == *key,
-                "mirror trust key"
+                key.len() == MLDSA65_PUBLIC_KEY_BYTES && key.iter().any(|b| *b != 0),
+                "mirror native trust key"
             );
             ensure!(
                 ids.insert(
-                    BootstrapTrustPolicyV1::single_signer(*key)
+                    BootstrapTrustPolicyV1::single_signer(key.clone())
                         .allowed_signer_peer_ids
                         .into_iter()
                         .next()
@@ -126,7 +132,7 @@ impl Config {
     }
     fn sources(&self) -> Result<Vec<BootstrapSourceV1>> {
         let sources: Vec<BootstrapSourceV1> =
-            serde_json::from_slice(&read_bounded(&self.source_path, 65536)?)?;
+            serde_json::from_slice(&read_bounded(&self.source_path, 1024 * 1024)?)?;
         ensure!(
             sources.len() == self.source_ids.len()
                 && sources
@@ -152,6 +158,7 @@ pub struct Owner {
     config: Config,
     seed: Zeroizing<[u8; 32]>,
     book: ServiceLeaseBookV1,
+    verifier: crate::transport_identity::QualifiedTransportVerifier,
     _lock: File,
 }
 
@@ -225,6 +232,10 @@ fn lock(root: &Path) -> Result<File> {
 }
 impl Owner {
     pub fn initialize(config: &Config) -> Result<()> {
+        let verifier = crate::transport_identity::load_transport_verifier(
+            &config.library,
+            &config.library_sha256,
+        )?;
         let root = &config.state_directory;
         let _lock = lock(root)?;
         ensure!(
@@ -238,13 +249,13 @@ impl Owner {
                 && config.permission_expires_at_ms - now <= 86400000,
             "mirror permission requires explicit expiry within 24 hours"
         );
-        let book = ServiceLeaseBookV1::new(config.policy()?, config.sources()?, now)?;
+        let book = ServiceLeaseBookV1::new(config.policy()?, config.sources()?, now, verifier)?;
         create(
             &root.join("enrollment.started"),
-            b"NOVOVM mirror custody v1",
+            b"NOVOVM mirror custody v2",
         )?;
         let mut material = Zeroizing::new(vec![0u8; 72]);
-        material[..8].copy_from_slice(b"NVMIRK01");
+        material[..8].copy_from_slice(b"NVMIRK02");
         OsRng.try_fill_bytes(&mut material[8..])?;
         material.extend_from_slice(&serde_json::to_vec(config)?);
         create(
@@ -256,16 +267,22 @@ impl Owner {
         Ok(())
     }
     fn open(config: Config) -> Result<Self> {
+        let verifier = crate::transport_identity::load_transport_verifier(
+            &config.library,
+            &config.library_sha256,
+        )?;
         let root = &config.state_directory;
         let owned = lock(root)?;
         ensure!(
-            read_bounded(&root.join("enrollment.started"), 128)? == b"NOVOVM mirror custody v1",
+            read_bounded(&root.join("enrollment.started"), 128)? == b"NOVOVM mirror custody v2",
             "mirror enrollment marker"
         );
-        let material =
-            crate::windows_custody::unprotect(&read_bounded(&root.join("keys.dpapi"), 16384)?)?;
+        let material = crate::windows_custody::unprotect(&read_bounded(
+            &root.join("keys.dpapi"),
+            256 * 1024,
+        )?)?;
         ensure!(
-            material.len() > 72 && &material[..8] == b"NVMIRK01",
+            material.len() > 72 && &material[..8] == b"NVMIRK02",
             "mirror custody version"
         );
         let policy: Config = serde_json::from_slice(&material[72..])?;
@@ -279,25 +296,17 @@ impl Owner {
             *seed != [0; 32] && *storage != [0; 32] && seed != storage,
             "independent mirror material"
         );
-        let pin = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
-        ensure!(
-            !config.trust_anchors.contains(&pin),
-            "mirror cannot be issuer"
-        );
+        // This seed belongs only to the existing Iroh carrier. The mirror
+        // never loads a NOV signing identity or possesses publisher authority.
         let (file, bytes) = ServiceLeaseFileV1::open(&root.join("mirror.journal"), storage)?;
-        let mut book = ServiceLeaseBookV1::restore(config.policy()?, &bytes, now_ms()?)?;
+        let mut book =
+            ServiceLeaseBookV1::restore(config.policy()?, &bytes, now_ms()?, verifier.clone())?;
         book.attach_persistence(file, &bytes)?;
-        ensure!(
-            book.sources()
-                .iter()
-                .flat_map(|s| &s.manifest.relay_records)
-                .all(|r| r.relay_public_key != pin),
-            "mirror cannot reuse node identity"
-        );
         Ok(Self {
             config,
             seed,
             book,
+            verifier,
             _lock: owned,
         })
     }
@@ -311,7 +320,12 @@ impl Owner {
     }
     fn live_sources(&self) -> Result<Vec<BootstrapSourceV1>> {
         let sources = self.book.sources();
-        ServiceLeaseBookV1::new(self.config.policy()?, sources.clone(), now_ms()?)?;
+        ServiceLeaseBookV1::new(
+            self.config.policy()?,
+            sources.clone(),
+            now_ms()?,
+            self.verifier.clone(),
+        )?;
         Ok(sources)
     }
     fn status(&self, phase: &str) -> Result<()> {
@@ -353,7 +367,7 @@ impl Owner {
             let bytes = serde_json::to_vec(&serde_json::json!({"transport":"novovm-bootstrap-v1",
                 "trust_anchors":self.config.trust_anchors,"minimum_signatures":self.config.minimum_signatures,
                 "sources":sources,"refresh_peers":[peer],"relays":self.config.relays,"dns":self.config.dns}))?;
-            ensure!(bytes.len() <= 8192, "mobile invitation size");
+            ensure!(bytes.len() <= 2 * 1024 * 1024, "native65 invitation size");
             atomic(&self.config.state_directory.join("invitation.json"), &bytes)?;
         }
         Ok(())

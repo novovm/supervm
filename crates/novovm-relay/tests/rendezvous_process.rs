@@ -2,7 +2,10 @@
 //! Actual installed-entry binary, loopback transport and explicit fixture keys.
 //! No production accounts, public relay, wallet, or phone acceptance implied.
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+use novovm_network::product_overlay::TransportIdentity;
+#[path = "support/transport_fixture.rs"]
+mod transport_fixture;
+const PROCESS_CHAIN_ID: u64 = 47;
 use novovm_network::{
     discovery_control::DiscoveryClient,
     iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
@@ -20,8 +23,8 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8) -> TransportIdentity {
+    transport_fixture::identity(seed)
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -60,8 +63,8 @@ async fn executable_rejects_old_wire_and_unapproved_client_without_fallback() ->
     assert_eq!(report["rejected_or_timed_out"], 2);
     Ok(())
 }
-fn pin(seed: u8) -> [u8; 32] {
-    key(seed).verifying_key().to_bytes()
+fn pin(seed: u8) -> Vec<u8> {
+    key(seed).public_key().to_vec()
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -112,6 +115,7 @@ async fn executable_signed_revocation_ends_active_stream_and_persists_tombstone(
         BootstrapTrustPolicyV1::single_signer(pin(71)),
         &checkpoint,
         now_ms()?,
+        key(73),
     )?;
     assert!(restored.routes(now_ms()?)?.is_empty());
     let state: Value = serde_json::from_slice(&checkpoint)?;
@@ -129,6 +133,12 @@ impl Fixture {
             rand::random::<u64>()
         ));
         std::fs::create_dir(&path).unwrap();
+        transport_fixture::protect_for_chain(
+            72,
+            &path.join("transport.protected"),
+            PROCESS_CHAIN_ID,
+        )
+        .expect("actual protected process identity");
         Self(path)
     }
     fn journal(&self) -> PathBuf {
@@ -147,7 +157,9 @@ impl Fixture {
         std::fs::write(
             &config,
             serde_json::to_vec(&serde_json::json!({
-                "version":2,"engineering_direct_allowed":allowed,
+                "version":3,"engineering_direct_allowed":allowed,
+                "transport_identity_path":self.0.join("transport.protected"),"chain_id":PROCESS_CHAIN_ID,
+                "library":transport_fixture::library(),"library_sha256":transport_fixture::digest(),
                 "trusted_signers":[pin(71)],"minimum_signatures":1,"allowed_clients":[pin(73),pin(74)],
                 "relays":[],"nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
                 "journal_path":self.journal(),"source_path":source,"enroll":enroll,
@@ -168,9 +180,8 @@ impl Fixture {
         }
         let mut child = command.spawn()?;
         let mut input = child.stdin.take().unwrap();
-        // Only deterministic test keys; the normal executable never contains them.
-        let _ = input.write_all(b"NVKEYS02");
-        let _ = input.write_all(&[72; 32]);
+        // Storage-only test material; signing uses the qualified protected purpose file.
+        let _ = input.write_all(b"NVKEYS04");
         let _ = input.write_all(&[75; 32]);
         drop(input);
         let stdout = child.stdout.take().unwrap();
@@ -217,7 +228,8 @@ impl Process {
     }
     fn approve(&self, record: PeerSignedRelayRecordV1, publisher: u8) -> Result<BootstrapSourceV1> {
         let mut manifest = SignedBootstrapManifestV1 {
-            version: 1,
+            version: 2,
+            suite: 65,
             manifest_id: "independent-fixture-source".into(),
             issued_at_ms: record.issued_at_ms,
             expires_at_ms: record.expires_at_ms,
@@ -280,6 +292,7 @@ async fn client(
         BootstrapTrustPolicyV1::single_signer(pin(71)),
         vec![source],
         now_ms()?,
+        key(73),
     )?;
     let config =
         IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)?;
@@ -292,7 +305,7 @@ async fn client(
                 let offer = request_service_offer_v2(&mut stream).await?;
                 book.accept_offer(
                     offer,
-                    pin(72),
+                    &pin(72),
                     endpoint.address.endpoint_key,
                     endpoint.instance,
                     now_ms()?,

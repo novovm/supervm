@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "scope": "isolated_native_transport_mldsa65_core_candidates_not_shipped_sdk",
+  "qualification_boundary": "Native identity and existing execution/storage tests only. Feature inclusion is not whole-node, ZK, GPU, performance or four-host acceptance.",
+  "retained_package_sidecars": "Original SDK sidecars remain separately identified; these cores do not replace the formal SDK.",
+  "platforms": {
+    "windows-x86_64": {
+      "library": "windows/aoem_ffi.dll",
+      "sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "library_bytes": 48345088,
+      "header": "windows/aoem.h",
+      "header_sha256": "4c6ae29baf7efc0c8cc1cf3abd0abb78a585a135cb2de47f8ab3fbfdaec969ca",
+      "source": {
+        "base_commit": "4c57372ad0cc12123df5ca9e163a130039bfb599",
+        "overlay_sha256": "8ee88c113611cbdcfacce949ae06b49f9870bb8cdd570a8eddeb8343505ab4fb",
+        "lock_sha256": "46625b6be8ad25c323fbba6e23263fe9f9f1b649805303ebdb89a7fe7f7abbec",
+        "isolated_lock_change": "libz-sys 1.1.23 -> 1.1.31"
+      },
+      "compiler": "rustc 1.94.0",
+      "features": [
+        "apfl-model-session",
+        "word256-gpu-forward-production",
+        "rocksdb-persistence",
+        "wasmtime-runtime",
+        "privacy-verify",
+        "mldsa",
+        "zkvm-executor",
+        "risc0",
+        "sp1",
+        "halo2"
+      ]
+    },
+    "linux-x86_64": {
+      "library": "linux/libaoem_ffi.so",
+      "sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "library_bytes": 160288664,
+      "header": "linux/aoem.h",
+      "header_sha256": "4c6ae29baf7efc0c8cc1cf3abd0abb78a585a135cb2de47f8ab3fbfdaec969ca",
+      "source": {
+        "base_commit": "4c57372ad0cc12123df5ca9e163a130039bfb599",
+        "overlay_sha256": "8ee88c113611cbdcfacce949ae06b49f9870bb8cdd570a8eddeb8343505ab4fb",
+        "lock_sha256": "46625b6be8ad25c323fbba6e23263fe9f9f1b649805303ebdb89a7fe7f7abbec",
+        "isolated_lock_change": "libz-sys 1.1.23 -> 1.1.31"
+      },
+      "compiler": "rustc 1.94.0",
+      "features": [
+        "apfl-model-session",
+        "word256-gpu-forward-production",
+        "rocksdb-persistence",
+        "wasmtime-runtime",
+        "privacy-verify",
+        "mldsa",
+        "zkvm-executor",
+        "risc0",
+        "sp1",
+        "halo2"
+      ]
+    }
+  }
+}

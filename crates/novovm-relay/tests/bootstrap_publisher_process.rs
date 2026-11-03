@@ -12,7 +12,7 @@ async fn independent_publisher_auto_authorizes_successor_and_both_process_restar
     let fixture = Fixture::new()?;
     let mut node = fixture.launch_node(2)?;
     let first = fixture.proposal(&BTreeSet::new()).await?;
-    fixture.enroll(first.relay_public_key)?;
+    fixture.enroll(first.relay_public_key.clone())?;
     let publisher_keys = std::fs::read(fixture.root.join("publisher/keys.dpapi"))?;
     let mut publisher = fixture.launch_publisher(60)?;
     fixture.exchange(&first).await?;
@@ -52,7 +52,7 @@ async fn online_revoke_survives_request_removal_and_both_owner_restarts() -> Res
     let fixture = Fixture::new()?;
     let mut node = fixture.launch_node(2)?;
     let first = fixture.proposal(&BTreeSet::new()).await?;
-    fixture.enroll(first.relay_public_key)?;
+    fixture.enroll(first.relay_public_key.clone())?;
     let mut publisher = fixture.launch_publisher(30)?;
     fixture.exchange(&first).await?;
     once(
@@ -82,7 +82,7 @@ async fn restart_republishes_exact_durable_grant_and_rejects_equivocation() -> R
     let fixture = Fixture::new()?;
     let mut node = fixture.launch_node(1)?;
     let mut first = fixture.proposal(&BTreeSet::new()).await?;
-    fixture.enroll(first.relay_public_key)?;
+    fixture.enroll(first.relay_public_key.clone())?;
     // Hard crash leaves a real signed proposal, without a live node removing it.
     node.0.kill()?;
     node.0.wait()?;
@@ -112,7 +112,7 @@ async fn forged_proposal_fails_before_any_authority_is_published() -> Result<()>
     let fixture = Fixture::new()?;
     let mut node = fixture.launch_node(1)?;
     let mut first = fixture.proposal(&BTreeSet::new()).await?;
-    fixture.enroll(first.relay_public_key)?;
+    fixture.enroll(first.relay_public_key.clone())?;
     node.0.kill()?;
     node.0.wait()?;
     first.signature[0] ^= 1;
@@ -136,7 +136,7 @@ async fn policy_replacement_and_missing_custody_never_reenroll() -> Result<()> {
     let fixture = Fixture::new()?;
     let mut node = fixture.launch_node(1)?;
     let first = fixture.proposal(&BTreeSet::new()).await?;
-    fixture.enroll(first.relay_public_key)?;
+    fixture.enroll(first.relay_public_key.clone())?;
     node.0.kill()?;
     node.0.wait()?;
     let config_path = fixture.root.join("publisher-config.json");
@@ -151,7 +151,11 @@ async fn policy_replacement_and_missing_custody_never_reenroll() -> Result<()> {
         "changed policy published"
     );
     std::fs::remove_file(fixture.root.join("publisher/keys.dpapi"))?;
-    once("--initialize", &fixture.root.join("publisher"), false)?;
+    once(
+        "--initialize",
+        &fixture.root.join("publisher-config.json"),
+        false,
+    )?;
     let mut publisher = fixture.launch_publisher(10)?;
     publisher.finish(false, 4).await?;
     ensure!(

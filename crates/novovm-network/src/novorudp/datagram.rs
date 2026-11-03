@@ -20,7 +20,7 @@ use std::time::Instant;
 pub const MAX_DATAGRAM_BYTES: usize = 1200;
 
 enum NativeChannel {
-    Udp(E2eSecureChannelV1),
+    Udp(Box<E2eSecureChannelV1>),
     #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
     Bound(Box<crate::transport_binding::BoundSecureChannelV1>),
 }
@@ -43,7 +43,7 @@ impl NativeUdpSession {
     pub(crate) fn new_route(channel: E2eSecureChannelV1, remote: NativeRoute) -> Result<Self> {
         remote.validate()?;
         Ok(Self {
-            channel: NativeChannel::Udp(channel),
+            channel: NativeChannel::Udp(Box::new(channel)),
             remote,
             pending: None,
         })

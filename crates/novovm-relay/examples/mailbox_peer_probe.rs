@@ -1,12 +1,11 @@
 //! Exercise an explicitly selected existing mailbox host; never starts a server.
-//! Input: fresh signed record, locally approved relay URL, DNS IP.
+//! Input: fresh signed record, approved route and two protected transport keys.
 //! Ephemeral capabilities and plaintext remain in memory and are never logged.
 use anyhow::{ensure, Context, Result};
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
 };
-use ed25519_dalek::SigningKey;
 use novovm_network::{
     carrier_stream::CarrierStreamV1,
     iroh_transport::{IrohConfigV1, IrohEndpointOwnerV1},
@@ -18,6 +17,7 @@ use novovm_network::{
 };
 use rand::RngCore;
 use std::{
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -27,24 +27,45 @@ use zeroize::Zeroizing;
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     ensure!(
-        args.len() == 4 || args.len() == 5,
-        "usage: mailbox_peer_probe RECORD APPROVED_RELAY DNS_IP [IDLE_SECONDS]"
+        args.len() == 9 || args.len() == 10,
+        "usage: mailbox_peer_probe RECORD APPROVED_RELAY DNS_IP AOEM_LIB AOEM_SHA256 CHAIN_ID SENDER_TRANSPORT_KEY READER_TRANSPORT_KEY [IDLE_SECONDS]"
     );
-    let idle_seconds: u64 = args.get(4).map(|v| v.parse()).transpose()?.unwrap_or(0);
+    let idle_seconds: u64 = args.get(9).map(|v| v.parse()).transpose()?.unwrap_or(0);
     ensure!(
         idle_seconds <= 35,
         "idle probe exceeds bounded operation budget"
     );
     let bytes = std::fs::read(&args[1])?;
-    ensure!(bytes.len() <= 16384, "record too large");
+    ensure!(bytes.len() <= 32 * 1024, "record too large");
     let record: PeerSignedRelayRecordV1 = serde_json::from_slice(&bytes)?;
-    validate_relay_record_v1(&record, now_ms()?)?;
+    let chain_id = args[6].parse()?;
+    let sender = novovm_relay::transport_identity::load_transport_identity(
+        Path::new(&args[7]),
+        chain_id,
+        Path::new(&args[4]),
+        &args[5],
+    )?;
+    let reader = novovm_relay::transport_identity::load_transport_identity(
+        Path::new(&args[8]),
+        chain_id,
+        Path::new(&args[4]),
+        &args[5],
+    )?;
+    ensure!(
+        sender.public_key() != reader.public_key(),
+        "probe requires independent transport identities"
+    );
+    validate_relay_record_v1(&record, now_ms()?, &sender)?;
     let route = IrohServiceEndpointV1::from_record(&record)?;
     ensure!(
         route.address.relays.iter().all(|r| r == &args[2]),
         "unapproved relay"
     );
-    let pin = record.relay_public_key;
+    let pin = record.relay_public_key.clone();
+    ensure!(
+        sender.public_key() != pin.as_slice() && reader.public_key() != pin.as_slice(),
+        "probe identity must differ from host"
+    );
     let grant = MailboxGrant::generate()?;
     let mailbox = grant.id;
     let caps = Arc::new(Zeroizing::new((
@@ -62,12 +83,11 @@ async fn main() -> Result<()> {
         .map_err(|_| anyhow::anyhow!("encrypt probe"))?;
     let expires = (now_ms()? / 1000) as i64 + 300;
     // Sender and reader are independent transport owners and purpose keys.
-    for receive in [false, true] {
-        validate_relay_record_v1(&record, now_ms()?)?;
+    for (receive, signer) in [(false, sender), (true, reader)] {
+        validate_relay_record_v1(&record, now_ms()?, &signer)?;
         let config = IrohConfigV1::new(&[args[2].clone()], args[3].parse()?)?;
         let client = IrohEndpointOwnerV1::bind(config, || Ok(())).await?;
-        let signer_seed = Zeroizing::new(rand::random::<[u8; 32]>());
-        let signer = SigningKey::from_bytes(&signer_seed);
+        let pin = pin.clone();
         let address = route.address.clone();
         let caps = caps.clone();
         let expected = ciphertext.clone();
@@ -78,7 +98,7 @@ async fn main() -> Result<()> {
                 let path = connected.selected_path()?.to_string();
                 let mut stream: CarrierStreamV1<'_> = connected.into();
                 let _group = request_mailbox_multiplex_v6(&mut stream).await?;
-                let mut session = MailboxClientSessionV2::begin_continuous_v6(&mut stream, &signer, pin).await?;
+                let mut session = MailboxClientSessionV2::begin_continuous_v6(&mut stream, &signer, pin.clone()).await?;
                 println!("{}", serde_json::json!({"phase": if receive {"reader_authenticated"} else {"sender_authenticated"}, "elapsed_ms": started.elapsed().as_millis(), "path":path}));
                 let operation = Instant::now();
                 if !receive {
@@ -90,10 +110,10 @@ async fn main() -> Result<()> {
                     }
                     let put = || MailboxRequestV1::Put { mailbox, write:caps.1, object, ciphertext:expected.clone(), expires };
                     let MailboxReplyV1::Stored(receipt) = session.request(put()).await? else { anyhow::bail!("missing storage receipt") };
-                    receipt.verify(pin, mailbox, object, &expected, expires)?;
+                    receipt.verify(&pin, mailbox, object, &expected, expires, &signer)?;
                     println!("{}", serde_json::json!({"phase":"store_receipt_verified", "operation_ms":operation.elapsed().as_millis()}));
                     let MailboxReplyV1::Stored(duplicate) = session.request(put()).await? else { anyhow::bail!("duplicate put rejected") };
-                    duplicate.verify(pin, mailbox, object, &expected, expires)?;
+                    duplicate.verify(&pin, mailbox, object, &expected, expires, &signer)?;
                     session.finish().await?;
                     Ok(None)
                 } else {
@@ -120,7 +140,7 @@ async fn main() -> Result<()> {
     }
     println!(
         "{}",
-        serde_json::json!({"result":"PASS", "device_delivery_receipt":false, "billing_exercised":false})
+        serde_json::json!({"result":"PASS", "signature_suite":"ML-DSA-65", "aoem_sha256":args[5], "chain_id":chain_id, "device_delivery_receipt":false, "billing_exercised":false})
     );
     Ok(())
 }

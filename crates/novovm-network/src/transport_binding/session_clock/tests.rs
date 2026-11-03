@@ -1,15 +1,20 @@
 use super::*;
 
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8) -> TransportIdentity {
+    TransportIdentity::from_bytes(&[seed; 32])
 }
-fn public(seed: u8) -> [u8; 32] {
-    key(seed).verifying_key().to_bytes()
+fn public(seed: u8) -> Vec<u8> {
+    key(seed).public_key().to_vec()
+}
+fn carrier_public(seed: u8) -> [u8; 32] {
+    ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+        .verifying_key()
+        .to_bytes()
 }
 fn binding(initiator: bool, exporter: u8) -> VerifiedTransportBinding {
     VerifiedTransportBinding::from_authenticated_transport(
-        public(if initiator { 3 } else { 4 }),
-        public(if initiator { 4 } else { 3 }),
+        carrier_public(if initiator { 3 } else { 4 }),
+        carrier_public(if initiator { 4 } else { 3 }),
         [exporter; 32],
         BOUND_TRANSPORT_ALPN_V1,
         initiator,
@@ -53,7 +58,7 @@ fn complete_pair() -> (BoundSecureChannelV1, BoundSecureChannelV1) {
 #[test]
 fn v2_completed_channel_preserves_actual_carrier_and_encrypted_business() {
     let a = start();
-    assert_eq!(a.offer().context.version, 2);
+    assert_eq!(a.offer().context.version, 4);
     assert_eq!(
         (a.offer().e2e.issued_at_ms, a.offer().e2e.expires_at_ms),
         (0, 30_000)

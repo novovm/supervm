@@ -10,6 +10,15 @@ use windows_sys::Win32::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
+// Current self-owned policy retains a Config (read budget 512KiB), an optional
+// explicitly supplied prior epoch Config (1MiB), a 1952-byte public node pin,
+// listener settings and the small owner-sequence checkpoint. Its original
+// NVOWN003 serialization therefore fits within 2MiB. This is not an unlimited
+// DPAPI store. Reserve a separate bounded allowance for DPAPI envelope overhead;
+// ciphertext cannot share the plaintext limit (even 16KiB gains >200 bytes).
+pub const MAX_PLAINTEXT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_PROTECTED_BYTES: usize = MAX_PLAINTEXT_BYTES + 16 * 1024;
+
 pub fn protect(input: &[u8]) -> Result<Vec<u8>> {
     Ok(transform(input, false)?.to_vec())
 }
@@ -17,9 +26,16 @@ pub fn unprotect(input: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     transform(input, true)
 }
 fn transform(input: &[u8], decrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
+    let (input_limit, output_limit) = if decrypt {
+        (MAX_PROTECTED_BYTES, MAX_PLAINTEXT_BYTES)
+    } else {
+        (MAX_PLAINTEXT_BYTES, MAX_PROTECTED_BYTES)
+    };
     ensure!(
-        !input.is_empty() && input.len() <= 16384,
-        "custody input size"
+        !input.is_empty() && input.len() <= input_limit,
+        "custody input size {} exceeds {}",
+        input.len(),
+        input_limit
     );
     let data = CRYPT_INTEGER_BLOB {
         cbData: input.len() as u32,
@@ -64,7 +80,12 @@ fn transform(input: &[u8], decrypt: bool) -> Result<Zeroizing<Vec<u8>>> {
         LocalFree(output.pbData.cast());
         copy
     };
-    ensure!(result.len() <= 16384, "custody output size");
+    ensure!(
+        result.len() <= output_limit,
+        "custody output size {} exceeds {}",
+        result.len(),
+        output_limit
+    );
     Ok(result)
 }
 
@@ -80,5 +101,21 @@ mod tests {
         let at = sealed.len() / 2;
         sealed[at] ^= 1;
         assert!(unprotect(&sealed).is_err());
+    }
+
+    #[test]
+    fn actual_windows_custody_separates_plaintext_and_dpapi_overhead_budgets() {
+        for length in [16384, MAX_PLAINTEXT_BYTES] {
+            let secret = Zeroizing::new(vec![97u8; length]);
+            let mut sealed = protect(&secret).unwrap();
+            assert!(sealed.len() > length);
+            assert!(sealed.len() <= MAX_PROTECTED_BYTES);
+            assert_eq!(&*unprotect(&sealed).unwrap(), secret.as_slice());
+            let midpoint = sealed.len() / 2;
+            sealed[midpoint] ^= 1;
+            assert!(unprotect(&sealed).is_err());
+        }
+        assert!(protect(&vec![0u8; MAX_PLAINTEXT_BYTES + 1]).is_err());
+        assert!(unprotect(&vec![0u8; MAX_PROTECTED_BYTES + 1]).is_err());
     }
 }

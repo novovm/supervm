@@ -259,8 +259,8 @@ fn run_recovery(highest_identity: bool) -> Result<()> {
     let mut ordered = (0..4)
         .map(|index| {
             Ok((
-                novovm_network::product_overlay::peer_id_from_ed25519_public_key_v1(
-                    &transport_key(index).verifying_key().to_bytes(),
+                novovm_network::product_overlay::peer_id_from_mldsa65_public_key_v1(
+                    transport_key(index).public_key(),
                 ),
                 Validator::new(validator_key(index).public_key(), 1)?.id(),
                 index,

@@ -1,30 +1,26 @@
 //! Bounded remote probe using the existing native SDK drivers from
 //! novovm-relay's rendezvous_dual_owner_tests and native owner tests.
-//! No server, production identity, relay, new codec or retry scheduler.
+//! No server startup, key generation, relay, new codec or retry scheduler.
 //! Run with --features iroh-transport,tls-transport.
-//! Arguments: RECORD EXPECTED_PIN_HEX udp|tls [CLIENTS ROUNDS PLAINTEXT_BYTES].
+//! Arguments: RECORD EXPECTED_PEER_ID udp|tls AOEM_LIB AOEM_SHA256 CHAIN_ID
+//! TRANSPORT_KEY_PATHS_JSON [CLIENTS ROUNDS PLAINTEXT_BYTES].
 //! Load mode is UDP only; preparation/window checks are excluded from load rates.
 //! Only random probe ciphertext/capabilities are created, with a five-minute TTL.
 //! This verifies service custody, NOT Android delivery or a DeviceReceipt.
-#[cfg(not(all(feature = "iroh-transport", feature = "tls-transport")))]
-fn main() -> anyhow::Result<()> {
-    anyhow::bail!("mailbox_native_peer_probe requires --features iroh-transport,tls-transport")
-}
-
-#[cfg(all(feature = "iroh-transport", feature = "tls-transport"))]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     probe::run().await
 }
 
-#[cfg(all(feature = "iroh-transport", feature = "tls-transport"))]
 mod probe {
     use anyhow::{bail, ensure, Context, Result};
     use chacha20poly1305::{
         aead::{Aead, KeyInit},
         ChaCha20Poly1305, Nonce,
     };
-    use ed25519_dalek::SigningKey;
+    use novovm_network::product_overlay::{
+        peer_id_from_mldsa65_public_key_v1, TransportIdentity, TransportVerifier,
+    };
     use novovm_network::{
         bound_session::peer_time::authenticate_mailbox_native_v8,
         carrier_stream::CarrierStreamV1,
@@ -54,8 +50,10 @@ mod probe {
         tls_transport::TlsScopeV1,
     };
     use std::{
+        collections::BTreeSet,
         io::Read,
         net::UdpSocket,
+        path::{Path, PathBuf},
         time::{Duration, Instant},
     };
     use zeroize::Zeroizing;
@@ -197,7 +195,7 @@ mod probe {
                         );
                     }
                     self.session.try_send(&mut self.link, id, at, || Ok(()))?;
-                    for (got, mut replies) in self.progress(at).await? {
+                    if let Some((got, mut replies)) = self.progress(at).await?.into_iter().next() {
                         ensure!(got == id && replies.len() == 1, "probe reply binding");
                         return Ok(replies.remove(0));
                     }
@@ -312,7 +310,10 @@ mod probe {
         }
     }
 
-    async fn udp(record: &PeerSignedRelayRecordV1, key: SigningKey) -> Result<Client<'static>> {
+    async fn udp(
+        record: &PeerSignedRelayRecordV1,
+        key: TransportIdentity,
+    ) -> Result<Client<'static>> {
         let route = NativeMailboxEndpointV7::from_record(record)?.context("UDP not advertised")?;
         let endpoint = NativeEndpoint::connect_client(
             UdpSocket::bind(if route.address.is_ipv4() {
@@ -322,7 +323,7 @@ mod probe {
             })?,
             key,
             NativePeer {
-                key: record.relay_public_key,
+                key: record.relay_public_key.clone(),
                 address: route.address,
             },
             NativeHandshakeBudget {
@@ -354,7 +355,7 @@ mod probe {
         let session = NativeMailboxClient::attach_adaptive(
             &mut link,
             0,
-            record.relay_public_key,
+            record.relay_public_key.clone(),
             controller,
         )?;
         Ok(Client {
@@ -367,13 +368,13 @@ mod probe {
 
     async fn tls<'a>(
         stream: &'a mut CarrierStreamV1<'_>,
-        key: &SigningKey,
-        pin: [u8; 32],
+        key: &TransportIdentity,
+        pin: &[u8],
     ) -> Result<Client<'a>> {
         let (channel, observed) = authenticate_mailbox_native_v8(
             stream,
             key,
-            pin,
+            pin.to_vec(),
             Instant::now() + Duration::from_secs(10),
             &mut HandshakeReplayCacheV1::new(8),
             &mut |_, _| Ok(()),
@@ -391,7 +392,7 @@ mod probe {
             vec![lane(&controller)],
             NativeSendPolicy::reliable_carrier_v1(REQUEST_DEADLINE),
         )?;
-        let session = NativeMailboxClient::attach_adaptive(&mut link, 0, pin, controller)?;
+        let session = NativeMailboxClient::attach_adaptive(&mut link, 0, pin.to_vec(), controller)?;
         Ok(Client {
             link,
             session,
@@ -408,7 +409,11 @@ mod probe {
         Ok(())
     }
 
-    async fn exchange(client: &mut Client<'_>, pin: [u8; 32]) -> Result<()> {
+    async fn exchange(
+        client: &mut Client<'_>,
+        pin: &[u8],
+        verifier: &dyn TransportVerifier,
+    ) -> Result<()> {
         let grant = MailboxGrant::generate()?;
         let mailbox = grant.id;
         let caps = Zeroizing::new((*grant.read.as_bytes(), *grant.write.as_bytes()));
@@ -448,7 +453,7 @@ mod probe {
             }
             _ => bail!("Put missing StoreReceipt"),
         };
-        receipt.verify(pin, mailbox, object, &ciphertext, expires)?;
+        receipt.verify(pin, mailbox, object, &ciphertext, expires, verifier)?;
         println!(
             "{}",
             serde_json::json!({
@@ -459,7 +464,7 @@ mod probe {
             Reply::Stored(receipt) => receipt,
             _ => bail!("duplicate Put missing StoreReceipt"),
         };
-        duplicate.verify(pin, mailbox, object, &ciphertext, expires)?;
+        duplicate.verify(pin, mailbox, object, &ciphertext, expires, verifier)?;
         ensure!(
             duplicate.signature == receipt.signature,
             "duplicate changed custody receipt"
@@ -542,10 +547,11 @@ mod probe {
     // verified receipts, never application messages or production TPS claims.
     async fn load_exchange(
         client: &mut Client<'_>,
-        pin: [u8; 32],
+        pin: &[u8],
         rounds: usize,
         size: usize,
         stats: &mut LoadStats,
+        verifier: &dyn TransportVerifier,
     ) -> Result<()> {
         let grant = MailboxGrant::generate()?;
         let mailbox = grant.id;
@@ -595,7 +601,7 @@ mod probe {
                 _ => bail!("load round {round}/{rounds} stage Put receipt missing"),
             };
             receipt
-                .verify(pin, mailbox, object, &ciphertext, expires)
+                .verify(pin, mailbox, object, &ciphertext, expires, verifier)
                 .with_context(|| format!("load round {round}/{rounds} stage Put receipt verify"))?;
             stats.stored_plaintext_bytes += size;
             let digest = match client
@@ -675,18 +681,19 @@ mod probe {
 
     async fn load(
         record: &PeerSignedRelayRecordV1,
-        pin: [u8; 32],
-        clients: usize,
+        pin: &[u8],
+        identities: Vec<TransportIdentity>,
         rounds: usize,
         size: usize,
+        verifier: &dyn TransportVerifier,
     ) -> Result<()> {
         use futures_util::{stream::FuturesUnordered, StreamExt};
+        let clients = identities.len();
         let preparation = Instant::now();
         let mut preparing = FuturesUnordered::new();
-        for connection in 0..clients {
+        for (connection, identity) in identities.into_iter().enumerate() {
             preparing.push(async move {
-                let seed = Zeroizing::new(rand::random::<[u8; 32]>());
-                let mut client = udp(record, SigningKey::from_bytes(&seed))
+                let mut client = udp(record, identity)
                     .await
                     .with_context(|| format!("connection {connection} handshake"))?;
                 client
@@ -729,7 +736,7 @@ mod probe {
         for (connection, mut client) in ready {
             pending.push(async move {
                 let mut stats = LoadStats::default();
-                let result = load_exchange(&mut client, pin, rounds, size, &mut stats)
+                let result = load_exchange(&mut client, pin, rounds, size, &mut stats, verifier)
                     .await
                     .with_context(|| format!("connection {connection}"));
                 (stats, result)
@@ -794,90 +801,127 @@ mod probe {
     pub async fn run() -> Result<()> {
         let args: Vec<_> = std::env::args().collect();
         ensure!(
-            args.len() == 4 || args.len() == 7,
-            "usage: mailbox_native_peer_probe RECORD EXPECTED_PIN_HEX udp|tls [CLIENTS ROUNDS PLAINTEXT_BYTES]"
+            args.len() == 8 || args.len() == 11,
+            "usage: mailbox_native_peer_probe RECORD EXPECTED_PEER_ID udp|tls AOEM_LIB AOEM_SHA256 CHAIN_ID TRANSPORT_KEY_PATHS_JSON [CLIENTS ROUNDS PLAINTEXT_BYTES]"
         );
         ensure!(
             matches!(args[3].as_str(), "udp" | "tls"),
             "carrier must be udp or tls"
         );
-        ensure!(
-            args[2].len() == 64 && args[2].is_ascii(),
-            "pin must be 32-byte hexadecimal"
-        );
-        let mut pin = [0; 32];
-        for (i, byte) in pin.iter_mut().enumerate() {
-            *byte = u8::from_str_radix(&args[2][i * 2..i * 2 + 2], 16).context("invalid pin")?;
-        }
-        let mut bytes = Vec::new();
-        std::fs::File::open(&args[1])?
-            .take(16_385)
-            .read_to_end(&mut bytes)?;
-        ensure!(bytes.len() <= 16_384, "record too large");
-        let record: PeerSignedRelayRecordV1 = serde_json::from_slice(&bytes)?;
-        ensure!(
-            record.relay_public_key == pin,
-            "record differs from approved pin"
-        );
-        validate_relay_record_v1(&record, now_ms()?)?;
-        if args.len() == 7 {
+        let load_parameters = if args.len() == 11 {
             ensure!(args[3] == "udp", "bounded load uses native UDP only");
-            let clients: usize = args[4].parse()?;
-            let rounds: usize = args[5].parse()?;
-            let size: usize = args[6].parse()?;
+            let clients: usize = args[8].parse()?;
+            let rounds: usize = args[9].parse()?;
+            let size: usize = args[10].parse()?;
             ensure!(
                 (1..=32).contains(&clients)
                     && (1..=60).contains(&rounds)
                     && (1..=32768).contains(&size),
                 "bounded diagnostic limits"
             );
+            Some((clients, rounds, size))
+        } else {
+            None
+        };
+        let mut bytes = Vec::new();
+        std::fs::File::open(&args[1])?
+            .take(32 * 1024 + 1)
+            .read_to_end(&mut bytes)?;
+        ensure!(bytes.len() <= 32 * 1024, "record too large");
+        let record: PeerSignedRelayRecordV1 = serde_json::from_slice(&bytes)?;
+        ensure!(
+            record.relay_peer_id == args[2]
+                && peer_id_from_mldsa65_public_key_v1(&record.relay_public_key) == args[2],
+            "record differs from approved ML-DSA peer identity"
+        );
+        let pin = record.relay_public_key.clone();
+        let chain_id = args[6].parse()?;
+        let preparation = Instant::now();
+        let verifier = novovm_relay::transport_identity::load_transport_verifier(
+            Path::new(&args[4]),
+            &args[5],
+        )?;
+        validate_relay_record_v1(&record, now_ms()?, &verifier)?;
+        let mut paths = Vec::new();
+        std::fs::File::open(&args[7])?
+            .take(128 * 1024 + 1)
+            .read_to_end(&mut paths)?;
+        ensure!(
+            paths.len() <= 128 * 1024,
+            "transport key path list too large"
+        );
+        let paths: Vec<PathBuf> = serde_json::from_slice(&paths)?;
+        let expected_clients = load_parameters.map_or(1, |(clients, _, _)| clients);
+        ensure!(
+            paths.len() == expected_clients,
+            "one protected transport identity is required per client"
+        );
+        let mut identities = Vec::with_capacity(paths.len());
+        let mut public_keys = BTreeSet::new();
+        for path in paths {
+            let identity = novovm_relay::transport_identity::load_transport_identity(
+                &path,
+                chain_id,
+                Path::new(&args[4]),
+                &args[5],
+            )?;
+            ensure!(
+                identity.public_key() != pin.as_slice()
+                    && public_keys.insert(identity.public_key().to_vec()),
+                "probe clients require independent transport identities"
+            );
+            identities.push(identity);
+        }
+        println!(
+            "{}",
+            serde_json::json!({"phase":"identities_prepared", "signature_suite":"ML-DSA-65", "identity_count":identities.len(), "elapsed_ms":preparation.elapsed().as_millis(), "aoem_sha256":args[5], "chain_id":chain_id})
+        );
+        validate_relay_record_v1(&record, now_ms()?, &verifier)?;
+        if let Some((_, rounds, size)) = load_parameters {
             return tokio::time::timeout(
                 Duration::from_secs(90),
-                load(&record, pin, clients, rounds, size),
+                load(&record, &pin, identities, rounds, size, &verifier),
             )
             .await?;
         }
         let mut book = ServiceLeaseBookV1::new_self_owned(
             SelfOwnedTrustV1 {
-                version: 1,
-                node_pins: [pin].into(),
+                version: 2,
+                node_pins: [pin.clone()].into(),
             },
             vec![record.clone()],
             now_ms()?,
+            verifier.clone(),
         )?;
-        let seed = Zeroizing::new(rand::random::<[u8; 32]>());
-        let key = SigningKey::from_bytes(&seed);
+        let key = identities.pop().context("probe identity missing")?;
         let start = Instant::now();
         tokio::time::timeout(Duration::from_secs(90), async {
             if args[3] == "udp" {
                 let route = NativeMailboxEndpointV7::from_record(&record)?.context("UDP not advertised")?;
-                book.check_native_mailbox_route_v7(pin, &route, now_ms()?)?;
+                book.check_native_mailbox_route_v7(&pin, &route, now_ms()?)?;
                 let mut client = udp(&record, key).await?;
                 println!("{}", serde_json::json!({"phase":"authenticated","carrier":"udp","elapsed_ms":start.elapsed().as_millis()}));
                 client.window_preflight(0).await?;
-                exchange(&mut client, pin).await?;
+                exchange(&mut client, &pin, &verifier).await?;
             } else {
                 let route = TlsServiceEndpointV1::from_record(&record)?.context("TLS not advertised")?;
                 ensure!(route.native_mailbox_v8, "native TLS V8 not advertised");
-                book.check_tls_route_v1(pin, &route, now_ms()?)?;
-                book.check_continuous_native_tls_v8(pin, &route, now_ms()?)?;
+                book.check_tls_route_v1(&pin, &route, now_ms()?)?;
+                book.check_continuous_native_tls_v8(&pin, &route, now_ms()?)?;
                 let scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
                 let tcp = tokio::net::TcpStream::connect(route.address).await?;
                 tcp.set_nodelay(true)?;
                 let mut stream = CarrierStreamV1::from(scope.connect(tcp, route.endpoint_key).await?);
-                let mut client = tls(&mut stream, &key, pin).await?;
+                let mut client = tls(&mut stream, &key, &pin).await?;
                 println!("{}", serde_json::json!({"phase":"authenticated","carrier":"tls-v8","elapsed_ms":start.elapsed().as_millis()}));
                 client.window_preflight(0).await?;
-                exchange(&mut client, pin).await?;
+                exchange(&mut client, &pin, &verifier).await?;
             }
             Ok::<_, anyhow::Error>(())
         }).await.context("bounded native probe expired")??;
         println!(
             "{}",
-            serde_json::json!({
-                "result":"PASS", "carrier":args[3], "device_delivery_receipt":false,
-                "android_acceptance":false, "relay_services_used":false, "billing_exercised":false
-            })
+            serde_json::json!({"result":"PASS", "signature_suite":"ML-DSA-65", "carrier":args[3], "device_delivery_receipt":false, "android_acceptance":false, "relay_services_used":false, "billing_exercised":false})
         );
         Ok(())
     }

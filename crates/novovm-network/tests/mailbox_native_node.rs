@@ -4,7 +4,8 @@
 #[path = "support/native_evidence.rs"]
 mod native_evidence;
 use anyhow::{bail, ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use novovm_network::{
     mailbox_receipt::StoreReceiptV1,
     mailbox_rpc::{
@@ -36,6 +37,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use transport_identity::key;
 use zeroize::Zeroizing;
 
 #[path = "support/native_endpoint_owner.rs"]
@@ -43,13 +45,10 @@ mod native_endpoint_owner;
 #[path = "support/native_locator_time.rs"]
 mod native_locator_time;
 
-fn key(value: u8) -> SigningKey {
-    SigningKey::from_bytes(&[value; 32])
-}
 fn trust() -> SelfOwnedTrustV1 {
     SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [key(17).verifying_key().to_bytes()].into(),
+        version: 2,
+        node_pins: [key(17).public_key().to_vec()].into(),
     }
 }
 fn lane() -> NativeLaneConfig {
@@ -85,13 +84,13 @@ impl Client {
         route: &NativeMailboxEndpointV7,
         identity: u8,
     ) -> Result<NativeObjectLink> {
-        let pin = key(17).verifying_key().to_bytes();
+        let pin = key(17).public_key().to_vec();
         let mut link = NativeObjectLink::new(
             NativeEndpoint::connect_client(
                 UdpSocket::bind("127.0.0.1:0")?,
                 key(identity),
                 NativePeer {
-                    key: pin,
+                    key: pin.clone(),
                     address: route.address,
                 },
                 NativeHandshakeBudget {
@@ -135,8 +134,8 @@ impl Client {
     }
     async fn connect(route: &NativeMailboxEndpointV7, identity: u8) -> Result<Self> {
         let mut link = Self::connect_link(route, identity).await?;
-        let pin = key(17).verifying_key().to_bytes();
-        let session = NativeMailboxClient::attach(&mut link, 0, pin)?;
+        let pin = key(17).public_key().to_vec();
+        let session = NativeMailboxClient::attach(&mut link, 0, pin.clone())?;
         Ok(Self {
             link,
             session,
@@ -211,7 +210,28 @@ async fn native_owner_multiplexes_watch_and_put_and_restores_custody() -> Result
     let expires = (now_ms()? / 1000) as i64 + 600;
     let original = round(directory.path(), expires, None).await?;
     let recovered = round(directory.path(), expires, Some(&original)).await?;
-    assert_eq!(original.signature, recovered.signature);
+    assert_eq!(
+        (
+            original.version,
+            original.suite,
+            &original.node,
+            original.mailbox,
+            original.object,
+            original.digest,
+            original.bytes,
+            original.expires
+        ),
+        (
+            recovered.version,
+            recovered.suite,
+            &recovered.node,
+            recovered.mailbox,
+            recovered.object,
+            recovered.digest,
+            recovered.bytes,
+            recovered.expires
+        )
+    );
     Ok(())
 }
 
@@ -252,7 +272,12 @@ async fn round(
             let at = now_ms()?;
             let mut book = if journal.exists() {
                 let (file, bytes) = ServiceLeaseFileV1::open(&journal, Zeroizing::new([91; 32]))?;
-                let mut book = ServiceLeaseBookV1::restore_self_owned(trust(), &bytes, at)?;
+                let mut book = ServiceLeaseBookV1::restore_self_owned(
+                    trust(),
+                    &bytes,
+                    at,
+                    crate::transport_identity::key(90),
+                )?;
                 book.attach_persistence(file, &bytes)?;
                 book
             } else {
@@ -264,13 +289,18 @@ async fn round(
                     until,
                     1,
                 )?;
-                let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+                let mut book = ServiceLeaseBookV1::new_self_owned(
+                    trust(),
+                    vec![record],
+                    at,
+                    crate::transport_identity::key(90),
+                )?;
                 let bytes = book.checkpoint()?;
                 let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([91; 32]), &bytes)?;
                 book.attach_persistence(file, &bytes)?;
                 book
             };
-            book.check_continuous_native_peer_v7(key(17).verifying_key().to_bytes(), at)?;
+            book.check_continuous_native_peer_v7(key(17).public_key(), at)?;
             Ok(Arc::new(ServiceLeaseHostV1::new(key(17), book)?))
         },
         move |record| {
@@ -282,13 +312,17 @@ async fn round(
     );
     let client = async {
         let record = rx.await?;
-        let pin = key(17).verifying_key().to_bytes();
-        let mut book =
-            ServiceLeaseBookV1::new_self_owned(trust(), vec![record.clone()], now_ms()?)?;
+        let pin = key(17).public_key().to_vec();
+        let mut book = ServiceLeaseBookV1::new_self_owned(
+            trust(),
+            vec![record.clone()],
+            now_ms()?,
+            crate::transport_identity::key(90),
+        )?;
         let route =
             NativeMailboxEndpointV7::from_record(&record)?.context("native route missing")?;
         ensure!(route == expected);
-        book.check_native_mailbox_route_v7(pin, &route, now_ms()?)?;
+        book.check_native_mailbox_route_v7(&pin, &route, now_ms()?)?;
         let mut receiver = Client::connect(&route, 83).await?;
         if let Some(original) = prior {
             // No sender connection is needed to recover the previously committed
@@ -317,8 +351,35 @@ async fn round(
             let Reply::Stored(receipt) = receiver.request(put(expires, 4)).await? else {
                 bail!("native duplicate Put did not recover receipt")
             };
-            receipt.verify(pin, [1; 32], [4; 32], &ciphertext, expires)?;
-            ensure!(receipt.signature == original.signature);
+            receipt.verify(
+                &pin,
+                [1; 32],
+                [4; 32],
+                &ciphertext,
+                expires,
+                &crate::transport_identity::key(90),
+            )?;
+            ensure!(
+                (
+                    receipt.version,
+                    receipt.suite,
+                    &receipt.node,
+                    receipt.mailbox,
+                    receipt.object,
+                    receipt.digest,
+                    receipt.bytes,
+                    receipt.expires
+                ) == (
+                    original.version,
+                    original.suite,
+                    &original.node,
+                    original.mailbox,
+                    original.object,
+                    original.digest,
+                    original.bytes,
+                    original.expires
+                )
+            );
             ensure!(matches!(
                 receiver
                     .request(Request::Consume {
@@ -337,7 +398,14 @@ async fn round(
             let Reply::Stored(restored) = receiver.request(put(expires, 4)).await? else {
                 bail!("native retry did not restore actual custody")
             };
-            restored.verify(pin, [1; 32], [4; 32], &ciphertext, expires)?;
+            restored.verify(
+                &pin,
+                [1; 32],
+                [4; 32],
+                &ciphertext,
+                expires,
+                &crate::transport_identity::key(90),
+            )?;
             let Reply::Object {
                 object: retried,
                 ciphertext: body,
@@ -437,7 +505,14 @@ async fn round(
         let Reply::Stored(receipt) = sender.request(put(expires, 4)).await? else {
             bail!("native node did not return storage evidence")
         };
-        receipt.verify(pin, [1; 32], [4; 32], &vec![9; 9000], expires)?;
+        receipt.verify(
+            &pin,
+            [1; 32],
+            [4; 32],
+            &vec![9; 9000],
+            expires,
+            &crate::transport_identity::key(90),
+        )?;
         ensure!(matches!(
             sender.until(second_watch).await?,
             Reply::NoticeObjectV6 { object: Some(row), .. }
@@ -558,7 +633,12 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 until,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![record],
+                at,
+                crate::transport_identity::key(90),
+            )?;
             let bytes = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([92; 32]), &bytes)?;
             book.attach_persistence(file, &bytes)?;
@@ -567,10 +647,10 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
         |_| Ok(()),
     );
     let client = async {
-        let pin = key(17).verifying_key().to_bytes();
+        let pin = key(17).public_key().to_vec();
         let mut stopped_link = Client::connect_link(&route, 87).await?;
         let (stopped_driver, stopped_handle) =
-            NativeMailboxDriver::attach(&mut stopped_link, 0, pin)?;
+            NativeMailboxDriver::attach(&mut stopped_link, 0, pin.clone())?;
         let abandoned = stopped_handle.request(
             0,
             vec![fetch(3)],
@@ -589,7 +669,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
         drop(stopped_link);
         let mut rejected_link = Client::connect_link(&route, 88).await?;
         let (mut rejected_driver, rejected_handle) =
-            NativeMailboxDriver::attach(&mut rejected_link, 0, pin)?;
+            NativeMailboxDriver::attach(&mut rejected_link, 0, pin.clone())?;
         let rejected_pending = rejected_handle.request(
             0,
             vec![Request::ProbeBulkV1],
@@ -624,7 +704,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
         assert!(!rejected_handle.supports_bulk_v1());
         let mut cancel_link = Client::connect_link(&route, 89).await?;
         let (mut cancel_driver, cancel_handle) =
-            NativeMailboxDriver::attach(&mut cancel_link, 0, pin)?;
+            NativeMailboxDriver::attach(&mut cancel_link, 0, pin.clone())?;
         let setup_deadline = Instant::now() + Duration::from_secs(5);
         while !cancel_handle.has_negotiated_capacity() {
             ensure!(Instant::now() < setup_deadline, "resource exchange timeout");
@@ -679,7 +759,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
         drop(cancel_link);
         let mut link = Client::connect_link(&route, 86).await?;
         ensure!(link.session_id(0).is_some(), "native session missing");
-        let (driver, handle) = NativeMailboxDriver::attach(&mut link, 0, pin)?;
+        let (driver, handle) = NativeMailboxDriver::attach(&mut link, 0, pin.clone())?;
         let check: NativeRequestAuthority = Arc::new(|| Ok(()));
         let until = || Instant::now() + Duration::from_secs(5);
         // The queue's caller deadline elapses even before the owner gets CPU;
@@ -775,7 +855,14 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             let Reply::Stored(receipt) = &stored[0] else {
                 bail!("no async storage receipt");
             };
-            receipt.verify(pin, [1; 32], [7; 32], &vec![9; 9000], expires)?;
+            receipt.verify(
+                &pin,
+                [1; 32],
+                [7; 32],
+                &vec![9; 9000],
+                expires,
+                &crate::transport_identity::key(90),
+            )?;
             let notified = watch.await?;
             assert!(
                 matches!(&notified[0], Reply::NoticeObjectV6 { object: Some(row), .. }
@@ -937,7 +1024,12 @@ async fn production_owner_waits_for_shared_execution_without_quota_or_restart() 
                 until,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![record],
+                at,
+                crate::transport_identity::key(90),
+            )?;
             let checkpoint = book.checkpoint()?;
             let file =
                 ServiceLeaseFileV1::create(&authority_path, Zeroizing::new([91; 32]), &checkpoint)?;
@@ -1086,7 +1178,12 @@ async fn native_service_rate_case(rate: Option<u16>, probe: &Path) -> Result<ser
                 until,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![record],
+                at,
+                crate::transport_identity::key(90),
+            )?;
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([94; 32]), &checkpoint)?;
             book.attach_persistence(file, &checkpoint)?;
@@ -1109,8 +1206,8 @@ async fn native_service_rate_case(rate: Option<u16>, probe: &Path) -> Result<ser
         let stderr_path = directory.path().join("probe.stderr.txt");
         // Files avoid an undrained stdout/stderr pipe blocking the child.
         let pin: String = key(17)
-            .verifying_key()
-            .to_bytes()
+            .public_key()
+            .to_vec()
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();

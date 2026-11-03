@@ -85,19 +85,22 @@ fn exercise_fresh_pool_receipts(
                         2 => invalid.object_hash[0] ^= 1,
                         _ => invalid.disposition = Kind::JournalPersisted,
                     }
-                    lifecycle.observe_transaction_transport_event(&Event::RecipientAck {
-                        ack: invalid,
-                        metric_peer_id: *metric_peer_id,
-                    });
+                    lifecycle.observe_transaction_transport_event(
+                        &Event::RecipientAck {
+                            ack: invalid,
+                            metric_peer_id: *metric_peer_id,
+                        },
+                        leader.identity_verifier(),
+                    );
                 }
                 assert_eq!(
                     lifecycle.status_json()["transaction_transport"]["recipient_acks_accepted"],
                     0
                 );
-                lifecycle.observe_transaction_transport_event(&event);
+                lifecycle.observe_transaction_transport_event(&event, leader.identity_verifier());
                 accepted = true;
             } else {
-                lifecycle.observe_transaction_transport_event(&event);
+                lifecycle.observe_transaction_transport_event(&event, leader.identity_verifier());
             }
         }
         assert!(
@@ -117,9 +120,12 @@ fn exercise_fresh_pool_receipts(
     ] {
         assert_eq!(after[field], before[field], "ACK changed {field}");
     }
-    lifecycle.observe_transaction_transport_event(&Event::E2eSessionEstablished {
-        remote_peer_id: sender.startup().local_peer_id.clone(),
-    });
+    lifecycle.observe_transaction_transport_event(
+        &Event::E2eSessionEstablished {
+            remote_peer_id: sender.startup().local_peer_id.clone(),
+        },
+        leader.identity_verifier(),
+    );
     assert_eq!(
         lifecycle.status_json()["transaction_transport"]["acked_peer_transactions"],
         0

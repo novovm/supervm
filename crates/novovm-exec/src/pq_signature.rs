@@ -35,6 +35,12 @@ impl MldsaRuntime {
         self.parameters
     }
 
+    /// Share this loaded owner through the same unified semantic verification
+    /// entry used by native asset consumers; no scalar-ABI fallback.
+    pub fn verification_owner_v1(&self) -> Result<OwnedMldsaVerifier, PqVerificationError> {
+        OwnedMldsaVerifier::new(Arc::clone(&self.runtime), self.parameters)
+    }
+
     pub fn sign(
         &self,
         trusted_public_key: &[u8],
@@ -260,7 +266,7 @@ const MLDSA_VERIFY_BATCH_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// Unframed canonical inputs. The facade applies external-pure framing once,
 /// just as scalar verification does; neither lengths nor failures select suites.
 #[derive(Clone, Copy)]
-pub(crate) struct MldsaVerifyInput<'a> {
+pub struct MldsaVerifyInput<'a> {
     pub public_key: &'a [u8],
     pub message: &'a [u8],
     pub context: &'a [u8],
@@ -271,7 +277,7 @@ pub(crate) struct MldsaVerifyInput<'a> {
 /// signing runtime this does not require sign/keygen capabilities. Construction
 /// qualifies both scalar and batch once; clones neither load nor re-qualify it.
 #[derive(Clone)]
-pub(crate) struct OwnedMldsaVerifier {
+pub struct OwnedMldsaVerifier {
     runtime: Arc<semantic::SemanticMldsaBackend>,
     parameters: AoemMldsaParameterSet,
 }
@@ -298,11 +304,11 @@ impl OwnedMldsaVerifier {
         })
     }
 
-    pub(crate) fn last_execution_v1(&self) -> Option<MldsaVerificationExecutionV1> {
+    pub fn last_execution_v1(&self) -> Option<MldsaVerificationExecutionV1> {
         self.runtime.last_execution_v1()
     }
 
-    pub(crate) fn verify(&self, item: MldsaVerifyInput<'_>) -> Result<(), PqVerificationError> {
+    pub fn verify(&self, item: MldsaVerifyInput<'_>) -> Result<(), PqVerificationError> {
         check_lengths(self.parameters, item.public_key, item.signature)?;
         let message = frame_pure_message(item.message, item.context)?;
         verify_with_backend(
@@ -811,6 +817,26 @@ mod owned_runtime_tests {
             shared.sign(&key.public_key, &key.expanded_secret_key, message, context)?;
         assert_eq!(signature.len(), 3309);
         shared.verify(&key.public_key, message, context, &signature)?;
+        let verifier = shared.verification_owner_v1()?;
+        let input = MldsaVerifyInput {
+            public_key: &key.public_key,
+            message,
+            context,
+            signature: &signature,
+        };
+        verifier.verify(input)?;
+        let execution = verifier
+            .last_execution_v1()
+            .expect("unified semantic execution");
+        assert_eq!(execution.rows, 1);
+        assert_eq!(execution.valid_count, 1);
+        assert!(verifier
+            .verify(MldsaVerifyInput {
+                context: b"other context",
+                ..input
+            })
+            .is_err());
+        assert_eq!(verifier.last_execution_v1().unwrap().valid_count, 0);
         assert!(shared
             .verify(&key.public_key, b"changed", context, &signature)
             .is_err());

@@ -7,13 +7,13 @@ use crate::{
     iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
     opaque_rendezvous::RendezvousStoreV1,
     product_directory::{sign_relay_record_v1, BootstrapSourceV1, BootstrapTrustPolicyV1},
+    product_overlay::{TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES},
     product_service_lease::{
         serve_service_offer_v2, IrohServiceEndpointV1, ServiceLeaseBookV1, ServiceLeaseFileV1,
         ServiceLeaseHostV1,
     },
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::{SigningKey, VerifyingKey};
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
@@ -35,9 +35,13 @@ use zeroize::Zeroizing;
 pub struct RendezvousDaemonConfigV2 {
     pub version: u8,
     pub engineering_direct_allowed: bool,
-    pub trusted_signers: Vec<[u8; 32]>,
+    pub relay_identity_key_path: PathBuf,
+    pub chain_id: u64,
+    pub library: PathBuf,
+    pub library_sha256: String,
+    pub trusted_signers: Vec<Vec<u8>>,
     pub minimum_signatures: usize,
-    pub allowed_clients: Vec<[u8; 32]>,
+    pub allowed_clients: Vec<Vec<u8>>,
     pub relays: Vec<String>,
     pub nameserver: IpAddr,
     pub bind_address: Option<SocketAddr>,
@@ -70,27 +74,26 @@ pub fn now_ms() -> Result<u64> {
 
 fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let mut bytes = Vec::new();
-    File::open(path)?.take(65537).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 65536, "service input size");
+    File::open(path)?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 1024 * 1024, "service input size");
     Ok(serde_json::from_slice(&bytes)?)
-}
-
-fn strong_key(key: &[u8; 32]) -> Result<()> {
-    let key = VerifyingKey::from_bytes(key)?;
-    ensure!(
-        !key.is_weak()
-            && key.to_edwards().is_torsion_free()
-            && key.to_edwards().compress().to_bytes() == key.to_bytes(),
-        "service key"
-    );
-    Ok(())
 }
 
 impl RendezvousDaemonConfigV2 {
     pub fn validate(&self) -> Result<(IrohConfigV1, BootstrapTrustPolicyV1)> {
         ensure!(
-            self.version == 2 && self.engineering_direct_allowed,
+            self.version == 3 && self.engineering_direct_allowed,
             "explicit engineering service required"
+        );
+        ensure!(
+            self.chain_id != 0
+                && self.relay_identity_key_path.is_absolute()
+                && self.library.is_absolute()
+                && self.library_sha256.len() == 64
+                && self.library_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "qualified native identity configuration required"
         );
         ensure!(
             (1..=8).contains(&self.trusted_signers.len())
@@ -104,7 +107,10 @@ impl RendezvousDaemonConfigV2 {
                 "duplicate service key"
             );
             for key in keys {
-                strong_key(key)?;
+                ensure!(
+                    key.len() == MLDSA65_PUBLIC_KEY_BYTES && key.iter().any(|b| *b != 0),
+                    "native service key"
+                );
             }
         }
         ensure!(
@@ -133,7 +139,7 @@ impl RendezvousDaemonConfigV2 {
                 .trusted_signers
                 .iter()
                 .map(|key| {
-                    BootstrapTrustPolicyV1::single_signer(*key)
+                    BootstrapTrustPolicyV1::single_signer(key.clone())
                         .allowed_signer_peer_ids
                         .into_iter()
                         .next()
@@ -147,28 +153,23 @@ impl RendezvousDaemonConfigV2 {
 }
 
 /// Called by the shared relay selector. Key bytes arrive ONLY over a private
-/// inherited stdin pipe: NVKEYS02 + independent signing seed + storage key.
+/// inherited stdin pipe: NVKEYS04 + storage key. The qualified native signer
+/// is injected by the original platform custody owner, not read as a raw seed.
 /// Public addressing is emitted only to the owner's redirected stdout pipe.
 /// Production installation must implement protected custody and source renewal;
 /// redirecting raw key files is not a supported custody implementation.
-pub fn run_rendezvous_cli_v2(path: &Path) -> Result<()> {
+pub fn run_rendezvous_cli_v2(path: &Path, key: TransportIdentity) -> Result<()> {
     let config: RendezvousDaemonConfigV2 = read_json(path)?;
     config.validate()?; // Reject configuration before reading keys or networking.
     ensure!(
         !std::io::stdin().is_terminal() && !std::io::stdout().is_terminal(),
         "private owner pipes required"
     );
-    let mut material = Zeroizing::new([0u8; 72]);
+    let mut material = Zeroizing::new([0u8; 40]);
     std::io::stdin().read_exact(material.as_mut())?;
-    ensure!(&material[..8] == b"NVKEYS02", "owner pipe version");
-    let seed = Zeroizing::new(<[u8; 32]>::try_from(&material[8..40])?);
-    let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[40..])?);
-    ensure!(
-        *seed != *storage && *seed != [0; 32] && *storage != [0; 32],
-        "independent service keys required"
-    );
-    let key = SigningKey::from_bytes(&seed);
-    drop(seed);
+    ensure!(&material[..8] == b"NVKEYS04", "owner pipe version");
+    let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[8..])?);
+    ensure!(*storage != [0; 32], "storage key required");
     drop(material);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -217,7 +218,7 @@ impl std::error::Error for RendezvousAuthorizationUnavailable {}
 /// and instance, and therefore requires a new independently signed grant.
 pub async fn run_rendezvous_epoch_v2(
     config: RendezvousDaemonConfigV2,
-    key: SigningKey,
+    key: TransportIdentity,
     storage: Zeroizing<[u8; 32]>,
     proposal: impl FnOnce(&crate::product_directory::PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<RendezvousDaemonReportV2> {
@@ -227,17 +228,14 @@ pub async fn run_rendezvous_epoch_v2(
 /// The optional owner is local lifecycle control, never a source of network trust.
 pub async fn run_owned_rendezvous_epoch_v2(
     config: RendezvousDaemonConfigV2,
-    key: SigningKey,
+    key: TransportIdentity,
     storage: Zeroizing<[u8; 32]>,
     proposal: impl FnOnce(&crate::product_directory::PeerSignedRelayRecordV1) -> Result<()> + 'static,
     owner: Option<RendezvousEpochOwnerV1>,
 ) -> Result<RendezvousDaemonReportV2> {
     let (carrier, policy) = config.validate()?;
-    ensure!(
-        key.to_bytes() != *storage && *storage != [0; 32],
-        "independent service keys required"
-    );
-    let pin = key.verifying_key().to_bytes();
+    ensure!(*storage != [0; 32], "independent service keys required");
+    let pin = key.public_key().to_vec();
     ensure!(
         !config.allowed_clients.contains(&pin),
         "service and client identities must differ"
@@ -253,7 +251,8 @@ pub async fn run_owned_rendezvous_epoch_v2(
         } else {
             let (file, checkpoint) =
                 ServiceLeaseFileV1::open(&config.journal_path, storage.clone())?;
-            let mut book = ServiceLeaseBookV1::restore(policy.clone(), &checkpoint, now_ms()?)?;
+            let mut book =
+                ServiceLeaseBookV1::restore(policy.clone(), &checkpoint, now_ms()?, key.clone())?;
             book.attach_persistence(file, &checkpoint)?;
             Some(book)
         })
@@ -303,8 +302,8 @@ pub async fn run_owned_rendezvous_epoch_v2(
             // Independent trust and exact new identity are checked BEFORE ready.
             // The durable history check is repeated at activation after the old
             // owner exits; passing this check never bypasses a tombstone.
-            let mut candidate = ServiceLeaseBookV1::new(policy.clone(), sources.clone(), now_ms()?)?;
-            candidate.check_route(pin, endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
+            let mut candidate = ServiceLeaseBookV1::new(policy.clone(), sources.clone(), now_ms()?, key.clone())?;
+            candidate.check_route(&pin, endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
             (owner.prepared)()?;
             while !owner.activate.load(Ordering::Acquire) {
                 ensure!(Instant::now() < deadline && !owner.stop.load(Ordering::Acquire), "epoch activation cancelled/expired");
@@ -318,7 +317,7 @@ pub async fn run_owned_rendezvous_epoch_v2(
                 None
             } else {
                 let (file, checkpoint) = ServiceLeaseFileV1::open(&config.journal_path, storage.clone())?;
-                let mut book = ServiceLeaseBookV1::restore(policy.clone(), &checkpoint, now_ms()?)?;
+                let mut book = ServiceLeaseBookV1::restore(policy.clone(), &checkpoint, now_ms()?, key.clone())?;
                 book.attach_persistence(file, &checkpoint)?;
                 Some(book)
             }
@@ -326,9 +325,9 @@ pub async fn run_owned_rendezvous_epoch_v2(
         let mut last_sources = serde_json::to_vec(&sources)?;
         let mut book = match recovered {
             Some(mut book) => { book.replace_sources(sources, now_ms()?)?; book }
-            None => ServiceLeaseBookV1::new(policy, sources, now_ms()?)?,
+            None => ServiceLeaseBookV1::new(policy, sources, now_ms()?, key.clone())?,
         };
-        book.check_route(pin, endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
+        book.check_route(&pin, endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
         if config.enroll {
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&config.journal_path, storage, &checkpoint)?;
@@ -396,4 +395,47 @@ pub async fn run_owned_rendezvous_epoch_v2(
         drop(active); // End every stream before destroying the instance/store.
         Ok(report)
     })).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daemon_configuration_requires_explicit_native65_custody_and_rejects_legacy_keys(
+    ) -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut config = RendezvousDaemonConfigV2 {
+            version: 3,
+            engineering_direct_allowed: true,
+            relay_identity_key_path: root.path().join("purpose.key"),
+            chain_id: 7,
+            library: root.path().join("qualified-library"),
+            library_sha256: "a".repeat(64),
+            trusted_signers: vec![vec![10; MLDSA65_PUBLIC_KEY_BYTES]],
+            minimum_signatures: 1,
+            allowed_clients: vec![vec![11; MLDSA65_PUBLIC_KEY_BYTES]],
+            relays: vec![],
+            nameserver: "1.1.1.1".parse()?,
+            bind_address: None,
+            relay_only: false,
+            journal_path: root.path().join("journal"),
+            source_path: root.path().join("source"),
+            enroll: true,
+            record_id: "record".into(),
+            grant_sequence: 1,
+            run_for_ms: 5000,
+            max_sessions: 4,
+        };
+        config.validate()?;
+        config.version = 2;
+        assert!(config.validate().is_err());
+        config.version = 3;
+        config.trusted_signers[0] = vec![10; 32];
+        assert!(config.validate().is_err());
+        config.trusted_signers[0] = vec![10; MLDSA65_PUBLIC_KEY_BYTES];
+        config.allowed_clients[0] = vec![11; 32];
+        assert!(config.validate().is_err());
+        Ok(())
+    }
 }

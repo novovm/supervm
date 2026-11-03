@@ -1,7 +1,16 @@
 //! Independently provisioned publisher entry. Uses the existing manifest format,
 //! protected Windows keys and durable issuance journal; never a node self-grant.
+#[cfg(all(windows, not(test)))]
+use novovm_relay::transport_identity;
 #[cfg(windows)]
 mod bootstrap_publisher_owner;
+#[cfg(all(windows, test))]
+mod transport_identity_fixture;
+#[cfg(all(windows, test))]
+mod transport_identity {
+    pub(crate) use super::transport_identity_fixture::component_identity;
+    pub use novovm_relay::transport_identity::load_transport_identity;
+}
 #[cfg(windows)]
 mod windows_custody;
 #[cfg(windows)]
@@ -122,13 +131,13 @@ mod windows {
         }
         ensure!(
             args.len() == 2 || args.len() == 3,
-            "usage: --initialize STATE | --enroll-policy CONFIG | --revoke CONFIG | --check CONFIG | --service CONFIG | --foreground CONFIG SECONDS"
+            "usage: --initialize CONFIG | --enroll-policy CONFIG | --revoke CONFIG | --check CONFIG | --service CONFIG | --foreground CONFIG SECONDS"
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
         if args[0] == "--initialize" {
             ensure!(args.len() == 2, "initialize arguments");
-            Owner::initialize(&path)?;
+            Owner::initialize(&Config::load(&path)?)?;
         } else if args[0] == "--enroll-policy" {
             ensure!(args.len() == 2, "enroll arguments");
             Owner::enroll(Config::load(&path)?)?;

@@ -2,7 +2,8 @@
 //! Actual loopback QUIC and the production node dispatcher/store. This does not
 //! prove Android wiring, NAT reachability, autonomous relay or message E2EE.
 use anyhow::{bail, ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use novovm_network::{
     bound_session::{
         authenticate_structured_bound_session_observed,
@@ -42,20 +43,18 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use transport_identity::key;
 use zeroize::Zeroizing;
 
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
-}
-fn pin() -> [u8; 32] {
-    key(17).verifying_key().to_bytes()
+fn pin() -> Vec<u8> {
+    key(17).public_key().to_vec()
 }
 fn config() -> Result<IrohConfigV1> {
     IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)
 }
 fn trust() -> SelfOwnedTrustV1 {
     SelfOwnedTrustV1 {
-        version: 1,
+        version: 2,
         node_pins: [pin()].into(),
     }
 }
@@ -241,13 +240,13 @@ async fn verified_record(
     if v8 {
         let endpoint =
             NativeCarrierMailboxEndpointV8::from_record(&record)?.context("V8 marker missing")?;
-        book.accept_native_record_v8(pin(), record.clone(), now_ms()?)?;
-        book.check_native_carrier_route_v8(pin(), &endpoint, now_ms()?)?;
+        book.accept_native_record_v8(&pin(), record.clone(), now_ms()?)?;
+        book.check_native_carrier_route_v8(&pin(), &endpoint, now_ms()?)?;
     } else {
         let endpoint =
             NativeCarrierMailboxEndpointV7::from_record(&record)?.context("V7 marker missing")?;
-        book.accept_native_record_v7(pin(), record.clone(), now_ms()?)?;
-        book.check_native_carrier_route_v7(pin(), &endpoint, now_ms()?)?;
+        book.accept_native_record_v7(&pin(), record.clone(), now_ms()?)?;
+        book.check_native_carrier_route_v7(&pin(), &endpoint, now_ms()?)?;
     }
     Ok(record)
 }
@@ -298,14 +297,19 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
     let server = run_self_owned_node_v1(
         config()?.with_owned_service_identity(Zeroizing::new([90; 32]))?,
         key(17),
-        [key(83).verifying_key().to_bytes()].into(),
+        [key(83).public_key().to_vec()].into(),
         stop,
         Some(service.clone()),
         move |endpoint, until| {
             let at = now_ms()?;
             let book = if journal.exists() {
                 let (file, bytes) = ServiceLeaseFileV1::open(&journal, Zeroizing::new([91; 32]))?;
-                let mut book = ServiceLeaseBookV1::restore_self_owned(trust(), &bytes, at)?;
+                let mut book = ServiceLeaseBookV1::restore_self_owned(
+                    trust(),
+                    &bytes,
+                    at,
+                    crate::transport_identity::key(90),
+                )?;
                 book.attach_persistence(file, &bytes)?;
                 book
             } else {
@@ -317,7 +321,12 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
                     until,
                     1,
                 )?;
-                let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+                let mut book = ServiceLeaseBookV1::new_self_owned(
+                    trust(),
+                    vec![record],
+                    at,
+                    crate::transport_identity::key(90),
+                )?;
                 let bytes = book.checkpoint()?;
                 let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([91; 32]), &bytes)?;
                 book.attach_persistence(file, &bytes)?;
@@ -351,10 +360,14 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
         let _stop = stop_guard;
         let (record, host) = rx.await?;
         // Original signed-book verification still happens before any network use.
-        let mut book =
-            ServiceLeaseBookV1::new_self_owned(trust(), vec![record.clone()], now_ms()?)?;
+        let mut book = ServiceLeaseBookV1::new_self_owned(
+            trust(),
+            vec![record.clone()],
+            now_ms()?,
+            crate::transport_identity::key(90),
+        )?;
         let route = IrohServiceEndpointV1::from_record(&record)?;
-        book.check_continuous_peer_v4(pin(), route.address.endpoint_key, now_ms()?)?;
+        book.check_continuous_peer_v4(&pin(), route.address.endpoint_key, now_ms()?)?;
         ensure!(
             carrier_route(&record, v8)?.is_some() == enabled,
             "node changed explicit capability unexpectedly"
@@ -362,13 +375,13 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
         if enabled {
             if v8 {
                 book.check_native_carrier_route_v8(
-                    pin(),
+                    &pin(),
                     &NativeCarrierMailboxEndpointV8::from_record(&record)?.unwrap(),
                     now_ms()?,
                 )?;
             } else {
                 book.check_native_carrier_route_v7(
-                    pin(),
+                    &pin(),
                     &NativeCarrierMailboxEndpointV7::from_record(&record)?.unwrap(),
                     now_ms()?,
                 )?;
@@ -400,8 +413,8 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
                     && digest == original.digest);
                 let Reply::Stored(recovered) = client.request(put(expires, 4)).await?
                     else { bail!("duplicate Put lost original receipt") };
-                recovered.verify(pin(), [1; 32], [4; 32], &ciphertext, expires)?;
-                ensure!(recovered.signature == original.signature);
+                recovered.verify(&pin(), [1; 32], [4; 32], &ciphertext, expires, &crate::transport_identity::key(90))?;
+                ensure!((recovered.version, recovered.suite, &recovered.node, recovered.mailbox, recovered.object, recovered.digest, recovered.bytes, recovered.expires) == (original.version, original.suite, &original.node, original.mailbox, original.object, original.digest, original.bytes, original.expires));
                 ensure!(matches!(client.request(Request::Consume {
                     mailbox: [1; 32], read: [3; 32], object, digest,
                 }).await?, Reply::Consumed));
@@ -411,7 +424,7 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
                 // custody again, with the original object and fixed expiry.
                 let Reply::Stored(restored) = client.request(put(expires, 4)).await?
                     else { bail!("consumed Put failed to restore actual custody") };
-                restored.verify(pin(), [1; 32], [4; 32], &ciphertext, expires)?;
+                restored.verify(&pin(), [1; 32], [4; 32], &ciphertext, expires, &crate::transport_identity::key(90))?;
                 let Reply::Object { object: retried, ciphertext: body, digest: hash, expires: ttl } =
                     client.request(fetch(3)).await? else { bail!("retry signed without actual custody") };
                 ensure!(retried == object && body == ciphertext && hash == digest && ttl == expires);
@@ -440,7 +453,7 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
                     mailbox:[1;32],write:[2;32],object:[4;32],ciphertext:payload.clone(),expires,
                 }).await.context("bulk Put transport")? else { bail!("bulk Put not stored") };
                 let put_ms=start.elapsed().as_millis();
-                receipt.verify(pin(),[1;32],[4;32],&payload,expires)?;
+                receipt.verify(&pin(),[1;32],[4;32],&payload,expires, &crate::transport_identity::key(90))?;
                 let start=Instant::now();
                 let Reply::Object { ciphertext,digest,.. }=client.request(Request::FetchBulkV1 { mailbox:[1;32],read:[3;32] }).await.context("bulk Fetch transport")? else { bail!("bulk Fetch missing") };
                 ensure!(ciphertext==payload);
@@ -481,7 +494,7 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
             let started = Instant::now();
             let Reply::Stored(receipt) = client.request(put(expires, 4)).await?
                 else { bail!("missing StoreReceipt") };
-            receipt.verify(pin(), [1; 32], [4; 32], &vec![9; 9000], expires)?;
+            receipt.verify(&pin(), [1; 32], [4; 32], &vec![9; 9000], expires, &crate::transport_identity::key(90))?;
             ensure!(matches!(client.until(watch).await?, Reply::NoticeObjectV6 { object: Some(row), .. }
                 if row.object == [4; 32] && row.ciphertext == vec![9; 9000] && row.expires == expires));
             ensure!(started.elapsed() < Duration::from_secs(5), "Put serialized behind Watch");
@@ -501,7 +514,7 @@ async fn round(path: &Path, expires: i64, case: Case, v8: bool) -> Result<Option
                 if actual == expires));
             let Reply::Stored(duplicate) = client.request(put(expires, 4)).await?
                 else { bail!("post-idle duplicate lost receipt") };
-            ensure!(duplicate.signature == receipt.signature);
+            ensure!((duplicate.version, duplicate.suite, &duplicate.node, duplicate.mailbox, duplicate.object, duplicate.digest, duplicate.bytes, duplicate.expires) == (receipt.version, receipt.suite, &receipt.node, receipt.mailbox, receipt.object, receipt.digest, receipt.bytes, receipt.expires));
             Ok(Some(receipt))
         })).await;
         let after = owner.snapshot();

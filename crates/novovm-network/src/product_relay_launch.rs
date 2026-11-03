@@ -73,11 +73,12 @@ where
 ///
 /// A selected backend's error is returned directly. In particular, duplex
 /// configuration, TLS, bind, or protocol errors never invoke `legacy`.
-pub fn run_product_relay_cli_v1<I, S, F>(args: I, legacy: F) -> Result<()>
+pub fn run_product_relay_cli_v1<I, S, F, P>(args: I, legacy: F, prepare_identity: P) -> Result<()>
 where
     I: IntoIterator<Item = S>,
     S: Into<OsString>,
     F: FnOnce(&Path) -> Result<()>,
+    P: FnOnce(&Path) -> Result<crate::product_overlay::TransportIdentity>,
 {
     let launch = parse_relay_launch_v1(args)?;
     {
@@ -100,7 +101,10 @@ where
     }
     if launch.runtime == RelayDaemonRuntimeV1::RendezvousV2 {
         #[cfg(feature = "iroh-transport")]
-        return crate::product_rendezvous_daemon::run_rendezvous_cli_v2(&launch.config_path);
+        return crate::product_rendezvous_daemon::run_rendezvous_cli_v2(
+            &launch.config_path,
+            prepare_identity(&launch.config_path)?,
+        );
         #[cfg(not(feature = "iroh-transport"))]
         bail!("rendezvous-v2 requires the iroh-transport feature");
     }
@@ -109,7 +113,8 @@ where
             load_product_relay_daemon_config_v1, run_product_relay_daemon_v1,
         };
         let config = load_product_relay_daemon_config_v1(path)?;
-        run_product_relay_daemon_v1(config)
+        let identity = prepare_identity(path)?;
+        run_product_relay_daemon_v1(config, identity)
     })
 }
 
@@ -144,7 +149,8 @@ mod tests {
         #[cfg(not(feature = "iroh-transport"))]
         assert!(run_product_relay_cli_v1(
             ["--runtime", "rendezvous-v2", "missing.json"],
-            |_| panic!("legacy fallback")
+            |_| panic!("legacy fallback"),
+            |_| panic!("unexpected identity preparation")
         )
         .unwrap_err()
         .to_string()
@@ -204,10 +210,14 @@ mod tests {
         ];
         for args in cases {
             let called = Cell::new(false);
-            assert!(run_product_relay_cli_v1(args.iter().copied(), |_| {
-                called.set(true);
-                Ok(())
-            })
+            assert!(run_product_relay_cli_v1(
+                args.iter().copied(),
+                |_| {
+                    called.set(true);
+                    Ok(())
+                },
+                |_| panic!("invalid input prepared an identity")
+            )
             .is_err());
             assert!(!called.get(), "invalid arguments dispatched a runtime");
         }
@@ -298,6 +308,7 @@ mod tests {
                 legacy_calls.set(legacy_calls.get() + 1);
                 Ok(())
             },
+            |_| panic!("invalid config prepared an identity"),
         );
         let error = result.unwrap_err();
         assert!(error.downcast_ref::<serde_json::Error>().is_some());

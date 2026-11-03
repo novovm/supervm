@@ -2,7 +2,7 @@
 //! daemon, signed handshakes and encrypted frames, never a production route.
 use super::*;
 use crate::duplex::product_relay_daemon::{
-    run_product_relay_daemon_with_shutdown_v1, ProductRelayDaemonConfigV1,
+    run_fixture_relay_daemon_with_shutdown_v1, ProductRelayDaemonConfigV1,
     ProductRelayDaemonReportV1,
 };
 use std::{fs, path::PathBuf, sync::atomic::AtomicU64};
@@ -16,11 +16,11 @@ fn must<T>(result: WorkResult<T>) -> T {
 }
 
 fn channels() -> (E2eSecureChannelV1, E2eSecureChannelV1) {
-    let a = SigningKey::from_bytes(&[31; 32]);
-    let b = SigningKey::from_bytes(&[32; 32]);
+    let a = TransportIdentity::from_bytes(&[31; 32]);
+    let b = TransportIdentity::from_bytes(&[32; 32]);
     let offer = NodeHandshakeInitiatorV1::start(
         &a,
-        peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(b.public_key()),
         1_000,
         10_000,
     )
@@ -212,16 +212,14 @@ impl RelayFixture {
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = stop.clone();
         let worker =
-            thread::spawn(move || run_product_relay_daemon_with_shutdown_v1(config, worker_stop));
+            thread::spawn(move || run_fixture_relay_daemon_with_shutdown_v1(config, worker_stop));
         // Construct the cleanup owner before any readiness assertion.
         let mut fixture = Self {
             root,
             config: ProductRelayClientConfigV1 {
                 endpoint: String::new(),
-                expected_relay_peer_id: peer_id_from_ed25519_public_key_v1(
-                    &SigningKey::from_bytes(&[0x47; 32])
-                        .verifying_key()
-                        .to_bytes(),
+                expected_relay_peer_id: peer_id_from_mldsa65_public_key_v1(
+                    TransportIdentity::from_bytes(&[0x47; 32]).public_key(),
                 ),
                 connect_timeout_ms: 4_000,
                 read_timeout_ms: 4_000,
@@ -348,9 +346,9 @@ async fn pair(
     deadline: Instant,
     revoked: Arc<AtomicBool>,
 ) -> (RelayByteStreamV1, RelayByteStreamV1, Workers) {
-    let a = SigningKey::from_bytes(&[31; 32]);
-    let b = SigningKey::from_bytes(&[32; 32]);
-    let (a_key, b_key) = (a.verifying_key().to_bytes(), b.verifying_key().to_bytes());
+    let a = TransportIdentity::from_bytes(&[31; 32]);
+    let b = TransportIdentity::from_bytes(&[32; 32]);
+    let (a_key, b_key) = (a.public_key().to_vec(), b.public_key().to_vec());
     let (left, right) = tokio::try_join!(
         RelayByteStreamV1::connect(
             a,
@@ -383,8 +381,10 @@ async fn admission_rejects_insecure_outer_tls_wrong_keys_and_revoked_control() {
         read_timeout_ms: 1_000,
         tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
     };
-    let key = SigningKey::from_bytes(&[31; 32]);
-    let remote = SigningKey::from_bytes(&[32; 32]).verifying_key().to_bytes();
+    let key = TransportIdentity::from_bytes(&[31; 32]);
+    let remote = TransportIdentity::from_bytes(&[32; 32])
+        .public_key()
+        .to_vec();
     assert!(RelayByteStreamV1::connect(
         key.clone(),
         config.clone(),
@@ -396,7 +396,7 @@ async fn admission_rejects_insecure_outer_tls_wrong_keys_and_revoked_control() {
     .is_err());
     let mut strict = config;
     strict.tls_trust = ProductRelayTlsTrustV1::NativeWebPki;
-    for remote in [[0; 32], key.verifying_key().to_bytes()] {
+    for remote in [vec![0; 32], key.public_key().to_vec()] {
         assert!(RelayByteStreamV1::connect(
             key.clone(),
             strict.clone(),
@@ -593,9 +593,11 @@ async fn absent_peer_uses_original_deadline_and_releases_worker_permit() {
     let fixture = RelayFixture::start();
     let deadline = Instant::now() + Duration::from_millis(700);
     let result = RelayByteStreamV1::connect(
-        SigningKey::from_bytes(&[31; 32]),
+        TransportIdentity::from_bytes(&[31; 32]),
         fixture.config.clone(),
-        SigningKey::from_bytes(&[32; 32]).verifying_key().to_bytes(),
+        TransportIdentity::from_bytes(&[32; 32])
+            .public_key()
+            .to_vec(),
         true,
         control(deadline, Arc::new(AtomicBool::new(false))),
     )
@@ -618,13 +620,13 @@ async fn cancelling_pending_connect_releases_actual_workers_and_global_admission
     let _serial = SERIAL.lock().await;
     let fixture = RelayFixture::start();
     let deadline = Instant::now() + Duration::from_secs(10);
-    let absent_peer = SigningKey::from_bytes(&[200; 32])
-        .verifying_key()
-        .to_bytes();
+    let absent_peer = TransportIdentity::from_bytes(&[200; 32])
+        .public_key()
+        .to_vec();
     let mut pending = Box::pin(RelayByteStreamV1::connect(
-        SigningKey::from_bytes(&[40; 32]),
+        TransportIdentity::from_bytes(&[40; 32]),
         fixture.config.clone(),
-        absent_peer,
+        absent_peer.clone(),
         true,
         control(deadline, Arc::new(AtomicBool::new(false))),
     ));
@@ -665,9 +667,9 @@ async fn cancelling_pending_connect_releases_actual_workers_and_global_admission
     let mut pending: Vec<_> = (41..45)
         .map(|seed| {
             Box::pin(RelayByteStreamV1::connect(
-                SigningKey::from_bytes(&[seed; 32]),
+                TransportIdentity::from_bytes(&[seed; 32]),
                 fixture.config.clone(),
-                absent_peer,
+                absent_peer.clone(),
                 true,
                 control(deadline, Arc::new(AtomicBool::new(false))),
             ))
@@ -691,7 +693,7 @@ async fn cancelling_pending_connect_releases_actual_workers_and_global_admission
         RELAY_BYTE_STREAM_MAX_OWNERS_V1
     );
     let fifth = RelayByteStreamV1::connect(
-        SigningKey::from_bytes(&[45; 32]),
+        TransportIdentity::from_bytes(&[45; 32]),
         fixture.config.clone(),
         absent_peer,
         true,

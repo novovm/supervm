@@ -329,6 +329,21 @@ jobs:
           target/proof-envelope-smoke/private-profile-ffi "$NOVOVM_AOEM_TEST_LIBRARY"
           cargo test -p aoem-bindings --lib resident --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-exec --lib resident --locked -- --test-threads=1
+
+      - name: Pin isolated runtime for the current native signature contract
+        shell: pwsh
+        run: ./scripts/ci-native-runtime-candidate.ps1 -Platform linux-x86_64 -GitHubEnvironment
+
+      - name: Integrated original tick with the pinned native ML-DSA runtime
+        # The preceding formal-SDK resident/private-profile checks remain intact.
+        # Only the new signature contract consumes the isolated qualified core.
+        timeout-minutes: 15
+        env:
+          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"
           cargo test -p novovm-network --lib duplex --locked -- --test-threads=1
           cargo test -p novovm-network --lib transport::native_ingress::tests --locked -- --test-threads=1
           cargo test -p novovm-network --lib udp_ingress_ --locked -- --test-threads=1
@@ -400,7 +415,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"
+          test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"
           cargo test -p novovm-protocol --lib uca_spend --locked
           cargo test -p novovm-adapter-api --lib uca_spend_policy --locked
           cargo test -p novovm-node --lib native_pipeline::business::uca_spend_state --locked
@@ -422,7 +437,7 @@ jobs:
           NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
         run: |
           set -euo pipefail
-          export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"
+          test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"
           target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
           export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
           test -x "$NOVOVM_RESIDENT_NODE_BINARY"
@@ -823,6 +838,101 @@ jobs:
         run: cargo clippy --manifest-path runtime/Cargo.toml -p novovm-host --lib --no-default-features --locked -- -D warnings
       - run: cargo test --manifest-path runtime/Cargo.toml --workspace --locked
 
+  native_transport_qualification:
+    name: Native ML-DSA runtime and actual owners / ${{ matrix.os }}
+    needs: detect
+    if: needs.detect.outputs.full == 'true'
+    concurrency:
+      group: ci-native-transport-${{ matrix.os }}-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux-x86_64
+            candidate_library: linux/libaoem_ffi.so
+            formal_library: aoem/linux/core/bin/libaoem_ffi.so
+            formal_sha256: 4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309
+          - os: windows-latest
+            platform: windows-x86_64
+            candidate_library: windows/aoem_ffi.dll
+            formal_library: aoem/windows/core/bin/aoem_ffi.dll
+            formal_sha256: 31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      NATIVE_RUNTIME_CANDIDATE_ROOT: artifacts/runtime-candidates/native-transport-mldsa65-20261103
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch only the pinned platform candidate and formal counterexample
+        shell: pwsh
+        run: |
+          git lfs pull --include="$env:NATIVE_RUNTIME_CANDIDATE_ROOT/${{ matrix.candidate_library }},${{ matrix.formal_library }}" --exclude=""
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $formal = (Resolve-Path '${{ matrix.formal_library }}').Path
+          if ((Get-FileHash -LiteralPath $formal -Algorithm SHA256).Hash.ToLowerInvariant() -cne '${{ matrix.formal_sha256 }}') {
+            throw 'Formal SDK counterexample identity changed; renew its actual qualification rather than assuming missing batch support.'
+          }
+          "NOVOVM_AOEM_BATCH_UNAVAILABLE_TEST_LIBRARY=$formal" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+          ./scripts/ci-native-runtime-candidate.ps1 -Platform '${{ matrix.platform }}' -GitHubEnvironment
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the actual native authentication executable
+        shell: pwsh
+        run: |
+          cargo build -p novovm-node --bin novovm-product-nat --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $metadata = cargo metadata --no-deps --format-version 1 | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $binary = Join-Path $metadata.target_directory "debug/novovm-product-nat$suffix"
+          if (!(Test-Path -LiteralPath $binary -PathType Leaf)) { throw 'Actual NAT executable is missing.' }
+          "NOVOVM_PRODUCT_NAT_TEST_BINARY=$binary" | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Actual runtime KAT, independent custody and NAT authentication/reconnect
+        shell: pwsh
+        run: |
+          cargo test -p novovmctl --test native_identity_cli --locked -- --include-ignored --list > "$env:RUNNER_TEMP/native-purpose-test-list.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = Get-Content -LiteralPath "$env:RUNNER_TEMP/native-purpose-test-list.txt" -Raw
+          foreach ($name in @('actual_runtime_qualification_uses_original_owner_without_keys_or_state', 'actual_runtime_qualification_rejects_selected_library_without_batch_capability', 'actual_mldsa65_both_purposes_generate_inspect_and_rejection_closure', 'actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_port')) {
+            if (!$tests.Contains("${name}: test")) { throw "Missing actual qualification test: $name" }
+          }
+          cargo test -p novovmctl --test native_identity_cli --locked -- --include-ignored --test-threads=1 --nocapture
+          exit $LASTEXITCODE
+      - name: Actual original startup authority pins and durable cold reopen
+        shell: pwsh
+        run: |
+          cargo test -p novovm-node --lib actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection --locked -- --ignored --list > "$env:RUNNER_TEMP/native-startup-test-list.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Get-Content -LiteralPath "$env:RUNNER_TEMP/native-startup-test-list.txt" -Raw).Contains('actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection: test')) { throw 'Missing actual original startup test.' }
+          cargo test -p novovm-node --lib actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection --locked -- --ignored --test-threads=1 --nocapture
+          exit $LASTEXITCODE
+      - name: Actual original relay service and custody owners
+        shell: pwsh
+        run: |
+          cargo test -p novovm-relay --features tls-transport --test rendezvous_process --locked -- --test-threads=1 --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($IsWindows) {
+            cargo test -p novovm-relay --features tls-transport --test rendezvous_owner_process --test bootstrap_publisher_process --test bootstrap_mirror_process --locked -- --list > "$env:RUNNER_TEMP/windows-owner-test-list.txt"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $tests = Get-Content -LiteralPath "$env:RUNNER_TEMP/windows-owner-test-list.txt" -Raw
+            foreach ($name in @('self_owned_process_fresh_node_requires_no_publisher_or_original_root', 'independent_publisher_auto_authorizes_successor_and_both_process_restarts', 'actual_mldsa65_lease_record_crosses_original_carrier_frames')) {
+              if (!$tests.Contains("${name}: test")) { throw "Missing original Windows owner test: $name" }
+            }
+            cargo test -p novovm-relay --features tls-transport --test rendezvous_owner_process --test bootstrap_publisher_process --test bootstrap_mirror_process --locked -- --test-threads=1 --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } else {
+            # Windows DPAPI process suites are cfg(windows), not Linux passes.
+            cargo test -p novovm-relay --features tls-transport --bin novovm-rendezvous-service linux_custody_and_listener_restart --locked -- --list > "$env:RUNNER_TEMP/linux-owner-test-list.txt"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if (!(Get-Content -LiteralPath "$env:RUNNER_TEMP/linux-owner-test-list.txt" -Raw).Contains('linux_custody_and_listener_restart: test')) { throw 'Missing original Linux owner restart test.' }
+            cargo test -p novovm-relay --features tls-transport --bin novovm-rendezvous-service linux_custody_and_listener_restart --locked -- --test-threads=1 --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
   # Release includes ordinary AND ignored tests. Keep this separate from the
   # lint/debug budget; do not replace --include-ignored with --ignored.
   runtime_modules_release:
@@ -866,7 +976,7 @@ jobs:
   result:
     name: CI scope result
     if: always()
-    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules, runtime_modules_release]
+    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules, runtime_modules_release, native_transport_qualification]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

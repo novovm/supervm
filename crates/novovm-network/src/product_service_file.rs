@@ -17,7 +17,11 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-pub const MAX_SERVICE_CHECKPOINT_BYTES: usize = 128 * 1024;
+// ML-DSA checkpoint v3: <=1MiB bounded sources, two 32KiB current
+// records and 32 native pins (<=250KiB JSON). A self-owned migration
+// retains that endorsed JSON as an escaped string (at most twice its size),
+// plus four records and 34 pins. Both shapes fit below 4MiB.
+pub const MAX_SERVICE_CHECKPOINT_BYTES: usize = 4 * 1024 * 1024;
 
 /// Generic opaque checkpoint persistence, independent of any network carrier.
 pub trait ServiceLeasePersistenceV1: Send + Sync {

@@ -9,6 +9,7 @@ use crate::native_pipeline::service::config::{protocol_commitment, ORIGINAL_PROF
 use crate::native_pipeline::service::{GenesisAllocation, GenesisConfig, GenesisValidator};
 use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
+use novovm_network::product_overlay::TransportIdentity;
 use serde_json::{json, Value};
 use std::net::{SocketAddr, TcpListener};
 use std::process::{Child, Command, Stdio};
@@ -335,8 +336,10 @@ struct ProcessIdentities {
     crypto: Arc<AoemConsensusCrypto>,
     signers: Vec<Arc<AoemConsensusSigner>>,
     validator_paths: Vec<PathBuf>,
-    transports: Vec<SigningKey>,
+    transports: Vec<TransportIdentity>,
     transport_paths: Vec<PathBuf>,
+    client_transport: TransportIdentity,
+    client_transport_path: PathBuf,
     #[cfg(target_os = "linux")]
     credential_directory: PathBuf,
 }
@@ -384,12 +387,18 @@ fn prepare_process_identities() -> Result<ProcessIdentities> {
         validator_paths.push(keys.validator_path);
         transport_paths.push(keys.transport_path);
     }
+    let (client_transport, client_transport_path) =
+        crate::native_pipeline::service::config::test_custody::generate_transport_key(
+            &directory, CHAIN, "client", &crypto,
+        )?;
     Ok(ProcessIdentities {
         crypto,
         signers,
         validator_paths,
         transports,
         transport_paths,
+        client_transport,
+        client_transport_path,
         #[cfg(target_os = "linux")]
         credential_directory,
     })
@@ -406,7 +415,7 @@ pub(super) fn process_crypto() -> Result<Arc<AoemConsensusCrypto>> {
     Ok(process_identities()?.crypto.clone())
 }
 
-fn transport_key(index: usize) -> SigningKey {
+pub(super) fn transport_key(index: usize) -> TransportIdentity {
     process_identities()
         .expect("actual protected transport fixture preparation")
         .transports[index]
@@ -471,7 +480,7 @@ fn genesis() -> Result<GenesisConfig> {
         validators: (0..4)
             .map(|index| GenesisValidator {
                 public_key: validator_key(index).public_key().to_vec(),
-                transport_public_key: transport_key(index).verifying_key().to_bytes(),
+                transport_public_key: transport_key(index).public_key().to_vec(),
                 weight: 1,
             })
             .collect(),

@@ -5,7 +5,7 @@ use crate::novorudp::NovoRudpTransportFrameKindV0;
 #[test]
 fn one_listener_serves_128_identities_without_reusing_handles_or_accepting_old_frames() -> Result<()>
 {
-    let key = SigningKey::from_bytes(&[250; 32]);
+    let key = crate::test_identity::key(250);
     let budget = || NativeHandshakeBudget {
         lifetime: Duration::from_secs(2),
         retry: Duration::from_millis(5),
@@ -19,7 +19,7 @@ fn one_listener_serves_128_identities_without_reusing_handles_or_accepting_old_f
     )?;
     server.update_client_capacity(1)?;
     let remote = NativePeer {
-        key: key.verifying_key().to_bytes(),
+        key: key.public_key().to_vec(),
         address: server.local_addr()?,
     };
     let mut old_frames = Vec::<Vec<u8>>::new();
@@ -27,7 +27,7 @@ fn one_listener_serves_128_identities_without_reusing_handles_or_accepting_old_f
         let start = Instant::now();
         let mut client = NativeEndpoint::connect_client(
             UdpSocket::bind("127.0.0.1:0")?,
-            SigningKey::from_bytes(&[(ordinal + 1) as u8; 32]),
+            crate::test_identity::key((ordinal + 1) as u8),
             remote.clone(),
             budget(),
             1000,
@@ -149,7 +149,7 @@ fn one_listener_serves_128_identities_without_reusing_handles_or_accepting_old_f
 #[test]
 fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Result<()> {
     use crate::product_overlay::{handshake_wire, NodeHandshakeInitiatorV1};
-    let key = SigningKey::from_bytes(&[231; 32]);
+    let key = crate::test_identity::key(231);
     let budget = NativeHandshakeBudget {
         lifetime: Duration::from_secs(5),
         retry: Duration::from_millis(5),
@@ -163,10 +163,10 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
     )?;
     server.update_client_capacity(1)?;
     let start = Instant::now();
-    let target = peer_id_from_ed25519_public_key_v1(&key.verifying_key().to_bytes());
+    let target = peer_id_from_mldsa65_public_key_v1(key.public_key());
     let source = UdpSocket::bind("127.0.0.1:0")?;
     let offer = NodeHandshakeInitiatorV1::start(
-        &SigningKey::from_bytes(&[232; 32]),
+        &crate::test_identity::key(232),
         target.clone(),
         1000,
         1000,
@@ -182,7 +182,7 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
     assert!(!server.needs_client_capacity(later));
     let other = UdpSocket::bind("127.0.0.1:0")?;
     let offer =
-        NodeHandshakeInitiatorV1::start(&SigningKey::from_bytes(&[233; 32]), target, 1000, 1000)?;
+        NodeHandshakeInitiatorV1::start(&crate::test_identity::key(233), target, 1000, 1000)?;
     let mut wire = handshake_wire::encode_offer(offer.offer())?;
     *wire.last_mut().unwrap() ^= 1;
     assert!(server
@@ -229,7 +229,7 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
 #[test]
 fn admission_snapshot_tracks_verified_waiter_without_evicting_existing_peer() -> Result<()> {
     use crate::product_overlay::{handshake_wire, NodeHandshakeInitiatorV1};
-    let key = SigningKey::from_bytes(&[234; 32]);
+    let key = crate::test_identity::key(234);
     let start = Instant::now();
     let mut server = NativeEndpoint::listen_clients(
         UdpSocket::bind("127.0.0.1:0")?,
@@ -242,14 +242,14 @@ fn admission_snapshot_tracks_verified_waiter_without_evicting_existing_peer() ->
         },
     )?;
     server.update_client_capacity(1)?;
-    let target = peer_id_from_ed25519_public_key_v1(&key.verifying_key().to_bytes());
+    let target = peer_id_from_mldsa65_public_key_v1(key.public_key());
     let sources = [
         UdpSocket::bind("127.0.0.1:0")?,
         UdpSocket::bind("127.0.0.1:0")?,
     ];
     for (index, source) in sources.iter().enumerate() {
         let offer = NodeHandshakeInitiatorV1::start(
-            &SigningKey::from_bytes(&[235 + index as u8; 32]),
+            &crate::test_identity::key(235 + index as u8),
             target.clone(),
             1000,
             1000,
@@ -284,7 +284,7 @@ fn admission_snapshot_tracks_verified_waiter_without_evicting_existing_peer() ->
 #[test]
 fn several_verified_waiters_wait_together_and_enter_in_arrival_order() -> Result<()> {
     use crate::product_overlay::{handshake_wire, NodeHandshakeInitiatorV1};
-    let key = SigningKey::from_bytes(&[241; 32]);
+    let key = crate::test_identity::key(241);
     let start = Instant::now();
     let mut server = NativeEndpoint::listen_clients(
         UdpSocket::bind("127.0.0.1:0")?,
@@ -297,14 +297,14 @@ fn several_verified_waiters_wait_together_and_enter_in_arrival_order() -> Result
         },
     )?;
     server.update_client_capacity(3)?;
-    let target = peer_id_from_ed25519_public_key_v1(&key.verifying_key().to_bytes());
+    let target = peer_id_from_mldsa65_public_key_v1(key.public_key());
     let sources: Vec<_> = (0..6)
         .map(|_| UdpSocket::bind("127.0.0.1:0"))
         .collect::<std::io::Result<_>>()?;
     let mut offers = Vec::new();
     for (index, source) in sources.iter().enumerate() {
         let offer = NodeHandshakeInitiatorV1::start(
-            &SigningKey::from_bytes(&[242 + index as u8; 32]),
+            &crate::test_identity::key(242 + index as u8),
             target.clone(),
             1000,
             1000,
@@ -318,7 +318,7 @@ fn several_verified_waiters_wait_together_and_enter_in_arrival_order() -> Result
     assert_eq!(server.waiting_clients.len(), 3);
     let excess_source = UdpSocket::bind("127.0.0.1:0")?;
     let excess =
-        NodeHandshakeInitiatorV1::start(&SigningKey::from_bytes(&[249; 32]), target, 1000, 1000)?;
+        NodeHandshakeInitiatorV1::start(&crate::test_identity::key(249), target, 1000, 1000)?;
     assert!(server
         .accept_client(
             NativeRoute::Udp(excess_source.local_addr()?),

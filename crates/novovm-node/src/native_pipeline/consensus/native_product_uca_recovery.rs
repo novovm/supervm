@@ -45,6 +45,11 @@ fn operator_call(
         "build novovm-native-client beside the explicit node binary"
     );
     let mut command = std::process::Command::new(binary);
+    #[cfg(target_os = "linux")]
+    command.env(
+        "CREDENTIALS_DIRECTORY",
+        &process_identities()?.credential_directory,
+    );
     command.arg(config).arg(action);
     if let Some(input) = input {
         command.arg(input);
@@ -72,8 +77,7 @@ fn operator_submit(
     use crate::native_pipeline::service::{client::operator, ResidentConfig};
     let node = ResidentConfig::load(&nodes.configs[index])?;
     let config_path = nodes.directory.join("operator-client.json");
-    let transport_key_file = nodes.directory.join("test-only-operator-transport.key");
-    fs::write(&transport_key_file, [202u8; 32])?;
+    let transport_key_file = process_identities()?.client_transport_path.clone();
     let config = operator::ClientConfig {
         chain_id: node.genesis.chain_id,
         genesis: node.genesis.genesis_config_commitment,
@@ -86,6 +90,8 @@ fn operator_submit(
         },
         bind_addr: "127.0.0.1:0".parse()?,
         transport_key_file,
+        library: node.library.clone(),
+        library_sha256: hex(&Sha256::digest(fs::read(&node.library)?)),
         timeout_ms: 15_000,
     };
     fs::write(&config_path, serde_json::to_vec_pretty(&config)?)?;

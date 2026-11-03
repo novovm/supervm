@@ -123,20 +123,25 @@ CandidateBodies/Lookahead执行；定位符命中不是验签或支出许可，�
 合法账户换钥后原 nonce 连续，撤销旧钥不能再花费。具体新 wire/编码须由该共享合同明确，
 本文不凭字段草案宣称已经交付。
 
-## 2026-10-26 当前唯一迁移目标与源码状态
+## 2026-10-26 唯一迁移目标与源码状态（传输用途更新：2026-11-03）
 
 本节优先于下方按日期保留的历史状态。用户要求首发统一 ML-DSA-65 单签，
 不为内部试用身份长期保留 Ed25519 产品路线。用途分离不是算法升级；
 共识签票、传输持钥、UCA 管理/花费与服务凭证仍各自授权、各自使用密钥。
 
+**本机源码候选，不是多机签收：** 2026-11-03 已沿原持钥、握手、绑定及实际消费者
+接入 ML-DSA-65；本轮编译、实际 AOEM、重连与平台检查仍在执行。以下“已接入候选”
+只描述代码落点，不代表 Windows/Linux 包或 A/B/C/D 已安装、切换、认证或启链。
+
 | 边界与实际 owner | 当前状态 | 必须完成的迁接 |
 | --- | --- | --- |
 | `novovm-consensus/src/round_bft` → node `consensus/crypto.rs` → exec `pq_signature` | 本次实现 ML-DSA-65/v2，真实 AOEM 进程回归；不是远端旧 `12c25e4c` 状态 | 保留原 quorum/journal，按固定提交重建各机包 |
 | `novovm-protocol/src/uca_spend.rs` / 原 NUAS、UCA 创世批准 | ML-DSA-65 单签，无 Ed 降级 | 原可信 UCA/nonce/预算语义不变；动态授权与移动端资格另验 |
-| `novovm-network/src/novorudp/endpoint` / `product_overlay.rs` / node `NativeChannel` | 实际传输仍使用 Ed25519 身份；不是已完成或正式备用路线 | 在原握手/认证重连中版本化新身份、peer 绑定、受限消息与分片；保留独立签票用途 |
-| `novovm-network/src/product_identity.rs` | 设备公钥及旧用途授权尚未迁移 | 原注册、撤销/恢复和权限状态消费者一起改，不能仅换公钥长度 |
-| relay `rendezvous_self_owned_owner.rs`、network `product_directory` / `mailbox_receipt.rs` | 服务声明与存储回执仍有实际旧签名消费者 | 同步服务签发端、客户端验证端和受保护密钥；不是只删除旧身份 |
+| `novovm-network/src/novorudp/endpoint` / `product_overlay.rs` / node `NativeChannel` | 已接入 version2 握手、suite65 传输身份候选；原有界承载、UDP AEAD 持钥确认与 peer 映射保留，可靠 carrier 保留 exporter-bound Finished | 完成实际 AOEM 认证、反例、重连与各平台包验证，再进行四机验收；保留独立签票用途 |
+| `novovm-network/src/product_identity.rs` | 设备授权候选明确 version2/suite65，原用途 context 与撤销状态继续校验 | 验证原注册、状态、权限及真实调用方；旧 Ed/Secp 原生授权不作为 fallback |
+| relay `rendezvous_self_owned_owner.rs` / `rendezvous_owner.rs`、network `product_directory` / `mailbox_receipt.rs` | 原签发/验证 owner 已接入注入的合格 ML-DSA-65 身份候选，服务声明与存储回执明确 version2/suite65 | 完成平台 custody、实际生产调用方与恢复检查；不自动转换旧身份，不触碰 B 当前服务 |
 | `novovm-node/src/native_round_bft.rs` 预集成诊断适配 | 本轮已删除文件及模块导出，旧 API/类型无调用 | 当前协议降级反例保留；不保留报错空壳或第二套候选签票路径 |
+| `novovm-node/src/bin/supervm-network-overlay-gate.rs` 历史网络诊断 | 仍是可编译 bin，内部目录/身份签名仍使用 Ed25519；旧 adaptive/process/fallback 诊断脚本及 headless gate 打包器仍调用它，未迁接 suite65 | 不在本轮原 product Linux 打包器的 11 binary 合同中，不是当前 `NativeEndpoint` / NAT / evidence 认证入口或算法 fallback；其运行结果不得作为本轮 ML-DSA-65 四机认证证据。历史诊断迁接/退役另列，不宣称全仓入口已迁完 |
 
 共同合同复用原 protocol 的明确套件、规范二进制与 exec 的合格 AOEM 签验，
 公钥 1952/签名 3309 字节；不得从长度猜算法，不把 32 字节摘要身份当作公钥。
@@ -146,16 +151,37 @@ CandidateBodies/Lookahead执行；定位符命中不是验签或支出许可，�
 实施依赖：固定本轮共识与 custody 制品 → 核对并迁接原 transport/device
 认证及服务声明/回执全部消费者 → 各平台实际签验、分片/重连/恢复与撤销验证
 → 新身份切换 → 精确清单清理旧试用身份及无调用实现。前置片提交不是整体签收。
-共享 SUPERVM 源码由 A 负责，C 消费唯一接口并负责移动持钥/真机，D 固定 Linux
-制品；不在 App 另做底层。B 运行服务切换验证前不删身份，清理仍需单独明确批准。
+共享 SUPERVM 源码由 A 集成，C 消费唯一接口并负责移动持钥/真机，各平台分别固定
+匹配制品；D 当前是 Windows，不再向 D 派发历史 Linux 打包任务。不在 App 另做底层。
+B 运行服务切换验证前不删身份，清理仍需单独明确批准。
 
 第三方 carrier 内部密钥、外链验证、历史证据与原生权限入口分别审计；不能删除
 一个依赖就声称所有调用已迁移。会话密钥协商/加密的抗量子资格独立核查，
 不从 ML-DSA 签名推导。当前未通过全面迁移、移动全平台或多机联合验收。
 
+当前用途 custody 为 `NVPK0003` / version3 / suite65，验证者与传输独立生成，
+两种 `native-identity generate/inspect` 都必须显式传入 `--library` 与
+`--library-sha256`，复用同一合格 AOEM 能力；配对 challenge/context 绑定用途、链域、公钥。
+原节点协议 pin 为 `transport-binding-v3-mldsa65/handshake-v2-mldsa65`，旧信封、
+裸32字节传输钥、旧握手/未知套件拒绝，不在失败后改算法。只读目录/证据验证可持合格
+`TransportVerifier`，不因此要求加载签名私钥。具体准备命令与 OS custody 约束见
+[原节点用途身份准备](NOVOVM_PURPOSE_IDENTITY_PREPARATION.md)。
+网络入站验签由已加载 runtime 暴露原 `OwnedMldsaVerifier` 统一语义 owner，
+与资产消费者复用，不使用旧 scalar verify ABI；签名/keygen 仍由既有共享 primitive
+owner 提供，不能把此次验签接线描述成新增统一语义签名算法或签名操作。
+
+服务控制回复沿同一原 `CarrierStream` 的既有 8 KiB 分帧方式迁接，不扩大 Iroh/TLS
+物理 frame 的 16 KiB 上限。当前报价/来源回复 tag 为 `NVLSRS03`，直接租约回复为
+`NVLSRL03`；每帧为 `tag[8] || total:u32be || offset:u32be || chunk`，chunk 最多8192字节，
+非尾帧必须完整，offset 连续且 total 不变。逻辑报价仍最多1 MiB、单租约仍最多32 KiB；
+旧单帧回复拒绝，不在不同连接间拼组。完整收齐后才按原 JSON、签名、阈值与 book 权限验证。
+原调用方整体 deadline、载体逐帧错误及撤销纪律保留；这不是新传输或预先授予 Finished 权限。
+
 ### 首次握手与现用载体的架构核对（2026-10-26）
 
-以下是源码核对，不是新握手实现或运行验收：
+以下保留 2026-10-26 的**迁移前历史源码核对**，不是当前准备/部署规范，也不是运行验收。
+旧32/64字节字段和1200字节首握手阻断用于说明本轮为何必须迁移有界承载与实际消费者，
+不得继续据此生成旧传输钥或宣称当前候选仍使用旧原生认证：
 
 - 原验证者与原生客户端经 `NativeEndpoint` → `NativeHandshake` → 根
   `product_overlay`；UDP 信箱 `product_rendezvous_native` 复用同一 endpoint。

@@ -55,8 +55,8 @@ async fn register(service: &MailboxServiceV1, expires: i64) -> Result<()> {
 async fn consumed_retry_after_restart_requires_real_custody_and_original_expiry() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("mailbox.db");
-    let key = SigningKey::from_bytes(&[86; 32]);
-    let pin = key.verifying_key().to_bytes();
+    let key = TransportIdentity::from_bytes(&[86; 32]);
+    let pin = key.public_key().to_vec();
     let expires = now()? + 600;
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(&path, Default::default(), true)?,
@@ -108,9 +108,30 @@ async fn consumed_retry_after_restart_requires_real_custody_and_original_expiry(
     let MailboxReplyV1::Stored(recovered) = service.request_local_v1(put(expires)).await? else {
         anyhow::bail!("retry did not commit real custody")
     };
-    recovered.verify(pin, BOX_ID, OBJECT, &PAYLOAD, expires)?;
-    // Receipt is deterministic for the same commitment, NOT a new delivery/NOV reward.
-    assert_eq!(original.signature, recovered.signature);
+    recovered.verify(
+        &pin,
+        BOX_ID,
+        OBJECT,
+        &PAYLOAD,
+        expires,
+        &crate::test_identity::key(250),
+    )?;
+    // The same custody commitment is not a new delivery/NOV reward, even if
+    // the signature provider uses fresh signing randomness for the retry.
+    original.verify(
+        &pin,
+        BOX_ID,
+        OBJECT,
+        &PAYLOAD,
+        expires,
+        &crate::test_identity::key(250),
+    )?;
+    assert_eq!(original.node, recovered.node);
+    assert_eq!(original.mailbox, recovered.mailbox);
+    assert_eq!(original.object, recovered.object);
+    assert_eq!(original.digest, recovered.digest);
+    assert_eq!(original.bytes, recovered.bytes);
+    assert_eq!(original.expires, recovered.expires);
     assert!(changed.has_changed()?);
     assert_eq!(row_count(&path)?, 1);
     let MailboxReplyV1::Object {
@@ -149,7 +170,7 @@ async fn consumed_cleanup_keeps_capability_conflict_expiry_and_revocation_checks
     let path = dir.path().join("mailbox.db");
     let service = MailboxServiceV1::new(
         MailboxStore::open(&path, Default::default())?,
-        SigningKey::from_bytes(&[86; 32]),
+        TransportIdentity::from_bytes(&[86; 32]),
     );
     let expires = now()? + 600;
     register(&service, expires).await?;

@@ -19,12 +19,97 @@ use std::{
 };
 const MIRROR: &str = env!("CARGO_BIN_EXE_novovm-bootstrap-mirror");
 
+#[tokio::test(flavor = "current_thread")]
+async fn actual_mldsa65_lease_record_crosses_original_carrier_frames() -> Result<()> {
+    use novovm_network::{
+        carrier_stream::CarrierStreamV1,
+        product_directory::{sign_relay_record_v1, validate_relay_record_v1},
+        product_service_lease::{
+            request_service_lease_v1, serve_service_lease_v1, IrohServiceEndpointV1,
+            ServiceLeaseIssuerV1,
+        },
+    };
+    let key = client(); // Shared fixture opens actual qualified AOEM; no test signer.
+    let server_key = key.clone();
+    let end = Instant::now() + Duration::from_secs(15);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let config =
+        || IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?);
+    let server = with_iroh_scope_v1(
+        config()?,
+        IrohControlV1::new(end, || Ok(()))?,
+        move |scope| {
+            Box::pin(async move {
+                let address = scope.address()?;
+                let record = sign_relay_record_v1(
+                    &server_key,
+                    "actual-random65-lease",
+                    vec![IrohServiceEndpointV1 {
+                        instance: [4; 32],
+                        address: address.clone(),
+                    }
+                    .endpoint()?],
+                    1000,
+                    100_000,
+                    1,
+                )?;
+                ensure!(
+                    serde_json::to_vec(&record)?.len()
+                        > novovm_network::iroh_transport::IROH_MAX_FRAME_V1,
+                    "fixture must prove actual signed record exceeds one carrier frame"
+                );
+                eprintln!(
+                    "actual ML-DSA-65 lease JSON bytes={}, original carrier frame cap={}",
+                    serde_json::to_vec(&record)?.len(),
+                    novovm_network::iroh_transport::IROH_MAX_FRAME_V1
+                );
+                let issuer = ServiceLeaseIssuerV1::new(server_key, record, 2000)?;
+                tx.send(address)
+                    .map_err(|_| anyhow::anyhow!("fixture receiver ended"))?;
+                let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
+                serve_service_lease_v1(&mut stream, &issuer, || Ok(3000)).await?;
+                stream.finish().await
+            })
+        },
+    );
+    let receiver = async move {
+        let address = rx.await?;
+        with_iroh_scope_v1(
+            config()?,
+            IrohControlV1::new(end, || Ok(()))?,
+            move |scope| {
+                Box::pin(async move {
+                    let mut stream: CarrierStreamV1<'_> = scope.connect(&address).await?.into();
+                    let record = request_service_lease_v1(&mut stream).await?;
+                    validate_relay_record_v1(&record, 3000, &key)?;
+                    ensure!(
+                        record.relay_public_key == key.public_key() && record.sequence == 2,
+                        "lease identity/sequence"
+                    );
+                    ensure!(
+                        serde_json::to_vec(&record)?.len()
+                            > novovm_network::iroh_transport::IROH_MAX_FRAME_V1,
+                        "full random signature bytes must survive chunking"
+                    );
+                    stream.finish().await
+                })
+            },
+        )
+        .await
+    };
+    let (s, c) = tokio::join!(server, receiver);
+    s?;
+    c?;
+    Ok(())
+}
+
 fn initialize(f: &Fixture, expiry: u64) -> Result<()> {
     std::fs::create_dir(f.root.join("mirror"))?;
     let port = UdpSocket::bind("127.0.0.1:0")?.local_addr()?;
     json_file(
         &f.root.join("mirror-config.json"),
-        &json!({"version":1,"engineering_direct_allowed":true,
+        &json!({"version":2,"engineering_direct_allowed":true,
+        "library":f.library,"library_sha256":f.library_sha256,
         "state_directory":f.root.join("mirror"),"source_path":f.root.join("node/active.sources.json"),
         "trust_anchors":[f.publisher_pin],"minimum_signatures":1,"source_ids":["test-independent-publisher"],
         "relays":[],"dns":"127.0.0.1","bind_address":port,"relay_only":false,"permission_expires_at_ms":expiry}),
@@ -72,16 +157,17 @@ async fn mirror_listener_keeps_single_binding_across_110_second_boundary() -> Re
     let f = Fixture::new()?;
     let _node = f.launch_node(50)?;
     let first = f.proposal(&BTreeSet::new()).await?;
-    f.enroll(first.relay_public_key)?;
+    f.enroll(first.relay_public_key.clone())?;
     let _publisher = f.launch_publisher(250)?;
     let sources = active(&f).await?;
     initialize(&f, now_ms()? + 250000)?;
     let _mirror = launch(&f, 240)?;
     let peer: BootstrapRefreshPeerV1 = read_json(&f.root.join("mirror/peer.json")).await?;
     let book = Arc::new(Mutex::new(ServiceLeaseBookV1::new(
-        BootstrapTrustPolicyV1::single_signer(f.publisher_pin),
+        BootstrapTrustPolicyV1::single_signer(f.publisher_pin.clone()),
         sources,
         now_ms()?,
+        f.verifier(),
     )?));
     fetch(peer.clone(), book.clone()).await?;
     let began = Instant::now();
@@ -129,7 +215,7 @@ async fn real_mirror_serves_active_epoch_then_restores_identity_and_client_cache
     let f = Fixture::new()?;
     let _node = f.launch_node(3)?;
     let first = f.proposal(&BTreeSet::new()).await?;
-    f.enroll(first.relay_public_key)?;
+    f.enroll(first.relay_public_key.clone())?;
     let _publisher = f.launch_publisher(60)?;
     let sources = active(&f).await?;
     ensure!(
@@ -146,16 +232,18 @@ async fn real_mirror_serves_active_epoch_then_restores_identity_and_client_cache
         "wrong invitation"
     );
     let old = ServiceLeaseBookV1::new(
-        BootstrapTrustPolicyV1::single_signer(f.publisher_pin),
+        BootstrapTrustPolicyV1::single_signer(f.publisher_pin.clone()),
         sources,
         now_ms()?,
+        f.verifier(),
     )?;
     let checkpoint = old.checkpoint()?;
     let a = Arc::new(Mutex::new(old));
     let b = Arc::new(Mutex::new(ServiceLeaseBookV1::restore(
-        BootstrapTrustPolicyV1::single_signer(f.publisher_pin),
+        BootstrapTrustPolicyV1::single_signer(f.publisher_pin.clone()),
         &checkpoint,
         now_ms()?,
+        f.verifier(),
     )?));
     let (one, two) = tokio::join!(
         fetch(peer.clone(), a.clone()),
@@ -220,16 +308,17 @@ async fn signed_revocation_reaches_mirror_and_survives_process_restart() -> Resu
     let f = Fixture::new()?;
     let mut node = f.launch_node(2)?;
     let first = f.proposal(&BTreeSet::new()).await?;
-    f.enroll(first.relay_public_key)?;
+    f.enroll(first.relay_public_key.clone())?;
     let _publisher = f.launch_publisher(30)?;
     let sources = active(&f).await?;
     initialize(&f, now_ms()? + 30000)?;
     let mut mirror = launch(&f, 30)?;
     let peer: BootstrapRefreshPeerV1 = read_json(&f.root.join("mirror/peer.json")).await?;
     let book = Arc::new(Mutex::new(ServiceLeaseBookV1::new(
-        BootstrapTrustPolicyV1::single_signer(f.publisher_pin),
+        BootstrapTrustPolicyV1::single_signer(f.publisher_pin.clone()),
         sources.clone(),
         now_ms()?,
+        f.verifier(),
     )?));
     fetch(peer.clone(), book.clone()).await?;
     once("--revoke", &f.root.join("publisher-config.json"), true)?;
@@ -262,7 +351,7 @@ async fn mirror_permission_expiry_and_mutation_do_not_renew_on_restart() -> Resu
     let f = Fixture::new()?;
     let _node = f.launch_node(2)?;
     let first = f.proposal(&BTreeSet::new()).await?;
-    f.enroll(first.relay_public_key)?;
+    f.enroll(first.relay_public_key.clone())?;
     let _publisher = f.launch_publisher(30)?;
     active(&f).await?;
     initialize(&f, now_ms()? + 1800)?;
@@ -285,16 +374,17 @@ async fn forged_live_source_stops_distribution_and_missing_keys_never_reenroll()
     let f = Fixture::new()?;
     let _node = f.launch_node(2)?;
     let first = f.proposal(&BTreeSet::new()).await?;
-    f.enroll(first.relay_public_key)?;
+    f.enroll(first.relay_public_key.clone())?;
     let _publisher = f.launch_publisher(30)?;
     let mut sources = active(&f).await?;
     initialize(&f, now_ms()? + 30000)?;
     let mut mirror = launch(&f, 30)?;
     let peer: BootstrapRefreshPeerV1 = read_json(&f.root.join("mirror/peer.json")).await?;
     let book = Arc::new(Mutex::new(ServiceLeaseBookV1::new(
-        BootstrapTrustPolicyV1::single_signer(f.publisher_pin),
+        BootstrapTrustPolicyV1::single_signer(f.publisher_pin.clone()),
         sources.clone(),
         now_ms()?,
+        f.verifier(),
     )?));
     fetch(peer.clone(), book.clone()).await?;
     sources[0].manifest.signatures[0].signature[0] ^= 1;

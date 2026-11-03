@@ -342,8 +342,12 @@ impl NativeObjectLink {
     pub fn enable_configured_reconnect_v1(&mut self) -> Result<()> {
         self.endpoint.enable_configured_reconnect_v1()
     }
-    pub fn local_identity(&self) -> [u8; 32] {
+    pub fn local_identity(&self) -> &[u8] {
         self.endpoint.local_identity()
+    }
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub(crate) fn identity_verifier(&self) -> &crate::product_overlay::TransportIdentity {
+        self.endpoint.identity_verifier()
     }
     pub fn session_id(&self, peer: usize) -> Option<[u8; 16]> {
         self.endpoint.session_id(peer)

@@ -21,7 +21,10 @@ $fixture = Join-Path $PSScriptRoot ('../../artifacts/audit/linux-build-fixture-'
 New-Item -ItemType Directory -Path $fixture | Out-Null
 $fixture = (Resolve-Path $fixture).Path
 $executable = Join-Path $fixture 'reported-linux-binary'
-[IO.File]::WriteAllBytes($executable, [byte[]]@(0x7f, 0x45, 0x4c, 0x46))
+$elfBytes = [byte[]]::new(20)
+$elfBytes[0]=0x7f; $elfBytes[1]=0x45; $elfBytes[2]=0x4c; $elfBytes[3]=0x46
+$elfBytes[4]=2; $elfBytes[5]=1; $elfBytes[18]=62
+[IO.File]::WriteAllBytes($executable, $elfBytes)
 $buildContracts = @(
   [PSCustomObject]@{package='fixture-one';binary='first';features=@();expected_cargo_package_id='fixture#fixture-one@1.0'},
   [PSCustomObject]@{package='fixture-two';binary='second';features=@('tls-transport');expected_cargo_package_id='fixture#fixture-two@1.0'}

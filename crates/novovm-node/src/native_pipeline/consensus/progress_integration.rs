@@ -124,8 +124,8 @@ fn fixture_with(
     };
     let peer_ids: Vec<_> = (0..keys.len())
         .map(|index| {
-            novovm_network::product_overlay::peer_id_from_ed25519_public_key_v1(
-                &component_transport_key(index).verifying_key().to_bytes(),
+            novovm_network::product_overlay::peer_id_from_mldsa65_public_key_v1(
+                component_transport_key(index).public_key(),
             )
         })
         .collect();

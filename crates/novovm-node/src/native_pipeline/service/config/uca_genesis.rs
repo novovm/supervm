@@ -757,11 +757,7 @@ mod tests {
                 timestamp_unix_ms: 123,
                 validators: (1..=4)
                     .map(|seed| GenesisValidator {
-                        transport_public_key: ed25519_dalek::SigningKey::from_bytes(
-                            &[100 + seed; 32],
-                        )
-                        .verifying_key()
-                        .to_bytes(),
+                        transport_public_key: vec![100 + seed; MLDSA65_PUBLIC_KEY_BYTES],
                         // Canonical-manifest fixture, not a signing backend.
                         public_key: vec![seed; MLDSA65_PUBLIC_KEY_BYTES],
                         weight: 1,
@@ -834,9 +830,9 @@ mod tests {
                 }
                 7 => changed.genesis.policy.quote_ttl_ms += 1,
                 8 => {
-                    let first = changed.genesis.validators[0].transport_public_key;
+                    let first = changed.genesis.validators[0].transport_public_key.clone();
                     changed.genesis.validators[0].transport_public_key =
-                        changed.genesis.validators[1].transport_public_key;
+                        changed.genesis.validators[1].transport_public_key.clone();
                     changed.genesis.validators[1].transport_public_key = first;
                 }
                 9 => changed.identities[0].identity_public_key[0] ^= 1,

@@ -476,7 +476,7 @@ impl NativeMailboxDriver {
     pub fn attach(
         link: &mut NativeObjectLink,
         peer: usize,
-        node: [u8; 32],
+        node: Vec<u8>,
     ) -> Result<(Self, NativeMailboxHandle)> {
         Self::attach_adaptive(
             link,
@@ -488,7 +488,7 @@ impl NativeMailboxDriver {
     pub fn attach_adaptive(
         link: &mut NativeObjectLink,
         peer: usize,
-        node: [u8; 32],
+        node: Vec<u8>,
         controller: Arc<crate::service_concurrency::ServiceConcurrencyV1>,
     ) -> Result<(Self, NativeMailboxHandle)> {
         let client = NativeMailboxClient::attach_adaptive(link, peer, node, controller.clone())

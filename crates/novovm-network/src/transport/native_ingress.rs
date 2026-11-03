@@ -7,12 +7,12 @@ use crate::novorudp::{
     fragments::{CompletedMessage, OutgoingMessage},
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
 };
+use crate::product_overlay::TransportIdentity;
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use std::{collections::BTreeSet, io, net::SocketAddr, sync::Arc, time::Instant};
 
 pub struct NativeUdpIngressConfigV1 {
-    pub identity: SigningKey,
+    pub identity: TransportIdentity,
     pub peers: Vec<NativePeer>,
     /// Explicit key-possession slots; zero does not turn an empty peer list open.
     pub client_slots: usize,
@@ -224,7 +224,10 @@ impl AuthenticatedUdpIngressV1 {
                 };
                 // Reserve whole wire families, including invalid versions. The
                 // existing endpoint applies its own strict codec/authentication.
-                if packet.starts_with(b"NVHSHK") || packet.starts_with(b"NVRLY") {
+                if packet.starts_with(b"NVHSHK")
+                    || packet.starts_with(b"NVHCONT")
+                    || packet.starts_with(b"NVRLY")
+                {
                     return Ok(Some((packet, source)));
                 }
                 // Native-only mode rejects before the legacy decoder can learn

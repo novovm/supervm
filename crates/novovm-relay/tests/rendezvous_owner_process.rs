@@ -2,7 +2,10 @@
 //! Real Windows account custody + service executable. The parent is an
 //! explicitly isolated TEST publisher; no production trust root is created.
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+use novovm_network::product_overlay::TransportIdentity;
+#[path = "support/transport_fixture.rs"]
+mod transport_fixture;
+const PROCESS_CHAIN_ID: u64 = 47;
 use novovm_network::{
     discovery_control::DiscoveryClient,
     iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
@@ -27,11 +30,28 @@ mod native_owner;
 #[path = "support/native_carrier_owner.rs"]
 mod native_carrier_owner;
 
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn selected_service_binary(override_path: Option<std::ffi::OsString>) -> PathBuf {
+    match override_path {
+        Some(path) => {
+            let path = PathBuf::from(path);
+            assert!(path.is_absolute() && path.is_file(),
+                "NOVOVM_RENDEZVOUS_SERVICE_TEST_BINARY must name an existing absolute candidate executable");
+            path
+        }
+        None => PathBuf::from(env!("CARGO_BIN_EXE_novovm-rendezvous-service")),
+    }
 }
-fn pin(seed: u8) -> [u8; 32] {
-    key(seed).verifying_key().to_bytes()
+fn service_command() -> Command {
+    Command::new(selected_service_binary(std::env::var_os(
+        "NOVOVM_RENDEZVOUS_SERVICE_TEST_BINARY",
+    )))
+}
+
+fn key(seed: u8) -> TransportIdentity {
+    transport_fixture::identity(seed)
+}
+fn pin(seed: u8) -> Vec<u8> {
+    key(seed).public_key().to_vec()
 }
 struct Fixture(PathBuf);
 impl Fixture {
@@ -42,12 +62,19 @@ impl Fixture {
             rand::random::<u64>()
         ));
         std::fs::create_dir(&root)?;
+        transport_fixture::protect_for_chain(
+            72,
+            &root.join("transport.protected"),
+            PROCESS_CHAIN_ID,
+        )?;
         std::fs::write(root.join("initialize.request"), b"explicit test enrollment")?;
         std::fs::write(
             root.join("config.json"),
             serde_json::to_vec(&serde_json::json!({
-                "version":1,"prepare_before_ms":5000,"epoch":{
-                    "version":2,"engineering_direct_allowed":true,"trusted_signers":[pin(71)],
+                "version":2,"prepare_before_ms":5000,"epoch":{
+                    "version":3,"engineering_direct_allowed":true,
+                    "relay_identity_key_path":root.join("transport.protected"),"chain_id":PROCESS_CHAIN_ID,
+                    "library":transport_fixture::library(),"library_sha256":transport_fixture::digest(),"trusted_signers":[pin(71)],
                     "minimum_signatures":1,"allowed_clients":[pin(73),pin(74)],"relays":[],
                     "nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
                     "journal_path":root.join("service.journal"),"source_path":root.join("authority.json"),
@@ -59,7 +86,7 @@ impl Fixture {
     }
     fn launch(&self, epochs: u8) -> Result<Process> {
         use std::os::windows::process::CommandExt;
-        let child = Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"))
+        let child = service_command()
             .arg("--foreground")
             .arg(self.0.join("config.json"))
             .arg(epochs.to_string())
@@ -100,9 +127,10 @@ impl Fixture {
         self.0.join(format!("epoch-{sequence}.authority.json"))
     }
     fn source(&self, record: &PeerSignedRelayRecordV1) -> Result<BootstrapSourceV1> {
-        validate_relay_record_v1(record, now_ms()?)?;
+        validate_relay_record_v1(record, now_ms()?, &key(73))?;
         let mut manifest = SignedBootstrapManifestV1 {
-            version: 1,
+            version: 2,
+            suite: 65,
             manifest_id: "owner-test-publisher".into(),
             issued_at_ms: now_ms()?,
             expires_at_ms: record.expires_at_ms,
@@ -165,7 +193,7 @@ impl Process {
 }
 async fn exchange(record: &PeerSignedRelayRecordV1, source: BootstrapSourceV1) -> Result<()> {
     let endpoint = IrohServiceEndpointV1::from_record(record)?;
-    let node = record.relay_public_key;
+    let node = record.relay_public_key.clone();
     let config =
         IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)?;
     with_iroh_scope_v1(
@@ -173,16 +201,23 @@ async fn exchange(record: &PeerSignedRelayRecordV1, source: BootstrapSourceV1) -
         IrohControlV1::new(Instant::now() + Duration::from_secs(4), || Ok(()))?,
         move |scope| {
             Box::pin(async move {
-                let mut stream = scope.connect(&endpoint.address).await?.into();
-                let offer = request_service_offer_v2(&mut stream).await?;
+                let mut stream = scope
+                    .connect(&endpoint.address)
+                    .await
+                    .context("self-owned original carrier connect")?
+                    .into();
+                let offer = request_service_offer_v2(&mut stream)
+                    .await
+                    .context("self-owned current signed service offer")?;
                 let mut book = ServiceLeaseBookV1::new(
                     BootstrapTrustPolicyV1::single_signer(pin(71)),
                     vec![source],
                     now_ms()?,
+                    key(73),
                 )?;
                 book.accept_offer(
                     offer,
-                    node,
+                    &node,
                     endpoint.address.endpoint_key,
                     endpoint.instance,
                     now_ms()?,
@@ -209,7 +244,9 @@ impl Fixture {
         std::fs::write(
             self.0.join("owned.json"),
             serde_json::to_vec(&serde_json::json!({
-                "version":2,"root":self.0,"allowed_clients":[pin(73),pin(74)],"relays":[],
+                "version":3,"root":self.0,
+                "transport_identity_path":self.0.join("transport.protected"),"chain_id":PROCESS_CHAIN_ID,
+                "library":transport_fixture::library(),"library_sha256":transport_fixture::digest(),"allowed_clients":[pin(73),pin(74)],"relays":[],
                 "nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
                 "record_id":"owner-test-node"
             }))?,
@@ -218,7 +255,7 @@ impl Fixture {
     }
     fn launch_owned(&self, mode: &str) -> Result<Process> {
         use std::os::windows::process::CommandExt;
-        let mut command = Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"));
+        let mut command = service_command();
         command.arg(mode);
         if mode == "--migrate-self-owned" {
             command.arg(self.0.join("config.json"));
@@ -259,15 +296,13 @@ async fn self_owned_process_carrier_change_preserves_identity_and_rejects_live_m
     let policy_path = fixture.0.join("self-owned-policy.dpapi");
     let policy = std::fs::read(&policy_path)?;
     let change = |mode: &str| -> Result<std::process::Output> {
-        Ok(
-            Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"))
-                .arg("--set-self-owned-carrier")
-                .arg(fixture.0.join("owned.json"))
-                .arg(mode)
-                .stdin(Stdio::null())
-                .creation_flags(0x08000000)
-                .output()?,
-        )
+        Ok(service_command()
+            .arg("--set-self-owned-carrier")
+            .arg(fixture.0.join("owned.json"))
+            .arg(mode)
+            .stdin(Stdio::null())
+            .creation_flags(0x08000000)
+            .output()?)
     };
     let live = change("automatic")?;
     assert!(!live.status.success());
@@ -315,11 +350,12 @@ async fn self_owned_process_carrier_change_preserves_identity_and_rejects_live_m
     );
     let history = ServiceLeaseBookV1::new_self_owned(
         SelfOwnedTrustV1 {
-            version: 1,
-            node_pins: [first.relay_public_key].into(),
+            version: 2,
+            node_pins: [first.relay_public_key.clone()].into(),
         },
         vec![next.clone()],
         now_ms()?,
+        key(73),
     )?;
     owned_exchange(&next, history).await?;
     let status: serde_json::Value =
@@ -335,7 +371,7 @@ async fn owned_exchange(
     mut history: ServiceLeaseBookV1,
 ) -> Result<ServiceLeaseBookV1> {
     let endpoint = IrohServiceEndpointV1::from_record(record)?;
-    let node = record.relay_public_key;
+    let node = record.relay_public_key.clone();
     let config =
         IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)?;
     with_iroh_scope_v1(
@@ -358,13 +394,14 @@ async fn owned_exchange(
                     IrohServiceEndpointV1::from_record(offer.lease.as_ref().context("lease")?)?;
                 history.accept_offer(
                     offer,
-                    node,
+                    &node,
                     endpoint.address.endpoint_key,
                     next.instance,
                     now_ms()?,
                 )?;
-                let mut rpc =
-                    DiscoveryClient::connect(&mut stream, &key(73), node, next.instance).await?;
+                let mut rpc = DiscoveryClient::connect(&mut stream, &key(73), node, next.instance)
+                    .await
+                    .context("self-owned current bound discovery authentication")?;
                 let slot = rand::random();
                 rpc.put(slot, 1, 2000, vec![12; 128]).await?;
                 let received = rpc.get(slot).await?.context("opaque object missing")?;
@@ -401,7 +438,7 @@ async fn self_owned_process_unavailable_relay_keeps_direct_listener_across_start
         // The existing eight-second publication bound also verifies that an
         // unavailable relay cannot delay the usable localhost listener by 20s.
         let first = fixture.owned_record(0).await?;
-        validate_relay_record_v1(&first, now_ms()?)?;
+        validate_relay_record_v1(&first, now_ms()?, &key(73))?;
         let published_at = tokio::time::Instant::now();
         let endpoint = IrohServiceEndpointV1::from_record(&first)?;
         ensure!(!endpoint.address.direct.is_empty(), "direct route missing");
@@ -416,11 +453,12 @@ async fn self_owned_process_unavailable_relay_keeps_direct_listener_across_start
         let keys = std::fs::read(fixture.0.join("keys.dpapi"))?;
         let mut history = ServiceLeaseBookV1::new_self_owned(
             SelfOwnedTrustV1 {
-                version: 1,
-                node_pins: [first.relay_public_key].into(),
+                version: 2,
+                node_pins: [first.relay_public_key.clone()].into(),
             },
             vec![first.clone()],
             now_ms()?,
+            key(73),
         )?;
         history = owned_exchange(&first, history)
             .await
@@ -437,7 +475,7 @@ async fn self_owned_process_unavailable_relay_keeps_direct_listener_across_start
         ensure!(owner.0.try_wait()?.is_none(), "owner exited at rotation");
         ensure!(owner.0.id() == pid, "owner process changed at rotation");
         let rotated = fixture.owned_record(first.sequence).await?;
-        validate_relay_record_v1(&rotated, now_ms()?)?;
+        validate_relay_record_v1(&rotated, now_ms()?, &key(73))?;
         let next = IrohServiceEndpointV1::from_record(&rotated)?;
         ensure!(
             rotated.relay_public_key == first.relay_public_key
@@ -492,10 +530,11 @@ async fn self_owned_process_migrates_without_publisher_keeps_listener_across_ins
         BootstrapTrustPolicyV1::single_signer(pin(71)),
         vec![source],
         admitted_at,
+        key(73),
     )?;
     let trust = SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [first.relay_public_key].into(),
+        version: 2,
+        node_pins: [first.relay_public_key.clone()].into(),
     };
     let mut history =
         previous.prepare_self_owned_migration(trust.clone(), vec![first.clone()], now_ms()?)?;
@@ -548,16 +587,26 @@ async fn self_owned_process_migrates_without_publisher_keeps_listener_across_ins
 #[tokio::test(flavor = "current_thread")]
 async fn self_owned_process_fresh_node_requires_no_publisher_or_original_root() -> Result<()> {
     let fixture = Fixture::new()?;
+    assert_eq!(
+        selected_service_binary(None),
+        PathBuf::from(env!("CARGO_BIN_EXE_novovm-rendezvous-service"))
+    );
+    let explicit_selection = fixture.0.join("config.json");
+    assert_eq!(
+        selected_service_binary(Some(explicit_selection.clone().into_os_string())),
+        explicit_selection
+    );
     fixture.owned_config()?;
     let owner = fixture.launch_owned("--provision-self-owned")?;
     let record = fixture.owned_record(0).await?;
     let history = ServiceLeaseBookV1::new_self_owned(
         SelfOwnedTrustV1 {
-            version: 1,
-            node_pins: [record.relay_public_key].into(),
+            version: 2,
+            node_pins: [record.relay_public_key.clone()].into(),
         },
         vec![record.clone()],
         now_ms()?,
+        key(73),
     )?;
     owned_exchange(&record, history).await?;
     drop(owner);

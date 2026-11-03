@@ -64,7 +64,7 @@ impl NativeEndpoint {
             return Ok(());
         }
         for (&index, peer) in &mut self.peers {
-            let Some(key) = peer.configured_key else {
+            let Some(key) = &peer.configured_key else {
                 continue;
             };
             if peer.session.is_some()
@@ -80,7 +80,7 @@ impl NativeEndpoint {
                 .context("configured peer lost its route")?;
             peer.handshake = Some(NativeHandshake::start_role(
                 policy.identity.clone(),
-                key,
+                key.clone(),
                 route,
                 wall_ms,
                 now,
@@ -154,7 +154,7 @@ impl NativeEndpoint {
         };
         let peer = &self.peers[&index];
         ensure!(
-            peer.configured_key == Some(offer.initiator_identity_public_key),
+            peer.configured_key.as_deref() == Some(offer.initiator_identity_public_key.as_slice()),
             "configured reconnect identity mismatch"
         );
         if peer.session.is_some() {
@@ -163,13 +163,22 @@ impl NativeEndpoint {
         // If both endpoints are starting, retain the lower peer's offer.
         // The higher peer validates a responder transcript BEFORE replacing
         // its local attempt; invalid input cannot suppress our outgoing offer.
-        let local = peer_id_from_ed25519_public_key_v1(&self.local_key);
+        let local = peer_id_from_mldsa65_public_key_v1(&self.local_key);
         if local.as_str() < peer.id.as_ref() {
             ensure!(
                 offer.responder_peer_id == local,
                 "configured offer target mismatch"
             );
-            crate::product_overlay::validate_handshake_offer_v1(&offer, wall_ms, &mut self.replay)?;
+            crate::product_overlay::validate_handshake_offer_v1(
+                &offer,
+                wall_ms,
+                &mut self.replay,
+                &self
+                    .configured
+                    .as_ref()
+                    .context("configured policy missing")?
+                    .identity,
+            )?;
             return Ok(());
         }
         self.prepare_reconnect(index, source, wire, wall_ms, now)?;
@@ -177,10 +186,11 @@ impl NativeEndpoint {
         // replaying a still-signed pre-restart offer could install an orphaned
         // session and permanently suppress retries. The bounded pending attempt
         // expires normally; an unsuccessful attempt then gets a NEW offer.
-        self.peers
-            .get_mut(&index)
-            .context("unknown native peer")?
-            .handshake = None;
+        // Keep the existing bounded initiator flight until confirmation. With
+        // a continued transcript, abandoning its last parts would leave the
+        // remote source's assembly occupied and block this response. Election
+        // still selects the lower peer's offer; only fresh AEAD confirmation
+        // installs the pending responder and replaces this initiator state.
         Ok(())
     }
 
@@ -246,7 +256,7 @@ impl NativeEndpoint {
             anyhow::bail!("client must initiate")
         };
         ensure!(
-            peer_id_from_ed25519_public_key_v1(&offer.initiator_identity_public_key)
+            peer_id_from_mldsa65_public_key_v1(&offer.initiator_identity_public_key)
                 == self
                     .peers
                     .get_mut(&index)
@@ -257,7 +267,7 @@ impl NativeEndpoint {
         );
         let mut handshake = NativeHandshake::start_role(
             identity,
-            offer.initiator_identity_public_key,
+            offer.initiator_identity_public_key.clone(),
             source,
             wall_ms,
             now,

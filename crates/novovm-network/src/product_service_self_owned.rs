@@ -8,23 +8,26 @@ pub struct SelfOwnedTrustV1 {
     pub version: u8,
     /// Confirmed out of band by the receiving owner. Never inferred from an
     /// unsolicited record or copied automatically from an old endorsement.
-    pub node_pins: BTreeSet<[u8; 32]>,
+    pub node_pins: BTreeSet<Vec<u8>>,
 }
 impl SelfOwnedTrustV1 {
     fn validate(&self) -> Result<()> {
         ensure!(
-            self.version == 1 && (1..=2).contains(&self.node_pins.len()),
+            self.version == 2 && (1..=2).contains(&self.node_pins.len()),
             "self-owned trust bounds"
         );
         for pin in &self.node_pins {
-            strict_key(pin)?;
+            ensure!(
+                pin.len() == MLDSA65_PUBLIC_KEY_BYTES && pin.iter().any(|b| *b != 0),
+                "invalid native service key"
+            );
         }
         Ok(())
     }
 }
 
 pub struct ServiceBootstrapCandidateV1 {
-    pub public_key: [u8; 32],
+    pub public_key: Vec<u8>,
     pub endpoint: IrohServiceEndpointV1,
     /// Local permission to attempt a fresh authenticated offer. Not the expiry
     /// of the historical signed record, nor permission for application IO.
@@ -38,7 +41,7 @@ struct State {
     trust: SelfOwnedTrustV1,
     grants: Vec<PeerSignedRelayRecordV1>,
     current: Vec<PeerSignedRelayRecordV1>,
-    tombstones: BTreeSet<[u8; 32]>,
+    tombstones: BTreeSet<Vec<u8>>,
     clock: u64,
     /// Retain the original signed source/revocation history on explicit migration.
     prior_endorsement: Option<String>,
@@ -52,13 +55,13 @@ impl ServiceLeaseBookV1 {
     /// Never available to the lease-bound, Publisher-endorsed policy.
     pub fn check_continuous_peer_v4(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: [u8; 32],
         now: u64,
     ) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "continuous peer requires local trust");
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry
                 .decoded_current()?
@@ -79,7 +82,7 @@ impl ServiceLeaseBookV1 {
     /// offered instance, after signature, freshness and sequence validation.
     pub fn check_bootstrap_route(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: [u8; 32],
         instance: [u8; 32],
         now: u64,
@@ -88,7 +91,7 @@ impl ServiceLeaseBookV1 {
             return self.check_route(pin, endpoint, instance, now);
         }
         self.observe(now)?;
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry
                 .decoded_current()?
@@ -154,9 +157,9 @@ impl ServiceLeaseBookV1 {
         let mut entries = self.entries.clone();
         let mut seen = BTreeSet::new();
         for record in records {
-            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS, &self.verifier)?;
             ensure!(
-                seen.insert(record.relay_public_key),
+                seen.insert(record.relay_public_key.clone()),
                 "duplicate self-owned update"
             );
             let entry = entries
@@ -173,6 +176,7 @@ impl ServiceLeaseBookV1 {
         trust: SelfOwnedTrustV1,
         records: Vec<PeerSignedRelayRecordV1>,
         now: u64,
+        verifier: impl TransportVerifier + 'static,
     ) -> Result<Self> {
         trust.validate()?;
         ensure!(
@@ -181,12 +185,12 @@ impl ServiceLeaseBookV1 {
         );
         let mut entries = BTreeMap::new();
         for record in records {
-            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS, &verifier)?;
             ensure!(
                 trust.node_pins.contains(&record.relay_public_key),
                 "unconfirmed self-owned node"
             );
-            let pin = record.relay_public_key;
+            let pin = record.relay_public_key.clone();
             ensure!(!entries.contains_key(&pin), "duplicate self-owned node");
             entries.insert(
                 pin,
@@ -199,6 +203,7 @@ impl ServiceLeaseBookV1 {
             );
         }
         Ok(Self {
+            verifier: Arc::new(verifier),
             policy: ServiceTrustV1::SelfOwned(trust),
             sources: Vec::new(),
             entries,
@@ -220,7 +225,7 @@ impl ServiceLeaseBookV1 {
         if self.is_self_owned() {
             let mut candidates = Vec::new();
             for entry in self.entries.values_mut() {
-                let pin = entry.current.relay_public_key;
+                let pin = entry.current.relay_public_key.clone();
                 if let Some(endpoint) = &entry.decoded_current()?.routes.iroh {
                     candidates.push(ServiceBootstrapCandidateV1 {
                         public_key: pin,
@@ -237,7 +242,7 @@ impl ServiceLeaseBookV1 {
             .iter()
             .map(|record| {
                 Ok(ServiceBootstrapCandidateV1 {
-                    public_key: record.relay_public_key,
+                    public_key: record.relay_public_key.clone(),
                     endpoint: IrohServiceEndpointV1::from_record(record)?,
                     authenticate_before_ms: record.expires_at_ms,
                 })
@@ -247,17 +252,17 @@ impl ServiceLeaseBookV1 {
 
     /// Operator/user removes only this local trust. It cannot revoke the node
     /// for other owners. A revoked key cannot resurrect by replay or restart.
-    pub fn revoke_self_owned(&mut self, pin: [u8; 32], now: u64) -> Result<()> {
+    pub fn revoke_self_owned(&mut self, pin: &[u8], now: u64) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "self-owned policy required");
         ensure!(
-            self.entries.contains_key(&pin) || self.tombstones.contains(&pin),
+            self.entries.contains_key(pin) || self.tombstones.contains(pin),
             "unknown self-owned node"
         );
         let mut entries = self.entries.clone();
-        entries.remove(&pin);
+        entries.remove(pin);
         let mut tombstones = self.tombstones.clone();
-        tombstones.insert(pin);
+        tombstones.insert(pin.to_vec());
         ensure!(tombstones.len() <= 32, "revocation budget");
         self.publish(Vec::new(), entries, tombstones)
     }
@@ -284,14 +289,14 @@ impl ServiceLeaseBookV1 {
         let mut entries = self.entries.clone();
         let mut seen = BTreeSet::new();
         for record in records {
-            let pin = record.relay_public_key;
+            let pin = record.relay_public_key.clone();
             ensure!(
                 trust.node_pins.contains(&pin)
                     && !self.tombstones.contains(&pin)
-                    && seen.insert(pin),
+                    && seen.insert(pin.clone()),
                 "untrusted, revoked or duplicate policy record"
             );
-            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS, &self.verifier)?;
             if let Some(previous) = entries.get(&pin) {
                 newer(&previous.current, &record)?;
             }
@@ -313,6 +318,7 @@ impl ServiceLeaseBookV1 {
             "new node requires a signed record"
         );
         let next = Self {
+            verifier: self.verifier.clone(),
             policy: ServiceTrustV1::SelfOwned(trust),
             sources: Vec::new(),
             entries,
@@ -340,7 +346,7 @@ impl ServiceLeaseBookV1 {
             !self.failed && !self.is_self_owned() && now >= self.clock,
             "invalid trust migration"
         );
-        let mut next = Self::new_self_owned(trust, records, now)?;
+        let mut next = Self::new_self_owned(trust, records, now, self.verifier.clone())?;
         for (pin, entry) in &next.entries {
             ensure!(!self.tombstones.contains(pin), "revoked service identity");
             let previous = self
@@ -368,7 +374,12 @@ impl ServiceLeaseBookV1 {
         )
     }
 
-    pub fn restore_self_owned(trust: SelfOwnedTrustV1, bytes: &[u8], now: u64) -> Result<Self> {
+    pub fn restore_self_owned(
+        trust: SelfOwnedTrustV1,
+        bytes: &[u8],
+        now: u64,
+        verifier: impl TransportVerifier + 'static,
+    ) -> Result<Self> {
         trust.validate()?;
         ensure!(
             bytes.len() <= MAX_SERVICE_CHECKPOINT_BYTES,
@@ -376,7 +387,7 @@ impl ServiceLeaseBookV1 {
         );
         let state: State = serde_json::from_slice(bytes)?;
         ensure!(
-            state.version == 2
+            state.version == 3
                 && state.trust == trust
                 && now >= state.clock
                 && state.tombstones.len() <= 32
@@ -394,12 +405,22 @@ impl ServiceLeaseBookV1 {
                     && current.issued_at_ms <= state.clock,
                 "self-owned checkpoint identity/clock"
             );
-            let old = verify_service_record(grant, grant.issued_at_ms, MAX_BOOTSTRAP_LEASE_MS)?;
+            let old = verify_service_record(
+                grant,
+                grant.issued_at_ms,
+                MAX_BOOTSTRAP_LEASE_MS,
+                &verifier,
+            )?;
             if current != grant {
                 // Different grant/current is the legacy Iroh online-renewal
                 // shape. Native locator updates atomically replace both.
                 let old = old.iroh.context("Iroh service endpoint required")?;
-                let live = verify(current, current.issued_at_ms, MAX_SERVICE_LEASE_MS)?;
+                let live = verify(
+                    current,
+                    current.issued_at_ms,
+                    MAX_SERVICE_LEASE_MS,
+                    &verifier,
+                )?;
                 ensure!(
                     old.address.endpoint_key == live.address.endpoint_key
                         && old.instance == live.instance,
@@ -410,7 +431,7 @@ impl ServiceLeaseBookV1 {
             ensure!(
                 entries
                     .insert(
-                        grant.relay_public_key,
+                        grant.relay_public_key.clone(),
                         Entry {
                             grant: grant.clone(),
                             current: current.clone(),
@@ -430,6 +451,7 @@ impl ServiceLeaseBookV1 {
             "missing self-owned history"
         );
         let book = Self {
+            verifier: Arc::new(verifier),
             policy: ServiceTrustV1::SelfOwned(trust),
             sources: Vec::new(),
             entries,
@@ -450,13 +472,13 @@ impl ServiceLeaseBookV1 {
 
 pub(super) fn encode_self_owned(
     trust: &SelfOwnedTrustV1,
-    entries: &BTreeMap<[u8; 32], Entry>,
-    tombstones: &BTreeSet<[u8; 32]>,
+    entries: &BTreeMap<Vec<u8>, Entry>,
+    tombstones: &BTreeSet<Vec<u8>>,
     clock: u64,
     prior_endorsement: &Option<String>,
 ) -> Result<Vec<u8>> {
     let bytes = serde_json::to_vec(&State {
-        version: 2,
+        version: 3,
         trust: trust.clone(),
         grants: entries.values().map(|e| e.grant.clone()).collect(),
         current: entries.values().map(|e| e.current.clone()).collect(),

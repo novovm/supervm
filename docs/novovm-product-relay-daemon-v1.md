@@ -1,10 +1,13 @@
 # NOVOVM Product Relay Daemon v1
 
+2026-11-03 source-candidate identity update; no actual deployment or A/B/C/D
+platform acceptance is claimed by these instructions.
+
 `novovm-product-relay` is a headless WSS relay runtime. It does not execute
 payloads, interpret business semantics, or act as a NOVOVM trust authority.
 
 The relay requires a PEM TLS certificate/key for the WebSocket transport and a
-separate Ed25519 relay identity key. The TLS certificate encrypts the transport;
+separate protected ML-DSA-65 relay Transport purpose key. The TLS certificate encrypts the transport;
 the signed NOVOVM node challenge-response remains the protocol identity check.
 The runtime report emitted by this release carries `daemon_version: 2`. Existing
 Rust `V1` names are type/scope labels only; they do not promise source, wire, or
@@ -12,12 +15,15 @@ report-schema compatibility with an older daemon.
 
 ## Configuration
 
-```json
+```jsonc
 {
   "bind_addr": "0.0.0.0:443",
   "tls_cert_path": "/etc/novovm/tls/fullchain.pem",
   "tls_key_path": "/etc/novovm/tls/privkey.pem",
-  "relay_identity_key_path": "/etc/novovm/relay-ed25519.hex",
+  "relay_identity_key_path": "<ABSOLUTE_PROTECTED_TRANSPORT_KEY>",
+  "chain_id": "<APPROVED_NONZERO_CHAIN_ID_INTEGER>",
+  "library": "<ABSOLUTE_APPROVED_PLATFORM_AOEM_LIBRARY>",
+  "library_sha256": "<APPROVED_64_LOWERCASE_HEX_SHA256>",
   "report_path": "/var/lib/novovm/reports/relay.json",
   "report_interval_ms": 5000,
   "max_connections": 512,
@@ -62,10 +68,20 @@ bytes，使用固定 60 秒窗口。它们不包含 relay egress、WebSocket fra
 `rate_limit_frames` 是单 identity 窗口上限，`max_frames_per_window` 是所有 identity 共享的
 同窗口上限；后者关闭大量小 frame 的 aggregate CPU 绕过。
 
-`relay_identity_key_path` contains exactly 64 hexadecimal characters: a single
-32-byte Ed25519 secret. It must be readable only by the relay service account
-and must never be placed in the JSON configuration, report, manifest, or relay
-record.
+The identity placeholders are not runnable chain/key/hash values.
+`relay_identity_key_path` points to the already-protected Transport purpose
+envelope (`NVPK0003`, version 3, suite 65), loaded under the actual service
+account through the original custody owner. The approved AOEM artifact is
+SHA-256 pinned and qualified once; native incoming signatures use its original
+unified-semantic verifier. Signing/keygen retain existing shared primitives.
+Old raw 32-byte/hex keys, missing runtime capability or verification failure
+never select an Ed25519 native authorization fallback. The distinct TLS PEM
+key remains a carrier key, not a NOV authorization key. Never put private material
+in JSON, reports, manifests or relay records.
+Use absolute paths in this template. The shared identity-input callback used by
+the explicit duplex/rendezvous selector resolves relative identity/library paths
+against the config directory; the original full legacy-JSON config loader does
+not automatically rebase all TLS/report/identity paths.
 
 Run the daemon with:
 

@@ -10,7 +10,7 @@
 //! establishes progress. Queues may expire or drop inbound traffic under load.
 
 use crate::duplex::product_overlay::{
-    peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
+    peer_id_from_mldsa65_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
     NodeHandshakeInitiatorV1, NodeHandshakeResponderV1, NodeHandshakeResponseV1,
 };
 use crate::duplex::product_relay::{
@@ -20,8 +20,8 @@ use crate::duplex::product_relay_client::{
     ProductRelayClientConfigV1, ProductRelayClientEventV1, ProductRelayClientV1,
 };
 use crate::novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0};
+use crate::product_overlay::TransportIdentity;
 use anyhow::{bail, Context, Result};
-use ed25519_dalek::SigningKey;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -310,7 +310,7 @@ pub struct NetworkWorker {
 impl NetworkWorker {
     /// Validates locally and spawns; never connects or waits for a relay here.
     /// Identity is moved to the dedicated worker, never attached to messages.
-    pub fn start(config: NetworkWorkerConfig, identity: SigningKey) -> Result<Self> {
+    pub fn start(config: NetworkWorkerConfig, identity: TransportIdentity) -> Result<Self> {
         validate_config(&config, &identity)?;
         let shared = Arc::new(Mutex::new(Shared {
             outbound: OutboundQueues::new(&config.peers, config.limits.outbound.clone()),
@@ -464,11 +464,11 @@ impl Drop for NetworkWorker {
     }
 }
 
-fn validate_config(config: &NetworkWorkerConfig, identity: &SigningKey) -> Result<()> {
+fn validate_config(config: &NetworkWorkerConfig, identity: &TransportIdentity) -> Result<()> {
     if config.chain_id == 0 {
         bail!("network chain id must be nonzero");
     }
-    let local = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+    let local = peer_id_from_mldsa65_public_key_v1(identity.public_key());
     let unique: BTreeSet<_> = config.peers.iter().collect();
     if config.peers.is_empty()
         || config.peers.len() > MAX_PEERS
@@ -521,7 +521,7 @@ fn validate_config(config: &NetworkWorkerConfig, identity: &SigningKey) -> Resul
 }
 
 fn valid_peer_id(id: &str) -> bool {
-    id.strip_prefix("novovm-ed25519:").is_some_and(|key| {
+    id.strip_prefix("novovm-mldsa65:").is_some_and(|key| {
         key.len() == 64
             && key
                 .bytes()
@@ -632,7 +632,7 @@ fn now_ms() -> u64 {
 
 fn run_worker(
     config: &NetworkWorkerConfig,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     shared: &Mutex<Shared>,
     stop: &AtomicBool,
 ) -> Result<()> {

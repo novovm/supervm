@@ -65,12 +65,25 @@ fn bulk_probe_reply_requires_exact_capability_and_original_request() {
     let ready = Reply::BulkReady {
         max_ciphertext: crate::mailbox_store::MAX_BULK_CIPHERTEXT as u32,
     };
-    assert!(verify_reply([1; 32], &Request::ProbeBulkV1, &ready).is_ok());
-    assert!(verify_reply([1; 32], &Request::ServiceRecordV7, &ready).is_err());
     assert!(verify_reply(
-        [1; 32],
+        &vec![1; MLDSA65_PUBLIC_KEY_BYTES],
         &Request::ProbeBulkV1,
-        &Reply::BulkReady { max_ciphertext: 1 }
+        &ready,
+        &crate::test_identity::key(250)
+    )
+    .is_ok());
+    assert!(verify_reply(
+        &vec![1; MLDSA65_PUBLIC_KEY_BYTES],
+        &Request::ServiceRecordV7,
+        &ready,
+        &crate::test_identity::key(250)
+    )
+    .is_err());
+    assert!(verify_reply(
+        &vec![1; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
+        &Request::ProbeBulkV1,
+        &Reply::BulkReady { max_ciphertext: 1 },
+        &crate::test_identity::key(250)
     )
     .is_err());
 }
@@ -80,7 +93,7 @@ fn binding() -> Binding {
         peer: 0,
         id: "test".into(),
         session: [7; 16],
-        local: [3; 32],
+        local: vec![3; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
         role: NativeApplicationRole::Client,
         validity: NativeSessionValidity::new(),
     }
@@ -124,7 +137,7 @@ fn work(slots: Slots, deadline: Instant) -> Result<MailboxWork> {
         },
         peer: 0,
         session: [7; 16],
-        signer: [3; 32],
+        signer: vec![3; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
         deadline,
     })
 }
@@ -150,16 +163,16 @@ fn cancelled_unpolled_work_latches_only_its_slot_and_context_separates_scopes() 
         }
         .context(0, 1)
     );
-    let requester = [31; 32];
-    let responder = [32; 32];
+    let requester = vec![31; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES];
+    let responder = vec![32; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES];
     let client = Binding {
-        local: requester,
-        id: peer_id_from_ed25519_public_key_v1(&responder),
+        local: requester.clone(),
+        id: peer_id_from_mldsa65_public_key_v1(&responder),
         ..binding()
     };
     let server = Binding {
-        local: responder,
-        id: peer_id_from_ed25519_public_key_v1(&requester),
+        local: responder.clone(),
+        id: peer_id_from_mldsa65_public_key_v1(&requester),
         role: NativeApplicationRole::Service,
         ..binding()
     };
@@ -175,11 +188,11 @@ fn cancelled_unpolled_work_latches_only_its_slot_and_context_separates_scopes() 
 #[tokio::test]
 async fn wrong_owner_and_expired_work_fail_before_store_effects() -> Result<()> {
     use crate::mailbox_store::MailboxStore;
-    use ed25519_dalek::SigningKey;
+    use crate::product_overlay::TransportIdentity;
     let dir = tempfile::tempdir()?;
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(dir.path().join("owner.db"), Default::default(), true)?,
-        SigningKey::from_bytes(&[11; 32]),
+        TransportIdentity::from_bytes(&[11; 32]),
     );
     service.set_resources_available(true).await?;
     for deadline in [
@@ -207,9 +220,9 @@ async fn wrong_owner_and_expired_work_fail_before_store_effects() -> Result<()> 
 
 #[test]
 fn reply_semantics_are_checked_not_only_context_and_row_count() -> Result<()> {
-    use ed25519_dalek::SigningKey;
-    let key = SigningKey::from_bytes(&[11; 32]);
-    let node = key.verifying_key().to_bytes();
+    use crate::product_overlay::TransportIdentity;
+    let key = TransportIdentity::from_bytes(&[11; 32]);
+    let node = key.public_key().to_vec();
     let put = Request::Put {
         mailbox: [1; 32],
         write: [2; 32],
@@ -217,24 +230,36 @@ fn reply_semantics_are_checked_not_only_context_and_row_count() -> Result<()> {
         ciphertext: vec![4; 16],
         expires: 1000,
     };
-    let mut receipt = StoreReceiptV1::committed(&key, [1; 32], [3; 32], &[4; 16], 1000);
-    assert!(verify_reply(node, &put, &Reply::Empty).is_err());
-    verify_reply(node, &put, &Reply::Stored(receipt.clone()))?;
+    let mut receipt = StoreReceiptV1::committed(&key, [1; 32], [3; 32], &[4; 16], 1000)?;
+    assert!(verify_reply(&node, &put, &Reply::Empty, &crate::test_identity::key(250)).is_err());
+    verify_reply(
+        &node,
+        &put,
+        &Reply::Stored(receipt.clone()),
+        &crate::test_identity::key(250),
+    )?;
     receipt.signature[0] ^= 1;
-    assert!(verify_reply(node, &put, &Reply::Stored(receipt)).is_err());
+    assert!(verify_reply(
+        &node,
+        &put,
+        &Reply::Stored(receipt),
+        &crate::test_identity::key(250)
+    )
+    .is_err());
     let fetch = Request::Fetch {
         mailbox: [1; 32],
         read: [3; 32],
     };
     assert!(verify_reply(
-        node,
+        &node,
         &fetch,
         &Reply::Object {
             object: [3; 32],
             ciphertext: vec![4; 16],
             digest: [0; 32],
             expires: 1000
-        }
+        },
+        &crate::test_identity::key(250)
     )
     .is_err());
     let watch = Request::Watch {
@@ -245,13 +270,20 @@ fn reply_semantics_are_checked_not_only_context_and_row_count() -> Result<()> {
         }],
         wait_ms: 0,
     };
-    assert!(verify_reply(node, &watch, &Reply::Notice(vec![])).is_err());
+    assert!(verify_reply(
+        &node,
+        &watch,
+        &Reply::Notice(vec![]),
+        &crate::test_identity::key(250)
+    )
+    .is_err());
     Ok(())
 }
 
 #[test]
 fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_record() -> Result<()>
 {
+    use crate::product_overlay::TransportIdentity;
     use crate::{
         iroh_transport::IrohAddressV1,
         product_directory::sign_relay_record_v1,
@@ -259,14 +291,15 @@ fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_rec
             IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7,
         },
     };
-    use ed25519_dalek::SigningKey;
-    let key = SigningKey::from_bytes(&[72; 32]);
-    let node = key.verifying_key().to_bytes();
+    let key = TransportIdentity::from_bytes(&[72; 32]);
+    let node = key.public_key().to_vec();
     let carrier = NativeCarrierMailboxEndpointV7 {
         iroh: IrohServiceEndpointV1 {
             instance: [7; 32],
             address: IrohAddressV1 {
-                endpoint_key: SigningKey::from_bytes(&[73; 32]).verifying_key().to_bytes(),
+                endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[73; 32])
+                    .verifying_key()
+                    .to_bytes(),
                 direct: vec!["127.0.0.1:4434".parse()?],
                 relays: Vec::new(),
             },
@@ -289,19 +322,21 @@ fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_rec
         vec![carrier.endpoint()?, udp.clone()],
     ] {
         verify_reply(
-            node,
+            &node,
             &Request::ServiceRecordV7,
             &Reply::ServiceRecordV7 {
                 record: sign(endpoints, now, now + 60_000)?,
             },
+            &crate::test_identity::key(250),
         )?;
     }
     assert!(verify_reply(
-        [99; 32],
+        &vec![99; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
         &Request::ServiceRecordV7,
         &Reply::ServiceRecordV7 {
             record: signed.clone()
-        }
+        },
+        &crate::test_identity::key(250)
     )
     .is_err());
     // Authenticated metadata may be inspected even when it is not a valid
@@ -311,19 +346,21 @@ fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_rec
         sign(vec![carrier.endpoint()?], now + 60_000, now + 120_000)?,
     ] {
         verify_reply(
-            node,
+            &node,
             &Request::ServiceRecordV7,
             &Reply::ServiceRecordV7 {
                 record: record.clone(),
             },
+            &crate::test_identity::key(250),
         )?;
-        assert!(crate::product_directory::validate_relay_record_v1(&record, now).is_err());
+        assert!(crate::product_directory::validate_relay_record_v1(&record, now, &key).is_err());
         let mut forged = record;
         forged.signature[0] ^= 1;
         assert!(verify_reply(
-            node,
+            &node,
             &Request::ServiceRecordV7,
-            &Reply::ServiceRecordV7 { record: forged }
+            &Reply::ServiceRecordV7 { record: forged },
+            &crate::test_identity::key(250)
         )
         .is_err());
     }
@@ -337,9 +374,10 @@ fn native_carrier_locator_reply_requires_explicit_capability_and_bound_valid_rec
         sign(vec![udp, malformed], now, now + 60_000)?,
     ] {
         assert!(verify_reply(
-            node,
+            &node,
             &Request::ServiceRecordV7,
-            &Reply::ServiceRecordV7 { record: rejected }
+            &Reply::ServiceRecordV7 { record: rejected },
+            &crate::test_identity::key(250)
         )
         .is_err());
     }
@@ -379,7 +417,7 @@ fn waiting_watch_classification_uses_validated_batch_and_zero_wait_is_immediate(
 async fn overload_rejects_without_storage_effects_or_slot_reset() -> Result<()> {
     use crate::mailbox_store::MailboxStore;
     let dir = tempfile::tempdir()?;
-    let key = ed25519_dalek::SigningKey::from_bytes(&[81; 32]);
+    let key = crate::test_identity::key(81);
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(dir.path().join("quota.db"), Default::default(), true)?,
         key.clone(),
@@ -387,7 +425,7 @@ async fn overload_rejects_without_storage_effects_or_slot_reset() -> Result<()> 
     service.set_resources_available(true).await?;
     let slots = slots();
     let mut item = work(slots.clone(), Instant::now() + REQUEST_DEADLINE)?;
-    item.signer = key.verifying_key().to_bytes();
+    item.signer = key.public_key().to_vec();
     assert!(!item.has_waiting_watch());
     let response = item.reject_quota(&service, || Ok(()))?;
     {

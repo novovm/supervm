@@ -10,7 +10,7 @@ pub(crate) struct TestNodeKeys {
     pub(crate) signer:
         std::sync::Arc<crate::native_pipeline::consensus::crypto::AoemConsensusSigner>,
     pub(crate) validator_path: std::path::PathBuf,
-    pub(crate) transport: ed25519_dalek::SigningKey,
+    pub(crate) transport: novovm_network::product_overlay::TransportIdentity,
     pub(crate) transport_path: std::path::PathBuf,
 }
 
@@ -22,9 +22,8 @@ pub(crate) fn generate_node_keys(
     index: usize,
     crypto: &crate::native_pipeline::consensus::crypto::AoemConsensusCrypto,
 ) -> Result<TestNodeKeys> {
-    use novovm_relay::purpose_keys::{self, PurposeV1};
+    use novovm_relay::purpose_keys;
     let validator_path = root.join(format!("test-validator-{index}.sealed"));
-    let transport_path = root.join(format!("test-transport-{index}.sealed"));
     purpose_keys::generate_validator(
         &validator_path,
         chain,
@@ -35,13 +34,36 @@ pub(crate) fn generate_node_keys(
         purpose_keys::load_validator(&validator_path, chain, |public, secret, challenge| {
             crypto.check_key_pair(public, secret, challenge)
         })?;
-    purpose_keys::generate(&transport_path, PurposeV1::Transport, chain)?;
+    let (transport, transport_path) =
+        generate_transport_key(root, chain, &index.to_string(), crypto)?;
     Ok(TestNodeKeys {
         signer: crypto.signer(material)?,
         validator_path,
-        transport: purpose_keys::load(&transport_path, PurposeV1::Transport, chain)?,
+        transport,
         transport_path,
     })
+}
+
+pub(crate) fn generate_transport_key(
+    root: &Path,
+    chain: u64,
+    label: &str,
+    crypto: &crate::native_pipeline::consensus::crypto::AoemConsensusCrypto,
+) -> Result<(
+    novovm_network::product_overlay::TransportIdentity,
+    std::path::PathBuf,
+)> {
+    use novovm_relay::purpose_keys::{self, PurposeV1};
+    let path = root.join(format!("test-transport-{label}.sealed"));
+    purpose_keys::generate_mldsa(
+        &path,
+        PurposeV1::Transport,
+        chain,
+        || crypto.generate_test_key(),
+        |public, secret, challenge| crypto.check_transport_key_pair(public, secret, challenge),
+    )?;
+    let material = purpose_keys::read_mldsa_material(&path, PurposeV1::Transport, chain)?;
+    Ok((crypto.transport_identity(material)?, path))
 }
 
 #[cfg(target_os = "linux")]

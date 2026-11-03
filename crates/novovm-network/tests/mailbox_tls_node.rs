@@ -2,7 +2,8 @@
 //! Real existing node loop, TCP/TLS, QUIC and encrypted authority journal.
 //! Loopback fixtures are not Android, independent-node or public reachability proof.
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use novovm_network::{
     carrier_stream::CarrierStreamV1,
     iroh_transport::*,
@@ -21,15 +22,13 @@ use std::{
     },
     time::Duration,
 };
+use transport_identity::key;
 use zeroize::Zeroizing;
 
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
-}
 fn trust() -> SelfOwnedTrustV1 {
     SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [key(1).verifying_key().to_bytes()].into(),
+        version: 2,
+        node_pins: [key(1).public_key().to_vec()].into(),
     }
 }
 fn config() -> Result<IrohConfigV1> {
@@ -60,27 +59,36 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     let ir = IrohServiceEndpointV1 {
         instance: [4; 32],
         address: IrohAddressV1 {
-            endpoint_key: key(3).verifying_key().to_bytes(),
+            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[3; 32])
+                .verifying_key()
+                .to_bytes(),
             direct: vec!["127.0.0.1:3000".parse()?],
             relays: vec![],
         },
     };
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:3001".parse()?,
-        endpoint_key: key(5).verifying_key().to_bytes(),
+        endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[5; 32])
+            .verifying_key()
+            .to_bytes(),
         max_connections: 4,
         native_mailbox_v8: false,
     };
-    let pin = key(1).verifying_key().to_bytes();
+    let pin = key(1).public_key().to_vec();
     let first = sign(&ir, Some(&tls), 1, 1000)?;
-    let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![first.clone()], 1000)?;
-    book.check_tls_route_v1(pin, &tls, 1001)?;
+    let mut book = ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![first.clone()],
+        1000,
+        crate::transport_identity::key(90),
+    )?;
+    book.check_tls_route_v1(&pin, &tls, 1001)?;
     // Live supervision repeats at IO/watchdog frequency, not discovery frequency.
     // This measures only the local checked book, not message/network latency.
     let started = std::time::Instant::now();
     for _ in 0..1000 {
-        book.check_continuous_tls_peer_v1(pin, &tls, 1001)?;
-        book.check_continuous_peer_v4(pin, ir.address.endpoint_key, 1001)?;
+        book.check_continuous_tls_peer_v1(&pin, &tls, 1001)?;
+        book.check_continuous_peer_v4(&pin, ir.address.endpoint_key, 1001)?;
     }
     eprintln!(
         "2000 live book checks elapsed_us={}",
@@ -94,7 +102,7 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
             candidates[0].endpoint.address.endpoint_key,
             ir.address.endpoint_key
         );
-        book.check_bootstrap_route(pin, ir.address.endpoint_key, ir.instance, 1001)?;
+        book.check_bootstrap_route(&pin, ir.address.endpoint_key, ir.instance, 1001)?;
     }
     eprintln!(
         "2000 candidate/route checks elapsed_us={}",
@@ -102,27 +110,34 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     );
     let mut wrong = tls.clone();
     wrong.address.set_port(3002);
-    assert!(book.check_tls_route_v1(pin, &wrong, 1002).is_err());
-    wrong.endpoint_key = key(6).verifying_key().to_bytes();
+    assert!(book.check_tls_route_v1(&pin, &wrong, 1002).is_err());
+    wrong.endpoint_key = ed25519_dalek::SigningKey::from_bytes(&[6; 32])
+        .verifying_key()
+        .to_bytes();
     assert!(book
-        .check_continuous_tls_peer_v1(pin, &wrong, 1002)
+        .check_continuous_tls_peer_v1(&pin, &wrong, 1002)
         .is_err());
     // Discovery expiry cannot renew a dial, and does not break a live session.
-    book.check_continuous_tls_peer_v1(pin, &tls, 92_000)?;
-    assert!(book.check_tls_route_v1(pin, &tls, 92_000).is_err());
+    book.check_continuous_tls_peer_v1(&pin, &tls, 92_000)?;
+    assert!(book.check_tls_route_v1(&pin, &tls, 92_000).is_err());
     let next = sign(&ir, Some(&tls), 2, 92_000)?;
     let mut forged = next.clone();
     forged.endpoints[1] = wrong.endpoint()?;
     assert!(book
         .replace_self_owned_records(vec![forged], 92_000)
         .is_err());
-    book.check_tls_route_v1(pin, &tls, 92_000)
+    book.check_tls_route_v1(&pin, &tls, 92_000)
         .expect_err("old locator expired");
-    book.check_continuous_tls_peer_v1(pin, &tls, 92_000)?;
+    book.check_continuous_tls_peer_v1(&pin, &tls, 92_000)?;
     book.replace_self_owned_records(vec![next], 92_000)?;
-    book.check_tls_route_v1(pin, &tls, 92_000)?;
+    book.check_tls_route_v1(&pin, &tls, 92_000)?;
     let saved = book.checkpoint()?;
-    let mut book = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 92_001)?;
+    let mut book = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        92_001,
+        crate::transport_identity::key(90),
+    )?;
     assert!(book
         .replace_self_owned_records(vec![first], 92_001)
         .is_err());
@@ -130,16 +145,18 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
     let mut moved = tls.clone();
     moved.address.set_port(3003);
     book.replace_self_owned_records(vec![sign(&ir, Some(&moved), 3, 92_002)?], 92_002)?;
-    book.check_continuous_tls_peer_v1(pin, &tls, 92_002)?;
-    assert!(book.check_tls_route_v1(pin, &tls, 92_002).is_err());
-    book.check_tls_route_v1(pin, &moved, 92_002)?;
+    book.check_continuous_tls_peer_v1(&pin, &tls, 92_002)?;
+    assert!(book.check_tls_route_v1(&pin, &tls, 92_002).is_err());
+    book.check_tls_route_v1(&pin, &moved, 92_002)?;
     let mut rotated = ir.clone();
-    rotated.address.endpoint_key = key(7).verifying_key().to_bytes();
+    rotated.address.endpoint_key = ed25519_dalek::SigningKey::from_bytes(&[7; 32])
+        .verifying_key()
+        .to_bytes();
     book.replace_self_owned_records(vec![sign(&rotated, Some(&wrong), 4, 92_003)?], 92_003)?;
     assert!(book
-        .check_continuous_peer_v4(pin, ir.address.endpoint_key, 92_003)
+        .check_continuous_peer_v4(&pin, ir.address.endpoint_key, 92_003)
         .is_err());
-    book.check_continuous_peer_v4(pin, rotated.address.endpoint_key, 92_003)?;
+    book.check_continuous_peer_v4(&pin, rotated.address.endpoint_key, 92_003)?;
     assert_eq!(
         book.bootstrap_candidates(92_003)?[0]
             .endpoint
@@ -148,16 +165,20 @@ fn signed_tls_route_uses_existing_history_freshness_and_revocation() -> Result<(
         rotated.address.endpoint_key
     );
     assert!(book
-        .check_continuous_tls_peer_v1(pin, &tls, 92_003)
+        .check_continuous_tls_peer_v1(&pin, &tls, 92_003)
         .is_err());
-    book.check_tls_route_v1(pin, &wrong, 92_003)?;
+    book.check_tls_route_v1(&pin, &wrong, 92_003)?;
     book.replace_self_owned_records(vec![sign(&rotated, None, 5, 92_003)?], 92_003)?;
     assert!(book
-        .check_continuous_tls_peer_v1(pin, &tls, 92_003)
+        .check_continuous_tls_peer_v1(&pin, &tls, 92_003)
         .is_err());
-    book.revoke_self_owned(pin, 92_004)?;
-    let mut restored =
-        ServiceLeaseBookV1::restore_self_owned(trust(), &book.checkpoint()?, 92_005)?;
+    book.revoke_self_owned(&pin, 92_004)?;
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &book.checkpoint()?,
+        92_005,
+        crate::transport_identity::key(90),
+    )?;
     assert!(restored
         .replace_self_owned_records(vec![sign(&ir, Some(&tls), 6, 92_005)?], 92_005)
         .is_err());
@@ -222,7 +243,7 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
     let server = run_self_owned_node_with_tls_v1(
         carrier.with_owned_service_identity(Zeroizing::new([90; 32]))?,
         key(1),
-        [key(2).verifying_key().to_bytes()].into(),
+        [key(2).public_key().to_vec()].into(),
         stop.clone(),
         service,
         listener,
@@ -236,7 +257,12 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
                 expires,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![record],
+                at,
+                crate::transport_identity::key(90),
+            )?;
             let bytes = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([91; 32]), &bytes)?;
             book.attach_persistence(file, &bytes)?;
@@ -251,12 +277,16 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
     );
     let client = async {
         let record = rx.await?;
-        let mut book =
-            ServiceLeaseBookV1::new_self_owned(trust(), vec![record.clone()], now_ms()?)?;
+        let mut book = ServiceLeaseBookV1::new_self_owned(
+            trust(),
+            vec![record.clone()],
+            now_ms()?,
+            crate::transport_identity::key(90),
+        )?;
         let tls = TlsServiceEndpointV1::from_record(&record)?.context("TLS route unpublished")?;
         ensure!(tls == expected);
-        let pin = key(1).verifying_key().to_bytes();
-        book.check_tls_route_v1(pin, &tls, now_ms()?)?;
+        let pin = key(1).public_key().to_vec();
+        book.check_tls_route_v1(&pin, &tls, now_ms()?)?;
         let client_scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?.with_connection_limit(8)?;
         let tcp = tokio::net::TcpStream::connect(tls.address).await?;
         tcp.set_nodelay(true)?;
@@ -265,7 +295,8 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
         request_mailbox_continuous_v6(&mut stream).await?;
         let identity = key(2);
         let mut session =
-            MailboxClientSessionV2::begin_continuous_v6(&mut stream, &identity, pin).await?;
+            MailboxClientSessionV2::begin_continuous_v6(&mut stream, &identity, pin.clone())
+                .await?;
         let grant = MailboxGrant::generate()?;
         let expires = (now_ms()? / 1000) as i64 + 60;
         ensure!(matches!(
@@ -292,7 +323,14 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
         else {
             anyhow::bail!("no StoreReceipt")
         };
-        receipt.verify(pin, grant.id, [7; 32], &data, expires)?;
+        receipt.verify(
+            &pin,
+            grant.id,
+            [7; 32],
+            &data,
+            expires,
+            &crate::transport_identity::key(90),
+        )?;
         // Real simultaneous TLS admissions exceed the former four-slot limit.
         // These lanes wait for their bound handshake; they cannot access data.
         // The established mailbox and QUIC lane must still make progress.
@@ -317,9 +355,12 @@ async fn actual_node(unreachable_relay: bool) -> Result<()> {
                         let mut stream = scope.connect(&route.address).await?.into();
                         let _group = request_mailbox_multiplex_v6(&mut stream).await?;
                         let user = key(2);
-                        let mut op =
-                            MailboxClientSessionV2::begin_continuous_v6(&mut stream, &user, pin)
-                                .await?;
+                        let mut op = MailboxClientSessionV2::begin_continuous_v6(
+                            &mut stream,
+                            &user,
+                            pin.clone(),
+                        )
+                        .await?;
                         let MailboxReplyV1::Object {
                             object,
                             ciphertext,
@@ -392,19 +433,27 @@ fn host_rotation_preserves_tls_until_explicit_removal_and_persists_it() -> Resul
     let ir = IrohServiceEndpointV1 {
         instance: [4; 32],
         address: IrohAddressV1 {
-            endpoint_key: key(3).verifying_key().to_bytes(),
+            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[3; 32])
+                .verifying_key()
+                .to_bytes(),
             direct: vec!["127.0.0.1:3000".parse()?],
             relays: vec![],
         },
     };
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:3001".parse()?,
-        endpoint_key: key(5).verifying_key().to_bytes(),
+        endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[5; 32])
+            .verifying_key()
+            .to_bytes(),
         max_connections: 4,
         native_mailbox_v8: false,
     };
-    let mut book =
-        ServiceLeaseBookV1::new_self_owned(trust(), vec![sign(&ir, None, 1, 1000)?], 1000)?;
+    let mut book = ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![sign(&ir, None, 1, 1000)?],
+        1000,
+        crate::transport_identity::key(90),
+    )?;
     let bytes = book.checkpoint()?;
     let file = ServiceLeaseFileV1::create(&path, Zeroizing::new([91; 32]), &bytes)?;
     book.attach_persistence(file, &bytes)?;
@@ -414,9 +463,14 @@ fn host_rotation_preserves_tls_until_explicit_removal_and_persists_it() -> Resul
     ensure!(TlsServiceEndpointV1::from_record(&updated)?.as_ref() == Some(&tls));
     drop(host);
     let (file, bytes) = ServiceLeaseFileV1::open(&path, Zeroizing::new([91; 32]))?;
-    let mut book = ServiceLeaseBookV1::restore_self_owned(trust(), &bytes, 1003)?;
+    let mut book = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &bytes,
+        1003,
+        crate::transport_identity::key(90),
+    )?;
     book.attach_persistence(file, &bytes)?;
-    book.check_tls_route_v1(key(1).verifying_key().to_bytes(), &tls, 1003)?;
+    book.check_tls_route_v1(key(1).public_key(), &tls, 1003)?;
     let host = ServiceLeaseHostV1::new(key(1), book)?;
     let removed = host.rotate_self_owned_with_tls_v1(&ir, None, 1004, 91_004)?;
     ensure!(TlsServiceEndpointV1::from_record(&removed)?.is_none());

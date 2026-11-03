@@ -36,7 +36,6 @@ pub use config::{
     GenesisAllocation, GenesisConfig, GenesisValidator, NativePeerConfig, NodeKeyStorage,
     ResidentConfig,
 };
-use ed25519_dalek::SigningKey;
 use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_exec::resident::StorageConfig;
 use novovm_network::novorudp::{
@@ -45,7 +44,7 @@ use novovm_network::novorudp::{
     object_link::{NativeSendLimits, NativeSendPolicy},
     NovoRudpPacingProfile, NovoRudpWindowConfig,
 };
-use novovm_network::UdpTransport;
+use novovm_network::{product_overlay::TransportIdentity, UdpTransport};
 use novovm_protocol::NodeId;
 use novovm_relay::purpose_keys::{self, PurposeV1};
 use std::{
@@ -75,7 +74,7 @@ impl ResidentNode {
         config.normalize_native_paths();
         config.validate()?;
         let prepared = prepare_startup(&config)?;
-        let public = prepared.identities.transport.verifying_key().to_bytes();
+        let public = prepared.identities.transport.public_key();
         let local_route = NodeId(u64::from_le_bytes(public[..8].try_into()?));
         let transport = UdpTransport::bind_for_chain(
             local_route,
@@ -199,7 +198,7 @@ impl ResidentNode {
 
 struct NodeIdentities {
     validator: Arc<AoemConsensusSigner>,
-    transport: SigningKey,
+    transport: TransportIdentity,
     bindings: ValidatorTransportBindings,
 }
 
@@ -218,21 +217,22 @@ fn prepare_startup(config: &ResidentConfig) -> Result<StartupPreparation> {
         let (metadata, initial) = config.genesis.prepare()?;
         (metadata, Some(initial))
     };
-    // Authenticate the independent transport key and complete routing binding
-    // before loading AOEM. A credential error cannot activate a signer or store.
-    let transport = read_key(
+    ensure!(
+        config.key_storage == NodeKeyStorage::ProtectedV1,
+        "node startup requires protected purpose custody; raw keys are retired"
+    );
+    let bindings = config.genesis.transport_bindings(&metadata)?;
+    let transport = purpose_keys::read_mldsa_material(
         &config.transport_key_file,
-        config.key_storage,
         PurposeV1::Transport,
         config.genesis.chain_id,
-    )?;
-    let bindings = config.genesis.transport_bindings(&metadata)?;
-    let local_transport = transport.verifying_key().to_bytes();
+    )
+    .context("read protected node purpose custody")?;
     let public = config
         .genesis
         .validators
         .iter()
-        .find(|v| v.transport_public_key == local_transport)
+        .find(|v| v.transport_public_key == transport.public_key)
         .context("local transport key differs from committed validator binding")?
         .public_key
         .as_slice();
@@ -274,7 +274,7 @@ fn read_identities(
     config: &ResidentConfig,
     validators: &ValidatorSet,
     crypto: &AoemConsensusCrypto,
-    transport: SigningKey,
+    transport: purpose_keys::PurposeKeyMaterialV3,
     bindings: ValidatorTransportBindings,
 ) -> Result<NodeIdentities> {
     ensure!(config.key_storage == NodeKeyStorage::ProtectedV1,
@@ -285,9 +285,10 @@ fn read_identities(
         |public, secret, challenge| crypto.check_key_pair(public, secret, challenge),
     )?;
     let validator = crypto.signer(material)?;
+    let transport = crypto.transport_identity(transport)?;
     let public = validator.public_key();
     ensure!(
-        bindings.transport_public_key(public)? == transport.verifying_key().to_bytes(),
+        bindings.transport_public_key(public)? == transport.public_key(),
         "local transport key differs from committed validator binding"
     );
     ensure!(
@@ -304,19 +305,6 @@ fn read_identities(
         transport,
         bindings,
     })
-}
-
-fn read_key(
-    path: &std::path::Path,
-    storage: NodeKeyStorage,
-    purpose: PurposeV1,
-    chain_id: u64,
-) -> Result<SigningKey> {
-    ensure!(
-        storage == NodeKeyStorage::ProtectedV1,
-        "node startup requires protected purpose custody; raw keys are retired"
-    );
-    purpose_keys::load(path, purpose, chain_id).context("read protected node purpose custody")
 }
 
 fn body_byte_limit(batch_size: usize) -> usize {

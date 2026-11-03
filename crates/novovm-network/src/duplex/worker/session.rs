@@ -34,12 +34,12 @@ mod tests;
 pub(super) fn run_session(
     relay: &mut ProductRelayPipelineV1,
     config: &NetworkWorkerConfig,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     peers: &mut BTreeMap<String, Peer>,
     shared: &Mutex<Shared>,
     stop: &AtomicBool,
 ) -> Result<()> {
-    let local = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+    let local = peer_id_from_mldsa65_public_key_v1(identity.public_key());
     let mut preauth = Queues::new(&config.peers, config.limits.preauth.clone());
     let mut flights = Flights::new();
     let mut reservation = 0u64;
@@ -245,7 +245,7 @@ fn submit_payload(
 fn submit_handshake(
     relay: &mut ProductRelayPipelineV1,
     config: &NetworkWorkerConfig,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     peers: &mut BTreeMap<String, Peer>,
     flights: &mut Flights,
     turn: &mut usize,
@@ -402,7 +402,7 @@ fn handle_event(
     event: ProductRelayClientEventV1,
     local: &str,
     config: &NetworkWorkerConfig,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     peers: &mut BTreeMap<String, Peer>,
     shared: &Mutex<Shared>,
     preauth: &mut Queues<OpaqueRelayDeliveryV1>,

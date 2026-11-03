@@ -1,4 +1,4 @@
-"""No external dependencies; exercise routing and real Git range/rename cases."""
+"""No Python packages; exercise routing, Git ranges and the real PowerShell selector."""
 import importlib.util
 import copy
 import json
@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import hashlib
+import shutil
 import unittest
 from unittest.mock import patch
 
@@ -64,6 +66,7 @@ class ScopeTests(unittest.TestCase):
             needs = {"detect": {"result": "success", "outputs": out}}
             for job, key in {"lan_script_launch": "full", "runtime_modules": "full",
                              "runtime_modules_release": "full",
+                             "native_transport_qualification": "full",
                              "rust": "has_rust", "rust_security": "security",
                              "python": "has_python", "node": "has_node"}.items():
                 needs[job] = {"result": "success" if out[key] == "true" else "skipped"}
@@ -128,6 +131,39 @@ class ScopeTests(unittest.TestCase):
                       "exit $LASTEXITCODE"):
             self.assertIn(value, release)
 
+    def test_native_signature_input_is_separate_and_all_existing_gates_remain(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        native = jobs["native_transport_qualification"]
+        self.assertIn("needs: detect\n", native)
+        self.assertIn("if: needs.detect.outputs.full == 'true'\n", native)
+        self.assertIn("os: [ubuntu-latest, windows-latest]\n", native)
+        self.assertIn("fail-fast: false\n", native)
+        self.assertIn("--test native_identity_cli --locked -- --include-ignored", native)
+        for name in ("actual_runtime_qualification_uses_original_owner_without_keys_or_state",
+                     "actual_runtime_qualification_rejects_selected_library_without_batch_capability",
+                     "actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_port",
+                     "--test rendezvous_process", "--test rendezvous_owner_process",
+                     "--test bootstrap_publisher_process", "--test bootstrap_mirror_process",
+                     "linux_custody_and_listener_restart", "Formal SDK counterexample identity changed"):
+            self.assertIn(name, native)
+        required = re.search(r"^    needs: \[([^\]]+)\]$", jobs["result"], re.M).group(1).split(", ")
+        self.assertIn("native_transport_qualification", required)
+        rust = jobs["rust"]
+        formal = rust.index('export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"')
+        resident = rust.index("cargo test -p aoem-bindings --lib resident")
+        pin = rust.index("ci-native-runtime-candidate.ps1 -Platform linux-x86_64")
+        current = rust.index("cargo test -p novovm-node --lib native_pipeline")
+        self.assertLess(formal, resident)
+        self.assertLess(resident, pin)
+        self.assertLess(pin, current)
+        self.assertNotIn('export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"', rust[pin:])
+        for command in ("private-profile-ffi", "native_successor_", "native_only_",
+                        "actual_mldsa_uca_initialized_spend_respend_journal_recovery",
+                        "native_uca_process_"):
+            self.assertIn(command, rust)
+        self.assertNotIn("ci-native-runtime-candidate", jobs["runtime_modules_release"])
+
     def test_missing_history_and_malformed_event_select_full(self):
         for raw in ("{broken", "null", "[]", json.dumps({"before": [], "after": "b" * 40}),
                     json.dumps({"before": "a" * 40, "after": "b" * 40})):
@@ -185,6 +221,69 @@ class ScopeTests(unittest.TestCase):
                 self.assertEqual(ci.select_scope("push", {}, whole), "full")
                 prose = ci.changed_paths("push", {"before": head, "after": final})
                 self.assertEqual(ci.select_scope("push", {}, prose), "docs")
+
+
+class RuntimeCandidateTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.helper = Path(__file__).parents[1] / "ci-native-runtime-candidate.ps1"
+        self.pwsh = shutil.which("pwsh")
+        if not self.pwsh:
+            self.fail("PowerShell is required to test the actual cross-platform CI selector")
+        self.manifest = {"schema_version": 1,
+                         "scope": "isolated_native_transport_mldsa65_core_candidates_not_shipped_sdk",
+                         "platforms": {}}
+        for platform, library in (("windows-x86_64", "windows/aoem_ffi.dll"),
+                                  ("linux-x86_64", "linux/libaoem_ffi.so")):
+            header = library.rsplit("/", 1)[0] + "/aoem.h"
+            for name, data in ((library, b"fixture-not-an-executable"), (header, b"fixture header")):
+                path = self.root / name
+                path.parent.mkdir(exist_ok=True)
+                path.write_bytes(data)
+            self.manifest["platforms"][platform] = {
+                "library": library, "sha256": hashlib.sha256((self.root / library).read_bytes()).hexdigest(),
+                "header": header, "header_sha256": hashlib.sha256((self.root / header).read_bytes()).hexdigest(),
+                "source": {"base_commit": "a" * 40, "overlay_sha256": "b" * 64, "lock_sha256": "c" * 64},
+                "features": ["mldsa"]}
+
+    def run_helper(self, platform="linux-x86_64", *extra, env=None):
+        (self.root / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
+        return subprocess.run([self.pwsh, "-NoProfile", "-File", str(self.helper),
+                               "-CandidateRoot", str(self.root), "-Platform", platform, *extra],
+                              capture_output=True, text=True, encoding="utf-8", env=env, timeout=20)
+
+    def test_pins_both_platforms_without_claiming_runtime_qualification(self):
+        for platform in self.manifest["platforms"]:
+            with self.subTest(platform=platform):
+                output = self.run_helper(platform)
+                self.assertEqual(output.returncode, 0, output.stderr)
+                report = json.loads(output.stdout)
+                self.assertEqual(report["sha256"], self.manifest["platforms"][platform]["sha256"])
+                self.assertFalse(report["runtime_kat_executed"])
+                self.assertEqual(Path(report["library"]), self.root / self.manifest["platforms"][platform]["library"])
+
+    def test_corruption_identity_drift_and_missing_provenance_are_rejected(self):
+        original = copy.deepcopy(self.manifest)
+        for field, value in (("library", "../unreviewed.so"), ("sha256", "A" * 64),
+                             ("header_sha256", "0" * 64), ("features", []), ("source", {})):
+            with self.subTest(field=field):
+                self.manifest = copy.deepcopy(original)
+                self.manifest["platforms"]["linux-x86_64"][field] = value
+                self.assertNotEqual(self.run_helper().returncode, 0)
+        self.manifest = original
+        (self.root / "linux/libaoem_ffi.so").write_bytes(b"changed artifact")
+        self.assertNotEqual(self.run_helper().returncode, 0)
+
+    def test_ci_selects_same_pinned_library_for_default_and_explicit_consumers(self):
+        output_file = self.root / "github-env"
+        env = dict(os.environ, GITHUB_ENV=str(output_file))
+        output = self.run_helper("linux-x86_64", "-GitHubEnvironment", env=env)
+        self.assertEqual(output.returncode, 0, output.stderr)
+        lines = dict(line.split("=", 1) for line in output_file.read_text(encoding="utf-8-sig").splitlines())
+        self.assertEqual(lines["NOVOVM_AOEM_TEST_LIBRARY"], lines["NOVOVM_AOEM_DLL"])
+        self.assertEqual(lines["NOVOVM_NATIVE_RUNTIME_SHA256"], self.manifest["platforms"]["linux-x86_64"]["sha256"])
 
 
 if __name__ == "__main__":

@@ -45,10 +45,10 @@ fn daemon_dispatches_inbound_application_while_large_delivery_is_write_blocked()
             .build()?,
     );
     let manager = ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default())?;
-    let relay_key = SigningKey::from_bytes(&[171; 32]);
-    let sender_key = SigningKey::from_bytes(&[172; 32]);
-    let peer_key = SigningKey::from_bytes(&[173; 32]);
-    let recipient_key = SigningKey::from_bytes(&[174; 32]);
+    let relay_key = TransportIdentity::from_bytes(&[171; 32]);
+    let sender_key = TransportIdentity::from_bytes(&[172; 32]);
+    let peer_key = TransportIdentity::from_bytes(&[173; 32]);
+    let recipient_key = TransportIdentity::from_bytes(&[174; 32]);
     let now = now_ms_v1();
     let (sender, _sender_inbox) = runtime.block_on(manager.register_authenticated_session(
         authenticate_test_peer_v1(&sender_key, &relay_key, now),

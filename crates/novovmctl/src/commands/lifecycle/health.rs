@@ -882,7 +882,7 @@ mod tests {
                     public_key[..8].copy_from_slice(&(index as u64).to_be_bytes());
                     GenesisValidator {
                         public_key,
-                        transport_public_key: [index as u8 + 1; 32],
+                        transport_public_key: vec![index as u8 + 1; 1952],
                         weight: 1,
                     }
                 })
@@ -899,6 +899,8 @@ mod tests {
                 validators,
                 bind_addr: "127.0.0.1:0".parse().unwrap(),
                 transport_key_file: "not-read.key".into(),
+                library: "not-read-aoem.dll".into(),
+                library_sha256: "00".repeat(32),
                 timeout_ms: 1000,
             };
             let bytes = serde_json::to_vec_pretty(&config).unwrap();

@@ -424,7 +424,8 @@ mod tests {
         let now = Instant::now();
         let identity =
             novovm_consensus::round_bft::test_vectors::FixtureSigningKey::from_bytes(&[101; 32]);
-        let transport_identity = SigningKey::from_bytes(&[201; 32]);
+        let transport_identity =
+            crate::native_pipeline::consensus::crypto::component_transport_identity([201; 32]);
         let domain = MessageDomain {
             chain_id: 292,
             genesis: [0x71; 32],
@@ -471,7 +472,7 @@ mod tests {
             &domain.validators,
             [(
                 identity.verifying_key().to_bytes(),
-                transport_identity.verifying_key().to_bytes(),
+                transport_identity.public_key().to_vec(),
             )],
         )?;
         let mut node = NativeChannel::from_transport(
@@ -488,9 +489,9 @@ mod tests {
         let wall = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
         let mut client = NativeApplicationClient::connect(
             UdpSocket::bind("127.0.0.1:0")?,
-            SigningKey::from_bytes(&[202; 32]),
+            crate::native_pipeline::consensus::crypto::component_transport_identity([202; 32]),
             NativePeer {
-                key: transport_identity.verifying_key().to_bytes(),
+                key: transport_identity.public_key().to_vec(),
                 address,
             },
             domain,

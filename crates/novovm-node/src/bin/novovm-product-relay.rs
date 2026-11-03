@@ -5,8 +5,12 @@ use novovm_node::product_relay_daemon::{
 };
 
 fn main() -> Result<()> {
-    run_product_relay_cli_v1(std::env::args_os().skip(1), |path| {
-        let config = load_product_relay_daemon_config_v1(path)?;
-        run_product_relay_daemon_v1(config)
-    })
+    run_product_relay_cli_v1(
+        std::env::args_os().skip(1),
+        |path| {
+            let config = load_product_relay_daemon_config_v1(path)?;
+            run_product_relay_daemon_v1(config)
+        },
+        novovm_node::product_relay_daemon::prepare_product_relay_identity_v1,
+    )
 }

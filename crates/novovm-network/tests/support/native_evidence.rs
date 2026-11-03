@@ -78,7 +78,12 @@ async fn native_evidence_correlates_verified_io_work_and_reply_without_claiming_
                 until,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![record],
+                at,
+                crate::transport_identity::key(90),
+            )?;
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([91; 32]), &checkpoint)?;
             book.attach_persistence(file, &checkpoint)?;
@@ -134,11 +139,12 @@ async fn native_evidence_correlates_verified_io_work_and_reply_without_claiming_
             bail!("authenticated Put did not return a StoreReceipt")
         };
         receipt.verify(
-            key(17).verifying_key().to_bytes(),
+            key(17).public_key(),
             [81; 32],
             [86; 32],
             &ciphertext,
             expires,
+            &crate::transport_identity::key(90),
         )?;
         correlated_response(&server_evidence, &client_evidence, put_tag)?;
         ensure!(server_evidence

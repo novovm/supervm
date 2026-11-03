@@ -2,9 +2,9 @@ use super::*;
 use crate::duplex::novorudp::NovoRudpTransportFrameKindV0;
 
 fn handshake() -> (NodeHandshakeInitiatorV1, NodeHandshakeResponderV1) {
-    let a = SigningKey::from_bytes(&[3; 32]);
-    let b = SigningKey::from_bytes(&[4; 32]);
-    let peer = peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes());
+    let a = TransportIdentity::from_bytes(&[3; 32]);
+    let b = TransportIdentity::from_bytes(&[4; 32]);
+    let peer = peer_id_from_mldsa65_public_key_v1(b.public_key());
     let initiator = NodeHandshakeInitiatorV1::start(&a, peer, 1_000, 10_000).unwrap();
     let responder = NodeHandshakeResponderV1::respond(
         initiator.offer(),
@@ -42,22 +42,27 @@ fn frame() -> NovoRudpTransportFrameV0 {
 }
 
 #[test]
-fn weak_identity_forgery_is_rejected_on_offer_and_response() {
+fn malformed_identity_forgery_is_rejected_on_offer_and_response() {
     let (initiator, responder) = handshake();
-    let mut weak_key = [0u8; 32];
-    weak_key[0] = 1; // Compressed Ed25519 identity point, not a signing identity.
+    let mut weak_key = vec![0u8; 32];
+    weak_key[0] = 1; // A legacy 32-byte identity is not an ML-DSA-65 key.
     let mut forged_signature = vec![0; 64];
     forged_signature[0] = 1;
     let mut offer = initiator.offer().clone();
-    offer.initiator_identity_public_key = weak_key;
-    offer.initiator_peer_id = peer_id_from_ed25519_public_key_v1(&weak_key);
+    offer.initiator_identity_public_key = weak_key.clone();
+    offer.initiator_peer_id = peer_id_from_mldsa65_public_key_v1(&weak_key);
     offer.signature = forged_signature.clone();
     assert!(matches!(
-        validate_handshake_offer_v1(&offer, 1_200, &mut HandshakeReplayCacheV1::default()),
-        Err(ProductOverlayErrorV1::InvalidHandshakeKey)
+        validate_handshake_offer_v1(
+            &offer,
+            1_200,
+            &mut HandshakeReplayCacheV1::default(),
+            &TransportIdentity::from_bytes(&[99; 32])
+        ),
+        Err(ProductOverlayErrorV1::InvalidHandshakeSignature)
     ));
     let mut original_offer = initiator.offer().clone();
-    original_offer.responder_peer_id = peer_id_from_ed25519_public_key_v1(&weak_key);
+    original_offer.responder_peer_id = peer_id_from_mldsa65_public_key_v1(&weak_key);
     let mut response = responder.response().clone();
     response.responder_identity_public_key = weak_key;
     response.responder_peer_id = original_offer.responder_peer_id.clone();
@@ -68,9 +73,10 @@ fn weak_identity_forgery_is_rejected_on_offer_and_response() {
             &original_offer,
             &response,
             1_200,
-            &mut HandshakeReplayCacheV1::default()
+            &mut HandshakeReplayCacheV1::default(),
+            &TransportIdentity::from_bytes(&[99; 32])
         ),
-        Err(ProductOverlayErrorV1::InvalidHandshakeKey)
+        Err(ProductOverlayErrorV1::InvalidHandshakeSignature)
     ));
 }
 
@@ -82,18 +88,43 @@ fn response_transcript_replay_signature_and_offer_expiry_are_checked() {
     let mut tampered = response.clone();
     tampered.challenge[0] ^= 1;
     assert!(matches!(
-        validate_handshake_response_v1(initiator.offer(), &tampered, 1_200, &mut cache),
+        validate_handshake_response_v1(
+            initiator.offer(),
+            &tampered,
+            1_200,
+            &mut cache,
+            &TransportIdentity::from_bytes(&[99; 32])
+        ),
         Err(ProductOverlayErrorV1::HandshakeTranscriptMismatch)
     ));
     tampered = response.clone();
     tampered.signature[0] ^= 1;
     assert!(matches!(
-        validate_handshake_response_v1(initiator.offer(), &tampered, 1_200, &mut cache),
+        validate_handshake_response_v1(
+            initiator.offer(),
+            &tampered,
+            1_200,
+            &mut cache,
+            &TransportIdentity::from_bytes(&[99; 32])
+        ),
         Err(ProductOverlayErrorV1::InvalidHandshakeSignature)
     ));
-    validate_handshake_response_v1(initiator.offer(), response, 1_200, &mut cache).unwrap();
+    validate_handshake_response_v1(
+        initiator.offer(),
+        response,
+        1_200,
+        &mut cache,
+        &TransportIdentity::from_bytes(&[99; 32]),
+    )
+    .unwrap();
     assert!(matches!(
-        validate_handshake_response_v1(initiator.offer(), response, 1_200, &mut cache),
+        validate_handshake_response_v1(
+            initiator.offer(),
+            response,
+            1_200,
+            &mut cache,
+            &TransportIdentity::from_bytes(&[99; 32])
+        ),
         Err(ProductOverlayErrorV1::HandshakeReplay)
     ));
     // A response can still be valid while the originating offer has expired.
@@ -102,7 +133,8 @@ fn response_transcript_replay_signature_and_offer_expiry_are_checked() {
             initiator.offer(),
             response,
             11_001,
-            &mut HandshakeReplayCacheV1::default()
+            &mut HandshakeReplayCacheV1::default(),
+            &TransportIdentity::from_bytes(&[99; 32])
         ),
         Err(ProductOverlayErrorV1::HandshakeExpired)
     ));
@@ -115,19 +147,29 @@ fn invalid_key_signature_length_and_wrong_responder_are_rejected() {
     let mut offer = initiator.offer().clone();
     offer.initiator_ephemeral_public_key = vec![0; 33];
     assert!(matches!(
-        validate_handshake_offer_v1(&offer, 1_200, &mut cache),
+        validate_handshake_offer_v1(
+            &offer,
+            1_200,
+            &mut cache,
+            &TransportIdentity::from_bytes(&[99; 32])
+        ),
         Err(ProductOverlayErrorV1::InvalidHandshakeKey)
     ));
     offer = initiator.offer().clone();
     offer.signature.pop();
     assert!(matches!(
-        validate_handshake_offer_v1(&offer, 1_200, &mut cache),
+        validate_handshake_offer_v1(
+            &offer,
+            1_200,
+            &mut cache,
+            &TransportIdentity::from_bytes(&[99; 32])
+        ),
         Err(ProductOverlayErrorV1::InvalidHandshakeSignature)
     ));
     assert!(matches!(
         NodeHandshakeResponderV1::respond(
             initiator.offer(),
-            &SigningKey::from_bytes(&[5; 32]),
+            &TransportIdentity::from_bytes(&[5; 32]),
             1_200,
             1_000,
             &mut cache

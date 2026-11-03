@@ -1,6 +1,8 @@
 //! Protected source mirror; distributes existing signed manifests over V2.
 //! Windows SCM and bounded foreground modes use the same owner.
 #[cfg(windows)]
+use novovm_relay::transport_identity;
+#[cfg(windows)]
 mod bootstrap_mirror_owner;
 #[cfg(windows)]
 mod windows_custody;

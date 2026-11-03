@@ -1,6 +1,5 @@
 use super::*;
 use crate::product_overlay::*;
-use ed25519_dalek::SigningKey;
 
 mod batch;
 mod progress;
@@ -11,11 +10,11 @@ fn link() -> Result<(UdpSocket, UdpSocket, NativeUdpSession, NativeUdpSession)> 
     let right = UdpSocket::bind("127.0.0.1:0")?;
     left.set_nonblocking(true)?;
     right.set_nonblocking(true)?;
-    let a = SigningKey::from_bytes(&[31; 32]);
-    let b = SigningKey::from_bytes(&[47; 32]);
+    let a = crate::test_identity::key(31);
+    let b = crate::test_identity::key(47);
     let offer = NodeHandshakeInitiatorV1::start(
         &a,
-        peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(b.public_key()),
         1000,
         5000,
     )?;

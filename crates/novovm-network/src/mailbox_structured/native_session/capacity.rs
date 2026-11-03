@@ -241,12 +241,15 @@ mod tests {
     }
     #[test]
     fn capacity_context_binds_session_identity_direction_and_version() {
-        let a = [31; 32];
-        let b = [32; 32];
-        let make = |local, remote, role, session| Binding {
+        let a = [31; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES];
+        let b = [32; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES];
+        let make = |local: [u8; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
+                    remote: [u8; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
+                    role,
+                    session| Binding {
             peer: 0,
-            id: peer_id_from_ed25519_public_key_v1(&remote),
-            local,
+            id: peer_id_from_mldsa65_public_key_v1(&remote),
+            local: local.to_vec(),
             role,
             session,
             validity: NativeSessionValidity::new(),
@@ -261,7 +264,12 @@ mod tests {
         );
         assert_ne!(
             binding(&client),
-            binding(&make(a, [33; 32], NativeApplicationRole::Client, [7; 16]))
+            binding(&make(
+                a,
+                [33; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
+                NativeApplicationRole::Client,
+                [7; 16]
+            ))
         );
         assert_ne!(
             binding(&client),

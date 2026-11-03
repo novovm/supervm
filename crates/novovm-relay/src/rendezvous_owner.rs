@@ -2,8 +2,8 @@
 //! source handoff. This module owns no publisher key and no chat protocol.
 use crate::windows_owner_files::{atomic, check_path, create, read_bounded};
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use novovm_network::{
+    product_overlay::TransportIdentity,
     product_rendezvous_daemon::{
         run_owned_rendezvous_epoch_v2, RendezvousAuthorizationUnavailable,
         RendezvousDaemonConfigV2, RendezvousDaemonReportV2, RendezvousEpochOwnerV1,
@@ -35,10 +35,11 @@ pub struct Config {
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let value: Self = serde_json::from_slice(&read_bounded(path, 65536)?)?;
+        // Up to 8 publisher and 16 client native public-key arrays.
+        let value: Self = serde_json::from_slice(&read_bounded(path, 1024 * 1024)?)?;
         value.epoch.validate()?;
         ensure!(
-            value.version == 1
+            value.version == 2
                 && !value.epoch.enroll
                 && value.epoch.grant_sequence == 1
                 && (5000..=30000).contains(&value.prepare_before_ms)
@@ -126,13 +127,24 @@ impl Durable {
 
 pub struct Owner {
     config: Config,
-    key: SigningKey,
+    key: TransportIdentity,
     storage: Zeroizing<[u8; 32]>,
     durable: Arc<Mutex<Durable>>,
     _lock: File,
 }
 impl Owner {
     pub fn open(config: Config) -> Result<Self> {
+        ensure!(config.version == 2, "owner configuration version");
+        config.epoch.validate()?;
+        let key = crate::transport_identity::load_transport_identity(
+            &config.epoch.relay_identity_key_path,
+            config.epoch.chain_id,
+            &config.epoch.library,
+            &config.epoch.library_sha256,
+        )?;
+        Self::open_with_identity(config, key)
+    }
+    fn open_with_identity(config: Config, key: TransportIdentity) -> Result<Self> {
         let root = config.root()?;
         ensure!(
             !root.join("self-owned-policy.dpapi").try_exists()?,
@@ -160,13 +172,13 @@ impl Owner {
                     && !config.epoch.journal_path.try_exists()?,
                 "explicit fresh owner enrollment required"
             );
-            create(&marker, b"NOVOVM account custody v1")?;
+            create(&marker, b"NOVOVM rendezvous custody v2")?;
             std::fs::remove_file(&request)?;
-            let mut material = Zeroizing::new([0u8; 72]);
-            material[..8].copy_from_slice(b"NVKEYS03");
+            let mut material = Zeroizing::new([0u8; 40]);
+            material[..8].copy_from_slice(b"NVKEYS04");
             OsRng.try_fill_bytes(&mut material[8..])?;
             create(&keys, &crate::windows_custody::protect(material.as_ref())?)?;
-            let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[40..])?);
+            let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[8..])?);
             let initial = serde_json::to_vec(&State {
                 version: 1,
                 next_sequence: 1,
@@ -177,21 +189,17 @@ impl Owner {
         ensure!(!request.try_exists()?, "ambiguous owner enrollment");
         let material = crate::windows_custody::unprotect(&read_bounded(&keys, 16384)?)?;
         ensure!(
-            material.len() == 72 && &material[..8] == b"NVKEYS03",
-            "custody version"
+            material.len() == 40 && &material[..8] == b"NVKEYS04",
+            "storage custody version; legacy signing custody cannot be reused"
         );
-        let seed = Zeroizing::new(<[u8; 32]>::try_from(&material[8..40])?);
-        let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[40..])?);
-        ensure!(
-            *seed != *storage && *seed != [0; 32] && *storage != [0; 32],
-            "independent owner keys"
-        );
-        let key = SigningKey::from_bytes(&seed);
+        let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[8..])?);
+        ensure!(*storage != [0; 32], "owner storage key required");
         ensure!(
             !config
                 .epoch
                 .trusted_signers
-                .contains(&key.verifying_key().to_bytes()),
+                .iter()
+                .any(|public| public == key.public_key()),
             "node cannot be its own publisher"
         );
         let (store, bytes) = ServiceLeaseFileV1::open(&journal, storage.clone())?;
@@ -212,6 +220,7 @@ impl Owner {
                 config.epoch.validate()?.1,
                 &checkpoint,
                 novovm_network::product_rendezvous_daemon::now_ms()?,
+                key.clone(),
             )?;
             drop(lease_file);
         }
@@ -235,7 +244,7 @@ impl Owner {
         atomic(
             &root.join("identity.json"),
             &serde_json::to_vec(
-                &serde_json::json!({"version":1,"node_public_key":key.verifying_key().to_bytes()}),
+                &serde_json::json!({"version":2,"suite":65,"node_public_key":key.public_key()}),
             )?,
         )?;
         Ok(Self {
@@ -452,14 +461,21 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("novovm-owner-retry-{}", rand::random::<u64>()));
         std::fs::create_dir(&root)?;
-        let pin = |n: u8| SigningKey::from_bytes(&[n; 32]).verifying_key().to_bytes();
+        let key = crate::transport_identity::component_identity([72; 32]);
+        let pin = |n: u8| {
+            crate::transport_identity::component_identity([n; 32])
+                .public_key()
+                .to_vec()
+        };
         let config_path = root.join("config.json");
         create(&root.join("initialize.request"), b"explicit test fixture")?;
         create(
             &config_path,
             &serde_json::to_vec(&serde_json::json!({
-                "version":1,"prepare_before_ms":5000,"epoch":{
-                    "version":2,"engineering_direct_allowed":true,"trusted_signers":[pin(71)],
+                "version":2,"prepare_before_ms":5000,"epoch":{
+                    "version":3,"engineering_direct_allowed":true,"trusted_signers":[pin(71)],
+                    "relay_identity_key_path":root.join("component-purpose.key"),"chain_id":7,
+                    "library":root.join("component-library"),"library_sha256":"a".repeat(64),
                     "minimum_signatures":1,"allowed_clients":[pin(73)],"relays":[],
                     "nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
                     "journal_path":root.join("service.journal"),"source_path":root.join("authority.json"),
@@ -468,10 +484,10 @@ mod tests {
             }))?,
         )?;
         let config = Config::load(&config_path)?;
-        let owner = Owner::open(config.clone())?;
-        let identity = owner.key.verifying_key();
+        let owner = Owner::open_with_identity(config.clone(), key.clone())?;
+        let identity = owner.key.public_key().to_vec();
         let previous_status = std::fs::read(root.join("status.json"))?;
-        assert!(Owner::open(config.clone()).is_err());
+        assert!(Owner::open_with_identity(config.clone(), key.clone()).is_err());
         config.record_start_failure();
         assert_eq!(std::fs::read(root.join("status.json"))?, previous_status);
         let stop = Arc::new(AtomicBool::new(false));
@@ -494,10 +510,23 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(2), &mut task).await??;
         }
         drop(owner);
-        let restored = Owner::open(config)?;
-        assert_eq!(restored.key.verifying_key(), identity);
+        let restored = Owner::open_with_identity(config.clone(), key.clone())?;
+        assert_eq!(restored.key.public_key(), identity);
         assert_eq!(restored.durable.lock().unwrap().state.next_sequence, 131);
         drop(restored);
+        let mut old_config = config.clone();
+        old_config.version = 1;
+        assert!(Owner::open(old_config).is_err());
+        let mut legacy = Zeroizing::new([0u8; 72]);
+        legacy[..8].copy_from_slice(b"NVKEYS03");
+        legacy[8..40].fill(41);
+        legacy[40..].fill(42);
+        let sealed = crate::windows_custody::protect(legacy.as_ref())?;
+        std::fs::write(root.join("keys.dpapi"), &sealed)?;
+        let journal = std::fs::read(root.join("owner.journal"))?;
+        assert!(Owner::open_with_identity(config, key).is_err());
+        assert_eq!(std::fs::read(root.join("keys.dpapi"))?, sealed);
+        assert_eq!(std::fs::read(root.join("owner.journal"))?, journal);
         std::fs::remove_dir_all(root)?;
         Ok(())
     }

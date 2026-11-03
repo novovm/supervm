@@ -61,8 +61,8 @@ fn check_return(
 /// the carrier's own earlier authority/deadline checks remain in force.
 pub async fn authenticate_structured_bound_session_v2_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    expected_peer: [u8; 32],
+    identity: &TransportIdentity,
+    expected_peer: Vec<u8>,
     initiator: bool,
     original_deadline: Instant,
     replay: &mut HandshakeReplayCacheV1,
@@ -145,12 +145,12 @@ where
 /// An empty pinned list fails closed and never becomes open admission.
 pub async fn authenticate_structured_service_client_v2_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     original_deadline: Instant,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
-) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError>
+) -> Result<(BoundSecureChannelV1, Vec<u8>), BoundSessionError>
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
@@ -169,17 +169,23 @@ where
             .map_err(BoundSessionError::Transport)?;
         check_deadline(deadline)?;
         let offer = structured::decode_offer_v2(&received).map_err(authentication)?;
-        let claimed = offer.context.initiator_identity_public_key;
-        if claimed == identity.verifying_key().to_bytes()
+        let claimed = offer.context.initiator_identity_public_key.clone();
+        if claimed == identity.public_key().to_vec()
             || matches!(policy, ServicePeerPolicyV1::Pinned(allowed) if !allowed.contains(&claimed))
         {
             return Err(authentication(anyhow::anyhow!(
                 "service client not permitted"
             )));
         }
-        let response =
-            SessionClockResponderV2::respond(&offer, identity, claimed, binding, deadline, replay)
-                .map_err(proof_error)?;
+        let response = SessionClockResponderV2::respond(
+            &offer,
+            identity,
+            claimed.clone(),
+            binding,
+            deadline,
+            replay,
+        )
+        .map_err(proof_error)?;
         observe_v2(stream, observer, BoundSessionStage::OfferVerified, deadline)?;
         let encoded = structured::encode_response_v2(response.response()).map_err(local)?;
         check_deadline(deadline)?;

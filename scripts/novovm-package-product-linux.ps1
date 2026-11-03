@@ -69,7 +69,7 @@ function Resolve-PackageDestination([string]$Repository, [string]$Directory) {
   return $candidate
 }
 
-function Get-CargoExecutable([object[]]$Messages, [string]$Binary) {
+function Get-CargoExecutable([object[]]$Messages, [string]$Binary, [string]$ExpectedTarget = 'x86_64-unknown-linux-gnu') {
   $artifacts = @($Messages | ForEach-Object {
     $message = $_ | ConvertFrom-Json
     if ($message.reason -eq 'compiler-artifact' -and $message.target.name -eq $Binary -and
@@ -79,11 +79,31 @@ function Get-CargoExecutable([object[]]$Messages, [string]$Binary) {
   $executable = [IO.Path]::GetFullPath($artifacts[0])
   if (!(Test-Path -LiteralPath $executable -PathType Leaf)) { throw "Cargo executable missing: $executable" }
   Assert-PlainPackagePath $executable -AllowFileHardLink
-  $stream = [IO.File]::OpenRead($executable)
+  $stream = [IO.BinaryReader]::new([IO.File]::OpenRead($executable))
   try {
-    $magic = [byte[]]::new(4)
-    if ($stream.Read($magic, 0, 4) -ne 4 -or [BitConverter]::ToString($magic) -ne '7F-45-4C-46') {
-      throw "Cargo executable is not an ELF Linux artifact: $executable"
+    if ($ExpectedTarget -eq 'x86_64-pc-windows-msvc') {
+      if ($stream.BaseStream.Length -lt 64 -or $stream.ReadUInt16() -ne 0x5a4d) {
+        throw "Cargo executable is not an AMD64 PE32+ Windows artifact: $executable"
+      }
+      $stream.BaseStream.Position = 0x3c
+      $peOffset = $stream.ReadUInt32()
+      if ($peOffset -gt ($stream.BaseStream.Length - 26)) {
+        throw "Cargo executable has an invalid Windows PE header: $executable"
+      }
+      $stream.BaseStream.Position = $peOffset
+      if ($stream.ReadUInt32() -ne 0x4550 -or $stream.ReadUInt16() -ne 0x8664) {
+        throw "Cargo executable is not an AMD64 PE32+ Windows artifact: $executable"
+      }
+      $stream.BaseStream.Position = $peOffset + 24
+      if ($stream.ReadUInt16() -ne 0x20b) { throw "Cargo executable is not PE32+: $executable" }
+    } elseif ($ExpectedTarget -eq 'x86_64-unknown-linux-gnu') {
+      $header = $stream.ReadBytes(20)
+      if ($header.Length -ne 20 -or [BitConverter]::ToString($header, 0, 4) -ne '7F-45-4C-46' -or
+          $header[4] -ne 2 -or $header[5] -ne 1 -or $header[18] -ne 62 -or $header[19] -ne 0) {
+        throw "Cargo executable is not an x86_64 ELF Linux artifact: $executable"
+      }
+    } else {
+      throw "Unsupported package target: $ExpectedTarget"
     }
   } finally { $stream.Dispose() }
   return $executable
@@ -118,19 +138,25 @@ function Publish-LinuxPackage([string]$Repository, [string]$Staged, [string]$Des
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repo
 try {
+  if ($Target -eq 'x86_64-pc-windows-msvc' -and !$PSBoundParameters.ContainsKey('PackageDir')) {
+    $PackageDir = 'artifacts/product-overlay/windows-x86_64'
+  }
   $destination = Resolve-PackageDestination $repo $PackageDir
   if ((Test-Path -LiteralPath $destination) -and !$Force) {
     throw "Package directory already exists: $destination. Use -Force only for an intentional replacement."
   }
-  if ($Target -ne 'x86_64-unknown-linux-gnu') {
-    throw "The bundled AOEM Linux runtime supports x86_64-unknown-linux-gnu only; no compatible runtime is packaged for '$Target'."
-  }
+  $windowsPackage = $Target -eq 'x86_64-pc-windows-msvc'
+  if (!$windowsPackage -and $Target -ne 'x86_64-unknown-linux-gnu') { throw "Unsupported package target: $Target" }
+  $platform = if ($windowsPackage) { 'windows' } else { 'linux' }
+  $platformId = "$platform-x86_64"
+  $coreName = if ($windowsPackage) { 'aoem_ffi.dll' } else { 'libaoem_ffi.so' }
+  $packageScope = if ($windowsPackage) { 'novovm_unified_windows_release_v1' } else { 'novovm_unified_linux_release_v3' }
   $dirty = @(git status --porcelain=v1 --untracked-files=all)
   if ($LASTEXITCODE -ne 0) {
     throw "Unable to verify the Git worktree before packaging."
   }
   if ($dirty.Count -ne 0) {
-    throw "Linux release packaging requires a clean Git worktree so binaries and git_commit describe the same source. Commit or remove local changes first."
+    throw "Release packaging requires a clean Git worktree so binaries and git_commit describe the same source. Commit or remove local changes first."
   }
   $commit = (git rev-parse HEAD).Trim()
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
@@ -193,11 +219,11 @@ try {
     $featureArgs = if ($contract.features.Count) { @('--features', ($contract.features -join ',')) } else { @() }
     $buildMessages = @(cargo build --locked -p $contract.package --release --target $Target --bin $bin @featureArgs --message-format=json-render-diagnostics)
     if ($LASTEXITCODE -ne 0) {
-      throw "Linux build failed for '$bin'; refusing to package possibly stale binaries."
+      throw "Build failed for '$bin'; refusing to package possibly stale binaries."
     }
     # Cargo reports the actual artifact, including .cargo/config.toml and any
     # CARGO_TARGET_DIR override. Never guess a path or accept an old namesake.
-    $executables[$bin] = Get-CargoExecutable $buildMessages $bin
+    $executables[$bin] = Get-CargoExecutable $buildMessages $bin $Target
     $executableHashes[$bin] = (Get-FileHash -LiteralPath $executables[$bin] -Algorithm SHA256).Hash
     $artifact = @($buildMessages | ForEach-Object { $_ | ConvertFrom-Json } |
       Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq $bin -and $_.executable })[-1]
@@ -213,29 +239,64 @@ try {
     $contract | Add-Member -NotePropertyName sha256 -NotePropertyValue $executableHashes[$bin].ToLowerInvariant() -Force
   }
 
-  $aoemLinux = Join-Path $aoemRoot "linux"
-  $aoemCore = Join-Path $aoemLinux "core\bin\libaoem_ffi.so"
+  $aoemPlatform = Join-Path $aoemRoot $platform
+  $aoemCore = Join-Path $aoemPlatform "core/bin/$coreName"
   $aoemManifest = Join-Path $aoemRoot "manifest\aoem-manifest.json"
   $aoemProfile = Join-Path $aoemRoot "config\aoem-runtime-profile.json"
-  foreach ($required in @($aoemLinux, $aoemCore, $aoemManifest, $aoemProfile)) {
+  foreach ($required in @($aoemPlatform, $aoemCore, $aoemManifest, $aoemProfile)) {
     if (!(Test-Path -LiteralPath $required)) {
-      throw "Required bundled AOEM FULLMAX Linux runtime path is missing: $required"
+      throw "Required bundled AOEM FULLMAX runtime path is missing: $required"
     }
   }
-  $linuxManifest = Get-Content -Raw -LiteralPath (Join-Path $aoemLinux "manifest.json") | ConvertFrom-Json
-  if ($linuxManifest.profile -ne "fullmax" -or $linuxManifest.platform -ne "linux") {
-    throw "Bundled AOEM Linux runtime is not a Linux FULLMAX package."
+  $platformManifest = Get-Content -Raw -LiteralPath (Join-Path $aoemPlatform "manifest.json") | ConvertFrom-Json
+  if ($platformManifest.profile -ne "fullmax" -or $platformManifest.platform -ne $platform) {
+    throw "Bundled AOEM runtime is not the selected $platform FULLMAX package."
   }
   $expectedAoemSha = (
     Get-Content -Raw -LiteralPath (Join-Path $aoemRoot "aoem-sdk-manifest.json") |
       ConvertFrom-Json
-  ).platforms.'linux-x86_64'.library_sha256
+  ).platforms.$platformId.library_sha256
   $actualAoemSha = (Get-FileHash -LiteralPath $aoemCore -Algorithm SHA256).Hash.ToLowerInvariant()
   if ([string]::IsNullOrWhiteSpace($expectedAoemSha) -or $actualAoemSha -ne $expectedAoemSha.ToLowerInvariant()) {
-    throw "Bundled AOEM FULLMAX Linux core checksum does not match the SDK manifest."
+    throw "Bundled AOEM FULLMAX core checksum does not match the SDK manifest."
   }
   if ($AoemCoreSha256 -and $actualAoemSha -ne $AoemCoreSha256.ToLowerInvariant()) {
     throw 'Isolated AOEM core does not match the independently pinned checksum.'
+  }
+  # A manifest hash/capability bit cannot prove the current native contract.
+  # Run the just-built original owner before creating any package staging.
+  $runtimeQualificationOutput = @(& $executables['novovmctl'] native-identity qualify-runtime `
+    --library $aoemCore --library-sha256 $actualAoemSha)
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Native identity runtime qualification failed; no package was published.'
+  }
+  $runtimeQualification = ($runtimeQualificationOutput -join "`n") | ConvertFrom-Json
+  $runtimeData = $runtimeQualification.data
+  $runtimeQualificationScope = 'ml-dsa-65-native-verification-owner'
+  if ($runtimeQualification.ok -isnot [bool] -or !$runtimeQualification.ok -or
+      $runtimeQualification.command -cne 'native-identity' -or
+      $runtimeData.action -cne 'qualify-runtime' -or
+      $runtimeData.qualification -cne $runtimeQualificationScope -or
+      $runtimeData.algorithm -cne 'ML-DSA-65' -or
+      $runtimeData.signature_suite -isnot [long] -or $runtimeData.signature_suite -ne 65 -or
+      $runtimeData.library_sha256 -cne $actualAoemSha -or
+      [string]::IsNullOrWhiteSpace($runtimeData.library) -or
+      ![IO.Path]::IsPathFullyQualified($runtimeData.library) -or
+      [IO.Path]::GetFullPath($runtimeData.library) -ne [IO.Path]::GetFullPath($aoemCore)) {
+    throw 'Native identity runtime qualification report does not match the built owner and pinned core.'
+  }
+  foreach ($field in @('verification_qualified', 'scalar_verification_kat_passed',
+      'unified_semantic_verification_kat_passed', 'mixed_batch_verification_kat_passed',
+      'primitive_sign_interface_size_checked')) {
+    if ($runtimeData.$field -isnot [bool] -or !$runtimeData.$field) {
+      throw "Native identity runtime qualification report lacks the required result: $field"
+    }
+  }
+  foreach ($field in @('signing_tested', 'keygen_tested', 'protected_key_created',
+      'custody_accessed', 'database_created', 'service_started', 'whole_node_post_quantum_qualified')) {
+    if ($runtimeData.$field -isnot [bool] -or $runtimeData.$field) {
+      throw "Native identity runtime qualification report exceeds its read-only scope: $field"
+    }
   }
   $metadataFiles = @(
     "aoem-sdk-manifest.json", "INSTALL-INFO.txt", "README.md",
@@ -259,14 +320,19 @@ try {
   )
   # Existing platform resources are copied without executing or reprovisioning
   # them. In particular B's owner/credential/SQLite identity must remain intact.
-  $platformResources = @(
+  $platformResources = if ($windowsPackage) { @(
+    'scripts/windows/install-novovm-relay.ps1',
+    'scripts/windows/NovovmRelayFirewall.psm1',
+    'scripts/windows/install-novovm-rendezvous.ps1',
+    'scripts/windows/rendezvous-user-install.ps1'
+  ) } else { @(
     'config/rendezvous-linux/novonet-mailbox.service',
     'config/rendezvous-linux/README.md',
     'scripts/linux/install-owned-mailbox.sh',
     'config/relay/supervm-relay.service',
     'config/relay/relay.example.json',
     'config/relay/nginx-location.conf'
-  )
+  ) }
   foreach ($inputPath in @($metadataFiles | ForEach-Object { Join-Path $aoemRoot $_ }) +
       @($packageDocs | ForEach-Object { Join-Path $repo "docs/$_" }) +
       @($platformResources | ForEach-Object { Join-Path $repo $_ })) {
@@ -282,16 +348,20 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $packagePath $directory) | Out-Null
   }
   $packageRoot = $packagePath
+  $runtimeQualificationReport = 'reports/native-identity-runtime-qualification.json'
+  $runtimeQualificationOutput -join "`n" | Set-Content -Encoding utf8 `
+    -LiteralPath (Join-Path $packagePath $runtimeQualificationReport)
   foreach ($bin in $bins) {
     Assert-PlainPackagePath $executables[$bin] -AllowFileHardLink
-    $copiedExecutable = Join-Path $packagePath "bin/$bin"
+    $binaryFileName = [IO.Path]::GetFileName($executables[$bin])
+    $copiedExecutable = Join-Path $packagePath "bin/$binaryFileName"
     Copy-Item -LiteralPath $executables[$bin] -Destination $copiedExecutable
     Assert-PlainPackagePath $copiedExecutable
     if ((Get-FileHash -LiteralPath $copiedExecutable -Algorithm SHA256).Hash -ne $executableHashes[$bin]) {
       throw "Cargo executable changed before/during copying: $bin; existing package remains untouched."
     }
   }
-  Copy-Item -LiteralPath $aoemLinux -Destination (Join-Path $packagePath "aoem") -Recurse
+  Copy-Item -LiteralPath $aoemPlatform -Destination (Join-Path $packagePath "aoem") -Recurse
   Copy-Item -LiteralPath (Join-Path $aoemRoot "manifest") -Destination (Join-Path $packagePath "aoem") -Recurse
   Copy-Item -LiteralPath (Join-Path $aoemRoot "config") -Destination (Join-Path $packagePath "aoem") -Recurse
   foreach ($metadata in $metadataFiles) {
@@ -308,7 +378,10 @@ try {
   "bind_addr": "127.0.0.1:45172",
   "tls_cert_path": "/etc/novovm/tls/fullchain.pem",
   "tls_key_path": "/etc/novovm/tls/privkey.pem",
-  "relay_identity_key_path": "/etc/novovm/relay-ed25519.hex",
+  "relay_identity_key_path": "/etc/novovm/keys/relay-transport.sealed",
+  "chain_id": "REVIEW_APPROVED_CHAIN_ID",
+  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "APPROVED_AOEM_CORE_SHA256",
   "report_path": "/var/lib/novovm-relay/reports/relay.json",
   "report_interval_ms": 5000,
   "max_connections": 512,
@@ -333,61 +406,69 @@ try {
   "source_bytes_per_minute": 67108864,
   "max_bytes_per_minute": 1073741824
 }
-'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\relay.json.example")
+'@.Replace('APPROVED_AOEM_CORE_SHA256', $actualAoemSha) | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\relay.json.example")
 
   @'
 {
   "role": "sender",
-  "identity_key_path": "/etc/novovm/peer-a-ed25519.hex",
+  "identity_key_path": "/etc/novovm/keys/peer-a-transport.sealed",
+  "chain_id": "REVIEW_APPROVED_CHAIN_ID",
+  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "APPROVED_AOEM_CORE_SHA256",
   "relay": {
     "endpoint": "wss://relay.example/novovm",
-    "expected_relay_peer_id": "<verified-relay-peer-id>",
+    "expected_relay_peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-relay-public-key>",
     "tls_trust": "native_web_pki"
   },
-  "target_peer_id": "<peer-b-id>",
+  "target_peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-b-public-key>",
   "payload_paths": ["/var/lib/novovm/outbound/operator-provided-payload.bin"],
   "report_path": "/var/lib/novovm/reports/peer-a.json"
 }
-'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\peer-sender.json.example")
+'@.Replace('APPROVED_AOEM_CORE_SHA256', $actualAoemSha) | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\peer-sender.json.example")
 
   @'
 {
   "role": "receiver",
-  "identity_key_path": "/etc/novovm/peer-b-ed25519.hex",
+  "identity_key_path": "/etc/novovm/keys/peer-b-transport.sealed",
+  "chain_id": "REVIEW_APPROVED_CHAIN_ID",
+  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "APPROVED_AOEM_CORE_SHA256",
   "relay": {
     "endpoint": "wss://relay.example/novovm",
-    "expected_relay_peer_id": "<verified-relay-peer-id>",
+    "expected_relay_peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-relay-public-key>",
     "tls_trust": "native_web_pki"
   },
-  "expected_source_peer_id": "<peer-a-id>",
+  "expected_source_peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-a-public-key>",
   "expected_frame_count": 1,
   "report_path": "/var/lib/novovm/reports/peer-b.json"
 }
-'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\peer-receiver.json.example")
+'@.Replace('APPROVED_AOEM_CORE_SHA256', $actualAoemSha) | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\peer-receiver.json.example")
 
   @'
 {
-  "chain_id": 1,
+  "chain_id": "REVIEW_APPROVED_CHAIN_ID",
   "role": "duplex",
-  "identity_key_path": "/etc/novovm/node-ed25519.hex",
+  "identity_key_path": "/etc/novovm/keys/transport.sealed",
+  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "APPROVED_AOEM_CORE_SHA256",
   "delivery_journal_path": "/var/lib/novovm/state/product-delivery-journal.rocksdb",
   "peers": [
     {
-      "peer_id": "novovm-ed25519:<peer-b-public-key>",
+      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-b-public-key>",
       "metric_peer_id": 9991002
     },
     {
-      "peer_id": "novovm-ed25519:<peer-c-public-key>",
+      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-c-public-key>",
       "metric_peer_id": 9991003
     },
     {
-      "peer_id": "novovm-ed25519:<peer-d-public-key>",
+      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-d-public-key>",
       "metric_peer_id": 9991004
     }
   ],
   "overlay": {
     "cache_path": "/var/lib/novovm/bootstrap-cache.json",
-    "trusted_signer_public_keys": [[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
+    "trusted_signer_public_keys": ["REVIEW_REPLACE_WITH_FULL_1952_BYTE_MLDSA65_PUBLIC_KEY_ARRAY"],
     "minimum_bootstrap_signatures": 1,
     "embedded_sources": [],
     "cooldown_base_ms": 2000,
@@ -419,7 +500,25 @@ try {
   "reconnect_base_delay_ms": 250,
   "reconnect_max_delay_ms": 30000
 }
-'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\node-mainline-overlay.json.example")
+'@.Replace('APPROVED_AOEM_CORE_SHA256', $actualAoemSha) | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\node-mainline-overlay.json.example")
+
+  @'
+{
+  "version": 2,
+  "mode": "observed_endpoint_probe",
+  "bind_addr": "0.0.0.0:0",
+  "identity_key_path": "/etc/novovm/keys/transport.sealed",
+  "chain_id": "REVIEW_APPROVED_CHAIN_ID",
+  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "APPROVED_AOEM_CORE_SHA256",
+  "peer_public_key": "REVIEW_REPLACE_WITH_FULL_1952_BYTE_MLDSA65_PUBLIC_KEY_ARRAY",
+  "peer_addr": "REVIEW_REACHABLE_OBSERVER_ADDRESS:43174",
+  "expected_peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-observer-public-key>",
+  "timeout_ms": 10000,
+  "run_for_ms": 10000,
+  "report_path": "/var/lib/novovm/reports/native-nat.json"
+}
+'@.Replace('APPROVED_AOEM_CORE_SHA256', $actualAoemSha) | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\native-nat.json.example")
 
   # Deployment JSON is not a transaction carrier. No fixture genesis, validator
   # identity, allocation or HTTP listener is invented by the packaging script.
@@ -468,28 +567,29 @@ NOVOVM_AOEM_PLUGIN_DIR=/opt/novovm/aoem/linux/core/plugins
   "nodes": [
     {
       "name": "node-a",
-      "peer_id": "novovm-ed25519:<node-a-public-key>",
+      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-a-public-key>",
       "config_path": "node-a.json"
     },
     {
       "name": "node-b",
-      "peer_id": "novovm-ed25519:<node-b-public-key>",
+      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-b-public-key>",
       "config_path": "node-b.json"
     },
     {
       "name": "node-c",
-      "peer_id": "novovm-ed25519:<node-c-public-key>",
+      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-c-public-key>",
       "config_path": "node-c.json"
     },
     {
       "name": "node-d",
-      "peer_id": "novovm-ed25519:<node-d-public-key>",
+      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-d-public-key>",
       "config_path": "node-d.json"
     }
   ]
 }
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\topology-plan.json.example")
 
+  if (!$windowsPackage) {
   @'
 [Unit]
 Description=NOVOVM Product WSS Relay
@@ -547,13 +647,18 @@ WantedBy=multi-user.target
 
   Copy-Item -LiteralPath (Join-Path $repo 'config/rendezvous-linux/novonet-mailbox.service') `
     -Destination (Join-Path $packagePath 'systemd/novonet-mailbox.service')
+  }
 
   # Public configuration shapes only. They fail closed until the operator
   # supplies approved trust/listener information; no fake key or public host.
   @'
 {
-  "version": 2,
+  "version": 3,
   "root": "/var/lib/novonet-mailbox",
+  "transport_identity_path": "/etc/novonet-mailbox/transport.sealed",
+  "chain_id": "REVIEW_APPROVED_CHAIN_ID",
+  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "APPROVED_AOEM_CORE_SHA256",
   "allowed_clients": [],
   "relays": [],
   "nameserver": "REVIEW_LOCAL_DNS_ADDRESS",
@@ -561,7 +666,7 @@ WantedBy=multi-user.target
   "relay_only": false,
   "record_id": "REVIEW_HOST_RECORD_ID"
 }
-'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/mailbox-node.json.example')
+'@.Replace('APPROVED_AOEM_CORE_SHA256', $actualAoemSha) | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/mailbox-node.json.example')
   @'
 {
   "version": 1,
@@ -591,6 +696,7 @@ WantedBy=multi-user.target
 }
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/unified-node.json.example')
 
+  if (!$windowsPackage) {
   @'
 [Unit]
 Description=NOVOVM Native NovoRUDP/APFL Validator
@@ -618,6 +724,7 @@ ReadWritePaths=/var/lib/novovm
 [Install]
 WantedBy=multi-user.target
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "systemd\novovm-node.service")
+  }
 
   foreach ($document in $packageDocs) {
     Copy-Item -LiteralPath (Join-Path $repo "docs/$document") -Destination (Join-Path $packagePath "docs")
@@ -645,7 +752,9 @@ Packaging is not installation, startup, multi-host acceptance or mainnet launch.
 3. Keep purpose-isolated identities, private key files, databases, signing
    journals and ciphertext under their ORIGINAL owner. Asset signing is
    ML-DSA-65; consensus proposals/votes/QC also require ML-DSA-65. Transport
-   remains purpose-isolated Ed25519, not whole-node full-PQ signoff.
+   uses its own protected ML-DSA-65 key (1952-byte public key), not a validator
+   or asset key. This signature migration is not post-quantum key agreement
+   or platform/runtime acceptance.
 4. systemd/novonet-mailbox.service is the existing self-owned owner unit with
    its ORIGINAL /opt/novonet-mailbox/current, /etc/novonet-mailbox, private data
    and systemd owner-key credential paths. resources/config/rendezvous-linux
@@ -670,11 +779,11 @@ Packaging is not installation, startup, multi-host acceptance or mainnet launch.
    is deliberately incomplete: replace `genesis: null` with the common verified
    GenesisConfig, pin its protocol/genesis commitments, populate every remote
    ML-DSA-65 validator public key (1952 bytes)/address and its committed
-   Ed25519 transport_public_key (32 bytes). Prepare
+   ML-DSA-65 transport_public_key (1952 bytes). Prepare
    TWO independent protected purpose keys for this node (validator and transport)
    using novovmctl native-identity under the eventual service account. Configure
-   key_storage=protected_v1 with NVPK0002 envelopes; old NVPK0001/raw validator
-   material is rejected. Validator generate/inspect additionally requires the
+   key_storage=protected_v1 with NVPK0003 envelopes; old NVPK0001/NVPK0002/raw
+   key material is rejected. Both purpose generate/inspect operations require the
    approved AOEM --library path and independently pinned --library-sha256.
    The node unit requires its OWN encrypted systemd owner-key credential at
    /etc/novovm/credentials/node-owner-key.cred. Prepare it with the existing
@@ -684,6 +793,12 @@ Packaging is not installation, startup, multi-host acceptance or mainnet launch.
    service account and credential. Lifecycle plan validates paths and pins but
    reports custody_verified=false: it does not decrypt or generate private keys.
    See docs/NOVOVM_PURPOSE_IDENTITY_PREPARATION.md for the offline handoff.
+   Transport examples pin this package's actual AOEM core hash. Their
+   REVIEW_APPROVED_CHAIN_ID and full-1952-byte-public-key-array strings are
+   intentionally invalid typed values until replaced with approved public
+   configuration. Peer labels use novovm-mldsa65:<lowercase SHA256 of the full
+   public key>; that 32-byte digest is NOT the public key itself. The native NAT
+   example uses the same authenticated NativeEndpoint, not an echo/raw-UDP test.
    Do not use fixture keys, invent allocation values, or copy another node's DB.
    There is no HTTP/JSON-RPC listener. JSON here is deployment configuration only;
    native transaction/query traffic uses NovoRUDP/APFL.
@@ -735,6 +850,59 @@ authentication, transaction semantics, overlay routing, and product policy
 remain in the host; no NOVOVM-specific business logic is added to AOEM.
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "README.md")
 
+  if ($windowsPackage) {
+    # The same public templates and package owner use platform paths. Unknown
+    # identity/chain values remain deliberately unconfigured on both platforms.
+    foreach ($template in Get-ChildItem -LiteralPath (Join-Path $packagePath 'config') -File) {
+      $content = [IO.File]::ReadAllText($template.FullName).
+        Replace('/opt/novovm/aoem/linux', 'C:/ProgramData/NOVOVM/releases/REVIEW_FIXED_RELEASE/aoem/windows').
+        Replace('/opt/novovm', 'C:/ProgramData/NOVOVM/releases/REVIEW_FIXED_RELEASE').
+        Replace('/etc/novonet-mailbox', 'C:/ProgramData/NOVOVM/Mailbox/config').
+        Replace('/var/lib/novonet-mailbox', 'C:/ProgramData/NOVOVM/Mailbox/state').
+        Replace('/etc/novovm', 'C:/ProgramData/NOVOVM/config').
+        Replace('/var/lib/novovm-relay', 'C:/ProgramData/NOVOVM/Relay/state').
+        Replace('/var/lib/novovm', 'C:/ProgramData/NOVOVM/Node/state').
+        Replace('libaoem_ffi.so', 'aoem_ffi.dll')
+      [IO.File]::WriteAllText($template.FullName, $content, [Text.UTF8Encoding]::new($false))
+    }
+    @'
+# NOVOVM / NOVONET Unified Windows x64 Candidate
+
+This is the SAME original packager, 11 Cargo binary contracts and verification
+preflight used for the Linux candidate. It is not an installed/running fleet.
+Verify release-manifest.json and CHECKSUMS.sha256 against independently pinned
+hashes. Preserve the actual AOEM provenance; scalar/mixed-batch verification
+qualification does not qualify every sidecar, signing, GPU, TPS or deployment.
+
+The original Windows adapters are under resources/scripts/windows, including
+their firewall module dependency. Packaging does not execute them, change a
+firewall/service/task, create credentials, start a validator or activate genesis.
+The relay installer only installs the original relay binary/firewall binding;
+it is not a new process supervisor. The rendezvous SCM/user-session adapters
+retain their original distinct ownership and custody requirements. Do not run
+them against an existing installation without an approved exact upgrade plan.
+
+All config examples remain unconfigured. Replace REVIEW_APPROVED_CHAIN_ID,
+REVIEW_FIXED_RELEASE and full 1952-byte public-key-array placeholders with the
+approved per-host configuration. Each machine needs its OWN protected transport
+and validator keys, generated/inspected via original novovmctl native-identity
+with explicit qualified --library and --library-sha256. NVPK0003 custody is tied
+to purpose, chain and runtime account. Never copy another host's private key or
+replace a live identity with a generated example. Old key/config versions reject.
+
+Native transfers use the original NovoRUDP/APFL path; this package creates no
+HTTP transaction listener. Do not enable another execution owner beside the
+native configuration. No systemd unit is a Windows startup contract. The unified
+lifecycle manifest stays services=[]; current SCM/task acceptance is separate.
+No new common genesis, balance distribution, billing or launch is authorized.
+
+Keep existing identities, protected policy, databases, signing history and NOVOCHAT
+data. Windows local EXE authentication results do not qualify C/D installation
+or A/B/C/D external routes/reconnect. B's services remain outside this package.
+ML-DSA-65 identity authentication is not post-quantum key agreement.
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'README.md')
+  }
+
   # Windows source checkouts may have CRLF. Linux env/unit files must not carry
   # a trailing CR into configuration values or a manually sourced START mode.
   foreach ($template in @(
@@ -764,11 +932,11 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
   if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) {
     throw "Source worktree changed while packaging; existing package remains untouched."
   }
-  $copiedAoem = Join-Path $packagePath "aoem/linux/core/bin/libaoem_ffi.so"
+  $copiedAoem = Join-Path $packagePath "aoem/$platform/core/bin/$coreName"
   if ((Get-FileHash -LiteralPath $copiedAoem -Algorithm SHA256).Hash.ToLowerInvariant() -ne $actualAoemSha) {
     throw "Copied AOEM runtime differs from its validated source; existing package remains untouched."
   }
-  $ackWireVersion = "novovm-product-mainline-recipient-ack/v1"
+  $ackWireVersion = "novovm-product-mainline-recipient-ack/v2"
   $journalSchema = "novovm-product-delivery-journal/v1"
   $overlaySource = Get-Content -Raw -LiteralPath (Join-Path $repo "crates\novovm-node\src\product_mainline_overlay.rs")
   $journalSource = Get-Content -Raw -LiteralPath (Join-Path $repo "crates\novovm-node\src\product_delivery_journal.rs")
@@ -779,7 +947,7 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
     throw "Release manifest journal schema does not match the delivery-journal source."
   }
   [PSCustomObject]@{
-    scope = "novovm_unified_linux_release_v3"
+    scope = $packageScope
     target = $Target
     git_commit = $commit
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
@@ -808,10 +976,15 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
       business_proof_finality = 'unavailable'
     }
     aoem_runtime = [PSCustomObject]@{
-      path = "aoem/linux/core/bin/libaoem_ffi.so"
+      path = "aoem/$platform/core/bin/$coreName"
       sha256 = $actualAoemSha
-      platform = "linux-x86_64"
+      platform = $platformId
       isolated_package_input = ![string]::IsNullOrWhiteSpace($AoemPackageRoot)
+      verification_qualified = $true
+      verification_qualification_scope = $runtimeQualificationScope
+      qualification_report = $runtimeQualificationReport
+      signing_tested_by_preflight = $false
+      keygen_tested_by_preflight = $false
       performance_qualified = $false
     }
     compatibility_tools = [PSCustomObject]@{
@@ -825,7 +998,7 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
     artifacts = $entries
   } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $packagePath "release-manifest.json")
   Publish-LinuxPackage $repo $packagePath $destination -Replace:$Force
-  Write-Host "Unified Linux artifacts assembled, not installed or started: $destination"
+  Write-Host "Unified $platform artifacts assembled, not installed or started: $destination"
 }
 finally {
   Pop-Location

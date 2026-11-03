@@ -543,12 +543,20 @@ impl TlsScopeV1 {
     /// Same platform resource controller as the outer node admission. This
     /// local transport gate counts connections only, never service work twice.
     #[cfg(feature = "iroh-transport")]
-    pub fn with_service_concurrency(mut self, controller: Arc<ServiceConcurrencyV1>) -> Self {
+    pub fn with_service_concurrency(self, controller: Arc<ServiceConcurrencyV1>) -> Self {
+        self.with_service_concurrency_limit(controller, Semaphore::MAX_PERMITS)
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn with_service_concurrency_limit(
+        mut self,
+        controller: Arc<ServiceConcurrencyV1>,
+        ceiling: usize,
+    ) -> Self {
         self.adaptive_connections = Some(AdaptiveAdmissionV1::new(
             TLS_MAX_CONNECTIONS_V1,
             Some(controller),
             AdmissionKind::Connections,
-            Semaphore::MAX_PERMITS,
+            ceiling,
         ));
         self
     }

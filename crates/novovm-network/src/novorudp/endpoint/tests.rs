@@ -8,13 +8,31 @@ fn budget() -> NativeHandshakeBudget {
     }
 }
 
+fn drive_handshake(
+    client: &mut NativeEndpoint,
+    node: &mut NativeEndpoint,
+    wall_ms: u64,
+    now: Instant,
+    stop_on_rejection: bool,
+) -> Result<NativePoll> {
+    for tick in 0..64 {
+        let at = now + Duration::from_micros(tick * 100);
+        client.poll(wall_ms, at, 64)?;
+        let report = node.poll(wall_ms, at, 64)?;
+        if (stop_on_rejection && report.rejected_datagrams != 0) || client.session_id(0).is_some() {
+            return Ok(report);
+        }
+    }
+    anyhow::bail!("handshake did not finish its bounded continuation flight")
+}
+
 #[test]
 fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confirmed() -> Result<()>
 {
     for same_address in [false, true] {
         let start = Instant::now();
-        let node_key = SigningKey::from_bytes(&[51; 32]);
-        let client_key = SigningKey::from_bytes(&[52; 32]);
+        let node_key = crate::test_identity::key(51);
+        let client_key = crate::test_identity::key(52);
         let node_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
         let mut node = NativeEndpoint::listen_clients_shared(
             node_socket.clone(),
@@ -24,7 +42,7 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
             budget(),
         )?;
         let remote = NativePeer {
-            key: node_key.verifying_key().to_bytes(),
+            key: node_key.public_key().to_vec(),
             address: node.local_addr()?,
         };
         let client_socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -41,10 +59,13 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
             1000,
             start,
         )?;
-        old.poll(1000, Instant::now(), 64)?;
-        let mut captured = [0; MAX_DATAGRAM_BYTES];
-        let (length, _) = node_socket.peek_from(&mut captured)?;
-        let old_offer = captured[..length].to_vec();
+        let old_offer = old.peers[&0]
+            .handshake
+            .as_ref()
+            .unwrap()
+            .outgoing_wire_for_test()
+            .unwrap()
+            .to_vec();
         while old.session_id(0).is_none() {
             ensure!(
                 start.elapsed() < Duration::from_secs(1),
@@ -63,17 +84,20 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
             1000,
             Instant::now(),
         )?;
-        fresh.poll(1000, Instant::now(), 64)?;
         assert_eq!(
-            node.poll(1000, Instant::now(), 64)?.rejected_datagrams,
+            drive_handshake(&mut fresh, &mut node, 1000, start, true)?.rejected_datagrams,
             1,
             "reconnect default must remain closed"
         );
         node.enable_client_reconnect_v1()?;
         // The rejected default-policy attempt did not consume the transcript.
-        fresh.poll(1000, start + Duration::from_millis(20), 64)?;
-        node.poll(1000, start + Duration::from_millis(20), 64)?;
-        fresh.poll(1000, start + Duration::from_millis(21), 64)?;
+        drive_handshake(
+            &mut fresh,
+            &mut node,
+            1000,
+            start + Duration::from_millis(20),
+            false,
+        )?;
         assert!(fresh.session_id(0).is_some());
         assert_eq!(
             node.session_id(0),
@@ -103,11 +127,11 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
         fresh
             .io
             .try_send(&old_wire, NativeRoute::Udp(node.local_addr()?))?;
-        node.poll(1000, start + Duration::from_millis(22), 64)?;
+        node.poll(1000, start + Duration::from_millis(40), 64)?;
         assert_eq!(node.session_id(0), Some(original));
         assert!(old.try_send(0, &frame(original, 17))?);
         assert_eq!(
-            node.poll(1000, start + Duration::from_millis(23), 64)?
+            node.poll(1000, start + Duration::from_millis(41), 64)?
                 .frames
                 .len(),
             1,
@@ -117,7 +141,7 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
         assert_ne!(new_session, original);
         fresh.try_send(0, &frame(new_session, 99))?;
         assert_eq!(
-            node.poll(1000, start + Duration::from_millis(24), 64)?
+            node.poll(1000, start + Duration::from_millis(42), 64)?
                 .rejected_datagrams,
             1
         );
@@ -125,7 +149,7 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
         // Old data in the SAME quantum must not escape after the transition.
         old.try_send(0, &frame(original, 17))?;
         fresh.try_send(0, &frame(new_session, 17))?;
-        let report = node.poll(1000, start + Duration::from_millis(25), 64)?;
+        let report = node.poll(1000, start + Duration::from_millis(43), 64)?;
         assert_eq!(
             report.session_changes,
             vec![NativeSessionChange {
@@ -137,12 +161,19 @@ fn client_reconnect_requires_fresh_possession_and_keeps_old_session_until_confir
         assert_eq!(report.frames.len(), 1);
         assert_eq!(report.frames[0].frame.session_id, new_session);
         assert_eq!(node.peer_count(), 1);
-        // Old address/transcript/ciphertext never reactivates the prior session.
-        old.io
-            .try_send(&old_offer, NativeRoute::Udp(node.local_addr()?))?;
+        // Reassembled old transcripts cannot reactivate the prior session;
+        // fragmentation itself is exercised by the continuation tests.
+        assert!(node
+            .receive_handshake(
+                NativeRoute::Udp(old.local_addr()?),
+                &old_offer,
+                1000,
+                start + Duration::from_millis(44),
+            )
+            .is_err());
         old.try_send(0, &frame(original, 17))?;
-        let report = node.poll(1000, start + Duration::from_millis(26), 64)?;
-        assert_eq!(report.rejected_datagrams, 2);
+        let report = node.poll(1000, start + Duration::from_millis(44), 64)?;
+        assert_eq!(report.rejected_datagrams, 1);
         assert!(report.frames.is_empty());
         assert_eq!(node.session_id(0), Some(new_session));
     }
@@ -154,14 +185,14 @@ fn open_client_possession_is_bounded_and_cannot_enter_validator_streams() -> Res
     use crate::product_overlay::{handshake_wire, NodeHandshakeInitiatorV1};
     let socket = UdpSocket::bind("127.0.0.1:0")?;
     let address = socket.local_addr()?;
-    let key = SigningKey::from_bytes(&[91; 32]);
+    let key = crate::test_identity::key(91);
     let start = Instant::now();
     let absent = UdpSocket::bind("127.0.0.1:0")?;
     let mut node = NativeEndpoint::bind(
         socket,
         key.clone(),
         vec![NativePeer {
-            key: SigningKey::from_bytes(&[92; 32]).verifying_key().to_bytes(),
+            key: crate::test_identity::key(92).public_key().to_vec(),
             address: absent.local_addr()?,
         }],
         budget(),
@@ -169,14 +200,14 @@ fn open_client_possession_is_bounded_and_cannot_enter_validator_streams() -> Res
         start,
     )?;
     assert!(node
-        .allow_clients(SigningKey::from_bytes(&[93; 32]), 1, vec![17], budget())
+        .allow_clients(crate::test_identity::key(93), 1, vec![17], budget())
         .is_err());
     node.allow_clients(key.clone(), 1, vec![17], budget())?;
-    let client_key = SigningKey::from_bytes(&[94; 32]);
+    let client_key = crate::test_identity::key(94);
     let invalid = UdpSocket::bind("127.0.0.1:0")?;
     let offer = NodeHandshakeInitiatorV1::start(
         &client_key,
-        peer_id_from_ed25519_public_key_v1(&key.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(key.public_key()),
         1000,
         1000,
     )?;
@@ -189,7 +220,7 @@ fn open_client_possession_is_bounded_and_cannot_enter_validator_streams() -> Res
         UdpSocket::bind("127.0.0.1:0")?,
         client_key,
         NativePeer {
-            key: key.verifying_key().to_bytes(),
+            key: key.public_key().to_vec(),
             address,
         },
         budget(),
@@ -209,8 +240,8 @@ fn open_client_possession_is_bounded_and_cannot_enter_validator_streams() -> Res
     assert_eq!(node.peer_count(), 2);
     // A second correctly signed identity is refused at the resource bound.
     let other = NodeHandshakeInitiatorV1::start(
-        &SigningKey::from_bytes(&[95; 32]),
-        peer_id_from_ed25519_public_key_v1(&key.verifying_key().to_bytes()),
+        &crate::test_identity::key(95),
+        peer_id_from_mldsa65_public_key_v1(key.public_key()),
         1000,
         1000,
     )?;
@@ -251,19 +282,19 @@ fn original_socket_owner_keeps_healthy_peer_live_with_absent_peer_and_invalid_da
     let unknown = UdpSocket::bind("127.0.0.1:0")?;
     let a_address = a_socket.local_addr()?;
     let b_address = b_socket.local_addr()?;
-    let a_key = SigningKey::from_bytes(&[23; 32]);
-    let b_key = SigningKey::from_bytes(&[47; 32]);
+    let a_key = crate::test_identity::key(23);
+    let b_key = crate::test_identity::key(47);
     let now = Instant::now();
     let mut a = NativeEndpoint::bind(
         a_socket,
         a_key.clone(),
         vec![
             NativePeer {
-                key: b_key.verifying_key().to_bytes(),
+                key: b_key.public_key().to_vec(),
                 address: b_address,
             },
             NativePeer {
-                key: SigningKey::from_bytes(&[71; 32]).verifying_key().to_bytes(),
+                key: crate::test_identity::key(71).public_key().to_vec(),
                 address: absent.local_addr()?,
             },
         ],
@@ -275,7 +306,7 @@ fn original_socket_owner_keeps_healthy_peer_live_with_absent_peer_and_invalid_da
         b_socket,
         b_key,
         vec![NativePeer {
-            key: a_key.verifying_key().to_bytes(),
+            key: a_key.public_key().to_vec(),
             address: a_address,
         }],
         budget(),
@@ -330,13 +361,28 @@ fn original_socket_owner_keeps_healthy_peer_live_with_absent_peer_and_invalid_da
 
 #[test]
 fn duplicate_identity_or_source_and_invalid_quantum_are_rejected() -> Result<()> {
-    let key = SigningKey::from_bytes(&[23; 32]);
-    let remote = SigningKey::from_bytes(&[47; 32]);
+    let key = crate::test_identity::key(23);
+    let remote = crate::test_identity::key(47);
     let peer = NativePeer {
-        key: remote.verifying_key().to_bytes(),
+        key: remote.public_key().to_vec(),
         address: "127.0.0.1:12345".parse()?,
     };
     let now = Instant::now();
+    assert!(
+        NativeEndpoint::connect_client(
+            UdpSocket::bind("127.0.0.1:0")?,
+            key.clone(),
+            NativePeer {
+                key: vec![47; 32],
+                address: peer.address,
+            },
+            budget(),
+            1000,
+            now,
+        )
+        .is_err(),
+        "legacy 32-byte identity must not enter the ML-DSA endpoint"
+    );
     assert!(NativeEndpoint::bind(
         UdpSocket::bind("127.0.0.1:0")?,
         key.clone(),
@@ -362,7 +408,7 @@ fn duplicate_identity_or_source_and_invalid_quantum_are_rejected() -> Result<()>
 #[test]
 fn node_wire_budget_counts_handshake_and_rejects_ingress_before_identity_admission() -> Result<()> {
     let now = Instant::now();
-    let key = SigningKey::from_bytes(&[81; 32]);
+    let key = crate::test_identity::key(81);
     let mut node = NativeEndpoint::listen_clients(
         UdpSocket::bind("127.0.0.1:0")?,
         key.clone(),
@@ -370,20 +416,20 @@ fn node_wire_budget_counts_handshake_and_rejects_ingress_before_identity_admissi
         vec![17],
         budget(),
     )?;
-    node.set_wire_budget_v1(2400, now)?;
-    assert!(node.set_wire_budget_v1(2400, now).is_err());
+    node.set_wire_budget_v1(32 * 1024, now)?;
+    assert!(node.set_wire_budget_v1(32 * 1024, now).is_err());
     let mut client = NativeEndpoint::connect_client(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[82; 32]),
+        crate::test_identity::key(82),
         NativePeer {
-            key: key.verifying_key().to_bytes(),
+            key: key.public_key().to_vec(),
             address: node.local_addr()?,
         },
         budget(),
         1000,
         now,
     )?;
-    client.set_wire_budget_v1(2400, now)?;
+    client.set_wire_budget_v1(32 * 1024, now)?;
     client.poll(1000, now, 64)?;
     let sent = client.wire_usage_v1(now).unwrap().sent_bytes;
     assert!(sent > 0);
@@ -392,8 +438,10 @@ fn node_wire_budget_counts_handshake_and_rejects_ingress_before_identity_admissi
     assert_eq!(usage.received_bytes, sent);
     assert_eq!(usage.admitted_receive_bytes, sent);
     assert!(usage.sent_bytes > 0);
-    client.poll(1000, now, 64)?;
+    drive_handshake(&mut client, &mut node, 1000, now, false)?;
     assert!(client.session_id(0).is_some());
+    let sent = client.wire_usage_v1(now).unwrap().sent_bytes;
+    assert_eq!(node.wire_usage_v1(now).unwrap().received_bytes, sent);
     let session = node.session_id(0);
     let remaining = node.wire_usage_v1(now).unwrap().remaining as usize;
     let attacker = UdpSocket::bind("127.0.0.1:0")?;
@@ -419,7 +467,7 @@ fn node_wire_budget_blocks_data_and_object_cursor_but_keeps_authenticated_sessio
         NovoRudpPacingProfile, NovoRudpWindowConfig,
     };
     let now = Instant::now();
-    let key = SigningKey::from_bytes(&[83; 32]);
+    let key = crate::test_identity::key(83);
     let mut node = NativeEndpoint::listen_clients(
         UdpSocket::bind("127.0.0.1:0")?,
         key.clone(),
@@ -427,21 +475,19 @@ fn node_wire_budget_blocks_data_and_object_cursor_but_keeps_authenticated_sessio
         vec![17],
         budget(),
     )?;
-    node.set_wire_budget_v1(2400, now)?;
+    node.set_wire_budget_v1(32 * 1024, now)?;
     let mut client = NativeEndpoint::connect_client(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[84; 32]),
+        crate::test_identity::key(84),
         NativePeer {
-            key: key.verifying_key().to_bytes(),
+            key: key.public_key().to_vec(),
             address: node.local_addr()?,
         },
         budget(),
         1000,
         now,
     )?;
-    client.poll(1000, now, 64)?;
-    node.poll(1000, now, 64)?;
-    client.poll(1000, now, 64)?;
+    drive_handshake(&mut client, &mut node, 1000, now, false)?;
     let session = node.session_id(0).unwrap();
     let remaining = node.wire_usage_v1(now).unwrap().remaining as usize;
     assert!(node

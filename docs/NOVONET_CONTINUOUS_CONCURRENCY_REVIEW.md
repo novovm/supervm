@@ -529,9 +529,13 @@ The current L4 constructor is
 [`mailbox_rpc.rs`](../crates/novovm-network/src/mailbox_rpc.rs) is shared by all
 local and remote requests, and is not reset by a new connection. Structured
 requests call `request_local_timed` once per operation. The
-[`native probe`](../crates/novovm-network/examples/mailbox_native_peer_probe.rs)
+[`native probe`](../crates/novovm-relay/examples/mailbox_native_peer_probe.rs)
 registers once per client and then executes Put, receipt verification,
 Fetch/decryption and Consume: three admitted requests per complete cycle.
+
+2026-11-03: this same operator tool moved to the relay owner to load protected
+ML-DSA-65 identities through the qualified AOEM adapter. Historical measurements
+in this review are unchanged and do not qualify the migrated tool's live use.
 
 Consequently its long-run policy ceiling is about **32 / 3 = 10.67 cycles/s**.
 With a full 64-token starting bucket the optimistic lower duration for N requests

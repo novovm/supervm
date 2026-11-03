@@ -212,19 +212,19 @@ impl ServiceEndpoints {
 }
 
 pub struct NativeMailboxCandidateV7 {
-    pub public_key: [u8; 32],
+    pub public_key: Vec<u8>,
     pub endpoint: NativeMailboxEndpointV7,
     pub record_expires_at_ms: u64,
 }
 
 pub struct NativeCarrierMailboxCandidateV7 {
-    pub public_key: [u8; 32],
+    pub public_key: Vec<u8>,
     pub endpoint: NativeCarrierMailboxEndpointV7,
     pub record_expires_at_ms: u64,
 }
 
 pub struct NativeCarrierMailboxCandidateV8 {
-    pub public_key: [u8; 32],
+    pub public_key: Vec<u8>,
     pub endpoint: NativeCarrierMailboxEndpointV8,
     pub record_expires_at_ms: u64,
 }
@@ -233,7 +233,7 @@ pub struct NativeCarrierMailboxCandidateV8 {
 /// locally pinned node. It carries no permission for mailbox business requests.
 #[derive(Clone)]
 pub struct NativeMailboxBootstrapV7 {
-    pub public_key: [u8; 32],
+    pub public_key: Vec<u8>,
     pub endpoint: NativeMailboxEndpointV7,
 }
 
@@ -251,7 +251,7 @@ impl ServiceLeaseBookV1 {
             if entry.current.expires_at_ms <= now {
                 continue;
             }
-            let public_key = entry.current.relay_public_key;
+            let public_key = entry.current.relay_public_key.clone();
             let record_expires_at_ms = entry.current.expires_at_ms;
             if let Some(endpoint) = &entry.decoded_current()?.routes.native_carrier {
                 candidates.push(NativeCarrierMailboxCandidateV7 {
@@ -270,13 +270,13 @@ impl ServiceLeaseBookV1 {
     /// This does not admit a new dial or replace live native session checks.
     pub fn check_continuous_native_carrier_v7(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         transport: [u8; 32],
         now: u64,
     ) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "native carrier requires local trust");
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         let current = entry
             .decoded_current()?
             .routes
@@ -294,12 +294,12 @@ impl ServiceLeaseBookV1 {
     /// expired locator or old instance is not authority for a new NVMBOX07 dial.
     pub fn check_native_carrier_route_v7(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &NativeCarrierMailboxEndpointV7,
         now: u64,
     ) -> Result<()> {
         self.check_continuous_native_carrier_v7(pin, endpoint.iroh.address.endpoint_key, now)?;
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry.current.expires_at_ms > now,
             "native carrier route expired"
@@ -330,7 +330,7 @@ impl ServiceLeaseBookV1 {
             if entry.current.expires_at_ms <= now {
                 continue;
             }
-            let public_key = entry.current.relay_public_key;
+            let public_key = entry.current.relay_public_key.clone();
             let record_expires_at_ms = entry.current.expires_at_ms;
             if let Some(endpoint) = &entry.decoded_current()?.routes.native_carrier_v8 {
                 candidates.push(NativeCarrierMailboxCandidateV8 {
@@ -349,13 +349,13 @@ impl ServiceLeaseBookV1 {
     /// This does not admit a new dial or replace live native session checks.
     pub fn check_continuous_native_carrier_v8(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         transport: [u8; 32],
         now: u64,
     ) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "native carrier requires local trust");
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         let current = entry
             .decoded_current()?
             .routes
@@ -373,12 +373,12 @@ impl ServiceLeaseBookV1 {
     /// expired locator or old instance is not authority for a new NVMBOX08 dial.
     pub fn check_native_carrier_route_v8(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &NativeCarrierMailboxEndpointV8,
         now: u64,
     ) -> Result<()> {
         self.check_continuous_native_carrier_v8(pin, endpoint.iroh.address.endpoint_key, now)?;
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry.current.expires_at_ms > now,
             "native carrier route expired"
@@ -407,7 +407,7 @@ impl ServiceLeaseBookV1 {
         );
         let mut out = Vec::new();
         for entry in self.entries.values_mut() {
-            let public_key = entry.current.relay_public_key;
+            let public_key = entry.current.relay_public_key.clone();
             if let Some(endpoint) = &entry.decoded_current()?.routes.native {
                 out.push(NativeMailboxBootstrapV7 {
                     public_key,
@@ -420,14 +420,14 @@ impl ServiceLeaseBookV1 {
 
     pub fn check_native_bootstrap_route_v7(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &NativeMailboxEndpointV7,
         now: u64,
     ) -> Result<()> {
         self.check_continuous_native_peer_v7(pin, now)?;
         ensure!(
             self.entries
-                .get_mut(&pin)
+                .get_mut(pin)
                 .context("service revoked")?
                 .decoded_current()?
                 .routes
@@ -444,7 +444,7 @@ impl ServiceLeaseBookV1 {
     /// exposing a temporal state; callers cannot turn them into a delayed retry.
     pub fn inspect_native_record_v7(
         &mut self,
-        expected_pin: [u8; 32],
+        expected_pin: &[u8],
         record: &PeerSignedRelayRecordV1,
         now: u64,
     ) -> Result<directory::RelayRecordTimeV1> {
@@ -452,7 +452,7 @@ impl ServiceLeaseBookV1 {
     }
     pub fn inspect_native_record_v8(
         &mut self,
-        expected_pin: [u8; 32],
+        expected_pin: &[u8],
         record: &PeerSignedRelayRecordV1,
         now: u64,
     ) -> Result<directory::RelayRecordTimeV1> {
@@ -460,7 +460,7 @@ impl ServiceLeaseBookV1 {
     }
     fn inspect_native_record(
         &mut self,
-        expected_pin: [u8; 32],
+        expected_pin: &[u8],
         record: &PeerSignedRelayRecordV1,
         now: u64,
         v8: bool,
@@ -471,7 +471,8 @@ impl ServiceLeaseBookV1 {
             record.relay_public_key == expected_pin,
             "native refresh wrong node"
         );
-        let decoded = verify_service_record_authenticity(record, MAX_BOOTSTRAP_LEASE_MS)?;
+        let decoded =
+            verify_service_record_authenticity(record, MAX_BOOTSTRAP_LEASE_MS, &self.verifier)?;
         ensure!(
             if v8 {
                 decoded.native_carrier_v8.is_some()
@@ -482,7 +483,7 @@ impl ServiceLeaseBookV1 {
         );
         let entry = self
             .entries
-            .get(&expected_pin)
+            .get(expected_pin)
             .context("untrusted or revoked self-owned node")?;
         newer(&entry.current, record)?;
         Ok(directory::relay_record_time_v1(record, now))
@@ -492,7 +493,7 @@ impl ServiceLeaseBookV1 {
     /// inspection/waiting never changes stored routes, grants or message TTLs.
     pub fn accept_native_record_v7(
         &mut self,
-        expected_pin: [u8; 32],
+        expected_pin: &[u8],
         record: PeerSignedRelayRecordV1,
         now: u64,
     ) -> Result<()> {
@@ -500,7 +501,7 @@ impl ServiceLeaseBookV1 {
     }
     pub fn accept_native_record_v8(
         &mut self,
-        expected_pin: [u8; 32],
+        expected_pin: &[u8],
         record: PeerSignedRelayRecordV1,
         now: u64,
     ) -> Result<()> {
@@ -508,7 +509,7 @@ impl ServiceLeaseBookV1 {
     }
     fn accept_native_record(
         &mut self,
-        expected_pin: [u8; 32],
+        expected_pin: &[u8],
         record: PeerSignedRelayRecordV1,
         now: u64,
         v8: bool,
@@ -524,7 +525,7 @@ impl ServiceLeaseBookV1 {
         }
         let mut entries = self.entries.clone();
         let entry = entries
-            .get_mut(&expected_pin)
+            .get_mut(expected_pin)
             .context("untrusted or revoked self-owned node")?;
         if entry.current == record {
             return Ok(());
@@ -545,7 +546,7 @@ impl ServiceLeaseBookV1 {
             if entry.current.expires_at_ms <= now {
                 continue;
             }
-            let pin = entry.current.relay_public_key;
+            let pin = entry.current.relay_public_key.clone();
             let expires = entry.current.expires_at_ms;
             if let Some(endpoint) = &entry.decoded_current()?.routes.native {
                 candidates.push(NativeMailboxCandidateV7 {
@@ -561,10 +562,10 @@ impl ServiceLeaseBookV1 {
     /// Supplement, never replace, NativeObjectLink's live session validity and
     /// authenticated peer-key binding. Ordinary locator renewal does not kill
     /// a healthy session. Removal, local revocation and owner retirement do.
-    pub fn check_continuous_native_peer_v7(&mut self, pin: [u8; 32], now: u64) -> Result<()> {
+    pub fn check_continuous_native_peer_v7(&mut self, pin: &[u8], now: u64) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "native mailbox requires local trust");
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry.decoded_current()?.routes.native.is_some(),
             "native mailbox service removed"
@@ -574,12 +575,12 @@ impl ServiceLeaseBookV1 {
 
     pub fn check_native_mailbox_route_v7(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &NativeMailboxEndpointV7,
         now: u64,
     ) -> Result<()> {
         self.check_continuous_native_peer_v7(pin, now)?;
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry.current.expires_at_ms > now,
             "native mailbox route expired"

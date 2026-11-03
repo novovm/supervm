@@ -1,6 +1,6 @@
 use super::*;
+use crate::native_pipeline::consensus::crypto::component_transport_identity;
 use anyhow::Context;
-use ed25519_dalek::SigningKey;
 use novovm_network::novorudp::{
     endpoint::{NativeHandshakeBudget, NativePeer},
     object_sender::{NativeObjectSender, ObjectSendState},
@@ -20,10 +20,10 @@ pub(crate) fn deliver(
     let right = UdpSocket::bind("127.0.0.1:0")?;
     let left_addr = left.local_addr()?;
     let right_addr = right.local_addr()?;
-    let a = SigningKey::from_bytes(&[23; 32]);
-    let b = SigningKey::from_bytes(&[47; 32]);
-    let a_key = a.verifying_key().to_bytes();
-    let b_key = b.verifying_key().to_bytes();
+    let a = component_transport_identity([23; 32]);
+    let b = component_transport_identity([47; 32]);
+    let a_key = a.public_key().to_vec();
+    let b_key = b.public_key().to_vec();
     let start = Instant::now();
     let budget = || NativeHandshakeBudget {
         lifetime: Duration::from_secs(5),

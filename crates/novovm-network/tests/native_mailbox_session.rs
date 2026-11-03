@@ -1,7 +1,8 @@
 #![cfg(feature = "iroh-transport")]
 //! Public SDK/session consumption, not a substitute for Android owner wiring.
 use anyhow::{ensure, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use novovm_network::{
     mailbox_rpc::{
         MailboxReplyV1 as Reply, MailboxRequestV1 as Request, MailboxServiceV1, MailboxWatchV1,
@@ -152,8 +153,8 @@ impl Fixture {
     async fn new_with_pressure(
         pressure: novovm_network::service_concurrency::ResourcePressureV1,
     ) -> Result<Self> {
-        let key = SigningKey::from_bytes(&[17; 32]);
-        let pin = key.verifying_key().to_bytes();
+        let key = transport_identity::key(17);
+        let pin = key.public_key().to_vec();
         let socket = UdpSocket::bind("127.0.0.1:0")?;
         let address = socket.local_addr()?;
         // Consumer obtains the actual native endpoint through the original
@@ -173,16 +174,17 @@ impl Fixture {
         )?;
         let mut directory_book = ServiceLeaseBookV1::new_self_owned(
             SelfOwnedTrustV1 {
-                version: 1,
-                node_pins: [pin].into(),
+                version: 2,
+                node_pins: [pin.clone()].into(),
             },
             vec![record],
             1000,
+            crate::transport_identity::key(90),
         )?;
         let candidates = directory_book.native_mailbox_candidates_v7(1000)?;
         let selected = &candidates[0];
         directory_book.check_native_mailbox_route_v7(
-            selected.public_key,
+            &selected.public_key,
             &selected.endpoint,
             1000,
         )?;
@@ -195,9 +197,9 @@ impl Fixture {
         let mut client_link = NativeObjectLink::new(
             NativeEndpoint::connect_client(
                 UdpSocket::bind("127.0.0.1:0")?,
-                SigningKey::from_bytes(&[83; 32]),
+                transport_identity::key(83),
                 NativePeer {
-                    key: selected.public_key,
+                    key: selected.public_key.clone(),
                     address: selected.endpoint.address,
                 },
                 budget(),
@@ -218,12 +220,12 @@ impl Fixture {
             let _ = server_link.poll(wall, now, 64)?;
             tokio::task::yield_now().await;
         }
-        assert!(NativeMailboxClient::attach(&mut client_link, 0, [99; 32]).is_err());
-        directory_book.check_continuous_native_peer_v7(selected.public_key, 1000)?;
+        assert!(NativeMailboxClient::attach(&mut client_link, 0, vec![99; 1952]).is_err());
+        directory_book.check_continuous_native_peer_v7(&selected.public_key, 1000)?;
         let client = NativeMailboxClient::attach_adaptive(
             &mut client_link,
             0,
-            selected.public_key,
+            selected.public_key.clone(),
             capacity_controller(pressure),
         )?;
         let server = NativeMailboxServer::attach_adaptive(
@@ -231,12 +233,15 @@ impl Fixture {
             0,
             capacity_controller(pressure),
         )?;
-        assert!(NativeMailboxClient::attach(&mut client_link, 0, pin).is_err());
+        assert!(NativeMailboxClient::attach(&mut client_link, 0, pin.clone()).is_err());
         assert!(NativeMailboxServer::attach(&mut server_link, 0).is_err());
         // Same authenticated peer may provide AND consume service; roles have
         // independent, direction-bound counters, not an exclusive client license.
-        let reverse_client =
-            NativeMailboxClient::attach(&mut server_link, 0, client_link.local_identity())?;
+        let reverse_client = NativeMailboxClient::attach(
+            &mut server_link,
+            0,
+            client_link.local_identity().to_vec(),
+        )?;
         let reverse_server = NativeMailboxServer::attach(&mut client_link, 0)?;
         drop((reverse_client, reverse_server)); // no implicit counter reset on drop
         let directory = tempfile::tempdir()?;
@@ -635,9 +640,12 @@ async fn client_invalidation_stops_enqueued_bytes_and_cannot_restart_owner() -> 
         .client
         .try_send(&mut f.client_link, id, Instant::now(), || Ok(()))
         .is_err());
-    assert!(
-        NativeMailboxClient::attach(&mut f.client_link, 0, f.server_link.local_identity()).is_err()
-    );
+    assert!(NativeMailboxClient::attach(
+        &mut f.client_link,
+        0,
+        f.server_link.local_identity().to_vec()
+    )
+    .is_err());
     Ok(())
 }
 

@@ -125,7 +125,7 @@ fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
             "activation_ready": false,
             "state_published": false,
             "consensus_signature_algorithm": "ML-DSA-65",
-            "transport_signature_algorithm": "Ed25519",
+            "transport_signature_algorithm": "ML-DSA-65",
             "whole_node_post_quantum_qualified": false
         }),
         review_only_startup_fragment: None,

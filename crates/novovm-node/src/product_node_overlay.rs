@@ -4,9 +4,9 @@
 //! never turns a relay or bootstrap source into a NOVOVM trust authority.
 
 use anyhow::{Context, Result};
-use ed25519_dalek::SigningKey;
+use novovm_network::product_overlay::TransportIdentity;
 use novovm_network::{
-    peer_id_from_ed25519_public_key_v1, resolve_bootstrap_sources_v1, sign_strategy_receipt_v1,
+    peer_id_from_mldsa65_public_key_v1, resolve_bootstrap_sources_v1, sign_strategy_receipt_v1,
     validate_bootstrap_manifest_v1, BootstrapSourceKindV1, BootstrapSourceV1,
     BootstrapTrustPolicyV1, NatPunchAttemptV1, NatSelectedPathV1, RelayCandidatePoolConfigV1,
     RelayCandidatePoolV1, RelayCandidateSnapshotV1, SignedBootstrapManifestV1,
@@ -31,7 +31,7 @@ pub struct ProductBootstrapSourceV1 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductNodeOverlayConfigV1 {
     pub cache_path: PathBuf,
-    pub trusted_signer_public_keys: Vec<[u8; 32]>,
+    pub trusted_signer_public_keys: Vec<Vec<u8>>,
     #[serde(default = "default_minimum_bootstrap_signatures_v1")]
     pub minimum_bootstrap_signatures: usize,
     #[serde(default)]
@@ -78,7 +78,11 @@ pub struct ProductNodeOverlayRuntimeV1 {
 }
 
 impl ProductNodeOverlayRuntimeV1 {
-    pub fn bootstrap(config: &ProductNodeOverlayConfigV1, now_ms: u64) -> Result<Self> {
+    pub fn bootstrap(
+        config: &ProductNodeOverlayConfigV1,
+        now_ms: u64,
+        verifier: &TransportIdentity,
+    ) -> Result<Self> {
         let policy = trust_policy_v1(config);
         let (cache_loaded, mut sources) = load_cached_sources_v1(&config.cache_path)?;
         sources.extend(
@@ -88,7 +92,7 @@ impl ProductNodeOverlayRuntimeV1 {
                 .cloned()
                 .map(source_to_network_v1),
         );
-        let resolution = resolve_bootstrap_sources_v1(&sources, &policy, now_ms)
+        let resolution = resolve_bootstrap_sources_v1(&sources, &policy, now_ms, verifier)
             .context("resolve signed product bootstrap sources")?;
         let mut pool = RelayCandidatePoolV1::new(RelayCandidatePoolConfigV1 {
             cooldown_base_ms: config.cooldown_base_ms.unwrap_or(2_000),
@@ -101,7 +105,7 @@ impl ProductNodeOverlayRuntimeV1 {
         let cache = ProductBootstrapCacheV1 {
             schema: PRODUCT_NODE_BOOTSTRAP_CACHE_SCHEMA_V1.into(),
             cached_at_ms: now_ms,
-            manifests: accepted_manifests_v1(&sources, &policy, now_ms),
+            manifests: accepted_manifests_v1(&sources, &policy, now_ms, verifier),
         };
         write_bootstrap_cache_v1(&config.cache_path, &cache)?;
         let status = ProductNodeBootstrapStatusV1 {
@@ -135,13 +139,13 @@ impl ProductNodeOverlayRuntimeV1 {
 
     pub fn select_relay_route(
         &self,
-        node_identity: &SigningKey,
+        node_identity: &TransportIdentity,
         receipt_id: impl Into<String>,
         target_peer_id: &str,
         now_ms: u64,
         apfl_advisory_hash: Option<[u8; 32]>,
         apfl_advisory_applied: bool,
-    ) -> ProductNodeRoutePlanV1 {
+    ) -> Result<ProductNodeRoutePlanV1> {
         let selected_relay = self.pool.select(now_ms);
         let decision = strategy_decision_v1(
             selected_relay.as_ref(),
@@ -161,12 +165,12 @@ impl ProductNodeOverlayRuntimeV1 {
 
     pub fn record_relay_failure_and_rotate(
         &mut self,
-        node_identity: &SigningKey,
+        node_identity: &TransportIdentity,
         receipt_id: impl Into<String>,
         target_peer_id: &str,
         failed_relay_peer_id: &str,
         now_ms: u64,
-    ) -> ProductNodeRoutePlanV1 {
+    ) -> Result<ProductNodeRoutePlanV1> {
         let outcome = self.pool.rotate_after_failure(failed_relay_peer_id, now_ms);
         let mut decision = strategy_decision_v1(
             outcome.selected.as_ref(),
@@ -190,12 +194,12 @@ impl ProductNodeOverlayRuntimeV1 {
 
     pub fn select_after_nat_attempt(
         &self,
-        node_identity: &SigningKey,
+        node_identity: &TransportIdentity,
         receipt_id: impl Into<String>,
         target_peer_id: &str,
         nat_attempt: &NatPunchAttemptV1,
         now_ms: u64,
-    ) -> ProductNodeRoutePlanV1 {
+    ) -> Result<ProductNodeRoutePlanV1> {
         let (selected_relay, decision) = match nat_attempt.selected_path_after_punch {
             NatSelectedPathV1::PunchedDirect => (
                 None,
@@ -262,13 +266,13 @@ impl ProductNodeOverlayRuntimeV1 {
 
     fn sign_route_plan_v1(
         &self,
-        node_identity: &SigningKey,
+        node_identity: &TransportIdentity,
         receipt_id: String,
         target_peer_id: &str,
         now_ms: u64,
         selected_relay: Option<RelayCandidateSnapshotV1>,
         decision: StrategyDecisionV1,
-    ) -> ProductNodeRoutePlanV1 {
+    ) -> Result<ProductNodeRoutePlanV1> {
         let strategy_input = serde_json::to_vec(&serde_json::json!({
             "target_peer_id": target_peer_id,
             "bootstrap_selected_source": self.status.selected_source,
@@ -282,13 +286,13 @@ impl ProductNodeOverlayRuntimeV1 {
             now_ms,
             &strategy_input,
             decision.clone(),
-        );
-        ProductNodeRoutePlanV1 {
+        )?;
+        Ok(ProductNodeRoutePlanV1 {
             selected_path: decision.selected_path.clone(),
             selected_relay,
             fallback_reason: decision.fallback_reason.clone(),
             strategy_receipt,
-        }
+        })
     }
 }
 
@@ -341,7 +345,7 @@ fn trust_policy_v1(config: &ProductNodeOverlayConfigV1) -> BootstrapTrustPolicyV
         allowed_signer_peer_ids: config
             .trusted_signer_public_keys
             .iter()
-            .map(peer_id_from_ed25519_public_key_v1)
+            .map(|key| peer_id_from_mldsa65_public_key_v1(key))
             .collect::<BTreeSet<_>>(),
         minimum_valid_signatures: config.minimum_bootstrap_signatures.max(1),
     }
@@ -387,10 +391,13 @@ fn accepted_manifests_v1(
     sources: &[BootstrapSourceV1],
     policy: &BootstrapTrustPolicyV1,
     now_ms: u64,
+    verifier: &TransportIdentity,
 ) -> Vec<SignedBootstrapManifestV1> {
     let mut manifests = sources
         .iter()
-        .filter(|source| validate_bootstrap_manifest_v1(&source.manifest, policy, now_ms).accepted)
+        .filter(|source| {
+            validate_bootstrap_manifest_v1(&source.manifest, policy, now_ms, verifier).accepted
+        })
         .map(|source| source.manifest.clone())
         .collect::<Vec<_>>();
     manifests.sort_by(|left, right| left.manifest_id.cmp(&right.manifest_id));
@@ -425,6 +432,11 @@ fn default_minimum_bootstrap_signatures_v1() -> usize {
 
 #[cfg(test)]
 mod tests {
+    use novovm_network::product_overlay::TransportIdentity;
+    fn component_key(seed: &[u8; 32]) -> TransportIdentity {
+        crate::product_relay_client::component_identity(seed)
+    }
+
     use super::*;
     use novovm_network::{
         fallback_after_nat_failure_v1, sign_bootstrap_manifest_v1, sign_relay_record_v1,
@@ -433,7 +445,7 @@ mod tests {
     };
 
     fn relay_record(
-        key: &SigningKey,
+        key: &TransportIdentity,
         name: &str,
         transport: RelayTransportV1,
     ) -> PeerSignedRelayRecordV1 {
@@ -461,11 +473,12 @@ mod tests {
         .unwrap()
     }
 
-    fn signed_source(signer: &SigningKey) -> ProductBootstrapSourceV1 {
-        let relay_a = SigningKey::from_bytes(&[111; 32]);
-        let relay_b = SigningKey::from_bytes(&[112; 32]);
+    fn signed_source(signer: &TransportIdentity) -> ProductBootstrapSourceV1 {
+        let relay_a = component_key(&[111; 32]);
+        let relay_b = component_key(&[112; 32]);
         let mut manifest = SignedBootstrapManifestV1 {
-            version: 1,
+            version: 2,
+            suite: 65,
             manifest_id: "node-runtime-manifest".into(),
             issued_at_ms: 1_000,
             expires_at_ms: 20_000,
@@ -492,66 +505,73 @@ mod tests {
         let root = std::env::temp_dir().join(format!("novovm-product-node-overlay-{}", 7_001));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
-        let signer = SigningKey::from_bytes(&[110; 32]);
+        let signer = component_key(&[110; 32]);
         let config = ProductNodeOverlayConfigV1 {
             cache_path: root.join("bootstrap-cache.json"),
-            trusted_signer_public_keys: vec![signer.verifying_key().to_bytes()],
+            trusted_signer_public_keys: vec![signer.public_key().to_vec()],
             minimum_bootstrap_signatures: 1,
             embedded_sources: vec![signed_source(&signer)],
             cooldown_base_ms: Some(1_000),
             cooldown_max_ms: Some(10_000),
         };
-        let node_identity = SigningKey::from_bytes(&[113; 32]);
-        let mut runtime = ProductNodeOverlayRuntimeV1::bootstrap(&config, 2_000).unwrap();
+        let node_identity = component_key(&[113; 32]);
+        let mut runtime = ProductNodeOverlayRuntimeV1::bootstrap(&config, 2_000, &signer).unwrap();
         assert!(!runtime.bootstrap_status().cache_loaded);
         assert_eq!(runtime.candidate_count(), 2);
-        let initial = runtime.select_relay_route(
-            &node_identity,
-            "receipt-initial",
-            "target-b",
-            2_000,
-            None,
-            false,
-        );
+        let initial = runtime
+            .select_relay_route(
+                &node_identity,
+                "receipt-initial",
+                "target-b",
+                2_000,
+                None,
+                false,
+            )
+            .unwrap();
         assert_eq!(initial.selected_path, StrategyPathV1::RelayNovoRudp);
         let selected = initial.selected_relay.unwrap();
         assert_eq!(
             selected.selected_endpoint.transport,
             RelayTransportV1::Wss443
         );
-        validate_strategy_receipt_v1(&initial.strategy_receipt).unwrap();
-        let rotated = runtime.record_relay_failure_and_rotate(
-            &node_identity,
-            "receipt-rotated",
-            "target-b",
-            &selected.relay_peer_id,
-            2_000,
-        );
+        validate_strategy_receipt_v1(&initial.strategy_receipt, &node_identity).unwrap();
+        let rotated = runtime
+            .record_relay_failure_and_rotate(
+                &node_identity,
+                "receipt-rotated",
+                "target-b",
+                &selected.relay_peer_id,
+                2_000,
+            )
+            .unwrap();
         assert_eq!(rotated.selected_path, StrategyPathV1::RelayNovoRudp);
         assert_ne!(
             rotated.selected_relay.unwrap().relay_peer_id,
             selected.relay_peer_id
         );
-        validate_strategy_receipt_v1(&rotated.strategy_receipt).unwrap();
+        validate_strategy_receipt_v1(&rotated.strategy_receipt, &node_identity).unwrap();
         let fallback = fallback_after_nat_failure_v1(
             NatDiagnosisV1::UdpReachabilityBlockedOrAckReturnFailed,
             true,
         );
-        let after_nat = runtime.select_after_nat_attempt(
-            &node_identity,
-            "receipt-nat-fallback",
-            "target-b",
-            &fallback,
-            2_100,
-        );
+        let after_nat = runtime
+            .select_after_nat_attempt(
+                &node_identity,
+                "receipt-nat-fallback",
+                "target-b",
+                &fallback,
+                2_100,
+            )
+            .unwrap();
         assert_eq!(after_nat.selected_path, StrategyPathV1::RelayNovoRudp);
-        validate_strategy_receipt_v1(&after_nat.strategy_receipt).unwrap();
+        validate_strategy_receipt_v1(&after_nat.strategy_receipt, &node_identity).unwrap();
         let cached = ProductNodeOverlayRuntimeV1::bootstrap(
             &ProductNodeOverlayConfigV1 {
                 embedded_sources: Vec::new(),
                 ..config
             },
             2_100,
+            &signer,
         )
         .unwrap();
         assert!(cached.bootstrap_status().cache_loaded);

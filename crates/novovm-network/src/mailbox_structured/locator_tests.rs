@@ -1,4 +1,5 @@
 use super::*;
+use crate::product_overlay::TransportIdentity;
 use crate::{
     mailbox_store::MailboxStore,
     product_directory::{
@@ -9,14 +10,13 @@ use crate::{
         IrohServiceEndpointV1, NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7,
     },
 };
-use ed25519_dalek::SigningKey;
 
 const CONTEXT: [u8; 32] = [71; 32];
 fn now() -> Result<u64> {
     crate::product_rendezvous_daemon::now_ms()
 }
 fn record(
-    key: &SigningKey,
+    key: &TransportIdentity,
     issued: u64,
     expires: u64,
     seq: u64,
@@ -37,7 +37,7 @@ fn record(
 }
 #[test]
 fn locator_apfl_preserves_original_signature_and_every_field() -> Result<()> {
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let now = now()?;
     let signed = record(&key, now, now + 60_000, 42)?;
     let request = encode_requests(CONTEXT, &[Request::ServiceRecordV7])?;
@@ -55,7 +55,7 @@ fn locator_apfl_preserves_original_signature_and_every_field() -> Result<()> {
         anyhow::bail!("wrong reply")
     };
     assert_eq!(*decoded, signed);
-    validate_relay_record_v1(decoded, now)?;
+    validate_relay_record_v1(decoded, now, &key)?;
     assert!(!wire
         .windows(b"relay_public_key".len())
         .any(|v| v == b"relay_public_key"));
@@ -64,7 +64,7 @@ fn locator_apfl_preserves_original_signature_and_every_field() -> Result<()> {
 }
 #[test]
 fn locator_codec_preserves_all_existing_transport_tags() -> Result<()> {
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let now = now()?;
     for (transport, uri) in [
         (RelayTransportV1::Wss443, "wss://example.invalid:443/"),
@@ -95,13 +95,13 @@ fn locator_codec_preserves_all_existing_transport_tags() -> Result<()> {
         )?;
         let decoded = locator::decode(&locator::encode(&signed)?)?;
         assert_eq!(decoded, signed);
-        validate_relay_record_v1(&decoded, now)?;
+        validate_relay_record_v1(&decoded, now, &key)?;
     }
     Ok(())
 }
 #[test]
 fn locator_codec_rejects_truncation_overlong_values_and_unknown_tags() -> Result<()> {
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let now = now()?;
     let signed = record(&key, now, now + 60_000, 42)?;
     let bytes = locator::encode(&signed)?;
@@ -112,12 +112,13 @@ fn locator_codec_rejects_truncation_overlong_values_and_unknown_tags() -> Result
     changed.push(0);
     assert!(locator::decode(&changed).is_err());
     changed = bytes.clone();
-    changed[0] = 2;
+    changed[0] = 1;
     assert!(locator::decode(&changed).is_err());
     changed = bytes.clone();
     changed[2..4].copy_from_slice(&257u16.to_le_bytes());
     assert!(locator::decode(&changed).is_err());
-    let count_at = 2 + 2 + signed.record_id.len() + 2 + signed.relay_peer_id.len() + 32;
+    let count_at =
+        4 + 2 + signed.record_id.len() + 2 + signed.relay_peer_id.len() + MLDSA65_PUBLIC_KEY_BYTES;
     changed = bytes.clone();
     changed[count_at] = 4;
     assert!(locator::decode(&changed).is_err());
@@ -127,7 +128,7 @@ fn locator_codec_rejects_truncation_overlong_values_and_unknown_tags() -> Result
     changed = bytes;
     changed[count_at + 2..count_at + 4].copy_from_slice(&2049u16.to_le_bytes());
     assert!(locator::decode(&changed).is_err());
-    assert!(locator::decode(&vec![0; 8193]).is_err());
+    assert!(locator::decode(&vec![0; 16 * 1024 + 1]).is_err());
     for which in 0..5 {
         let mut invalid = signed.clone();
         match which {
@@ -143,7 +144,7 @@ fn locator_codec_rejects_truncation_overlong_values_and_unknown_tags() -> Result
 }
 #[test]
 fn locator_apfl_rejects_wrong_schema_context_and_extra_fields() -> Result<()> {
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let now = now()?;
     let signed = record(&key, now, now + 60_000, 42)?;
     let encoded = locator::encode(&signed)?;
@@ -162,7 +163,7 @@ fn locator_apfl_rejects_wrong_schema_context_and_extra_fields() -> Result<()> {
 }
 #[test]
 fn locator_is_rejected_by_legacy_json_in_both_directions() -> Result<()> {
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let now = now()?;
     let signed = record(&key, now, now + 60_000, 42)?;
     assert!(serde_json::to_vec(&Request::ServiceRecordV7).is_err());
@@ -179,7 +180,7 @@ fn locator_is_rejected_by_legacy_json_in_both_directions() -> Result<()> {
 async fn locator_owner_snapshot_rejects_wrong_identity_signature_stale_and_rollback() -> Result<()>
 {
     let directory = tempfile::tempdir()?;
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(
             directory.path().join("mailbox.db"),
@@ -201,7 +202,7 @@ async fn locator_owner_snapshot_rejects_wrong_identity_signature_stale_and_rollb
     assert!(service.update_native_record_v7(bad_signature).is_err());
     assert!(service
         .update_native_record_v7(record(
-            &SigningKey::from_bytes(&[73; 32]),
+            &TransportIdentity::from_bytes(&[73; 32]),
             now,
             now + 60_000,
             43
@@ -257,7 +258,7 @@ async fn locator_owner_snapshot_rejects_wrong_identity_signature_stale_and_rollb
 #[tokio::test]
 async fn locator_owner_does_not_serve_an_expired_snapshot() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(
             directory.path().join("mailbox.db"),
@@ -278,7 +279,7 @@ async fn locator_owner_does_not_serve_an_expired_snapshot() -> Result<()> {
 
 async fn native_carrier_locator_case(v8: bool) -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let key = SigningKey::from_bytes(&[72; 32]);
+    let key = TransportIdentity::from_bytes(&[72; 32]);
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(
             directory.path().join("mailbox.db"),
@@ -291,7 +292,9 @@ async fn native_carrier_locator_case(v8: bool) -> Result<()> {
         iroh: IrohServiceEndpointV1 {
             instance: [7; 32],
             address: crate::iroh_transport::IrohAddressV1 {
-                endpoint_key: SigningKey::from_bytes(&[73; 32]).verifying_key().to_bytes(),
+                endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[73; 32])
+                    .verifying_key()
+                    .to_bytes(),
                 direct: vec!["127.0.0.1:4434".parse()?],
                 relays: Vec::new(),
             },
@@ -315,7 +318,7 @@ async fn native_carrier_locator_case(v8: bool) -> Result<()> {
         }
     };
     let now = now()?;
-    let make = |signer: &SigningKey, endpoints, issued, expires, sequence| {
+    let make = |signer: &TransportIdentity, endpoints, issued, expires, sequence| {
         sign_relay_record_v1(
             signer,
             "carrier-locator",
@@ -343,7 +346,7 @@ async fn native_carrier_locator_case(v8: bool) -> Result<()> {
     for rejected in [
         forged,
         make(
-            &SigningKey::from_bytes(&[74; 32]),
+            &TransportIdentity::from_bytes(&[74; 32]),
             vec![carrier_endpoint()?],
             now,
             now + 60_000,

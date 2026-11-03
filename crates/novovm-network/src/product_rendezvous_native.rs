@@ -1,6 +1,7 @@
 //! Native mailbox transport borrowed by the existing node owner. No task spawn,
 //! runtime, new store or parallel service protocol. Watch work is polled beside
 //! packet progress, so it cannot hold the transport receive loop hostage.
+use crate::product_overlay::TransportIdentity;
 use crate::service_concurrency::{
     AdaptiveAdmissionV1, ServiceConcurrencyV1, ServiceRequestBodyPermitV1,
     ServiceTransportPermitV1, ServiceWorkPermitV1,
@@ -33,7 +34,6 @@ use crate::{
     product_service_lease::{NativeMailboxEndpointV7, ServiceLeaseHostV1},
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use futures_util::{
     future::{AbortHandle, Abortable, Aborted, LocalBoxFuture},
     stream::FuturesUnordered,
@@ -166,13 +166,16 @@ impl Readiness<'_> {
 }
 
 enum Admission {
-    Udp(Arc<AdaptiveAdmissionV1>),
+    Udp {
+        slots: Arc<AdaptiveAdmissionV1>,
+        wire_ceiling: Option<u64>,
+    },
     Carrier(Arc<OwnedSemaphorePermit>),
 }
 impl Admission {
     fn acquire(&self) -> Option<Arc<OwnedSemaphorePermit>> {
         match self {
-            Self::Udp(slots) => slots.clone().try_acquire_owned().ok().map(Arc::new),
+            Self::Udp { slots, .. } => slots.clone().try_acquire_owned().ok().map(Arc::new),
             // The existing node selector already reserved this connection.
             Self::Carrier(permit) => Some(permit.clone()),
         }
@@ -260,7 +263,7 @@ pub(super) enum NativeCarrierHandshake {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn serve_carrier(
     stream: &mut CarrierStreamV1<'_>,
-    key: &SigningKey,
+    key: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     service: &MailboxServiceV1,
     stop: Arc<AtomicBool>,
@@ -270,7 +273,7 @@ pub(super) async fn serve_carrier(
     handshake: NativeCarrierHandshake,
 ) -> Result<()> {
     ensure!(
-        key.verifying_key().to_bytes() == service.identity_public_key(),
+        key.public_key().to_vec() == service.identity_public_key(),
         "native carrier and mailbox signer differ"
     );
     let check = || {
@@ -333,6 +336,8 @@ pub struct NativeMailboxListenerV7 {
     route: NativeMailboxEndpointV7,
     stop: Arc<AtomicBool>,
     concurrency: Option<Arc<ServiceConcurrencyV1>>,
+    connection_ceiling: u16,
+    wire_ceiling: Option<u64>,
     transport: Option<ServiceTransportPermitV1>,
 }
 impl NativeMailboxListenerV7 {
@@ -342,7 +347,7 @@ impl NativeMailboxListenerV7 {
     pub fn bind(
         listen: SocketAddr,
         advertised: SocketAddr,
-        key: SigningKey,
+        key: TransportIdentity,
         stop: Arc<AtomicBool>,
         max_connections: u16,
     ) -> Result<Self> {
@@ -361,7 +366,7 @@ impl NativeMailboxListenerV7 {
     pub fn bind_with_wire_budget(
         listen: SocketAddr,
         advertised: SocketAddr,
-        key: SigningKey,
+        key: TransportIdentity,
         stop: Arc<AtomicBool>,
         max_connections: u16,
         max_bytes_per_minute: u64,
@@ -381,26 +386,56 @@ impl NativeMailboxListenerV7 {
     pub fn bind_adaptive(
         listen: SocketAddr,
         advertised: SocketAddr,
-        key: SigningKey,
+        key: TransportIdentity,
         stop: Arc<AtomicBool>,
         max_bytes_per_minute: u64,
         concurrency: Arc<ServiceConcurrencyV1>,
     ) -> Result<Self> {
-        let capacity = concurrency.snapshot().inbound_connections() as u16;
-        Self::bind_with_resources(
+        let mut listener = Self::bind_with_resources(
             listen,
             advertised,
             key,
             stop,
-            capacity,
+            u16::MAX,
             max_bytes_per_minute,
             Some(concurrency),
-        )
+        )?;
+        listener.wire_ceiling = None;
+        Ok(listener)
+    }
+
+    /// Explicit local ceilings constrain the same adaptive owner. Omitted
+    /// limits retain its resource-derived capacity and wire-budget growth.
+    pub fn bind_adaptive_with_limits(
+        listen: SocketAddr,
+        advertised: SocketAddr,
+        key: TransportIdentity,
+        stop: Arc<AtomicBool>,
+        max_connections: Option<u16>,
+        max_bytes_per_minute: Option<u64>,
+        concurrency: Arc<ServiceConcurrencyV1>,
+    ) -> Result<Self> {
+        let mut listener = Self::bind_with_resources(
+            listen,
+            advertised,
+            key,
+            stop,
+            max_connections.unwrap_or(u16::MAX),
+            max_bytes_per_minute.unwrap_or(64 * 1024 * 1024),
+            Some(concurrency),
+        )?;
+        listener.wire_ceiling = max_bytes_per_minute;
+        let route = listener.current_route();
+        listener
+            .link
+            .update_wire_budget_v1(route.max_bytes_per_minute, Instant::now())?;
+        listener.route = route;
+        Ok(listener)
     }
     fn bind_with_resources(
         listen: SocketAddr,
         mut advertised: SocketAddr,
-        key: SigningKey,
+        key: TransportIdentity,
         stop: Arc<AtomicBool>,
         max_connections: u16,
         max_bytes_per_minute: u64,
@@ -414,7 +449,11 @@ impl NativeMailboxListenerV7 {
         }
         let route = NativeMailboxEndpointV7 {
             address: advertised,
-            max_connections,
+            max_connections: concurrency.as_ref().map_or(max_connections, |c| {
+                c.snapshot()
+                    .inbound_connections()
+                    .min(usize::from(max_connections)) as u16
+            }),
             max_bytes_per_minute,
         };
         route.endpoint()?;
@@ -424,7 +463,7 @@ impl NativeMailboxListenerV7 {
         let mut endpoint = NativeEndpoint::listen_clients(
             socket,
             key,
-            usize::from(max_connections),
+            usize::from(route.max_connections),
             vec![STREAM],
             NativeHandshakeBudget {
                 lifetime: REQUEST_DEADLINE,
@@ -448,6 +487,8 @@ impl NativeMailboxListenerV7 {
             route,
             stop,
             concurrency,
+            connection_ceiling: max_connections,
+            wire_ceiling: Some(max_bytes_per_minute),
             transport,
         })
     }
@@ -460,7 +501,7 @@ impl NativeMailboxListenerV7 {
         Arc::ptr_eq(&self.stop, stop)
     }
 
-    pub fn identity(&self) -> [u8; 32] {
+    pub fn identity(&self) -> &[u8] {
         self.link.local_identity()
     }
 
@@ -472,20 +513,25 @@ impl NativeMailboxListenerV7 {
         let mut route = self.route.clone();
         if let Some(c) = &self.concurrency {
             let snapshot = c.snapshot();
-            route.max_connections = snapshot.inbound_connections() as u16;
+            route.max_connections = snapshot
+                .inbound_connections()
+                .min(usize::from(self.connection_ceiling))
+                as u16;
             if snapshot.wire_bytes_per_minute != 0 {
-                route.max_bytes_per_minute = snapshot.wire_bytes_per_minute;
+                route.max_bytes_per_minute = snapshot
+                    .wire_bytes_per_minute
+                    .min(self.wire_ceiling.unwrap_or(u64::MAX));
             }
         }
         route
     }
 
     pub(super) fn admission_ceiling(&self) -> usize {
-        if self.concurrency.is_some() {
-            usize::from(u16::MAX)
-        } else {
-            usize::from(self.route.max_connections)
-        }
+        usize::from(self.connection_ceiling)
+    }
+
+    pub(super) fn wire_ceiling(&self) -> Option<u64> {
+        self.wire_ceiling
     }
 
     pub(super) async fn serve(
@@ -511,7 +557,10 @@ impl NativeMailboxListenerV7 {
             Readiness::Udp(readiness),
             service,
             &stop,
-            Admission::Udp(slots),
+            Admission::Udp {
+                slots,
+                wire_ceiling: self.wire_ceiling,
+            },
             concurrency,
             authority,
         )
@@ -579,7 +628,7 @@ async fn serve_link(
             changes.borrow_and_update();
         }
         held.retain(|item| now < item.work.deadline());
-        if let Admission::Udp(slots) = &admission {
+        if let Admission::Udp { slots, .. } = &admission {
             // The transport cannot see a database job or waiting Watch. Protect
             // those handles until their actual work and response have drained.
             // Reclaim idle clients only under capacity pressure, inside this
@@ -613,7 +662,14 @@ async fn serve_link(
         // under pressure, higher while it is the only limiting resource.
         if let Some(controller) = concurrency.as_ref() {
             if let Some(usage) = link.wire_usage_v1(now) {
-                let limit = controller.observe_native_wire(usage, now);
+                let mut limit = controller.observe_native_wire(usage, now);
+                if let Admission::Udp {
+                    wire_ceiling: Some(ceiling),
+                    ..
+                } = &admission
+                {
+                    limit = limit.min(*ceiling);
+                }
                 if limit != usage.limit {
                     link.update_wire_budget_v1(limit, now)?;
                 }
@@ -894,6 +950,123 @@ mod progress_tests;
 #[cfg(test)]
 mod resource_boundary_tests {
     use super::*;
+    #[tokio::test]
+    async fn omitted_native_limits_do_not_freeze_startup_defaults() -> Result<()> {
+        use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+        let controller = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 64,
+            available_memory_bytes: 16 * 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let listener = NativeMailboxListenerV7::bind_adaptive_with_limits(
+            "127.0.0.1:0".parse()?,
+            "127.0.0.1:0".parse()?,
+            TransportIdentity::from_bytes(&[19; 32]),
+            Arc::new(AtomicBool::new(false)),
+            None,
+            None,
+            controller,
+        )?;
+        assert!(listener.current_route().max_connections > 64);
+        assert_eq!(listener.admission_ceiling(), usize::from(u16::MAX));
+        assert_eq!(listener.wire_ceiling(), None);
+        Ok(())
+    }
+    #[tokio::test]
+    async fn explicit_native_limits_bound_advertisement_and_original_socket() -> Result<()> {
+        use crate::novorudp::wire_budget::NativeWireUsage;
+        use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+        let resources = ResourceSnapshotV1 {
+            cpu_parallelism: 64,
+            available_memory_bytes: 16 * 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        };
+        let controller = ServiceConcurrencyV1::new(resources);
+        let wire = 64 * 1024 * 1024;
+        let mut listener = NativeMailboxListenerV7::bind_adaptive_with_limits(
+            "127.0.0.1:0".parse()?,
+            "127.0.0.1:0".parse()?,
+            TransportIdentity::from_bytes(&[18; 32]),
+            Arc::new(AtomicBool::new(false)),
+            Some(8),
+            Some(wire),
+            controller.clone(),
+        )?;
+        assert!(Arc::ptr_eq(&listener.concurrency().unwrap(), &controller));
+        assert_eq!(listener.route().max_connections, 8);
+        assert_eq!(listener.admission_ceiling(), 8);
+        let now = Instant::now();
+        assert_eq!(
+            listener
+                .link
+                .client_admission_snapshot_v1(now)
+                .unwrap()
+                .capacity,
+            8
+        );
+        assert_eq!(listener.link.wire_usage_v1(now).unwrap().limit, wire);
+        controller.observe_network_cost(true);
+        controller.observe_native_wire(
+            NativeWireUsage {
+                limit: wire,
+                ..Default::default()
+            },
+            now,
+        );
+        let grown = controller.observe_native_wire(
+            NativeWireUsage {
+                limit: wire,
+                send_deferred: 1,
+                ..Default::default()
+            },
+            now + Duration::from_secs(3),
+        );
+        assert!(grown > wire);
+        assert_eq!(listener.current_route().max_bytes_per_minute, wire);
+        controller.update_resources(ResourceSnapshotV1 {
+            pressure: ResourcePressureV1::Severe,
+            ..resources
+        });
+        let slots = AdaptiveAdmissionV1::new(
+            8,
+            Some(controller.clone()),
+            crate::service_concurrency::AdmissionKind::Inbound,
+            listener.admission_ceiling(),
+        );
+        assert_eq!(slots.limit(), 2);
+        listener.link.retire_idle_clients(
+            now,
+            REQUEST_DEADLINE,
+            &BTreeSet::new(),
+            slots.limit(),
+        )?;
+        assert_eq!(
+            listener
+                .link
+                .client_admission_snapshot_v1(now)
+                .unwrap()
+                .capacity,
+            2
+        );
+        assert_eq!(listener.current_route().max_connections, 2);
+        controller.update_resources(resources);
+        listener.link.retire_idle_clients(
+            now,
+            REQUEST_DEADLINE,
+            &BTreeSet::new(),
+            slots.limit(),
+        )?;
+        assert_eq!(
+            listener
+                .link
+                .client_admission_snapshot_v1(now)
+                .unwrap()
+                .capacity,
+            8
+        );
+        assert_eq!(listener.current_route().max_connections, 8);
+        Ok(())
+    }
     #[test]
     fn insufficient_link_memory_is_typed_resource_deferral() {
         let error = require_mailbox_frame_budget(LIMITS.wire_bytes - 1).unwrap_err();
@@ -913,7 +1086,7 @@ mod resource_boundary_tests {
         let listener = NativeMailboxListenerV7::bind_adaptive(
             "127.0.0.1:0".parse()?,
             "127.0.0.1:0".parse()?,
-            SigningKey::from_bytes(&[17; 32]),
+            TransportIdentity::from_bytes(&[17; 32]),
             Arc::new(AtomicBool::new(false)),
             startup,
             c.clone(),

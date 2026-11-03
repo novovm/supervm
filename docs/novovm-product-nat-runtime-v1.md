@@ -1,97 +1,173 @@
-# NOVOVM Product NAT Runtime v1
+# NOVOVM Product NAT Runtime — Native Endpoint Qualification v2
 
-`novovm-product-nat` is a headless UDP candidate-observation and cooperative
-punch tool. It uses the same Ed25519 node identity model as the overlay runtime.
-Every probe and ACK is signed and binds a random nonce, peer identity, target,
-and expiry. It does not send payloads, ledger data, or execution instructions.
+2026-11-03 source-candidate description. The executable and Rust API retain
+their original names; **configuration version 2** replaces the retired raw
+Ed25519/JSON UDP probe. Old raw keys and old configuration are not a fallback.
+This document does not record four-host, platform-package or deployment acceptance.
 
-## Modes
+`novovm-product-nat` now uses the original NovoRUDP `NativeEndpoint`: protected
+ML-DSA-65 purpose identity → original version-2 handshake + UDP AEAD key confirmation → original
+authenticated session and AEAD → bounded opaque echo/observed-address exchange.
+It creates no chain database, validator, asset action or second UDP protocol.
+It does not interpret APFL or execute ledger payloads.
 
-```text
-observed_endpoint_observer  Receive a signed probe and return the sender's observed UDP address.
-nat_punch_target            Receive a signed punch request and return a signed ACK.
-observed_endpoint_probe     Ask a known observer for this socket's observed address.
-nat_punch_probe             Try a signed UDP punch against a target candidate.
-```
+Source: [node runtime](../crates/novovm-node/src/product_nat_runtime.rs),
+[original endpoint](../crates/novovm-network/src/novorudp/endpoint.rs),
+[shared qualified identity loader](../crates/novovm-relay/src/transport_identity.rs).
+The old network `product_nat` signed-JSON codec is retired; that module retains
+only routing-outcome types/helpers, not a second authentication path.
 
-Run any mode with:
+## Four mode names, one authenticated observation exchange
 
-```bash
-novovm-product-nat /etc/novovm/nat.json
-```
+| Configuration mode | Current behavior |
+| --- | --- |
+| `observed_endpoint_observer` | Listen, accept the pinned peer's authenticated request, reply with the observed UDP source address. |
+| `nat_punch_target` | Same server-side exchange; the historical name does not enable an automatic hole-punch coordinator. |
+| `observed_endpoint_probe` | Connect to the pinned peer through the original endpoint, send a fresh opaque nonce, verify the matching authenticated reply. |
+| `nat_punch_probe` | Same client-side exchange to the explicitly supplied candidate address; no automatic candidate discovery or routing promotion. |
 
-The `identity_key_path` file contains exactly 64 hexadecimal characters for a
-32-byte Ed25519 node key. The key is never written to the report.
+The report normalizes these to `mode: "observer"` or `"probe"`.
+This tool does **not** automatically select `PunchedDirect`, switch to a relay,
+open a firewall, modify NAT state policy or prove general Internet reachability.
+An address observed on this socket/session is only a candidate for that path.
 
-## Observer Configuration
+## Identity, artifact and configuration inputs
 
-```json
+`identity_key_path` must point to an existing protected **Transport** purpose
+envelope (`NVPK0003`, version 3, suite 65) in the configured nonzero `chain_id`.
+Use the original [purpose preparation contract](NOVOVM_PURPOSE_IDENTITY_PREPARATION.md).
+The tool never generates a replacement identity or reads a raw 32-byte/hex key.
+Windows uses the intended service user's DPAPI custody. Linux requires the
+original private-directory/credential custody under the intended UID; do not
+borrow B's existing mailbox or Relay credential.
+
+`library` and `library_sha256` identify the approved platform AOEM artifact.
+The shared loader pins its SHA-256 before/after loading, qualifies ML-DSA-65,
+and checks the protected purpose key through the original execution facade.
+Incoming network signatures use the same unified-semantic
+`OwnedMldsaVerifier` owner as the asset consumer, obtained from the loaded
+`MldsaRuntime::verification_owner_v1`; they do not use the old scalar verify ABI.
+Signing/key generation retain the existing shared primitive owner—this is not
+a claim that a new unified-semantic signing operation has been implemented.
+Signing or authentication failure is returned, not retried with another algorithm.
+ML-DSA authenticates identity; it does not establish post-quantum key agreement.
+
+Every mode, including the observer/target, requires `peer_public_key`: the
+**complete expected remote ML-DSA-65 public key, exactly 1,952 bytes**. The local
+key must differ. An address or a hash label cannot replace that full public pin.
+Optional `expected_peer_id`, when present, must match the original
+`peer_id_from_mldsa65_public_key_v1` label derived from those exact bytes.
+
+`identity_key_path`, `library` and optional `report_path` resolve relative paths
+against the configuration file's directory, not the caller's working directory.
+`bind_addr` and client `peer_addr` are explicit socket addresses. A probe requires
+a nonzero, non-unspecified, non-multicast peer address; server modes do not need
+`peer_addr` and learn the pinned caller's route through the authenticated endpoint.
+
+## Configuration templates — not runnable deployment material
+
+The placeholders below deliberately contain **no usable identity, chain domain
+or approved artifact hash**. Replace them with reviewed inputs before execution;
+`peer_public_key` must become an integer array, not a string, seed or digest.
+No real key generation, chain activation or configuration installation is authorized
+by these examples. Documentation-range addresses are not actual host endpoints.
+
+Observer/target template:
+
+```jsonc
 {
+  "version": 2,
   "mode": "observed_endpoint_observer",
   "bind_addr": "0.0.0.0:41031",
-  "identity_key_path": "/etc/novovm/observer-ed25519.hex",
-  "timeout_ms": 3000
+  "identity_key_path": "purpose/observer.protected",
+  "chain_id": "<APPROVED_NONZERO_CHAIN_ID_INTEGER>",
+  "library": "artifacts/<APPROVED_PLATFORM_AOEM_LIBRARY>",
+  "library_sha256": "<APPROVED_64_LOWERCASE_HEX_SHA256>",
+  "peer_public_key": [ /* approved prober public key: exactly 1952 byte integers */ ],
+  "timeout_ms": 3000,
+  "run_for_ms": 10000,
+  "report_path": "reports/observer.json"
 }
 ```
 
-An observer can be any reachable NOVOVM node. The prober must know its `peer_id`
-from a signed record or another authenticated channel; an arbitrary address is
-not an identity authority.
+Probe template (use the observer's full public key, not the prober's):
 
-## Observed Candidate Probe
-
-```json
+```jsonc
 {
+  "version": 2,
   "mode": "observed_endpoint_probe",
   "bind_addr": "0.0.0.0:41020",
-  "identity_key_path": "/etc/novovm/node-ed25519.hex",
+  "identity_key_path": "purpose/prober.protected",
+  "chain_id": "<SAME_APPROVED_NONZERO_CHAIN_ID_INTEGER>",
+  "library": "artifacts/<APPROVED_PLATFORM_AOEM_LIBRARY>",
+  "library_sha256": "<APPROVED_64_LOWERCASE_HEX_SHA256>",
+  "peer_public_key": [ /* approved observer public key: exactly 1952 byte integers */ ],
   "peer_addr": "198.51.100.10:41031",
-  "expected_peer_id": "novovm-ed25519:<observer-key-hash>",
   "timeout_ms": 3000,
-  "report_path": "/var/lib/novovm/reports/observed-endpoint.json"
+  "run_for_ms": 10000,
+  "report_path": "reports/probe.json"
 }
 ```
 
-The report's `observed_endpoint` is a candidate, not a claim that inbound UDP
-is reachable. Publish it only through the signed, minimal-disclosure directory
-policy.
+For the historical target/punch naming, change only the mode to
+`nat_punch_target` / `nat_punch_probe`; their current exchange is the same one
+described above. `relay_candidate_available` is no longer a configuration field.
+Unknown fields and version-1 configurations are rejected.
 
-## Cooperative Punch
+After reviewed configuration and operation approval, the original invocation is:
 
-On the target node, run:
-
-```json
-{
-  "mode": "nat_punch_target",
-  "bind_addr": "0.0.0.0:41020",
-  "identity_key_path": "/etc/novovm/node-b-ed25519.hex",
-  "timeout_ms": 3000
-}
+```text
+novovm-product-nat <approved-config-path>
 ```
 
-On the source node, use the target's previously observed candidate and known
-node identity:
+`timeout_ms` is 2–30,000 ms; `run_for_ms` is 1–120,000 ms and must cover the
+timeout. The observer/target normally runs for its bounded duration; the probe
+can finish after its matching authenticated reply. The tool does not change
+production timeouts or start a validator.
 
-```json
-{
-  "mode": "nat_punch_probe",
-  "bind_addr": "0.0.0.0:41020",
-  "identity_key_path": "/etc/novovm/node-a-ed25519.hex",
-  "peer_addr": "203.0.113.20:41020",
-  "expected_peer_id": "novovm-ed25519:<node-b-key-hash>",
-  "timeout_ms": 3000,
-  "relay_candidate_available": true,
-  "report_path": "/var/lib/novovm/reports/nat-punch.json"
-}
-```
+## Report interpretation
 
-Only a valid target-signed ACK produces `PunchedDirect`. Timeout, malformed
-packets, stale responses, nonce mismatch, and identity mismatch never promote
-direct routing. They produce `RelayNovoRudp` when a valid relay candidate is
-available, otherwise `QueueFallback`.
+The report's `scope` is `novovm_native_authenticated_endpoint_v2`,
+`handshake_version` is 2 and `signature_suite` is 65.
 
-## Test Boundary
+- **Probe `accepted=true`:** this run received the pinned peer's authenticated
+  reply with the matching object/nonce and decoded observed address;
+  `round_trip_confirmed=true`. It proves
+  this bounded session exchange, not future reachability, arbitrary delivery or
+  a ledger/consensus result.
+- **Server `accepted=true`:** it received a request from the expected authenticated
+  peer and the original synchronous reply submission was accepted. This is **not**
+  proof that the remote application received or consumed that reply. Correlate
+  the client report/session separately; `round_trip_confirmed` remains **false**.
+- `local_peer_id` identifies this run's local Transport identity; `peer_id`
+  identifies the configured expected remote identity. Correlate both identities
+  and `session_id` when comparing observer/probe reports, not just `accepted`.
+- `authenticated_requests` counts matching authenticated requests received by
+  the observer; `local_replies_submitted` counts replies accepted by its local
+  send owner. Neither counter proves remote receipt. Both counters are zero in
+  the probe report.
+- `authenticated_exchanges` is role-specific: the probe records one confirmed
+  reply; the observer records its locally submitted replies. It is not a shared
+  end-to-end delivery counter, a transaction count or a remote acknowledgment.
+- `observed_endpoint` is the server-observed source address carried in the
+  authenticated reply. It is not an inbound-reachability guarantee.
+- `network_only=true`, `aoem_called=true`, `ledger_semantics=false` and
+  `apfl_interpreted=false` describe the execution boundary, not an end-to-end
+  product or four-host acceptance result.
+- `novorudp_wire_changed=false` describes preservation of the inner data-frame
+  contract; it does not claim that the old Ed25519 handshake bytes are unchanged.
 
-Loopback/LAN success proves protocol and local socket behavior only. It does
-not prove traversal through home NAT, CGNAT, VPN/TUN, mobile carrier networks,
-or a firewall. Those require mixed-topology evidence from separate networks.
+When a configured report path exists, retain the failed report as well as the
+process error. Timeout or rejected authentication must not be relabeled success.
+Failures before the report is constructed may produce only an error, not a report.
+The evidence verifier enforces these role-specific stages; a signed observer
+report alone does not become a confirmed round-trip report. It does not
+automatically pair reports or establish four-host topology acceptance.
+
+## Qualification boundary
+
+Loopback/LAN success proves only the tested protocol, socket and local route.
+Home NAT, CGNAT, VPN/TUN, public-cloud security rules and mobile networks require
+their own mixed-topology evidence. A/B/C/D's real authenticated exchanges,
+actual outbound routes and reconnect/replay rejection remain separately measured
+gates; this source update does not sign them off.

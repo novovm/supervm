@@ -20,7 +20,7 @@ const KEYS_FILE: &str = "keys.sealed";
 #[cfg(target_os = "linux")]
 const POLICY_FILE: &str = "self-owned-policy.sealed";
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+use novovm_network::product_overlay::{TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES};
 use novovm_network::{
     iroh_transport::IrohConfigV1,
     product_directory::{sign_relay_record_v1, RelayEndpointV1},
@@ -186,7 +186,11 @@ impl RunEvidence {
 pub struct Config {
     pub version: u8,
     pub root: PathBuf,
-    pub allowed_clients: BTreeSet<[u8; 32]>,
+    pub allowed_clients: BTreeSet<Vec<u8>>,
+    pub transport_identity_path: PathBuf,
+    pub chain_id: u64,
+    pub library: PathBuf,
+    pub library_sha256: String,
     pub relays: Vec<String>,
     pub nameserver: IpAddr,
     pub bind_address: Option<SocketAddr>,
@@ -195,9 +199,9 @@ pub struct Config {
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let config: Self = serde_json::from_slice(&read_bounded(path, 32768)?)?;
+        let mut config: Self = serde_json::from_slice(&read_bounded(path, 512 * 1024)?)?;
         ensure!(
-            config.version == 2
+            config.version == 3
                 && (1..=16).contains(&config.allowed_clients.len())
                 && !config.record_id.is_empty()
                 && config.record_id.len() <= 128,
@@ -208,9 +212,16 @@ impl Config {
         IrohConfigV1::new(&config.relays, config.nameserver)?;
         for pin in &config.allowed_clients {
             ensure!(
-                !ed25519_dalek::VerifyingKey::from_bytes(pin)?.is_weak(),
-                "weak client key"
+                pin.len() == MLDSA65_PUBLIC_KEY_BYTES,
+                "client pin must be an ML-DSA-65 public key"
             );
+        }
+        let base = path.parent().context("self-owned config directory")?;
+        if config.transport_identity_path.is_relative() {
+            config.transport_identity_path = base.join(&config.transport_identity_path);
+        }
+        if config.library.is_relative() {
+            config.library = base.join(&config.library);
         }
         Ok(config)
     }
@@ -252,7 +263,7 @@ struct Policy {
     // accepting a new binary never upgrades a protected owner policy.
     #[serde(default)]
     native_carrier_mailbox_v8: bool,
-    node_pin: [u8; 32],
+    node_pin: Vec<u8>,
     sequence_floor: u64,
     legacy: Option<LegacyConfig>,
     // Retain reserved sequence/enrollment provenance, including allocations
@@ -277,16 +288,13 @@ pub struct TlsListenerConfig {
     pub version: u8,
     pub listen: SocketAddr,
     pub advertised: SocketAddr,
-    #[serde(default = "default_tls_connections")]
-    pub max_connections: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_connections: Option<u16>,
     #[serde(default, skip_serializing_if = "tls_native_disabled")]
     pub native_mailbox_v8: bool,
 }
 fn tls_native_disabled(value: &bool) -> bool {
     !value
-}
-fn default_tls_connections() -> u16 {
-    4
 }
 impl TlsListenerConfig {
     pub fn load(path: &Path) -> Result<Self> {
@@ -299,7 +307,7 @@ impl TlsListenerConfig {
             |ip: IpAddr| !ip.is_multicast() && !matches!(ip, IpAddr::V4(v) if v.is_broadcast());
         ensure!(
             self.version == 1
-                && self.max_connections > 0
+                && self.max_connections.is_none_or(|limit| limit > 0)
                 && admissible(self.listen.ip())
                 && admissible(self.advertised.ip())
                 && !self.advertised.ip().is_unspecified()
@@ -319,8 +327,10 @@ pub struct NativeListenerConfig {
     pub version: u8,
     pub listen: SocketAddr,
     pub advertised: SocketAddr,
-    pub max_connections: u16,
-    pub max_bytes_per_minute: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_connections: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes_per_minute: Option<u64>,
 }
 impl NativeListenerConfig {
     pub fn load(path: &Path) -> Result<Self> {
@@ -344,8 +354,8 @@ impl NativeListenerConfig {
         }
         novovm_network::product_service_lease::NativeMailboxEndpointV7 {
             address,
-            max_connections: self.max_connections,
-            max_bytes_per_minute: self.max_bytes_per_minute,
+            max_connections: self.max_connections.unwrap_or(u16::MAX),
+            max_bytes_per_minute: self.max_bytes_per_minute.unwrap_or(64 * 1024 * 1024),
         }
         .endpoint()?;
         Ok(())
@@ -354,7 +364,7 @@ impl NativeListenerConfig {
 
 pub struct Owner {
     policy: Policy,
-    key: SigningKey,
+    key: TransportIdentity,
     storage: Zeroizing<[u8; 32]>,
     transport: Zeroizing<[u8; 32]>,
     transition: bool,
@@ -364,6 +374,21 @@ impl Owner {
     /// Creation or migration are explicit local owner actions. Ordinary start
     /// never creates replacement keys, resets a journal, or infers new trust.
     pub fn open(config: Config, create_policy: bool, legacy: Option<LegacyConfig>) -> Result<Self> {
+        let key = crate::transport_identity::load_transport_identity(
+            &config.transport_identity_path,
+            config.chain_id,
+            &config.library,
+            &config.library_sha256,
+        )?;
+        Self::open_with_identity(config, create_policy, legacy, key)
+    }
+
+    fn open_with_identity(
+        config: Config,
+        create_policy: bool,
+        legacy: Option<LegacyConfig>,
+        key: TransportIdentity,
+    ) -> Result<Self> {
         let root = &config.root;
         #[cfg(target_os = "linux")]
         {
@@ -405,7 +430,7 @@ impl Owner {
                                 .epoch
                                 .allowed_clients
                                 .iter()
-                                .copied()
+                                .map(|key| key.to_vec())
                                 .collect::<BTreeSet<_>>()
                                 == config.allowed_clients
                             && old.epoch.relays == config.relays
@@ -414,7 +439,7 @@ impl Owner {
                             && old.epoch.record_id == config.record_id,
                         "migration changes identity/transport/resource policy"
                     );
-                    let (_, storage) = read_keys(root)?;
+                    let storage = read_storage_key(root, true)?;
                     let (_journal, bytes) =
                         ServiceLeaseFileV1::open(&root.join("owner.journal"), storage.clone())?;
                     let state: serde_json::Value = serde_json::from_slice(&bytes)?;
@@ -428,7 +453,12 @@ impl Owner {
                         .context("legacy sequence floor")?;
                     let (_journal, checkpoint) =
                         ServiceLeaseFileV1::open(&root.join("service.journal"), storage)?;
-                    ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &checkpoint, now_ms()?)?;
+                    ServiceLeaseBookV1::restore(
+                        old.epoch.validate()?.1,
+                        &checkpoint,
+                        now_ms()?,
+                        key.clone(),
+                    )?;
                     (floor, Some(String::from_utf8(bytes)?))
                 }
             } else {
@@ -443,13 +473,13 @@ impl Owner {
                     &root.join("enrollment.started"),
                     b"NOVOVM self-owned custody v2",
                 )?;
-                let mut keys = Zeroizing::new([0u8; 72]);
-                keys[..8].copy_from_slice(b"NVKEYS03");
+                let mut keys = Zeroizing::new([0u8; 40]);
+                keys[..8].copy_from_slice(b"NVKEYS04");
                 OsRng.try_fill_bytes(&mut keys[8..])?;
                 create_custody(&root.join(KEYS_FILE), keys.as_ref())?;
                 (1, None)
             };
-            let (key, _) = read_keys(root)?;
+            read_storage_key(root, legacy.is_some())?;
             let policy = Policy {
                 config: config.clone(),
                 shared_storage_limit_mib: None,
@@ -458,7 +488,7 @@ impl Owner {
                 native_listener: None,
                 native_carrier_mailbox_v7: false,
                 native_carrier_mailbox_v8: false,
-                node_pin: key.verifying_key().to_bytes(),
+                node_pin: key.public_key().to_vec(),
                 sequence_floor,
                 legacy,
                 legacy_owner_checkpoint,
@@ -466,7 +496,7 @@ impl Owner {
             // Secret transport seed has a binary representation, never JSON,
             // command line, environment, export, status or console output.
             let mut protected = Zeroizing::new(vec![0u8; 40]);
-            protected[..8].copy_from_slice(b"NVOWN002");
+            protected[..8].copy_from_slice(b"NVOWN003");
             OsRng.try_fill_bytes(&mut protected[8..40])?;
             protected.extend_from_slice(&serde_json::to_vec(&policy)?);
             create_custody(&custody, &protected)?;
@@ -477,7 +507,7 @@ impl Owner {
         );
         let protected = read_custody(&custody)?;
         ensure!(
-            protected.len() > 40 && &protected[..8] == b"NVOWN002",
+            protected.len() > 40 && &protected[..8] == b"NVOWN003",
             "self-owned custody version"
         );
         let transport = Zeroizing::new(<[u8; 32]>::try_from(&protected[8..40])?);
@@ -518,11 +548,10 @@ impl Owner {
                 "native listener conflicts with relay-only policy"
             );
         }
-        let (key, storage) = read_keys(root)?;
+        let storage = read_storage_key(root, policy.legacy.is_some())?;
         ensure!(
-            policy.node_pin == key.verifying_key().to_bytes()
+            policy.node_pin == key.public_key()
                 && !config.allowed_clients.contains(&policy.node_pin)
-                && *transport != key.to_bytes()
                 && *transport != *storage,
             "custody identity separation"
         );
@@ -530,24 +559,7 @@ impl Owner {
         let path = root.join("service.journal");
         if path.try_exists()? {
             let (_file, bytes) = ServiceLeaseFileV1::open(&path, storage.clone())?;
-            match serde_json::from_slice::<serde_json::Value>(&bytes)?["version"].as_u64() {
-                Some(2) => {
-                    ServiceLeaseBookV1::restore_self_owned(
-                        trust(policy.node_pin),
-                        &bytes,
-                        now_ms()?,
-                    )?;
-                }
-                #[cfg(windows)]
-                Some(1) if create_policy => {
-                    let old = policy
-                        .legacy
-                        .as_ref()
-                        .context("explicit legacy transition required")?;
-                    ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &bytes, now_ms()?)?;
-                }
-                _ => anyhow::bail!("incomplete self-owned migration; explicit recovery required"),
-            }
+            restore_service_history(&policy, create_policy, &key, &bytes, now_ms()?)?;
         } else {
             ensure!(
                 create_policy
@@ -685,7 +697,7 @@ impl Owner {
 
     fn save_policy(&self) -> Result<()> {
         let mut bytes = Zeroizing::new(Vec::with_capacity(4096));
-        bytes.extend_from_slice(b"NVOWN002");
+        bytes.extend_from_slice(b"NVOWN003");
         bytes.extend_from_slice(self.transport.as_ref());
         bytes.extend_from_slice(&serde_json::to_vec(&self.policy)?);
         save_custody(&self.policy.config.root.join(POLICY_FILE), &bytes)
@@ -724,23 +736,8 @@ impl Owner {
         };
         let now = now_ms()?;
         let (book, file) = if let Some((file, bytes)) = previous {
-            let version = serde_json::from_slice::<serde_json::Value>(&bytes)?["version"].as_u64();
-            let mut book = if version == Some(2) {
-                ServiceLeaseBookV1::restore_self_owned(trust(self.policy.node_pin), &bytes, now)?
-            } else {
-                ensure!(self.transition, "explicit migration required");
-                #[cfg(target_os = "linux")]
-                anyhow::bail!("Linux does not accept legacy service history");
-                #[cfg(windows)]
-                {
-                    let old = self
-                        .policy
-                        .legacy
-                        .as_ref()
-                        .context("legacy policy missing")?;
-                    ServiceLeaseBookV1::restore(old.epoch.validate()?.1, &bytes, now)?
-                }
-            };
+            let mut book =
+                restore_service_history(&self.policy, self.transition, &self.key, &bytes, now)?;
             let state: serde_json::Value = serde_json::from_slice(&bytes)?;
             let floor = state["current"]
                 .as_array()
@@ -766,7 +763,7 @@ impl Owner {
                 book.replace_self_owned_records(vec![record], now)?;
             } else {
                 book = book.prepare_self_owned_migration(
-                    trust(self.policy.node_pin),
+                    trust(self.policy.node_pin.clone()),
                     vec![record],
                     now,
                 )?;
@@ -796,8 +793,12 @@ impl Owner {
                 expires,
                 self.policy.sequence_floor,
             )?;
-            let mut book =
-                ServiceLeaseBookV1::new_self_owned(trust(self.policy.node_pin), vec![record], now)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust(self.policy.node_pin.clone()),
+                vec![record],
+                now,
+                self.key.clone(),
+            )?;
             let bytes = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&path, self.storage.clone(), &bytes)?;
             book.attach_persistence(file.clone(), &bytes)?;
@@ -814,7 +815,7 @@ impl Owner {
     ) -> Result<Arc<ServiceLeaseHostV1>> {
         let mut book = self.activate_book(vec![endpoint.endpoint()?], expires)?;
         book.check_route(
-            self.policy.node_pin,
+            &self.policy.node_pin,
             endpoint.address.endpoint_key,
             endpoint.instance,
             now_ms()?,
@@ -891,11 +892,12 @@ impl Owner {
         };
         let native = if let Some(settings) = native_settings {
             Some(
-                novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_adaptive(
+                novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_adaptive_with_limits(
                     settings.listen,
                     settings.advertised,
                     key.clone(),
                     stop.clone(),
+                    settings.max_connections,
                     settings.max_bytes_per_minute,
                     concurrency.clone(),
                 )
@@ -904,9 +906,12 @@ impl Owner {
         } else {
             None
         };
+        // Heap-hold the selected lifetime future so the Windows 1 MiB main
+        // stack retains room for the original cryptographic initialization.
+        // This neither spawns a task nor allocates per connection or packet.
         if native_selected && !dual_selected {
             let listener = native.context("native listener missing")?;
-            let result =
+            let result = Box::pin(
                 novovm_network::product_rendezvous_owned::run_self_owned_native_mailbox_v7(
                     listener,
                     key,
@@ -917,7 +922,7 @@ impl Owner {
                             let mut book =
                                 self.activate_book(vec![endpoint.endpoint()?], expires)?;
                             book.check_native_mailbox_route_v7(
-                                self.policy.node_pin,
+                                &self.policy.node_pin,
                                 endpoint,
                                 now_ms()?,
                             )?;
@@ -926,8 +931,9 @@ impl Owner {
                         .context(FailureStage::Activate)
                     },
                     publish,
-                )
-                .await;
+                ),
+            )
+            .await;
             return stage_result(result, FailureStage::TransportRun);
         }
         let carrier = (|| -> Result<_> {
@@ -951,11 +957,12 @@ impl Owner {
                 .map_err(|_| anyhow::anyhow!("TLS key derivation failed"))
                 .context(FailureStage::CarrierSetup)?;
             let listener =
-                novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind_adaptive(
+                novovm_network::product_rendezvous_owned::TlsMailboxListenerV1::bind_adaptive_with_capacity(
                     settings.listen,
                     settings.advertised,
                     seed,
                     stop.clone(),
+                    settings.max_connections,
                     concurrency.clone(),
                 )
                 .await
@@ -976,32 +983,36 @@ impl Owner {
             };
         #[cfg(feature = "tls-transport")]
         let result = if let Some(native) = native {
-            novovm_network::product_rendezvous_owned::run_self_owned_node_with_native_tls_v8(
-                carrier,
-                key,
-                config.allowed_clients.clone(),
-                stop,
-                mailbox,
-                native,
-                tls,
-                activate,
-                publish,
+            Box::pin(
+                novovm_network::product_rendezvous_owned::run_self_owned_node_with_native_tls_v8(
+                    carrier,
+                    key,
+                    config.allowed_clients.clone(),
+                    stop,
+                    mailbox,
+                    native,
+                    tls,
+                    activate,
+                    publish,
+                ),
             )
             .await
         } else if let Some(tls) = tls {
-            novovm_network::product_rendezvous_owned::run_self_owned_node_with_tls_v1(
-                carrier,
-                key,
-                config.allowed_clients.clone(),
-                stop,
-                mailbox,
-                tls,
-                activate,
-                publish,
+            Box::pin(
+                novovm_network::product_rendezvous_owned::run_self_owned_node_with_tls_v1(
+                    carrier,
+                    key,
+                    config.allowed_clients.clone(),
+                    stop,
+                    mailbox,
+                    tls,
+                    activate,
+                    publish,
+                ),
             )
             .await
         } else {
-            run_self_owned_node_v1(
+            Box::pin(run_self_owned_node_v1(
                 carrier,
                 key,
                 config.allowed_clients.clone(),
@@ -1009,24 +1020,26 @@ impl Owner {
                 Some(mailbox),
                 activate,
                 publish,
-            )
+            ))
             .await
         };
         #[cfg(not(feature = "tls-transport"))]
         let result = if let Some(native) = native {
-            novovm_network::product_rendezvous_owned::run_self_owned_node_with_native_v7(
-                carrier,
-                key,
-                config.allowed_clients.clone(),
-                stop,
-                mailbox,
-                native,
-                activate,
-                publish,
+            Box::pin(
+                novovm_network::product_rendezvous_owned::run_self_owned_node_with_native_v7(
+                    carrier,
+                    key,
+                    config.allowed_clients.clone(),
+                    stop,
+                    mailbox,
+                    native,
+                    activate,
+                    publish,
+                ),
             )
             .await
         } else {
-            run_self_owned_node_v1(
+            Box::pin(run_self_owned_node_v1(
                 carrier,
                 key,
                 config.allowed_clients.clone(),
@@ -1034,7 +1047,7 @@ impl Owner {
                 Some(mailbox),
                 activate,
                 publish,
-            )
+            ))
             .await
         };
         stage_result(result, FailureStage::TransportRun)
@@ -1054,25 +1067,63 @@ fn effective_relays(policy: &Policy) -> &[String] {
         &policy.config.relays
     }
 }
-fn trust(pin: [u8; 32]) -> SelfOwnedTrustV1 {
+fn trust(pin: Vec<u8>) -> SelfOwnedTrustV1 {
     SelfOwnedTrustV1 {
-        version: 1,
+        version: 2,
         node_pins: [pin].into(),
     }
 }
-fn read_keys(root: &Path) -> Result<(SigningKey, Zeroizing<[u8; 32]>)> {
+
+fn restore_service_history(
+    policy: &Policy,
+    transition: bool,
+    key: &TransportIdentity,
+    bytes: &[u8],
+    now: u64,
+) -> Result<ServiceLeaseBookV1> {
+    let state: serde_json::Value = serde_json::from_slice(bytes)?;
+    ensure!(
+        state["version"] == 3,
+        "incompatible service checkpoint version"
+    );
+    // Both current checkpoint contracts are v3. Their distinct trust fields,
+    // not the version or a failed restore attempt, select the owning decoder.
+    match (state.get("trust"), state.get("signers")) {
+        (Some(_), None) => ServiceLeaseBookV1::restore_self_owned(
+            trust(policy.node_pin.clone()),
+            bytes,
+            now,
+            key.clone(),
+        ),
+        (None, Some(_)) => {
+            ensure!(
+                transition && policy.legacy.is_some() && policy.legacy_owner_checkpoint.is_some(),
+                "endorsed history requires explicit protected migration policy"
+            );
+            #[cfg(target_os = "linux")]
+            anyhow::bail!("Linux does not accept legacy service history");
+            #[cfg(windows)]
+            {
+                let old = policy.legacy.as_ref().context("legacy policy missing")?;
+                ServiceLeaseBookV1::restore(old.epoch.validate()?.1, bytes, now, key.clone())
+            }
+        }
+        _ => anyhow::bail!("ambiguous or unknown service checkpoint trust contract"),
+    }
+}
+fn read_storage_key(root: &Path, explicit_legacy: bool) -> Result<Zeroizing<[u8; 32]>> {
     let material = read_custody(&root.join(KEYS_FILE))?;
-    ensure!(
-        material.len() == 72 && &material[..8] == b"NVKEYS03",
-        "custody version"
-    );
-    let seed = Zeroizing::new(<[u8; 32]>::try_from(&material[8..40])?);
-    let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[40..])?);
-    ensure!(
-        *seed != *storage && *seed != [0; 32] && *storage != [0; 32],
-        "independent owner keys"
-    );
-    Ok((SigningKey::from_bytes(&seed), storage))
+    let storage = if material.len() == 40 && &material[..8] == b"NVKEYS04" {
+        Zeroizing::new(<[u8; 32]>::try_from(&material[8..])?)
+    } else if explicit_legacy && material.len() == 72 && &material[..8] == b"NVKEYS03" {
+        // An explicit existing-owner migration retains its storage history.
+        // The discarded old signature seed is never a native identity input.
+        Zeroizing::new(<[u8; 32]>::try_from(&material[40..])?)
+    } else {
+        anyhow::bail!("incompatible owner custody; explicit legacy migration required");
+    };
+    ensure!(*storage != [0; 32], "empty owner storage key");
+    Ok(storage)
 }
 
 #[cfg(windows)]
@@ -1081,7 +1132,7 @@ fn create_custody(path: &Path, data: &[u8]) -> Result<()> {
 }
 #[cfg(windows)]
 fn read_custody(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
-    windows_custody::unprotect(&read_bounded(path, 65536)?)
+    windows_custody::unprotect(&read_bounded(path, windows_custody::MAX_PROTECTED_BYTES)?)
 }
 #[cfg(windows)]
 fn save_custody(path: &Path, data: &[u8]) -> Result<()> {
@@ -1129,6 +1180,10 @@ fn replace_protected(path: &Path, sealed: &[u8]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use ed25519_dalek::SigningKey; // Iroh carrier key fixtures only.
+    fn component_key(seed: u8) -> TransportIdentity {
+        crate::transport_identity::component_identity([seed; 32])
+    }
     use super::*;
     use novovm_network::{
         mailbox_receipt::StoreReceiptV1,
@@ -1151,6 +1206,190 @@ mod tests {
 
     struct Fixture(Config);
     #[test]
+    fn current_self_owned_journal_reopens_and_reactivates_without_legacy_policy() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let path = fixture.0.root.join("service.journal");
+        let (file, before) = ServiceLeaseFileV1::open(&path, owner.storage.clone())?;
+        let state: serde_json::Value = serde_json::from_slice(&before)?;
+        assert_eq!(state["version"], 3);
+        assert!(state.get("trust").is_some() && state.get("signers").is_none());
+        let previous_sequence = state["current"][0]["sequence"].as_u64().unwrap();
+        drop(file);
+        drop(owner);
+        let owner = fixture.open()?;
+        let endpoint = NativeMailboxEndpointV7 {
+            address: "127.0.0.1:1".parse()?,
+            max_connections: 4,
+            max_bytes_per_minute: 64 * 1024 * 1024,
+        };
+        let book = owner.activate_book(vec![endpoint.endpoint()?], now_ms()? + 90_000)?;
+        assert!(book.is_self_owned());
+        assert!(book.self_owned_records()?[0].sequence > previous_sequence);
+        drop(book);
+        drop(owner);
+        fixture.open()?;
+        Ok(())
+    }
+
+    #[test]
+    fn checkpoint_dispatch_rejects_old_or_ambiguous_shapes_without_rewriting_history() -> Result<()>
+    {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let path = fixture.0.root.join("service.journal");
+        let encrypted = std::fs::read(&path)?;
+        let (file, bytes) = ServiceLeaseFileV1::open(&path, owner.storage.clone())?;
+        drop(file);
+        let state: serde_json::Value = serde_json::from_slice(&bytes)?;
+        for version in [1, 2] {
+            let mut old = state.clone();
+            old["version"] = version.into();
+            assert!(restore_service_history(
+                &owner.policy,
+                true,
+                &owner.key,
+                &serde_json::to_vec(&old)?,
+                now_ms()?
+            )
+            .is_err());
+        }
+        let mut ambiguous = state;
+        ambiguous["signers"] = serde_json::json!([]);
+        assert!(restore_service_history(
+            &owner.policy,
+            true,
+            &owner.key,
+            &serde_json::to_vec(&ambiguous)?,
+            now_ms()?
+        )
+        .is_err());
+        assert_eq!(std::fs::read(path)?, encrypted);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn endorsed_v3_history_requires_explicit_transition_before_self_owned_activation() -> Result<()>
+    {
+        use novovm_network::product_directory::{
+            sign_bootstrap_manifest_v1, BootstrapSourceKindV1, BootstrapSourceV1,
+            BootstrapTrustPolicyV1, SignedBootstrapManifestV1,
+        };
+        use novovm_network::{
+            iroh_transport::IrohAddressV1, product_service_lease::IrohServiceEndpointV1,
+        };
+        let fixture = Fixture::new()?;
+        let mut owner = fixture.provision()?;
+        let now = now_ms()?;
+        let endpoint = IrohServiceEndpointV1 {
+            instance: [7; 32],
+            address: IrohAddressV1 {
+                endpoint_key: SigningKey::from_bytes(&owner.transport)
+                    .verifying_key()
+                    .to_bytes(),
+                direct: vec!["127.0.0.1:23456".parse()?],
+                relays: vec![],
+            },
+        }
+        .endpoint()?;
+        let record = sign_relay_record_v1(
+            &owner.key,
+            &fixture.0.record_id,
+            vec![endpoint.clone()],
+            now,
+            now + 90_000,
+            8,
+        )?;
+        let signer = component_key(70);
+        let mut manifest = SignedBootstrapManifestV1 {
+            version: 2,
+            suite: 65,
+            manifest_id: "explicit-owner-transition".into(),
+            issued_at_ms: now,
+            expires_at_ms: now + 90_000,
+            candidate_limit: 1,
+            full_raw_ip_directory_embedded: false,
+            requires_single_official_relay: false,
+            requires_single_official_domain: false,
+            relay_records: vec![record],
+            signatures: vec![],
+        };
+        sign_bootstrap_manifest_v1(&mut manifest, &signer)?;
+        let endorsed = ServiceLeaseBookV1::new(
+            BootstrapTrustPolicyV1::single_signer(signer.public_key().to_vec()),
+            vec![BootstrapSourceV1 {
+                source_kind: BootstrapSourceKindV1::FriendInvite,
+                priority: 0,
+                manifest,
+            }],
+            now,
+            owner.key.clone(),
+        )?
+        .checkpoint()?;
+        // Same version as the self-owned contract, but never its decoder.
+        assert!(restore_service_history(&owner.policy, true, &owner.key, &endorsed, now).is_err());
+        owner.policy.legacy = Some(serde_json::from_value(serde_json::json!({
+            "version":2, "prepare_before_ms":5000, "epoch": {
+                "version":3,"engineering_direct_allowed":true,
+                "relay_identity_key_path":fixture.0.root.join("component-purpose.key"),"chain_id":7,
+                "library":fixture.0.root.join("component-library"),"library_sha256":"a".repeat(64),
+                "trusted_signers":[signer.public_key()],"minimum_signatures":1,
+                "allowed_clients":[component_key(41).public_key()],"relays":[],"nameserver":"127.0.0.1",
+                "bind_address":"127.0.0.1:0","relay_only":false,
+                "journal_path":fixture.0.root.join("service.journal"),"source_path":fixture.0.root.join("authority.json"),
+                "enroll":false,"record_id":fixture.0.record_id,"grant_sequence":1,"run_for_ms":10000,"max_sessions":64
+            }
+        }))?);
+        owner.policy.legacy_owner_checkpoint = Some("retained owner reservation provenance".into());
+        assert!(restore_service_history(&owner.policy, false, &owner.key, &endorsed, now).is_err());
+        let book = restore_service_history(&owner.policy, true, &owner.key, &endorsed, now)?;
+        assert!(!book.is_self_owned());
+        let migrated = book
+            .prepare_self_owned_migration(
+                trust(owner.policy.node_pin.clone()),
+                vec![sign_relay_record_v1(
+                    &owner.key,
+                    &fixture.0.record_id,
+                    vec![endpoint],
+                    now,
+                    now + 90_000,
+                    9,
+                )?],
+                now,
+            )?
+            .checkpoint()?;
+        assert!(
+            restore_service_history(&owner.policy, false, &owner.key, &migrated, now)?
+                .is_self_owned()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_owner_storage_only_custody_rejects_implicit_old_signature_seed() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let storage = owner.storage.clone();
+        drop(owner);
+        let key_path = fixture.0.root.join(KEYS_FILE);
+        let fresh = read_custody(&key_path)?;
+        assert_eq!(fresh.len(), 40);
+        assert_eq!(&fresh[..8], b"NVKEYS04");
+        let mut legacy = Zeroizing::new(vec![0u8; 72]);
+        legacy[..8].copy_from_slice(b"NVKEYS03");
+        legacy[8..40].fill(13);
+        legacy[40..].copy_from_slice(storage.as_ref());
+        save_custody(&key_path, &legacy)?;
+        let preserved = std::fs::read(&key_path)?;
+        assert!(read_storage_key(&fixture.0.root, false).is_err());
+        assert!(fixture.open().is_err());
+        assert!(*read_storage_key(&fixture.0.root, true)? == *storage);
+        assert_eq!(std::fs::read(&key_path)?, preserved);
+        Ok(())
+    }
+
+    #[test]
     fn shared_storage_owner_choice_survives_policy_reopen() -> Result<()> {
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
@@ -1164,6 +1403,51 @@ mod tests {
         ensure!(owner.set_storage_limit_mib(Some(499)).is_err());
         ensure!(fixture.open()?.policy.shared_storage_limit_mib.is_none());
         ensure!(storage_limits(Some(u64::MAX)).is_err());
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn maximum_public_client_policy_uses_original_serialization_and_reopens_dpapi() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let mut config = fixture.0.clone();
+        config.allowed_clients = (1..=16)
+            .map(|i| component_key(i).public_key().to_vec())
+            .collect();
+        let key = component_key(71);
+        let owner = Owner::open_with_identity(config.clone(), true, None, key.clone())?;
+        let policy = serde_json::to_vec(&owner.policy)?;
+        let plaintext = read_custody(&config.root.join(POLICY_FILE))?;
+        assert_eq!(plaintext.len(), 40 + policy.len());
+        assert_eq!(&plaintext[40..], policy);
+        assert!(
+            plaintext.len() > 65536,
+            "maximum approved client count must exceed old read cap"
+        );
+        let mut sealed = std::fs::read(config.root.join(POLICY_FILE))?;
+        assert!(sealed.len() > 65536);
+        assert_eq!(&*windows_custody::unprotect(&sealed)?, plaintext.as_slice());
+        eprintln!(
+            "original NVOWN003 policy clients=16 plaintext_bytes={} protected_bytes={}",
+            plaintext.len(),
+            sealed.len()
+        );
+        let midpoint = sealed.len() / 2;
+        sealed[midpoint] ^= 1;
+        assert!(windows_custody::unprotect(&sealed).is_err());
+        drop(owner.activate_book(
+            vec![NativeMailboxEndpointV7 {
+                    address: "127.0.0.1:1".parse()?,
+                    max_connections: 4,
+                    max_bytes_per_minute: 64 * 1024 * 1024,
+                }
+                .endpoint()?],
+            now_ms()? + 90_000,
+        )?);
+        drop(owner);
+        let reopened = Owner::open_with_identity(config, false, None, key)?;
+        assert_eq!(reopened.policy.config.allowed_clients.len(), 16);
+        assert_eq!(serde_json::to_vec(&reopened.policy)?, policy);
         Ok(())
     }
 
@@ -1181,10 +1465,13 @@ mod tests {
                 crate::linux_custody::prepare_test_credential()?;
             }
             let config = Config {
-                version: 2,
+                version: 3,
                 root,
-                allowed_clients: [SigningKey::from_bytes(&[41; 32]).verifying_key().to_bytes()]
-                    .into(),
+                transport_identity_path: PathBuf::from("component-fixture-not-custody"),
+                chain_id: 7,
+                library: PathBuf::from("component-fixture-not-runtime"),
+                library_sha256: "0".repeat(64),
+                allowed_clients: [component_key(41).public_key().to_vec()].into(),
                 relays: vec![],
                 nameserver: "127.0.0.1".parse()?,
                 bind_address: Some("127.0.0.1:0".parse()?),
@@ -1194,20 +1481,20 @@ mod tests {
             Ok(Self(config))
         }
         fn provision(&self) -> Result<Owner> {
-            let owner = Owner::open(self.0.clone(), true, None)?;
+            let owner = Owner::open_with_identity(self.0.clone(), true, None, component_key(71))?;
             let mut route = settings();
             route.advertised.set_port(1);
             let endpoint = NativeMailboxEndpointV7 {
                 address: route.advertised,
-                max_connections: route.max_connections,
-                max_bytes_per_minute: route.max_bytes_per_minute,
+                max_connections: route.max_connections.unwrap(),
+                max_bytes_per_minute: route.max_bytes_per_minute.unwrap(),
             };
             // Test-only initial journal; run() replaces it with the bound route.
             drop(owner.activate_book(vec![endpoint.endpoint()?], now_ms()? + 90_000)?);
             Ok(owner)
         }
         fn open(&self) -> Result<Owner> {
-            Owner::open(self.0.clone(), false, None)
+            Owner::open_with_identity(self.0.clone(), false, None, component_key(71))
         }
     }
     impl Drop for Fixture {
@@ -1220,8 +1507,8 @@ mod tests {
             version: 1,
             listen: "127.0.0.1:0".parse().unwrap(),
             advertised: "127.0.0.1:0".parse().unwrap(),
-            max_connections: 4,
-            max_bytes_per_minute: 64 * 1024 * 1024,
+            max_connections: Some(4),
+            max_bytes_per_minute: Some(64 * 1024 * 1024),
         }
     }
 
@@ -1376,7 +1663,7 @@ mod tests {
     fn native_carrier_policy_opens_old_schema_without_rewriting_custody() -> Result<()> {
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let transport = owner.transport.clone();
         let baseline = [KEYS_FILE, "service.journal"]
             .map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
@@ -1390,7 +1677,7 @@ mod tests {
             .context("policy object")?
             .remove("native_carrier_mailbox_v8");
         let mut material = Zeroizing::new(Vec::new());
-        material.extend_from_slice(b"NVOWN002");
+        material.extend_from_slice(b"NVOWN003");
         material.extend_from_slice(owner.transport.as_ref());
         material.extend_from_slice(&serde_json::to_vec(&old_policy)?);
         let path = fixture.0.root.join(POLICY_FILE);
@@ -1439,12 +1726,12 @@ mod tests {
             .context("policy object")?
             .remove("native_carrier_mailbox_v8");
         let mut material = Zeroizing::new(Vec::new());
-        material.extend_from_slice(b"NVOWN002");
+        material.extend_from_slice(b"NVOWN003");
         material.extend_from_slice(owner.transport.as_ref());
         material.extend_from_slice(&serde_json::to_vec(&old_policy)?);
         let path = fixture.0.root.join(POLICY_FILE);
         save_custody(&path, &material)?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let transport = owner.transport.clone();
         drop(owner);
         let names = [KEYS_FILE, POLICY_FILE, "service.journal"];
@@ -1466,7 +1753,7 @@ mod tests {
         let owner = fixture.provision()?;
         assert!(!owner.native_carrier_mailbox_v7());
         let policy = serde_json::to_value(&owner.policy)?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let transport = owner.transport.clone();
         let baseline = [KEYS_FILE, "service.journal"]
             .map(|name| std::fs::read(fixture.0.root.join(name)).unwrap());
@@ -1562,7 +1849,7 @@ mod tests {
         };
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let transport = owner.transport.clone();
         let key_custody = std::fs::read(fixture.0.root.join(KEYS_FILE))?;
         let endpoint = IrohServiceEndpointV1 {
@@ -1594,7 +1881,12 @@ mod tests {
                 &fixture.0.root.join("service.journal"),
                 owner.storage.clone(),
             )?;
-            let book = ServiceLeaseBookV1::restore_self_owned(trust(pin), &bytes, now_ms()?)?;
+            let book = ServiceLeaseBookV1::restore_self_owned(
+                trust(pin.clone()),
+                &bytes,
+                now_ms()?,
+                component_key(71),
+            )?;
             let records = book.self_owned_records()?;
             assert_eq!(records.len(), 1);
             let record = &records[0];
@@ -1626,7 +1918,7 @@ mod tests {
         };
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let endpoint = IrohServiceEndpointV1 {
             instance: [7; 32],
             address: IrohAddressV1 {
@@ -1638,7 +1930,7 @@ mod tests {
             },
         };
         let mut book = owner.activate_book(vec![endpoint.endpoint()?], now_ms()? + 90_000)?;
-        book.revoke_self_owned(pin, now_ms()?)?;
+        book.revoke_self_owned(&pin, now_ms()?)?;
         drop(book);
         let path = fixture.0.root.join("service.journal");
         let revoked = std::fs::read(&path)?;
@@ -1658,7 +1950,7 @@ mod tests {
             version: 1,
             listen: "127.0.0.1:0".parse().unwrap(),
             advertised: "127.0.0.1:0".parse().unwrap(),
-            max_connections: 4,
+            max_connections: Some(4),
             native_mailbox_v8: native,
         }
     }
@@ -1672,7 +1964,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&parsed)?, old);
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let transport = owner.transport.clone();
         let baseline =
             [KEYS_FILE, "service.journal"].map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
@@ -1738,7 +2030,7 @@ mod tests {
         let mut tls_key = None;
         for _ in 0..2 {
             let owner = fixture.open()?;
-            let pin = owner.policy.node_pin;
+            let pin = owner.policy.node_pin.clone();
             let root = fixture.0.root.clone();
             let stop = Arc::new(AtomicBool::new(false));
             let serving = owner.run(stop.clone());
@@ -1772,8 +2064,8 @@ mod tests {
                     CarrierStreamV1::from(scope.connect(tcp, route.endpoint_key).await?);
                 let (_, observed) = authenticate_mailbox_native_v8(
                     &mut stream,
-                    &SigningKey::from_bytes(&[41; 32]),
-                    pin,
+                    &component_key(41),
+                    pin.clone(),
                     until,
                     &mut HandshakeReplayCacheV1::new(8),
                     &mut |_, _| Ok(()),
@@ -1819,7 +2111,7 @@ mod tests {
         let owner = fixture.provision()?;
         let baseline =
             [KEYS_FILE, "service.journal"].map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         owner.set_carrier_mode(CarrierMode::DirectOnly)?;
         let owner = fixture.open()?;
         assert_eq!(owner.policy.node_pin, pin);
@@ -1843,7 +2135,7 @@ mod tests {
     fn native_listener_policy_roundtrip_preserves_identity_and_history() -> Result<()> {
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let transport = owner.transport.clone();
         let baseline =
             [KEYS_FILE, "service.journal"].map(|p| std::fs::read(fixture.0.root.join(p)).unwrap());
@@ -1853,7 +2145,7 @@ mod tests {
             version: 1,
             listen: "127.0.0.1:0".parse()?,
             advertised: "127.0.0.1:0".parse()?,
-            max_connections: 4,
+            max_connections: Some(4),
             native_mailbox_v8: false,
         }))?;
         fixture.open()?.set_native_listener(Some(settings()))?;
@@ -1875,7 +2167,7 @@ mod tests {
         assert!(owner.set_carrier_mode(CarrierMode::RelayOnly).is_err());
         assert_eq!(std::fs::read(fixture.0.root.join(POLICY_FILE))?, sealed);
         let mut bad = settings();
-        bad.max_connections = 0;
+        bad.max_connections = Some(0);
         assert!(fixture.open()?.set_native_listener(Some(bad)).is_err());
         assert_eq!(std::fs::read(fixture.0.root.join(POLICY_FILE))?, sealed);
         fixture.open()?.set_native_listener(None)?;
@@ -1897,7 +2189,7 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec(&good)?)?;
         assert_eq!(NativeListenerConfig::load(&path)?, good);
         let mut larger = good.clone();
-        larger.max_connections = 128;
+        larger.max_connections = Some(128);
         std::fs::write(&path, serde_json::to_vec(&larger)?)?;
         assert_eq!(NativeListenerConfig::load(&path)?, larger);
         let mut invalid = Vec::new();
@@ -1905,10 +2197,10 @@ mod tests {
         v.version = 2;
         invalid.push(v);
         let mut v = good.clone();
-        v.max_connections = 0;
+        v.max_connections = Some(0);
         invalid.push(v);
         let mut v = good.clone();
-        v.max_bytes_per_minute = 0;
+        v.max_bytes_per_minute = Some(0);
         invalid.push(v);
         let mut v = good.clone();
         v.advertised = "0.0.0.0:1".parse()?;
@@ -1927,13 +2219,40 @@ mod tests {
     }
 
     #[test]
+    fn listener_omission_preserves_adaptive_policy_and_explicit_numbers_roundtrip() -> Result<()> {
+        let omitted = r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0"}"#;
+        let native: NativeListenerConfig = serde_json::from_str(omitted)?;
+        native.validate()?;
+        assert_eq!(native.max_connections, None);
+        assert_eq!(native.max_bytes_per_minute, None);
+        assert_eq!(serde_json::to_string(&native)?, omitted);
+        let explicit = settings();
+        let reopened: NativeListenerConfig =
+            serde_json::from_slice(&serde_json::to_vec(&explicit)?)?;
+        assert_eq!(reopened.max_connections, Some(4));
+        assert_eq!(reopened.max_bytes_per_minute, Some(64 * 1024 * 1024));
+        #[cfg(feature = "tls-transport")]
+        {
+            let tls: TlsListenerConfig = serde_json::from_str(omitted)?;
+            tls.validate()?;
+            assert_eq!(tls.max_connections, None);
+            assert_eq!(serde_json::to_string(&tls)?, omitted);
+            let explicit = tls_settings(false);
+            let reopened: TlsListenerConfig =
+                serde_json::from_slice(&serde_json::to_vec(&explicit)?)?;
+            assert_eq!(reopened.max_connections, Some(4));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn native_listener_journal_switches_carriers_without_reset() -> Result<()> {
         use novovm_network::{
             iroh_transport::IrohAddressV1, product_service_lease::IrohServiceEndpointV1,
         };
         let fixture = Fixture::new()?;
         let owner = fixture.provision()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let iroh = IrohServiceEndpointV1 {
             instance: [7; 32],
             address: IrohAddressV1 {
@@ -1947,7 +2266,7 @@ mod tests {
         let native = NativeMailboxEndpointV7 {
             address: "127.0.0.1:23457".parse()?,
             max_connections: 4,
-            max_bytes_per_minute: settings().max_bytes_per_minute,
+            max_bytes_per_minute: settings().max_bytes_per_minute.unwrap(),
         };
         let mut sequence = 0;
         for endpoint in [iroh.endpoint()?, native.endpoint()?, iroh.endpoint()?] {
@@ -1971,17 +2290,18 @@ mod tests {
         async fn connect(record: &PeerSignedRelayRecordV1) -> Result<Self> {
             let route = NativeMailboxEndpointV7::from_record(record)?.context("native route")?;
             let mut book = ServiceLeaseBookV1::new_self_owned(
-                trust(record.relay_public_key),
+                trust(record.relay_public_key.clone()),
                 vec![record.clone()],
                 now_ms()?,
+                component_key(71),
             )?;
-            book.check_native_mailbox_route_v7(record.relay_public_key, &route, now_ms()?)?;
+            book.check_native_mailbox_route_v7(&record.relay_public_key, &route, now_ms()?)?;
             let mut link = NativeObjectLink::new(
                 NativeEndpoint::connect_client(
                     UdpSocket::bind("127.0.0.1:0")?,
-                    SigningKey::from_bytes(&[52; 32]),
+                    component_key(52),
                     NativePeer {
-                        key: record.relay_public_key,
+                        key: record.relay_public_key.clone(),
                         address: route.address,
                     },
                     NativeHandshakeBudget {
@@ -2021,7 +2341,8 @@ mod tests {
                 let _ = link.poll(now_ms()?, Instant::now(), 64)?;
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
-            let session = NativeMailboxClient::attach(&mut link, 0, record.relay_public_key)?;
+            let session =
+                NativeMailboxClient::attach(&mut link, 0, record.relay_public_key.clone())?;
             Ok(Self { link, session })
         }
         async fn request(&mut self, request: Request) -> Result<Reply> {
@@ -2059,7 +2380,7 @@ mod tests {
         expires: i64,
     ) -> Result<(StoreReceiptV1, u64)> {
         let owner = fixture.open()?;
-        let pin = owner.policy.node_pin;
+        let pin = owner.policy.node_pin.clone();
         let root = fixture.0.root.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let serving = owner.run(stop.clone());
@@ -2124,7 +2445,14 @@ mod tests {
             let Reply::Stored(receipt) = client.request(put).await? else {
                 anyhow::bail!("fixture Put not stored")
             };
-            receipt.verify(pin, [1; 32], [4; 32], &vec![8; 256], expires)?;
+            receipt.verify(
+                &pin,
+                [1; 32],
+                [4; 32],
+                &vec![8; 256],
+                expires,
+                &component_key(71),
+            )?;
             if let Some(previous) = prior {
                 assert_eq!(receipt.signature, previous.signature);
             }

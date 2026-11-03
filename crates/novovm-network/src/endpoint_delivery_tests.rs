@@ -6,7 +6,6 @@ use crate::{
     },
     mailbox_store::{Limits, MailboxStore},
 };
-use ed25519_dalek::SigningKey;
 use std::sync::atomic::AtomicUsize;
 
 fn request(write: u8) -> Request {
@@ -44,7 +43,7 @@ async fn endpoint_routes_are_capability_checked_generation_owned_and_never_write
     let path = temp.path().join("mailbox.db");
     let service = MailboxServiceV1::new(
         MailboxStore::open(&path, Limits::default())?,
-        SigningKey::from_bytes(&[9; 32]),
+        crate::test_identity::key(9),
     );
     let sql = rusqlite::Connection::open(&path)?;
     let names = sql

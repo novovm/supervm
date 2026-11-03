@@ -7,7 +7,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Args)]
-#[command(about = "Prepare protected test-node purpose keys; never starts a chain or service")]
+#[command(
+    about = "Prepare protected purpose keys or qualify their runtime; never starts a chain or service"
+)]
 pub struct NativeIdentityArgs {
     #[command(subcommand)]
     pub command: NativeIdentityCommand,
@@ -19,6 +21,18 @@ pub enum NativeIdentityCommand {
     Generate(KeyArgs),
     /// Read-only check of existing protected material, expected purpose and isolated chain id.
     Inspect(KeyArgs),
+    /// Read-only qualification of an explicit AOEM runtime; no keys, custody or network.
+    QualifyRuntime(RuntimeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeArgs {
+    /// Explicit AOEM library to qualify through the original native verification owner.
+    #[arg(long)]
+    pub library: PathBuf,
+    /// Independently approved lowercase SHA-256 of this exact platform artifact.
+    #[arg(long)]
+    pub library_sha256: String,
 }
 
 #[derive(Debug, Args)]
@@ -32,7 +46,7 @@ pub struct KeyArgs {
     /// Explicit independent test-chain domain; this is not genesis activation.
     #[arg(long)]
     pub chain_id: u64,
-    /// Explicit trusted AOEM library. Required for ML-DSA-65 validator generation/inspection.
+    /// Explicit trusted AOEM library. Required for either ML-DSA-65 purpose.
     #[arg(long, requires = "library_sha256")]
     pub library: Option<PathBuf>,
     /// Independently approved lowercase SHA-256; checked before and after AOEM use.
@@ -49,7 +63,14 @@ fn parse_purpose(value: &str) -> Result<PurposeV1, String> {
 }
 
 #[derive(Serialize)]
-struct Report {
+#[serde(untagged)]
+enum Report {
+    Identity(IdentityReport),
+    Runtime(RuntimeReport),
+}
+
+#[derive(Serialize)]
+struct IdentityReport {
     action: &'static str,
     identity: PublicIdentityV1,
     protected_key_created: bool,
@@ -60,6 +81,28 @@ struct Report {
     genesis_activated: bool,
     consensus_signed: bool,
     asset_authority_granted: bool,
+    whole_node_post_quantum_qualified: bool,
+}
+
+#[derive(Serialize)]
+struct RuntimeReport {
+    action: &'static str,
+    qualification: &'static str,
+    algorithm: &'static str,
+    signature_suite: u16,
+    library: PathBuf,
+    library_sha256: String,
+    verification_qualified: bool,
+    scalar_verification_kat_passed: bool,
+    unified_semantic_verification_kat_passed: bool,
+    mixed_batch_verification_kat_passed: bool,
+    primitive_sign_interface_size_checked: bool,
+    signing_tested: bool,
+    keygen_tested: bool,
+    protected_key_created: bool,
+    custody_accessed: bool,
+    database_created: bool,
+    service_started: bool,
     whole_node_post_quantum_qualified: bool,
 }
 
@@ -76,23 +119,12 @@ fn execute(args: NativeIdentityArgs) -> Result<Report, CtlError> {
     let (action, args, create) = match args.command {
         NativeIdentityCommand::Generate(args) => ("generate", args, true),
         NativeIdentityCommand::Inspect(args) => ("inspect", args, false),
-    };
-    let identity = if args.purpose == PurposeV1::Validator {
-        validator_identity(&args, create)?
-    } else {
-        if args.library.is_some() || args.library_sha256.is_some() {
-            return Err(CtlError::InvalidArgument("AOEM arguments are for validator ML-DSA-65 only; transport remains a separate purpose".into()));
+        NativeIdentityCommand::QualifyRuntime(args) => {
+            return qualify_runtime(args).map(Report::Runtime);
         }
-        if create {
-            purpose_keys::generate(&args.key_file, args.purpose, args.chain_id)
-        } else {
-            purpose_keys::inspect(&args.key_file, args.purpose, args.chain_id)
-        }
-        .map_err(|error| {
-            CtlError::IntegrationFailed(format!("protected purpose identity: {error:#}"))
-        })?
     };
-    Ok(Report {
+    let identity = mldsa_identity(&args, create)?;
+    Ok(Report::Identity(IdentityReport {
         action,
         identity,
         protected_key_created: create,
@@ -104,19 +136,51 @@ fn execute(args: NativeIdentityArgs) -> Result<Report, CtlError> {
         consensus_signed: false,
         asset_authority_granted: false,
         whole_node_post_quantum_qualified: false,
+    }))
+}
+
+fn qualify_runtime(args: RuntimeArgs) -> Result<RuntimeReport, CtlError> {
+    let library = args.library.canonicalize().map_err(|error| {
+        CtlError::FileReadFailed(format!("explicit AOEM runtime library: {error}"))
+    })?;
+    novovm_relay::transport_identity::load_transport_verifier(&library, &args.library_sha256)
+        .map_err(|error| {
+            CtlError::IntegrationFailed(format!(
+                "native ML-DSA-65 runtime qualification: {error:#}"
+            ))
+        })?;
+    Ok(RuntimeReport {
+        action: "qualify-runtime",
+        qualification: "ml-dsa-65-native-verification-owner",
+        algorithm: "ML-DSA-65",
+        signature_suite: 65,
+        library,
+        library_sha256: args.library_sha256,
+        verification_qualified: true,
+        scalar_verification_kat_passed: true,
+        unified_semantic_verification_kat_passed: true,
+        mixed_batch_verification_kat_passed: true,
+        primitive_sign_interface_size_checked: true,
+        signing_tested: false,
+        keygen_tested: false,
+        protected_key_created: false,
+        custody_accessed: false,
+        database_created: false,
+        service_started: false,
+        whole_node_post_quantum_qualified: false,
     })
 }
 
-fn validator_identity(args: &KeyArgs, create: bool) -> Result<PublicIdentityV1, CtlError> {
+fn mldsa_identity(args: &KeyArgs, create: bool) -> Result<PublicIdentityV1, CtlError> {
     let library = args.library.as_ref().ok_or_else(|| {
         CtlError::InvalidArgument(
-            "validator ML-DSA-65 requires --library and --library-sha256; no Ed25519 fallback"
+            "node ML-DSA-65 identity requires --library and --library-sha256; no Ed25519 fallback"
                 .into(),
         )
     })?;
     let digest = args.library_sha256.as_deref().ok_or_else(|| {
         CtlError::InvalidArgument(
-            "validator ML-DSA-65 requires independently approved --library-sha256".into(),
+            "node ML-DSA-65 identity requires independently approved --library-sha256".into(),
         )
     })?;
     let expected = super::native_genesis::parse_digest(digest)?;
@@ -137,30 +201,26 @@ fn validator_identity(args: &KeyArgs, create: bool) -> Result<PublicIdentityV1, 
         })?;
     let check = |public: &[u8], secret: &[u8], challenge: &[u8]| {
         signer
-            .sign(
-                public,
-                secret,
-                challenge,
-                purpose_keys::VALIDATOR_PAIR_CONTEXT,
-            )
+            .sign(public, secret, challenge, args.purpose.pair_context())
             .map(|_| ())
             .map_err(Into::into)
     };
     let identity = if create {
-        purpose_keys::generate_validator(
+        purpose_keys::generate_mldsa(
             &args.key_file,
+            args.purpose,
             args.chain_id,
             || {
                 let key = signer.generate_keypair()?;
-                purpose_keys::ValidatorKeyMaterialV2::new(key.public_key, key.expanded_secret_key)
+                purpose_keys::PurposeKeyMaterialV3::new(key.public_key, key.expanded_secret_key)
             },
             check,
         )
     } else {
-        purpose_keys::inspect_validator(&args.key_file, args.chain_id, check)
+        purpose_keys::inspect_mldsa(&args.key_file, args.purpose, args.chain_id, check)
     }
     .map_err(|error| {
-        CtlError::IntegrationFailed(format!("protected validator identity: {error:#}"))
+        CtlError::IntegrationFailed(format!("protected ML-DSA-65 purpose identity: {error:#}"))
     })?;
     if super::native_genesis::file_digest(&library)? != expected {
         return Err(CtlError::IntegrationFailed(

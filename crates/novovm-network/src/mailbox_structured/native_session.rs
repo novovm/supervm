@@ -17,7 +17,7 @@ use crate::{
         },
         object_sender::ObjectSendState,
     },
-    product_overlay::peer_id_from_ed25519_public_key_v1,
+    product_overlay::peer_id_from_mldsa65_public_key_v1,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -68,7 +68,7 @@ struct Binding {
     peer: usize,
     id: String,
     session: [u8; 16],
-    local: [u8; 32],
+    local: Vec<u8>,
     role: NativeApplicationRole,
     validity: NativeSessionValidity,
 }
@@ -84,7 +84,7 @@ impl Binding {
             peer,
             id,
             session,
-            local: link.local_identity(),
+            local: link.local_identity().to_vec(),
             role,
             validity: link.session_validity(peer)?,
         })
@@ -104,7 +104,7 @@ impl Binding {
         hash.update(b"novonet.mailbox.request.v7\0");
         hash.update(domain());
         hash.update(self.session);
-        let local = peer_id_from_ed25519_public_key_v1(&self.local);
+        let local = peer_id_from_mldsa65_public_key_v1(&self.local);
         let parties = match self.role {
             NativeApplicationRole::Client => [&local, &self.id],
             NativeApplicationRole::Service => [&self.id, &local],
@@ -210,7 +210,7 @@ impl ClientSlot {
 }
 pub struct NativeMailboxClient {
     binding: Binding,
-    node: [u8; 32],
+    node: Vec<u8>,
     slots: Vec<ClientSlot>,
     bulk_ready: bool,
     capacity: Option<ClientCapacity>,
@@ -273,18 +273,18 @@ impl NativeMailboxClient {
     /// Call only once after the existing pinned peer handshake is established.
     /// No handshake per batch; node must be that same peer, not a receipt key
     /// supplied by an unauthenticated response.
-    pub fn attach(link: &mut NativeObjectLink, peer: usize, node: [u8; 32]) -> Result<Self> {
+    pub fn attach(link: &mut NativeObjectLink, peer: usize, node: Vec<u8>) -> Result<Self> {
         Self::attach_adaptive(link, peer, node, ServiceConcurrencyV1::from_host())
     }
     /// Exchange resource capacity on the existing authenticated lane.
     pub fn attach_adaptive(
         link: &mut NativeObjectLink,
         peer: usize,
-        node: [u8; 32],
+        node: Vec<u8>,
         controller: Arc<ServiceConcurrencyV1>,
     ) -> Result<Self> {
         ensure!(
-            link.peer_id(peer)? == peer_id_from_ed25519_public_key_v1(&node),
+            link.peer_id(peer)? == peer_id_from_mldsa65_public_key_v1(&node),
             "mailbox node pin mismatch"
         );
         let mut value = Self {
@@ -529,7 +529,7 @@ impl NativeMailboxClient {
         ensure!(p.sent && now < p.deadline, "mailbox late/unsent reply");
         let replies = decode_replies(&bytes, p.context, p.requests.len())?;
         for (request, reply) in p.requests.iter().zip(&replies) {
-            verify_reply(self.node, request, reply)?;
+            verify_reply(&self.node, request, reply, link.identity_verifier())?;
         }
         authority()?;
         if p.requests
@@ -589,7 +589,12 @@ impl NativeMailboxClient {
         expired
     }
 }
-fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> {
+fn verify_reply(
+    node: &[u8],
+    request: &Request,
+    reply: &Reply,
+    verifier: &dyn crate::product_overlay::TransportVerifier,
+) -> Result<()> {
     if matches!(reply, Reply::Rejected(_)) {
         return Ok(());
     }
@@ -630,7 +635,7 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
             // trust book checks pin, revocation, sequence and time before use,
             // allowing an authentic future declaration to wait without latching
             // every business slot on this otherwise healthy session.
-            crate::product_service_lease::verify_native_record_metadata_v1(record)?;
+            crate::product_service_lease::verify_native_record_metadata_v1(record, verifier)?;
             Ok(())
         }
         (Request::Register { .. }, Reply::Registered)
@@ -655,7 +660,7 @@ fn verify_reply(node: [u8; 32], request: &Request, reply: &Reply) -> Result<()> 
                 ..
             },
             Reply::Stored(r),
-        ) => r.verify(node, *mailbox, *object, ciphertext, *expires),
+        ) => r.verify(node, *mailbox, *object, ciphertext, *expires, verifier),
         (
             Request::Fetch { .. } | Request::FetchBulkV1 { .. },
             Reply::Object {
@@ -823,7 +828,7 @@ impl NativeMailboxServer {
                 },
                 peer: self.binding.peer,
                 session: self.binding.session,
-                signer: self.binding.local,
+                signer: self.binding.local.clone(),
                 deadline: now + REQUEST_DEADLINE,
                 capacity_response: Some(response),
                 retained_bytes: 4096,
@@ -863,7 +868,7 @@ impl NativeMailboxServer {
             },
             peer: self.binding.peer,
             session: self.binding.session,
-            signer: self.binding.local,
+            signer: self.binding.local.clone(),
             deadline: now + REQUEST_DEADLINE,
             capacity_response: None,
             retained_bytes,
@@ -931,7 +936,7 @@ pub struct MailboxWork {
     guard: WorkGuard,
     peer: usize,
     session: [u8; 16],
-    signer: [u8; 32],
+    signer: Vec<u8>,
     deadline: Instant,
 }
 impl MailboxWork {
@@ -1192,6 +1197,7 @@ mod endpoint_tests {
     use super::*;
     #[test]
     fn endpoint_reply_requires_original_object_and_bounded_receipt() {
+        let verifier = crate::test_identity::key(9);
         let request = Request::EndpointDeliverV1 {
             mailbox: [1; 32],
             write: [2; 32],
@@ -1205,25 +1211,28 @@ mod endpoint_tests {
             receipt_expires: 101,
             receipt: vec![6],
         };
-        assert!(verify_reply([9; 32], &request, &good()).is_ok());
+        assert!(verify_reply(verifier.public_key(), &request, &good(), &verifier).is_ok());
         let mut wrong = good();
         if let Reply::EndpointDeliveredV1 { object, .. } = &mut wrong {
             *object = [7; 32];
         }
-        assert!(verify_reply([9; 32], &request, &wrong).is_err());
+        assert!(verify_reply(verifier.public_key(), &request, &wrong, &verifier).is_err());
         let mut large = good();
         if let Reply::EndpointDeliveredV1 { receipt, .. } = &mut large {
             *receipt = vec![0; 65_537];
         }
-        assert!(verify_reply([9; 32], &request, &large).is_err());
-        assert!(verify_reply([9; 32], &request, &Reply::Consumed).is_err());
+        assert!(verify_reply(verifier.public_key(), &request, &large, &verifier).is_err());
+        assert!(
+            verify_reply(verifier.public_key(), &request, &Reply::Consumed, &verifier).is_err()
+        );
         assert!(verify_reply(
-            [9; 32],
+            verifier.public_key(),
             &Request::Fetch {
                 mailbox: [1; 32],
                 read: [2; 32]
             },
-            &good()
+            &good(),
+            &verifier
         )
         .is_err());
     }

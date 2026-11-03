@@ -14,9 +14,9 @@ use crate::duplex::{
     RelayPeerHandshakeDeliveryV1, RelayPeerHandshakeV1, SecureNovoRudpEnvelopeV1,
     PRODUCT_RELAY_MAX_WIRE_MESSAGE_BYTES_V1,
 };
+use crate::product_overlay::TransportIdentity;
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use ed25519_dalek::SigningKey;
 use rand::{rngs::OsRng, RngCore};
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
@@ -666,14 +666,17 @@ pub struct ProductRelayReconnectStateV1 {
 }
 
 pub struct ProductRelayConnectorV1 {
-    identity: SigningKey,
+    identity: TransportIdentity,
     config: ProductRelayClientConfigV1,
     policy: ProductRelayReconnectPolicyV1,
     state: ProductRelayReconnectStateV1,
 }
 
 impl ProductRelayClientV1 {
-    pub fn connect(identity: &SigningKey, config: &ProductRelayClientConfigV1) -> Result<Self> {
+    pub fn connect(
+        identity: &TransportIdentity,
+        config: &ProductRelayClientConfigV1,
+    ) -> Result<Self> {
         Self::connect_inner_v1(
             identity,
             config,
@@ -684,7 +687,7 @@ impl ProductRelayClientV1 {
     }
 
     pub fn connect_with_control(
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         config: &ProductRelayClientConfigV1,
         control: ProductRelayClientControlV1,
     ) -> Result<Self> {
@@ -698,7 +701,7 @@ impl ProductRelayClientV1 {
     }
 
     fn connect_inner_v1(
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         config: &ProductRelayClientConfigV1,
         control: Option<ProductRelayClientControlV1>,
         resolver_slots: &'static AtomicUsize,
@@ -1267,7 +1270,7 @@ fn pop_pending_relay_event_v1(
 
 impl ProductRelayConnectorV1 {
     pub fn new(
-        identity: SigningKey,
+        identity: TransportIdentity,
         config: ProductRelayClientConfigV1,
         policy: ProductRelayReconnectPolicyV1,
     ) -> Result<Self> {
@@ -1959,10 +1962,10 @@ fn default_tls_trust_v1() -> ProductRelayTlsTrustV1 {
 mod tests {
     use super::*;
     use crate::duplex::product_relay_daemon::{
-        run_product_relay_daemon_v1, ProductRelayDaemonConfigV1,
+        run_fixture_relay_daemon_v1, ProductRelayDaemonConfigV1,
     };
     use crate::duplex::{
-        peer_id_from_ed25519_public_key_v1, NodeHandshakeResponderV1, NovoRudpTransportFrameKindV0,
+        peer_id_from_mldsa65_public_key_v1, NodeHandshakeResponderV1, NovoRudpTransportFrameKindV0,
         NovoRudpTransportFrameV0,
     };
     use std::{fs, net::TcpListener, thread};
@@ -2017,14 +2020,14 @@ mod tests {
         });
         let config = ProductRelayClientConfigV1 {
             endpoint: format!("wss://{address}/novovm"),
-            expected_relay_peer_id: "novovm-ed25519:control-test".into(),
+            expected_relay_peer_id: "novovm-mldsa65:control-test".into(),
             connect_timeout_ms: 5000,
             read_timeout_ms: 5000,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
         };
         let start = Instant::now();
         let error = ProductRelayClientV1::connect_with_control(
-            &SigningKey::from_bytes(&[195; 32]),
+            &TransportIdentity::from_bytes(&[195; 32]),
             &config,
             cancelling_control_v1(cancelled),
         )
@@ -2047,7 +2050,7 @@ mod tests {
         let (started, worker_started) = mpsc::channel();
         let config = ProductRelayClientConfigV1 {
             endpoint: format!("wss://delayed.invalid:{}/novovm", address.port()),
-            expected_relay_peer_id: "novovm-ed25519:control-test".into(),
+            expected_relay_peer_id: "novovm-mldsa65:control-test".into(),
             connect_timeout_ms: 5000,
             read_timeout_ms: 5000,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
@@ -2056,7 +2059,7 @@ mod tests {
         let control = ProductRelayClientControlV1::new(|| Ok(()))
             .with_connect_deadline(start + Duration::from_millis(80));
         let error = ProductRelayClientV1::connect_inner_v1(
-            &SigningKey::from_bytes(&[196; 32]),
+            &TransportIdentity::from_bytes(&[196; 32]),
             &config,
             Some(control),
             &SLOTS,
@@ -2404,10 +2407,10 @@ mod tests {
 
     #[test]
     fn node_key_bound_tls_is_loopback_only_before_connect() {
-        let identity = SigningKey::from_bytes(&[140; 32]);
+        let identity = TransportIdentity::from_bytes(&[140; 32]);
         let config = ProductRelayClientConfigV1 {
             endpoint: "wss://192.0.2.1:443/novovm".into(),
-            expected_relay_peer_id: "novovm-ed25519:test-relay".into(),
+            expected_relay_peer_id: "novovm-mldsa65:test-relay".into(),
             connect_timeout_ms: 60_000,
             read_timeout_ms: 1_000,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
@@ -2527,16 +2530,14 @@ mod tests {
                 }),
             )
         });
-        let identity = SigningKey::from_bytes(&[203; 32]);
+        let identity = TransportIdentity::from_bytes(&[203; 32]);
         let mut client = ProductRelayClientV1::connect(&identity, &fixture.config).unwrap();
         // Kernels may round socket timeouts (for example 10ms to 12ms).
         // Verify restoration to the effective baseline, not the requested duration.
         let original_read_timeout = client.stream.sock.inner.read_timeout().unwrap();
         let original_write_timeout = client.stream.sock.inner.write_timeout().unwrap();
-        let target = peer_id_from_ed25519_public_key_v1(
-            &SigningKey::from_bytes(&[204; 32])
-                .verifying_key()
-                .to_bytes(),
+        let target = peer_id_from_mldsa65_public_key_v1(
+            TransportIdentity::from_bytes(&[204; 32]).public_key(),
         );
         let initiator =
             NodeHandshakeInitiatorV1::start(&identity, target.clone(), now_ms_v1(), 5_000).unwrap();
@@ -2575,9 +2576,11 @@ mod tests {
     #[test]
     fn outcome_absolute_timeout_is_terminal_and_restores_idle_read_scope() {
         let fixture = delayed_test_relay_v1(|_| Ok(()));
-        let mut client =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[205; 32]), &fixture.config)
-                .unwrap();
+        let mut client = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[205; 32]),
+            &fixture.config,
+        )
+        .unwrap();
         // Kernels may round socket timeouts (for example 10ms to 12ms).
         // Verify restoration to the effective baseline, not the requested duration.
         let original_read_timeout = client.stream.sock.inner.read_timeout().unwrap();
@@ -2609,9 +2612,11 @@ mod tests {
             stream.flush()?;
             Ok(())
         });
-        let mut client =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[206; 32]), &fixture.config)
-                .unwrap();
+        let mut client = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[206; 32]),
+            &fixture.config,
+        )
+        .unwrap();
         let receive_deadline = Instant::now() + Duration::from_secs(3);
         while client.read_buffer.is_empty() {
             let error = client.recv_event().unwrap_err();
@@ -2683,10 +2688,12 @@ mod tests {
                 true,
                 |_| bail!("identity handshake was reached after unsupported subprotocol"),
             );
-            let error =
-                ProductRelayClientV1::connect(&SigningKey::from_bytes(&[211; 32]), &fixture.config)
-                    .err()
-                    .expect("upgrade must fail before sending an identity offer");
+            let error = ProductRelayClientV1::connect(
+                &TransportIdentity::from_bytes(&[211; 32]),
+                &fixture.config,
+            )
+            .err()
+            .expect("upgrade must fail before sending an identity offer");
             assert!(error.to_string().contains("subprotocol"));
             fixture.finish();
         }
@@ -2704,9 +2711,11 @@ mod tests {
                 stream.flush()?;
                 Ok(())
             });
-            let mut client =
-                ProductRelayClientV1::connect(&SigningKey::from_bytes(&[211; 32]), &fixture.config)
-                    .unwrap();
+            let mut client = ProductRelayClientV1::connect(
+                &TransportIdentity::from_bytes(&[211; 32]),
+                &fixture.config,
+            )
+            .unwrap();
             let deadline = Instant::now() + Duration::from_secs(3);
             if incremental {
                 let mut pipeline = client.into_pipeline().unwrap();
@@ -2753,20 +2762,22 @@ mod tests {
             ProductRelayWireMessageV1::HeartbeatAck,
         ] {
             let fixture = delayed_test_relay_with_window_v1(advertisement, false, |_| Ok(()));
-            let error =
-                ProductRelayClientV1::connect(&SigningKey::from_bytes(&[211; 32]), &fixture.config)
-                    .err()
-                    .expect("unsupported delivery window must fail closed");
+            let error = ProductRelayClientV1::connect(
+                &TransportIdentity::from_bytes(&[211; 32]),
+                &fixture.config,
+            )
+            .err()
+            .expect("unsupported delivery window must fail closed");
             assert!(error.to_string().contains("supported delivery window v1"));
             fixture.finish();
         }
     }
 
     pub(super) fn test_window_deliveries_v1() -> Vec<ProductRelayWireMessageV1> {
-        let source = SigningKey::from_bytes(&[210; 32]);
-        let target = SigningKey::from_bytes(&[211; 32]);
-        let source_id = peer_id_from_ed25519_public_key_v1(&source.verifying_key().to_bytes());
-        let target_id = peer_id_from_ed25519_public_key_v1(&target.verifying_key().to_bytes());
+        let source = TransportIdentity::from_bytes(&[210; 32]);
+        let target = TransportIdentity::from_bytes(&[211; 32]);
+        let source_id = peer_id_from_mldsa65_public_key_v1(source.public_key());
+        let target_id = peer_id_from_mldsa65_public_key_v1(target.public_key());
         let now = now_ms_v1();
         let initiator =
             NodeHandshakeInitiatorV1::start(&source, target_id.clone(), now, 30_000).unwrap();
@@ -2855,9 +2866,11 @@ mod tests {
             }
             Ok(())
         });
-        let client =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[210; 32]), &fixture.config)
-                .unwrap();
+        let client = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[210; 32]),
+            &fixture.config,
+        )
+        .unwrap();
         let mut pipeline = client.into_pipeline().unwrap();
         let mut envelopes = envelopes.into_iter().peekable();
         let mut completed = Vec::new();
@@ -2930,12 +2943,10 @@ mod tests {
             ));
             Ok(())
         });
-        let identity = SigningKey::from_bytes(&[211; 32]);
+        let identity = TransportIdentity::from_bytes(&[211; 32]);
         let mut client = ProductRelayClientV1::connect(&identity, &fixture.config).unwrap();
-        let target = peer_id_from_ed25519_public_key_v1(
-            &SigningKey::from_bytes(&[210; 32])
-                .verifying_key()
-                .to_bytes(),
+        let target = peer_id_from_mldsa65_public_key_v1(
+            TransportIdentity::from_bytes(&[210; 32]).public_key(),
         );
         let offer = NodeHandshakeInitiatorV1::start(&identity, target.clone(), now_ms_v1(), 30_000)
             .unwrap();
@@ -2986,9 +2997,11 @@ mod tests {
     #[test]
     fn prefetched_inbound_deadline_is_not_reset_by_outbound_completion() {
         let fixture = delayed_test_relay_v1(|_| Ok(()));
-        let mut client =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[212; 32]), &fixture.config)
-                .unwrap();
+        let mut client = ProductRelayClientV1::connect(
+            &TransportIdentity::from_bytes(&[212; 32]),
+            &fixture.config,
+        )
+        .unwrap();
         let now = Instant::now();
         client
             .stream
@@ -3020,9 +3033,11 @@ mod tests {
     fn delivery_window_credit_write_failure_and_counter_overflow_are_terminal() {
         for overflow in [false, true] {
             let fixture = delayed_test_relay_v1(|_| Ok(()));
-            let mut client =
-                ProductRelayClientV1::connect(&SigningKey::from_bytes(&[211; 32]), &fixture.config)
-                    .unwrap();
+            let mut client = ProductRelayClientV1::connect(
+                &TransportIdentity::from_bytes(&[211; 32]),
+                &fixture.config,
+            )
+            .unwrap();
             client.delivery_consumed = if overflow { u64::MAX } else { 6 };
             if !overflow {
                 client.stream.sock.test_write_fault = Some(ProductRelayClientWriteFaultV1::Timeout);
@@ -3116,9 +3131,8 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!("wss://{}/novovm", listener.local_addr().unwrap());
         listener.set_nonblocking(true).unwrap();
-        let relay_identity = SigningKey::from_bytes(&[202; 32]);
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let relay_identity = TransportIdentity::from_bytes(&[202; 32]);
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
         let (stop, stopping) = std::sync::mpsc::channel();
         let server = thread::spawn(move || -> Result<()> {
             let accept_deadline = Instant::now() + Duration::from_secs(5);
@@ -3383,7 +3397,7 @@ mod tests {
         let daemon = thread::spawn({
             let root = root.clone();
             move || {
-                run_product_relay_daemon_v1(ProductRelayDaemonConfigV1 {
+                run_fixture_relay_daemon_v1(ProductRelayDaemonConfigV1 {
                     bind_addr: format!("127.0.0.1:{port}"),
                     tls_cert_path: certificate_path,
                     tls_key_path: key_path,
@@ -3415,23 +3429,21 @@ mod tests {
                 })
             }
         });
-        let relay_identity = SigningKey::from_bytes(&[141; 32]);
+        let relay_identity = TransportIdentity::from_bytes(&[141; 32]);
         let config = ProductRelayClientConfigV1 {
             endpoint: format!("wss://127.0.0.1:{port}/novovm"),
-            expected_relay_peer_id: peer_id_from_ed25519_public_key_v1(
-                &relay_identity.verifying_key().to_bytes(),
-            ),
+            expected_relay_peer_id: peer_id_from_mldsa65_public_key_v1(relay_identity.public_key()),
             connect_timeout_ms: 2_000,
             read_timeout_ms: 2_000,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,
         };
-        let node_a = SigningKey::from_bytes(&[142; 32]);
-        let node_b = SigningKey::from_bytes(&[143; 32]);
+        let node_a = TransportIdentity::from_bytes(&[142; 32]);
+        let node_b = TransportIdentity::from_bytes(&[143; 32]);
         let mut client_a = connect_retry_v1(&node_a, &config);
         let mut client_b = ProductRelayClientV1::connect(&node_b, &config).unwrap();
         assert!(client_a.session().node_identity_challenge_response_verified);
-        let node_a_peer_id = peer_id_from_ed25519_public_key_v1(&node_a.verifying_key().to_bytes());
-        let node_b_peer_id = peer_id_from_ed25519_public_key_v1(&node_b.verifying_key().to_bytes());
+        let node_a_peer_id = peer_id_from_mldsa65_public_key_v1(node_a.public_key());
+        let node_b_peer_id = peer_id_from_mldsa65_public_key_v1(node_b.public_key());
         let peer_initiator =
             NodeHandshakeInitiatorV1::start(&node_a, node_b_peer_id.clone(), now_ms_v1(), 5_000)
                 .unwrap();
@@ -3536,7 +3548,7 @@ mod tests {
     }
 
     fn connect_retry_v1(
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         config: &ProductRelayClientConfigV1,
     ) -> ProductRelayClientV1 {
         for _ in 0..50 {
@@ -3550,10 +3562,10 @@ mod tests {
 
     #[test]
     fn reconnect_state_is_bounded_after_failures() {
-        let identity = SigningKey::from_bytes(&[145; 32]);
+        let identity = TransportIdentity::from_bytes(&[145; 32]);
         let config = ProductRelayClientConfigV1 {
             endpoint: "wss://127.0.0.1:9/novovm".into(),
-            expected_relay_peer_id: "novovm-ed25519:unreachable".into(),
+            expected_relay_peer_id: "novovm-mldsa65:unreachable".into(),
             connect_timeout_ms: 1,
             read_timeout_ms: 1,
             tls_trust: ProductRelayTlsTrustV1::NodeKeyBoundEncrypted,

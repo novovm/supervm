@@ -1,21 +1,19 @@
 //! Purpose-bound node keys over the existing OS custody adapters.
 //! This module never opens a chain store, votes, publishes or starts a service.
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
-use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use std::{fs::Metadata, path::Path};
 use zeroize::Zeroizing;
 
-const MAGIC: &[u8; 8] = b"NVPK0002";
-const VERSION: u16 = 2;
+const MAGIC: &[u8; 8] = b"NVPK0003";
+const VERSION: u16 = 3;
 const HEADER: usize = 8 + 2 + 1 + 2 + 8 + 2 + 2;
-const ED25519: u16 = 1;
 const MLDSA65: u16 = 65;
 pub const VALIDATOR_PUBLIC_BYTES: usize = 1952;
 pub const VALIDATOR_SECRET_BYTES: usize = 4032;
 /// This local proof of possession is deliberately not a vote or an asset grant.
-pub const VALIDATOR_PAIR_CONTEXT: &[u8] = b"NOVOVM/node-purpose-key-pair/v2";
+pub const VALIDATOR_PAIR_CONTEXT: &[u8] = b"NOVOVM/validator-purpose-key-pair/v3";
+pub const TRANSPORT_PAIR_CONTEXT: &[u8] = b"NOVOVM/transport-purpose-key-pair/v3";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +27,13 @@ impl PurposeV1 {
         match self {
             Self::Validator => 1,
             Self::Transport => 2,
+        }
+    }
+
+    pub fn pair_context(self) -> &'static [u8] {
+        match self {
+            Self::Validator => VALIDATOR_PAIR_CONTEXT,
+            Self::Transport => TRANSPORT_PAIR_CONTEXT,
         }
     }
 }
@@ -50,33 +55,34 @@ fn public(public_key: &[u8], purpose: PurposeV1, chain_id: u64) -> PublicIdentit
         purpose,
         chain_id,
         public_key: public_key.to_vec(),
-        algorithm: match purpose {
-            PurposeV1::Validator => "ML-DSA-65",
-            PurposeV1::Transport => "Ed25519",
-        },
+        algorithm: "ML-DSA-65",
         qualification: "purpose_key_only_not_membership_launch_or_whole_node_pq",
     }
 }
 
 /// Never serializable, printable or cloned. Secret erasure belongs to this
 /// existing custody owner even when validation or downstream startup fails.
-pub struct ValidatorKeyMaterialV2 {
+pub struct PurposeKeyMaterialV3 {
     pub public_key: Vec<u8>,
     pub expanded_secret_key: Zeroizing<Vec<u8>>,
 }
 
-impl ValidatorKeyMaterialV2 {
+/// Existing validator consumers use the same material; the signed purpose is
+/// carried by the envelope and pair challenge, not by a second key format.
+pub type ValidatorKeyMaterialV2 = PurposeKeyMaterialV3;
+
+impl PurposeKeyMaterialV3 {
     pub fn new(public_key: Vec<u8>, expanded_secret_key: Zeroizing<Vec<u8>>) -> Result<Self> {
         let key = Self {
             public_key,
             expanded_secret_key,
         };
-        validate_validator_lengths(&key)?;
+        validate_lengths(&key)?;
         Ok(key)
     }
 }
 
-fn validate_validator_lengths(key: &ValidatorKeyMaterialV2) -> Result<()> {
+fn validate_lengths(key: &PurposeKeyMaterialV3) -> Result<()> {
     ensure!(
         key.public_key.len() == VALIDATOR_PUBLIC_BYTES
             && key.expanded_secret_key.len() == VALIDATOR_SECRET_BYTES,
@@ -121,100 +127,95 @@ fn validate_path(path: &Path, chain_id: u64) -> Result<()> {
     }
 }
 
-/// Creates a transport key only. Validator preparation requires AOEM ML-DSA-65
-/// through `generate_validator`; this API cannot downgrade it to Ed25519.
-pub fn generate(path: &Path, purpose: PurposeV1, chain_id: u64) -> Result<PublicIdentityV1> {
-    ensure!(
-        purpose == PurposeV1::Transport,
-        "validator requires AOEM ML-DSA-65 preparation; Ed25519 forbidden"
-    );
-    validate_creation(path, chain_id)?;
-    let mut seed = Zeroizing::new([0u8; 32]);
-    OsRng.try_fill_bytes(seed.as_mut())?;
-    ensure!(*seed != [0; 32], "invalid generated key material");
-    let key = SigningKey::from_bytes(&seed);
-    let envelope = encode(
-        purpose,
-        ED25519,
-        chain_id,
-        &key.verifying_key().to_bytes(),
-        seed.as_ref(),
-    );
-    create_protected(path, &envelope)?;
-    let checked = inspect(path, purpose, chain_id)?;
-    ensure!(
-        checked == public(&key.verifying_key().to_bytes(), purpose, chain_id),
-        "created purpose key readback differs"
-    );
-    Ok(checked)
-}
-
-/// Decrypts a transport key; validator callers must use `load_validator`.
-pub fn load(path: &Path, expected_purpose: PurposeV1, chain_id: u64) -> Result<SigningKey> {
-    ensure!(
-        expected_purpose == PurposeV1::Transport,
-        "validator requires ML-DSA-65 custody; Ed25519 forbidden"
-    );
-    let bytes = read_stable(path, chain_id)?;
-    let (public, secret) = decode(&bytes, expected_purpose, ED25519, chain_id, 32, 32)?;
-    let seed = Zeroizing::new(<[u8; 32]>::try_from(secret)?);
-    ensure!(*seed != [0; 32], "invalid purpose custody key material");
-    let key = SigningKey::from_bytes(&seed);
-    ensure!(
-        public == key.verifying_key().to_bytes(),
-        "purpose custody public and private key mismatch"
-    );
-    Ok(key)
-}
-
 /// Key generation and pair checks must be supplied by the existing exec/AOEM
 /// consumer. Custody owns format/storage, not a second crypto implementation.
 /// Validation signs this owner's purpose/chain/public-bound challenge and
 /// verifies it with the supplied public key before any file is created.
-pub fn generate_validator(
+pub fn generate_mldsa(
     path: &Path,
+    purpose: PurposeV1,
     chain_id: u64,
-    generate: impl FnOnce() -> Result<ValidatorKeyMaterialV2>,
+    generate: impl FnOnce() -> Result<PurposeKeyMaterialV3>,
     verify_pair: impl Fn(&[u8], &[u8], &[u8]) -> Result<()>,
 ) -> Result<PublicIdentityV1> {
     validate_creation(path, chain_id)?;
     let key = generate()?;
-    validate_pair(&key, chain_id, &verify_pair)?;
+    validate_pair(&key, purpose, chain_id, &verify_pair)?;
     let envelope = encode(
-        PurposeV1::Validator,
+        purpose,
         MLDSA65,
         chain_id,
         &key.public_key,
         &key.expanded_secret_key,
     );
     create_protected(path, &envelope)?;
-    let checked = inspect_validator(path, chain_id, verify_pair)?;
+    let checked = inspect_mldsa(path, purpose, chain_id, verify_pair)?;
     ensure!(
-        checked == public(&key.public_key, PurposeV1::Validator, chain_id),
-        "created validator key readback differs"
+        checked == public(&key.public_key, purpose, chain_id),
+        "created purpose key readback differs"
     );
     Ok(checked)
 }
 
 /// Existing protected ML-DSA-65 material only. Old versions, Ed25519, wrong
 /// level/purpose/domain/shape and a mismatched secret are rejected, never cast.
-pub fn load_validator(
+pub fn load_mldsa(
     path: &Path,
+    purpose: PurposeV1,
     chain_id: u64,
     verify_pair: impl Fn(&[u8], &[u8], &[u8]) -> Result<()>,
-) -> Result<ValidatorKeyMaterialV2> {
+) -> Result<PurposeKeyMaterialV3> {
+    let key = read_mldsa_material(path, purpose, chain_id)?;
+    validate_pair(&key, purpose, chain_id, verify_pair)?;
+    Ok(key)
+}
+
+/// Reads one protected, version/purpose/domain-checked envelope. This is not
+/// cryptographic pair qualification: callers must pass the result to the
+/// qualified AOEM identity factory before it can sign or authenticate traffic.
+/// Startup uses its public field to reject a wrong binding before loading AOEM.
+pub fn read_mldsa_material(
+    path: &Path,
+    purpose: PurposeV1,
+    chain_id: u64,
+) -> Result<PurposeKeyMaterialV3> {
     let bytes = read_stable(path, chain_id)?;
     let (public, secret) = decode(
         &bytes,
-        PurposeV1::Validator,
+        purpose,
         MLDSA65,
         chain_id,
         VALIDATOR_PUBLIC_BYTES,
         VALIDATOR_SECRET_BYTES,
     )?;
-    let key = ValidatorKeyMaterialV2::new(public.to_vec(), Zeroizing::new(secret.to_vec()))?;
-    validate_pair(&key, chain_id, verify_pair)?;
-    Ok(key)
+    PurposeKeyMaterialV3::new(public.to_vec(), Zeroizing::new(secret.to_vec()))
+}
+
+pub fn inspect_mldsa(
+    path: &Path,
+    purpose: PurposeV1,
+    chain_id: u64,
+    verify_pair: impl Fn(&[u8], &[u8], &[u8]) -> Result<()>,
+) -> Result<PublicIdentityV1> {
+    let key = load_mldsa(path, purpose, chain_id, verify_pair)?;
+    Ok(public(&key.public_key, purpose, chain_id))
+}
+
+pub fn generate_validator(
+    path: &Path,
+    chain_id: u64,
+    generate: impl FnOnce() -> Result<PurposeKeyMaterialV3>,
+    verify_pair: impl Fn(&[u8], &[u8], &[u8]) -> Result<()>,
+) -> Result<PublicIdentityV1> {
+    generate_mldsa(path, PurposeV1::Validator, chain_id, generate, verify_pair)
+}
+
+pub fn load_validator(
+    path: &Path,
+    chain_id: u64,
+    verify_pair: impl Fn(&[u8], &[u8], &[u8]) -> Result<()>,
+) -> Result<PurposeKeyMaterialV3> {
+    load_mldsa(path, PurposeV1::Validator, chain_id, verify_pair)
 }
 
 pub fn inspect_validator(
@@ -222,23 +223,17 @@ pub fn inspect_validator(
     chain_id: u64,
     verify_pair: impl Fn(&[u8], &[u8], &[u8]) -> Result<()>,
 ) -> Result<PublicIdentityV1> {
-    let key = load_validator(path, chain_id, verify_pair)?;
-    Ok(public(&key.public_key, PurposeV1::Validator, chain_id))
+    inspect_mldsa(path, PurposeV1::Validator, chain_id, verify_pair)
 }
 
 fn validate_pair(
-    key: &ValidatorKeyMaterialV2,
+    key: &PurposeKeyMaterialV3,
+    purpose: PurposeV1,
     chain_id: u64,
     verify_pair: impl Fn(&[u8], &[u8], &[u8]) -> Result<()>,
 ) -> Result<()> {
-    validate_validator_lengths(key)?;
-    let challenge = encode(
-        PurposeV1::Validator,
-        MLDSA65,
-        chain_id,
-        &key.public_key,
-        &[],
-    );
+    validate_lengths(key)?;
+    let challenge = encode(purpose, MLDSA65, chain_id, &key.public_key, &[]);
     verify_pair(&key.public_key, &key.expanded_secret_key, &challenge)
         .context("AOEM ML-DSA-65 purpose key pair verification")
 }
@@ -287,15 +282,6 @@ fn read_stable(path: &Path, chain_id: u64) -> Result<Zeroizing<Vec<u8>>> {
         "purpose custody lock changed during read"
     );
     Ok(bytes)
-}
-
-/// Public-only inspection of the exact protected material the node will load.
-pub fn inspect(path: &Path, purpose: PurposeV1, chain_id: u64) -> Result<PublicIdentityV1> {
-    Ok(public(
-        &load(path, purpose, chain_id)?.verifying_key().to_bytes(),
-        purpose,
-        chain_id,
-    ))
 }
 
 #[cfg(windows)]
@@ -430,7 +416,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn original_linux_custody_roundtrip_has_distinct_purposes() -> Result<()> {
+    fn original_linux_custody_roundtrip_preserves_mldsa_purpose_envelopes() -> Result<()> {
         use std::os::unix::fs::DirBuilderExt;
         ensure!(
             std::env::var_os("CREDENTIALS_DIRECTORY").is_none(),
@@ -442,14 +428,35 @@ mod tests {
             rand::random::<u64>()
         ));
         std::fs::DirBuilder::new().mode(0o700).create(&root)?;
-        let other_transport = root.join("other-transport");
+        let validator = root.join("validator");
         let transport = root.join("transport");
-        let a = generate(&other_transport, PurposeV1::Transport, 83)?;
-        let b = generate(&transport, PurposeV1::Transport, 83)?;
+        // Format/custody fixture, not a cryptographic implementation. The CLI
+        // integration separately qualifies real generated pairs through AOEM.
+        let create = |path: &Path, purpose, value| {
+            generate_mldsa(
+                path,
+                purpose,
+                83,
+                || PurposeKeyMaterialV3::new(vec![value; 1952], Zeroizing::new(vec![value; 4032])),
+                |_, _, _| Ok(()),
+            )
+        };
+        let a = create(&validator, PurposeV1::Validator, 29)?;
+        let b = create(&transport, PurposeV1::Transport, 31)?;
+        assert_eq!(a.algorithm, "ML-DSA-65");
+        assert_eq!(b.algorithm, "ML-DSA-65");
         assert_ne!(a.public_key, b.public_key);
-        assert_eq!(inspect(&other_transport, PurposeV1::Transport, 83)?, a);
-        assert!(inspect(&transport, PurposeV1::Validator, 83).is_err());
-        for path in [&other_transport, &transport] {
+        assert_eq!(
+            inspect_mldsa(&validator, PurposeV1::Validator, 83, |_, _, _| Ok(()))?,
+            a
+        );
+        assert_eq!(
+            inspect_mldsa(&transport, PurposeV1::Transport, 83, |_, _, _| Ok(()))?,
+            b
+        );
+        assert!(inspect_mldsa(&transport, PurposeV1::Validator, 83, |_, _, _| Ok(())).is_err());
+        assert!(inspect_mldsa(&validator, PurposeV1::Transport, 83, |_, _, _| Ok(())).is_err());
+        for path in [&validator, &transport] {
             std::fs::remove_file(path)?;
             std::fs::remove_file(lock_path(path))?;
         }
@@ -479,7 +486,7 @@ mod tests {
         };
         assert_eq!(check(&bytes).unwrap(), (1952, 4032));
         assert!(decode(&bytes, PurposeV1::Transport, MLDSA65, 91, 1952, 4032).is_err());
-        assert!(decode(&bytes, PurposeV1::Validator, ED25519, 91, 1952, 4032).is_err());
+        assert!(decode(&bytes, PurposeV1::Validator, 1, 91, 1952, 4032).is_err());
         assert!(decode(&bytes, PurposeV1::Validator, MLDSA65, 92, 1952, 4032).is_err());
         assert!(check(&bytes[..bytes.len() - 1]).is_err());
         for index in [0, 8, 10, 11, 13, 21, 23] {
@@ -489,19 +496,55 @@ mod tests {
         }
         bytes.extend_from_slice(&[0]);
         assert!(check(&bytes).is_err());
+
+        let old_transport = {
+            let mut old = encode(PurposeV1::Transport, 1, 91, &[29; 32], &[31; 32]);
+            old[..8].copy_from_slice(b"NVPK0002");
+            old[8..10].copy_from_slice(&2u16.to_be_bytes());
+            old
+        };
+        assert!(decode(
+            &old_transport,
+            PurposeV1::Transport,
+            MLDSA65,
+            91,
+            1952,
+            4032
+        )
+        .is_err());
+        let mut old_validator = encode(PurposeV1::Validator, MLDSA65, 91, &[29; 1952], &[31; 4032]);
+        old_validator[..8].copy_from_slice(b"NVPK0002");
+        old_validator[8..10].copy_from_slice(&2u16.to_be_bytes());
+        assert!(check(&old_validator).is_err());
     }
 
     #[test]
     fn pair_check_is_mandatory_and_binds_purpose_chain_and_public() -> Result<()> {
         let material = ValidatorKeyMaterialV2::new(vec![29; 1952], Zeroizing::new(vec![31; 4032]))?;
-        assert!(validate_pair(&material, 99, |_, _, _| anyhow::bail!("invalid pair")).is_err());
-        let expected = encode(PurposeV1::Validator, MLDSA65, 99, &material.public_key, &[]);
-        validate_pair(&material, 99, |public, secret, challenge| {
-            assert_eq!(public, &[29; 1952]);
-            assert_eq!(secret, &[31; 4032]);
-            assert_eq!(challenge, expected.as_slice());
-            Ok(())
-        })?;
+        assert_ne!(
+            PurposeV1::Validator.pair_context(),
+            PurposeV1::Transport.pair_context()
+        );
+        let validator_challenge =
+            encode(PurposeV1::Validator, MLDSA65, 99, &material.public_key, &[]);
+        let transport_challenge =
+            encode(PurposeV1::Transport, MLDSA65, 99, &material.public_key, &[]);
+        assert_ne!(validator_challenge, transport_challenge);
+        for purpose in [PurposeV1::Validator, PurposeV1::Transport] {
+            assert!(
+                validate_pair(&material, purpose, 99, |_, _, _| anyhow::bail!(
+                    "invalid pair"
+                ))
+                .is_err()
+            );
+            let expected = encode(purpose, MLDSA65, 99, &material.public_key, &[]);
+            validate_pair(&material, purpose, 99, |public, secret, challenge| {
+                assert_eq!(public, &[29; 1952]);
+                assert_eq!(secret, &[31; 4032]);
+                assert_eq!(challenge, expected.as_slice());
+                Ok(())
+            })?;
+        }
         assert!(
             ValidatorKeyMaterialV2::new(vec![29; 2592], Zeroizing::new(vec![31; 4896])).is_err()
         );

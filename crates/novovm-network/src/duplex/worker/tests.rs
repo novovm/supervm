@@ -1,11 +1,11 @@
 use super::*;
 use crate::duplex::product_relay_client::ProductRelayTlsTrustV1;
 
-pub(super) fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+pub(super) fn key(seed: u8) -> TransportIdentity {
+    TransportIdentity::from_bytes(&[seed; 32])
 }
 pub(super) fn id(seed: u8) -> String {
-    peer_id_from_ed25519_public_key_v1(&key(seed).verifying_key().to_bytes())
+    peer_id_from_mldsa65_public_key_v1(key(seed).public_key())
 }
 
 pub(super) fn config(peers: Vec<String>) -> NetworkWorkerConfig {
@@ -619,7 +619,7 @@ struct RelayFixture {
 impl RelayFixture {
     fn start() -> Self {
         use crate::duplex::product_relay_daemon::{
-            run_product_relay_daemon_with_shutdown_v1, ProductRelayDaemonConfigV1,
+            run_fixture_relay_daemon_with_shutdown_v1, ProductRelayDaemonConfigV1,
             ProductRelayDaemonReportV1,
         };
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -652,7 +652,7 @@ impl RelayFixture {
         let stop = Arc::new(AtomicBool::new(false));
         let daemon_stop = Arc::clone(&stop);
         let worker =
-            thread::spawn(move || run_product_relay_daemon_with_shutdown_v1(daemon, daemon_stop));
+            thread::spawn(move || run_fixture_relay_daemon_with_shutdown_v1(daemon, daemon_stop));
         let mut fixture = Self {
             endpoint: String::new(),
             cert,

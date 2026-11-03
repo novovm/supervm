@@ -2,6 +2,7 @@
 //! product directory's signed manifests/records; no chat or account identifier.
 //! Trust anchors are supplied separately. Optional durable checkpoints retain
 //! authorization history; encryption and external freshness remain platform-owned.
+use crate::product_overlay::{TransportIdentity, TransportVerifier, MLDSA65_PUBLIC_KEY_BYTES};
 use crate::{
     carrier_stream::CarrierStreamV1,
     iroh_transport::IrohAddressV1,
@@ -12,7 +13,7 @@ use crate::{
 };
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use ed25519_dalek::{Signature, SigningKey, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -21,10 +22,11 @@ use std::{
 
 const PREFIX: &str = "iroh-rendezvous-v1://";
 const REQUEST: &[u8; 8] = b"NVLSRQ01";
-const RESPONSE: &[u8; 8] = b"NVLSRS01";
+const LEASE_RESPONSE_CHUNK_V3: &[u8; 8] = b"NVLSRL03";
 pub const MAX_SERVICE_LEASE_MS: u64 = 120_000;
 pub const MAX_BOOTSTRAP_LEASE_MS: u64 = 600_000;
-pub const MAX_SERVICE_LEASE_BYTES: usize = 8192;
+// JSON byte arrays include a 1952-byte native key and 3309-byte signature.
+pub const MAX_SERVICE_LEASE_BYTES: usize = 32 * 1024;
 
 #[path = "product_service_tls.rs"]
 mod tls_endpoint;
@@ -126,8 +128,9 @@ fn verify(
     record: &PeerSignedRelayRecordV1,
     now: u64,
     max_ttl: u64,
+    verifier: &dyn TransportVerifier,
 ) -> Result<IrohServiceEndpointV1> {
-    verify_service_record(record, now, max_ttl)?
+    verify_service_record(record, now, max_ttl, verifier)?
         .iroh
         .context("Iroh service endpoint required")
 }
@@ -135,8 +138,9 @@ fn verify_service_record(
     record: &PeerSignedRelayRecordV1,
     now: u64,
     max_ttl: u64,
+    verifier: &dyn TransportVerifier,
 ) -> Result<ServiceEndpoints> {
-    let decoded = verify_service_record_authenticity(record, max_ttl)?;
+    let decoded = verify_service_record_authenticity(record, max_ttl, verifier)?;
     match directory::relay_record_time_v1(record, now) {
         directory::RelayRecordTimeV1::Valid => Ok(decoded),
         directory::RelayRecordTimeV1::NotYetValid => {
@@ -150,6 +154,7 @@ fn verify_service_record(
 fn verify_service_record_authenticity(
     record: &PeerSignedRelayRecordV1,
     max_ttl: u64,
+    verifier: &dyn TransportVerifier,
 ) -> Result<ServiceEndpoints> {
     ensure!(
         serde_json::to_vec(record)?.len() <= MAX_SERVICE_LEASE_BYTES
@@ -165,21 +170,17 @@ fn verify_service_record_authenticity(
             .is_some_and(|ttl| ttl > 0 && ttl <= max_ttl),
         "service record lifetime"
     );
-    strict_key(&record.relay_public_key)?;
-    directory::verify_relay_record_authenticity_v1(record)?;
-    // The existing signing bytes are shared; enforce canonical, strong-key
-    // verification here without changing historical directory consumers.
-    VerifyingKey::from_bytes(&record.relay_public_key)?.verify_strict(
-        &directory::relay_record_signing_bytes_v1(record),
-        &Signature::from_slice(&record.signature)?,
-    )?;
+    directory::verify_relay_record_authenticity_v1(record, verifier)?;
     ServiceEndpoints::from_record(record)
 }
 
 /// A signed metadata reply is not a usable route. The receiving trust book must
 /// still check local pin, revocation, sequence, time and exact version at use.
-pub(crate) fn verify_native_record_metadata_v1(record: &PeerSignedRelayRecordV1) -> Result<()> {
-    let decoded = verify_service_record_authenticity(record, MAX_BOOTSTRAP_LEASE_MS)?;
+pub(crate) fn verify_native_record_metadata_v1(
+    record: &PeerSignedRelayRecordV1,
+    verifier: &dyn TransportVerifier,
+) -> Result<()> {
+    let decoded = verify_service_record_authenticity(record, MAX_BOOTSTRAP_LEASE_MS, verifier)?;
     ensure!(
         decoded.native.is_some()
             || decoded.native_carrier.is_some()
@@ -235,10 +236,11 @@ impl Entry {
 /// The caller must hold this under its existing Application/native owner lock.
 /// No network IO, wallet lookup, automatic trust-on-first-use or privacy claim.
 pub struct ServiceLeaseBookV1 {
+    verifier: Arc<dyn TransportVerifier>,
     policy: ServiceTrustV1,
     sources: Vec<BootstrapSourceV1>,
-    entries: BTreeMap<[u8; 32], Entry>,
-    tombstones: BTreeSet<[u8; 32]>,
+    entries: BTreeMap<Vec<u8>, Entry>,
+    tombstones: BTreeSet<Vec<u8>>,
     clock: u64,
     persistence: Option<Arc<dyn ServiceLeasePersistenceV1>>,
     persisted: Vec<u8>,
@@ -264,6 +266,7 @@ impl ServiceLeaseBookV1 {
         policy: BootstrapTrustPolicyV1,
         sources: Vec<BootstrapSourceV1>,
         now: u64,
+        verifier: impl TransportVerifier + 'static,
     ) -> Result<Self> {
         ensure!(
             !policy.allowed_signer_peer_ids.is_empty()
@@ -272,8 +275,9 @@ impl ServiceLeaseBookV1 {
                 && policy.minimum_valid_signatures <= policy.allowed_signer_peer_ids.len(),
             "bootstrap trust bounds"
         );
-        let entries = validated_sources(&sources, &policy, now)?;
+        let entries = validated_sources(&sources, &policy, now, &verifier)?;
         Ok(Self {
+            verifier: Arc::new(verifier),
             policy: ServiceTrustV1::Endorsed(policy),
             sources,
             entries,
@@ -299,7 +303,8 @@ impl ServiceLeaseBookV1 {
     /// leave the previous state intact. No unbounded tombstone eviction.
     pub fn replace_sources(&mut self, sources: Vec<BootstrapSourceV1>, now: u64) -> Result<()> {
         self.observe(now)?;
-        let mut entries = validated_sources(&sources, self.policy.endorsed()?, now)?;
+        let mut entries =
+            validated_sources(&sources, self.policy.endorsed()?, now, &self.verifier)?;
         for source in &sources {
             if let Some(old) = self
                 .sources
@@ -346,7 +351,7 @@ impl ServiceLeaseBookV1 {
                     }
                 }
             } else {
-                tombstones.insert(*pin);
+                tombstones.insert(pin.clone());
             }
         }
         ensure!(
@@ -390,13 +395,13 @@ impl ServiceLeaseBookV1 {
     }
     pub fn check_route(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: [u8; 32],
         instance: [u8; 32],
         now: u64,
     ) -> Result<()> {
         self.observe(now)?;
-        let entry = self.entries.get(&pin).context("service revoked")?;
+        let entry = self.entries.get(pin).context("service revoked")?;
         ensure!(entry.expires > now, "bootstrap authorization expired");
         let self_owned = matches!(self.policy, ServiceTrustV1::SelfOwned(_));
         let route = if self_owned || entry.current.expires_at_ms > now {
@@ -422,20 +427,20 @@ impl ServiceLeaseBookV1 {
     pub fn accept_renewal(
         &mut self,
         record: PeerSignedRelayRecordV1,
-        expected_pin: [u8; 32],
+        expected_pin: &[u8],
         expected_endpoint: [u8; 32],
         instance: [u8; 32],
         now: u64,
     ) -> Result<()> {
         self.observe(now)?;
-        let address = verify(&record, now, MAX_SERVICE_LEASE_MS)?;
+        let address = verify(&record, now, MAX_SERVICE_LEASE_MS, &self.verifier)?;
         ensure!(
             record.relay_public_key == expected_pin
                 && address.address.endpoint_key == expected_endpoint
                 && address.instance == instance,
             "renewal identity differs"
         );
-        let entry = self.entries.get(&expected_pin).context("service revoked")?;
+        let entry = self.entries.get(expected_pin).context("service revoked")?;
         ensure!(
             entry.expires > now && record.expires_at_ms <= entry.expires,
             "renewal exceeds authority"
@@ -451,7 +456,7 @@ impl ServiceLeaseBookV1 {
             );
         }
         let mut entries = self.entries.clone();
-        let entry = entries.get_mut(&expected_pin).expect("checked entry");
+        let entry = entries.get_mut(expected_pin).expect("checked entry");
         if self.is_self_owned() {
             entry.grant = record.clone();
         }
@@ -463,13 +468,14 @@ fn validated_sources(
     sources: &[BootstrapSourceV1],
     policy: &BootstrapTrustPolicyV1,
     now: u64,
-) -> Result<BTreeMap<[u8; 32], Entry>> {
+    verifier: &dyn TransportVerifier,
+) -> Result<BTreeMap<Vec<u8>, Entry>> {
     ensure!(
         !sources.is_empty() && sources.len() <= 4,
         "bootstrap source budget"
     );
     let mut ids = BTreeSet::new();
-    let mut entries = BTreeMap::<[u8; 32], Entry>::new();
+    let mut entries = BTreeMap::<Vec<u8>, Entry>::new();
     for source in sources {
         let manifest = &source.manifest;
         ensure!(
@@ -486,23 +492,26 @@ fn validated_sources(
             "bootstrap disclosure/lifetime bounds"
         );
         ensure!(
-            directory::validate_bootstrap_manifest_v1(manifest, policy, now).accepted,
+            directory::validate_bootstrap_manifest_v1(manifest, policy, now, verifier).accepted,
             "untrusted bootstrap source"
         );
+        // This owner retains its stricter rule: every supplied trusted
+        // publisher signature must verify, not merely the threshold subset.
         for signature in &manifest.signatures {
-            strict_key(&signature.signer_public_key)?;
             if policy
                 .allowed_signer_peer_ids
                 .contains(&signature.signer_peer_id)
             {
-                VerifyingKey::from_bytes(&signature.signer_public_key)?.verify_strict(
+                verifier.verify(
+                    &signature.signer_public_key,
                     &directory::bootstrap_manifest_signing_bytes_v1(manifest),
-                    &Signature::from_slice(&signature.signature)?,
+                    directory::BOOTSTRAP_CONTEXT,
+                    &signature.signature,
                 )?;
             }
         }
         for record in &manifest.relay_records {
-            verify(record, now, MAX_BOOTSTRAP_LEASE_MS)?;
+            verify(record, now, MAX_BOOTSTRAP_LEASE_MS, verifier)?;
             let expires = record.expires_at_ms.min(manifest.expires_at_ms);
             match entries.get_mut(&record.relay_public_key) {
                 Some(entry) => {
@@ -511,7 +520,7 @@ fn validated_sources(
                 }
                 None => {
                     entries.insert(
-                        record.relay_public_key,
+                        record.relay_public_key.clone(),
                         Entry {
                             grant: record.clone(),
                             current: record.clone(),
@@ -528,17 +537,21 @@ fn validated_sources(
 }
 
 pub struct ServiceLeaseIssuerV1 {
-    key: SigningKey,
+    key: TransportIdentity,
     original: PeerSignedRelayRecordV1,
     state: Mutex<(u64, u64)>,
 }
 impl ServiceLeaseIssuerV1 {
     /// The install owner supplies a signed record and non-reused sequence floor.
     /// Restart/rotation requires a new signed source, never a counter reset.
-    pub fn new(key: SigningKey, original: PeerSignedRelayRecordV1, now: u64) -> Result<Self> {
-        verify(&original, now, MAX_BOOTSTRAP_LEASE_MS)?;
+    pub fn new(
+        key: TransportIdentity,
+        original: PeerSignedRelayRecordV1,
+        now: u64,
+    ) -> Result<Self> {
+        verify(&original, now, MAX_BOOTSTRAP_LEASE_MS, &key)?;
         ensure!(
-            original.relay_public_key == key.verifying_key().to_bytes(),
+            original.relay_public_key == key.public_key(),
             "issuer key differs"
         );
         let state = Mutex::new((original.sequence, now));
@@ -577,14 +590,10 @@ pub async fn request_service_lease_v1(
     stream: &mut CarrierStreamV1<'_>,
 ) -> Result<PeerSignedRelayRecordV1> {
     stream.write_frame(REQUEST).await?;
-    let response = stream.read_frame().await?;
-    ensure!(
-        response.len() > RESPONSE.len()
-            && response.len() <= MAX_SERVICE_LEASE_BYTES
-            && response.starts_with(RESPONSE),
-        "service lease response version/size"
-    );
-    Ok(serde_json::from_slice(&response[RESPONSE.len()..])?)
+    let response =
+        host::read_control_message(stream, LEASE_RESPONSE_CHUNK_V3, MAX_SERVICE_LEASE_BYTES)
+            .await?;
+    Ok(serde_json::from_slice(&response)?)
 }
 pub async fn serve_service_lease_v1(
     stream: &mut CarrierStreamV1<'_>,
@@ -596,13 +605,18 @@ pub async fn serve_service_lease_v1(
         "service lease request version"
     );
     let record = issuer.issue(now()?)?;
-    let mut bytes = RESPONSE.to_vec();
-    bytes.extend_from_slice(&serde_json::to_vec(&record)?);
+    let bytes = serde_json::to_vec(&record)?;
     ensure!(
         bytes.len() <= MAX_SERVICE_LEASE_BYTES,
         "service lease response budget"
     );
-    stream.write_frame(&bytes).await
+    host::write_control_message(
+        stream,
+        LEASE_RESPONSE_CHUNK_V3,
+        &bytes,
+        MAX_SERVICE_LEASE_BYTES,
+    )
+    .await
 }
 #[cfg(test)]
 #[path = "product_service_lease_tests.rs"]

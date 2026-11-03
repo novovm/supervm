@@ -80,7 +80,7 @@ fn independent_fresh_storage_run_through(
             .iter()
             .map(|v| Binding {
                 validator_id: v.validator_id,
-                transport_peer_id: novovm_network::peer_id_from_ed25519_public_key_v1(
+                transport_peer_id: crate::product_relay_client::component_transport_peer(
                     &v.public_key,
                 ),
             })

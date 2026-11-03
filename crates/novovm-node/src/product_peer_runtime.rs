@@ -1,11 +1,10 @@
 //! Headless A/B peer runtime for real relay-first delivery evidence.
 
 use anyhow::{bail, Context, Result};
-use ed25519_dalek::SigningKey;
+use novovm_network::product_overlay::TransportIdentity;
 use novovm_network::{
-    peer_id_from_ed25519_public_key_v1, HandshakeReplayCacheV1, NodeHandshakeInitiatorV1,
-    NodeHandshakeResponderV1, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
-    RelayPeerHandshakeV1,
+    HandshakeReplayCacheV1, NodeHandshakeInitiatorV1, NodeHandshakeResponderV1,
+    NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0, RelayPeerHandshakeV1,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -29,6 +28,9 @@ pub enum ProductPeerRoleV1 {
 pub struct ProductPeerRuntimeConfigV1 {
     pub role: ProductPeerRoleV1,
     pub identity_key_path: PathBuf,
+    pub chain_id: u64,
+    pub library: PathBuf,
+    pub library_sha256: String,
     pub relay: ProductRelayClientConfigV1,
     #[serde(default)]
     pub target_peer_id: Option<String>,
@@ -60,7 +62,8 @@ pub struct ProductPeerRuntimeReportV1 {
     pub relay_is_trusted_authority: bool,
     pub network_only: bool,
     pub apfl_interpreted: bool,
-    pub aoem_called: bool,
+    pub transport_signature_suite: u16,
+    pub transport_handshake_version: u16,
     pub ledger_semantics: bool,
     pub novorudp_wire_changed: bool,
 }
@@ -90,8 +93,13 @@ pub fn run_product_peer_runtime_v1(
             Vec::new()
         }
     };
-    let identity = load_ed25519_key_v1(&config.identity_key_path)?;
-    let local_peer_id = peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+    let identity = novovm_relay::transport_identity::load_transport_identity(
+        &config.identity_key_path,
+        config.chain_id,
+        &config.library,
+        &config.library_sha256,
+    )?;
+    let local_peer_id = identity.peer_id();
     let mut relay = ProductRelayClientV1::connect(&identity, &config.relay)?;
     let relay_peer_id = relay.session().relay_peer_id.clone();
     let report = match config.role {
@@ -122,7 +130,7 @@ pub fn run_product_peer_runtime_v1(
 
 fn run_sender_v1(
     relay: &mut ProductRelayClientV1,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     local_peer_id: &str,
     config: &ProductPeerRuntimeConfigV1,
     payloads: Vec<Vec<u8>>,
@@ -178,7 +186,7 @@ fn run_sender_v1(
 
 fn run_receiver_v1(
     relay: &mut ProductRelayClientV1,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     local_peer_id: &str,
     config: &ProductPeerRuntimeConfigV1,
     relay_peer_id: String,
@@ -253,7 +261,7 @@ fn report_v1(
 ) -> ProductPeerRuntimeReportV1 {
     ProductPeerRuntimeReportV1 {
         accepted: e2e_session_established,
-        scope: "novovm_product_peer_runtime_v1".into(),
+        scope: "novovm_product_peer_runtime_v2".into(),
         role: role.into(),
         local_peer_id: local_peer_id.into(),
         remote_peer_id,
@@ -269,25 +277,11 @@ fn report_v1(
         relay_is_trusted_authority: false,
         network_only: true,
         apfl_interpreted: false,
-        aoem_called: false,
+        transport_signature_suite: 65,
+        transport_handshake_version: 2,
         ledger_semantics: false,
         novorudp_wire_changed: false,
     }
-}
-
-fn load_ed25519_key_v1(path: &Path) -> Result<SigningKey> {
-    let key = fs::read_to_string(path)
-        .with_context(|| format!("read peer identity key: {}", path.display()))?;
-    let key = key.trim();
-    if key.len() != 64 {
-        bail!("peer identity key must contain exactly 64 hexadecimal characters");
-    }
-    let mut bytes = [0u8; 32];
-    for (index, output) in bytes.iter_mut().enumerate() {
-        *output = u8::from_str_radix(&key[index * 2..index * 2 + 2], 16)
-            .context("decode peer identity key hex")?;
-    }
-    Ok(SigningKey::from_bytes(&bytes))
 }
 
 fn load_sender_payloads_v1(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>> {

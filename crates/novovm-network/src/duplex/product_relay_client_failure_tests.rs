@@ -77,7 +77,7 @@ fn authenticated_write_failure_cannot_retry_or_write_during_close() {
     ] {
         let fixture = delayed_test_relay_v1(|_| Ok(()));
         let mut client =
-            ProductRelayClientV1::connect(&SigningKey::from_bytes(&[207; 32]), &fixture.config)
+            ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[207; 32]), &fixture.config)
                 .unwrap();
         let calls = Arc::clone(&client.stream.sock.test_io_calls);
         let before = calls.load(std::sync::atomic::Ordering::Relaxed);
@@ -105,7 +105,7 @@ fn authenticated_write_failure_cannot_retry_or_write_during_close() {
 fn ping_reply_write_timeout_is_not_read_idle() {
     let fixture = delayed_test_relay_v1(|_| Ok(()));
     let mut client =
-        ProductRelayClientV1::connect(&SigningKey::from_bytes(&[208; 32]), &fixture.config)
+        ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[208; 32]), &fixture.config)
             .unwrap();
     // A complete buffered Ping reaches the real recv_event/control-reply path
     // without depending on network scheduling to trigger the write failure.
@@ -125,7 +125,7 @@ fn ping_reply_write_timeout_is_not_read_idle() {
 fn authenticated_write_error_keeps_timeout_source_but_marks_it_terminal() {
     let fixture = delayed_test_relay_v1(|_| Ok(()));
     let mut client =
-        ProductRelayClientV1::connect(&SigningKey::from_bytes(&[209; 32]), &fixture.config)
+        ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[209; 32]), &fixture.config)
             .unwrap();
     let error = client
         .write_authenticated_v1::<()>(|_| {
@@ -144,7 +144,7 @@ fn authenticated_write_error_keeps_timeout_source_but_marks_it_terminal() {
 fn implicit_tls_write_during_read_timeout_is_terminal_on_first_error() {
     let fixture = delayed_test_relay_v1(|_| Ok(()));
     let mut client =
-        ProductRelayClientV1::connect(&SigningKey::from_bytes(&[211; 32]), &fixture.config)
+        ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[211; 32]), &fixture.config)
             .unwrap();
     client
         .stream
@@ -172,7 +172,7 @@ fn ordinary_read_idle_still_allows_heartbeat_and_ack() {
         write_fragmented_test_server_wire_v1(stream, &ProductRelayWireMessageV1::HeartbeatAck)
     });
     let mut client =
-        ProductRelayClientV1::connect(&SigningKey::from_bytes(&[210; 32]), &fixture.config)
+        ProductRelayClientV1::connect(&TransportIdentity::from_bytes(&[210; 32]), &fixture.config)
             .unwrap();
     let idle = client.recv_event().unwrap_err();
     assert!(product_relay_client_read_is_idle_timeout_v1(&idle));

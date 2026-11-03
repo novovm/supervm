@@ -585,12 +585,11 @@ mod tests {
     fn maximum_encrypted_object_acks_bypass_pacing_but_not_hard_budget() -> Result<()> {
         use crate::novorudp::{datagram::NativeUdpSession, object_ack::encode_object_ack, *};
         use crate::product_overlay::*;
-        use ed25519_dalek::SigningKey;
-        let a = SigningKey::from_bytes(&[31; 32]);
-        let b = SigningKey::from_bytes(&[47; 32]);
+        let a = crate::test_identity::key(31);
+        let b = crate::test_identity::key(47);
         let offer = NodeHandshakeInitiatorV1::start(
             &a,
-            peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes()),
+            peer_id_from_mldsa65_public_key_v1(b.public_key()),
             1000,
             5000,
         )?;

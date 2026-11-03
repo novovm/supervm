@@ -3,6 +3,15 @@
 // Direct Windows task/service execution must not open an interactive console.
 // Redirected CLI handles continue to carry process-test diagnostics.
 #![cfg_attr(windows, windows_subsystem = "windows")]
+#[cfg(not(test))]
+use novovm_relay::transport_identity;
+#[cfg(test)]
+mod transport_identity_fixture;
+#[cfg(test)]
+mod transport_identity {
+    pub(crate) use super::transport_identity_fixture::component_identity;
+    pub use novovm_relay::transport_identity::load_transport_identity;
+}
 #[cfg(target_os = "linux")]
 mod linux_custody;
 #[cfg(target_os = "linux")]
@@ -63,10 +72,10 @@ mod windows {
 
     fn execute(config: &std::path::Path, stop: Arc<AtomicBool>, epochs: Option<u64>) -> Result<()> {
         let version = serde_json::from_slice::<serde_json::Value>(
-            &super::windows_owner_files::read_bounded(config, 65536)?,
+            &super::windows_owner_files::read_bounded(config, 1024 * 1024)?,
         )?["version"]
             .as_u64();
-        if version == Some(2) {
+        if uses_self_owned_identity(version)? {
             ensure!(
                 epochs.is_none(),
                 "self-owned service uses local stop, not endpoint epochs"
@@ -85,6 +94,16 @@ mod windows {
             config.record_start_failure();
         }
         result
+    }
+
+    fn uses_self_owned_identity(version: Option<u64>) -> Result<bool> {
+        match version {
+            Some(3) => Ok(true),
+            Some(2) => Ok(false),
+            _ => anyhow::bail!(
+                "incompatible rendezvous owner version; explicit ML-DSA-65 configuration required"
+            ),
+        }
     }
     fn execute_owned(
         config: &std::path::Path,
@@ -287,10 +306,10 @@ mod windows {
         if args[0] == "--check" {
             ensure!(args.len() == 2, "check arguments");
             let version = serde_json::from_slice::<serde_json::Value>(
-                &super::windows_owner_files::read_bounded(&path, 65536)?,
+                &super::windows_owner_files::read_bounded(&path, 1024 * 1024)?,
             )?["version"]
                 .as_u64();
-            if version == Some(2) {
+            if uses_self_owned_identity(version)? {
                 super::rendezvous_self_owned_owner::Config::load(&path)?;
             } else {
                 Config::load(&path)?;
@@ -323,6 +342,15 @@ mod windows {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn owner_selector_requires_current_explicit_identity_contract() {
+            assert!(uses_self_owned_identity(Some(3)).unwrap());
+            assert!(!uses_self_owned_identity(Some(2)).unwrap());
+            for version in [None, Some(0), Some(1), Some(4)] {
+                assert!(uses_self_owned_identity(version).is_err());
+            }
+        }
 
         #[test]
         fn native_carrier_cli_requires_explicit_version_and_preserves_on() -> Result<()> {

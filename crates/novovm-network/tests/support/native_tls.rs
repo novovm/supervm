@@ -63,7 +63,7 @@ async fn round_tls(
     let server = run_self_owned_node_with_tls_v1(
         config()?.with_owned_service_identity(Zeroizing::new([90; 32]))?,
         key(17),
-        [key(83).verifying_key().to_bytes()].into(),
+        [key(83).public_key().to_vec()].into(),
         stop,
         service.clone(),
         listener,
@@ -71,7 +71,12 @@ async fn round_tls(
             let at = now_ms()?;
             let book = if history.exists() {
                 let (file, bytes) = ServiceLeaseFileV1::open(&history, Zeroizing::new([91; 32]))?;
-                let mut book = ServiceLeaseBookV1::restore_self_owned(trust(), &bytes, at)?;
+                let mut book = ServiceLeaseBookV1::restore_self_owned(
+                    trust(),
+                    &bytes,
+                    at,
+                    crate::transport_identity::key(90),
+                )?;
                 book.attach_persistence(file, &bytes)?;
                 book
             } else {
@@ -83,7 +88,12 @@ async fn round_tls(
                     until,
                     1,
                 )?;
-                let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record], at)?;
+                let mut book = ServiceLeaseBookV1::new_self_owned(
+                    trust(),
+                    vec![record],
+                    at,
+                    crate::transport_identity::key(90),
+                )?;
                 let bytes = book.checkpoint()?;
                 let file = ServiceLeaseFileV1::create(&history, Zeroizing::new([91; 32]), &bytes)?;
                 book.attach_persistence(file, &bytes)?;
@@ -108,17 +118,26 @@ async fn round_tls(
     let client = async {
         let _guard = guard;
         let (record, host) = rx.await?;
-        let mut book =
-            ServiceLeaseBookV1::new_self_owned(trust(), vec![record.clone()], now_ms()?)?;
+        let mut book = ServiceLeaseBookV1::new_self_owned(
+            trust(),
+            vec![record.clone()],
+            now_ms()?,
+            crate::transport_identity::key(90),
+        )?;
         let route = TlsServiceEndpointV1::from_record(&record)?.context("TLS missing")?;
         ensure!(route.native_mailbox_v8 == declared);
-        book.check_tls_route_v1(pin(), &route, now_ms()?)?;
+        book.check_tls_route_v1(&pin(), &route, now_ms()?)?;
         let scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
         // TLS transport pin is checked before the independent service identity.
         let wrong = tokio::net::TcpStream::connect(route.address).await?;
         ensure!(
             scope
-                .connect(wrong, key(99).verifying_key().to_bytes())
+                .connect(
+                    wrong,
+                    ed25519_dalek::SigningKey::from_bytes(&[99; 32])
+                        .verifying_key()
+                        .to_bytes()
+                )
                 .await
                 .is_err(),
             "wrong TLS identity accepted"
@@ -128,7 +147,7 @@ async fn round_tls(
         let mut stream = CarrierStreamV1::from(scope.connect(tcp, route.endpoint_key).await?);
         if !declared {
             ensure!(book
-                .check_continuous_native_tls_v8(pin(), &route, now_ms()?)
+                .check_continuous_native_tls_v8(&pin(), &route, now_ms()?)
                 .is_err());
             ensure!(
                 request_mailbox_native_v8(&mut stream, Instant::now() + Duration::from_secs(3))
@@ -138,7 +157,7 @@ async fn round_tls(
             );
             return Ok(None);
         }
-        book.check_continuous_native_tls_v8(pin(), &route, now_ms()?)?;
+        book.check_continuous_native_tls_v8(&pin(), &route, now_ms()?)?;
         let mut client = Client::attach(&mut stream, true).await?;
         let current = verified_record(&mut client, &mut book, true).await?;
         ensure!(TlsServiceEndpointV1::from_record(&current)?.as_ref() == Some(&route));
@@ -154,9 +173,34 @@ async fn round_tls(
             let Reply::Stored(duplicate) = client.request(put(expires, 4)).await? else {
                 bail!("duplicate")
             };
-            duplicate.verify(pin(), [1; 32], [4; 32], &vec![9; 9000], expires)?;
+            duplicate.verify(
+                &pin(),
+                [1; 32],
+                [4; 32],
+                &vec![9; 9000],
+                expires,
+                &crate::transport_identity::key(90),
+            )?;
             ensure!(
-                duplicate.signature == receipt.signature,
+                (
+                    duplicate.version,
+                    duplicate.suite,
+                    &duplicate.node,
+                    duplicate.mailbox,
+                    duplicate.object,
+                    duplicate.digest,
+                    duplicate.bytes,
+                    duplicate.expires
+                ) == (
+                    receipt.version,
+                    receipt.suite,
+                    &receipt.node,
+                    receipt.mailbox,
+                    receipt.object,
+                    receipt.digest,
+                    receipt.bytes,
+                    receipt.expires
+                ),
                 "restart changed receipt"
             );
             let at = now_ms()?;
@@ -215,7 +259,14 @@ async fn round_tls(
         let Reply::Stored(receipt) = client.request(put(expires, 4)).await? else {
             bail!("store")
         };
-        receipt.verify(pin(), [1; 32], [4; 32], &vec![9; 9000], expires)?;
+        receipt.verify(
+            &pin(),
+            [1; 32],
+            [4; 32],
+            &vec![9; 9000],
+            expires,
+            &crate::transport_identity::key(90),
+        )?;
         ensure!(
             matches!(client.until(watch).await?, Reply::NoticeObjectV6 {object:Some(row), ..}
             if row.object == [4;32] && row.expires == expires)

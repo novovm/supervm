@@ -3,14 +3,14 @@ use super::*;
 use crate::duplex::product_overlay::{
     HandshakeReplayCacheV1, NodeHandshakeInitiatorV1, NodeHandshakeResponderV1,
 };
-use ed25519_dalek::SigningKey;
+use crate::product_overlay::TransportIdentity;
 use std::{sync::Mutex, time::Duration};
 
 #[tokio::test]
 async fn delivery_encoding_does_not_hold_the_shared_session_lock() {
-    let relay = SigningKey::from_bytes(&[230; 32]);
-    let source = SigningKey::from_bytes(&[231; 32]);
-    let target = SigningKey::from_bytes(&[232; 32]);
+    let relay = TransportIdentity::from_bytes(&[230; 32]);
+    let source = TransportIdentity::from_bytes(&[231; 32]);
+    let target = TransportIdentity::from_bytes(&[232; 32]);
     let mut manager = ProductRelaySessionManagerV1::new(Default::default()).unwrap();
     let (source, _source_inbox) = manager
         .register_authenticated_session(authenticate_to_relay(&source, &relay, 1000), 1000)
@@ -50,9 +50,9 @@ const LANES: [Lane; 3] = [Lane::Data, Lane::Offer, Lane::Response];
 
 struct Fixture {
     manager: ProductRelaySessionManagerV1,
-    relay_key: SigningKey,
-    source_key: SigningKey,
-    target_key: SigningKey,
+    relay_key: TransportIdentity,
+    source_key: TransportIdentity,
+    target_key: TransportIdentity,
     source: RelaySessionRegistrationV1,
     target: RelaySessionRegistrationV1,
     _source_inbox: RelaySessionInboxV1,
@@ -62,9 +62,9 @@ struct Fixture {
 impl Fixture {
     async fn new(config: ProductRelayRuntimeConfigV1) -> Self {
         let manager = ProductRelaySessionManagerV1::new(config).unwrap();
-        let relay_key = SigningKey::from_bytes(&[230; 32]);
-        let source_key = SigningKey::from_bytes(&[231; 32]);
-        let target_key = SigningKey::from_bytes(&[232; 32]);
+        let relay_key = TransportIdentity::from_bytes(&[230; 32]);
+        let source_key = TransportIdentity::from_bytes(&[231; 32]);
+        let target_key = TransportIdentity::from_bytes(&[232; 32]);
         let (source, source_inbox) = manager
             .register_authenticated_session(
                 authenticate_to_relay(&source_key, &relay_key, 1000),

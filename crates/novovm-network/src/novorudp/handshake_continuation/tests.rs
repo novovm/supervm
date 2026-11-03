@@ -1,5 +1,121 @@
 use super::*;
 
+#[test]
+fn configured_route_interleaves_old_and_fresh_flights_without_admitting_a_third() -> Result<()> {
+    let now = Instant::now();
+    let source = "127.0.0.1:1000".parse()?;
+    let old_bytes = vec![1; MIN_TRANSCRIPT_BYTES];
+    let fresh_bytes = vec![2; MAX_TRANSCRIPT_BYTES];
+    let mut receiver = Receiver::with_routes(now, [source].into_iter());
+    let mut old = Sender::new(&old_bytes)?;
+    challenge(&mut receiver, source, &mut old, &old_bytes, now)?;
+    let old_parts = parts(&mut old, &old_bytes)?;
+    receiver.receive(source, &old_parts[0], now)?;
+    let old_deadline = receiver.pending[&(source, old.commitment.transfer)].deadline;
+
+    // A queued response from the previous generation can remain incomplete
+    // when a same-route restart begins its fresh authenticated handshake.
+    let mut fresh = Sender::new(&fresh_bytes)?;
+    challenge(&mut receiver, source, &mut fresh, &fresh_bytes, now)?;
+    let fresh_parts = parts(&mut fresh, &fresh_bytes)?;
+    let mut third = Sender::new(&fresh_bytes)?;
+    challenge(&mut receiver, source, &mut third, &fresh_bytes, now)?;
+    let third_parts = parts(&mut third, &fresh_bytes)?;
+    receiver.receive(source, &fresh_parts[0], now)?;
+    assert_eq!(receiver.pending.len(), 2);
+    assert!(receiver.receive(source, &third_parts[0], now).is_err());
+    let fourth = Sender::new(&fresh_bytes)?;
+    assert!(receiver
+        .receive(source, &fourth.datagram(&fresh_bytes)?, now)
+        .is_err());
+    assert_eq!(
+        receiver.pending[&(source, old.commitment.transfer)].deadline,
+        old_deadline
+    );
+    assert!(
+        receiver
+            .pending
+            .values()
+            .map(|a| a.bytes.len())
+            .sum::<usize>()
+            <= 2 * MAX_TRANSCRIPT_BYTES
+    );
+
+    for part in &fresh_parts[1..fresh_parts.len() - 1] {
+        receiver.receive(source, part, now)?;
+    }
+    assert!(
+        matches!(receiver.receive(source, fresh_parts.last().unwrap(), now)?, Received::Complete(bytes) if bytes == fresh_bytes)
+    );
+    assert_eq!(receiver.pending.len(), 1);
+    receiver.receive(source, &third_parts[0], now)?;
+    assert_eq!(
+        receiver.pending.len(),
+        2,
+        "completion did not return its slot"
+    );
+    for part in &old_parts[1..old_parts.len() - 1] {
+        receiver.receive(source, part, now)?;
+    }
+    assert!(
+        matches!(receiver.receive(source, old_parts.last().unwrap(), now)?, Received::Complete(bytes) if bytes == old_bytes)
+    );
+    for part in &third_parts[1..] {
+        receiver.receive(source, part, now)?;
+    }
+    assert!(receiver.pending.is_empty());
+    for part in &old_parts {
+        assert!(matches!(
+            receiver.receive(source, part, now)?,
+            Received::Pending
+        ));
+    }
+    assert!(
+        receiver.pending.is_empty(),
+        "completed tail recreated a flight"
+    );
+    receiver.expire(now + LIFETIME);
+    assert!(receiver.pending.is_empty() && receiver.completed.is_empty());
+    Ok(())
+}
+
+#[test]
+fn overlapping_configured_flights_share_the_existing_completion_budget() -> Result<()> {
+    let now = Instant::now();
+    let source = "127.0.0.1:1000".parse()?;
+    let bytes = vec![3; MAX_TRANSCRIPT_BYTES];
+    let mut receiver = Receiver::with_routes(now, [source].into_iter());
+    for _ in 0..MAX_PINNED_COMPLETIONS - 1 {
+        let mut sender = Sender::new(&bytes)?;
+        challenge(&mut receiver, source, &mut sender, &bytes, now)?;
+        for part in parts(&mut sender, &bytes)? {
+            receiver.receive(source, &part, now)?;
+        }
+    }
+    let mut last = Sender::new(&bytes)?;
+    challenge(&mut receiver, source, &mut last, &bytes, now)?;
+    let last_parts = parts(&mut last, &bytes)?;
+    receiver.receive(source, &last_parts[0], now)?;
+    let mut excess = Sender::new(&bytes)?;
+    challenge(&mut receiver, source, &mut excess, &bytes, now)?;
+    assert!(receiver
+        .receive(source, &excess.datagram(&bytes)?, now)
+        .is_err());
+    assert_eq!(receiver.pending.len(), 1);
+    assert_eq!(receiver.completed.len(), MAX_PINNED_COMPLETIONS - 1);
+    for part in &last_parts[1..] {
+        receiver.receive(source, part, now)?;
+    }
+    assert_eq!(receiver.completed.len(), MAX_PINNED_COMPLETIONS);
+    assert!(receiver.pending.is_empty());
+    receiver.expire(now + LIFETIME);
+    let mut excess = Sender::new(&bytes)?;
+    challenge(&mut receiver, source, &mut excess, &bytes, now + LIFETIME)?;
+    receiver.receive(source, &excess.datagram(&bytes)?, now + LIFETIME)?;
+    assert_eq!(receiver.pending.len(), 1);
+    Ok(())
+}
+
 fn challenge(
     receiver: &mut Receiver,
     source: SocketAddr,
@@ -36,7 +152,7 @@ fn maximum_sized_transcript_reassembles_out_of_order_with_exact_duplicates() -> 
     let now = Instant::now();
     let source = "127.0.0.1:1000".parse()?;
     let bytes = vec![7; MAX_TRANSCRIPT_BYTES];
-    assert_eq!(bytes.len(), 5591);
+    assert_eq!(bytes.len(), 5593);
     let mut receiver = Receiver::new(now);
     let mut sender = Sender::new(&bytes)?;
     challenge(&mut receiver, source, &mut sender, &bytes, now)?;
@@ -101,7 +217,14 @@ fn malformed_init_and_parts_never_allocate_or_reflect() -> Result<()> {
     let mut extra = init.clone();
     extra.push(0);
     assert!(receiver.receive(source, &extra, now).is_err());
-    for length in [0u16, (MAX_TRANSCRIPT_BYTES + 1) as u16, u16::MAX] {
+    for length in [
+        0u16,
+        362,
+        426,
+        (MIN_TRANSCRIPT_BYTES - 1) as u16,
+        (MAX_TRANSCRIPT_BYTES + 1) as u16,
+        u16::MAX,
+    ] {
         let mut wire = init.clone();
         wire[57..59].copy_from_slice(&length.to_be_bytes());
         assert!(receiver.receive(source, &wire, now).is_err());
@@ -128,7 +251,7 @@ fn missing_conflicting_and_tampered_parts_do_not_authenticate_or_extend_deadline
     let reply = challenge(&mut receiver, source, &mut sender, &bytes, now)?;
     let flight = parts(&mut sender, &bytes)?;
     receiver.receive(source, &flight[0], now)?;
-    let deadline = receiver.pending[&source].deadline;
+    let deadline = receiver.pending[&(source, sender.commitment.transfer)].deadline;
     let mut conflict = flight[0].clone();
     conflict[HEADER + 1] ^= 1;
     assert!(receiver.receive(source, &conflict, now).is_err());
@@ -138,7 +261,10 @@ fn missing_conflicting_and_tampered_parts_do_not_authenticate_or_extend_deadline
         retry_reply, reply,
         "retry changed cookie/deadline for partial flight"
     );
-    assert_eq!(receiver.pending[&source].deadline, deadline);
+    assert_eq!(
+        receiver.pending[&(source, sender.commitment.transfer)].deadline,
+        deadline
+    );
     assert!(matches!(
         receiver.receive(source, &flight[0], later)?,
         Received::Pending
@@ -186,7 +312,7 @@ fn per_source_and_global_memory_are_bounded_without_challenging_peer_displacemen
             .values()
             .map(|v| v.bytes.len())
             .sum::<usize>(),
-        178912
+        178976
     );
     let mut replacement = Sender::new(&bytes)?;
     assert!(receiver
@@ -268,7 +394,9 @@ fn completed_cookie_tail_cannot_block_new_flight_or_repeat_verification() -> Res
     assert_eq!(receiver.pending.len(), 1);
     receiver.receive(source, &flight[5], now)?;
     assert_eq!(
-        receiver.pending[&source].commitment.transfer,
+        receiver.pending[&(source, fresh.commitment.transfer)]
+            .commitment
+            .transfer,
         fresh.commitment.transfer
     );
     receiver.expire(now + LIFETIME);

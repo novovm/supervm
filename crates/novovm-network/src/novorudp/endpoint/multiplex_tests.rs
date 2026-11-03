@@ -14,7 +14,7 @@ fn multiplex_other_protocol_consumes_quantum_without_native_admission() -> Resul
     let now = Instant::now();
     let mut endpoint = NativeEndpoint::listen_clients_shared(
         Arc::clone(&socket),
-        SigningKey::from_bytes(&[81; 32]),
+        crate::test_identity::key(81),
         1,
         vec![17],
         budget(),
@@ -53,7 +53,7 @@ fn multiplex_other_protocol_consumes_quantum_without_native_admission() -> Resul
 #[test]
 fn multiplex_shared_socket_keeps_handshake_source_replay_and_byte_checks() -> Result<()> {
     let socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
-    let server_key = SigningKey::from_bytes(&[82; 32]);
+    let server_key = crate::test_identity::key(82);
     let now = Instant::now();
     let mut server = NativeEndpoint::listen_clients_shared(
         Arc::clone(&socket),
@@ -65,9 +65,9 @@ fn multiplex_shared_socket_keeps_handshake_source_replay_and_byte_checks() -> Re
     server.set_wire_budget_v1(1_000_000, now)?;
     let mut client = NativeEndpoint::connect_client(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[83; 32]),
+        crate::test_identity::key(83),
         NativePeer {
-            key: server_key.verifying_key().to_bytes(),
+            key: server_key.public_key().to_vec(),
             address: socket.local_addr()?,
         },
         budget(),

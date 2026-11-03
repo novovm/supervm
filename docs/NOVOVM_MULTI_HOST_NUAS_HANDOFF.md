@@ -3,6 +3,11 @@
 **C校时已确认（23:24—23:25）：** 用户本人完成标准管理员确认，原配置reload及rediscover/resync后，23:24:29成功同步；23:25:15独立复核仍Running/Manual、time.windows.com、Leap0/Stratum5、最后错误0。覆盖下方C待UAC/仍PENDING的当前判断，原失败记录保留。当前C仍有线1 Gbps、192.168.71.125/24；不重复整机清点、不换源或启动类型、未启链。见[C成功增量及证据](VALIDATOR_C_NETWORK_RETURN_2026-11-02.md)。A请回传received_commit/evidence_sha256；Git推送不是A已读，不把A/C/D各自对源同步等同于全组相对偏差验收。
 
 
+**2026-11-03 当前阻断与顺序：** 四机基础回执、A/C/D 校时和 B 既有同步结果已收齐，
+下方历史校时命令不是新的执行任务。A 先完成原 NovoRUDP ML-DSA-65 网络认证候选、
+冻结各平台程序与 AOEM 清单，再验收四机预期身份、实际出口及重连；启链和交易压测
+仍需后续批准。不重复清点 C/D，不修改网页或现有 B 服务，不借用历史服务身份。
+
 **D校时重试成功（23:08-23:09）：** 用户返回后要求重试正常UAC，原
 `w32tm /resync /rediscover`退出0。23:08:57及23:09:43两次复核均Running/Auto、
 Leap0/Stratum5、source `time.windows.com,0x9`，最后成功23:08:46、最后错误0。

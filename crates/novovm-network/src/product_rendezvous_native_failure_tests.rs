@@ -34,8 +34,8 @@ impl NativeDatagramIo for FailingUdp {
     }
 }
 
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8) -> TransportIdentity {
+    TransportIdentity::from_bytes(&[seed; 32])
 }
 fn config() -> Result<IrohConfigV1> {
     IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)
@@ -104,6 +104,8 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
     let listener = NativeMailboxListenerV7 {
         link: mailbox_link(endpoint, false)?,
         readiness,
+        connection_ceiling: route.max_connections,
+        wire_ceiling: Some(route.max_bytes_per_minute),
         route,
         stop: stop.clone(),
         concurrency: None,
@@ -133,10 +135,10 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
                 1,
             )?;
             let trust = SelfOwnedTrustV1 {
-                version: 1,
-                node_pins: [key(17).verifying_key().to_bytes()].into(),
+                version: 2,
+                node_pins: [key(17).public_key().to_vec()].into(),
             };
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now, key(90))?;
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([91; 32]), &checkpoint)?;
             book.attach_persistence(file, &checkpoint)?;
@@ -153,7 +155,7 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
         let first = rx.recv().await.context("initial advertisement")?;
         ensure!(NativeMailboxEndpointV7::from_record(&first)?.is_some());
         let carrier = IrohServiceEndpointV1::from_record(&first)?;
-        let pin = key(17).verifying_key().to_bytes();
+        let pin = key(17).public_key().to_vec();
         peer.with_continuous_service_v4(|| Ok(()), |scope| Box::pin(async move {
             let mut stream: CarrierStreamV1<'_> = scope.connect(&carrier.address).await?.into();
             request_mailbox_continuous_v4(&mut stream).await?;

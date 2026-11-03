@@ -1,7 +1,6 @@
 //! Offline operator CLI regressions. All allocations, domains and keys below
 //! are isolated test material, never an approved deployment configuration.
 //! Fixture files and command output are retained, including failed commands.
-use ed25519_dalek::SigningKey;
 use novovm_node::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
 use novovm_node::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS;
 use novovm_node::native_pipeline::service::config::uca_genesis::{
@@ -217,9 +216,7 @@ fn manifest() -> Result<UcaGenesisManifestV2, Box<dyn Error>> {
                     // Structural prepare test only; no vote/key possession is
                     // claimed. The actual runtime test replaces all four keys.
                     public_key: vec![seed; MLDSA65_PUBLIC_KEY_BYTES],
-                    transport_public_key: SigningKey::from_bytes(&[100 + seed; 32])
-                        .verifying_key()
-                        .to_bytes(),
+                    transport_public_key: vec![100 + seed; MLDSA65_PUBLIC_KEY_BYTES],
                     weight: 1,
                 })
                 .collect(),
@@ -329,9 +326,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
     input.genesis.validators = (0..64)
         .map(|index| GenesisValidator {
             public_key: metadata_key(1, index),
-            transport_public_key: SigningKey::from_bytes(&[index as u8 + 100; 32])
-                .verifying_key()
-                .to_bytes(),
+            transport_public_key: metadata_key(5, index),
             weight: 1,
         })
         .collect();
@@ -480,7 +475,7 @@ fn prepare_matches_original_canonical_domain_without_authorizing_or_writing() ->
     assert_eq!(observed["message_is_unframed"], true);
     assert_eq!(observed["signing_algorithm"], "ML-DSA-65");
     assert_eq!(observed["consensus_signature_algorithm"], "ML-DSA-65");
-    assert_eq!(observed["transport_signature_algorithm"], "Ed25519");
+    assert_eq!(observed["transport_signature_algorithm"], "ML-DSA-65");
     assert_eq!(observed["schema_version"], 3);
     assert_eq!(observed["identity_and_asset_approvals_verified"], false);
     assert!(observed.get("signing_message_hex").is_none());
@@ -816,6 +811,7 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
     }
     for validator in &mut input.genesis.validators {
         validator.public_key = signer.generate_keypair()?.public_key;
+        validator.transport_public_key = signer.generate_keypair()?.public_key;
     }
     let mut approvals = Vec::new();
     for (subject, public_key) in input.required_approval_subjects() {

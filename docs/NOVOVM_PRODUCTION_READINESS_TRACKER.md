@@ -4830,6 +4830,11 @@ Zeroizing导入已修；取消测试原夹具未发送开启QUIC流的前导帧�
 
 ## 2026-10-14 Android L4 真实入站寄存/领取：direct 与 relay 对照
 
+位置更新（2026-11-03）：同一 operator 示例已迁至
+`crates/novovm-relay/examples/mailbox_peer_probe.rs`，由既有受保护密钥与已校核
+AOEM owner 提供 ML-DSA-65 身份，需明确库/哈希/链域及两份传输用途钥文件。
+这是当前调用方迁接，不追认下述历史 Ed25519 样本为新认证验收，也未运行公网探测。
+
 在通讯输入 4fd28feb、NOVOCHAT e36c4fd 的两部原正式安装上，使用新增通用客户端
 示例 `crates/novovm-network/examples/mailbox_peer_probe.rs` 调用已有 NVMBOX06；
 没有新增宿主、账号、许可、网络协议或运行时。客户端校验从手机原 MethodChannel

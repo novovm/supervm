@@ -255,9 +255,9 @@ fn client(
     let message_bytes = codec.message_bytes;
     NativeApplicationClient::connect(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[201; 32]),
+        process_identities()?.client_transport.clone(),
         NativePeer {
-            key: transport_key(index).verifying_key().to_bytes(),
+            key: transport_key(index).public_key().to_vec(),
             address: config.udp_addr,
         },
         MessageDomain {

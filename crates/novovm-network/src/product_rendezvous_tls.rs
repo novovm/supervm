@@ -16,6 +16,7 @@ pub struct TlsMailboxListenerV1 {
     route: TlsServiceEndpointV1,
     stop: Arc<AtomicBool>,
     concurrency: Option<Arc<ServiceConcurrencyV1>>,
+    connection_ceiling: u16,
 }
 
 impl TlsMailboxListenerV1 {
@@ -36,8 +37,25 @@ impl TlsMailboxListenerV1 {
         stop: Arc<AtomicBool>,
         concurrency: Arc<ServiceConcurrencyV1>,
     ) -> Result<Self> {
-        let capacity = advertised_capacity(&concurrency);
-        Self::bind_with_resources(listen, advertised, seed, stop, capacity, Some(concurrency)).await
+        Self::bind_with_resources(listen, advertised, seed, stop, u16::MAX, Some(concurrency)).await
+    }
+    pub async fn bind_adaptive_with_capacity(
+        listen: SocketAddr,
+        advertised: SocketAddr,
+        seed: Zeroizing<[u8; 32]>,
+        stop: Arc<AtomicBool>,
+        max_connections: Option<u16>,
+        concurrency: Arc<ServiceConcurrencyV1>,
+    ) -> Result<Self> {
+        Self::bind_with_resources(
+            listen,
+            advertised,
+            seed,
+            stop,
+            max_connections.unwrap_or(u16::MAX),
+            Some(concurrency),
+        )
+        .await
     }
     pub async fn bind_with_capacity(
         listen: SocketAddr,
@@ -66,7 +84,8 @@ impl TlsMailboxListenerV1 {
         })?
         .with_connection_limit(usize::from(max_connections))?;
         if let Some(controller) = &concurrency {
-            scope = scope.with_service_concurrency(controller.clone());
+            scope = scope
+                .with_service_concurrency_limit(controller.clone(), usize::from(max_connections));
         }
         let listener = TcpListener::bind(listen).await?;
         if advertised.port() == 0 {
@@ -75,7 +94,9 @@ impl TlsMailboxListenerV1 {
         let route = TlsServiceEndpointV1 {
             address: advertised,
             endpoint_key: scope.endpoint_key(),
-            max_connections,
+            max_connections: concurrency.as_ref().map_or(max_connections, |c| {
+                advertised_capacity(c).min(max_connections)
+            }),
             native_mailbox_v8: false,
         };
         route.endpoint()?;
@@ -85,6 +106,7 @@ impl TlsMailboxListenerV1 {
             route,
             stop,
             concurrency,
+            connection_ceiling: max_connections,
         })
     }
 
@@ -104,11 +126,7 @@ impl TlsMailboxListenerV1 {
     }
 
     pub(super) fn admission_ceiling(&self) -> usize {
-        self.concurrency
-            .as_ref()
-            .map_or(usize::from(self.route.max_connections), |_| {
-                usize::from(u16::MAX)
-            })
+        usize::from(self.connection_ceiling)
     }
 
     /// Capacity is an observation, not a reservation or a permanent ceiling.
@@ -116,15 +134,15 @@ impl TlsMailboxListenerV1 {
     pub fn current_route(&self) -> TlsServiceEndpointV1 {
         let mut route = self.route.clone();
         if let Some(controller) = &self.concurrency {
-            route.max_connections = advertised_capacity(controller);
+            route.max_connections = advertised_capacity(controller).min(self.connection_ceiling);
         }
         route
     }
 
     pub(super) async fn serve(
         &self,
-        key: &SigningKey,
-        clients: &Option<Vec<[u8; 32]>>,
+        key: &TransportIdentity,
+        clients: &Option<Vec<Vec<u8>>>,
         host: &ServiceLeaseHostV1,
         service: &crate::mailbox_rpc::MailboxServiceV1,
         slots: Arc<AdaptiveAdmissionV1>,
@@ -187,6 +205,48 @@ fn advertised_capacity(controller: &ServiceConcurrencyV1) -> u16 {
 mod resource_tests {
     use super::*;
     use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+
+    #[tokio::test]
+    async fn explicit_tls_capacity_bounds_same_adaptive_controller() -> Result<()> {
+        let _serial = crate::tls_transport::TLS_TEST_SERIAL.acquire().await?;
+        let resources = ResourceSnapshotV1 {
+            cpu_parallelism: 64,
+            available_memory_bytes: 16 * 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        };
+        let controller = ServiceConcurrencyV1::new(resources);
+        let listener = TlsMailboxListenerV1::bind_adaptive_with_capacity(
+            "127.0.0.1:0".parse()?,
+            "127.0.0.1:0".parse()?,
+            Zeroizing::new([39; 32]),
+            Arc::new(AtomicBool::new(false)),
+            Some(8),
+            controller.clone(),
+        )
+        .await?;
+        assert!(Arc::ptr_eq(&listener.concurrency().unwrap(), &controller));
+        assert_eq!(listener.route().max_connections, 8);
+        assert_eq!(listener.admission_ceiling(), 8);
+        controller.update_resources(ResourceSnapshotV1 {
+            pressure: ResourcePressureV1::Severe,
+            ..resources
+        });
+        assert_eq!(listener.current_route().max_connections, 2);
+        controller.update_resources(resources);
+        assert_eq!(listener.current_route().max_connections, 8);
+        let omitted = TlsMailboxListenerV1::bind_adaptive_with_capacity(
+            "127.0.0.1:0".parse()?,
+            "127.0.0.1:0".parse()?,
+            Zeroizing::new([40; 32]),
+            Arc::new(AtomicBool::new(false)),
+            None,
+            controller,
+        )
+        .await?;
+        assert!(omitted.current_route().max_connections > 64);
+        assert_eq!(omitted.admission_ceiling(), usize::from(u16::MAX));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn tls_route_capacity_tracks_resources_without_changing_identity() -> Result<()> {

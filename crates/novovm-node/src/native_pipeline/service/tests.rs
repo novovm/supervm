@@ -7,7 +7,7 @@ use crate::native_pipeline::ingress::batch::authenticate_batch_for_proof;
 use crate::native_pipeline::ingress::wire::{
     encode_transfer_v3, signing_message, FeePolicy, TransferV3,
 };
-use ed25519_dalek::Signer;
+use ed25519_dalek::{Signer, SigningKey};
 
 pub(super) fn signed_raw(index: u64, nonce: u64) -> Vec<u8> {
     let mut seed = [0x5a; 32];
@@ -118,10 +118,19 @@ fn identity_rejection_fixture() -> Result<(
     fixture.signing_key_file = directory.join("test-only-validator.key");
     fixture.transport_key_file = directory.join("test-only-transport.key");
     std::fs::write(&fixture.signing_key_file, [1u8; 32])?;
-    let transport = purpose_keys::generate(
+    // Envelope-only fixture: the assertions below must fail before AOEM is
+    // loaded, so no fixture material can reach a network/signature owner.
+    let transport = purpose_keys::generate_mldsa(
         &fixture.transport_key_file,
         PurposeV1::Transport,
         fixture.genesis.chain_id,
+        || {
+            purpose_keys::PurposeKeyMaterialV3::new(
+                vec![101; 1952],
+                zeroize::Zeroizing::new(vec![102; 4032]),
+            )
+        },
+        |_, _, _| Ok(()),
     )?;
     #[cfg(unix)]
     {
@@ -133,16 +142,11 @@ fn identity_rejection_fixture() -> Result<(
     fixture.genesis.validators = (1..=4)
         .map(|seed| GenesisValidator {
             public_key: vec![seed; 1952],
-            transport_public_key: SigningKey::from_bytes(&[100 + seed; 32])
-                .verifying_key()
-                .to_bytes(),
+            transport_public_key: vec![100 + seed; 1952],
             weight: 1,
         })
         .collect();
-    fixture.genesis.validators[0].transport_public_key = transport
-        .public_key
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("transport key shape"))?;
+    fixture.genesis.validators[0].transport_public_key = transport.public_key;
     fixture.genesis.allocations = vec![GenesisAllocation {
         account_hex: "01".repeat(20),
         amount: crate::native_pipeline::business::fixed_supply::NOV_FIXED_SUPPLY_BASE_UNITS
@@ -191,9 +195,7 @@ fn resident_config_reads_large_mldsa_metadata_but_rejects_oversized_documents() 
     fixture.genesis.validators = (1u8..=64)
         .map(|seed| GenesisValidator {
             public_key: vec![seed; 1952], // Metadata fixture; never used to sign.
-            transport_public_key: SigningKey::from_bytes(&[seed; 32])
-                .verifying_key()
-                .to_bytes(),
+            transport_public_key: vec![100 + seed; 1952],
             weight: 1,
         })
         .collect();
@@ -247,10 +249,17 @@ fn mismatched_transport_key_rejects_before_native_startup() -> Result<()> {
     fixture.transport_key_file = fixture
         .transport_key_file
         .with_file_name("other-transport.sealed");
-    purpose_keys::generate(
+    purpose_keys::generate_mldsa(
         &fixture.transport_key_file,
         PurposeV1::Transport,
         fixture.genesis.chain_id,
+        || {
+            purpose_keys::PurposeKeyMaterialV3::new(
+                vec![201; 1952],
+                zeroize::Zeroizing::new(vec![202; 4032]),
+            )
+        },
+        |_, _, _| Ok(()),
     )?;
     rejects_before_socket_library_and_store(
         fixture,

@@ -1,6 +1,5 @@
 use super::*;
 use crate::novorudp::endpoint::{NativeHandshakeBudget, NativePeer};
-use ed25519_dalek::SigningKey;
 use std::net::UdpSocket;
 
 const CONTROL: u64 = 1;
@@ -66,7 +65,7 @@ fn pair_and_third() -> Result<(NativeObjectLink, NativeObjectLink, NativeObjectL
         .iter()
         .map(UdpSocket::local_addr)
         .collect::<std::io::Result<Vec<_>>>()?;
-    let keys = [23, 47, 71].map(|seed| SigningKey::from_bytes(&[seed; 32]));
+    let keys = [23, 47, 71].map(crate::test_identity::key);
     let now = Instant::now();
     let mut links = Vec::new();
     for (i, socket) in sockets.into_iter().enumerate() {
@@ -74,7 +73,7 @@ fn pair_and_third() -> Result<(NativeObjectLink, NativeObjectLink, NativeObjectL
         let peers = peers
             .into_iter()
             .map(|n| NativePeer {
-                key: keys[n].verifying_key().to_bytes(),
+                key: keys[n].public_key().to_vec(),
                 address: addresses[n],
             })
             .collect();
@@ -240,7 +239,7 @@ fn scoped_observer_separates_admission_writes_fragments_hash_and_done() -> Resul
 #[test]
 fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_identity(
 ) -> Result<()> {
-    let identity = SigningKey::from_bytes(&[241; 32]);
+    let identity = crate::test_identity::key(241);
     let budget = || NativeHandshakeBudget {
         lifetime: Duration::from_secs(10),
         retry: Duration::from_millis(5),
@@ -253,7 +252,7 @@ fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_i
         budget(),
     )?;
     let remote = NativePeer {
-        key: identity.verifying_key().to_bytes(),
+        key: identity.public_key().to_vec(),
         address: endpoint.local_addr()?,
     };
     let mut server = NativeObjectLink::new(endpoint, configs(), policy())?;
@@ -264,7 +263,7 @@ fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_i
         let mut client = NativeObjectLink::new(
             NativeEndpoint::connect_client(
                 UdpSocket::bind("127.0.0.1:0")?,
-                SigningKey::from_bytes(&[242 + ordinal as u8; 32]),
+                crate::test_identity::key(242 + ordinal as u8),
                 remote.clone(),
                 budget(),
                 1000,
@@ -294,7 +293,7 @@ fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_i
         let mut waiting = NativeObjectLink::new(
             NativeEndpoint::connect_client(
                 UdpSocket::bind("127.0.0.1:0")?,
-                SigningKey::from_bytes(&[246; 32]),
+                crate::test_identity::key(246),
                 remote.clone(),
                 budget(),
                 1000,
@@ -398,8 +397,8 @@ fn client_retirement_protects_work_and_transport_then_invalidates_only_drained_i
 
 #[test]
 fn reconnect_retires_only_old_generation_and_preserves_unknown_outgoing_custody() -> Result<()> {
-    let node_key = SigningKey::from_bytes(&[51; 32]);
-    let client_key = SigningKey::from_bytes(&[52; 32]);
+    let node_key = crate::test_identity::key(51);
+    let client_key = crate::test_identity::key(52);
     let budget = || NativeHandshakeBudget {
         lifetime: Duration::from_secs(2),
         retry: Duration::from_millis(5),
@@ -413,7 +412,7 @@ fn reconnect_retires_only_old_generation_and_preserves_unknown_outgoing_custody(
     )?;
     endpoint.enable_client_reconnect_v1()?;
     let remote = NativePeer {
-        key: node_key.verifying_key().to_bytes(),
+        key: node_key.public_key().to_vec(),
         address: endpoint.local_addr()?,
     };
     let mut server = NativeObjectLink::new(endpoint, configs(), policy())?;
@@ -554,7 +553,7 @@ fn application_sequence_owner_is_bound_to_peer_lane_and_authenticated_session() 
     assert_eq!(a.application_owners.len(), 4);
     assert_eq!(
         a.local_identity(),
-        SigningKey::from_bytes(&[23; 32]).verifying_key().to_bytes()
+        crate::test_identity::key(23).public_key().to_vec()
     );
     Ok(())
 }
@@ -833,7 +832,10 @@ impl crate::novorudp::carrier::NativeDatagramIo for BlockedFeedbackIo {
         // This fixture establishes a real UDP handshake before modelling the
         // bound carrier's data writer. UDP Finished retransmissions are not
         // writes on that reliable-data slot.
-        if self.stepped.load(Ordering::Relaxed) && !bytes.starts_with(b"NVHSHK01") {
+        if self.stepped.load(Ordering::Relaxed)
+            && !bytes.starts_with(b"NVHSHK02")
+            && !bytes.starts_with(b"NVHCONT1")
+        {
             let mut slot = self.write.lock().unwrap();
             if let Some((old, old_route, complete)) = slot.as_ref() {
                 if old != bytes || *old_route != route {
@@ -867,7 +869,7 @@ fn blocked_feedback_pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<Bl
         failed: false.into(),
         write: std::sync::Mutex::new(None),
     });
-    let server_key = SigningKey::from_bytes(&[81; 32]);
+    let server_key = crate::test_identity::key(81);
     let budget = || NativeHandshakeBudget {
         lifetime: Duration::from_secs(2),
         retry: Duration::from_millis(10),
@@ -886,9 +888,9 @@ fn blocked_feedback_pair() -> Result<(NativeObjectLink, NativeObjectLink, Arc<Bl
     let mut client = NativeObjectLink::new(
         NativeEndpoint::connect_client(
             UdpSocket::bind("127.0.0.1:0")?,
-            SigningKey::from_bytes(&[82; 32]),
+            crate::test_identity::key(82),
             NativePeer {
-                key: server_key.verifying_key().to_bytes(),
+                key: server_key.public_key().to_vec(),
                 address,
             },
             budget(),

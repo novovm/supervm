@@ -94,12 +94,12 @@ impl ServiceLeaseBookV1 {
     /// complete before Register/Put/Fetch. Legacy fresh-dial rules are unchanged.
     pub fn check_native_tls_bootstrap_v8(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &TlsServiceEndpointV1,
         now: u64,
     ) -> Result<()> {
         self.check_continuous_native_tls_v8(pin, endpoint, now)?;
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry.decoded_current()?.routes.tls.as_ref() == Some(endpoint),
             "native TLS bootstrap route changed"
@@ -111,12 +111,12 @@ impl ServiceLeaseBookV1 {
     /// service capability. Locator rotation/expiry does not kill a live stream.
     pub fn check_continuous_native_tls_v8(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &TlsServiceEndpointV1,
         now: u64,
     ) -> Result<()> {
         self.check_continuous_tls_peer_v1(pin, endpoint, now)?;
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         let routes = &entry.decoded_current()?.routes;
         ensure!(
             endpoint.native_mailbox_v8
@@ -133,13 +133,13 @@ impl ServiceLeaseBookV1 {
     /// TLS Finished and the bound service handshake are separately mandatory.
     pub fn check_continuous_tls_peer_v1(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &TlsServiceEndpointV1,
         now: u64,
     ) -> Result<()> {
         self.observe(now)?;
         ensure!(self.is_self_owned(), "continuous peer requires local trust");
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         let current = entry
             .decoded_current()?
             .routes
@@ -158,12 +158,12 @@ impl ServiceLeaseBookV1 {
     /// does not turn an old locator into live TLS proof or approve new nodes.
     pub fn check_tls_route_v1(
         &mut self,
-        pin: [u8; 32],
+        pin: &[u8],
         endpoint: &TlsServiceEndpointV1,
         now: u64,
     ) -> Result<()> {
         self.check_continuous_tls_peer_v1(pin, endpoint, now)?;
-        let entry = self.entries.get_mut(&pin).context("service revoked")?;
+        let entry = self.entries.get_mut(pin).context("service revoked")?;
         ensure!(
             entry.current.expires_at_ms > now,
             "TLS service route expired"

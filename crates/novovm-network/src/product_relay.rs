@@ -2180,22 +2180,21 @@ fn snapshot_v1(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_identity::SigningKey;
     use crate::{
         novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
         product_overlay::{
-            peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
+            peer_id_from_mldsa65_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
             NodeHandshakeInitiatorV1, NodeHandshakeResponderV1,
         },
     };
-    use ed25519_dalek::SigningKey;
 
     fn authenticate_to_relay(
         node_identity: &SigningKey,
         relay_identity: &SigningKey,
         now_ms: u64,
     ) -> AuthenticatedPeerV1 {
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(node_identity, relay_peer_id, now_ms, 5_000)
                 .expect("start relay auth");
@@ -2217,8 +2216,7 @@ mod tests {
         responder_identity: &SigningKey,
         now_ms: u64,
     ) -> (E2eSecureChannelV1, E2eSecureChannelV1) {
-        let responder_peer_id =
-            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let responder_peer_id = peer_id_from_mldsa65_public_key_v1(responder_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(initiator_identity, responder_peer_id, now_ms, 5_000)
                 .expect("start peer handshake");
@@ -2331,8 +2329,7 @@ mod tests {
             .register_authenticated_session(auth_b, 5_100)
             .await
             .expect("register b");
-        let node_b_peer_id =
-            peer_id_from_ed25519_public_key_v1(&node_b_identity.verifying_key().to_bytes());
+        let node_b_peer_id = peer_id_from_mldsa65_public_key_v1(node_b_identity.public_key());
         let offer =
             NodeHandshakeInitiatorV1::start(&node_a_identity, node_b_peer_id.clone(), 5_200, 5_000)
                 .expect("start peer offer")
@@ -3614,6 +3611,6 @@ mod tests {
     }
 
     fn node_b_auth_peer_id_v1(identity: &SigningKey) -> String {
-        peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes())
+        peer_id_from_mldsa65_public_key_v1(identity.public_key())
     }
 }

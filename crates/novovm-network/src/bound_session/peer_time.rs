@@ -7,7 +7,7 @@ use super::*;
 use crate::{
     network_time::{measure_peer_clock_v1, ClockAnchorV1, PeerTimeSampleV1},
     novorudp::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
-    product_overlay::{binary, peer_id_from_ed25519_public_key_v1},
+    product_overlay::{binary, peer_id_from_mldsa65_public_key_v1},
     transport_binding::{session_clock::SessionClockDeadlineV2, TransportBindingErrorV1},
 };
 use anyhow::{ensure, Result};
@@ -47,8 +47,8 @@ impl PendingPeerTimeV8 {
 /// share one immutable deadline. Return the SAME channel for native adoption.
 pub async fn authenticate_mailbox_native_v8<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    expected_peer: [u8; 32],
+    identity: &TransportIdentity,
+    expected_peer: Vec<u8>,
     original_deadline: Instant,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
@@ -60,7 +60,7 @@ where
     let mut channel = super::session_clock::authenticate_structured_bound_session_v2_observed(
         stream,
         identity,
-        expected_peer,
+        expected_peer.clone(),
         true,
         pending.deadline(),
         replay,
@@ -79,7 +79,7 @@ pub enum PeerTimeObservationV1 {
     InvalidMeasurement,
 }
 pub struct AuthenticatedPeerTimeV1 {
-    pub peer_identity_public_key: [u8; 32],
+    pub peer_identity_public_key: Vec<u8>,
     pub observation: PeerTimeObservationV1,
 }
 
@@ -296,7 +296,7 @@ pub async fn receive_peer_time_v8(
     stream: &mut CarrierStreamV1<'_>,
     channel: &mut BoundSecureChannelV1,
     pending: PendingPeerTimeV8,
-    expected_peer: [u8; 32],
+    expected_peer: Vec<u8>,
 ) -> Result<AuthenticatedPeerTimeV1, BoundSessionError> {
     let deadline = pending.deadline;
     let exchange = async {
@@ -307,7 +307,7 @@ pub async fn receive_peer_time_v8(
                 "time observation receiver must be client initiator"
             )));
         }
-        if channel.remote_peer_id() != peer_id_from_ed25519_public_key_v1(&expected_peer) {
+        if channel.remote_peer_id() != peer_id_from_mldsa65_public_key_v1(&expected_peer) {
             return Err(authentication(anyhow::anyhow!(
                 "time observation peer pin mismatch"
             )));

@@ -1,7 +1,6 @@
 //! External consumer test: only public network APIs, no node/validator/AOEM,
 //! HTTP, Iroh or Relay. Opaque binary payloads are NOT APFL mailbox acceptance.
 use anyhow::{ensure, Result};
-use ed25519_dalek::SigningKey;
 use novovm_network::novorudp::{
     endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
     fragments::{FragmentProfile, OutgoingMessage, ReassemblyLimits},
@@ -9,14 +8,18 @@ use novovm_network::novorudp::{
     object_sender::ObjectSendState,
     NovoRudpPacingProfile, NovoRudpWindowConfig,
 };
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use std::{
     net::UdpSocket,
     sync::Arc,
     time::{Duration, Instant},
 };
+use transport_identity::key;
 
 const STREAM: u64 = 17;
 const DOMAIN: [u8; 32] = [71; 32];
+
 fn budget() -> NativeHandshakeBudget {
     NativeHandshakeBudget {
         lifetime: Duration::from_millis(500),
@@ -78,7 +81,7 @@ fn object(bytes: Vec<u8>) -> Result<Arc<OutgoingMessage>> {
 fn unenrolled_application_uses_one_native_session_for_bidirectional_objects() -> Result<()> {
     let listener = UdpSocket::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?;
-    let server_key = SigningKey::from_bytes(&[17; 32]);
+    let server_key = key(17);
     let endpoint =
         NativeEndpoint::listen_clients(listener, server_key.clone(), 1, vec![STREAM], budget())?;
     assert_eq!(endpoint.peer_count(), 0);
@@ -86,9 +89,9 @@ fn unenrolled_application_uses_one_native_session_for_bidirectional_objects() ->
     let origin = Instant::now();
     let endpoint = NativeEndpoint::connect_client(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[83; 32]),
+        key(83),
         NativePeer {
-            key: server_key.verifying_key().to_bytes(),
+            key: server_key.public_key().to_vec(),
             address,
         },
         budget(),
@@ -158,10 +161,10 @@ fn unenrolled_application_uses_one_native_session_for_bidirectional_objects() ->
 
 #[test]
 fn empty_pinned_policy_is_not_open_and_listener_requires_explicit_limits() -> Result<()> {
-    let key = SigningKey::from_bytes(&[17; 32]);
+    let identity = key(17);
     assert!(NativeEndpoint::bind(
         UdpSocket::bind("127.0.0.1:0")?,
-        key.clone(),
+        identity.clone(),
         vec![],
         budget(),
         1000,
@@ -171,7 +174,7 @@ fn empty_pinned_policy_is_not_open_and_listener_requires_explicit_limits() -> Re
     for (clients, streams) in [(0, vec![STREAM]), (1, vec![]), (1, vec![0])] {
         assert!(NativeEndpoint::listen_clients(
             UdpSocket::bind("127.0.0.1:0")?,
-            key.clone(),
+            identity.clone(),
             clients,
             streams,
             budget()
@@ -181,7 +184,7 @@ fn empty_pinned_policy_is_not_open_and_listener_requires_explicit_limits() -> Re
     // Resource policy replaced the unreleased fixed 64-client ceiling.
     let listener = NativeEndpoint::listen_clients(
         UdpSocket::bind("127.0.0.1:0")?,
-        key,
+        identity,
         65,
         vec![STREAM],
         budget(),
@@ -205,15 +208,15 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
     };
     use zeroize::Zeroizing;
     let directory = tempfile::tempdir()?;
-    let key = SigningKey::from_bytes(&[17; 32]);
-    let pin = key.verifying_key().to_bytes();
+    let identity = key(17);
+    let pin = identity.public_key().to_vec();
     let service = MailboxServiceV1::new(
         MailboxStore::open_contributor(
             directory.path().join("mailbox.db"),
             Default::default(),
             true,
         )?,
-        key.clone(),
+        identity.clone(),
     );
     service.set_resources_available(true).await?;
     let socket = UdpSocket::bind("127.0.0.1:0")?;
@@ -221,7 +224,7 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
     let mut config = lane();
     config.stream = MAIL;
     let mut server = NativeObjectLink::new(
-        NativeEndpoint::listen_clients(socket, key, 1, vec![MAIL], budget())?,
+        NativeEndpoint::listen_clients(socket, identity.clone(), 1, vec![MAIL], budget())?,
         vec![config.clone()],
         policy(),
     )?;
@@ -229,8 +232,11 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
     let mut client = NativeObjectLink::new(
         NativeEndpoint::connect_client(
             UdpSocket::bind("127.0.0.1:0")?,
-            SigningKey::from_bytes(&[83; 32]),
-            NativePeer { key: pin, address },
+            key(83),
+            NativePeer {
+                key: pin.clone(),
+                address,
+            },
             budget(),
             1000,
             origin,
@@ -336,9 +342,9 @@ async fn structured_mailbox_over_authenticated_udp_returns_verified_custody() ->
             let Reply::Stored(receipt) = &replies[1] else {
                 anyhow::bail!("missing custody evidence")
             };
-            receipt.verify(pin, [1; 32], [4; 32], &vec![7; 9000], expires)?;
+            receipt.verify(&pin, [1; 32], [4; 32], &vec![7; 9000], expires, &identity)?;
             assert!(receipt
-                .verify(pin, [1; 32], [4; 32], &vec![8; 9000], expires)
+                .verify(&pin, [1; 32], [4; 32], &vec![8; 9000], expires, &identity)
                 .is_err());
         } else {
             assert!(

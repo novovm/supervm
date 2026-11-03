@@ -69,8 +69,8 @@ fn budget() -> NativeHandshakeBudget {
         retry: Duration::from_millis(10),
     }
 }
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8) -> TransportIdentity {
+    crate::test_identity::key(seed)
 }
 fn endpoints() -> Result<(NativeEndpoint, NativeEndpoint, Arc<SocketIo>, Arc<SocketIo>)> {
     let a = SocketIo::new()?;
@@ -81,7 +81,7 @@ fn endpoints() -> Result<(NativeEndpoint, NativeEndpoint, Arc<SocketIo>, Arc<Soc
         a.clone(),
         key(73),
         vec![NativeRoutePeer {
-            key: key(72).verifying_key().to_bytes(),
+            key: key(72).public_key().to_vec(),
             route: NativeRoute::Udp(b.socket.local_addr()?),
         }],
         budget(),

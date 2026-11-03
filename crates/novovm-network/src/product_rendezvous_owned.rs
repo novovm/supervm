@@ -1,5 +1,6 @@
 //! Self-owned lifecycle for the EXISTING rendezvous V2 offer and authenticated
 //! RPC. Stable listener; rotating opaque stores and resource-bound mailbox sessions.
+use crate::product_overlay::TransportIdentity;
 use crate::service_concurrency::{AdaptiveAdmissionV1, AdmissionKind};
 use crate::{
     bound_session::ServicePeerPolicyV1,
@@ -17,7 +18,6 @@ use crate::{
     },
 };
 use anyhow::{ensure, Result};
-use ed25519_dalek::SigningKey;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use std::{
     collections::BTreeSet,
@@ -78,8 +78,8 @@ struct Generation {
 /// explicit stop handle. No publisher, registry, CA or chain RPC is consulted.
 pub async fn run_self_owned_rendezvous_v1(
     carrier: IrohConfigV1,
-    key: SigningKey,
-    clients: BTreeSet<[u8; 32]>,
+    key: TransportIdentity,
+    clients: BTreeSet<Vec<u8>>,
     stop: Arc<AtomicBool>,
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
@@ -91,8 +91,8 @@ pub async fn run_self_owned_rendezvous_v1(
 /// admission and supplies the shared persistent store; no chat server or epoch DB.
 pub async fn run_self_owned_node_v1(
     carrier: IrohConfigV1,
-    key: SigningKey,
-    clients: BTreeSet<[u8; 32]>,
+    key: TransportIdentity,
+    clients: BTreeSet<Vec<u8>>,
     stop: Arc<AtomicBool>,
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
@@ -127,8 +127,8 @@ pub async fn run_self_owned_node_v1(
 #[allow(clippy::too_many_arguments)]
 pub async fn run_self_owned_node_with_tls_v1(
     carrier: IrohConfigV1,
-    key: SigningKey,
-    clients: BTreeSet<[u8; 32]>,
+    key: TransportIdentity,
+    clients: BTreeSet<Vec<u8>>,
     stop: Arc<AtomicBool>,
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     tls: TlsMailboxListenerV1,
@@ -158,8 +158,8 @@ pub async fn run_self_owned_node_with_tls_v1(
 /// Explicit fixed scopes retain their caller-selected admission policy.
 pub async fn run_self_owned_node_on_endpoint_v1(
     endpoint: &IrohEndpointOwnerV1,
-    key: SigningKey,
-    clients: BTreeSet<[u8; 32]>,
+    key: TransportIdentity,
+    clients: BTreeSet<Vec<u8>>,
     stop: Arc<AtomicBool>,
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
@@ -185,7 +185,7 @@ pub async fn run_self_owned_node_on_endpoint_v1(
 /// are NOT silently opened by this opt-in: use their existing pinned entrypoint.
 pub async fn run_self_owned_mailbox_on_endpoint_v1(
     endpoint: &IrohEndpointOwnerV1,
-    key: SigningKey,
+    key: TransportIdentity,
     stop: Arc<AtomicBool>,
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
@@ -206,7 +206,7 @@ pub async fn run_self_owned_mailbox_on_endpoint_v1(
 #[allow(clippy::too_many_arguments)]
 pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
     endpoint: &IrohEndpointOwnerV1,
-    key: SigningKey,
+    key: TransportIdentity,
     stop: Arc<AtomicBool>,
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     native: Option<NativeMailboxListenerV7>,
@@ -214,7 +214,7 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
     ensure!(
-        mailbox.identity_public_key() == key.verifying_key().to_bytes(),
+        mailbox.identity_public_key() == key.public_key(),
         "mailbox node signer mismatch"
     );
     let mut max_connections = if endpoint.service_concurrency().is_some() {
@@ -228,7 +228,7 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
             "native listener requires original owner stop"
         );
         ensure!(
-            listener.identity() == key.verifying_key().to_bytes(),
+            listener.identity() == key.public_key(),
             "native node signer mismatch"
         );
         max_connections = max_connections.min(listener.admission_ceiling());
@@ -253,8 +253,8 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
 #[allow(clippy::too_many_arguments)]
 pub async fn run_self_owned_node_with_native_v7(
     carrier: IrohConfigV1,
-    key: SigningKey,
-    clients: BTreeSet<[u8; 32]>,
+    key: TransportIdentity,
+    clients: BTreeSet<Vec<u8>>,
     stop: Arc<AtomicBool>,
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     native: NativeMailboxListenerV7,
@@ -280,8 +280,8 @@ pub async fn run_self_owned_node_with_native_v7(
 #[allow(clippy::too_many_arguments)]
 pub async fn run_self_owned_node_with_native_tls_v8(
     carrier: IrohConfigV1,
-    key: SigningKey,
-    clients: BTreeSet<[u8; 32]>,
+    key: TransportIdentity,
+    clients: BTreeSet<Vec<u8>>,
     stop: Arc<AtomicBool>,
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     native: NativeMailboxListenerV7,
@@ -309,8 +309,8 @@ pub async fn run_self_owned_node_with_native_tls_v8(
 }
 
 fn native_node(
-    key: SigningKey,
-    clients: BTreeSet<[u8; 32]>,
+    key: TransportIdentity,
+    clients: BTreeSet<Vec<u8>>,
     stop: Arc<AtomicBool>,
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     native: NativeMailboxListenerV7,
@@ -320,7 +320,7 @@ fn native_node(
         "native listener requires original owner stop"
     );
     ensure!(
-        native.identity() == key.verifying_key().to_bytes(),
+        native.identity() == key.public_key(),
         "native node signer mismatch"
     );
     let mut node = Node::new(
@@ -339,7 +339,7 @@ fn native_node(
 /// The platform supplies its existing protected signer and durable history.
 pub async fn run_self_owned_native_mailbox_v7(
     listener: NativeMailboxListenerV7,
-    key: SigningKey,
+    key: TransportIdentity,
     stop: Arc<AtomicBool>,
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     activate: impl FnOnce(&NativeMailboxEndpointV7, u64) -> Result<Arc<ServiceLeaseHostV1>>,
@@ -351,8 +351,8 @@ pub async fn run_self_owned_native_mailbox_v7(
         "native listener requires original owner stop"
     );
     ensure!(
-        listener.identity() == key.verifying_key().to_bytes()
-            && mailbox.identity_public_key() == key.verifying_key().to_bytes(),
+        listener.identity() == key.public_key()
+            && mailbox.identity_public_key() == key.public_key(),
         "native node signer mismatch"
     );
     let concurrency = listener.concurrency();
@@ -361,13 +361,14 @@ pub async fn run_self_owned_native_mailbox_v7(
     }
     let mut route = listener.current_route();
     let admission_ceiling = listener.admission_ceiling();
+    let wire_ceiling = listener.wire_ceiling();
     let expiry = now_ms()?
         .checked_add(90_000)
         .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
     let host = activate(&route, expiry)?;
     let record = host.rotate_native_mailbox_v7(Some(&route), now_ms()?, expiry)?;
     ensure!(
-        record.relay_public_key == key.verifying_key().to_bytes(),
+        record.relay_public_key == key.public_key(),
         "native host signer mismatch"
     );
     mailbox.update_native_record_v7(record.clone())?;
@@ -407,9 +408,9 @@ pub async fn run_self_owned_native_mailbox_v7(
                 if Instant::now() >= rotate_at {
                     if let Some(c) = &concurrency {
                         let snapshot = c.snapshot();
-                        route.max_connections = snapshot.inbound_connections() as u16;
+                        route.max_connections = snapshot.inbound_connections().min(admission_ceiling) as u16;
                         if snapshot.wire_bytes_per_minute != 0 {
-                            route.max_bytes_per_minute = snapshot.wire_bytes_per_minute;
+                            route.max_bytes_per_minute = snapshot.wire_bytes_per_minute.min(wire_ceiling.unwrap_or(u64::MAX));
                         }
                     }
                     let expiry = now.checked_add(90_000).ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
@@ -424,8 +425,8 @@ pub async fn run_self_owned_native_mailbox_v7(
 }
 
 struct Node {
-    key: SigningKey,
-    clients: Option<Vec<[u8; 32]>>,
+    key: TransportIdentity,
+    clients: Option<Vec<Vec<u8>>>,
     stop: Arc<AtomicBool>,
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     max_connections: usize,
@@ -454,20 +455,21 @@ impl Node {
     }
 
     fn new(
-        key: SigningKey,
-        clients: BTreeSet<[u8; 32]>,
+        key: TransportIdentity,
+        clients: BTreeSet<Vec<u8>>,
         stop: Arc<AtomicBool>,
         mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
         max_connections: usize,
     ) -> Result<Self> {
         ensure!(
-            (1..=16).contains(&clients.len()) && !clients.contains(&key.verifying_key().to_bytes()),
+            (1..=16).contains(&clients.len()) && !clients.contains(key.public_key()),
             "local client resource policy"
         );
         for pin in &clients {
             ensure!(
-                !ed25519_dalek::VerifyingKey::from_bytes(pin)?.is_weak(),
-                "weak client key"
+                pin.len() == crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES
+                    && pin.iter().any(|&b| b != 0),
+                "invalid ML-DSA-65 client key"
             );
         }
         Ok(Self {
@@ -527,9 +529,19 @@ impl Node {
             .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
         let host = activate(&endpoint, expires_ms)?;
         let native_adaptive = native.as_ref().is_some_and(|n| n.concurrency().is_some());
+        let native_wire_ceiling = native
+            .as_ref()
+            .and_then(NativeMailboxListenerV7::wire_ceiling);
         let mut native_route = native.as_ref().map(NativeMailboxListenerV7::current_route);
+        if let Some(route) = &mut native_route {
+            route.max_connections = route.max_connections.min(max_connections as u16);
+        }
         #[cfg(feature = "tls-transport")]
-        let tls_route = tls.as_ref().map(TlsMailboxListenerV1::current_route);
+        let tls_route = tls.as_ref().map(|listener| {
+            let mut route = listener.current_route();
+            route.max_connections = route.max_connections.min(max_connections as u16);
+            route
+        });
         #[cfg(not(feature = "tls-transport"))]
         let tls_route = None;
         let first = if let Some(c) = &concurrency {
@@ -674,12 +686,16 @@ impl Node {
                                 if let Some(route) = &mut native_route {
                                     route.max_connections = capacity;
                                     if snapshot.wire_bytes_per_minute != 0 {
-                                        route.max_bytes_per_minute = snapshot.wire_bytes_per_minute;
+                                        route.max_bytes_per_minute = snapshot.wire_bytes_per_minute.min(native_wire_ceiling.unwrap_or(u64::MAX));
                                     }
                                 }
                             }
                             #[cfg(feature = "tls-transport")]
-                            let tls_route = tls.as_ref().map(TlsMailboxListenerV1::current_route);
+                            let tls_route = tls.as_ref().map(|listener| {
+                                let mut route = listener.current_route();
+                                route.max_connections = route.max_connections.min(max_connections as u16);
+                                route
+                            });
                             #[cfg(not(feature = "tls-transport"))]
                             let tls_route = None;
                             host.rotate_self_owned_resources_v1(&endpoint, tls_route.as_ref(),

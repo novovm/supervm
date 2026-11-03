@@ -14,13 +14,16 @@ use crate::product_mainline_overlay::{
     ProductMainlineOverlayRuntimeV1,
 };
 use crate::product_node_overlay::{ProductBootstrapSourceV1, ProductNodeOverlayConfigV1};
+use crate::product_relay_client::{
+    component_identity, component_transport_peer, component_transport_seed,
+};
 use crate::product_relay_client::{ProductRelayClientConfigV1, ProductRelayTlsTrustV1};
 use crate::product_relay_daemon::{
-    run_product_relay_daemon_with_shutdown_v1, ProductRelayDaemonConfigV1,
+    run_component_relay_daemon_with_shutdown_v1, ProductRelayDaemonConfigV1,
 };
 use novovm_network::{
-    peer_id_from_ed25519_public_key_v1, sign_bootstrap_manifest_v1, sign_relay_record_v1,
-    BootstrapSourceKindV1, RelayEndpointV1, RelayTransportV1, SignedBootstrapManifestV1,
+    sign_bootstrap_manifest_v1, sign_relay_record_v1, BootstrapSourceKindV1, RelayEndpointV1,
+    RelayTransportV1, SignedBootstrapManifestV1,
 };
 use std::{
     collections::BTreeSet,
@@ -52,7 +55,7 @@ impl RelayGuard {
         Self {
             stopping,
             worker: Some(thread::spawn(move || {
-                run_product_relay_daemon_with_shutdown_v1(config, stop)
+                run_component_relay_daemon_with_shutdown_v1(config, stop)
             })),
         }
     }
@@ -89,7 +92,7 @@ struct NetworkCluster {
     authority: NovNativeSealEpochAuthorityV1,
     block_hash: [u8; 32],
     bootstrap: ProductBootstrapSourceV1,
-    bootstrap_signer: [u8; 32],
+    bootstrap_signer: Vec<u8>,
     relay_override: ProductRelayClientConfigV1,
     relay: RelayGuard,
     started: Instant,
@@ -113,7 +116,13 @@ pub(crate) fn with_service_test_transports<T>(
         cluster.start_peer(index, cluster.started);
         cluster.peers[index].adapter.take();
     }
-    test(cluster.peers.iter().map(|peer| (peer.runtime.as_ref().unwrap(), &peer.key)).collect())
+    test(
+        cluster
+            .peers
+            .iter()
+            .map(|peer| (peer.runtime.as_ref().unwrap(), &peer.key))
+            .collect(),
+    )
 }
 
 fn durable_seal_facts(store: &NovNativeBlockSealStoreV1) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -139,9 +148,7 @@ impl NetworkCluster {
                 .iter()
                 .map(|key| NovNativeSealValidatorTransportBindingV1 {
                     validator_id: validator_id_v1(key.verifying_key().as_bytes()),
-                    transport_peer_id: peer_id_from_ed25519_public_key_v1(
-                        key.verifying_key().as_bytes(),
-                    ),
+                    transport_peer_id: component_transport_peer(key.verifying_key().as_bytes()),
                 })
                 .collect();
             let authority = NovNativeSealEpochAuthorityV1::derive_operator_pinned_genesis_epoch(
@@ -158,7 +165,7 @@ impl NetworkCluster {
                 block_hash = block.header.block_hash;
             }
             let key = keys.into_iter().nth(index).unwrap();
-            let peer_id = peer_id_from_ed25519_public_key_v1(key.verifying_key().as_bytes());
+            let peer_id = component_transport_peer(key.verifying_key().as_bytes());
             peers.push(NetworkPeer {
                 node,
                 key,
@@ -181,9 +188,8 @@ impl NetworkCluster {
         fs::write(&certificate_path, certificate.serialize_pem().unwrap()).unwrap();
         fs::write(&tls_key_path, certificate.serialize_private_key_pem()).unwrap();
         fs::write(&identity_path, hex_v1(&[113; 32])).unwrap();
-        let relay_key = SigningKey::from_bytes(&[113; 32]);
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(relay_key.verifying_key().as_bytes());
+        let relay_key = component_identity(&[113; 32]);
+        let relay_peer_id = relay_key.peer_id();
         let port = TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -195,6 +201,9 @@ impl NetworkCluster {
             "tls_cert_path": certificate_path,
             "tls_key_path": tls_key_path,
             "relay_identity_key_path": identity_path,
+            "chain_id": chain_id,
+            "library": "component-fixture-not-runtime",
+            "library_sha256": "0".repeat(64),
             "report_path": report_path,
             "report_interval_ms": 20,
             "session_queue_capacity": 128,
@@ -217,7 +226,7 @@ impl NetworkCluster {
             thread::sleep(Duration::from_millis(10));
         }
         let now = wall_ms();
-        let bootstrap_key = SigningKey::from_bytes(&[114; 32]);
+        let bootstrap_key = component_identity(&[114; 32]);
         let record = sign_relay_record_v1(
             &relay_key,
             "round-loopback-relay",
@@ -234,7 +243,8 @@ impl NetworkCluster {
         )
         .unwrap();
         let mut manifest = SignedBootstrapManifestV1 {
-            version: 1,
+            version: 2,
+            suite: 65,
             manifest_id: "round-loopback-manifest".into(),
             issued_at_ms: now.saturating_sub(1000),
             expires_at_ms: now + 300_000,
@@ -255,7 +265,7 @@ impl NetworkCluster {
                 priority: 1,
                 manifest,
             },
-            bootstrap_signer: *bootstrap_key.verifying_key().as_bytes(),
+            bootstrap_signer: bootstrap_key.public_key().to_vec(),
             relay_override: ProductRelayClientConfigV1 {
                 endpoint: format!("wss://127.0.0.1:{port}/novovm"),
                 expected_relay_peer_id: relay_peer_id,
@@ -284,7 +294,13 @@ impl NetworkCluster {
         self.start_peer_with_decision(index, now, commit_v2, false);
     }
 
-    fn start_peer_with_decision(&mut self, index: usize, now: Instant, commit_v2: bool, decision_v3: bool) {
+    fn start_peer_with_decision(
+        &mut self,
+        index: usize,
+        now: Instant,
+        commit_v2: bool,
+        decision_v3: bool,
+    ) {
         let remote_peers = self
             .peers
             .iter()
@@ -298,15 +314,23 @@ impl NetworkCluster {
         let peer = &mut self.peers[index];
         assert!(peer.runtime.is_none());
         let key_path = peer.node.root.join("network-identity.hex");
-        fs::write(&key_path, hex_v1(&peer.key.to_bytes())).unwrap();
+        fs::write(
+            &key_path,
+            hex_v1(&component_transport_seed(
+                peer.key.verifying_key().as_bytes(),
+            )),
+        )
+        .unwrap();
         let config = ProductMainlineOverlayConfigV1 {
             chain_id: self.authority.chain_id,
             role: ProductMainlineOverlayRoleV1::Duplex,
             identity_key_path: key_path,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             delivery_journal_path: None,
             overlay: ProductNodeOverlayConfigV1 {
                 cache_path: peer.node.root.join("bootstrap-cache.json"),
-                trusted_signer_public_keys: vec![self.bootstrap_signer],
+                trusted_signer_public_keys: vec![self.bootstrap_signer.clone()],
                 minimum_bootstrap_signatures: 1,
                 embedded_sources: vec![self.bootstrap.clone()],
                 cooldown_base_ms: Some(10),

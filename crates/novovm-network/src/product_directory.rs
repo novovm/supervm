@@ -1,16 +1,22 @@
-use crate::product_overlay::peer_id_from_ed25519_public_key_v1;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use crate::product_overlay::{
+    peer_id_from_mldsa65_public_key_v1, TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SUITE,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-pub const PRODUCT_DIRECTORY_VERSION_V1: u16 = 1;
+pub const PRODUCT_DIRECTORY_VERSION_V1: u16 = 2;
+const RELAY_RECORD_CONTEXT: &[u8] = b"NOVOVM/relay-record/ML-DSA-65/v2";
+pub(crate) const BOOTSTRAP_CONTEXT: &[u8] = b"NOVOVM/bootstrap-manifest/ML-DSA-65/v2";
+const STRATEGY_CONTEXT: &[u8] = b"NOVOVM/strategy-receipt/ML-DSA-65/v2";
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ProductDirectoryErrorV1 {
     #[error("unsupported product directory version: {0}")]
     UnsupportedVersion(u16),
+    #[error("unsupported product directory signature suite: {0}")]
+    UnsupportedSuite(u16),
     #[error("record or manifest has expired")]
     Expired,
     #[error("relay record is not yet valid")]
@@ -61,9 +67,10 @@ pub struct RelayEndpointV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeerSignedRelayRecordV1 {
     pub version: u16,
+    pub suite: u16,
     pub record_id: String,
     pub relay_peer_id: String,
-    pub relay_public_key: [u8; 32],
+    pub relay_public_key: Vec<u8>,
     pub endpoints: Vec<RelayEndpointV1>,
     pub issued_at_ms: u64,
     pub expires_at_ms: u64,
@@ -127,13 +134,14 @@ struct RelayCandidateRuntimeV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BootstrapManifestSignatureV1 {
     pub signer_peer_id: String,
-    pub signer_public_key: [u8; 32],
+    pub signer_public_key: Vec<u8>,
     pub signature: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedBootstrapManifestV1 {
     pub version: u16,
+    pub suite: u16,
     pub manifest_id: String,
     pub issued_at_ms: u64,
     pub expires_at_ms: u64,
@@ -214,9 +222,10 @@ pub struct StrategyDecisionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedStrategyReceiptV1 {
     pub version: u16,
+    pub suite: u16,
     pub receipt_id: String,
     pub subject_peer_id: String,
-    pub subject_public_key: [u8; 32],
+    pub subject_public_key: Vec<u8>,
     pub issued_at_ms: u64,
     pub input_hash: [u8; 32],
     pub decision: StrategyDecisionV1,
@@ -225,17 +234,18 @@ pub struct SignedStrategyReceiptV1 {
 }
 
 pub fn sign_relay_record_v1(
-    signing_key: &SigningKey,
+    signing_key: &TransportIdentity,
     record_id: impl Into<String>,
     endpoints: Vec<RelayEndpointV1>,
     issued_at_ms: u64,
     expires_at_ms: u64,
     sequence: u64,
 ) -> Result<PeerSignedRelayRecordV1, ProductDirectoryErrorV1> {
-    let relay_public_key = signing_key.verifying_key().to_bytes();
-    let relay_peer_id = peer_id_from_ed25519_public_key_v1(&relay_public_key);
+    let relay_public_key = signing_key.public_key().to_vec();
+    let relay_peer_id = signing_key.peer_id();
     let mut record = PeerSignedRelayRecordV1 {
         version: PRODUCT_DIRECTORY_VERSION_V1,
+        suite: MLDSA65_SUITE,
         record_id: record_id.into(),
         relay_peer_id,
         relay_public_key,
@@ -247,17 +257,20 @@ pub fn sign_relay_record_v1(
     };
     validate_relay_record_shape_v1(&record)?;
     record.signature = signing_key
-        .sign(&relay_record_signing_bytes_v1(&record))
-        .to_bytes()
-        .to_vec();
+        .sign(
+            &relay_record_signing_bytes_v1(&record),
+            RELAY_RECORD_CONTEXT,
+        )
+        .map_err(|_| ProductDirectoryErrorV1::InvalidSignature)?;
     Ok(record)
 }
 
 pub fn validate_relay_record_v1(
     record: &PeerSignedRelayRecordV1,
     now_ms: u64,
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<ValidatedRelayRecordV1, ProductDirectoryErrorV1> {
-    verify_relay_record_authenticity_v1(record)?;
+    verify_relay_record_authenticity_v1(record, verifier)?;
     match relay_record_time_v1(record, now_ms) {
         RelayRecordTimeV1::NotYetValid => return Err(ProductDirectoryErrorV1::NotYetValid),
         RelayRecordTimeV1::Expired => return Err(ProductDirectoryErrorV1::Expired),
@@ -293,15 +306,18 @@ pub(crate) fn relay_record_time_v1(
 /// Authentic signed metadata only, never a currently usable directory entry.
 pub(crate) fn verify_relay_record_authenticity_v1(
     record: &PeerSignedRelayRecordV1,
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<(), ProductDirectoryErrorV1> {
     validate_relay_record_shape_v1(record)?;
-    if record.relay_peer_id != peer_id_from_ed25519_public_key_v1(&record.relay_public_key) {
+    if record.relay_peer_id != peer_id_from_mldsa65_public_key_v1(&record.relay_public_key) {
         return Err(ProductDirectoryErrorV1::RelayIdentityMismatch);
     }
     verify_signature_v1(
         &record.relay_public_key,
         &relay_record_signing_bytes_v1(record),
         &record.signature,
+        RELAY_RECORD_CONTEXT,
+        verifier,
     )
 }
 
@@ -409,8 +425,8 @@ impl RelayCandidatePoolV1 {
 
 impl BootstrapTrustPolicyV1 {
     #[must_use]
-    pub fn single_signer(signer_public_key: [u8; 32]) -> Self {
-        let signer_peer_id = peer_id_from_ed25519_public_key_v1(&signer_public_key);
+    pub fn single_signer(signer_public_key: Vec<u8>) -> Self {
+        let signer_peer_id = peer_id_from_mldsa65_public_key_v1(&signer_public_key);
         Self {
             allowed_signer_peer_ids: BTreeSet::from([signer_peer_id]),
             minimum_valid_signatures: 1,
@@ -420,14 +436,24 @@ impl BootstrapTrustPolicyV1 {
 
 pub fn sign_bootstrap_manifest_v1(
     manifest: &mut SignedBootstrapManifestV1,
-    signing_key: &SigningKey,
+    signing_key: &TransportIdentity,
 ) -> Result<(), ProductDirectoryErrorV1> {
-    let signer_public_key = signing_key.verifying_key().to_bytes();
-    let signer_peer_id = peer_id_from_ed25519_public_key_v1(&signer_public_key);
+    if manifest.version != PRODUCT_DIRECTORY_VERSION_V1 {
+        return Err(ProductDirectoryErrorV1::UnsupportedVersion(
+            manifest.version,
+        ));
+    }
+    if manifest.suite != MLDSA65_SUITE {
+        return Err(ProductDirectoryErrorV1::UnsupportedSuite(manifest.suite));
+    }
+    let signer_public_key = signing_key.public_key().to_vec();
+    let signer_peer_id = signing_key.peer_id();
     let signature = signing_key
-        .sign(&bootstrap_manifest_signing_bytes_v1(manifest))
-        .to_bytes()
-        .to_vec();
+        .sign(
+            &bootstrap_manifest_signing_bytes_v1(manifest),
+            BOOTSTRAP_CONTEXT,
+        )
+        .map_err(|_| ProductDirectoryErrorV1::InvalidSignature)?;
     manifest
         .signatures
         .retain(|existing| existing.signer_peer_id != signer_peer_id);
@@ -446,8 +472,9 @@ pub fn validate_bootstrap_manifest_v1(
     manifest: &SignedBootstrapManifestV1,
     policy: &BootstrapTrustPolicyV1,
     now_ms: u64,
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> BootstrapValidationV1 {
-    let result = validate_bootstrap_manifest_inner_v1(manifest, policy, now_ms);
+    let result = validate_bootstrap_manifest_inner_v1(manifest, policy, now_ms, verifier);
     match result {
         Ok((trusted_signature_count, valid_relay_record_count, rejected_relay_record_count)) => {
             BootstrapValidationV1 {
@@ -472,6 +499,7 @@ pub fn resolve_bootstrap_sources_v1(
     sources: &[BootstrapSourceV1],
     policy: &BootstrapTrustPolicyV1,
     now_ms: u64,
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<BootstrapResolutionV1, ProductDirectoryErrorV1> {
     let mut sources = sources.to_vec();
     sources.sort_by(|left, right| {
@@ -484,7 +512,7 @@ pub fn resolve_bootstrap_sources_v1(
     let mut records = BTreeMap::<String, ValidatedRelayRecordV1>::new();
     let mut selected_source = None;
     for source in sources {
-        let validation = validate_bootstrap_manifest_v1(&source.manifest, policy, now_ms);
+        let validation = validate_bootstrap_manifest_v1(&source.manifest, policy, now_ms, verifier);
         if !validation.accepted {
             rejected_source_count = rejected_source_count.saturating_add(1);
             continue;
@@ -492,7 +520,7 @@ pub fn resolve_bootstrap_sources_v1(
         selected_source.get_or_insert(source.source_kind);
         accepted_sources.push(source.source_kind);
         for record in &source.manifest.relay_records {
-            if let Ok(validated) = validate_relay_record_v1(record, now_ms) {
+            if let Ok(validated) = validate_relay_record_v1(record, now_ms, verifier) {
                 let replace = records
                     .get(&validated.record.relay_peer_id)
                     .is_none_or(|current| current.record.sequence < validated.record.sequence);
@@ -514,14 +542,14 @@ pub fn resolve_bootstrap_sources_v1(
 }
 
 pub fn sign_strategy_receipt_v1(
-    signing_key: &SigningKey,
+    signing_key: &TransportIdentity,
     receipt_id: impl Into<String>,
     issued_at_ms: u64,
     strategy_input: &[u8],
     decision: StrategyDecisionV1,
-) -> SignedStrategyReceiptV1 {
-    let subject_public_key = signing_key.verifying_key().to_bytes();
-    let subject_peer_id = peer_id_from_ed25519_public_key_v1(&subject_public_key);
+) -> Result<SignedStrategyReceiptV1, ProductDirectoryErrorV1> {
+    let subject_public_key = signing_key.public_key().to_vec();
+    let subject_peer_id = signing_key.peer_id();
     let input_hash = hash_v1(b"novovm-product-overlay-strategy-input-v1", strategy_input);
     let decision_hash = hash_v1(
         b"novovm-product-overlay-strategy-decision-v1",
@@ -529,6 +557,7 @@ pub fn sign_strategy_receipt_v1(
     );
     let mut receipt = SignedStrategyReceiptV1 {
         version: PRODUCT_DIRECTORY_VERSION_V1,
+        suite: MLDSA65_SUITE,
         receipt_id: receipt_id.into(),
         subject_peer_id,
         subject_public_key,
@@ -539,19 +568,28 @@ pub fn sign_strategy_receipt_v1(
         signature: Vec::new(),
     };
     receipt.signature = signing_key
-        .sign(&strategy_receipt_signing_bytes_v1(&receipt))
-        .to_bytes()
-        .to_vec();
-    receipt
+        .sign(
+            &strategy_receipt_signing_bytes_v1(&receipt),
+            STRATEGY_CONTEXT,
+        )
+        .map_err(|_| ProductDirectoryErrorV1::InvalidSignature)?;
+    Ok(receipt)
 }
 
 pub fn validate_strategy_receipt_v1(
     receipt: &SignedStrategyReceiptV1,
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<(), ProductDirectoryErrorV1> {
     if receipt.version != PRODUCT_DIRECTORY_VERSION_V1 {
         return Err(ProductDirectoryErrorV1::UnsupportedVersion(receipt.version));
     }
-    if receipt.subject_peer_id != peer_id_from_ed25519_public_key_v1(&receipt.subject_public_key) {
+    if receipt.suite != MLDSA65_SUITE {
+        return Err(ProductDirectoryErrorV1::UnsupportedSuite(receipt.suite));
+    }
+    if receipt.subject_public_key.len() != MLDSA65_PUBLIC_KEY_BYTES {
+        return Err(ProductDirectoryErrorV1::InvalidKeyMaterial);
+    }
+    if receipt.subject_peer_id != peer_id_from_mldsa65_public_key_v1(&receipt.subject_public_key) {
         return Err(ProductDirectoryErrorV1::ReceiptIdentityMismatch);
     }
     let expected_decision_hash = hash_v1(
@@ -565,6 +603,8 @@ pub fn validate_strategy_receipt_v1(
         &receipt.subject_public_key,
         &strategy_receipt_signing_bytes_v1(receipt),
         &receipt.signature,
+        STRATEGY_CONTEXT,
+        verifier,
     )
 }
 
@@ -573,6 +613,12 @@ fn validate_relay_record_shape_v1(
 ) -> Result<(), ProductDirectoryErrorV1> {
     if record.version != PRODUCT_DIRECTORY_VERSION_V1 {
         return Err(ProductDirectoryErrorV1::UnsupportedVersion(record.version));
+    }
+    if record.suite != MLDSA65_SUITE {
+        return Err(ProductDirectoryErrorV1::UnsupportedSuite(record.suite));
+    }
+    if record.relay_public_key.len() != MLDSA65_PUBLIC_KEY_BYTES {
+        return Err(ProductDirectoryErrorV1::InvalidKeyMaterial);
     }
     if record.record_id.is_empty()
         || record.endpoints.is_empty()
@@ -655,11 +701,15 @@ fn validate_bootstrap_manifest_inner_v1(
     manifest: &SignedBootstrapManifestV1,
     policy: &BootstrapTrustPolicyV1,
     now_ms: u64,
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<(usize, usize, usize), ProductDirectoryErrorV1> {
     if manifest.version != PRODUCT_DIRECTORY_VERSION_V1 {
         return Err(ProductDirectoryErrorV1::UnsupportedVersion(
             manifest.version,
         ));
+    }
+    if manifest.suite != MLDSA65_SUITE {
+        return Err(ProductDirectoryErrorV1::UnsupportedSuite(manifest.suite));
     }
     if manifest.issued_at_ms > now_ms || manifest.expires_at_ms <= now_ms {
         return Err(ProductDirectoryErrorV1::Expired);
@@ -677,7 +727,7 @@ fn validate_bootstrap_manifest_inner_v1(
     }
     let mut trusted_signers = BTreeSet::new();
     for signature in &manifest.signatures {
-        let expected_peer_id = peer_id_from_ed25519_public_key_v1(&signature.signer_public_key);
+        let expected_peer_id = peer_id_from_mldsa65_public_key_v1(&signature.signer_public_key);
         if signature.signer_peer_id != expected_peer_id
             || !policy
                 .allowed_signer_peer_ids
@@ -689,6 +739,8 @@ fn validate_bootstrap_manifest_inner_v1(
             &signature.signer_public_key,
             &bootstrap_manifest_signing_bytes_v1(manifest),
             &signature.signature,
+            BOOTSTRAP_CONTEXT,
+            verifier,
         )
         .is_ok()
         {
@@ -701,7 +753,7 @@ fn validate_bootstrap_manifest_inner_v1(
     let mut valid_relay_record_count = 0usize;
     let mut rejected_relay_record_count = 0usize;
     for record in &manifest.relay_records {
-        if validate_relay_record_v1(record, now_ms).is_ok() {
+        if validate_relay_record_v1(record, now_ms, verifier).is_ok() {
             valid_relay_record_count = valid_relay_record_count.saturating_add(1);
         } else {
             rejected_relay_record_count = rejected_relay_record_count.saturating_add(1);
@@ -716,8 +768,9 @@ fn validate_bootstrap_manifest_inner_v1(
 
 pub(crate) fn relay_record_signing_bytes_v1(record: &PeerSignedRelayRecordV1) -> Vec<u8> {
     let mut out = Vec::new();
-    append_field_v1(&mut out, b"novovm-product-relay-record-v1");
+    append_field_v1(&mut out, b"novovm-product-relay-record-mldsa65-v2");
     out.extend_from_slice(&record.version.to_be_bytes());
+    out.extend_from_slice(&record.suite.to_be_bytes());
     append_field_v1(&mut out, record.record_id.as_bytes());
     append_field_v1(&mut out, record.relay_peer_id.as_bytes());
     out.extend_from_slice(&record.relay_public_key);
@@ -730,8 +783,9 @@ pub(crate) fn relay_record_signing_bytes_v1(record: &PeerSignedRelayRecordV1) ->
 
 pub(crate) fn bootstrap_manifest_signing_bytes_v1(manifest: &SignedBootstrapManifestV1) -> Vec<u8> {
     let mut out = Vec::new();
-    append_field_v1(&mut out, b"novovm-product-bootstrap-manifest-v1");
+    append_field_v1(&mut out, b"novovm-product-bootstrap-manifest-mldsa65-v2");
     out.extend_from_slice(&manifest.version.to_be_bytes());
+    out.extend_from_slice(&manifest.suite.to_be_bytes());
     append_field_v1(&mut out, manifest.manifest_id.as_bytes());
     out.extend_from_slice(&manifest.issued_at_ms.to_be_bytes());
     out.extend_from_slice(&manifest.expires_at_ms.to_be_bytes());
@@ -749,8 +803,9 @@ pub(crate) fn bootstrap_manifest_signing_bytes_v1(manifest: &SignedBootstrapMani
 
 fn strategy_receipt_signing_bytes_v1(receipt: &SignedStrategyReceiptV1) -> Vec<u8> {
     let mut out = Vec::new();
-    append_field_v1(&mut out, b"novovm-product-strategy-receipt-v1");
+    append_field_v1(&mut out, b"novovm-product-strategy-receipt-mldsa65-v2");
     out.extend_from_slice(&receipt.version.to_be_bytes());
+    out.extend_from_slice(&receipt.suite.to_be_bytes());
     append_field_v1(&mut out, receipt.receipt_id.as_bytes());
     append_field_v1(&mut out, receipt.subject_peer_id.as_bytes());
     out.extend_from_slice(&receipt.subject_public_key);
@@ -846,17 +901,20 @@ fn hash_v1(domain: &[u8], payload: &[u8]) -> [u8; 32] {
 }
 
 fn verify_signature_v1(
-    public_key: &[u8; 32],
+    public_key: &[u8],
     bytes: &[u8],
     signature: &[u8],
+    context: &[u8],
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<(), ProductDirectoryErrorV1> {
-    let verifying_key = VerifyingKey::from_bytes(public_key)
-        .map_err(|_| ProductDirectoryErrorV1::InvalidKeyMaterial)?;
-    let signature: [u8; 64] = signature
-        .try_into()
-        .map_err(|_| ProductDirectoryErrorV1::InvalidSignature)?;
-    verifying_key
-        .verify(bytes, &Signature::from_bytes(&signature))
+    if public_key.len() != MLDSA65_PUBLIC_KEY_BYTES {
+        return Err(ProductDirectoryErrorV1::InvalidKeyMaterial);
+    }
+    if signature.len() != crate::product_overlay::MLDSA65_SIGNATURE_BYTES {
+        return Err(ProductDirectoryErrorV1::InvalidSignature);
+    }
+    verifier
+        .verify(public_key, bytes, context, signature)
         .map_err(|_| ProductDirectoryErrorV1::InvalidSignature)
 }
 
@@ -882,7 +940,7 @@ mod tests {
     }
 
     fn record(
-        key: &SigningKey,
+        key: &TransportIdentity,
         id: &str,
         transport: RelayTransportV1,
         sequence: u64,
@@ -900,44 +958,44 @@ mod tests {
 
     #[test]
     fn signed_relay_records_reject_tamper_expiry_and_identity_mismatch() {
-        let key = SigningKey::from_bytes(&[81u8; 32]);
+        let key = crate::test_identity::key(81);
         let valid = record(&key, "relay-a", RelayTransportV1::Wss443, 1);
-        assert!(validate_relay_record_v1(&valid, 2_000).is_ok());
+        assert!(validate_relay_record_v1(&valid, 2_000, &key).is_ok());
 
         let mut tampered = valid.clone();
         tampered.endpoints[0].uri = "wss://attacker.example:443/novovm".into();
         assert_eq!(
-            validate_relay_record_v1(&tampered, 2_000),
+            validate_relay_record_v1(&tampered, 2_000, &key),
             Err(ProductDirectoryErrorV1::InvalidSignature)
         );
 
         let mut wrong_identity = valid.clone();
-        wrong_identity.relay_peer_id = "novovm-ed25519:wrong".into();
+        wrong_identity.relay_peer_id = "novovm-mldsa65:wrong".into();
         assert_eq!(
-            validate_relay_record_v1(&wrong_identity, 2_000),
+            validate_relay_record_v1(&wrong_identity, 2_000, &key),
             Err(ProductDirectoryErrorV1::RelayIdentityMismatch)
         );
 
         assert_eq!(
-            validate_relay_record_v1(&valid, 10_000),
+            validate_relay_record_v1(&valid, 10_000, &key),
             Err(ProductDirectoryErrorV1::Expired)
         );
     }
 
     #[test]
     fn relay_time_boundaries_follow_authenticity_checks() {
-        let key = SigningKey::from_bytes(&[81; 32]);
+        let key = crate::test_identity::key(81);
         let signed = record(&key, "relay-time", RelayTransportV1::Wss443, 1);
         assert_eq!(
-            validate_relay_record_v1(&signed, 999),
+            validate_relay_record_v1(&signed, 999, &key),
             Err(ProductDirectoryErrorV1::NotYetValid)
         );
         for now in [1000, 1001, 9999] {
-            assert!(validate_relay_record_v1(&signed, now).is_ok());
+            assert!(validate_relay_record_v1(&signed, now, &key).is_ok());
         }
         for now in [10000, 10001] {
             assert_eq!(
-                validate_relay_record_v1(&signed, now),
+                validate_relay_record_v1(&signed, now, &key),
                 Err(ProductDirectoryErrorV1::Expired)
             );
         }
@@ -947,36 +1005,52 @@ mod tests {
         wrong.relay_peer_id = "wrong".into();
         let mut version = signed.clone();
         version.version = 99;
+        let mut legacy = signed.clone();
+        legacy.version = 1;
+        let mut suite = signed.clone();
+        suite.suite = 44;
         for now in [999, 1000, 10000] {
             assert_eq!(
-                validate_relay_record_v1(&forged, now),
+                validate_relay_record_v1(&forged, now, &key),
                 Err(ProductDirectoryErrorV1::InvalidSignature)
             );
             assert_eq!(
-                validate_relay_record_v1(&wrong, now),
+                validate_relay_record_v1(&wrong, now, &key),
                 Err(ProductDirectoryErrorV1::RelayIdentityMismatch)
             );
             assert_eq!(
-                validate_relay_record_v1(&version, now),
+                validate_relay_record_v1(&version, now, &key),
                 Err(ProductDirectoryErrorV1::UnsupportedVersion(99))
+            );
+            assert_eq!(
+                validate_relay_record_v1(&legacy, now, &key),
+                Err(ProductDirectoryErrorV1::UnsupportedVersion(1))
+            );
+            assert_eq!(
+                validate_relay_record_v1(&suite, now, &key),
+                Err(ProductDirectoryErrorV1::UnsupportedSuite(44))
             );
         }
     }
 
     #[test]
     fn candidate_pool_rotates_cools_down_and_prefers_wss() {
-        let key_a = SigningKey::from_bytes(&[82u8; 32]);
-        let key_b = SigningKey::from_bytes(&[83u8; 32]);
+        let key_a = crate::test_identity::key(82);
+        let key_b = crate::test_identity::key(83);
         let mut pool = RelayCandidatePoolV1::new(RelayCandidatePoolConfigV1 {
             cooldown_base_ms: 1_000,
             cooldown_max_ms: 10_000,
         });
         let relay_a = record(&key_a, "relay-a", RelayTransportV1::Wss443, 1);
         let relay_b = record(&key_b, "relay-b", RelayTransportV1::Quic443, 1);
-        pool.upsert_verified_record(validate_relay_record_v1(&relay_a, 2_000).expect("valid a"))
-            .expect("upsert a");
-        pool.upsert_verified_record(validate_relay_record_v1(&relay_b, 2_000).expect("valid b"))
-            .expect("upsert b");
+        pool.upsert_verified_record(
+            validate_relay_record_v1(&relay_a, 2_000, &key_a).expect("valid a"),
+        )
+        .expect("upsert a");
+        pool.upsert_verified_record(
+            validate_relay_record_v1(&relay_b, 2_000, &key_b).expect("valid b"),
+        )
+        .expect("upsert b");
         let selected = pool.select(2_000).expect("selected relay");
         assert_eq!(selected.relay_peer_id, relay_a.relay_peer_id);
         let rotated = pool.rotate_after_failure(&relay_a.relay_peer_id, 2_000);
@@ -991,12 +1065,13 @@ mod tests {
 
     #[test]
     fn bootstrap_requires_configured_trusted_signers_and_merges_sources() {
-        let signer_a = SigningKey::from_bytes(&[84u8; 32]);
-        let signer_b = SigningKey::from_bytes(&[85u8; 32]);
-        let relay_a = SigningKey::from_bytes(&[86u8; 32]);
-        let relay_b = SigningKey::from_bytes(&[87u8; 32]);
+        let signer_a = crate::test_identity::key(84);
+        let signer_b = crate::test_identity::key(85);
+        let relay_a = crate::test_identity::key(86);
+        let relay_b = crate::test_identity::key(87);
         let mut manifest = SignedBootstrapManifestV1 {
             version: PRODUCT_DIRECTORY_VERSION_V1,
+            suite: MLDSA65_SUITE,
             manifest_id: "manifest-a".into(),
             issued_at_ms: 1_000,
             expires_at_ms: 10_000,
@@ -1012,15 +1087,12 @@ mod tests {
         };
         sign_bootstrap_manifest_v1(&mut manifest, &signer_a).expect("sign a");
         let policy = BootstrapTrustPolicyV1 {
-            allowed_signer_peer_ids: BTreeSet::from([
-                peer_id_from_ed25519_public_key_v1(&signer_a.verifying_key().to_bytes()),
-                peer_id_from_ed25519_public_key_v1(&signer_b.verifying_key().to_bytes()),
-            ]),
+            allowed_signer_peer_ids: BTreeSet::from([signer_a.peer_id(), signer_b.peer_id()]),
             minimum_valid_signatures: 2,
         };
-        assert!(!validate_bootstrap_manifest_v1(&manifest, &policy, 2_000).accepted);
+        assert!(!validate_bootstrap_manifest_v1(&manifest, &policy, 2_000, &signer_a).accepted);
         sign_bootstrap_manifest_v1(&mut manifest, &signer_b).expect("sign b");
-        let validation = validate_bootstrap_manifest_v1(&manifest, &policy, 2_000);
+        let validation = validate_bootstrap_manifest_v1(&manifest, &policy, 2_000, &signer_a);
         assert!(validation.accepted);
         assert_eq!(validation.trusted_signature_count, 2);
         let resolution = resolve_bootstrap_sources_v1(
@@ -1038,6 +1110,7 @@ mod tests {
             ],
             &policy,
             2_000,
+            &signer_a,
         )
         .expect("resolve sources");
         assert_eq!(
@@ -1049,10 +1122,11 @@ mod tests {
 
     #[test]
     fn bootstrap_rejects_raw_directory_and_single_official_requirements() {
-        let signer = SigningKey::from_bytes(&[88u8; 32]);
-        let policy = BootstrapTrustPolicyV1::single_signer(signer.verifying_key().to_bytes());
+        let signer = crate::test_identity::key(88);
+        let policy = BootstrapTrustPolicyV1::single_signer(signer.public_key().to_vec());
         let mut manifest = SignedBootstrapManifestV1 {
             version: PRODUCT_DIRECTORY_VERSION_V1,
+            suite: MLDSA65_SUITE,
             manifest_id: "bad-manifest".into(),
             issued_at_ms: 1_000,
             expires_at_ms: 10_000,
@@ -1064,7 +1138,7 @@ mod tests {
             signatures: Vec::new(),
         };
         sign_bootstrap_manifest_v1(&mut manifest, &signer).expect("sign manifest");
-        let validation = validate_bootstrap_manifest_v1(&manifest, &policy, 2_000);
+        let validation = validate_bootstrap_manifest_v1(&manifest, &policy, 2_000, &signer);
         assert!(!validation.accepted);
         assert!(validation
             .reject_reason
@@ -1074,12 +1148,13 @@ mod tests {
 
     #[test]
     fn bootstrap_rejects_records_beyond_declared_minimal_candidate_limit() {
-        let signer = SigningKey::from_bytes(&[91u8; 32]);
-        let relay_a = SigningKey::from_bytes(&[92u8; 32]);
-        let relay_b = SigningKey::from_bytes(&[93u8; 32]);
-        let policy = BootstrapTrustPolicyV1::single_signer(signer.verifying_key().to_bytes());
+        let signer = crate::test_identity::key(91);
+        let relay_a = crate::test_identity::key(92);
+        let relay_b = crate::test_identity::key(93);
+        let policy = BootstrapTrustPolicyV1::single_signer(signer.public_key().to_vec());
         let mut manifest = SignedBootstrapManifestV1 {
             version: PRODUCT_DIRECTORY_VERSION_V1,
+            suite: MLDSA65_SUITE,
             manifest_id: "over-disclosure".into(),
             issued_at_ms: 1_000,
             expires_at_ms: 10_000,
@@ -1094,7 +1169,7 @@ mod tests {
             signatures: Vec::new(),
         };
         sign_bootstrap_manifest_v1(&mut manifest, &signer).expect("sign manifest");
-        let validation = validate_bootstrap_manifest_v1(&manifest, &policy, 2_000);
+        let validation = validate_bootstrap_manifest_v1(&manifest, &policy, 2_000, &signer);
         assert!(!validation.accepted);
         assert!(validation
             .reject_reason
@@ -1104,7 +1179,7 @@ mod tests {
 
     #[test]
     fn signed_strategy_receipt_is_replayable_and_tamper_evident() {
-        let key = SigningKey::from_bytes(&[89u8; 32]);
+        let key = crate::test_identity::key(89);
         let decision = StrategyDecisionV1 {
             selected_path: StrategyPathV1::RelayNovoRudp,
             selected_relay_peer_id: Some("relay-a".into()),
@@ -1118,12 +1193,13 @@ mod tests {
             hard_policy_override_rejected: false,
         };
         let receipt =
-            sign_strategy_receipt_v1(&key, "receipt-1", 2_000, b"strategy-input", decision);
-        validate_strategy_receipt_v1(&receipt).expect("valid receipt");
+            sign_strategy_receipt_v1(&key, "receipt-1", 2_000, b"strategy-input", decision)
+                .unwrap();
+        validate_strategy_receipt_v1(&receipt, &key).expect("valid receipt");
         let mut tampered = receipt.clone();
         tampered.decision.selected_relay_peer_id = Some("relay-attacker".into());
         assert_eq!(
-            validate_strategy_receipt_v1(&tampered),
+            validate_strategy_receipt_v1(&tampered, &key),
             Err(ProductDirectoryErrorV1::InvalidSignature)
         );
     }

@@ -1,5 +1,13 @@
 //! Process-isolated Linux credential/owner acceptance. No live credentials used.
 use super::*;
+fn open_component(config: Config, provision: bool, legacy: Option<LegacyConfig>) -> Result<Owner> {
+    Owner::open_with_identity(
+        config,
+        provision,
+        legacy,
+        crate::transport_identity::component_identity([71; 32]),
+    )
+}
 use std::{
     os::unix::fs::{symlink, PermissionsExt},
     process::Command,
@@ -42,74 +50,81 @@ async fn linux_owner_child() -> Result<()> {
     };
     let root = PathBuf::from(root);
     let config = Config {
-        version: 2,
+        version: 3,
         root: root.clone(),
-        allowed_clients: [SigningKey::from_bytes(&[41; 32]).verifying_key().to_bytes()].into(),
+        transport_identity_path: PathBuf::from("component-fixture-not-custody"),
+        chain_id: 7,
+        library: PathBuf::from("component-fixture-not-runtime"),
+        library_sha256: "0".repeat(64),
+        allowed_clients: [crate::transport_identity::component_identity([41; 32])
+            .public_key()
+            .to_vec()]
+        .into(),
         relays: vec![],
         nameserver: "127.0.0.1".parse()?,
         bind_address: Some("127.0.0.1:0".parse()?),
         relay_only: false,
         record_id: "linux-owner-fixture".into(),
     };
-    let owner = Owner::open(config.clone(), true, None)?;
-    let pin = owner.policy.node_pin;
-    assert!(Owner::open(config.clone(), true, None).is_err());
-    assert!(Owner::open(config.clone(), true, Some(serde_json::json!({}))).is_err());
+    let owner = open_component(config.clone(), true, None)?;
+    let pin = owner.policy.node_pin.clone();
+    assert!(open_component(config.clone(), true, None).is_err());
+    assert!(open_component(config.clone(), true, Some(serde_json::json!({}))).is_err());
     let native = NativeListenerConfig {
         version: 1,
         listen: "127.0.0.1:0".parse()?,
         advertised: "127.0.0.1:0".parse()?,
-        max_connections: 4,
-        max_bytes_per_minute: 64 * 1024 * 1024,
+        max_connections: Some(4),
+        max_bytes_per_minute: Some(64 * 1024 * 1024),
     };
     owner.set_carrier_mode(CarrierMode::DirectOnly)?;
-    Owner::open(config.clone(), true, None)?.set_native_listener(Some(native))?;
+    open_component(config.clone(), true, None)?.set_native_listener(Some(native))?;
     #[cfg(feature = "tls-transport")]
     {
-        Owner::open(config.clone(), true, None)?.set_native_carrier_mailbox_v8(true)?;
-        Owner::open(config.clone(), true, None)?.set_tls_listener(Some(TlsListenerConfig {
+        open_component(config.clone(), true, None)?.set_native_carrier_mailbox_v8(true)?;
+        open_component(config.clone(), true, None)?.set_tls_listener(Some(TlsListenerConfig {
             version: 1,
             listen: "127.0.0.1:0".parse()?,
             advertised: "127.0.0.1:0".parse()?,
-            max_connections: 4,
+            max_connections: Some(4),
             native_mailbox_v8: true,
         }))?;
     }
 
     // Pending first activation is explicit; ordinary open cannot invent history.
-    assert!(Owner::open(config.clone(), false, None).is_err());
+    assert!(open_component(config.clone(), false, None).is_err());
     let sealed_keys = std::fs::read(root.join(KEYS_FILE))?;
     let original_policy = std::fs::read(root.join(POLICY_FILE))?;
     let credential_path = root.join("credentials/owner-key");
     let missing = credential_path.with_extension("missing");
     std::fs::rename(&credential_path, &missing)?;
-    assert!(Owner::open(config.clone(), true, None).is_err());
+    assert!(open_component(config.clone(), true, None).is_err());
     std::fs::rename(missing, &credential_path)?;
     for length in [31, 33] {
         std::fs::write(&credential_path, vec![67; length])?;
-        assert!(Owner::open(config.clone(), true, None).is_err());
+        assert!(open_component(config.clone(), true, None).is_err());
         assert_eq!(std::fs::read(root.join(KEYS_FILE))?, sealed_keys);
     }
     std::fs::write(&credential_path, [68; 32])?;
-    assert!(Owner::open(config.clone(), true, None).is_err());
+    assert!(open_component(config.clone(), true, None).is_err());
     assert_eq!(std::fs::read(root.join(KEYS_FILE))?, sealed_keys);
     assert_eq!(std::fs::read(root.join(POLICY_FILE))?, original_policy);
     std::fs::write(&credential_path, [67; 32])?;
     std::fs::set_permissions(&credential_path, std::fs::Permissions::from_mode(0o644))?;
-    assert!(Owner::open(config.clone(), true, None).is_err());
+    assert!(open_component(config.clone(), true, None).is_err());
     std::fs::set_permissions(&credential_path, std::fs::Permissions::from_mode(0o600))?;
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))?;
-    assert!(Owner::open(config.clone(), true, None).is_err());
+    assert!(open_component(config.clone(), true, None).is_err());
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
     let link = root.join("symlink-state");
     symlink(&root, &link)?;
     let mut invalid = config.clone();
     invalid.root = link.clone();
-    assert!(Owner::open(invalid, true, None).is_err());
+    assert!(open_component(invalid, true, None).is_err());
     std::fs::remove_file(link)?;
     let mut sequence = 0;
     for first in [true, false] {
-        let owner = Owner::open(config.clone(), first, None)?;
+        let owner = open_component(config.clone(), first, None)?;
         assert_eq!(owner.policy.node_pin, pin);
         let stop = Arc::new(AtomicBool::new(false));
         let control = stop.clone();
@@ -154,7 +169,7 @@ async fn linux_owner_child() -> Result<()> {
     assert_eq!(std::fs::read(root.join(KEYS_FILE))?, sealed_keys);
     // Missing committed history never triggers fresh keys or a new journal.
     std::fs::rename(root.join("service.journal"), root.join("service.saved"))?;
-    assert!(Owner::open(config, true, None).is_err());
+    assert!(open_component(config, true, None).is_err());
     assert!(!root.join("service.journal").exists());
     assert_eq!(std::fs::read(root.join(KEYS_FILE))?, sealed_keys);
     Ok(())

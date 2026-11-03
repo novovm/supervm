@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+pub(crate) mod test_identity;
+
 #[cfg(all(test, feature = "iroh-transport"))]
 pub(crate) static SERVICE_TEST_SERIAL: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(1);

@@ -13,11 +13,11 @@ use super::{
     wire_budget::{NativeWireBudget, NativeWireUsage},
     NovoRudpTransportFrameV0,
 };
+use crate::product_overlay::TransportIdentity;
 use crate::product_overlay::{
-    peer_id_from_ed25519_public_key_v1, HandshakeReplayCacheV1, ProductOverlayErrorV1,
+    peer_id_from_mldsa65_public_key_v1, HandshakeReplayCacheV1, ProductOverlayErrorV1,
 };
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     io::ErrorKind,
@@ -28,14 +28,14 @@ use std::{
 
 #[derive(Clone)]
 pub struct NativePeer {
-    pub key: [u8; 32],
+    pub key: Vec<u8>,
     pub address: SocketAddr,
 }
 
 /// Node identity and actual carrier route remain independently bound.
 #[derive(Clone)]
 pub struct NativeRoutePeer {
-    pub key: [u8; 32],
+    pub key: Vec<u8>,
     pub route: NativeRoute,
 }
 impl From<NativePeer> for NativeRoutePeer {
@@ -57,7 +57,7 @@ struct Peer {
     id: Arc<str>,
     // Only bind[_shared] installs this pinned identity. An open client never
     // becomes a configured peer merely by using its key or source address.
-    configured_key: Option<[u8; 32]>,
+    configured_key: Option<Vec<u8>>,
     handshake: Option<NativeHandshake>,
     session: Option<NativeUdpSession>,
     streams: Option<BTreeSet<u64>>,
@@ -66,13 +66,13 @@ struct Peer {
 }
 
 struct ConfiguredAdmission {
-    identity: SigningKey,
+    identity: TransportIdentity,
     budget: NativeHandshakeBudget,
     reconnect_v1: bool,
 }
 
 struct OpenAdmission {
-    identity: SigningKey,
+    identity: TransportIdentity,
     limit: usize,
     streams: BTreeSet<u64>,
     budget: NativeHandshakeBudget,
@@ -172,7 +172,9 @@ pub struct NativeEndpoint {
     // Full UDP payload capacity, initialized once. Parsing sees only the exact
     // received prefix; old tail bytes are never input to authentication/decoding.
     receive_scratch: Vec<u8>,
-    local_key: [u8; 32],
+    local_key: Vec<u8>,
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    identity_verifier: TransportIdentity,
     peers: BTreeMap<usize, Peer>,
     next_peer: usize,
     // Up to MAX_WAITING_CLIENTS fully verified admissions wait, in arrival
@@ -212,7 +214,8 @@ impl NativeEndpoint {
             "invalid bound native streams"
         );
         channel.verify_transport_binding(binding)?;
-        let local_key = channel.local_identity_public_key();
+        let local_key = channel.local_identity_public_key().to_vec();
+        let identity_verifier = channel.identity_verifier().clone();
         let id: Arc<str> = channel.remote_peer_id().into();
         let route =
             NativeRoute::Carrier(super::carrier::VerifiedCarrierRoute::from_binding(binding));
@@ -221,6 +224,7 @@ impl NativeEndpoint {
             io,
             receive_scratch: vec![0; 65536],
             local_key,
+            identity_verifier,
             peers: BTreeMap::from([(
                 0,
                 Peer {
@@ -250,7 +254,7 @@ impl NativeEndpoint {
     /// installs key-possession admission before the socket can receive data.
     pub fn listen_clients(
         socket: UdpSocket,
-        identity: SigningKey,
+        identity: TransportIdentity,
         clients: usize,
         streams: Vec<u64>,
         budget: NativeHandshakeBudget,
@@ -263,7 +267,7 @@ impl NativeEndpoint {
     /// `poll_with_receiver`; sharing the socket does not authenticate a sender.
     pub fn listen_clients_shared(
         socket: Arc<UdpSocket>,
-        identity: SigningKey,
+        identity: TransportIdentity,
         clients: usize,
         streams: Vec<u64>,
         budget: NativeHandshakeBudget,
@@ -276,7 +280,7 @@ impl NativeEndpoint {
     /// rejected until exporter-bound handshake/Finished support is integrated.
     pub fn listen_clients_with_io(
         io: Arc<dyn NativeDatagramIo>,
-        identity: SigningKey,
+        identity: TransportIdentity,
         clients: usize,
         streams: Vec<u64>,
         budget: NativeHandshakeBudget,
@@ -284,7 +288,9 @@ impl NativeEndpoint {
         let mut endpoint = Self {
             io,
             receive_scratch: vec![0; 65536],
-            local_key: identity.verifying_key().to_bytes(),
+            local_key: identity.public_key().to_vec(),
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            identity_verifier: identity.clone(),
             peers: BTreeMap::new(),
             next_peer: 0,
             waiting_clients: VecDeque::new(),
@@ -303,7 +309,7 @@ impl NativeEndpoint {
 
     pub fn bind(
         socket: UdpSocket,
-        identity: SigningKey,
+        identity: TransportIdentity,
         peers: Vec<NativePeer>,
         budget: NativeHandshakeBudget,
         wall_ms: u64,
@@ -319,7 +325,7 @@ impl NativeEndpoint {
     /// `enable_configured_reconnect_v1` before polling.
     pub fn bind_shared(
         socket: Arc<UdpSocket>,
-        identity: SigningKey,
+        identity: TransportIdentity,
         peers: Vec<NativePeer>,
         budget: NativeHandshakeBudget,
         wall_ms: u64,
@@ -331,7 +337,7 @@ impl NativeEndpoint {
 
     pub(crate) fn bind_with_io(
         io: Arc<dyn NativeDatagramIo>,
-        identity: SigningKey,
+        identity: TransportIdentity,
         peers: Vec<NativePeer>,
         budget: NativeHandshakeBudget,
         wall_ms: u64,
@@ -342,7 +348,11 @@ impl NativeEndpoint {
         let mut ids = BTreeSet::new();
         let mut owned = BTreeMap::new();
         for (index, peer) in peers.into_iter().enumerate() {
-            let id = peer_id_from_ed25519_public_key_v1(&peer.key);
+            ensure!(
+                peer.key.len() == crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES,
+                "native peer requires an ML-DSA-65 public key"
+            );
+            let id = peer_id_from_mldsa65_public_key_v1(&peer.key);
             ensure!(
                 ids.insert(id.clone())
                     && sources
@@ -352,7 +362,7 @@ impl NativeEndpoint {
             );
             let handshake = NativeHandshake::start(
                 identity.clone(),
-                peer.key,
+                peer.key.clone(),
                 peer.address,
                 wall_ms,
                 now,
@@ -385,7 +395,9 @@ impl NativeEndpoint {
         Ok(Self {
             io,
             receive_scratch: vec![0; 65536],
-            local_key: identity.verifying_key().to_bytes(),
+            local_key: identity.public_key().to_vec(),
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            identity_verifier: identity.clone(),
             next_peer: owned.len(),
             waiting_clients: VecDeque::new(),
             peers: owned,
@@ -409,14 +421,14 @@ impl NativeEndpoint {
     /// Slots are bounded and are not silently evicted/rebound to another key.
     pub fn allow_clients(
         &mut self,
-        identity: SigningKey,
+        identity: TransportIdentity,
         additional: usize,
         streams: Vec<u64>,
         budget: NativeHandshakeBudget,
     ) -> Result<()> {
         ensure!(self.open.is_none(), "native open policy already installed");
         ensure!(
-            identity.verifying_key().to_bytes() == self.local_key,
+            identity.public_key() == self.local_key,
             "native client admission identity mismatch"
         );
         ensure!(
@@ -448,7 +460,7 @@ impl NativeEndpoint {
     /// bound; this identity need not be a validator or have a token balance.
     pub fn connect_client(
         socket: UdpSocket,
-        identity: SigningKey,
+        identity: TransportIdentity,
         remote: NativePeer,
         budget: NativeHandshakeBudget,
         wall_ms: u64,
@@ -462,7 +474,7 @@ impl NativeEndpoint {
     /// service does not serialize or change another peer's authentication.
     pub fn connect_clients(
         socket: UdpSocket,
-        identity: SigningKey,
+        identity: TransportIdentity,
         remotes: Vec<NativePeer>,
         budget: NativeHandshakeBudget,
         wall_ms: u64,
@@ -484,19 +496,23 @@ impl NativeEndpoint {
     /// the original native handshake transcript to a reliable carrier.
     pub fn connect_clients_with_io(
         io: Arc<dyn NativeDatagramIo>,
-        identity: SigningKey,
+        identity: TransportIdentity,
         remotes: Vec<NativeRoutePeer>,
         budget: NativeHandshakeBudget,
         wall_ms: u64,
         now: Instant,
     ) -> Result<Self> {
         ensure!(!remotes.is_empty(), "native endpoint peer bound");
-        let local_key = identity.verifying_key().to_bytes();
+        let local_key = identity.public_key().to_vec();
         let mut sources = BTreeMap::new();
         let mut ids = BTreeSet::new();
         let mut peers = BTreeMap::new();
         for (index, remote) in remotes.into_iter().enumerate() {
-            let id = peer_id_from_ed25519_public_key_v1(&remote.key);
+            ensure!(
+                remote.key.len() == crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES,
+                "native peer requires an ML-DSA-65 public key"
+            );
+            let id = peer_id_from_mldsa65_public_key_v1(&remote.key);
             ensure!(
                 ids.insert(id.clone()) && sources.insert(remote.route, index).is_none(),
                 "duplicate native peer/endpoint"
@@ -538,6 +554,8 @@ impl NativeEndpoint {
             io,
             receive_scratch: vec![0; 65536],
             local_key,
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            identity_verifier: identity.clone(),
             next_peer: peers.len(),
             waiting_clients: VecDeque::new(),
             peers,
@@ -567,7 +585,7 @@ impl NativeEndpoint {
         let HandshakeMessage::Offer(offer) = decode(wire)? else {
             anyhow::bail!("client must initiate")
         };
-        let id = peer_id_from_ed25519_public_key_v1(&offer.initiator_identity_public_key);
+        let id = peer_id_from_mldsa65_public_key_v1(&offer.initiator_identity_public_key);
         if let Some(index) = self
             .peers
             .iter()
@@ -603,7 +621,7 @@ impl NativeEndpoint {
         );
         let mut handshake = NativeHandshake::start_role(
             open.identity.clone(),
-            offer.initiator_identity_public_key,
+            offer.initiator_identity_public_key.clone(),
             source,
             wall_ms,
             now,
@@ -785,11 +803,32 @@ impl NativeEndpoint {
         self.peers.remove(&index);
         Ok(retired)
     }
-    pub fn local_identity(&self) -> [u8; 32] {
-        self.local_key
+    pub fn local_identity(&self) -> &[u8] {
+        &self.local_key
+    }
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub(crate) fn identity_verifier(&self) -> &TransportIdentity {
+        &self.identity_verifier
     }
     pub fn peer_id(&self, index: usize) -> Result<&str> {
         Ok(&self.peers.get(&index).context("unknown native peer")?.id)
+    }
+
+    /// The route retained by this receive owner after session authentication,
+    /// not an endpoint advertised in a caller or peer-provided payload.
+    pub fn peer_route(&self, index: usize) -> Result<NativeRoute> {
+        ensure!(
+            self.peers
+                .get(&index)
+                .context("unknown native peer")?
+                .session
+                .is_some(),
+            "native peer has no authenticated session"
+        );
+        self.sources
+            .iter()
+            .find_map(|(route, peer)| (*peer == index).then_some(*route))
+            .context("authenticated peer lost its route")
     }
     pub fn session_id(&self, index: usize) -> Option<[u8; 16]> {
         self.peers
@@ -988,7 +1027,7 @@ impl NativeEndpoint {
                 }
                 continue;
             }
-            if bytes.starts_with(b"NVHSHK01") {
+            if bytes.starts_with(b"NVHSHK") {
                 if self.receive_handshake(source, bytes, wall_ms, now).is_err() {
                     result.rejected_datagrams += 1;
                     result

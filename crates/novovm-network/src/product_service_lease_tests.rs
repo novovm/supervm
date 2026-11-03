@@ -3,12 +3,91 @@ use directory::{BootstrapSourceKindV1, SignedBootstrapManifestV1};
 
 fn own_trust() -> SelfOwnedTrustV1 {
     SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [key(2).verifying_key().to_bytes()].into(),
+        version: 2,
+        node_pins: [key(2).public_key().to_vec()].into(),
     }
 }
 fn own_book() -> Result<ServiceLeaseBookV1> {
-    ServiceLeaseBookV1::new_self_owned(own_trust(), vec![record(2, 1, 1000, 400_000)], 2000)
+    ServiceLeaseBookV1::new_self_owned(
+        own_trust(),
+        vec![record(2, 1, 1000, 400_000)],
+        2000,
+        key(90),
+    )
+}
+
+#[test]
+fn mldsa_json_capacity_covers_bounded_sources_revocations_and_retained_history() -> Result<()> {
+    // Serialization-capacity fixture only: maximal byte values are not
+    // cryptographic signatures. Authentication is tested on the real APIs.
+    let mut record = record(2, 1, 1000, 400_000);
+    record.relay_public_key = vec![255; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES];
+    record.signature = vec![255; crate::product_overlay::MLDSA65_SIGNATURE_BYTES];
+    record.record_id = "\\\"".repeat(64);
+    record.endpoints[0].uri.clear();
+    let fixed = serde_json::to_vec(&record)?.len();
+    record.endpoints[0].uri = "a".repeat(MAX_SERVICE_LEASE_BYTES - fixed);
+    assert_eq!(serde_json::to_vec(&record)?.len(), MAX_SERVICE_LEASE_BYTES);
+    let signature = directory::BootstrapManifestSignatureV1 {
+        signer_peer_id: "f".repeat(82),
+        signer_public_key: vec![255; crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES],
+        signature: vec![255; crate::product_overlay::MLDSA65_SIGNATURE_BYTES],
+    };
+    let mut source = source(vec![record.clone(); 2], 1000);
+    source.manifest.manifest_id = "\0".repeat(128);
+    source.manifest.signatures = vec![signature; 8];
+    let sources = vec![source; 4];
+    let offer = ServiceLeaseOfferV2 {
+        version: 2,
+        sources: sources.clone(),
+        lease: Some(record.clone()),
+    };
+    assert!(serde_json::to_vec(&offer)?.len() <= host::MAX_OFFER_BYTES);
+    let entries = (0u8..2)
+        .map(|i| {
+            (
+                vec![i; 1952],
+                Entry {
+                    grant: record.clone(),
+                    current: record.clone(),
+                    expires: 400_000,
+                    decoded: None,
+                },
+            )
+        })
+        .collect();
+    let tombstones = (3u8..35)
+        .map(|i| {
+            let mut p = vec![255; 1952];
+            p[0] = i;
+            p
+        })
+        .collect();
+    let mut book = ServiceLeaseBookV1 {
+        verifier: Arc::new(key(90)),
+        policy: ServiceTrustV1::Endorsed(BootstrapTrustPolicyV1 {
+            allowed_signer_peer_ids: (0..8).map(|i| format!("{i}{}", "f".repeat(81))).collect(),
+            minimum_valid_signatures: 8,
+        }),
+        sources,
+        entries,
+        tombstones,
+        clock: 2000,
+        persistence: None,
+        persisted: Vec::new(),
+        failed: false,
+        prior_endorsement: None,
+    };
+    let endorsed = book.checkpoint()?;
+    assert!(endorsed.len() < MAX_SERVICE_CHECKPOINT_BYTES);
+    book.policy = ServiceTrustV1::SelfOwned(SelfOwnedTrustV1 {
+        version: 2,
+        node_pins: book.entries.keys().cloned().collect(),
+    });
+    book.sources.clear();
+    book.prior_endorsement = Some(String::from_utf8(endorsed)?);
+    assert!(book.checkpoint()?.len() < MAX_SERVICE_CHECKPOINT_BYTES);
+    Ok(())
 }
 
 #[test]
@@ -37,17 +116,10 @@ fn app_quota_refusal_preserves_renewal_but_failed_revocation_stays_closed() -> R
     assert_eq!(book.persisted, saved);
     budget.set_limit(None)?;
     accept(&mut book, record(2, 2, 3000, 40_000), 3000)?;
-    assert_eq!(
-        book.entries[&key(2).verifying_key().to_bytes()]
-            .current
-            .sequence,
-        2
-    );
+    assert_eq!(book.entries[key(2).public_key()].current.sequence, 2);
 
     budget.set_limit(Some(novovm_storage_budget::MIN_LIMIT_BYTES))?;
-    assert!(book
-        .revoke_self_owned(key(2).verifying_key().to_bytes(), 3001)
-        .is_err());
+    assert!(book.revoke_self_owned(key(2).public_key(), 3001).is_err());
     assert!(book.failed);
     budget.set_limit(None)?;
     assert!(book.routes(3002).is_err());
@@ -60,19 +132,14 @@ fn self_owned_policy_update_keeps_floors_revocations_and_prior_history() -> Resu
     old.replace_self_owned_records(vec![record(2, 9, 3000, 40_000)], 3000)?;
     let original = old.checkpoint()?;
     let mut trust = own_trust();
-    trust.node_pins.insert(key(5).verifying_key().to_bytes());
+    trust.node_pins.insert(key(5).public_key().to_vec());
     let next = old.prepare_self_owned_policy_update(
         trust.clone(),
         vec![record(5, 1, 3000, 40_000)],
         3000,
     )?;
     assert_eq!(old.checkpoint()?, original);
-    assert_eq!(
-        next.entries[&key(2).verifying_key().to_bytes()]
-            .current
-            .sequence,
-        9
-    );
+    assert_eq!(next.entries[key(2).public_key()].current.sequence, 9);
     assert!(next
         .prepare_self_owned_policy_update(own_trust(), vec![], 3001)
         .is_err());
@@ -80,14 +147,14 @@ fn self_owned_policy_update_keeps_floors_revocations_and_prior_history() -> Resu
         .prepare_self_owned_policy_update(trust.clone(), vec![record(2, 8, 3001, 40_000)], 3001,)
         .is_err());
     let mut revoked =
-        ServiceLeaseBookV1::restore_self_owned(trust.clone(), &next.checkpoint()?, 3001)?;
-    revoked.revoke_self_owned(key(2).verifying_key().to_bytes(), 3002)?;
+        ServiceLeaseBookV1::restore_self_owned(trust.clone(), &next.checkpoint()?, 3001, key(90))?;
+    revoked.revoke_self_owned(key(2).public_key(), 3002)?;
     let updated = revoked.prepare_self_owned_policy_update(trust.clone(), vec![], 3003)?;
     assert_eq!(updated.tombstones, revoked.tombstones);
     assert!(updated
         .prepare_self_owned_policy_update(trust.clone(), vec![record(2, 20, 3003, 40_000)], 3003,)
         .is_err());
-    ServiceLeaseBookV1::restore_self_owned(trust, &updated.checkpoint()?, 3003)?;
+    ServiceLeaseBookV1::restore_self_owned(trust, &updated.checkpoint()?, 3003, key(90))?;
     let old = book();
     let migrated =
         old.prepare_self_owned_migration(own_trust(), vec![record(2, 10, 3000, 40_000)], 3000)?;
@@ -98,7 +165,8 @@ fn self_owned_policy_update_keeps_floors_revocations_and_prior_history() -> Resu
 
 #[test]
 fn continuous_peer_keeps_local_trust_not_expired_locator_authority() -> Result<()> {
-    let pin = key(2).verifying_key().to_bytes();
+    let identity = key(2);
+    let pin = identity.public_key();
     let endpoint = address(3).address.endpoint_key;
     let mut b = own_book()?;
     // A historical locator remains only a way to find the pinned transport.
@@ -108,7 +176,7 @@ fn continuous_peer_keeps_local_trust_not_expired_locator_authority() -> Result<(
     assert!(accept(&mut b, record(2, 2, 3000, 40_000), 500_000).is_err());
     assert!(b.check_continuous_peer_v4(pin, [99; 32], 500_000).is_err());
     assert!(b
-        .check_continuous_peer_v4([99; 32], endpoint, 500_000)
+        .check_continuous_peer_v4(&[99; 32], endpoint, 500_000)
         .is_err());
     // Publisher-bound authority has no implicit conversion to local trust.
     assert!(book()
@@ -116,7 +184,8 @@ fn continuous_peer_keeps_local_trust_not_expired_locator_authority() -> Result<(
         .is_err());
     b.revoke_self_owned(pin, 500_001)?;
     let saved = b.checkpoint()?;
-    let mut reopened = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 500_002)?;
+    let mut reopened =
+        ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 500_002, key(90))?;
     assert!(reopened
         .check_continuous_peer_v4(pin, endpoint, 500_002)
         .is_err());
@@ -145,7 +214,8 @@ fn self_owned_store_rotation_requires_fresh_signature_on_unchanged_transport() -
         530_000,
         2,
     )?;
-    let pin = key(2).verifying_key().to_bytes();
+    let identity = key(2);
+    let pin = identity.public_key();
     let transport = endpoint.address.endpoint_key;
     client.check_bootstrap_route(pin, transport, [4; 32], 500_000)?;
     assert!(client
@@ -178,8 +248,12 @@ fn self_owned_store_rotation_requires_fresh_signature_on_unchanged_transport() -
         500_000,
     )?;
     client.check_route(pin, transport, endpoint.instance, 500_000)?;
-    let mut reopened =
-        ServiceLeaseBookV1::restore_self_owned(own_trust(), &client.checkpoint()?, 500_001)?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(
+        own_trust(),
+        &client.checkpoint()?,
+        500_001,
+        key(90),
+    )?;
     assert_eq!(reopened.routes(500_001)?, vec![fresh]);
     assert!(accept(&mut reopened, record(2, 1, 500_001, 510_000), 500_001).is_err());
     reopened.revoke_self_owned(pin, 500_001)?;
@@ -201,7 +275,8 @@ fn compacted_self_owned_journal_keeps_revocation_and_sequence_floors() -> Result
         let now = 2000 + sequence;
         accept(&mut b, record(2, sequence, now, now + 50_000), now)?;
     }
-    let pin = key(2).verifying_key().to_bytes();
+    let identity = key(2);
+    let pin = identity.public_key();
     b.revoke_self_owned(pin, 4000)?;
     let exact = b.checkpoint()?;
     drop(b);
@@ -211,7 +286,7 @@ fn compacted_self_owned_journal_keeps_revocation_and_sequence_floors() -> Result
     let (file, saved) = ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
     assert_eq!(saved, exact);
     assert!(std::fs::metadata(dir.path())?.len() < 700_000);
-    let mut restored = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 5000)?;
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 5000, key(90))?;
     restored.attach_persistence(file, &saved)?;
     assert!(restored.routes(5000)?.is_empty());
     assert!(restored.bootstrap_candidates(5000)?.is_empty());
@@ -228,17 +303,19 @@ fn self_owned_does_not_need_publisher_but_does_need_confirmed_key() -> Result<()
     assert_eq!(b.bootstrap_candidates(2000)?.len(), 1);
     let mut bad = record(2, 1, 1000, 400_000);
     bad.signature[0] ^= 1;
-    assert!(ServiceLeaseBookV1::new_self_owned(own_trust(), vec![bad], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(own_trust(), vec![bad], 2000, key(90)).is_err());
     assert!(ServiceLeaseBookV1::new_self_owned(
         own_trust(),
         vec![record(4, 1, 1000, 400_000)],
-        2000
+        2000,
+        key(90)
     )
     .is_err());
     assert!(ServiceLeaseBookV1::new_self_owned(
         own_trust(),
         vec![record(2, 1, 1000, 400_000)],
-        400_000
+        400_000,
+        key(90)
     )
     .is_err());
     assert!(ServiceLeaseBookV1::new(
@@ -247,7 +324,8 @@ fn self_owned_does_not_need_publisher_but_does_need_confirmed_key() -> Result<()
             minimum_valid_signatures: 0
         },
         Vec::new(),
-        2000
+        2000,
+        key(90)
     )
     .is_err());
     assert!(b.replace_sources(book().sources(), 2000).is_err());
@@ -262,7 +340,7 @@ fn self_owned_expired_claim_is_only_locator_and_new_online_offer_is_required() -
     let file = ServiceLeaseFileV1::create(&dir.path(), zeroize::Zeroizing::new([91; 32]), &bytes)?;
     b.attach_persistence(file, &bytes)?;
     let host = ServiceLeaseHostV1::new(key(2), b)?;
-    let mut client = ServiceLeaseBookV1::restore_self_owned(own_trust(), &bytes, 500_000)?;
+    let mut client = ServiceLeaseBookV1::restore_self_owned(own_trust(), &bytes, 500_000, key(90))?;
     assert!(client.routes(500_000)?.is_empty());
     assert_eq!(client.bootstrap_candidates(500_000)?.len(), 1);
     assert!(accept(&mut client, record(2, 1, 1000, 100_000), 500_000).is_err());
@@ -270,8 +348,12 @@ fn self_owned_expired_claim_is_only_locator_and_new_online_offer_is_required() -
     assert!(offer.sources.is_empty());
     assert_eq!(accept_offer(&mut client, offer, 500_000)?, 620_000);
     let current = client.routes(500_000)?;
-    let mut restarted =
-        ServiceLeaseBookV1::restore_self_owned(own_trust(), &client.checkpoint()?, 500_001)?;
+    let mut restarted = ServiceLeaseBookV1::restore_self_owned(
+        own_trust(),
+        &client.checkpoint()?,
+        500_001,
+        key(90),
+    )?;
     assert_eq!(restarted.routes(500_001)?, current);
     assert!(accept(&mut restarted, record(2, 1, 500_001, 510_000), 500_001).is_err());
     Ok(())
@@ -291,7 +373,7 @@ fn self_owned_live_locator_update_preserves_peer_and_persists_new_candidates() -
     endpoint.address.direct = vec!["192.0.2.44:54321".parse()?];
     endpoint.instance = [8; 32];
     let fresh = host.rotate_self_owned(&endpoint, 3001, 93_001)?;
-    directory::validate_relay_record_v1(&fresh, 3001)?;
+    directory::validate_relay_record_v1(&fresh, 3001, &key(90))?;
     assert_eq!(
         IrohServiceEndpointV1::from_record(&fresh)?.address.direct,
         endpoint.address.direct
@@ -305,17 +387,18 @@ fn self_owned_live_locator_update_preserves_peer_and_persists_new_candidates() -
             .direct,
         endpoint.address.direct
     );
-    endpoint.address.endpoint_key = key(9).verifying_key().to_bytes();
+    endpoint.address.endpoint_key = carrier_key(9);
     assert!(host.rotate_self_owned(&endpoint, 3004, 93_004).is_err());
     drop(host);
     let (_file, saved) = ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
-    let mut reopened = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 3005)?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(own_trust(), &saved, 3005, key(90))?;
     let routes = reopened.routes(3005)?;
     let restored = IrohServiceEndpointV1::from_record(&routes[0])?;
     assert_eq!(restored.address.direct, endpoint.address.direct);
     assert_eq!(restored.address.endpoint_key, transport);
     assert_eq!(restored.instance, [8; 32]);
-    let pin = key(2).verifying_key().to_bytes();
+    let identity = key(2);
+    let pin = identity.public_key();
     reopened.revoke_self_owned(pin, 3006)?;
     assert!(reopened
         .replace_self_owned_records(vec![fresh], 3007)
@@ -363,8 +446,9 @@ fn self_owned_offers_reject_forgery_wrong_endpoint_and_endorsement_fallback() ->
 #[test]
 fn self_owned_revocation_survives_restart_and_rejects_new_signed_record() -> Result<()> {
     let mut b = own_book()?;
-    b.revoke_self_owned(key(2).verifying_key().to_bytes(), 2000)?;
-    let mut b = ServiceLeaseBookV1::restore_self_owned(own_trust(), &b.checkpoint()?, 3000)?;
+    b.revoke_self_owned(key(2).public_key(), 2000)?;
+    let mut b =
+        ServiceLeaseBookV1::restore_self_owned(own_trust(), &b.checkpoint()?, 3000, key(90))?;
     assert!(b.bootstrap_candidates(3000)?.is_empty());
     assert!(b
         .replace_self_owned_records(vec![record(2, 3, 3000, 40_000)], 3000)
@@ -386,21 +470,26 @@ fn self_owned_migration_preserves_old_history_and_rejects_revoked_or_rollback() 
         next.prior_endorsement.as_deref(),
         Some(std::str::from_utf8(&old.checkpoint()?)?)
     );
-    ServiceLeaseBookV1::restore_self_owned(own_trust(), &next.checkpoint()?, 3000)?;
+    ServiceLeaseBookV1::restore_self_owned(own_trust(), &next.checkpoint()?, 3000, key(90))?;
     old.replace_sources(vec![source(vec![], 3000)], 3000)?;
     assert!(old
         .prepare_self_owned_migration(own_trust(), vec![record(2, 11, 3000, 40_000)], 3000)
         .is_err());
     Ok(())
 }
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
+fn key(n: u8) -> TransportIdentity {
+    crate::test_identity::key(n)
+}
+fn carrier_key(n: u8) -> [u8; 32] {
+    ed25519_dalek::SigningKey::from_bytes(&[n; 32])
+        .verifying_key()
+        .to_bytes()
 }
 fn address(n: u8) -> IrohServiceEndpointV1 {
     IrohServiceEndpointV1 {
         instance: [4; 32],
         address: IrohAddressV1 {
-            endpoint_key: key(n).verifying_key().to_bytes(),
+            endpoint_key: carrier_key(n),
             direct: vec!["127.0.0.1:12345".parse().unwrap()],
             relays: vec![],
         },
@@ -419,7 +508,8 @@ fn record(n: u8, sequence: u64, issued: u64, expires: u64) -> PeerSignedRelayRec
 }
 fn source(records: Vec<PeerSignedRelayRecordV1>, issued: u64) -> BootstrapSourceV1 {
     let mut manifest = SignedBootstrapManifestV1 {
-        version: 1,
+        version: 2,
+        suite: crate::product_overlay::MLDSA65_SUITE,
         manifest_id: "installation-source".into(),
         issued_at_ms: issued,
         expires_at_ms: 500_000,
@@ -439,9 +529,10 @@ fn source(records: Vec<PeerSignedRelayRecordV1>, issued: u64) -> BootstrapSource
 }
 fn book() -> ServiceLeaseBookV1 {
     ServiceLeaseBookV1::new(
-        BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+        BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec()),
         vec![source(vec![record(2, 1, 1000, 400_000)], 1000)],
         2000,
+        key(90),
     )
     .unwrap()
 }
@@ -545,13 +636,7 @@ fn reopen_host(dir: &HostDirectory, now: u64) -> Result<ServiceLeaseHostV1> {
     ServiceLeaseHostV1::new(key(2), b)
 }
 fn accept_offer(b: &mut ServiceLeaseBookV1, offer: ServiceLeaseOfferV2, now: u64) -> Result<u64> {
-    b.accept_offer(
-        offer,
-        key(2).verifying_key().to_bytes(),
-        key(3).verifying_key().to_bytes(),
-        [4; 32],
-        now,
-    )
+    b.accept_offer(offer, key(2).public_key(), carrier_key(3), [4; 32], now)
 }
 
 fn activation_offer(record: PeerSignedRelayRecordV1) -> ServiceLeaseOfferV2 {
@@ -576,10 +661,11 @@ async fn activation_wait_keeps_old_authority_until_real_local_time() -> Result<(
         2000
     )
     .is_err());
+    let identity = key(2);
     let waiting = accept_service_offer_with_activation_v2(
         &owner,
         offer,
-        key(2).verifying_key().to_bytes(),
+        identity.public_key(),
         &endpoint,
         now,
         || Ok(()),
@@ -614,7 +700,7 @@ async fn activation_wait_rejects_invalid_expired_and_excessive_future_records() 
             accept_service_offer_with_activation_v2(
                 &owner,
                 activation_offer(record),
-                key(2).verifying_key().to_bytes(),
+                key(2).public_key(),
                 &address(3),
                 || Ok(2000),
                 || Ok(()),
@@ -644,7 +730,7 @@ async fn activation_wait_persists_revocation_before_considering_future_lease() -
     assert!(accept_service_offer_with_activation_v2(
         &owner,
         offer,
-        key(2).verifying_key().to_bytes(),
+        key(2).public_key(),
         &address(3),
         || Ok(2000),
         || Ok(())
@@ -658,8 +744,8 @@ async fn activation_wait_persists_revocation_before_considering_future_lease() -
     assert!(restored
         .accept_renewal(
             record(2, 2, 2200, 100_000),
-            key(2).verifying_key().to_bytes(),
-            key(3).verifying_key().to_bytes(),
+            key(2).public_key(),
+            carrier_key(3),
             [4; 32],
             2200
         )
@@ -673,10 +759,11 @@ async fn activation_wait_rechecks_revocation_while_waiting() -> Result<()> {
     let start = std::time::Instant::now();
     let now = || Ok(2000 + start.elapsed().as_millis() as u64);
     let endpoint = address(3);
+    let identity = key(2);
     let wait = accept_service_offer_with_activation_v2(
         &owner,
         activation_offer(record(2, 2, 2300, 100_000)),
-        key(2).verifying_key().to_bytes(),
+        identity.public_key(),
         &endpoint,
         now,
         || Ok(()),
@@ -705,7 +792,7 @@ async fn activation_wait_obeys_cancel_original_deadline_and_clock_rollback() -> 
         let result = accept_service_offer_with_activation_v2(
             &owner,
             activation_offer(record(2, 2, 2100, 100_000)),
-            key(2).verifying_key().to_bytes(),
+            key(2).public_key(),
             &address(3),
             || Ok(clock.load(Ordering::Acquire)),
             || {
@@ -734,7 +821,7 @@ async fn activation_wait_frozen_clock_exhausts_monotonic_budget() -> Result<()> 
         accept_service_offer_with_activation_v2(
             &owner,
             activation_offer(record(2, 2, 2100, 100_000)),
-            key(2).verifying_key().to_bytes(),
+            key(2).public_key(),
             &address(3),
             || Ok(2000),
             || Ok(()),
@@ -831,12 +918,7 @@ fn host_write_failure_never_releases_a_lease() -> Result<()> {
     owner.1.store(false, std::sync::atomic::Ordering::Release);
     assert!(host.offer(4000).is_err());
     let b = restore(&owner.0.lock().unwrap(), 4000)?;
-    assert_eq!(
-        b.entries[&key(2).verifying_key().to_bytes()]
-            .current
-            .sequence,
-        1
-    );
+    assert_eq!(b.entries[key(2).public_key()].current.sequence, 1);
     Ok(())
 }
 
@@ -866,9 +948,10 @@ fn online_refresh_keeps_independent_sources_and_local_priorities() -> Result<()>
     let mut sources = book().sources();
     sources.push(other);
     let mut client = ServiceLeaseBookV1::new(
-        BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+        BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec()),
         sources,
         2000,
+        key(90),
     )?;
     let mut offer = host.offer(3000)?;
     offer.sources[0].source_kind = BootstrapSourceKindV1::Official;
@@ -885,7 +968,7 @@ fn online_refresh_keeps_independent_sources_and_local_priorities() -> Result<()>
     assert_eq!(client.routes(5000)?.len(), 1);
     assert_eq!(
         client.routes(5000)?[0].relay_public_key,
-        key(5).verifying_key().to_bytes()
+        key(5).public_key()
     );
     Ok(())
 }
@@ -944,23 +1027,12 @@ fn real_process_restarts_do_not_reissue_lost_responses() -> Result<()> {
         let (_file, checkpoint) =
             ServiceLeaseFileV1::open(&dir.path(), zeroize::Zeroizing::new([91; 32]))?;
         let b = restore(&checkpoint, 11_000)?;
-        assert_eq!(
-            b.entries[&key(2).verifying_key().to_bytes()]
-                .current
-                .sequence,
-            expected
-        );
+        assert_eq!(b.entries[key(2).public_key()].current.sequence, expected);
     }
     Ok(())
 }
 fn accept(book: &mut ServiceLeaseBookV1, value: PeerSignedRelayRecordV1, now: u64) -> Result<()> {
-    book.accept_renewal(
-        value,
-        key(2).verifying_key().to_bytes(),
-        key(3).verifying_key().to_bytes(),
-        [4; 32],
-        now,
-    )
+    book.accept_renewal(value, key(2).public_key(), carrier_key(3), [4; 32], now)
 }
 #[test]
 fn signed_invite_admits_without_official_source_or_ip_input() {
@@ -1003,7 +1075,7 @@ fn invalid_expired_forged_and_wrong_node_are_rejected() {
         record(2, 2, 1000, 1500),
         record(5, 2, 2000, 3000),
     ] {
-        if bad.issued_at_ms == 2000 && bad.relay_public_key == key(2).verifying_key().to_bytes() {
+        if bad.issued_at_ms == 2000 && bad.relay_public_key == key(2).public_key() {
             bad.signature[0] ^= 1;
         }
         assert!(accept(&mut b, bad, 2000).is_err());
@@ -1014,7 +1086,7 @@ fn invalid_expired_forged_and_wrong_node_are_rejected() {
 fn cannot_swap_endpoint_or_instance_or_transport() {
     let mut b = book();
     for mut addr in [address(5), address(3)] {
-        if addr.address.endpoint_key == key(3).verifying_key().to_bytes() {
+        if addr.address.endpoint_key == carrier_key(3) {
             addr.instance = [6; 32];
         }
         let bad = directory::sign_relay_record_v1(
@@ -1082,12 +1154,7 @@ fn bootstrap_locator_retains_source_expiry_revocation_epoch_and_clock_gates() ->
     b.replace_sources(vec![source(vec![next.clone()], 2600)], 3100)?;
     assert_eq!(b.bootstrap_routes(3100)?, vec![next]);
     assert!(b
-        .check_route(
-            key(2).verifying_key().to_bytes(),
-            key(3).verifying_key().to_bytes(),
-            [4; 32],
-            3100
-        )
+        .check_route(key(2).public_key(), carrier_key(3), [4; 32], 3100)
         .is_err());
     b.replace_sources(vec![source(vec![], 3200)], 3200)?;
     let mut restored = restore(&b.checkpoint()?, 3300)?;
@@ -1100,9 +1167,10 @@ fn bootstrap_locator_retains_source_expiry_revocation_epoch_and_clock_gates() ->
     shorter.manifest.signatures.clear();
     directory::sign_bootstrap_manifest_v1(&mut shorter.manifest, &key(1))?;
     let mut bounded = ServiceLeaseBookV1::new(
-        BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+        BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec()),
         vec![shorter],
         2000,
+        key(90),
     )?;
     assert_eq!(bounded.bootstrap_routes(2999)?.len(), 1);
     assert!(bounded.bootstrap_routes(3000)?.is_empty());
@@ -1114,12 +1182,7 @@ fn signed_revocation_interrupts_routes_and_cannot_be_replayed_away() {
     b.replace_sources(vec![source(vec![], 3000)], 3000).unwrap();
     assert!(b.routes(3000).unwrap().is_empty());
     assert!(b
-        .check_route(
-            key(2).verifying_key().to_bytes(),
-            key(3).verifying_key().to_bytes(),
-            [4; 32],
-            3000
-        )
+        .check_route(key(2).public_key(), carrier_key(3), [4; 32], 3000)
         .is_err());
     assert!(b
         .replace_sources(vec![source(vec![record(2, 1, 1000, 400_000)], 1000)], 3000)
@@ -1130,9 +1193,9 @@ fn signed_revocation_interrupts_routes_and_cannot_be_replayed_away() {
 }
 #[test]
 fn wrong_anchor_and_aggregate_disclosure_are_rejected() {
-    let policy = BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes());
-    let wrong = BootstrapTrustPolicyV1::single_signer(key(8).verifying_key().to_bytes());
-    assert!(ServiceLeaseBookV1::new(wrong, book().sources(), 2000).is_err());
+    let policy = BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec());
+    let wrong = BootstrapTrustPolicyV1::single_signer(key(8).public_key().to_vec());
+    assert!(ServiceLeaseBookV1::new(wrong, book().sources(), 2000, key(90)).is_err());
     let a = source(
         vec![record(2, 1, 1000, 400_000), record(5, 1, 1000, 400_000)],
         1000,
@@ -1140,7 +1203,7 @@ fn wrong_anchor_and_aggregate_disclosure_are_rejected() {
     let mut b = source(vec![record(6, 1, 1000, 400_000)], 1000);
     b.manifest.manifest_id = "community".into();
     directory::sign_bootstrap_manifest_v1(&mut b.manifest, &key(1)).unwrap();
-    assert!(ServiceLeaseBookV1::new(policy, vec![a, b], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new(policy, vec![a, b], 2000, key(90)).is_err());
 }
 #[test]
 fn source_rollback_equivocation_and_bad_update_preserve_previous_route() {
@@ -1208,9 +1271,10 @@ async fn real_carrier_renews_three_times_without_reauthorizing_node() -> Result<
     let client = async {
         let source = rx.await?;
         let mut b = ServiceLeaseBookV1::new(
-            BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+            BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec()),
             vec![source],
             2000,
+            key(90),
         )?;
         let route = IrohServiceEndpointV1::from_record(&b.routes(2000)?[0])?;
         with_iroh_scope_v1(config, IrohControlV1::new(end, || Ok(()))?, move |scope| {
@@ -1221,7 +1285,7 @@ async fn real_carrier_renews_three_times_without_reauthorizing_node() -> Result<
                     assert_eq!(r.sequence, seq);
                     b.accept_renewal(
                         r,
-                        key(2).verifying_key().to_bytes(),
+                        key(2).public_key(),
                         route.address.endpoint_key,
                         [4; 32],
                         3000,
@@ -1255,9 +1319,10 @@ impl ServiceLeasePersistenceV1 for MemoryCheckpoint {
 }
 fn restore(bytes: &[u8], now: u64) -> Result<ServiceLeaseBookV1> {
     ServiceLeaseBookV1::restore(
-        BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+        BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec()),
         bytes,
         now,
+        key(90),
     )
 }
 #[test]
@@ -1287,16 +1352,11 @@ fn durable_expired_history_is_retained_but_never_authorizes_route() -> Result<()
     let mut reopened = restore(&bytes, 900_000)?;
     assert!(reopened.routes(900_000)?.is_empty());
     assert!(reopened
-        .check_route(
-            key(2).verifying_key().to_bytes(),
-            key(3).verifying_key().to_bytes(),
-            [4; 32],
-            900_000
-        )
+        .check_route(key(2).public_key(), carrier_key(3), [4; 32], 900_000)
         .is_err());
     assert!(restore(&bytes, 1999).is_err());
-    let wrong = BootstrapTrustPolicyV1::single_signer(key(7).verifying_key().to_bytes());
-    assert!(ServiceLeaseBookV1::restore(wrong, &bytes, 4000).is_err());
+    let wrong = BootstrapTrustPolicyV1::single_signer(key(7).public_key().to_vec());
+    assert!(ServiceLeaseBookV1::restore(wrong, &bytes, 4000, key(90)).is_err());
     let mut invalid: serde_json::Value = serde_json::from_slice(&bytes)?;
     invalid["current"][0]["sequence"] = 999.into();
     assert!(restore(&serde_json::to_vec(&invalid)?, 4000).is_err());
@@ -1350,9 +1410,10 @@ async fn real_carrier_v2_refreshes_sources_and_durably_issues() -> Result<()> {
                     .map_err(|_| anyhow::anyhow!("fixture receiver ended"))?;
                 let dir = HostDirectory::new();
                 let mut book = ServiceLeaseBookV1::new(
-                    BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+                    BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec()),
                     vec![source(vec![initial], 1000)],
                     2000,
+                    key(90),
                 )?;
                 let checkpoint = book.checkpoint()?;
                 let file = ServiceLeaseFileV1::create(
@@ -1376,9 +1437,10 @@ async fn real_carrier_v2_refreshes_sources_and_durably_issues() -> Result<()> {
     let client = async {
         let source = rx.await?;
         let mut b = ServiceLeaseBookV1::new(
-            BootstrapTrustPolicyV1::single_signer(key(1).verifying_key().to_bytes()),
+            BootstrapTrustPolicyV1::single_signer(key(1).public_key().to_vec()),
             vec![source],
             2000,
+            key(90),
         )?;
         let route = IrohServiceEndpointV1::from_record(&b.routes(2000)?[0])?;
         with_iroh_scope_v1(config, IrohControlV1::new(end, || Ok(()))?, move |scope| {
@@ -1389,7 +1451,7 @@ async fn real_carrier_v2_refreshes_sources_and_durably_issues() -> Result<()> {
                     assert_eq!(r.lease.as_ref().unwrap().sequence, seq);
                     b.accept_offer(
                         r,
-                        key(2).verifying_key().to_bytes(),
+                        key(2).public_key(),
                         route.address.endpoint_key,
                         [4; 32],
                         3000,

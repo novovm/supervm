@@ -1,7 +1,8 @@
 #![cfg(feature = "iroh-transport")]
 //! Real localhost QUIC fixtures. These are neither Android nor anonymity evidence.
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use novovm_network::{
     carrier_stream::CarrierStreamV1, iroh_transport::*, mailbox_rpc::*, mailbox_store::*,
     product_directory::sign_relay_record_v1, product_rendezvous_daemon::now_ms,
@@ -14,10 +15,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use transport_identity::key;
 
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
-}
 fn config() -> IrohConfigV1 {
     IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
         .unwrap()
@@ -81,14 +80,14 @@ async fn continuous_mailbox_survives_locator_rotation_expiry_and_more_than_64_re
     let epochs = Arc::new(AtomicUsize::new(0));
     let published = epochs.clone();
     let trust = SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [key(1).verifying_key().to_bytes()].into(),
+        version: 2,
+        node_pins: [key(1).public_key().to_vec()].into(),
     };
     let server_trust = trust.clone();
     let server = run_self_owned_node_v1(
         config().with_owned_service_identity(zeroize::Zeroizing::new([90; 32]))?,
         key(1),
-        [key(2).verifying_key().to_bytes()].into(),
+        [key(2).public_key().to_vec()].into(),
         stop,
         Some(service),
         move |endpoint, expires| {
@@ -101,7 +100,12 @@ async fn continuous_mailbox_survives_locator_rotation_expiry_and_more_than_64_re
                 expires,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(server_trust, vec![record], now)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                server_trust,
+                vec![record],
+                now,
+                crate::transport_identity::key(90),
+            )?;
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(
                 &journal,
@@ -128,18 +132,19 @@ async fn continuous_mailbox_survives_locator_rotation_expiry_and_more_than_64_re
             trust,
             vec![record],
             now_ms()?,
+            crate::transport_identity::key(90),
         )?));
         let owner = IrohEndpointOwnerV1::bind(config(), || Ok(())).await?;
         let before = owner.snapshot();
         let check_book = book.clone();
         let transport = route.address.endpoint_key;
         owner.with_continuous_service_v4(move || {
-            check_book.lock().unwrap().check_continuous_peer_v4(key(1).verifying_key().to_bytes(), transport, now_ms()?)
+            check_book.lock().unwrap().check_continuous_peer_v4(key(1).public_key(), transport, now_ms()?)
         }, move |scope| Box::pin(async move {
             let started = Instant::now();
             let mut stream: CarrierStreamV1<'_> = scope.connect(&route.address).await?.into();
             request_mailbox_continuous_v4(&mut stream).await?;
-            let mut session = MailboxClientSessionV2::begin_continuous_v4(&mut stream, &key(2), key(1).verifying_key().to_bytes()).await?;
+            let mut session = MailboxClientSessionV2::begin_continuous_v4(&mut stream, &key(2), key(1).public_key().to_vec()).await?;
             let grant = MailboxGrant::generate()?;
             ensure!(matches!(session.request(register(&grant)).await?, MailboxReplyV1::Registered));
             // Exercise the shared rate budget beyond the old lifetime cap.
@@ -158,7 +163,7 @@ async fn continuous_mailbox_survives_locator_rotation_expiry_and_more_than_64_re
             let expires = (now_ms()? / 1000) as i64 + 60;
             let receipt = session.request(MailboxRequestV1::Put { mailbox: grant.id, write: *grant.write.as_bytes(),
                 object: [42; 32], ciphertext: data.clone(), expires }).await?;
-            match receipt { MailboxReplyV1::Stored(receipt) => receipt.verify(key(1).verifying_key().to_bytes(), grant.id, [42; 32], &data, expires)?,
+            match receipt { MailboxReplyV1::Stored(receipt) => receipt.verify(key(1).public_key(), grant.id, [42; 32], &data, expires, &crate::transport_identity::key(90))?,
                 _ => anyhow::bail!("missing durable store receipt") }
             ensure!(matches!(session.request(fetch(&grant)).await?, MailboxReplyV1::Object { ciphertext, .. } if ciphertext == data));
             // A capability error is a rejected operation, not a global license.
@@ -228,7 +233,7 @@ async fn continuous_rejects_wrong_identity_legacy_finite_scope_revocation_and_ca
                         serve_mailbox_continuous_v4(
                             &mut stream,
                             &key(1),
-                            &[key(2).verifying_key().to_bytes()],
+                            &[key(2).public_key().to_vec()],
                             &service,
                             || {
                                 ensure!(check.load(Ordering::Acquire), "fixture revoked");
@@ -264,12 +269,17 @@ async fn continuous_rejects_wrong_identity_legacy_finite_scope_revocation_and_ca
             }
             let identity = key(if case == "identity" { 3 } else { 2 });
             let node_pin = key(if case == "node_pin" { 4 } else { 1 })
-                .verifying_key()
-                .to_bytes();
+                .public_key()
+                .to_vec();
             let result = if case == "legacy" {
-                MailboxClientSessionV2::begin(&mut stream, &identity, node_pin).await
+                MailboxClientSessionV2::begin(&mut stream, &identity, node_pin.clone()).await
             } else {
-                MailboxClientSessionV2::begin_continuous_v4(&mut stream, &identity, node_pin).await
+                MailboxClientSessionV2::begin_continuous_v4(
+                    &mut stream,
+                    &identity,
+                    node_pin.clone(),
+                )
+                .await
             };
             if matches!(case, "identity" | "node_pin" | "legacy" | "finite") {
                 ensure!(result.is_err(), "invalid negotiation accepted");

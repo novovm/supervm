@@ -1,6 +1,7 @@
 #![cfg(feature = "iroh-transport")]
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use novovm_network::{
     carrier_stream::CarrierStreamV1, iroh_transport::*, mailbox_rpc::*, mailbox_store::*,
 };
@@ -9,10 +10,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use transport_identity::key;
 
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
-}
 fn config() -> IrohConfigV1 {
     IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
         .unwrap()
@@ -36,10 +35,7 @@ async fn rpc(
             serve_mailbox_v1(
                 &mut stream,
                 &key(1),
-                &[
-                    key(2).verifying_key().to_bytes(),
-                    key(3).verifying_key().to_bytes(),
-                ],
+                &[key(2).public_key().to_vec(), key(3).public_key().to_vec()],
                 &service,
             )
             .await
@@ -51,7 +47,7 @@ async fn rpc(
             request_mailbox_v1(
                 &mut stream,
                 &key(client),
-                key(1).verifying_key().to_bytes(),
+                key(1).public_key().to_vec(),
                 request,
             )
             .await
@@ -97,14 +93,14 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = Mutex::new(Some(tx));
     let trust = SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [key(1).verifying_key().to_bytes()].into(),
+        version: 2,
+        node_pins: [key(1).public_key().to_vec()].into(),
     };
     let server_trust = trust.clone();
     let server = run_self_owned_node_v1(
         config().with_owned_service_identity(zeroize::Zeroizing::new([90; 32]))?,
         key(1),
-        [key(2).verifying_key().to_bytes()].into(),
+        [key(2).public_key().to_vec()].into(),
         stop,
         Some(service),
         move |endpoint, expires| {
@@ -117,7 +113,12 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                 expires,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(server_trust, vec![record], now)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                server_trust,
+                vec![record],
+                now,
+                crate::transport_identity::key(90),
+            )?;
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(
                 &journal,
@@ -138,7 +139,12 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
         let _stop = guard;
         let record = rx.await?;
         let route = IrohServiceEndpointV1::from_record(&record)?;
-        let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now_ms()?)?;
+        let mut book = ServiceLeaseBookV1::new_self_owned(
+            trust,
+            vec![record],
+            now_ms()?,
+            crate::transport_identity::key(90),
+        )?;
         let endpoint = IrohEndpointOwnerV1::bind(config(), || Ok(())).await?;
         let grant = MailboxGrant::generate()?;
         let expiry = (now_ms()? / 1000) as i64 + 300;
@@ -193,7 +199,7 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                         let offer = request_mailbox_offer_v2(&mut stream).await?;
                         book.accept_offer(
                             offer,
-                            key(1).verifying_key().to_bytes(),
+                            key(1).public_key(),
                             route.address.endpoint_key,
                             route.instance,
                             now_ms()?,
@@ -201,7 +207,7 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                         let reply = request_mailbox_v1(
                             &mut stream,
                             &key(2),
-                            key(1).verifying_key().to_bytes(),
+                            key(1).public_key().to_vec(),
                             request,
                         )
                         .await?;
@@ -215,11 +221,12 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                 | (1 | 6, MailboxReplyV1::Empty)
                 | (5, MailboxReplyV1::Consumed) => {}
                 (2, MailboxReplyV1::Stored(r)) => r.verify(
-                    key(1).verifying_key().to_bytes(),
+                    key(1).public_key(),
                     grant.id,
                     [42; 32],
                     &data,
                     expiry,
+                    &crate::transport_identity::key(90),
                 )?,
                 (3, MailboxReplyV1::Notice(n)) => ensure!(
                     n.len() == 1 && n[0].pending && n[0].cursor.sequence == 1,
@@ -241,7 +248,7 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                     let offer = request_mailbox_offer_v2(&mut stream).await?;
                     book.accept_offer(
                         offer,
-                        key(1).verifying_key().to_bytes(),
+                        key(1).public_key(),
                         route.address.endpoint_key,
                         route.instance,
                         now_ms()?,
@@ -249,7 +256,7 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                     let mut session = MailboxClientSessionV2::begin(
                         &mut stream,
                         &key(2),
-                        key(1).verifying_key().to_bytes(),
+                        key(1).public_key().to_vec(),
                     )
                     .await?;
                     for _ in 0..3 {
@@ -288,7 +295,7 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                             IrohServiceEndpointV1::from_record(offer.lease.as_ref().unwrap())?;
                         book.accept_offer(
                             offer,
-                            key(1).verifying_key().to_bytes(),
+                            key(1).public_key(),
                             route.address.endpoint_key,
                             offered.instance,
                             now_ms()?,
@@ -296,7 +303,7 @@ async fn existing_self_owned_listener_dispatches_mailbox_with_verified_offer() -
                         let mut session = MailboxClientSessionV2::begin(
                             &mut stream,
                             &key(2),
-                            key(1).verifying_key().to_bytes(),
+                            key(1).public_key().to_vec(),
                         )
                         .await?;
                         let start = Instant::now();
@@ -371,7 +378,7 @@ async fn authenticated_window_rejects_expiry_revocation_and_wrong_identity() -> 
                     let result = serve_mailbox_window_v3(
                         &mut stream,
                         &key(1),
-                        &[key(2).verifying_key().to_bytes()],
+                        &[key(2).public_key().to_vec()],
                         &service,
                         move || {
                             ensure!(check.load(Ordering::Acquire), "fixture revoked");
@@ -399,7 +406,7 @@ async fn authenticated_window_rejects_expiry_revocation_and_wrong_identity() -> 
                 let opened = MailboxClientSessionV2::begin(
                     &mut stream,
                     &signer,
-                    key(1).verifying_key().to_bytes(),
+                    key(1).public_key().to_vec(),
                 )
                 .await;
                 if case == "identity" {
@@ -481,11 +488,12 @@ async fn contributor_same_authenticated_protocol_retains_objects_across_opt_out_
             anyhow::bail!("contributor did not commit")
         };
         receipt.verify(
-            key(1).verifying_key().to_bytes(),
+            key(1).public_key(),
             grant.id,
             [8; 32],
             &data,
             expiry,
+            &crate::transport_identity::key(90),
         )?;
     }
     service.set_resources_available(false).await?;
@@ -521,11 +529,12 @@ async fn contributor_same_authenticated_protocol_retains_objects_across_opt_out_
         anyhow::bail!("lost ACK cannot be reconciled after opt-out")
     };
     receipt.verify(
-        key(1).verifying_key().to_bytes(),
+        key(1).public_key(),
         phone.id,
         [8; 32],
         &data,
         expiry,
+        &crate::transport_identity::key(90),
     )?;
     assert!(matches!(
         rpc(
@@ -602,13 +611,14 @@ async fn contributor_same_authenticated_protocol_retains_objects_across_opt_out_
         anyhow::bail!("retry did not restore actual custody")
     };
     restored.verify(
-        key(1).verifying_key().to_bytes(),
+        key(1).public_key(),
         phone.id,
         [8; 32],
         &data,
         expiry,
+        &crate::transport_identity::key(90),
     )?;
-    // Identical deterministic receipt bytes do not prove cleanup or custody.
+    // Identical custody commitments do not prove cleanup or custody.
     // Verify the actual stored object before acknowledging this retry.
     let MailboxReplyV1::Object {
         object: retried,
@@ -671,11 +681,12 @@ async fn contributor_same_authenticated_protocol_retains_objects_across_opt_out_
         anyhow::bail!("explicit resume did not restore admission")
     };
     receipt.verify(
-        key(1).verifying_key().to_bytes(),
+        key(1).public_key(),
         phone.id,
         [9; 32],
         &data,
         expiry,
+        &crate::transport_identity::key(90),
     )?;
     Ok(())
 }
@@ -737,39 +748,52 @@ async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full(
         expires,
     };
     // Recipient has no socket/runtime session during either Put.
-    let mut original_signature = None;
+    let mut original_commitment = None;
     for _ in 0..2 {
         let MailboxReplyV1::Stored(receipt) = rpc(service.clone(), 2, put()).await? else {
             anyhow::bail!("not stored")
         };
         receipt.verify(
-            key(1).verifying_key().to_bytes(),
+            key(1).public_key(),
             grant.id,
             object,
             &payload,
             expires,
+            &crate::transport_identity::key(90),
         )?;
-        if let Some(signature) = original_signature.as_ref() {
-            assert_eq!(&receipt.signature, signature);
+        let commitment = (
+            receipt.version,
+            receipt.suite,
+            receipt.node.clone(),
+            receipt.mailbox,
+            receipt.object,
+            receipt.digest,
+            receipt.bytes,
+            receipt.expires,
+        );
+        if let Some(original) = original_commitment.as_ref() {
+            assert_eq!(&commitment, original);
         } else {
-            original_signature = Some(receipt.signature.clone());
+            original_commitment = Some(commitment);
         }
         assert!(receipt
             .verify(
-                key(2).verifying_key().to_bytes(),
+                key(2).public_key(),
                 grant.id,
                 object,
                 &payload,
-                expires
+                expires,
+                &crate::transport_identity::key(90)
             )
             .is_err());
         assert!(receipt
             .verify(
-                key(1).verifying_key().to_bytes(),
+                key(1).public_key(),
                 grant.id,
                 object,
                 &payload,
-                expires + 1
+                expires + 1,
+                &crate::transport_identity::key(90)
             )
             .is_err());
     }
@@ -863,11 +887,12 @@ async fn l3_l4_same_rpc_durable_offline_fetch_restart_duplicate_revoke_and_full(
         anyhow::bail!("retry did not restore custody after restart")
     };
     restored.verify(
-        key(1).verifying_key().to_bytes(),
+        key(1).public_key(),
         grant.id,
         object,
         &payload,
         expires,
+        &crate::transport_identity::key(90),
     )?;
     // The retry must represent new durable custody with the original TTL.
     let MailboxReplyV1::Object {
@@ -962,7 +987,7 @@ async fn session_preserves_chunk_counters_capabilities_revocation_and_budget() -
             serve_mailbox_session_v2(
                 &mut stream,
                 &key(1),
-                &[key(2).verifying_key().to_bytes()],
+                &[key(2).public_key().to_vec()],
                 &service,
                 || Ok(()),
             )
@@ -972,12 +997,9 @@ async fn session_preserves_chunk_counters_capabilities_revocation_and_budget() -
     let client = with_iroh_scope_v1(config(), control(), move |scope| {
         Box::pin(async move {
             let mut stream = scope.connect(&rx.await?).await?.into();
-            let mut session = MailboxClientSessionV2::begin(
-                &mut stream,
-                &key(2),
-                key(1).verifying_key().to_bytes(),
-            )
-            .await?;
+            let mut session =
+                MailboxClientSessionV2::begin(&mut stream, &key(2), key(1).public_key().to_vec())
+                    .await?;
             let expires = (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_secs()
@@ -1001,11 +1023,12 @@ async fn session_preserves_chunk_counters_capabilities_revocation_and_budget() -
                     anyhow::bail!("missing store receipt")
                 };
                 receipt.verify(
-                    key(1).verifying_key().to_bytes(),
+                    key(1).public_key(),
                     grant.id,
                     [42; 32],
                     &data,
                     expires,
+                    &crate::transport_identity::key(90),
                 )?;
             }
             ensure!(matches!(

@@ -120,7 +120,7 @@ pub struct GenesisConfig {
 #[serde(deny_unknown_fields)]
 pub struct GenesisValidator {
     pub public_key: Vec<u8>,
-    pub transport_public_key: Hash,
+    pub transport_public_key: Vec<u8>,
     pub weight: u64,
 }
 
@@ -137,7 +137,7 @@ pub struct GenesisAllocation {
 pub fn protocol_commitment() -> Hash {
     let mut hash = Sha256::new();
     hash.update(
-        b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v2/fixed-nov-1e17/asset-accounts-nuas-v2\0",
+        b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v3-mldsa65/handshake-v2-mldsa65/fixed-nov-1e17/asset-accounts-nuas-v2\0",
     );
     hash.update(program_id());
     hash.update(SEMANTIC_VERSION.to_be_bytes());
@@ -344,7 +344,7 @@ impl GenesisConfig {
             set,
             self.validators
                 .iter()
-                .map(|v| (v.public_key.clone(), v.transport_public_key)),
+                .map(|v| (v.public_key.clone(), v.transport_public_key.clone())),
         )
     }
 
@@ -477,9 +477,7 @@ mod tests {
             policy,
             validators: (1..=4)
                 .map(|seed| GenesisValidator {
-                    transport_public_key: ed25519_dalek::SigningKey::from_bytes(&[100 + seed; 32])
-                        .verifying_key()
-                        .to_bytes(),
+                    transport_public_key: vec![100 + seed; 1952],
                     // Encoding-only fixture; this is never a qualified signer.
                     public_key: vec![seed; 1952],
                     weight: 1,
@@ -610,8 +608,9 @@ mod tests {
         let mut base = genesis();
         base.genesis_config_commitment = base.derive_commitment().unwrap();
         let mut changed = base.clone();
-        let first = changed.validators[0].transport_public_key;
-        changed.validators[0].transport_public_key = changed.validators[1].transport_public_key;
+        let first = changed.validators[0].transport_public_key.clone();
+        changed.validators[0].transport_public_key =
+            changed.validators[1].transport_public_key.clone();
         changed.validators[1].transport_public_key = first;
         assert_ne!(
             base.derive_commitment().unwrap(),
@@ -625,8 +624,20 @@ mod tests {
         bad.validators[0].public_key = base.validators[1].transport_public_key.to_vec();
         assert!(bad.derive_commitment().is_err());
         bad = base.clone();
-        bad.validators[0].transport_public_key = base.validators[1].transport_public_key;
+        bad.validators[0].transport_public_key = base.validators[1].transport_public_key.clone();
         assert!(bad.derive_commitment().is_err());
+        for key in [
+            vec![7; 32],
+            vec![0; 1952],
+            base.validators[0].public_key.clone(),
+        ] {
+            let mut bad = base.clone();
+            bad.validators[0].transport_public_key = key;
+            assert!(
+                bad.derive_commitment().is_err(),
+                "old, empty or shared-purpose key accepted"
+            );
+        }
         let mut encoded = serde_json::to_value(base).unwrap();
         encoded["validators"][0]
             .as_object_mut()
@@ -770,17 +781,32 @@ mod tests {
             },
         )?;
         let transport_file = root.join("test-only-transport.key");
-        let transport = novovm_relay::purpose_keys::generate(
+        let transport = novovm_relay::purpose_keys::generate_mldsa(
             &transport_file,
             novovm_relay::purpose_keys::PurposeV1::Transport,
             71,
+            || {
+                let pair = crypto.generate_keypair()?;
+                novovm_relay::purpose_keys::PurposeKeyMaterialV3::new(
+                    pair.public_key,
+                    pair.expanded_secret_key,
+                )
+            },
+            |public, secret, message| {
+                crypto
+                    .sign(
+                        public,
+                        secret,
+                        message,
+                        novovm_relay::purpose_keys::PurposeV1::Transport.pair_context(),
+                    )
+                    .map(|_| ())
+                    .map_err(Into::into)
+            },
         )?;
         let mut genesis = genesis();
         genesis.validators[0].public_key = validator.public_key;
-        genesis.validators[0].transport_public_key = transport
-            .public_key
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("transport fixture key shape"))?;
+        genesis.validators[0].transport_public_key = transport.public_key;
         genesis.genesis_config_commitment = genesis.derive_commitment()?;
         let config = ResidentConfig {
             native_client_limit: 0,

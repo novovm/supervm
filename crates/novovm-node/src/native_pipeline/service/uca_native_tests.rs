@@ -84,23 +84,20 @@ fn start(configs: &[ResidentConfig], mode: StartMode) -> Result<Vec<rpc::RpcLife
 fn connect(
     config: &ResidentConfig,
     validators: Arc<ValidatorSet>,
+    key: novovm_network::product_overlay::TransportIdentity,
 ) -> Result<client::NativeApplicationClient> {
-    let key = SigningKey::from_bytes(&[201; 32]);
     ensure!(
         config.genesis.validators.iter().all(|v| {
-            v.public_key != key.verifying_key().to_bytes()
-                && v.transport_public_key != key.verifying_key().to_bytes()
+            v.public_key != key.public_key() && v.transport_public_key != key.public_key()
         }),
         "client is validator"
     );
-    let transport_public = read_key(
+    let transport_public = purpose_keys::read_mldsa_material(
         &config.transport_key_file,
-        config.key_storage,
         PurposeV1::Transport,
         config.genesis.chain_id,
     )?
-    .verifying_key()
-    .to_bytes();
+    .public_key;
     client::NativeApplicationClient::connect(
         UdpSocket::bind("127.0.0.1:0")?,
         key,
@@ -427,6 +424,12 @@ fn run_native_uca_service_fixture_with(
     let node_keys = (0..4)
         .map(|index| config::test_custody::generate_node_keys(&directory, 781, index, &crypto))
         .collect::<Result<Vec<_>>>()?;
+    let (client_identity, _) = config::test_custody::generate_transport_key(
+        &directory,
+        781,
+        "application-client",
+        &crypto,
+    )?;
     let keygen = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
     // Independent: two managers, two spending keys, one shared identity, two
     // recovery keys, two replacement spending keys and a replacement manager.
@@ -446,7 +449,7 @@ fn run_native_uca_service_fixture_with(
             validators: (0..4)
                 .map(|i| GenesisValidator {
                     public_key: node_keys[i].signer.public_key().to_vec(),
-                    transport_public_key: node_keys[i].transport.verifying_key().to_bytes(),
+                    transport_public_key: node_keys[i].transport.public_key().to_vec(),
                     weight: 1,
                 })
                 .collect(),
@@ -559,7 +562,7 @@ fn run_native_uca_service_fixture_with(
         .context("nonleader ingress missing")?;
     let mut clients = configs
         .iter()
-        .map(|config| connect(config, validators.clone()))
+        .map(|config| connect(config, validators.clone(), client_identity.clone()))
         .collect::<Result<Vec<_>>>()?;
     let intent =
         |payer: usize, recipient: usize, amount: u128, epoch: u64| -> Result<AssetSpendIntentV3> {
@@ -658,7 +661,7 @@ fn run_native_uca_service_fixture_with(
         let mut nodes = start(&configs, StartMode::Existing)?;
         let mut clients = configs
             .iter()
-            .map(|config| connect(config, validators.clone()))
+            .map(|config| connect(config, validators.clone(), client_identity.clone()))
             .collect::<Result<Vec<_>>>()?;
         for (index, client) in clients.iter_mut().enumerate() {
             assert_eq!(receipt(&mut nodes, client, &transfer)?, receipts[index].0);
@@ -701,7 +704,7 @@ fn run_native_uca_service_fixture_with(
     let mut nodes = start(&configs, StartMode::Existing)?;
     let mut clients = configs
         .iter()
-        .map(|config| connect(config, validators.clone()))
+        .map(|config| connect(config, validators.clone(), client_identity.clone()))
         .collect::<Result<Vec<_>>>()?;
     let mut tampered = transfer.clone();
     tampered.signature[0] ^= 1;
@@ -790,7 +793,7 @@ fn run_native_uca_service_fixture_with(
     let mut nodes = start(&configs, StartMode::Existing)?;
     let mut clients = configs
         .iter()
-        .map(|config| connect(config, validators.clone()))
+        .map(|config| connect(config, validators.clone(), client_identity.clone()))
         .collect::<Result<Vec<_>>>()?;
     for (index, client) in clients.iter_mut().enumerate() {
         assert_eq!(receipt(&mut nodes, client, &transfer)?, first[0]);
@@ -948,7 +951,7 @@ fn run_native_uca_service_fixture_with(
     let mut nodes = start(&configs, StartMode::Existing)?;
     let mut clients = configs
         .iter()
-        .map(|config| connect(config, validators.clone()))
+        .map(|config| connect(config, validators.clone(), client_identity.clone()))
         .collect::<Result<Vec<_>>>()?;
     assert_eq!(
         account_views(&mut nodes, &mut clients, &new_spend.intent, &respend.intent)?,
@@ -1071,7 +1074,7 @@ fn run_native_uca_service_fixture_with(
     let mut nodes = start(&configs, StartMode::Existing)?;
     let mut clients = configs
         .iter()
-        .map(|config| connect(config, validators.clone()))
+        .map(|config| connect(config, validators.clone(), client_identity.clone()))
         .collect::<Result<Vec<_>>>()?;
     assert_eq!(
         account_views(

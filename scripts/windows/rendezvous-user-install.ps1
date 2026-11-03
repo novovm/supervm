@@ -90,7 +90,12 @@ try {
 } finally { $pe.Dispose() }
 $raw = Get-Content -LiteralPath $Configuration -Raw
 $config = $raw | ConvertFrom-Json
-if ($config.version -ne 2 -or -not [IO.Path]::IsPathRooted($config.root)) { throw 'Existing self-owned v2 configuration required.' }
+if ($config.version -ne 3 -or -not [IO.Path]::IsPathRooted($config.root)) { throw 'Existing protected ML-DSA-65 self-owned v3 configuration required; old policy is not migrated by installation.' }
+if ($config.chain_id -le 0 -or $config.library_sha256 -notmatch '^[a-fA-F0-9]{64}$' -or
+    -not [IO.Path]::IsPathFullyQualified($config.library) -or
+    -not [IO.Path]::IsPathFullyQualified($config.transport_identity_path)) {
+    throw 'Explicit chain, qualified library pin and absolute protected transport identity are required.'
+}
 Assert-Plain $config.root
 foreach ($file in @('keys.dpapi','self-owned-policy.dpapi','service.journal')) {
     $state = Join-Path $config.root $file

@@ -5,8 +5,8 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
+fn key(n: u8) -> TransportIdentity {
+    TransportIdentity::from_bytes(&[n; 32])
 }
 fn config() -> IrohConfigV1 {
     IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
@@ -57,7 +57,7 @@ async fn exercise(revoke: bool) -> Result<()> {
                 serve_session(
                     &mut stream,
                     &key(1),
-                    ServicePeerPolicyV1::Pinned(&[key(2).verifying_key().to_bytes()]),
+                    ServicePeerPolicyV1::Pinned(&[key(2).public_key().to_vec()]),
                     &service,
                     || Ok(()),
                     SessionMode::Prefetch,
@@ -75,7 +75,7 @@ async fn exercise(revoke: bool) -> Result<()> {
                 let mut session = MailboxClientSessionV2::begin_continuous_v6(
                     &mut stream,
                     &key(2),
-                    key(1).verifying_key().to_bytes(),
+                    key(1).public_key().to_vec(),
                 )
                 .await?;
                 let (path, rtt) = session.carrier_observation_v1()?;
@@ -121,11 +121,12 @@ async fn exercise(revoke: bool) -> Result<()> {
                     anyhow::bail!("missing durable receipt")
                 };
                 receipt.verify(
-                    key(1).verifying_key().to_bytes(),
+                    key(1).public_key(),
                     grant.id,
                     [7; 32],
                     &data,
                     expires,
+                    &crate::test_identity::key(250),
                 )?;
                 assert!(matches!(
                     session

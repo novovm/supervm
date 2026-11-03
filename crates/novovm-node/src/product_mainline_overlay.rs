@@ -5,9 +5,12 @@
 //! policy before AOEM execution; native seal bytes remain opaque to this transport module.
 
 use anyhow::{bail, Context, Result};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use novovm_network::product_overlay::{
+    TransportIdentity, TransportVerifier, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
+    MLDSA65_SUITE,
+};
 use novovm_network::{
-    peer_id_from_ed25519_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
+    peer_id_from_mldsa65_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
     NodeHandshakeInitiatorV1, NodeHandshakeResponderV1, NovoRudpTransportFrameKindV0,
     NovoRudpTransportFrameV0, OpaqueRelayDeliveryV1, ProductRelayWireMessageV1,
     RelayForwardDispositionV1, RelayForwardOutcomeV1, RelayPeerHandshakeV1, RelayTransportV1,
@@ -54,11 +57,11 @@ const PRODUCT_MAINLINE_OVERLAY_EVENT_SLOT_OVERHEAD_BYTES_V1: usize = 4 * 1024;
 const PRODUCT_MAINLINE_OVERLAY_EVENT_RETRY_DELAY_MS_V1: u64 = 5;
 const PRODUCT_MAINLINE_OVERLAY_EVENT_TEXT_MAX_BYTES_V1: usize = 4 * 1024;
 const PRODUCT_MAINLINE_OVERLAY_EVENT_DRAIN_MAX_BATCH_V1: usize = 256;
-const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_MAGIC_V1: [u8; 8] = *b"NOVACK01";
+const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_MAGIC_V1: [u8; 8] = *b"NOVACK02";
 const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1: &[u8] =
-    b"novovm-product-mainline-recipient-ack/v1";
-const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1: u16 = 1;
-const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1: usize = 64;
+    b"novovm-product-mainline-recipient-ack/v2";
+const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1: u16 = 2;
+const PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1: usize = MLDSA65_SIGNATURE_BYTES;
 const PRODUCT_MAINLINE_OVERLAY_PEER_ID_MAX_BYTES_V1: usize = 256;
 const DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1: &str =
     "novovm-product-delivery-journal.rocksdb";
@@ -158,6 +161,8 @@ pub struct ProductMainlineOverlayConfigV1 {
     pub chain_id: u64,
     pub role: ProductMainlineOverlayRoleV1,
     pub identity_key_path: PathBuf,
+    pub library: PathBuf,
+    pub library_sha256: String,
     pub delivery_journal_path: Option<PathBuf>,
     pub overlay: ProductNodeOverlayConfigV1,
     pub target_peer_id: Option<String>,
@@ -178,6 +183,8 @@ struct ProductMainlineOverlayConfigSerdeV1 {
     chain_id: u64,
     role: ProductMainlineOverlayRoleV1,
     identity_key_path: PathBuf,
+    library: PathBuf,
+    library_sha256: String,
     #[serde(default)]
     delivery_journal_path: Option<PathBuf>,
     overlay: ProductNodeOverlayConfigV1,
@@ -218,6 +225,8 @@ impl<'de> Deserialize<'de> for ProductMainlineOverlayConfigV1 {
             chain_id: decoded.chain_id,
             role: decoded.role,
             identity_key_path: decoded.identity_key_path,
+            library: decoded.library,
+            library_sha256: decoded.library_sha256,
             delivery_journal_path: decoded.delivery_journal_path,
             overlay: decoded.overlay,
             target_peer_id: decoded.target_peer_id,
@@ -318,18 +327,27 @@ pub struct ProductMainlineOverlayRecipientAckV1 {
     pub recipient_peer_id: String,
     pub accepted_at_ms: u64,
     pub disposition: ProductMainlineOverlayRecipientAckDispositionV1,
-    pub signature: [u8; PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1],
+    pub suite: u16,
+    pub recipient_public_key: Vec<u8>,
+    pub signature: Vec<u8>,
 }
 
 impl ProductMainlineOverlayRecipientAckV1 {
     /// Recheck typed events at a consumer boundary using the canonical wire
     /// verifier. The public structure alone is not proof of authentication.
-    pub(crate) fn verify_route(&self, chain: u64, sender: &str, recipient: &str) -> Result<()> {
+    pub(crate) fn verify_route(
+        &self,
+        chain: u64,
+        sender: &str,
+        recipient: &str,
+        verifier: &dyn TransportVerifier,
+    ) -> Result<()> {
         decode_and_verify_recipient_ack_v1(
             &encode_recipient_ack_v1(self)?,
             chain,
             sender,
             recipient,
+            verifier,
         )
         .map(|_| ())
     }
@@ -515,7 +533,9 @@ fn product_mainline_overlay_event_owned_bytes_v1(event: &ProductMainlineOverlayE
         ProductMainlineOverlayEventV1::RecipientAck { ack, .. } => ack
             .original_sender_peer_id
             .capacity()
-            .saturating_add(ack.recipient_peer_id.capacity()),
+            .saturating_add(ack.recipient_peer_id.capacity())
+            .saturating_add(ack.recipient_public_key.capacity())
+            .saturating_add(ack.signature.capacity()),
         ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(admission) => admission
             .original_sender_peer_id
             .capacity()
@@ -791,7 +811,7 @@ fn try_reserve_preauth_v1(
 }
 
 struct ProductMainlineOverlayWorkerV1 {
-    identity: SigningKey,
+    identity: TransportIdentity,
     overlay: ProductNodeOverlayRuntimeV1,
     route_plan: ProductNodeRoutePlanV1,
     relay_overrides: BTreeMap<String, ProductRelayClientConfigV1>,
@@ -850,6 +870,7 @@ pub struct ProductMainlineOverlayRuntimeV1 {
     role: ProductMainlineOverlayRoleV1,
     metric_peer_id: u64,
     remote_peer_ids: Vec<String>,
+    verifier: TransportIdentity,
     outbound: SyncSender<ProductMainlineOverlayOutboundV1>,
     recipient_acks: SyncSender<ProductMainlineOverlayRecipientAckRequestV1>,
     pending_budget: Arc<Mutex<ProductMainlineOverlayPendingBudgetV1>>,
@@ -859,6 +880,10 @@ pub struct ProductMainlineOverlayRuntimeV1 {
 }
 
 impl ProductMainlineOverlayRuntimeV1 {
+    pub fn identity_verifier(&self) -> &dyn TransportVerifier {
+        &self.verifier
+    }
+
     pub fn start(config: ProductMainlineOverlayConfigV1, now_ms: u64) -> Result<Self> {
         Self::start_inner_v1(config, now_ms, BTreeMap::new())
     }
@@ -868,10 +893,23 @@ impl ProductMainlineOverlayRuntimeV1 {
         now_ms: u64,
         relay_overrides: BTreeMap<String, ProductRelayClientConfigV1>,
     ) -> Result<Self> {
+        let identity = novovm_relay::transport_identity::load_transport_identity(
+            &config.identity_key_path,
+            config.chain_id,
+            &config.library,
+            &config.library_sha256,
+        )?;
+        Self::start_with_identity_v1(config, now_ms, relay_overrides, identity)
+    }
+
+    fn start_with_identity_v1(
+        config: ProductMainlineOverlayConfigV1,
+        now_ms: u64,
+        relay_overrides: BTreeMap<String, ProductRelayClientConfigV1>,
+        identity: TransportIdentity,
+    ) -> Result<Self> {
         validate_config_v1(&config)?;
-        let identity = load_ed25519_identity_v1(&config.identity_key_path)?;
-        let local_peer_id =
-            peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+        let local_peer_id = peer_id_from_mldsa65_public_key_v1(identity.public_key());
         let remote_peers = configured_remote_peers_v1(&config)?;
         let remote_peer_id = remote_peers
             .first()
@@ -889,7 +927,7 @@ impl ProductMainlineOverlayRuntimeV1 {
             .map(|remote| remote.peer_id.clone())
             .collect::<Vec<_>>();
 
-        let overlay = ProductNodeOverlayRuntimeV1::bootstrap(&config.overlay, now_ms)
+        let overlay = ProductNodeOverlayRuntimeV1::bootstrap(&config.overlay, now_ms, &identity)
             .context("bootstrap product overlay inside main node lifecycle")?;
         let route_plan = overlay.select_relay_route(
             &identity,
@@ -898,7 +936,7 @@ impl ProductMainlineOverlayRuntimeV1 {
             now_ms,
             None,
             false,
-        );
+        )?;
         if route_plan.selected_path != StrategyPathV1::RelayNovoRudp {
             bail!(
                 "product mainline overlay requires a reachable signed relay candidate: {:?}",
@@ -952,6 +990,7 @@ impl ProductMainlineOverlayRuntimeV1 {
         let tls_trust = config.tls_trust.clone();
         let reconnect_base_delay_ms = config.reconnect_base_delay_ms.max(1);
         let reconnect_max_delay_ms = config.reconnect_max_delay_ms.max(reconnect_base_delay_ms);
+        let verifier = identity.clone();
         let worker = thread::Builder::new()
             .name("novovm-product-overlay".into())
             .spawn(move || {
@@ -997,6 +1036,7 @@ impl ProductMainlineOverlayRuntimeV1 {
             role: config.role,
             metric_peer_id: config.metric_peer_id,
             remote_peer_ids,
+            verifier,
             outbound: outbound_tx,
             recipient_acks: recipient_ack_tx,
             pending_budget,
@@ -1025,7 +1065,10 @@ impl ProductMainlineOverlayRuntimeV1 {
             .into_iter()
             .map(|relay| (relay.expected_relay_peer_id.clone(), relay))
             .collect();
-        Self::start_inner_v1(config, now_ms, relay_overrides)
+        let identity = crate::product_relay_daemon::component_identity_from_seed_fixture(
+            &config.identity_key_path,
+        )?;
+        Self::start_with_identity_v1(config, now_ms, relay_overrides, identity)
     }
 
     #[must_use]
@@ -1312,12 +1355,11 @@ fn sha256_v1(bytes: &[u8]) -> [u8; 32] {
 }
 
 fn build_recipient_ack_v1(
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     chain_id: u64,
     request: &ProductMainlineOverlayRecipientAckRequestV1,
 ) -> Result<ProductMainlineOverlayRecipientAckV1> {
-    let recipient_peer_id =
-        peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes());
+    let recipient_peer_id = peer_id_from_mldsa65_public_key_v1(identity.public_key());
     if request.recipient_peer_id != recipient_peer_id {
         bail!("product mainline overlay recipient ACK signer does not own recipient peer id");
     }
@@ -1343,10 +1385,15 @@ fn build_recipient_ack_v1(
         recipient_peer_id: request.recipient_peer_id.clone(),
         accepted_at_ms: request.accepted_at_ms,
         disposition: request.disposition,
-        signature: [0u8; PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1],
+        suite: MLDSA65_SUITE,
+        recipient_public_key: identity.public_key().to_vec(),
+        signature: Vec::new(),
     };
     let signing_bytes = recipient_ack_signing_bytes_v1(&ack)?;
-    ack.signature = identity.sign(signing_bytes.as_slice()).to_bytes();
+    ack.signature = identity.sign(
+        signing_bytes.as_slice(),
+        PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1,
+    )?;
     Ok(ack)
 }
 
@@ -1363,6 +1410,12 @@ fn recipient_ack_signing_bytes_v1(ack: &ProductMainlineOverlayRecipientAckV1) ->
     {
         bail!("pending transaction ACK has a non-transaction class");
     }
+    if ack.suite != MLDSA65_SUITE
+        || ack.recipient_public_key.len() != MLDSA65_PUBLIC_KEY_BYTES
+        || peer_id_from_mldsa65_public_key_v1(&ack.recipient_public_key) != ack.recipient_peer_id
+    {
+        bail!("recipient ACK ML-DSA-65 identity binding is invalid");
+    }
     validate_ack_peer_id_v1(ack.original_sender_peer_id.as_str())?;
     validate_ack_peer_id_v1(ack.recipient_peer_id.as_str())?;
     let domain_len = u16::try_from(PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1.len())
@@ -1375,6 +1428,8 @@ fn recipient_ack_signing_bytes_v1(ack: &ProductMainlineOverlayRecipientAckV1) ->
         8 + 2
             + PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1.len()
             + 2
+            + 2
+            + MLDSA65_PUBLIC_KEY_BYTES
             + 8
             + 4
             + 32 * 3
@@ -1388,6 +1443,8 @@ fn recipient_ack_signing_bytes_v1(ack: &ProductMainlineOverlayRecipientAckV1) ->
     bytes.extend_from_slice(&domain_len.to_be_bytes());
     bytes.extend_from_slice(PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1);
     bytes.extend_from_slice(&ack.version.to_be_bytes());
+    bytes.extend_from_slice(&ack.suite.to_be_bytes());
+    bytes.extend_from_slice(&ack.recipient_public_key);
     bytes.extend_from_slice(&ack.chain_id.to_be_bytes());
     bytes.push(ack.payload_class.code());
     bytes.push(ack.disposition.code());
@@ -1405,6 +1462,9 @@ fn recipient_ack_signing_bytes_v1(ack: &ProductMainlineOverlayRecipientAckV1) ->
 
 fn encode_recipient_ack_v1(ack: &ProductMainlineOverlayRecipientAckV1) -> Result<Vec<u8>> {
     let mut bytes = recipient_ack_signing_bytes_v1(ack)?;
+    if ack.signature.len() != MLDSA65_SIGNATURE_BYTES {
+        bail!("recipient ACK signature width is invalid");
+    }
     bytes.extend_from_slice(&ack.signature);
     Ok(bytes)
 }
@@ -1414,6 +1474,7 @@ fn decode_and_verify_recipient_ack_v1(
     expected_chain_id: u64,
     expected_original_sender_peer_id: &str,
     expected_recipient_peer_id: &str,
+    verifier: &dyn TransportVerifier,
 ) -> Result<ProductMainlineOverlayRecipientAckV1> {
     let signed_len = bytes
         .len()
@@ -1432,6 +1493,12 @@ fn decode_and_verify_recipient_ack_v1(
         bail!("product mainline overlay recipient ACK domain is invalid");
     }
     let version = read_ack_u16_v1(signed, &mut cursor)?;
+    let suite = read_ack_u16_v1(signed, &mut cursor)?;
+    if version != PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1 || suite != MLDSA65_SUITE {
+        bail!("recipient ACK version or suite is unsupported");
+    }
+    let recipient_public_key =
+        read_ack_bytes_v1(signed, &mut cursor, MLDSA65_PUBLIC_KEY_BYTES)?.to_vec();
     let chain_id = read_ack_u64_v1(signed, &mut cursor)?;
     let payload_class = ProductMainlineOverlayPayloadClassV1::from_code(
         *read_ack_bytes_v1(signed, &mut cursor, 1)?
@@ -1469,10 +1536,7 @@ fn decode_and_verify_recipient_ack_v1(
     if cursor != signed.len() {
         bail!("product mainline overlay recipient ACK has trailing signed bytes");
     }
-    let signature: [u8; PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_SIGNATURE_BYTES_V1] =
-        signature_bytes
-            .try_into()
-            .context("product mainline overlay recipient ACK signature width is invalid")?;
+    let signature = signature_bytes.to_vec();
     let ack = ProductMainlineOverlayRecipientAckV1 {
         version,
         chain_id,
@@ -1484,6 +1548,8 @@ fn decode_and_verify_recipient_ack_v1(
         recipient_peer_id,
         accepted_at_ms,
         disposition,
+        suite,
+        recipient_public_key,
         signature,
     };
     if ack.version != PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_VERSION_V1
@@ -1511,11 +1577,16 @@ fn decode_and_verify_recipient_ack_v1(
     if ack.delivery_id != expected_delivery_id {
         bail!("product mainline overlay recipient ACK delivery id mismatch");
     }
-    let public_key = ed25519_public_key_from_peer_id_v1(ack.recipient_peer_id.as_str())?;
-    let verifying_key = VerifyingKey::from_bytes(&public_key)
-        .context("product mainline overlay recipient ACK public key is invalid")?;
-    verifying_key
-        .verify(signed, &Signature::from_bytes(&ack.signature))
+    if peer_id_from_mldsa65_public_key_v1(&ack.recipient_public_key) != ack.recipient_peer_id {
+        bail!("recipient ACK public key does not own recipient identity");
+    }
+    verifier
+        .verify(
+            &ack.recipient_public_key,
+            signed,
+            PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1,
+            &ack.signature,
+        )
         .context("product mainline overlay recipient ACK signature is invalid")?;
     Ok(ack)
 }
@@ -1557,30 +1628,21 @@ fn validate_ack_peer_id_v1(peer_id: &str) -> Result<()> {
     if peer_id.is_empty() || peer_id.len() > PRODUCT_MAINLINE_OVERLAY_PEER_ID_MAX_BYTES_V1 {
         bail!("product mainline overlay recipient ACK peer id length is invalid");
     }
-    ed25519_public_key_from_peer_id_v1(peer_id).map(|_| ())
-}
-
-fn ed25519_public_key_from_peer_id_v1(peer_id: &str) -> Result<[u8; 32]> {
-    const PREFIX: &str = "novovm-ed25519:";
-    let encoded = peer_id
-        .strip_prefix(PREFIX)
-        .context("product mainline overlay recipient ACK peer id is not Ed25519")?;
-    if encoded.len() != 64 || encoded.bytes().any(|byte| !byte.is_ascii_hexdigit()) {
-        bail!("product mainline overlay recipient ACK peer id key is not canonical hex");
+    let digest = peer_id
+        .strip_prefix("novovm-mldsa65:")
+        .context("recipient ACK peer identity is not ML-DSA-65")?;
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        bail!("recipient ACK peer identity is not canonical");
     }
-    let mut public_key = [0u8; 32];
-    for (index, output) in public_key.iter_mut().enumerate() {
-        *output = u8::from_str_radix(&encoded[index * 2..index * 2 + 2], 16)
-            .context("decode product mainline overlay recipient ACK peer id key")?;
-    }
-    if peer_id_from_ed25519_public_key_v1(&public_key) != peer_id {
-        bail!("product mainline overlay recipient ACK peer id is not canonical");
-    }
-    Ok(public_key)
+    Ok(())
 }
 
 fn recipient_ack_frame_v1(
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     chain_id: u64,
     frame_sequence: u64,
     request: &ProductMainlineOverlayRecipientAckRequestV1,
@@ -1711,6 +1773,7 @@ fn open_product_mainline_inbound_v1(
     channel: &mut E2eSecureChannelV1,
     delivery: OpaqueRelayDeliveryV1,
     chain_id: u64,
+    verifier: &dyn TransportVerifier,
 ) -> Result<ProductMainlineOverlayOpenedInboundV1> {
     let source_peer_id = delivery.source_peer_id.clone();
     let target_peer_id = delivery.target_peer_id.clone();
@@ -1753,6 +1816,7 @@ fn open_product_mainline_inbound_v1(
                 chain_id,
                 target_peer_id.as_str(),
                 source_peer_id.as_str(),
+                verifier,
             )?;
             let expected_object_id =
                 u64::from_le_bytes(ack.delivery_id[..8].try_into().context(
@@ -1821,6 +1885,7 @@ pub fn load_product_mainline_overlay_config_v1(
         .parent()
         .context("product mainline overlay config has no parent directory")?;
     rebase_relative_path_v1(base, &mut config.identity_key_path);
+    rebase_relative_path_v1(base, &mut config.library);
     rebase_relative_path_v1(base, &mut config.overlay.cache_path);
     let journal_path = config.delivery_journal_path.get_or_insert_with(|| {
         PathBuf::from(DEFAULT_PRODUCT_MAINLINE_OVERLAY_DELIVERY_JOURNAL_NAME_V1)
@@ -1930,10 +1995,13 @@ pub fn validate_product_mainline_overlay_config_v1(
 pub fn product_mainline_overlay_local_peer_id_v1(
     config: &ProductMainlineOverlayConfigV1,
 ) -> Result<String> {
-    let identity = load_ed25519_identity_v1(&config.identity_key_path)?;
-    Ok(peer_id_from_ed25519_public_key_v1(
-        &identity.verifying_key().to_bytes(),
-    ))
+    let identity = novovm_relay::transport_identity::load_transport_identity(
+        &config.identity_key_path,
+        config.chain_id,
+        &config.library,
+        &config.library_sha256,
+    )?;
+    Ok(peer_id_from_mldsa65_public_key_v1(identity.public_key()))
 }
 
 fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
@@ -1992,7 +2060,7 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
                 now_ms_v1(),
                 None,
                 false,
-            );
+            )?;
             continue;
         }
 
@@ -2075,7 +2143,7 @@ fn run_worker_v1(mut worker: ProductMainlineOverlayWorkerV1) -> Result<()> {
             &worker.remote_peer_id,
             &relay_peer_id,
             now_ms_v1(),
-        );
+        )?;
         if let Some(next) = next_route.selected_relay.as_ref() {
             if next.relay_peer_id != relay_peer_id {
                 publish_product_mainline_overlay_event_v1(
@@ -2388,8 +2456,7 @@ fn outbound_delivery_id_v1(
     item: &ProductMainlineOverlayOutboundItemV1,
     recipient_peer_id: &str,
 ) -> [u8; 32] {
-    let sender_peer_id =
-        peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
+    let sender_peer_id = peer_id_from_mldsa65_public_key_v1(worker.identity.public_key());
     product_delivery_id_v1(
         worker.chain_id,
         item.payload_class.label(),
@@ -2634,8 +2701,7 @@ fn run_duplex_mesh_session_v1(
         VecDeque<ProductMainlineOverlayRecipientAckRequestV1>,
     >,
 ) -> Result<()> {
-    let local_peer_id =
-        peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
+    let local_peer_id = peer_id_from_mldsa65_public_key_v1(worker.identity.public_key());
     let mut peers = worker
         .remote_peers
         .iter()
@@ -2817,6 +2883,7 @@ fn run_duplex_mesh_session_v1(
                     .context("configured mesh peer state disappeared")?,
                 buffered.delivery,
                 worker.chain_id,
+                &worker.identity,
             ) {
                 Ok(opened) => publish_opened_inbound_v1(worker, opened, metric_peer_id, true)
                     .context("publish buffered multi-peer product overlay inbound event")?,
@@ -2981,6 +3048,7 @@ fn run_duplex_mesh_session_v1(
                             .context("configured mesh peer state disappeared")?,
                         delivery,
                         worker.chain_id,
+                        &worker.identity,
                     ) {
                         Ok(opened) => {
                             publish_opened_inbound_v1(worker, opened, metric_peer_id, true)
@@ -3181,11 +3249,12 @@ fn open_mesh_inbound_v1(
     state: &mut ProductMainlineMeshPeerStateV1,
     delivery: OpaqueRelayDeliveryV1,
     chain_id: u64,
+    verifier: &dyn TransportVerifier,
 ) -> Result<ProductMainlineOverlayOpenedInboundV1> {
     let ProductMainlineMeshPeerPhaseV1::Active(channel) = &mut state.phase else {
         bail!("multi-peer delivery arrived without an active E2E channel");
     };
-    open_product_mainline_inbound_v1(channel, delivery, chain_id)
+    open_product_mainline_inbound_v1(channel, delivery, chain_id, verifier)
 }
 
 fn mesh_peer_expects_handshake_session_v1(
@@ -3257,8 +3326,7 @@ fn run_authenticated_role_v1(
             (channel, buffered, false, true)
         }
         ProductMainlineOverlayRoleV1::Duplex => {
-            let local_peer_id =
-                peer_id_from_ed25519_public_key_v1(&worker.identity.verifying_key().to_bytes());
+            let local_peer_id = peer_id_from_mldsa65_public_key_v1(worker.identity.public_key());
             let (channel, buffered) = if local_peer_id < worker.remote_peer_id {
                 establish_initiator_channel_v1(
                     relay,
@@ -3305,7 +3373,7 @@ fn run_authenticated_role_v1(
 #[allow(clippy::too_many_arguments)]
 fn establish_initiator_channel_v1(
     relay: &mut ProductRelayClientV1,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     remote_peer_id: &str,
     events: &ProductMainlineOverlayEventSenderV1,
     stop: &AtomicBool,
@@ -3376,7 +3444,7 @@ fn establish_initiator_channel_v1(
 #[allow(clippy::too_many_arguments)]
 fn establish_responder_channel_v1(
     relay: &mut ProductRelayClientV1,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     expected_source_peer_id: Option<&str>,
     events: &ProductMainlineOverlayEventSenderV1,
     stop: &AtomicBool,
@@ -3658,8 +3726,12 @@ fn run_authenticated_session_v1(
         };
         match event {
             ProductRelayClientEventV1::Delivery(delivery) => {
-                let opened =
-                    open_product_mainline_inbound_v1(&mut channel, delivery, worker.chain_id)?;
+                let opened = open_product_mainline_inbound_v1(
+                    &mut channel,
+                    delivery,
+                    worker.chain_id,
+                    &worker.identity,
+                )?;
                 publish_opened_inbound_v1(worker, opened, remote_metric_peer_id, allow_inbound)
                     .context("publish product overlay inbound event")?;
             }
@@ -3888,21 +3960,6 @@ fn validate_inbound_frame_v1(frame: &NovoRudpTransportFrameV0, chain_id: u64) ->
     Ok(())
 }
 
-fn load_ed25519_identity_v1(path: &Path) -> Result<SigningKey> {
-    let text = fs::read_to_string(path)
-        .with_context(|| format!("read product mainline identity key: {}", path.display()))?;
-    let text = text.trim();
-    if text.len() != 64 {
-        bail!("product mainline identity key must contain exactly 64 hexadecimal characters");
-    }
-    let mut secret = [0u8; 32];
-    for (index, output) in secret.iter_mut().enumerate() {
-        *output = u8::from_str_radix(&text[index * 2..index * 2 + 2], 16)
-            .context("decode product mainline identity key hex")?;
-    }
-    Ok(SigningKey::from_bytes(&secret))
-}
-
 fn now_ms_v1() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -3946,11 +4003,16 @@ fn default_reconnect_max_delay_ms_v1() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use novovm_network::product_overlay::TransportIdentity;
+    fn component_key(seed: &[u8; 32]) -> TransportIdentity {
+        crate::product_relay_client::component_identity(seed)
+    }
+
     use super::*;
     use crate::{
         product_node_overlay::ProductBootstrapSourceV1,
         product_relay_daemon::{
-            run_product_relay_daemon_v1, run_product_relay_daemon_with_shutdown_v1,
+            run_component_relay_daemon_v1, run_component_relay_daemon_with_shutdown_v1,
             ProductRelayDaemonConfigV1,
         },
         tx_ingress::sign_nov_native_tx_with_seed_v1,
@@ -4063,7 +4125,7 @@ mod tests {
             Self {
                 stopping,
                 worker: Some(thread::spawn(move || {
-                    run_product_relay_daemon_with_shutdown_v1(config, daemon_stopping)
+                    run_component_relay_daemon_with_shutdown_v1(config, daemon_stopping)
                 })),
             }
         }
@@ -4092,6 +4154,8 @@ mod tests {
             chain_id: 7,
             role,
             identity_key_path: PathBuf::from("identity.hex"),
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             delivery_journal_path: None,
             overlay: ProductNodeOverlayConfigV1 {
                 cache_path: PathBuf::from("cache.json"),
@@ -4445,13 +4509,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let local_identity_path = root.join("local.hex");
         write_identity_v1(&local_identity_path, [0x34; 32]);
-        let relay_identity = SigningKey::from_bytes(&[0x35; 32]);
-        let remote_identity = SigningKey::from_bytes(&[0x36; 32]);
-        let remote_peer_id =
-            peer_id_from_ed25519_public_key_v1(&remote_identity.verifying_key().to_bytes());
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
-        let bootstrap_signer = SigningKey::from_bytes(&[0x37; 32]);
+        let relay_identity = component_key(&[0x35; 32]);
+        let remote_identity = component_key(&[0x36; 32]);
+        let remote_peer_id = peer_id_from_mldsa65_public_key_v1(remote_identity.public_key());
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
+        let bootstrap_signer = component_key(&[0x37; 32]);
         let source = signed_bootstrap_source_v1(
             &bootstrap_signer,
             &relay_identity,
@@ -4464,7 +4526,7 @@ mod tests {
             ProductMainlineOverlayRoleV1::Duplex,
             local_identity_path,
             root.join("cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source,
             Some(remote_peer_id.clone()),
             None,
@@ -4551,13 +4613,11 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let local_identity_path = root.join("local.hex");
         write_identity_v1(&local_identity_path, [0x41; 32]);
-        let relay_identity = SigningKey::from_bytes(&[0x42; 32]);
-        let remote_identity = SigningKey::from_bytes(&[0x43; 32]);
-        let remote_peer_id =
-            peer_id_from_ed25519_public_key_v1(&remote_identity.verifying_key().to_bytes());
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
-        let bootstrap_signer = SigningKey::from_bytes(&[0x44; 32]);
+        let relay_identity = component_key(&[0x42; 32]);
+        let remote_identity = component_key(&[0x43; 32]);
+        let remote_peer_id = peer_id_from_mldsa65_public_key_v1(remote_identity.public_key());
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
+        let bootstrap_signer = component_key(&[0x44; 32]);
         let source = signed_bootstrap_source_v1(
             &bootstrap_signer,
             &relay_identity,
@@ -4569,7 +4629,7 @@ mod tests {
             ProductMainlineOverlayRoleV1::Duplex,
             local_identity_path,
             root.join("cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source,
             Some(remote_peer_id),
             None,
@@ -4658,6 +4718,8 @@ mod tests {
             "chain_id": 7,
             "role": "duplex",
             "identity_key_path": "node.hex",
+            "library": "component-fixture-not-runtime",
+            "library_sha256": "0".repeat(64),
             "target_peer_id": "peer-b",
             "overlay": {
                 "cache_path": "bootstrap-cache.json",
@@ -4699,6 +4761,8 @@ mod tests {
             "chain_id": 7,
             "role": "duplex",
             "identity_key_path": "node.hex",
+            "library": "component-fixture-not-runtime",
+            "library_sha256": "0".repeat(64),
             "target_peer_id": "peer-b",
             "overlay": {
                 "cache_path": "bootstrap-cache.json",
@@ -4775,10 +4839,9 @@ mod tests {
 
     #[test]
     fn product_mainline_mesh_filters_stale_handshake_generation_traffic() {
-        let local_identity = SigningKey::from_bytes(&[0x68; 32]);
-        let remote_identity = SigningKey::from_bytes(&[0x69; 32]);
-        let remote_peer_id =
-            peer_id_from_ed25519_public_key_v1(&remote_identity.verifying_key().to_bytes());
+        let local_identity = component_key(&[0x68; 32]);
+        let remote_identity = component_key(&[0x69; 32]);
+        let remote_peer_id = peer_id_from_mldsa65_public_key_v1(remote_identity.public_key());
         let initiator = NodeHandshakeInitiatorV1::start(
             &local_identity,
             remote_peer_id,
@@ -4854,6 +4917,8 @@ mod tests {
                 "chain_id": 7,
                 "role": "duplex",
                 "identity_key_path": "secrets/node.hex",
+                "library": "component-fixture-not-runtime",
+                "library_sha256": "0".repeat(64),
                 "target_peer_id": "peer-b",
                 "overlay": {
                     "cache_path": "runtime/bootstrap-cache.json",
@@ -4950,12 +5015,11 @@ mod tests {
 
     #[test]
     fn recipient_ack_wire_is_canonical_signed_and_delivery_bound() {
-        let sender_identity = SigningKey::from_bytes(&[0x71; 32]);
-        let recipient_identity = SigningKey::from_bytes(&[0x72; 32]);
+        let sender_identity = component_key(&[0x71; 32]);
+        let recipient_identity = component_key(&[0x72; 32]);
         let original_sender_peer_id =
-            peer_id_from_ed25519_public_key_v1(&sender_identity.verifying_key().to_bytes());
-        let recipient_peer_id =
-            peer_id_from_ed25519_public_key_v1(&recipient_identity.verifying_key().to_bytes());
+            peer_id_from_mldsa65_public_key_v1(sender_identity.public_key());
+        let recipient_peer_id = peer_id_from_mldsa65_public_key_v1(recipient_identity.public_key());
         let object_hash = [0x73; 32];
         let payload_sha256 = [0x74; 32];
         let delivery_id = product_delivery_id_v1(
@@ -4984,6 +5048,7 @@ mod tests {
                 7,
                 original_sender_peer_id.as_str(),
                 recipient_peer_id.as_str(),
+                &component_key(&[1; 32])
             )
             .unwrap(),
             ack
@@ -4993,6 +5058,7 @@ mod tests {
             8,
             original_sender_peer_id.as_str(),
             recipient_peer_id.as_str(),
+            &component_key(&[1; 32])
         )
         .is_err());
 
@@ -5003,6 +5069,7 @@ mod tests {
             7,
             original_sender_peer_id.as_str(),
             recipient_peer_id.as_str(),
+            &component_key(&[1; 32])
         )
         .is_err());
     }
@@ -5058,10 +5125,9 @@ mod tests {
     fn maximum_classified_payload_fits_existing_websocket_carrier_limit() {
         const EXISTING_WEBSOCKET_FRAME_LIMIT_BYTES_V1: usize = 1_048_576;
 
-        let initiator_identity = SigningKey::from_bytes(&[0x71; 32]);
-        let responder_identity = SigningKey::from_bytes(&[0x72; 32]);
-        let responder_peer_id =
-            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let initiator_identity = component_key(&[0x71; 32]);
+        let responder_identity = component_key(&[0x72; 32]);
+        let responder_peer_id = peer_id_from_mldsa65_public_key_v1(responder_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(&initiator_identity, responder_peer_id, 1_000, 5_000)
                 .unwrap();
@@ -5133,6 +5199,9 @@ mod tests {
             tls_cert_path: certificate_path,
             tls_key_path,
             relay_identity_key_path: relay_identity_path,
+            chain_id: 7,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
             // The scenario owns the relay through all duplex and ingress assertions.
@@ -5162,27 +5231,26 @@ mod tests {
         let mut daemon = ScopedRelayDaemonV1::start(daemon_config);
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
-        let relay_identity = SigningKey::from_bytes(&[31; 32]);
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
-        let bootstrap_signer = SigningKey::from_bytes(&[34; 32]);
+        let relay_identity = component_key(&[31; 32]);
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
+        let bootstrap_signer = component_key(&[34; 32]);
         let source = signed_bootstrap_source_v1(
             &bootstrap_signer,
             &relay_identity,
             now.saturating_sub(1_000),
             now.saturating_add(30_000),
         );
-        let node_a = SigningKey::from_bytes(&[32; 32]);
-        let node_b = SigningKey::from_bytes(&[33; 32]);
-        let node_a_peer_id = peer_id_from_ed25519_public_key_v1(&node_a.verifying_key().to_bytes());
-        let node_b_peer_id = peer_id_from_ed25519_public_key_v1(&node_b.verifying_key().to_bytes());
+        let node_a = component_key(&[32; 32]);
+        let node_b = component_key(&[33; 32]);
+        let node_a_peer_id = peer_id_from_mldsa65_public_key_v1(node_a.public_key());
+        let node_b_peer_id = peer_id_from_mldsa65_public_key_v1(node_b.public_key());
         let chain_id = 8_000_000 + now % 100_000;
         let node_b_config = mainline_config_v1(
             chain_id,
             ProductMainlineOverlayRoleV1::Duplex,
             node_b_identity_path,
             root.join("node-b-cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source.clone(),
             Some(node_a_peer_id),
             None,
@@ -5192,7 +5260,7 @@ mod tests {
             ProductMainlineOverlayRoleV1::Duplex,
             node_a_identity_path,
             root.join("node-a-cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source,
             Some(node_b_peer_id),
             None,
@@ -5443,8 +5511,8 @@ mod tests {
         let node_peer_ids = node_seeds
             .iter()
             .map(|seed| {
-                let identity = SigningKey::from_bytes(seed);
-                peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes())
+                let identity = component_key(seed);
+                peer_id_from_mldsa65_public_key_v1(identity.public_key())
             })
             .collect::<Vec<_>>();
 
@@ -5459,6 +5527,9 @@ mod tests {
             tls_cert_path: certificate_path,
             tls_key_path,
             relay_identity_key_path: relay_identity_path,
+            chain_id: 7,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
             run_for_ms: None,
@@ -5487,10 +5558,9 @@ mod tests {
         let mut daemon = ScopedRelayDaemonV1::start(daemon_config);
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
-        let relay_identity = SigningKey::from_bytes(&[59; 32]);
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
-        let bootstrap_signer = SigningKey::from_bytes(&[63; 32]);
+        let relay_identity = component_key(&[59; 32]);
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
+        let bootstrap_signer = component_key(&[63; 32]);
         let source = signed_bootstrap_source_v1(
             &bootstrap_signer,
             &relay_identity,
@@ -5519,7 +5589,7 @@ mod tests {
                 ProductMainlineOverlayRoleV1::Duplex,
                 identity_path.clone(),
                 root.join(format!("node-{index}-cache.json")),
-                bootstrap_signer.verifying_key().to_bytes(),
+                bootstrap_signer.public_key().to_vec(),
                 source.clone(),
                 None,
                 None,
@@ -5713,6 +5783,9 @@ mod tests {
             tls_cert_path: certificate_path,
             tls_key_path,
             relay_identity_key_path: relay_identity_path,
+            chain_id: 7,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
             run_for_ms: None,
@@ -5741,19 +5814,15 @@ mod tests {
         let mut daemon = ScopedRelayDaemonV1::start(daemon_config);
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
-        let relay_identity = SigningKey::from_bytes(&[74; 32]);
-        let relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_identity.verifying_key().to_bytes());
-        let node_a_identity = SigningKey::from_bytes(&[75; 32]);
-        let node_b_identity = SigningKey::from_bytes(&[76; 32]);
-        let malicious_identity = SigningKey::from_bytes(&[77; 32]);
-        let node_a_peer_id =
-            peer_id_from_ed25519_public_key_v1(&node_a_identity.verifying_key().to_bytes());
-        let node_b_peer_id =
-            peer_id_from_ed25519_public_key_v1(&node_b_identity.verifying_key().to_bytes());
-        let malicious_peer_id =
-            peer_id_from_ed25519_public_key_v1(&malicious_identity.verifying_key().to_bytes());
-        let bootstrap_signer = SigningKey::from_bytes(&[78; 32]);
+        let relay_identity = component_key(&[74; 32]);
+        let relay_peer_id = peer_id_from_mldsa65_public_key_v1(relay_identity.public_key());
+        let node_a_identity = component_key(&[75; 32]);
+        let node_b_identity = component_key(&[76; 32]);
+        let malicious_identity = component_key(&[77; 32]);
+        let node_a_peer_id = peer_id_from_mldsa65_public_key_v1(node_a_identity.public_key());
+        let node_b_peer_id = peer_id_from_mldsa65_public_key_v1(node_b_identity.public_key());
+        let malicious_peer_id = peer_id_from_mldsa65_public_key_v1(malicious_identity.public_key());
+        let bootstrap_signer = component_key(&[78; 32]);
         let source = signed_bootstrap_source_v1(
             &bootstrap_signer,
             &relay_identity,
@@ -5766,7 +5835,7 @@ mod tests {
             ProductMainlineOverlayRoleV1::Duplex,
             node_a_identity_path,
             root.join("node-a-cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source.clone(),
             None,
             None,
@@ -5786,7 +5855,7 @@ mod tests {
             ProductMainlineOverlayRoleV1::Duplex,
             node_b_identity_path,
             root.join("node-b-cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source,
             Some(node_a_peer_id.clone()),
             None,
@@ -6042,21 +6111,17 @@ mod tests {
         write_identity_v1(&node_a_identity_path, [52; 32]);
         write_identity_v1(&node_b_identity_path, [53; 32]);
 
-        let relay_a = SigningKey::from_bytes(&[40; 32]);
-        let relay_b = SigningKey::from_bytes(&[41; 32]);
-        let relay_a_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_a.verifying_key().to_bytes());
-        let relay_b_peer_id =
-            peer_id_from_ed25519_public_key_v1(&relay_b.verifying_key().to_bytes());
+        let relay_a = component_key(&[40; 32]);
+        let relay_b = component_key(&[41; 32]);
+        let relay_a_peer_id = peer_id_from_mldsa65_public_key_v1(relay_a.public_key());
+        let relay_b_peer_id = peer_id_from_mldsa65_public_key_v1(relay_b.public_key());
         let (dead_relay, live_relay, live_relay_seed) = if relay_a_peer_id < relay_b_peer_id {
             (relay_a, relay_b, [41; 32])
         } else {
             (relay_b, relay_a, [40; 32])
         };
-        let dead_relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&dead_relay.verifying_key().to_bytes());
-        let live_relay_peer_id =
-            peer_id_from_ed25519_public_key_v1(&live_relay.verifying_key().to_bytes());
+        let dead_relay_peer_id = peer_id_from_mldsa65_public_key_v1(dead_relay.public_key());
+        let live_relay_peer_id = peer_id_from_mldsa65_public_key_v1(live_relay.public_key());
         write_identity_v1(&live_relay_identity_path, live_relay_seed);
 
         let live_port = TcpListener::bind("127.0.0.1:0")
@@ -6075,6 +6140,9 @@ mod tests {
             tls_cert_path: certificate_path,
             tls_key_path,
             relay_identity_key_path: live_relay_identity_path,
+            chain_id: 7,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             report_path: relay_report_path.clone(),
             report_interval_ms: 20,
             run_for_ms: Some(5_000),
@@ -6100,27 +6168,27 @@ mod tests {
             source_bytes_per_minute: None,
             max_bytes_per_minute: None,
         };
-        let daemon = thread::spawn(move || run_product_relay_daemon_v1(daemon_config));
+        let daemon = thread::spawn(move || run_component_relay_daemon_v1(daemon_config));
         wait_until_v1(Duration::from_secs(3), || relay_report_path.exists());
 
-        let bootstrap_signer = SigningKey::from_bytes(&[54; 32]);
+        let bootstrap_signer = component_key(&[54; 32]);
         let source = signed_bootstrap_source_with_relays_v1(
             &bootstrap_signer,
             &[&dead_relay, &live_relay],
             now.saturating_sub(1_000),
             now.saturating_add(30_000),
         );
-        let node_a = SigningKey::from_bytes(&[52; 32]);
-        let node_b = SigningKey::from_bytes(&[53; 32]);
-        let node_a_peer_id = peer_id_from_ed25519_public_key_v1(&node_a.verifying_key().to_bytes());
-        let node_b_peer_id = peer_id_from_ed25519_public_key_v1(&node_b.verifying_key().to_bytes());
+        let node_a = component_key(&[52; 32]);
+        let node_b = component_key(&[53; 32]);
+        let node_a_peer_id = peer_id_from_mldsa65_public_key_v1(node_a.public_key());
+        let node_b_peer_id = peer_id_from_mldsa65_public_key_v1(node_b.public_key());
         let chain_id = 8_100_000 + now % 100_000;
         let node_a_config = mainline_config_v1(
             chain_id,
             ProductMainlineOverlayRoleV1::Duplex,
             node_a_identity_path,
             root.join("node-a-cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source.clone(),
             Some(node_b_peer_id),
             None,
@@ -6130,7 +6198,7 @@ mod tests {
             ProductMainlineOverlayRoleV1::Duplex,
             node_b_identity_path,
             root.join("node-b-cache.json"),
-            bootstrap_signer.verifying_key().to_bytes(),
+            bootstrap_signer.public_key().to_vec(),
             source,
             Some(node_a_peer_id),
             None,
@@ -6288,7 +6356,7 @@ mod tests {
         role: ProductMainlineOverlayRoleV1,
         identity_key_path: PathBuf,
         cache_path: PathBuf,
-        trusted_signer: [u8; 32],
+        trusted_signer: Vec<u8>,
         source: ProductBootstrapSourceV1,
         target_peer_id: Option<String>,
         expected_source_peer_id: Option<String>,
@@ -6297,6 +6365,8 @@ mod tests {
             chain_id,
             role,
             identity_key_path,
+            library: PathBuf::from("component-fixture-not-runtime"),
+            library_sha256: "0".repeat(64),
             delivery_journal_path: None,
             overlay: ProductNodeOverlayConfigV1 {
                 cache_path,
@@ -6321,8 +6391,8 @@ mod tests {
     }
 
     fn signed_bootstrap_source_v1(
-        signer: &SigningKey,
-        relay: &SigningKey,
+        signer: &TransportIdentity,
+        relay: &TransportIdentity,
         issued_at_ms: u64,
         expires_at_ms: u64,
     ) -> ProductBootstrapSourceV1 {
@@ -6330,8 +6400,8 @@ mod tests {
     }
 
     fn signed_bootstrap_source_with_relays_v1(
-        signer: &SigningKey,
-        relays: &[&SigningKey],
+        signer: &TransportIdentity,
+        relays: &[&TransportIdentity],
         issued_at_ms: u64,
         expires_at_ms: u64,
     ) -> ProductBootstrapSourceV1 {
@@ -6357,7 +6427,8 @@ mod tests {
             })
             .collect::<Vec<PeerSignedRelayRecordV1>>();
         let mut manifest = SignedBootstrapManifestV1 {
-            version: 1,
+            version: 2,
+            suite: 65,
             manifest_id: "mainline-overlay-manifest".into(),
             issued_at_ms,
             expires_at_ms,

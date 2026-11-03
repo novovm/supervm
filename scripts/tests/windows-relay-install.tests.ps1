@@ -100,6 +100,49 @@ try {
     Check ((& $module { $script:deletes }) -eq 1) 'Uninstall is not idempotent'
     Check (-not (Get-NovovmRelayFirewallState $program).persistentPresent) 'Uninstall left owned rule'
     MustReject { Set-NovovmRelayFirewall (Join-Path $testRoot 'missing.exe') } '*installed, absolute*'
+    # Execute ONLY the original configuration guards, never installer OS calls.
+    foreach ($installer in @('rendezvous-user-install.ps1', 'install-novovm-rendezvous.ps1')) {
+        $sourcePath = Join-Path (Join-Path $PSScriptRoot '../windows') $installer
+        $tokens = $null; $parseErrors = $null
+        $sourceAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $sourcePath).Path, [ref]$tokens, [ref]$parseErrors)
+        if ($parseErrors.Count) { throw $parseErrors }
+        $guards = @($sourceAst.FindAll({ param($node)
+            $node -is [System.Management.Automation.Language.IfStatementAst] -and
+            ($node.Extent.Text.Contains('Existing protected ML-DSA-65 self-owned v3 configuration required') -or
+             $node.Extent.Text.Contains('Explicit protected ML-DSA-65 epoch owner v2/daemon v3 configuration required') -or
+             $node.Extent.Text.Contains('Explicit chain, qualified library pin and absolute protected transport identity are required.'))
+        }, $true) | ForEach-Object { [scriptblock]::Create($_.Extent.Text) })
+        Check ($guards.Count -eq 2) 'Original installer must retain version and qualified-purpose configuration guards'
+        $selfOwned = $installer -eq 'rendezvous-user-install.ps1'
+        $config = if ($selfOwned) {
+            [pscustomobject]@{ version=3;root=$testRoot;chain_id=47;library_sha256=('a'*64);
+                library=(Join-Path $testRoot 'aoem_ffi.dll');transport_identity_path=(Join-Path $testRoot 'transport.sealed') }
+        } else {
+            [pscustomobject]@{version=2;epoch=[pscustomobject]@{version=3;engineering_direct_allowed=$true;
+                chain_id=47;library_sha256=('a'*64);library=(Join-Path $testRoot 'aoem_ffi.dll');
+                relay_identity_key_path=(Join-Path $testRoot 'transport.sealed') }}
+        }
+        foreach ($guard in $guards) { & $guard }
+        $script:checks++
+        $valid = $config | ConvertTo-Json -Depth 4
+        foreach ($failure in @('old-version','zero-chain','missing-pin','relative-library','relative-key')) {
+            $config = $valid | ConvertFrom-Json
+            $identity = if ($selfOwned) { $config } else { $config.epoch }
+            switch ($failure) {
+                'old-version' { $config.version = if ($selfOwned) { 2 } else { 1 } }
+                'zero-chain' { $identity.chain_id = 0 }
+                'missing-pin' { $identity.library_sha256 = '' }
+                'relative-library' { $identity.library = 'aoem_ffi.dll' }
+                'relative-key' {
+                    if ($selfOwned) { $identity.transport_identity_path = 'transport.sealed' }
+                    else { $identity.relay_identity_key_path = 'transport.sealed' }
+                }
+            }
+            MustReject { foreach ($guard in $guards) { & $guard } } '*required*'
+        }
+        Check ($sourceAst.Extent.Text.Contains('--check')) 'Original executable must validate its current typed configuration before installation'
+    }
     Write-Output "$script:checks policy assertions passed (fixtures only, no OS mutation)."
 } finally {
     Remove-Module $module -Force

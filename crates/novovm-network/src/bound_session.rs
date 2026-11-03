@@ -5,15 +5,15 @@
 //! changes a contact pin, grants UCA authorization, retries authentication, or
 //! interprets a transport connection as message delivery.
 
+use crate::product_overlay::TransportIdentity;
 use crate::{
     carrier_stream::CarrierStreamV1,
     duplex::{HandshakeReplayCacheV1, SecureNovoRudpEnvelopeV1},
     transport_binding::{
-        BoundHandshakeInitiatorV1, BoundHandshakeResponderV1, BoundNodeHandshakeOfferV1,
-        BoundNodeHandshakeResponseV1, BoundSecureChannelV1, BOUND_HANDSHAKE_MAX_TTL_MS_V1,
+        BoundHandshakeInitiatorV1, BoundHandshakeResponderV1, BoundSecureChannelV1,
+        BOUND_HANDSHAKE_MAX_TTL_MS_V1,
     },
 };
-use ed25519_dalek::SigningKey;
 use thiserror::Error;
 
 pub mod peer_time;
@@ -96,60 +96,16 @@ where
     Ok(())
 }
 
-/// Explicit wire choice made by the service entry, never inferred from peer input.
-#[derive(Clone, Copy)]
-enum HandshakeWire {
-    LegacyJson,
-    StructuredApfl,
-}
+use crate::transport_binding::structured as wire;
 
-impl HandshakeWire {
-    fn encode_offer(self, value: &BoundNodeHandshakeOfferV1) -> anyhow::Result<Vec<u8>> {
-        match self {
-            Self::LegacyJson => Ok(value.encode_json()?),
-            Self::StructuredApfl => crate::transport_binding::structured::encode_offer(value),
-        }
-    }
-    fn decode_offer(self, bytes: &[u8]) -> anyhow::Result<BoundNodeHandshakeOfferV1> {
-        match self {
-            Self::LegacyJson => Ok(BoundNodeHandshakeOfferV1::decode_json(bytes)?),
-            Self::StructuredApfl => crate::transport_binding::structured::decode_offer(bytes),
-        }
-    }
-    fn encode_response(self, value: &BoundNodeHandshakeResponseV1) -> anyhow::Result<Vec<u8>> {
-        match self {
-            Self::LegacyJson => Ok(value.encode_json()?),
-            Self::StructuredApfl => crate::transport_binding::structured::encode_response(value),
-        }
-    }
-    fn decode_response(self, bytes: &[u8]) -> anyhow::Result<BoundNodeHandshakeResponseV1> {
-        match self {
-            Self::LegacyJson => Ok(BoundNodeHandshakeResponseV1::decode_json(bytes)?),
-            Self::StructuredApfl => crate::transport_binding::structured::decode_response(bytes),
-        }
-    }
-    fn encode_finished(self, value: &SecureNovoRudpEnvelopeV1) -> anyhow::Result<Vec<u8>> {
-        match self {
-            Self::LegacyJson => Ok(serde_json::to_vec(value)?),
-            Self::StructuredApfl => crate::transport_binding::structured::encode_finished(value),
-        }
-    }
-    fn decode_finished(self, bytes: &[u8]) -> anyhow::Result<SecureNovoRudpEnvelopeV1> {
-        match self {
-            Self::LegacyJson => Ok(serde_json::from_slice(bytes)?),
-            Self::StructuredApfl => crate::transport_binding::structured::decode_finished(bytes),
-        }
-    }
-}
-
-/// Native structured entry using the original bound handshake and Finished.
-/// No legacy decoding or fallback; the caller must explicitly select the same
-/// service version on both ends before using this entry. This authenticates the
+/// Native entry alias for the one current APFL bound handshake and Finished.
+/// Default and explicitly named structured consumers use the same schemas;
+/// there is no JSON decoding or algorithm fallback. This authenticates the
 /// carrier stream, not a mailbox resource grant or a delivered chat message.
 pub async fn authenticate_structured_bound_session_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    expected_peer: [u8; 32],
+    identity: &TransportIdentity,
+    expected_peer: Vec<u8>,
     initiator: bool,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
@@ -157,21 +113,15 @@ pub async fn authenticate_structured_bound_session_observed<O>(
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
-    authenticate_bound_session_with_wire(
-        stream,
-        identity,
-        expected_peer,
-        initiator,
-        replay,
-        observer,
-        HandshakeWire::StructuredApfl,
-    )
-    .await
+    authenticate_bound_session_inner(stream, identity, expected_peer, initiator, replay, observer)
+        .await
 }
 
 /// Complete both identity proofs and the encrypted, role-separated Finished
 /// exchange before exposing an E2E channel. The local Finished is actually
 /// written to the carrier before the remote Finished is accepted.
+/// The current UTC contract uses APFL schemas 03 and binary Finished inside
+/// the unchanged carrier frame cap; JSON is not a negotiated alternative.
 ///
 /// `identity` must be the separately authorized network/device signing key, not
 /// a spending key. `expected_peer` is the caller's independently verified pin.
@@ -180,8 +130,8 @@ where
 /// a partly completed handshake or its replay cache as a downgrade mechanism.
 pub async fn authenticate_bound_session(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    expected_peer: [u8; 32],
+    identity: &TransportIdentity,
+    expected_peer: Vec<u8>,
     initiator: bool,
     replay: &mut HandshakeReplayCacheV1,
 ) -> Result<BoundSecureChannelV1, BoundSessionError> {
@@ -205,8 +155,8 @@ pub async fn authenticate_bound_session(
 /// not a promise about the entire session or a privacy classification.
 pub async fn authenticate_bound_session_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    expected_peer: [u8; 32],
+    identity: &TransportIdentity,
+    expected_peer: Vec<u8>,
     initiator: bool,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
@@ -214,26 +164,17 @@ pub async fn authenticate_bound_session_observed<O>(
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
-    authenticate_bound_session_with_wire(
-        stream,
-        identity,
-        expected_peer,
-        initiator,
-        replay,
-        observer,
-        HandshakeWire::LegacyJson,
-    )
-    .await
+    authenticate_bound_session_inner(stream, identity, expected_peer, initiator, replay, observer)
+        .await
 }
 
-async fn authenticate_bound_session_with_wire<O>(
+async fn authenticate_bound_session_inner<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    expected_peer: [u8; 32],
+    identity: &TransportIdentity,
+    expected_peer: Vec<u8>,
     initiator: bool,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
-    wire: HandshakeWire,
 ) -> Result<BoundSecureChannelV1, BoundSessionError>
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
@@ -250,7 +191,7 @@ where
             BOUND_HANDSHAKE_MAX_TTL_MS_V1,
         )
         .map_err(authentication)?;
-        let offer = wire.encode_offer(start.offer()).map_err(local)?;
+        let offer = wire::encode_offer(start.offer()).map_err(local)?;
         stream
             .write_frame(&offer)
             .await
@@ -260,7 +201,7 @@ where
             .read_frame()
             .await
             .map_err(BoundSessionError::Transport)?;
-        let response = wire.decode_response(&response).map_err(authentication)?;
+        let response = wire::decode_response(&response).map_err(authentication)?;
         let pending = start
             .complete(&response, now_ms()?, replay)
             .map_err(authentication)?;
@@ -271,7 +212,7 @@ where
             .read_frame()
             .await
             .map_err(BoundSessionError::Transport)?;
-        let offer = wire.decode_offer(&offer).map_err(authentication)?;
+        let offer = wire::decode_offer(&offer).map_err(authentication)?;
         let response = BoundHandshakeResponderV1::respond(
             &offer,
             identity,
@@ -283,7 +224,7 @@ where
         )
         .map_err(authentication)?;
         observe(stream, observer, BoundSessionStage::OfferVerified)?;
-        let encoded = wire.encode_response(response.response()).map_err(local)?;
+        let encoded = wire::encode_response(response.response()).map_err(local)?;
         stream
             .write_frame(&encoded)
             .await
@@ -292,7 +233,7 @@ where
         response.into_pending()
     };
 
-    finish_bound_session(stream, pending, observer, wire).await
+    finish_bound_session(stream, pending, observer).await
 }
 
 /// Service-side admission for a temporary transport endpoint. The offer's key
@@ -301,10 +242,10 @@ where
 /// records have been verified. An empty or oversized allowlist fails closed.
 pub async fn authenticate_allowed_service_client(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     replay: &mut HandshakeReplayCacheV1,
-) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError> {
+) -> Result<(BoundSecureChannelV1, Vec<u8>), BoundSessionError> {
     authenticate_allowed_service_client_observed(stream, identity, allowed, replay, &mut |_, _| {
         Ok(())
     })
@@ -316,11 +257,11 @@ pub async fn authenticate_allowed_service_client(
 /// not observed or authorized before its actual signature and binding verify.
 pub async fn authenticate_allowed_service_client_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
-    allowed: &[[u8; 32]],
+    identity: &TransportIdentity,
+    allowed: &[Vec<u8>],
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
-) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError>
+) -> Result<(BoundSecureChannelV1, Vec<u8>), BoundSessionError>
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
@@ -339,29 +280,21 @@ where
 /// An empty Pinned policy remains invalid and never means open access.
 #[derive(Clone, Copy)]
 pub enum ServicePeerPolicyV1<'a> {
-    Pinned(&'a [[u8; 32]]),
+    Pinned(&'a [Vec<u8>]),
     AnyAuthenticated,
 }
 
 pub async fn authenticate_service_client_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
-) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError>
+) -> Result<(BoundSecureChannelV1, Vec<u8>), BoundSessionError>
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
-    authenticate_service_client_with_wire(
-        stream,
-        identity,
-        policy,
-        replay,
-        observer,
-        HandshakeWire::LegacyJson,
-    )
-    .await
+    authenticate_service_client_inner(stream, identity, policy, replay, observer).await
 }
 
 /// Open or pinned provider policy on the explicit native structured entry.
@@ -369,33 +302,24 @@ where
 /// resource limits remain the provider's separate per-operation checks.
 pub async fn authenticate_structured_service_client_observed<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
-) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError>
+) -> Result<(BoundSecureChannelV1, Vec<u8>), BoundSessionError>
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
-    authenticate_service_client_with_wire(
-        stream,
-        identity,
-        policy,
-        replay,
-        observer,
-        HandshakeWire::StructuredApfl,
-    )
-    .await
+    authenticate_service_client_inner(stream, identity, policy, replay, observer).await
 }
 
-async fn authenticate_service_client_with_wire<O>(
+async fn authenticate_service_client_inner<O>(
     stream: &mut CarrierStreamV1<'_>,
-    identity: &SigningKey,
+    identity: &TransportIdentity,
     policy: ServicePeerPolicyV1<'_>,
     replay: &mut HandshakeReplayCacheV1,
     observer: &mut O,
-    wire: HandshakeWire,
-) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError>
+) -> Result<(BoundSecureChannelV1, Vec<u8>), BoundSessionError>
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
@@ -409,9 +333,9 @@ where
         .read_frame()
         .await
         .map_err(BoundSessionError::Transport)?;
-    let offer = wire.decode_offer(&received).map_err(authentication)?;
-    let claimed = offer.context.initiator_identity_public_key;
-    if claimed == identity.verifying_key().to_bytes()
+    let offer = wire::decode_offer(&received).map_err(authentication)?;
+    let claimed = offer.context.initiator_identity_public_key.clone();
+    if claimed == identity.public_key().to_vec()
         || matches!(policy, ServicePeerPolicyV1::Pinned(allowed) if !allowed.contains(&claimed))
     {
         return Err(authentication(anyhow::anyhow!(
@@ -421,7 +345,7 @@ where
     let response = BoundHandshakeResponderV1::respond(
         &offer,
         identity,
-        claimed,
+        claimed.clone(),
         binding,
         now_ms()?,
         BOUND_HANDSHAKE_MAX_TTL_MS_V1,
@@ -430,11 +354,11 @@ where
     .map_err(authentication)?;
     observe(stream, observer, BoundSessionStage::OfferVerified)?;
     stream
-        .write_frame(&wire.encode_response(response.response()).map_err(local)?)
+        .write_frame(&wire::encode_response(response.response()).map_err(local)?)
         .await
         .map_err(BoundSessionError::Transport)?;
     observe(stream, observer, BoundSessionStage::ResponseWritten)?;
-    let channel = finish_bound_session(stream, response.into_pending(), observer, wire).await?;
+    let channel = finish_bound_session(stream, response.into_pending(), observer).await?;
     Ok((channel, claimed))
 }
 
@@ -442,13 +366,12 @@ async fn finish_bound_session<O>(
     stream: &mut CarrierStreamV1<'_>,
     mut pending: crate::transport_binding::PendingBoundChannelV1,
     observer: &mut O,
-    wire: HandshakeWire,
 ) -> Result<BoundSecureChannelV1, BoundSessionError>
 where
     O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
 {
     let finished = pending.make_finished(now_ms()?).map_err(local)?;
-    let encoded = wire.encode_finished(&finished).map_err(local)?;
+    let encoded = wire::encode_finished(&finished).map_err(local)?;
     stream
         .write_frame(&encoded)
         .await
@@ -458,9 +381,8 @@ where
         .read_frame()
         .await
         .map_err(BoundSessionError::Transport)?;
-    let remote_finished: SecureNovoRudpEnvelopeV1 = wire
-        .decode_finished(&remote_finished)
-        .map_err(authentication)?;
+    let remote_finished: SecureNovoRudpEnvelopeV1 =
+        wire::decode_finished(&remote_finished).map_err(authentication)?;
     pending
         .verify_finished(&remote_finished, now_ms()?)
         .map_err(authentication)?;
@@ -474,6 +396,12 @@ mod tests {
     mod native_carrier;
     mod session_clock;
     use super::*;
+    #[derive(Clone, Copy)]
+    enum Entry {
+        Default,
+        StructuredApfl,
+    }
+
     use crate::{
         duplex::{NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0},
         iroh_transport::{with_iroh_scope_v1, IrohAddressV1, IrohConfigV1, IrohControlV1},
@@ -486,12 +414,12 @@ mod tests {
 
     // Keys and addressing below exist only in localhost tests. No DNS lookup,
     // public discovery, public relay, handset or user data is involved.
-    fn key(seed: u8) -> SigningKey {
-        SigningKey::from_bytes(&[seed; 32])
+    fn key(seed: u8) -> TransportIdentity {
+        TransportIdentity::from_bytes(&[seed; 32])
     }
 
-    fn public(seed: u8) -> [u8; 32] {
-        key(seed).verifying_key().to_bytes()
+    fn public(seed: u8) -> Vec<u8> {
+        key(seed).public_key().to_vec()
     }
 
     fn config() -> IrohConfigV1 {
@@ -520,24 +448,24 @@ mod tests {
 
     async fn test_bound_entry<O>(
         stream: &mut CarrierStreamV1<'_>,
-        identity: &SigningKey,
-        peer: [u8; 32],
+        identity: &TransportIdentity,
+        peer: Vec<u8>,
         initiator: bool,
         replay: &mut HandshakeReplayCacheV1,
         observer: &mut O,
-        wire: HandshakeWire,
+        wire: Entry,
     ) -> Result<BoundSecureChannelV1, BoundSessionError>
     where
         O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
     {
         match wire {
-            HandshakeWire::LegacyJson => {
+            Entry::Default => {
                 authenticate_bound_session_observed(
                     stream, identity, peer, initiator, replay, observer,
                 )
                 .await
             }
-            HandshakeWire::StructuredApfl => {
+            Entry::StructuredApfl => {
                 authenticate_structured_bound_session_observed(
                     stream, identity, peer, initiator, replay, observer,
                 )
@@ -547,21 +475,21 @@ mod tests {
     }
     async fn test_service_entry<O>(
         stream: &mut CarrierStreamV1<'_>,
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         policy: ServicePeerPolicyV1<'_>,
         replay: &mut HandshakeReplayCacheV1,
         observer: &mut O,
-        wire: HandshakeWire,
-    ) -> Result<(BoundSecureChannelV1, [u8; 32]), BoundSessionError>
+        wire: Entry,
+    ) -> Result<(BoundSecureChannelV1, Vec<u8>), BoundSessionError>
     where
         O: FnMut(BoundSessionStage, &'static str) -> anyhow::Result<()> + Send + ?Sized,
     {
         match wire {
-            HandshakeWire::LegacyJson => {
+            Entry::Default => {
                 authenticate_service_client_observed(stream, identity, policy, replay, observer)
                     .await
             }
-            HandshakeWire::StructuredApfl => {
+            Entry::StructuredApfl => {
                 authenticate_structured_service_client_observed(
                     stream, identity, policy, replay, observer,
                 )
@@ -570,7 +498,7 @@ mod tests {
         }
     }
 
-    async fn handshake_business_roundtrip(wire: HandshakeWire, open: bool) {
+    async fn handshake_business_roundtrip(wire: Entry, open: bool) {
         let _permit = SERIAL.acquire().await.unwrap();
         let (server_tx, server_rx) = oneshot::channel();
         let (client_tx, client_rx) = oneshot::channel();
@@ -698,20 +626,20 @@ mod tests {
 
     #[tokio::test]
     async fn real_quic_finished_authenticates_both_directions_before_business() {
-        handshake_business_roundtrip(HandshakeWire::LegacyJson, false).await;
+        handshake_business_roundtrip(Entry::Default, false).await;
     }
 
     #[tokio::test]
     async fn structured_quic_finished_authenticates_both_directions_before_business() {
-        handshake_business_roundtrip(HandshakeWire::StructuredApfl, false).await;
+        handshake_business_roundtrip(Entry::StructuredApfl, false).await;
     }
 
     #[tokio::test]
     async fn structured_quic_open_service_authenticates_then_exchanges_encrypted_data() {
-        handshake_business_roundtrip(HandshakeWire::StructuredApfl, true).await;
+        handshake_business_roundtrip(Entry::StructuredApfl, true).await;
     }
 
-    async fn wrong_identity_pin(wire: HandshakeWire) {
+    async fn wrong_identity_pin(wire: Entry) {
         let _permit = SERIAL.acquire().await.unwrap();
         let (server_tx, server_rx) = oneshot::channel();
         let (client_tx, client_rx) = oneshot::channel();
@@ -722,7 +650,7 @@ mod tests {
                 let mut stream: CarrierStreamV1<'_> =
                     (scope.accept(peer.endpoint_key).await?).into();
                 let mut stages = Vec::new();
-                let result = authenticate_bound_session_with_wire(
+                let result = test_bound_entry(
                     &mut stream,
                     &key(2),
                     public(3),
@@ -750,14 +678,14 @@ mod tests {
                 let mut stream: CarrierStreamV1<'_> =
                     (scope.connect(&server_rx.await?).await?).into();
                 ensure!(
-                    authenticate_bound_session_with_wire(
+                    test_bound_entry(
                         &mut stream,
                         &key(1),
                         public(2),
                         true,
                         &mut HandshakeReplayCacheV1::new(8),
                         &mut |_, _| Ok(()),
-                        wire,
+                        wire
                     )
                     .await
                     .is_err(),
@@ -773,12 +701,12 @@ mod tests {
 
     #[tokio::test]
     async fn real_quic_wrong_identity_pin_is_authentication_failure() {
-        wrong_identity_pin(HandshakeWire::LegacyJson).await;
+        wrong_identity_pin(Entry::Default).await;
     }
 
     #[tokio::test]
     async fn structured_quic_wrong_identity_pin_is_authentication_failure() {
-        wrong_identity_pin(HandshakeWire::StructuredApfl).await;
+        wrong_identity_pin(Entry::StructuredApfl).await;
     }
 
     #[derive(Clone, Copy)]
@@ -788,10 +716,7 @@ mod tests {
         InvalidFinished,
     }
 
-    async fn interrupted_peer(
-        mode: InterruptedPeer,
-        wire: HandshakeWire,
-    ) -> Result<BoundSessionError> {
+    async fn interrupted_peer(mode: InterruptedPeer, wire: Entry) -> Result<BoundSessionError> {
         let (server_tx, server_rx) = oneshot::channel();
         let (client_tx, client_rx) = oneshot::channel();
         let server = with_iroh_scope_v1(config(), control(), move |scope| {
@@ -803,7 +728,7 @@ mod tests {
                 // Wait for the actual offer so failure occurs during the bound
                 // session, rather than racing initial QUIC stream establishment.
                 let offer = stream.read_frame().await?;
-                let offer = wire.decode_offer(&offer)?;
+                let offer = wire::decode_offer(&offer)?;
                 if matches!(mode, InterruptedPeer::InvalidHandshake) {
                     stream.write_frame(b"not a bound handshake").await?;
                     // Keep the connection alive until the client has read and
@@ -820,17 +745,17 @@ mod tests {
                         &mut HandshakeReplayCacheV1::new(8),
                     )?;
                     stream
-                        .write_frame(&wire.encode_response(response.response())?)
+                        .write_frame(&wire::encode_response(response.response())?)
                         .await?;
                     let mut pending = response.into_pending();
                     let mut finished = pending.make_finished(now_ms()?)?;
                     let remote: SecureNovoRudpEnvelopeV1 =
-                        wire.decode_finished(&stream.read_frame().await?)?;
+                        wire::decode_finished(&stream.read_frame().await?)?;
                     pending.verify_finished(&remote, now_ms()?)?;
                     ensure!(!finished.ciphertext.is_empty());
                     finished.ciphertext[0] ^= 1;
                     stream
-                        .write_frame(&wire.encode_finished(&finished)?)
+                        .write_frame(&wire::encode_finished(&finished)?)
                         .await?;
                     let _ = stream.read_frame().await;
                 }
@@ -844,7 +769,7 @@ mod tests {
                 let mut stream: CarrierStreamV1<'_> =
                     (scope.connect(&server_rx.await?).await?).into();
                 let mut stages = Vec::new();
-                let result = authenticate_bound_session_with_wire(
+                let result = test_bound_entry(
                     &mut stream,
                     &key(1),
                     public(2),
@@ -883,7 +808,7 @@ mod tests {
     async fn real_quic_peer_closing_before_response_is_transport_failure() {
         let _permit = SERIAL.acquire().await.unwrap();
         assert!(matches!(
-            interrupted_peer(InterruptedPeer::Close, HandshakeWire::LegacyJson)
+            interrupted_peer(InterruptedPeer::Close, Entry::Default)
                 .await
                 .unwrap(),
             BoundSessionError::Transport(_)
@@ -894,7 +819,7 @@ mod tests {
     async fn real_quic_unknown_handshake_format_is_authentication_failure() {
         let _permit = SERIAL.acquire().await.unwrap();
         assert!(matches!(
-            interrupted_peer(InterruptedPeer::InvalidHandshake, HandshakeWire::LegacyJson)
+            interrupted_peer(InterruptedPeer::InvalidHandshake, Entry::Default)
                 .await
                 .unwrap(),
             BoundSessionError::Authentication(_)
@@ -905,7 +830,7 @@ mod tests {
     async fn real_quic_tampered_finished_never_emits_finished_verified() {
         let _permit = SERIAL.acquire().await.unwrap();
         assert!(matches!(
-            interrupted_peer(InterruptedPeer::InvalidFinished, HandshakeWire::LegacyJson)
+            interrupted_peer(InterruptedPeer::InvalidFinished, Entry::Default)
                 .await
                 .unwrap(),
             BoundSessionError::Authentication(_)
@@ -920,9 +845,7 @@ mod tests {
             InterruptedPeer::InvalidHandshake,
             InterruptedPeer::InvalidFinished,
         ] {
-            let error = interrupted_peer(mode, HandshakeWire::StructuredApfl)
-                .await
-                .unwrap();
+            let error = interrupted_peer(mode, Entry::StructuredApfl).await.unwrap();
             if matches!(mode, InterruptedPeer::Close) {
                 assert!(matches!(error, BoundSessionError::Transport(_)));
             } else {
@@ -1007,15 +930,44 @@ mod tests {
                         let mut offer = initiator.offer().clone();
                         match case {
                             3 => offer.signature[0] ^= 1,
-                            5 => offer.context.initiator_identity_public_key = [0; 32],
+                            5 => offer.context.initiator_identity_public_key = vec![0; 32],
                             6 => offer.context.initiator_identity_public_key = public(2),
                             _ => {}
                         }
-                        stream.write_frame(&serde_json::to_vec(&offer)?).await?;
+                        // Encode untrusted field mutations without the typed
+                        // encoder's local shape checks; the real receiver must
+                        // reject them before granting a channel.
+                        use novovm_protocol::{apfl_batch, apfl_column::Column};
+                        let limits = apfl_batch::Limits {
+                            rows: 1,
+                            columns: 18,
+                            field_bytes: crate::product_overlay::MLDSA65_SIGNATURE_BYTES,
+                            wire_bytes: crate::transport_binding::BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1,
+                            expanded_bytes: 16 * 1024,
+                        };
+                        let canonical = wire::encode_offer(initiator.offer())?;
+                        let batch = apfl_batch::decode(&canonical, wire::OFFER_SCHEMA, limits)
+                            .map_err(anyhow::Error::msg)?;
+                        let mut fields = (0..batch.columns())
+                            .map(|i| batch.field(0, i).map_err(anyhow::Error::msg))
+                            .collect::<Result<Vec<_>>>()?;
+                        fields[2] = &offer.context.initiator_identity_public_key;
+                        fields[13] = &offer.signature;
+                        let columns = fields
+                            .into_iter()
+                            .map(|field| Column::collect(std::iter::once(field)))
+                            .collect::<Vec<_>>();
+                        let untrusted = apfl_batch::encode(
+                            wire::OFFER_SCHEMA,
+                            batch.context,
+                            1,
+                            &columns,
+                            limits,
+                        )
+                        .map_err(anyhow::Error::msg)?;
+                        stream.write_frame(&untrusted).await?;
                         if case == 4 {
-                            let response = BoundNodeHandshakeResponseV1::decode_json(
-                                &stream.read_frame().await?,
-                            )?;
+                            let response = wire::decode_response(&stream.read_frame().await?)?;
                             let mut pending = initiator.complete(
                                 &response,
                                 now_ms()?,
@@ -1023,7 +975,9 @@ mod tests {
                             )?;
                             let mut finished = pending.make_finished(now_ms()?)?;
                             finished.ciphertext[0] ^= 1;
-                            stream.write_frame(&serde_json::to_vec(&finished)?).await?;
+                            stream
+                                .write_frame(&wire::encode_finished(&finished)?)
+                                .await?;
                             // Consume the server's Finished, then observe refusal.
                             let _ = stream.read_frame().await;
                         }
@@ -1042,7 +996,7 @@ mod tests {
     async fn observer_rejection(
         reject_on_server: bool,
         rejected_stage: BoundSessionStage,
-        wire: HandshakeWire,
+        wire: Entry,
     ) -> Result<()> {
         let (server_tx, server_rx) = oneshot::channel();
         let (client_tx, client_rx) = oneshot::channel();
@@ -1055,7 +1009,7 @@ mod tests {
                 let mut stream: CarrierStreamV1<'_> =
                     (scope.accept(peer.endpoint_key).await?).into();
                 let mut stages = Vec::new();
-                let result = authenticate_service_client_with_wire(
+                let result = test_service_entry(
                     &mut stream,
                     &key(2),
                     ServicePeerPolicyV1::Pinned(&[public(1)]),
@@ -1099,7 +1053,7 @@ mod tests {
                 let mut stream: CarrierStreamV1<'_> =
                     (scope.connect(&server_rx.await?).await?).into();
                 let mut stages = Vec::new();
-                let result = authenticate_bound_session_with_wire(
+                let result = test_bound_entry(
                     &mut stream,
                     &key(1),
                     public(2),
@@ -1149,7 +1103,7 @@ mod tests {
             (true, BoundSessionStage::OfferVerified),
             (true, BoundSessionStage::FinishedVerified),
         ] {
-            observer_rejection(server, stage, HandshakeWire::LegacyJson)
+            observer_rejection(server, stage, Entry::Default)
                 .await
                 .unwrap();
         }
@@ -1162,7 +1116,7 @@ mod tests {
                 BoundSessionStage::FinishedWritten,
                 BoundSessionStage::FinishedVerified,
             ] {
-                observer_rejection(server, stage, HandshakeWire::StructuredApfl)
+                observer_rejection(server, stage, Entry::StructuredApfl)
                     .await
                     .unwrap();
             }
@@ -1198,15 +1152,32 @@ mod tests {
                 client_tx.send(scope.address()?).unwrap();
                 let mut stream: CarrierStreamV1<'_> =
                     scope.connect(&server_rx.await?).await?.into();
-                let result = authenticate_bound_session(
-                    &mut stream,
+                let start = BoundHandshakeInitiatorV1::start(
                     &key(1),
                     public(2),
-                    true,
-                    &mut HandshakeReplayCacheV1::new(8),
-                )
-                .await;
-                ensure!(result.is_err());
+                    stream.binding()?,
+                    now_ms()?,
+                    BOUND_HANDSHAKE_MAX_TTL_MS_V1,
+                )?;
+                // The default API is APFL too; send the superseded JSON
+                // representation explicitly rather than calling that API.
+                let mut legacy = start.offer().clone();
+                legacy.context.version = 1;
+                legacy.context.initiator_identity_public_key.truncate(32);
+                legacy.context.responder_identity_public_key.truncate(32);
+                legacy.e2e.version = 1;
+                legacy.e2e.initiator_identity_public_key.truncate(32);
+                legacy.e2e.signature.truncate(64);
+                legacy.signature.truncate(64);
+                let mut json = serde_json::to_value(legacy)?;
+                json["context"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("signature_suite");
+                let bytes = serde_json::to_vec(&json)?;
+                ensure!(bytes.len() <= crate::iroh_transport::IROH_MAX_FRAME_V1);
+                stream.write_frame(&bytes).await?;
+                ensure!(stream.read_frame().await.is_err());
                 Ok(())
             })
         });

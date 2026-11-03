@@ -41,8 +41,17 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     let unique = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/runtime-rebuild/consensus-tests/uca-startup")
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.join("target/runtime-rebuild"));
+    let target = if target.is_absolute() {
+        target
+    } else {
+        workspace.join(target)
+    };
+    let root = target
+        .join("consensus-tests/uca-startup")
         .join(format!("{}-{unique}", std::process::id()));
     std::fs::create_dir_all(&root)?;
     let root = native_path(&root.canonicalize()?);
@@ -50,7 +59,30 @@ fn actual_uca_startup_with_custody() -> Result<()> {
     let key = root.join("test-only-validator.key");
     let transport_key = root.join("test-only-transport.key");
     let mut genesis = super::tests::genesis();
-    use novovm_relay::purpose_keys::{self, generate, PurposeV1, ValidatorKeyMaterialV2};
+    use novovm_relay::purpose_keys::{self, PurposeV1, ValidatorKeyMaterialV2};
+    let chain = genesis.chain_id;
+    let generate_transport = |path: &Path| {
+        purpose_keys::generate_mldsa(
+            path,
+            PurposeV1::Transport,
+            chain,
+            || {
+                let pair = signer.generate_keypair()?;
+                ValidatorKeyMaterialV2::new(pair.public_key, pair.expanded_secret_key)
+            },
+            |public, secret, challenge| {
+                signer
+                    .sign(
+                        public,
+                        secret,
+                        challenge,
+                        PurposeV1::Transport.pair_context(),
+                    )
+                    .map(|_| ())
+                    .map_err(Into::into)
+            },
+        )
+    };
     let validator = purpose_keys::generate_validator(
         &key,
         genesis.chain_id,
@@ -70,12 +102,9 @@ fn actual_uca_startup_with_custody() -> Result<()> {
                 .map_err(Into::into)
         },
     )?;
-    let transport = generate(&transport_key, PurposeV1::Transport, genesis.chain_id)?;
+    let transport = generate_transport(&transport_key)?;
     genesis.validators[0].public_key = validator.public_key;
-    genesis.validators[0].transport_public_key = transport
-        .public_key
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("transport public key width"))?;
+    genesis.validators[0].transport_public_key = transport.public_key;
     for validator in &mut genesis.validators[1..] {
         validator.public_key = signer.generate_keypair()?.public_key;
     }
@@ -220,18 +249,14 @@ fn actual_uca_startup_with_custody() -> Result<()> {
             3 => init.accounts[0].management_public_key[0] ^= 1,
             4 => init.approvals[0].signature[0] ^= 1,
             5 => {
-                let first = bad.genesis.validators[1].transport_public_key;
+                let first = bad.genesis.validators[1].transport_public_key.clone();
                 bad.genesis.validators[1].transport_public_key =
-                    bad.genesis.validators[2].transport_public_key;
+                    bad.genesis.validators[2].transport_public_key.clone();
                 bad.genesis.validators[2].transport_public_key = first;
             }
             6 => {
                 bad.transport_key_file = root.join("test-only-wrong-transport.key");
-                let wrong = generate(
-                    &bad.transport_key_file,
-                    PurposeV1::Transport,
-                    config.genesis.chain_id,
-                )?;
+                let wrong = generate_transport(&bad.transport_key_file)?;
                 assert_ne!(
                     wrong.public_key,
                     config.genesis.validators[0].transport_public_key

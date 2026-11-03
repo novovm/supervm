@@ -185,13 +185,17 @@ impl FreshChainLifecycleV1 {
 
     /// These events only affect transport retries, never consensus or pool
     /// ownership. A new connection forgets receipt suppression conservatively.
-    pub fn observe_transaction_transport_event(&mut self, event: &TransportEvent) {
+    pub fn observe_transaction_transport_event(
+        &mut self,
+        event: &TransportEvent,
+        verifier: &dyn novovm_network::product_overlay::TransportVerifier,
+    ) {
         if self.halted {
             return;
         }
         match event {
             TransportEvent::RecipientAck { ack, .. } => {
-                self.accept_transaction_receipt(ack);
+                self.accept_transaction_receipt(ack, verifier);
             }
             TransportEvent::E2eSessionEstablished { remote_peer_id }
             | TransportEvent::PeerIsolated { remote_peer_id, .. } => {
@@ -208,7 +212,11 @@ impl FreshChainLifecycleV1 {
         }
     }
 
-    fn accept_transaction_receipt(&mut self, receipt: &Receipt) -> bool {
+    fn accept_transaction_receipt(
+        &mut self,
+        receipt: &Receipt,
+        verifier: &dyn novovm_network::product_overlay::TransportVerifier,
+    ) -> bool {
         let Some(config) = &self.config else {
             return false;
         };
@@ -238,6 +246,7 @@ impl FreshChainLifecycleV1 {
                 self.chain,
                 &local.transport_peer_id,
                 &receipt.recipient_peer_id,
+                verifier,
             )
             .is_err()
         {

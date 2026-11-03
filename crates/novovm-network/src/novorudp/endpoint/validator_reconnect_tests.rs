@@ -3,8 +3,8 @@
 use super::*;
 use crate::novorudp::NovoRudpTransportFrameKindV0;
 
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8) -> TransportIdentity {
+    crate::test_identity::key(seed)
 }
 fn budget() -> NativeHandshakeBudget {
     NativeHandshakeBudget {
@@ -12,15 +12,15 @@ fn budget() -> NativeHandshakeBudget {
         retry: Duration::from_millis(10),
     }
 }
-fn peer(identity: &SigningKey, address: SocketAddr) -> NativePeer {
+fn peer(identity: &TransportIdentity, address: SocketAddr) -> NativePeer {
     NativePeer {
-        key: identity.verifying_key().to_bytes(),
+        key: identity.public_key().to_vec(),
         address,
     }
 }
 fn configured(
     socket: Arc<UdpSocket>,
-    identity: SigningKey,
+    identity: TransportIdentity,
     peers: Vec<NativePeer>,
     budget: NativeHandshakeBudget,
     wall: u64,
@@ -52,8 +52,10 @@ fn exchange(
     let mut changes = Vec::new();
     for tick in 0..100 {
         let time = now + Duration::from_millis(tick * 10);
-        changes.extend(a.poll(wall + tick * 10, time, 64)?.session_changes);
-        changes.extend(b.poll(wall + tick * 10, time, 64)?.session_changes);
+        let left = a.poll(wall + tick * 10, time, 64)?;
+        let right = b.poll(wall + tick * 10, time, 64)?;
+        changes.extend(left.session_changes);
+        changes.extend(right.session_changes);
         if a.session_id(0).is_some() && a.session_id(0) == b.session_id(0) {
             return Ok(changes);
         }
@@ -65,6 +67,23 @@ fn exchange(
         }
     }
     anyhow::bail!("configured peers did not authenticate the same generation")
+}
+
+fn finish_initiator_offer(
+    initiator: &mut NativeEndpoint,
+    responder: &mut NativeEndpoint,
+    wall: u64,
+    now: Instant,
+) -> Result<()> {
+    for tick in 0..64 {
+        let at = now + Duration::from_micros(tick * 100);
+        initiator.poll(wall, at, 64)?;
+        responder.poll(wall, at, 64)?;
+        if initiator.session_id(0).is_some() {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("continued offer/response did not reach initiator; responder remains unconfirmed")
 }
 
 #[test]
@@ -188,9 +207,13 @@ fn configured_peer_restart_requires_fresh_aead_and_rejects_old_generation() -> R
             start,
         )?;
         a.poll(1000, start, 64)?;
-        let mut captured = [0; MAX_DATAGRAM_BYTES];
-        let (length, _) = b_socket.peek_from(&mut captured)?;
-        let old_offer = captured[..length].to_vec();
+        let old_offer = a.peers[&0]
+            .handshake
+            .as_ref()
+            .unwrap()
+            .outgoing_wire_for_test()
+            .unwrap()
+            .to_vec();
         exchange(&mut a, &mut b, 1000, start)?;
         let original = a.session_id(0).unwrap();
         let old_wire = a
@@ -215,9 +238,7 @@ fn configured_peer_restart_requires_fresh_aead_and_rejects_old_generation() -> R
             1300,
             later,
         )?;
-        fresh.poll(1300, later, 64)?;
-        b.poll(1300, later, 64)?;
-        fresh.poll(1301, later + Duration::from_millis(1), 64)?;
+        finish_initiator_offer(&mut fresh, &mut b, 1300, later)?;
         let current = fresh
             .session_id(0)
             .context("restart initiator did not authenticate")?;
@@ -228,11 +249,11 @@ fn configured_peer_restart_requires_fresh_aead_and_rejects_old_generation() -> R
             "signed offer replaced a live channel"
         );
         a_socket.send_to(&old_wire, b_socket.local_addr()?)?;
-        let before = b.poll(1302, later + Duration::from_millis(2), 64)?;
+        let before = b.poll(1320, later + Duration::from_millis(20), 64)?;
         assert!(before.session_changes.is_empty());
         assert_eq!(b.session_id(0), Some(original));
         fresh.try_send(0, &proof(current))?;
-        let after = b.poll(1303, later + Duration::from_millis(3), 64)?;
+        let after = b.poll(1321, later + Duration::from_millis(21), 64)?;
         assert_eq!(
             after.session_changes,
             vec![NativeSessionChange {
@@ -244,9 +265,18 @@ fn configured_peer_restart_requires_fresh_aead_and_rejects_old_generation() -> R
         assert_eq!(b.session_id(0), Some(current));
         // Replay of an old signed offer and old encrypted traffic cannot
         // restore the old session, including when they share the same source.
-        a_socket.send_to(&old_offer, b_socket.local_addr()?)?;
+        // Feed the completed canonical transcript, not a captured continuation
+        // Init; continuation ordering/loss has its own real UDP coverage.
+        assert!(b
+            .receive_handshake(
+                NativeRoute::Udp(a_socket.local_addr()?),
+                &old_offer,
+                1322,
+                later + Duration::from_millis(22)
+            )
+            .is_err());
         a_socket.send_to(&old_wire, b_socket.local_addr()?)?;
-        let replay = b.poll(1304, later + Duration::from_millis(4), 64)?;
+        let replay = b.poll(1322, later + Duration::from_millis(22), 64)?;
         assert!(replay.session_changes.is_empty());
         assert!(replay.frames.is_empty());
         assert_eq!(b.session_id(0), Some(current));
@@ -281,7 +311,7 @@ fn configured_reconnect_cannot_migrate_source_or_identity_via_open_admission() -
     b.enable_client_reconnect_v1()?;
     exchange(&mut a, &mut b, 1000, start)?;
     let original = b.session_id(0);
-    let mut migrated = NativeEndpoint::connect_client(
+    let migrated = NativeEndpoint::connect_client(
         UdpSocket::bind("127.0.0.1:0")?,
         key(23),
         peer(&key(47), b.local_addr()?),
@@ -289,15 +319,26 @@ fn configured_reconnect_cannot_migrate_source_or_identity_via_open_admission() -
         1100,
         start + Duration::from_millis(100),
     )?;
-    migrated.poll(1100, start + Duration::from_millis(100), 64)?;
-    assert_eq!(
-        b.poll(1100, start + Duration::from_millis(100), 64)?
-            .rejected_datagrams,
-        1
-    );
+    // These rejection checks use the reassembly owner's complete signed
+    // transcript. One Init alone proves neither identity nor a rejection.
+    let offer = migrated.peers[&0]
+        .handshake
+        .as_ref()
+        .unwrap()
+        .outgoing_wire_for_test()
+        .unwrap()
+        .to_vec();
+    assert!(b
+        .receive_handshake(
+            NativeRoute::Udp(migrated.local_addr()?),
+            &offer,
+            1100,
+            start + Duration::from_millis(100)
+        )
+        .is_err());
     assert_eq!(b.session_id(0), original);
     assert_eq!(b.peer_count(), 1);
-    let mut impostor = NativeEndpoint::connect_client(
+    let impostor = NativeEndpoint::connect_client(
         a_socket.try_clone()?,
         key(99),
         peer(&key(47), b.local_addr()?),
@@ -305,12 +346,21 @@ fn configured_reconnect_cannot_migrate_source_or_identity_via_open_admission() -
         1200,
         start + Duration::from_millis(200),
     )?;
-    impostor.poll(1200, start + Duration::from_millis(200), 64)?;
-    assert_eq!(
-        b.poll(1200, start + Duration::from_millis(200), 64)?
-            .rejected_datagrams,
-        1
-    );
+    let offer = impostor.peers[&0]
+        .handshake
+        .as_ref()
+        .unwrap()
+        .outgoing_wire_for_test()
+        .unwrap()
+        .to_vec();
+    assert!(b
+        .receive_handshake(
+            NativeRoute::Udp(impostor.local_addr()?),
+            &offer,
+            1200,
+            start + Duration::from_millis(200)
+        )
+        .is_err());
     assert_eq!(b.session_id(0), original);
     assert_eq!(b.peer_count(), 1);
     Ok(())
@@ -320,9 +370,7 @@ fn configured_reconnect_cannot_migrate_source_or_identity_via_open_admission() -
 fn replayed_initial_offer_cannot_pin_restarted_responder_to_orphan_session() -> Result<()> {
     let start = Instant::now();
     let mut keys = [key(23), key(47)];
-    keys.sort_by_key(|identity| {
-        peer_id_from_ed25519_public_key_v1(&identity.verifying_key().to_bytes())
-    });
+    keys.sort_by_key(|identity| peer_id_from_mldsa65_public_key_v1(identity.public_key()));
     let [a_key, b_key] = keys;
     let a_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
     let b_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
@@ -343,9 +391,13 @@ fn replayed_initial_offer_cannot_pin_restarted_responder_to_orphan_session() -> 
         start,
     )?;
     a.poll(1000, start, 64)?;
-    let mut captured = [0; MAX_DATAGRAM_BYTES];
-    let (length, _) = b_socket.peek_from(&mut captured)?;
-    let old_offer = captured[..length].to_vec();
+    let old_offer = a.peers[&0]
+        .handshake
+        .as_ref()
+        .unwrap()
+        .outgoing_wire_for_test()
+        .unwrap()
+        .to_vec();
     exchange(&mut a, &mut b, 1000, start)?;
     let original = a.session_id(0).unwrap();
     // The old Offer is still signed/in-window, but the higher peer has lost
@@ -359,7 +411,12 @@ fn replayed_initial_offer_cannot_pin_restarted_responder_to_orphan_session() -> 
         1200,
         start + Duration::from_millis(200),
     )?;
-    a_socket.send_to(&old_offer, b_socket.local_addr()?)?;
+    fresh.receive_handshake(
+        NativeRoute::Udp(a_socket.local_addr()?),
+        &old_offer,
+        1200,
+        start + Duration::from_millis(200),
+    )?;
     fresh.poll(1200, start + Duration::from_millis(200), 64)?;
     assert!(
         fresh.session_id(0).is_none(),

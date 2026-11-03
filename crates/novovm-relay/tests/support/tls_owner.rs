@@ -15,7 +15,7 @@ async fn configure(
 ) -> Result<()> {
     use std::os::windows::process::CommandExt;
     let mut child = Process(
-        Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"))
+        service_command()
             .arg(command)
             .arg(f.0.join("owned.json"))
             .arg(value)
@@ -36,14 +36,15 @@ async fn exchange_tls(
 ) -> Result<()> {
     let mut history = ServiceLeaseBookV1::new_self_owned(
         SelfOwnedTrustV1 {
-            version: 1,
-            node_pins: [record.relay_public_key].into(),
+            version: 2,
+            node_pins: [record.relay_public_key.clone()].into(),
         },
         vec![record.clone()],
         now_ms()?,
+        key(73),
     )?;
     let route = TlsServiceEndpointV1::from_record(record)?.context("TLS route missing")?;
-    history.check_tls_route_v1(record.relay_public_key, &route, now_ms()?)?;
+    history.check_tls_route_v1(&record.relay_public_key, &route, now_ms()?)?;
     let scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?;
     let tcp = tokio::net::TcpStream::connect(route.address).await?;
     tcp.set_nodelay(true)?;
@@ -53,7 +54,7 @@ async fn exchange_tls(
     let mut session = MailboxClientSessionV2::begin_continuous_v6(
         &mut stream,
         &identity,
-        record.relay_public_key,
+        record.relay_public_key.clone(),
     )
     .await?;
     let object = [9; 32];
@@ -82,7 +83,14 @@ async fn exchange_tls(
         else {
             anyhow::bail!("no durable receipt")
         };
-        receipt.verify(record.relay_public_key, grant.id, object, &data, expires)?;
+        receipt.verify(
+            &record.relay_public_key,
+            grant.id,
+            object,
+            &data,
+            expires,
+            &key(73),
+        )?;
     } else {
         let MailboxReplyV1::Object {
             object: found,
@@ -162,7 +170,7 @@ async fn windows_tls_policy_restart_preserves_identity_and_real_custody() -> Res
         let second_tls = TlsServiceEndpointV1::from_record(&second)?.unwrap();
         ensure!(second_tls.max_connections == 8);
         ensure!(second.relay_public_key == first.relay_public_key);
-        ensure!(second_tls.endpoint_key != second.relay_public_key);
+        ensure!(second_tls.endpoint_key.as_slice() != second.relay_public_key.as_slice());
         ensure!(
             second_tls.endpoint_key
                 != IrohServiceEndpointV1::from_record(&second)?
@@ -222,7 +230,7 @@ async fn windows_tls_invalid_settings_never_change_custody() -> Result<()> {
         r#"{"version":1,"listen":"127.0.0.1:0","advertised":"[::1]:443"}"#,
         r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","private_key":"forbidden"}"#,
         r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":0}"#,
-        r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":65}"#,
+        r#"{"version":1,"listen":"127.0.0.1:0","advertised":"127.0.0.1:0","max_connections":65536}"#,
     ] {
         std::fs::write(&path, invalid)?;
         configure(&fixture, "--set-self-owned-tls", path.as_os_str(), false).await?;

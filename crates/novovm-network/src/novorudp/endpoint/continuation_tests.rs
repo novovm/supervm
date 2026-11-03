@@ -1,6 +1,6 @@
 //! Exercise the actual original endpoint, not just the reassembly codec.
-//! Existing signed V1 input proves validation is not bypassed. Large opaque
-//! input proves bounds, NOT production ML-DSA identity migration.
+//! Full-size signed ML-DSA-65-shape test input proves validation is not bypassed.
+//! The deterministic test provider is not production AOEM qualification.
 use super::*;
 use crate::{
     novorudp::handshake_continuation::{Sender, MAX_TRANSCRIPT_BYTES},
@@ -13,13 +13,18 @@ fn receive(socket: &UdpSocket) -> Result<Vec<u8>> {
     Ok(wire[..length].to_vec())
 }
 
-fn listener() -> Result<(NativeEndpoint, UdpSocket, SigningKey, SigningKey)> {
+fn listener() -> Result<(
+    NativeEndpoint,
+    UdpSocket,
+    TransportIdentity,
+    TransportIdentity,
+)> {
     let server = UdpSocket::bind("127.0.0.1:0")?;
     let client = UdpSocket::bind("127.0.0.1:0")?;
     client.connect(server.local_addr()?)?;
     client.set_read_timeout(Some(Duration::from_secs(2)))?;
-    let local = SigningKey::from_bytes(&[14; 32]);
-    let remote = SigningKey::from_bytes(&[19; 32]);
+    let local = crate::test_identity::key(14);
+    let remote = crate::test_identity::key(19);
     let endpoint = NativeEndpoint::listen_clients(
         server,
         local.clone(),
@@ -39,13 +44,33 @@ fn feed(endpoint: &mut NativeEndpoint, socket: &UdpSocket, wire: &[u8]) -> Resul
     endpoint.poll(1000, Instant::now(), 8)
 }
 
+fn receive_response(endpoint: &mut NativeEndpoint, socket: &UdpSocket) -> Result<Vec<u8>> {
+    let mut receiver = crate::novorudp::handshake_continuation::Receiver::new(Instant::now());
+    for _ in 0..32 {
+        let wire = receive(socket)?;
+        match receiver.receive(endpoint.local_addr()?, &wire, Instant::now())? {
+            crate::novorudp::handshake_continuation::Received::Reply(reply) => {
+                feed(endpoint, socket, &reply)?;
+            }
+            crate::novorudp::handshake_continuation::Received::Pending => {
+                endpoint.poll(1000, Instant::now(), 8)?;
+            }
+            crate::novorudp::handshake_continuation::Received::Complete(wire) => return Ok(wire),
+            crate::novorudp::handshake_continuation::Received::Challenge => {
+                anyhow::bail!("unexpected response continuation challenge")
+            }
+        }
+    }
+    anyhow::bail!("response continuation exceeded packet bound")
+}
+
 #[test]
 fn continuation_cookie_never_admits_peer_but_complete_signed_input_uses_original_handshake(
 ) -> Result<()> {
     let (mut endpoint, socket, server_key, client_key) = listener()?;
     let offer = NodeHandshakeInitiatorV1::start(
         &client_key,
-        peer_id_from_ed25519_public_key_v1(&server_key.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(server_key.public_key()),
         1000,
         5000,
     )?;
@@ -59,10 +84,17 @@ fn continuation_cookie_never_admits_peer_but_complete_signed_input_uses_original
     let reply = receive(&socket)?;
     assert_eq!(init.len(), reply.len());
     sender.challenge(&reply)?;
-    let report = feed(&mut endpoint, &socket, &sender.datagram(&wire)?)?;
-    assert_eq!(report.rejected_datagrams, 0);
-    assert_eq!(endpoint.peers.len(), 1);
-    let response = receive(&socket)?;
+    loop {
+        let part = sender.datagram(&wire)?;
+        let last = sender.sent();
+        let report = feed(&mut endpoint, &socket, &part)?;
+        assert_eq!(report.rejected_datagrams, 0);
+        assert_eq!(endpoint.peers.len(), usize::from(last));
+        if last {
+            break;
+        }
+    }
+    let response = receive_response(&mut endpoint, &socket)?;
     let handshake_wire::HandshakeMessage::Response(response) = handshake_wire::decode(&response)?
     else {
         panic!("original endpoint did not sign response")
@@ -78,7 +110,7 @@ fn valid_cookie_cannot_admit_invalid_signature_or_large_unrecognized_transcript(
     let (mut endpoint, socket, server_key, client_key) = listener()?;
     let offer = NodeHandshakeInitiatorV1::start(
         &client_key,
-        peer_id_from_ed25519_public_key_v1(&server_key.verifying_key().to_bytes()),
+        peer_id_from_mldsa65_public_key_v1(server_key.public_key()),
         1000,
         5000,
     )?;

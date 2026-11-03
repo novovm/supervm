@@ -53,12 +53,11 @@ mod receipt_wire_tests {
         );
     }
 
-    fn identities() -> (SigningKey, SigningKey, String, String) {
-        let sender = SigningKey::from_bytes(&[0x61; 32]);
-        let recipient = SigningKey::from_bytes(&[0x62; 32]);
-        let sender_id = peer_id_from_ed25519_public_key_v1(&sender.verifying_key().to_bytes());
-        let recipient_id =
-            peer_id_from_ed25519_public_key_v1(&recipient.verifying_key().to_bytes());
+    fn identities() -> (TransportIdentity, TransportIdentity, String, String) {
+        let sender = component_key(&[0x61; 32]);
+        let recipient = component_key(&[0x62; 32]);
+        let sender_id = peer_id_from_mldsa65_public_key_v1(sender.public_key());
+        let recipient_id = peer_id_from_mldsa65_public_key_v1(recipient.public_key());
         (sender, recipient, sender_id, recipient_id)
     }
 
@@ -92,11 +91,13 @@ mod receipt_wire_tests {
     // encoder. Intentionally has no validation so signed invalid combinations
     // can reach the decoder, rather than failing only in the encoder fixture.
     fn signing_bytes_unchecked(ack: &ProductMainlineOverlayRecipientAckV1) -> Vec<u8> {
-        let domain = b"novovm-product-mainline-recipient-ack/v1";
-        let mut bytes = b"NOVACK01".to_vec();
+        let domain = b"novovm-product-mainline-recipient-ack/v2";
+        let mut bytes = b"NOVACK02".to_vec();
         bytes.extend_from_slice(&(domain.len() as u16).to_be_bytes());
         bytes.extend_from_slice(domain);
         bytes.extend_from_slice(&ack.version.to_be_bytes());
+        bytes.extend_from_slice(&ack.suite.to_be_bytes());
+        bytes.extend_from_slice(&ack.recipient_public_key);
         bytes.extend_from_slice(&ack.chain_id.to_be_bytes());
         bytes.push(match ack.payload_class {
             ProductMainlineOverlayPayloadClassV1::NativeTransaction => 1,
@@ -125,7 +126,7 @@ mod receipt_wire_tests {
     }
 
     #[test]
-    fn legacy_code_one_keeps_its_original_bytes_signature_and_route_verification() {
+    fn version_two_journal_code_one_has_canonical_signed_route() {
         let (_, recipient, sender_id, recipient_id) = identities();
         for class in [
             ProductMainlineOverlayPayloadClassV1::NativeTransaction,
@@ -140,18 +141,30 @@ mod receipt_wire_tests {
                 ),
             )
             .unwrap();
-            assert_eq!(ack.version, 1);
+            assert_eq!(ack.version, 2);
             assert_eq!(ack.disposition.code(), 1);
-            let old_signature = recipient.sign(&signing_bytes_unchecked(&ack)).to_bytes();
+            let old_signature = recipient
+                .sign(
+                    &signing_bytes_unchecked(&ack),
+                    PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1,
+                )
+                .unwrap();
             assert_eq!(ack.signature, old_signature);
             let old_wire = wire_unchecked(&ack);
             assert_eq!(encode_recipient_ack_v1(&ack).unwrap(), old_wire);
             assert_eq!(
-                decode_and_verify_recipient_ack_v1(&old_wire, 7, &sender_id, &recipient_id)
-                    .unwrap(),
+                decode_and_verify_recipient_ack_v1(
+                    &old_wire,
+                    7,
+                    &sender_id,
+                    &recipient_id,
+                    &component_key(&[1; 32])
+                )
+                .unwrap(),
                 ack
             );
-            ack.verify_route(7, &sender_id, &recipient_id).unwrap();
+            ack.verify_route(7, &sender_id, &recipient_id, &component_key(&[1; 32]))
+                .unwrap();
         }
     }
 
@@ -171,10 +184,18 @@ mod receipt_wire_tests {
         let encoded = encode_recipient_ack_v1(&ack).unwrap();
         assert_eq!(encoded, wire_unchecked(&ack));
         assert_eq!(
-            decode_and_verify_recipient_ack_v1(&encoded, 7, &sender_id, &recipient_id).unwrap(),
+            decode_and_verify_recipient_ack_v1(
+                &encoded,
+                7,
+                &sender_id,
+                &recipient_id,
+                &component_key(&[1; 32])
+            )
+            .unwrap(),
             ack
         );
-        ack.verify_route(7, &sender_id, &recipient_id).unwrap();
+        ack.verify_route(7, &sender_id, &recipient_id, &component_key(&[1; 32]))
+            .unwrap();
 
         let mut old = build_recipient_ack_v1(
             &recipient,
@@ -187,11 +208,18 @@ mod receipt_wire_tests {
         .unwrap();
         old.disposition =
             ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted;
-        let error = old.verify_route(7, &sender_id, &recipient_id).unwrap_err();
+        let error = old
+            .verify_route(7, &sender_id, &recipient_id, &component_key(&[1; 32]))
+            .unwrap_err();
         assert!(error.to_string().contains("signature"));
-        let error =
-            decode_and_verify_recipient_ack_v1(&wire_unchecked(&old), 7, &sender_id, &recipient_id)
-                .unwrap_err();
+        let error = decode_and_verify_recipient_ack_v1(
+            &wire_unchecked(&old),
+            7,
+            &sender_id,
+            &recipient_id,
+            &component_key(&[1; 32]),
+        )
+        .unwrap_err();
         assert!(error.to_string().contains("signature"));
     }
 
@@ -207,19 +235,24 @@ mod receipt_wire_tests {
             ),
         )
         .unwrap();
-        let other_id = peer_id_from_ed25519_public_key_v1(
-            &SigningKey::from_bytes(&[0x65; 32])
-                .verifying_key()
-                .to_bytes(),
-        );
+        let other_id = peer_id_from_mldsa65_public_key_v1(component_key(&[0x65; 32]).public_key());
         let wire = encode_recipient_ack_v1(&ack).unwrap();
         for (chain, sender, recipient) in [
             (8, sender_id.as_str(), recipient_id.as_str()),
             (7, other_id.as_str(), recipient_id.as_str()),
             (7, sender_id.as_str(), other_id.as_str()),
         ] {
-            assert!(ack.verify_route(chain, sender, recipient).is_err());
-            assert!(decode_and_verify_recipient_ack_v1(&wire, chain, sender, recipient).is_err());
+            assert!(ack
+                .verify_route(chain, sender, recipient, &component_key(&[1; 32]))
+                .is_err());
+            assert!(decode_and_verify_recipient_ack_v1(
+                &wire,
+                chain,
+                sender,
+                recipient,
+                &component_key(&[1; 32])
+            )
+            .is_err());
         }
         let mutations: [fn(&mut ProductMainlineOverlayRecipientAckV1); 8] = [
             |bad| bad.chain_id = 8,
@@ -235,7 +268,8 @@ mod receipt_wire_tests {
             let mut bad = ack.clone();
             mutate(&mut bad);
             assert!(
-                bad.verify_route(7, &sender_id, &recipient_id).is_err(),
+                bad.verify_route(7, &sender_id, &recipient_id, &component_key(&[1; 32]))
+                    .is_err(),
                 "typed mutation {index}"
             );
             assert!(
@@ -243,7 +277,8 @@ mod receipt_wire_tests {
                     &wire_unchecked(&bad),
                     7,
                     &sender_id,
-                    &recipient_id
+                    &recipient_id,
+                    &component_key(&[1; 32])
                 )
                 .is_err(),
                 "wire mutation {index}"
@@ -253,16 +288,55 @@ mod receipt_wire_tests {
         let mut zero_time = ack;
         zero_time.accepted_at_ms = 0;
         zero_time.signature = recipient
-            .sign(&signing_bytes_unchecked(&zero_time))
-            .to_bytes();
+            .sign(
+                &signing_bytes_unchecked(&zero_time),
+                PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1,
+            )
+            .unwrap();
         assert!(encode_recipient_ack_v1(&zero_time).is_err());
         assert!(decode_and_verify_recipient_ack_v1(
             &wire_unchecked(&zero_time),
             7,
             &sender_id,
             &recipient_id,
+            &component_key(&[1; 32])
         )
         .is_err());
+    }
+
+    #[test]
+    fn ack_rejects_legacy_suite_and_public_key_rebinding() {
+        let (_, recipient, sender_id, recipient_id) = identities();
+        let ack = build_recipient_ack_v1(
+            &recipient,
+            7,
+            &request(
+                ProductMainlineOverlayPayloadClassV1::NativeTransaction,
+                ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted,
+            ),
+        )
+        .unwrap();
+        for mutate in [
+            (|value: &mut ProductMainlineOverlayRecipientAckV1| value.version = 1)
+                as fn(&mut ProductMainlineOverlayRecipientAckV1),
+            |value| value.suite = 1,
+            |value| value.recipient_public_key[0] ^= 1,
+            |value| value.recipient_public_key.truncate(32),
+        ] {
+            let mut invalid = ack.clone();
+            mutate(&mut invalid);
+            assert!(invalid
+                .verify_route(7, &sender_id, &recipient_id, &recipient)
+                .is_err());
+            assert!(decode_and_verify_recipient_ack_v1(
+                &wire_unchecked(&invalid),
+                7,
+                &sender_id,
+                &recipient_id,
+                &recipient
+            )
+            .is_err());
+        }
     }
 
     #[test]
@@ -285,15 +359,21 @@ mod receipt_wire_tests {
         invalid.disposition =
             ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted;
         invalid.signature = recipient
-            .sign(&signing_bytes_unchecked(&invalid))
-            .to_bytes();
+            .sign(
+                &signing_bytes_unchecked(&invalid),
+                PRODUCT_MAINLINE_OVERLAY_RECIPIENT_ACK_DOMAIN_V1,
+            )
+            .unwrap();
         assert!(encode_recipient_ack_v1(&invalid).is_err());
-        assert!(invalid.verify_route(7, &sender_id, &recipient_id).is_err());
+        assert!(invalid
+            .verify_route(7, &sender_id, &recipient_id, &component_key(&[1; 32]))
+            .is_err());
         let error = decode_and_verify_recipient_ack_v1(
             &wire_unchecked(&invalid),
             7,
             &sender_id,
             &recipient_id,
+            &component_key(&[1; 32]),
         )
         .unwrap_err();
         assert!(

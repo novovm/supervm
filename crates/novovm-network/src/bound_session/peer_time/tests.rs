@@ -15,16 +15,20 @@ use anyhow::Context;
 use std::time::Duration;
 use tokio::sync::oneshot;
 
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
+fn key(n: u8) -> TransportIdentity {
+    TransportIdentity::from_bytes(&[n; 32])
 }
-fn public(n: u8) -> [u8; 32] {
-    key(n).verifying_key().to_bytes()
+fn public(n: u8) -> Vec<u8> {
+    key(n).public_key().to_vec()
 }
 fn binding(initiator: bool) -> VerifiedTransportBinding {
     VerifiedTransportBinding::from_authenticated_transport(
-        public(if initiator { 3 } else { 4 }),
-        public(if initiator { 4 } else { 3 }),
+        ed25519_dalek::SigningKey::from_bytes(&[if initiator { 3 } else { 4 }; 32])
+            .verifying_key()
+            .to_bytes(),
+        ed25519_dalek::SigningKey::from_bytes(&[if initiator { 4 } else { 3 }; 32])
+            .verifying_key()
+            .to_bytes(),
         [7; 32],
         BOUND_TRANSPORT_ALPN_V1,
         initiator,

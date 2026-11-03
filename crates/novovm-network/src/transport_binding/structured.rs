@@ -1,4 +1,4 @@
-//! Explicit structured representations of the UTC V1 and session-clock V2
+//! Explicit ML-DSA-65 representations of the UTC V3 and session-clock V4
 //! bound handshakes. The caller selects the mode before reading peer input.
 //! Decoding checks shape, not authority: callers must still run respond/complete
 //! and the bidirectional Finished exchange on the actual authenticated carrier.
@@ -10,20 +10,53 @@ use novovm_protocol::{
     apfl_column::Column,
 };
 
-pub const OFFER_SCHEMA: u64 = u64::from_be_bytes(*b"NVBOFR01");
-pub const RESPONSE_SCHEMA: u64 = u64::from_be_bytes(*b"NVBRES01");
-pub const OFFER_SCHEMA_V2: u64 = u64::from_be_bytes(*b"NVBOFR02");
-pub const RESPONSE_SCHEMA_V2: u64 = u64::from_be_bytes(*b"NVBRES02");
-const OFFER_WIDTHS: [usize; 14] = [2, 32, 32, 32, 32, 32, 2, 16, 33, 32, 8, 8, 64, 64];
-const RESPONSE_WIDTHS: [usize; 17] = [
-    2, 32, 32, 32, 32, 32, 2, 16, 33, 32, 8, 8, 64, 64, 32, 32, 32,
+pub const OFFER_SCHEMA: u64 = u64::from_be_bytes(*b"NVBOFR03");
+pub const RESPONSE_SCHEMA: u64 = u64::from_be_bytes(*b"NVBRES03");
+pub const OFFER_SCHEMA_V2: u64 = u64::from_be_bytes(*b"NVBOFR04");
+pub const RESPONSE_SCHEMA_V2: u64 = u64::from_be_bytes(*b"NVBRES04");
+const OFFER_WIDTHS: [usize; 15] = [
+    2,
+    32,
+    MLDSA65_PUBLIC_KEY_BYTES,
+    MLDSA65_PUBLIC_KEY_BYTES,
+    32,
+    32,
+    2,
+    16,
+    33,
+    32,
+    8,
+    8,
+    MLDSA65_SIGNATURE_BYTES,
+    MLDSA65_SIGNATURE_BYTES,
+    2,
+];
+const RESPONSE_WIDTHS: [usize; 18] = [
+    2,
+    32,
+    MLDSA65_PUBLIC_KEY_BYTES,
+    MLDSA65_PUBLIC_KEY_BYTES,
+    32,
+    32,
+    2,
+    16,
+    33,
+    32,
+    8,
+    8,
+    MLDSA65_SIGNATURE_BYTES,
+    MLDSA65_SIGNATURE_BYTES,
+    32,
+    32,
+    32,
+    2,
 ];
 const LIMITS: Limits = Limits {
     rows: 1,
-    columns: 17,
-    field_bytes: 64,
+    columns: 18,
+    field_bytes: MLDSA65_SIGNATURE_BYTES,
     wire_bytes: BOUND_HANDSHAKE_MAX_WIRE_BYTES_V1,
-    expanded_bytes: 1024,
+    expanded_bytes: 16 * 1024,
 };
 const FINISHED_WIRE_LIMIT: usize = 1024;
 
@@ -60,12 +93,17 @@ fn fixed<const N: usize>(batch: &BatchView<'_>, column: usize) -> Result<[u8; N]
         .try_into()
         .map_err(|_| anyhow::anyhow!("bound structured field width"))
 }
-fn context(batch: &BatchView<'_>, mode: BoundClockMode) -> Result<BoundHandshakeContextV1> {
+fn context(
+    batch: &BatchView<'_>,
+    mode: BoundClockMode,
+    suite_column: usize,
+) -> Result<BoundHandshakeContextV1> {
     let result = BoundHandshakeContextV1 {
         version: u16::from_le_bytes(fixed(batch, 0)?),
+        signature_suite: u16::from_le_bytes(fixed(batch, suite_column)?),
         purpose: fixed(batch, 1)?,
-        initiator_identity_public_key: fixed(batch, 2)?,
-        responder_identity_public_key: fixed(batch, 3)?,
+        initiator_identity_public_key: field(batch, 2)?.to_vec(),
+        responder_identity_public_key: field(batch, 3)?.to_vec(),
         initiator_transport_public_key: fixed(batch, 4)?,
         responder_transport_public_key: fixed(batch, 5)?,
         connection_binding: batch.context,
@@ -109,6 +147,7 @@ fn encode_offer_with_mode(
             &e.expires_at_ms.to_le_bytes(),
             &e.signature,
             &value.signature,
+            &c.signature_suite.to_le_bytes(),
         ],
     )
 }
@@ -126,15 +165,15 @@ fn decode_offer_with_mode(
     mode: BoundClockMode,
 ) -> Result<BoundNodeHandshakeOfferV1> {
     let batch = decode(wire, schema, &OFFER_WIDTHS)?;
-    let c = context(&batch, mode)?;
+    let c = context(&batch, mode, 14)?;
     // These redundant signed fields are determined exactly by context; shape
     // validation on encoding ensures this representation preserves the object.
     let e2e = NodeHandshakeOfferV1 {
         version: u16::from_le_bytes(fixed(&batch, 6)?),
         session_id: fixed(&batch, 7)?,
-        initiator_peer_id: peer_id_from_ed25519_public_key_v1(&c.initiator_identity_public_key),
-        responder_peer_id: peer_id_from_ed25519_public_key_v1(&c.responder_identity_public_key),
-        initiator_identity_public_key: c.initiator_identity_public_key,
+        initiator_peer_id: peer_id_from_mldsa65_public_key_v1(&c.initiator_identity_public_key),
+        responder_peer_id: peer_id_from_mldsa65_public_key_v1(&c.responder_identity_public_key),
+        initiator_identity_public_key: c.initiator_identity_public_key.clone(),
         initiator_ephemeral_public_key: field(&batch, 8)?.to_vec(),
         challenge: fixed(&batch, 9)?,
         issued_at_ms: u64::from_le_bytes(fixed(&batch, 10)?),
@@ -186,6 +225,7 @@ fn encode_response_with_mode(
             &e.response_nonce,
             &e.offer_hash,
             &value.offer_hash,
+            &c.signature_suite.to_le_bytes(),
         ],
     )
 }
@@ -203,13 +243,13 @@ fn decode_response_with_mode(
     mode: BoundClockMode,
 ) -> Result<BoundNodeHandshakeResponseV1> {
     let batch = decode(wire, schema, &RESPONSE_WIDTHS)?;
-    let c = context(&batch, mode)?;
+    let c = context(&batch, mode, 17)?;
     let e2e = NodeHandshakeResponseV1 {
         version: u16::from_le_bytes(fixed(&batch, 6)?),
         session_id: fixed(&batch, 7)?,
-        initiator_peer_id: peer_id_from_ed25519_public_key_v1(&c.initiator_identity_public_key),
-        responder_peer_id: peer_id_from_ed25519_public_key_v1(&c.responder_identity_public_key),
-        responder_identity_public_key: c.responder_identity_public_key,
+        initiator_peer_id: peer_id_from_mldsa65_public_key_v1(&c.initiator_identity_public_key),
+        responder_peer_id: peer_id_from_mldsa65_public_key_v1(&c.responder_identity_public_key),
+        responder_identity_public_key: c.responder_identity_public_key.clone(),
         responder_ephemeral_public_key: field(&batch, 8)?.to_vec(),
         challenge: fixed(&batch, 9)?,
         issued_at_ms: u64::from_le_bytes(fixed(&batch, 10)?),

@@ -5,7 +5,7 @@ use novovm_network::product_service_lease::NativeMailboxEndpointV7;
 async fn configure(f: &Fixture, value: &std::ffi::OsStr, success: bool) -> Result<()> {
     use std::os::windows::process::CommandExt;
     let mut child = Process(
-        Command::new(env!("CARGO_BIN_EXE_novovm-rendezvous-service"))
+        service_command()
             .arg("--set-self-owned-native")
             .arg(f.0.join("owned.json"))
             .arg(value)
@@ -48,7 +48,7 @@ async fn windows_native_cli_preserves_custody_across_activation_restart_and_off(
         }
         let native = fixture.launch_owned("--foreground")?;
         let second = fixture.owned_record(first.sequence).await?;
-        validate_relay_record_v1(&second, now_ms()?)?;
+        validate_relay_record_v1(&second, now_ms()?, &key(73))?;
         ensure!(second.endpoints.len() == 1, "mixed carrier publication");
         let route = NativeMailboxEndpointV7::from_record(&second)?.context("native route missing")?;
         ensure!(route.address.ip().is_loopback() && route.address.port() != 0);
@@ -60,7 +60,7 @@ async fn windows_native_cli_preserves_custody_across_activation_restart_and_off(
 
         let restarted = fixture.launch_owned("--foreground")?;
         let third = fixture.owned_record(second.sequence).await?;
-        validate_relay_record_v1(&third, now_ms()?)?;
+        validate_relay_record_v1(&third, now_ms()?, &key(73))?;
         ensure!(third.relay_public_key == first.relay_public_key);
         ensure!(NativeMailboxEndpointV7::from_record(&third)?.is_some());
         ensure!(std::fs::read(fixture.0.join("keys.dpapi"))? == keys);

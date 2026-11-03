@@ -1,6 +1,8 @@
 use super::*;
-use crate::mailbox_store::{MailboxGrant, MailboxStore, MAX_BULK_CIPHERTEXT};
-use ed25519_dalek::SigningKey;
+#[cfg(feature = "mailbox-seal")]
+use crate::mailbox_store::MAX_BULK_CIPHERTEXT;
+use crate::mailbox_store::{MailboxGrant, MailboxStore};
+use crate::product_overlay::TransportIdentity;
 
 #[test]
 #[cfg(feature = "mailbox-seal")]
@@ -52,8 +54,8 @@ async fn bulk_one_object_restart_receipt_quota_revoke_and_consume() -> Result<()
     let path = directory.path().join("mailbox.db");
     let now = crate::product_rendezvous_daemon::now_ms()? as i64 / 1000;
     let expires = now + 600;
-    let signer = SigningKey::from_bytes(&[71; 32]);
-    let pin = signer.verifying_key().to_bytes();
+    let signer = TransportIdentity::from_bytes(&[71; 32]);
+    let pin = signer.public_key().to_vec();
     let grant = MailboxGrant::generate()?;
     let payload = vec![17; 1_600_067];
     let mut store = MailboxStore::open(&path, Default::default())?;
@@ -75,7 +77,14 @@ async fn bulk_one_object_restart_receipt_quota_revoke_and_consume() -> Result<()
     let Reply::Stored(receipt) = &replies[0] else {
         anyhow::bail!("no receipt")
     };
-    receipt.verify(pin, grant.id, [4; 32], &payload, expires)?;
+    receipt.verify(
+        &pin,
+        grant.id,
+        [4; 32],
+        &payload,
+        expires,
+        &crate::test_identity::key(250),
+    )?;
     assert!(matches!(
         service
             .request_local_v1(Request::Fetch {

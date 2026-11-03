@@ -109,10 +109,10 @@ Detailed signoffs:
 ## Architecture overview
 
 - **Native transaction authentication**
-	- Native wire version 3 requires `ed25519 public key (32) || signature (64)` before pending admission
-	- The signed domain binds chain ID, nonce, signer identity, account ownership fields, execution target, policy, data, gas, value, and transaction hash
-	- Legacy 32-byte native authentication values remain decode-only and are rejected by ingress
-	- High-level public operations require the user's explicit signed intent and nonce; the host does not substitute its own signer. See [the active native authentication contract](docs/NOVOVM_NATIVE_TRANSACTION_AUTHENTICATION_V1.md)
+	- The current first-release engineering contract uses **ML-DSA-65 single signatures**. Transfers sign the concrete payer and recipient asset accounts, NOV asset, amount, fee, account nonce, chain domain and validity; UCA identifies and associates accounts, not a shared spending balance or cross-account authority
+	- Quick-payment and savings are the same asset-account type with independent control keys. An ordinary controller spends its own account's available balance under nonce, fee and atomic execution rules; restricted delegation remains explicit and is not promoted to full control
+	- High-level public operations require the user's explicit signed intent; the host does not substitute its own signer. See the [current signature and actual-account contract](docs/NOVOVM_FIRST_RELEASE_SIGNATURE_CONTRACT.md). Source-candidate implementation and local tests do not establish qualified packages, complete CI, four-host acceptance or release
+	- **Historical milestone only:** [native wire version 3 authentication](docs/NOVOVM_NATIVE_TRANSACTION_AUTHENTICATION_V1.md) used `Ed25519 public key (32) || signature (64)` before pending admission and rejected legacy 32-byte authentication values. That earlier contract is not the current ML-DSA policy, a deployment recipe or a production downgrade path
 
 - **Unified execution kernel (`AOEM`)**
 	- Semantic concurrency with `OCCC` as the primary execution path

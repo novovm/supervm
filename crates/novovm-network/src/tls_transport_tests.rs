@@ -140,46 +140,57 @@ async fn real_tcp_tls_mutual_keys_exporter_bound_finished_and_graceful_close() -
     assert_eq!(astream.remote_endpoint_key()?, b.endpoint_key());
     assert_eq!(bstream.remote_endpoint_key()?, a.endpoint_key());
     assert_eq!(astream.selected_path()?, "tls-unclassified");
-    let ak = SigningKey::from_bytes(&[71; 32]);
-    let bk = SigningKey::from_bytes(&[72; 32]);
+    let ak = crate::test_identity::key(71);
+    let bk = crate::test_identity::key(72);
     let now = 1000;
     let initiator = BoundHandshakeInitiatorV1::start(
         &ak,
-        bk.verifying_key().to_bytes(),
+        bk.public_key().to_vec(),
         astream.binding()?,
         now,
         1000,
     )?;
     astream
-        .write_frame(&initiator.offer().encode_json()?)
+        .write_frame(&crate::transport_binding::structured::encode_offer(
+            initiator.offer(),
+        )?)
         .await?;
-    let offer = crate::transport_binding::BoundNodeHandshakeOfferV1::decode_json(
-        &bstream.read_frame().await?,
-    )?;
+    let offer = crate::transport_binding::structured::decode_offer(&bstream.read_frame().await?)?;
     let mut replay = HandshakeReplayCacheV1::new(8);
     let responder = BoundHandshakeResponderV1::respond(
         &offer,
         &bk,
-        ak.verifying_key().to_bytes(),
+        ak.public_key().to_vec(),
         bstream.binding()?,
         now,
         1000,
         &mut replay,
     )?;
     bstream
-        .write_frame(&responder.response().encode_json()?)
+        .write_frame(&crate::transport_binding::structured::encode_response(
+            responder.response(),
+        )?)
         .await?;
-    let response = crate::transport_binding::BoundNodeHandshakeResponseV1::decode_json(
-        &astream.read_frame().await?,
-    )?;
+    let response =
+        crate::transport_binding::structured::decode_response(&astream.read_frame().await?)?;
     let mut apending = initiator.complete(&response, now, &mut HandshakeReplayCacheV1::new(8))?;
     let mut bpending = responder.into_pending();
     let af = apending.make_finished(now)?;
     let bf = bpending.make_finished(now)?;
-    astream.write_frame(&serde_json::to_vec(&af)?).await?;
-    bstream.write_frame(&serde_json::to_vec(&bf)?).await?;
-    apending.verify_finished(&serde_json::from_slice(&astream.read_frame().await?)?, now)?;
-    bpending.verify_finished(&serde_json::from_slice(&bstream.read_frame().await?)?, now)?;
+    astream
+        .write_frame(&crate::transport_binding::structured::encode_finished(&af)?)
+        .await?;
+    bstream
+        .write_frame(&crate::transport_binding::structured::encode_finished(&bf)?)
+        .await?;
+    apending.verify_finished(
+        &crate::transport_binding::structured::decode_finished(&astream.read_frame().await?)?,
+        now,
+    )?;
+    bpending.verify_finished(
+        &crate::transport_binding::structured::decode_finished(&bstream.read_frame().await?)?,
+        now,
+    )?;
     apending.into_channel(now)?;
     bpending.into_channel(now)?;
     tokio::try_join!(astream.finish(), bstream.finish())?;
@@ -289,11 +300,11 @@ async fn a_real_exporter_from_one_connection_cannot_authenticate_a_second_connec
     let b = TlsScopeV1::new(control())?;
     let (first, _peer) = pair(&a, &b).await?;
     let (_second, second_peer) = pair(&a, &b).await?;
-    let ak = SigningKey::from_bytes(&[31; 32]);
-    let bk = SigningKey::from_bytes(&[32; 32]);
+    let ak = crate::test_identity::key(31);
+    let bk = crate::test_identity::key(32);
     let start = BoundHandshakeInitiatorV1::start(
         &ak,
-        bk.verifying_key().to_bytes(),
+        bk.public_key().to_vec(),
         first.binding()?,
         1000,
         1000,
@@ -301,7 +312,7 @@ async fn a_real_exporter_from_one_connection_cannot_authenticate_a_second_connec
     assert!(BoundHandshakeResponderV1::respond(
         start.offer(),
         &bk,
-        ak.verifying_key().to_bytes(),
+        ak.public_key().to_vec(),
         second_peer.binding()?,
         1000,
         1000,
@@ -563,5 +574,44 @@ async fn explicit_tls_connection_budget_is_not_capped_at_sixty_four() -> Result<
     assert!(scope.acquire_connection().is_err());
     drop(permits);
     assert!(scope.acquire_connection().is_ok());
+    Ok(())
+}
+
+#[cfg(feature = "iroh-transport")]
+#[tokio::test]
+async fn explicit_adaptive_tls_limit_is_enforced_by_original_scope() -> Result<()> {
+    use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+    let _serial = SERIAL.acquire().await?;
+    let resources = ResourceSnapshotV1 {
+        cpu_parallelism: 64,
+        available_memory_bytes: 16 * 1024 * 1024 * 1024,
+        pressure: ResourcePressureV1::Normal,
+    };
+    let controller = ServiceConcurrencyV1::new(resources);
+    let scope = TlsScopeV1::new_continuous_v4(|| Ok(()))?
+        .with_connection_limit(8)?
+        .with_service_concurrency_limit(controller.clone(), 8);
+    let permits = (0..8)
+        .map(|_| scope.acquire_connection())
+        .collect::<Result<Vec<_>>>()?;
+    assert!(scope.acquire_connection().is_err());
+    controller.update_resources(ResourceSnapshotV1 {
+        pressure: ResourcePressureV1::Severe,
+        ..resources
+    });
+    assert!(scope.acquire_connection().is_err());
+    drop(permits);
+    let reduced = (0..4)
+        .map(|_| scope.acquire_connection())
+        .collect::<Result<Vec<_>>>()?;
+    assert!(scope.acquire_connection().is_err());
+    drop(reduced);
+    controller.update_resources(resources);
+    let restored = (0..8)
+        .map(|_| scope.acquire_connection())
+        .collect::<Result<Vec<_>>>()?;
+    assert!(scope.acquire_connection().is_err());
+    assert_eq!(restored.len(), 8);
+    assert_eq!(controller.snapshot().active_work, 0);
     Ok(())
 }

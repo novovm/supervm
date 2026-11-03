@@ -9,15 +9,15 @@ fn budget() -> NativeHandshakeBudget {
         retry: Duration::from_millis(20),
     }
 }
-fn key(seed: u8) -> SigningKey {
-    SigningKey::from_bytes(&[seed; 32])
+fn key(seed: u8) -> TransportIdentity {
+    crate::test_identity::key(seed)
 }
 
 #[test]
 fn connect_clients_rejects_empty_and_duplicates_without_a_sixty_four_peer_cap() -> Result<()> {
     let socket = || UdpSocket::bind("127.0.0.1:0");
     let remote = NativePeer {
-        key: key(1).verifying_key().to_bytes(),
+        key: key(1).public_key().to_vec(),
         address: "127.0.0.1:12001".parse()?,
     };
     let connect = |peers| {
@@ -29,11 +29,11 @@ fn connect_clients_rejects_empty_and_duplicates_without_a_sixty_four_peer_cap() 
     repeated_key.address.set_port(12002);
     assert!(connect(vec![remote.clone(), repeated_key]).is_err());
     let mut repeated_address = remote.clone();
-    repeated_address.key = key(2).verifying_key().to_bytes();
+    repeated_address.key = key(2).public_key().to_vec();
     assert!(connect(vec![remote, repeated_address]).is_err());
     let configured = (1..=128)
         .map(|seed| NativePeer {
-            key: key(seed).verifying_key().to_bytes(),
+            key: key(seed).public_key().to_vec(),
             address: SocketAddr::from(([127, 0, 0, 1], 12000 + u16::from(seed))),
         })
         .collect();
@@ -46,7 +46,7 @@ fn connect_clients_one_socket_authenticates_live_services_around_silent_peer() -
     // Exercise BOTH lexical key orders: open services always need a client
     // initiator, regardless of the role selection used by validator bind().
     let mut keys: Vec<_> = (21..=28).map(key).collect();
-    keys.sort_by_key(|key| key.verifying_key().to_bytes());
+    keys.sort_by_key(|key| key.public_key().to_vec());
     let client_key = keys[4].clone();
     let mut servers = Vec::new();
     for identity in [keys[0].clone(), keys[7].clone()] {
@@ -61,15 +61,15 @@ fn connect_clients_one_socket_authenticates_live_services_around_silent_peer() -
     let silent = UdpSocket::bind("127.0.0.1:0")?;
     let peers = vec![
         NativePeer {
-            key: servers[0].local_key,
+            key: servers[0].local_key.clone(),
             address: servers[0].local_addr()?,
         },
         NativePeer {
-            key: key(240).verifying_key().to_bytes(),
+            key: key(240).public_key().to_vec(),
             address: silent.local_addr()?,
         },
         NativePeer {
-            key: servers[1].local_key,
+            key: servers[1].local_key.clone(),
             address: servers[1].local_addr()?,
         },
     ];
@@ -104,7 +104,7 @@ fn connect_clients_one_socket_authenticates_live_services_around_silent_peer() -
         assert_eq!(server.sources.get(&NativeRoute::Udp(source)), Some(&0));
         assert_eq!(
             server.peer_id(0)?,
-            peer_id_from_ed25519_public_key_v1(&client_key.verifying_key().to_bytes())
+            peer_id_from_mldsa65_public_key_v1(client_key.public_key())
         );
         let index = ordinal * 2;
         let frame = NovoRudpTransportFrameV0::new(

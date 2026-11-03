@@ -2,13 +2,13 @@
 //! One explicitly enrolled node per owner; no node discovery, TOFU or wallet role.
 use crate::windows_owner_files::{atomic, check_path, create, read_bounded};
 use anyhow::{ensure, Result};
-use ed25519_dalek::{SigningKey, VerifyingKey};
 use novovm_network::{
     iroh_transport::IrohConfigV1,
     product_directory::{
         sign_bootstrap_manifest_v1, BootstrapSourceKindV1, BootstrapSourceV1,
         BootstrapTrustPolicyV1, PeerSignedRelayRecordV1, SignedBootstrapManifestV1,
     },
+    product_overlay::{TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES},
     product_rendezvous_daemon::now_ms,
     product_service_lease::{
         IrohServiceEndpointV1, ServiceLeaseBookV1, ServiceLeaseFileV1, ServiceLeasePersistenceV1,
@@ -33,8 +33,12 @@ pub struct Config {
     pub version: u8,
     pub state_directory: PathBuf,
     pub exchange_directory: PathBuf,
-    pub publisher_public_key: [u8; 32],
-    pub node_public_key: [u8; 32],
+    pub publisher_public_key: Vec<u8>,
+    pub node_public_key: Vec<u8>,
+    pub transport_identity_path: PathBuf,
+    pub chain_id: u64,
+    pub library: PathBuf,
+    pub library_sha256: String,
     pub record_id: String,
     pub manifest_id: String,
     pub allowed_relays: Vec<String>,
@@ -42,9 +46,9 @@ pub struct Config {
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        let value: Self = serde_json::from_slice(&read_bounded(path, 16384)?)?;
+        let value: Self = serde_json::from_slice(&read_bounded(path, 65536)?)?;
         ensure!(
-            value.version == 1 && (5000..=110000).contains(&value.max_grant_ms),
+            value.version == 2 && (5000..=110000).contains(&value.max_grant_ms),
             "publisher bounds"
         );
         for id in [&value.record_id, &value.manifest_id] {
@@ -54,17 +58,22 @@ impl Config {
             );
         }
         for key in [&value.node_public_key, &value.publisher_public_key] {
-            let key = VerifyingKey::from_bytes(key)?;
             ensure!(
-                !key.is_weak()
-                    && key.to_edwards().is_torsion_free()
-                    && key.to_edwards().compress().to_bytes() == key.to_bytes(),
-                "publisher policy key"
+                key.len() == MLDSA65_PUBLIC_KEY_BYTES && key.iter().any(|b| *b != 0),
+                "publisher native policy key"
             );
         }
         ensure!(
             value.node_public_key != value.publisher_public_key,
             "node cannot publish its own authority"
+        );
+        ensure!(
+            value.chain_id != 0
+                && value.transport_identity_path.is_absolute()
+                && value.library.is_absolute()
+                && value.library_sha256.len() == 64
+                && value.library_sha256.bytes().all(|b| b.is_ascii_hexdigit()),
+            "qualified publisher identity required"
         );
         for dir in [&value.state_directory, &value.exchange_directory] {
             check_path(dir)?;
@@ -101,7 +110,7 @@ struct State {
 }
 pub struct Owner {
     root: PathBuf,
-    key: SigningKey,
+    key: TransportIdentity,
     store: Arc<ServiceLeaseFileV1>,
     state: State,
     bytes: Vec<u8>,
@@ -123,10 +132,26 @@ fn lock(root: &Path) -> Result<File> {
     Ok(lock)
 }
 impl Owner {
-    /// Explicit provisioning creates independent random keys under the current
-    /// Windows identity. Run this under the eventual service identity, never
-    /// copy a different user's DPAPI blobs into a service account.
-    pub fn initialize(root: &Path) -> Result<()> {
+    /// The publisher purpose key is already explicitly protected. This creates
+    /// only independent storage custody under the eventual service identity.
+    pub fn initialize(config: &Config) -> Result<()> {
+        let key = Self::identity(config)?;
+        ensure!(
+            key.public_key() == config.publisher_public_key,
+            "publisher key pin mismatch"
+        );
+        Self::initialize_with_identity(&config.state_directory, key)
+    }
+    fn identity(config: &Config) -> Result<TransportIdentity> {
+        ensure!(config.version == 2, "publisher configuration version");
+        crate::transport_identity::load_transport_identity(
+            &config.transport_identity_path,
+            config.chain_id,
+            &config.library,
+            &config.library_sha256,
+        )
+    }
+    fn initialize_with_identity(root: &Path, key: TransportIdentity) -> Result<()> {
         let _lock = lock(root)?;
         ensure!(
             std::fs::read_dir(root)?
@@ -135,23 +160,19 @@ impl Owner {
         );
         create(
             &root.join("enrollment.started"),
-            b"NOVOVM publisher custody v1",
+            b"NOVOVM publisher custody v2",
         )?;
-        let mut material = Zeroizing::new([0u8; 72]);
-        material[..8].copy_from_slice(b"NVPUBK01");
+        let mut material = Zeroizing::new([0u8; 40]);
+        material[..8].copy_from_slice(b"NVPUBK02");
         OsRng.try_fill_bytes(&mut material[8..])?;
         create(
             &root.join("keys.dpapi"),
             &crate::windows_custody::protect(material.as_ref())?,
         )?;
-        let seed = Zeroizing::new(<[u8; 32]>::try_from(&material[8..40])?);
-        let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[40..])?);
-        ensure!(
-            *seed != *storage && *seed != [0; 32] && *storage != [0; 32],
-            "independent publisher keys"
-        );
+        let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[8..])?);
+        ensure!(*storage != [0; 32], "publisher storage key");
         let state = State {
-            version: 1,
+            version: 2,
             policy: None,
             revoked: false,
             last_time_ms: 0,
@@ -167,38 +188,34 @@ impl Owner {
         atomic(
             &root.join("identity.json"),
             &serde_json::to_vec(&serde_json::json!({
-                "version":1, "publisher_public_key":SigningKey::from_bytes(&seed).verifying_key().to_bytes()
+                "version":2, "suite":65, "publisher_public_key":key.public_key()
             }))?,
         )?;
         Ok(())
     }
-    fn open(root: &Path) -> Result<Self> {
+    fn open_with_identity(root: &Path, key: TransportIdentity) -> Result<Self> {
         let owner_lock = lock(root)?;
         ensure!(
-            read_bounded(&root.join("enrollment.started"), 128)? == b"NOVOVM publisher custody v1",
+            read_bounded(&root.join("enrollment.started"), 128)? == b"NOVOVM publisher custody v2",
             "publisher enrollment marker"
         );
         let material =
             crate::windows_custody::unprotect(&read_bounded(&root.join("keys.dpapi"), 16384)?)?;
         ensure!(
-            material.len() == 72 && &material[..8] == b"NVPUBK01",
+            material.len() == 40 && &material[..8] == b"NVPUBK02",
             "publisher custody version"
         );
-        let seed = Zeroizing::new(<[u8; 32]>::try_from(&material[8..40])?);
-        let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[40..])?);
-        ensure!(
-            *seed != *storage && *seed != [0; 32] && *storage != [0; 32],
-            "independent publisher keys"
-        );
+        let storage = Zeroizing::new(<[u8; 32]>::try_from(&material[8..])?);
+        ensure!(*storage != [0; 32], "publisher storage key");
         let (store, bytes) = ServiceLeaseFileV1::open(&root.join("publisher.journal"), storage)?;
         let state: State = serde_json::from_slice(&bytes)?;
         ensure!(
-            state.version == 1 && state.grants.len() <= 2,
+            state.version == 2 && state.grants.len() <= 2,
             "publisher journal state"
         );
         Ok(Self {
             root: root.into(),
-            key: SigningKey::from_bytes(&seed),
+            key,
             store,
             state,
             bytes,
@@ -222,13 +239,17 @@ impl Owner {
     }
     fn check_key(&self, config: &Config) -> Result<()> {
         ensure!(
-            config.publisher_public_key == self.key.verifying_key().to_bytes(),
+            config.publisher_public_key == self.key.public_key(),
             "publisher key pin mismatch"
         );
         Ok(())
     }
     pub fn enroll(config: Config) -> Result<()> {
-        let mut owner = Self::open(&config.state_directory)?;
+        let key = Self::identity(&config)?;
+        Self::enroll_with_identity(config, key)
+    }
+    fn enroll_with_identity(config: Config, key: TransportIdentity) -> Result<()> {
+        let mut owner = Self::open_with_identity(&config.state_directory, key)?;
         owner.check_key(&config)?;
         ensure!(
             owner.state.policy.is_none() && !owner.state.revoked && owner.state.last_sequence == 0,
@@ -238,7 +259,10 @@ impl Owner {
         owner.save()
     }
     fn configured(config: &Config) -> Result<Self> {
-        let owner = Self::open(&config.state_directory)?;
+        Self::configured_with_identity(config, Self::identity(config)?)
+    }
+    fn configured_with_identity(config: &Config, key: TransportIdentity) -> Result<Self> {
+        let owner = Self::open_with_identity(&config.state_directory, key)?;
         owner.check_key(config)?;
         ensure!(
             owner.state.policy.as_ref() == Some(config),
@@ -255,7 +279,7 @@ impl Owner {
         )?;
         if path.try_exists()? {
             ensure!(
-                read_bounded(&path, 1024)? == request,
+                read_bounded(&path, 16384)? == request,
                 "conflicting revoke request"
             );
         } else {
@@ -271,7 +295,8 @@ impl Owner {
         expires: u64,
     ) -> Result<BootstrapSourceV1> {
         let mut manifest = SignedBootstrapManifestV1 {
-            version: 1,
+            version: 2,
+            suite: 65,
             manifest_id: config.manifest_id.clone(),
             issued_at_ms: now,
             expires_at_ms: expires,
@@ -291,9 +316,10 @@ impl Owner {
         // Reuse consumers' strict signature, TTL, canonical endpoint and bounds
         // validation; do not accept a weaker publisher-only interpretation.
         ServiceLeaseBookV1::new(
-            BootstrapTrustPolicyV1::single_signer(config.publisher_public_key),
+            BootstrapTrustPolicyV1::single_signer(config.publisher_public_key.clone()),
             vec![source.clone()],
             now,
+            self.key.clone(),
         )?;
         Ok(source)
     }
@@ -304,7 +330,7 @@ impl Owner {
                 &serde_json::json!({"version":1,"node_public_key":config.node_public_key}),
             )?;
             ensure!(
-                read_bounded(&path, 1024)? == expected,
+                read_bounded(&path, 16384)? == expected,
                 "invalid revoke request"
             );
             self.state.revoked = true;
@@ -350,7 +376,7 @@ impl Owner {
                 .exchange_directory
                 .join(format!("epoch-{}.authority.json", grant.proposal.sequence));
             let bytes = serde_json::to_vec(&vec![grant.source.clone()])?;
-            if !path.try_exists()? || read_bounded(&path, 16384)? != bytes {
+            if !path.try_exists()? || read_bounded(&path, 1024 * 1024)? != bytes {
                 atomic(&path, &bytes)?;
             }
         }
@@ -391,7 +417,10 @@ impl Owner {
         }
         proposals.sort_by_key(|(sequence, _)| *sequence);
         for (sequence, path) in proposals {
-            let record: PeerSignedRelayRecordV1 = match read_bounded(&path, 8192) {
+            let record: PeerSignedRelayRecordV1 = match read_bounded(
+                &path,
+                novovm_network::product_service_lease::MAX_SERVICE_LEASE_BYTES,
+            ) {
                 Ok(bytes) => serde_json::from_slice(&bytes)?,
                 Err(e)
                     if e.downcast_ref::<std::io::Error>()
@@ -443,11 +472,8 @@ impl Owner {
                     .all(|r| config.allowed_relays.contains(r)),
                 "unapproved publisher relay"
             );
-            ensure!(
-                endpoint.address.endpoint_key != config.publisher_public_key
-                    && endpoint.address.endpoint_key != config.node_public_key,
-                "separate carrier identity required"
-            );
+            // Iroh endpoint keys remain carrier-owned 32-byte material;
+            // native issuer/node authority uses separately held 1952-byte keys.
             // Verify the node signature even when refusing it after revocation.
             let approved = self.source(config, Some(record.clone()), now, record.expires_at_ms)?;
             let source = if self.state.revoked {
@@ -501,7 +527,7 @@ mod tests {
     struct Fixture {
         root: PathBuf,
         config: Config,
-        node: SigningKey,
+        node: TransportIdentity,
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -519,23 +545,26 @@ mod tests {
             let exchange_directory = root.join("node");
             std::fs::create_dir(&state_directory)?;
             std::fs::create_dir(&exchange_directory)?;
-            Owner::initialize(&state_directory)?;
-            let owner = Owner::open(&state_directory)?;
-            let publisher_public_key = owner.key.verifying_key().to_bytes();
-            drop(owner);
-            let node = SigningKey::generate(&mut OsRng);
+            let publisher = crate::transport_identity::component_identity([11; 32]);
+            Owner::initialize_with_identity(&state_directory, publisher.clone())?;
+            let publisher_public_key = publisher.public_key().to_vec();
+            let node = crate::transport_identity::component_identity([12; 32]);
             let config = Config {
-                version: 1,
+                version: 2,
+                transport_identity_path: root.join("component-purpose"),
+                chain_id: 7,
+                library: root.join("component-library"),
+                library_sha256: "a".repeat(64),
                 state_directory,
                 exchange_directory,
                 publisher_public_key,
-                node_public_key: node.verifying_key().to_bytes(),
+                node_public_key: node.public_key().to_vec(),
                 record_id: "test-node".into(),
                 manifest_id: "test-publisher".into(),
                 allowed_relays: vec![],
                 max_grant_ms: 10000,
             };
-            Owner::enroll(config.clone())?;
+            Owner::enroll_with_identity(config.clone(), publisher)?;
             Ok(Self { root, config, node })
         }
         fn proposal(
@@ -547,7 +576,9 @@ mod tests {
             let endpoint = IrohServiceEndpointV1 {
                 instance: rand::random(),
                 address: IrohAddressV1 {
-                    endpoint_key: SigningKey::generate(&mut OsRng).verifying_key().to_bytes(),
+                    endpoint_key: ed25519_dalek::SigningKey::generate(&mut OsRng)
+                        .verifying_key()
+                        .to_bytes(),
                     direct: vec!["127.0.0.1:9".parse()?],
                     relays,
                 },
@@ -572,10 +603,45 @@ mod tests {
         }
     }
     #[test]
+    fn old_publisher_config_and_signing_custody_are_not_promoted() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let path = fixture.root.join("config.json");
+        let mut old = fixture.config.clone();
+        old.version = 1;
+        atomic(&path, &serde_json::to_vec(&old)?)?;
+        assert!(Config::load(&path).is_err());
+        old.version = 2;
+        old.publisher_public_key = vec![21; 32];
+        atomic(&path, &serde_json::to_vec(&old)?)?;
+        assert!(Config::load(&path).is_err());
+        let mut raw = Zeroizing::new([0u8; 72]);
+        raw[..8].copy_from_slice(b"NVPUBK01");
+        raw[8..40].fill(21);
+        raw[40..].fill(22);
+        let sealed = crate::windows_custody::protect(raw.as_ref())?;
+        let key_path = fixture.config.state_directory.join("keys.dpapi");
+        std::fs::write(&key_path, &sealed)?;
+        let journal = std::fs::read(fixture.config.state_directory.join("publisher.journal"))?;
+        assert!(Owner::configured_with_identity(
+            &fixture.config,
+            crate::transport_identity::component_identity([11; 32])
+        )
+        .is_err());
+        assert_eq!(std::fs::read(key_path)?, sealed);
+        assert_eq!(
+            std::fs::read(fixture.config.state_directory.join("publisher.journal"))?,
+            journal
+        );
+        Ok(())
+    }
+    #[test]
     fn interrupted_revocation_recovery_cannot_publish_a_previous_live_grant() -> Result<()> {
         let fixture = Fixture::new()?;
         fixture.proposal(1, 10000, vec![])?;
-        let mut owner = Owner::configured(&fixture.config)?;
+        let mut owner = Owner::configured_with_identity(
+            &fixture.config,
+            crate::transport_identity::component_identity([11; 32]),
+        )?;
         owner.tick(&fixture.config)?;
         // Crash point: tombstone durable, replacement manifests not committed.
         owner.state.revoked = true;
@@ -583,13 +649,17 @@ mod tests {
         drop(owner);
         std::thread::sleep(Duration::from_millis(5));
         fixture.proposal(66, 10000, vec![])?;
-        let mut owner = Owner::configured(&fixture.config)?;
+        let mut owner = Owner::configured_with_identity(
+            &fixture.config,
+            crate::transport_identity::component_identity([11; 32]),
+        )?;
         owner.tick(&fixture.config)?;
         let path = fixture
             .config
             .exchange_directory
             .join("epoch-1.authority.json");
-        let sources: Vec<BootstrapSourceV1> = serde_json::from_slice(&read_bounded(&path, 16384)?)?;
+        let sources: Vec<BootstrapSourceV1> =
+            serde_json::from_slice(&read_bounded(&path, 1024 * 1024)?)?;
         ensure!(
             sources[0].manifest.relay_records.is_empty(),
             "live grant replayed after durable revocation"
@@ -608,7 +678,8 @@ mod tests {
             .config
             .exchange_directory
             .join("epoch-66.authority.json");
-        let sources: Vec<BootstrapSourceV1> = serde_json::from_slice(&read_bounded(&path, 16384)?)?;
+        let sources: Vec<BootstrapSourceV1> =
+            serde_json::from_slice(&read_bounded(&path, 1024 * 1024)?)?;
         ensure!(
             sources[0].manifest.relay_records.is_empty(),
             "successor restored revoked authority"
@@ -623,7 +694,10 @@ mod tests {
         ] {
             let fixture = Fixture::new()?;
             fixture.proposal(1, ttl, relays)?;
-            let mut owner = Owner::configured(&fixture.config)?;
+            let mut owner = Owner::configured_with_identity(
+                &fixture.config,
+                crate::transport_identity::component_identity([11; 32]),
+            )?;
             ensure!(
                 owner.tick(&fixture.config).is_err(),
                 "unauthorized lifetime or carrier accepted"
@@ -638,7 +712,10 @@ mod tests {
             );
         }
         let fixture = Fixture::new()?;
-        let mut owner = Owner::configured(&fixture.config)?;
+        let mut owner = Owner::configured_with_identity(
+            &fixture.config,
+            crate::transport_identity::component_identity([11; 32]),
+        )?;
         owner.state.last_time_ms = now_ms()? + 60000;
         owner.save()?;
         ensure!(
@@ -648,11 +725,19 @@ mod tests {
         drop(owner);
         std::fs::remove_file(fixture.config.state_directory.join("publisher.journal"))?;
         ensure!(
-            Owner::configured(&fixture.config).is_err(),
+            Owner::configured_with_identity(
+                &fixture.config,
+                crate::transport_identity::component_identity([11; 32])
+            )
+            .is_err(),
             "missing history reopened"
         );
         ensure!(
-            Owner::initialize(&fixture.config.state_directory).is_err(),
+            Owner::initialize_with_identity(
+                &fixture.config.state_directory,
+                crate::transport_identity::component_identity([11; 32])
+            )
+            .is_err(),
             "missing history reenrolled"
         );
         Ok(())

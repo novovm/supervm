@@ -1,14 +1,20 @@
 use super::*;
+use crate::product_overlay::TransportIdentity;
 
-fn key() -> SigningKey {
-    SigningKey::from_bytes(&[42; 32])
+fn carrier_key(seed: u8) -> [u8; 32] {
+    ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+        .verifying_key()
+        .to_bytes()
 }
-fn pin() -> [u8; 32] {
-    key().verifying_key().to_bytes()
+fn key() -> TransportIdentity {
+    TransportIdentity::from_bytes(&[42; 32])
+}
+fn pin() -> Vec<u8> {
+    key().public_key().to_vec()
 }
 fn trust() -> SelfOwnedTrustV1 {
     SelfOwnedTrustV1 {
-        version: 1,
+        version: 2,
         node_pins: [pin()].into(),
     }
 }
@@ -38,6 +44,7 @@ fn book() -> Result<ServiceLeaseBookV1> {
         trust(),
         vec![record(vec![route().endpoint()?], 1, 1000)?],
         2000,
+        crate::test_identity::key(90),
     )
 }
 
@@ -50,33 +57,38 @@ fn native_only_uses_original_trust_checkpoint_and_no_iroh_placeholder() -> Resul
     assert_eq!(candidates[0].endpoint, route());
     assert!(b.bootstrap_candidates(2000)?.is_empty());
     assert!(IrohServiceEndpointV1::from_record(&b.routes(2000)?[0]).is_err());
-    assert!(b.check_continuous_peer_v4(pin(), pin(), 2000).is_err());
+    assert!(b.check_continuous_peer_v4(&pin(), [0; 32], 2000).is_err());
     let bytes = b.checkpoint()?;
-    let mut restored = ServiceLeaseBookV1::restore_self_owned(trust(), &bytes, 2001)?;
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &bytes,
+        2001,
+        crate::test_identity::key(90),
+    )?;
     assert_eq!(bytes, restored.checkpoint()?);
-    restored.check_native_mailbox_route_v7(pin(), &route(), 2001)?;
+    restored.check_native_mailbox_route_v7(&pin(), &route(), 2001)?;
     Ok(())
 }
 
 #[test]
 fn fresh_dial_and_healthy_native_session_have_distinct_lifetimes() -> Result<()> {
     let mut b = book()?;
-    b.check_native_mailbox_route_v7(pin(), &route(), 2000)?;
+    b.check_native_mailbox_route_v7(&pin(), &route(), 2000)?;
     assert!(b.native_mailbox_candidates_v7(91_000)?.is_empty());
     assert!(b
-        .check_native_mailbox_route_v7(pin(), &route(), 91_000)
+        .check_native_mailbox_route_v7(&pin(), &route(), 91_000)
         .is_err());
-    b.check_continuous_native_peer_v7(pin(), 91_000)?;
+    b.check_continuous_native_peer_v7(&pin(), 91_000)?;
     let mut changed = route();
     changed.address.set_port(30211);
     b.replace_self_owned_records(vec![record(vec![changed.endpoint()?], 2, 91_000)?], 91_000)?;
-    b.check_continuous_native_peer_v7(pin(), 91_001)?;
+    b.check_continuous_native_peer_v7(&pin(), 91_001)?;
     assert!(b
-        .check_native_mailbox_route_v7(pin(), &route(), 91_001)
+        .check_native_mailbox_route_v7(&pin(), &route(), 91_001)
         .is_err());
-    b.check_native_mailbox_route_v7(pin(), &changed, 91_001)?;
+    b.check_native_mailbox_route_v7(&pin(), &changed, 91_001)?;
     b.retire_for_policy_change();
-    assert!(b.check_continuous_native_peer_v7(pin(), 91_001).is_err());
+    assert!(b.check_continuous_native_peer_v7(&pin(), 91_001).is_err());
     assert!(b.native_mailbox_candidates_v7(91_001).is_err());
     Ok(())
 }
@@ -89,7 +101,7 @@ fn native_records_reject_forgery_replay_equivocation_and_revoked_reentry() -> Re
     forged.signature[0] ^= 1;
     assert!(b.replace_self_owned_records(vec![forged], 3000).is_err());
     let other = directory::sign_relay_record_v1(
-        &SigningKey::from_bytes(&[43; 32]),
+        &TransportIdentity::from_bytes(&[43; 32]),
         "native-node",
         vec![route().endpoint()?],
         3000,
@@ -106,11 +118,16 @@ fn native_records_reject_forgery_replay_equivocation_and_revoked_reentry() -> Re
     assert!(b
         .replace_self_owned_records(vec![record(vec![changed.endpoint()?], 2, 3000)?], 3000)
         .is_err());
-    b.revoke_self_owned(pin(), 3001)?;
-    let mut reopened = ServiceLeaseBookV1::restore_self_owned(trust(), &b.checkpoint()?, 3002)?;
+    b.revoke_self_owned(&pin(), 3001)?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &b.checkpoint()?,
+        3002,
+        crate::test_identity::key(90),
+    )?;
     assert!(reopened.native_mailbox_candidates_v7(3002)?.is_empty());
     assert!(reopened
-        .check_continuous_native_peer_v7(pin(), 3002)
+        .check_continuous_native_peer_v7(&pin(), 3002)
         .is_err());
     assert!(reopened
         .replace_self_owned_records(vec![record(vec![route().endpoint()?], 3, 3002)?], 3002)
@@ -133,7 +150,13 @@ fn udp_label_does_not_authorize_unknown_mailbox_protocol_or_malformed_alternativ
         wrong.uri = uri.into();
         let r = record(vec![wrong], 1, 1000)?;
         assert!(
-            ServiceLeaseBookV1::new_self_owned(trust(), vec![r], 2000).is_err(),
+            ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![r],
+                2000,
+                crate::test_identity::key(90)
+            )
+            .is_err(),
             "{uri}"
         );
     }
@@ -141,11 +164,23 @@ fn udp_label_does_not_authorize_unknown_mailbox_protocol_or_malformed_alternativ
         let mut wrong = endpoint.clone();
         wrong.max_sessions = capacity;
         if let Ok(r) = record(vec![wrong], 1, 1000) {
-            assert!(ServiceLeaseBookV1::new_self_owned(trust(), vec![r], 2000).is_err());
+            assert!(ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![r],
+                2000,
+                crate::test_identity::key(90)
+            )
+            .is_err());
         }
     }
     let r = record(vec![endpoint.clone(), endpoint], 1, 1000)?;
-    assert!(ServiceLeaseBookV1::new_self_owned(trust(), vec![r], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![r],
+        2000,
+        crate::test_identity::key(90)
+    )
+    .is_err());
     let ipv6 = NativeMailboxEndpointV7 {
         address: "[2001:db8::1]:30210".parse()?,
         max_connections: 2,
@@ -170,14 +205,16 @@ fn native_host_publication_is_durable_and_keeps_legacy_alternatives_on_rotation(
     let iroh = IrohServiceEndpointV1 {
         instance: [4; 32],
         address: IrohAddressV1 {
-            endpoint_key: SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes(),
+            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[43; 32])
+                .verifying_key()
+                .to_bytes(),
             direct: vec!["127.0.0.1:40210".parse()?],
             relays: vec![],
         },
     };
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:40211".parse()?,
-        endpoint_key: pin(),
+        endpoint_key: carrier_key(42),
         max_connections: 4,
         native_mailbox_v8: false,
     };
@@ -185,6 +222,7 @@ fn native_host_publication_is_durable_and_keeps_legacy_alternatives_on_rotation(
         trust(),
         vec![record(vec![iroh.endpoint()?, tls.endpoint()?], 1, 1000)?],
         2000,
+        crate::test_identity::key(90),
     )?;
     let host = durable_host(b, &path)?;
     let r = host.rotate_native_mailbox_v7(Some(&route()), 3000, 93_000)?;
@@ -198,9 +236,14 @@ fn native_host_publication_is_durable_and_keeps_legacy_alternatives_on_rotation(
     assert_eq!(NativeMailboxEndpointV7::from_record(&r)?, Some(route()));
     drop(host);
     let (file, saved) = ServiceLeaseFileV1::open(&path, zeroize::Zeroizing::new([91; 32]))?;
-    let mut reopened = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3003)?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        3003,
+        crate::test_identity::key(90),
+    )?;
     reopened.attach_persistence(file, &saved)?;
-    reopened.check_native_mailbox_route_v7(pin(), &route(), 3003)?;
+    reopened.check_native_mailbox_route_v7(&pin(), &route(), 3003)?;
     let host = ServiceLeaseHostV1::new(key(), reopened)?;
     let r = host.rotate_native_mailbox_v7(None, 3004, 93_004)?;
     assert_eq!(r.endpoints.len(), 2);
@@ -216,7 +259,7 @@ fn resource_rotation_updates_all_carriers_without_retiring_live_identity() -> Re
     let iroh = carrier().iroh;
     let original_tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:40211".parse()?,
-        endpoint_key: pin(),
+        endpoint_key: carrier_key(42),
         max_connections: 4,
         native_mailbox_v8: false,
     };
@@ -232,6 +275,7 @@ fn resource_rotation_updates_all_carriers_without_retiring_live_identity() -> Re
             1000,
         )?],
         2000,
+        crate::test_identity::key(90),
     )?;
     let host = durable_host(book, &path)?;
     let mut sequence = 1;
@@ -298,7 +342,12 @@ fn resource_rotation_updates_all_carriers_without_retiring_live_identity() -> Re
     }
     drop(host);
     let (_file, saved) = ServiceLeaseFileV1::open(&path, zeroize::Zeroizing::new([91; 32]))?;
-    let mut restored = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3006)?;
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        3006,
+        crate::test_identity::key(90),
+    )?;
     let actual = restored.routes(3006)?;
     assert_eq!(actual[0].sequence, sequence);
     assert!(NativeMailboxEndpointV7::from_record(&actual[0])?.is_none());
@@ -343,17 +392,22 @@ fn native_wire_budget_is_signed_preserved_and_bound_to_fresh_dials() -> Result<(
     assert!(b.replace_self_owned_records(vec![forged], 3000).is_err());
     b.replace_self_owned_records(vec![record], 3000)?;
     assert!(b
-        .check_native_mailbox_route_v7(pin(), &original, 3001)
+        .check_native_mailbox_route_v7(&pin(), &original, 3001)
         .is_err());
-    b.check_native_mailbox_route_v7(pin(), &limited, 3001)?;
+    b.check_native_mailbox_route_v7(&pin(), &limited, 3001)?;
     let saved = b.checkpoint()?;
-    let mut restored = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3002)?;
+    let mut restored = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        3002,
+        crate::test_identity::key(90),
+    )?;
     assert_eq!(
         restored.native_mailbox_candidates_v7(3002)?[0].endpoint,
         limited
     );
     // This does not reset or expand the already-open socket's budget.
-    restored.check_continuous_native_peer_v7(pin(), 3002)?;
+    restored.check_continuous_native_peer_v7(&pin(), 3002)?;
     for limit in [0, 2399, 1024 * 1024 * 1024 + 1, u64::MAX] {
         let mut wrong = original.clone();
         wrong.max_bytes_per_minute = limit;
@@ -366,34 +420,39 @@ fn native_wire_budget_is_signed_preserved_and_bound_to_fresh_dials() -> Result<(
 fn expired_native_locator_is_probe_only_and_remains_bound_to_original_pin_and_route() -> Result<()>
 {
     let b = book()?;
-    let mut reopened = ServiceLeaseBookV1::restore_self_owned(trust(), &b.checkpoint()?, 91_000)?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &b.checkpoint()?,
+        91_000,
+        crate::test_identity::key(90),
+    )?;
     let probes = reopened.native_mailbox_bootstrap_v7(91_000)?;
     assert_eq!(probes.len(), 1);
     assert_eq!(probes[0].public_key, pin());
     assert_eq!(probes[0].endpoint, route());
-    reopened.check_native_bootstrap_route_v7(pin(), &route(), 91_000)?;
+    reopened.check_native_bootstrap_route_v7(&pin(), &route(), 91_000)?;
     assert!(reopened.native_mailbox_candidates_v7(91_000)?.is_empty());
     assert!(reopened
-        .check_native_mailbox_route_v7(pin(), &route(), 91_000)
+        .check_native_mailbox_route_v7(&pin(), &route(), 91_000)
         .is_err());
-    let unknown = SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes();
+    let unknown = crate::test_identity::key(43).public_key().to_vec();
     assert!(reopened
-        .check_native_bootstrap_route_v7(unknown, &route(), 91_000)
+        .check_native_bootstrap_route_v7(&unknown, &route(), 91_000)
         .is_err());
     let mut changed = route();
     changed.address.set_port(30213);
     assert!(reopened
-        .check_native_bootstrap_route_v7(pin(), &changed, 91_000)
+        .check_native_bootstrap_route_v7(&pin(), &changed, 91_000)
         .is_err());
     // A signed new locator, not the historical address, admits new business.
     reopened.accept_native_record_v7(
-        pin(),
+        &pin(),
         record(vec![changed.endpoint()?], 2, 91_000)?,
         91_000,
     )?;
-    reopened.check_native_mailbox_route_v7(pin(), &changed, 91_001)?;
+    reopened.check_native_mailbox_route_v7(&pin(), &changed, 91_001)?;
     assert!(reopened
-        .check_native_bootstrap_route_v7(pin(), &route(), 91_001)
+        .check_native_bootstrap_route_v7(&pin(), &route(), 91_001)
         .is_err());
     reopened.retire_for_policy_change();
     assert!(reopened.native_mailbox_bootstrap_v7(91_001).is_err());
@@ -402,8 +461,8 @@ fn expired_native_locator_is_probe_only_and_remains_bound_to_original_pin_and_ro
 
 #[test]
 fn single_native_refresh_persists_without_refreshing_another_offline_node() -> Result<()> {
-    let other_key = SigningKey::from_bytes(&[43; 32]);
-    let other_pin = other_key.verifying_key().to_bytes();
+    let other_key = TransportIdentity::from_bytes(&[43; 32]);
+    let other_pin = other_key.public_key().to_vec();
     let mut other_route = route();
     other_route.address.set_port(30214);
     let other_record = directory::sign_relay_record_v1(
@@ -415,8 +474,8 @@ fn single_native_refresh_persists_without_refreshing_another_offline_node() -> R
         1,
     )?;
     let both = SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [pin(), other_pin].into(),
+        version: 2,
+        node_pins: [pin(), other_pin.clone()].into(),
     };
     let mut b = ServiceLeaseBookV1::new_self_owned(
         both.clone(),
@@ -425,6 +484,7 @@ fn single_native_refresh_persists_without_refreshing_another_offline_node() -> R
             other_record.clone(),
         ],
         2000,
+        crate::test_identity::key(90),
     )?;
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("two-native-pins.enc");
@@ -433,7 +493,7 @@ fn single_native_refresh_persists_without_refreshing_another_offline_node() -> R
     b.attach_persistence(file, &initial)?;
     assert!(b.native_mailbox_candidates_v7(91_000)?.is_empty());
     let fresh = record(vec![route().endpoint()?], 2, 91_000)?;
-    b.accept_native_record_v7(pin(), fresh.clone(), 91_000)?;
+    b.accept_native_record_v7(&pin(), fresh.clone(), 91_000)?;
     let candidates = b.native_mailbox_candidates_v7(91_000)?;
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].public_key, pin());
@@ -443,23 +503,38 @@ fn single_native_refresh_persists_without_refreshing_another_offline_node() -> R
     drop(b);
     let (file, disk) = ServiceLeaseFileV1::open(&path, zeroize::Zeroizing::new([92; 32]))?;
     assert_eq!(saved, disk);
-    assert!(ServiceLeaseBookV1::restore_self_owned(both.clone(), &disk, 90_999).is_err());
-    let mut reopened = ServiceLeaseBookV1::restore_self_owned(both, &disk, 91_001)?;
+    assert!(ServiceLeaseBookV1::restore_self_owned(
+        both.clone(),
+        &disk,
+        90_999,
+        crate::test_identity::key(90)
+    )
+    .is_err());
+    let mut reopened =
+        ServiceLeaseBookV1::restore_self_owned(both, &disk, 91_001, crate::test_identity::key(90))?;
     reopened.attach_persistence(file, &disk)?;
     assert!(reopened.self_owned_records()?.contains(&fresh));
     assert!(reopened.self_owned_records()?.contains(&other_record));
-    reopened.check_native_mailbox_route_v7(pin(), &route(), 91_001)?;
-    reopened.check_native_bootstrap_route_v7(other_pin, &other_route, 91_001)?;
+    reopened.check_native_mailbox_route_v7(&pin(), &route(), 91_001)?;
+    reopened.check_native_bootstrap_route_v7(&other_pin, &other_route, 91_001)?;
     assert!(reopened
-        .check_native_mailbox_route_v7(other_pin, &other_route, 91_001)
+        .check_native_mailbox_route_v7(&other_pin, &other_route, 91_001)
         .is_err());
     // Neither lower sequence nor a newer sequence with older issuance can lower
     // the original per-pin high-water after a genuine encrypted-store reopen.
     assert!(reopened
-        .accept_native_record_v7(pin(), record(vec![route().endpoint()?], 1, 91_001)?, 91_001)
+        .accept_native_record_v7(
+            &pin(),
+            record(vec![route().endpoint()?], 1, 91_001)?,
+            91_001
+        )
         .is_err());
     assert!(reopened
-        .accept_native_record_v7(pin(), record(vec![route().endpoint()?], 3, 90_999)?, 91_001)
+        .accept_native_record_v7(
+            &pin(),
+            record(vec![route().endpoint()?], 3, 90_999)?,
+            91_001
+        )
         .is_err());
     assert_eq!(reopened.durable_checkpoint()?, saved);
     Ok(())
@@ -477,9 +552,9 @@ fn native_refresh_rejects_forgery_wrong_pin_equivocation_and_durable_revoked_ree
     let good = record(vec![route().endpoint()?], 2, 91_000)?;
     let mut forged = good.clone();
     forged.signature[0] ^= 1;
-    assert!(b.accept_native_record_v7(pin(), forged, 91_000).is_err());
-    let unknown_key = SigningKey::from_bytes(&[44; 32]);
-    let unknown = unknown_key.verifying_key().to_bytes();
+    assert!(b.accept_native_record_v7(&pin(), forged, 91_000).is_err());
+    let unknown_key = TransportIdentity::from_bytes(&[44; 32]);
+    let unknown = unknown_key.public_key().to_vec();
     let alien = directory::sign_relay_record_v1(
         &unknown_key,
         "unknown-native",
@@ -489,40 +564,57 @@ fn native_refresh_rejects_forgery_wrong_pin_equivocation_and_durable_revoked_ree
         2,
     )?;
     assert!(b
-        .accept_native_record_v7(pin(), alien.clone(), 91_000)
+        .accept_native_record_v7(&pin(), alien.clone(), 91_000)
         .is_err());
-    assert!(b.accept_native_record_v7(unknown, alien, 91_000).is_err());
+    assert!(b.accept_native_record_v7(&unknown, alien, 91_000).is_err());
     assert_eq!(b.durable_checkpoint()?, initial);
-    b.accept_native_record_v7(pin(), good.clone(), 91_000)?;
+    b.accept_native_record_v7(&pin(), good.clone(), 91_000)?;
     let accepted = b.durable_checkpoint()?;
-    b.accept_native_record_v7(pin(), good, 91_000)?;
+    b.accept_native_record_v7(&pin(), good, 91_000)?;
     assert_eq!(b.durable_checkpoint()?, accepted);
     let mut changed = route();
     changed.address.set_port(30215);
     assert!(b
-        .accept_native_record_v7(pin(), record(vec![changed.endpoint()?], 2, 91_000)?, 91_000)
+        .accept_native_record_v7(
+            &pin(),
+            record(vec![changed.endpoint()?], 2, 91_000)?,
+            91_000
+        )
         .is_err());
     assert!(b
-        .accept_native_record_v7(pin(), record(vec![route().endpoint()?], 1, 91_000)?, 91_000)
+        .accept_native_record_v7(
+            &pin(),
+            record(vec![route().endpoint()?], 1, 91_000)?,
+            91_000
+        )
         .is_err());
     assert_eq!(b.durable_checkpoint()?, accepted);
-    b.revoke_self_owned(pin(), 91_001)?;
+    b.revoke_self_owned(&pin(), 91_001)?;
     let revoked = b.durable_checkpoint()?;
     drop(b);
     let (file, disk) = ServiceLeaseFileV1::open(&path, zeroize::Zeroizing::new([93; 32]))?;
     assert_eq!(disk, revoked);
-    let mut reopened = ServiceLeaseBookV1::restore_self_owned(trust(), &disk, 91_002)?;
+    let mut reopened = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &disk,
+        91_002,
+        crate::test_identity::key(90),
+    )?;
     reopened.attach_persistence(file, &disk)?;
     assert!(reopened.native_mailbox_bootstrap_v7(91_002)?.is_empty());
     assert!(reopened.native_mailbox_candidates_v7(91_002)?.is_empty());
     assert!(reopened
-        .check_native_bootstrap_route_v7(pin(), &route(), 91_002)
+        .check_native_bootstrap_route_v7(&pin(), &route(), 91_002)
         .is_err());
     assert!(reopened
-        .check_continuous_native_peer_v7(pin(), 91_002)
+        .check_continuous_native_peer_v7(&pin(), 91_002)
         .is_err());
     assert!(reopened
-        .accept_native_record_v7(pin(), record(vec![route().endpoint()?], 3, 91_002)?, 91_002)
+        .accept_native_record_v7(
+            &pin(),
+            record(vec![route().endpoint()?], 3, 91_002)?,
+            91_002
+        )
         .is_err());
     assert_eq!(reopened.durable_checkpoint()?, revoked);
     Ok(())
@@ -533,7 +625,9 @@ fn carrier() -> NativeCarrierMailboxEndpointV7 {
         iroh: IrohServiceEndpointV1 {
             instance: [4; 32],
             address: IrohAddressV1 {
-                endpoint_key: SigningKey::from_bytes(&[43; 32]).verifying_key().to_bytes(),
+                endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[43; 32])
+                    .verifying_key()
+                    .to_bytes(),
                 direct: vec!["127.0.0.1:40210".parse().unwrap()],
                 relays: vec![],
             },
@@ -546,6 +640,7 @@ fn carrier_book() -> Result<ServiceLeaseBookV1> {
         trust(),
         vec![record(vec![carrier().endpoint()?], 1, 1000)?],
         2000,
+        crate::test_identity::key(90),
     )
 }
 
@@ -554,12 +649,17 @@ fn native_carrier_marker_is_explicit_signed_and_not_a_fourth_physical_route() ->
     let endpoint = carrier();
     let legacy = record(vec![endpoint.iroh.endpoint()?], 1, 1000)?;
     assert!(NativeCarrierMailboxEndpointV7::from_record(&legacy)?.is_none());
-    let mut legacy_book = ServiceLeaseBookV1::new_self_owned(trust(), vec![legacy.clone()], 2000)?;
+    let mut legacy_book = ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![legacy.clone()],
+        2000,
+        crate::test_identity::key(90),
+    )?;
     assert!(legacy_book
         .native_carrier_mailbox_candidates_v7(2000)?
         .is_empty());
     assert!(legacy_book
-        .check_continuous_native_carrier_v7(pin(), endpoint.iroh.address.endpoint_key, 2000)
+        .check_continuous_native_carrier_v7(&pin(), endpoint.iroh.address.endpoint_key, 2000)
         .is_err());
     assert!(NativeCarrierMailboxEndpointV7::from_record(&record(
         vec![route().endpoint()?],
@@ -569,7 +669,7 @@ fn native_carrier_marker_is_explicit_signed_and_not_a_fourth_physical_route() ->
     .is_none());
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:40211".parse()?,
-        endpoint_key: pin(),
+        endpoint_key: carrier_key(42),
         max_connections: 4,
         native_mailbox_v8: false,
     };
@@ -578,7 +678,12 @@ fn native_carrier_marker_is_explicit_signed_and_not_a_fourth_physical_route() ->
         1,
         1000,
     )?;
-    let mut b = ServiceLeaseBookV1::new_self_owned(trust(), vec![explicit.clone()], 2000)?;
+    let mut b = ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![explicit.clone()],
+        2000,
+        crate::test_identity::key(90),
+    )?;
     assert_eq!(b.routes(2000)?[0].endpoints.len(), 3);
     let candidate = b.native_carrier_mailbox_candidates_v7(2000)?.remove(0);
     assert_eq!(candidate.public_key, pin());
@@ -598,10 +703,22 @@ fn native_carrier_marker_is_explicit_signed_and_not_a_fourth_physical_route() ->
         .is_err());
     let mut forged_upgrade = legacy;
     forged_upgrade.endpoints[0].uri.push_str(SUFFIX);
-    assert!(ServiceLeaseBookV1::new_self_owned(trust(), vec![forged_upgrade], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![forged_upgrade],
+        2000,
+        crate::test_identity::key(90)
+    )
+    .is_err());
     let mut forged_downgrade = explicit;
     forged_downgrade.endpoints[0] = endpoint.iroh.endpoint()?;
-    assert!(ServiceLeaseBookV1::new_self_owned(trust(), vec![forged_downgrade], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![forged_downgrade],
+        2000,
+        crate::test_identity::key(90)
+    )
+    .is_err());
     Ok(())
 }
 
@@ -625,13 +742,25 @@ fn native_carrier_parser_keeps_canonical_version_key_and_endpoint_bounds() -> Re
         wrong.uri = uri.clone();
         let record = record(vec![wrong], 1, 1000)?;
         assert!(
-            ServiceLeaseBookV1::new_self_owned(trust(), vec![record], 2000).is_err(),
+            ServiceLeaseBookV1::new_self_owned(
+                trust(),
+                vec![record],
+                2000,
+                crate::test_identity::key(90)
+            )
+            .is_err(),
             "{uri}"
         );
     }
     // Duplicate legacy+native views of one physical carrier are not accepted.
     let duplicate = record(vec![base, endpoint.endpoint()?], 1, 1000)?;
-    assert!(ServiceLeaseBookV1::new_self_owned(trust(), vec![duplicate], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![duplicate],
+        2000,
+        crate::test_identity::key(90)
+    )
+    .is_err());
     let mut invalid_key = endpoint.clone();
     invalid_key.iroh.address.endpoint_key = [0; 32];
     assert!(invalid_key.endpoint().is_err());
@@ -650,33 +779,33 @@ fn native_carrier_live_session_survives_locator_expiry_but_new_dial_requires_exa
     let endpoint = carrier();
     let transport = endpoint.iroh.address.endpoint_key;
     let mut b = carrier_book()?;
-    b.check_native_carrier_route_v7(pin(), &endpoint, 2000)?;
+    b.check_native_carrier_route_v7(&pin(), &endpoint, 2000)?;
     assert!(b
-        .check_continuous_native_carrier_v7([99; 32], transport, 2000)
+        .check_continuous_native_carrier_v7(&[99; 32], transport, 2000)
         .is_err());
     assert!(b
-        .check_continuous_native_carrier_v7(pin(), pin(), 2000)
+        .check_continuous_native_carrier_v7(&pin(), [0; 32], 2000)
         .is_err());
     // Carrier capability alone does not authorize the independent UDP entry.
-    assert!(b.check_continuous_native_peer_v7(pin(), 2000).is_err());
+    assert!(b.check_continuous_native_peer_v7(&pin(), 2000).is_err());
     assert!(b.native_carrier_mailbox_candidates_v7(91_000)?.is_empty());
     assert!(b
-        .check_native_carrier_route_v7(pin(), &endpoint, 91_000)
+        .check_native_carrier_route_v7(&pin(), &endpoint, 91_000)
         .is_err());
-    b.check_continuous_native_carrier_v7(pin(), transport, 91_000)?;
+    b.check_continuous_native_carrier_v7(&pin(), transport, 91_000)?;
     let mut fresh = endpoint.clone();
     fresh.iroh.instance = [5; 32];
     fresh.iroh.address.direct[0].set_port(40212);
     b.replace_self_owned_records(vec![record(vec![fresh.endpoint()?], 2, 91_000)?], 91_000)?;
-    b.check_continuous_native_carrier_v7(pin(), transport, 91_001)?;
+    b.check_continuous_native_carrier_v7(&pin(), transport, 91_001)?;
     assert!(b
-        .check_native_carrier_route_v7(pin(), &endpoint, 91_001)
+        .check_native_carrier_route_v7(&pin(), &endpoint, 91_001)
         .is_err());
-    b.check_native_carrier_route_v7(pin(), &fresh, 91_001)?;
+    b.check_native_carrier_route_v7(&pin(), &fresh, 91_001)?;
     let mut wrong_address = fresh.clone();
     wrong_address.iroh.address.direct[0].set_port(40213);
     assert!(b
-        .check_native_carrier_route_v7(pin(), &wrong_address, 91_001)
+        .check_native_carrier_route_v7(&pin(), &wrong_address, 91_001)
         .is_err());
     b.replace_self_owned_records(
         vec![record(
@@ -687,14 +816,14 @@ fn native_carrier_live_session_survives_locator_expiry_but_new_dial_requires_exa
         91_002,
     )?;
     assert!(b
-        .check_continuous_native_carrier_v7(pin(), transport, 91_002)
+        .check_continuous_native_carrier_v7(&pin(), transport, 91_002)
         .is_err());
     assert!(b
-        .check_native_carrier_route_v7(pin(), &fresh, 91_002)
+        .check_native_carrier_route_v7(&pin(), &fresh, 91_002)
         .is_err());
     assert!(b.native_carrier_mailbox_candidates_v7(91_002)?.is_empty());
-    b.check_continuous_native_peer_v7(pin(), 91_002)?;
-    b.check_continuous_peer_v4(pin(), transport, 91_002)?;
+    b.check_continuous_native_peer_v7(&pin(), 91_002)?;
+    b.check_continuous_peer_v4(&pin(), transport, 91_002)?;
     Ok(())
 }
 
@@ -710,9 +839,14 @@ fn native_carrier_replay_key_change_revocation_and_checkpoint_do_not_restore_old
     assert!(b.replace_self_owned_records(vec![forged], 3000).is_err());
     b.replace_self_owned_records(vec![good], 3000)?;
     let saved = b.checkpoint()?;
-    let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3001)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        3001,
+        crate::test_identity::key(90),
+    )?;
     assert_eq!(b.checkpoint()?, saved);
-    b.check_native_carrier_route_v7(pin(), &endpoint, 3001)?;
+    b.check_native_carrier_route_v7(&pin(), &endpoint, 3001)?;
     assert!(b
         .replace_self_owned_records(vec![record(vec![endpoint.endpoint()?], 1, 3001)?], 3001)
         .is_err());
@@ -723,23 +857,29 @@ fn native_carrier_replay_key_change_revocation_and_checkpoint_do_not_restore_old
         )
         .is_err());
     assert!(b
-        .check_continuous_native_carrier_v7(pin(), transport, 3000)
+        .check_continuous_native_carrier_v7(&pin(), transport, 3000)
         .is_err());
     let mut replacement = endpoint.clone();
-    replacement.iroh.address.endpoint_key =
-        SigningKey::from_bytes(&[44; 32]).verifying_key().to_bytes();
+    replacement.iroh.address.endpoint_key = ed25519_dalek::SigningKey::from_bytes(&[44; 32])
+        .verifying_key()
+        .to_bytes();
     b.replace_self_owned_records(vec![record(vec![replacement.endpoint()?], 3, 3002)?], 3002)?;
     assert!(b
-        .check_continuous_native_carrier_v7(pin(), transport, 3002)
+        .check_continuous_native_carrier_v7(&pin(), transport, 3002)
         .is_err());
-    b.check_continuous_native_carrier_v7(pin(), replacement.iroh.address.endpoint_key, 3002)?;
-    b.revoke_self_owned(pin(), 3003)?;
-    let mut revoked = ServiceLeaseBookV1::restore_self_owned(trust(), &b.checkpoint()?, 3004)?;
+    b.check_continuous_native_carrier_v7(&pin(), replacement.iroh.address.endpoint_key, 3002)?;
+    b.revoke_self_owned(&pin(), 3003)?;
+    let mut revoked = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &b.checkpoint()?,
+        3004,
+        crate::test_identity::key(90),
+    )?;
     assert!(revoked
         .native_carrier_mailbox_candidates_v7(3004)?
         .is_empty());
     assert!(revoked
-        .check_continuous_native_carrier_v7(pin(), replacement.iroh.address.endpoint_key, 3004)
+        .check_continuous_native_carrier_v7(&pin(), replacement.iroh.address.endpoint_key, 3004)
         .is_err());
     assert!(revoked
         .replace_self_owned_records(vec![record(vec![replacement.endpoint()?], 4, 3004)?], 3004)
@@ -747,7 +887,7 @@ fn native_carrier_replay_key_change_revocation_and_checkpoint_do_not_restore_old
     let mut retired = carrier_book()?;
     retired.retire_for_policy_change();
     assert!(retired
-        .check_continuous_native_carrier_v7(pin(), transport, 2001)
+        .check_continuous_native_carrier_v7(&pin(), transport, 2001)
         .is_err());
     assert!(retired.native_carrier_mailbox_candidates_v7(2001).is_err());
     Ok(())
@@ -761,7 +901,7 @@ fn native_carrier_host_rotation_preserves_marker_and_udp_until_explicit_disable(
     let transport = endpoint.iroh.address.endpoint_key;
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:40211".parse()?,
-        endpoint_key: pin(),
+        endpoint_key: carrier_key(42),
         max_connections: 4,
         native_mailbox_v8: false,
     };
@@ -777,6 +917,7 @@ fn native_carrier_host_rotation_preserves_marker_and_udp_until_explicit_disable(
             1000,
         )?],
         2000,
+        crate::test_identity::key(90),
     )?;
     let host = durable_host(b, &path)?;
     assert!(host
@@ -813,9 +954,14 @@ fn native_carrier_host_rotation_preserves_marker_and_udp_until_explicit_disable(
     );
     drop(host);
     let (file, saved) = ServiceLeaseFileV1::open(&path, zeroize::Zeroizing::new([91; 32]))?;
-    let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3004)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        3004,
+        crate::test_identity::key(90),
+    )?;
     b.attach_persistence(file, &saved)?;
-    b.check_native_carrier_route_v7(pin(), &rotated, 3004)?;
+    b.check_native_carrier_route_v7(&pin(), &rotated, 3004)?;
     let host = ServiceLeaseHostV1::new(key(), b)?;
     let disabled = host.rotate_native_carrier_mailbox_v7(false, 3005, 93_005)?;
     assert_eq!(disabled.endpoints.len(), 3);
@@ -837,10 +983,10 @@ fn native_carrier_record_refresh_reuses_pin_and_high_water_without_accepting_leg
     let mut endpoint = carrier();
     endpoint.iroh.instance = [9; 32];
     let fresh = record(vec![endpoint.endpoint()?], 2, 91_000)?;
-    b.accept_native_record_v7(pin(), fresh.clone(), 91_000)?;
-    b.check_native_carrier_route_v7(pin(), &endpoint, 91_000)?;
+    b.accept_native_record_v7(&pin(), fresh.clone(), 91_000)?;
+    b.check_native_carrier_route_v7(&pin(), &endpoint, 91_000)?;
     let saved = b.checkpoint()?;
-    b.accept_native_record_v7(pin(), fresh.clone(), 91_000)?;
+    b.accept_native_record_v7(&pin(), fresh.clone(), 91_000)?;
     assert_eq!(b.checkpoint()?, saved);
     for rejected in [
         record(vec![endpoint.iroh.endpoint()?], 3, 91_000)?,
@@ -852,14 +998,14 @@ fn native_carrier_record_refresh_reuses_pin_and_high_water_without_accepting_leg
             forged
         },
     ] {
-        assert!(b.accept_native_record_v7(pin(), rejected, 91_000).is_err());
+        assert!(b.accept_native_record_v7(&pin(), rejected, 91_000).is_err());
         assert_eq!(b.checkpoint()?, saved);
     }
-    assert!(b.check_continuous_native_peer_v7(pin(), 91_000).is_err());
-    b.revoke_self_owned(pin(), 91_001)?;
+    assert!(b.check_continuous_native_peer_v7(&pin(), 91_000).is_err());
+    b.revoke_self_owned(&pin(), 91_001)?;
     assert!(b
         .accept_native_record_v7(
-            pin(),
+            &pin(),
             record(vec![endpoint.endpoint()?], 3, 91_001)?,
             91_001,
         )
@@ -878,6 +1024,7 @@ fn carrier_book_v8() -> Result<ServiceLeaseBookV1> {
         trust(),
         vec![record(vec![carrier_v8().endpoint()?], 1, 1000)?],
         2000,
+        crate::test_identity::key(90),
     )
 }
 
@@ -899,25 +1046,42 @@ fn native_carrier_v8_is_explicit_not_v7_or_a_second_physical_route() -> Result<(
     assert_eq!(candidate.public_key, pin());
     assert_eq!(candidate.record_expires_at_ms, 91_000);
     assert_eq!(candidate.endpoint.endpoint()?, endpoint.endpoint()?);
-    b.check_native_carrier_route_v8(pin(), &endpoint, 2000)?;
+    b.check_native_carrier_route_v8(&pin(), &endpoint, 2000)?;
     assert!(b
-        .check_continuous_native_carrier_v7(pin(), transport, 2000)
+        .check_continuous_native_carrier_v7(&pin(), transport, 2000)
         .is_err());
-    assert!(b.check_continuous_native_peer_v7(pin(), 2000).is_err());
+    assert!(b.check_continuous_native_peer_v7(&pin(), 2000).is_err());
     for previous in [endpoint.iroh.endpoint()?, carrier().endpoint()?] {
         let prior = record(vec![previous.clone()], 1, 1000)?;
         assert!(NativeCarrierMailboxEndpointV8::from_record(&prior)?.is_none());
-        let mut b = ServiceLeaseBookV1::new_self_owned(trust(), vec![prior], 2000)?;
+        let mut b = ServiceLeaseBookV1::new_self_owned(
+            trust(),
+            vec![prior],
+            2000,
+            crate::test_identity::key(90),
+        )?;
         assert!(b.native_carrier_mailbox_candidates_v8(2000)?.is_empty());
         assert!(b
-            .check_continuous_native_carrier_v8(pin(), transport, 2000)
+            .check_continuous_native_carrier_v8(&pin(), transport, 2000)
             .is_err());
         let duplicate = record(vec![previous, endpoint.endpoint()?], 1, 1000)?;
-        assert!(ServiceLeaseBookV1::new_self_owned(trust(), vec![duplicate], 2000).is_err());
+        assert!(ServiceLeaseBookV1::new_self_owned(
+            trust(),
+            vec![duplicate],
+            2000,
+            crate::test_identity::key(90)
+        )
+        .is_err());
     }
     let mut forged = signed;
     forged.endpoints[0] = carrier().endpoint()?;
-    assert!(ServiceLeaseBookV1::new_self_owned(trust(), vec![forged], 2000).is_err());
+    assert!(ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![forged],
+        2000,
+        crate::test_identity::key(90)
+    )
+    .is_err());
     for uri in [
         format!("{}{SUFFIX_V8}/", endpoint.iroh.endpoint()?.uri),
         format!("{}{SUFFIX_V8}{SUFFIX_V8}", endpoint.iroh.endpoint()?.uri),
@@ -929,7 +1093,8 @@ fn native_carrier_v8_is_explicit_not_v7_or_a_second_physical_route() -> Result<(
         assert!(ServiceLeaseBookV1::new_self_owned(
             trust(),
             vec![record(vec![invalid], 1, 1000)?],
-            2000
+            2000,
+            crate::test_identity::key(90)
         )
         .is_err());
     }
@@ -941,31 +1106,31 @@ fn native_carrier_v8_preserves_expiry_rotation_rollback_and_revocation_rules() -
     let endpoint = carrier_v8();
     let transport = endpoint.iroh.address.endpoint_key;
     let mut b = carrier_book_v8()?;
-    b.check_native_carrier_route_v8(pin(), &endpoint, 2000)?;
+    b.check_native_carrier_route_v8(&pin(), &endpoint, 2000)?;
     assert!(b
-        .check_continuous_native_carrier_v8([99; 32], transport, 2000)
+        .check_continuous_native_carrier_v8(&[99; 32], transport, 2000)
         .is_err());
     assert!(b
-        .check_continuous_native_carrier_v8(pin(), pin(), 2000)
+        .check_continuous_native_carrier_v8(&pin(), [0; 32], 2000)
         .is_err());
     assert!(b.native_carrier_mailbox_candidates_v8(91_000)?.is_empty());
     assert!(b
-        .check_native_carrier_route_v8(pin(), &endpoint, 91_000)
+        .check_native_carrier_route_v8(&pin(), &endpoint, 91_000)
         .is_err());
-    b.check_continuous_native_carrier_v8(pin(), transport, 91_000)?;
+    b.check_continuous_native_carrier_v8(&pin(), transport, 91_000)?;
     let mut rotated = endpoint.clone();
     rotated.iroh.instance = [5; 32];
     rotated.iroh.address.direct[0].set_port(40212);
     let fresh = record(vec![rotated.endpoint()?], 2, 91_000)?;
-    b.accept_native_record_v8(pin(), fresh.clone(), 91_000)?;
-    b.check_continuous_native_carrier_v8(pin(), transport, 91_001)?;
+    b.accept_native_record_v8(&pin(), fresh.clone(), 91_000)?;
+    b.check_continuous_native_carrier_v8(&pin(), transport, 91_001)?;
     assert!(b
-        .check_native_carrier_route_v8(pin(), &endpoint, 91_001)
+        .check_native_carrier_route_v8(&pin(), &endpoint, 91_001)
         .is_err());
-    b.check_native_carrier_route_v8(pin(), &rotated, 91_001)?;
+    b.check_native_carrier_route_v8(&pin(), &rotated, 91_001)?;
     let saved = b.checkpoint()?;
     assert!(b
-        .check_continuous_native_carrier_v8(pin(), transport, 91_000)
+        .check_continuous_native_carrier_v8(&pin(), transport, 91_000)
         .is_err());
     for rejected in [
         record(vec![carrier().endpoint()?], 3, 91_001)?,
@@ -977,32 +1142,43 @@ fn native_carrier_v8_preserves_expiry_rotation_rollback_and_revocation_rules() -
             forged
         },
     ] {
-        assert!(b.accept_native_record_v8(pin(), rejected, 91_001).is_err());
+        assert!(b.accept_native_record_v8(&pin(), rejected, 91_001).is_err());
         assert_eq!(b.checkpoint()?, saved);
     }
-    let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 91_002)?;
-    b.check_continuous_native_carrier_v8(pin(), transport, 91_002)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        91_002,
+        crate::test_identity::key(90),
+    )?;
+    b.check_continuous_native_carrier_v8(&pin(), transport, 91_002)?;
     let mut replacement = rotated;
-    replacement.iroh.address.endpoint_key =
-        SigningKey::from_bytes(&[44; 32]).verifying_key().to_bytes();
+    replacement.iroh.address.endpoint_key = ed25519_dalek::SigningKey::from_bytes(&[44; 32])
+        .verifying_key()
+        .to_bytes();
     b.accept_native_record_v8(
-        pin(),
+        &pin(),
         record(vec![replacement.endpoint()?], 3, 91_003)?,
         91_003,
     )?;
     assert!(b
-        .check_continuous_native_carrier_v8(pin(), transport, 91_003)
+        .check_continuous_native_carrier_v8(&pin(), transport, 91_003)
         .is_err());
-    b.check_continuous_native_carrier_v8(pin(), replacement.iroh.address.endpoint_key, 91_003)?;
-    b.revoke_self_owned(pin(), 91_004)?;
-    let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &b.checkpoint()?, 91_005)?;
+    b.check_continuous_native_carrier_v8(&pin(), replacement.iroh.address.endpoint_key, 91_003)?;
+    b.revoke_self_owned(&pin(), 91_004)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &b.checkpoint()?,
+        91_005,
+        crate::test_identity::key(90),
+    )?;
     assert!(b.native_carrier_mailbox_candidates_v8(91_005)?.is_empty());
     assert!(b
-        .check_continuous_native_carrier_v8(pin(), replacement.iroh.address.endpoint_key, 91_005)
+        .check_continuous_native_carrier_v8(&pin(), replacement.iroh.address.endpoint_key, 91_005)
         .is_err());
     assert!(b
         .accept_native_record_v8(
-            pin(),
+            &pin(),
             record(vec![replacement.endpoint()?], 4, 91_005)?,
             91_005
         )
@@ -1011,7 +1187,7 @@ fn native_carrier_v8_preserves_expiry_rotation_rollback_and_revocation_rules() -
     retired.retire_for_policy_change();
     assert!(retired.native_carrier_mailbox_candidates_v8(2001).is_err());
     assert!(retired
-        .check_continuous_native_carrier_v8(pin(), transport, 2001)
+        .check_continuous_native_carrier_v8(&pin(), transport, 2001)
         .is_err());
     Ok(())
 }
@@ -1034,6 +1210,7 @@ fn native_carrier_v8_host_uses_same_durable_owner_and_preserves_resource_policy(
             1000,
         )?],
         2000,
+        crate::test_identity::key(90),
     )?;
     let host = durable_host(b, &path)?;
     let enabled = host.rotate_native_carrier_mailbox_v8(true, 3000, 93_000)?;
@@ -1060,7 +1237,12 @@ fn native_carrier_v8_host_uses_same_durable_owner_and_preserves_resource_policy(
     }
     drop(host);
     let (file, saved) = ServiceLeaseFileV1::open(&path, zeroize::Zeroizing::new([91; 32]))?;
-    let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &saved, 3002)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &saved,
+        3002,
+        crate::test_identity::key(90),
+    )?;
     b.attach_persistence(file, &saved)?;
     let host = ServiceLeaseHostV1::new(key(), b)?;
     host.check_continuous_native_carrier_v8(transport, 3002)?;
@@ -1091,7 +1273,9 @@ fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<(
     let native = carrier_v8();
     let tls = TlsServiceEndpointV1 {
         address: "127.0.0.1:40443".parse()?,
-        endpoint_key: SigningKey::from_bytes(&[88; 32]).verifying_key().to_bytes(),
+        endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[88; 32])
+            .verifying_key()
+            .to_bytes(),
         max_connections: 4,
         native_mailbox_v8: true,
     };
@@ -1099,34 +1283,41 @@ fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<(
         record(vec![native.endpoint()?, tls.endpoint()?], sequence, at)
     };
     let first = signed(&tls, 1, 1000)?;
-    let mut b = ServiceLeaseBookV1::new_self_owned(trust(), vec![first.clone()], 1000)?;
-    b.check_continuous_native_tls_v8(pin(), &tls, 2000)?;
-    b.check_tls_route_v1(pin(), &tls, 2000)?;
+    let mut b = ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![first.clone()],
+        1000,
+        crate::test_identity::key(90),
+    )?;
+    b.check_continuous_native_tls_v8(&pin(), &tls, 2000)?;
+    b.check_tls_route_v1(&pin(), &tls, 2000)?;
     // Expiry retires new business dialing, but the exact retained endpoint may
     // still retrieve fresh metadata. Neither path renews the old declaration.
-    b.check_continuous_native_tls_v8(pin(), &tls, 91_000)?;
-    assert!(b.check_tls_route_v1(pin(), &tls, 91_000).is_err());
+    b.check_continuous_native_tls_v8(&pin(), &tls, 91_000)?;
+    assert!(b.check_tls_route_v1(&pin(), &tls, 91_000).is_err());
     let expired_checkpoint = b.checkpoint()?;
-    b.check_native_tls_bootstrap_v8(pin(), &tls, 91_000)?;
+    b.check_native_tls_bootstrap_v8(&pin(), &tls, 91_000)?;
     assert_eq!(expired_checkpoint, b.checkpoint()?);
     assert!(b.native_carrier_mailbox_candidates_v8(91_000)?.is_empty());
     let mut moved = tls.clone();
     moved.address.set_port(40444);
     b.replace_self_owned_records(vec![signed(&moved, 2, 91_000)?], 91_000)?;
-    b.check_continuous_native_tls_v8(pin(), &tls, 91_001)?;
-    assert!(b.check_tls_route_v1(pin(), &tls, 91_001).is_err());
-    b.check_tls_route_v1(pin(), &moved, 91_001)?;
+    b.check_continuous_native_tls_v8(&pin(), &tls, 91_001)?;
+    assert!(b.check_tls_route_v1(&pin(), &tls, 91_001).is_err());
+    b.check_tls_route_v1(&pin(), &moved, 91_001)?;
     assert!(b
-        .check_native_tls_bootstrap_v8(pin(), &tls, 91_001)
+        .check_native_tls_bootstrap_v8(&pin(), &tls, 91_001)
         .is_err());
-    b.check_native_tls_bootstrap_v8(pin(), &moved, 91_001)?;
+    b.check_native_tls_bootstrap_v8(&pin(), &moved, 91_001)?;
     let mut wrong = moved.clone();
-    wrong.endpoint_key = SigningKey::from_bytes(&[89; 32]).verifying_key().to_bytes();
+    wrong.endpoint_key = ed25519_dalek::SigningKey::from_bytes(&[89; 32])
+        .verifying_key()
+        .to_bytes();
     assert!(b
-        .check_continuous_native_tls_v8(pin(), &wrong, 91_001)
+        .check_continuous_native_tls_v8(&pin(), &wrong, 91_001)
         .is_err());
     assert!(b
-        .check_native_tls_bootstrap_v8(pin(), &wrong, 91_001)
+        .check_native_tls_bootstrap_v8(&pin(), &wrong, 91_001)
         .is_err());
     let saved = b.checkpoint()?;
     let mut forged = signed(&wrong, 3, 91_002)?;
@@ -1136,21 +1327,26 @@ fn native_tls_v8_binds_declared_transport_and_preserves_revocation() -> Result<(
     moved.native_mailbox_v8 = false;
     b.replace_self_owned_records(vec![signed(&moved, 3, 91_002)?], 91_002)?;
     assert!(b
-        .check_continuous_native_tls_v8(pin(), &tls, 91_002)
+        .check_continuous_native_tls_v8(&pin(), &tls, 91_002)
         .is_err());
     assert!(b
-        .check_native_tls_bootstrap_v8(pin(), &moved, 91_002)
+        .check_native_tls_bootstrap_v8(&pin(), &moved, 91_002)
         .is_err());
     // Removing only the native bit leaves the separately selected legacy service.
-    b.check_continuous_tls_peer_v1(pin(), &tls, 91_002)?;
+    b.check_continuous_tls_peer_v1(&pin(), &tls, 91_002)?;
     assert!(b.replace_self_owned_records(vec![first], 91_002).is_err());
-    b.revoke_self_owned(pin(), 91_003)?;
-    let mut b = ServiceLeaseBookV1::restore_self_owned(trust(), &b.checkpoint()?, 91_004)?;
+    b.revoke_self_owned(&pin(), 91_003)?;
+    let mut b = ServiceLeaseBookV1::restore_self_owned(
+        trust(),
+        &b.checkpoint()?,
+        91_004,
+        crate::test_identity::key(90),
+    )?;
     assert!(b
-        .check_continuous_native_tls_v8(pin(), &tls, 91_004)
+        .check_continuous_native_tls_v8(&pin(), &tls, 91_004)
         .is_err());
     assert!(b
-        .check_native_tls_bootstrap_v8(pin(), &tls, 91_004)
+        .check_native_tls_bootstrap_v8(&pin(), &tls, 91_004)
         .is_err());
     assert!(b
         .replace_self_owned_records(vec![signed(&tls, 4, 91_004)?], 91_004)
@@ -1165,7 +1361,12 @@ fn bulk_capability_signed_explicit_and_preserved_across_renewal() -> Result<()> 
     let endpoint = carrier_v8();
     let initial = record(vec![endpoint.endpoint()?], 1, 1000)?;
     assert!(!NativeCarrierMailboxEndpointV8::supports_bulk_v1(&initial)?);
-    let b = ServiceLeaseBookV1::new_self_owned(trust(), vec![initial], 2000)?;
+    let b = ServiceLeaseBookV1::new_self_owned(
+        trust(),
+        vec![initial],
+        2000,
+        crate::test_identity::key(90),
+    )?;
     let host = durable_host(b, &path)?;
     let enabled = host.rotate_native_carrier_mailbox_bulk_v1(true, 3000, 93_000)?;
     assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&enabled)?);
@@ -1191,52 +1392,52 @@ fn native_metadata_time_does_not_install_or_override_security() -> Result<()> {
     let mut b = book()?;
     let retained = b.self_owned_records()?;
     assert_eq!(
-        b.inspect_native_record_v7(pin(), &future, 2999)?,
+        b.inspect_native_record_v7(&pin(), &future, 2999)?,
         NotYetValid
     );
     assert!(b
-        .accept_native_record_v7(pin(), future.clone(), 2999)
+        .accept_native_record_v7(&pin(), future.clone(), 2999)
         .is_err());
     assert_eq!(b.self_owned_records()?, retained);
-    b.check_continuous_native_peer_v7(pin(), 2999)?;
-    assert_eq!(b.inspect_native_record_v7(pin(), &future, 3000)?, Valid);
-    b.accept_native_record_v7(pin(), future.clone(), 3000)?;
-    assert_eq!(b.inspect_native_record_v7(pin(), &future, 92999)?, Valid);
-    assert_eq!(b.inspect_native_record_v7(pin(), &future, 93000)?, Expired);
+    b.check_continuous_native_peer_v7(&pin(), 2999)?;
+    assert_eq!(b.inspect_native_record_v7(&pin(), &future, 3000)?, Valid);
+    b.accept_native_record_v7(&pin(), future.clone(), 3000)?;
+    assert_eq!(b.inspect_native_record_v7(&pin(), &future, 92999)?, Valid);
+    assert_eq!(b.inspect_native_record_v7(&pin(), &future, 93000)?, Expired);
     assert!(b
-        .accept_native_record_v7(pin(), future.clone(), 93000)
+        .accept_native_record_v7(&pin(), future.clone(), 93000)
         .is_err());
-    b.check_continuous_native_peer_v7(pin(), 93000)?;
+    b.check_continuous_native_peer_v7(&pin(), 93000)?;
 
     // An unseen higher sequence is authentic, but is not evidence of freshness.
     // Receiving it must never restart its original signed lifetime.
     let mut stale_book = book()?;
     let stale = record(vec![route().endpoint()?], 2, 1500)?;
     assert_eq!(
-        stale_book.inspect_native_record_v7(pin(), &stale, 500_000)?,
+        stale_book.inspect_native_record_v7(&pin(), &stale, 500_000)?,
         Expired
     );
     assert!(stale_book
-        .accept_native_record_v7(pin(), stale, 500_000)
+        .accept_native_record_v7(&pin(), stale, 500_000)
         .is_err());
 
     for now in [2999, 93000] {
         let mut b = book()?;
         let mut forged = future.clone();
         forged.signature[0] ^= 1;
-        assert!(b.inspect_native_record_v7(pin(), &forged, now).is_err());
-        assert!(b.inspect_native_record_v7([9; 32], &future, now).is_err());
+        assert!(b.inspect_native_record_v7(&pin(), &forged, now).is_err());
+        assert!(b.inspect_native_record_v7(&[9; 32], &future, now).is_err());
         let equivocation = record(vec![route().endpoint()?], 1, 3000)?;
         assert!(b
-            .inspect_native_record_v7(pin(), &equivocation, now)
+            .inspect_native_record_v7(&pin(), &equivocation, now)
             .is_err());
-        assert!(b.inspect_native_record_v8(pin(), &future, now).is_err());
-        b.revoke_self_owned(pin(), now)?;
-        assert!(b.inspect_native_record_v7(pin(), &future, now).is_err());
+        assert!(b.inspect_native_record_v8(&pin(), &future, now).is_err());
+        b.revoke_self_owned(&pin(), now)?;
+        assert!(b.inspect_native_record_v7(&pin(), &future, now).is_err());
     }
     let mut b = book()?;
     let advanced = record(vec![route().endpoint()?], 3, 4000)?;
-    b.accept_native_record_v7(pin(), advanced, 4000)?;
-    assert!(b.inspect_native_record_v7(pin(), &future, 4000).is_err());
+    b.accept_native_record_v7(&pin(), advanced, 4000)?;
+    assert!(b.inspect_native_record_v7(&pin(), &future, 4000).is_err());
     Ok(())
 }

@@ -11,7 +11,7 @@ struct Checkpoint {
     minimum_signatures: usize,
     sources: Vec<BootstrapSourceV1>,
     current: Vec<PeerSignedRelayRecordV1>,
-    tombstones: BTreeSet<[u8; 32]>,
+    tombstones: BTreeSet<Vec<u8>>,
     clock: u64,
 }
 
@@ -34,14 +34,20 @@ impl ServiceLeaseBookV1 {
     /// Restore expired history too: it prevents a restart from resetting sequence
     /// floors or revocations. routes/check_route still enforce actual wall time.
     /// The trust policy comes from the protected install owner, not this blob.
-    pub fn restore(policy: BootstrapTrustPolicyV1, bytes: &[u8], now: u64) -> Result<Self> {
+    pub fn restore(
+        policy: BootstrapTrustPolicyV1,
+        bytes: &[u8],
+        now: u64,
+        verifier: impl TransportVerifier + 'static,
+    ) -> Result<Self> {
+        let verifier: Arc<dyn TransportVerifier> = Arc::new(verifier);
         ensure!(
             bytes.len() <= MAX_SERVICE_CHECKPOINT_BYTES,
             "checkpoint size"
         );
         let state: Checkpoint = serde_json::from_slice(bytes)?;
         ensure!(
-            state.version == 1
+            state.version == 3
                 && state.signers == policy.allowed_signer_peer_ids
                 && state.minimum_signatures == policy.minimum_valid_signatures
                 && now >= state.clock
@@ -51,7 +57,7 @@ impl ServiceLeaseBookV1 {
                 && state.current.len() <= 2,
             "checkpoint policy/version/bounds/clock"
         );
-        let mut entries = BTreeMap::<[u8; 32], Entry>::new();
+        let mut entries = BTreeMap::<Vec<u8>, Entry>::new();
         let mut ids = BTreeSet::new();
         for source in &state.sources {
             ensure!(ids.insert(&source.manifest.manifest_id), "duplicate source");
@@ -63,7 +69,7 @@ impl ServiceLeaseBookV1 {
                 .fold(source.manifest.issued_at_ms, u64::max);
             ensure!(at <= state.clock, "future checkpoint source");
             // Reuse all current validation, at its historical admission time.
-            let validated = Self::new(policy.clone(), vec![source.clone()], at)?;
+            let validated = Self::new(policy.clone(), vec![source.clone()], at, verifier.clone())?;
             for (pin, entry) in validated.entries {
                 ensure!(!state.tombstones.contains(&pin), "revoked checkpoint node");
                 if let Some(old) = entries.get_mut(&pin) {
@@ -81,7 +87,7 @@ impl ServiceLeaseBookV1 {
         let mut seen = BTreeSet::new();
         for record in &state.current {
             ensure!(
-                seen.insert(record.relay_public_key),
+                seen.insert(record.relay_public_key.clone()),
                 "duplicate checkpoint record"
             );
             let entry = entries
@@ -92,7 +98,7 @@ impl ServiceLeaseBookV1 {
                 "future checkpoint lease"
             );
             if *record != entry.grant {
-                verify(record, record.issued_at_ms, MAX_SERVICE_LEASE_MS)?;
+                verify(record, record.issued_at_ms, MAX_SERVICE_LEASE_MS, &verifier)?;
                 newer(&entry.grant, record)?;
                 ensure!(
                     record.expires_at_ms <= entry.expires,
@@ -102,6 +108,7 @@ impl ServiceLeaseBookV1 {
             entry.current = record.clone();
         }
         let result = Self {
+            verifier,
             policy: ServiceTrustV1::Endorsed(policy),
             sources: state.sources,
             entries,
@@ -139,8 +146,8 @@ impl ServiceLeaseBookV1 {
     pub(super) fn publish(
         &mut self,
         sources: Vec<BootstrapSourceV1>,
-        entries: BTreeMap<[u8; 32], Entry>,
-        tombstones: BTreeSet<[u8; 32]>,
+        entries: BTreeMap<Vec<u8>, Entry>,
+        tombstones: BTreeSet<Vec<u8>>,
     ) -> Result<()> {
         if let Some(owner) = &self.persistence {
             let next = match &self.policy {
@@ -190,12 +197,12 @@ impl ServiceLeaseBookV1 {
 fn encode(
     policy: &BootstrapTrustPolicyV1,
     sources: &[BootstrapSourceV1],
-    entries: &BTreeMap<[u8; 32], Entry>,
-    tombstones: &BTreeSet<[u8; 32]>,
+    entries: &BTreeMap<Vec<u8>, Entry>,
+    tombstones: &BTreeSet<Vec<u8>>,
     clock: u64,
 ) -> Result<Vec<u8>> {
     let result = serde_json::to_vec(&Checkpoint {
-        version: 1,
+        version: 3,
         signers: policy.allowed_signer_peer_ids.clone(),
         minimum_signatures: policy.minimum_valid_signatures,
         sources: sources.to_vec(),

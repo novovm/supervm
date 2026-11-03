@@ -7,8 +7,8 @@ struct EncodedDeliveryFixtureV1 {
     registration: crate::duplex::RelaySessionRegistrationV1,
     inbox: Option<crate::duplex::RelaySessionInboxV1>,
     _source_inbox: crate::duplex::RelaySessionInboxV1,
-    relay: SigningKey,
-    target: SigningKey,
+    relay: TransportIdentity,
+    target: TransportIdentity,
     expected_wire: Vec<u8>,
     control: bool,
 }
@@ -21,9 +21,9 @@ impl EncodedDeliveryFixtureV1 {
             .unwrap();
         let manager =
             ProductRelaySessionManagerV1::new(ProductRelayRuntimeConfigV1::default()).unwrap();
-        let relay = SigningKey::from_bytes(&[181; 32]);
-        let source = SigningKey::from_bytes(&[182; 32]);
-        let target = SigningKey::from_bytes(&[183; 32]);
+        let relay = TransportIdentity::from_bytes(&[181; 32]);
+        let source = TransportIdentity::from_bytes(&[182; 32]);
+        let target = TransportIdentity::from_bytes(&[183; 32]);
         let now = now_ms_v1();
         let (source_registration, source_inbox) = runtime
             .block_on(manager.register_authenticated_session(

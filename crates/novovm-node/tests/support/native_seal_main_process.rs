@@ -1,9 +1,11 @@
 //! Opt-in real main-process test. Port 443 is part of the signed relay contract.
 use super::*;
 use ed25519_dalek::SigningKey;
+#[path = "../../../novovm-relay/tests/support/transport_fixture.rs"]
+mod transport_fixture;
 use novovm_network::{
-    peer_id_from_ed25519_public_key_v1, sign_bootstrap_manifest_v1, sign_relay_record_v1,
-    BootstrapSourceKindV1, RelayEndpointV1, RelayTransportV1, SignedBootstrapManifestV1,
+    sign_bootstrap_manifest_v1, sign_relay_record_v1, BootstrapSourceKindV1, RelayEndpointV1,
+    RelayTransportV1, SignedBootstrapManifestV1,
 };
 use novovm_node::{
     native_block_seal::{
@@ -549,16 +551,13 @@ fn run_real_aoem_main_nodes_scenario(
         .map(|i| SigningKey::from_bytes(&[if fresh { 1 + i } else { 151 + i }; 32]))
         .collect();
     let transport: Vec<_> = (0..4)
-        .map(|i| SigningKey::from_bytes(&[161 + i; 32]))
+        .map(|i| transport_fixture::identity(161 + i))
         .collect();
     let validators: Vec<_> = keys
         .iter()
         .map(|k| NovNativeSealValidatorV1::new(*k.verifying_key().as_bytes(), 1).unwrap())
         .collect();
-    let peer_ids: Vec<_> = transport
-        .iter()
-        .map(|k| peer_id_from_ed25519_public_key_v1(k.verifying_key().as_bytes()))
-        .collect();
+    let peer_ids: Vec<_> = transport.iter().map(|k| k.peer_id()).collect();
     let set = NovNativeSealValidatorSetV1::new(CHAIN, 1, 1, validators.clone()).unwrap();
     let bindings = validators
         .iter()
@@ -604,11 +603,12 @@ fn run_real_aoem_main_nodes_scenario(
         certificate.serialize_private_key_pem(),
     )
     .unwrap();
-    let relay_key = SigningKey::from_bytes(&[171; 32]);
-    fs::write(root.join("identity.hex"), hex(&relay_key.to_bytes())).unwrap();
+    let relay_key = transport_fixture::identity(171);
+    transport_fixture::protect_for_chain(171, &root.join("identity.protected"), CHAIN).unwrap();
     let config: ProductRelayDaemonConfigV1 = serde_json::from_value(serde_json::json!({
         "bind_addr":"127.0.0.2:443", "tls_cert_path":root.join("cert.pem"), "tls_key_path":root.join("tls.hex"),
-        "relay_identity_key_path":root.join("identity.hex"), "report_path":root.join("report.json"),
+        "relay_identity_key_path":root.join("identity.protected"), "report_path":root.join("report.json"),
+        "chain_id":CHAIN, "library":transport_fixture::library(), "library_sha256":transport_fixture::digest(),
         "report_interval_ms":20, "session_queue_capacity":128, "offline_queue_per_peer":128,
         "offline_queue_per_source":256, "offline_queue_total":512, "session_ttl_ms":10000,
         "rate_limit_frames":10000, "max_frames_per_window":20000, "rate_limit_window_ms":1000
@@ -631,7 +631,7 @@ fn run_real_aoem_main_nodes_scenario(
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as u64;
-    let bootstrap_key = SigningKey::from_bytes(&[172; 32]);
+    let bootstrap_key = transport_fixture::identity(172);
     let record = sign_relay_record_v1(
         &relay_key,
         "main-process-test",
@@ -648,7 +648,8 @@ fn run_real_aoem_main_nodes_scenario(
     )
     .unwrap();
     let mut manifest = SignedBootstrapManifestV1 {
-        version: 1,
+        version: 2,
+        suite: 65,
         manifest_id: "main-process-test".into(),
         issued_at_ms: now - 1000,
         expires_at_ms: now + 600_000,
@@ -672,9 +673,15 @@ fn run_real_aoem_main_nodes_scenario(
         )
         .unwrap();
         fs::write(node.0.join("signer.hex"), hex(&keys[i].to_bytes())).unwrap();
-        fs::write(node.0.join("transport.hex"), hex(&transport[i].to_bytes())).unwrap();
-        let overlay = serde_json::json!({"chain_id":CHAIN,"role":"duplex", "identity_key_path":"transport.hex",
-            "overlay":{"cache_path":"cache.json", "trusted_signer_public_keys":[bootstrap_key.verifying_key().to_bytes()],
+        transport_fixture::protect_for_chain(
+            161 + i as u8,
+            &node.0.join("transport.protected"),
+            CHAIN,
+        )
+        .unwrap();
+        let overlay = serde_json::json!({"chain_id":CHAIN,"role":"duplex", "identity_key_path":"transport.protected",
+            "library":transport_fixture::library(), "library_sha256":transport_fixture::digest(),
+            "overlay":{"cache_path":"cache.json", "trusted_signer_public_keys":[bootstrap_key.public_key().to_vec()],
                 "minimum_bootstrap_signatures":1,"embedded_sources":[bootstrap],"cooldown_base_ms":10,"cooldown_max_ms":100},
             "peers":peer_ids.iter().enumerate().filter(|(j,_)| *j!=i).map(|(j,p)| serde_json::json!({"peer_id":p,"metric_peer_id":8800+j})).collect::<Vec<_>>(),
             "tls_trust":{"explicit_ca":{"certificate_path":root.join("cert.pem")}},

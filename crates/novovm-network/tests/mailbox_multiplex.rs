@@ -1,7 +1,8 @@
 #![cfg(feature = "iroh-transport")]
 //! Real loopback QUIC and SQLite fixtures; not independent-device or latency evidence.
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::SigningKey;
+#[path = "support/transport_identity.rs"]
+mod transport_identity;
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use novovm_network::{
     carrier_stream::CarrierStreamV1, iroh_transport::*, mailbox_rpc::*, mailbox_store::*,
@@ -13,10 +14,8 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::time::{Duration, Instant};
+use transport_identity::key;
 
-fn key(n: u8) -> SigningKey {
-    SigningKey::from_bytes(&[n; 32])
-}
 fn config() -> IrohConfigV1 {
     IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
         .unwrap()
@@ -50,13 +49,13 @@ async fn three_clients(prefetch: bool) -> Result<()> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx = Mutex::new(Some(tx));
     let trust = SelfOwnedTrustV1 {
-        version: 1,
-        node_pins: [key(1).verifying_key().to_bytes()].into(),
+        version: 2,
+        node_pins: [key(1).public_key().to_vec()].into(),
     };
     let server = run_self_owned_node_v1(
         config().with_owned_service_identity(zeroize::Zeroizing::new([90; 32]))?,
         key(1),
-        (2..=4).map(|n| key(n).verifying_key().to_bytes()).collect(),
+        (2..=4).map(|n| key(n).public_key().to_vec()).collect(),
         stop,
         Some(service),
         move |endpoint, expires| {
@@ -69,7 +68,12 @@ async fn three_clients(prefetch: bool) -> Result<()> {
                 expires,
                 1,
             )?;
-            let mut book = ServiceLeaseBookV1::new_self_owned(trust, vec![record], now)?;
+            let mut book = ServiceLeaseBookV1::new_self_owned(
+                trust,
+                vec![record],
+                now,
+                crate::transport_identity::key(90),
+            )?;
             let checkpoint = book.checkpoint()?;
             let file = ServiceLeaseFileV1::create(
                 &journal,
@@ -116,18 +120,18 @@ async fn three_clients(prefetch: bool) -> Result<()> {
                                     request_mailbox_multiplex_lane_v5(&mut notification).await?;
                                 }
                                 let identity = key(n);
-                                let pin = key(1).verifying_key().to_bytes();
+                                let pin = key(1).public_key().to_vec();
                                 let (mut op, mut notify) = if prefetch {
                                     tokio::try_join!(
                                         MailboxClientSessionV2::begin_continuous_v6(
                                             &mut operation,
                                             &identity,
-                                            pin
+                                            pin.clone()
                                         ),
                                         MailboxClientSessionV2::begin_continuous_v6(
                                             &mut notification,
                                             &identity,
-                                            pin
+                                            pin.clone()
                                         )
                                     )?
                                 } else {
@@ -135,12 +139,12 @@ async fn three_clients(prefetch: bool) -> Result<()> {
                                         MailboxClientSessionV2::begin_continuous_v4(
                                             &mut operation,
                                             &identity,
-                                            pin
+                                            pin.clone()
                                         ),
                                         MailboxClientSessionV2::begin_continuous_v4(
                                             &mut notification,
                                             &identity,
-                                            pin
+                                            pin.clone()
                                         )
                                     )?
                                 };
@@ -185,8 +189,14 @@ async fn three_clients(prefetch: bool) -> Result<()> {
                                         })
                                         .await?
                                     {
-                                        MailboxReplyV1::Stored(receipt) => receipt
-                                            .verify(pin, grant.id, [n; 32], &data, expires)?,
+                                        MailboxReplyV1::Stored(receipt) => receipt.verify(
+                                            &pin,
+                                            grant.id,
+                                            [n; 32],
+                                            &data,
+                                            expires,
+                                            &crate::transport_identity::key(90),
+                                        )?,
                                         _ => anyhow::bail!("durable receipt missing"),
                                     }
                                     Ok::<_, anyhow::Error>(())
@@ -355,7 +365,7 @@ async fn negative(prefetch: bool) -> Result<()> {
                                 NodeServiceV1::MailboxMultiplex
                             }
                         );
-                        let pins = [key(2).verifying_key().to_bytes()];
+                        let pins = [key(2).public_key().to_vec()];
                         let policy =
                             novovm_network::bound_session::ServicePeerPolicyV1::Pinned(&pins);
                         let check = || {
@@ -413,11 +423,13 @@ async fn negative(prefetch: bool) -> Result<()> {
             }
             let connection = connection?;
             let identity = key(2);
-            let pin = key(1).verifying_key().to_bytes();
+            let pin = key(1).public_key().to_vec();
             let mut op = if prefetch {
-                MailboxClientSessionV2::begin_continuous_v6(&mut root, &identity, pin).await?
+                MailboxClientSessionV2::begin_continuous_v6(&mut root, &identity, pin.clone())
+                    .await?
             } else {
-                MailboxClientSessionV2::begin_continuous_v4(&mut root, &identity, pin).await?
+                MailboxClientSessionV2::begin_continuous_v4(&mut root, &identity, pin.clone())
+                    .await?
             };
             let mut child = connection.open().await?;
             if case == "child_version" {
@@ -433,7 +445,7 @@ async fn negative(prefetch: bool) -> Result<()> {
                 }
                 let child_identity = key(if case == "child_identity" { 3 } else { 2 });
                 let child_pin = if case == "child_pin" {
-                    key(4).verifying_key().to_bytes()
+                    key(4).public_key().to_vec()
                 } else {
                     pin
                 };
@@ -441,14 +453,14 @@ async fn negative(prefetch: bool) -> Result<()> {
                     MailboxClientSessionV2::begin_continuous_v6(
                         &mut child,
                         &child_identity,
-                        child_pin,
+                        child_pin.clone(),
                     )
                     .await
                 } else {
                     MailboxClientSessionV2::begin_continuous_v4(
                         &mut child,
                         &child_identity,
-                        child_pin,
+                        child_pin.clone(),
                     )
                     .await
                 };

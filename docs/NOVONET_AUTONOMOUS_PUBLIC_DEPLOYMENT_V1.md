@@ -246,12 +246,18 @@ Deployment must:
 
 `mailbox_native_peer_probe` is a bounded diagnostic using the existing
 NativeMailboxClient, NativeObjectLink and NativeCarrierPump. Supply a fresh
-signed record and an independently verified node public key; it creates only
+signed record and an independently verified canonical ML-DSA peer identity; it creates only
 temporary random encrypted probe data and capabilities with a five-minute TTL.
 It does not read phone keys or change server admission.
 
+2026-11-03 entry update: the same tool moved to the existing relay crate and
+requires an approved AOEM path/hash, chain domain and a JSON array of protected
+transport-key file paths (one per diagnostic client). It no longer generates
+raw Ed25519 identities. This caller migration does not requalify the historical
+results below as ML-DSA or prove a new public-network run.
+
 ```text
-cargo run --release -p novovm-network --example mailbox_native_peer_probe --features iroh-transport,tls-transport -- RECORD EXPECTED_PIN_HEX udp
+cargo run --release -p novovm-relay --example mailbox_native_peer_probe --features iroh-transport,tls-transport -- RECORD EXPECTED_PEER_ID udp AOEM_LIB AOEM_SHA256 CHAIN_ID TRANSPORT_KEY_PATHS_JSON
 ```
 
 External UDP passed from WSL and Windows against the deployed Ubuntu owner,

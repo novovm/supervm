@@ -2,9 +2,13 @@ use crate::novorudp::diagnostics::{io_span, IoPhase};
 use crate::novorudp::{NovoRudpTransportFrameDecodeErrorV0, NovoRudpTransportFrameV0};
 pub mod binary;
 pub mod handshake_wire;
+mod identity;
 use chacha20poly1305::{aead::AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce, Tag};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use hkdf::Hkdf;
+pub use identity::{
+    TransportIdentity, TransportSignatureProvider, TransportVerifier, MLDSA65_PUBLIC_KEY_BYTES,
+    MLDSA65_SIGNATURE_BYTES, MLDSA65_SUITE,
+};
 use k256::elliptic_curve::Generate;
 use k256::{ecdh::diffie_hellman, elliptic_curve::sec1::ToSec1Point, PublicKey, SecretKey};
 use rand::{rngs::OsRng, RngCore};
@@ -14,11 +18,12 @@ use std::collections::{HashSet, VecDeque};
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-pub const PRODUCT_OVERLAY_PROTOCOL_VERSION_V1: u16 = 1;
+pub const PRODUCT_OVERLAY_PROTOCOL_VERSION_V1: u16 = 2;
 /// Bound differences between independently synchronized device clocks. This
 /// tolerates future issuance only; signed expiration remains a strict deadline.
 pub const PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1: u64 = 5_000;
-pub const PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1: &[u8] = b"novovm-product-overlay-handshake-v1";
+pub const PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1: &[u8] =
+    b"novovm-product-overlay-handshake-mldsa65-v2";
 pub const PRODUCT_OVERLAY_SECURE_FRAME_DOMAIN_V1: &[u8] = b"novovm-product-overlay-secure-frame-v1";
 
 #[derive(Debug, Error)]
@@ -61,7 +66,7 @@ pub struct NodeHandshakeOfferV1 {
     pub session_id: [u8; 16],
     pub initiator_peer_id: String,
     pub responder_peer_id: String,
-    pub initiator_identity_public_key: [u8; 32],
+    pub initiator_identity_public_key: Vec<u8>,
     pub initiator_ephemeral_public_key: Vec<u8>,
     pub challenge: [u8; 32],
     pub issued_at_ms: u64,
@@ -75,7 +80,7 @@ pub struct NodeHandshakeResponseV1 {
     pub session_id: [u8; 16],
     pub initiator_peer_id: String,
     pub responder_peer_id: String,
-    pub responder_identity_public_key: [u8; 32],
+    pub responder_identity_public_key: Vec<u8>,
     pub responder_ephemeral_public_key: Vec<u8>,
     pub challenge: [u8; 32],
     pub response_nonce: [u8; 32],
@@ -88,6 +93,7 @@ pub struct NodeHandshakeResponseV1 {
 pub struct NodeHandshakeInitiatorV1 {
     offer: NodeHandshakeOfferV1,
     ephemeral_secret: SecretKey,
+    verifier: TransportIdentity,
 }
 
 pub struct NodeHandshakeResponderV1 {
@@ -99,7 +105,7 @@ pub struct NodeHandshakeResponderV1 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthenticatedPeerV1 {
     peer_id: String,
-    identity_public_key: [u8; 32],
+    identity_public_key: Vec<u8>,
     session_id: [u8; 16],
     authenticated_at_ms: u64,
 }
@@ -234,7 +240,7 @@ impl SlidingReplayWindowV1 {
 
 impl NodeHandshakeInitiatorV1 {
     pub fn start(
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         responder_peer_id: impl Into<String>,
         now_ms: u64,
         ttl_ms: u64,
@@ -257,7 +263,7 @@ impl NodeHandshakeInitiatorV1 {
     }
 
     fn start_with_material(
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         responder_peer_id: String,
         now_ms: u64,
         ttl_ms: u64,
@@ -265,8 +271,8 @@ impl NodeHandshakeInitiatorV1 {
         challenge: [u8; 32],
         ephemeral_secret: SecretKey,
     ) -> Result<Self, ProductOverlayErrorV1> {
-        let identity_public_key = identity.verifying_key().to_bytes();
-        let initiator_peer_id = peer_id_from_ed25519_public_key_v1(&identity_public_key);
+        let identity_public_key = identity.public_key().to_vec();
+        let initiator_peer_id = identity.peer_id();
         let ephemeral_public_key = ephemeral_secret
             .public_key()
             .to_sec1_point(true)
@@ -288,12 +294,15 @@ impl NodeHandshakeInitiatorV1 {
             signature: Vec::new(),
         };
         offer.signature = identity
-            .sign(&handshake_offer_signing_bytes_v1(&offer))
-            .to_bytes()
-            .to_vec();
+            .sign(
+                &handshake_offer_signing_bytes_v1(&offer),
+                PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+            )
+            .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
         Ok(Self {
             offer,
             ephemeral_secret,
+            verifier: identity.clone(),
         })
     }
 
@@ -321,7 +330,13 @@ impl NodeHandshakeInitiatorV1 {
         replay_cache: &mut HandshakeReplayCacheV1,
     ) -> Result<E2eSecureChannelV1, Box<(Self, ProductOverlayErrorV1)>> {
         let result = (|| {
-            validate_handshake_response_v1(&self.offer, response, now_ms, replay_cache)?;
+            validate_handshake_response_v1(
+                &self.offer,
+                response,
+                now_ms,
+                replay_cache,
+                &self.verifier,
+            )?;
             let remote_public =
                 PublicKey::from_sec1_bytes(&response.responder_ephemeral_public_key)
                     .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
@@ -340,14 +355,14 @@ impl NodeHandshakeInitiatorV1 {
 impl NodeHandshakeResponderV1 {
     pub fn respond(
         offer: &NodeHandshakeOfferV1,
-        identity: &SigningKey,
+        identity: &TransportIdentity,
         now_ms: u64,
         ttl_ms: u64,
         replay_cache: &mut HandshakeReplayCacheV1,
     ) -> Result<Self, ProductOverlayErrorV1> {
-        validate_handshake_offer_v1(offer, now_ms, replay_cache)?;
-        let responder_identity_public_key = identity.verifying_key().to_bytes();
-        let responder_peer_id = peer_id_from_ed25519_public_key_v1(&responder_identity_public_key);
+        validate_handshake_offer_v1(offer, now_ms, replay_cache, identity)?;
+        let responder_identity_public_key = identity.public_key().to_vec();
+        let responder_peer_id = identity.peer_id();
         if responder_peer_id != offer.responder_peer_id {
             return Err(ProductOverlayErrorV1::HandshakeTargetMismatch);
         }
@@ -379,15 +394,17 @@ impl NodeHandshakeResponderV1 {
             signature: Vec::new(),
         };
         response.signature = identity
-            .sign(&handshake_response_signing_bytes_v1(&response))
-            .to_bytes()
-            .to_vec();
+            .sign(
+                &handshake_response_signing_bytes_v1(&response),
+                PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+            )
+            .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
         let secrets =
             derive_session_secrets_v1(&ephemeral_secret, &initiator_public, offer, &response)?;
         let channel = E2eSecureChannelV1::for_responder(offer, secrets);
         let authenticated_remote = AuthenticatedPeerV1 {
             peer_id: offer.initiator_peer_id.clone(),
-            identity_public_key: offer.initiator_identity_public_key,
+            identity_public_key: offer.initiator_identity_public_key.clone(),
             session_id: offer.session_id,
             authenticated_at_ms: now_ms,
         };
@@ -426,8 +443,8 @@ impl AuthenticatedPeerV1 {
     }
 
     #[must_use]
-    pub fn identity_public_key(&self) -> [u8; 32] {
-        self.identity_public_key
+    pub fn identity_public_key(&self) -> &[u8] {
+        &self.identity_public_key
     }
 
     #[must_use]
@@ -652,14 +669,18 @@ impl E2eSecureChannelV1 {
 }
 
 #[must_use]
-pub fn peer_id_from_ed25519_public_key_v1(public_key: &[u8; 32]) -> String {
-    format!("novovm-ed25519:{}", hex_lower_v1(public_key))
+pub fn peer_id_from_mldsa65_public_key_v1(public_key: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"NOVOVM/transport-identity/ML-DSA-65/v2\0");
+    digest.update(public_key);
+    format!("novovm-mldsa65:{}", hex_lower_v1(&digest.finalize()))
 }
 
 pub fn validate_handshake_offer_v1(
     offer: &NodeHandshakeOfferV1,
     now_ms: u64,
     replay_cache: &mut HandshakeReplayCacheV1,
+    verifier: &TransportIdentity,
 ) -> Result<(), ProductOverlayErrorV1> {
     if offer.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 {
         return Err(ProductOverlayErrorV1::UnsupportedVersion(offer.version));
@@ -670,17 +691,20 @@ pub fn validate_handshake_offer_v1(
     {
         return Err(ProductOverlayErrorV1::HandshakeExpired);
     }
-    let expected_peer_id = peer_id_from_ed25519_public_key_v1(&offer.initiator_identity_public_key);
+    let expected_peer_id = peer_id_from_mldsa65_public_key_v1(&offer.initiator_identity_public_key);
     if offer.initiator_peer_id != expected_peer_id {
         return Err(ProductOverlayErrorV1::IdentityMismatch);
     }
     PublicKey::from_sec1_bytes(&offer.initiator_ephemeral_public_key)
         .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
-    verify_ed25519_signature_v1(
-        &offer.initiator_identity_public_key,
-        &handshake_offer_signing_bytes_v1(offer),
-        &offer.signature,
-    )?;
+    verifier
+        .verify(
+            &offer.initiator_identity_public_key,
+            &handshake_offer_signing_bytes_v1(offer),
+            PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+            &offer.signature,
+        )
+        .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
     if !replay_cache.insert_once(handshake_offer_hash_v1(offer)) {
         return Err(ProductOverlayErrorV1::HandshakeReplay);
     }
@@ -692,6 +716,7 @@ pub fn validate_handshake_response_v1(
     response: &NodeHandshakeResponseV1,
     now_ms: u64,
     replay_cache: &mut HandshakeReplayCacheV1,
+    verifier: &TransportIdentity,
 ) -> Result<(), ProductOverlayErrorV1> {
     if response.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 {
         return Err(ProductOverlayErrorV1::UnsupportedVersion(response.version));
@@ -718,17 +743,20 @@ pub fn validate_handshake_response_v1(
         return Err(ProductOverlayErrorV1::HandshakeTranscriptMismatch);
     }
     let expected_peer_id =
-        peer_id_from_ed25519_public_key_v1(&response.responder_identity_public_key);
+        peer_id_from_mldsa65_public_key_v1(&response.responder_identity_public_key);
     if response.responder_peer_id != expected_peer_id {
         return Err(ProductOverlayErrorV1::IdentityMismatch);
     }
     PublicKey::from_sec1_bytes(&response.responder_ephemeral_public_key)
         .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
-    verify_ed25519_signature_v1(
-        &response.responder_identity_public_key,
-        &handshake_response_signing_bytes_v1(response),
-        &response.signature,
-    )?;
+    verifier
+        .verify(
+            &response.responder_identity_public_key,
+            &handshake_response_signing_bytes_v1(response),
+            PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+            &response.signature,
+        )
+        .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
     if !replay_cache.insert_once(handshake_response_hash_v1(response)) {
         return Err(ProductOverlayErrorV1::HandshakeReplay);
     }
@@ -764,25 +792,11 @@ fn derive_session_secrets_v1(
     })
 }
 
-fn verify_ed25519_signature_v1(
-    public_key: &[u8; 32],
-    message: &[u8],
-    signature: &[u8],
-) -> Result<(), ProductOverlayErrorV1> {
-    let verifying_key = VerifyingKey::from_bytes(public_key)
-        .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeKey)?;
-    let signature_bytes: [u8; 64] = signature
-        .try_into()
-        .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
-    verifying_key
-        .verify(message, &Signature::from_bytes(&signature_bytes))
-        .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)
-}
-
 fn handshake_offer_signing_bytes_v1(offer: &NodeHandshakeOfferV1) -> Vec<u8> {
     let mut out = Vec::new();
     append_field_v1(&mut out, PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1);
     out.extend_from_slice(&offer.version.to_be_bytes());
+    out.extend_from_slice(&MLDSA65_SUITE.to_be_bytes());
     out.extend_from_slice(&offer.session_id);
     append_field_v1(&mut out, offer.initiator_peer_id.as_bytes());
     append_field_v1(&mut out, offer.responder_peer_id.as_bytes());
@@ -798,6 +812,7 @@ fn handshake_response_signing_bytes_v1(response: &NodeHandshakeResponseV1) -> Ve
     let mut out = Vec::new();
     append_field_v1(&mut out, PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1);
     out.extend_from_slice(&response.version.to_be_bytes());
+    out.extend_from_slice(&MLDSA65_SUITE.to_be_bytes());
     out.extend_from_slice(&response.session_id);
     append_field_v1(&mut out, response.initiator_peer_id.as_bytes());
     append_field_v1(&mut out, response.responder_peer_id.as_bytes());
@@ -959,6 +974,8 @@ mod tests {
         assert!(SecretKey::from_slice(&[0u8; 32]).is_err());
     }
 
+    use crate::test_identity::SigningKey;
+
     fn identities() -> (SigningKey, SigningKey) {
         (
             SigningKey::from_bytes(&[31u8; 32]),
@@ -968,8 +985,7 @@ mod tests {
 
     fn channels() -> (E2eSecureChannelV1, E2eSecureChannelV1) {
         let (initiator_identity, responder_identity) = identities();
-        let responder_peer_id =
-            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let responder_peer_id = peer_id_from_mldsa65_public_key_v1(responder_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(&initiator_identity, responder_peer_id, 1_000, 5_000)
                 .expect("start handshake");
@@ -1069,8 +1085,7 @@ mod tests {
     #[test]
     fn handshake_rejects_identity_and_signature_tamper() {
         let (initiator_identity, responder_identity) = identities();
-        let responder_peer_id =
-            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let responder_peer_id = peer_id_from_mldsa65_public_key_v1(responder_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(&initiator_identity, responder_peer_id, 1_000, 5_000)
                 .expect("start handshake");
@@ -1079,7 +1094,7 @@ mod tests {
         identity_tamper.initiator_peer_id = "novovm-ed25519:attacker".into();
         let mut cache = HandshakeReplayCacheV1::default();
         assert!(matches!(
-            validate_handshake_offer_v1(&identity_tamper, 1_100, &mut cache),
+            validate_handshake_offer_v1(&identity_tamper, 1_100, &mut cache, &responder_identity),
             Err(ProductOverlayErrorV1::IdentityMismatch)
         ));
 
@@ -1087,7 +1102,7 @@ mod tests {
         signature_tamper.challenge[0] ^= 0x80;
         let mut cache = HandshakeReplayCacheV1::default();
         assert!(matches!(
-            validate_handshake_offer_v1(&signature_tamper, 1_100, &mut cache),
+            validate_handshake_offer_v1(&signature_tamper, 1_100, &mut cache, &responder_identity),
             Err(ProductOverlayErrorV1::InvalidHandshakeSignature)
         ));
     }
@@ -1096,7 +1111,7 @@ mod tests {
     fn independent_device_clocks_allow_bounded_skew_in_both_directions() {
         for skew in [-5_000_i64, 5_000] {
             let (a, b) = identities();
-            let peer = peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes());
+            let peer = peer_id_from_mldsa65_public_key_v1(b.public_key());
             let initiator = NodeHandshakeInitiatorV1::start(&a, peer, 100_000, 30_000).unwrap();
             let responder_time = (100_000_i64 + skew) as u64;
             let responder = NodeHandshakeResponderV1::respond(
@@ -1120,13 +1135,14 @@ mod tests {
     #[test]
     fn excessive_clock_skew_is_rejected_without_extending_expiration() {
         let (a, b) = identities();
-        let peer = peer_id_from_ed25519_public_key_v1(&b.verifying_key().to_bytes());
+        let peer = peer_id_from_mldsa65_public_key_v1(b.public_key());
         let initiator = NodeHandshakeInitiatorV1::start(&a, peer, 100_000, 30_000).unwrap();
         assert!(matches!(
             validate_handshake_offer_v1(
                 initiator.offer(),
                 94_999,
                 &mut HandshakeReplayCacheV1::default(),
+                &b,
             ),
             Err(ProductOverlayErrorV1::HandshakeExpired)
         ));
@@ -1144,6 +1160,7 @@ mod tests {
                 responder.response(),
                 100_000,
                 &mut HandshakeReplayCacheV1::default(),
+                &a,
             ),
             Err(ProductOverlayErrorV1::HandshakeExpired)
         ));
@@ -1152,6 +1169,7 @@ mod tests {
                 initiator.offer(),
                 130_001,
                 &mut HandshakeReplayCacheV1::default(),
+                &b,
             ),
             Err(ProductOverlayErrorV1::HandshakeExpired)
         ));
@@ -1160,22 +1178,26 @@ mod tests {
     #[test]
     fn handshake_replay_and_expiry_are_rejected() {
         let (initiator_identity, responder_identity) = identities();
-        let responder_peer_id =
-            peer_id_from_ed25519_public_key_v1(&responder_identity.verifying_key().to_bytes());
+        let responder_peer_id = peer_id_from_mldsa65_public_key_v1(responder_identity.public_key());
         let initiator =
             NodeHandshakeInitiatorV1::start(&initiator_identity, responder_peer_id, 1_000, 100)
                 .expect("start handshake");
         let mut replay = HandshakeReplayCacheV1::default();
-        validate_handshake_offer_v1(initiator.offer(), 1_050, &mut replay)
+        validate_handshake_offer_v1(initiator.offer(), 1_050, &mut replay, &responder_identity)
             .expect("first offer accepted");
         assert!(matches!(
-            validate_handshake_offer_v1(initiator.offer(), 1_050, &mut replay),
+            validate_handshake_offer_v1(initiator.offer(), 1_050, &mut replay, &responder_identity),
             Err(ProductOverlayErrorV1::HandshakeReplay)
         ));
 
         let mut fresh_cache = HandshakeReplayCacheV1::default();
         assert!(matches!(
-            validate_handshake_offer_v1(initiator.offer(), 1_101, &mut fresh_cache),
+            validate_handshake_offer_v1(
+                initiator.offer(),
+                1_101,
+                &mut fresh_cache,
+                &responder_identity
+            ),
             Err(ProductOverlayErrorV1::HandshakeExpired)
         ));
     }

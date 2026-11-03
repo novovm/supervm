@@ -4,22 +4,23 @@
 //! canonical mapping; endpoints and local secret paths are deliberately absent.
 use crate::native_pipeline::consensus::wire::{Hash, ValidatorSet};
 use anyhow::{ensure, Context, Result};
-use ed25519_dalek::VerifyingKey;
-use novovm_network::product_overlay::peer_id_from_ed25519_public_key_v1;
+use novovm_network::product_overlay::{
+    peer_id_from_mldsa65_public_key_v1, MLDSA65_PUBLIC_KEY_BYTES,
+};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug)]
 pub struct ValidatorTransportBindings {
     validator_set_hash: Hash,
-    transport_by_validator: BTreeMap<Vec<u8>, Hash>,
+    transport_by_validator: BTreeMap<Vec<u8>, Vec<u8>>,
     validator_by_peer: BTreeMap<String, Hash>,
 }
 
 impl ValidatorTransportBindings {
     pub fn new(
         validators: &ValidatorSet,
-        bindings: impl IntoIterator<Item = (Vec<u8>, Hash)>,
+        bindings: impl IntoIterator<Item = (Vec<u8>, Vec<u8>)>,
     ) -> Result<Self> {
         let signing_keys = validators
             .members()
@@ -33,17 +34,21 @@ impl ValidatorTransportBindings {
             let id = signing_keys
                 .get(&validator)
                 .context("transport binding names an unknown validator")?;
-            let key = VerifyingKey::from_bytes(&transport)
-                .context("invalid validator transport public key")?;
-            ensure!(!key.is_weak(), "weak validator transport public key");
+            ensure!(
+                transport.len() == MLDSA65_PUBLIC_KEY_BYTES && transport.iter().any(|b| *b != 0),
+                "validator transport public key must be ML-DSA-65"
+            );
+            ensure!(
+                !signing_keys.contains_key(&transport),
+                "validator signing and transport keys must be independent"
+            );
+            let peer = peer_id_from_mldsa65_public_key_v1(&transport);
             ensure!(
                 transport_by_validator
-                    .insert(validator, transport)
+                    .insert(validator, transport.clone())
                     .is_none()
                     && transport_keys.insert(transport)
-                    && validator_by_peer
-                        .insert(peer_id_from_ed25519_public_key_v1(&transport), *id)
-                        .is_none(),
+                    && validator_by_peer.insert(peer, *id).is_none(),
                 "duplicate validator or transport identity binding"
             );
         }
@@ -58,10 +63,10 @@ impl ValidatorTransportBindings {
         })
     }
 
-    pub fn transport_public_key(&self, validator_public_key: &[u8]) -> Result<Hash> {
+    pub fn transport_public_key(&self, validator_public_key: &[u8]) -> Result<Vec<u8>> {
         self.transport_by_validator
             .get(validator_public_key)
-            .copied()
+            .cloned()
             .context("validator has no approved transport identity")
     }
 
@@ -76,7 +81,7 @@ impl ValidatorTransportBindings {
     /// remain committed by the original validator set and genesis envelope.
     pub fn canonical_commitment(&self) -> Hash {
         let mut hash = Sha256::new();
-        hash.update(b"NOVOVM/validator-transport-bindings/v2-mldsa65\0");
+        hash.update(b"NOVOVM/validator-transport-bindings/v3-mldsa65-mutual\0");
         hash.update((self.transport_by_validator.len() as u64).to_be_bytes());
         for (validator, transport) in &self.transport_by_validator {
             hash.update(validator);

@@ -7,7 +7,7 @@ fn pair() -> Result<(NativeEndpoint, NativeEndpoint)> {
     let left = UdpSocket::bind("127.0.0.1:0")?;
     let right = UdpSocket::bind("127.0.0.1:0")?;
     let addresses = [left.local_addr()?, right.local_addr()?];
-    let keys = [71, 72].map(|value| SigningKey::from_bytes(&[value; 32]));
+    let keys = [71, 72].map(crate::test_identity::key);
     let start = Instant::now();
     let budget = || NativeHandshakeBudget {
         lifetime: Duration::from_secs(5),
@@ -17,7 +17,7 @@ fn pair() -> Result<(NativeEndpoint, NativeEndpoint)> {
         left,
         keys[0].clone(),
         vec![NativePeer {
-            key: keys[1].verifying_key().to_bytes(),
+            key: keys[1].public_key().to_vec(),
             address: addresses[1],
         }],
         budget(),
@@ -28,7 +28,7 @@ fn pair() -> Result<(NativeEndpoint, NativeEndpoint)> {
         right,
         keys[1].clone(),
         vec![NativePeer {
-            key: keys[0].verifying_key().to_bytes(),
+            key: keys[0].public_key().to_vec(),
             address: addresses[0],
         }],
         budget(),
@@ -85,6 +85,31 @@ fn rejected(report: NativePoll, reason: NativeRejectReasonV1) {
     assert_eq!(report.rejection_reasons.total(), 1);
     assert_eq!(report.rejection_reasons.counts, expected.counts);
     assert!(report.frames.is_empty());
+}
+
+#[test]
+fn peer_route_requires_authentication_and_uses_the_receive_owners_source() -> Result<()> {
+    let (a, b) = pair()?;
+    assert_eq!(a.peer_route(0)?, NativeRoute::Udp(b.local_addr()?));
+    assert_eq!(b.peer_route(0)?, NativeRoute::Udp(a.local_addr()?));
+    assert!(a.peer_route(1).is_err());
+    let silent = UdpSocket::bind("127.0.0.1:0")?;
+    let pending = NativeEndpoint::bind(
+        UdpSocket::bind("127.0.0.1:0")?,
+        crate::test_identity::key(74),
+        vec![NativePeer {
+            key: crate::test_identity::key(75).public_key().to_vec(),
+            address: silent.local_addr()?,
+        }],
+        NativeHandshakeBudget {
+            lifetime: Duration::from_secs(5),
+            retry: Duration::from_millis(5),
+        },
+        1000,
+        Instant::now(),
+    )?;
+    assert!(pending.peer_route(0).is_err());
+    Ok(())
 }
 
 #[test]
@@ -165,7 +190,7 @@ fn pre_session_and_handshake_rejections_do_not_claim_authentication() -> Result<
         NativeRejectReasonV1::NoSession,
     );
     rejected(
-        poll_one(&mut b, b"NVHSHK01-invalid", source)?,
+        poll_one(&mut b, b"NVHSHK02-invalid", source)?,
         NativeRejectReasonV1::Handshake,
     );
     assert!(b.session_id(0).is_none());
@@ -176,7 +201,7 @@ fn pre_session_and_handshake_rejections_do_not_claim_authentication() -> Result<
 fn wire_budget_rejection_keeps_original_precedence_and_byte_charge() -> Result<()> {
     let mut endpoint = NativeEndpoint::listen_clients(
         UdpSocket::bind("127.0.0.1:0")?,
-        SigningKey::from_bytes(&[73; 32]),
+        crate::test_identity::key(73),
         1,
         vec![17],
         NativeHandshakeBudget {

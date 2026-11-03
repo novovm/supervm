@@ -1321,7 +1321,10 @@ fn exercise_record_profile_fresh_transfers() {
         )
         .unwrap();
         assert!(protected.is_empty());
-        assert_eq!(workspace::list_v1(chain, params).unwrap(), registered_catalog);
+        assert_eq!(
+            workspace::list_v1(chain, params).unwrap(),
+            registered_catalog
+        );
         assert_eq!(
             workspace::load_block_artifact_v1(chain, next_input.workspace_id, params)
                 .unwrap()
@@ -1433,7 +1436,7 @@ fn finalize_record_candidate_fixture(
             .iter()
             .map(|validator| NovNativeSealValidatorTransportBindingV1 {
                 validator_id: validator.validator_id,
-                transport_peer_id: novovm_network::peer_id_from_ed25519_public_key_v1(
+                transport_peer_id: crate::product_relay_client::component_transport_peer(
                     &validator.public_key,
                 ),
             })

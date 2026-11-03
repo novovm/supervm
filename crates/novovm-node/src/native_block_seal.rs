@@ -3149,9 +3149,10 @@ pub(crate) mod tests {
                         .iter()
                         .map(|validator| NovNativeSealValidatorTransportBindingV1 {
                             validator_id: validator.validator_id,
-                            transport_peer_id: novovm_network::peer_id_from_ed25519_public_key_v1(
-                                &validator.public_key,
-                            ),
+                            transport_peer_id:
+                                crate::product_relay_client::component_transport_peer(
+                                    &validator.public_key,
+                                ),
                         })
                         .collect(),
                 )

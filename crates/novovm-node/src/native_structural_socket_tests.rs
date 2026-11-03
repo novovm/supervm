@@ -247,8 +247,8 @@ fn original_socket_authenticates_reassembles_and_checks_signed_apfl_without_raw_
         lifetime: Duration::from_secs(5),
         retry: Duration::from_millis(10),
     };
-    let node_key = SigningKey::from_bytes(&[74; 32]);
-    let client_key = SigningKey::from_bytes(&[75; 32]);
+    let node_key = crate::product_relay_client::component_identity(&[74; 32]);
+    let client_key = crate::product_relay_client::component_identity(&[75; 32]);
     let original = UdpTransport::bind_for_chain(NodeId(40), "127.0.0.1:0", CHAIN + 1).unwrap();
     let address = original.local_addr().unwrap();
     let stale_reader = original.clone();
@@ -285,7 +285,7 @@ fn original_socket_authenticates_reassembles_and_checks_signed_apfl_without_raw_
         UdpSocket::bind("127.0.0.1:0").unwrap(),
         client_key,
         NativePeer {
-            key: node_key.verifying_key().to_bytes(),
+            key: node_key.public_key().to_vec(),
             address,
         },
         budget(),

@@ -2,10 +2,10 @@
 //! Transport authentication is real Ed25519; this is not ML-DSA runtime or
 //! independent validator-process acceptance.
 use super::*;
+use crate::native_pipeline::consensus::crypto::component_transport_identity;
 use crate::native_pipeline::consensus::wire::{
     Context as VoteContext, Phase, Validator, ValidatorSet,
 };
-use ed25519_dalek::SigningKey;
 use novovm_consensus::round_bft::test_vectors::{self, FixtureSigningKey};
 use novovm_network::novorudp::{
     endpoint::{NativeHandshakeBudget, NativePeer},
@@ -242,7 +242,7 @@ impl Mesh {
             let peers = (0..keys.len())
                 .filter(|&j| j != i)
                 .map(|j| NativePeer {
-                    key: transport_keys[j].verifying_key().to_bytes(),
+                    key: transport_keys[j].public_key().to_vec(),
                     address: addresses[j],
                 })
                 .collect();
@@ -441,13 +441,13 @@ impl Mesh {
 
 // Test transport identity is independently generated, never truncated or
 // inferred from a validator public key. This helper is not a production key API.
-pub(crate) fn component_transport_key(index: usize) -> SigningKey {
-    SigningKey::from_bytes(&[151 + index as u8; 32])
+pub(crate) fn component_transport_key(index: usize) -> TransportIdentity {
+    component_transport_identity([151 + index as u8; 32])
 }
 
 type SeparatedMaterial = (
     Vec<FixtureSigningKey>,
-    Vec<SigningKey>,
+    Vec<TransportIdentity>,
     MessageDomain,
     VoteContext,
 );
@@ -457,7 +457,7 @@ fn separated_material() -> Result<SeparatedMaterial> {
         .map(|seed| FixtureSigningKey::from_bytes(&[seed; 32]))
         .collect::<Vec<_>>();
     let transport = (151..155)
-        .map(|seed| SigningKey::from_bytes(&[seed; 32]))
+        .map(|seed| component_transport_identity([seed; 32]))
         .collect::<Vec<_>>();
     let validators = Arc::new(ValidatorSet::new_for_test(
         292,
@@ -494,14 +494,14 @@ fn separated_material() -> Result<SeparatedMaterial> {
 fn split_bindings(
     domain: &MessageDomain,
     signing: &[FixtureSigningKey],
-    transport: &[SigningKey],
+    transport: &[TransportIdentity],
 ) -> Result<ValidatorTransportBindings> {
     ValidatorTransportBindings::new(
         &domain.validators,
         signing.iter().zip(transport).map(|(signing, transport)| {
             (
                 signing.verifying_key().to_bytes(),
-                transport.verifying_key().to_bytes(),
+                transport.public_key().to_vec(),
             )
         }),
     )
@@ -547,7 +547,7 @@ fn validator_transport_bindings_are_bijective_separated_and_canonical() -> Resul
     let pairs = signing
         .iter()
         .zip(&transport)
-        .map(|(s, t)| (s.verifying_key().to_bytes(), t.verifying_key().to_bytes()))
+        .map(|(s, t)| (s.verifying_key().to_bytes(), t.public_key().to_vec()))
         .collect::<Vec<_>>();
     let bindings = ValidatorTransportBindings::new(&domain.validators, pairs.clone())?;
     let reversed =
@@ -559,20 +559,18 @@ fn validator_transport_bindings_are_bijective_separated_and_canonical() -> Resul
     for (validator, transport) in &pairs {
         assert_eq!(bindings.transport_public_key(validator)?, *transport);
         assert_eq!(
-            bindings.validator_for_peer(&peer_id_from_ed25519_public_key_v1(transport))?,
+            bindings.validator_for_peer(&peer_id_from_mldsa65_public_key_v1(transport))?,
             Validator::new(validator.clone(), 1)?.id()
         );
     }
     assert!(bindings
-        .validator_for_peer(&peer_id_from_ed25519_public_key_v1(
-            &SigningKey::from_bytes(&[200; 32])
-                .verifying_key()
-                .to_bytes()
+        .validator_for_peer(&peer_id_from_mldsa65_public_key_v1(
+            component_transport_identity([200; 32]).public_key()
         ))
         .is_err());
     let mut swapped = pairs.clone();
-    swapped[0].1 = pairs[1].1;
-    swapped[1].1 = pairs[0].1;
+    swapped[0].1 = pairs[1].1.clone();
+    swapped[1].1 = pairs[0].1.clone();
     assert_ne!(
         bindings.canonical_commitment(),
         ValidatorTransportBindings::new(&domain.validators, swapped)?.canonical_commitment()
@@ -584,7 +582,7 @@ fn validator_transport_bindings_are_bijective_separated_and_canonical() -> Resul
         let mut bad = pairs.clone();
         match variant {
             0 => bad[1].0 = bad[0].0.clone(),
-            1 => bad[1].1 = bad[0].1,
+            1 => bad[1].1 = bad[0].1.clone(),
             2 => bad[0].0 = bad[0].1.to_vec(),
             3 => bad[0].0 = bad[1].1.to_vec(),
             4 => {
@@ -592,7 +590,7 @@ fn validator_transport_bindings_are_bijective_separated_and_canonical() -> Resul
                     .verifying_key()
                     .to_bytes()
             }
-            _ => bad[0].1 = [0; 32],
+            _ => bad[0].1 = vec![0; 1952],
         }
         assert!(
             ValidatorTransportBindings::new(&domain.validators, bad).is_err(),
@@ -609,7 +607,7 @@ fn validator_transport_bindings_are_bijective_separated_and_canonical() -> Resul
 #[test]
 fn original_transport_rejects_unbound_local_and_remote_identities() -> Result<()> {
     let (signing, transport, domain, _) = separated_material()?;
-    let foreign = SigningKey::from_bytes(&[200; 32]);
+    let foreign = component_transport_identity([200; 32]);
     let bindings = split_bindings(&domain, &signing, &transport)?;
     for variant in 0..4 {
         let socket = UdpTransport::bind_for_chain(
@@ -625,20 +623,20 @@ fn original_transport_rejects_unbound_local_and_remote_identities() -> Result<()
         let peers = match variant {
             0 => Vec::new(),
             1 => vec![NativePeer {
-                key: foreign.verifying_key().to_bytes(),
+                key: foreign.public_key().to_vec(),
                 address: "127.0.0.1:19001".parse()?,
             }],
             2 => vec![NativePeer {
-                key: transport[0].verifying_key().to_bytes(),
+                key: transport[0].public_key().to_vec(),
                 address: "127.0.0.1:19001".parse()?,
             }],
             _ => vec![
                 NativePeer {
-                    key: transport[1].verifying_key().to_bytes(),
+                    key: transport[1].public_key().to_vec(),
                     address: "127.0.0.1:19001".parse()?,
                 },
                 NativePeer {
-                    key: transport[1].verifying_key().to_bytes(),
+                    key: transport[1].public_key().to_vec(),
                     address: "127.0.0.1:19002".parse()?,
                 },
             ],
@@ -664,7 +662,6 @@ fn original_transport_rejects_unbound_local_and_remote_identities() -> Result<()
 
 #[test]
 fn original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery() -> Result<()> {
-    use ed25519_dalek::Signer;
     let (signing, transport_keys, domain, context) = separated_material()?;
     let bindings = split_bindings(&domain, &signing, &transport_keys)?;
     let transports = (0..signing.len())
@@ -693,7 +690,7 @@ fn original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery
                 (0..signing.len())
                     .filter(|&j| i != j)
                     .map(|j| NativePeer {
-                        key: transport_keys[j].verifying_key().to_bytes(),
+                        key: transport_keys[j].public_key().to_vec(),
                         address: addresses[j],
                     })
                     .collect(),
@@ -715,9 +712,7 @@ fn original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery
         for (peer, remote) in (0..signing.len()).filter(|&i| i != local).enumerate() {
             assert_eq!(
                 channel.peer_id(peer)?,
-                peer_id_from_ed25519_public_key_v1(
-                    &transport_keys[remote].verifying_key().to_bytes()
-                )
+                peer_id_from_mldsa65_public_key_v1(transport_keys[remote].public_key())
             );
             assert_eq!(
                 channel.validator_for_peer(peer)?,
@@ -758,9 +753,10 @@ fn original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery
         .is_err(),
         "transport key must not acquire validator signing membership"
     );
-    let transport_signature = transport_keys[0]
-        .sign(b"transport possession is not a vote")
-        .to_bytes();
+    let transport_signature = transport_keys[0].sign(
+        b"transport possession is not a vote",
+        b"fixture-transport-context",
+    )?;
     forged.signature = vec![0; novovm_consensus::round_bft::crypto::MLDSA65_SIGNATURE_BYTES];
     forged.signature[..transport_signature.len()].copy_from_slice(&transport_signature);
     assert!(mesh.channels[0]

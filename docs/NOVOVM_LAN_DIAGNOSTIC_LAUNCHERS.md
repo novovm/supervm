@@ -6,6 +6,17 @@ block finality, phone chat discovery or the Product Mainline runtime:
 - `scripts/novovm-overlay-cross-machine-process-gate.ps1`
 - `scripts/novovm-adaptive-overlay-cross-machine-smoke.ps1`
 
+2026-11-03 signature-migration boundary: these scripts still build/run
+`supervm-network-overlay-gate`, whose historical directory/identity signing
+uses Ed25519. They are not the current ML-DSA-65 `NativeEndpoint` qualification
+entry and are not included in the original product Linux packager's current
+11-binary contract. The related node-process matrix, fallback-chain process gate
+and old headless gate packager share this unmigrated diagnostic boundary.
+Their success must not qualify the new A/B/C/D authentication contract; use the
+[current protected native endpoint entry](novovm-product-nat-runtime-v1.md).
+Historical diagnostic results remain historical evidence, not an algorithm
+fallback or proof that every repository tool has migrated.
+
 Their shared binary resolver now stops on Cargo failure even if an old executable
 exists. Both build and lookup use the same explicit target directory: an absolute
 `CARGO_TARGET_DIR`, a repository-relative `CARGO_TARGET_DIR`, or `<repo>/target`
