@@ -1,0 +1,7 @@
+{
+  "status": "STOPPED_D",
+  "stage": "preflight",
+  "stopped_at": "2026-11-04T07:01:40.8499683+08:00",
+  "reason": "Original sealed identity metadata differs from receipt",
+  "retry_performed": false
+}

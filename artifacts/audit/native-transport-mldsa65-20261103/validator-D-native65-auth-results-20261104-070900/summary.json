@@ -1,0 +1,201 @@
+{
+  "node": "validator-D",
+  "result": "D_CLIENT_TWO_AUTHENTICATED_ROUND_TRIPS_CONFIRMED_PENDING_B_REPORT_RECONCILIATION",
+  "checked_local": "2026-11-04T07:14:40.5616779+08:00",
+  "read_main_commit": "6278fdcd401d1faa2d20340acc6745b70cf250d6",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "configuration_zip_sha256": "99a4dfbd8cf819c9e4286a0aaf0edaf976ae61a8b3ab203a80cb7bad22e9cebd",
+  "armed_local": "2026-11-04T07:02:25.5292076+08:00",
+  "scheduled_local": "2026-11-04T07:09:00+08:00",
+  "actual_start_local": "2026-11-04T07:09:00.026677+08:00",
+  "finished_local": "2026-11-04T07:09:00.7482341+08:00",
+  "first_started_in_scheduled_second": true,
+  "same_original_D_public_key_sha256": "30019ff63f5f8c1f77029990aaf2657c3bb6dad562d957d78f0b60d8d349c934",
+  "expected_B_public_key_sha256": "741cb7b6d0964de5a1a70adf64f1399cacf117f6aae838fd78e1000320b9a676",
+  "peer_id_check": "Diagnostic reference of original peer_id_from_mldsa65_public_key_v1 over domain-separated full raw public key, not the plain public-key fingerprint",
+  "results": [
+    {
+      "case": "first",
+      "exit_code": 0,
+      "started_local": "2026-11-04T07:09:00.026677+08:00",
+      "finished_local": "2026-11-04T07:09:00.345351+08:00",
+      "accepted": true,
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "local_peer_id": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "peer_id": "novovm-mldsa65:a44d68f612d0bfbcce70fe4900383060c385d588103513e6c9a9296bd0dd3ad6",
+      "local_bind_addr": "0.0.0.0:61541",
+      "observed_endpoint": "114.92.30.222:61367",
+      "session_id_hex": "8cb4ea3aae03518b95a1d9adcad27686",
+      "session_id_bytes": [
+        140,
+        180,
+        234,
+        58,
+        174,
+        3,
+        81,
+        139,
+        149,
+        161,
+        217,
+        173,
+        202,
+        210,
+        118,
+        134
+      ],
+      "config_sha256_unchanged": "cf51b75ebcc04b6a37ef5c2c10e1a70ddb2d07a49d9b54c67476367c5e032d42",
+      "stdout_json_matches_original_report": true,
+      "stderr_bytes": 0,
+      "handshake_version": 2,
+      "signature_suite": 65,
+      "novorudp_inner_frame_preserved": true,
+      "aoem_called": true,
+      "ledger_semantics": false
+    },
+    {
+      "case": "second",
+      "exit_code": 0,
+      "started_local": "2026-11-04T07:09:00.3544414+08:00",
+      "finished_local": "2026-11-04T07:09:00.7458924+08:00",
+      "accepted": true,
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "local_peer_id": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "peer_id": "novovm-mldsa65:a44d68f612d0bfbcce70fe4900383060c385d588103513e6c9a9296bd0dd3ad6",
+      "local_bind_addr": "0.0.0.0:61543",
+      "observed_endpoint": "114.92.30.222:61374",
+      "session_id_hex": "7b23789962dc401fd33156c53fd13dfd",
+      "session_id_bytes": [
+        123,
+        35,
+        120,
+        153,
+        98,
+        220,
+        64,
+        31,
+        211,
+        49,
+        86,
+        197,
+        63,
+        209,
+        61,
+        253
+      ],
+      "config_sha256_unchanged": "2a0310e5872dd48f2b8183942f2668561ef95f6d1bd7f274b4145676e4198229",
+      "stdout_json_matches_original_report": true,
+      "stderr_bytes": 0,
+      "handshake_version": 2,
+      "signature_suite": 65,
+      "novorudp_inner_frame_preserved": true,
+      "aoem_called": true,
+      "ledger_semantics": false
+    }
+  ],
+  "session_ids_different": true,
+  "verified_original_files": [
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovm-product-nat.exe",
+      "sha256": "970e89225b5daa6a1563e0d5313db3cf25ad3ba2a90a0cc2188c8bf5a58dec73",
+      "bytes": 6633472,
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovmctl.exe",
+      "sha256": "58db89fe535c2111197b8d8da174e8a264efb255a06c1fe54d695ed811738903",
+      "bytes": 25115136,
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+      "sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "bytes": 48345088,
+      "unchanged": true
+    }
+  ],
+  "sealed_identity_metadata_unchanged": true,
+  "original_evidence_copies": [
+    {
+      "path": "first.report.json",
+      "bytes": 926,
+      "sha256": "05fa5d9fb7f7bb7cd0e3e25fd3ca23e5421a31e71ef3704d1708a987040278bb",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "first.stdout.txt",
+      "bytes": 927,
+      "sha256": "fabbe61f98f529cc79c5d3c1badb23e5d9cd05c062353e3085e93d9a42f2a0ee",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "first.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "second.report.json",
+      "bytes": 922,
+      "sha256": "1849dac50981e7c5c468dec084281d9fba1bb898d2e58259e967dcc0c31749e3",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "second.stdout.txt",
+      "bytes": 923,
+      "sha256": "15edc3c2ed70224e5aea75780f1b159e928b44e520912213ec6bdbc95ec68f82",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "second.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "armed.json",
+      "bytes": 1289,
+      "sha256": "d2db34cba2d1b99d7c9584e0fb3dbe719c219b9ab6acaf46c927aba94c94a532",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "first.execution.json",
+      "bytes": 669,
+      "sha256": "57c4cfcd7987ec4655f3c736a35dd872b77db9002371d42d3c6758059b50a436",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "second.execution.json",
+      "bytes": 674,
+      "sha256": "9af3958744faa7d0c95b83c3b1c5824b57b5a5ddb0258b38fa84740b63a3c9e2",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "completion.json",
+      "bytes": 524,
+      "sha256": "434a40fdc2b0a0aee38d125ea49c2755e16049dd2f7381a3d61f2a8848b2e277",
+      "original_bytes_preserved": true
+    },
+    {
+      "path": "preflight-stopped.json",
+      "bytes": 203,
+      "sha256": "c561f725385ba7fcf092ea3f79a213d234096e3de32fce62a5073b746327a89b",
+      "original_bytes_preserved": true
+    }
+  ],
+  "preflight_note": "Before arming, PowerShell DateTime string coercion lost timezone/fractional precision in a local metadata check. Exact UTC ticks and length matched. Only the waiting-script timestamp reader was corrected; preserve preflight-stopped.json. No probe or network test occurred in that stopped preflight.",
+  "bounds": {
+    "B_observer_report_reconciled_by_D": false,
+    "scheduled_task_or_service_created": false,
+    "old_session_packet_replay_counterexample_accepted": false,
+    "private_material_exported": false,
+    "clock_identity_config_or_production_timeout_changed": false,
+    "new_probe_or_retry_during_review": false,
+    "B_initiated_home_NAT_reachability_accepted": false,
+    "validator_or_chain_started": false,
+    "four_host_authentication_accepted": false
+  },
+  "next_action": "A correlates both D sessions, peer identities and observed endpoints with original B reports; no automatic rerun"
+}

@@ -1,0 +1,11 @@
+{
+  "node": "validator-D",
+  "case": "first",
+  "started_at": "2026-11-04T07:09:00.0266770+08:00",
+  "finished_at": "2026-11-04T07:09:00.3453510+08:00",
+  "exit_code": 0,
+  "config_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\probe-D-B-first.json",
+  "report_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\reports\\probe-D-B-first.json",
+  "stdout_path": "D:\\WEB3_AI\\SUPERVM\\target\\validator-D-auth-armed-20261104-070900\\armed\\first.stdout.log",
+  "stderr_path": "D:\\WEB3_AI\\SUPERVM\\target\\validator-D-auth-armed-20261104-070900\\armed\\first.stderr.log"
+}

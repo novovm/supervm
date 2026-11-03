@@ -1,0 +1,26 @@
+{
+  "status": "ARMED_D",
+  "node": "validator-D",
+  "armed_at": "2026-11-04T07:02:25.5292076+08:00",
+  "due_at_beijing": "2026-11-04T07:09:00.0000000+08:00",
+  "process_id": 48432,
+  "account": "SUPERVM-L2-01\\ASUS",
+  "executable": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovm-product-nat.exe",
+  "configs": [
+    "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\probe-D-B-first.json",
+    "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\probe-D-B-second.json"
+  ],
+  "config_hashes": [
+    "cf51b75ebcc04b6a37ef5c2c10e1a70ddb2d07a49d9b54c67476367c5e032d42",
+    "2a0310e5872dd48f2b8183942f2668561ef95f6d1bd7f274b4145676e4198229"
+  ],
+  "reports": [
+    "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\reports\\probe-D-B-first.json",
+    "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\reports\\probe-D-B-second.json"
+  ],
+  "mode": "one retained foreground terminal process; no scheduled task or service",
+  "first_failure_stops_second": true,
+  "missed_time_no_catchup": true,
+  "report_overwrite_allowed": false,
+  "clock_or_identity_or_timeout_changed": false
+}

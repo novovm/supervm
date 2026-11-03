@@ -1,0 +1,11 @@
+{
+  "status": "D_TWO_ORIGINAL_PROBES_COMPLETED",
+  "completed_at": "2026-11-04T07:09:00.7482341+08:00",
+  "reports": [
+    "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\reports\\probe-D-B-first.json",
+    "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\reports\\probe-D-B-second.json"
+  ],
+  "cross_host_acceptance_requires_B_matching_reports": true,
+  "four_host_authentication_accepted": false,
+  "old_session_replay_accepted": false
+}
