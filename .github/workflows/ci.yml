@@ -39,12 +39,18 @@ jobs:
       - name: Reject failed and misattributed LAN reports
         shell: pwsh
         run: ./scripts/tests/adaptive-overlay-aggregate.tests.ps1
-      - name: Bound Linux package replacement and consume actual Cargo artifacts
+      - name: Bound package replacement, runtime preflight and platform adapters
         shell: pwsh
         run: |
           ./scripts/tests/linux-package-safety.tests.ps1
           ./scripts/tests/linux-package-build-failure.tests.ps1
           ./scripts/tests/linux-package-assembly.tests.ps1
+          if ($IsWindows) {
+            # Exercise Windows canonical path prefixes on an actual Windows host.
+            ./scripts/tests/linux-package-assembly.tests.ps1 -Target x86_64-pc-windows-msvc
+            ./scripts/tests/windows-relay-install.tests.ps1
+            ./scripts/tests/windows-node-network.tests.ps1
+          }
 
   governance_pr_gate_observability:
     name: Governance PR Gate observability

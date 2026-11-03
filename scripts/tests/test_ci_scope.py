@@ -164,6 +164,21 @@ class ScopeTests(unittest.TestCase):
             self.assertIn(command, rust)
         self.assertNotIn("ci-native-runtime-candidate", jobs["runtime_modules_release"])
 
+    def test_original_script_matrix_covers_windows_package_and_adapter_contracts(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        block = jobs["lan_script_launch"]
+        self.assertIn("os: [ubuntu-latest, windows-latest]", block)
+        for command in ("./scripts/tests/linux-package-safety.tests.ps1",
+                        "./scripts/tests/linux-package-build-failure.tests.ps1",
+                        "./scripts/tests/linux-package-assembly.tests.ps1\n"):
+            self.assertIn(command, block)
+        windows = re.search(r"if \(\$IsWindows\) \{(.*?)\n          \}", block, re.S).group(1)
+        for command in ("./scripts/tests/linux-package-assembly.tests.ps1 -Target x86_64-pc-windows-msvc",
+                        "./scripts/tests/windows-relay-install.tests.ps1",
+                        "./scripts/tests/windows-node-network.tests.ps1"):
+            self.assertEqual(windows.count(command), 1)
+
     def test_missing_history_and_malformed_event_select_full(self):
         for raw in ("{broken", "null", "[]", json.dumps({"before": [], "after": "b" * 40}),
                     json.dumps({"before": "a" * 40, "after": "b" * 40})):

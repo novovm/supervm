@@ -130,9 +130,14 @@ Set-Item -LiteralPath ('Function:\global:' + $runtimeFixtureCommand) -Value {
       service_started=$false; whole_node_post_quantum_qualified=$false
     }
   }
+  if ($windowsPackage -and [IO.Path]::DirectorySeparatorChar -eq '\') {
+    # Match the real Rust canonicalize() report, not only PowerShell's DOS path.
+    $report.data.library = '\\?\' + $RuntimeArguments[3]
+  }
   switch ($fixtureState.qualificationMode) {
     'missing' { $report.Remove('data') }
     'wrong-hash' { $report.data.library_sha256 = '0' * 64 }
+    'wrong-library' { $report.data.library = Join-Path $fixture "build/novovm-node$binarySuffix" }
     'wrong-scope' { $report.data.qualification = 'capability-bit-only' }
     'missing-batch' { $report.data.Remove('mixed_batch_verification_kat_passed') }
     'false-batch' { $report.data.mixed_batch_verification_kat_passed = $false }
@@ -157,6 +162,10 @@ if ($fixtureState.qualificationCalls -ne 1 -or !$manifest.aoem_runtime.verificat
 $qualification = Get-Content -LiteralPath (Join-Path $output $manifest.aoem_runtime.qualification_report) -Raw | ConvertFrom-Json
 if ($qualification.data.library_sha256 -cne $coreSha -or !$qualification.data.mixed_batch_verification_kat_passed) {
   throw 'The original runtime qualification output must be retained for the exact selected core'
+}
+if ($windowsPackage -and [IO.Path]::DirectorySeparatorChar -eq '\' -and
+    !$qualification.data.library.StartsWith('\\?\', [StringComparison]::Ordinal)) {
+  throw 'Windows assembly must exercise the real Rust extended canonical path report'
 }
 $expectedScope = if ($windowsPackage) { 'novovm_unified_windows_release_v1' } else { 'novovm_unified_linux_release_v3' }
 if ($manifest.scope -ne $expectedScope -or $manifest.target -ne $Target -or $manifest.build_contracts.Count -ne 11 -or
@@ -323,7 +332,7 @@ if ((Get-FileHash (Join-Path $output "bin/novovm-node$binarySuffix") -Algorithm 
   throw 'Package copy still aliases mutable Cargo source'
 }
 $fixtureState.tamper = $false
-foreach ($mode in @('nonzero', 'missing', 'wrong-hash', 'wrong-scope', 'missing-batch', 'false-batch')) {
+foreach ($mode in @('nonzero', 'missing', 'wrong-hash', 'wrong-library', 'wrong-scope', 'missing-batch', 'false-batch')) {
   $fixtureState.qualificationMode = $mode
   $callsBefore = $fixtureState.qualificationCalls
   $originalManifestSha = (Get-FileHash -LiteralPath (Join-Path $output 'release-manifest.json') -Algorithm SHA256).Hash
@@ -360,4 +369,4 @@ $isolated = Get-Content -Raw -LiteralPath (Join-Path $fixture 'artifacts/product
 if (!$isolated.aoem_runtime.isolated_package_input -or $isolated.aoem_runtime.sha256 -ne $coreSha) {
   throw 'The original assembly must bind and record its explicit isolated AOEM input'
 }
-Write-Output "PASS: original unified assembly (11 binary contracts), verification-only runtime preflight plus 6 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"
+Write-Output "PASS: original unified assembly (11 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"

@@ -69,6 +69,19 @@ function Resolve-PackageDestination([string]$Repository, [string]$Directory) {
   return $candidate
 }
 
+function Get-ComparableRuntimeLibraryPath([string]$Path, [bool]$WindowsPath) {
+  # Rust canonicalize() uses extended Windows paths. Preserve the file identity
+  # while comparing the same DOS/UNC path chosen by the PowerShell owner.
+  if ($WindowsPath) {
+    if ($Path.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) {
+      $Path = '\\' + $Path.Substring(8)
+    } elseif ($Path -cmatch '^\\\\\?\\[A-Za-z]:\\') {
+      $Path = $Path.Substring(4)
+    }
+  }
+  return [IO.Path]::GetFullPath($Path)
+}
+
 function Get-CargoExecutable([object[]]$Messages, [string]$Binary, [string]$ExpectedTarget = 'x86_64-unknown-linux-gnu') {
   $artifacts = @($Messages | ForEach-Object {
     $message = $_ | ConvertFrom-Json
@@ -273,6 +286,15 @@ try {
   $runtimeQualification = ($runtimeQualificationOutput -join "`n") | ConvertFrom-Json
   $runtimeData = $runtimeQualification.data
   $runtimeQualificationScope = 'ml-dsa-65-native-verification-owner'
+  $runtimeLibraryMatches = $false
+  if ($runtimeData.library -is [string] -and ![string]::IsNullOrWhiteSpace($runtimeData.library) -and
+      [IO.Path]::IsPathFullyQualified($runtimeData.library)) {
+    $reportedLibrary = Get-ComparableRuntimeLibraryPath $runtimeData.library $windowsPackage
+    $selectedLibrary = Get-ComparableRuntimeLibraryPath $aoemCore $windowsPackage
+    $pathComparison = if ($windowsPackage) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $runtimeLibraryMatches = [string]::Equals($reportedLibrary, $selectedLibrary, $pathComparison) -and
+      (Test-Path -LiteralPath $reportedLibrary -PathType Leaf)
+  }
   if ($runtimeQualification.ok -isnot [bool] -or !$runtimeQualification.ok -or
       $runtimeQualification.command -cne 'native-identity' -or
       $runtimeData.action -cne 'qualify-runtime' -or
@@ -280,9 +302,7 @@ try {
       $runtimeData.algorithm -cne 'ML-DSA-65' -or
       $runtimeData.signature_suite -isnot [long] -or $runtimeData.signature_suite -ne 65 -or
       $runtimeData.library_sha256 -cne $actualAoemSha -or
-      [string]::IsNullOrWhiteSpace($runtimeData.library) -or
-      ![IO.Path]::IsPathFullyQualified($runtimeData.library) -or
-      [IO.Path]::GetFullPath($runtimeData.library) -ne [IO.Path]::GetFullPath($aoemCore)) {
+      !$runtimeLibraryMatches) {
     throw 'Native identity runtime qualification report does not match the built owner and pinned core.'
   }
   foreach ($field in @('verification_qualified', 'scalar_verification_kat_passed',

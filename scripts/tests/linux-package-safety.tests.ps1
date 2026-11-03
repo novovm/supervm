@@ -108,6 +108,14 @@ Expect-Rejection { Get-CargoExecutable $peMessages 'fixture' 'x86_64-pc-windows-
 $peBytes[68]=0x64; $peBytes[69]=0x86; $peBytes[88]=0x0b; $peBytes[89]=0x01
 [IO.File]::WriteAllBytes($pe, $peBytes)
 Expect-Rejection { Get-CargoExecutable $peMessages 'fixture' 'x86_64-pc-windows-msvc' } '*not PE32+*'
+# No network/file access: verify only Windows canonical-prefix equivalence.
+if ((Get-ComparableRuntimeLibraryPath '\\?\UNC\host\share\core.dll' $true) -cne
+    (Get-ComparableRuntimeLibraryPath '\\host\share\core.dll' $true) -or
+    (Get-ComparableRuntimeLibraryPath '\\?\D:\candidate\core.dll' $true) -cne
+    (Get-ComparableRuntimeLibraryPath 'D:\candidate\core.dll' $true)) {
+  throw 'Extended DOS/UNC canonical paths must preserve the selected Windows file path'
+}
+$checks++
 Expect-Rejection { Assert-PlainPackagePath (Join-Path $link 'cargo-elf-hardlink') -AllowFileHardLink } '*links/reparse points*'
 # Directory links are covered above on both platforms; file symlinks require
 # elevation on some Windows runners, so exercise the actual file case on Linux.
