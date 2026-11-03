@@ -277,7 +277,9 @@ impl NativeHandshake {
                         self.cached_response = Some(wire.to_vec());
                         self.ready = true;
                         self.outgoing = None;
-                        self.continuation = None;
+                        // Retain this one flight's bounded metadata so a delayed
+                        // Init reply still checks its original commitment and
+                        // deadline. No transcript remains queued for sending.
                     }
                     Err(failure) => {
                         let (initiator, error) = *failure;

@@ -96,13 +96,18 @@ fn identity_rejection_fixture() -> Result<(
     std::net::UdpSocket,
     config::test_custody::TestCredentialGuard,
 )> {
-    let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/runtime-rebuild/config-tests/purpose-identity")
-        .join(format!(
-            "{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ));
+    #[cfg(unix)]
+    let root = std::env::temp_dir().join("novovm-purpose-identity");
+    #[cfg(not(unix))]
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/config-tests/purpose-identity");
+    // WSL checkouts may be on DrvFs without Unix permission metadata. Custody
+    // fixtures need the same real 0700 ownership as the production loader.
+    let directory = root.join(format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
     std::fs::create_dir_all(&directory)?;
     let directory = config::native_path(&directory.canonicalize()?);
     let credentials = config::test_custody::TestCredentialGuard::new(&directory)?;

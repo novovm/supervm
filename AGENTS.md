@@ -1,5 +1,43 @@
 # Agent Highest Law
 
+## 2026-11-03 最高架构：统一语义、原生结构化数据与唯一正式主链
+
+用户明确要求以 AOEM 统一语义作为开发的最高架构约束。沿现有
+`novovm-node -> novovm-exec -> aoem-bindings -> AOEM` 接线；复用原 NovoRUDP/APFL、
+状态、证明、调度和发布所有者，不另造执行器、密码引擎、隐私引擎、账本或网络。
+通用执行优先既有 `aoem_execute_ops_wire_v1`；CPU/GPU 是同一语义的后端，
+不是两个产品路径。统一语义不是仅保留函数名、增加包装层或把 Host 串行逻辑藏入回调。
+
+从交易产生、传输、AOEM 到持久化，优先保留二进制/APFL及已验证类型化视图，
+减少重复展开、编码、复制和校验。不得把原生热数据改成 APFL→JSON→二进制往返，
+或用 NovoRUDP 外壳包 JSON 冒充结构化接通。必要分帧、加密和不同二进制合同不等于
+任意重复转换；应说明实际复用与尚存物化，未测不得声称全程最短、零复制或 TPS 改善。
+配置/报告 JSON 与热路径区分；既有 canonical 接口规定的版本化载荷不能擅自改写。
+
+AOEM 的 `aoem_privacy_execute_v1` 是其 `privacy-verify` 构建中的 canonical
+Production ABI；按既有隐私合同复用，不能降称“只有实验接口”，也不能为强塞一个
+C 函数而另造隐私路线。ZK MSM、resident proof/lifecycle、zkVM及非 canonical
+RingCT 等保留各自的能力、feature、授权和晋升边界，不用一个内核成功覆盖全部证明。
+能力存在、Production ABI 定位、具体包/授权默认可用、实际加载库及 NOVOVM 业务闭环
+分别验收。不得靠改 manifest、关闭授权、旧算法回退或未提交源码替实际制品背书。
+隐私 feature 许可、具体资产账户支配权、普通网络接入是不同权限；ML-DSA 外签名
+不会自动让经典隐私证明具有抗量子资格。Host 的余额、费用、防双花、权限及最终发布
+继续由原所有者原子处理，不下沉 NOV 专属政策到 AOEM。
+
+正式产品只承认唯一 NOVOVM 主网。正式发行的主网 chain_id、创世与可信承诺必须来自
+获批固定发行配置，不由远端、网页或普通用户任意覆盖；不提供每设备建链流程。
+内部工具仍保留显式域参数用于隔离反例，不等于开放正式多链产品。
+用户另行批准的四机公测域 `167999907280566` 仅用于本次独立传输用途身份和认证，
+不是正式主网值，不授权创世、启链、NOV 分配或 B 既有服务切换。
+普通设备本地生成身份、按公开规则加入，不申请 A/官方入网许可证；验证者、资产、
+服务等特殊权限仍分别核验。L1—L4 沿原职责划分，不按硬件档次重造四层架构。
+
+首次同步的 ZK 应复用原证明体系，验证客户端预先固定的可信起点/程序、状态与所需
+共识证据，并处理新鲜度和防回退；远端不能自选信任根或 ImageID。现有执行 receipt
+不自动证明权威父状态或最终性，不得改名冒充完整入网证明。原 ML-DSA 持钥、会话
+绑定、重连、AEAD及重放检查继续保留，不另建中心发证系统。本段是明确的开发约束，
+不是这些尚未接通关系已经实现、完整 CI 已过或主网发布获准的声明。
+
 ## 2026-11-02 latest customer billing: monthly subscription, provider daily settlement
 
 Founder personal proceeds derive from approved genesis-owned NOV and actual market sales, not subscription dividends. NOV holdings alone confer no equity or system-income dividend rights. The user now confirms the overall subscription allocation design: 80% node-service budget, 20% network purposes, 0% founder personal share. The internal 10% development treasury + 10% network assurance split remains a candidate. This supersedes the earlier historical-query-only status; fee responsibility, unused-budget carryover, receiving accounts and final settlement rules still need finalization. It does not authorize production charging or approve genesis allocations.

@@ -1,6 +1,6 @@
 //! In-process network components use explicitly branded consensus fixtures.
-//! Transport authentication is real Ed25519; this is not ML-DSA runtime or
-//! independent validator-process acceptance.
+//! Transport uses the branded ML-DSA-shaped component identity provider; this
+//! is not actual AOEM ML-DSA runtime or independent validator-process acceptance.
 use super::*;
 use crate::native_pipeline::consensus::crypto::component_transport_identity;
 use crate::native_pipeline::consensus::wire::{
@@ -347,7 +347,7 @@ impl Mesh {
                     }
                 }
             }
-            completed += mesh.pump()?;
+            completed += mesh.pump().context("establishing native mesh")?;
             for channel in &mut mesh.channels {
                 while let Some(event) = channel.poll_receive_lane(0, Instant::now(), 64)? {
                     match event {
@@ -365,7 +365,7 @@ impl Mesh {
     }
     pub(crate) fn pump(&mut self) -> Result<usize> {
         let mut finished = 0;
-        for c in &mut self.channels {
+        for (index, c) in self.channels.iter_mut().enumerate() {
             let r = c.poll_io(
                 self.wall_base + self.start.elapsed().as_millis() as u64,
                 Instant::now(),
@@ -373,7 +373,20 @@ impl Mesh {
             )?;
             ensure!(
                 r.rejected == 0 && r.backpressured == 0,
-                "valid native fixture rejected/backpressured packets"
+                "valid native fixture rejected/backpressured packets: node={index}, elapsed={:?}, rejected={}, reasons={:?}, backpressured={}, accepted={}, duplicate={}, data_sent={}, feedback_sent={}, handshake_send_failures={}, receive_errors={}, send_failures={}, completed={}, session_changes={:?}",
+                self.start.elapsed(),
+                r.rejected,
+                r.rejection_reasons,
+                r.backpressured,
+                r.accepted_fragments,
+                r.duplicate_fragments,
+                r.data_sent,
+                r.feedback_sent,
+                r.handshake_send_failures,
+                r.receive_errors,
+                r.send_failures,
+                r.completed.len(),
+                r.session_changes
             );
             for done in r.completed {
                 ensure!(

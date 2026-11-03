@@ -288,3 +288,74 @@ Windows/Linux 原 genesis CLI 含真实 AOEM 审批反例均 12/12，原 Linux c
 CI 回归也通过。最终源码冻结及完整 CI 复验继续按实际结果记录，不拿首次失败的 CI
 或其他 SHA 的通过替代。B 仍保留原程序/服务；本节没有安装新 B
 程序、准备真实用途钥、启链、资金分配或四机认证完成的结论。
+
+## 8. 第二次冻结、当前失败与统一语义约束
+
+`main@6d519ef663d1a343987d0a8fa6e7fad6038edba5` 已生成独立两平台包；
+Windows 80 项、Linux 85 项 CHECKSUMS 再次逐文件核对一致。包内真实原 CLI/NAT
+分别 7/7、原 Relay 分别 4/4，Windows 原服务 owner 13/13 通过，日志为
+`target/transport-{windows,linux}-6d519ef6-package-*-20261103.log`。
+这些结果只资格化当时的源码/程序/核心组合，不继承给后续源码。
+
+第二次完整 [CI 41561582151](https://github.com/novovm/supervm/actions/runs/41561582151)
+已正常结束并失败。Windows/Linux 的 `Native ML-DSA runtime and actual owners`
+及 preserved runtime gates 均通过；`Rust checks` 在原生流水线 serial 测试失败：
+556 通过、6 失败、146 既有忽略。六项都触发原 Mesh 的拒包/背压断言，冻结日志
+没有原因计数，不能由此认定失败源于并发测试、AOEM、过期 CHALLENGE 或吞吐退化。
+原始 CI 输出保留于 `target/transport-ci-6d519ef6-rust-failure-20261103.log`。
+
+本机 Windows/Linux 单项、Linux 12 项原 Mesh 及完整流水线中的 Mesh 均通过，
+未复现该六项。已给原断言补充节点、原因计数、会话变化及发送/接收错误上下文，
+没有删除零拒包断言或扩大超时。完整 Linux 本机另有五项权限夹具失败：硬编码
+工作区目录落在不具备真实 Unix 0700 元数据的 WSL DrvFs；这是不同于 CI 六项的
+本机问题。仅 Unix 夹具改用原临时目录/保护凭据流程，生产权限检查保持不变。
+
+原 endpoint 精确反例确认：自己 INIT 重试引出的迟到 CHALLENGE，在完成握手并
+清空发送状态后被误记为拒绝；会话、peer 数和后续 AEAD 数据仍然正确。因此该
+反例证明分类问题，**不证明推进停顿、CI 六项根因或 TPS 收益**。原失败记录为
+`target/transport-late-challenge-old-20261103.log`。最小修正保留原有界发送 flight
+标识，仍清空待发正文；错误 flight、未知源、过期回复继续拒绝，不重新发包或重置
+会话。四项原 endpoint 测试通过；默认网络库 928 通过、13 既有忽略，记录为
+`target/transport-late-challenge-fixed-20261103.log` 和
+`target/transport-network-fixed-lib-20261103.log`。双向选举替换旧 flight 是另一个
+窗口，不因这个单向反例通过而宣称已覆盖。
+
+上述修正后的本机 Linux 原生流水线 serial 复验 **562 通过、0 失败、146 既有忽略**，
+53.44 秒；包括原来五项目录权限失败及原 Mesh 组，记录为
+`target/transport-native-pipeline-linux-fixed-triple-20261103.log`。
+全 workspace 格式检查、受影响 network/node 的 lib/tests 严格 Clippy 通过，
+记录为 `target/transport-current-{format,strict-clippy}-20261103.log`。
+中间一次遗漏显式 target triple 的本机构建已停止，不计为测试成功，也未改编译设置。
+本机成功不替代远端 CI 六项失败的复验，仍需同一冻结版本重新执行完整检查。
+
+### 新的最高架构约束与真实接线边界
+
+用户要求已写入根 `AGENTS.md`：AOEM 统一语义及原
+`node → exec → bindings → AOEM` 是最高架构；NovoRUDP/APFL 与原状态/发布所有者
+保持唯一。通用 wire、canonical `aoem_privacy_execute_v1`、ZK feature 与非 canonical
+RingCT 各沿原合同复用。Production ABI 定位、构建/授权、实际包能力、运行与业务
+闭环分别验收，不把隐私入口降为实验接口，也不强迫不同 ABI 改成一个 C 符号。
+
+本次只读核对：原资产热路径仍是 `AssetSpendBatchV3/NUAPFL03`、原二进制网络帧、
+`AOMV0001` 统一 ML-DSA 请求与二进制结果、整数 AOIP/AOIR、原状态存储 AOSQ，
+没有发现交易经 APFL→JSON→二进制往返。配置、能力元数据、诊断及 HTTP 边界
+JSON 不等于大正文 JSON。尚存的真实物化包括 `compute.rs` 的 row 展开、
+`pq_signature_semantic.rs` 的签名消息/AOMV 重打包，以及 `persistence/packet.rs`
+逐行规范字节和 archive `from_raw` 重建；因此不宣称全程同一字节、最短或零复制。
+此轮不为这些观察另造 codec、缓存、证明或隐私执行器，也不声称已经修复它们。
+
+### 已批准的公共身份域
+
+用户直接批准的新四机传输公测域固定为 **`167999907280566`**，见
+[唯一共同配置](../../../docs/NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md)。
+A 已以实际 6d519ef6 包内 CLI/核心生成并配对检查独立 protected ML-DSA-65 传输钥；
+公钥长 1952 字节，SHA256
+`0656e6de01e498b50d7b67b10ff58f4c600cdf61663066b03f358a7901839eae`。
+私钥留本机保护存储，未复制到其他机器。B/C/D 需在后续合格候选中使用同一公开域、
+各自独立用途钥，只交换公开材料；不是一份四机共用钥或每机自建一条链。
+
+正式主网只认获批固定发行身份/创世/信任承诺；上述公测域不是正式主网值。
+ZK 入网验证必须另有正确的信任起点、程序、状态、共识及新鲜度关系，现有执行
+receipt 不冒充最终性或入网许可证。本节没有批准或实现该新证明关系。
+完整 CI 仍未通过，后续修正须重新冻结、构建及复验；没有安装/切换 B 新程序、
+要求 C/D 重交基础回执、启链、NOV 分配或新的 TPS 结论。

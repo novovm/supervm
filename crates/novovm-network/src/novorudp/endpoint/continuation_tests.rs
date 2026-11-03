@@ -168,3 +168,108 @@ fn continuation_obeys_original_wire_budget_and_unsolicited_challenges_do_not_cre
     assert!(endpoint.peers.is_empty());
     Ok(())
 }
+
+#[test]
+fn delayed_challenge_from_sent_init_does_not_reject_or_replace_authenticated_session() -> Result<()>
+{
+    use crate::novorudp::NovoRudpTransportFrameKindV0;
+
+    let (mut node, socket, node_key, client_key) = listener()?;
+    let start = Instant::now();
+    let mut client = NativeEndpoint::connect_client(
+        socket.try_clone()?,
+        client_key,
+        NativePeer {
+            key: node_key.public_key().to_vec(),
+            address: node.local_addr()?,
+        },
+        NativeHandshakeBudget {
+            lifetime: Duration::from_secs(5),
+            retry: Duration::from_millis(10),
+        },
+        1000,
+        start,
+    )?;
+
+    // Withhold both genuine replies while the original sender's retry timer
+    // produces a second Init for its unchanged signed transcript.
+    assert_eq!(client.poll(1000, start, 64)?.handshakes_sent, 1);
+    assert_eq!(node.poll(1000, start, 64)?.handshakes_sent, 1);
+    let first_challenge = receive(&socket)?;
+    let retry_at = start + Duration::from_millis(10);
+    assert_eq!(client.poll(1010, retry_at, 64)?.handshakes_sent, 1);
+    assert_eq!(node.poll(1010, retry_at, 64)?.handshakes_sent, 1);
+    let delayed_challenge = receive(&socket)?;
+    assert!(node.peers.is_empty());
+    assert!(client.session_id(0).is_none());
+
+    node.io
+        .try_send(&first_challenge, NativeRoute::Udp(client.local_addr()?))?;
+    for tick in 0..64 {
+        let at = retry_at + Duration::from_micros(tick * 100);
+        let left = client.poll(1010, at, 64)?;
+        let right = node.poll(1010, at, 64)?;
+        assert_eq!(left.rejected_datagrams, 0);
+        assert_eq!(right.rejected_datagrams, 0);
+        if client.session_id(0).is_some() {
+            break;
+        }
+    }
+    let session = client
+        .session_id(0)
+        .context("continued handshake did not finish")?;
+    assert_eq!(node.session_id(0), Some(session));
+    assert_eq!(client.peer_count(), 1);
+    assert_eq!(node.peer_count(), 1);
+
+    let proof = NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Data,
+        session,
+        1,
+        1,
+        0,
+        0,
+        vec![7; 4],
+    );
+    assert!(client.try_send(0, &proof)?);
+    let before = node.poll(1010, retry_at + Duration::from_millis(7), 64)?;
+    assert_eq!(before.rejected_datagrams, 0);
+    assert_eq!(before.frames.len(), 1);
+
+    let mut unsolicited = delayed_challenge.clone();
+    unsolicited[9] ^= 1;
+    node.io
+        .try_send(&unsolicited, NativeRoute::Udp(client.local_addr()?))?;
+    let wrong_flight = client.poll(1010, retry_at + Duration::from_micros(7500), 64)?;
+    assert_eq!(wrong_flight.rejected_datagrams, 1);
+    assert_eq!(client.session_id(0), Some(session));
+
+    node.io
+        .try_send(&delayed_challenge, NativeRoute::Udp(client.local_addr()?))?;
+    let delayed = client.poll(1010, retry_at + Duration::from_millis(8), 64)?;
+    assert_eq!(client.session_id(0), Some(session));
+    assert_eq!(node.session_id(0), Some(session));
+    assert_eq!(client.peer_count(), 1);
+    assert_eq!(node.peer_count(), 1);
+    assert!(delayed.frames.is_empty() && delayed.session_changes.is_empty());
+    assert_eq!(delayed.handshakes_sent, 0);
+
+    // Verify live progress before testing the rejection-counter expectation:
+    // a counted stale challenge alone does not demonstrate a stalled channel.
+    assert!(client.try_send(0, &proof)?);
+    let after = node.poll(1010, retry_at + Duration::from_millis(9), 64)?;
+    assert_eq!(after.rejected_datagrams, 0);
+    assert_eq!(after.frames.len(), 1);
+    assert_eq!(after.frames[0].frame(), &proof);
+    assert_eq!(
+        delayed.rejected_datagrams, 0,
+        "delayed reply to our sent Init was counted as rejection: {:?}; session and subsequent AEAD delivery remained valid",
+        delayed.rejection_reasons
+    );
+    node.io
+        .try_send(&delayed_challenge, NativeRoute::Udp(client.local_addr()?))?;
+    let expired = client.poll(6000, start + Duration::from_secs(5), 64)?;
+    assert_eq!(expired.rejected_datagrams, 1);
+    assert_eq!(client.session_id(0), Some(session));
+    Ok(())
+}
