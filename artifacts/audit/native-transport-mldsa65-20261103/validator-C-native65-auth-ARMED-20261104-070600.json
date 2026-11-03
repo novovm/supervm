@@ -1,0 +1,43 @@
+{
+  "node": "validator-C",
+  "status": "ARMED_C",
+  "terminal_snapshot": {
+    "node": "validator-C",
+    "status": "ARMED_C",
+    "pid": 45996,
+    "armed_local": "2026-11-04T07:00:49.141756+08:00",
+    "scheduled_local": "2026-11-04T07:06:00+08:00",
+    "case_directory": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD-070600",
+    "retained_terminal_only": true,
+    "scheduled_task_or_service_created": false,
+    "probe_processes": []
+  },
+  "retained_exec_session_id": 27650,
+  "original_config_bytes_preserved": true,
+  "new_report_directory_to_avoid_overwrite": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD-070600",
+  "previous_interrupted_attempt": {
+    "first_was_actually_executed": true,
+    "first_started_local": "2026-11-04T06:52:03.624804+08:00",
+    "first_finished_local": "2026-11-04T06:52:13.967655+08:00",
+    "first_exit_code": 1,
+    "first_report_preserved": true,
+    "second_was_not_executed": true,
+    "coordinated_network_acceptance_result": false,
+    "reason": "Previous manual-window attempt was not a valid coordinated network acceptance run; do not infer a network defect from its timeout."
+  },
+  "validator_D_instruction": {
+    "scheduled_local": "2026-11-04T07:09:00+08:00",
+    "instruction": "On validator-D only, retain a terminal and run the unchanged README-CD first then second at this time. Stop after first failure, preserve existing reports, do not catch up if the start is missed. Do not change clock, production timeouts or identities; no scheduled task or resident service. Immediately return ARMED_D. A opens its B window 15 seconds early.",
+    "received_ARMED_D": false,
+    "latest_D_status_seen": "READY_D at e02b4ff0; not an ARMED_D receipt"
+  },
+  "scope": {
+    "clock_changed": false,
+    "production_timeouts_changed": false,
+    "identity_changed": false,
+    "old_report_overwritten": false,
+    "scheduled_task_or_service_created": false,
+    "chain_started": false,
+    "private_material_uploaded": false
+  }
+}
