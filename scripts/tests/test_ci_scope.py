@@ -172,6 +172,8 @@ class ScopeTests(unittest.TestCase):
                         "native_uca_process_"):
             self.assertIn(command, rust)
         self.assertNotIn("ci-native-runtime-candidate", jobs["runtime_modules_release"])
+        self.assertIn('test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"', rust[pin:])
+        self.assertIn('export AOEM_DLL_MANIFEST_REQUIRED=1', rust[pin:])
 
     def test_original_script_matrix_covers_windows_package_and_adapter_contracts(self):
         workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -258,6 +260,7 @@ class RuntimeCandidateTests(unittest.TestCase):
             self.fail("PowerShell is required to test the actual cross-platform CI selector")
         self.manifest = {"schema_version": 1,
                          "scope": "isolated_native_transport_mldsa65_core_candidates_not_shipped_sdk",
+                         "entries": [],
                          "platforms": {}}
         for platform, library in (("windows-x86_64", "windows/aoem_ffi.dll"),
                                   ("linux-x86_64", "linux/libaoem_ffi.so")):
@@ -271,6 +274,14 @@ class RuntimeCandidateTests(unittest.TestCase):
                 "header": header, "header_sha256": hashlib.sha256((self.root / header).read_bytes()).hexdigest(),
                 "source": {"base_commit": "a" * 40, "overlay_sha256": "b" * 64, "lock_sha256": "c" * 64},
                 "features": ["mldsa"]}
+            capabilities = dict.fromkeys(("execute_ops_v2", "semantic_graph_v3", "storage_provider_wire_v1"), True)
+            if platform == "windows-x86_64":
+                capabilities.update(dict.fromkeys(("compute_checked_integer_resources_v7",
+                    "compute_checked_integer_binary_result_v1", "compute_checked_integer_dataflow_v1",
+                    "compute_checked_integer_composition_v1"), True))
+            self.manifest["entries"].append({"name": "core", "platform": platform, "dll": library,
+                "sha256": self.manifest["platforms"][platform]["sha256"], "abi_expected": 1,
+                "capabilities_required": capabilities})
 
     def run_helper(self, platform="linux-x86_64", *extra, env=None):
         (self.root / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
@@ -307,7 +318,21 @@ class RuntimeCandidateTests(unittest.TestCase):
         self.assertEqual(output.returncode, 0, output.stderr)
         lines = dict(line.split("=", 1) for line in output_file.read_text(encoding="utf-8-sig").splitlines())
         self.assertEqual(lines["NOVOVM_AOEM_TEST_LIBRARY"], lines["NOVOVM_AOEM_DLL"])
+        self.assertEqual(Path(lines["NOVOVM_AOEM_TEST_MANIFEST"]), self.root / "manifest.json")
+        self.assertEqual(lines["NOVOVM_AOEM_MANIFEST"], lines["NOVOVM_AOEM_TEST_MANIFEST"])
         self.assertEqual(lines["NOVOVM_NATIVE_RUNTIME_SHA256"], self.manifest["platforms"]["linux-x86_64"]["sha256"])
+
+    def test_runtime_descriptor_cannot_drift_from_the_candidate_or_weaken_existing_checks(self):
+        original = copy.deepcopy(self.manifest)
+        for field, value in (("dll", "windows/aoem_ffi.dll"), ("sha256", "0" * 64),
+                             ("abi_expected", 2), ("capabilities_required", {"execute_ops_v2": True})):
+            with self.subTest(field=field):
+                self.manifest = copy.deepcopy(original)
+                self.manifest["entries"][1][field] = value
+                self.assertNotEqual(self.run_helper().returncode, 0)
+        self.manifest = copy.deepcopy(original)
+        self.manifest["entries"].append(copy.deepcopy(self.manifest["entries"][1]))
+        self.assertNotEqual(self.run_helper().returncode, 0)
 
 
 if __name__ == "__main__":

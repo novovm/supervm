@@ -414,3 +414,63 @@ runtime、脚本和 security gates 通过，不覆盖 `Rust checks` 的失败；
 `target/transport-configured-retry-linux--20261103.log` 不计入验收或性能证据。
 随后用原过滤器、明确配对库路径重新执行上述范围，不以误选样本充数。
 新源码冻结后的完整 CI 尚须独立验收；不把 9b8bae6e 的平台通过结果直接继承过来。
+
+## 10. 9162824b：原生门禁通过，剩余 CI 测试接线修正
+
+`main@9162824bd05880720441783ec70777f1eb600cb6` 的完整
+[CI 41616898295](https://github.com/novovm/supervm/actions/runs/41616898295)
+已结束，结果 **failure**。原 `Integrated original tick with the pinned native ML-DSA runtime`
+门禁已通过，包括此前失败的六项 Mesh、归档/退休/后继、原节点交易/查询及冷恢复。
+这取得远端复验，不再把旧六项笼统列为仍然失败；整轮仍不可交付。
+本机原 `native_only_` 六项真实节点进程也全部通过（333.32 s），包含迟到超过原
+握手期限的最高/最低验证者、原库恢复及少数节点反例，日志为
+`target/transport-configured-native-process-tests-20261103.log`；不是 TPS 或四物理机验收。
+
+本轮实际失败及最小修正：
+
+1. Windows `bootstrap_mirror_process` 为 5 通过、1 失败，位于 `A fresh generation`
+   的 carrier finish。镜像会在接受新 source 后取消旧 source 的在途任务；原夹具
+   仅等待节点的发布点，没有等待镜像自身发布对应世代。改为在原 3 s 截止内观察
+   镜像 invitation 的同一 relay 公钥/世代，再调用一次原真实刷新，并要求已验
+   book 序号不早于刚观察的发布序号。失败仍立即返回，增加原 bounded lifecycle
+   上下文；不把已提交但 finish 失败改称成功，不加 RPC retry、不删 `active.clear()`。
+   原日志不足以唯一判定是 source 换代取消还是原请求预算到期，仍保留此归因限制。
+   本机原夹具也能通过（12.25 s），不冒称稳定复现失败。修正后全 6 项进程通过
+   （249.29 s）；随后仅收紧到观察到的准确序号，受影响单项再次通过（11.07 s）。
+   原撤销/篡改/权限及 110/220 秒同一监听器反例未删除或放宽。
+2. Linux `uca_spend_runtime` 两项硬编码正式 SDK，忽略 CI 已选定的真实候选路径，
+   因而正确报批验签能力缺失。原 exec/prover runtime helper 改为消费显式
+   `NOVOVM_AOEM_TEST_LIBRARY`，没有设置时保留原 SDK 默认；显式错误路径不回退。
+   同次核对发现 graph/compute scope 的隔离 helper 会丢失选择，现仅保留显式
+   测试库/清单配对，其余 ambient backend/worker 状态仍清除并按原机制恢复。
+
+候选清单新增原 runtime manifest 的 `entries` 字段，**同一已固定核心 SHA 未变**，
+保留正式平台原有 ABI=1 和 required capabilities（Windows 7 项、Linux 3 项）。
+原 CI selector 校验两种清单身份一致后导出库/清单配对；scope 隔离重新传递该配对，
+原 checked loader 仍实际核对哈希、ABI、能力，并在 scoped 检查要求清单存在。
+先前错误配对确实被哈希检查拒绝，日志
+`target/transport-runtime-selection-windows-semantic_compute-20261103.log` 保留。
+不是改 formal SDK 清单/能力、关闭检查或把描述文件当作 runtime KAT。
+正式 SDK resident/private-profile 及 preserved-runtime 原检查仍在 pin 候选之前/独立 job，
+旧 SDK 缺批能力的原 CLI 反例保持不变，正式 DLL/SO 均未替换。
+
+后继工作区受影响验证（尚非新冻结 SHA 的完整 CI）：
+
+| 范围 | Windows | Linux |
+| --- | --- | --- |
+| 实际候选资产花费 runtime | 2/2 | 2/2 |
+| 实际候选 PQ 参数兼容、篡改/上下文/旧 raw 签名拒绝 | 3/3 | 3/3 |
+| 实际候选 compute / graph owner / graph scope | 14/14、9/9、6/6 | 14/14、9/9、6/6 |
+| 受影响严格 Clippy | exec/prover/relay all targets 通过 | exec/prover all targets 通过 |
+
+原 CI selector/范围测试 19 项通过，覆盖两平台、字节损坏、库/清单身份偏离、ABI
+及 required capability 弱化拒绝；假库夹具只测 selector，报告仍为 KAT 未执行。
+真实 runtime 日志为 `target/transport-runtime-selection-*20261103.log`，镜像日志为
+`target/transport-mirror-generation-*20261103.log`。旧 SDK 与缺失显式路径的失败关闭
+日志分别为 `target/transport-runtime-selection-old-sdk-negative-20261103.log` 和
+`target/transport-runtime-selection-missing-{exec,prover}-negative-20261103.log`。
+新增配置另用历史 9b8bae6e 包内 CLI 7/7 复核旧库负测不被污染，**仅是配置反例，
+不作为后继程序资格**。全 workspace 格式通过，必须再固定源码并运行原完整 CI。
+
+原始 916 CI 日志：`target/transport-ci-9162824b-{rust-job,windows-native-job}-20261103.log`。
+本轮没有新增架构、ZK/隐私实现、TPS、正式库替换、B 服务切换或 A/B/C/D 启链结论。

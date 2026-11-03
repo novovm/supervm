@@ -5,6 +5,9 @@ use novovm_prover::pq_signature::{
 use std::path::PathBuf;
 
 fn packaged_runtime() -> AoemDyn {
+    if let Some(path) = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY") {
+        return unsafe { AoemDyn::load(path) }.expect("load explicitly selected AOEM test package");
+    }
     let (platform, library) = if cfg!(target_os = "windows") {
         ("windows", "aoem_ffi.dll")
     } else if cfg!(target_os = "macos") {

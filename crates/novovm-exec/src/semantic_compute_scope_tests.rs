@@ -80,6 +80,8 @@ fn with_isolated_runtime(name: &str, test: impl FnOnce(&AoemRuntimeConfig)) {
         .unwrap()
         .to_path_buf();
     let mut command = Command::new(std::env::current_exe().unwrap());
+    let selected_library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY");
+    let selected_manifest = std::env::var_os("NOVOVM_AOEM_TEST_MANIFEST");
     command.args([
         "--exact",
         &format!("semantic_compute::session_scope::tests::{name}"),
@@ -94,6 +96,15 @@ fn with_isolated_runtime(name: &str, test: impl FnOnce(&AoemRuntimeConfig)) {
             || normalized == "NOVOVM_INGRESS_WORKERS"
         {
             command.env_remove(key);
+        }
+    }
+    // Only the explicit test artifact survives isolation; never inherit a
+    // possibly poisoned ambient DLL, backend or worker configuration.
+    if let Some(library) = selected_library {
+        command.env("NOVOVM_AOEM_DLL", library);
+        if let Some(manifest) = selected_manifest {
+            command.env("NOVOVM_AOEM_MANIFEST", manifest);
+            command.env("AOEM_DLL_MANIFEST_REQUIRED", "1");
         }
     }
     let result = command

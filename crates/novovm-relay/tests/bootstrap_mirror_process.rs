@@ -274,23 +274,49 @@ async fn real_mirror_serves_active_epoch_then_restores_identity_and_client_cache
         ensure!(Instant::now() < until, "node renewal deadline");
         tokio::time::sleep(Duration::from_millis(80)).await;
     }
-    // Renewal and mirror publication are separate processes. Observe the
-    // expected activated generation before testing its RPC; a signed address
-    // still within TTL is not a guarantee that a retiring carrier stays open.
+    // Node publication precedes the mirror's reload, which cancels old source
+    // requests. Wait for the mirror's own publication before asserting service
+    // of that generation; do not turn a cancelled finish into RPC success.
     let fresh = Instant::now() + Duration::from_secs(3);
-    loop {
-        fetch(peer.clone(), a.clone())
-            .await
-            .context("A fresh generation")?;
-        if a.lock().unwrap().routes(now_ms()?)?[0].sequence >= first.sequence + 130 {
-            break;
+    let published_sequence = loop {
+        let invitation: Value = tokio::time::timeout_at(
+            fresh.into(),
+            read_json(&f.root.join("mirror/invitation.json")),
+        )
+        .await
+        .context("mirror successor publication deadline")??;
+        let published: Vec<BootstrapSourceV1> =
+            serde_json::from_value(invitation["sources"].clone())?;
+        if let Some(record) = published
+            .iter()
+            .flat_map(|source| &source.manifest.relay_records)
+            .find(|record| {
+                record.relay_public_key == first.relay_public_key
+                    && record.sequence >= first.sequence + 130
+            })
+        {
+            break record.sequence;
         }
         ensure!(
             Instant::now() < fresh,
             "mirror failed to publish activated successor"
         );
         tokio::time::sleep(Duration::from_millis(40)).await;
-    }
+    };
+    let requested_at_ms = now_ms()?;
+    fetch(peer.clone(), a.clone()).await.with_context(|| {
+        let lifecycle = std::fs::read(f.root.join("mirror/lifecycle.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .unwrap_or(Value::Null);
+        format!(
+            "A fresh generation: published_sequence={published_sequence}, requested_at_ms={requested_at_ms}, mirror_lifecycle={lifecycle}"
+        )
+    })?;
+    ensure!(
+        a.lock().unwrap().routes(now_ms()?)?[0].sequence >= published_sequence,
+        "mirror RPC did not validate the published successor"
+    );
     fetch(peer, b.clone()).await.context("B expired refresh")?;
     let record = a.lock().unwrap().routes(now_ms()?)?.remove(0);
     ensure!(

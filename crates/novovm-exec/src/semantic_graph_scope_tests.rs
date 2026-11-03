@@ -46,6 +46,8 @@ pub(super) fn with_scope_runtime(label: &str, test: impl FnOnce(&AoemRuntimeConf
     let _lock = SCOPE_RUNTIME_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let selected_library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY");
+    let selected_manifest = std::env::var_os("NOVOVM_AOEM_TEST_MANIFEST");
     let _restore = ScopeRuntimeEnvironment::isolated();
     // Keep the native spelling passed to the provider: canonicalize on Windows
     // would add a verbatim prefix which this bundled RocksDB does not accept.
@@ -57,6 +59,14 @@ pub(super) fn with_scope_runtime(label: &str, test: impl FnOnce(&AoemRuntimeConf
         .to_path_buf();
     std::env::set_var("NOVOVM_AOEM_ROOT", root.join("aoem"));
     std::env::set_var("NOVOVM_AOEM_VARIANT", "core");
+    // Preserve the CI-selected artifact, not ambient runtime/worker settings.
+    if let Some(library) = selected_library {
+        std::env::set_var("NOVOVM_AOEM_DLL", library);
+        if let Some(manifest) = selected_manifest {
+            std::env::set_var("NOVOVM_AOEM_MANIFEST", manifest);
+            std::env::set_var("AOEM_DLL_MANIFEST_REQUIRED", "1");
+        }
+    }
     // The explicit semantic storage provider below is RocksDB. Do not open an
     // unrelated legacy persistence backend without its own fixture path.
     std::env::set_var("NOVOVM_AOEM_PERSIST_BACKEND", "none");

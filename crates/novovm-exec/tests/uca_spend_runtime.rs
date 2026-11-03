@@ -10,6 +10,9 @@ use novovm_protocol::uca_spend::{
 use std::path::PathBuf;
 
 fn packaged_library() -> PathBuf {
+    if let Some(path) = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY") {
+        return PathBuf::from(path);
+    }
     let (platform, library) = if cfg!(target_os = "windows") {
         ("windows", "aoem_ffi.dll")
     } else if cfg!(target_os = "macos") {
@@ -57,7 +60,7 @@ fn intent(public_key: &[u8]) -> AssetSpendIntentV3 {
 #[ignore = "requires the trusted packaged AOEM runtime; run explicitly, no silent skip"]
 fn packaged_facade_signs_and_checks_the_single_shared_spend_contract() {
     let path = packaged_library();
-    let runtime = unsafe { AoemDyn::load(&path) }.expect("load trusted repository AOEM package");
+    let runtime = unsafe { AoemDyn::load(&path) }.expect("load selected AOEM test package");
     let facade = AoemExecFacade::open(&path, AoemExecOpenOptions::default())
         .expect("open the same packaged runtime through the product facade");
     let signer = facade

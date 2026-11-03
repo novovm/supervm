@@ -476,6 +476,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$NOVOVM_AOEM_TEST_MANIFEST"
+          test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"
+          export AOEM_DLL_MANIFEST_REQUIRED=1
           cargo test -p novovm-exec --lib semantic_compute --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-exec --lib graph_owner --locked -- --include-ignored --test-threads=1
           cargo test -p novovm-exec --lib graph_scope --locked -- --include-ignored --test-threads=1

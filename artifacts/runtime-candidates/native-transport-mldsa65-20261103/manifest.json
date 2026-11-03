@@ -3,6 +3,36 @@
   "scope": "isolated_native_transport_mldsa65_core_candidates_not_shipped_sdk",
   "qualification_boundary": "Native identity and existing execution/storage tests only. Feature inclusion is not whole-node, ZK, GPU, performance or four-host acceptance.",
   "retained_package_sidecars": "Original SDK sidecars remain separately identified; these cores do not replace the formal SDK.",
+  "entries": [
+    {
+      "name": "core",
+      "platform": "windows-x86_64",
+      "dll": "windows/aoem_ffi.dll",
+      "sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true,
+        "semantic_graph_v3": true,
+        "storage_provider_wire_v1": true,
+        "compute_checked_integer_resources_v7": true,
+        "compute_checked_integer_binary_result_v1": true,
+        "compute_checked_integer_dataflow_v1": true,
+        "compute_checked_integer_composition_v1": true
+      }
+    },
+    {
+      "name": "core",
+      "platform": "linux-x86_64",
+      "dll": "linux/libaoem_ffi.so",
+      "sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true,
+        "semantic_graph_v3": true,
+        "storage_provider_wire_v1": true
+      }
+    }
+  ],
   "platforms": {
     "windows-x86_64": {
       "library": "windows/aoem_ffi.dll",
