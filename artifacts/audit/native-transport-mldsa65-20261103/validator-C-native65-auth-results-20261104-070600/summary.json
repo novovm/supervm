@@ -1,0 +1,158 @@
+{
+  "node": "validator-C",
+  "result": "C_CLIENT_TWO_AUTHENTICATED_ROUND_TRIPS_CONFIRMED_PENDING_B_REPORT_RECONCILIATION",
+  "checked_local": "2026-11-04T07:08:29.156417+08:00",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "configuration_zip_sha256": "99a4dfbd8cf819c9e4286a0aaf0edaf976ae61a8b3ab203a80cb7bad22e9cebd",
+  "scheduled_local": "2026-11-04T07:06:00+08:00",
+  "actual_start_local": "2026-11-04T07:06:00.000546+08:00",
+  "finished_local": "2026-11-04T07:06:00.452726+08:00",
+  "same_original_C_public_key_sha256": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f",
+  "expected_B_public_key_sha256": "741cb7b6d0964de5a1a70adf64f1399cacf117f6aae838fd78e1000320b9a676",
+  "peer_id_check": "Diagnostic reference calculation of original peer_id_from_mldsa65_public_key_v1 domain-separated SHA256 over full raw public key, not the plain public-key fingerprint",
+  "results": [
+    {
+      "case": "first",
+      "exit_code": 0,
+      "started_local": "2026-11-04T07:06:00.000546+08:00",
+      "finished_local": "2026-11-04T07:06:00.216794+08:00",
+      "accepted": true,
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "local_peer_id": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "peer_id": "novovm-mldsa65:a44d68f612d0bfbcce70fe4900383060c385d588103513e6c9a9296bd0dd3ad6",
+      "local_bind_addr": "0.0.0.0:54636",
+      "observed_endpoint": "114.92.30.222:59072",
+      "session_id_hex": "5a7211a1bbf2271f6240c82e8fd29b3b",
+      "session_id_bytes": [
+        90,
+        114,
+        17,
+        161,
+        187,
+        242,
+        39,
+        31,
+        98,
+        64,
+        200,
+        46,
+        143,
+        210,
+        155,
+        59
+      ],
+      "config_sha256_unchanged": "3e20f84a19db383725327e56e55c68e8fbcc123286a263bdb25aa3daed83b074",
+      "stdout_json_matches_original_report": true,
+      "stderr_bytes": 0,
+      "handshake_version": 2,
+      "signature_suite": 65
+    },
+    {
+      "case": "second",
+      "exit_code": 0,
+      "started_local": "2026-11-04T07:06:00.216794+08:00",
+      "finished_local": "2026-11-04T07:06:00.451204+08:00",
+      "accepted": true,
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "local_peer_id": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "peer_id": "novovm-mldsa65:a44d68f612d0bfbcce70fe4900383060c385d588103513e6c9a9296bd0dd3ad6",
+      "local_bind_addr": "0.0.0.0:54638",
+      "observed_endpoint": "114.92.30.222:59088",
+      "session_id_hex": "a87cf0ded56caee98acb6e1b16b4f417",
+      "session_id_bytes": [
+        168,
+        124,
+        240,
+        222,
+        213,
+        108,
+        174,
+        233,
+        138,
+        203,
+        110,
+        27,
+        22,
+        180,
+        244,
+        23
+      ],
+      "config_sha256_unchanged": "39372e077f30c76dc287628ddf90887baa7ac989ca885bf1dd832f566db77f4c",
+      "stdout_json_matches_original_report": true,
+      "stderr_bytes": 0,
+      "handshake_version": 2,
+      "signature_suite": 65
+    }
+  ],
+  "session_ids_different": true,
+  "raw_files": [
+    {
+      "file": "first.report.json",
+      "bytes": 922,
+      "sha256": "83b5154193d521503f6ab856f306589a81908a2eed80e2dc8b32b808cdaa8ee5",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD-070600\\C\\reports\\probe-C-B-first.json",
+      "copied_verbatim": true
+    },
+    {
+      "file": "first.stdout.txt",
+      "bytes": 923,
+      "sha256": "ffcb86df249e9cc1e849bf0b99b42896aac7a43cb975c3e03d7d11a1abfeddba",
+      "source": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\first.stdout.txt",
+      "copied_verbatim": true
+    },
+    {
+      "file": "first.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\first.stderr.txt",
+      "copied_verbatim": true
+    },
+    {
+      "file": "second.report.json",
+      "bytes": 927,
+      "sha256": "bb1b914ab8e6fdc04314781fe5fb63f914a23fd300b8168dc1ac8ae93c6a4e05",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD-070600\\C\\reports\\probe-C-B-second.json",
+      "copied_verbatim": true
+    },
+    {
+      "file": "second.stdout.txt",
+      "bytes": 928,
+      "sha256": "9dad9dc0a4602a980945756d2dd27b79e11ce65afd0d062f0f93c5936b6f448b",
+      "source": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\second.stdout.txt",
+      "copied_verbatim": true
+    },
+    {
+      "file": "second.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\second.stderr.txt",
+      "copied_verbatim": true
+    },
+    {
+      "file": "execution.json",
+      "bytes": 1717,
+      "sha256": "f804c3648bb1cfd4beeaaa270da3dd5f1933bb01c6c83da81b447e3f7780b01b",
+      "source": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\execution.json",
+      "copied_verbatim": true
+    }
+  ],
+  "historical_unscheduled_first_report": {
+    "preserved_in_place": true,
+    "sha256": "e4a0ffd03eb9471cea1121baf51bae0b84ee52dc46faff878bf096746a0aec32",
+    "is_scheduled_run_result": false,
+    "network_defect_inferred": false
+  },
+  "bounds": {
+    "probe_rerun_during_review": false,
+    "configs_or_timeouts_or_identity_changed": false,
+    "B_observer_reports_locally_reviewed": false,
+    "B_to_C_unsolicited_NAT_reachability_proven": false,
+    "old_session_replay_counterexample_accepted": false,
+    "four_host_authentication_accepted": false,
+    "validator_or_chain_started": false,
+    "production_fees_enabled": false,
+    "private_material_uploaded": false
+  }
+}

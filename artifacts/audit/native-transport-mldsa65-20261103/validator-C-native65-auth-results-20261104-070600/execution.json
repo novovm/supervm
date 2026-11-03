@@ -1,0 +1,34 @@
+{
+  "node": "validator-C",
+  "status": "COMPLETED_C_PENDING_PEER_RECONCILIATION",
+  "pid": 45996,
+  "armed_local": "2026-11-04T07:00:49.141756+08:00",
+  "scheduled_local": "2026-11-04T07:06:00+08:00",
+  "case_directory": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD-070600",
+  "retained_terminal_only": true,
+  "scheduled_task_or_service_created": false,
+  "probe_processes": [
+    {
+      "case": "first",
+      "started_local": "2026-11-04T07:06:00.000546+08:00",
+      "finished_local": "2026-11-04T07:06:00.216794+08:00",
+      "exit_code": 0,
+      "report_path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD-070600\\C\\reports\\probe-C-B-first.json",
+      "report_exists": true,
+      "stdout_path": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\first.stdout.txt",
+      "stderr_path": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\first.stderr.txt"
+    },
+    {
+      "case": "second",
+      "started_local": "2026-11-04T07:06:00.216794+08:00",
+      "finished_local": "2026-11-04T07:06:00.451204+08:00",
+      "exit_code": 0,
+      "report_path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD-070600\\C\\reports\\probe-C-B-second.json",
+      "report_exists": true,
+      "stdout_path": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\second.stdout.txt",
+      "stderr_path": "D:\\WEB3_AI\\SUPERVM\\target\\validator-C-auth-scheduled-20261104-070600\\second.stderr.txt"
+    }
+  ],
+  "actual_start_local": "2026-11-04T07:06:00.000546+08:00",
+  "finished_local": "2026-11-04T07:06:00.452726+08:00"
+}
