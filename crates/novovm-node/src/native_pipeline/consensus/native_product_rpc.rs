@@ -339,7 +339,7 @@ struct ProcessIdentities {
     transports: Vec<TransportIdentity>,
     transport_paths: Vec<PathBuf>,
     client_transport: TransportIdentity,
-    client_transport_path: PathBuf,
+    operator_transport_path: PathBuf,
     #[cfg(target_os = "linux")]
     credential_directory: PathBuf,
 }
@@ -387,9 +387,18 @@ fn prepare_process_identities() -> Result<ProcessIdentities> {
         validator_paths.push(keys.validator_path);
         transport_paths.push(keys.transport_path);
     }
-    let (client_transport, client_transport_path) =
+    let (client_transport, _) =
         crate::native_pipeline::service::config::test_custody::generate_transport_key(
             &directory, CHAIN, "client", &crypto,
+        )?;
+    // The operator subprocess uses another socket while the observer stays
+    // connected. Sharing its identity would replace that live peer session.
+    let (_, operator_transport_path) =
+        crate::native_pipeline::service::config::test_custody::generate_transport_key(
+            &directory,
+            CHAIN,
+            "operator-client",
+            &crypto,
         )?;
     Ok(ProcessIdentities {
         crypto,
@@ -398,7 +407,7 @@ fn prepare_process_identities() -> Result<ProcessIdentities> {
         transports,
         transport_paths,
         client_transport,
-        client_transport_path,
+        operator_transport_path,
         #[cfg(target_os = "linux")]
         credential_directory,
     })

@@ -571,7 +571,7 @@ jobs:
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/fresh-process-build.jsonl"
           binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/fresh-process-build.jsonl")
           test -x "$binary"
-          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 "$1" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1' fresh-process-gate "$binary"
+          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 NOVOVM_AOEM_TEST_LIBRARY="$2" NOVOVM_AOEM_DLL="$2" NOVOVM_AOEM_TEST_MANIFEST="$3" NOVOVM_AOEM_MANIFEST="$3" AOEM_DLL_MANIFEST="$3" AOEM_DLL_MANIFEST_REQUIRED=1 "$1" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1' fresh-process-gate "$binary" "$NOVOVM_AOEM_TEST_LIBRARY" "$NOVOVM_AOEM_TEST_MANIFEST"
 
       - name: Upload user ingress and recovery evidence
         if: always()
@@ -600,7 +600,7 @@ jobs:
           cargo test -p novovm-node --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/r2-rpc-build.jsonl"
           binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/r2-rpc-build.jsonl")
           test -x "$binary"
-          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0 NOVOVM_TRANSFER_PARITY_WORKER="$2" "$1" fresh_record_transfers_conflict_failure_serial_parity --ignored --test-threads=1' r2-product-rpc "$binary" "$oracle"
+          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0 NOVOVM_TRANSFER_PARITY_WORKER="$2" NOVOVM_AOEM_TEST_LIBRARY="$3" NOVOVM_AOEM_DLL="$3" NOVOVM_AOEM_TEST_MANIFEST="$4" NOVOVM_AOEM_MANIFEST="$4" AOEM_DLL_MANIFEST="$4" AOEM_DLL_MANIFEST_REQUIRED=1 "$1" fresh_record_transfers_conflict_failure_serial_parity --ignored --test-threads=1' r2-product-rpc "$binary" "$oracle" "$NOVOVM_AOEM_TEST_LIBRARY" "$NOVOVM_AOEM_TEST_MANIFEST"
 
       - name: Upload signed Transfer RPC acceptance evidence
         if: always()

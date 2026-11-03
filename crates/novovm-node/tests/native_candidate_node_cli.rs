@@ -13,7 +13,7 @@ use std::{
 };
 
 const CHAIN: u64 = 98_919_601;
-struct Node(PathBuf, Option<String>, bool);
+struct Node(PathBuf, Option<String>, bool, Option<PathBuf>);
 impl Node {
     fn new(label: &str) -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -33,7 +33,7 @@ impl Node {
                     .as_nanos()
             ));
         fs::create_dir_all(&dir).unwrap();
-        Self(dir, None, false)
+        Self(dir, None, false, None)
     }
     // Opt in per fixture, not globally: historical comparison tests keep their
     // original environment policy. Every command for this instance, including
@@ -124,11 +124,27 @@ impl Node {
             .unwrap()
             .to_path_buf();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_novovm-node"));
+        let selected_library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY");
+        let selected_manifest = std::env::var_os("NOVOVM_AOEM_TEST_MANIFEST");
         for (key, _) in std::env::vars_os() {
             let name = key.to_string_lossy().to_ascii_uppercase();
             if name.starts_with("NOVOVM_") || name.starts_with("AOEM_") {
                 cmd.env_remove(key);
             }
+        }
+        cmd.env_remove("CREDENTIALS_DIRECTORY");
+        if let Some(library) = selected_library {
+            cmd.env("NOVOVM_AOEM_TEST_LIBRARY", &library)
+                .env("NOVOVM_AOEM_DLL", library);
+            if let Some(manifest) = selected_manifest {
+                cmd.env("NOVOVM_AOEM_TEST_MANIFEST", &manifest)
+                    .env("NOVOVM_AOEM_MANIFEST", &manifest)
+                    .env("AOEM_DLL_MANIFEST", manifest)
+                    .env("AOEM_DLL_MANIFEST_REQUIRED", "1");
+            }
+        }
+        if let Some(credentials) = &self.3 {
+            cmd.env("CREDENTIALS_DIRECTORY", credentials);
         }
         cmd.current_dir(&self.0)
             .env("TEMP", &self.0)
@@ -602,6 +618,45 @@ mod native_seal_main_process;
 
 #[path = "support/native_fresh_genesis_cli.rs"]
 mod native_fresh_genesis_cli;
+
+#[test]
+fn candidate_child_fixture_preserves_explicit_artifact_and_credential_selection() {
+    let mut node = Node::new("child-runtime-selection");
+    let command = node.command();
+    let variable = |key: &str| {
+        command
+            .get_envs()
+            .find(|(name, _)| *name == std::ffi::OsStr::new(key))
+            .and_then(|(_, value)| value.map(std::ffi::OsStr::to_os_string))
+    };
+    assert_eq!(
+        variable("NOVOVM_AOEM_DLL"),
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+    );
+    assert_eq!(variable("CREDENTIALS_DIRECTORY"), None);
+    if std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY").is_some() {
+        assert_eq!(
+            variable("NOVOVM_AOEM_MANIFEST"),
+            std::env::var_os("NOVOVM_AOEM_TEST_MANIFEST")
+        );
+        assert_eq!(
+            variable("AOEM_DLL_MANIFEST"),
+            std::env::var_os("NOVOVM_AOEM_TEST_MANIFEST")
+        );
+        if std::env::var_os("NOVOVM_AOEM_TEST_MANIFEST").is_some() {
+            assert_eq!(variable("AOEM_DLL_MANIFEST_REQUIRED"), Some("1".into()));
+        }
+    }
+    node.3 = Some(node.0.join("explicit-fixture-credential"));
+    let command = node.command();
+    assert_eq!(
+        command
+            .get_envs()
+            .find(|(name, _)| *name == std::ffi::OsStr::new("CREDENTIALS_DIRECTORY"))
+            .and_then(|(_, value)| value),
+        node.3.as_deref().map(std::path::Path::as_os_str)
+    );
+}
 
 #[test]
 fn candidate_node_cli_rejects_malformed_and_oversized_files_before_persistence() {

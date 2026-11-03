@@ -474,3 +474,80 @@ runtime、脚本和 security gates 通过，不覆盖 `Rust checks` 的失败；
 
 原始 916 CI 日志：`target/transport-ci-9162824b-{rust-job,windows-native-job}-20261103.log`。
 本轮没有新增架构、ZK/隐私实现、TPS、正式库替换、B 服务切换或 A/B/C/D 启链结论。
+
+## 11. b2bffa07：既有失败点通过，NUAS 夹具与后续隔离接线待最终复验
+
+`main@b2bffa07360215b842331d0b3a2589d1b2d5007d` 的
+[完整 CI 41627869808](https://github.com/novovm/supervm/actions/runs/41627869808)
+已结束为 **failure**。独立 host-auth relation 检查通过，不是物理四机验收。
+本次 Windows/Linux 实际认证及原服务作业均通过：Windows CLI 7、startup 1、
+relay 4、mirror 6、publisher 5、owner 13；此前失败的 mirror fresh-generation
+在本次原始日志中通过。Rust 原生 tick、共享 ML-DSA 花费/PQ runtime 门禁也已通过。
+原始日志：`target/transport-ci-b2bffa07-{windows-native-job,rust-job}-20261103.log`。
+
+本次新增失败在 `NUAS original-node process recovery and credited NOV respend`：
+operator 配置使用 RPC 展示用 `hex()`，其输出带 `0x`，而原严格装载器要求裸小写
+64 位 SHA256，因而在交易前拒绝。工作区仅改该测试输入格式，不改严格装载器；
+本机旧行为实际复现相同错误（`target/transport-ci-recovery-hash-before-20261103.log`）。
+修正格式后又复现首笔回执超时：原观察客户端与独立 CLI 共用了同一传输身份，
+CLI 新连接替换仍在线的观察会话。现在沿原 protected test custody 为两者分别生成
+Transport 用途身份，不借用验证者或资产钥，不改变会话替换/重放规则。
+完整原 NUAS 用例随后 **1/1 通过，159.07 s**，涵盖 40 高度、1,024 行归档、
+追赶中强杀、原库恢复及到账再花；不是吞吐或物理四机结论。失败与成功日志分别为
+`target/transport-ci-recovery-hash-after-20261103.log`、
+`target/transport-ci-recovery-distinct-client-20261103.log`。
+
+后续原 CI 还存在经调用方核查的夹具遗漏，已在工作区修正，尚须实际进程复验：
+
+- 两处原 `sudo unshare` 仅显式传递已选候选库/清单，保留原 namespace、Host 权限、
+  parity worker、测试及超时，不采用整份环境继承。
+- 原 `Node::command()` 隔离后只恢复明确测试库/清单并要求原 manifest 校验；
+  普通节点不继承服务 credential，需要该 credential 的场景显式持有并传递。
+- 原 `TestCredentialGuard` 原样提取供两类原夹具复用；Linux 用途钥与隔离 credential
+  位于真实 `/tmp` 私有目录，保留 0700/0600、随机 wrapping key 和原生产 custody；
+  不更改报告/数据库位置，不新增生产 API。
+
+本机后续原门禁预跑 `target/transport-ci-post-recovery-nativefs-linux-20261103.log`
+合计 **397 通过、1 项原有忽略**：原 Transfer 恢复 231.47 s，compute/graph 14/9/6，
+候选/状态/钱包查询、native seal 214、执行/dispatch 10/22、ledger 40、genesis 10 等。
+此前 `/mnt/d` 样本到原 10 分钟时限仍未结束，已停止并保留
+`target/transport-ci-post-recovery-linux-20261103.log`，不得记为通过。
+停止前只读线程采样见到 WSL 9P 文件读取等待；成功复验将相同候选 SO 与清单复制到
+Linux 原生文件系统，core SHA 仍为 `d73e4a2f...bc33`、清单 SHA 为
+`e1443e482a3463d8102e06a2264a97c3057eb9d9a7ac59f8d2e571e678e1f4db`。
+这不是严格同二进制文件系统性能 A/B，不据此解释全部耗时差异或宣称产品提速。
+原范围/selector 19 测试通过；新增夹具仍需受影响严格 Clippy 和真实进程检查。
+
+### 当前实际环境阻断
+
+随后构建 `native_candidate_node_cli` 时 rustc 报 SIGBUS，见
+`target/transport-ci-candidate-processes-linux-20261103.log`；未取得该轮测试通过结果。
+同轮 Windows 实读 **C 盘一度剩余 0 字节**（随后仅约 20 MiB），D 仍约 97.7 GiB。
+Ubuntu-24.04 的 `ext4.vhdx` 位于 C 盘，当前文件约 127.60 GiB；WSL 随后报
+`Wsl/Service/CreateInstance/E_FAIL`，不能继续启动。尚不把 SIGBUS 单独定性为产品代码缺陷。
+后续构建已停止，没有擅自删除 C 盘数据、移动虚拟盘或终止其他机器服务。
+上述工作区改动保留、未提交/推送；完整 CI 与两平台最终包仍未签收，C/D 无需操作。
+
+## 12. 2026-11-04：空间恢复后续验，不沿用 SIGBUS 样本
+
+用户完成 C 盘清理后，A 实读 C 可用约 116.4 GiB，WSL 正常启动；没有更改增量编译
+设置或删除用户数据。相同候选 SO/清单的 SHA256 与第 11 节一致。
+原构建命令重新完成，原 SIGBUS/空间不足日志继续保留，不把失败样本改成通过。
+
+本次实际续验：
+
+- 原 `native_candidate_node_cli`：**16 通过、16 项原有显式忽略**，24.21 s。
+  新增子进程候选库/manifest/独立 credential 选择断言通过；不以它代替真实进程。
+- 原隔离网络 namespace 中的 `fresh_genesis_main_nodes_continue_three_heights_without_restart`：
+  **1/1 通过，255.07 s**；原四成员、三高度、重启/中断/迟到等断言保留。
+- 原 `fresh_record_transfers_conflict_failure_serial_parity`：**1/1 通过，98.07 s**；
+  Host 执行许可仍为 0，原冲突、业务失败、最终性、重启及串行结果对照保留。
+  仅本机测试进程使用 root 建立临时网络 namespace，构建仍由原 WSL 普通用户完成；
+  没有远端部署、生产端口/权限变化或四物理机结论。
+
+日志为 `target/transport-ci-{candidate-processes,isolated-processes}-linux-20261104.log`。
+这些结果替代第 11 节“待进程复验”的状态，不替代新冻结提交的完整 CI 或平台包资格。
+原 CI scope/selector 19 项及 workspace 格式检查本次再次通过；Windows/Linux
+`novovm-node --all-targets --locked` 严格 Clippy（`-D warnings`）均通过，日志为
+`target/transport-ci-fixture-clippy-{windows,linux}-20261104.log`。
+提交后完整 CI 仍须独立通过，不使用先前提交结果自动背书后继候选。

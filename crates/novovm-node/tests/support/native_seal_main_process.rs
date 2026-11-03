@@ -1,6 +1,9 @@
 //! Opt-in real main-process test. Port 443 is part of the signed relay contract.
 use super::*;
 use ed25519_dalek::SigningKey;
+#[cfg(target_os = "linux")]
+#[path = "../../src/native_pipeline/service/config/test_credential.rs"]
+mod test_credential;
 #[path = "../../../novovm-relay/tests/support/transport_fixture.rs"]
 mod transport_fixture;
 use novovm_network::{
@@ -596,6 +599,32 @@ fn run_real_aoem_main_nodes_scenario(
     };
 
     let root = Node::new("seal-relay").0;
+    #[cfg(target_os = "linux")]
+    let identity_root = {
+        use std::os::unix::fs::DirBuilderExt;
+        let directory = PathBuf::from("/tmp").join(format!(
+            "novovm-main-process-custody-{}-{}",
+            std::process::id(),
+            rand::random::<u64>()
+        ));
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&directory)
+            .unwrap();
+        directory
+    };
+    #[cfg(not(target_os = "linux"))]
+    let identity_root = root.clone();
+    #[cfg(target_os = "linux")]
+    let credential = test_credential::TestCredentialGuard::new(&identity_root).unwrap();
+    #[cfg(target_os = "linux")]
+    let nodes = {
+        let mut nodes = nodes;
+        for node in &mut nodes {
+            node.3 = Some(credential.directory().to_owned());
+        }
+        nodes
+    };
     let certificate = rcgen::generate_simple_self_signed(vec!["127.0.0.2".into()]).unwrap();
     fs::write(root.join("cert.pem"), certificate.serialize_pem().unwrap()).unwrap();
     fs::write(
@@ -604,10 +633,11 @@ fn run_real_aoem_main_nodes_scenario(
     )
     .unwrap();
     let relay_key = transport_fixture::identity(171);
-    transport_fixture::protect_for_chain(171, &root.join("identity.protected"), CHAIN).unwrap();
+    let relay_identity_path = identity_root.join("relay-identity.protected");
+    transport_fixture::protect_for_chain(171, &relay_identity_path, CHAIN).unwrap();
     let config: ProductRelayDaemonConfigV1 = serde_json::from_value(serde_json::json!({
         "bind_addr":"127.0.0.2:443", "tls_cert_path":root.join("cert.pem"), "tls_key_path":root.join("tls.hex"),
-        "relay_identity_key_path":root.join("identity.protected"), "report_path":root.join("report.json"),
+        "relay_identity_key_path":relay_identity_path, "report_path":root.join("report.json"),
         "chain_id":CHAIN, "library":transport_fixture::library(), "library_sha256":transport_fixture::digest(),
         "report_interval_ms":20, "session_queue_capacity":128, "offline_queue_per_peer":128,
         "offline_queue_per_source":256, "offline_queue_total":512, "session_ttl_ms":10000,
@@ -673,13 +703,10 @@ fn run_real_aoem_main_nodes_scenario(
         )
         .unwrap();
         fs::write(node.0.join("signer.hex"), hex(&keys[i].to_bytes())).unwrap();
-        transport_fixture::protect_for_chain(
-            161 + i as u8,
-            &node.0.join("transport.protected"),
-            CHAIN,
-        )
-        .unwrap();
-        let overlay = serde_json::json!({"chain_id":CHAIN,"role":"duplex", "identity_key_path":"transport.protected",
+        let transport_identity_path = identity_root.join(format!("transport-{i}.protected"));
+        transport_fixture::protect_for_chain(161 + i as u8, &transport_identity_path, CHAIN)
+            .unwrap();
+        let overlay = serde_json::json!({"chain_id":CHAIN,"role":"duplex", "identity_key_path":transport_identity_path,
             "library":transport_fixture::library(), "library_sha256":transport_fixture::digest(),
             "overlay":{"cache_path":"cache.json", "trusted_signer_public_keys":[bootstrap_key.public_key().to_vec()],
                 "minimum_bootstrap_signatures":1,"embedded_sources":[bootstrap],"cooldown_base_ms":10,"cooldown_max_ms":100},
