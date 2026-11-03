@@ -1,0 +1,144 @@
+{
+  "status": "READY_D",
+  "node": "validator-D",
+  "prepared_at": "2026-11-04T06:46:09.0120356+08:00",
+  "read_main_commit": "3a4115c5b85eb489949a536c8a2406d472f42b10",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "auth_zip": {
+    "bytes": 19531,
+    "checksum_file_sha256": "512998a0ea5a3b34b9a5f964f43eb9bef1305eef3aafa7ff18dfaff430603236",
+    "new_independent_directory": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD",
+    "checksums_verified": [
+      {
+        "path": "README-CD.md",
+        "sha256": "970215f41f92633245f1ea79155a554dacc777a4d276d8388bfc3ea239667bd6",
+        "verified": true
+      },
+      {
+        "path": "C/probe-C-B-first.json",
+        "sha256": "3e20f84a19db383725327e56e55c68e8fbcc123286a263bdb25aa3daed83b074",
+        "verified": true
+      },
+      {
+        "path": "C/probe-C-B-second.json",
+        "sha256": "39372e077f30c76dc287628ddf90887baa7ac989ca885bf1dd832f566db77f4c",
+        "verified": true
+      },
+      {
+        "path": "D/probe-D-B-first.json",
+        "sha256": "cf51b75ebcc04b6a37ef5c2c10e1a70ddb2d07a49d9b54c67476367c5e032d42",
+        "verified": true
+      },
+      {
+        "path": "D/probe-D-B-second.json",
+        "sha256": "2a0310e5872dd48f2b8183942f2668561ef95f6d1bd7f274b4145676e4198229",
+        "verified": true
+      }
+    ],
+    "external_expected_sha256": "99a4dfbd8cf819c9e4286a0aaf0edaf976ae61a8b3ab203a80cb7bad22e9cebd",
+    "source": "E:\\区块链四机通讯\\four-host-native65-auth-CD-20261104.zip",
+    "sha256": "99a4dfbd8cf819c9e4286a0aaf0edaf976ae61a8b3ab203a80cb7bad22e9cebd"
+  },
+  "original_candidate_files_verified": [
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovm-product-nat.exe",
+      "bytes": 6633472,
+      "sha256": "970e89225b5daa6a1563e0d5313db3cf25ad3ba2a90a0cc2188c8bf5a58dec73",
+      "verified": true
+    },
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovmctl.exe",
+      "bytes": 25115136,
+      "sha256": "58db89fe535c2111197b8d8da174e8a264efb255a06c1fe54d695ed811738903",
+      "verified": true
+    },
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+      "bytes": 48345088,
+      "sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "verified": true
+    }
+  ],
+  "D_configs_verified": [
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\probe-D-B-first.json",
+      "sha256": "cf51b75ebcc04b6a37ef5c2c10e1a70ddb2d07a49d9b54c67476367c5e032d42",
+      "version": 2,
+      "mode": "observed_endpoint_probe",
+      "bind_addr": "0.0.0.0:0",
+      "identity_key_path_matches_original": true,
+      "library_path_matches_original": true,
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "chain_id": 167999907280566,
+      "peer_public_key_bytes": 1952,
+      "peer_public_key_sha256": "741cb7b6d0964de5a1a70adf64f1399cacf117f6aae838fd78e1000320b9a676",
+      "peer_addr": "47.103.59.206:41050",
+      "expected_peer_id_specified": false,
+      "timeout_ms": 10000,
+      "run_for_ms": 10000,
+      "future_report_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\reports\\probe-D-B-first.json",
+      "future_report_already_exists": false,
+      "probe_started": false
+    },
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\probe-D-B-second.json",
+      "sha256": "2a0310e5872dd48f2b8183942f2668561ef95f6d1bd7f274b4145676e4198229",
+      "version": 2,
+      "mode": "observed_endpoint_probe",
+      "bind_addr": "0.0.0.0:0",
+      "identity_key_path_matches_original": true,
+      "library_path_matches_original": true,
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "chain_id": 167999907280566,
+      "peer_public_key_bytes": 1952,
+      "peer_public_key_sha256": "741cb7b6d0964de5a1a70adf64f1399cacf117f6aae838fd78e1000320b9a676",
+      "peer_addr": "47.103.59.206:41050",
+      "expected_peer_id_specified": false,
+      "timeout_ms": 10000,
+      "run_for_ms": 10000,
+      "future_report_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\auth-20261104-CD\\D\\reports\\probe-D-B-second.json",
+      "future_report_already_exists": false,
+      "probe_started": false
+    }
+  ],
+  "configs_differ_only_in_report_path": true,
+  "configuration_files_unchanged": true,
+  "original_identity_inspection": {
+    "exit_code": 0,
+    "same_public_key_as_prior_receipt": true,
+    "timestamp_unix_ms": 1793745968994,
+    "purpose": "transport",
+    "public_key_bytes": 1952,
+    "private_material_exported": false,
+    "protected_key_created": false,
+    "account_check": {
+      "dpapi_original_identity_inspect_ok": true,
+      "running_as_original_sealed_file_owner": true,
+      "sealed_metadata_unchanged": true,
+      "operating_account": "SUPERVM-L2-01\\ASUS",
+      "identity_generated": false,
+      "probe_started": false
+    },
+    "schema_version": 3,
+    "chain_id": 167999907280566,
+    "action": "inspect",
+    "public_key_sha256": "30019ff63f5f8c1f77029990aaf2657c3bb6dad562d957d78f0b60d8d349c934",
+    "algorithm": "ML-DSA-65",
+    "ok": true
+  },
+  "wait_condition": "Explicit START_D from A confirming the corresponding B observation window is open and pinned to D; two sequential original probes only then",
+  "bounds": {
+    "D_B_authentication_accepted": false,
+    "chain_started_or_database_opened": false,
+    "C_configuration_contents_parsed_executed_or_adapted": false,
+    "old_session_replay_counterexample_accepted": false,
+    "program_reinstalled_or_recompiled": false,
+    "four_host_authentication_accepted": false,
+    "services_or_firewall_or_VPN_changed": false,
+    "NAT_probe_started": false,
+    "B_test_window_opened_by_D": false,
+    "clock_changed": false,
+    "private_material_uploaded": false,
+    "new_key_generated": false
+  }
+}
