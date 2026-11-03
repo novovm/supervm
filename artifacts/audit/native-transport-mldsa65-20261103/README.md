@@ -359,3 +359,58 @@ ZK 入网验证必须另有正确的信任起点、程序、状态、共识及�
 receipt 不冒充最终性或入网许可证。本节没有批准或实现该新证明关系。
 完整 CI 仍未通过，后续修正须重新冻结、构建及复验；没有安装/切换 B 新程序、
 要求 C/D 重交基础回执、启链、NOV 分配或新的 TPS 结论。
+
+## 9. 9b8bae6e 完整 CI 已失败：只收口原握手重试
+
+`main@9b8bae6ee6d0e4540a70bf0619f50534c8c358ff` 的完整
+[CI 41569651842](https://github.com/novovm/supervm/actions/runs/41569651842)
+已结束，结论 **failure**，不再记为运行中。两平台实际认证/服务矩阵、preserved
+runtime、脚本和 security gates 通过，不覆盖 `Rust checks` 的失败；scope result
+也正确失败，未跳过、取消或修改检查。此 SHA 的独立平台包仍是未签收候选。
+
+9b8bae6e 包内 Windows/Linux CLI/NAT 各 7/7、Relay 各 4/4，Windows 服务 owner
+13/13；80/85 项制品 checksum 与源码身份分别一致。本机结果和 CI 失败同时保留。
+日志为 `target/transport-{windows,linux}-9b8bae6e-package-*-20261103.log` 及
+`target/transport-9b8bae6e-package-checksums-20261103.json`，不替后继源码背书。
+
+已下载原始失败输出 `target/transport-ci-9b8bae6e-rust-failure-20261103.log`：
+六项原 Mesh 均在 establishing 阶段、node0 约 38 ms 时计入一个 handshake rejection；
+背压、收发错误、发送失败均为零。流水线 556 通过、6 失败、146 既有忽略。
+这是同一分类的证据，不把分类计数冒充完整原始 Err 或唯一根因证明。
+
+两个原 owner 精确反例分别确认了正常握手重试窗口：
+
+1. 配置双方同时发起、较低 peer 的 offer 获选并经 AEAD 确认后，较高 peer 原
+   INIT 的迟到 CHALLENGE 因原 flight 被替换而误拒。修复仅保留一份原 Sender
+   标识与原 deadline；不保留旧会话、旧待发正文，不重发、不延长时间、不转移授权。
+2. 较低 peer 首次完整验证败选 offer 后，没有保留它的幂等身份；相同 offer 在
+   会话建立前后重传均被原 replay cache 拒绝。复用原 `cached_offer` 单槽，只有原
+   公钥 pin、目标、签名、时间和 replay 验证成功才记入；后续必须字节完全一致且
+   原 attempt/签名期限仍有效，不重新创建会话、不提前推进 initiator 的重试时钟。
+
+旧行为失败记录：`target/transport-configured-late-challenge-old-20261103.log`、
+`target/transport-configured-losing-offer-before-20261103.log`。第二份记录的失败时，
+前一项 metadata 修正已在工作区，但 losing-offer 路径尚未改变，不能标成整个干净
+9b8bae6e 二进制的 A/B。修正后原 endpoint 六项反例通过，记录为
+`target/transport-configured-retry-fixed-20261103.log`；继续验证错误 flight、未知源、
+篡改签名、过期、原 wire budget 和认证后双向数据。
+
+这些反例也确认旧行为的 AEAD 数据仍正常，故不宣称发现吞吐停顿根因或 TPS 提升。
+驻留增加是每个原 peer 一份有界已验证 offer 与一份旧 Sender metadata，不是零新增
+内存，也不是无限缓存/历史队列。没有改变签名、AEAD、nonce、quorum、生产超时、
+发送/补片策略或执行规则。完整回归与新冻结 SHA 的原 CI 仍须通过；B 服务、正式库、
+启链、资金和隐私/ZK业务均未由此放行。
+
+后继修正的本机受影响验证：全 feature 网络库 **1,296 通过、13 既有忽略**
+（466.20 s）；Linux 原生流水线 **562 通过、146 既有忽略**（固定同一实际库变量
+的复验 53.45 s），原归档 **24/24**、退休 **4/4**、后继 **16/16** 均通过。
+全 workspace 格式检查及 network/node lib/tests 严格 Clippy 通过。
+对应日志为 `target/transport-configured-retry-network-features-20261103.log`、
+`target/transport-configured-retry-linux-native-pipeline-pinned-20261103.log`、
+`target/transport-configured-retry-linux-{native_archive_,native_realtime_retirement_,native_successor_}-20261103.log`
+及 `target/transport-configured-retry-{format,clippy}-20261103.log`。
+
+中间一次 PowerShell→WSL 参数传递错误造成空过滤器/库变量不配对，已停止；
+`target/transport-configured-retry-linux--20261103.log` 不计入验收或性能证据。
+随后用原过滤器、明确配对库路径重新执行上述范围，不以误选样本充数。
+新源码冻结后的完整 CI 尚须独立验收；不把 9b8bae6e 的平台通过结果直接继承过来。

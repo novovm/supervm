@@ -165,21 +165,14 @@ impl NativeEndpoint {
         // its local attempt; invalid input cannot suppress our outgoing offer.
         let local = peer_id_from_mldsa65_public_key_v1(&self.local_key);
         if local.as_str() < peer.id.as_ref() {
-            ensure!(
-                offer.responder_peer_id == local,
-                "configured offer target mismatch"
-            );
-            crate::product_overlay::validate_handshake_offer_v1(
-                &offer,
-                wall_ms,
-                &mut self.replay,
-                &self
-                    .configured
-                    .as_ref()
-                    .context("configured policy missing")?
-                    .identity,
-            )?;
-            return Ok(());
+            return self
+                .peers
+                .get_mut(&index)
+                .context("configured peer missing")?
+                .handshake
+                .as_mut()
+                .context("configured attempt missing")?
+                .receive_election_offer(wire, &offer, wall_ms, &mut self.replay);
         }
         self.prepare_reconnect(index, source, wire, wall_ms, now)?;
         // Initial responders also require fresh-secret confirmation. Otherwise
@@ -324,11 +317,14 @@ impl NativeEndpoint {
         {
             return None;
         }
-        let pending = peer.reconnect.take()?;
+        let mut pending = peer.reconnect.take()?;
         let previous = peer.session.as_ref().map(NativeUdpSession::session_id);
         let current = pending.session.session_id();
         peer.last_authenticated = now;
         peer.session = Some(pending.session);
+        if let Some(previous) = peer.handshake.as_mut() {
+            pending.handshake.retain_replaced_flight(previous);
+        }
         peer.handshake = Some(pending.handshake);
         self.sources.retain(|_, i| *i != index);
         self.sources.insert(source, index);

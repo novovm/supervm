@@ -28,6 +28,7 @@ pub struct NativeHandshake {
     cached_response: Option<Vec<u8>>,
     outgoing: Option<Vec<u8>>,
     continuation: Option<handshake_continuation::Sender>,
+    retired_continuation: Option<(handshake_continuation::Sender, Instant)>,
     next_send: Instant,
     deadline: Instant,
     ttl_ms: u64,
@@ -106,6 +107,7 @@ impl NativeHandshake {
             cached_response: None,
             outgoing,
             continuation: None,
+            retired_continuation: None,
             next_send: now,
             deadline: now
                 .checked_add(ttl)
@@ -183,16 +185,64 @@ impl NativeHandshake {
             source == self.remote && now < self.deadline,
             "unexpected/expired continuation challenge"
         );
-        let newly_accepted = self
+        let newly_accepted = match self
             .continuation
             .as_mut()
-            .context("no large outgoing handshake")?
-            .challenge(wire)?;
+            .context("no large outgoing handshake")
+            .and_then(|sender| sender.challenge(wire))
+        {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                // Election can replace our Init with the peer's authenticated
+                // response while the Init's cookie is still in flight. Only
+                // that exact former flight, within its ORIGINAL deadline, is
+                // harmless; it never resumes a sender or changes the session.
+                if self
+                    .retired_continuation
+                    .as_mut()
+                    .is_some_and(|(sender, deadline)| {
+                        now < *deadline && sender.challenge(wire).is_ok()
+                    })
+                {
+                    return Ok(());
+                }
+                return Err(error);
+            }
+        };
         // The challenge unlocks the current cached flight, not a new transcript
         // or peer; it does not extend either signed expiry or attempt deadline.
         if newly_accepted {
             self.next_send = now;
         }
+        Ok(())
+    }
+
+    pub(super) fn retain_replaced_flight(&mut self, previous: &mut Self) {
+        if self.remote == previous.remote && self.remote_peer == previous.remote_peer {
+            // One previous flight, not a transcript/session history. A later
+            // replacement overwrites the slot without extending its expiry.
+            self.retired_continuation = previous
+                .continuation
+                .take()
+                .map(|sender| (sender, previous.deadline));
+        }
+    }
+
+    pub(super) fn receive_election_offer(
+        &mut self,
+        wire: &[u8],
+        offer: &NodeHandshakeOfferV1,
+        wall_ms: u64,
+        replay: &mut HandshakeReplayCacheV1,
+    ) -> Result<()> {
+        ensure!(
+            offer.responder_peer_id == self.identity.peer_id(),
+            "configured offer target mismatch"
+        );
+        validate_handshake_offer_v1(offer, wall_ms, replay, &self.identity)?;
+        // Reuse the original exact-offer retry slot. Losing election does not
+        // make an already verified transcript a new reconnect on its next retry.
+        self.cached_offer = Some(wire.to_vec());
         Ok(())
     }
 
@@ -219,6 +269,18 @@ impl NativeHandshake {
         ensure!(now < self.deadline, "native handshake attempt expired");
         match handshake_wire::decode(wire)? {
             HandshakeMessage::Offer(offer) => {
+                if self.cached_offer.as_deref() == Some(wire) {
+                    ensure!(
+                        wall_ms <= offer.expires_at_ms && wall_ms <= self.outgoing_expiry,
+                        "expired offer cannot retry a live attempt"
+                    );
+                    // Only the responder retries its authenticated response;
+                    // a losing offer cannot accelerate the elected initiator.
+                    if self.ready && self.outgoing.is_some() {
+                        self.next_send = now;
+                    }
+                    return Ok(());
+                }
                 ensure!(
                     self.initiator.is_none(),
                     "unexpected simultaneous native offer"
@@ -227,18 +289,10 @@ impl NativeHandshake {
                     offer.initiator_peer_id == self.remote_peer,
                     "unexpected native identity"
                 );
-                if self.ready {
-                    ensure!(
-                        self.cached_offer.as_deref() == Some(wire)
-                            && wall_ms <= offer.expires_at_ms
-                            && wall_ms <= self.outgoing_expiry,
-                        "different/expired offer cannot replace live session"
-                    );
-                    // Response loss: retry the SAME authenticated transcript.
-                    // Do not bypass the replay cache to create another channel.
-                    self.next_send = now;
-                    return Ok(());
-                }
+                ensure!(
+                    !self.ready,
+                    "different/expired offer cannot replace live session"
+                );
                 let responder = NodeHandshakeResponderV1::respond(
                     &offer,
                     &self.identity,

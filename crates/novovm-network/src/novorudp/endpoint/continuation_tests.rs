@@ -273,3 +273,244 @@ fn delayed_challenge_from_sent_init_does_not_reject_or_replace_authenticated_ses
     assert_eq!(client.session_id(0), Some(session));
     Ok(())
 }
+
+#[test]
+fn configured_election_retains_own_delayed_challenge_after_responder_confirmation() -> Result<()> {
+    use crate::novorudp::NovoRudpTransportFrameKindV0;
+
+    let first = crate::test_identity::key(14);
+    let second = crate::test_identity::key(19);
+    let (low_key, high_key) = if first.peer_id() < second.peer_id() {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    let low_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
+    let high_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
+    let start = Instant::now();
+    let budget = NativeHandshakeBudget {
+        lifetime: Duration::from_secs(5),
+        retry: Duration::from_millis(10),
+    };
+    let mut low = NativeEndpoint::bind_shared(
+        low_socket.clone(),
+        low_key.clone(),
+        vec![NativePeer {
+            key: high_key.public_key().to_vec(),
+            address: high_socket.local_addr()?,
+        }],
+        budget.clone(),
+        1000,
+        start,
+    )?;
+    let mut high = NativeEndpoint::bind_shared(
+        high_socket.clone(),
+        high_key,
+        vec![NativePeer {
+            key: low_key.public_key().to_vec(),
+            address: low_socket.local_addr()?,
+        }],
+        budget,
+        1000,
+        start,
+    )?;
+    low.enable_configured_reconnect_v1()?;
+    high.enable_configured_reconnect_v1()?;
+
+    // Both original owners initiate. Low's immediate cookie reply precedes its
+    // own Init; retain the former while delivering the elected lower offer.
+    assert_eq!(high.poll(1000, start, 64)?.handshakes_sent, 1);
+    let low_start = low.poll(1000, start, 64)?;
+    assert_eq!(low_start.rejected_datagrams, 0);
+    assert_eq!(low_start.handshakes_sent, 2);
+    let delayed_challenge = receive(&high_socket)?;
+    let low_init = receive(&high_socket)?;
+    assert!(delayed_challenge.starts_with(crate::novorudp::handshake_continuation::MAGIC));
+    assert_eq!(delayed_challenge[8], 2);
+    assert!(low_init.starts_with(crate::novorudp::handshake_continuation::MAGIC));
+    assert_eq!(low_init[8], 1);
+    low.io
+        .try_send(&low_init, NativeRoute::Udp(high.local_addr()?))?;
+
+    for tick in 1..64 {
+        let at = start + Duration::from_micros(tick * 100);
+        let right = high.poll(1000, at, 64)?;
+        let left = low.poll(1000, at, 64)?;
+        assert_eq!(right.rejected_datagrams, 0);
+        assert_eq!(left.rejected_datagrams, 0);
+        if low.session_id(0).is_some() {
+            break;
+        }
+    }
+    let session = low
+        .session_id(0)
+        .context("elected initiator did not authenticate")?;
+    assert!(high.session_id(0).is_none());
+    assert!(high.peers[&0].reconnect.is_some());
+    let proof = NovoRudpTransportFrameV0::new(
+        NovoRudpTransportFrameKindV0::Data,
+        session,
+        1,
+        1,
+        0,
+        0,
+        vec![7; 4],
+    );
+    assert!(low.try_send(0, &proof)?);
+    let confirmed = high.poll(1000, start + Duration::from_millis(7), 64)?;
+    assert_eq!(confirmed.rejected_datagrams, 0);
+    assert_eq!(confirmed.frames.len(), 1);
+    assert_eq!(high.session_id(0), Some(session));
+    assert!(high.peers[&0].reconnect.is_none());
+    assert!(high.peers[&0]
+        .handshake
+        .as_ref()
+        .unwrap()
+        .outgoing_wire_for_test()
+        .is_some_and(|wire| matches!(
+            handshake_wire::decode(wire),
+            Ok(handshake_wire::HandshakeMessage::Response(_))
+        )));
+
+    let mut wrong_flight = delayed_challenge.clone();
+    wrong_flight[9] ^= 1;
+    low.io
+        .try_send(&wrong_flight, NativeRoute::Udp(high.local_addr()?))?;
+    assert_eq!(
+        high.poll(1000, start + Duration::from_micros(7100), 64)?
+            .rejected_datagrams,
+        1
+    );
+    let stranger = UdpSocket::bind("127.0.0.1:0")?;
+    stranger.send_to(&delayed_challenge, high.local_addr()?)?;
+    assert_eq!(
+        high.poll(1000, start + Duration::from_micros(7200), 64)?
+            .rejected_datagrams,
+        1
+    );
+
+    low.io
+        .try_send(&delayed_challenge, NativeRoute::Udp(high.local_addr()?))?;
+    let delayed = high.poll(1000, start + Duration::from_micros(7300), 64)?;
+    assert_eq!(high.session_id(0), Some(session));
+    assert_eq!(low.session_id(0), Some(session));
+    assert_eq!(high.peer_count(), 1);
+    assert_eq!(low.peer_count(), 1);
+    assert!(delayed.frames.is_empty() && delayed.session_changes.is_empty());
+    assert_eq!(delayed.handshakes_sent, 0);
+
+    assert!(low.try_send(0, &proof)?);
+    let forward = high.poll(1000, start + Duration::from_micros(7400), 64)?;
+    assert_eq!(forward.rejected_datagrams, 0);
+    assert_eq!(forward.frames.len(), 1);
+    assert!(high.try_send(0, &proof)?);
+    let reverse = low.poll(1000, start + Duration::from_micros(7500), 64)?;
+    assert_eq!(reverse.rejected_datagrams, 0);
+    assert_eq!(reverse.frames.len(), 1);
+    assert_eq!(
+        delayed.rejected_datagrams, 0,
+        "election discarded our sent Init's delayed challenge: {:?}; elected session and bidirectional AEAD delivery remained valid",
+        delayed.rejection_reasons
+    );
+    // The newer responder's lifetime must not extend the retired initiator's
+    // original deadline, even though the elected session remains healthy.
+    low.io
+        .try_send(&delayed_challenge, NativeRoute::Udp(high.local_addr()?))?;
+    let expired = high.poll(6000, start + Duration::from_secs(5), 64)?;
+    assert_eq!(expired.rejected_datagrams, 1);
+    assert_eq!(high.session_id(0), Some(session));
+    Ok(())
+}
+
+#[test]
+fn configured_losing_offer_retry_is_idempotent_before_and_after_elected_session() -> Result<()> {
+    use crate::product_overlay::NodeHandshakeResponderV1;
+
+    let first = crate::test_identity::key(14);
+    let second = crate::test_identity::key(19);
+    let (low_key, high_key) = if first.peer_id() < second.peer_id() {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    let high_socket = UdpSocket::bind("127.0.0.1:0")?;
+    let source = NativeRoute::Udp(high_socket.local_addr()?);
+    let start = Instant::now();
+    let mut low = NativeEndpoint::bind(
+        UdpSocket::bind("127.0.0.1:0")?,
+        low_key.clone(),
+        vec![NativePeer {
+            key: high_key.public_key().to_vec(),
+            address: high_socket.local_addr()?,
+        }],
+        NativeHandshakeBudget {
+            lifetime: Duration::from_secs(5),
+            retry: Duration::from_millis(10),
+        },
+        1000,
+        start,
+    )?;
+    low.enable_configured_reconnect_v1()?;
+    low.poll(1000, start, 64)?;
+    let elected = low.peers[&0]
+        .handshake
+        .as_ref()
+        .unwrap()
+        .outgoing_wire_for_test()
+        .context("configured initiator did not prepare offer")?
+        .to_vec();
+    let loser = NodeHandshakeInitiatorV1::start(&high_key, low_key.peer_id(), 1000, 5000)?;
+    let loser_wire = handshake_wire::encode_offer(loser.offer())?;
+    low.receive_handshake(source, &loser_wire, 1000, start)?;
+    let before = low.receive_handshake(source, &loser_wire, 1000, start);
+    assert!(low.session_id(0).is_none() && low.peers[&0].reconnect.is_none());
+    assert_eq!(
+        low.peers[&0]
+            .handshake
+            .as_ref()
+            .unwrap()
+            .outgoing_wire_for_test(),
+        Some(elected.as_slice())
+    );
+
+    // Complete the elected transcript through the original signed responder
+    // and endpoint owner; no session or replay cache is injected into Low.
+    let handshake_wire::HandshakeMessage::Offer(offer) = handshake_wire::decode(&elected)? else {
+        anyhow::bail!("elected transcript was not an offer")
+    };
+    let responder = NodeHandshakeResponderV1::respond(
+        &offer,
+        &high_key,
+        1000,
+        5000,
+        &mut HandshakeReplayCacheV1::default(),
+    )?;
+    let response = handshake_wire::encode_response(responder.response())?;
+    low.receive_handshake(source, &response, 1000, start)?;
+    let session = low
+        .session_id(0)
+        .context("elected session was not installed")?;
+    let after = low.receive_handshake(source, &loser_wire, 1000, start);
+    assert_eq!(low.session_id(0), Some(session));
+    assert_eq!(low.peer_count(), 1);
+    assert!(low.peers[&0].reconnect.is_none());
+
+    let mut forged = loser_wire.clone();
+    *forged.last_mut().unwrap() ^= 1;
+    assert!(low.receive_handshake(source, &forged, 1000, start).is_err());
+    assert!(low
+        .receive_handshake(
+            source,
+            &loser_wire,
+            6001,
+            start + Duration::from_millis(5001),
+        )
+        .is_err());
+    assert_eq!(low.session_id(0), Some(session));
+    assert!(low.peers[&0].reconnect.is_none());
+    assert!(
+        before.is_ok() && after.is_ok(),
+        "same validated losing offer was not idempotent: before={before:?}, after={after:?}"
+    );
+    Ok(())
+}
