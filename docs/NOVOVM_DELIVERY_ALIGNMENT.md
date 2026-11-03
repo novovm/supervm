@@ -1,5 +1,105 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-11-04：C/D 固定 Windows 候选包接收与本机核验
+
+本轮只安装独立候选程序、核验实际库和准备本机传输用途身份。不启链，不安装或
+启动 Windows 服务，不生成验证者钥、创世或 NOV，不替换既有身份、数据库和正式库。
+C/D 均是 Windows x86_64；D 不是历史 DGX/Linux 设备。
+
+### 1. GitHub 与文件复制各负责什么
+
+- GitHub：同步本指令、原规则和公开回执。只用 `main`；先保留本机未提交工作，
+  fetch 后仅在可无损快进时同步，不 reset、不强推、不建分支。
+- 局域网/现有文件传输：复制 A 已验收的完整 ZIP，不只复制一个 EXE 或 DLL。
+  不把此大包塞进普通 Git 历史，也不自行重编译出另一份候选替代它。
+- 本机源码可包含后续文档提交；下面的实际程序源码固定为 **d7ef793b**。
+  后续回执文档不改变该程序包身份，不把新 main 的测试结果冒充旧包结果。
+
+A 上待复制文件：
+`D:\WorksArea\SUPERVM\target\native65-d7ef793b-windows-x86_64-20261104.zip`
+
+| 固定项 | 值 |
+| --- | --- |
+| ZIP 字节数 | 144558493 |
+| ZIP SHA256 | `d025e678f793fffc95a22b21be6b7aeb8d0aa369e5e0ba6df63ba4c06e2238cc` |
+| 程序源码 | `d7ef793b819c8670e472d217daae9db5f074aea8` |
+| release-manifest.json SHA256 | `f6caccf81d205974102d34c00300ff10814de5ff13aea8c041d6f7a00cf3eeb4` |
+| CHECKSUMS.sha256 文件 SHA256 | `301e95eb56419e90e882562448d2aedc4c30e0e89343bf0db4669721ce2a09f8` |
+| 包内 Windows AOEM core SHA256 | `1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50` |
+| 本次传输身份域 | `167999907280566`，不是正式主网值 |
+
+### 2. 直接交给 C 或 D 的 Codex
+
+把本节交给对应机器的 Codex，同时告诉它 ZIP 在该机器上的实际路径：
+
+> 阅读根 AGENTS.md、本文件、共同配置和用途身份文档。你只负责本机 C（或 D）
+> 的候选接收及公开回执，不修改共享协议、AOEM 或其他机器配置，不重复基础清点、
+> 校时和编译。按下列顺序执行并在出错时保留原错误，不换库或降级：
+>
+> 1. 先核对收到 ZIP 的字节数与上述 SHA256。
+> 2. 解压到本机独立目录 `%LOCALAPPDATA%\NOVOVM\candidates\native65-d7ef793b-windows-x86_64`。
+>    只用新的目录；如已有内容，先核对，不覆盖或清理。ZIP 根直接包含 bin/aoem/
+>    release-manifest.json，不需要运行安装器，不需要管理员权限。
+> 3. 独立核对 manifest/checksum 文件哈希、manifest 的 git_commit/target，以及其中
+>    全部 artifacts 的大小和 SHA256；预期 11 个原构建合同、80 个文件。
+> 4. 使用该目录里的 novovmctl 和 AOEM core 运行下面的原资格入口，保存公开结果。
+>    不用 PATH 中的旧 novovmctl，不使用正式随包 DLL 代替候选 DLL。
+> 5. 资格通过后，沿原 native-identity 工具检查本机传输用途身份。已有本域身份则
+>    inspect，不能重新 generate 覆盖；本机确无该身份时才在原保护目录中 generate。
+>    每机独立密钥，不能复制 A/B/另一台机器的 transport.sealed。
+> 6. 回传本机公开报告：节点 C/D、程序源码、ZIP/manifest/core 哈希、实际加载路径、
+>    资格结果、身份用途/域/完整公钥和公钥 SHA256。失败则回传原错误及停在哪一步。
+>    不回传 sealed 文件、私钥、wrapping credential、口令或令牌。
+> 7. 公开回执使用自己的独立文件，不编辑共享规则；按原 main 协作流程回传给 A。
+>    未收到 A 汇总的原认证配置前，不启动 NAT 观察服务、网络守护程序或验证者。
+
+原资格命令（变量指向刚验真的本机绝对路径）：
+
+```powershell
+$pkg = Join-Path $env:LOCALAPPDATA 'NOVOVM/candidates/native65-d7ef793b-windows-x86_64'
+$ctl = Join-Path $pkg 'bin/novovmctl.exe'
+$lib = Join-Path $pkg 'aoem/windows/core/bin/aoem_ffi.dll'
+$coreSha = '1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50'
+& $ctl native-identity qualify-runtime --library $lib --library-sha256 $coreSha
+```
+
+必须核对命令成功退出、`ok=true`、实际库路径/哈希匹配，以及 scalar、unified
+semantic、mixed-batch 验证项成功。失败不修改清单、不绕过门禁。
+
+身份文件沿已有约定使用
+`%LOCALAPPDATA%\NOVOVM\four-host-167999907280566\transport.sealed`。
+存在时只运行：
+
+```powershell
+$key = Join-Path $env:LOCALAPPDATA 'NOVOVM/four-host-167999907280566/transport.sealed'
+& $ctl native-identity inspect --purpose transport --chain-id 167999907280566 --key-file $key --library $lib --library-sha256 $coreSha
+```
+
+只有确认该文件不存在时，才按原[用途身份准备合同](NOVOVM_PURPOSE_IDENTITY_PREPARATION.md)
+用同一命令的 `generate` 动作创建本机独立身份。身份只用于本次传输认证，
+不授予验证者资格、资产控制或正式主网权限。
+
+回执建议位置：
+`artifacts/audit/native-transport-mldsa65-20261103/validator-C-d7ef793b-20261104.md`
+或对应的 `validator-D-...md`，只提交公开内容。
+
+### 3. A 已完成与未完成
+
+- 固定源码的[完整 CI](https://github.com/novovm/supervm/actions/runs/41690278351)
+  已 completed/success。Windows/Linux 包内 CLI/NAT 各 7 项、Relay 各 4 项及
+  Windows 原真实服务 13 项均通过；不是 C/D 本机验收结果。
+- 原正式 Windows/Linux AOEM 库未替换。候选包只具备进入下一阶段的所列资格，
+  不是主网发布许可、完整抗量子密钥协商资格或新 TPS 成绩。
+- A 的本域传输身份已经由新包只读复核，指纹仍为
+  `0656e6de01e498b50d7b67b10ff58f4c600cdf61663066b03f358a7901839eae`。
+- B 已仅安装到新隔离目录 `/opt/novovm/releases/novovm-d7ef793b-linux-x86_64-20261104`，
+  安装前后全部包文件验真、B 实际库资格通过；邮箱/Relay/nginx/Docker 的 PID、状态及
+  激活时间未变，没有修改 current、服务配置、用途钥或账本。B 安装不等于四机认证。
+- 等各机公开材料汇总后，A 沿原 NovoRUDP 组织双向身份、实际出口、重连及旧会话
+  拒绝验收；普通 UDP echo、ICMP 或本机进程通过不能代替它。
+- [共同配置](NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md)中既有链路、校时及
+  B 现有服务边界继续有效。不新增网页/防火墙修改，不启动共识或分配 NOV。
+
 ## 2026-11-02 用户纠正：只在main开发，禁止推断分支授权
 
 此前将参考材料中的“建议建立阶段开发分支”记为明确授权，是Agent的错误。
