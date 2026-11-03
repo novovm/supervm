@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "command": "native-identity",
+  "timestamp_unix_ms": 1793742292760,
+  "host": "SUPERVM-L2-01",
+  "data": {
+    "action": "qualify-runtime",
+    "qualification": "ml-dsa-65-native-verification-owner",
+    "algorithm": "ML-DSA-65",
+    "signature_suite": 65,
+    "library": "\\\\?\\C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+    "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+    "verification_qualified": true,
+    "scalar_verification_kat_passed": true,
+    "unified_semantic_verification_kat_passed": true,
+    "mixed_batch_verification_kat_passed": true,
+    "primitive_sign_interface_size_checked": true,
+    "signing_tested": false,
+    "keygen_tested": false,
+    "protected_key_created": false,
+    "custody_accessed": false,
+    "database_created": false,
+    "service_started": false,
+    "whole_node_post_quantum_qualified": false
+  }
+}
