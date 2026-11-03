@@ -384,15 +384,18 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
             signature: vec![255; 3309],
         })
         .collect();
+    let domain = input.signing_domain()?;
     let initialization = UcaInitializationConfigV2 {
         pages: vec![],
         identities: input.identities.clone(),
         accounts: input.accounts.clone(),
         approvals,
-        expected_signing_domain: [1; 32],
+        expected_signing_domain: domain,
         expected_initial_root: [2; 32],
         expected_final_commitment: [3; 32],
     };
+    let mut startup_genesis = input.genesis.clone();
+    startup_genesis.genesis_config_commitment = domain;
     let config = ResidentConfig {
         profile: "native_execution_tick".into(),
         library: fixture.root.join("not-loaded-aoem.dll"),
@@ -414,7 +417,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
             })
             .collect(),
         native_client_limit: 1,
-        genesis: input.genesis.clone(),
+        genesis: startup_genesis,
         uca_initialization: Some(initialization),
         workers: 2,
         execution_backend: Default::default(),
@@ -439,11 +442,86 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
     let decoded: ResidentConfig = serde_json::from_slice(&with_peers_and_initialization)?;
     assert_eq!(decoded.genesis.validators.len(), 64);
     assert_eq!(decoded.peers.len(), 63);
-    assert_eq!(decoded.uca_initialization.unwrap().accounts.len(), 32);
+    let original_material = decoded.uca_initialization.as_ref().unwrap();
+    assert_eq!(original_material.accounts.len(), 32);
     document["uca_initialization"] = Value::Null;
     let with_peers = serde_json::to_vec_pretty(&document)?;
-    assert!(with_peers_and_initialization.len() < MAX_STARTUP_DOCUMENT_BYTES);
     eprintln!("maximum MLDSA metadata: canonical={} manifest_pretty={} resident64_with_peers={} resident64_with_peers_and_32x8_initialization={}", canonical.len(), pretty.len(), with_peers.len(), with_peers_and_initialization.len());
+    // A valid manifest need not fit an arbitrarily indented inline deployment
+    // document. Keep the maximum shape and use the original bounded pages.
+    assert!(with_peers_and_initialization.len() > MAX_STARTUP_DOCUMENT_BYTES);
+    assert!(with_peers.len() < MAX_STARTUP_DOCUMENT_BYTES);
+    let inline_path = fixture.root.join("maximum-inline-resident.json");
+    fs::write(&inline_path, &with_peers_and_initialization)?;
+    assert!(ResidentConfig::load(&inline_path)
+        .unwrap_err()
+        .to_string()
+        .contains("bounded startup document size"));
+
+    let mut paged_genesis = decoded.genesis.clone();
+    let paged_material = original_material.write_pages_with_genesis(
+        &mut paged_genesis,
+        &fixture.root.join("maximum-initialization-pages"),
+        64,
+    )?;
+    assert!(!paged_material.pages.is_empty());
+    assert!(paged_material.identities.is_empty());
+    assert!(paged_material.accounts.is_empty());
+    assert!(paged_material.approvals.is_empty());
+    for page in &paged_material.pages {
+        assert!(fs::metadata(page)?.len() <= MAX_STARTUP_DOCUMENT_BYTES as u64);
+    }
+    document["genesis"] = serde_json::to_value(&paged_genesis)?;
+    document["uca_initialization"] = serde_json::to_value(&paged_material)?;
+    let paged_document = serde_json::to_vec_pretty(&document)?;
+    eprintln!(
+        "maximum MLDSA paged metadata: resident_header={} pages={}",
+        paged_document.len(),
+        paged_material.pages.len()
+    );
+    assert!(paged_document.len() < MAX_STARTUP_DOCUMENT_BYTES);
+    let paged_path = fixture.root.join("maximum-paged-resident.json");
+    fs::write(&paged_path, paged_document)?;
+    // These files satisfy only load()'s file-shape precondition. No AOEM
+    // loading, custody opening or signature approval is performed in this test.
+    for path in [
+        &decoded.library,
+        &decoded.signing_key_file,
+        &decoded.transport_key_file,
+    ] {
+        fs::write(
+            path,
+            b"structural startup test only; not usable key/library",
+        )?;
+    }
+    let hydrated = ResidentConfig::load(&paged_path)?;
+    assert_eq!(hydrated.genesis.validators.len(), 64);
+    assert_eq!(hydrated.peers.len(), 63);
+    assert_eq!(hydrated.genesis.genesis_config_commitment, domain);
+    let hydrated_material = hydrated.uca_initialization.unwrap();
+    assert!(hydrated_material.pages.is_empty());
+    assert_eq!(hydrated_material.accounts.len(), 32);
+    assert!(hydrated_material
+        .accounts
+        .iter()
+        .all(|account| account.grants.len() == MAX_INITIAL_GRANTS_PER_ACCOUNT));
+    assert_eq!(
+        serde_json::to_vec(&hydrated_material)?,
+        serde_json::to_vec(original_material)?
+    );
+    let mut hydrated_genesis = hydrated.genesis;
+    hydrated_genesis.genesis_config_commitment = [0; 32];
+    let hydrated_manifest = UcaGenesisManifestV2 {
+        genesis: hydrated_genesis,
+        identities: hydrated_material.identities,
+        accounts: hydrated_material.accounts,
+    };
+    assert_eq!(hydrated_manifest.canonical_bytes()?, canonical);
+    assert_eq!(hydrated_manifest.signing_domain()?, domain);
+    assert_eq!(
+        hydrated_manifest.required_approval_subjects(),
+        input.required_approval_subjects()
+    );
     // A larger text envelope never bypasses the explicit byte bound or creates a store.
     fs::write(
         &fixture.manifest,

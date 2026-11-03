@@ -919,8 +919,34 @@ jobs:
       - name: Actual original relay service and custody owners
         shell: pwsh
         run: |
-          cargo test -p novovm-relay --features tls-transport --test rendezvous_process --locked -- --test-threads=1 --nocapture
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $credentialRoot = $null
+          try {
+            if ($IsLinux) {
+              $credentialRoot = Join-Path $env:RUNNER_TEMP ('novovm-relay-credential-' + [guid]::NewGuid().ToString('N'))
+              $env:CREDENTIALS_DIRECTORY = $credentialRoot
+              # Isolated per-user fixture only. No service account credential or secret output.
+              $directoryMode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute
+              [void][IO.Directory]::CreateDirectory($credentialRoot, $directoryMode)
+              $options = [IO.FileStreamOptions]::new()
+              $options.Mode = [IO.FileMode]::CreateNew
+              $options.Access = [IO.FileAccess]::Write
+              $options.UnixCreateMode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite
+              [byte[]]$credentialBytes = [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
+              $credentialStream = [IO.FileStream]::new((Join-Path $credentialRoot 'owner-key'), $options)
+              try { $credentialStream.Write($credentialBytes, 0, $credentialBytes.Length) }
+              finally { $credentialStream.Dispose(); [Array]::Clear($credentialBytes) }
+            }
+            cargo test -p novovm-relay --features tls-transport --test rendezvous_process --locked -- --test-threads=1 --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            if ($IsLinux) {
+              Remove-Item Env:CREDENTIALS_DIRECTORY -ErrorAction SilentlyContinue
+              if ($credentialRoot -and (Test-Path -LiteralPath $credentialRoot)) {
+                Remove-Item -LiteralPath (Join-Path $credentialRoot 'owner-key') -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $credentialRoot -Force
+              }
+            }
+          }
           if ($IsWindows) {
             cargo test -p novovm-relay --features tls-transport --test rendezvous_owner_process --test bootstrap_publisher_process --test bootstrap_mirror_process --locked -- --list > "$env:RUNNER_TEMP/windows-owner-test-list.txt"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

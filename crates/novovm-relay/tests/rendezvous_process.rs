@@ -132,6 +132,15 @@ impl Fixture {
             std::process::id(),
             rand::random::<u64>()
         ));
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&path)
+                .unwrap();
+        }
+        #[cfg(not(target_os = "linux"))]
         std::fs::create_dir(&path).unwrap();
         transport_fixture::protect_for_chain(
             72,
@@ -158,7 +167,7 @@ impl Fixture {
             &config,
             serde_json::to_vec(&serde_json::json!({
                 "version":3,"engineering_direct_allowed":allowed,
-                "transport_identity_path":self.0.join("transport.protected"),"chain_id":PROCESS_CHAIN_ID,
+                "relay_identity_key_path":self.0.join("transport.protected"),"chain_id":PROCESS_CHAIN_ID,
                 "library":transport_fixture::library(),"library_sha256":transport_fixture::digest(),
                 "trusted_signers":[pin(71)],"minimum_signatures":1,"allowed_clients":[pin(73),pin(74)],
                 "relays":[],"nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
@@ -166,7 +175,18 @@ impl Fixture {
                 "record_id":"explicit-loopback-fixture","grant_sequence":sequence,"run_for_ms":15000,"max_sessions":count
             }))?,
         )?;
-        let mut command = Command::new(env!("CARGO_BIN_EXE_supervm-relay"));
+        let binary = match std::env::var_os("NOVOVM_RELAY_TEST_BINARY") {
+            Some(path) => {
+                let path = PathBuf::from(path);
+                ensure!(
+                    path.is_absolute() && path.is_file(),
+                    "NOVOVM_RELAY_TEST_BINARY must name an existing absolute candidate executable"
+                );
+                path
+            }
+            None => PathBuf::from(env!("CARGO_BIN_EXE_supervm-relay")),
+        };
+        let mut command = Command::new(binary);
         command
             .args(["--runtime", "rendezvous-v2"])
             .arg(config)
@@ -217,9 +237,24 @@ impl Drop for Process {
     }
 }
 impl Process {
-    fn proposal(&self) -> Result<PeerSignedRelayRecordV1> {
-        let json: Value =
-            serde_json::from_str(&self.receive.recv_timeout(Duration::from_secs(8))??)?;
+    fn proposal(&mut self) -> Result<PeerSignedRelayRecordV1> {
+        let line = match self.receive.recv_timeout(Duration::from_secs(8)) {
+            Ok(line) => line?,
+            Err(error) => {
+                if let Some(status) = self.child.try_wait()? {
+                    let mut stderr = String::new();
+                    if let Some(mut pipe) = self.child.stderr.take() {
+                        pipe.read_to_string(&mut stderr)?;
+                    }
+                    anyhow::bail!(
+                        "entry proposal unavailable: child {status}; {error}; stderr: {stderr}"
+                    );
+                }
+                return Err(error)
+                    .context("entry proposal unavailable while child is still running");
+            }
+        };
+        let json: Value = serde_json::from_str(&line)?;
         ensure!(
             json["event"] == "awaiting_authorization",
             "entry proposal missing"

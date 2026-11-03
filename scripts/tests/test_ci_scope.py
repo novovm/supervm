@@ -147,6 +147,15 @@ class ScopeTests(unittest.TestCase):
                      "--test bootstrap_publisher_process", "--test bootstrap_mirror_process",
                      "linux_custody_and_listener_restart", "Formal SDK counterexample identity changed"):
             self.assertIn(name, native)
+        for contract in ("[IO.Directory]::CreateDirectory($credentialRoot, $directoryMode)",
+                         "[IO.FileMode]::CreateNew", "[IO.FileAccess]::Write", "$options.UnixCreateMode =",
+                         "[Security.Cryptography.RandomNumberGenerator]::GetBytes(32)",
+                         "$credentialStream.Write($credentialBytes, 0, $credentialBytes.Length)",
+                         "} finally {", "Remove-Item Env:CREDENTIALS_DIRECTORY"):
+            self.assertIn(contract, native)
+        self.assertNotIn('python3 -c "import os,secrets', native)
+        self.assertLess(native.index("Remove-Item Env:CREDENTIALS_DIRECTORY"),
+                        native.index("--bin novovm-rendezvous-service linux_custody_and_listener_restart"))
         required = re.search(r"^    needs: \[([^\]]+)\]$", jobs["result"], re.M).group(1).split(", ")
         self.assertIn("native_transport_qualification", required)
         rust = jobs["rust"]
