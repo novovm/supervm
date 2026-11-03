@@ -1,0 +1,109 @@
+{
+  "node": "validator-C",
+  "measured_at": "2026-11-04T05:32:24.132994+08:00",
+  "handoff_commit": "331a55c6c728bd98b53c778de8a9b1eb245fe782",
+  "program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "purpose": "transport",
+  "chain_id": 167999907280566,
+  "algorithm": "ML-DSA-65",
+  "schema_version": 3,
+  "public_key_bytes": 1952,
+  "public_key_encoding": "hex of canonical raw ML-DSA-65 public key bytes",
+  "public_key_hex": "c248733e1193b08bbac6e186ef421643b9f62c3981e47a79d754409421ed23eeb6b6ad7ed1d974f56970fdb9ee4f7d713122a75395567ffacc4c6c8a56b3192b4a3ec9740f787ab9013926242799fea1a5b8fb11545e0c44aa7da3b062f383e392c0cb438591b9a9990a294b105931c90b49456e92ad79cb561761eac10f96f1a5b9ca8789a756d7f9810a634930dd71b9846134a6fd5955ea21add9a7fa09175c160efb49bf72be4440fc935dfda7e012f9f8942db7999ecf7c9556ae2882bb3bf7629a1c096ac7568a05f4aa21d28ec971566568d4e20d1a9f271094f2e157e6311773daf133d5d59c682469c8e699a3da4e6734abeb669c43baa60c14f88fa8429bf58f467e87a7da79dbbe2e7857dd97b682157d1fe350ac080e2e8307b41ee255a2e548fca1083e2edfb37c1746a4e72bb047eb9613c1232231c1405ec5d293620b660d39706c597a93c3c588b4e774080bd97545ceb387fbc2d9b53ce3620086d4c9e646daa8789bcbd044a47742e3a9ad628a073277f7e6a9db7a49982410976b4fb11e0b526e06ea02f46658e465cfbc83edbd8eb165ff2918794481221f450e7b1ae91ece0cbcf5305f6fb5608a06803eef64b0ce29e4285003ceb6c9d59ebba40dd16f689a9536b906628747df84ca5d4bf08581b3a691d801a957645613c42dce50e682178ff8501cfba0ae03beb8cd25f5ba9304216b663286e3d97b0e53d843f66f95c66d3d3bf342c5a30d62245b68b35406d9f7a80072f3868e194c8538e94c25562b3eaacd000d9852d563ff5c07e4af003a0afeeb2010340691dec63105d10f174f7b4f8802b9b87f4af27c310eddf7b0b6dc9c47e71e4e57ce0f999cfadcdba946177f1d3388010eec0083875ea7adfb907958a922ca89b903bf3182d9c2c393598e68329e2d958af935bf4cb4af8ac0dbf911cae90ec397b6ffed6aef115a40860017a15cc9a7e5ce67ce557242f28e9c2006d4825ba8aa7811bae84ad4dc6e347e665dcfe325adda623f76ac0b7637ba05a1f4442943817a0e658c38363fc0bed7acebd0942a2c89777335c514c7799d4cab2080a15b0575084b30c9013faa7d5aa4a8449a90e158f5357a4669bcc9bcaa216988b9b4698d2524b361ce745133becd82b44dec4891fed3a8d3c689b3172c6110a13dc54badb6cd0160883ece7141736e6b8b053c64ee7772a8963be70eaf1d7ab3b6c0cd3551d1f0eff55617b20e9a047229b925374f458ceb7e6e15411628367da891fd17724dbd2686627e8f03ce39f62f1b0b553f108e7554b75387b9c5d92f469b7c085f1000df96935611e954abc61b6d596210c5a67833df9aa6f47d64c7694fee4b3fa71ce5c1b5ca11baacae0edd3014d8ee8fdbb683cb0be036e30c15b05d0c3a0761a27456074a500e1c896c6bacdd190c0c141ca479156613e0885d7ca25c9da196470712cb6fed39cb9c8be12781e3f07c4467015dea36060a9e81d8d37aa1071cc5579c06597ff33e50164a208fe93844427792927dd16f42b7f6f7bc9b2d81918d207751482353a4208d9bafea5bfe649a736446715ba50bcd9e1b8d52bcc952e19a2aef08758c7d0fbb35288511128dcc39f6dad241bc60d1899bf2ab6ed255eee6247865df30bd50fee5432588e50789da9fb4879fabbf7a87b79b63285cc96299362ac1fae8a47a71094c0de54b9128c579c8ad0e4a7a8cb4800ebafaf6b2c7d4c4d3fbf35522c80c5ae01b84ab53f4122a1f2dde687f0161414f22e2605433c499bbb9f18bcec80e54562a17d0d2bde6b47edc1083cd871bbec62bb896fd266fb3fc8e3f2cd656ddb0c061a588c303045b297486def524d42f92ee88811c9340c6b4ae17aaeeb9fce6b1ca0116a38b407bf5be86adc8f3abb03e5566a81989abe64000b2aedf7415f01bf90e1453e574fd60696e7d7dcdc697f6d055c2596916241a3ecfed2e8905ce773a337e9cd113ce4d6db3fba1048dbd2925a6d9de9ce69e3c1e9bf2aefcde440bf8e9f5d7e7ae41f45b9cafe2c175338fb61009a9992f3478f14dd6483fea765ac14a763e07586e3b5f7d23804df3e8d0dd8f7e327493016fb921478c6526dcb17eea224308d6e73c701cdecb4b3a7838c3d3d3ed4452655ec363a8d30d9dd8548e1909050727a39ff453409dbf54f73453a0a033a592686afa5be3b0bf4ead400d81c635db7f473e2c29e396b9c2e40816dba4563fe9430f7ef389951470d2948591a645c939a5b04acace5cf6f75853832a6be47ccf60d39b2ef4fa57f53737b57e7d6241fd55daf200c2cd7175809a6dd8582898b8527c31b4ee485027eadeb31e79775320aa783df40420c0fb16c09fb387f620a281258b90f2e310f9e410c9b40770c6db4d60241d01e3d81e57fc61e1d85e8a926e3b9110da125759e4694ef72fa2edda2d95d4adb367fd7857ab41c7a2443bc33e68b43ca7aedf5b10c0098ff464ad00edc7d03842fc922d609b64f51fcd135745029b57605fde64f753718e2f2ad9bf56186451943d09e3d61166b082fbfe0fd698e3ca74466043e754e1f0937f98971aa832618944ab5aaa08a817e011cbebd15b879f267b2960608e4b549a467e9552deed81fc9e8ddd4eb1ab379676db451c2c34986e93d2418fee007e213f2c50d7aeb8fa86b196fbe1fb7ac4bc244ca7ff44cd33a9b586394712bda5eb41085f0776deac9f0eb3f4895782affa15ce9930bb068588dc67d19d95d6aec90f2a9e629a1043117dc6ded2bb",
+  "public_key_sha256": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f",
+  "different_from_A_published_public_key_sha256": true,
+  "operations": [
+    {
+      "action": "generate",
+      "exit_code": 0,
+      "ok": true,
+      "timestamp_unix_ms": 1793741484026,
+      "protected_key_created": true,
+      "private_material_exported": false,
+      "public_key_sha256": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f"
+    },
+    {
+      "action": "inspect",
+      "exit_code": 0,
+      "ok": true,
+      "timestamp_unix_ms": 1793741543383,
+      "protected_key_created": false,
+      "private_material_exported": false,
+      "public_key_sha256": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f"
+    },
+    {
+      "action": "inspect",
+      "exit_code": 0,
+      "ok": true,
+      "timestamp_unix_ms": 1793741543638,
+      "protected_key_created": false,
+      "private_material_exported": false,
+      "public_key_sha256": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f"
+    }
+  ],
+  "local_protection": {
+    "execution_account_kind": "current Windows user, same account for generate and both inspect runs",
+    "protection": "Windows DPAPI current-user",
+    "key_existed_before_task": false,
+    "sealed_metadata_unchanged_during_inspects": true,
+    "access_entries": [
+      {
+        "object": "private-directory",
+        "principal": "SYSTEM",
+        "rights": "FullControl",
+        "type": "Allow",
+        "inherited": false,
+        "inheritance_protected": true
+      },
+      {
+        "object": "private-directory",
+        "principal": "Administrators",
+        "rights": "FullControl",
+        "type": "Allow",
+        "inherited": false,
+        "inheritance_protected": true
+      },
+      {
+        "object": "private-directory",
+        "principal": "current-user",
+        "rights": "FullControl",
+        "type": "Allow",
+        "inherited": false,
+        "inheritance_protected": true
+      },
+      {
+        "object": "sealed-file",
+        "principal": "SYSTEM",
+        "rights": "FullControl",
+        "type": "Allow",
+        "inherited": true,
+        "inheritance_protected": false
+      },
+      {
+        "object": "sealed-file",
+        "principal": "Administrators",
+        "rights": "FullControl",
+        "type": "Allow",
+        "inherited": true,
+        "inheritance_protected": false
+      },
+      {
+        "object": "sealed-file",
+        "principal": "current-user",
+        "rights": "FullControl",
+        "type": "Allow",
+        "inherited": true,
+        "inheritance_protected": false
+      }
+    ]
+  },
+  "private_material_exported": false,
+  "validator_key_generated": false,
+  "genesis_created_or_activated": false,
+  "chain_started": false,
+  "services_installed_or_started": false,
+  "database_created": false,
+  "asset_authority_granted": false,
+  "whole_node_post_quantum_qualified": false,
+  "scope": "local purpose-key preparation and pair checks only; no peer authentication performed"
+}
