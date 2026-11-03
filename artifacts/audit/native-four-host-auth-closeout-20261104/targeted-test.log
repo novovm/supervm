@@ -1,0 +1,8 @@
+
+running 3 tests
+test product_nat_runtime::tests::actual_aoem_handshake_rejects_tamper_and_authenticates_both_directions ... ok
+test product_nat_runtime::tests::actual_aoem_native_udp_reconnect_rejects_previous_session_packets ... ok
+test product_nat_runtime::tests::actual_aoem_protected_probe_entry_reconnects_and_reports_observed_source ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1848 filtered out; finished in 3.32s
+

@@ -42,6 +42,8 @@ artifacts/audit/resident-layer-exchange-20261014/*.log whitespace=-blank-at-eof,
 artifacts/audit/resident-layer-batch-20261014/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
 artifacts/audit/resident-layer-batch-20261014/*.log whitespace=-blank-at-eof,cr-at-eol
 # Preserve installation/test stdout and its checksums across Windows/Linux.
+artifacts/audit/native-four-host-auth-closeout-20261104/*.log -text whitespace=-blank-at-eof,cr-at-eol
+artifacts/audit/native-four-host-auth-closeout-20261104/prior-main-ci-failed.log -whitespace
 artifacts/audit/validator-b-program-install-20261102/*.log -text whitespace=-blank-at-eof,cr-at-eol
 artifacts/audit/validator-b-program-install-20261102/*.json -text
 # The real CLI help emits indented blank lines; keep that raw stdout intact.

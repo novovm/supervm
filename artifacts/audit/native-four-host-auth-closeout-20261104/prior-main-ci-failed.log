@@ -1,0 +1,78 @@
+Rust checks	NOVOVM control-plane portability tests	﻿2026-11-03T23:22:50.8251590Z ##[group]Run cargo test --manifest-path "Cargo.toml" -p novovmctl
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8252073Z ^[[36;1mcargo test --manifest-path "Cargo.toml" -p novovmctl^[[0m
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8278473Z shell: /usr/bin/bash -e {0}
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8278797Z env:
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8279055Z   CARGO_HOME: /home/runner/.cargo
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8279364Z   CARGO_INCREMENTAL: 0
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8279774Z   CARGO_TERM_COLOR: always
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8280027Z   CACHE_ON_FAILURE: false
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8280271Z ##[endgroup]
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8595822Z ^[[1m^[[33mwarning^[[0m: /home/runner/work/supervm/supervm/crates/novovm-node/Cargo.toml: file `/home/runner/work/supervm/supervm/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8597085Z   * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8597556Z   * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8598025Z   * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:50.8598511Z   * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:22:51.0039306Z ^[[1m^[[92m   Compiling^[[0m novovm-node v0.1.0 (/home/runner/work/supervm/supervm/crates/novovm-node)
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:23:23.3676252Z ^[[1m^[[91merror^[[0m^[[1m: failed to build archive at `/home/runner/work/supervm/supervm/target/runtime-rebuild/debug/deps/libnovovm_node-2968a7114c2f9d20.rlib`: No space left on device (os error 28)^[[0m
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:23:23.3677133Z 
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:23:23.4840829Z ^[[1m^[[91merror^[[0m: could not compile `novovm-node` (lib) due to 1 previous error
+Rust checks	NOVOVM control-plane portability tests	2026-11-03T23:23:23.5094867Z ##[error]Process completed with exit code 101.
+CI scope result	Require every selected check to succeed	﻿2026-11-03T23:39:08.1021319Z ##[group]Run python3 scripts/ci_scope.py --check-results
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.1021871Z ^[[36;1mpython3 scripts/ci_scope.py --check-results^[[0m
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.1046851Z shell: /usr/bin/bash -e {0}
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.1047148Z env:
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.1049598Z   CI_NEEDS: {
+CI scope result	Require every selected check to succeed	  "detect": {
+CI scope result	Require every selected check to succeed	    "result": "success",
+CI scope result	Require every selected check to succeed	    "outputs": {
+CI scope result	Require every selected check to succeed	      "scope": "full",
+CI scope result	Require every selected check to succeed	      "full": "true",
+CI scope result	Require every selected check to succeed	      "security": "true",
+CI scope result	Require every selected check to succeed	      "has_rust": "true",
+CI scope result	Require every selected check to succeed	      "rust_manifest": "Cargo.toml",
+CI scope result	Require every selected check to succeed	      "has_python": "true",
+CI scope result	Require every selected check to succeed	      "has_node": "false"
+CI scope result	Require every selected check to succeed	    }
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "lan_script_launch": {
+CI scope result	Require every selected check to succeed	    "result": "success",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "rust": {
+CI scope result	Require every selected check to succeed	    "result": "failure",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "rust_security": {
+CI scope result	Require every selected check to succeed	    "result": "success",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "python": {
+CI scope result	Require every selected check to succeed	    "result": "success",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "node": {
+CI scope result	Require every selected check to succeed	    "result": "skipped",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "runtime_modules": {
+CI scope result	Require every selected check to succeed	    "result": "success",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "runtime_modules_release": {
+CI scope result	Require every selected check to succeed	    "result": "success",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  },
+CI scope result	Require every selected check to succeed	  "native_transport_qualification": {
+CI scope result	Require every selected check to succeed	    "result": "success",
+CI scope result	Require every selected check to succeed	    "outputs": {}
+CI scope result	Require every selected check to succeed	  }
+CI scope result	Require every selected check to succeed	}
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.1052118Z ##[endgroup]
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2231797Z Traceback (most recent call last):
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2232700Z   File "/home/runner/work/supervm/supervm/scripts/ci_scope.py", line 161, in <module>
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2233660Z     scope = validate_results(json.loads(os.environ["CI_NEEDS"]))
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2234396Z             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2235280Z   File "/home/runner/work/supervm/supervm/scripts/ci_scope.py", line 118, in validate_results
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2236032Z     raise ValueError(f"{job}: expected {expected}, got {actual}")
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2236528Z ValueError: rust: expected success, got failure
+CI scope result	Require every selected check to succeed	2026-11-03T23:39:08.2453446Z ##[error]Process completed with exit code 1.

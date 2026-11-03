@@ -362,6 +362,9 @@ fn now_ms_v1() -> u64 {
 }
 
 #[cfg(test)]
+mod replay_qualification;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use novovm_network::product_overlay::{
