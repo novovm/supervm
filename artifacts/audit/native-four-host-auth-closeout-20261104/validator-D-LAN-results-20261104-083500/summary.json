@@ -1,0 +1,243 @@
+{
+  "node": "validator-D",
+  "status": "D_LAN_EXECUTION_COMPLETE_PENDING_PAIRED_RECONCILIATION",
+  "checked_beijing": "2026-11-04T08:57:49.8906526+08:00",
+  "read_main_commit": "eeec18dd380a1aee4d0ebec20efb4cec34446259",
+  "schedule_commit": "53fe7da3acbb80b7f3731e59e083616bbafad304",
+  "common_start_beijing": "2026-11-04T08:35:00+08:00",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "actual_original_script_sha256": "d88d974416cd5180f1523f7b1752ab3b73e8acd4525f7d818c8d4a721079fcf6",
+  "script_invocation_count_this_schedule": 1,
+  "retained_terminal_exit_code": 0,
+  "all_original_case_exit_codes_zero": true,
+  "results": [
+    {
+      "case": "probe-D-A-first",
+      "exit_code": 0,
+      "started_utc": "2026-11-04T00:38:00.9330656+00:00",
+      "ended_utc": "2026-11-04T00:38:01.1676464+00:00",
+      "started_beijing": "2026-11-04T08:38:00.9330656+08:00",
+      "ended_beijing": "2026-11-04T08:38:01.1676464+08:00",
+      "accepted": true,
+      "mode": "probe",
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "authenticated_requests": 0,
+      "local_replies_submitted": 0,
+      "local_peer_id": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "peer_id": "novovm-mldsa65:859f2be748346b2378334d6e5873a9d71d02c9d6584b52cf9297fcb36285ec40",
+      "local_bind_addr": "0.0.0.0:52970",
+      "observed_endpoint": "192.168.71.59:52970",
+      "session_id_hex": "3f2fb23576b2df66dec86ad1c99a67c7",
+      "observer_records_last_session_only": false,
+      "config_sha256_unchanged": "1818d596e8c1692d9c38ee260a4d367a0a2c8380d4710c01b9fd7048e2293fdd",
+      "stdout_matches_original_report": true,
+      "stderr_bytes": 0,
+      "network_only": true,
+      "aoem_called": true,
+      "ledger_semantics": false,
+      "novorudp_inner_frame_preserved": true,
+      "novorudp_wire_changed": false
+    },
+    {
+      "case": "probe-D-A-second",
+      "exit_code": 0,
+      "started_utc": "2026-11-04T00:38:01.1824201+00:00",
+      "ended_utc": "2026-11-04T00:38:01.4387390+00:00",
+      "started_beijing": "2026-11-04T08:38:01.1824201+08:00",
+      "ended_beijing": "2026-11-04T08:38:01.4387390+08:00",
+      "accepted": true,
+      "mode": "probe",
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "authenticated_requests": 0,
+      "local_replies_submitted": 0,
+      "local_peer_id": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "peer_id": "novovm-mldsa65:859f2be748346b2378334d6e5873a9d71d02c9d6584b52cf9297fcb36285ec40",
+      "local_bind_addr": "0.0.0.0:52971",
+      "observed_endpoint": "192.168.71.59:52971",
+      "session_id_hex": "29161f9a2c54ad3f15aeb11fba478586",
+      "observer_records_last_session_only": false,
+      "config_sha256_unchanged": "87dac92eb2311d3bd3411de93f94af09fa92fe7e8234f7cf02132a9cf15cdfd6",
+      "stdout_matches_original_report": true,
+      "stderr_bytes": 0,
+      "network_only": true,
+      "aoem_called": true,
+      "ledger_semantics": false,
+      "novorudp_inner_frame_preserved": true,
+      "novorudp_wire_changed": false
+    },
+    {
+      "case": "observer-D-for-C",
+      "exit_code": 0,
+      "started_utc": "2026-11-04T00:40:45.3496692+00:00",
+      "ended_utc": "2026-11-04T00:42:15.4853754+00:00",
+      "started_beijing": "2026-11-04T08:40:45.3496692+08:00",
+      "ended_beijing": "2026-11-04T08:42:15.4853754+08:00",
+      "accepted": true,
+      "mode": "observer",
+      "round_trip_confirmed": false,
+      "authenticated_exchanges": 2,
+      "authenticated_requests": 2,
+      "local_replies_submitted": 2,
+      "local_peer_id": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "peer_id": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "local_bind_addr": "0.0.0.0:41050",
+      "observed_endpoint": "192.168.71.125:59561",
+      "session_id_hex": "5114b1a40e9f555c99692ea44591a1e7",
+      "observer_records_last_session_only": true,
+      "config_sha256_unchanged": "b577bf53d6b8f10ca32238991bc407b435f21a34e42b39775e5e18b30530e761",
+      "stdout_matches_original_report": true,
+      "stderr_bytes": 0,
+      "network_only": true,
+      "aoem_called": true,
+      "ledger_semantics": false,
+      "novorudp_inner_frame_preserved": true,
+      "novorudp_wire_changed": false
+    }
+  ],
+  "A_D_probe_session_ids_different": true,
+  "C_D_observer_semantics": "Observer authenticated two requests and submitted two replies; round_trip_confirmed=false is expected observer semantics, not proof of client receipt. Final report exposes only the last session/source. Need C original probe reports for paired acceptance.",
+  "public_key_sha256": {
+    "C": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f",
+    "A": "0656e6de01e498b50d7b67b10ff58f4c600cdf61663066b03f358a7901839eae",
+    "D": "30019ff63f5f8c1f77029990aaf2657c3bb6dad562d957d78f0b60d8d349c934"
+  },
+  "peer_id_reference": "Read-only diagnostic reference of original domain-separated peer_id_from_mldsa65_public_key_v1; no fingerprint-as-peer-id replacement",
+  "selected_routes_before": [
+    {
+      "destination": "192.168.71.74",
+      "source_ipv4": "192.168.71.59",
+      "interface_index": 16,
+      "interface_alias": "以太网 2",
+      "selected_prefix": "192.168.71.0/24",
+      "next_hop": "0.0.0.0",
+      "local_query_only": true
+    },
+    {
+      "destination": "192.168.71.125",
+      "source_ipv4": "192.168.71.59",
+      "interface_index": 16,
+      "interface_alias": "以太网 2",
+      "selected_prefix": "192.168.71.0/24",
+      "next_hop": "0.0.0.0",
+      "local_query_only": true
+    }
+  ],
+  "route_warning": "Resulting JSON is truncated as serialization has exceeded the set depth of 8.",
+  "route_warning_scope": "Nested CIM metadata truncated by original depth8 serialization; required four source/route objects parse and required fields are preserved. Original file and warning retained, no script edit/rerun.",
+  "unchanged_candidate_files": [
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovm-product-nat.exe",
+      "bytes": 6633472,
+      "sha256": "970e89225b5daa6a1563e0d5313db3cf25ad3ba2a90a0cc2188c8bf5a58dec73",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovmctl.exe",
+      "bytes": 25115136,
+      "sha256": "58db89fe535c2111197b8d8da174e8a264efb255a06c1fe54d695ed811738903",
+      "unchanged": true
+    },
+    {
+      "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+      "bytes": 48345088,
+      "sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "unchanged": true
+    }
+  ],
+  "sealed_identity_metadata_unchanged": true,
+  "udp41050_after_execution": {
+    "checked_at": "2026-11-04T08:57:49.9436521+08:00",
+    "listeners": [],
+    "listener_count": 0
+  },
+  "original_evidence_files": [
+    {
+      "path": "probe-D-A-first.report.json",
+      "bytes": 927,
+      "sha256": "225194db98072a3382e44949f59aef8f3e378b4ea2e315ab9ccc8238e2a50876",
+      "source_last_write_utc": "2026-11-04T00:38:01.1601997Z"
+    },
+    {
+      "path": "probe-D-A-first.stdout.txt",
+      "bytes": 928,
+      "sha256": "a9586ca5cdb30dda47718aa9708f8d4ae62f8c8f97c15181f7f623c610b25e9c",
+      "source_last_write_utc": "2026-11-04T00:38:01.1656024Z"
+    },
+    {
+      "path": "probe-D-A-first.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_last_write_utc": "2026-11-04T00:38:00.9353833Z"
+    },
+    {
+      "path": "probe-D-A-second.report.json",
+      "bytes": 921,
+      "sha256": "ee58335d6e4b128fd5f7dc5a6e413cda06cb397ccb7f2f4f72325aaff5bd977f",
+      "source_last_write_utc": "2026-11-04T00:38:01.4318751Z"
+    },
+    {
+      "path": "probe-D-A-second.stdout.txt",
+      "bytes": 922,
+      "sha256": "098a1155321c0d6d62b279d3a98701b525e5f7c426ce07fe3c08254090d72a68",
+      "source_last_write_utc": "2026-11-04T00:38:01.4368809Z"
+    },
+    {
+      "path": "probe-D-A-second.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_last_write_utc": "2026-11-04T00:38:01.1831168Z"
+    },
+    {
+      "path": "observer-D-for-C.report.json",
+      "bytes": 928,
+      "sha256": "511e437721ecbc589d61cf1e7aebac0a96b1bfe209b38e6d80bf5fb79161d79e",
+      "source_last_write_utc": "2026-11-04T00:42:15.4785775Z"
+    },
+    {
+      "path": "observer-D-for-C.stdout.txt",
+      "bytes": 929,
+      "sha256": "895abc4b1400db01b67c9cccbc34c4545537ca55bf510de1f727940a898729de",
+      "source_last_write_utc": "2026-11-04T00:42:15.4838845Z"
+    },
+    {
+      "path": "observer-D-for-C.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_last_write_utc": "2026-11-04T00:40:45.3514806Z"
+    },
+    {
+      "path": "execution.json",
+      "bytes": 532,
+      "sha256": "4b48e376c568baebc752b1eb02b9188ef7a1ed035384d5555333c833c430e6c8",
+      "source_last_write_utc": "2026-11-04T00:42:15.4866771Z"
+    },
+    {
+      "path": "routes-before.json",
+      "bytes": 328419,
+      "sha256": "1f600f4bfd5b74045581a20688bd8f72579bad72b10cd9bcbb7b62ff486df2d7",
+      "source_last_write_utc": "2026-11-04T00:15:47.4988291Z"
+    }
+  ],
+  "raw_zip": {
+    "bytes": 21914,
+    "sha256": "7f27496cf76a3ce244a9c16606a85ade37ec8149c6d9e70d1279fc2738c7f07c",
+    "entries": 11,
+    "all_entry_sizes_and_hashes_verified": true,
+    "path": "original-evidence.zip",
+    "reason": "Preserve original CRLF execution/routes and all raw output without Git newline normalization"
+  },
+  "bounds": {
+    "private_material_exported": false,
+    "full_pair_acceptance_claimed": false,
+    "clock_identity_config_firewall_VPN_or_timeout_changed": false,
+    "four_host_acceptance_claimed": false,
+    "new_probe_observer_or_retry_during_review": false,
+    "remote_A_or_C_original_reports_reconciled_by_D": false,
+    "scheduled_task_or_service_created": false,
+    "ledger_or_validator_or_chain_started": false,
+    "old_session_replay_gate_independently_signed_by_D": false
+  },
+  "next_action": "A correlate its A-for-D observer with the two D probes, and C two client reports with D observer counts and last session/source; do not equate observer acceptance with client receipt."
+}
