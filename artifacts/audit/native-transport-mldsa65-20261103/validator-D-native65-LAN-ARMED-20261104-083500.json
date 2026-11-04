@@ -1,0 +1,118 @@
+{
+  "status": "ARMED_LAN_D",
+  "node": "validator-D",
+  "schedule_commit": "53fe7da3acbb80b7f3731e59e083616bbafad304",
+  "read_main_commit": "53fe7da3acbb80b7f3731e59e083616bbafad304",
+  "schedule_document": "artifacts/audit/native-four-host-auth-closeout-20261104/LAN-SCHEDULE-20261104-083500.md",
+  "common_start_beijing": "2026-11-04T08:35:00.0000000+08:00",
+  "common_start_utc": "2026-11-04T00:35:00.0000000+00:00",
+  "armed_verified_at_utc": "2026-11-04T00:17:41.8395719+00:00",
+  "armed_verified_at_beijing": "2026-11-04T08:17:41.8409915+08:00",
+  "execution_process_id": 49632,
+  "execution_process_name": "pwsh",
+  "execution_process_started_at": "2026-11-04T08:15:46.2000809+08:00",
+  "execution_process_alive_at_verification": true,
+  "execution_account": "SUPERVM-L2-01\\ASUS",
+  "original_script_path": "D:\\WEB3_AI\\SUPERVM\\scripts\\novovm-four-host-lan-qualification.ps1",
+  "actual_script_sha256": "d88d974416cd5180f1523f7b1752ab3b73e8acd4525f7d818c8d4a721079fcf6",
+  "original_script_invocations_this_request": 1,
+  "armed_stdout": "ARMED_LAN_D start=2026-11-04T08:35:00.0000000+08:00",
+  "retained_foreground_terminal": true,
+  "evidence_root": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-083500-D",
+  "configuration_root": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "configuration_zip_sha256": "c023f140411469abee01bdd67978b6e36c4ca67a90c7e5dde7360701cc5fd889",
+  "jobs": [
+    {
+      "pair": "A/D",
+      "role": "probe",
+      "at_beijing": "2026-11-04T08:38:00+08:00",
+      "cases": [
+        "probe-D-A-first",
+        "probe-D-A-second"
+      ],
+      "first_failure_stops_second": true
+    },
+    {
+      "pair": "C/D",
+      "role": "observer",
+      "at_beijing": "2026-11-04T08:40:45+08:00",
+      "run_for_ms": 90000,
+      "cases": [
+        "observer-D-for-C"
+      ]
+    }
+  ],
+  "original_routes_before": {
+    "bytes": 328419,
+    "warning_note": "Warning from original route serialization; original script still printed ARMED and remains alive. Nested CIM metadata may be truncated; no claim of complete nested metadata. No script change or rerun.",
+    "path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-083500-D\\routes-before.json",
+    "original_file_modified": false,
+    "sha256": "1f600f4bfd5b74045581a20688bd8f72579bad72b10cd9bcbb7b62ff486df2d7",
+    "required_core_fields_preserved": true,
+    "record_count": 4,
+    "serialization_warning": "Resulting JSON is truncated as serialization has exceeded the set depth of 8."
+  },
+  "required_route_summary": [
+    {
+      "destination": "192.168.71.74",
+      "source_ipv4": "192.168.71.59",
+      "source_prefix": 24,
+      "interface_index": 16,
+      "interface_alias": "以太网 2",
+      "selected_prefix": "192.168.71.0/24",
+      "next_hop": "0.0.0.0",
+      "route_metric": 256,
+      "local_query_only": true
+    },
+    {
+      "destination": "192.168.71.125",
+      "source_ipv4": "192.168.71.59",
+      "source_prefix": 24,
+      "interface_index": 16,
+      "interface_alias": "以太网 2",
+      "selected_prefix": "192.168.71.0/24",
+      "next_hop": "0.0.0.0",
+      "route_metric": 256,
+      "local_query_only": true
+    }
+  ],
+  "role_report_paths": [
+    {
+      "case": "probe-D-A-first",
+      "config_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\D\\probe-D-A-first.json",
+      "config_sha256": "1818d596e8c1692d9c38ee260a4d367a0a2c8380d4710c01b9fd7048e2293fdd",
+      "future_report_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\D\\reports\\probe-D-A-first.json",
+      "report_exists_at_arm_check": false
+    },
+    {
+      "case": "probe-D-A-second",
+      "config_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\D\\probe-D-A-second.json",
+      "config_sha256": "87dac92eb2311d3bd3411de93f94af09fa92fe7e8234f7cf02132a9cf15cdfd6",
+      "future_report_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\D\\reports\\probe-D-A-second.json",
+      "report_exists_at_arm_check": false
+    },
+    {
+      "case": "observer-D-for-C",
+      "config_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\D\\observer-D-for-C.json",
+      "config_sha256": "b577bf53d6b8f10ca32238991bc407b435f21a34e42b39775e5e18b30530e761",
+      "future_report_path": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\D\\reports\\observer-D-for-C.json",
+      "report_exists_at_arm_check": false
+    }
+  ],
+  "execution_report_exists_at_arm_check": false,
+  "bounds": {
+    "original_script_modified": false,
+    "program_reinstalled_or_rebuilt": false,
+    "manual_probe_or_observer_started_before_due": false,
+    "validator_or_chain_started": false,
+    "original_report_overwritten": false,
+    "four_host_acceptance_claimed": false,
+    "private_material_exported": false,
+    "clock_or_identity_or_production_timeout_changed": false,
+    "scheduled_task_or_service_created": false,
+    "C_or_A_or_B_operated_by_D": false,
+    "LAN_pair_accepted_in_advance": false
+  },
+  "next_action": "Keep original terminal alive; it automatically runs only D roles at the fixed schedule. Original script skips missed jobs, records failures and does not retry. Collect original evidence after completion; paired acceptance remains with A."
+}
