@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context;
 use novovm_protocol::{decode_nov_native_tx_wire_v1, encode_nov_native_tx_wire_v1, NovTxKindV1};
 
 const FIRST: u64 = 3;
@@ -103,6 +104,63 @@ fn confirmed(node: &Node, height: u64) -> Option<Value> {
     })
 }
 
+fn record_deadline(nodes: &[Node], active: &[usize], height: u64, hash: &[u8; 32]) {
+    for &index in active {
+        let node = &nodes[index];
+        let sample = (|| -> anyhow::Result<Value> {
+            let text = fs::read_to_string(node.0.join(format!("{LABEL}.stdout.log")))?;
+            let address = text
+                .lines()
+                .find_map(|line| line.strip_prefix("native_fresh_rpc_listening: "))
+                .context("no fresh RPC address")?;
+            let mut replies = Vec::new();
+            for (method, params) in [
+                ("nov_chainStatus", serde_json::json!([])),
+                ("nov_getTransactionStatus", serde_json::json!([hex(hash)])),
+            ] {
+                let began = Instant::now();
+                // Failure evidence only: no retries and no change to the
+                // original height deadline, including when a node cannot reply.
+                let result = (|| -> anyhow::Result<Value> {
+                    let mut response = ureq::post(&format!("http://{address}/"))
+                        .config()
+                        .proxy(None)
+                        .timeout_connect(Some(Duration::from_secs(1)))
+                        .timeout_global(Some(Duration::from_secs(1)))
+                        .build()
+                        .header("Content-Type", "application/json")
+                        .send(serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string())?;
+                    Ok(serde_json::from_slice(&response.body_mut().read_to_vec()?)?)
+                })();
+                replies.push(serde_json::json!({
+                    "method":method,
+                    "elapsed_ms":began.elapsed().as_millis(),
+                    "sampled_at_ms":SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+                    "response":result.as_ref().ok(),
+                    "error":result.err().map(|error| format!("{error:#}")),
+                }));
+            }
+            Ok(serde_json::json!({"node_index":index,"height":height,"replies":replies}))
+        })();
+        let value = match sample {
+            Ok(value) => value,
+            Err(error) => {
+                serde_json::json!({"node_index":index,"height":height,"error":format!("{error:#}")})
+            }
+        };
+        // The existing CI *.process.json evidence allowlist excludes custody,
+        // node configuration and databases; these are public RPC observations.
+        let path = node.0.join("continuous-deadline.process.json");
+        if let Err(error) = fs::write(&path, serde_json::to_vec(&value).unwrap()) {
+            eprintln!(
+                "could not save deadline observation {}: {error}",
+                path.display()
+            );
+        }
+        eprintln!("continuous deadline observation: {value}");
+    }
+}
+
 pub(super) fn history(node: &Node, height: u64) -> Value {
     let genesis: novovm_node::tx_ingress::fresh_genesis::FreshGenesisConfigV1 =
         serde_json::from_slice(&fs::read(node.0.join("genesis.json")).unwrap()).unwrap();
@@ -204,11 +262,13 @@ pub(super) fn exercise(
                     {
                         break;
                     }
-                    assert!(
-                        deadline.elapsed() < Duration::from_secs(120),
-                        "continuous height {height} deadline; evidence: {}",
-                        evidence_root.display()
-                    );
+                    if deadline.elapsed() >= Duration::from_secs(120) {
+                        record_deadline(nodes, &active, height, &transactions[offset].0);
+                        panic!(
+                            "continuous height {height} deadline; evidence: {}",
+                            evidence_root.display()
+                        );
+                    }
                     std::thread::sleep(Duration::from_millis(25));
                 }
                 for &index in &active {
