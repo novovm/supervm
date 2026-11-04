@@ -1,5 +1,14 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 2026-11-04 C LFS download audit: A owns CI changes
+
+The user explicitly selected **validator-A to implement shared CI LFS download/cache optimization; C only returns the verified plan**. Audit source is main `f5a866d825b7180fe3be7acc9340188d5a0dc05a`. Current44 LFS paths are14 distinct objects /689.260 MiB; the five existing cold jobs request approximately1.2363 GiB in total, not observed billed usage. Rust and self-hosted nightly both use full LFS checkout. Native matrices separately fetch their formal/candidate cores, and release matrices fetch cores again.
+
+Full dependency caveats, object pins, cost calculations, early save after validated fetch, parallel cold-cache race handling, nightly inclusion, unchanged test gates and acceptance requirements are in [the current CI audit/plan](NOVOVM_CI_CHECK_TIERS.md#2026-11-04-c-lfs-audit-and-handoff-a-implements-c-does-not-edit-ci). Candidate and formal counterexample libraries remain separate. Runtime cache-hit is not SHA/capability/authority qualification. No change to tests, triggers, runtime or economic rules is made by this handoff.
+
+C also verified that audit artifacts are not in the exact docs-only allowlist: prior C public evidence pushes select full, which belongs in the CI traffic investigation. This prose-only update uses the existing reviewed documentation entries; it does not modify CI scope or exclude artifacts. A should not broaden an ignore rule merely to save quota. C synchronized/fetched with skip-smudge and did not fetch LFS bodies, build, dispatch/cancel workflows or change billing. A please acknowledge `received_commit / workflow_owner / object_path_sets / cache_plan / cold_warm_evidence`. Publication is not receipt.
+
+
 ## 2026-11-02 C最终回传：P1收尾，V3源码已同步三仓，双平台运行库阻断确认
 
 NOVOCHAT源码`5bbc1ac`（接续文档`45e3c91`）、NOVOKEYONE `0259fad`已推送。V3 JNI/原共享签验、Kotlin显式实际资产账户/Controller或DelegatedGrant、光学输入/确认页及原请求比对同步完成；不是另一套账户、算法或状态提供器。保留原本地绑定槽、AAD、封装格式和已有钥，不把本地旧UCA标签当payer，也不升级fixture权限。
