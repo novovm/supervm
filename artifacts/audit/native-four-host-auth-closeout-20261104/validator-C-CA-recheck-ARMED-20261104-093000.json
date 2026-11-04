@@ -1,0 +1,94 @@
+{
+  "node": "validator-C",
+  "status": "ARMED_CA_RECHECK_C",
+  "main_execution_pid": 30840,
+  "process_name": "pwsh.exe",
+  "process_creation_local": "2026-11-04T09:14:03.296308+08:00",
+  "main_process_alive": true,
+  "observed_utc": "2026-11-04T01:15:17.1706530+00:00",
+  "observed_local": "2026-11-04T09:15:17.1942560+08:00",
+  "retained_exec_session_id": 6690,
+  "start": "2026-11-04T09:30:00+08:00",
+  "arming_deadline": "2026-11-04T09:25:00+08:00",
+  "script_invocations": 1,
+  "schedule_commit": "7dfdc8e703a1ce57788295295f6de32b6a6f1baa",
+  "read_main_commit": "7dfdc8e703a1ce57788295295f6de32b6a6f1baa",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "configuration_root": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-recheck-20261104-093000",
+  "evidence_root": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C",
+  "script_path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-recheck-20261104-093000\\run-C-CA-recheck.ps1",
+  "script_sha256": "ebfd42a61e928ea16b88e843cba6ce0c59d6f44a5bce4755ba9a620b88b8747f",
+  "zip_bytes": 13604,
+  "zip_sha256": "70da8bbaa0d100c04a173abe5b6d797e03b3bcf6742d86e65808da775d72a7e4",
+  "config_checksums": [
+    {
+      "file": "A/observer-A-for-C.json",
+      "sha256": "fddeb54dcd1113ddc743ab579bb89a7c5bf041e237350bd6b88a29af61de84ad",
+      "verified": true
+    },
+    {
+      "file": "C/probe-C-A-first.json",
+      "sha256": "0b8976cd52e70901953d91d3e08dad7dc9614173fb5e3a5a2c9976a07daf42da",
+      "verified": true
+    },
+    {
+      "file": "C/probe-C-A-second.json",
+      "sha256": "edde0a500fe20942990ebd9b39f9aeb74f8c6f44804c0ccd033bdf2499c788c9",
+      "verified": true
+    }
+  ],
+  "C_config_comparison": [
+    {
+      "case": "first",
+      "only_report_path_changed": true,
+      "report_path": "reports/probe-C-A-first-recheck-093000.json",
+      "config_sha256": "0b8976cd52e70901953d91d3e08dad7dc9614173fb5e3a5a2c9976a07daf42da"
+    },
+    {
+      "case": "second",
+      "only_report_path_changed": true,
+      "report_path": "reports/probe-C-A-second-recheck-093000.json",
+      "config_sha256": "edde0a500fe20942990ebd9b39f9aeb74f8c6f44804c0ccd033bdf2499c788c9"
+    }
+  ],
+  "observed_armed_output": "ARMED_CA_RECHECK_C start=2026-11-04T09:30:00+08:00; keep this terminal running",
+  "routes_before": {
+    "file": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C\\routes-before.json",
+    "bytes": 337,
+    "sha256": "136b60d8c69e195ab21f1d932f34e3b001946de6b995517744e7ca984b3d9f2e",
+    "data": [
+      {
+        "IPAddress": "192.168.71.125",
+        "InterfaceAlias": "以太网",
+        "InterfaceIndex": 24,
+        "DestinationPrefix": null,
+        "NextHop": null
+      },
+      {
+        "IPAddress": null,
+        "InterfaceAlias": "以太网",
+        "InterfaceIndex": 24,
+        "DestinationPrefix": "192.168.71.0/24",
+        "NextHop": "0.0.0.0"
+      }
+    ]
+  },
+  "old_0835_CA_failure_report_preserved": {
+    "sha256": "4a95c3b9e128efb6e102a64c587f0bb0d0605e606d10f917344d567ffed9a695",
+    "source_still_matches": true
+  },
+  "probe_started_yet": false,
+  "other_hosts_scheduled_or_operated_by_C": false,
+  "scope": {
+    "authentication_code_changed": false,
+    "timeouts_changed": false,
+    "original_script_changed": false,
+    "identity_replaced_or_regenerated": false,
+    "program_reinstalled_or_recompiled": false,
+    "firewall_or_routes_or_VPN_changed": false,
+    "Windows_scheduled_task_or_service_created": false,
+    "successful_pairs_rerun": false,
+    "chain_started": false,
+    "private_material_uploaded": false
+  }
+}
