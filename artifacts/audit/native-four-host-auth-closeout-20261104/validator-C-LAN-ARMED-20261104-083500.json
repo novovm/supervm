@@ -1,0 +1,91 @@
+{
+  "node": "validator-C",
+  "status": "ARMED_LAN_C",
+  "confirmed_utc": "2026-11-04T00:16:16.8489964+00:00",
+  "confirmed_local": "2026-11-04T08:16:16.8839507+08:00",
+  "main_execution_pid": 33308,
+  "process_name": "pwsh.exe",
+  "process_creation_local": "2026-11-04T08:14:54.782463+08:00",
+  "process_alive": true,
+  "retained_exec_session_id": 70251,
+  "common_start": "2026-11-04T08:35:00+08:00",
+  "observed_armed_line": "ARMED_LAN_C start=2026-11-04T08:35:00.0000000+08:00",
+  "script_path": "D:\\WEB3_AI\\SUPERVM\\scripts\\novovm-four-host-lan-qualification.ps1",
+  "script_sha256": "adc87b9b2836776694c43062525951906118fbfaa9f5aaa192e69abcaf78df07",
+  "config_root": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104",
+  "evidence_root": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-083500-C",
+  "read_schedule_commit": "53fe7da3acbb80b7f3731e59e083616bbafad304",
+  "read_main_commit": "53fe7da3acbb80b7f3731e59e083616bbafad304",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "role_C_jobs": [
+    {
+      "pair": "C/A",
+      "probe_start": "2026-11-04T08:35:00+08:00",
+      "cases": [
+        "probe-C-A-first",
+        "probe-C-A-second"
+      ]
+    },
+    {
+      "pair": "C/D",
+      "probe_start": "2026-11-04T08:41:00+08:00",
+      "cases": [
+        "probe-C-D-first",
+        "probe-C-D-second"
+      ]
+    }
+  ],
+  "routes_before_original": {
+    "path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-083500-C\\routes-before.json",
+    "bytes": 328367,
+    "sha256": "61df75af24743e56691fc6c8aa9f8cca5cb2f901217df99db4046517e8cdb563",
+    "original_serialization_warning": "ConvertTo-Json depth8 warning observed; top-level required address/interface/prefix/next-hop fields remain readable. No source script or original evidence was modified.",
+    "selected_top_level_fields": [
+      {
+        "IPAddress": "192.168.71.125",
+        "InterfaceIndex": 24,
+        "InterfaceAlias": "以太网",
+        "DestinationPrefix": null,
+        "NextHop": null,
+        "RouteMetric": null
+      },
+      {
+        "IPAddress": null,
+        "InterfaceIndex": 24,
+        "InterfaceAlias": "以太网",
+        "DestinationPrefix": "192.168.71.0/24",
+        "NextHop": "0.0.0.0",
+        "RouteMetric": 256
+      },
+      {
+        "IPAddress": "192.168.71.125",
+        "InterfaceIndex": 24,
+        "InterfaceAlias": "以太网",
+        "DestinationPrefix": null,
+        "NextHop": null,
+        "RouteMetric": null
+      },
+      {
+        "IPAddress": null,
+        "InterfaceIndex": 24,
+        "InterfaceAlias": "以太网",
+        "DestinationPrefix": "192.168.71.0/24",
+        "NextHop": "0.0.0.0",
+        "RouteMetric": 256
+      }
+    ]
+  },
+  "original_script_invocations": 1,
+  "probe_or_observer_started_yet": false,
+  "D_ARMED_acknowledgment_received_by_C": false,
+  "scope": {
+    "Windows_scheduled_task_or_resident_service_created": false,
+    "clock_config_changed": false,
+    "identity_replaced_or_regenerated": false,
+    "candidate_reinstalled_or_recompiled": false,
+    "original_script_changed": false,
+    "private_material_uploaded": false,
+    "validator_or_chain_started": false
+  },
+  "waiter_policy": "Original A script: first failure stops its pair second; independently reserved pair remains scheduled. Missed job is recorded and not caught up. No duplicate invocation."
+}
