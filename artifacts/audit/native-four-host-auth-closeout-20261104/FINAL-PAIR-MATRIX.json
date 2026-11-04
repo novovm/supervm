@@ -1,0 +1,145 @@
+{
+  "scope": "six_pair_native_mldsa65_network_only",
+  "domain": 167999907280566,
+  "tps_measured": false,
+  "separate_real_stale_session_replay": "passed; see raw/replay-original-evidence.zip",
+  "pairs": [
+    {
+      "pair": "A/B",
+      "result": "passed_listed_two_authenticated_round_trips",
+      "client_peer": "novovm-mldsa65:859f2be748346b2378334d6e5873a9d71d02c9d6584b52cf9297fcb36285ec40",
+      "server_peer": "novovm-mldsa65:a44d68f612d0bfbcce70fe4900383060c385d588103513e6c9a9296bd0dd3ad6",
+      "sessions": [
+        "fb9104399545c53e23cdfbcc15053c95",
+        "cc3b46e5fc42bdd2e142222360803fb6"
+      ],
+      "observed_client_sources": [
+        "114.92.30.222:61660",
+        "114.92.30.222:61689"
+      ],
+      "observer_requests": 2,
+      "last_session_source_directly_matched": true,
+      "observer_retains_only_last_session": true,
+      "probe_refs": [
+        "target/four-host-native65-auth-20261104/canonical-pins/A/reports/probe-A-B-first.json",
+        "target/four-host-native65-auth-20261104/canonical-pins/A/reports/probe-A-B-second.json"
+      ],
+      "observer_ref": "target/four-host-native65-auth-20261104/canonical-pins/B/observer-B-for-A.report.json"
+    },
+    {
+      "pair": "C/B",
+      "result": "passed_listed_two_authenticated_round_trips",
+      "client_peer": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "server_peer": "novovm-mldsa65:a44d68f612d0bfbcce70fe4900383060c385d588103513e6c9a9296bd0dd3ad6",
+      "sessions": [
+        "5a7211a1bbf2271f6240c82e8fd29b3b",
+        "a87cf0ded56caee98acb6e1b16b4f417"
+      ],
+      "observed_client_sources": [
+        "114.92.30.222:59072",
+        "114.92.30.222:59088"
+      ],
+      "observer_requests": 2,
+      "last_session_source_directly_matched": true,
+      "observer_retains_only_last_session": true,
+      "probe_refs": [
+        "artifacts/audit/native-transport-mldsa65-20261103/validator-C-native65-auth-results-20261104-070600/first.report.json",
+        "artifacts/audit/native-transport-mldsa65-20261103/validator-C-native65-auth-results-20261104-070600/second.report.json"
+      ],
+      "observer_ref": "target/four-host-native65-auth-20261104/canonical-pins/B/observer-B-for-C-scheduled.report.json"
+    },
+    {
+      "pair": "D/B",
+      "result": "passed_listed_two_authenticated_round_trips",
+      "client_peer": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "server_peer": "novovm-mldsa65:a44d68f612d0bfbcce70fe4900383060c385d588103513e6c9a9296bd0dd3ad6",
+      "sessions": [
+        "8cb4ea3aae03518b95a1d9adcad27686",
+        "7b23789962dc401fd33156c53fd13dfd"
+      ],
+      "observed_client_sources": [
+        "114.92.30.222:61367",
+        "114.92.30.222:61374"
+      ],
+      "observer_requests": 2,
+      "last_session_source_directly_matched": true,
+      "observer_retains_only_last_session": true,
+      "probe_refs": [
+        "artifacts/audit/native-transport-mldsa65-20261103/validator-D-native65-auth-results-20261104-070900/first.report.json",
+        "artifacts/audit/native-transport-mldsa65-20261103/validator-D-native65-auth-results-20261104-070900/second.report.json"
+      ],
+      "observer_ref": "target/four-host-native65-auth-20261104/canonical-pins/B/observer-B-for-D-scheduled.report.json"
+    },
+    {
+      "pair": "A/D",
+      "result": "passed_listed_two_authenticated_round_trips",
+      "client_peer": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "server_peer": "novovm-mldsa65:859f2be748346b2378334d6e5873a9d71d02c9d6584b52cf9297fcb36285ec40",
+      "sessions": [
+        "3f2fb23576b2df66dec86ad1c99a67c7",
+        "29161f9a2c54ad3f15aeb11fba478586"
+      ],
+      "observed_client_sources": [
+        "192.168.71.59:52970",
+        "192.168.71.59:52971"
+      ],
+      "observer_requests": 2,
+      "last_session_source_directly_matched": true,
+      "observer_retains_only_last_session": true,
+      "probe_refs": [
+        "artifacts/audit/native-four-host-auth-closeout-20261104/validator-D-LAN-results-20261104-083500/probe-D-A-first.report.json",
+        "artifacts/audit/native-four-host-auth-closeout-20261104/validator-D-LAN-results-20261104-083500/probe-D-A-second.report.json"
+      ],
+      "observer_ref": "target/four-host-native65-LAN-20261104/A/reports/observer-A-for-D.json"
+    },
+    {
+      "pair": "C/D",
+      "result": "passed_listed_two_authenticated_round_trips",
+      "client_peer": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "server_peer": "novovm-mldsa65:e4759711dc7c5ded8c2625cc72802e69107d53dfcbca2a69d3cc093764923166",
+      "sessions": [
+        "ba1be5926a32c08cb9357f66e871bde4",
+        "5114b1a40e9f555c99692ea44591a1e7"
+      ],
+      "observed_client_sources": [
+        "192.168.71.125:59560",
+        "192.168.71.125:59561"
+      ],
+      "observer_requests": 2,
+      "last_session_source_directly_matched": true,
+      "observer_retains_only_last_session": true,
+      "probe_refs": [
+        "artifacts/audit/native-four-host-auth-closeout-20261104/validator-C-LAN-results-20261104-083500/raw/probe-C-D-first.json",
+        "artifacts/audit/native-four-host-auth-closeout-20261104/validator-C-LAN-results-20261104-083500/raw/probe-C-D-second.json"
+      ],
+      "observer_ref": "artifacts/audit/native-four-host-auth-closeout-20261104/validator-D-LAN-results-20261104-083500/observer-D-for-C.report.json"
+    },
+    {
+      "pair": "A/C",
+      "result": "passed_listed_two_authenticated_round_trips",
+      "client_peer": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "server_peer": "novovm-mldsa65:859f2be748346b2378334d6e5873a9d71d02c9d6584b52cf9297fcb36285ec40",
+      "sessions": [
+        "cb91145344f0b50838e916d9b5841c4c",
+        "926ca66c7e1c31f248a3fb7340c0e4e5"
+      ],
+      "observed_client_sources": [
+        "192.168.71.125:52748",
+        "192.168.71.125:58936"
+      ],
+      "observer_requests": 2,
+      "last_session_source_directly_matched": true,
+      "observer_retains_only_last_session": true,
+      "probe_refs": [
+        "artifacts/audit/native-four-host-auth-closeout-20261104/validator-C-CA-recheck-results-20261104-093000/raw/first.report.json",
+        "artifacts/audit/native-four-host-auth-closeout-20261104/validator-C-CA-recheck-results-20261104-093000/raw/second.report.json"
+      ],
+      "observer_ref": "target/four-host-native65-LAN-CA-recheck-20261104-093000/A/reports/observer-A-for-C-recheck-093000.json"
+    }
+  ],
+  "all_directed_public_inbound_routes_proven": false,
+  "reviewed_peer_receipts_main": "3841827419f97c4801b5a57da727ca9e34a0eb49",
+  "full_ci_qualified": false,
+  "program_source": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "chain_started": false
+}
