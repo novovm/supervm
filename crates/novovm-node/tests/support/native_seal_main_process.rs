@@ -127,6 +127,11 @@ fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> V
         if label.starts_with("continuous") {
             cmd.env("NOVOVM_NATIVE_FRESH_RPC_BIND", "127.0.0.1:0");
         }
+        if label == "continuous-three-heights"
+            && std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1")
+        {
+            cmd.env("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE", "1");
+        }
         // Preserve environment isolation; forward only this explicit diagnostic
         // switch, and only to the measured workload (not genesis/recovery).
         if (label == transfer_throughput::LABEL

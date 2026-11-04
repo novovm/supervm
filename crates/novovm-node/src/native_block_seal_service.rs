@@ -521,7 +521,15 @@ impl NovNativeSealServiceV1 {
                 {
                     Ok(true) => self.accepted = self.accepted.saturating_add(1),
                     Ok(false) => (),
-                    Err(_) => self.rejected = self.rejected.saturating_add(1),
+                    Err(error) => {
+                        crate::native_fresh_timing::handoff_trace("seal.reject", || {
+                            serde_json::json!({
+                                "height": self.config.height, "source": inbound.source_peer_id,
+                                "object": inbound.object_hash, "reason": error.to_string(),
+                            })
+                        });
+                        self.rejected = self.rejected.saturating_add(1);
+                    }
                 }
             }
             if budget == 0 {

@@ -316,6 +316,25 @@ impl FreshChainLifecycleV1 {
 
     /// Bounded authenticated runtime events only; no execution, writes or votes.
     pub fn enqueue(&mut self, inbound: ProductMainlineOverlayInboundV1) -> bool {
+        if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal
+            && (!is_nov_native_seal_round_wire_v1(&inbound.frame.payload)
+                || inbound
+                    .frame
+                    .payload
+                    .get(10)
+                    .is_some_and(|kind| matches!(kind, 4 | 5)))
+        {
+            crate::native_fresh_timing::handoff_trace("lifecycle.receive", || {
+                serde_json::json!({
+                    "height": self.config.as_ref().map(|config| config.height),
+                    "service": self.service.is_some(), "bodies": self.bodies.is_some(),
+                    "source": inbound.source_peer_id, "object": inbound.object_hash,
+                    "class": format!("{:?}", inbound.payload_class),
+                    "round_wire": is_nov_native_seal_round_wire_v1(&inbound.frame.payload),
+                    "kind": inbound.frame.payload.get(10),
+                })
+            });
+        }
         if self.halted {
             return false;
         }
@@ -506,7 +525,13 @@ impl FreshChainLifecycleV1 {
                     match pacemaker.ingest(config, &event, now) {
                         Ok(true) => continue,
                         Ok(false) => (),
-                        Err(_) => {
+                        Err(error) => {
+                            crate::native_fresh_timing::handoff_trace("parent.reject", || {
+                                serde_json::json!({
+                                    "parent_height": config.height, "source": event.source_peer_id,
+                                    "object": event.object_hash, "reason": error.to_string(),
+                                })
+                            });
                             self.rejected = self.rejected.saturating_add(1);
                             continue;
                         }
@@ -515,7 +540,13 @@ impl FreshChainLifecycleV1 {
             }
             let completed = match inbox.accept_with_manifest(&event, now) {
                 Ok(body) => body,
-                Err(_) => {
+                Err(error) => {
+                    crate::native_fresh_timing::handoff_trace("body.reject", || {
+                        serde_json::json!({
+                            "parent_height": config.height, "source": event.source_peer_id,
+                            "object": event.object_hash, "reason": error.to_string(),
+                        })
+                    });
                     self.rejected = self.rejected.saturating_add(1);
                     continue;
                 }
@@ -523,6 +554,14 @@ impl FreshChainLifecycleV1 {
             let Some((body, manifest)) = completed else {
                 continue;
             };
+            crate::native_fresh_timing::handoff_trace("body.complete", || {
+                serde_json::json!({
+                    "parent_height": config.height, "source": manifest.source_peer_id,
+                    "object": manifest.object_hash, "round": body.message.round(),
+                    "proposal": body.message.proposal().map(|proposal| proposal.proposal_hash),
+                    "subject": body.message.proposal().map(|proposal| &proposal.subject),
+                })
+            });
             if !self
                 .pacemaker
                 .as_mut()

@@ -1,12 +1,51 @@
 //! Opt-in slow-call diagnostics, not throughput or finality measurements.
 //! Phases must be fixed literals, never request, signature or account data.
 use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
 static ORIGIN: OnceLock<Instant> = OnceLock::new();
 const SLOW_CALL: Duration = Duration::from_millis(10);
+
+/// Isolated handoff diagnosis only. Public object/validator identities, never
+/// payloads or signatures; a hard process cap also bounds failure output.
+pub(crate) fn handoff_trace(phase: &'static str, details: impl FnOnce() -> serde_json::Value) {
+    static TRACE: OnceLock<bool> = OnceLock::new();
+    static COUNTS: [AtomicUsize; 8] = [const { AtomicUsize::new(0) }; 8];
+    if !*TRACE.get_or_init(|| {
+        std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1")
+    }) {
+        return;
+    }
+    // Stale archive rejects dominated the observed stream. They must not use
+    // the body-completion/vote allowance before the next height starts.
+    let counter = match phase {
+        "lifecycle.receive" => 0,
+        "body.queue" => 1,
+        "parent.reject" => 2,
+        "body.reject" => 3,
+        "body.complete" => 4,
+        "seal.reject" => 5,
+        "seal.accept" => 6,
+        "seal.local_vote" => 7,
+        _ => return,
+    };
+    let Ok(index) = COUNTS[counter].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+        (count < 64).then_some(count + 1)
+    }) else {
+        return;
+    };
+    let now = Instant::now();
+    let line = serde_json::json!({
+        "pid": std::process::id(), "phase": phase, "sample": index + 1,
+        "unix_us": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok().map(|elapsed| elapsed.as_micros()),
+        "since_start_us": now.duration_since(*ORIGIN.get_or_init(|| now)).as_micros(),
+        "details": details(),
+    });
+    let _ = writeln!(std::io::stdout().lock(), "native_fresh_handoff: {line}");
+}
 
 fn enabled() -> bool {
     *ENABLED
@@ -69,6 +108,31 @@ fn measure_enabled<T>(phase: &'static str, enabled: bool, action: impl FnOnce() 
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn fresh_handoff_trace_bounds_each_phase_and_skips_disabled_payloads() {
+        let enabled =
+            std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1");
+        for phase in [
+            "lifecycle.receive",
+            "body.queue",
+            "parent.reject",
+            "body.reject",
+            "body.complete",
+            "seal.reject",
+            "seal.accept",
+            "seal.local_vote",
+        ] {
+            let evaluated = Cell::new(0);
+            for _ in 0..66 {
+                handoff_trace(phase, || {
+                    evaluated.set(evaluated.get() + 1);
+                    serde_json::json!({"fixture":"public diagnostic only"})
+                });
+            }
+            assert_eq!(evaluated.get(), if enabled { 64 } else { 0 }, "{phase}");
+        }
+    }
 
     #[test]
     fn fresh_timing_disabled_runs_once_and_preserves_value() {

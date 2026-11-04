@@ -194,7 +194,7 @@ pub(super) fn exercise(
     nodes: &[Node],
     authority: &NovNativeSealEpochAuthorityV1,
     validators: &[NovNativeSealValidatorV1],
-    _peer_ids: &[String],
+    peer_ids: &[String],
     first_plan: &NovNativeCandidateExecutionPlanV1,
     evidence_root: &std::path::Path,
 ) {
@@ -214,6 +214,19 @@ pub(super) fn exercise(
     let active: Vec<_> = (0..nodes.len())
         .filter(|index| *index != sender_index)
         .collect();
+    if std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1") {
+        let topology = serde_json::json!({
+            "active": active, "offline": sender_index, "leaders": leaders,
+            "first_height": FIRST, "last_height": LAST,
+            "quorum_weight": authority.validator_set.quorum_weight,
+            "validators": validators, "transport_peers": peer_ids,
+        });
+        fs::write(
+            evidence_root.join("continuous-topology.process.json"),
+            serde_json::to_vec(&topology).unwrap(),
+        )
+        .unwrap();
+    }
     let original_configs: Vec<_> = nodes
         .iter()
         .map(|node| fs::read(node.0.join("seal.json")).unwrap())

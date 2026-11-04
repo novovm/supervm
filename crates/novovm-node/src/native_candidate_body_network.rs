@@ -96,12 +96,17 @@ impl CandidateBodySenderV1 {
         }
         self.next_send = Some(now + SEND_INTERVAL);
         if let Some(frame) = self.frames.get(self.next) {
-            if runtime.try_submit_to_peer(
-                &self.target,
-                Class::NativeSeal,
-                object_hash(frame),
-                frame.clone(),
-            )? {
+            let hash = object_hash(frame);
+            let accepted =
+                runtime.try_submit_to_peer(&self.target, Class::NativeSeal, hash, frame.clone())?;
+            crate::native_fresh_timing::handoff_trace("body.queue", || {
+                serde_json::json!({
+                    "source": self.source, "target": self.target, "object": hash,
+                    "frame_index": self.next, "frame_count": self.frames.len(),
+                    "queue_accepted": accepted,
+                })
+            });
+            if accepted {
                 self.next += 1;
                 if self.next == self.frames.len() {
                     self.retry_at = Some(now + RETRY_INTERVAL);

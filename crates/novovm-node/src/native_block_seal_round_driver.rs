@@ -638,6 +638,16 @@ impl NovNativeSealRoundDriverV1 {
         if self.proposal.is_none() {
             self.proposal = message.proposal().cloned();
         }
+        crate::native_fresh_timing::handoff_trace("seal.accept", || {
+            serde_json::json!({
+                "height": self.binding.height, "round": self.state.current.round,
+                "local_validator": self.binding.local_validator_id, "source": source_peer_id,
+                "proposal": self.proposal.as_ref().map(|proposal| proposal.proposal_hash),
+                "subject": self.proposal.as_ref().map(|proposal| &proposal.subject),
+                "vote_ids": self.votes.keys().collect::<Vec<_>>(),
+                "quorum_weight": self.set().quorum_weight,
+            })
+        });
         Ok(true)
     }
 
@@ -821,7 +831,18 @@ impl NovNativeSealRoundDriverV1 {
             });
         }
         let vote = store.sign_local_vote(ledger, &proposal, self.set(), key)?;
-        insert_unique(&mut self.votes, vote.validator_id, vote.clone())?;
+        let first_local_vote = insert_unique(&mut self.votes, vote.validator_id, vote.clone())?;
+        if first_local_vote {
+            crate::native_fresh_timing::handoff_trace("seal.local_vote", || {
+                serde_json::json!({
+                    "height": self.binding.height, "round": self.state.current.round,
+                    "local_validator": self.binding.local_validator_id,
+                    "proposal": proposal.proposal_hash, "subject": proposal.subject,
+                    "vote_ids": self.votes.keys().collect::<Vec<_>>(),
+                    "quorum_weight": self.set().quorum_weight,
+                })
+            });
+        }
         output.push(Message::Vote {
             proposal: Box::new(proposal.clone()),
             vote: Box::new(vote),
