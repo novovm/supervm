@@ -1,6 +1,6 @@
 # D LAN scheduled results: A/D probes and C/D observer
 
-Node **validator-D**, date 2026-11-04 Asia/Shanghai. The original retained script finished with **exit0**; all **three original cases exited0**, with empty stderr. **Both D-to-A probes confirmed authenticated round trips with different sessions. D's observer authenticated two C requests and submitted two replies. C/D client receipt still requires C's original probe reports and A's paired reconciliation.**
+Node **validator-D**, date 2026-11-04 Asia/Shanghai. The original retained script finished with **exit0**; all **three original cases exited0**, with empty stderr. **Both D-to-A probes confirmed authenticated round trips with different sessions. D's observer authenticated two C requests and submitted two replies. The later concurrent C receipt confirms both C/D client round trips and matches D's last session/source; C/A first failed and second was skipped. A-side originals and final matrix reconciliation remain with A.**
 
 Schedule: main `53fe7da3acbb80b7f3731e59e083616bbafad304`, common start08:35. Actual original script SHA256 remains `d88d974416cd5180f1523f7b1752ab3b73e8acd4525f7d818c8d4a721079fcf6`; candidate program remains `d7ef793b819c8670e472d217daae9db5f074aea8`. This review did not run another probe/observer, retry, catch-up or modify an original report.
 
@@ -10,7 +10,7 @@ Schedule: main `53fe7da3acbb80b7f3731e59e083616bbafad304`, common start08:35. Ac
 | probe-D-A-second | 08:38:01.1824201 / 08:38:01.4387390 | 0 | accepted=true; round_trip_confirmed=true; exchanges1 | `29161f9a2c54ad3f15aeb11fba478586` |
 | observer-D-for-C | 08:40:45.3496692 / 08:42:15.4853754 | 0 | accepted=true; requests2; exchanges2; replies submitted2 | `5114b1a40e9f555c99692ea44591a1e7` (last session only) |
 
-Both reserved D job starts fall within the unchanged original script's schedule tolerance. First completed successfully before second began. These are process timestamps, not isolated handshake latency or TPS. The observer's **round_trip_confirmed=false** is its original server-side semantics: submitting replies does not prove the client received them. It is not a failed probe, and accepted=true alone must not be promoted into completed C/D client delivery. Its final report retains only the last C session/source, not a complete first-session history.
+Both reserved D job starts fall within the unchanged original script's schedule tolerance. First completed successfully before second began. These are process timestamps, not isolated handshake latency or TPS. The observer's **round_trip_confirmed=false** is its original server-side semantics: submitting replies does not prove the client received them. It is not a failed probe, and accepted=true alone must not be promoted into completed C/D client delivery. Its final report retains only the last C session/source, not a complete first-session history. Client confirmation below comes from C's separately committed reports, not a reinterpretation of the observer flag.
 
 ## Identities and LAN evidence
 
@@ -24,6 +24,12 @@ Both reserved D job starts fall within the unchanged original script's schedule 
 
 All three native reports retain handshake version2, suite65, `network_only=true`, `aoem_called=true`, inner-frame preservation and `ledger_semantics=false`. Each original stdout JSON matches the corresponding native report, and all three stderr files contain zero bytes.
 
+## Concurrent C receipt and remaining failure
+
+C commit `5e5003f3` was published concurrently and merged without replacing either host's original evidence. [C's original results](../validator-C-LAN-results-20261104-083500/README.md) show both C/D probes exited0 with round_trip_confirmed=true. Their peers reverse-match D's observer identities. Sessions are `ba1be5926a32c08cb9357f66e871bde4` and `5114b1a40e9f555c99692ea44591a1e7`; the second session and source `192.168.71.125:59561` exactly match D's last observer record, with request/reply counts2. The first C source is `192.168.71.125:59560`; D's final aggregate has no separate first-session history. This listed correlation does not invent that missing history or replace A's final matrix review.
+
+**C/A is not green:** C/A first exited1, accepted=false, authenticated_exchanges=0, session/observed_endpoint=null; stderr is `Error: native authenticated probe did not complete; retain failure report`. C/A second was correctly not executed. The failed report's expected A peer ID is not proof of authenticated A contact. Root cause remains unknown pending A's original observer timing/report; do not assert firewall, VPN, packet-loss or signature causes, alter parameters or rerun automatically. D/A success and C/D correlation do not erase this independent C/A failure.
+
 ## Exact raw evidence for A
 
 The [original-evidence.zip](original-evidence.zip) contains **11 original files**: three native reports, their stdout/stderr, `execution.json` and `routes-before.json`. ZIP size **21914 bytes**, SHA256 **`7f27496cf76a3ce244a9c16606a85ade37ec8149c6d9e70d1279fc2738c7f07c`**. Every entry's length/SHA256 was verified against its untouched source. [RAW-FILES.sha256](RAW-FILES.sha256) and [summary.json](summary.json) record per-file hashes/lengths. The three native reports are also provided as directly readable JSON copies.
@@ -32,6 +38,6 @@ Original `execution.json` has20 CRLFs (532 bytes, SHA256 `4b48e376c568baebc752b1
 
 The original route JSON-depth8 warning disclosed in ARMED_LAN_D is preserved. Required four source/route records and core fields are readable; nested CIM metadata may be truncated. No evidence was rewritten or original script rerun to conceal that warning. On extraction into a new empty directory, verify the 11 files against RAW-FILES before interpreting them; do not overwrite existing evidence.
 
-Summary Git/LF SHA256: **`1d3154796803a27451e3489498b2c5e6131f677e7d91e95273f29eb772f31c1f`**. Original native reports: [D/A first](probe-D-A-first.report.json), [D/A second](probe-D-A-second.report.json), [D-for-C observer](observer-D-for-C.report.json).
+Summary Git/LF SHA256: **`e0673e982209c6bab8d1323254c6344ad02d2b8284efef4805c05f34d8dce095`**. Original native reports: [D/A first](probe-D-A-first.report.json), [D/A second](probe-D-A-second.report.json), [D-for-C observer](observer-D-for-C.report.json).
 
-**A:** reconcile A's observer with both D probe reports, then reconcile C's two client reports with D's counters and last session/source. Return `received_commit / A_D_reconciled / C_D_reconciled / opposite_report_refs / first_blocker`. D has not retrieved A/C's original reports and does not sign their acceptance. No four-host, consensus, chain, throughput, complete post-quantum key-agreement or separate stale-session replay gate is promoted by this D-only result. No sealed contents, private key, credential, password or token is published; Git publication is not A acknowledgment.
+**A:** reconcile A's observer with both D probe reports, review the listed C/D correlation, and inspect A's original C observer for the failed C/A case. Return `received_commit / A_D_reconciled / C_D_reconciled / C_A_first_blocker / opposite_report_refs`. D has received C's original reports but not A's observer originals and does not sign A's acceptance. No four-host, consensus, chain, throughput, complete post-quantum key-agreement or separate stale-session replay gate is promoted. No sealed contents, private key, credential, password or token is published; Git publication is not A acknowledgment.

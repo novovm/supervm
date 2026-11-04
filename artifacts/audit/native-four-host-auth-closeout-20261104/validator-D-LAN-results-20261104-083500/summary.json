@@ -1,6 +1,6 @@
 {
   "node": "validator-D",
-  "status": "D_LAN_EXECUTION_COMPLETE_PENDING_PAIRED_RECONCILIATION",
+  "status": "D_LOCAL_SUCCESS_C_D_LAST_SESSION_CORRELATED_C_A_FAILURE_REPORTED",
   "checked_beijing": "2026-11-04T08:57:49.8906526+08:00",
   "read_main_commit": "eeec18dd380a1aee4d0ebec20efb4cec34446259",
   "schedule_commit": "53fe7da3acbb80b7f3731e59e083616bbafad304",
@@ -14,8 +14,8 @@
     {
       "case": "probe-D-A-first",
       "exit_code": 0,
-      "started_utc": "2026-11-04T00:38:00.9330656+00:00",
-      "ended_utc": "2026-11-04T00:38:01.1676464+00:00",
+      "started_utc": "2026-11-04T08:38:00.9330656+08:00",
+      "ended_utc": "2026-11-04T08:38:01.1676464+08:00",
       "started_beijing": "2026-11-04T08:38:00.9330656+08:00",
       "ended_beijing": "2026-11-04T08:38:01.1676464+08:00",
       "accepted": true,
@@ -42,10 +42,10 @@
     {
       "case": "probe-D-A-second",
       "exit_code": 0,
-      "started_utc": "2026-11-04T00:38:01.1824201+00:00",
-      "ended_utc": "2026-11-04T00:38:01.4387390+00:00",
+      "started_utc": "2026-11-04T08:38:01.1824201+08:00",
+      "ended_utc": "2026-11-04T08:38:01.438739+08:00",
       "started_beijing": "2026-11-04T08:38:01.1824201+08:00",
-      "ended_beijing": "2026-11-04T08:38:01.4387390+08:00",
+      "ended_beijing": "2026-11-04T08:38:01.438739+08:00",
       "accepted": true,
       "mode": "probe",
       "round_trip_confirmed": true,
@@ -70,8 +70,8 @@
     {
       "case": "observer-D-for-C",
       "exit_code": 0,
-      "started_utc": "2026-11-04T00:40:45.3496692+00:00",
-      "ended_utc": "2026-11-04T00:42:15.4853754+00:00",
+      "started_utc": "2026-11-04T08:40:45.3496692+08:00",
+      "ended_utc": "2026-11-04T08:42:15.4853754+08:00",
       "started_beijing": "2026-11-04T08:40:45.3496692+08:00",
       "ended_beijing": "2026-11-04T08:42:15.4853754+08:00",
       "accepted": true,
@@ -97,7 +97,7 @@
     }
   ],
   "A_D_probe_session_ids_different": true,
-  "C_D_observer_semantics": "Observer authenticated two requests and submitted two replies; round_trip_confirmed=false is expected observer semantics, not proof of client receipt. Final report exposes only the last session/source. Need C original probe reports for paired acceptance.",
+  "C_D_observer_semantics": "Observer round_trip_confirmed=false remains correct server semantics. Later C receipt confirms both client round trips; its second identity/session/source matches D last record plus requests/replies2. D has no individual first-session server history. A still owns final paired matrix acceptance.",
   "public_key_sha256": {
     "C": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f",
     "A": "0656e6de01e498b50d7b67b10ff58f4c600cdf61663066b03f358a7901839eae",
@@ -234,10 +234,45 @@
     "clock_identity_config_firewall_VPN_or_timeout_changed": false,
     "four_host_acceptance_claimed": false,
     "new_probe_observer_or_retry_during_review": false,
-    "remote_A_or_C_original_reports_reconciled_by_D": false,
     "scheduled_task_or_service_created": false,
     "ledger_or_validator_or_chain_started": false,
-    "old_session_replay_gate_independently_signed_by_D": false
+    "old_session_replay_gate_independently_signed_by_D": false,
+    "remote_A_original_reports_reconciled_by_D": false
   },
-  "next_action": "A correlate its A-for-D observer with the two D probes, and C two client reports with D observer counts and last session/source; do not equate observer acceptance with client receipt."
+  "next_action": "A check original A observers for failed C/A and successful D/A; use committed C/D listed correlation without inventing first-session observer history; do not rerun or mark all pairs green.",
+  "concurrent_C_receipt_reconciliation": {
+    "source_commit": "5e5003f3364ae83f119ba5bd4ee35f1438e52a20",
+    "checked_beijing": "2026-11-04T09:01:50.6578442+08:00",
+    "C_first_report_path": "artifacts/audit/native-four-host-auth-closeout-20261104/validator-C-LAN-results-20261104-083500/raw/probe-C-D-first.json",
+    "C_first_report_sha256": "41d799afa4e52bebe73efa8bcf0d526e7911c02463135ed3f2b66d61f1a7f81a",
+    "C_second_report_path": "artifacts/audit/native-four-host-auth-closeout-20261104/validator-C-LAN-results-20261104-083500/raw/probe-C-D-second.json",
+    "C_second_report_sha256": "64174224164df470653ce9749b0bbfb5271a10d0ca8d029ecb491235e8a159ae",
+    "both_C_client_round_trips_confirmed": true,
+    "both_C_client_identities_match_D_observer": true,
+    "C_session_ids_different": true,
+    "C_first_session_hex": "ba1be5926a32c08cb9357f66e871bde4",
+    "C_second_session_hex": "5114b1a40e9f555c99692ea44591a1e7",
+    "D_last_session_matches_C_second": true,
+    "D_last_observed_source_matches_C_second": true,
+    "C_first_observed_endpoint": "192.168.71.125:59560",
+    "C_second_observed_endpoint": "192.168.71.125:59561",
+    "D_authenticated_requests": 2,
+    "D_replies_submitted": 2,
+    "D_first_session_individual_history_available": false,
+    "A_final_matrix_approval_claimed": false
+  },
+  "unresolved_C_A_from_C_original_receipt": {
+    "case": "probe-C-A-first",
+    "exit_code": 1,
+    "accepted": false,
+    "round_trip_confirmed": false,
+    "authenticated_exchanges": 0,
+    "session_id": null,
+    "observed_endpoint": null,
+    "stderr": "Error: native authenticated probe did not complete; retain failure report",
+    "second_executed": false,
+    "cause": "unknown; A original observer timing/report needed; do not infer firewall/VPN/packet-loss/signature cause",
+    "original_failure_report_path": "artifacts/audit/native-four-host-auth-closeout-20261104/validator-C-LAN-results-20261104-083500/raw/probe-C-A-first.json",
+    "original_failure_report_sha256": "4a95c3b9e128efb6e102a64c587f0bb0d0605e606d10f917344d567ffed9a695"
+  }
 }
