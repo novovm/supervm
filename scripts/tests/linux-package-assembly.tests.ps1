@@ -63,6 +63,7 @@ foreach ($name in @('aoem/manifest/aoem-manifest.json', 'aoem/config/aoem-runtim
 [IO.File]::WriteAllText((Join-Path $fixture 'crates/novovm-node/src/product_mainline_overlay.rs'), 'novovm-product-mainline-recipient-ack/v2')
 [IO.File]::WriteAllText((Join-Path $fixture 'crates/novovm-node/src/product_delivery_journal.rs'), 'novovm-product-delivery-journal/v1')
 $fixtureState = @{commit='1234567890123456789012345678901234567890';root=$fixture;buildCalls=0;contracts=@();qualificationCalls=0;qualificationMode='valid'}
+$fixtureState.nodeServiceMode = 'valid'
 function git {
   $global:LASTEXITCODE = 0
   if ($args[0] -eq 'status') { return }
@@ -105,6 +106,21 @@ function cargo {
 # Only this synthetic command path is stubbed. The production packager still
 # invokes its exact Cargo-reported ctl, with no skip/injection option.
 $runtimeFixtureCommand = Join-Path $fixture "build/novovmctl$binarySuffix"
+if ($windowsPackage) {
+  $nodeFixtureCommand = Join-Path $fixture "build/novovm-node$binarySuffix"
+  Set-Item -LiteralPath ('Function:\global:' + $nodeFixtureCommand) -Value {
+    param([Parameter(ValueFromRemainingArguments)]$NodeArguments)
+    if ($NodeArguments.Count -ne 1 -or $NodeArguments[0] -cne '--service-contract') {
+      throw 'Node service preflight must be an offline contract query of the actual built executable'
+    }
+    $global:LASTEXITCODE = 0
+    if ($fixtureState.nodeServiceMode -eq 'nonzero') { $global:LASTEXITCODE = 19; return '{}' }
+    $contract = @{schema_version=1;contract='windows-scm-existing-v1';platform='windows';supported=$true;entry='native_execution_tick';start_mode='existing';service_started=$false;database_opened=$false;custody_accessed=$false}
+    if ($fixtureState.nodeServiceMode -eq 'wrong-contract') { $contract.contract = 'not-a-service' }
+    if ($fixtureState.nodeServiceMode -eq 'side-effect') { $contract.database_opened = $true }
+    $contract | ConvertTo-Json -Compress
+  }
+}
 Set-Item -LiteralPath ('Function:\global:' + $runtimeFixtureCommand) -Value {
   param([Parameter(ValueFromRemainingArguments)]$RuntimeArguments)
   $fixtureState.qualificationCalls++
@@ -317,6 +333,26 @@ if ($relayUnit -notmatch '(?m)^WorkingDirectory=/var/lib/novovm-relay$' -or
   $windowsReadme = Get-Content -LiteralPath (Join-Path $output 'README.md') -Raw
   if ($windowsReadme -notmatch 'NVPK0003' -or $windowsReadme -notmatch 'does not execute them' -or
       $windowsReadme -notmatch 'SCM/task acceptance is separate') { throw 'Windows packaging must not claim installation/activation' }
+  $scmUnit = Get-Content -Raw -LiteralPath (Join-Path $output 'config/NOVOVMNativeNode.json.example') | ConvertFrom-Json
+  if ($scmUnit.schema_version -ne 1 -or
+      $scmUnit.config -ne 'C:/ProgramData/NOVOVM/config/native-node.json' -or
+      $scmUnit.account_name -ne 'REVIEW_EXPLICIT_SERVICE_ACCOUNT' -or
+      $manifest.native_node_service_contract -ne 'windows-scm-existing-v1' -or
+      !(Test-Path (Join-Path $output 'reports/native-node-service-contract.json'))) {
+    throw 'Windows SCM must retain an explicit unconfigured account and the actual binary contract query'
+  }
+  foreach ($mode in @('nonzero', 'wrong-contract', 'side-effect')) {
+    $fixtureState.nodeServiceMode = $mode
+    $rejected = $false
+    try { & $packager -Target $Target -PackageDir "artifacts/product-overlay/rejected-scm-$mode" } catch {
+      if ($_.Exception.Message -notlike '*Native SCM*') { throw }
+      $rejected = $true
+    }
+    if (!$rejected -or (Test-Path (Join-Path $fixture "artifacts/product-overlay/rejected-scm-$mode"))) {
+      throw "SCM contract refusal must precede publication: $mode"
+    }
+  }
+  $fixtureState.nodeServiceMode = 'valid'
 }
 $fixtureState.buildCalls = 0
 $fixtureState.tamper = $true

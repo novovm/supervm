@@ -15,6 +15,9 @@ novovm-node = { path = "../novovm-node" }
 novovm-relay = { path = "../novovm-relay" }
 novovm-exec = { path = "../novovm-exec" }
 
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8.1"
+
 [dev-dependencies]
 aoem-bindings = { path = "../aoem-bindings" }
 ed25519-dalek = "2"

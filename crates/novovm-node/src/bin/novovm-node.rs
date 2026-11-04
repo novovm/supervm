@@ -43983,6 +43983,7 @@ fn run_fresh_genesis_confirmation_v1(
 fn run_native_execution_tick_node_mode_v1(
     verbose: bool,
     seal_config_path: Option<PathBuf>,
+    service_control: Option<novovm_node::native_service::Control>,
 ) -> Result<()> {
     let configured_product = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG").is_some();
     if configured_product {
@@ -44219,11 +44220,32 @@ fn run_native_execution_tick_node_mode_v1(
     };
     // Parse every setting before activating the signer and resident owners.
     let mut udp_drive = NativeExecutionPipelineUdpDriveV1::from_env(chain_id)?;
+    if let Some(control) = &service_control {
+        anyhow::ensure!(
+            udp_drive
+                .as_ref()
+                .is_some_and(|drive| drive.product.is_some()),
+            "SCM service requires the original authenticated native owner"
+        );
+        if let Err(error) = control.ready() {
+            let product = udp_drive.as_mut().unwrap().product.take().unwrap();
+            let drain = product.node.shutdown();
+            return Err(error.context(format!(
+                "SCM readiness failed; original tick drained: {drain:?}"
+            )));
+        }
+    }
     if configured_product {
         println!("native_tick_start: owner=original_udp execution=resident_aoem publication=round_bft_journal http=false legacy_pending_executor=false");
     }
     let product_started = Instant::now();
     loop {
+        if service_control
+            .as_ref()
+            .is_some_and(|control| control.stop_requested())
+        {
+            break;
+        }
         if max_ticks > 0 && ticks >= max_ticks {
             break;
         }
@@ -44716,7 +44738,24 @@ fn validate_original_native_tick_selection_v1(node_mode: &str) -> Result<()> {
     Ok(())
 }
 
+fn run_native_scm_tick(
+    request: novovm_node::native_service::Request,
+    control: novovm_node::native_service::Control,
+) -> Result<()> {
+    request.prepare_existing_tick()?;
+    validate_original_native_tick_selection_v1("native_execution_tick")?;
+    run_native_execution_tick_node_mode_v1(false, None, Some(control))
+}
+
 fn main() -> Result<()> {
+    let service_args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(report) = novovm_node::native_service::contract_query(&service_args)? {
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
+    if let Some(request) = novovm_node::native_service::Request::parse(service_args)? {
+        return novovm_node::native_service::dispatch(request, run_native_scm_tick);
+    }
     let node_mode = std::env::var("NOVOVM_NODE_MODE").unwrap_or_else(|_| "full".to_string());
     validate_original_native_tick_selection_v1(&node_mode)?;
     if node_mode.eq_ignore_ascii_case("native_resident")
@@ -44868,8 +44907,8 @@ fn main() -> Result<()> {
     {
         return std::thread::Builder::new()
             .name("novovm-native-tick".into())
-            .stack_size(16 * 1024 * 1024)
-            .spawn(move || run_native_execution_tick_node_mode_v1(verbose, seal_config_path))?
+            .stack_size(novovm_node::native_service::TICK_STACK_BYTES)
+            .spawn(move || run_native_execution_tick_node_mode_v1(verbose, seal_config_path, None))?
             .join()
             .map_err(|_| anyhow::anyhow!("original native tick panicked"))?;
     }

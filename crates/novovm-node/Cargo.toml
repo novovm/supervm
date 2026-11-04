@@ -53,6 +53,7 @@ novovm-consensus = { path = "../novovm-consensus", features = ["test-vectors"] }
 
 [target.'cfg(windows)'.dependencies]
 mio = { version = "1.1.1", default-features = false, features = ["os-poll", "net"] }
+windows-service = "0.8.1"
 
 [[bin]]
 name = "novovm-node"

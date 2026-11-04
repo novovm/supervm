@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 const MAX_MANIFEST: u64 = 4 * 1024 * 1024;
 const MAX_UNIT: u64 = 128 * 1024;
 const MAX_OUTPUT: usize = 256 * 1024;
+mod windows_scm;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +76,8 @@ struct Release {
     target: String,
     mixed_version_rolling_upgrade_supported: bool,
     artifacts: Vec<Artifact>,
+    #[serde(default)]
+    native_node_service_contract: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -102,7 +105,7 @@ fn signature_contract_report() -> serde_json::Value {
     serde_json::json!({
         "scope":"current_product_configuration_contract_not_runtime_acceptance",
         "consensus_signature_contract":"ML-DSA-65/v2",
-        "transport_identity":"Ed25519",
+        "transport_identity":"ML-DSA-65/v2",
         "signature_runtime_verified":false,
         "full_node_post_quantum":"unavailable"
     })
@@ -226,9 +229,9 @@ fn run_with(args: &LifecycleArgs, runner: &mut impl Runner) -> Result<serde_json
     }
     if selected
         .iter()
-        .any(|s| !matches!(s.manager, Manager::Systemd))
+        .any(|s| matches!(s.manager, Manager::WindowsScm))
     {
-        return Err(bad("unified Windows SCM/task install and ownership verification are not qualified; use existing reviewed platform adapters, not sc create for a non-SCM executable"));
+        return run_windows(args, &deployment, &release, &selected);
     }
     let mut operations = Vec::new();
     for service in &selected {
@@ -307,6 +310,88 @@ fn run_with(args: &LifecycleArgs, runner: &mut impl Runner) -> Result<serde_json
     }))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WindowsNodeUnit {
+    schema_version: u32,
+    config: PathBuf,
+    account_name: String,
+}
+
+fn windows_node_spec(service: &Service) -> Result<windows_scm::NodeServiceSpec, CtlError> {
+    if !matches!(service.role, Role::Node) || !matches!(service.manager, Manager::WindowsScm) {
+        return Err(bad("Windows SCM adapter manages only the original native node; task/relay/mailbox ownership remains with its existing adapter"));
+    }
+    let unit: WindowsNodeUnit = read_json(&service.unit_file, MAX_UNIT)?;
+    if unit.schema_version != 1 || !service.config_files.iter().any(|f| f.path == unit.config) {
+        return Err(bad(
+            "Windows node unit requires version 1 and an explicitly pinned native config",
+        ));
+    }
+    let spec = windows_scm::NodeServiceSpec {
+        name: service.name.clone(),
+        binary: service.binary.clone(),
+        config: unit.config,
+        account_name: unit.account_name,
+    };
+    spec.validate()?;
+    Ok(spec)
+}
+
+fn run_windows(
+    args: &LifecycleArgs,
+    deployment: &Deployment,
+    release: &Release,
+    selected: &[&Service],
+) -> Result<serde_json::Value, CtlError> {
+    let action = args.action.as_str();
+    if action == "logs" {
+        return Err(bad("Windows native logs require the reviewed event/log owner; no systemd or legacy lifecycle fallback"));
+    }
+    let specs = selected
+        .iter()
+        .map(|s| windows_node_spec(s))
+        .collect::<Result<Vec<_>, _>>()?;
+    if action == "install" && selected.iter().any(|s| s.existing) {
+        return Err(bad(
+            "existing Windows owner must be adopted, never reinstalled",
+        ));
+    }
+    let mut observations = Vec::new();
+    if args.apply || matches!(action, "status" | "health" | "adopt") {
+        // Check every selected owner before the first SCM mutation.
+        for spec in &specs {
+            observations.push(windows_scm::preflight(spec, action == "install")?);
+        }
+    }
+    let mut results = Vec::new();
+    if args.apply && matches!(action, "install" | "start" | "stop") {
+        validate_deployment(deployment)?;
+        for spec in &specs {
+            results.push(windows_scm::apply(spec, action)?);
+        }
+    }
+    let operations: Vec<_> = specs.iter().filter(|_| matches!(action, "install" | "start" | "stop"))
+        .map(|spec| serde_json::json!({"manager":"windows_scm","action":action,"service":spec.name,"binary":spec.binary,"arguments":spec.launch_arguments().iter().map(|v| v.to_string_lossy().into_owned()).collect::<Vec<_>>(),"account_name":spec.account_name,"start_type":"demand"}))
+        .collect();
+    let reports: Vec<_> = if action == "health" {
+        selected.iter().map(|service| serde_json::json!({"service":service.name,"health":service.health.as_ref().map(health::inspect)})).collect()
+    } else {
+        Vec::new()
+    };
+    Ok(serde_json::json!({
+        "schema_version":1,"host_id":deployment.host_id,"action":action,
+        "source_commit":release.git_commit,"package_target":release.target,
+        "release_manifest_sha256":deployment.expected_release_manifest_sha256,
+        "applied":args.apply && !results.is_empty(),"operations":operations,"results":results,
+        "service_observations":observations,"health":reports,"full_stack_accepted":false,
+        "service_settlement":"not_connected","manager_mutates_data_directly":false,
+        "credentials_provisioned":false,"custody_verified":false,
+        "signature_contract":signature_contract_report(),
+        "note":"SCM install is demand-only and does not start, initialize a database or create/decrypt purpose keys. Plan is offline; status is not finality or economic acceptance. No implicit account, legacy fallback or automatic rollback."
+    }))
+}
+
 fn validate_deployment(deployment: &Deployment) -> Result<Release, CtlError> {
     if deployment.schema_version != 1 || !safe_name(&deployment.host_id) {
         return Err(bad("invalid deployment schema or host identity"));
@@ -315,7 +400,11 @@ fn validate_deployment(deployment: &Deployment) -> Result<Release, CtlError> {
     let manifest = deployment.package_root.join("release-manifest.json");
     verify_file(&manifest, &deployment.expected_release_manifest_sha256)?;
     let release: Release = read_json(&manifest, MAX_MANIFEST)?;
-    if release.scope != "novovm_unified_linux_release_v3"
+    let windows = release.scope == "novovm_unified_windows_release_v1"
+        && release.target == "x86_64-pc-windows-msvc";
+    let linux = release.scope == "novovm_unified_linux_release_v3"
+        && release.target == "x86_64-unknown-linux-gnu";
+    if !(windows || linux)
         || release.git_commit.len() != 40
         || !release.git_commit.bytes().all(|b| b.is_ascii_hexdigit())
         || release.mixed_version_rolling_upgrade_supported
@@ -323,6 +412,10 @@ fn validate_deployment(deployment: &Deployment) -> Result<Release, CtlError> {
         || release.artifacts.len() > 4096
     {
         return Err(bad("package is not the qualified unified v3 manifest shape; no mixed-version upgrade inference"));
+    }
+    if windows && release.native_node_service_contract.as_deref() != Some("windows-scm-existing-v1")
+    {
+        return Err(bad("Windows native node package lacks the qualified SCM entry contract; old non-SCM executables cannot be registered"));
     }
     let mut packaged = BTreeMap::new();
     for artifact in &release.artifacts {
@@ -357,23 +450,36 @@ fn validate_deployment(deployment: &Deployment) -> Result<Release, CtlError> {
     let mut roles = BTreeSet::new();
     let mut data_owners: Vec<(&str, &Path)> = Vec::new();
     for service in deployment.services.iter().filter(|s| s.enabled) {
-        if !safe_unit_name(&service.name)
-            || !names.insert(&service.name)
+        if !(if windows {
+            safe_name(&service.name)
+        } else {
+            safe_unit_name(&service.name)
+        }) || !names.insert(&service.name)
             || !roles.insert(format!("{:?}", service.role))
         {
             return Err(bad("invalid or duplicate service identity/role"));
         }
+        if (windows && !matches!(service.manager, Manager::WindowsScm))
+            || (linux && !matches!(service.manager, Manager::Systemd))
+        {
+            return Err(bad("service manager must match its pinned platform package; Windows tasks are not a native SCM node"));
+        }
         verify_file(&service.binary, &service.binary_sha256)?;
         verify_file(&service.unit_file, &service.unit_sha256)?;
-        if !service.existing && packaged.get(&service.binary) != Some(&service.binary_sha256) {
+        if (windows || !service.existing)
+            && packaged.get(&service.binary) != Some(&service.binary_sha256)
+        {
             return Err(bad(
                 "new service binary must match a pinned package artifact",
             ));
         }
-        let expected_binary = match service.role {
-            Role::Node => "novovm-node",
-            Role::Mailbox => "novovm-rendezvous-service",
-            Role::Relay => "supervm-relay",
+        let expected_binary = match (&service.role, windows) {
+            (Role::Node, true) => "novovm-node.exe",
+            (Role::Mailbox, true) => "novovm-rendezvous-service.exe",
+            (Role::Relay, true) => "supervm-relay.exe",
+            (Role::Node, false) => "novovm-node",
+            (Role::Mailbox, false) => "novovm-rendezvous-service",
+            (Role::Relay, false) => "supervm-relay",
         };
         if service.binary.file_name().and_then(|s| s.to_str()) != Some(expected_binary) {
             return Err(bad("service role does not match original product binary"));
@@ -412,7 +518,12 @@ fn validate_deployment(deployment: &Deployment) -> Result<Release, CtlError> {
             }
             data_owners.push((&service.name, path));
         }
-        if service.unit_file.file_name().and_then(|s| s.to_str()) != Some(service.name.as_str()) {
+        let unit_name = if windows {
+            format!("{}.json", service.name)
+        } else {
+            service.name.clone()
+        };
+        if service.unit_file.file_name().and_then(|s| s.to_str()) != Some(unit_name.as_str()) {
             return Err(bad("unit filename must match managed service name"));
         }
         validate_unit(service, &packaged, &deployment.package_root)?;
@@ -449,7 +560,19 @@ fn validate_unit(
     package_root: &Path,
 ) -> Result<(), CtlError> {
     if !matches!(service.manager, Manager::Systemd) {
-        return Ok(());
+        let spec = windows_node_spec(service)?;
+        let native: serde_json::Value = read_json(&spec.config, MAX_MANIFEST)?;
+        let library = PathBuf::from(
+            native["library"]
+                .as_str()
+                .ok_or_else(|| bad("Windows native config requires its pinned AOEM library"))?,
+        );
+        if !library.is_absolute() {
+            return Err(bad(
+                "Windows managed native config requires an absolute AOEM library path",
+            ));
+        }
+        return validate_native_config(service, &spec.config, packaged, &library);
     }
     let unit = read_text(&service.unit_file, MAX_UNIT)?;
     let entries = unit_values(&unit)?;
@@ -857,7 +980,14 @@ fn validate_native_config(
 }
 
 fn same_library_binding(configured: &Path, env_library: &Path) -> Result<(), CtlError> {
-    if configured != env_library {
+    // ResidentConfig normalizes Windows paths for native long-path I/O. Both
+    // spellings must still resolve to the exact independently pinned file.
+    let same_windows_file = cfg!(windows)
+        && configured
+            .canonicalize()
+            .ok()
+            .is_some_and(|path| env_library.canonicalize().ok().as_ref() == Some(&path));
+    if configured != env_library && !same_windows_file {
         return Err(bad(
             "native configuration and loaded EnvironmentFile select different AOEM artifacts",
         ));
@@ -1178,13 +1308,139 @@ mod tests {
     fn signature_contract_separates_consensus_from_transport_and_runtime_acceptance() {
         let report = signature_contract_report();
         assert_eq!(report["consensus_signature_contract"], "ML-DSA-65/v2");
-        assert_eq!(report["transport_identity"], "Ed25519");
+        assert_eq!(report["transport_identity"], "ML-DSA-65/v2");
         assert_eq!(report["signature_runtime_verified"], false);
         assert_eq!(report["full_node_post_quantum"], "unavailable");
         assert_eq!(
             report["scope"],
             "current_product_configuration_contract_not_runtime_acceptance"
         );
+    }
+
+    fn windows_fixture() -> Fixture {
+        let mut f = Fixture::new();
+        let binary = f.deployment.package_root.join("bin/novovm-node.exe");
+        fs::write(&binary, b"node fixture").unwrap();
+        let config = f.root.join("config/native.json");
+        fs::write(&config, b"{}").unwrap();
+        let unit = f.root.join("config/NOVOVM-Node-A.json");
+        fs::write(
+            &unit,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version":1,"config":config,"account_name":"NT AUTHORITY\\LocalService"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let service = &mut f.deployment.services[0];
+        service.role = Role::Node;
+        service.manager = Manager::WindowsScm;
+        service.name = "NOVOVM-Node-A".into();
+        service.binary = binary.clone();
+        service.binary_sha256 = hash(&binary);
+        service.unit_file = unit.clone();
+        service.unit_sha256 = hash(&unit);
+        service.config_files = vec![PinnedFile {
+            path: config,
+            sha256: hash(&f.root.join("config/native.json")),
+        }];
+        let release = serde_json::json!({"scope":"novovm_unified_windows_release_v1","target":"x86_64-pc-windows-msvc","git_commit":"b".repeat(40),"native_node_service_contract":"windows-scm-existing-v1","mixed_version_rolling_upgrade_supported":false,"artifacts":[{"path":"bin/novovm-node.exe","sha256":hash(&binary),"bytes":12}]});
+        let manifest = f.deployment.package_root.join("release-manifest.json");
+        fs::write(&manifest, serde_json::to_vec(&release).unwrap()).unwrap();
+        f.deployment.expected_release_manifest_sha256 = hash(&manifest);
+        f
+    }
+
+    #[test]
+    fn windows_node_descriptor_is_typed_and_binds_the_pinned_config() {
+        let mut f = windows_fixture();
+        let spec = windows_node_spec(f.service()).unwrap();
+        assert_eq!(spec.name, "NOVOVM-Node-A");
+        assert_eq!(spec.config, f.service().config_files[0].path);
+        f.deployment.services[0].config_files.clear();
+        assert!(windows_node_spec(f.service()).is_err());
+        f.deployment.services[0].role = Role::Relay;
+        assert!(windows_node_spec(f.service()).is_err());
+    }
+
+    #[test]
+    fn windows_package_reaches_the_original_native_config_gate() {
+        let f = windows_fixture();
+        // This is deliberately NOT an economic startup fixture. An incomplete
+        // config must fail inside the original config boundary, not on .exe or
+        // a Linux-only package rule, and must never become an install plan.
+        let error = validate_deployment(&f.deployment)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            error.contains("Windows native config requires its pinned AOEM library"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn windows_offline_plan_never_calls_a_service_manager() {
+        let f = windows_fixture();
+        let cli = Cli::try_parse_from([
+            "novovmctl",
+            "lifecycle",
+            "--deployment-manifest",
+            "unused.json",
+            "--action",
+            "install",
+        ])
+        .unwrap();
+        let TopCommand::Lifecycle(args) = cli.command else {
+            panic!()
+        };
+        let release: Release = read_json(
+            &f.deployment.package_root.join("release-manifest.json"),
+            MAX_MANIFEST,
+        )
+        .unwrap();
+        // Platform planning after the independent native validation gate; this
+        // does not assert the deliberately empty fixture config is deployable.
+        let plan = run_windows(&args, &f.deployment, &release, &[f.service()]).unwrap();
+        assert_eq!(plan["applied"], false);
+        assert_eq!(plan["service_observations"], serde_json::json!([]));
+        assert_eq!(plan["operations"][0]["arguments"][0], "--service");
+        assert_eq!(plan["operations"][0]["arguments"][2], "--service-name");
+        assert_eq!(plan["custody_verified"], false);
+    }
+
+    #[test]
+    fn windows_package_cannot_select_systemd_task_or_unpinned_unit_fields() {
+        let mut f = windows_fixture();
+        f.deployment.services[0].manager = Manager::Systemd;
+        assert!(validate_deployment(&f.deployment).is_err());
+        f.deployment.services[0].manager = Manager::WindowsTask;
+        assert!(validate_deployment(&f.deployment).is_err());
+        f.deployment.services[0].manager = Manager::WindowsScm;
+        fs::write(
+            &f.service().unit_file,
+            b"{\"schema_version\":1,\"config\":\"x\",\"account_name\":\"x\",\"create\":true}",
+        )
+        .unwrap();
+        assert!(windows_node_spec(f.service()).is_err());
+    }
+
+    #[test]
+    fn windows_package_without_actual_service_entry_is_not_installable() {
+        let mut f = windows_fixture();
+        let manifest = f.deployment.package_root.join("release-manifest.json");
+        let mut content: serde_json::Value = read_json(&manifest, MAX_MANIFEST).unwrap();
+        content
+            .as_object_mut()
+            .unwrap()
+            .remove("native_node_service_contract");
+        fs::write(&manifest, serde_json::to_vec(&content).unwrap()).unwrap();
+        f.deployment.expected_release_manifest_sha256 = hash(&manifest);
+        let error = validate_deployment(&f.deployment)
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("SCM entry contract"), "{error}");
     }
     #[test]
     fn rejects_changed_artifact_even_with_same_filename() {

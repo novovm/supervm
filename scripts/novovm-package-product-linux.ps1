@@ -318,6 +318,25 @@ try {
       throw "Native identity runtime qualification report exceeds its read-only scope: $field"
     }
   }
+  $nativeNodeServiceContract = $null
+  if ($windowsPackage) {
+    $serviceContractOutput = @(& $executables['novovm-node'] --service-contract)
+    if ($LASTEXITCODE -ne 0) { throw 'Native SCM entry contract query failed; no package was published.' }
+    $serviceContract = ($serviceContractOutput -join "`n") | ConvertFrom-Json
+    if ($serviceContract.schema_version -ne 1 -or
+        $serviceContract.contract -cne 'windows-scm-existing-v1' -or
+        $serviceContract.platform -cne 'windows' -or
+        $serviceContract.supported -isnot [bool] -or !$serviceContract.supported -or
+        $serviceContract.entry -cne 'native_execution_tick' -or $serviceContract.start_mode -cne 'existing') {
+      throw 'Native SCM entry contract mismatch; non-SCM executables cannot be packaged as node services.'
+    }
+    foreach ($field in @('service_started', 'database_opened', 'custody_accessed')) {
+      if ($serviceContract.$field -isnot [bool] -or $serviceContract.$field) {
+        throw "Native SCM contract query exceeded offline scope: $field"
+      }
+    }
+    $nativeNodeServiceContract = $serviceContract.contract
+  }
   $metadataFiles = @(
     "aoem-sdk-manifest.json", "INSTALL-INFO.txt", "README.md",
     "RELEASE-NOTES.md", "RUNTIME-BASELINE.md"
@@ -371,6 +390,10 @@ try {
   $runtimeQualificationReport = 'reports/native-identity-runtime-qualification.json'
   $runtimeQualificationOutput -join "`n" | Set-Content -Encoding utf8 `
     -LiteralPath (Join-Path $packagePath $runtimeQualificationReport)
+  if ($windowsPackage) {
+    $serviceContractOutput -join "`n" | Set-Content -Encoding utf8 `
+      -LiteralPath (Join-Path $packagePath 'reports/native-node-service-contract.json')
+  }
   foreach ($bin in $bins) {
     Assert-PlainPackagePath $executables[$bin] -AllowFileHardLink
     $binaryFileName = [IO.Path]::GetFileName($executables[$bin])
@@ -871,6 +894,13 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "README.md")
 
   if ($windowsPackage) {
+    @'
+{
+  "schema_version": 1,
+  "config": "C:/ProgramData/NOVOVM/config/native-node.json",
+  "account_name": "REVIEW_EXPLICIT_SERVICE_ACCOUNT"
+}
+'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath 'config/NOVOVMNativeNode.json.example')
     # The same public templates and package owner use platform paths. Unknown
     # identity/chain values remain deliberately unconfigured on both platforms.
     foreach ($template in Get-ChildItem -LiteralPath (Join-Path $packagePath 'config') -File) {
@@ -914,7 +944,20 @@ Native transfers use the original NovoRUDP/APFL path; this package creates no
 HTTP transaction listener. Do not enable another execution owner beside the
 native configuration. No systemd unit is a Windows startup contract. The unified
 lifecycle manifest stays services=[]; current SCM/task acceptance is separate.
-No new common genesis, balance distribution, billing or launch is authorized.
+The native node now exposes --service CONFIG --service-name NAME on Windows;
+its SCM host selects only the original existing-state tick and drains the same
+owners on stop. novovmctl lifecycle plans/inspects/installs that pinned native
+node through the original Windows SCM, not a replacement daemon or sc wrapper.
+The config/NOVOVMNativeNode.json.example descriptor is NOT executable as-is:
+bind the approved native config, explicit runtime account and protected paths,
+rename it to the exact service name plus .json and pin it in the original
+deployment manifest. Install is demand-only and does not start the service.
+Password-free built-in/virtual account creation is separate from the ability to
+decrypt purpose materials: current-user DPAPI keys do not become service-account
+keys. Existing named-account services require exact owner adoption. Windows
+tasks, automatic upgrades, service logs and real SCM/custody acceptance are not
+qualified by packaging or offline tests. No new common genesis, deployment key,
+balance distribution, billing, service installation or launch is authorized.
 
 Keep existing identities, protected policy, databases, signing history and NOVOCHAT
 data. Windows local EXE authentication results do not qualify C/D installation
@@ -973,6 +1016,7 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
     generated_at_utc = [DateTime]::UtcNow.ToString("o")
     node_entry = "native_execution_tick/NOVOVM_NATIVE_EXECUTION_CONFIG"
     native_release_http_listener = $false
+    native_node_service_contract = $nativeNodeServiceContract
     build_contracts = $buildContracts
     deployment = [PSCustomObject]@{
       schema_version = 1
