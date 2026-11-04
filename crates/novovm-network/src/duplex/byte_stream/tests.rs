@@ -418,6 +418,8 @@ async fn admission_rejects_insecure_outer_tls_wrong_keys_and_revoked_control() {
 
 #[tokio::test]
 async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss() {
+    use std::future::{poll_fn, Future};
+
     let _serial = SERIAL.lock().await;
     let fixture = RelayFixture::start();
     let (left, right, workers) = pair(
@@ -436,17 +438,17 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
     let payload_right: Vec<u8> = (0..RELAY_BYTE_STREAM_QUEUE_BYTES_V1 * 3 + 319)
         .map(|i| (i % 239) as u8)
         .collect();
-    let left_send = async {
-        left_write.write_all(&payload_left).await.unwrap();
-        left_write.shutdown().await.unwrap();
-    };
-    let right_send = async {
-        right_write.write_all(&payload_right).await.unwrap();
-        right_write.shutdown().await.unwrap();
-    };
-    let receive_both = async {
-        // Delay reads until BOTH actual encrypted receive queues are full;
-        // then let readers consume concurrently with pending writers.
+    // Admit exactly one receive-queue capacity in each direction first. If
+    // either peer already retains an overflow chunk, its owner pauses polling,
+    // so flooding the entire payload can stop the other direction below full.
+    let capacity = RELAY_BYTE_STREAM_QUEUE_BYTES_V1;
+    let (a, b) = tokio::join!(
+        left_write.write_all(&payload_left[..capacity]),
+        right_write.write_all(&payload_right[..capacity])
+    );
+    a.unwrap();
+    b.unwrap();
+    {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let full_left = left_state.state().inbound_bytes == RELAY_BYTE_STREAM_QUEUE_BYTES_V1;
@@ -456,22 +458,68 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
             }
             assert!(
                 Instant::now() < deadline,
-                "bidirectional queues never reached controlled backpressure"
+                "bidirectional queues never reached controlled backpressure; \
+                 (inbound, outbound, written, confirmed): left={:?}, right={:?}",
+                {
+                    let state = left_state.state();
+                    (
+                        state.inbound_bytes,
+                        state.outbound_bytes,
+                        state.written,
+                        state.confirmed,
+                    )
+                },
+                {
+                    let state = right_state.state();
+                    (
+                        state.inbound_bytes,
+                        state.outbound_bytes,
+                        state.written,
+                        state.confirmed,
+                    )
+                }
             );
             tokio::time::sleep(POLL_INTERVAL).await;
         }
-        let mut from_left = Vec::new();
-        let mut from_right = Vec::new();
-        let (a, b) = tokio::join!(
-            left_read.read_to_end(&mut from_right),
-            right_read.read_to_end(&mut from_left)
-        );
-        a.unwrap();
-        b.unwrap();
-        assert_eq!(from_left, payload_left);
-        assert_eq!(from_right, payload_right);
-    };
-    tokio::join!(left_send, right_send, receive_both);
+    }
+    {
+        let left_send = async {
+            left_write
+                .write_all(&payload_left[capacity..])
+                .await
+                .unwrap();
+            left_write.shutdown().await.unwrap();
+        };
+        let right_send = async {
+            right_write
+                .write_all(&payload_right[capacity..])
+                .await
+                .unwrap();
+            right_write.shutdown().await.unwrap();
+        };
+        tokio::pin!(left_send, right_send);
+        // Observe actual writer backpressure before releasing either reader;
+        // full inbound counters alone do not prove the writers ever suspended.
+        poll_fn(|cx| {
+            assert!(left_send.as_mut().poll(cx).is_pending());
+            assert!(right_send.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        let receive_both = async {
+            let mut from_left = Vec::new();
+            let mut from_right = Vec::new();
+            let (a, b) = tokio::join!(
+                left_read.read_to_end(&mut from_right),
+                right_read.read_to_end(&mut from_left)
+            );
+            a.unwrap();
+            b.unwrap();
+            assert_eq!(from_left, payload_left);
+            assert_eq!(from_right, payload_right);
+        };
+        tokio::join!(left_send, right_send, receive_both);
+    }
     drop((left_read, left_write, right_read, right_write));
     workers.completed().await;
     assert_eq!(OWNERS.load(Ordering::Acquire), 0);
