@@ -276,7 +276,10 @@ fn finish_cluster(
         } else {
             &summary["product_mainline_overlay"]["native_seal"]
         };
-        assert_eq!(seal["prepared"], expect_prepared);
+        assert_eq!(
+            seal["prepared"], expect_prepared,
+            "node {index}: {error}\n{text}"
+        );
         assert_eq!(seal["decision_v3_enabled"], decision_v3);
         assert_eq!(seal["decision_confirmed"], decision_v3 && expect_prepared);
         assert_eq!(seal["halted"], false);
@@ -772,13 +775,18 @@ fn run_real_aoem_main_nodes_scenario(
             &root,
         );
     }
-    run_cluster(
+    // Quorum readiness cannot be expressed as 32 local polls. Use the existing
+    // bounded durable-finality/kill path; the restart below still checks clean exit.
+    run_cluster_at_height(
         &nodes,
         &active,
         "three-of-four",
-        if fresh { 32 } else { 100 },
+        if fresh { 0 } else { 100 },
         true,
         decision_v3,
+        fresh,
+        1,
+        None,
         fresh,
     );
     let mut previous_qcs = Vec::new();

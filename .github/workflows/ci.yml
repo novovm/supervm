@@ -610,6 +610,9 @@ jobs:
           # Preserve this step's startup/recovery logs on failure, without keys,
           # node configuration or databases. The earlier upload predates this run.
           path: |
+            artifacts/audit/candidate-node-processes/**/*.process.json
+            artifacts/audit/candidate-node-processes/**/*.stdout.log
+            artifacts/audit/candidate-node-processes/**/*.stderr.log
             artifacts/audit/candidate-node-processes/**/mixed-*.json
             artifacts/audit/candidate-node-processes/**/continuous-mixed-*.stdout.log
             artifacts/audit/candidate-node-processes/**/continuous-mixed-*.stderr.log
