@@ -442,6 +442,7 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
     // either peer already retains an overflow chunk, its owner pauses polling,
     // so flooding the entire payload can stop the other direction below full.
     let capacity = RELAY_BYTE_STREAM_QUEUE_BYTES_V1;
+    let pressure_deadline = Instant::now() + Duration::from_secs(5);
     let (a, b) = tokio::join!(
         left_write.write_all(&payload_left[..capacity]),
         right_write.write_all(&payload_right[..capacity])
@@ -449,7 +450,6 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
     a.unwrap();
     b.unwrap();
     {
-        let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let full_left = left_state.state().inbound_bytes == RELAY_BYTE_STREAM_QUEUE_BYTES_V1;
             let full_right = right_state.state().inbound_bytes == RELAY_BYTE_STREAM_QUEUE_BYTES_V1;
@@ -457,7 +457,7 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
                 break;
             }
             assert!(
-                Instant::now() < deadline,
+                Instant::now() < pressure_deadline,
                 "bidirectional queues never reached controlled backpressure; \
                  (inbound, outbound, written, confirmed): left={:?}, right={:?}",
                 {
@@ -482,10 +482,17 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
             tokio::time::sleep(POLL_INTERVAL).await;
         }
     }
+    tokio::try_join!(left_write.flush(), right_write.flush()).unwrap();
+    let overflow_end = capacity + RELAY_BYTE_STREAM_CHUNK_BYTES_V1;
+    left_write
+        .write_all(&payload_left[capacity..overflow_end])
+        .await
+        .unwrap();
+    wait_receive_backpressure(&right_state, pressure_deadline).await;
     {
         let left_send = async {
             left_write
-                .write_all(&payload_left[capacity..])
+                .write_all(&payload_left[overflow_end..])
                 .await
                 .unwrap();
             left_write.shutdown().await.unwrap();
@@ -498,16 +505,24 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
             right_write.shutdown().await.unwrap();
         };
         tokio::pin!(left_send, right_send);
-        // Observe actual writer backpressure before releasing either reader;
-        // full inbound counters alone do not prove the writers ever suspended.
+        // The right owner really holds an overflow chunk, so it cannot poll
+        // Forward ACKs and refill write credit while its reader is held.
         poll_fn(|cx| {
-            assert!(left_send.as_mut().poll(cx).is_pending());
             assert!(right_send.as_mut().poll(cx).is_pending());
             Poll::Ready(())
         })
         .await;
+        // Release one real chunk, not both readers: right can now transmit the
+        // bytes admitted above and force the opposite owner into backpressure.
+        let mut from_left = vec![0; RELAY_BYTE_STREAM_CHUNK_BYTES_V1];
+        right_read.read_exact(&mut from_left).await.unwrap();
+        wait_receive_backpressure(&left_state, pressure_deadline).await;
+        poll_fn(|cx| {
+            assert!(left_send.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
         let receive_both = async {
-            let mut from_left = Vec::new();
             let mut from_right = Vec::new();
             let (a, b) = tokio::join!(
                 left_read.read_to_end(&mut from_right),
@@ -523,6 +538,23 @@ async fn real_duplex_large_bidirectional_backpressure_recovers_without_byte_loss
     drop((left_read, left_write, right_read, right_write));
     workers.completed().await;
     assert_eq!(OWNERS.load(Ordering::Acquire), 0);
+}
+
+async fn wait_receive_backpressure(shared: &Shared, deadline: Instant) {
+    loop {
+        {
+            let state = shared.state();
+            assert!(state.failure.is_none(), "worker failed before saturation");
+            if state.receive_backpressured {
+                return;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "owner did not retain an overflow chunk"
+        );
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 # 原双向背压CI失败：复现、最小修正与候选门禁
 
 2026-11-04，A从main b4658189继续。四机六配对与原密文反例封存，不要求C/D重跑，
-不动B服务、不启链。代码变更仅在原byte_stream/tests.rs；原生产owner、协议、密码、
+不动B服务、不启链。代码变更为原测试及byte_stream.rs内仅cfg(test)存在的观测位；原生产owner、协议、密码、
 队列容量、发送策略、有效期与超时均未修改。
 
 ## 失败证据不是“重跑绿了”
@@ -29,17 +29,29 @@ right (inbound, outbound, written, confirmed) = (65536, 65536, 98304, 32768)
 
 1. 沿原真实连接，各发送恰好65536字节。此时没有超出容量的额外接收块抢先暂停owner。
 2. 保留原5秒等待上限和**双端接收队列都等于65536**的断言。
-3. 发送原载荷剩余部分，直接poll两个实际write_all future，新增断言：两者都返回Pending。
-4. 才释放两端reader，与原发送future一起推进；核对完整原载荷逐字节相等。
+3. 清完前缀Forward ACK后，左额外发一块；原queue_received真实放不下时设置测试观测位，
+   确认右owner已持有溢出块，再poll右侧剩余write_all，断言Pending。
+4. 仅从右reader预读并保留16KiB，使右owner恢复并送出已入队数据；确认左owner真实
+   持有溢出块，再poll左侧剩余write_all，断言Pending。最后释放两端reader，完成原发送，
+   将预读字节计入完整载荷逐字节核对。
 5. 保留原半关闭、worker真实退出及OWNERS归零检查。
 
 总载荷不减：左右分别为3×65536+127、3×65536+319。原15秒流生命周期、5秒造压
 等待、3秒join等待不变，没有sleep延长、删除用例、跳过测试或修改生产背压策略。
-新的Pending断言还补上了旧测试未直接检查的“writer实际被背压”事实。
+两个造压阶段共用原5秒deadline，不要求两个owner同时进入不可达的溢出等待。
+新的Pending断言补上了旧测试未直接检查的“两个writer分别实际受压”事实。
 测试继续使用原真实TLS/Relay/AEAD实现及原组件签名夹具；不是AOEM ML-DSA实际制品
 资格或外网WSS验收，不把它扩称另一次密码/四机认证测试。
 
-## 本地验证
+## 初版与复核记录
+
+facd175b初版通过下列本地验证并投递原完整CI41757929427。只读复核随后发现：
+满队列不自动意味着owner已停止Forward ACK消费；若生产者被抢占，初版首次poll仍
+可能提前完成。也不能直接要求双owner同时溢出，因为一方先暂停可阻止对方提交溢出块。
+因此本提交采用上面的单pair顺序造压：观测真实pending、只释放一块、再验证相反方向。
+不加生产调度hook或barrier。初版CI保留，不取消，也不能为本次不同源码背书。
+
+以下是初版记录；最终版本重新执行的证据见下一节。
 
 | 范围 | 结果 |
 | --- | --- |
@@ -57,6 +69,19 @@ right (inbound, outbound, written, confirmed) = (65536, 65536, 98304, 32768)
 [旧失败及新验证原日志ZIP](original-and-fixed-test-logs.zip)，SHA256：
 `f35d2dbb36d92a0239a35299c11b98d3a2a678028e5e7b71f288070c6d57fa21`。
 ZIP保留原字节，包括CI原失败、旧两核第4轮失败、各短测与回归/Clippy日志。
+
+## 当前顺序造压版本验证
+
+- Windows短测12/12；Linux相同两核条件24/24。
+- 原duplex回归：Windows217通过/10原忽略，Linux216通过/10原忽略。
+- Windows/Linux网络lib/tests严格Clippy、格式及diff检查通过。
+- 两次Pending都在对应owner实际保留溢出块后观察；右侧预读16KiB进入最终from_left
+  核对，没有丢弃、重复或减少总载荷。
+- State观测位、queue_received更新和fail清零均有cfg(test)；非测试构建没有该字段或
+  新逻辑。失败先于观测被检查，不把终止状态当作饱和。
+
+[最终版本40份原验证日志ZIP](sequential-final-test-logs.zip)，SHA256：
+`a0eca2c7c6d82f4c4d7a821bbf16afc92abab9f983d51c253d844f393b8794a3`。
 
 ## 完整CI是剩余门禁
 

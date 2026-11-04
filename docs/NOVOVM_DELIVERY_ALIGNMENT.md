@@ -3,7 +3,7 @@
 ## 2026-11-04：背压失败已在Linux两核复现，修正原测试造压时序
 
 A保留旧双向背压失败，得到实际接收状态49152/65536，而非无证据反复重跑。
-仅修正原真实测试：先填满两端接收队列，再验证双writer Pending，随后恢复读取、
+仅修正原真实测试及cfg(test)观测：先填满两端接收队列，再顺序验证双writer真实Pending，随后恢复读取、
 逐字节核对并等待owner退出；双满断言、载荷、原期限与生产代码均保留。
 本地Windows/Linux短测、原duplex回归及严格Clippy通过；完整CI仍以冻结提交结果为准。
 详见[背压CI记录](../artifacts/audit/native-duplex-backpressure-ci-20261104/README.md)。

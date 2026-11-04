@@ -143,6 +143,8 @@ struct State {
     confirmed: u64,
     inbound: VecDeque<Vec<u8>>,
     inbound_bytes: usize,
+    #[cfg(test)]
+    receive_backpressured: bool,
     head_offset: usize,
     shutdown_requested: bool,
     shutdown_confirmed: bool,
@@ -197,6 +199,10 @@ impl Shared {
             state.outbound_bytes = 0;
             state.inbound.clear();
             state.inbound_bytes = 0;
+            #[cfg(test)]
+            {
+                state.receive_backpressured = false;
+            }
         }
         self.wake();
     }
@@ -909,9 +915,17 @@ fn queue_received(
             ));
         }
         if state.inbound_bytes + bytes.len() > RELAY_BYTE_STREAM_QUEUE_BYTES_V1 {
+            #[cfg(test)]
+            {
+                state.receive_backpressured = true;
+            }
             *pending = Some(bytes);
             false
         } else {
+            #[cfg(test)]
+            {
+                state.receive_backpressured = false;
+            }
             state.inbound_bytes += bytes.len();
             state.inbound.push_back(bytes);
             true
