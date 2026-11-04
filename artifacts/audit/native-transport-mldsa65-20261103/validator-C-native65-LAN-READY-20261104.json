@@ -1,0 +1,223 @@
+{
+  "node": "validator-C",
+  "status": "READY_LAN_C",
+  "prepared_local": "2026-11-04T08:03:13.815360+08:00",
+  "read_main_commit": "7698612991c78319e704134f987947874245c723",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "bundle": {
+    "source": "E:\\区块链四机通讯\\native65-LAN-20261104.zip",
+    "bytes": 38602,
+    "sha256": "c023f140411469abee01bdd67978b6e36c4ca67a90c7e5dde7360701cc5fd889",
+    "independent_new_directory": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104",
+    "existing_reports_overwritten": false,
+    "checksum_file_sha256": "6cbb41f51b099c198a1454b59e63039fad5448dd444a11658d8727f18c29e8a6",
+    "checksums": [
+      {
+        "path": "README-LAN.md",
+        "sha256": "5a4c33d16e76459807f3c96d55c0d53452c8fcc7179513d4c9a7696042a04d21",
+        "verified": true
+      },
+      {
+        "path": "A/observer-A-for-C.json",
+        "sha256": "0418ac7f3d50fb3ac1c647a8e2cd97735ed28d5648d59665c12b01871c7cdfd0",
+        "verified": true
+      },
+      {
+        "path": "A/observer-A-for-D.json",
+        "sha256": "8cb88a563073a8bd33623f6c830a1ab0375e9fbdfccacc6d2de727d92300644c",
+        "verified": true
+      },
+      {
+        "path": "C/probe-C-A-first.json",
+        "sha256": "032d4c923bc874678bb406b236d387d18d676e1f79d4d0b89fe3f2138d51fcf4",
+        "verified": true
+      },
+      {
+        "path": "C/probe-C-A-second.json",
+        "sha256": "05fb2c8ec5f280c9a64824d19cfdecc97bfbdfe47b0cde5eeb5dd5b294b3153e",
+        "verified": true
+      },
+      {
+        "path": "C/probe-C-D-first.json",
+        "sha256": "f03952f9837da90c899c698d886c86ec5321675f9728ab6c9bc39ee91cb53c65",
+        "verified": true
+      },
+      {
+        "path": "C/probe-C-D-second.json",
+        "sha256": "e2d5271a6faf4afe917affb365246f61d264318ded92030aa4794f754c76b1db",
+        "verified": true
+      },
+      {
+        "path": "D/observer-D-for-C.json",
+        "sha256": "b577bf53d6b8f10ca32238991bc407b435f21a34e42b39775e5e18b30530e761",
+        "verified": true
+      },
+      {
+        "path": "D/probe-D-A-first.json",
+        "sha256": "1818d596e8c1692d9c38ee260a4d367a0a2c8380d4710c01b9fd7048e2293fdd",
+        "verified": true
+      },
+      {
+        "path": "D/probe-D-A-second.json",
+        "sha256": "87dac92eb2311d3bd3411de93f94af09fa92fe7e8234f7cf02132a9cf15cdfd6",
+        "verified": true
+      }
+    ],
+    "same_public_zip_available_on_Git": "artifacts/audit/native-four-host-auth-closeout-20261104/native65-LAN-20261104.zip"
+  },
+  "network_address_and_route_checks": {
+    "node": "validator-C",
+    "measured_local": "2026-11-04T08:01:48.0191545+08:00",
+    "local_ipv4": [
+      {
+        "IPAddress": "192.168.71.125",
+        "PrefixLength": 24,
+        "InterfaceIndex": 24,
+        "InterfaceAlias": "以太网"
+      }
+    ],
+    "routes": [
+      {
+        "command": "Find-NetRoute -RemoteIPAddress 192.168.71.74",
+        "destination": "192.168.71.74",
+        "query_succeeded": true,
+        "source_ipv4": "192.168.71.125",
+        "source_interface_index": 24,
+        "source_interface_alias": "以太网",
+        "route_interface_index": 24,
+        "route_interface_alias": "以太网",
+        "destination_prefix": "192.168.71.0/24",
+        "next_hop": "0.0.0.0",
+        "route_metric": 256,
+        "route_protocol": "Local",
+        "is_route_lookup_only": true
+      },
+      {
+        "command": "Find-NetRoute -RemoteIPAddress 192.168.71.59",
+        "destination": "192.168.71.59",
+        "query_succeeded": true,
+        "source_ipv4": "192.168.71.125",
+        "source_interface_index": 24,
+        "source_interface_alias": "以太网",
+        "route_interface_index": 24,
+        "route_interface_alias": "以太网",
+        "destination_prefix": "192.168.71.0/24",
+        "next_hop": "0.0.0.0",
+        "route_metric": 256,
+        "route_protocol": "Local",
+        "is_route_lookup_only": true
+      }
+    ],
+    "original_identity_exists": true,
+    "running_as_original_identity_owner": true,
+    "probe_or_observer_started": false,
+    "D_port_41050_checked_from_C": false
+  },
+  "existing_candidate_files_reverified": [
+    {
+      "path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovm-product-nat.exe",
+      "sha256": "970e89225b5daa6a1563e0d5313db3cf25ad3ba2a90a0cc2188c8bf5a58dec73"
+    },
+    {
+      "path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\bin\\novovmctl.exe",
+      "sha256": "58db89fe535c2111197b8d8da174e8a264efb255a06c1fe54d695ed811738903"
+    },
+    {
+      "path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\candidates\\native65-d7ef793b-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+      "sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50"
+    }
+  ],
+  "C_configuration_checks": [
+    {
+      "file": "C/probe-C-A-first.json",
+      "sha256": "032d4c923bc874678bb406b236d387d18d676e1f79d4d0b89fe3f2138d51fcf4",
+      "mode": "observed_endpoint_probe",
+      "version": 2,
+      "bind_addr": "0.0.0.0:0",
+      "chain_id": 167999907280566,
+      "peer_addr": "192.168.71.74:41050",
+      "peer_public_key_bytes": 1952,
+      "peer_public_key_sha256": "0656e6de01e498b50d7b67b10ff58f4c600cdf61663066b03f358a7901839eae",
+      "expected_peer_id_specified": false,
+      "original_identity_path_matches": true,
+      "original_library_path_matches": true,
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "timeout_ms": 10000,
+      "run_for_ms": 10000,
+      "future_report_path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\C\\reports\\probe-C-A-first.json",
+      "future_report_exists": false
+    },
+    {
+      "file": "C/probe-C-A-second.json",
+      "sha256": "05fb2c8ec5f280c9a64824d19cfdecc97bfbdfe47b0cde5eeb5dd5b294b3153e",
+      "mode": "observed_endpoint_probe",
+      "version": 2,
+      "bind_addr": "0.0.0.0:0",
+      "chain_id": 167999907280566,
+      "peer_addr": "192.168.71.74:41050",
+      "peer_public_key_bytes": 1952,
+      "peer_public_key_sha256": "0656e6de01e498b50d7b67b10ff58f4c600cdf61663066b03f358a7901839eae",
+      "expected_peer_id_specified": false,
+      "original_identity_path_matches": true,
+      "original_library_path_matches": true,
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "timeout_ms": 10000,
+      "run_for_ms": 10000,
+      "future_report_path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\C\\reports\\probe-C-A-second.json",
+      "future_report_exists": false
+    },
+    {
+      "file": "C/probe-C-D-first.json",
+      "sha256": "f03952f9837da90c899c698d886c86ec5321675f9728ab6c9bc39ee91cb53c65",
+      "mode": "observed_endpoint_probe",
+      "version": 2,
+      "bind_addr": "0.0.0.0:0",
+      "chain_id": 167999907280566,
+      "peer_addr": "192.168.71.59:41050",
+      "peer_public_key_bytes": 1952,
+      "peer_public_key_sha256": "30019ff63f5f8c1f77029990aaf2657c3bb6dad562d957d78f0b60d8d349c934",
+      "expected_peer_id_specified": false,
+      "original_identity_path_matches": true,
+      "original_library_path_matches": true,
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "timeout_ms": 10000,
+      "run_for_ms": 10000,
+      "future_report_path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\C\\reports\\probe-C-D-first.json",
+      "future_report_exists": false
+    },
+    {
+      "file": "C/probe-C-D-second.json",
+      "sha256": "e2d5271a6faf4afe917affb365246f61d264318ded92030aa4794f754c76b1db",
+      "mode": "observed_endpoint_probe",
+      "version": 2,
+      "bind_addr": "0.0.0.0:0",
+      "chain_id": 167999907280566,
+      "peer_addr": "192.168.71.59:41050",
+      "peer_public_key_bytes": 1952,
+      "peer_public_key_sha256": "30019ff63f5f8c1f77029990aaf2657c3bb6dad562d957d78f0b60d8d349c934",
+      "expected_peer_id_specified": false,
+      "original_identity_path_matches": true,
+      "original_library_path_matches": true,
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "timeout_ms": 10000,
+      "run_for_ms": 10000,
+      "future_report_path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-20261104\\C\\reports\\probe-C-D-second.json",
+      "future_report_exists": false
+    }
+  ],
+  "D_port_41050_status": "NOT_CHECKED_BY_C; D must independently verify its observer port is free",
+  "identity_check_scope": "Existing expected path and current running file owner checked. No key creation or fresh unwrap/inspect was performed in this readiness-only step; prior successful inspections and C/B authenticated exchange remain their own evidence.",
+  "wait_condition": "No LAN start time is currently active. Wait for A to publish new coordinated LAN pair slots; never reuse expired 07:06/07:09 B windows.",
+  "bounds": {
+    "probe_or_observer_started": false,
+    "active_peer_network_probe_performed": false,
+    "LAN_authentication_accepted": false,
+    "D_READY_signed_by_C": false,
+    "full_hardware_inventory_or_clock_sync_repeated": false,
+    "VPN_routes_or_firewall_changed": false,
+    "program_reinstalled_or_recompiled": false,
+    "identity_generated_or_replaced": false,
+    "chain_started": false,
+    "private_material_uploaded": false
+  }
+}
