@@ -1,0 +1,179 @@
+{
+  "node": "validator-C",
+  "result": "C_A_RECHECK_TWO_CLIENT_AUTHENTICATED_ROUND_TRIPS_CONFIRMED_PENDING_A_OBSERVER_RECONCILIATION",
+  "checked_local": "2026-11-04T09:33:12.216407+08:00",
+  "read_main_commit": "c5d60105d6c319f3991a5fe1c0335fd4640b8f7e",
+  "schedule_commit": "7dfdc8e703a1ce57788295295f6de32b6a6f1baa",
+  "candidate_program_commit": "d7ef793b819c8670e472d217daae9db5f074aea8",
+  "retained_exec_session_exit_code": 0,
+  "scheduled_start": "2026-11-04T09:30:00+08:00",
+  "results": [
+    {
+      "started_utc": "2026-11-04T01:30:00.5220869+00:00",
+      "ended_utc": "2026-11-04T01:30:00.8989040+00:00",
+      "exit_code": 0,
+      "case": "first",
+      "started_local": "2026-11-04T09:30:00.522086+08:00",
+      "ended_local": "2026-11-04T09:30:00.898904+08:00",
+      "accepted": true,
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "local_peer_id": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "peer_id": "novovm-mldsa65:859f2be748346b2378334d6e5873a9d71d02c9d6584b52cf9297fcb36285ec40",
+      "local_bind_addr": "0.0.0.0:52748",
+      "observed_endpoint": "192.168.71.125:52748",
+      "session_id_hex": "cb91145344f0b50838e916d9b5841c4c",
+      "session_id_bytes": [
+        203,
+        145,
+        20,
+        83,
+        68,
+        240,
+        181,
+        8,
+        56,
+        233,
+        22,
+        217,
+        181,
+        132,
+        28,
+        76
+      ],
+      "stdout_json_matches_native_report": true,
+      "stderr_bytes": 0,
+      "config_sha256": "0b8976cd52e70901953d91d3e08dad7dc9614173fb5e3a5a2c9976a07daf42da"
+    },
+    {
+      "started_utc": "2026-11-04T01:30:00.9025862+00:00",
+      "ended_utc": "2026-11-04T01:30:01.1533639+00:00",
+      "exit_code": 0,
+      "case": "second",
+      "started_local": "2026-11-04T09:30:00.902586+08:00",
+      "ended_local": "2026-11-04T09:30:01.153363+08:00",
+      "accepted": true,
+      "round_trip_confirmed": true,
+      "authenticated_exchanges": 1,
+      "local_peer_id": "novovm-mldsa65:f0f7edca9d8c05bda48841860887e5cf2b2a6d8096dc00f18d9af36a0add354f",
+      "peer_id": "novovm-mldsa65:859f2be748346b2378334d6e5873a9d71d02c9d6584b52cf9297fcb36285ec40",
+      "local_bind_addr": "0.0.0.0:58936",
+      "observed_endpoint": "192.168.71.125:58936",
+      "session_id_hex": "926ca66c7e1c31f248a3fb7340c0e4e5",
+      "session_id_bytes": [
+        146,
+        108,
+        166,
+        108,
+        126,
+        28,
+        49,
+        242,
+        72,
+        163,
+        251,
+        115,
+        64,
+        192,
+        228,
+        229
+      ],
+      "stdout_json_matches_native_report": true,
+      "stderr_bytes": 0,
+      "config_sha256": "edde0a500fe20942990ebd9b39f9aeb74f8c6f44804c0ccd033bdf2499c788c9"
+    }
+  ],
+  "session_ids_different": true,
+  "C_public_key_sha256": "a3760975c77a717ad64e9d18c95f1f6b4d043298b9f359aeaf9fe61687355b2f",
+  "A_public_key_sha256": "0656e6de01e498b50d7b67b10ff58f4c600cdf61663066b03f358a7901839eae",
+  "LAN_route_evidence": [
+    {
+      "IPAddress": "192.168.71.125",
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "DestinationPrefix": null,
+      "NextHop": null
+    },
+    {
+      "IPAddress": null,
+      "InterfaceAlias": "以太网",
+      "InterfaceIndex": 24,
+      "DestinationPrefix": "192.168.71.0/24",
+      "NextHop": "0.0.0.0"
+    }
+  ],
+  "raw_files": [
+    {
+      "file": "raw/execution.json",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C\\execution.json",
+      "bytes": 336,
+      "sha256": "4bdaa4b768ef561c0f20aeeeecdd0ba97503772bd60a7db0ad6f209c01fc606a",
+      "copied_verbatim": true
+    },
+    {
+      "file": "raw/routes-before.json",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C\\routes-before.json",
+      "bytes": 337,
+      "sha256": "136b60d8c69e195ab21f1d932f34e3b001946de6b995517744e7ca984b3d9f2e",
+      "copied_verbatim": true
+    },
+    {
+      "file": "raw/first.report.json",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-recheck-20261104-093000\\C\\reports\\probe-C-A-first-recheck-093000.json",
+      "bytes": 922,
+      "sha256": "03d904e7df6c50ae504cbf3372c216672710119a7c96913de8b199e1671f75e7",
+      "copied_verbatim": true
+    },
+    {
+      "file": "raw/first.stdout.txt",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C\\first.stdout.txt",
+      "bytes": 923,
+      "sha256": "cb5c9a174f613e7ed8788b7b6c014f747422bb10edb36eac28b68f2bdef2d1a2",
+      "copied_verbatim": true
+    },
+    {
+      "file": "raw/first.stderr.txt",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C\\first.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "copied_verbatim": true
+    },
+    {
+      "file": "raw/second.report.json",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-recheck-20261104-093000\\C\\reports\\probe-C-A-second-recheck-093000.json",
+      "bytes": 927,
+      "sha256": "de1cb751a2662e40d34bb8d4404cb22450195c7369efe528c6e21dc982bfdff0",
+      "copied_verbatim": true
+    },
+    {
+      "file": "raw/second.stdout.txt",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C\\second.stdout.txt",
+      "bytes": 928,
+      "sha256": "acb495c87c15bcf34e67c11e268496cb9f6d69411f78c12369d69d0848b2d068",
+      "copied_verbatim": true
+    },
+    {
+      "file": "raw/second.stderr.txt",
+      "source": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\four-host-167999907280566\\lan-evidence-20261104-093000-C\\second.stderr.txt",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "copied_verbatim": true
+    }
+  ],
+  "old_0835_failed_attempt_and_other_outputs": {
+    "all_11_original_source_hashes_unchanged": true,
+    "first_CA_exit_code_remains": 1,
+    "second_CA_remains_not_executed": true,
+    "superseded_as_failure_history": false
+  },
+  "bounds": {
+    "review_time_probe_rerun": false,
+    "configuration_or_timeout_or_program_or_identity_changed": false,
+    "old_failure_overwritten_or_reclassified_as_not_executed": false,
+    "successful_other_pairs_rerun": false,
+    "A_observer_reports_locally_reviewed": false,
+    "whole_four_host_acceptance_signed_by_C": false,
+    "chain_started": false,
+    "private_material_uploaded": false
+  }
+}

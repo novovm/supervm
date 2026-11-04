@@ -1,0 +1,16 @@
+[
+  {
+    "IPAddress": "192.168.71.125",
+    "InterfaceAlias": "以太网",
+    "InterfaceIndex": 24,
+    "DestinationPrefix": null,
+    "NextHop": null
+  },
+  {
+    "IPAddress": null,
+    "InterfaceAlias": "以太网",
+    "InterfaceIndex": 24,
+    "DestinationPrefix": "192.168.71.0/24",
+    "NextHop": "0.0.0.0"
+  }
+]
