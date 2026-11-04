@@ -2,6 +2,8 @@
 
 ## 2026-11-04 C LFS download audit: A owns CI changes
 
+**A receipt, 2026-11-04:** received_commit `bb98a1d7236f2938547d1e2be94c0adda523bd98`; workflow_owner A. The handoff is read and merged without discarding concurrent main work. The Linux formal/candidate/plugin and Windows formal/candidate path sets remain proposals pending A's dependency validation. The proposed cache key binds platform and the required OID/size set, with verified early save; neither this cache nor cold/warm evidence has been implemented or measured. First finish the already-running backpressure/mirror full-CI closure. No workflow, trigger, test command, LFS download or billing change is made by this receipt.
+
 The user explicitly selected **validator-A to implement shared CI LFS download/cache optimization; C only returns the verified plan**. Audit source is main `f5a866d825b7180fe3be7acc9340188d5a0dc05a`. Current44 LFS paths are14 distinct objects /689.260 MiB; the five existing cold jobs request approximately1.2363 GiB in total, not observed billed usage. Rust and self-hosted nightly both use full LFS checkout. Native matrices separately fetch their formal/candidate cores, and release matrices fetch cores again.
 
 Full dependency caveats, object pins, cost calculations, early save after validated fetch, parallel cold-cache race handling, nightly inclusion, unchanged test gates and acceptance requirements are in [the current CI audit/plan](NOVOVM_CI_CHECK_TIERS.md#2026-11-04-c-lfs-audit-and-handoff-a-implements-c-does-not-edit-ci). Candidate and formal counterexample libraries remain separate. Runtime cache-hit is not SHA/capability/authority qualification. No change to tests, triggers, runtime or economic rules is made by this handoff.
