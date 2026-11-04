@@ -1,5 +1,36 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-11-04：原完整CI收口，获验源码85e96e35
+
+本节更新下方各检查点的待验收状态，不覆盖旧失败证据。
+固定获验源码为`85e96e3516df72479a3578a30c10f6efcfab9dbe`；
+[原完整CI41786775454](https://github.com/novovm/supervm/actions/runs/41786775454)
+已完成且结论success。所有选中门禁成功；PR专用观测及未选择的Node任务按原规则
+跳过，不计为已运行通过。没有取消运行、改选择规则、放宽生产超时或跳过失败用例。
+
+- 原Rust日志实际包含双向背压、连续三高度恢复、混合转账最终性/钱包恢复三项ok，
+  以及Mainline Gate Runner、原生双节点生命周期门禁成功，不是零匹配或仅构建。
+- Windows/Linux实际ML-DSA运行库及原owner任务成功；Windows mirror6项包含原
+  110/220秒寿命与真实在途撤销取消反例。Linux按其原平台重启范围验收，不冒算镜像6项。
+- 本地双平台CLI各16通过/16原忽略，严格Clippy及19项CI路由测试通过。
+
+本轮修正原背压造压时序、镜像寿命测试与换代取消窗口混杂，以及初始fresh夹具
+用32poll冒充法定确认就绪。复用原有界owner/180秒全员最终发布后强杀和原正常重启
+核对；生产网络、协议、密码、权限、经济及共识规则未改。原反例和日志分别见
+[背压](../artifacts/audit/native-duplex-backpressure-ci-20261104/README.md)、
+[镜像](../artifacts/audit/native-duplex-backpressure-ci-20261104/MIRROR-CI.md)、
+[前置确认](../artifacts/audit/native-duplex-backpressure-ci-20261104/PREPARATION-CI.md)。
+
+旧facd175b的高度4间歇超时仍未确定根因；限定本地复现及新CI通过不把它改记为已修。
+其失败诊断继续由原公开RPC观测保留，详见
+[连续恢复记录](../artifacts/audit/native-duplex-backpressure-ci-20261104/CONTINUOUS-RECOVERY-CI.md)。
+这项完整CI成功不等于全部历史偶发问题、整链性能或主网发布签收。
+
+本次后续提交只记录验收结果，不是另一个获验程序版本。四机真实认证仍对应
+`d7ef793b`固定实机制品；六配对与已列重放证据封存，C/D无需重复操作，B既有服务
+和正式随包库未改。没有新安装、启链、创世、NOV分配、ZK闭环或TPS结论。
+C的LFS/缓存交接已接收，但本轮未实施该独立优化，不将配置估算记作实际省流量。
+
 ## 2026-11-04：完整CI前置准备夹具的固定poll窗口
 
 6e3b32df完整CI失败于混合转账前置prepared断言；双平台实际运行库、Windows镜像
