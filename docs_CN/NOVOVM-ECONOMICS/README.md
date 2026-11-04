@@ -1,9 +1,15 @@
 # NOVOVM Economics
 
+## 2026-11-05 对外经济、公式及开发的阅读入口
+
+- [经济设计与公式参考](../../docs/NOVOVM-ECONOMICS/NOV-ECONOMICS-DESIGN-AND-FORMULA-REFERENCE-2026-11-05.md)：三份用户附件全文、候选分配/释放/治理、五类业务成本、公式前提和量纲、算术核对、实际源码接线；不把参考保存当参数批准。
+- 先读[首发经济契约](../../docs/NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)、[统一基线第13节](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md#13-2026-11-05-全业务成本报价和分配的统一阅读基准)和[订阅日结契约](../../docs/NOVOVM-ECONOMICS/NOV-COMMUNICATION-SUBSCRIPTION-DAILY-SETTLEMENT-2026-11-02.md)。成本、售价、分配分别表述；已定规则不重问，新费率/比例仍待决定。
+- 演练仍称NOV，不另造测试币。本文档更新不启用收费/创世/部署，不承诺节点利润或固定法币收入。
+
 ## 2026-10-24 当前服务经济入口
 
 - [首发经济契约](../../docs/NOVOVM-ECONOMICS/NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md)：定向引入远端同名文档并修正旧最低 5 USD 分账，不合并其他代码；1 亿总量、9 位精度为设计规则，执行未交付。
-- 统一基线第 11–12 节已记录职业经营、多设备、自费测试与公共补助边界：补助购买可验证容量/事先发布任务，自造订单不自动获补助。3,500 万、80/10/10、体验预算仍为候选；首笔测试 NOV 具体到账验收仅为后续开发规格。
+- 统一基线第11–13节记录职业经营、多设备、自费测试及公共补助边界：补助购买可验证容量/事先发布任务，自造订单不自动获补助。分配/释放、20%内部10/10及体验预算仍为候选；整体订阅80/20/0已确认。首笔NOV实际账户到账仍须原产品闭环验收。
 
 - [统一经济基线](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)：已确认、建议、待定和实现缺口分开；覆盖旧最低 5 USD 分账及原生 NOV 增发/销毁口径。
 - [English synchronization](../../docs/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md)。

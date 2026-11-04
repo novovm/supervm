@@ -1,12 +1,18 @@
 # NOVOVM Economics
 
+## Reading entry for external economics, formulas and development — 2026-11-05
+
+- Read the [current design/formula reference](NOV-ECONOMICS-DESIGN-AND-FORMULA-REFERENCE-2026-11-05.md) alongside the first-release contract and authoritative Chinese baseline. Three user-supplied ChatGPT attachments are preserved in full, with later corrections, candidate status, unit/arithmetic checks and actual source mappings. Saving them does not approve allocations, vesting, governance thresholds or fees.
+- Confirmed: 100m NOV, nine decimals, no later native mint/burn; monthly subscription paid once, daily verified provider settlement, overall 80/20/0. Internal 10/10, 0.00001 NOV, 90/10, mandatory 1% and new genesis allocations are not frozen parameters.
+- No new token, billing activation, chain launch, deployment or profit guarantee. Cost accounting, pricing and distribution remain different layers.
+
 ## Current service economics, 2026-10-24
 
 - [Synchronized baseline](NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md) and [authoritative Chinese baseline](../../docs_CN/NOVOVM-ECONOMICS/NOVONET-SERVICE-ECONOMICS-BASELINE-2026-10-24.md).
-- Supersedes the minimum USD 5 founder share and conflicting native NOV emission/burn rules. Default pay-as-you-go, persistent balances, fixed supply, funded obligations.
+- Supersedes the minimum USD 5 founder share and conflicting native NOV emission/burn rules. The November 2 subscription/daily-settlement decision supersedes the old pay-as-you-go default; wallet balances persist, supply is fixed, obligations remain funded.
 - **Design updated; implementation not delivered.** No activation of billing, genesis changes or claim of provider payouts.
 - [First-release economic contract](NOVOVM-NOV-FIRST-RELEASE-ECONOMIC-CONTRACT-2026-10-24.md): documented 100m supply and nine decimals; targeted remote-document import with obsolete USD 5 floor corrected, not a code merge.
-- Baseline update: professional/multi-device participation is allowed; construction budgets purchase verifiable capacity or public tasks, not automatic rewards for self-created orders. 35m/80-10-10 and trial budgets remain candidates; first test-NOV concrete-account payment milestone is specified, not implemented.
+- Baseline update: professional/multi-device participation is allowed; construction budgets purchase verifiable capacity or public tasks, not automatic rewards for self-created orders. Allocation/vesting candidates and the internal 10/10/trial budgets remain unapproved; the concrete-account income milestone uses the same NOV implementation in an unreleased rehearsal, not a separate test token.
 
 This directory contains NOVOVM's upper-layer economic boundaries, monetary rules, settlement rules, and asset-lifecycle policy.
 

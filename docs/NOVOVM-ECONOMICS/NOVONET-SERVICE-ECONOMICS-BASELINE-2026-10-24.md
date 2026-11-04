@@ -1,5 +1,27 @@
 # NOVONET service economics: synchronized baseline
 
+## 2026-11-05 design sources and formula reference, not parameter approval
+
+The user requested full reading and durable inclusion of three supplied ChatGPT design attachments.
+The [design/formula reference](NOV-ECONOMICS-DESIGN-AND-FORMULA-REFERENCE-2026-11-05.md)
+preserves their full source text and maps candidate allocations, vesting/governance, five business
+cost models, formula units, checked arithmetic, historical CPU evidence and current source wiring.
+This synchronizes Chinese section 13; it does not activate billing, generate genesis or approve
+new numbers. S1's 15/5/20/30/20/5/5 allocation, 3-of-5 plus founder consent, 24-hour/7-day delays,
+0.00001 NOV fee and 90/10 split remain proposals. S2/S3 explicitly decline to freeze the fee/split;
+S3 corrects S2's absolute rejection of amount-based pricing. Such pricing is technically possible,
+but a mandatory 1% levy, optional value-added services and resource-based Execution Fee are distinct
+policy choices. No new policy is inferred from saving these references.
+
+Keep resource quantity, incremental/full cost, provider target proceeds, customer quote and revenue
+allocation separate. Local identity generation is free/permissionless; shared registration,
+state-service pricing and refundable deposits are unapproved models. Custody deposits are not
+treasury revenue. Web hosting/content distribution and program deployment/invocation do not
+automatically inherit chat's 80/20 split. No per-layer tax or duplicate per-message debit,
+retransmission fee, replica multiplication or full proof charge both per row and per batch.
+Provider income requires real funded qualified work and concrete-account credit, not online/device
+counts. The reference's historical CPU samples are not today's four-host costs or income promises.
+
 ## 2026-11-02 latest decision: monthly subscription, daily provider settlement
 
 The selected NOV quick wallet pays the monthly subscription once. Normally unused monthly entitlements expire without a refund; unspent wallet NOV does not expire. Included usage is not charged to the user's wallet again. The main treasury communication settlement pool records verified service liabilities promptly and settles qualified providers daily. This supersedes default pay-as-you-go and optional-only subscription wording. Existing resource measurement, duplicate-charge prevention and funded obligations remain. Price, resource entitlements, renewal, daily/monthly cutoffs and pool allocation remain pending; billing is not enabled. The [authoritative subscription and daily-settlement contract](NOV-COMMUNICATION-SUBSCRIPTION-DAILY-SETTLEMENT-2026-11-02.md) records the full boundaries.
@@ -34,7 +56,7 @@ These supersede conflicting current requirements in the October 13 contribution 
 - NOV is NOVOCHAT's payment and settlement asset. Resource entitlements are not a transferable second token. General NOVOVM multi-asset clearing does not authorize foreign-asset payment or automatic conversion in the App.
 - Meter effective bytes, byte-seconds and explicitly contracted compute, routing or capacity services. L1/L2 may earn for selected discovery, routing or relay work; traffic need not traverse every layer. No per-layer tax, paid retransmission loops or duplicate cost categories.
 - `GiB = 2^30 bytes`; `GiB-hour = 2^30 * 3600 byte-seconds`. Metering layer, padding, replica/fanout limits and rounding must be specified in the quote. Accumulate micro-usage before atomic-unit settlement; no per-packet upward rounding or per-message chain calls.
-- Topups and settled earnings persist. Pending income is not spendable; reservations cannot be spent again. Income never increases the authorized spending cap or automatically funds another UCA. Budget-cycle renewal does not release existing reservations/debts. Normally unused subscription resources expire without rollover or refund; error remedies and concrete entitlements still require definition.
+- Topups and settled earnings persist. Pending income is not spendable; reservations cannot be spent again. An ordinary account's current controller may spend its available balance without a mandatory grant/top-up. Incoming funds do not expand a voluntarily restricted delegation, automated-payment authority or service budget, and UCA association grants no cross-account authority. Budget-cycle renewal does not release existing reservations/debts. Normally unused subscription resources expire without rollover or refund; error remedies and concrete entitlements still require definition.
 - Chat authority is not asset-spending authority. The asset owner may approve bounded automatic spending by UCA, purpose, amount, duration and service scope. Its concrete interface and hardware-wallet integration remain unimplemented.
 
 ## Service obligations and settlement
@@ -169,4 +191,4 @@ Candidate batches add `100/400/500/1,000`, cumulatively `100/500/1,000/2,000`. D
 4. Spend/transfer that credited balance with proper authority; service keys and incoming earnings cannot expand spending power.
 5. Interrupt/restart around reservation, performance, settlement and refund: preserve legitimate payables, no duplicate payment/refund, and resolve late claims consistently.
 
-Use explicitly labeled test NOV on the same product path first. Formal income awaits first-release identity/signature, approved funding rules, new genesis and production acceptance. Construction grants have a separate gate covering duplicate capacity, false independence via multiple UCAs, unauthorized self-created tasks, related returns, duplicate obligations, exhausted budgets and valid handover after shutdown. Proof protocol, task authority, contract/dispute parameters and activation remain pending; this does not prevent the first funded customer-service test closure.
+Rehearse on the same product path with the asset still named NOV; do not introduce a separate test token or require a test-NOV wallet label. Deployment records identify unreleased/resettable state and do not present rehearsal balances as formal income. Formal income awaits first-release identity/signature, approved funding rules, new genesis and production acceptance. Construction grants have a separate gate covering duplicate capacity, false independence via multiple UCAs, unauthorized self-created tasks, related returns, duplicate obligations, exhausted budgets and valid handover after shutdown. Proof protocol, task authority, contract/dispute parameters and activation remain pending; this does not prevent the first funded customer-service test closure.
