@@ -1,5 +1,80 @@
 # CI scope and candidate validation
 
+## 2026-11-04 C LFS audit and handoff: A implements, C does not edit CI
+
+**User-selected ownership:** validator-A owns implementation of CI LFS download/cache optimization; validator-C only verifies and returns this plan. This decision does not authorize C to edit workflows, a second downloader, AOEM, credentials, billing budgets or test semantics. A continues its integration/test work and can implement the following in the same main owner. No optimization is delivered by this prose update.
+
+Audit baseline: main **`f5a866d825b7180fe3be7acc9340188d5a0dc05a`**. The workflow Git blobs are ci.yml `dcbeddb5a1f38a75ada9c42fa99516fed84e485a` and mainline-nightly-soak.yml `7584e17f493a38d177f213ac0c2ee01c93de4dd8`. C fetched/synchronized with process-scoped `GIT_LFS_SKIP_SMUDGE=1`; metadata inspection used `git lfs ls-files --json` and did not fetch LFS objects or launch builds. The current workflow files are unchanged by this round.
+
+### Recomputed current object and per-job request sizes
+
+Current main lists **44 LFS paths / 14 different SHA256 objects / 722,741,064 bytes = 689.260 MiB**. This is the current revision's distinct-object set, not all historical storage or a bill. Identical OIDs at multiple paths are counted once **inside each job**, but independent cold jobs repeat their requested objects.
+
+| Existing job | Cold requested bytes | MiB |
+| --- | ---: | ---: |
+| Rust checks (current full LFS checkout) | 722,741,064 | 689.260 |
+| Native transport qualification / Linux | 313,628,440 | 299.099 |
+| Native transport qualification / Windows | 93,050,880 | 88.740 |
+| Preserved runtime release / Linux | 153,339,776 | 146.236 |
+| Preserved runtime release / Windows | 44,705,792 | 42.635 |
+| Five-job total | 1,327,465,952 | 1265.970 |
+
+The five-job total is **1.2363 GiB per full cold run**. It assumes empty LFS stores, each selected fetch completes, no cancellation before download, and independent jobs. It excludes nightly, manual/local/fork/archive downloads, historical objects, retries and any cache-product costs. It is not observed billed traffic. The supplied 52-run / 40-checkout / 24-cancelled / 108-fetch log counts were not independently replayed in this audit; retain them as the user's prior historical investigation, not newly measured C results. C has no usage invoice or owner billing breakdown and cannot assign all quota consumption to CI.
+
+Verified source locations at this baseline:
+
+- `.github/workflows/ci.yml:223`: Rust checkout has `lfs: true`; its Cargo cache is not an explicit `.git/lfs/objects` restore/save.
+- `ci.yml:328` uses the formal Linux core for existing resident/private-profile checks; `:339` subsequently pins the isolated Linux candidate. **A Linux-only filter must include the isolated candidate, not just aoem/linux/**.
+- `ci.yml:881` fetches one platform's formal core plus candidate for each native-auth job; the formal core is an intentional negative counterexample and must not be removed or silently replaced by the candidate.
+- `ci.yml:1000` fetches the platform core again for each runtime-release job.
+- `.github/workflows/mainline-nightly-soak.yml:56` also uses `lfs: true`. It is self-hosted: inspect its retained local LFS store before estimating actual repeated downloads; do not assume every nightly is cold.
+- The audited workflow files contain no explicit LFS object cache. Local/runner caches, concurrent requests and cancelled jobs must be observed rather than inferred from a cache step name or final run status.
+
+The four distinct core objects that must remain separate:
+
+| Current path | LFS object SHA256 | Bytes |
+| --- | --- | ---: |
+| `aoem/linux/core/bin/libaoem_ffi.so` | `4d06f36a67f41035661100ac0fd18c67dcae60bf2cdd5df28db33b555c538309` | 153,339,776 |
+| `artifacts/runtime-candidates/native-transport-mldsa65-20261103/linux/libaoem_ffi.so` | `d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33` | 160,288,664 |
+| `aoem/windows/core/bin/aoem_ffi.dll` | `31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947` | 44,705,792 |
+| `artifacts/runtime-candidates/native-transport-mldsa65-20261103/windows/aoem_ffi.dll` | `1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50` | 48,345,088 |
+
+### Proposed implementation order for A
+
+1. **Map each job's actual dependencies first.** For the Rust Linux job, a conservative starting set is all currently tracked `aoem/linux/**` objects plus the isolated Linux candidate: **501.870 MiB / 7 OIDs**. This is a platform-filter scenario, **not a proven minimal dependency closure**. Check dynamic plugin loading, ignored tests, fixture readers and cross-platform negative cases before excluding individual plugins. Native-auth matrices retain their formal and candidate objects; runtime release retains its real core and any dependencies its original tests actually load. Audit the nightly host's same dependency boundary separately. Missing required material fails; it must not cause tests to disappear or be replaced by a mock.
+2. **Restore before any LFS download.** Use checkout without automatic LFS materialization, with process/job-scoped skip-smudge if necessary, then restore a dedicated object cache. Use the existing original fetch/materialization owners for only the allowed paths. Do not cache the whole .git directory, credential helpers, tokens, private test custody or runtime state. Cache data is not authority: validate the current tracked pointer's OID and size, materialized bytes, platform/header and existing independent runtime manifest/qualification gates. A cache hit must not bypass these checks or turn a formal SDK into a candidate.
+3. **Save immediately after download and successful verification**, before long Rust builds/tests. Use an explicit restore/save sequence rather than depending solely on end-of-job post-save. Later cancellation/failure must not throw away the only opportunity to save already paid-for, verified downloads. A cancellation between fetch and save still has a cost; no design can undo a completed LFS download. Key caches by platform plus a stable digest of the relevant OID/size set, not the moving commit SHA, timestamp or a static platform label alone. Prove changed OIDs fetch only missing objects and preserve old-object isolation.
+4. **Avoid parallel cold-download races.** Several independent jobs restoring the same missing key can all download before any save completes. Prefer one bounded platform preparation/download owner (or another existing, verified single warm-up point), then let the original test jobs consume the verified object cache. Keep test matrices, assertions, all ordinary/ignored cases, fail-closed result aggregation and native runtime qualification intact. Do not disable main CI, add skip markers, cancel unrelated candidate checks or change product timeouts/quorum/permissions. Confirm cache scope/access on the relevant push/PR contexts; a cache snapshot that is inaccessible/evicted is a miss, not a success.
+
+Sizing scenarios from the **same current** objects:
+
+| Scenario | Cold LFS GiB | Scope of estimate |
+| --- | ---: | --- |
+| Current five independent cold jobs | 1.2363 | Verified configured object sets; not billed traffic |
+| Only constrain Rust to conservative Linux set; other jobs unchanged | 1.0533 | About 14.80% fewer requested bytes; plugin closure still needs testing |
+| One Linux-set + one required Windows-core-set download, downstream reuse succeeds | 0.5768 | 590.610 MiB unique union; about 53.35% lower than current cold requests; not yet implemented |
+| All required objects available from a verified accessible cache | No missing-object LFS fetch required | Not zero Actions traffic, zero cache cost or a promise that every run is warm |
+
+Sharing through Actions cache/artifacts has its own storage, transfer and runner-time costs; it is not free just because it no longer consumes LFS bandwidth. A should choose the simplest reuse arrangement that avoids fetching unrelated platform/plugins and demonstrate its real effect in logs.
+
+### Required evidence after A's implementation
+
+- Diff the pre/post workflow job/platform/test-command coverage; runtime qualification, formal negative controls, current hash pins, root/native/retained runtime/security gates and result validation remain intact.
+- Demonstrate actual cold and warm runs for Linux and Windows, including the Rust job's formal resident phase and later candidate phase. Record required OIDs/bytes, restored-object hits, actual missing fetches and save success separately from compile/test status.
+- Verify changed-OID and invalid/missing cached-object rejection, cancellation **after** early save, parallel cold consumers, and nightly self-hosted reuse behavior without manufacturing a passing product result. A failed or cancelled test remains failed/cancelled despite a good cache.
+- Do not report the estimation table as realized cost savings; compare actual fetch evidence to owner usage reports if available. No price/budget increase or bill approval is implied.
+
+### Audit-return pushes also select CI
+
+`scripts/ci_scope.py:16-25` currently allows only eight exact reviewed prose files as docs-only. **New files under artifacts/audit select full by design.** C's prior public evidence commits also fall into this full-selection class; they must be included when attributing CI traffic, rather than treating all report pushes as free. This observation does not prove any particular checkout completed or was billed. Do not broadly exclude artifacts/**: that tree also contains loaded DLL/SO candidates, manifests and inputs consumed by tests.
+
+This audit is placed in the existing reviewed prose CI document and the existing joint handoff, without changing PROSE_ONLY, triggers, cancellation or tests. The current router therefore selects its existing docs path for this prose-only change. This is not a product CI pass. Any future scope change needs a separate dependency review, not an unreviewed escape from full candidate qualification.
+
+Primary references: [GitHub LFS billing](https://docs.github.com/en/billing/concepts/product-billing/git-lfs) confirms Actions LFS downloads count against the repository owner's bandwidth; [restore action](https://github.com/actions/cache/blob/main/restore/README.md) and [save action](https://github.com/actions/cache/blob/main/save/README.md) support explicitly placed restore/save steps. This report uses these only for the proposed download/cache lifecycle, not to infer actual invoice amounts.
+
+A please return `received_commit / CI_file_owner / audited_path_sets / planned_cache_key_and_early_save / cold_warm_run_refs / remaining_blocker`. Git publication is not an A acknowledgment. C has changed no workflow/helper/product file, dispatched or cancelled no CI run, downloaded no LFS object for this audit and modified no billing setting.
+
+
 2026-10-25. Source baseline: `91a9a587`. This is CI scheduling, not a change to
 NOVOVM execution, economic rules, signatures, quorum or release authorization.
 
