@@ -4,11 +4,12 @@ mod fixture;
 use anyhow::{ensure, Context, Result};
 use fixture::*;
 use novovm_network::{
+    carrier_stream::CarrierStreamV1,
     iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
     product_bootstrap_refresh::{refresh_bootstrap_sources_v1, BootstrapRefreshPeerV1},
     product_directory::{BootstrapSourceV1, BootstrapTrustPolicyV1},
     product_rendezvous_daemon::now_ms,
-    product_service_lease::ServiceLeaseBookV1,
+    product_service_lease::{request_service_offer_v2, ServiceLeaseBookV1},
 };
 use serde_json::{json, Value};
 use std::{
@@ -154,7 +155,9 @@ async fn active(f: &Fixture) -> Result<Vec<BootstrapSourceV1>> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn mirror_listener_keeps_single_binding_across_110_second_boundary() -> Result<()> {
-    let f = Fixture::new()?;
+    // Exercise listener lifetime separately from permitted source cancellation.
+    // Other process tests retain 10s epochs and cover rollover/revocation.
+    let f = Fixture::with_epoch_ms(100000)?;
     let _node = f.launch_node(50)?;
     let first = f.proposal(&BTreeSet::new()).await?;
     f.enroll(first.relay_public_key.clone())?;
@@ -181,6 +184,7 @@ async fn mirror_listener_keeps_single_binding_across_110_second_boundary() -> Re
                 failures.push((
                     began.elapsed().as_millis(),
                     novovm_network::iroh_transport::iroh_protocol_diagnostic_v1(&error),
+                    format!("{error:#}"),
                 ));
             }
             tokio::time::sleep(Duration::from_millis(80)).await;
@@ -347,7 +351,74 @@ async fn signed_revocation_reaches_mirror_and_survives_process_restart() -> Resu
         f.verifier(),
     )?));
     fetch(peer.clone(), book.clone()).await?;
-    once("--revoke", &f.root.join("publisher-config.json"), true)?;
+    let config =
+        IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)?;
+    let old_peer = peer.clone();
+    let old_book = book.clone();
+    let publisher_config = f.root.join("publisher-config.json");
+    let invitation_path = f.root.join("mirror/invitation.json");
+    with_iroh_scope_v1(
+        config,
+        IrohControlV1::new(Instant::now() + Duration::from_secs(4), || Ok(()))?,
+        move |scope| {
+            Box::pin(async move {
+                let mut stream: CarrierStreamV1<'_> =
+                    scope.connect(&old_peer.address).await?.into();
+                let started = Instant::now();
+                let offer = request_service_offer_v2(&mut stream).await?;
+                ensure!(
+                    offer
+                        .sources
+                        .iter()
+                        .any(|s| !s.manifest.relay_records.is_empty()),
+                    "held response must precede revocation"
+                );
+                let expires = offer
+                    .sources
+                    .iter()
+                    .map(|s| s.manifest.expires_at_ms)
+                    .min()
+                    .context("old response has no sources")?;
+                let until =
+                    started + Duration::from_millis(expires.saturating_sub(now_ms()?).min(3000));
+                old_book
+                    .lock()
+                    .unwrap()
+                    .accept_bootstrap_sources(offer.sources, now_ms()?)?;
+                // Hold the real response before FIN; connect alone does not
+                // prove that the mirror has accepted or served this stream.
+                once("--revoke", &publisher_config, true)?;
+                loop {
+                    let invitation: Value = read_json(&invitation_path).await?;
+                    let published: Vec<BootstrapSourceV1> =
+                        serde_json::from_value(invitation["sources"].clone())?;
+                    if !published.is_empty()
+                        && published
+                            .iter()
+                            .all(|s| s.manifest.relay_records.is_empty())
+                    {
+                        break;
+                    }
+                    ensure!(
+                        Instant::now() < until,
+                        "revocation not published inside original request budget"
+                    );
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                let error = tokio::time::timeout_at(until.into(), stream.finish())
+                    .await
+                    .context("old response cancellation not observed before its original budget")?
+                    .expect_err("revoked in-flight response must not finish successfully");
+                ensure!(
+                    Instant::now() < until,
+                    "expiry cannot stand in for revocation"
+                );
+                eprintln!("old response cancelled after signed revocation: {error:#}");
+                Ok(())
+            })
+        },
+    )
+    .await?;
     node.finish(false, 5).await?;
     ensure!(
         active(&f).await?[0].manifest.relay_records.is_empty(),

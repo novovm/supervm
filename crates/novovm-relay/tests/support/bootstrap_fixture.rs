@@ -74,6 +74,7 @@ pub struct Fixture {
     pub publisher_pin: Vec<u8>,
     pub library: PathBuf,
     pub library_sha256: String,
+    epoch_ms: u64,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -103,6 +104,9 @@ impl Fixture {
     }
 
     pub fn new() -> Result<Self> {
+        Self::with_epoch_ms(10000)
+    }
+    pub fn with_epoch_ms(epoch_ms: u64) -> Result<Self> {
         let root = std::env::temp_dir().join(format!(
             "novovm-publisher-process-{}-{}",
             std::process::id(),
@@ -131,7 +135,7 @@ impl Fixture {
                 "chain_id":PROCESS_CHAIN_ID, "library":library, "library_sha256":library_sha256,
                 "publisher_public_key":publisher_pin, "node_public_key":node_pin,
                 "record_id":"publisher-process-test-node", "manifest_id":"test-independent-publisher",
-                "allowed_relays":[], "max_grant_ms":10000
+                "allowed_relays":[], "max_grant_ms":epoch_ms
             }),
         )?;
         once("--initialize", &root.join("publisher-config.json"), true)?;
@@ -153,7 +157,7 @@ impl Fixture {
                     "minimum_signatures":1,"allowed_clients":[client().public_key().to_vec()],"relays":[],
                     "nameserver":"127.0.0.1","bind_address":"127.0.0.1:0","relay_only":false,
                     "journal_path":root.join("node/service.journal"),"source_path":root.join("node/authority.json"),
-                    "enroll":false,"record_id":"publisher-process-test-node","grant_sequence":1,"run_for_ms":10000,"max_sessions":64
+                    "enroll":false,"record_id":"publisher-process-test-node","grant_sequence":1,"run_for_ms":epoch_ms,"max_sessions":64
                 }
             }),
         )?;
@@ -176,6 +180,7 @@ impl Fixture {
             publisher_pin,
             library,
             library_sha256,
+            epoch_ms,
         })
     }
     pub fn launch_node(&self, epochs: u8) -> Result<Process> {
@@ -206,7 +211,7 @@ impl Fixture {
                 "chain_id":PROCESS_CHAIN_ID, "library":self.library, "library_sha256":self.library_sha256,"exchange_directory":self.root.join("node"),
                 "publisher_public_key":self.publisher_pin,"node_public_key":node,
                 "record_id":"publisher-process-test-node","manifest_id":"test-independent-publisher",
-                "allowed_relays":[],"max_grant_ms":10000
+                "allowed_relays":[],"max_grant_ms":self.epoch_ms
             }),
         )?;
         once("--enroll-policy", &config, true)
