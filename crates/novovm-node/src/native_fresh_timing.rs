@@ -13,7 +13,7 @@ const SLOW_CALL: Duration = Duration::from_millis(10);
 /// payloads or signatures; a hard process cap also bounds failure output.
 pub(crate) fn handoff_trace(phase: &'static str, details: impl FnOnce() -> serde_json::Value) {
     static TRACE: OnceLock<bool> = OnceLock::new();
-    static COUNTS: [AtomicUsize; 8] = [const { AtomicUsize::new(0) }; 8];
+    static COUNTS: [AtomicUsize; 11] = [const { AtomicUsize::new(0) }; 11];
     if !*TRACE.get_or_init(|| {
         std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1")
     }) {
@@ -30,6 +30,9 @@ pub(crate) fn handoff_trace(phase: &'static str, details: impl FnOnce() -> serde
         "seal.reject" => 5,
         "seal.accept" => 6,
         "seal.local_vote" => 7,
+        "history.request_queue" => 8,
+        "history.request_received" => 9,
+        "history.response" => 10,
         _ => return,
     };
     let Ok(index) = COUNTS[counter].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
@@ -122,6 +125,9 @@ mod tests {
             "seal.reject",
             "seal.accept",
             "seal.local_vote",
+            "history.request_queue",
+            "history.request_received",
+            "history.response",
         ] {
             let evaluated = Cell::new(0);
             for _ in 0..66 {

@@ -127,8 +127,10 @@ fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> V
         if label.starts_with("continuous") {
             cmd.env("NOVOVM_NATIVE_FRESH_RPC_BIND", "127.0.0.1:0");
         }
-        if label == "continuous-three-heights"
-            && std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1")
+        if matches!(
+            label,
+            "continuous-three-heights" | "continuous-offline-history"
+        ) && std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1")
         {
             cmd.env("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE", "1");
         }
@@ -219,10 +221,13 @@ fn finish_cluster(
             if before_kill.len() == children.len() {
                 break;
             }
-            assert!(
-                deadline.elapsed() < Duration::from_secs(180),
-                "finalized-before-kill deadline"
-            );
+            if deadline.elapsed() >= Duration::from_secs(180) {
+                if label == "continuous-offline-history" {
+                    let active = children.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+                    continuous::record_deadline(nodes, &active, label, height, None);
+                }
+                panic!("finalized-before-kill deadline");
+            }
             std::thread::sleep(Duration::from_millis(25));
         }
         // Only handles spawned above, never a process-name-wide kill. Wait for

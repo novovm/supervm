@@ -85,6 +85,10 @@ impl HistorySync {
         }
         self.requests
             .insert(event.source_peer_id.clone(), (height, now));
+        crate::native_fresh_timing::handoff_trace("history.request_received", || {
+            serde_json::json!({"source":event.source_peer_id,"requested_height":height,
+                "local_height":config.height})
+        });
         true
     }
 
@@ -110,6 +114,10 @@ impl HistorySync {
             }
             let requested = *height;
             *height = 0;
+            crate::native_fresh_timing::handoff_trace("history.response", || {
+                serde_json::json!({"target":peer,"requested_height":requested,
+                    "finalized_height":finalized,"response_height":self.responses.get(peer).map(|response| response.height)})
+            });
             if requested > finalized {
                 self.responses.remove(peer);
                 continue;
@@ -205,12 +213,16 @@ impl HistorySync {
             bytes.extend_from_slice(&requested.to_be_bytes());
             for binding in &config.authority.transport_bindings {
                 if binding.validator_id != config.local_validator_id {
-                    runtime.try_submit_to_peer(
+                    let accepted = runtime.try_submit_to_peer(
                         &binding.transport_peer_id,
                         ProductMainlineOverlayPayloadClassV1::NativeSeal,
                         hash(&bytes),
                         bytes.clone(),
                     )?;
+                    crate::native_fresh_timing::handoff_trace("history.request_queue", || {
+                        serde_json::json!({"target":binding.transport_peer_id,
+                            "requested_height":requested,"queue_accepted":accepted})
+                    });
                 }
             }
         }

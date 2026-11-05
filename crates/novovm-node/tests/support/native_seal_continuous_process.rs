@@ -104,20 +104,27 @@ fn confirmed(node: &Node, height: u64) -> Option<Value> {
     })
 }
 
-fn record_deadline(nodes: &[Node], active: &[usize], height: u64, hash: &[u8; 32]) {
+pub(super) fn record_deadline(
+    nodes: &[Node],
+    active: &[usize],
+    label: &str,
+    height: u64,
+    hash: Option<&[u8; 32]>,
+) {
     for &index in active {
         let node = &nodes[index];
         let sample = (|| -> anyhow::Result<Value> {
-            let text = fs::read_to_string(node.0.join(format!("{LABEL}.stdout.log")))?;
+            let text = fs::read_to_string(node.0.join(format!("{label}.stdout.log")))?;
             let address = text
                 .lines()
                 .find_map(|line| line.strip_prefix("native_fresh_rpc_listening: "))
                 .context("no fresh RPC address")?;
             let mut replies = Vec::new();
-            for (method, params) in [
-                ("nov_chainStatus", serde_json::json!([])),
-                ("nov_getTransactionStatus", serde_json::json!([hex(hash)])),
-            ] {
+            let mut queries = vec![("nov_chainStatus", serde_json::json!([]))];
+            if let Some(hash) = hash {
+                queries.push(("nov_getTransactionStatus", serde_json::json!([hex(hash)])));
+            }
+            for (method, params) in queries {
                 let began = Instant::now();
                 // Failure evidence only: no retries and no change to the
                 // original height deadline, including when a node cannot reply.
@@ -150,7 +157,7 @@ fn record_deadline(nodes: &[Node], active: &[usize], height: u64, hash: &[u8; 32
         };
         // The existing CI *.process.json evidence allowlist excludes custody,
         // node configuration and databases; these are public RPC observations.
-        let path = node.0.join("continuous-deadline.process.json");
+        let path = node.0.join(format!("{label}-deadline.process.json"));
         if let Err(error) = fs::write(&path, serde_json::to_vec(&value).unwrap()) {
             eprintln!(
                 "could not save deadline observation {}: {error}",
@@ -276,7 +283,13 @@ pub(super) fn exercise(
                         break;
                     }
                     if deadline.elapsed() >= Duration::from_secs(120) {
-                        record_deadline(nodes, &active, height, &transactions[offset].0);
+                        record_deadline(
+                            nodes,
+                            &active,
+                            LABEL,
+                            height,
+                            Some(&transactions[offset].0),
+                        );
                         panic!(
                             "continuous height {height} deadline; evidence: {}",
                             evidence_root.display()
