@@ -1,5 +1,47 @@
 # CI scope and candidate validation
 
+## 2026-11-06 recovery is an independently runnable required job
+
+The original `Durable user ingress and multi-height process recovery` gate now
+lives in `native_recovery`, rather than late inside the long `rust` job. Full
+candidate runs select both jobs; the existing result checker requires both to
+succeed. No signature, quorum, recovery assertion, production deadline or main
+push/PR selection has been removed. The reviewed-prose allowlist is unchanged.
+
+The recovery job retains `fresh_pool_tests`, `native_fresh_rpc` and the original
+ignored multi-process recovery case, its network namespace, single test thread,
+bounded handoff evidence, and isolated AOEM candidate selected by the same
+manifest/hash checker. It also runs the process-reaping deadline counterexample.
+It checks that the filters select tests. Cold compilation
+is separate from the original 15-minute execution step; this is not an extension
+of the fixture's per-phase deadlines. Only this job's Linux candidate is fetched
+from LFS. Other jobs' formal SDK negative controls remain unchanged.
+
+The public `fresh-ingress-history-recovery` artifact is emitted by the recovery
+job even on failure. The former Rust job still uploads its other ingress/native
+service evidence as `fresh-ingress-related-evidence`; logs, private keys and
+databases are not conflated, and no private custody/database upload is added.
+
+| Work being checked | Run scope |
+| --- | --- |
+| Local defect iteration | Original targeted test and affected regression/lint checks; no automatic cloud dispatch |
+| Same-SHA failed recovery job | Rerun the failed job, not the whole monolithic Rust sequence; this cannot validate later code changes |
+| Cloud-only recovery investigation | Explicit manual `profile=recovery`; original recovery job only, **not full candidate qualification** |
+| Frozen candidate | Existing automatic full main checks or explicitly requested `profile=full`; every selected job must succeed |
+
+Manual recovery uses the original workflow and selected ref, not a new branch
+or substitute test harness:
+
+```powershell
+gh workflow run ci.yml --repo novovm/supervm --ref main -f profile=recovery
+```
+
+Verify the resulting `headSha` against the intended source checkpoint before
+using its evidence. A successful recovery-only result explicitly says other
+product, platform and security gates were not executed; it never qualifies a
+package or replaces full results. This local workflow change has not itself run
+cloud CI and makes no measured runner-time or LFS-billing savings claim.
+
 ## 2026-11-04 C LFS audit and handoff: A implements, C does not edit CI
 
 **User-selected ownership:** validator-A owns implementation of CI LFS download/cache optimization; validator-C only verifies and returns this plan. This decision does not authorize C to edit workflows, a second downloader, AOEM, credentials, billing budgets or test semantics. A continues its integration/test work and can implement the following in the same main owner. No optimization is delivered by this prose update.
@@ -230,6 +272,7 @@ security advisories are ignored or removed.
 | Weekly Sunday `47 3 * * 0` UTC (11:47 Asia/Shanghai) | Complete existing CI suite |
 | Manual dispatch, default `profile=full` | Complete existing CI suite on the selected ref/SHA |
 | Manual dispatch `profile=security` | Security only, explicitly not product qualification |
+| Manual dispatch `profile=recovery` (2026-11-06) | Original historical recovery job only, explicitly not full candidate qualification |
 
 `native-auth-relation.yml` retains its existing independent path filters.
 `mainline-nightly-soak.yml` is unchanged and remains historical comparison,
@@ -248,7 +291,8 @@ an unnecessary run explicitly. No automatic candidate-run cancellation is added.
 `CI scope result` requires routing success and the correct terminal result of
 every selected job. Failure, cancellation or unexpected skipping is not success.
 It also rejects inconsistent scope/output combinations. Docs/security-only
-success explicitly says product tests were NOT EXECUTED; it is not full green,
+success explicitly says product tests were NOT EXECUTED; recovery-only success
+says the other product/platform/security gates were NOT EXECUTED. Neither is full green,
 deployment qualification, mobile acceptance or permission to activate assets.
 
 Current remote `main` protection was inspected read-only: required_status_checks

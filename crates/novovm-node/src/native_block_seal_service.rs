@@ -346,6 +346,26 @@ impl NovNativeSealServiceV1 {
             && is_nov_native_seal_round_wire_v1(&inbound.frame.payload);
         if valid {
             if let Some(peer) = self.inbox.get_mut(&inbound.source_peer_id) {
+                // Retransmissions use fresh frame sequence/checksum values but
+                // carry the same logical evidence. Coalesce only while pending;
+                // this neither caches verification nor admits another peer.
+                if peer.pending.iter().any(|queued| {
+                    queued.payload_class == inbound.payload_class
+                        && queued.object_hash == inbound.object_hash
+                        && queued.delivery_id == inbound.delivery_id
+                        && queued.payload_sha256 == inbound.payload_sha256
+                        && queued.source_peer_id == inbound.source_peer_id
+                        && queued.frame.kind == inbound.frame.kind
+                        && queued.frame.session_id == inbound.frame.session_id
+                        && queued.frame.stream_id == inbound.frame.stream_id
+                        && queued.frame.object_id == inbound.frame.object_id
+                        && queued.frame.ack_epoch == inbound.frame.ack_epoch
+                        && queued.frame.payload == inbound.frame.payload
+                        && queued.frame.sequence == queued.original_frame_sequence
+                        && inbound.frame.sequence == inbound.original_frame_sequence
+                }) {
+                    return true;
+                }
                 if peer.pending.len() < PER_PEER_QUEUE {
                     peer.pending.push_back(inbound);
                     return true;

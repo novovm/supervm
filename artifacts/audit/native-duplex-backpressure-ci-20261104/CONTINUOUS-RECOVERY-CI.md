@@ -213,3 +213,199 @@ B/C/D、正式库及已纠正账户材料不动。
 用户随后要求继续下一步：本次仅将这四份恢复诊断源码及本记录集中提交到main，
 推送一次并由原自动CI验证，不混入尚未提交的经济规则/分配草稿。新运行的最终结论
 必须绑定实际提交SHA；不手动重跑、取消或跳过检查。提交本记录不是故障修复声明。
+
+### 78341bae 的本次 CI：更早的高度1前置失败，未执行历史追赶
+
+2026-11-06只读核对 [42099283537](https://github.com/novovm/supervm/actions/runs/42099283537)：
+源码 `78341baea775fff0ca3ef04c957ad46c5cc5bbdf`，attempt=1，completed/failure。
+Windows/Linux实际ML-DSA运行库及其原所有者作业通过；Rust历史进程用例在197.62秒后
+报 `finalized-before-kill deadline`。汇总作业失败为Rust失败的传递。
+
+下载的原日志表明，这次只运行到 `three-of-four`：节点0/1/2有高度1启动记录，
+没有高度1持久确认记录；尚无restart、continuous或offline-history阶段。
+两节点前置阶段正常退出，其末尾0/1都处于CollectingVotes，未形成法定确认，
+符合该阶段不能以两票确认的要求。三个在线节点的启动时WaitingProposal不能当成
+180秒期限到达时的状态，因为原失败现场没有末尾状态快照。
+
+本次PeerIsolated日志均指向未参与此阶段的节点3身份
+`novovm-mldsa65:ae30fe061bd815cede8507a7b6f021d722df402a5e1d76e037fefaf09e929ffa`，
+每个在线节点5条；它不能证明0/1/2之间认证失败。没有把这次高度1与此前高度4、
+离线追赶高度2停滞判作同一根因。此次未取得新增历史追赶证据，不能将未执行计为通过。
+
+原失败日志保存在 `target/offline-history-ci-78341bae-failed.log`；GitHub原公开工件
+`fresh-ingress-history-recovery`（id13454410251，124974字节）保存于
+`target/offline-history-ci-78341bae/`。没有重跑或再次推送。
+
+本地仅修正测试观察覆盖范围：原显式HANDOFF开关转发到同一用例的前置/重启阶段，
+仍使用每阶段64条上限；报错增加phase和height；所有强杀前期限失败复用原公共
+RPC观察。未配置RPC的早期阶段会明确记录无RPC地址，而不是擅自开启交易入口。
+生产代码、180秒判断期限、票数、原用例顺序和断言不变。
+
+使用原 `fresh_genesis_main_nodes_confirm_three_of_four_and_recover` 本地定向验证，
+不为一次计量调整再运行云端完整CI。结果1通过/0失败，用例97.79秒；原高度1确认、
+原库恢复及后继恢复按用例完成。父PID697的节点0/1/2均有高度1持久确认，
+本地没有复现云端失败。观察到有效签票/接收说明开关已覆盖原前置阶段，但不能
+以新正向样本补造云端缺失事件或宣称修复。
+测试程序SHA256 `37b31d264f7c75461b24cb7a72b5a08505d90416bd2aa4eb50b4f15c877f7f1e`，
+AOEM仍为上列SO；环境仍为WSL隔离网络、CPU0/1。原始日志为
+`target/quorum-frontier-run1-20261106.log`，驱动为
+`target/diagnose-quorum-frontier-20261106.sh`。一次命令引号错误未启动测试，保留在
+`target/quorum-frontier-run-20261106.log`，不计产品失败。
+原进程测试目标严格Clippy、格式及diff检查通过；Clippy日志为
+`target/quorum-frontier-clippy-20261106.log`。新观察差异未提交/推送，未再次触发CI。
+本轮候选仍未获部署资格，下一步定位高度1的首次提案/收票与重连推进，不先改
+超时、票数或恢复策略；B/C/D及账户材料不变。
+
+### 后续原 Relay/mesh 重连核对（本地，不触发 CI）
+
+继续核对原 `product_mainline_overlay` 与 `product_relay`：Relay 注册时在同一状态锁内
+先排入离线队列，再发布新会话；存在未排空离线队列时，新握手继续排队，客户端也先
+消费已缓冲事件。不能只凭 Active 状态能接收 Offer，就断言旧 Offer 在这次失败中
+越过了新 Response。尚未证明失败现场出现会话错配，也没有据此修改认证状态机。
+
+在同一 WSL 隔离网络、CPU0/1 条件下运行原有定向测试：
+
+- `three_node_mesh_survives_delayed_restart`：1通过，10.37秒；包含原8.5秒延迟、
+  三节点认证、单节点重启后的重新认证及实际消息交付。
+- `product_mainline_mesh`：实际命中2项，全部通过，1.07秒；覆盖旧握手响应代次过滤
+  及坏MAC只隔离可归责peer。没有把过滤测试扩称旧Offer乱序反例。
+
+测试程序SHA256为 `ba4b426e86a224d03d2c74e9400dd072c15844a3466fed699e70d646f32ad148`；
+日志为 `target/quorum-mesh-build-20261106.log`、
+`target/quorum-mesh-restart-20261106.log`、`target/quorum-mesh-boundaries-20261106.log`。
+这些是原 mesh 组件用例，使用其原组件身份夹具，不是新增四机真实AOEM认证、
+完整共识恢复或SCM部署验收。三项通过不覆盖失败CI，也不构成根因排除证明。
+
+当前仍缺失败时节点轮询进度与同候选实际收票的末尾证据；沿已补齐的前置阶段有界
+观测继续定向定位。生产实现、超时、法定票数未改；没有推送、重跑云端CI、
+安装服务、生成创世或操作B/C/D。
+
+### 早期无RPC阶段的轮询证据补齐（本地未提交）
+
+原早期进程没有交易池，不能为查状态而开启交易RPC。本次沿原
+`run_fresh_genesis_confirmation_v1` 和 `native_fresh_timing::handoff_trace` 增加
+`main.tick_enter`、`main.tick_status`、`main.overlay_ready` 三个固定阶段。
+沿原显式开关，默认关闭；前4轮及其后每5秒采样轮询前后，三个阶段分别最多64条。
+状态复用原 `lifecycle.status_json()`，不读私钥、不开新监听、不记录数据报正文。
+认证就绪只记录原worker事件，不把它当作实际投票或最终确认。
+轮询前后记录可判断采样窗口是否仍有推进；不承诺单靠低频样本定位任意中间函数。
+
+原 `record_deadline` 同时保留每类最后一条公开轮询/收票/接收记录，即使无RPC、
+RPC超时或日志末尾截断也能留下已有证据，仍保留原RPC错误，不伪造完整终态。
+180秒判断期限、原用例顺序、投票门槛、握手及恢复实现未改。
+
+本地结果：无RPC/截断日志取证反例1通过；有界开关开启1通过（新增三阶段各64条），
+关闭3通过；原真实AOEM三票确认/原库重启/后继恢复进程用例1通过，94.76秒。
+节点0/1/2的高度1样本均有同候选3票，随后完成原用例；本机未复现CI失败。
+相关lib、node二进制、进程测试目标严格Clippy与全workspace格式检查通过。
+
+源码身份为 `78341bae` 加本地诊断差异；实际Linux节点SHA256
+`e317aac0acfef1492ce750d7190cb0427630a690079c9c995bb556eba0284445`，
+进程测试程序 `ce4a812b8ea5f5436edcfaed335195354c317416514b85f5f43dc75d91574c1c`，
+库测试程序 `78bc31fd003e192966b378d1a836c35788bef552be2ce3cf0bfe94999a38c2f9`；
+AOEM仍是与失败CI声明一致的 `d73e4a2f…`，没有替换库。
+日志为 `target/quorum-progress-{build,deadline-unit,cap-enabled,cap-disabled,process,clippy,fmt}-20261106.log`。
+上述定向进程现场父PID703保留在原candidate-node-processes目录。
+这次修的是失败取证缺口，不是停滞根因；未推送、未运行云端CI、未取得部署资格。
+
+随后使用同一程序、AOEM和原驱动，在本地隔离网络/CPU0、1只运行一次原CI失败用例
+`fresh_genesis_main_nodes_continue_three_heights_without_restart`：1通过，219.42秒。
+原断言覆盖同进程连续3→5、耐久入口、离线节点多高度追赶、强杀及原库恢复；
+`seal-relay-360-1793915846071148068/continuous-acceptance.json` 中对应字段均为true。
+节点现场为父PID360，日志 `target/quorum-progress-history-20261106.log`。
+低频状态与认证事件已在实际前置、后继和追赶阶段输出；没有启用早期交易RPC。
+这是本地正向样本，不是云端原失败的复现或修复，不再追加同条件盲目重跑。
+下一次集中云端验证需使用本轮取证差异，在原失败环境区分循环阻塞、缺少有效票与
+父状态/正文等待；不得因本地通过关闭该门禁、提前安装SCM或宣布历史停滞结案。
+
+### 2026-11-06 审计后的定向修正（本地工作区，未推送）
+
+用户要求实施本轮审计发现；在 `main@78341bae` 与已有未提交差异上继续，没有建分支、
+触发云端CI、改部署、换库或操作B/C/D。历史高度1、离线追赶高度2及旧高度4失败
+仍分别保留；以下短反例不能代替那些原失败的完整因果证据。
+
+本次修改范围：
+
+- 原CI历史恢复步骤从长Rust作业移到独立 `native_recovery` 作业。完整候选仍要求
+  两者通过；增加显式 `profile=recovery` 仅供定向诊断，不冒充完整候选。保留原库
+  选择器、原恢复命令/时限/网络隔离，检查测试非零命中，并加入进程回收短反例。
+  新作业不自动取消运行中的检查；原有其他作业路由不变。
+- 原 `finish_cluster` 在全部持久确认并发出kill后，为进程回收单独起计时。业务
+  180秒、逐高度120秒、生产换轮300秒均未修改；不以回收期限延长业务确认期限。
+- 原 `CandidateBodyInboxV1` 按提案及认证来源独立组装，不混合分片。总条目仍为4，
+  每来源64次/秒及固定30秒TTL不变；坏来源只关闭自己的组装，完成后释放同提案
+  的其他缓冲并保留原到期的完成标记。清单仍独立验证，完整正文仍核对原承诺。
+- 原签票服务只合并同peer当前队列内的同一逻辑消息，保留原字节和绑定一致性；
+  不增加验签缓存、队列容量或8次/秒准入预算，不改变票数或签名规则。
+
+修改生产实现前，已加入并运行旧行为反例：
+
+| 反例 | 原实现实测 |
+| --- | --- |
+| 实际认证重投挤满四个槽位，后续不同证据入队 | 1失败，1.42秒；`retries must not occupy all four slots ahead of distinct evidence` |
+| 来源A仅提供清单，来源B完整提供同一签名提案正文 | 1失败，256.05秒；`body fragment source differs from manifest` |
+
+正文反例沿原真实AOEM发布/后继序列取得proof和正文，真实WSS传输捕获认证事件后，
+仅控制交付顺序，未复制组装或业务校验逻辑。它属于原历史执行比较路径，不是新的
+ML-DSA资产性能或实机四节点验收。原日志为 `target/stall-repair-old-queue-20261106.log`
+与 `target/stall-repair-old-body-20261106.log`。外层命令最后的退出码合并因shell变量
+传递失败，没有用于判定结果；上述两个测试各自日志明确记录断言与FAILED。
+
+修复后的本地结果：
+
+| 验证范围 | 结果 |
+| --- | --- |
+| `native_seal_service_` 原配置/队列/签票/换轮/迟到证据/重启回归，含新增队列反例 | 40通过，53.15秒 |
+| 原 `native_candidate_node_cli` 非ignored范围，含新增真实子进程回收反例 | 18通过，16 ignored，17.34秒；ignored不计通过 |
+| `candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry`，含多来源正文、坏来源隔离、TTL及原全局边界 | 1通过，275.08秒；旧行为在中途失败，不能比较两次完整耗时声称提速 |
+| CI范围选择/聚合/原候选库选择测试 | 21通过；full/recovery选中项失败、取消、跳过或缺失均不当作成功 |
+| actionlint 1.7.12、全workspace格式、相关lib/node/CLI严格Clippy | 通过；actionlint关闭外部shellcheck/pyflakes，非云端完整CI |
+
+当前代码身份是 `78341bae` 加本地已列差异，不是新的已提交或已部署SHA。
+Linux节点SHA256 `d3eec253a2bd04fa93bd5352fcda77c9d6f630e6cc377a3abc3485ce18a058a2`；
+lib测试程序 `b0540e0c6259499de851a1b3e501f6f7b0b3d8cc4c5851aad8e8ed784b8d6873`；
+CLI测试程序 `fc98ea18910d60e230d5b648aff036f52d9035bb8735a0239a3ba21da9974ba1`。
+AOEM继续为 `d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33`，
+manifest `e1443e482a3463d8102e06a2264a97c3057eb9d9a7ac59f8d2e571e678e1f4db`。
+没有换算法、重签旧域、换正式库或声明Windows部署资格。
+
+运行驱动和哈希清单为 `target/stall-repair-run-20261106.sh`、
+`target/stall-repair-fixed-identities-20261106.txt`；输出为
+`target/stall-repair-fixed-{build,service,cli,body,process}-20261106.log`，
+严格Clippy输出为 `target/stall-repair-clippy-20261106.log`。
+原多进程强杀/连续历史恢复结果单独记录，不能用上述单进程或队列反例替代。
+
+同一固定本地程序的原多进程用例
+`fresh_genesis_main_nodes_continue_three_heights_without_restart`：**1通过，220.28秒**。
+运行环境仍为WSL独立网络命名空间、CPU0/1；这是代码验证，不是吞吐测量。
+父PID163140的原库/日志与
+`artifacts/audit/candidate-node-processes/seal-relay-163140-1793918333915421213/continuous-acceptance.json`
+保留。报告 `accepted=true`，同进程高度3→5、完整最终性历史重启保持、确认后强杀、
+耐久入口、非提案者gossip、离线节点多高度追赶及追赶后重启验证均为true；操作配置
+未变。物理LAN、断电及公网RPC未执行，不登记为通过。
+
+本轮结论：两个具体推进缺陷已有旧失败/新通过反例，测试回收期限已正确拆分，
+CI恢复门禁已本地拆为可单独运行且完整候选仍必需的作业。此前云端高度1/2/4的
+确切停滞根因**未因此结案**，不能把这一次成功恢复样本当作全链稳定性或TPS改善。
+未提交/推送、未触发或重跑云端CI、未部署SCM、未替换正式库，B/C/D不变。
+
+### 2026-11-06 集中冻结前的三项边界核对
+
+用户后继要求仅核对已有边界证据、缺项补短测，然后集中提交推送一个完整工作包。
+上述“未提交/推送”是当时本地验证状态；本节所在修正提交进入新的自动完整CI，
+CI结果必须绑定该提交，不能沿用 `54bf0c16` 或旧实机制品资格。
+
+| 边界 | 对应原实现/测试证据 |
+| --- | --- |
+| 正文内容、提案、来源及上下文仍验证 | `exercise_received_successor_body`：错误高度/未绑定来源、提案hash及正文篡改拒绝；正确签名但输出根错误仍拒绝执行；乱序/相同重复可完成、冲突片关闭。它由已通过的真实AOEM发布序列执行。 |
+| 每来源与全部组装有界、按原TTL清理 | `exercise_body_network`：64次/秒、第65次拒绝、下一秒恢复，总4条目、第5条拒绝、30秒清理。`exercise_body_multisource_recovery`：两来源独立、坏来源隔离、不重复交付，各自30/31秒到期且重复清单不延期。所有来源仍共享同一个4条目map，不是每来源4条。 |
+| 不合并不同投票、轮次和消息 | `native_seal_service_v3_retains_distinct_decision_votes_in_first_poll` 保留两来源有效票并验证3票证书；原四项split/timeout/restart/late-QC回归保留跨轮及迟到证据；原two-of-four回归保留票数和预算。去重比较完整逻辑消息及绑定，不改变原计票。 |
+| 离队后必要重试不被永久屏蔽 | 在 `native_seal_service_retransmissions_preserve_room_for_distinct_evidence` 末尾补直接断言：第一次poll清空后，同一消息再次入队，重复仍只占1项，下一poll累计处理5项且不能形成不足票数的确认。短测1通过，1.41秒；日志 `target/stall-freeze-pending-retry-20261106.log`。没有生产实现变化或新增缓存。 |
+| 完整候选不漏恢复、未执行/失败不算通过 | `test_recovery_split_keeps_gate_commands_and_fail_closed_aggregation`、`test_summary_rejects_skipped_cancelled_failed_selected_jobs`、`test_manual_recovery_summary_cannot_claim_full_qualification`；原范围/选择器共21项复核通过。 |
+| 回收超限/异常不由业务成功掩盖 | `process_exit_wait_uses_reaping_budget_after_completed_business` 使用真实子进程；原 `try_wait` 错误、超限及退出状态断言仍会失败。只有全部确认且主动终止后才起独立回收时钟，业务期限未变。 |
+
+正文条目和逻辑载荷有界不等于RSS峰值测量；历史正文owner的原容量与主产品8MiB
+候选预算不是同一项，本轮均未调整。原40项服务回归、18项CLI、真实AOEM序列及
+220.28秒多进程恢复证据继续保留，本次只增加上述离队重试断言并定向复核。
+经济分配/AGENTS等另有未提交工作，未混入本次冻结。历史高度停滞仍未归因；
+SCM安装、B/C/D、正式库、性能及四机重新认证均不由这次推送授权或登记通过。

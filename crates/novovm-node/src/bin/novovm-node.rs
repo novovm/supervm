@@ -43876,10 +43876,24 @@ fn run_fresh_genesis_confirmation_v1(
     println!("native_seal_service_startup: {}", lifecycle.status_json());
     let mut ticks = 0u64;
     let mut confirmation_reported = None;
+    let handoff_trace =
+        std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1");
+    let mut last_handoff_tick = Instant::now();
     #[cfg(test)]
     let mut faults = partition_test::Controller::open()?;
     loop {
         let tick_started = Instant::now();
+        // Early phases have no transaction RPC. Keep sparse progress evidence
+        // across their 180-second test deadline without opening another ingress.
+        let trace_tick =
+            handoff_trace && (ticks < 4 || last_handoff_tick.elapsed() >= Duration::from_secs(5));
+        if trace_tick {
+            last_handoff_tick = tick_started;
+            novovm_node::native_fresh_timing::handoff_trace(
+                "main.tick_enter",
+                || serde_json::json!({ "tick": ticks }),
+            );
+        }
         #[cfg(test)]
         if let Some(faults) = &mut faults {
             faults.refresh()?;
@@ -43936,6 +43950,18 @@ fn run_fresh_genesis_confirmation_v1(
                 ProductMainlineOverlayEventV1::WorkerStopped => {
                     eprintln!("native_fresh_overlay_worker_stopped");
                 }
+                ProductMainlineOverlayEventV1::RelayConnected { relay_peer_id } => {
+                    novovm_node::native_fresh_timing::handoff_trace(
+                        "main.overlay_ready",
+                        || serde_json::json!({ "kind": "relay", "peer": relay_peer_id, "tick": ticks }),
+                    );
+                }
+                ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
+                    novovm_node::native_fresh_timing::handoff_trace(
+                        "main.overlay_ready",
+                        || serde_json::json!({ "kind": "e2e", "peer": remote_peer_id, "tick": ticks }),
+                    );
+                }
                 _ => {}
             }
         }
@@ -43943,6 +43969,12 @@ fn run_fresh_genesis_confirmation_v1(
             lifecycle.poll(&runtime, Instant::now())
         })?;
         let status = lifecycle.status_json();
+        if trace_tick {
+            novovm_node::native_fresh_timing::handoff_trace(
+                "main.tick_status",
+                || serde_json::json!({ "tick": ticks, "status": &status }),
+            );
+        }
         #[cfg(test)]
         if let Some(faults) = &faults {
             faults.record(&status)?;

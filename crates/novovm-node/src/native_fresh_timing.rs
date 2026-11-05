@@ -11,9 +11,10 @@ const SLOW_CALL: Duration = Duration::from_millis(10);
 
 /// Isolated handoff diagnosis only. Public object/validator identities, never
 /// payloads or signatures; a hard process cap also bounds failure output.
-pub(crate) fn handoff_trace(phase: &'static str, details: impl FnOnce() -> serde_json::Value) {
+#[doc(hidden)]
+pub fn handoff_trace(phase: &'static str, details: impl FnOnce() -> serde_json::Value) {
     static TRACE: OnceLock<bool> = OnceLock::new();
-    static COUNTS: [AtomicUsize; 11] = [const { AtomicUsize::new(0) }; 11];
+    static COUNTS: [AtomicUsize; 14] = [const { AtomicUsize::new(0) }; 14];
     if !*TRACE.get_or_init(|| {
         std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1")
     }) {
@@ -33,6 +34,9 @@ pub(crate) fn handoff_trace(phase: &'static str, details: impl FnOnce() -> serde
         "history.request_queue" => 8,
         "history.request_received" => 9,
         "history.response" => 10,
+        "main.tick_enter" => 11,
+        "main.tick_status" => 12,
+        "main.overlay_ready" => 13,
         _ => return,
     };
     let Ok(index) = COUNTS[counter].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
@@ -128,6 +132,9 @@ mod tests {
             "history.request_queue",
             "history.request_received",
             "history.response",
+            "main.tick_enter",
+            "main.tick_status",
+            "main.overlay_ready",
         ] {
             let evaluated = Cell::new(0);
             for _ in 0..66 {

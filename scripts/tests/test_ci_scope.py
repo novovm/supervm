@@ -39,17 +39,20 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(ci.select_scope("workflow_dispatch", {}), "full")
         self.assertEqual(ci.select_scope("workflow_dispatch", {"inputs": {"profile": "unknown"}}), "full")
         self.assertEqual(ci.select_scope("workflow_dispatch", {"inputs": {"profile": "security"}}), "security")
+        self.assertEqual(ci.select_scope("workflow_dispatch", {"inputs": {"profile": "recovery"}}), "recovery")
+        self.assertEqual(ci.select_scope("push", {"inputs": {"profile": "recovery"}}, ["crates/a/lib.rs"]), "full")
         self.assertEqual(ci.select_scope("schedule", {"schedule": ci.DAILY_SECURITY}), "security")
         self.assertEqual(ci.select_scope("schedule", {"schedule": "47 3 * * 0"}), "full")
         self.assertEqual(ci.select_scope("schedule", {}), "full")
 
     def test_outputs_never_claim_unrun_product_tests(self):
         tracked = ["Cargo.toml", "runtime/Cargo.toml", "scripts/a.py", "package.json"]
-        for scope in ("docs", "security", "full"):
+        for scope in ("docs", "security", "recovery", "full"):
             out = ci.outputs_for(scope, tracked)
             for name in ("has_rust", "has_python", "has_node", "full"):
                 self.assertEqual(out[name], str(scope == "full").lower())
-            self.assertEqual(out["security"], str(scope != "docs").lower())
+            self.assertEqual(out["security"], str(scope in ("security", "full")).lower())
+            self.assertEqual(out["recovery"], str(scope in ("recovery", "full")).lower())
 
     def test_zero_or_invalid_base_rejected(self):
         for base in (None, "0" * 40, "--help"):
@@ -61,12 +64,13 @@ class ScopeTests(unittest.TestCase):
             ci.outputs_for("full", ["runtime/Cargo.toml"])
 
     def test_summary_rejects_skipped_cancelled_failed_selected_jobs(self):
-        for scope in ("docs", "security", "full"):
+        for scope in ("docs", "security", "recovery", "full"):
             out = ci.outputs_for(scope, ["Cargo.toml", "scripts/a.py", "package.json"])
             needs = {"detect": {"result": "success", "outputs": out}}
             for job, key in {"lan_script_launch": "full", "runtime_modules": "full",
                              "runtime_modules_release": "full",
                              "native_transport_qualification": "full",
+                             "native_recovery": "recovery",
                              "rust": "has_rust", "rust_security": "security",
                              "python": "has_python", "node": "has_node"}.items():
                 needs[job] = {"result": "success" if out[key] == "true" else "skipped"}
@@ -84,6 +88,67 @@ class ScopeTests(unittest.TestCase):
                 if job != "detect":
                     with self.assertRaisesRegex(ValueError, job):
                         ci.validate_results(missing)
+
+    def test_recovery_split_keeps_gate_commands_and_fail_closed_aggregation(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        recovery = jobs["native_recovery"]
+        self.assertIn("options: [full, security, recovery]", workflow)
+        self.assertIn("branches: [main]", workflow)
+        self.assertIn("recovery: ${{ steps.detect.outputs.recovery }}", jobs["detect"])
+        self.assertIn("needs: detect\n", recovery)
+        self.assertIn("if: needs.detect.outputs.recovery == 'true'\n", recovery)
+        self.assertIn("runs-on: ubuntu-latest\n", recovery)
+        self.assertIn("ci-native-recovery-${{ github.ref }}-", recovery)
+        self.assertIn("cancel-in-progress: false", recovery)
+        self.assertIn("Swatinem/rust-cache@v2", recovery)
+        self.assertIn('git lfs pull --include="$env:NATIVE_RUNTIME_CANDIDATE_ROOT/linux/libaoem_ffi.so" --exclude=""', recovery)
+        self.assertNotIn("lfs: true", recovery)
+        self.assertIn("./scripts/ci-native-runtime-candidate.ps1 -Platform linux-x86_64 -GitHubEnvironment", recovery)
+        for group in ("fresh_pool_tests", "native_fresh_rpc"):
+            command = 'cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib ' + group + ' --locked -- --test-threads=1'
+            self.assertEqual(recovery.count(command), 1)
+            self.assertIn(group + ' --locked -- --list', recovery)
+        for value in ("timeout-minutes: 15", "NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '1'",
+                      "sudo unshare --net sh -c 'ip link set lo up; exec env",
+                      "NOVOVM_NATIVE_FRESH_HANDOFF_TRACE=1", "AOEM_DLL_MANIFEST_REQUIRED=1",
+                      'NOVOVM_AOEM_TEST_LIBRARY="$2" NOVOVM_AOEM_DLL="$2"',
+                      'NOVOVM_AOEM_TEST_MANIFEST="$3" NOVOVM_AOEM_MANIFEST="$3"',
+                      "fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1",
+                      "native_seal_main_process::process_exit_wait_uses_reaping_budget_after_completed_business --exact --test-threads=1",
+                      'test "$(grep -c \': test$\' "$RUNNER_TEMP/fresh-process-tests.txt")" = 1',
+                      "if: always()", "name: fresh-ingress-history-recovery",
+                      "artifacts/audit/candidate-node-processes/**/*.process.json",
+                      "artifacts/audit/candidate-node-processes/**/*.stdout.log",
+                      "artifacts/audit/candidate-node-processes/**/*.stderr.log"):
+            with self.subTest(value=value):
+                self.assertIn(value, recovery)
+        self.assertNotIn("fresh_genesis_main_nodes_continue_three_heights_without_restart", jobs["rust"])
+        self.assertIn("name: fresh-ingress-related-evidence", jobs["rust"])
+        self.assertIn("${{ runner.temp }}/nuas-native-service.log", jobs["rust"])
+        self.assertIn("target/runtime-rebuild/consensus-tests/uca-native-services/**/report.json", jobs["rust"])
+        required = re.search(r"^    needs: \[([^\]]+)\]$", jobs["result"], re.M).group(1).split(", ")
+        self.assertIn("native_recovery", required)
+        out = ci.outputs_for("full", ["Cargo.toml"])
+        out["recovery"] = "false"
+        with self.assertRaisesRegex(ValueError, "contradicts"):
+            ci.validate_results({"detect": {"result": "success", "outputs": out}})
+
+    def test_manual_recovery_summary_cannot_claim_full_qualification(self):
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            output = Path(temp) / "output"
+            summary = Path(temp) / "summary"
+            event.write_text(json.dumps({"inputs": {"profile": "recovery"}}), encoding="utf-8")
+            with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch",
+                                         "GITHUB_EVENT_PATH": str(event),
+                                         "GITHUB_OUTPUT": str(output),
+                                         "GITHUB_STEP_SUMMARY": str(summary)}), patch.object(ci, "git", return_value=b"Cargo.toml\0"):
+                ci.main()
+            self.assertIn("scope=recovery\n", output.read_text())
+            self.assertIn("full=false\n", output.read_text())
+            self.assertIn("Historical recovery only", summary.read_text())
+            self.assertIn("Not release qualification", summary.read_text())
 
     def test_runtime_split_retains_both_platforms_and_independent_budgets(self):
         workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")

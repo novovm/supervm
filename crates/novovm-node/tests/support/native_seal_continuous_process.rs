@@ -149,14 +149,44 @@ pub(super) fn record_deadline(
             }
             Ok(serde_json::json!({"node_index":index,"height":height,"replies":replies}))
         })();
-        let value = match sample {
+        let mut value = match sample {
             Ok(value) => value,
             Err(error) => {
                 serde_json::json!({"node_index":index,"height":height,"error":format!("{error:#}")})
             }
         };
+        // Early quorum phases intentionally have no transaction RPC. Preserve
+        // the latest bounded loop/vote evidence even when that query is absent
+        // or the node's loop cannot answer it.
+        if let Ok(text) = fs::read_to_string(node.0.join(format!("{label}.stdout.log"))) {
+            let mut latest = serde_json::Map::new();
+            for line in text.lines().rev() {
+                let Some(json) = line.strip_prefix("native_fresh_handoff: ") else {
+                    continue;
+                };
+                let Ok(observation) = serde_json::from_str::<Value>(json) else {
+                    continue;
+                };
+                let Some(phase) = observation["phase"].as_str() else {
+                    continue;
+                };
+                if matches!(
+                    phase,
+                    "main.tick_enter"
+                        | "main.tick_status"
+                        | "main.overlay_ready"
+                        | "seal.accept"
+                        | "seal.local_vote"
+                        | "lifecycle.receive"
+                ) && !latest.contains_key(phase)
+                {
+                    latest.insert(phase.to_owned(), observation);
+                }
+            }
+            value["last_handoff"] = Value::Object(latest);
+        }
         // The existing CI *.process.json evidence allowlist excludes custody,
-        // node configuration and databases; these are public RPC observations.
+        // node configuration and databases; these are public diagnostic observations.
         let path = node.0.join(format!("{label}-deadline.process.json"));
         if let Err(error) = fs::write(&path, serde_json::to_vec(&value).unwrap()) {
             eprintln!(
@@ -166,6 +196,37 @@ pub(super) fn record_deadline(
         }
         eprintln!("continuous deadline observation: {value}");
     }
+}
+
+#[test]
+fn deadline_without_rpc_keeps_latest_public_handoff() {
+    let nodes = [Node::new("deadline-handoff")];
+    let mut lines = String::new();
+    for (phase, tick) in [
+        ("main.tick_status", 1),
+        ("seal.accept", 1),
+        ("main.tick_status", 2),
+        ("main.tick_enter", 3),
+        ("unrecognized", 4),
+    ] {
+        lines.push_str(&format!(
+            "native_fresh_handoff: {}\n",
+            serde_json::json!({"phase":phase,"details":{"tick":tick}})
+        ));
+    }
+    lines.push_str("native_fresh_handoff: truncated\n");
+    fs::write(nodes[0].0.join("fixture.stdout.log"), lines).unwrap();
+    record_deadline(&nodes, &[0], "fixture", 1, None);
+    let value: Value = serde_json::from_slice(
+        &fs::read(nodes[0].0.join("fixture-deadline.process.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value["error"], "no fresh RPC address");
+    let latest = value["last_handoff"].as_object().unwrap();
+    assert_eq!(latest.len(), 3);
+    assert_eq!(latest["main.tick_status"]["details"]["tick"], 2);
+    assert_eq!(latest["main.tick_enter"]["details"]["tick"], 3);
+    assert_eq!(latest["seal.accept"]["details"]["tick"], 1);
 }
 
 pub(super) fn history(node: &Node, height: u64) -> Value {

@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: "Full candidate validation or security scan only"
+        description: "Full candidate validation, security scan, or historical recovery only"
         type: choice
-        options: [full, security]
+        options: [full, security, recovery]
         default: full
   schedule:
     - cron: '17 3 * * *'
@@ -190,6 +190,7 @@ jobs:
       scope: ${{ steps.detect.outputs.scope }}
       full: ${{ steps.detect.outputs.full }}
       security: ${{ steps.detect.outputs.security }}
+      recovery: ${{ steps.detect.outputs.recovery }}
       has_rust: ${{ steps.detect.outputs.has_rust }}
       rust_manifest: ${{ steps.detect.outputs.rust_manifest }}
       has_python: ${{ steps.detect.outputs.has_python }}
@@ -559,25 +560,11 @@ jobs:
         timeout-minutes: 15
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --test native_candidate_node_cli --locked -- --test-threads=1
 
-      - name: Durable user ingress and multi-height process recovery (historical comparison only)
-        env:
-          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '1'
-        timeout-minutes: 15
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib fresh_pool_tests --locked -- --test-threads=1
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_fresh_rpc --locked -- --test-threads=1
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/fresh-process-build.jsonl"
-          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/fresh-process-build.jsonl")
-          test -x "$binary"
-          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_NATIVE_FRESH_HANDOFF_TRACE=1 NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 NOVOVM_AOEM_TEST_LIBRARY="$2" NOVOVM_AOEM_DLL="$2" NOVOVM_AOEM_TEST_MANIFEST="$3" NOVOVM_AOEM_MANIFEST="$3" AOEM_DLL_MANIFEST="$3" AOEM_DLL_MANIFEST_REQUIRED=1 "$1" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1' fresh-process-gate "$binary" "$NOVOVM_AOEM_TEST_LIBRARY" "$NOVOVM_AOEM_TEST_MANIFEST"
-
       - name: Upload user ingress and recovery evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fresh-ingress-history-recovery
+          name: fresh-ingress-related-evidence
           path: |
             ${{ runner.temp }}/nuas-native-service.log
             target/runtime-rebuild/consensus-tests/uca-native-services/**/report.json
@@ -732,6 +719,73 @@ jobs:
             artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json
             artifacts/native-pipeline/native-pipeline-dual-node-gate-report.json.evidence-*/*.log
           if-no-files-found: error
+
+  native_recovery:
+    name: Native historical ingress and process recovery
+    needs: detect
+    if: needs.detect.outputs.recovery == 'true'
+    concurrency:
+      group: ci-native-recovery-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '1'
+      NATIVE_RUNTIME_CANDIDATE_ROOT: artifacts/runtime-candidates/native-transport-mldsa65-20261103
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch and pin the same isolated Linux runtime as full Rust checks
+        shell: pwsh
+        run: |
+          git lfs pull --include="$env:NATIVE_RUNTIME_CANDIDATE_ROOT/linux/libaoem_ffi.so" --exclude=""
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/ci-native-runtime-candidate.ps1 -Platform linux-x86_64 -GitHubEnvironment
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the original recovery test targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/fresh-process-build.jsonl"
+      - name: Durable user ingress and multi-height process recovery (historical comparison only)
+        # The original per-process/height deadlines and isolated network remain.
+        # Cold compilation is separate from this existing execution budget.
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"
+          test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"
+          export AOEM_DLL_MANIFEST_REQUIRED=1
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib fresh_pool_tests --locked -- --list > "$RUNNER_TEMP/fresh-pool-tests.txt"
+          grep -q ': test$' "$RUNNER_TEMP/fresh-pool-tests.txt"
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib fresh_pool_tests --locked -- --test-threads=1
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_fresh_rpc --locked -- --list > "$RUNNER_TEMP/fresh-rpc-tests.txt"
+          grep -q ': test$' "$RUNNER_TEMP/fresh-rpc-tests.txt"
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_fresh_rpc --locked -- --test-threads=1
+          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/fresh-process-build.jsonl")
+          test -x "$binary"
+          "$binary" native_seal_main_process::process_exit_wait_uses_reaping_budget_after_completed_business --exact --list > "$RUNNER_TEMP/process-exit-tests.txt"
+          test "$(grep -c ': test$' "$RUNNER_TEMP/process-exit-tests.txt")" = 1
+          "$binary" native_seal_main_process::process_exit_wait_uses_reaping_budget_after_completed_business --exact --test-threads=1
+          "$binary" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --list > "$RUNNER_TEMP/fresh-process-tests.txt"
+          test "$(grep -c ': test$' "$RUNNER_TEMP/fresh-process-tests.txt")" = 1
+          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_NATIVE_FRESH_HANDOFF_TRACE=1 NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 NOVOVM_AOEM_TEST_LIBRARY="$2" NOVOVM_AOEM_DLL="$2" NOVOVM_AOEM_TEST_MANIFEST="$3" NOVOVM_AOEM_MANIFEST="$3" AOEM_DLL_MANIFEST="$3" AOEM_DLL_MANIFEST_REQUIRED=1 "$1" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1' fresh-process-gate "$binary" "$NOVOVM_AOEM_TEST_LIBRARY" "$NOVOVM_AOEM_TEST_MANIFEST"
+      - name: Upload historical ingress and recovery evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-ingress-history-recovery
+          path: |
+            ${{ runner.temp }}/fresh-process-tests.txt
+            artifacts/audit/candidate-node-processes/**/continuous-acceptance.json
+            artifacts/audit/candidate-node-processes/**/*.process.json
+            artifacts/audit/candidate-node-processes/**/*.stdout.log
+            artifacts/audit/candidate-node-processes/**/*.stderr.log
+          if-no-files-found: warn
 
   rust_security:
     name: Rust security checks
@@ -1014,7 +1068,7 @@ jobs:
   result:
     name: CI scope result
     if: always()
-    needs: [detect, lan_script_launch, rust, rust_security, python, node, runtime_modules, runtime_modules_release, native_transport_qualification]
+    needs: [detect, lan_script_launch, rust, native_recovery, rust_security, python, node, runtime_modules, runtime_modules_release, native_transport_qualification]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

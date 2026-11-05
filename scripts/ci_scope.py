@@ -54,7 +54,8 @@ def select_scope(event_name, event, paths=None):
     if event_name == "schedule":
         return "security" if event.get("schedule") == DAILY_SECURITY else "full"
     if event_name == "workflow_dispatch":
-        return "security" if event.get("inputs", {}).get("profile") == "security" else "full"
+        profile = event.get("inputs", {}).get("profile")
+        return profile if profile in ("security", "recovery") else "full"
     if event_name in ("push", "pull_request") and paths and all(
         p in PROSE_ONLY for p in paths
     ):
@@ -77,6 +78,7 @@ def outputs_for(scope, tracked):
         "has_rust": str(full and bool(manifest)).lower(),
         "rust_manifest": manifest,
         "security": str(scope in ("full", "security") and bool(manifest)).lower(),
+        "recovery": str(scope in ("full", "recovery") and bool(manifest)).lower(),
         "has_python": str(full and any(p.endswith(".py") for p in product)).lower(),
         "has_node": str(full and bool(package)).lower(),
         "node_package_json": package,
@@ -88,14 +90,15 @@ def validate_results(needs):
         raise ValueError("CI routing did not succeed")
     out = needs["detect"]["outputs"]
     scope = out["scope"]
-    if scope not in ("full", "security", "docs"):
+    if scope not in ("full", "security", "recovery", "docs"):
         raise ValueError("unknown CI scope")
     required = {
-        "full": ("true", "true", "true"),
-        "security": ("false", "false", "true"),
-        "docs": ("false", "false", "false"),
+        "full": ("true", "true", "true", "true"),
+        "security": ("false", "false", "true", "false"),
+        "recovery": ("false", "false", "false", "true"),
+        "docs": ("false", "false", "false", "false"),
     }[scope]
-    if (out["full"], out["has_rust"], out["security"]) != required:
+    if (out["full"], out["has_rust"], out["security"], out["recovery"]) != required:
         raise ValueError("scope contradicts required product/security checks")
     if scope != "full" and (out["has_python"] != "false" or out["has_node"] != "false"):
         raise ValueError("non-full scope unexpectedly selects product checks")
@@ -105,6 +108,7 @@ def validate_results(needs):
         "runtime_modules_release": out["full"],
         "native_transport_qualification": out["full"],
         "rust": out["has_rust"],
+        "native_recovery": out["recovery"],
         "rust_security": out["security"],
         "python": out["has_python"],
         "node": out["has_node"],
@@ -151,6 +155,8 @@ def main():
         handle.write("Reviewed prose only; product tests NOT EXECUTED. Not release qualification.\n"
                      if scope == "docs" else
                      "Security only; product tests NOT EXECUTED.\n" if scope == "security" else
+                     "Historical recovery only; other product/platform/security gates NOT EXECUTED. Not release qualification.\n"
+                     if scope == "recovery" else
                      "All existing product, historical and platform gates selected.\n")
     print(json.dumps(outputs, sort_keys=True))
 
@@ -161,6 +167,6 @@ if __name__ == "__main__":
         scope = validate_results(json.loads(os.environ["CI_NEEDS"]))
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
             handle.write(f"## Passed selected scope: {scope}\n\n")
-            handle.write("Docs/security-only success is NOT full product or release qualification.\n")
+            handle.write("Docs/security/recovery-only success is NOT full product or release qualification.\n")
     else:
         main()

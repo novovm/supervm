@@ -121,13 +121,13 @@ struct Entry {
     body: Option<CandidateBodyAssemblerV1>,
     manifest: Inbound,
     expires: Instant,
-    source: String,
+    completed: bool,
 }
 
 pub struct CandidateBodyInboxV1 {
     authority: NovNativeSealEpochAuthorityV1,
     height: u64,
-    entries: BTreeMap<[u8; 32], Entry>,
+    entries: BTreeMap<([u8; 32], String), Entry>,
     budgets: BTreeMap<String, (Instant, usize)>,
     last_seen: Instant,
 }
@@ -222,19 +222,25 @@ impl CandidateBodyInboxV1 {
                 .proposal()
                 .context("body proposal missing")?
                 .proposal_hash;
-            if self.entries.contains_key(&hash) {
+            let key = (hash, inbound.source_peer_id.clone());
+            if self.entries.contains_key(&key)
+                || self
+                    .entries
+                    .iter()
+                    .any(|((proposal, _), entry)| *proposal == hash && entry.completed)
+            {
                 return Ok(None);
             }
             if self.entries.len() >= MAX_ACTIVE {
                 bail!("body inbox candidate budget exhausted");
             }
             self.entries.insert(
-                hash,
+                key,
                 Entry {
                     body: Some(body),
                     manifest: inbound.clone(),
                     expires: now + LIFETIME,
-                    source: inbound.source_peer_id.clone(),
+                    completed: false,
                 },
             );
             return Ok(None);
@@ -243,13 +249,14 @@ impl CandidateBodyInboxV1 {
             bail!("unknown body fragment");
         }
         let hash: [u8; 32] = packet[8..40].try_into()?;
+        // Each authenticated source owns its assembler. A certificate-only or
+        // failed source must not pin all delivery of this proposal for 30s.
+        // The original global entry bound still covers all sources together.
+        let key = (hash, inbound.source_peer_id.clone());
         let entry = self
             .entries
-            .get_mut(&hash)
+            .get_mut(&key)
             .context("body fragment has no active signed manifest")?;
-        if entry.source != inbound.source_peer_id {
-            bail!("body fragment source differs from manifest");
-        }
         let Some(body) = entry.body.as_mut() else {
             return Ok(None);
         };
@@ -257,6 +264,15 @@ impl CandidateBodyInboxV1 {
         if result.is_err() || matches!(result, Ok(Some(_))) {
             entry.body = None;
         }
-        result.map(|body| body.map(|body| (body, entry.manifest.clone())))
+        let Some(body) = result? else {
+            return Ok(None);
+        };
+        entry.completed = true;
+        let manifest = entry.manifest.clone();
+        // Retain this entry's original expiry as the completion marker, while
+        // releasing incomplete sibling buffers. Never mix their fragments.
+        self.entries
+            .retain(|candidate, _| candidate.0 != hash || *candidate == key);
+        Ok(Some((body, manifest)))
     }
 }

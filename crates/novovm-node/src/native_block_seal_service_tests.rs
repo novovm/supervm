@@ -8,6 +8,79 @@ include!("native_block_seal_service_v3_tests.rs");
 include!("native_block_seal_service_split_tests.rs");
 
 #[test]
+fn native_seal_service_retransmissions_preserve_room_for_distinct_evidence() {
+    let mut cluster = NetworkCluster::new(9_782_342);
+    let initial = cluster.started;
+    let leader = cluster.initial_leader();
+    let recipient = (leader + 1) % 4;
+    let mut sender = start_test_service(&mut cluster, leader, initial);
+    let mut receiver = start_test_service(&mut cluster, recipient, initial);
+    let source = &cluster.peers[leader];
+    let target = &cluster.peers[recipient];
+    let sender_runtime = source.runtime.as_ref().unwrap();
+    let receiver_runtime = target.runtime.as_ref().unwrap();
+    let mut arrivals = std::collections::BTreeMap::<_, Vec<_>>::new();
+    let started = Instant::now();
+    let (retries, distinct) = loop {
+        sender_runtime.drain_events(128);
+        sender.poll(sender_runtime, initial + started.elapsed()).unwrap();
+        for event in receiver_runtime.drain_events(128) {
+            match event {
+                ProductMainlineOverlayEventV1::Inbound(inbound)
+                    if inbound.source_peer_id == source.peer_id =>
+                {
+                    arrivals.entry(inbound.object_hash).or_default().push(inbound);
+                }
+                ProductMainlineOverlayEventV1::WorkerFailed(error) => panic!("{error}"),
+                _ => (),
+            }
+        }
+        if let Some((hash, repeated)) = arrivals.iter().find(|(_, events)| events.len() >= 4) {
+            if let Some((_, other)) = arrivals.iter().find(|(other_hash, _)| *other_hash != hash) {
+                break (repeated[..4].to_vec(), other[0].clone());
+            }
+        }
+        assert!(started.elapsed() < NETWORK_DEADLINE, "real proposal/vote retransmissions required");
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(retries.windows(2).all(|pair| pair[0].frame.sequence != pair[1].frame.sequence));
+    let before = durable_seal_facts(target.node.store());
+    for event in &retries {
+        assert!(receiver.enqueue(event.clone()));
+    }
+    assert!(receiver.enqueue(distinct), "retries must not occupy all four slots ahead of distinct evidence");
+    assert_eq!(receiver.status_json()["queued_ingress"], 2);
+
+    // Same advertised object is insufficient: changed bytes or inconsistent
+    // transport metadata must still reach the original rejection checks.
+    let mut changed = retries[0].clone();
+    *changed.frame.payload.last_mut().unwrap() ^= 1;
+    assert!(receiver.enqueue(changed));
+    let mut changed = retries[0].clone();
+    changed.original_frame_sequence ^= 1;
+    assert!(receiver.enqueue(changed));
+    let mut overflow = retries[0].clone();
+    overflow.object_hash[0] ^= 1;
+    assert!(!receiver.enqueue(overflow));
+    assert_eq!(receiver.status_json()["queued_ingress"], 4);
+    assert_eq!(durable_seal_facts(target.node.store()), before);
+    receiver.poll(receiver_runtime, initial + started.elapsed()).unwrap();
+    assert_eq!(receiver.status_json()["processed_ingress"], 4);
+    assert_eq!(receiver.status_json()["rejected_ingress"], 2);
+    assert_eq!(receiver.status_json()["prepared"], false);
+    // Once consumed, the same evidence may be retried; only current queue
+    // occupancy is coalesced, never a persistent acceptance/verification fact.
+    assert_eq!(receiver.status_json()["queued_ingress"], 0);
+    assert!(receiver.enqueue(retries[0].clone()));
+    assert!(receiver.enqueue(retries[1].clone()));
+    assert_eq!(receiver.status_json()["queued_ingress"], 1);
+    receiver.poll(receiver_runtime, initial + started.elapsed() + Duration::from_secs(1)).unwrap();
+    assert_eq!(receiver.status_json()["processed_ingress"], 5);
+    assert_eq!(receiver.status_json()["prepared"], false);
+    cluster.assert_unfinalized();
+}
+
+#[test]
 fn native_seal_service_candidate_view_cannot_switch_ledger_even_inside_poll_interval() {
     let mut cluster = NetworkCluster::new(9_782_313);
     let now = cluster.started;

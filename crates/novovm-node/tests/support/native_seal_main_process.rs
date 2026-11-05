@@ -69,6 +69,22 @@ impl Drop for Child {
     }
 }
 
+fn wait_for_main_process_exit(
+    child: &mut std::process::Child,
+    started: Instant,
+) -> anyhow::Result<std::process::ExitStatus> {
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        anyhow::ensure!(
+            started.elapsed() < Duration::from_secs(180),
+            "main-process deadline"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 fn run_cluster(
     nodes: &[Node],
     active: &[usize],
@@ -121,17 +137,16 @@ fn run_cluster_at_height(
 
 fn start_cluster(nodes: &[Node], active: &[usize], label: &str, ticks: u64) -> Vec<(usize, Child)> {
     let mut children = Vec::new();
+    let trace = std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1");
     for &index in active {
         let node = &nodes[index];
         let mut cmd = node.command();
         if label.starts_with("continuous") {
             cmd.env("NOVOVM_NATIVE_FRESH_RPC_BIND", "127.0.0.1:0");
         }
-        if matches!(
-            label,
-            "continuous-three-heights" | "continuous-offline-history"
-        ) && std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1")
-        {
+        // Preceding restart/quorum phases can fail before the measured history
+        // phase. Forward the same bounded trace without enabling new ingress.
+        if trace {
             cmd.env("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE", "1");
         }
         // Preserve environment isolation; forward only this explicit diagnostic
@@ -222,11 +237,9 @@ fn finish_cluster(
                 break;
             }
             if deadline.elapsed() >= Duration::from_secs(180) {
-                if label == "continuous-offline-history" {
-                    let active = children.iter().map(|(index, _)| *index).collect::<Vec<_>>();
-                    continuous::record_deadline(nodes, &active, label, height, None);
-                }
-                panic!("finalized-before-kill deadline");
+                let active = children.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+                continuous::record_deadline(nodes, &active, label, height, None);
+                panic!("finalized-before-kill deadline: phase={label} height={height}");
             }
             std::thread::sleep(Duration::from_millis(25));
         }
@@ -237,17 +250,16 @@ fn finish_cluster(
             child.0.kill().unwrap();
         }
     }
+    // Confirmed continuous heights have their own deadlines. Once every node
+    // has published and been killed, reclaiming those processes must not reuse
+    // the elapsed business window. One shared exit budget covers all children.
+    let exit_started = if kill_after_finalized {
+        Instant::now()
+    } else {
+        deadline
+    };
     for (index, mut child) in children.drain(..) {
-        let status = loop {
-            if let Some(status) = child.0.try_wait().unwrap() {
-                break status;
-            }
-            assert!(
-                deadline.elapsed() < Duration::from_secs(180),
-                "main-process deadline"
-            );
-            std::thread::sleep(Duration::from_millis(25));
-        };
+        let status = wait_for_main_process_exit(&mut child.0, exit_started).unwrap();
         let text = fs::read_to_string(nodes[index].0.join(format!("{label}.stdout.log"))).unwrap();
         let error = fs::read_to_string(nodes[index].0.join(format!("{label}.stderr.log"))).unwrap();
         assert_eq!(
@@ -303,6 +315,51 @@ fn finish_cluster(
             assert_eq!(seal[field], fresh && expect_prepared);
         }
     }
+}
+
+#[test]
+fn process_exit_wait_uses_reaping_budget_after_completed_business() {
+    if std::env::var("NOVOVM_PROCESS_EXIT_WAIT_CHILD").as_deref() == Ok("1") {
+        let mut byte = [0];
+        std::io::Read::read_exact(&mut std::io::stdin(), &mut byte).unwrap();
+        return;
+    }
+    let mut child = Child(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "native_seal_main_process::process_exit_wait_uses_reaping_budget_after_completed_business",
+            ])
+            .env("NOVOVM_PROCESS_EXIT_WAIT_CHILD", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let completed_business_started = Instant::now()
+        .checked_sub(Duration::from_secs(181))
+        .unwrap();
+    let old_result = wait_for_main_process_exit(&mut child.0, completed_business_started);
+    assert!(
+        old_result
+            .unwrap_err()
+            .to_string()
+            .contains("main-process deadline"),
+        "reusing the expired business budget must reject a still-live child"
+    );
+    assert!(child.0.try_wait().unwrap().is_none());
+    child.0.kill().unwrap();
+    let exit_started = Instant::now();
+    assert!(!wait_for_main_process_exit(&mut child.0, exit_started)
+        .unwrap()
+        .success());
+    // Already-observed exit wins even when the earlier business budget expired.
+    assert!(
+        !wait_for_main_process_exit(&mut child.0, completed_business_started)
+            .unwrap()
+            .success()
+    );
 }
 
 #[test]

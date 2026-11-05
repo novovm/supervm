@@ -1,5 +1,6 @@
 include!("native_successor_publication_bundle_tests.rs");
 include!("native_fresh_transaction_ack_integration_tests.rs");
+include!("native_fresh_body_multisource_tests.rs");
 
 fn with_record_signing_guard<T>(
     record_profile: bool,
@@ -355,6 +356,9 @@ fn exercise_fresh_sequence(
                 certificate: None,
             },
         };
+        if height == 4 {
+            exercise_body_multisource_recovery(&proof, &artifact.block().body.raw_txs);
+        }
         assert!(
             Ledger::load_fresh_finality_by_height_v1(&ledger, pin, namespace, height)
                 .unwrap()
