@@ -447,6 +447,7 @@ mod tests {
 
     pub(super) fn genesis() -> GenesisConfig {
         let policy = DirectNovFeePolicy {
+            amount_fee_v3: None,
             quote_ttl_ms: 15_000,
             policy_version: 1,
             policy_source: "default".into(),
@@ -496,6 +497,33 @@ mod tests {
                             .to_string(),
                 },
             ],
+        }
+    }
+
+    #[test]
+    fn pre_amount_fee_protocol_cannot_be_reinterpreted_as_current_genesis() {
+        for (version, program, codec) in [
+            (
+                1u32,
+                "novovm/replacement/nov-transfer-complete-effects/v1",
+                "novovm/replacement/nov-transfer-receipt/postcard/v1",
+            ),
+            (
+                2u32,
+                "novovm/replacement/nov-transfer-complete-effects/v2-amount-fee",
+                "novovm/replacement/nov-transfer-receipt/postcard/v2-amount-fee",
+            ),
+        ] {
+            let mut old = Sha256::new();
+            old.update(b"novovm/native-resident-v1/round-bft-v2-mldsa65/candidate-store-v1/transport-binding-v3-mldsa65/handshake-v2-mldsa65/fixed-nov-1e17/asset-accounts-nuas-v2\0");
+            old.update(Sha256::digest(program.as_bytes()));
+            old.update(version.to_be_bytes());
+            old.update(Sha256::digest(codec.as_bytes()));
+            let mut g = genesis();
+            g.protocol_commitment = old.finalize().into();
+            assert_ne!(g.protocol_commitment, protocol_commitment());
+            assert!(format!("{:#}", g.derive_commitment().unwrap_err())
+                .contains("protocol pin mismatch"));
         }
     }
 

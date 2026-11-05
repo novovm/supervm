@@ -17,6 +17,7 @@ struct Fixture {
 fn fixture() -> Result<Fixture> {
     // Existing deterministic fee-policy fixture, not approved genesis parameters.
     let policy = DirectNovFeePolicy {
+        amount_fee_v3: None,
         quote_ttl_ms: 15000,
         policy_version: 1,
         policy_source: "default".into(),

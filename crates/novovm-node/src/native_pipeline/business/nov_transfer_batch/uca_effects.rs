@@ -224,10 +224,11 @@ pub(super) fn rejected_receipt(
 }
 
 pub fn uca_program_id() -> NodeHash {
-    Sha256::digest(b"novovm/nov-transfer-asset-complete-effects/v4").into()
+    Sha256::digest(b"novovm/nov-transfer-asset-complete-effects/v6-bounded-amount-fee").into()
 }
 pub fn uca_receipt_codec() -> NodeHash {
-    Sha256::digest(b"novovm/nov-asset-receipt/controller-or-delegated-budget/v3").into()
+    Sha256::digest(b"novovm/nov-asset-receipt/controller-or-delegated-budget/v5-bounded-amount-fee")
+        .into()
 }
 pub fn uca_effect_contract(policy: &DirectNovFeePolicy) -> Result<NodeHash> {
     let mut h = Sha256::new();

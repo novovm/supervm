@@ -46,6 +46,7 @@ fn wall_ms() -> Result<u64> {
 // Not an approved production distribution or new fee rule.
 fn policy() -> DirectNovFeePolicy {
     DirectNovFeePolicy {
+        amount_fee_v3: None,
         quote_ttl_ms: 15000,
         policy_version: 1,
         policy_source: "default".into(),
@@ -387,18 +388,52 @@ fn actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures() -
 }
 
 fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
-    run_native_uca_service_fixture_with(pool_pressure, None)
+    run_native_uca_service_fixture_with(pool_pressure, None, None)
+}
+
+#[test]
+#[ignore = "qualified AOEM; real four-service proportional-fee publication/replay and original RocksDB cold recovery"]
+fn actual_native_proportional_fee_respend_and_cold_recovery() -> Result<()> {
+    use crate::native_pipeline::business::direct_nov_fee::{
+        FeeRoundingV2, ProportionalFeeV3, SplitRemainderV2,
+    };
+    let mut p = policy();
+    p.policy_version = 3;
+    p.reserve_share_bps = 0;
+    p.fee_share_bps = 0;
+    p.risk_buffer_share_bps = 0;
+    p.min_risk_buffer_nov = 0;
+    p.redeem_paused = true;
+    p.clearing_enabled = false;
+    p.amount_fee_v3 = Some(ProportionalFeeV3 {
+        minimum_fee_units: 0,
+        maximum_fee_units: u128::MAX,
+        rate_bps: 10,
+        rounding: FeeRoundingV2::Ceil,
+        service_share_bps: 6234,
+        network_share_bps: 3766,
+        split_remainder: SplitRemainderV2::Service,
+    });
+    run_native_uca_service_fixture_with(false, None, Some(p.clone()))?;
+    // Small explicit bounds keep this original funded fixture valid; candidate
+    // commercial units are independently checked in the arithmetic table.
+    let m = p.amount_fee_v3.as_mut().unwrap();
+    m.rate_bps = 1000;
+    m.minimum_fee_units = 5;
+    m.maximum_fee_units = 7;
+    run_native_uca_service_fixture_with(false, None, Some(p))
 }
 
 type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV3]) -> Result<()>;
 
 pub(super) fn with_uca_gossip_service_fixture(check: GossipServiceCheck) -> Result<()> {
-    run_native_uca_service_fixture_with(false, Some(check))
+    run_native_uca_service_fixture_with(false, Some(check), None)
 }
 
 fn run_native_uca_service_fixture_with(
     pool_pressure: bool,
     gossip_check: Option<GossipServiceCheck>,
+    amount_policy: Option<DirectNovFeePolicy>,
 ) -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
@@ -465,7 +500,7 @@ fn run_native_uca_service_fixture_with(
                     amount: (NOV_FIXED_SUPPLY_BASE_UNITS - 1000).to_string(),
                 },
             ],
-            policy: policy(),
+            policy: amount_policy.clone().unwrap_or_else(policy),
         },
         identities: vec![UcaGenesisIdentityV2 {
             uca_id: IDS[0].into(),
@@ -803,6 +838,25 @@ fn run_native_uca_service_fixture_with(
             state(&mut nodes, client, &respend.intent, 1, 0)?,
         );
         assert_eq!(after, before[index]);
+    }
+
+    if let Some(p) = &amount_policy {
+        let m = p.amount_fee_v3.as_ref().unwrap();
+        let expected = if m.minimum_fee_units == 0 {
+            (1, 1)
+        } else {
+            (7, 5)
+        };
+        ensure!(
+            (first_fee, second_fee) == expected,
+            "proportional respend fee differs from explicit bounded/unbounded fixture"
+        );
+        drop(clients);
+        for node in nodes {
+            node.node.shutdown()?;
+        }
+        println!("proportional fee: four original services/DBs, durable receipts, respend, exact replay and cold recovery passed; no deployment or TPS claim");
+        return Ok(());
     }
 
     // Continue on these SAME recovered databases. Every management/recovery

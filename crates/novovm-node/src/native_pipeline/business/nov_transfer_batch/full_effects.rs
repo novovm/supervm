@@ -660,16 +660,41 @@ fn compile_with_builder(p: &Prepared, now: u128, mut b: Builder) -> Result<Compi
             // This is not rounding an aggregate fee or a cached settlement.
             let amount = quotes[i].intent_terms().0;
             let split = quoted_splits.entry(amount).or_insert_with(|| {
-                b.call(
+                let (reserve_bps, fee_bps) = match &p.policy.amount_fee_v3 {
+                    Some(policy) => (
+                        match policy.split_remainder {
+                            super::super::direct_nov_fee::SplitRemainderV2::Service => {
+                                policy.network_share_bps
+                            }
+                            super::super::direct_nov_fee::SplitRemainderV2::Network => {
+                                policy.service_share_bps
+                            }
+                        },
+                        0,
+                    ),
+                    None => (p.policy.reserve_share_bps, p.policy.fee_share_bps),
+                };
+                let split = b.call(
                     5,
                     &lit(1),
-                    vec![
-                        lit(amount),
-                        lit(p.policy.reserve_share_bps.into()),
-                        lit(p.policy.fee_share_bps.into()),
-                    ],
+                    vec![lit(amount), lit(reserve_bps.into()), lit(fee_bps.into())],
                     3,
-                )
+                );
+                if let Some(amount_policy) = &p.policy.amount_fee_v3 {
+                    // Original AOEM split floors the selected budget share.
+                    // Rebind that and its remainder to [network, service, 0]; no
+                    // Host arithmetic or new kernel between plan submissions.
+                    match amount_policy.split_remainder {
+                        super::super::direct_nov_fee::SplitRemainderV2::Service => {
+                            vec![split[0], split[2], lit(0)]
+                        }
+                        super::super::direct_nov_fee::SplitRemainderV2::Network => {
+                            vec![split[2], split[0], lit(0)]
+                        }
+                    }
+                } else {
+                    split
+                }
             });
             split
                 .iter()

@@ -1213,6 +1213,7 @@ fn validate_receipts(
             &receipt,
             tx_hash,
             &transaction.from,
+            transaction.amount,
             plan.context(),
             &mut journal_seq,
         )?;
@@ -1227,11 +1228,16 @@ fn validate_fee_receipt(
     receipt: &ReceiptRef<'_>,
     tx_hash: NodeHash,
     payer: &[u8],
+    amount: u128,
     context: &BatchContext,
     journal_seq: &mut Option<u64>,
 ) -> Result<()> {
     if let Some(quote) = &receipt.quote {
         quote.validate()?;
+        ensure!(
+            quote.amount_fee_v3.is_none() || quote.basis_amount == Some(amount),
+            "candidate proportional quote basis differs from signed amount"
+        );
     }
     match (&receipt.failure, &receipt.fee_failure) {
         (Some(FailureRef::Fee(reason)), Some(fee)) => {

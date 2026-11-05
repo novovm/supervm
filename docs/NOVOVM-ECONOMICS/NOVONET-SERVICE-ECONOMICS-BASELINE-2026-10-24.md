@@ -1,5 +1,19 @@
 # NOVONET service economics: synchronized baseline
 
+## 2026-11-05 later clarification: proportional transfers are distinct from resource-service quotes
+
+The user's recorded direction is `transfer_fee_NOV = amount_NOV * r`; 0.1%-0.2% (10-20 bps)
+is the discussion range, not a selected production rate. Token appreciation or more devices does
+not automatically reduce r or the overall provider allocation. The native-transfer revenue split
+remains undecided: do not apply subscription 80/20 or the former proposed 90/10. Device proceeds
+depend on qualified work in that service class, not all online devices. Regional costs and profit
+targets inform viability; funded capacity procurement may support early infrastructure, without
+guaranteed returns or duplicate payments. Do not double-count token appreciation when economic
+transaction value stays unchanged. Chat/storage/content/compute may adjust NOV amounts in future
+quotes for purchasing power; accepted obligations stay binding. Price aspirations are scenarios,
+not redemption or return guarantees. See [reference section 0](NOV-ECONOMICS-DESIGN-AND-FORMULA-REFERENCE-2026-11-05.md#0-2026-11-05后继确认转账比例收费与资源服务购买力报价分开).
+This supersedes conflicting historical assistant proposals; no billing or deployment is activated.
+
 ## 2026-11-05 design sources and formula reference, not parameter approval
 
 The user requested full reading and durable inclusion of three supplied ChatGPT design attachments.

@@ -1,4 +1,4 @@
-//! Purpose-bound node keys over the existing OS custody adapters.
+//! Purpose-bound ML-DSA keys over the existing OS custody adapters.
 //! This module never opens a chain store, votes, publishes or starts a service.
 use anyhow::{ensure, Context, Result};
 use serde::Serialize;
@@ -14,12 +14,16 @@ pub const VALIDATOR_SECRET_BYTES: usize = 4032;
 /// This local proof of possession is deliberately not a vote or an asset grant.
 pub const VALIDATOR_PAIR_CONTEXT: &[u8] = b"NOVOVM/validator-purpose-key-pair/v3";
 pub const TRANSPORT_PAIR_CONTEXT: &[u8] = b"NOVOVM/transport-purpose-key-pair/v3";
+pub const IDENTITY_PAIR_CONTEXT: &[u8] = b"NOVOVM/identity-purpose-key-pair/v3";
+pub const ASSET_MANAGEMENT_PAIR_CONTEXT: &[u8] = b"NOVOVM/asset-management-purpose-key-pair/v3";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PurposeV1 {
     Validator,
     Transport,
+    Identity,
+    AssetManagement,
 }
 
 impl PurposeV1 {
@@ -27,6 +31,8 @@ impl PurposeV1 {
         match self {
             Self::Validator => 1,
             Self::Transport => 2,
+            Self::Identity => 3,
+            Self::AssetManagement => 4,
         }
     }
 
@@ -34,6 +40,8 @@ impl PurposeV1 {
         match self {
             Self::Validator => VALIDATOR_PAIR_CONTEXT,
             Self::Transport => TRANSPORT_PAIR_CONTEXT,
+            Self::Identity => IDENTITY_PAIR_CONTEXT,
+            Self::AssetManagement => ASSET_MANAGEMENT_PAIR_CONTEXT,
         }
     }
 }
@@ -413,6 +421,31 @@ fn lock_path(path: &Path) -> std::path::PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asset_identity_and_node_purposes_cannot_be_reinterpreted() {
+        let purposes = [
+            PurposeV1::Validator,
+            PurposeV1::Transport,
+            PurposeV1::Identity,
+            PurposeV1::AssetManagement,
+        ];
+        for purpose in purposes {
+            let bytes = encode(purpose, MLDSA65, 91, &[29; 1952], &[31; 4032]);
+            for other in purposes {
+                assert_eq!(
+                    decode(&bytes, other, MLDSA65, 91, 1952, 4032).is_ok(),
+                    purpose == other
+                );
+                assert_eq!(
+                    purpose.pair_context() == other.pair_context(),
+                    purpose == other
+                );
+            }
+        }
+        assert_eq!(PurposeV1::Validator.tag(), 1);
+        assert_eq!(PurposeV1::Transport.tag(), 2);
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

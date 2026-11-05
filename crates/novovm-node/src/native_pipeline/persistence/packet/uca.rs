@@ -15,7 +15,7 @@ use novovm_protocol::uca_spend::SignedAssetSpendV3;
 pub(super) fn is_profile(context: &BatchContext) -> bool {
     context.business_program == uca_program_id()
         && context.receipt_codec == uca_receipt_codec()
-        && context.semantic_version == 1
+        && context.semantic_version == SEMANTIC_VERSION
 }
 
 pub(super) fn receipt_hash_with_spend(
@@ -175,6 +175,7 @@ pub(super) fn validate_receipts(
                 &receipt,
                 tx_hash,
                 receipt.delta.payer.account,
+                intent.amount,
                 plan.context(),
                 &mut journal_seq,
             )?;

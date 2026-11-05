@@ -262,7 +262,7 @@ fn both_purposes_require_explicit_qualified_aoem_and_never_fall_back_to_ed25519(
     let fixture = Fixture::new()?;
     let path = fixture.root.join("validator.protected");
     let before = snapshot(&fixture.root)?;
-    for purpose in ["validator", "transport"] {
+    for purpose in ["validator", "transport", "identity", "asset-management"] {
         for action in ["generate", "inspect"] {
             let output = fixture.run(action, purpose, 43, &path)?;
             assert!(!output.status.success());
@@ -275,7 +275,7 @@ fn both_purposes_require_explicit_qualified_aoem_and_never_fall_back_to_ed25519(
     let library = fixture.root.join("not-a-runtime.bin");
     std::fs::write(&library, b"not an AOEM artifact")?;
     let before = snapshot(&fixture.root)?;
-    for purpose in ["validator", "transport"] {
+    for purpose in ["validator", "transport", "identity", "asset-management"] {
         let output = fixture
             .command("generate", purpose, 43, &path)
             .arg("--library")
@@ -452,6 +452,8 @@ fn actual_mldsa65_both_purposes_generate_inspect_and_rejection_closure() -> Test
     let fixture = Fixture::new()?;
     let validator = fixture.root.join("validator.protected");
     let transport = fixture.root.join("transport.protected");
+    let local_identity = fixture.root.join("identity.protected");
+    let management = fixture.root.join("management.protected");
     let run = |action, purpose, chain, path: &Path| -> Result<Output, Box<dyn Error>> {
         Ok(fixture
             .command(action, purpose, chain, path)
@@ -469,6 +471,15 @@ fn actual_mldsa65_both_purposes_generate_inspect_and_rejection_closure() -> Test
     let identity = success(run("generate", "validator", 47, &validator)?)?;
     assert_eq!(identity["identity"]["algorithm"], "ML-DSA-65");
     let peer = success(run("generate", "transport", 47, &transport)?)?;
+    let local = success(run("generate", "identity", 47, &local_identity)?)?;
+    let asset = success(run("generate", "asset-management", 47, &management)?)?;
+    assert_eq!(asset["asset_account_hex"].as_str().unwrap().len(), 64);
+    assert!(local.get("asset_account_hex").is_none());
+    assert!(peer.get("asset_account_hex").is_none());
+    assert_ne!(
+        local["identity"]["public_key"],
+        asset["identity"]["public_key"]
+    );
     assert_ne!(
         identity["identity"]["public_key"],
         peer["identity"]["public_key"]
@@ -477,9 +488,15 @@ fn actual_mldsa65_both_purposes_generate_inspect_and_rejection_closure() -> Test
     for (purpose, path, original, other) in [
         ("validator", &validator, &identity, &transport),
         ("transport", &transport, &peer, &validator),
+        ("identity", &local_identity, &local, &management),
+        ("asset-management", &management, &asset, &local_identity),
     ] {
         let inspected = success(run("inspect", purpose, 47, path)?)?;
         assert_eq!(inspected["identity"], original["identity"]);
+        assert_eq!(
+            inspected.get("asset_account_hex"),
+            original.get("asset_account_hex")
+        );
         assert_eq!(inspected["protected_key_created"], false);
         assert_eq!(snapshot(&fixture.root)?, before);
         for (action, chain, path) in [
@@ -499,7 +516,13 @@ fn actual_mldsa65_both_purposes_generate_inspect_and_rejection_closure() -> Test
             assert_eq!(snapshot(&fixture.root)?, before);
         }
     }
-    let expected = if cfg!(target_os = "linux") { 5 } else { 2 };
+    for purpose in ["validator", "transport"] {
+        for path in [&local_identity, &management] {
+            assert!(!run("inspect", purpose, 47, path)?.status.success());
+            assert_eq!(snapshot(&fixture.root)?, before);
+        }
+    }
+    let expected = if cfg!(target_os = "linux") { 9 } else { 4 };
     assert_eq!(
         before.len(),
         expected,

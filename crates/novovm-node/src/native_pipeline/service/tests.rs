@@ -41,6 +41,7 @@ pub(super) fn signed_raw(index: u64, nonce: u64) -> Vec<u8> {
 
 fn config(size: usize) -> ResidentConfig {
     let policy = DirectNovFeePolicy {
+        amount_fee_v3: None,
         quote_ttl_ms: 15_000,
         policy_version: 1,
         policy_source: "default".into(),

@@ -106,7 +106,7 @@ fn context(root: NodeHash, policy: &DirectNovFeePolicy) -> Result<BatchContext> 
         genesis_config_commitment: [2; 32],
         protocol_commitment: [9; 32],
         business_program: uca_program_id(),
-        semantic_version: 1,
+        semantic_version: SEMANTIC_VERSION,
         effect_contract: uca_effect_contract(policy)?,
         parent_block_hash: [3; 32],
         parent_height: 9,

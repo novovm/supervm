@@ -41,18 +41,18 @@ pub(crate) use integer::ResidentTransferResources;
 pub(crate) use uca_effects::{authorization_code, authorization_error};
 pub use uca_effects::{uca_effect_contract, uca_program_id, uca_receipt_codec, SpendOutput};
 
-const POLICY_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v1/policy";
-const FEE_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v1/fees";
+const POLICY_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v3/policy";
+const FEE_PREFIX: &[u8] = b"novovm/replacement/nov-direct/v3/fees";
 const POLICY_BYTES: usize = 2048;
 const FEE_BYTES: usize = 8192;
-pub const SEMANTIC_VERSION: u32 = 1;
+pub const SEMANTIC_VERSION: u32 = 3;
 
 pub fn program_id() -> NodeHash {
-    Sha256::digest(b"novovm/replacement/nov-transfer-complete-effects/v1").into()
+    Sha256::digest(b"novovm/replacement/nov-transfer-complete-effects/v3-bounded-amount-fee").into()
 }
 
 pub fn receipt_codec() -> NodeHash {
-    Sha256::digest(b"novovm/replacement/nov-transfer-receipt/postcard/v1").into()
+    Sha256::digest(b"novovm/replacement/nov-transfer-receipt/postcard/v3-bounded-amount-fee").into()
 }
 
 /// All effective policy fields, including provenance and TTL, are bound. The
@@ -65,10 +65,10 @@ pub fn effect_contract(policy: &DirectNovFeePolicy) -> Result<NodeHash> {
         "fee policy record exceeds bound"
     );
     let mut digest = Sha256::new();
-    digest.update(b"novovm/replacement/nov-direct-effects/v1\0");
+    digest.update(b"novovm/replacement/nov-direct-effects/v3\0");
     digest.update(program_id());
     digest.update(receipt_codec());
-    digest.update(b"accounts:u128le;nonce:u64le;paged-postcard:v1;pages:256;policy:2048;fees:8192;quote-transfer-json:v1;fee-journal:receipt-output;direct-only\0");
+    digest.update(b"accounts:u128le;nonce:u64le;paged-postcard:v3;pages:256;policy:2048;fees:8192;quote-amount-bounded-v3-or-explicit-reference-v1;fee-journal:receipt-output;direct-only\0");
     digest.update((bytes.len() as u64).to_be_bytes());
     digest.update(bytes);
     Ok(digest.finalize().into())

@@ -4,6 +4,184 @@ use super::*;
 use novovm_protocol::uca_spend::{AssetAccountCreationV2, AssetAuthorityUpdateV2};
 
 #[test]
+#[ignore = "qualified AOEM ML-DSA-65 and Vulkan; proportional fee CPU/integer and state recovery parity"]
+fn actual_proportional_controller_fee_cpu_integer_and_replay() -> Result<()> {
+    use crate::native_pipeline::business::direct_nov_fee::{
+        FeeRoundingV2, ProportionalFeeV3, SplitRemainderV2,
+    };
+    let (path, facade) = actual_mldsa_facade()?;
+    let mut keys = (0..2)
+        .map(|_| {
+            aoem_bindings::mldsa_keygen_v1_auto(65)?
+                .context("real amount fee fixture key unavailable")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let result = (|| -> Result<()> {
+        let refs = keys
+            .iter()
+            .map(|(p, _)| spend_key_ref_v1(p))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let base = AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::Controller,
+            chain_id: 7,
+            genesis: [2; 32],
+            payer: vec![11; 20],
+            recipient: vec![12; 32],
+            asset: 1,
+            authorization_epoch: 3,
+            spend_key_ref: refs[0],
+            amount: 1001,
+            max_fee: 100,
+            nonce: 0,
+            not_before_height: 10,
+            expires_at_height: 20,
+            authority_update: None,
+            recipient_creation: None,
+        };
+        for case in [
+            "success",
+            "wrong-key",
+            "fee-cap",
+            "business-failure",
+            "floor-tiny",
+            "network-remainder",
+            "minimum",
+            "minimum-cap-reject",
+            "maximum",
+        ] {
+            let mut policy = super::super::body_tests::policy();
+            policy.policy_version = 3;
+            policy.reserve_share_bps = 0;
+            policy.fee_share_bps = 0;
+            policy.risk_buffer_share_bps = 0;
+            policy.min_risk_buffer_nov = 0;
+            policy.clearing_enabled = false;
+            policy.redeem_paused = true;
+            policy.amount_fee_v3 = Some(ProportionalFeeV3 {
+                minimum_fee_units: if case.starts_with("minimum") { 3 } else { 0 },
+                maximum_fee_units: if case == "maximum" { 1 } else { u128::MAX },
+                rate_bps: 10,
+                rounding: if case == "floor-tiny" {
+                    FeeRoundingV2::Floor
+                } else {
+                    FeeRoundingV2::Ceil
+                },
+                service_share_bps: 6234,
+                network_share_bps: 3766,
+                split_remainder: if case == "network-remainder" {
+                    SplitRemainderV2::Network
+                } else {
+                    SplitRemainderV2::Service
+                },
+            });
+            let mut changes = fee_record_changes(&policy, &FeeState::default())?;
+            for (account, key, balance) in [
+                (base.payer.clone(), refs[0], 100_000u128),
+                (
+                    base.recipient.clone(),
+                    refs[1],
+                    if case == "business-failure" {
+                        u128::MAX
+                    } else {
+                        0
+                    },
+                ),
+            ] {
+                changes.extend(account_record_changes(
+                    7,
+                    &base.genesis,
+                    &AssetAccountAuthorityV2 {
+                        account: account.clone(),
+                        asset: 1,
+                        active: true,
+                        current_spend_epoch: 3,
+                        management_key_ref: key,
+                        recovery_key_ref: None,
+                    },
+                )?);
+                changes.push(StateChange::Put {
+                    key: balance_key(&Account::try_from(account).map_err(anyhow::Error::msg)?),
+                    value: balance.to_le_bytes().to_vec(),
+                });
+            }
+            changes.push(StateChange::Put {
+                key: nonce_key(&base.nonce_identity()?),
+                value: 0u64.to_le_bytes().to_vec(),
+            });
+            let initial = stage_state_update(&Memory::default(), empty_root(), &changes)?;
+            let mut memory = Memory(initial.nodes().clone());
+            let mut root = initial.root();
+            let mut runner = SignedAssetRunner {
+                facade: &facade,
+                session: ComputeSession::open(&path, 4)?,
+                integer: Some(ResidentTransferResources::new(&path, 4, 8)?),
+                policy: policy.clone(),
+            };
+            let mut intent = base.clone();
+            match case {
+                "wrong-key" => intent.spend_key_ref = refs[1],
+                "fee-cap" => intent.max_fee = 1,
+                "minimum-cap-reject" => intent.max_fee = 2,
+                "floor-tiny" => intent.amount = 1,
+                _ => {}
+            }
+            let output = runner.run(&mut memory, &mut root, &[intent.clone()], &keys)?;
+            let expected_fee = match case {
+                "success" | "business-failure" | "network-remainder" => 2,
+                "minimum" => 3,
+                "maximum" => 1,
+                _ => 0,
+            };
+            assert_eq!(
+                output.receipts()[0].delta.fee_funding_delta,
+                expected_fee,
+                "{case}"
+            );
+            assert_eq!(
+                output.fees().accounting.treasury_reserve_nov.unwrap_or(0),
+                expected_fee,
+                "{case}"
+            );
+            assert_eq!(output.fees().accounting.risk_buffer_nov, 0);
+            assert_eq!(
+                output.receipts()[0].failure.is_none(),
+                matches!(
+                    case,
+                    "success" | "floor-tiny" | "network-remainder" | "minimum" | "maximum"
+                )
+            );
+            assert_eq!(
+                read_state(&memory, root, &base)?.next_nonce(),
+                u64::from(case != "wrong-key")
+            );
+            // Re-open the original paged binary state through a new captured
+            // input/session; repeating a nonce must not collect a second fee.
+            if case == "success" {
+                runner.session = ComputeSession::open(&path, 4)?;
+                let before = read_state(&memory, root, &base)?.balances();
+                match runner.run(&mut memory, &mut root, &[intent], &keys) {
+                    Ok(replay) => {
+                        assert!(replay.receipts()[0].failure.is_some());
+                        assert_eq!(replay.receipts()[0].delta.fee_funding_delta, 0);
+                    }
+                    Err(error) => ensure!(
+                        format!("{error:#}").to_lowercase().contains("nonce"),
+                        "unexpected replay failure: {error:#}"
+                    ),
+                }
+                assert_eq!(read_state(&memory, root, &base)?.balances(), before);
+                assert_eq!(read_state(&memory, root, &base)?.next_nonce(), 1);
+            }
+        }
+        Ok(())
+    })();
+    for (_, secret) in &mut keys {
+        secret.fill(0);
+    }
+    result
+}
+
+#[test]
 #[ignore = "explicit qualified AOEM ML-DSA-65; real controller/delegated seeded-tree effects"]
 fn actual_mldsa_controller_cpu_atomic_effects() -> Result<()> {
     let (path, facade) = actual_mldsa_facade()?;

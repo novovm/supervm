@@ -18,7 +18,9 @@ use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
 mod prepared;
+mod proportional;
 pub(super) use prepared::{FeeQuotationContext, PreparedTransferFee};
+pub use proportional::{FeeRoundingV2, ProportionalFeeV3, SplitRemainderV2};
 
 pub const JOURNAL_RETAIN_LAST: usize = 512;
 const BPS: u128 = 10_000;
@@ -43,8 +45,11 @@ pub struct DirectNovFeePolicy {
     pub policy_version: u32,
     pub policy_source: String,
     pub resolution_source: String,
+    #[serde(default)]
     pub reserve_share_bps: u32,
+    #[serde(default)]
     pub fee_share_bps: u32,
+    #[serde(default)]
     pub risk_buffer_share_bps: u32,
     pub min_reserve_bucket_nov: u128,
     pub min_fee_bucket_nov: u128,
@@ -59,6 +64,10 @@ pub struct DirectNovFeePolicy {
     pub clearing_constrained_strategy: String,
     pub mapped_asset_auto_heal_rollback_enabled: bool,
     pub mapped_asset_reorg_response_policy: String,
+    /// Omission is the old, explicitly identifiable reference contract, never
+    /// a fallback after a malformed amount policy. No new rate is defaulted.
+    #[serde(default)]
+    pub amount_fee_v3: Option<ProportionalFeeV3>,
 }
 
 impl DirectNovFeePolicy {
@@ -67,21 +76,43 @@ impl DirectNovFeePolicy {
             self.policy_version > 0,
             "fee policy version must be explicit"
         );
-        ensure!(
-            self.reserve_share_bps > 0 && self.fee_share_bps > 0 && self.risk_buffer_share_bps > 0,
-            "fee shares must all be positive"
-        );
-        ensure!(
-            u64::from(self.reserve_share_bps)
-                + u64::from(self.fee_share_bps)
-                + u64::from(self.risk_buffer_share_bps)
-                == BPS as u64,
-            "fee shares must sum to 10000"
-        );
-        ensure!(
-            self.min_risk_buffer_nov > 0,
-            "resolved risk-buffer minimum must be positive"
-        );
+        if let Some(amount) = &self.amount_fee_v3 {
+            amount.validate()?;
+            ensure!(
+                self.policy_version >= 3,
+                "bounded amount fee requires policy version >= 3"
+            );
+            ensure!(
+                self.reserve_share_bps == 0
+                    && self.fee_share_bps == 0
+                    && self.risk_buffer_share_bps == 0,
+                "amount fee cannot mix legacy bucket shares with explicit service/network budgets"
+            );
+            ensure!(
+                !self.clearing_enabled
+                    && self.redeem_paused
+                    && !self.mapped_asset_auto_heal_rollback_enabled,
+                "native amount-fee policy does not activate mapped-asset clearing or redemption"
+            );
+        } else {
+            ensure!(
+                self.reserve_share_bps > 0
+                    && self.fee_share_bps > 0
+                    && self.risk_buffer_share_bps > 0,
+                "fee shares must all be positive"
+            );
+            ensure!(
+                u64::from(self.reserve_share_bps)
+                    + u64::from(self.fee_share_bps)
+                    + u64::from(self.risk_buffer_share_bps)
+                    == BPS as u64,
+                "fee shares must sum to 10000"
+            );
+            ensure!(
+                self.min_risk_buffer_nov > 0,
+                "resolved risk-buffer minimum must be positive"
+            );
+        }
         ensure!(
             (1..=BPS as u32).contains(&self.clearing_constrained_daily_usage_bps),
             "resolved constrained daily usage out of range"
@@ -130,7 +161,7 @@ impl DirectNovFeePolicy {
     /// Legacy attribution string, NOT a cryptographic policy commitment. The
     /// compiler must commit the complete snapshot, including TTL/provenance.
     pub fn contract_id(&self) -> String {
-        format!(
+        let legacy = format!(
             "nov_treasury_policy_v1:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             self.policy_version,
             self.normalized_source(),
@@ -150,7 +181,20 @@ impl DirectNovFeePolicy {
             self.clearing_constrained_strategy,
             u8::from(self.mapped_asset_auto_heal_rollback_enabled),
             self.mapped_asset_reorg_response_policy
-        )
+        );
+        match &self.amount_fee_v3 {
+            None => legacy,
+            Some(p) => format!(
+                "{legacy}:amount-bounded-v3:{}:{:?}:{}:{}:{}:{}:{:?}",
+                p.rate_bps,
+                p.rounding,
+                p.minimum_fee_units,
+                p.maximum_fee_units,
+                p.service_share_bps,
+                p.network_share_bps,
+                p.split_remainder
+            ),
+        }
     }
 }
 
@@ -185,6 +229,10 @@ pub struct FeeQuote {
     pub route: String,
     pub quote_contract: String,
     pub price_source: String,
+    #[serde(default)]
+    pub amount_fee_v3: Option<ProportionalFeeV3>,
+    #[serde(default)]
+    pub basis_amount: Option<u128>,
 }
 
 /// Optional map leaves distinguish absence from a present zero. Treasury totals
@@ -331,17 +379,36 @@ impl FeeQuote {
             self.pay_asset == "NOV"
                 && self.rate_ppm == RATE_PPM
                 && self.route == "direct_nov"
-                && self.price_source == "direct_nov"
-                && self.quote_contract == "novovm-exec-fee-quote/v1",
+                && self.price_source == "direct_nov",
             "invalid direct NOV quote profile"
         );
+        if let Some(p) = &self.amount_fee_v3 {
+            p.validate()?;
+            ensure!(
+                self.quote_contract == "novovm-exec-fee-quote/amount-bounded-v3"
+                    && self
+                        .basis_amount
+                        .is_some_and(|amount| p.fee(amount) == self.nov_amount)
+                    && self.slippage_bps == 0,
+                "invalid proportional NOV quote"
+            );
+        } else {
+            ensure!(
+                self.quote_contract == "novovm-exec-fee-quote/v1"
+                    && self.basis_amount.is_none()
+                    && (40..=104).contains(&self.nov_amount),
+                "invalid legacy NOV quote"
+            );
+        }
         ensure!(
-            (40..=104).contains(&self.nov_amount)
-                && self.quoted_pay_amount == self.nov_amount
-                && self.slippage_bps <= BPS as u32,
+            self.quoted_pay_amount == self.nov_amount && self.slippage_bps <= BPS as u32,
             "invalid NOV quote arithmetic"
         );
-        let inclusive = (self.nov_amount * (BPS + u128::from(self.slippage_bps))).div_ceil(BPS);
+        let inclusive = if self.amount_fee_v3.is_some() {
+            self.nov_amount
+        } else {
+            (self.nov_amount * (BPS + u128::from(self.slippage_bps))).div_ceil(BPS)
+        };
         ensure!(
             self.quoted_pay_amount_with_slippage == inclusive && self.max_pay_amount >= inclusive,
             "invalid NOV quote cap"
@@ -444,8 +511,8 @@ fn failure(code: FeeFailureCode, detail: impl std::fmt::Display) -> FeeFailure {
     }
 }
 
-/// Pure Transfer quote: preserves the original compact JSON argument projection,
-/// native-module/method/gas costs, NOV 1:1 rate, cap sentinel and slippage rounding.
+/// Pure Transfer quote: explicit amount-bounded-v3 uses integer amounts only. Omitted
+/// amount policy retains the old reference projection/cap/slippage contract.
 /// An economic cap refusal is the inner Err, not an infrastructure/config error.
 pub fn quote_transfer(
     request: &TransferFeeRequest,
@@ -473,22 +540,33 @@ fn quote_transfer_with_cap(
     #[cfg(test)]
     QUOTE_EVALUATIONS.with(|count| count.set(count.get() + 1));
     validate_request(request)?;
-    // Every interpolated value is fixed NOV, canonical hexadecimal, or decimal
-    // digits, so this is byte-identical to the old ordered serde JSON struct.
-    let arguments = format!(
-        "{{\"asset\":\"NOV\",\"to\":\"{}\",\"amount\":\"{}\"}}",
-        hex(request.recipient.as_bytes(), true),
-        request.amount
-    );
-    let nov_amount = 40 + ((arguments.len() as u128).div_ceil(16)).min(64);
-    let slippage_bps = request.slippage_bps.min(BPS as u32);
-    // nov_amount <= 104; this multiplication and ceiling cannot overflow.
-    let with_slippage = (nov_amount * (BPS + u128::from(slippage_bps))).div_ceil(BPS);
-    let max_pay_amount = if legacy_zero_cap && request.max_pay_amount == 0 {
-        with_slippage
+    let (nov_amount, slippage_bps, with_slippage) = if let Some(p) = &policy.amount_fee_v3 {
+        ensure!(
+            request.slippage_bps == 0,
+            "native proportional fee has no FX slippage"
+        );
+        let fee = p.fee(request.amount);
+        (fee, 0, fee)
     } else {
-        request.max_pay_amount
+        // Every interpolated value is fixed NOV, canonical hexadecimal, or decimal
+        // digits, so this is byte-identical to the old ordered serde JSON struct.
+        let arguments = format!(
+            "{{\"asset\":\"NOV\",\"to\":\"{}\",\"amount\":\"{}\"}}",
+            hex(request.recipient.as_bytes(), true),
+            request.amount
+        );
+        let nov_amount = 40 + ((arguments.len() as u128).div_ceil(16)).min(64);
+        let slippage_bps = request.slippage_bps.min(BPS as u32);
+        // nov_amount <= 104; this multiplication and ceiling cannot overflow.
+        let with_slippage = (nov_amount * (BPS + u128::from(slippage_bps))).div_ceil(BPS);
+        (nov_amount, slippage_bps, with_slippage)
     };
+    let max_pay_amount =
+        if policy.amount_fee_v3.is_none() && legacy_zero_cap && request.max_pay_amount == 0 {
+            with_slippage
+        } else {
+            request.max_pay_amount
+        };
     if with_slippage > max_pay_amount {
         return Ok(Err(failure(
             FeeFailureCode::MaxPayExceeded,
@@ -509,8 +587,15 @@ fn quote_transfer_with_cap(
         rate_ppm: RATE_PPM,
         oracle_updated_at_unix_ms: now,
         route: "direct_nov".into(),
-        quote_contract: "novovm-exec-fee-quote/v1".into(),
+        quote_contract: if policy.amount_fee_v3.is_some() {
+            "novovm-exec-fee-quote/amount-bounded-v3"
+        } else {
+            "novovm-exec-fee-quote/v1"
+        }
+        .into(),
         price_source: "direct_nov".into(),
+        amount_fee_v3: policy.amount_fee_v3.clone(),
+        basis_amount: policy.amount_fee_v3.as_ref().map(|_| request.amount),
     }))
 }
 
@@ -544,9 +629,13 @@ fn credit_accounting(
     amount: u128,
     policy: &DirectNovFeePolicy,
 ) -> Option<(FeeAccounting, [u128; 3])> {
-    let reserve = amount.checked_mul(u128::from(policy.reserve_share_bps))? / BPS;
-    let fee = amount.checked_mul(u128::from(policy.fee_share_bps))? / BPS;
-    let risk = amount.checked_sub(reserve)?.checked_sub(fee)?;
+    let [reserve, fee, risk] = if let Some(p) = &policy.amount_fee_v3 {
+        p.split(amount)
+    } else {
+        let reserve = amount.checked_mul(u128::from(policy.reserve_share_bps))? / BPS;
+        let fee = amount.checked_mul(u128::from(policy.fee_share_bps))? / BPS;
+        [reserve, fee, amount.checked_sub(reserve)?.checked_sub(fee)?]
+    };
     let mut after = before.clone();
     after.treasury_reserve_nov = Some(
         before
@@ -769,5 +858,7 @@ pub fn quote_and_settle(
     }
 }
 
+#[cfg(test)]
+mod proportional_tests;
 #[cfg(test)]
 mod tests;

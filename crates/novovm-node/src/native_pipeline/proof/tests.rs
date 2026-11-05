@@ -40,6 +40,7 @@ impl StateNodeReader for Memory {
 
 fn policy() -> DirectNovFeePolicy {
     DirectNovFeePolicy {
+        amount_fee_v3: None,
         quote_ttl_ms: 15_000,
         policy_version: 3,
         policy_source: "default".into(),

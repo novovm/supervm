@@ -156,6 +156,7 @@ fn hex(bytes: &[u8]) -> String {
 
 fn manifest() -> Result<UcaGenesisManifestV2, Box<dyn Error>> {
     let policy = DirectNovFeePolicy {
+        amount_fee_v3: None,
         quote_ttl_ms: 60_000,
         policy_version: 1,
         policy_source: "isolated-cli-test-not-deployment".into(),
@@ -564,6 +565,89 @@ fn prepare_matches_original_canonical_domain_without_authorizing_or_writing() ->
     Ok(())
 }
 
+fn proportional_fixture_policy(mut p: DirectNovFeePolicy) -> DirectNovFeePolicy {
+    use novovm_node::native_pipeline::business::direct_nov_fee::{
+        FeeRoundingV2, ProportionalFeeV3, SplitRemainderV2,
+    };
+    p.policy_version = 3;
+    p.reserve_share_bps = 0;
+    p.fee_share_bps = 0;
+    p.risk_buffer_share_bps = 0;
+    p.min_risk_buffer_nov = 0;
+    p.clearing_enabled = false;
+    p.redeem_paused = true;
+    p.amount_fee_v3 = Some(ProportionalFeeV3 {
+        minimum_fee_units: 0,
+        maximum_fee_units: u128::MAX,
+        rate_bps: 10,
+        rounding: FeeRoundingV2::Ceil,
+        service_share_bps: 6234,
+        network_share_bps: 3766,
+        split_remainder: SplitRemainderV2::Service,
+    });
+    p
+}
+
+#[test]
+fn proportional_prepare_commits_explicit_policy_and_rejects_mixed_legacy_shares() -> TestResult {
+    let fixture = Fixture::new("proportional-prepare")?;
+    let mut input = manifest()?;
+    input.genesis.policy = proportional_fixture_policy(input.genesis.policy);
+    fixture.write_manifest(&input)?;
+    let first = data(&fixture.prepare("proportional")?)?;
+    assert_eq!(
+        first["observed_signing_domain"],
+        hex(&input.signing_domain()?)
+    );
+    assert_non_activation(&first);
+    input
+        .genesis
+        .policy
+        .amount_fee_v3
+        .as_mut()
+        .unwrap()
+        .rate_bps = 20;
+    fixture.write_manifest(&input)?;
+    let second = data(&fixture.prepare("changed-rate")?)?;
+    assert_ne!(
+        first["observed_signing_domain"],
+        second["observed_signing_domain"]
+    );
+    input
+        .genesis
+        .policy
+        .amount_fee_v3
+        .as_mut()
+        .unwrap()
+        .minimum_fee_units = 2;
+    fixture.write_manifest(&input)?;
+    let bounded = data(&fixture.prepare("changed-minimum")?)?;
+    assert_ne!(
+        second["observed_signing_domain"],
+        bounded["observed_signing_domain"]
+    );
+    input
+        .genesis
+        .policy
+        .amount_fee_v3
+        .as_mut()
+        .unwrap()
+        .maximum_fee_units = 50;
+    fixture.write_manifest(&input)?;
+    let capped = data(&fixture.prepare("changed-maximum")?)?;
+    assert_ne!(
+        bounded["observed_signing_domain"],
+        capped["observed_signing_domain"]
+    );
+    input.genesis.policy.reserve_share_bps = 1;
+    fixture.write_manifest(&input)?;
+    rejected(
+        &fixture.prepare("mixed-legacy")?,
+        "cannot mix legacy bucket shares",
+    );
+    Ok(())
+}
+
 #[test]
 fn prepare_reads_paged_manifest_above_32_accounts_without_rounding_money() -> TestResult {
     let fixture = Fixture::new("paged-65-accounts")?;
@@ -860,6 +944,16 @@ struct VerifiedFragment {
 #[test]
 #[ignore = "requires trusted NOVOVM_AOEM_TEST_LIBRARY; uses real AOEM test keys only in memory, never activates a chain"]
 fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResult {
+    run_actual_approvals(false)
+}
+
+#[test]
+#[ignore = "explicit qualified AOEM; actual proportional-policy initialization approvals and rejection, no activation"]
+fn actual_amount_fee_approvals_match_original_startup_and_reject_forgery() -> TestResult {
+    run_actual_approvals(true)
+}
+
+fn run_actual_approvals(amount_fee: bool) -> TestResult {
     use novovm_exec::pq_signature::AoemMldsaParameterSet;
     use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
 
@@ -880,6 +974,9 @@ fn actual_aoem_approvals_match_original_startup_and_reject_forgery() -> TestResu
         .collect::<Result<Vec<_>, _>>()?;
     let fixture = Fixture::new("actual-aoem")?;
     let mut input = manifest()?;
+    if amount_fee {
+        input.genesis.policy = proportional_fixture_policy(input.genesis.policy);
+    }
     for (index, account) in input.accounts.iter_mut().enumerate() {
         account.management_public_key = keys[index].public_key.clone();
         account.grants[0].spend_public_key = keys[index + 2].public_key.clone();

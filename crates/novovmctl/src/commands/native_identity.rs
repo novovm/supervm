@@ -4,6 +4,7 @@ use clap::{Args, Subcommand};
 use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
 use novovm_relay::purpose_keys::{self, PublicIdentityV1, PurposeV1};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 #[derive(Debug, Args)]
@@ -37,10 +38,10 @@ pub struct RuntimeArgs {
 
 #[derive(Debug, Args)]
 pub struct KeyArgs {
-    /// Absolute key path in an already prepared private directory under the eventual service account.
+    /// Absolute key path in a private directory under its intended holder or service account.
     #[arg(long)]
     pub key_file: PathBuf,
-    /// Independent node role: validator or transport. Not a UCA asset key.
+    /// Independent key purpose; creating a key does not register identity or asset authority.
     #[arg(long, value_parser = parse_purpose)]
     pub purpose: PurposeV1,
     /// Explicit independent test-chain domain; this is not genesis activation.
@@ -58,7 +59,9 @@ fn parse_purpose(value: &str) -> Result<PurposeV1, String> {
     match value {
         "validator" => Ok(PurposeV1::Validator),
         "transport" => Ok(PurposeV1::Transport),
-        _ => Err("purpose must be validator or transport".into()),
+        "identity" => Ok(PurposeV1::Identity),
+        "asset-management" => Ok(PurposeV1::AssetManagement),
+        _ => Err("purpose must be validator, transport, identity or asset-management".into()),
     }
 }
 
@@ -73,6 +76,9 @@ enum Report {
 struct IdentityReport {
     action: &'static str,
     identity: PublicIdentityV1,
+    /// Local genesis descriptor address, not an on-chain opening or a balance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    asset_account_hex: Option<String>,
     protected_key_created: bool,
     private_material_exported: bool,
     database_created: bool,
@@ -124,9 +130,19 @@ fn execute(args: NativeIdentityArgs) -> Result<Report, CtlError> {
         }
     };
     let identity = mldsa_identity(&args, create)?;
+    // Genesis accepts opaque 20/32-byte account locations. This names a newly
+    // prepared descriptor only; current authority still comes from the signed
+    // initialization and its existing state owner, not this derivation.
+    let asset_account_hex = (args.purpose == PurposeV1::AssetManagement).then(|| {
+        let mut hash = Sha256::new();
+        hash.update(b"NOVOVM/asset/local-genesis-descriptor/v1\0");
+        hash.update(&identity.public_key);
+        super::native_genesis::hex(&hash.finalize())
+    });
     Ok(Report::Identity(IdentityReport {
         action,
         identity,
+        asset_account_hex,
         protected_key_created: create,
         private_material_exported: false,
         database_created: false,

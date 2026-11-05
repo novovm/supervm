@@ -65,7 +65,7 @@ impl UcaFixture {
         let mut context = *base.plan.context();
         context.business_program = uca_program_id();
         context.receipt_codec = uca_receipt_codec();
-        context.semantic_version = 1;
+        context.semantic_version = SEMANTIC_VERSION;
         let access = [
             balance_key(&payer),
             balance_key(&recipient),
@@ -151,6 +151,51 @@ fn controller_packet_cannot_claim_a_delegated_budget() {
         output.remaining = 0;
     }
     assert!(f.packet().is_ok());
+}
+
+#[test]
+fn proportional_packet_binds_quote_basis_even_when_rounded_fee_is_unchanged() {
+    use crate::native_pipeline::business::direct_nov_fee::{
+        FeeQuote, FeeRoundingV2, ProportionalFeeV3, SplitRemainderV2,
+    };
+    let mut f = UcaFixture::new();
+    // Structural rejected-fee receipt only, like this module's other fixtures;
+    // a stored quote is not proof of successful economic execution.
+    f.base.receipts[1].quote = Some(FeeQuote {
+        quote_id: "q-000000000000-4d2".into(),
+        pay_asset: "NOV".into(),
+        nov_amount: 1,
+        quoted_pay_amount: 1,
+        quoted_pay_amount_with_slippage: 1,
+        max_pay_amount: 1,
+        slippage_bps: 0,
+        quoted_at_unix_ms: 1234,
+        expires_at_unix_ms: 1235,
+        rate_ppm: 1_000_000,
+        oracle_updated_at_unix_ms: 1234,
+        route: "direct_nov".into(),
+        quote_contract: "novovm-exec-fee-quote/amount-bounded-v3".into(),
+        price_source: "direct_nov".into(),
+        amount_fee_v3: Some(ProportionalFeeV3 {
+            minimum_fee_units: 0,
+            maximum_fee_units: u128::MAX,
+            rate_bps: 10,
+            rounding: FeeRoundingV2::Ceil,
+            service_share_bps: 6234,
+            network_share_bps: 3766,
+            split_remainder: SplitRemainderV2::Service,
+        }),
+        basis_amount: Some(5),
+    });
+    assert!(f.packet().is_ok());
+    f.base.receipts[1].quote.as_mut().unwrap().basis_amount = Some(6);
+    f.base.receipts[1]
+        .quote
+        .as_ref()
+        .unwrap()
+        .validate()
+        .unwrap();
+    assert!(format!("{:#}", f.packet().err().unwrap()).contains("basis differs from signed amount"));
 }
 
 #[test]

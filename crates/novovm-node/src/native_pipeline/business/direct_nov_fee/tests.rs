@@ -3,8 +3,9 @@ use crate::native_pipeline::business::quoted_transfer::{
     compute_outcome, TransferFailure, TransferIntent, TransferSnapshot,
 };
 
-fn policy() -> DirectNovFeePolicy {
+pub(super) fn policy() -> DirectNovFeePolicy {
     DirectNovFeePolicy {
+        amount_fee_v3: None,
         quote_ttl_ms: 15_000,
         policy_version: 1,
         policy_source: "runtime_path".into(),
