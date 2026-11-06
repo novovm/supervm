@@ -32,6 +32,15 @@ Windows节点沿原SCM运行；选用现有适配器允许的LocalService，部�
 A当前非管理员，具体安装时需一次Windows原生UAC提升；不索取明文密码。
 服务键和用户七把资产控制钥分离，B既有服务不变。后继实际结果在本节续记。
 
+实际后继：原审批薄接线已在`9a6153f1eebda4da5c10829abf77575aa106ba8f`固定，
+两平台程序包重建通过，Windows16项/Linux13+3及严格Clippy通过。
+B已实际安装该Linux版本并在实际novovm服务账户/systemd加密credential上下文完成
+两把新域validator/transport用途钥生成及解封，旧四项应用服务状态/PID均未变化。
+A的UAC返回用户取消，未安装或生成服务钥；C/D还需各执行一次本机包安装/服务钥
+准备，不重复六组认证、不转交私钥。具体包pin、一次脚本、公开回执字段及实际证据
+统一见[原B交付记录最新节](../artifacts/audit/validator-b-program-install-20261102/README.md)。
+共同四验证者公开材料尚未齐；没有生成创世、链库或余额，没有节点已运行或新TPS结论。
+
 ## 2026-11-06 用户要求直接推进交付
 
 ### 同日后继：退役旧 WSS 主链，恢复资格回到当前 NovoRUDP

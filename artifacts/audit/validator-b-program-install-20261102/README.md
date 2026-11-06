@@ -1,5 +1,77 @@
 # B Linux程序安装回执（未启链）
 
+## 2026-11-06 首次自营交付增量（当前状态）
+
+最新直接授权：七用途金额合计1亿NOV，20bps/最低0.002/最高50 NOV、ceil、90/10及
+余数归服务预算保持；本次暂不启用S1锁定/共管，七把资产控制钥由用户个人持有。
+这不是公众资金治理完成，也不启用第三方资金/付费业务。
+
+实际程序源码：`9a6153f1eebda4da5c10829abf77575aa106ba8f`。沿原打包器分别重建
+Windows/Linux十个程序，复用逐文件核验的既有AOEM，未替换正式SDK。
+新增的`native-genesis approve`只把原受保护用途钥接入原初始化审批/AOEM签名；
+错域、错用途、错公钥、改清单/签名、跨主体重放及覆盖输出均拒绝。Windows16项、
+Linux13常规+3真实库及两平台严格Clippy通过；没有把本地结果写成完整云端CI通过。
+此前云端42153285988/9b2af049：Rust和原生恢复成功、两平台认证反例失败；
+f1a7e0e0已本地完整修正并验证受影响作业，尚无后继完整云端成功结论。
+
+| 制品 | 长度/独立pin |
+| --- | --- |
+| Windows ZIP | `selfrun-9a6153f1-windows-x86_64.zip`，140,195,880字节，SHA256 `5a946c364fca767e7805081bd81c538b637da72b29475daf4a11c40175ee1292` |
+| Windows release-manifest | `58c92085ca738c1e3e280960df9f16d5432ff38fabcf08fa1dca170b905eff5d`；77项原清单文件 |
+| Linux TAR.GZ | `selfrun-9a6153f1-linux-x86_64.tar.gz`，349,871,858字节，SHA256 `8bc21561725dcb9bb55f8e996e3374850404514b81c78263a3be49af68895159` |
+| Linux release-manifest | `efad60ae58128fb5faa971bf09a93736c78fc9f02989d3e9f969bd2a3245fadd`；80项原清单文件 |
+
+两个归档均在A的`D:\WorksArea\SUPERVM\target\selfrun-delivery-20261106\`。
+它们不是Git仓库中的二进制；仅`git pull`不会取得程序包。Windows ZIP内含固定程序目录
+和[一次安装/服务钥准备脚本](Install-Selfrun-Windows-20261106.ps1)，脚本SHA256为
+`27e44c439a329fdb116bc262e3efb9a81bfa579cfedc0fdcbd280f59e2f04046`。
+
+### B已实际完成
+
+- 新版本安装在`/opt/novovm/releases/selfrun-9a6153f1-linux-x86_64`，独立归档/manifest
+  pin、源码SHA和80项文件哈希全部核对；未切换旧版本目录或已有应用入口。
+- 新建原节点服务账户`novovm`，沿已有systemd加密credential及原`native-identity`
+  生成/inspect独立validator、transport钥，域`91129655606029`。钥在
+  `/var/lib/novovm/selfrun/91129655606029/B/`，0600且仅novovm可读写；包装credential
+  root:root 0600，不输出、不上传、不借用旧邮箱/Relay身份。
+- 实际相同User/Group和LoadCredentialEncrypted上下文通过包内AOEM KAT及两用途
+  生成/解封；这不是节点systemd服务生命周期验收。
+- 安装前后邮箱/Relay/Nginx/Docker全部active，PID分别944911/958/627770/1414，未变化。
+- `novovm-node.service`仍not-found；没有节点启动、链库、创世、余额初始化或新TPS。
+
+原始公开报告、安装日志、两平台release清单及实际操作脚本见
+[自营交付证据包](selfrun-9a6153f1-public-evidence.zip)，SHA256
+`bec384c758a5c49880fcae22b6d0becb8f8352753c96ba60d3c59b3385f86448`。
+证据包仅12个明确公开文件，不含用途钥、credential、链库或签票journal。
+
+### A/C/D现在只执行一次本机步骤
+
+A原生UAC尝试返回“操作已被用户取消”；没有安装或生成服务钥，不绕过提权。
+将上述Windows ZIP复制给C/D，先独立核对大小和归档SHA，再解到新的本地目录。
+若浏览器标记下载来源，只在核对上述SHA后对该ZIP执行`Unblock-File`再解包；
+不全局降低执行策略。不要复制七把资产钥或B的用途钥。
+
+各机Codex使用管理员PowerShell运行ZIP内同一脚本；`$unpacked`为实际解压目录：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "$unpacked\Install-Selfrun-Windows-20261106.ps1" -HostId C -PackageRoot "$unpacked\selfrun-9a6153f1-windows-x86_64"
+```
+
+C用`C`、D用`D`、A用`A`；A可直接使用原程序包根
+`D:\WorksArea\SUPERVM\artifacts\product-overlay\selfrun-9a6153f1-windows-x86_64`。
+脚本拒绝覆写既存release/state/服务/任务，核对源/安装后全部文件，设置ACL；
+一次性Task仅在LocalService（S-1-5-19）下运行原ctl生成及inspect本机两把用途钥。
+成功后注销该临时任务，节点仍只走原SCM；没有Task节点、清库、替代账本或低票旁路。
+LocalService的DPAPI是该账户域保护，不宣称不同服务名之间有独立密码学隔离。
+
+完成后只回传脚本所在目录中的`c-`/`d-`公开结果：`provision-result.json`、
+`runtime.json`、`validator-inspect.json`、`transport-inspect.json`；失败保留stderr和
+已有材料，不重复生成、不覆盖。不要上传`*.protected`、credential、数据库或journal。
+不用预约短窗口、不重跑六组认证；公开材料齐后A沿原初始化器固定共同清单/三pin，
+再安装和启动原节点，保留原4验证者/3票门槛。
+
+以下2026-11-02内容为当时安装记录，不覆盖本节实际增量。
+
 2026-11-02，`A-B-DEPLOY-20261102`。用户确认尚无共同配置，先安装程序。
 A在既有WSL Ubuntu构建，沿原Linux打包器生成完整候选，在B阿里云Ubuntu x86_64隔离安装。
 没有新建Git分支、替换正式随包库、启动验证者、生成创世/用途密钥或分配NOV。
