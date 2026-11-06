@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Args)]
 #[command(
-    about = "Offline identity and asset genesis preparation; never creates keys, a chain or a service"
+    about = "Original offline genesis preparation, protected approval and explicit initial-store creation; never starts a node or service"
 )]
 pub struct NativeGenesisArgs {
     #[command(subcommand)]
@@ -12,12 +12,26 @@ pub struct NativeGenesisArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum NativeGenesisCommand {
+    /// Observe this binary's original native protocol commitment; no state or runtime access.
+    ProtocolCommitment,
     /// Review the manifest and optionally select one original approval transcript.
     Prepare(PrepareArgs),
     /// Sign one reviewed original approval with its protected purpose key; public output only.
     Approve(ApproveArgs),
     /// Verify independent identity/asset approvals and derive review-only startup material; not launch approval.
     VerifyApprovals(VerifyArgs),
+    /// Create initial persistent content from a fully approved original node configuration, without networking or votes.
+    Initialize(InitializeArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct InitializeArgs {
+    /// Original native_execution_tick ResidentConfig with all three approved initialization pins.
+    #[arg(long)]
+    pub config: PathBuf,
+    /// Independently verified SHA-256 of the exact configured AOEM library.
+    #[arg(long)]
+    pub library_sha256: String,
 }
 
 #[derive(Debug, Args)]

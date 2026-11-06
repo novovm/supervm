@@ -13,7 +13,7 @@ use novovm_node::native_pipeline::service::config::{
     NodeKeyStorage, ResidentConfig, MAX_STARTUP_DOCUMENT_BYTES,
 };
 use novovm_protocol::uca_spend::{spend_key_ref_v1, MLDSA65_PUBLIC_KEY_BYTES};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -1212,6 +1212,17 @@ fn protected_approval_rejects_unreviewed_domain_index_recovery_and_overwrite_bef
     Ok(())
 }
 
+#[test]
+fn native_protocol_commitment_uses_original_owner_without_runtime_or_state() -> TestResult {
+    let fixture = Fixture::new("native-protocol-commitment")?;
+    let report = data(&fixture.invoke("protocol", &["protocol-commitment".into()])?)?;
+    assert_eq!(report["protocol_commitment"], hex(&protocol_commitment()));
+    assert_eq!(report["observed_only"], true);
+    assert_eq!(report["database_created"], false);
+    assert_eq!(report["network_opened"], false);
+    Ok(())
+}
+
 #[cfg(any(windows, target_os = "linux"))]
 struct ApprovalCustody(PathBuf);
 
@@ -1329,8 +1340,12 @@ fn actual_protected_genesis_approvals_match_original_compiler_and_reject_wrong_m
         }
         generate("wrong-chain", "identity", input.genesis.chain_id + 1)?;
         generate("wrong-purpose", "transport", input.genesis.chain_id)?;
+        input.genesis.validators[0].public_key =
+            generate("local-validator", "validator", input.genesis.chain_id)?;
+        input.genesis.validators[0].transport_public_key =
+            generate("local-transport", "transport", input.genesis.chain_id)?;
     }
-    for validator in &mut input.genesis.validators {
+    for validator in input.genesis.validators.iter_mut().skip(1) {
         validator.public_key = signer.generate_keypair()?.public_key;
         validator.transport_public_key = signer.generate_keypair()?.public_key;
     }
@@ -1448,6 +1463,15 @@ fn actual_protected_genesis_approvals_match_original_compiler_and_reject_wrong_m
     input.compile(&runtime, domain, &approvals)?;
     fixture.write_approvals(&approvals)?;
     data(&fixture.verify("protected-original-startup", domain, &library, library_hash)?)?;
+    check_offline_initialization(
+        &fixture,
+        &input,
+        &approvals,
+        &keys,
+        &credentials,
+        &library,
+        library_hash,
+    )?;
     let mut replayed = approvals.clone();
     replayed[1].signature = replayed[0].signature.clone();
     assert!(
@@ -1478,6 +1502,210 @@ fn actual_protected_genesis_approvals_match_original_compiler_and_reject_wrong_m
             .compile(&runtime, input.signing_domain()?, &approvals)
             .is_err(),
         "old approvals replayed into changed manifest"
+    );
+    Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn check_offline_initialization(
+    fixture: &Fixture,
+    input: &UcaGenesisManifestV2,
+    approvals: &[UcaGenesisApprovalV2],
+    keys: &BTreeMap<String, PathBuf>,
+    credentials: &Path,
+    library: &Path,
+    library_hash: [u8; 32],
+) -> TestResult {
+    use novovm_exec::{resident::StorageConfig, AoemExecFacade, AoemExecOpenOptions};
+    use novovm_node::native_pipeline::{
+        persistence::{CandidateStore, OpenMode, PacketBudget, StorageDomain, StoreConfig},
+        state::tree::StateNodeReader,
+    };
+    let runtime = AoemExecFacade::open(library, AoemExecOpenOptions::default())?;
+    let domain = input.signing_domain()?;
+    let verified = input.compile(&runtime, domain, approvals)?;
+    let material = UcaInitializationConfigV2 {
+        pages: vec![],
+        identities: input.identities.clone(),
+        accounts: input.accounts.clone(),
+        approvals: approvals.to_vec(),
+        expected_signing_domain: domain,
+        expected_initial_root: verified.state().root(),
+        expected_final_commitment: verified.final_commitment(),
+    };
+    let mut genesis = input.genesis.clone();
+    genesis.genesis_config_commitment = domain;
+    let database = fixture.root.join("exclusive-offline-genesis.rocksdb");
+    // If initialize accidentally starts the original node it cannot bind this
+    // address. No listener is started by the command under test.
+    let occupied = std::net::UdpSocket::bind("127.0.0.1:0")?;
+    #[derive(Serialize)]
+    struct Configuration<'a> {
+        profile: &'static str,
+        library: &'a Path,
+        database: &'a Path,
+        signing_key_file: &'a Path,
+        transport_key_file: &'a Path,
+        key_storage: NodeKeyStorage,
+        rpc_addr: Option<std::net::SocketAddr>,
+        udp_addr: std::net::SocketAddr,
+        peers: Vec<NativePeerConfig>,
+        genesis: &'a GenesisConfig,
+        uca_initialization: &'a UcaInitializationConfigV2,
+        workers: u32,
+        batch_size: usize,
+    }
+    let write_config = |label: &str,
+                        material: &UcaInitializationConfigV2,
+                        signing_key: &Path,
+                        transport_key: &Path|
+     -> Result<PathBuf, Box<dyn Error>> {
+        let path = fixture.root.join(format!("{label}.config.json"));
+        let config = Configuration {
+            profile: novovm_node::native_pipeline::service::config::ORIGINAL_PROFILE,
+            library,
+            database: &database,
+            signing_key_file: signing_key,
+            transport_key_file: transport_key,
+            key_storage: NodeKeyStorage::ProtectedV1,
+            rpc_addr: None,
+            udp_addr: occupied.local_addr()?,
+            peers: genesis
+                .validators
+                .iter()
+                .skip(1)
+                .enumerate()
+                .map(|(index, validator)| NativePeerConfig {
+                    public_key: validator.public_key.clone(),
+                    address: ([127, 0, 0, 1], 35000 + index as u16).into(),
+                })
+                .collect(),
+            genesis: &genesis,
+            uca_initialization: material,
+            workers: 1,
+            batch_size: 2,
+        };
+        fs::write(&path, serde_json::to_vec(&config)?)?;
+        Ok(path)
+    };
+    let run = |label: &str,
+               config: &Path,
+               hash: [u8; 32],
+               create: bool|
+     -> Result<Output, Box<dyn Error>> {
+        let before = snapshot(&fixture.root)?;
+        let result = Command::new(env!("CARGO_BIN_EXE_novovmctl"))
+            .args(["native-genesis", "initialize", "--config"])
+            .arg(config)
+            .arg("--library-sha256")
+            .arg(hex(&hash))
+            .env("CREDENTIALS_DIRECTORY", credentials)
+            .output()?;
+        let after = snapshot(&fixture.root)?;
+        if !create || !result.status.success() {
+            assert_eq!(before, after, "failed initialize changed files: {label}");
+        } else {
+            let relative = database.strip_prefix(&fixture.root)?;
+            let unchanged = after
+                .into_iter()
+                .filter(|(path, _)| !path.starts_with(relative))
+                .collect::<FileSnapshot>();
+            assert_eq!(
+                before, unchanged,
+                "initialize modified outside its original database"
+            );
+        }
+        fs::write(fixture.root.join(format!("{label}.stdout")), &result.stdout)?;
+        fs::write(fixture.root.join(format!("{label}.stderr")), &result.stderr)?;
+        Ok(result)
+    };
+    let good = write_config(
+        "offline-approved",
+        &material,
+        &keys["local-validator"],
+        &keys["local-transport"],
+    )?;
+    rejected(
+        &run("offline-wrong-library", &good, [0; 32], false)?,
+        "SHA-256 mismatch",
+    );
+    for (label, field) in [
+        ("offline-wrong-initial-root", 0),
+        ("offline-wrong-final-pin", 1),
+        ("offline-bad-approval", 2),
+    ] {
+        let mut altered = material.clone();
+        match field {
+            0 => altered.expected_initial_root[0] ^= 1,
+            1 => altered.expected_final_commitment[0] ^= 1,
+            _ => altered.approvals[0].signature[0] ^= 1,
+        }
+        let config = write_config(
+            label,
+            &altered,
+            &keys["local-validator"],
+            &keys["local-transport"],
+        )?;
+        let result = run(label, &config, library_hash, false)?;
+        assert!(
+            !result.status.success(),
+            "wrong original initialization pins/approval accepted"
+        );
+        assert!(!database.exists());
+    }
+    let wrong = write_config(
+        "offline-wrong-purpose",
+        &material,
+        &keys["wrong-purpose"],
+        &keys["local-transport"],
+    )?;
+    rejected(
+        &run("offline-wrong-purpose", &wrong, library_hash, false)?,
+        "purpose mismatch",
+    );
+    assert!(!database.exists());
+    let report = data(&run("offline-created", &good, library_hash, true)?)?;
+    assert_eq!(report["initial_state_root"], hex(&verified.state().root()));
+    for field in [
+        "original_owners_drained",
+        "initial_state_persisted",
+        "database_created",
+    ] {
+        assert_eq!(report[field], true, "{field}");
+    }
+    for field in [
+        "private_material_exported",
+        "node_started",
+        "service_started",
+        "network_opened",
+        "consensus_vote_signed",
+        "state_published",
+        "finality_verified",
+    ] {
+        assert_eq!(report[field], false, "{field}");
+    }
+    let original_config = ResidentConfig::load(&good)?;
+    let store_config = StoreConfig {
+        library: original_config.library,
+        database: original_config.database,
+        domain: StorageDomain {
+            chain_id: genesis.chain_id,
+            genesis_config_commitment: domain,
+            protocol_commitment: genesis.protocol_commitment,
+        },
+        storage: StorageConfig::default(),
+        packet_budget: PacketBudget::default(),
+    };
+    // The original Existing storage path, no socket/controller/journal. Compare
+    // every original content-addressed initial node, not a reconstructed ledger.
+    let store = CandidateStore::open(store_config, OpenMode::Existing)?;
+    for (hash, bytes) in verified.state().nodes() {
+        assert_eq!(store.read_node(hash)?.as_ref(), Some(bytes));
+    }
+    drop(store);
+    rejected(
+        &run("offline-existing-refused", &good, library_hash, false)?,
+        "refusing overwrite",
     );
     Ok(())
 }

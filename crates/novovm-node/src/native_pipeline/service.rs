@@ -66,6 +66,45 @@ pub struct ResidentNode {
     pub validators: Arc<ValidatorSet>,
 }
 
+/// Local initial content only, not a chain head, signed vote or finality claim.
+#[derive(Debug)]
+pub struct OfflineInitialization {
+    pub initial_state_root: super::state::tree::NodeHash,
+}
+
+/// Explicit first creation through the original startup and persistence owners.
+/// All identity/approval/pin checks finish before CreateNew opens the store.
+/// No socket, lifecycle controller or validator journal is constructed here.
+pub fn initialize_persistent_state(mut config: ResidentConfig) -> Result<OfflineInitialization> {
+    config.normalize_native_paths();
+    ensure!(
+        config.profile == config::ORIGINAL_PROFILE
+            && config.key_storage == NodeKeyStorage::ProtectedV1
+            && config.uca_initialization.is_some()
+            && config.rpc_addr.is_none(),
+        "offline initialization requires native_execution_tick, protected custody, approved UCA initialization and no RPC"
+    );
+    config.validate()?;
+    match std::fs::symlink_metadata(&config.database) {
+        Ok(_) => {
+            anyhow::bail!("offline initialization database already exists; refusing overwrite")
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context("inspect new offline initialization path"),
+    }
+    let prepared = prepare_startup(&config)?;
+    let initial_state_root = prepared.initial.root();
+    let pipeline = CandidatePipeline::start_with_initial_state(
+        pipeline_config(&config),
+        OpenMode::CreateNew,
+        prepared.initial,
+    )?;
+    // Success is reported only after the original computation/I/O owners drain.
+    // A failed create remains on disk for diagnosis, never erased or resumed.
+    pipeline.shutdown()?;
+    Ok(OfflineInitialization { initial_state_root })
+}
+
 impl ResidentNode {
     /// Historical convenience startup. Bind the original UDP owner exactly
     /// once, then use the same supplied-transport initialization as the node tick.

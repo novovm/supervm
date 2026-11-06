@@ -1,0 +1,71 @@
+{
+  "source_of_approval_and_verification_tools": "9a6153f1eebda4da5c10829abf77575aa106ba8f",
+  "chain_id": 91129655606029,
+  "validator_epoch": 1,
+  "validator_count": 4,
+  "quorum": 3,
+  "independent_purpose_public_keys": [
+    {
+      "purpose": "validator",
+      "public_key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "core_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "host": "A"
+    },
+    {
+      "purpose": "transport",
+      "public_key_sha256": "621b30cd995d2a8734dbc1490ea0c5e46e764bf61c4d8f84eb26b6aaf540e72b",
+      "core_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "host": "A"
+    },
+    {
+      "purpose": "validator",
+      "public_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "core_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "host": "B"
+    },
+    {
+      "purpose": "transport",
+      "public_key_sha256": "74b943c29911e0729f00012ca10cbec41b395553cd910808d41495bfe8c63490",
+      "core_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "host": "B"
+    },
+    {
+      "purpose": "validator",
+      "public_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+      "core_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "host": "C"
+    },
+    {
+      "purpose": "transport",
+      "public_key_sha256": "610885e9dc34eaa2c979a95e55bebde247d8f40e23f071f727a7fbf0b4c50e4a",
+      "core_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "host": "C"
+    },
+    {
+      "purpose": "validator",
+      "public_key_sha256": "cac6c513f90eb836466ed6a6a175c2c091736192634c536099dd10dfb96cbb96",
+      "core_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "host": "D"
+    },
+    {
+      "purpose": "transport",
+      "public_key_sha256": "01663acfa5f718969673922846042817fa359eece95d9fdfc837ebd8014099fb",
+      "core_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "host": "D"
+    }
+  ],
+  "manifest_sha256": "633988f50254cf1e9dfb894dfe27ec4c96c406810e7815555111b21bcbc5f2a5",
+  "approvals_sha256": "2275f276bc4c0948fea3a273b1a6d54bad688388a440b71773da6e9983478e5c",
+  "approval_subjects": 8,
+  "signing_domain": "f8396bae7c0150eef98ab2f1532057b706a5576b89c149c12561ef5d6b847ec6",
+  "initial_state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "final_genesis_commitment": "fce54ec26c62c3d2eabce3e35216cd982cb4eab663bb0172148cb4aaaec69d11",
+  "Windows_original_compiler_verified": true,
+  "B_original_linux_compiler_verified": true,
+  "three_pins_match": true,
+  "S1_locks_enabled": false,
+  "multiparty_control_enabled": false,
+  "chain_state_initialized": false,
+  "node_started": false,
+  "private_material_exported": false
+}

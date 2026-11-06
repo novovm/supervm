@@ -1,8 +1,8 @@
 //! Thin offline adapter to the original node compiler and protected signer.
-//! Only explicit approve accesses custody; no store, journal, service or network.
+//! Explicit initialize creates initial content only; no journal, service or network.
 use super::native_nonce_migration::read_bounded_document_v1;
 use crate::cli::native_genesis::{
-    ApproveArgs, NativeGenesisArgs, NativeGenesisCommand, VerifyArgs,
+    ApproveArgs, InitializeArgs, NativeGenesisArgs, NativeGenesisCommand, VerifyArgs,
 };
 use crate::{error::CtlError, output};
 use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
@@ -50,9 +50,23 @@ pub fn run(args: NativeGenesisArgs) -> Result<(), CtlError> {
 
 fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
     let input = match command {
+        NativeGenesisCommand::ProtocolCommitment => {
+            return Ok(Review {
+                metadata: json!({
+                    "action": "protocol-commitment",
+                    "source": "novovm-node/native_pipeline/service/config::protocol_commitment",
+                    "protocol_commitment": hex(&novovm_node::native_pipeline::service::config::protocol_commitment()),
+                    "observed_only": true, "database_created": false,
+                "state_published": false, "node_started": false, "network_opened": false,
+                "consensus_vote_signed": false
+                }),
+                review_only_startup_fragment: None,
+            })
+        }
         NativeGenesisCommand::Prepare(args) => args,
         NativeGenesisCommand::Approve(args) => return approve(args),
         NativeGenesisCommand::VerifyApprovals(args) => &args.input,
+        NativeGenesisCommand::Initialize(args) => return initialize(args),
     };
     if !(1..=128).contains(&input.approval_limit) {
         return Err(CtlError::InvalidArgument(
@@ -136,6 +150,43 @@ fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
         verify(args, &manifest, domain, &mut report)?;
     }
     Ok(report)
+}
+
+fn initialize(args: &InitializeArgs) -> Result<Review, CtlError> {
+    use novovm_node::native_pipeline::service::{initialize_persistent_state, ResidentConfig};
+    let config = ResidentConfig::load(&args.config).map_err(|error| {
+        CtlError::InvalidArgument(format!(
+            "original offline initialization configuration: {error:#}"
+        ))
+    })?;
+    let expected_library = parse_digest(&args.library_sha256)?;
+    if file_digest(&config.library)? != expected_library {
+        return Err(CtlError::InvalidArgument(
+            "AOEM library SHA-256 mismatch before load".into(),
+        ));
+    }
+    let initialized = initialize_persistent_state(config.clone()).map_err(|error| {
+        CtlError::IntegrationFailed(format!("original offline initialization: {error:#}"))
+    })?;
+    if file_digest(&config.library)? != expected_library {
+        return Err(CtlError::IntegrationFailed("AOEM library changed during offline initialization; preserve the created state for diagnosis".into()));
+    }
+    Ok(Review {
+        metadata: json!({
+            "schema_version": 3, "action": "initialize", "database": config.database,
+            "chain_id": config.genesis.chain_id,
+            "genesis_config_commitment": hex(&config.genesis.genesis_config_commitment),
+            "protocol_commitment": hex(&config.genesis.protocol_commitment),
+            "initial_state_root": hex(&initialized.initial_state_root),
+            "aoem_library": config.library, "aoem_library_sha256": hex(&expected_library),
+            "database_created": true, "initial_state_persisted": true,
+            "original_owners_drained": true, "private_material_exported": false,
+            "node_started": false, "service_started": false, "network_opened": false,
+            "consensus_vote_signed": false, "state_published": false,
+            "finality_verified": false
+        }),
+        review_only_startup_fragment: None,
+    })
 }
 
 fn read_manifest(path: &Path) -> Result<UcaGenesisManifestV2, CtlError> {

@@ -1,5 +1,27 @@
 # B Linux程序安装回执（未启链）
 
+## 2026-11-06 当前：C/D已签收，四机共同初始承诺已核对
+
+A已读取C `f791cfed`与D `54b59f6e`的原始公开报告ZIP，核对R2/程序/core pin、实际
+LocalService退出码与生成/inspect公钥；A/B/C/D本轮独立服务用途材料齐全，八把公钥
+各不相同。不要求C/D再次安装、换钥、重做六组认证。各机原始回执未改写。
+
+原七用途清单（1亿NOV、个人七钥、S1本次不启用）及既定费用已构造为原初始化manifest，
+8份身份/资产管理主体批准经原受保护`approve`生成。A的Windows和B已安装Linux9a
+分别验证，签名域/初始root/最终commitment完全一致；完整值及原始文件位置见
+[唯一共同配置当前增量](../../../docs/NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md)。
+没有私钥传输、库复制、签票、链状态初始化或节点启动，不称四机主链已运行。
+
+原SCM仅`existing`，原工具缺离线建库入口；现已补`native-genesis initialize`，严格
+复用原startup/pipeline/CreateNew/shutdown，不创建socket/controller/journal。两平台
+各17项真实AOEM/custody/建库/原Existing冷开及反例、严格Clippy通过，原service单元
+10项及node lib严格Clippy通过。新初始化源码/工具仍与已安装9a运行节点分别固定，
+不以debug可执行文件操作真实状态，也不为此重新生成已合格用途钥。
+
+实际B对端路由尚需公网可达地址：用户确认尚无端口映射，A已给A/C/D UDP41051/52/53
+同端口映射计划，B仍41050。等待路由器型号/WAN核对，不将LAN地址假填给云端B，不
+自动修改路由器/防火墙、开启DMZ、放宽来源绑定或回退WSS。其间继续固定原初始化工具。
+
 ## 2026-11-06 当前：A实际服务账户准备通过，C/D使用R2（本地集中交付记录）
 
 用户执行恢复脚本后，A原固定程序77项哈希再次通过；没有重装程序。真实LocalService
