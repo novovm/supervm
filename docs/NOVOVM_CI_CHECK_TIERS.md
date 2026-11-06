@@ -1,5 +1,27 @@
 # CI scope and candidate validation
 
+## 2026-11-06 customer correction: local CI before another candidate push
+
+Cloud CI is a final candidate gate, not the local debugging environment. Before
+another push, run the affected original workflow jobs locally with their actual
+platform libraries, manifests, environment propagation, positive cases AND
+counterexamples. A selected recovery group or selector unit tests alone do not
+qualify another affected platform job. In particular, changing an inherited
+runtime pin affects tests that intentionally select a different artifact too.
+
+Use the workflow's existing build/test commands as the source of truth; do not
+maintain a second implementation of the tests. Record executed, failed and not
+executed steps separately. Local reuse of verified artifacts/toolchains is not a
+claim to reproduce GitHub's hosted image or remote networking. Missing local
+platform coverage remains missing, not a reason to push and see what fails.
+
+Finish the coherent local work package and relevant checks before concentrated
+delivery. Do not push each small fix, trigger manual full CI for diagnosis,
+disable automatic checks, or turn failure into success. Existing cloud runs and
+their original results remain; this correction does not authorize cancellation,
+deployment, library replacement or changes to B/C/D. The current follow-up stays
+local until the affected jobs and remaining local checks have been completed.
+
 ## 2026-11-06 current native recovery; user-authorized WSS mainchain retirement
 
 The user explicitly retired the historical WSS mainchain, not the independent

@@ -413,7 +413,7 @@ fn actual_runtime_qualification_uses_original_owner_without_keys_or_state() -> T
 }
 
 #[test]
-#[ignore = "requires explicit NOVOVM_AOEM_BATCH_UNAVAILABLE_TEST_LIBRARY; countercheck only this exact recorded artifact hash"]
+#[ignore = "requires explicit batch-unavailable library and candidate manifest; countercheck only these recorded artifacts"]
 fn actual_runtime_qualification_rejects_selected_library_without_batch_capability() -> TestResult {
     use sha2::{Digest, Sha256};
     let library = PathBuf::from(std::env::var_os("NOVOVM_AOEM_BATCH_UNAVAILABLE_TEST_LIBRARY")
@@ -421,12 +421,37 @@ fn actual_runtime_qualification_rejects_selected_library_without_batch_capabilit
     let digest = format!("{:x}", Sha256::digest(std::fs::read(&library)?));
     let fixture = Fixture::new()?;
     let before = snapshot(&fixture.root)?;
+    let candidate_manifest = PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_MANIFEST")
+            .ok_or("set NOVOVM_AOEM_TEST_MANIFEST to the qualified candidate manifest")?,
+    )
+    .canonicalize()?;
+    let mismatched = fixture
+        .runtime_command()
+        .arg("--library")
+        .arg(&library)
+        .arg("--library-sha256")
+        .arg(&digest)
+        .env("AOEM_DLL_MANIFEST", &candidate_manifest)
+        .env("AOEM_DLL_MANIFEST_REQUIRED", "1")
+        .output()?;
+    assert!(!mismatched.status.success());
+    assert!(
+        String::from_utf8_lossy(&mismatched.stderr).contains("AOEM DLL hash mismatch"),
+        "{}",
+        String::from_utf8_lossy(&mismatched.stderr)
+    );
+    assert_eq!(snapshot(&fixture.root)?, before);
     let output = fixture
         .runtime_command()
         .arg("--library")
         .arg(&library)
         .arg("--library-sha256")
         .arg(&digest)
+        // This counterexample deliberately selects the formal SDK, not the
+        // candidate. Use its original manifest discovery and keep it mandatory.
+        .env_remove("AOEM_DLL_MANIFEST")
+        .env("AOEM_DLL_MANIFEST_REQUIRED", "1")
         .output()?;
     assert!(!output.status.success());
     let error = String::from_utf8_lossy(&output.stderr);

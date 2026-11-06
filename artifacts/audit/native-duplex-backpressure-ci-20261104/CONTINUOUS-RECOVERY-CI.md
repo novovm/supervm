@@ -1,5 +1,60 @@
 # 旧完整CI的高度4超时：保留失败，补足失败现场
 
+## 2026-11-06 后继纠正：不得用云端CI补本地作业覆盖
+
+用户指出连续推送导致重复云端CI。本轮不推送、不手工触发、不取消已有运行，
+先在A本地完成受影响的原作业。上一轮只跑恢复组和配置单元测试，未把同一环境变更
+影响到的两平台认证作业完整执行就推送，属于验证范围不足，不能称为云端偶发问题。
+
+`9b2af049`运行[42153285988](https://github.com/novovm/supervm/actions/runs/42153285988)
+的两平台认证作业分别6通过/1失败，唯一失败均为
+`actual_runtime_qualification_rejects_selected_library_without_batch_capability`。
+原记录中的正向KAT及真实NAT重连通过，不是本轮又发现六种网络恢复故障。
+修正canonical manifest导出后，反例显式选择正式SDK旧库，却继承候选manifest，
+提前触发DLL hash mismatch，没有验证它原本要求的batch capability unavailable。
+Windows本地原实现已复现该错误，0通过/1失败、退出101，原日志保留。
+
+本次只改原反例：
+
+| 实际库及清单 | 必须得到的结果 |
+| --- | --- |
+| 旧库＋候选清单 | 强制manifest校验拒绝哈希不匹配；新增此断言，临时目录保持不变 |
+| 同一旧库＋原SDK清单定位 | 仅在该反例子进程去掉候选覆盖，强制required=1；仍须精确拒绝“ML-DSA batch verification capability unavailable” |
+| 当前候选库＋候选清单 | 原正向KAT、用途隔离、NAT认证/重连完整执行，不改变父进程pin或生产加载器 |
+
+不关闭校验、不把任意错误当作能力缺失、不修改库/manifest内容，不改密码学、网络、
+共识或超时。原反例的无状态变化断言保留，生产代码没有差异。
+
+本地执行直接读取`.github/workflows/ci.yml`中`native_transport_qualification`的
+原矩阵与run脚本，重放GITHUB_ENV，执行全部五个材料校验/构建/测试步骤，不再手选
+一个测试过滤器。本地复用已物化且哈希核对的库与已安装1.94.0工具链；不执行云端
+checkout/cache/LFS下载步骤，不声称复刻GitHub托管镜像或真实多机环境。
+Windows在A原系统运行，Linux在A的Ubuntu 24.04 WSL运行；不是B/C/D实机验收。
+为执行原PowerShell脚本，WSL仅在本工作包隔离目录准备官方便携PowerShell 7.6.9，
+核验发布资产SHA256为`1da6d6d6035d651f20e70ddee7c4c15ac6ab8b9fb40ee92240d91263f28a884b`，
+不安装系统包或服务、不更改全局PATH。执行器和工具均不进入产品包。
+
+| 原作业/检查 | 本轮本地结果 |
+| --- | --- |
+| Linux认证作业五个原步骤 | 全部通过：身份/KAT/NAT 7项，启动三承诺/冷恢复1项，Relay真实进程4项，Linux受保护服务重启1项 |
+| Windows认证作业五个原步骤 | 全部通过：身份/KAT/NAT 7项，启动三承诺/冷恢复1项，Relay进程4项，mirror 6项，publisher 5项，owner 13项 |
+| 相关严格Clippy | Windows/Linux均通过 |
+| 原CI配置/严格汇总 | 24项通过；失败、跳过或未执行不能汇总为通过 |
+| 格式、YAML解析及差异检查 | 通过；保留原测试期限及计票/权限/资源条件 |
+
+原始本地运行材料在`target/native-auth-local-job-20261106/`。这不是整个仓库所有
+平台/所有CI作业的重新签收，更不是SCM、四机部署、自动入网或新性能结论。
+该工作包不混入已有经济文档改动；本地优先规则同步到原CI分层文档。
+两平台本地作业各退出0；Windows镜像寿命组251.86秒、所有者组306.26秒，原
+110/220秒监听、61秒换代、撤销和重启边界保留，没有缩短测试制造通过。
+
+[本轮本地原作业证据](native-auth-local-jobs-evidence.zip)仅含19个明确列出的
+构建/测试/Clippy日志、原失败、配置导出和原工作流本地执行脚本，16,597字节。
+SHA256：`85b7b68e04ac1a3f8112bd0ae1930731f01a3f08339812acf660fa463944788c`。
+不包含库文件、便携工具、用途钥、节点配置、数据库、journal或钱包材料。
+本轮仅本地提交，不推送、不新增手工或自动云端运行，不取消已有CI；不改B/C/D，
+不部署、不替换正式库，不以此宣称整个仓库或新提交的云端门禁已通过。
+
 ## 2026-11-06 后继：独立原生恢复作业漏接AOEM manifest环境
 
 `3055eefb4785c461d001dcc54e0d760b5371f2a2`的完整CI
