@@ -1,5 +1,17 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 2026-11-07 C通信能力交接：A接共享选路，C保留手机所有权
+
+本轮已核对SUPERVM `54b59f6e`与NOVOCHAT `45e3c917`，两仓审查前均无未提交或未推送修改。
+在[原共享传输交接](NOVORUDP_SHARED_CLIENT_HANDOFF.md#2026-11-07-validator-c--a-novonet-通信能力复用交接)
+补齐实际制品、发现→NAT→直连/中继/多跳→认证→重连调用链、算法/版本、外部依赖和逐项证据边界。
+v110实际SDK是`06801146`，其通信身份仍为Ed25519；当前共享原生身份已改ML-DSA-65，
+不能混称旧手机已迁移。保留APK/native摘要本轮重算一致，手机测试没有重跑。
+A负责审阅复用共享能力、NOV主节点动态选路接线与验证；C只负责手机接入，不另写共享网络。
+主节点固定对端装配、候选多跳源码、手机有限通信通过分别记账。完整Android运行库及新格式
+身份兼容仍须明确交付；Windows候选KAT不代替手机资格。不启链、不改手机身份历史或生产收费。
+接收回执字段见上述原交接；推送不等于A签收。
+
 ## 2026-11-04 C LFS download audit: A owns CI changes
 
 **A receipt, 2026-11-04:** received_commit `bb98a1d7236f2938547d1e2be94c0adda523bd98`; workflow_owner A. The handoff is read and merged without discarding concurrent main work. The Linux formal/candidate/plugin and Windows formal/candidate path sets remain proposals pending A's dependency validation. The proposed cache key binds platform and the required OID/size set, with verified early save; neither this cache nor cold/warm evidence has been implemented or measured. First finish the already-running backpressure/mirror full-CI closure. No workflow, trigger, test command, LFS download or billing change is made by this receipt.
