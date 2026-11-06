@@ -21,7 +21,7 @@ function Test-Release([string]$root) {
     foreach ($file in $manifest.artifacts) {
         $full = [IO.Path]::GetFullPath((Join-Path $root $file.path))
         if (-not $full.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Artifact escaped release' }
-        $item = Get-Item -LiteralPath $full
+        $item = Get-Item -LiteralPath $full -Force
         if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $item.Length -ne $file.bytes) { throw "Artifact shape mismatch: $($file.path)" }
         if ((Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant() -ne $file.sha256) { throw "Artifact hash mismatch: $($file.path)" }
     }
@@ -33,14 +33,25 @@ try {
     if (Get-Service -Name ('NOVOVM-'+$HostId) -ErrorAction SilentlyContinue) { throw 'Service already exists: refusing implicit adoption' }
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Provisioning task already exists' }
     foreach ($parent in @('C:\ProgramData', 'C:\ProgramData\NOVOVM', 'C:\ProgramData\NOVOVM\releases', 'C:\ProgramData\NOVOVM\selfrun', 'C:\ProgramData\NOVOVM\selfrun\91129655606029')) {
-        if ((Test-Path -LiteralPath $parent) -and ((Get-Item -LiteralPath $parent).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Reparse parent: $parent" }
+        if ((Test-Path -LiteralPath $parent) -and ((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Reparse parent: $parent" }
     }
     $result['source_artifacts_verified'] = Test-Release $source
     New-Item -ItemType Directory -Path (Split-Path -Parent $release) -Force | Out-Null
     Copy-Item -LiteralPath $source -Destination $release -Recurse
     $result['installed_artifacts_verified'] = Test-Release $release
-    & icacls.exe $release /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-19:(OI)(CI)(RX)' /T /Q | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Release ACL failed' }
+    # Files need effective ACEs without directory-only inheritance flags.
+    foreach ($entry in @((Get-Item -LiteralPath $release -Force)) + @(Get-ChildItem -LiteralPath $release -Recurse -Force)) {
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Linked release entry' }
+        $acl = if ($entry.PSIsContainer) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
+        $inherit = if ($entry.PSIsContainer) { [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit' } else { [Security.AccessControl.InheritanceFlags]::None }
+        $acl.SetAccessRuleProtection($true,$false)
+        foreach ($sidText in @('S-1-5-18','S-1-5-32-544','S-1-5-19')) {
+            $sid = New-Object Security.Principal.SecurityIdentifier($sidText)
+            $rights = if ($sidText -eq 'S-1-5-19') { [Security.AccessControl.FileSystemRights]::ReadAndExecute } else { [Security.AccessControl.FileSystemRights]::FullControl }
+            $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,$rights,$inherit,[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow)))
+        }
+        Set-Acl -LiteralPath $entry.FullName -AclObject $acl
+    }
     New-Item -ItemType Directory -Path $state | Out-Null
     & icacls.exe $state /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)(F)' '*S-1-5-32-544:(OI)(CI)(F)' '*S-1-5-19:(OI)(CI)(F)' /T /Q | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Private state ACL failed' }

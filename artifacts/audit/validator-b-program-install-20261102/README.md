@@ -1,5 +1,74 @@
 # B Linux程序安装回执（未启链）
 
+## 2026-11-06 当前：A实际服务账户准备通过，C/D使用R2（本地集中交付记录）
+
+用户执行恢复脚本后，A原固定程序77项哈希再次通过；没有重装程序。真实LocalService
+（SID `S-1-5-19`）成功完成包内AOEM标量/统一语义/混合批验签资格、两把独立ML-DSA-65
+validator/transport钥生成和原OS custody解封。生成与inspect公钥完全一致，A/B共四把
+用途公钥各不相同。任务退出码0，原临时任务已注销（独立schtasks查询亦为不存在）。
+权限夹具已恢复继承权限。原失败、空文件DACL审计均保留，不改写为成功。
+
+这证明**A实际LocalService用途材料准备通过**，不是节点SCM生命周期通过：
+没有安装节点服务、开链库、创世/余额初始化或启动节点，没有新TPS；七把资产钥未被
+该操作读取或替换。B上轮安装及两用途解封结论保持，C/D本轮公开材料尚未收到。
+
+程序仍为`9a6153f1eebda4da5c10829abf77575aa106ba8f`，二进制和release-manifest
+不变。R2仅修正隐藏目录查询和文件/目录分别授权；A恢复实际执行的是同一安装脚本
+中的修正ACL步骤，不是另一套权限实现。最终ZIP已逐流验证77项制品及4份元数据/
+脚本，共81个非目录项；SDK嵌套CHECKSUMS仍匹配原已验独立pin。
+
+| R2交付 | 独立核对值 |
+| --- | --- |
+| ZIP | `D:\WorksArea\SUPERVM\target\selfrun-delivery-20261106\selfrun-9a6153f1-windows-x86_64-r2.zip` |
+| 大小 | 140,196,230字节 |
+| ZIP SHA256 | `57bf8bc6fab08d5b7a85f4d15b2df30bbedcc1fa69d7ca361d3d3f99d63847eb` |
+| 包内安装脚本 SHA256 | `3edee735b7c208b93a9a65b3a12da0744f8b613af50fa1e506ea5478d928deec` |
+| 原Windows release-manifest SHA256 | `58c92085ca738c1e3e280960df9f16d5432ff38fabcf08fa1dca170b905eff5d` |
+
+C/D各取得此R2 ZIP，核对后解到新目录，由管理员PowerShell运行包内同一脚本：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "$unpacked\Install-Selfrun-Windows-20261106.ps1" -HostId C -PackageRoot "$unpacked\selfrun-9a6153f1-windows-x86_64"
+```
+
+C用`C`、D用`D`。只回传`c-`或`d-`的`provision-result.json`、`runtime.json`、
+`validator-inspect.json`、`transport-inspect.json`，不传protected/credential/库/journal。
+如已执行旧版而存在安装目录或失败报告，先回传原结果，不反复重跑、清目录或换钥；
+A专用恢复脚本不能不改Host就交给C/D。没有短预约窗口，不重跑六组认证。
+**旧ZIP和GitHub旧快照中的安装脚本不可继续使用，以此R2包内脚本为准。**
+本轮安装修正、真实结果及R2记录先本地固定，待交付工作包集中推送，不额外启动完整CI。
+
+公开证据：[A服务账户R2证据](selfrun-9a6153f1-A-custody-r2-public-evidence.zip)，
+20,479字节，SHA256 `ed37705701b4643d57cce108511ac98949020f3a7e915e014b629740e07a0c76`；
+13项明确公开文件，含两次失败、权限审计、实际成功/运行库/公开身份报告与原操作脚本，
+不含任何受保护钥、包装credential或链状态。
+
+### 历史：A真实安装问题及待提权窗口（已由上文后继成功结果覆盖）
+
+A已由实际UAC提升执行安装：源及安装后77项哈希一致，固定程序目录已建立。
+实测发现两个安装脚本问题，原失败均保留：
+
+1. 隐藏的`C:\ProgramData`在Windows PowerShell5中须`Get-Item -Force`；原预检
+   在任何复制/密钥操作前失败，已修正查询。
+2. 原递归icacls授权未在普通文件留下有效ACE；实际审计中目录有三条Allow，但
+   `bin/novovmctl.exe`的DACL为空，LocalService进程创建被拒绝。Task已实际运行在
+   S-1-5-19，失败在runtime KAT进程启动之前，未生成validator/transport钥。
+
+现已把安装脚本改为目录/文件分别创建明确DACL：SYSTEM/Administrators全权，
+LocalService读/执行，文件ACE不带目录继承标志。**该修正尚未取得真实LocalService
+成功结果**，不能标成服务资格通过。后续恢复UAC返回取消；不绕过提权，不重装或
+删除原报告，不在桌面用户下代跑密钥准备。
+
+之前的Windows ZIP中安装脚本已撤回使用；C/D暂不执行该旧ZIP脚本，二进制9a及
+其77项清单没有改变。新脚本/交付归档待A真实解封通过后集中更新，不为此反复云端CI。
+本地`target/selfrun-delivery-20261106/`保存`a-provision-result-before-hidden-path-fix.json`、
+`a-provision-result.json`、`a-service-execution-audit.json`及有界恢复脚本
+`Resume-A-ServiceKeys.ps1`。恢复只修该固定版本文件权限、重新执行已有失败任务、
+核对原包哈希和实际SID、生成/inspect尚不存在的两把用途钥，成功后注销临时任务；
+仍不安装节点服务、开库、创世或触碰七把资产钥。
+额外的非提升ACL夹具尝试被权限拒绝，不计通过；恢复脚本只对明确的两项本地
+`acl-fixture`测试对象恢复继承权限，不操作其他路径。历史失败/旧权限审计不销账。
+
 ## 2026-11-06 首次自营交付增量（当前状态）
 
 最新直接授权：七用途金额合计1亿NOV，20bps/最低0.002/最高50 NOV、ceil、90/10及
