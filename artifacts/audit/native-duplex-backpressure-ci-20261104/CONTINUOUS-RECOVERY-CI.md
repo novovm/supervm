@@ -1,5 +1,57 @@
 # 旧完整CI的高度4超时：保留失败，补足失败现场
 
+## 2026-11-06 后继：独立原生恢复作业漏接AOEM manifest环境
+
+`3055eefb4785c461d001dcc54e0d760b5371f2a2`的完整CI
+[42140191890](https://github.com/novovm/supervm/actions/runs/42140191890)中，
+恢复作业[127638522031](https://github.com/novovm/supervm/actions/runs/42140191890/job/127638522031)
+六项全部失败于`native_product_rpc.rs`的真实用途身份准备，合计0.01秒；
+尚未启动原节点或进入正文、签票、追赶。该次失败保留，不是新的高度停滞证据。
+
+根因是原`ci-native-runtime-candidate.ps1 -GitHubEnvironment`只输出了
+`NOVOVM_AOEM_TEST_MANIFEST`和`NOVOVM_AOEM_MANIFEST`，遗漏底层bindings读取的
+`AOEM_DLL_MANIFEST`。身份夹具直接调用`AoemExecFacade::open`，在配置节点有机会
+应用NOVOVM别名之前，bindings已经要求manifest；于是按SO目录推导了不存在的
+`linux/manifest/aoem-manifest.json`。`OnceLock`保留首次准备错误，使六项报告同一错误。
+上一轮本地脚本手动设置了底层变量，掩盖了CI跨step环境导出的缺口。
+
+本次只在原候选选择脚本补齐同一个已核验manifest的canonical环境变量，恢复作业
+在编译前检查该文件存在且与候选manifest一致，两组真实进程测试入口也核对一致性。
+不复制manifest到猜测目录，不改manifest内容或哈希，不关闭required校验；
+不修改Rust生产代码、测试断言、票数、超时、网络或库。
+
+本地先清除所有库/manifest别名，只消费旧脚本真实GITHUB_ENV输出，使用上轮同一
+Linux测试程序及实际库，复现6失败/0通过、退出101及同一缺失路径（0.08秒）。
+修改后的双平台环境回归也先在旧脚本上失败（缺`AOEM_DLL_MANIFEST`），修正后
+原23项scope/配置测试及新增的哈希不符禁止导出反例共24项全部通过，包含错误继承
+manifest被候选输出覆盖的检查；Windows/Linux各自的哈希不符均在导出前拒绝。
+
+| 定向验证 | 本轮结果 |
+| --- | --- |
+| 原选择脚本真实导出＋原生进程组 | 已复现原错误，不计为通过 |
+| 双平台选择、篡改/身份/能力拒绝与严格CI汇总 | 24项通过；未执行的检查仍不能汇总为通过 |
+| 修正后真实原生进程组 | 6项通过、318.95秒，两个身份排序方向均完成原库追赶和少票拒绝 |
+| 修正后ML-DSA/UCA恢复组 | 1项通过、147.39秒；40高度含1,024行大正文，追赶中断后从原库恢复、再花及四库冷恢复通过 |
+
+真实回归没有手动补变量：在独立干净进程中重放原选择脚本的输出。选择脚本使用
+本机已有Windows PowerShell运行，平台选Linux；仅将绝对文件路径映射为WSL路径，
+由原Linux测试程序实际加载仓库中的同一候选SO。WSL没有安装pwsh，不另行安装
+工具或伪造Linux选择器通过。库/manifest及node身份与前一节固定值相同。
+原CI完整日志、本地原失败及新结果保存在`target/native-runtime-manifest-ci-20261106/`。
+两组真实测试流水线退出0，复验后node/client哈希不变。Python语法、YAML解析及差异
+检查通过；本次未改Rust，不重新编译整套产品或将旧Clippy结果改记为新执行。
+
+[原失败与修正后本地证据](native-runtime-manifest-ci-local-evidence.zip)含10个明确列出的
+选择器输出、原失败/新通过日志、回归日志及本地执行命令，5,150字节，SHA256：
+`7908e91d20434d4d476b58cb34a79e9e951514e8bd371e14641f6f39679a7457`。
+不包含完整云端下载日志、用途钥、节点/钱包配置、数据库、journal或钱包材料。
+
+本轮先本地提交，不立即推送：截至北京时间09:48核对，原运行的Rust作业仍在执行，
+main推送会按现有concurrency取消它并重开全量CI。保留旧结果，让已有运行完成，
+后续在完整工作包交付时集中验证；未手工重跑、取消、跳过或修改原CI结果。
+本地修正通过不等于新提交已取得云端候选资格。本次仍未部署、不操作B/C/D、
+不替换正式库、不产生TPS结论，其他未提交经济文档不混入此修复。
+
 ## 2026-11-06 最新范围纠正：旧 WSS 主链退役
 
 本文件下方是历史失败及当时修正记录，不再作为运行旧主链的操作指令。

@@ -54,6 +54,7 @@ if ($GitHubEnvironment) {
     "NOVOVM_AOEM_TEST_LIBRARY=$library"
     "NOVOVM_AOEM_TEST_MANIFEST=$(Join-Path $root 'manifest.json')"
     "NOVOVM_AOEM_MANIFEST=$(Join-Path $root 'manifest.json')"
+    "AOEM_DLL_MANIFEST=$(Join-Path $root 'manifest.json')"
     "NOVOVM_AOEM_DLL=$library"
     "NOVOVM_NATIVE_RUNTIME_SHA256=$($entry.sha256)"
   ) | Out-File -LiteralPath $env:GITHUB_ENV -Append -Encoding utf8

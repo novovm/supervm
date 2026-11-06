@@ -126,6 +126,8 @@ class ScopeTests(unittest.TestCase):
                       'echo "NOVOVM_RESIDENT_NODE_BINARY=$target_dir/debug/novovm-node" >> "$GITHUB_ENV"',
                       'test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"',
                       'test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"',
+                      'test "$AOEM_DLL_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"',
+                      'test -f "$AOEM_DLL_MANIFEST"',
                       "export AOEM_DLL_MANIFEST_REQUIRED=1", "set -euo pipefail",
                       "if: always()", "name: native-process-recovery",
                       "target/native-product-rpc/**/recovery-report.json",
@@ -433,15 +435,24 @@ class RuntimeCandidateTests(unittest.TestCase):
         self.assertNotEqual(self.run_helper().returncode, 0)
 
     def test_ci_selects_same_pinned_library_for_default_and_explicit_consumers(self):
-        output_file = self.root / "github-env"
-        env = dict(os.environ, GITHUB_ENV=str(output_file))
-        output = self.run_helper("linux-x86_64", "-GitHubEnvironment", env=env)
-        self.assertEqual(output.returncode, 0, output.stderr)
-        lines = dict(line.split("=", 1) for line in output_file.read_text(encoding="utf-8-sig").splitlines())
-        self.assertEqual(lines["NOVOVM_AOEM_TEST_LIBRARY"], lines["NOVOVM_AOEM_DLL"])
-        self.assertEqual(Path(lines["NOVOVM_AOEM_TEST_MANIFEST"]), self.root / "manifest.json")
-        self.assertEqual(lines["NOVOVM_AOEM_MANIFEST"], lines["NOVOVM_AOEM_TEST_MANIFEST"])
-        self.assertEqual(lines["NOVOVM_NATIVE_RUNTIME_SHA256"], self.manifest["platforms"]["linux-x86_64"]["sha256"])
+        for platform in self.manifest["platforms"]:
+            with self.subTest(platform=platform):
+                output_file = self.root / (platform + ".github-env")
+                env = dict(os.environ, GITHUB_ENV=str(output_file),
+                           AOEM_DLL_MANIFEST=str(self.root / "wrong-inherited-manifest.json"))
+                output = self.run_helper(platform, "-GitHubEnvironment", env=env)
+                self.assertEqual(output.returncode, 0, output.stderr)
+                lines = dict(line.split("=", 1) for line in
+                             output_file.read_text(encoding="utf-8-sig").splitlines())
+                self.assertEqual(lines["NOVOVM_AOEM_TEST_LIBRARY"], lines["NOVOVM_AOEM_DLL"])
+                self.assertEqual(Path(lines["NOVOVM_AOEM_TEST_MANIFEST"]), self.root / "manifest.json")
+                self.assertEqual(lines["NOVOVM_AOEM_MANIFEST"], lines["NOVOVM_AOEM_TEST_MANIFEST"])
+                # AoemExecFacade::open loads bindings before a configured node
+                # can apply NOVOVM_* aliases. Its canonical loader must be pinned too.
+                self.assertEqual(lines["AOEM_DLL_MANIFEST"], lines["NOVOVM_AOEM_TEST_MANIFEST"])
+                self.assertTrue(Path(lines["AOEM_DLL_MANIFEST"]).is_file())
+                self.assertEqual(lines["NOVOVM_NATIVE_RUNTIME_SHA256"],
+                                 self.manifest["platforms"][platform]["sha256"])
 
     def test_runtime_descriptor_cannot_drift_from_the_candidate_or_weaken_existing_checks(self):
         original = copy.deepcopy(self.manifest)
@@ -454,6 +465,19 @@ class RuntimeCandidateTests(unittest.TestCase):
         self.manifest = copy.deepcopy(original)
         self.manifest["entries"].append(copy.deepcopy(self.manifest["entries"][1]))
         self.assertNotEqual(self.run_helper().returncode, 0)
+
+    def test_invalid_hash_never_exports_ci_environment(self):
+        for platform in self.manifest["platforms"]:
+            with self.subTest(platform=platform):
+                self.manifest["platforms"][platform]["sha256"] = "0" * 64
+                entry = next(item for item in self.manifest["entries"] if item["platform"] == platform)
+                entry["sha256"] = "0" * 64
+                output_file = self.root / (platform + ".rejected-env")
+                output = self.run_helper(platform, "-GitHubEnvironment",
+                                         env=dict(os.environ, GITHUB_ENV=str(output_file)))
+                self.assertNotEqual(output.returncode, 0)
+                self.assertIn("SHA-256 mismatch", output.stderr)
+                self.assertFalse(output_file.exists())
 
 
 if __name__ == "__main__":
