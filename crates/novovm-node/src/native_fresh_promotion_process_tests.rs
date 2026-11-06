@@ -59,7 +59,7 @@ fn candidate_workspace_fresh_promotion_process_worker() {
         serde_json::from_str(&std::env::var(FRESH_PROCESS_PARAMS).unwrap()).unwrap();
     let marker = PathBuf::from(std::env::var_os(FRESH_PROCESS_MARKER).unwrap());
     std::thread::Builder::new()
-        .stack_size(crate::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
+        .stack_size(crate::native_candidate_plan::CANDIDATE_EXECUTION_STACK_BYTES_V1)
         .spawn(move || {
             let path = resolve_native_execution_store_path_from_params_v1(&params).unwrap();
             if mode != "recover" {

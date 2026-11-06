@@ -13,10 +13,6 @@ use sha2::{Digest, Sha256};
 use std::fmt;
 
 pub const NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1: usize = 192 * 1024;
-const _: () = assert!(
-    NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1
-        <= crate::product_mainline_overlay::PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1
-);
 pub const NOV_NATIVE_SEAL_ROUND_MAX_PAYLOAD_BYTES_V1: usize =
     NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1 - HEADER_BYTES - CHECKSUM_BYTES;
 

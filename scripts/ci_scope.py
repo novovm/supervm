@@ -155,9 +155,9 @@ def main():
         handle.write("Reviewed prose only; product tests NOT EXECUTED. Not release qualification.\n"
                      if scope == "docs" else
                      "Security only; product tests NOT EXECUTED.\n" if scope == "security" else
-                     "Historical recovery only; other product/platform/security gates NOT EXECUTED. Not release qualification.\n"
+                     "Current NovoRUDP recovery only; other product/platform/security gates NOT EXECUTED. Not release qualification.\n"
                      if scope == "recovery" else
-                     "All existing product, historical and platform gates selected.\n")
+                     "All required product, current native recovery and platform gates selected. Retired WSS mainchain is not release evidence.\n")
     print(json.dumps(outputs, sort_keys=True))
 
 

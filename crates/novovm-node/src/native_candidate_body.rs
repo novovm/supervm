@@ -9,13 +9,13 @@ use crate::native_block_seal::round_message::NovNativeSealRoundMessageV1 as Mess
 use crate::native_block_seal::round_wire::decode_nov_native_seal_round_wire_v1;
 use crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1;
 use anyhow::{bail, Context, Result};
-#[path = "native_candidate_body_network.rs"]
-pub mod network;
 
 const MAGIC: &[u8; 8] = b"NOVBODY1";
 const HEADER: usize = 8 + 32 + 4;
 const CHUNK: usize = 64 * 1024;
-const _: () = assert!(HEADER + CHUNK <= crate::product_mainline_overlay::PRODUCT_MAINLINE_OVERLAY_MAX_CLASSIFIED_LOGICAL_PAYLOAD_BYTES_V1);
+const _: () = assert!(
+    HEADER + CHUNK <= crate::native_block_seal::round_wire::NOV_NATIVE_SEAL_ROUND_MAX_WIRE_BYTES_V1
+);
 
 /// Fields cannot be constructed from unchecked bytes. Execution and comparison
 /// with the signed output subject remain mandatory before any vote.

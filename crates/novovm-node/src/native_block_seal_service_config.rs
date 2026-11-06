@@ -17,7 +17,7 @@ use std::time::Duration;
 mod recovery;
 #[path = "native_fresh_successor_preparation.rs"]
 mod successor_preparation;
-pub(crate) use successor_preparation::{FreshSuccessorPreparationV1, SuccessorOutputMismatch};
+use successor_preparation::FreshSuccessorPreparationV1;
 
 pub const NOV_NATIVE_SEAL_SERVICE_SCHEMA_V1: &str = "novovm-native-seal-service/v1";
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
@@ -245,6 +245,7 @@ impl From<AuthorityFile> for NovNativeSealEpochAuthorityV1 {
 }
 
 impl NovNativeSealServiceConfigV1 {
+    #[cfg(test)]
     pub(crate) fn transaction_transport_limits(&self) -> FreshTransactionTransportV1 {
         self.transaction_transport
             .unwrap_or(FreshTransactionTransportV1 {
@@ -321,7 +322,7 @@ impl NovNativeSealServiceConfigV1 {
         body: crate::native_candidate_body::VerifiedCandidateBodyV1,
         params: &serde_json::Value,
     ) -> Result<Self> {
-        let preparation = self.begin_received_successor_mode(body, params, false)?;
+        let preparation = self.prepare_received_successor_input(body, params)?;
         crate::tx_ingress::candidate_workspace::execute_v1(
             preparation.chain_id(),
             preparation.workspace_id(),
@@ -330,19 +331,10 @@ impl NovNativeSealServiceConfigV1 {
         preparation.finish(params)
     }
 
-    pub(crate) fn begin_received_successor(
+    fn prepare_received_successor_input(
         self,
         body: crate::native_candidate_body::VerifiedCandidateBodyV1,
         params: &serde_json::Value,
-    ) -> Result<FreshSuccessorPreparationV1> {
-        self.begin_received_successor_mode(body, params, true)
-    }
-
-    fn begin_received_successor_mode(
-        self,
-        body: crate::native_candidate_body::VerifiedCandidateBodyV1,
-        params: &serde_json::Value,
-        deferred: bool,
     ) -> Result<FreshSuccessorPreparationV1> {
         use crate::tx_ingress::candidate_workspace::CandidateInputRejected;
         let proposal = body
@@ -359,13 +351,12 @@ impl NovNativeSealServiceConfigV1 {
                 "received body does not extend configured authority and parent"
             )));
         }
-        self.begin_fresh_successor_mode(
+        self.prepare_fresh_successor_input(
             subject.slot,
             subject.timestamp_unix_ms,
             body.raw_txs,
             params,
             Some(subject.clone()),
-            deferred,
         )
     }
 
@@ -377,13 +368,12 @@ impl NovNativeSealServiceConfigV1 {
         params: &serde_json::Value,
         expected: Option<&crate::native_block_seal::NovNativeSealSubjectV1>,
     ) -> Result<Self> {
-        let preparation = self.begin_fresh_successor_mode(
+        let preparation = self.prepare_fresh_successor_input(
             slot,
             timestamp_unix_ms,
             raw_txs,
             params,
             expected.cloned(),
-            false,
         )?;
         crate::native_fresh_timing::measure("successor.prepare.execute", || {
             crate::tx_ingress::candidate_workspace::execute_v1(
@@ -395,27 +385,13 @@ impl NovNativeSealServiceConfigV1 {
         preparation.finish(params)
     }
 
-    /// Capture input without a new durable slot. The value stays with the lifecycle
-    /// owner; neither the signer nor this service configuration goes to compute.
-    pub(crate) fn begin_fresh_successor(
+    fn prepare_fresh_successor_input(
         self,
         slot: u64,
         timestamp_unix_ms: u64,
         raw_txs: Vec<Vec<u8>>,
         params: &serde_json::Value,
         expected: Option<crate::native_block_seal::NovNativeSealSubjectV1>,
-    ) -> Result<FreshSuccessorPreparationV1> {
-        self.begin_fresh_successor_mode(slot, timestamp_unix_ms, raw_txs, params, expected, true)
-    }
-
-    fn begin_fresh_successor_mode(
-        self,
-        slot: u64,
-        timestamp_unix_ms: u64,
-        raw_txs: Vec<Vec<u8>>,
-        params: &serde_json::Value,
-        expected: Option<crate::native_block_seal::NovNativeSealSubjectV1>,
-        deferred: bool,
     ) -> Result<FreshSuccessorPreparationV1> {
         use crate::tx_ingress::candidate_workspace as workspace;
         self.validate(self.chain_id)?;
@@ -477,23 +453,13 @@ impl NovNativeSealServiceConfigV1 {
             raw_txs,
             params,
         )?;
-        // New asynchronous inputs do not occupy the durable catalog until the
-        // result passes current-parent/round and complete output-subject checks.
-        let (candidate, execution) = if deferred {
-            let execution =
-                crate::native_fresh_timing::measure("successor.prepare.capture", || {
-                    workspace::capture_execution_from_finalized_v1(&plan, parent_id, pin, params)
-                })?;
-            (execution.workspace_id(), Some(execution))
-        } else {
-            let candidate =
-                crate::native_fresh_timing::measure("successor.prepare.create", || {
-                    workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)
-                })?;
-            (candidate.workspace_id, None)
-        };
+        let candidate = crate::native_fresh_timing::measure("successor.prepare.create", || {
+            workspace::create_from_finalized_genesis_v1(&plan, parent_id, pin, params)
+        })?;
         Ok(FreshSuccessorPreparationV1::new(
-            self, candidate, expected, execution,
+            self,
+            candidate.workspace_id,
+            expected,
         ))
     }
 

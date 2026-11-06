@@ -56,6 +56,7 @@ pub(crate) enum ExecutionStartV1 {
     Job(Box<ExecutionJobV1>),
 }
 
+#[cfg(test)]
 impl ExecutionStartV1 {
     pub(crate) fn workspace_id(&self) -> [u8; 32] {
         match self {
@@ -70,6 +71,7 @@ impl ExecutionStartV1 {
 pub(crate) struct ExecutionJobV1 {
     snapshot: ExecutionSnapshot,
     verified: VerifiedInput,
+    #[cfg(test)]
     captured: Option<Box<input_capture::CapturedInput>>,
 }
 
@@ -78,10 +80,15 @@ pub(crate) struct ExecutionJobV1 {
 pub(crate) struct PreparedExecutionV1 {
     snapshot: ExecutionSnapshot,
     prepared: PreparedOutput,
+    // Tests compare the independently computed artifact with durable readback.
+    // The synchronous product owner validates it without retaining a preview.
+    #[cfg(test)]
     preview: IsolatedBlockArtifactV1,
+    #[cfg(test)]
     captured: Option<(Box<input_capture::CapturedInput>, VerifiedInput)>,
 }
 
+#[cfg(test)]
 impl PreparedExecutionV1 {
     pub(crate) fn workspace_id(&self) -> [u8; 32] {
         self.snapshot.input.id
@@ -89,14 +96,6 @@ impl PreparedExecutionV1 {
 
     pub(crate) fn chain_id(&self) -> u64 {
         self.snapshot.binding.chain_id
-    }
-
-    pub(crate) fn preview_successor_subject_v1(
-        &self,
-        parent: &live_parent::FinalizedParentViewV1,
-        round: u64,
-    ) -> Result<crate::native_block_seal::NovNativeSealSubjectV1> {
-        parent.successor_seal_subject(&self.preview, round)
     }
 }
 
@@ -130,16 +129,19 @@ impl ExecutionJobV1 {
         )?;
         self.snapshot.binding.validate(&workspace)?;
         check_output_capacity(0, prepared.bytes().len())?;
-        let preview = prepared.preview_artifact(&self.snapshot.input, &self.verified)?;
+        let _preview = prepared.validated_artifact(&self.snapshot.input, &self.verified)?;
         Ok(PreparedExecutionV1 {
             snapshot: self.snapshot,
             prepared,
-            preview,
+            #[cfg(test)]
+            preview: _preview,
+            #[cfg(test)]
             captured: self.captured.map(|captured| (captured, self.verified)),
         })
     }
 }
 
+#[cfg(test)]
 pub(crate) fn begin_execution_v1(
     chain_id: u64,
     id: [u8; 32],
@@ -151,6 +153,7 @@ pub(crate) fn begin_execution_v1(
 /// New async successors remain entirely owned input until the completion's
 /// current parent/round/subject fence admits them. Exact existing reservations
 /// keep their original staged recovery path; no error selects this branch.
+#[cfg(test)]
 pub(crate) fn capture_execution_from_finalized_v1(
     plan: &NovNativeCandidateExecutionPlanV1,
     parent: [u8; 32],
@@ -217,6 +220,7 @@ pub(super) fn begin_with_checkpoint(
             params: params.clone(),
         },
         verified,
+        #[cfg(test)]
         captured: None,
     }))) // workspace, its provider handle and its OS lock are dropped here.
 }
@@ -236,6 +240,7 @@ fn revalidate_input(
     workspace.read_input(&current)
 }
 
+#[cfg(test)]
 pub(crate) fn finish_execution_v1(prepared: PreparedExecutionV1) -> Result<ExecutionInfoV1> {
     finish_with_checkpoint(prepared, &|_| Ok(()))
 }
@@ -248,9 +253,12 @@ pub(super) fn finish_with_checkpoint(
     let PreparedExecutionV1 {
         snapshot,
         prepared,
-        preview: _,
+        #[cfg(test)]
+            preview: _,
+        #[cfg(test)]
         captured,
     } = computed;
+    #[cfg(test)]
     if let Some((captured, _)) = &captured {
         let checked =
             WorkspaceStore::open_computation(snapshot.binding.chain_id, &snapshot.params)?;
@@ -266,6 +274,7 @@ pub(super) fn finish_with_checkpoint(
         )?;
     }
     let mut workspace = WorkspaceStore::open(snapshot.binding.chain_id, &snapshot.params)?;
+    #[cfg(test)]
     if let Some((captured, verified)) = &captured {
         snapshot.binding.validate(&workspace)?;
         crate::native_fresh_timing::measure("candidate.finish.stage_input", || {

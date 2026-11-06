@@ -45,7 +45,7 @@ pub(super) fn run(params: &serde_json::Value) -> Result<()> {
     let params = params.clone();
     std::thread::Builder::new()
         .name("native-candidate-preparation".into())
-        .stack_size(novovm_node::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
+        .stack_size(novovm_node::native_candidate_plan::CANDIDATE_EXECUTION_STACK_BYTES_V1)
         .spawn(move || run_inner(&params))
         .context("start native candidate preparation")?
         .join()

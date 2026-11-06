@@ -1,5 +1,20 @@
 # NOVOVM 架构纠偏审计与开发路线
 
+## 2026-11-06 当前架构收敛：退役 WSS 主链承载
+
+用户明确退役旧 WSS/Relay 主链运行分支、拓扑安装模板和专属测试夹具。
+当前主链只使用原 `native_execution_tick -> NativeLifecycle/NativeChannel ->
+NovoRUDP/APFL -> novovm-exec/aoem-bindings/AOEM`，不另造传输或保留静默回退。
+旧部署指引和独占源码从活动树移除，历史事实留在 Git 与审计记录，不要求修通旧载体。
+其他应用正在使用的 Relay、邮箱、Web 与共用纯验证/持久化所有者不是删除对象。
+
+主链恢复资格沿现有 `native_only_*` / `native_uca_process_*` 真实进程测试收口，
+独立 recovery 范围仍属于 full 必过项；未知、零命中、失败、未完成均不是通过。
+旧高度4超时发生于 WSS 历史夹具，根因仍未结案，不能直接称为 NovoRUDP 丢包，
+也不能把退役记成故障修复。当前原生未决签票精确强杀点、真实 EROFS/ENOSPC
+等覆盖缺项须独立列出，不能由已有追赶强杀/冷恢复自动替代。
+本段是范围与规则纠正，不是新源码已通过CI、已经部署或有新TPS的声明。
+
 ## 2026-10-24 首发前置：固定 NOV 经济契约与 ML-DSA/UCA
 
 本机主责收敛为 NOV 经济与生态。用户确认：正式创世全额发行1亿 NOV、9位小数，

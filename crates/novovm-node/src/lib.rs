@@ -32,8 +32,6 @@ pub mod native_transfer_delta;
 pub mod native_transfer_executor;
 pub mod product_delivery_journal;
 pub mod product_evidence;
-pub mod product_mainline_overlay;
-pub mod product_mainline_topology;
 pub mod product_nat_runtime;
 pub mod product_node_overlay;
 pub mod product_peer_runtime;

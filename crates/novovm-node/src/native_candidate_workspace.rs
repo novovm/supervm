@@ -10,11 +10,14 @@ pub(crate) use auth::{require_new_successor_execution, CandidateInputRejected};
 mod execution;
 #[path = "native_candidate_finalized_parent.rs"]
 mod finalized_parent;
+#[cfg(test)]
 #[path = "native_candidate_input_capture.rs"]
 mod input_capture;
 #[path = "native_candidate_live_parent.rs"]
 mod live_parent;
-pub(crate) use live_parent::{load_finalized_parent_view_v1, FinalizedParentViewV1};
+pub(crate) use live_parent::load_finalized_parent_view_v1;
+#[cfg(test)]
+pub(crate) use live_parent::FinalizedParentViewV1;
 #[cfg(test)]
 #[path = "native_candidate_finalized_query_tests.rs"]
 mod finalized_query_tests;
@@ -29,11 +32,12 @@ pub(crate) use publication_verify_tests::exercise_publication_verify_corruption_
 mod rooted_parent;
 #[path = "native_candidate_state_records.rs"]
 mod state_records;
+#[cfg(test)]
 #[path = "native_candidate_unregistered_reclaim.rs"]
 mod unregistered_reclaim;
+#[cfg(test)]
 pub(crate) use execution::{
-    capture_execution_from_finalized_v1, finish_execution_v1, ExecutionJobV1, ExecutionStartV1,
-    PreparedExecutionV1,
+    capture_execution_from_finalized_v1, finish_execution_v1, ExecutionStartV1,
 };
 pub use execution::{
     complete_genesis_promotion_v1, complete_successor_ledger_v1, execute_v1,
@@ -59,18 +63,15 @@ pub(super) use execution::{
     publish_successor_with_checkpoint_v1, publish_with_checkpoint_v1, retire_with_checkpoint_v1,
     ExecutionCheckpointV1, PromotionCheckpointV1, RetirementCheckpointV1,
 };
-pub(crate) use execution::{load_startup_artifact_v1, load_startup_successor_v1};
 pub use finalized_parent::create_from_finalized_genesis_v1;
 use finalized_parent::FinalizedParentSnapshot;
 #[cfg(test)]
 pub(super) use state_records::assert_materialization_allowed_for_test;
 #[cfg(test)]
 pub(super) use state_records::without_materialization_for_test;
-pub(crate) use unregistered_reclaim::reclaim_unregistered_workspaces_v1;
 #[cfg(test)]
 pub(crate) use unregistered_reclaim::{
-    exercise_unregistered_reclaim_for_test_v1, reclaim_unregistered_with_checkpoint_v1,
-    UnregisteredReclaimCheckpointV1,
+    exercise_unregistered_reclaim_for_test_v1, reclaim_unregistered_workspaces_v1,
 };
 #[cfg(test)]
 #[path = "native_candidate_live_parent_tests.rs"]
@@ -1296,27 +1297,6 @@ pub fn list_v1(chain_id: u64, params: &serde_json::Value) -> Result<Vec<Workspac
         .iter()
         .map(|(slot, descriptor)| workspace.info(*slot, descriptor))
         .collect()
-}
-
-#[cfg(test)]
-pub(crate) fn assert_execution_unpublished_for_test_v1(
-    chain: u64,
-    id: [u8; 32],
-    params: &serde_json::Value,
-) -> Result<()> {
-    let workspace = WorkspaceStore::open(chain, params)?;
-    let mut first_chunk = id.to_vec();
-    first_chunk.extend_from_slice(&0u32.to_be_bytes());
-    for key in [
-        workspace.key(b'v', &id),
-        workspace.key(b'e', &id),
-        workspace.key(b'o', &first_chunk),
-    ] {
-        if workspace.graph.get(&key)?.is_some() {
-            bail!("candidate unexpectedly has an output reservation, chunk or completion");
-        }
-    }
-    Ok(())
 }
 
 pub fn abort_v1(

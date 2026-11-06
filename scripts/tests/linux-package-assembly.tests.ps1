@@ -60,7 +60,6 @@ $coreSha = (Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash.ToLowerInvar
 foreach ($name in @('aoem/manifest/aoem-manifest.json', 'aoem/config/aoem-runtime-profile.json')) {
   [IO.File]::WriteAllText((Join-Path $fixture $name), '{}')
 }
-[IO.File]::WriteAllText((Join-Path $fixture 'crates/novovm-node/src/product_mainline_overlay.rs'), 'novovm-product-mainline-recipient-ack/v2')
 [IO.File]::WriteAllText((Join-Path $fixture 'crates/novovm-node/src/product_delivery_journal.rs'), 'novovm-product-delivery-journal/v1')
 $fixtureState = @{commit='1234567890123456789012345678901234567890';root=$fixture;buildCalls=0;contracts=@();qualificationCalls=0;qualificationMode='valid'}
 $fixtureState.nodeServiceMode = 'valid'
@@ -97,7 +96,7 @@ function cargo {
   if (!(Test-Path -LiteralPath $artifact)) {
     New-Item -ItemType HardLink -Path $artifact -Target $alias | Out-Null
   }
-  if ($fixtureState.tamper -and $fixtureState.buildCalls -eq 11) {
+  if ($fixtureState.tamper -and $fixtureState.buildCalls -eq 10) {
     # Another write through Cargo's deps alias after the first hash was pinned.
     [IO.File]::WriteAllBytes((Join-Path $fixtureState.root "build/novovm-node$binarySuffix.deps"), [byte[]]@(1, 2, 3, 4))
   }
@@ -163,7 +162,7 @@ Set-Item -LiteralPath ('Function:\global:' + $runtimeFixtureCommand) -Value {
 & $packager -Target $Target
 $output = Join-Path $fixture "artifacts/product-overlay/$platform-x86_64"
 $manifest = Get-Content -LiteralPath (Join-Path $output 'release-manifest.json') -Raw | ConvertFrom-Json
-if ($manifest.git_commit -ne $fixtureState.commit -or $fixtureState.buildCalls -ne 11 -or
+if ($manifest.git_commit -ne $fixtureState.commit -or $fixtureState.buildCalls -ne 10 -or
     $manifest.aoem_runtime.sha256 -ne $coreSha -or $manifest.native_release_http_listener -ne $false) {
   throw 'Package manifest, build count or native boundary differs from inputs'
 }
@@ -184,7 +183,7 @@ if ($windowsPackage -and [IO.Path]::DirectorySeparatorChar -eq '\' -and
   throw 'Windows assembly must exercise the real Rust extended canonical path report'
 }
 $expectedScope = if ($windowsPackage) { 'novovm_unified_windows_release_v1' } else { 'novovm_unified_linux_release_v3' }
-if ($manifest.scope -ne $expectedScope -or $manifest.target -ne $Target -or $manifest.build_contracts.Count -ne 11 -or
+if ($manifest.scope -ne $expectedScope -or $manifest.target -ne $Target -or $manifest.build_contracts.Count -ne 10 -or
     $manifest.deployment.auto_start -ne $false -or $manifest.deployment.new_chain_created -ne $false -or
     $manifest.deployment.existing_services_modified -ne $false -or $manifest.deployment.services_configured -ne $false -or
     $manifest.capabilities.service_settlement_to_provider_uca -ne 'unavailable' -or
@@ -273,7 +272,7 @@ if ($packageReadme -notmatch 'ML-DSA-65 validator public key \(1952 bytes\)' -or
 }
 }
 $expectedLibrary = if ($windowsPackage) { 'C:/ProgramData/NOVOVM/releases/REVIEW_FIXED_RELEASE/aoem/windows/core/bin/aoem_ffi.dll' } else { '/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so' }
-foreach ($name in @('relay', 'peer-sender', 'peer-receiver', 'node-mainline-overlay', 'native-nat', 'mailbox-node')) {
+foreach ($name in @('relay', 'peer-sender', 'peer-receiver', 'native-nat', 'mailbox-node')) {
   $example = Get-Content -LiteralPath (Join-Path $output "config/$name.json.example") -Raw | ConvertFrom-Json
   if ($example.chain_id -ne 'REVIEW_APPROVED_CHAIN_ID' -or
       $example.library -ne $expectedLibrary -or
@@ -287,22 +286,28 @@ foreach ($name in @('relay', 'peer-sender', 'peer-receiver', 'node-mainline-over
   }
   if ($keyPath -notlike '*.sealed') { throw "Protected transport purpose key required: $name" }
 }
-$overlayExample = Get-Content -LiteralPath (Join-Path $output 'config/node-mainline-overlay.json.example') -Raw | ConvertFrom-Json
 $natExample = Get-Content -LiteralPath (Join-Path $output 'config/native-nat.json.example') -Raw | ConvertFrom-Json
 $mailboxExample = Get-Content -LiteralPath (Join-Path $output 'config/mailbox-node.json.example') -Raw | ConvertFrom-Json
-if ($overlayExample.overlay.trusted_signer_public_keys[0] -ne 'REVIEW_REPLACE_WITH_FULL_1952_BYTE_MLDSA65_PUBLIC_KEY_ARRAY' -or
-    $natExample.version -ne 2 -or $natExample.peer_public_key -ne 'REVIEW_REPLACE_WITH_FULL_1952_BYTE_MLDSA65_PUBLIC_KEY_ARRAY' -or
+if ($natExample.version -ne 2 -or $natExample.peer_public_key -ne 'REVIEW_REPLACE_WITH_FULL_1952_BYTE_MLDSA65_PUBLIC_KEY_ARRAY' -or
     $mailboxExample.version -ne 3 -or $mailboxExample.allowed_clients.Count -ne 0 -or
-    $manifest.compatibility_tools.product_overlay_ack_wire -ne 'novovm-product-mainline-recipient-ack/v2') {
-  throw 'Current identity/ACK contracts require explicit full-width public pins, not a fake 32-byte fixture or legacy config'
+    $manifest.compatibility_tools.delivery_journal_schema -ne 'novovm-product-delivery-journal/v1') {
+  throw 'Current identity/journal contracts require explicit full-width public pins, not a fake 32-byte fixture or legacy config'
 }
-foreach ($name in @('relay', 'peer-sender', 'peer-receiver', 'node-mainline-overlay', 'native-nat', 'topology-plan')) {
+if ($manifest.compatibility_tools.PSObject.Properties.Name -contains 'product_overlay_ack_wire') {
+  throw 'Retired WSS mainchain ACK must not remain a package compatibility claim'
+}
+foreach ($name in @('relay', 'peer-sender', 'peer-receiver', 'native-nat')) {
   $text = Get-Content -LiteralPath (Join-Path $output "config/$name.json.example") -Raw
   if ($text -match 'ed25519|APPROVED_AOEM_CORE_SHA256') { throw "Old identity or unsubstituted library pin in $name" }
 }
-if ($natExample.expected_peer_id -notlike 'novovm-mldsa65:*' -or
-    @($overlayExample.peers | Where-Object peer_id -notlike 'novovm-mldsa65:*').Count -ne 0) {
+if ($natExample.expected_peer_id -notlike 'novovm-mldsa65:*') {
   throw 'Peer IDs must name the canonical ML-DSA-65 digest representation, not use the digest as a public key'
+}
+foreach ($retired in @('config/node-mainline-overlay.json.example', 'config/topology-plan.json.example', "bin/novovm-product-topology$binarySuffix")) {
+  if (Test-Path -LiteralPath (Join-Path $output $retired)) { throw "Retired WSS mainchain entry must not ship: $retired" }
+}
+if (@($manifest.build_contracts | Where-Object binary -eq 'novovm-product-topology').Count -ne 0) {
+  throw 'Retired WSS mainchain topology must not remain a package build contract'
 }
 if (!$windowsPackage) {
 if ($nodeUnit -notmatch '(?m)^StateDirectory=novovm novovm/state novovm/reports$' -or
@@ -405,4 +410,4 @@ $isolated = Get-Content -Raw -LiteralPath (Join-Path $fixture 'artifacts/product
 if (!$isolated.aoem_runtime.isolated_package_input -or $isolated.aoem_runtime.sha256 -ne $coreSha) {
   throw 'The original assembly must bind and record its explicit isolated AOEM input'
 }
-Write-Output "PASS: original unified assembly (11 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"
+Write-Output "PASS: original unified assembly (10 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default, WSS-mainchain retirement and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"

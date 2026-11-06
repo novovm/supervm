@@ -704,6 +704,122 @@ fn fixture_control_votes(node: &NativeLifecycle, height: u64) -> Result<Vec<Prep
 }
 
 #[test]
+#[ignore = "real native handles; duplicate queue custody, distinct controls and completed retry"]
+fn native_archive_control_duplicates_preserve_distinct_votes_and_retry_after_delivery() -> Result<()>
+{
+    use crate::native_pipeline::consensus::wire::Phase;
+    use novovm_consensus::round_bft::test_vectors::{self, FixtureSigningKey};
+
+    with_delivery_peer_lifecycle_for_test(|node, remote, _| {
+        let head = node.progress.head();
+        let mut wires = fixture_control_votes(node, node.progress.context().height)?;
+        for (round, phase, value) in [
+            (0, Phase::Precommit, [0xc3; 32]),
+            (1, Phase::Prevote, [0xc3; 32]),
+            (0, Phase::Prevote, [0xc4; 32]),
+        ] {
+            let vote = test_vectors::sign_vote(
+                node.progress.context(),
+                round,
+                phase,
+                Some(value),
+                &node.validators,
+                &FixtureSigningKey::from_bytes(&[101; 32]),
+            )?;
+            wires.push(prepared(node, &Message::Vote(vote))?);
+        }
+        for _ in 0..node.limits.messages_per_peer * 2 {
+            ensure!(node.enqueue(0, wires[0].clone()));
+            ensure!(node.deliveries[0].len() == 1);
+            ensure!(node.bytes[0] == wires[0].byte_len());
+        }
+        for wire in &wires[1..] {
+            ensure!(node.enqueue(0, wire.clone()));
+        }
+        let expected: BTreeSet<_> = wires.iter().map(PreparedMessage::fragment_id).collect();
+        ensure!(expected.len() == 7 && node.deliveries[0].len() == 7);
+        ensure!(node.bytes[0] == wires.iter().map(PreparedMessage::byte_len).sum::<usize>());
+        ensure!(node.deliveries[0].iter().all(|delivery| !delivery.admitted));
+
+        // Observe actual authenticated remote handoff and original DONE before
+        // treating the pending sender entries as delivered. No votes are fed
+        // into consensus and no fixture-generated certificate is published.
+        let start = Instant::now();
+        let deadline = start + Duration::from_secs(10);
+        let mut received = BTreeSet::new();
+        let mut delivery_order = Vec::new();
+        while received != expected || !node.deliveries[0].is_empty() {
+            ensure!(
+                Instant::now() < deadline,
+                "distinct native controls did not drain"
+            );
+            let wall = 1000 + start.elapsed().as_millis() as u64;
+            node.poll_io(wall, Instant::now())?;
+            let report = remote.channel.poll_io(wall, Instant::now(), 64)?;
+            ensure!(report.rejected == 0 && report.backpressured == 0);
+            for _ in 0..32 {
+                match remote.channel.poll_receive_lane(0, Instant::now(), 64)? {
+                    Some(ReceiveEvent::Message(value)) => {
+                        ensure!(expected.contains(&value.fragment_id));
+                        ensure!(
+                            received.insert(value.fragment_id),
+                            "duplicate remote handoff"
+                        );
+                        delivery_order.push((value.fragment_id, value.message));
+                    }
+                    Some(ReceiveEvent::Rejected { error, .. }) => anyhow::bail!(error),
+                    None => break,
+                }
+            }
+            std::thread::yield_now();
+        }
+        ensure!(node.bytes[0] == 0 && node.expired_sends == 0);
+        let (retry_id, retry_message) = delivery_order.first().context("missing remote handoff")?;
+        let retry = wires
+            .iter()
+            .find(|wire| wire.fragment_id() == *retry_id)
+            .context("received control has no prepared handle")?;
+        for _ in 0..3 {
+            ensure!(node.enqueue(0, retry.clone()));
+        }
+        ensure!(node.deliveries[0].len() == 1 && node.bytes[0] == retry.byte_len());
+        // The original receiver retains only four completions per peer in this
+        // fixture. Seven handoffs can evict this identity; equal completion times
+        // need not evict in handoff order. The transport is at-least-once, not
+        // permanent business dedup: a retained DONE or one exact redelivery is
+        // valid, while the sender must release the new pending handle in both.
+        let mut redelivered = false;
+        while !node.deliveries[0].is_empty() {
+            ensure!(
+                Instant::now() < deadline,
+                "completed native control retry did not drain"
+            );
+            let wall = 1000 + start.elapsed().as_millis() as u64;
+            node.poll_io(wall, Instant::now())?;
+            let report = remote.channel.poll_io(wall, Instant::now(), 64)?;
+            ensure!(report.rejected == 0 && report.backpressured == 0);
+            match remote.channel.poll_receive_lane(0, Instant::now(), 64)? {
+                Some(ReceiveEvent::Message(value)) => {
+                    ensure!(!redelivered, "duplicate retry handoff");
+                    ensure!(value.fragment_id == *retry_id);
+                    ensure!(
+                        value.message == *retry_message,
+                        "retry changed signed control"
+                    );
+                    redelivered = true;
+                }
+                Some(ReceiveEvent::Rejected { error, .. }) => anyhow::bail!(error),
+                None => {}
+            }
+            std::thread::yield_now();
+        }
+        ensure!(node.bytes[0] == 0 && node.expired_sends == 0);
+        ensure!(node.progress.head() == head && remote.progress.head().is_none());
+        Ok(())
+    })
+}
+
+#[test]
 #[ignore = "real native handles; current control capacity coexists with bounded old drain"]
 fn native_realtime_retirement_auxiliary_full_preserves_four_current_controls() -> Result<()> {
     with_delivery_lifecycle_for_test(|node, _| {

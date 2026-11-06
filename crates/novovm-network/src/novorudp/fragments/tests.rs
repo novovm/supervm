@@ -990,3 +990,83 @@ fn native_profile_keeps_budget_ttl_peer_isolation_and_missing_snapshot() {
     assert_eq!(receiver.reserved_bytes(), 0);
     assert!(receiver.missing_ranges("a", outgoing.id()).is_none());
 }
+
+#[test]
+fn native_profile_partial_source_does_not_block_same_object_complete_source() -> Result<()> {
+    let now = Instant::now();
+    let payload = bytes(3000, 7);
+    let outgoing =
+        OutgoingMessage::with_profile(DOMAIN, payload.clone(), 4096, FragmentProfile::NativeUdpV2)?;
+    let mut receiver = Reassembler::awaiting_authenticated_peers(
+        DOMAIN,
+        ReassemblyLimits {
+            max_message_bytes: 4096,
+            messages: 2,
+            bytes: 6000,
+            peer_messages: 1,
+            peer_bytes: 3000,
+            ttl: Duration::from_secs(5),
+        },
+        FragmentProfile::NativeUdpV2,
+    )?
+    .with_completion_history();
+    // The endpoint supplies authenticated peer identities at this boundary;
+    // this is an assembly test, not another handshake or finality fixture.
+    assert!(receiver.push("a", &outgoing.frame(0)?, now).is_err());
+    for peer in ["a", "b"] {
+        receiver.admit_authenticated_peer(peer.into())?;
+    }
+    assert_eq!(
+        receiver.push("a", &outgoing.frame(0)?, now)?,
+        FragmentAdmission::Accepted
+    );
+    for index in 1..outgoing.frame_count() {
+        assert_eq!(
+            receiver.push("b", &outgoing.frame(index)?, now)?,
+            FragmentAdmission::Accepted
+        );
+    }
+    assert_eq!(receiver.pending_messages(), 2);
+    assert_eq!(receiver.reserved_bytes(), 6000);
+    assert!(receiver.poll_complete(now, 64)?.is_none());
+    // Their combined fragments cover the whole object, but neither source
+    // owns a complete message. Cross-source stitching must not complete it.
+    assert!(receiver.completed_total("a", outgoing.id(), now).is_none());
+    assert!(receiver.completed_total("b", outgoing.id(), now).is_none());
+    for _ in 0..8 {
+        assert_eq!(
+            receiver.push("a", &outgoing.frame(0)?, now)?,
+            FragmentAdmission::Duplicate
+        );
+    }
+    let other =
+        OutgoingMessage::with_profile(DOMAIN, bytes(3000, 8), 4096, FragmentProfile::NativeUdpV2)?;
+    assert_eq!(
+        receiver.push("a", &other.frame(0)?, now)?,
+        FragmentAdmission::Backpressure
+    );
+    assert_eq!(receiver.reserved_bytes(), 6000);
+    receiver.push("b", &outgoing.frame(0)?, now)?;
+    assert_payload(
+        receiver.poll_complete(now, 64)?.unwrap(),
+        "b",
+        &outgoing,
+        &payload,
+    );
+    assert_eq!(receiver.pending_messages(), 1);
+    assert_eq!(receiver.reserved_bytes(), 3000);
+    assert!(receiver.completed_total("a", outgoing.id(), now).is_none());
+    assert!(receiver.poll_complete(now, 64)?.is_none());
+    for index in 1..outgoing.frame_count() {
+        receiver.push("a", &outgoing.frame(index)?, now)?;
+    }
+    assert_payload(
+        receiver.poll_complete(now, 64)?.unwrap(),
+        "a",
+        &outgoing,
+        &payload,
+    );
+    assert_eq!(receiver.pending_messages(), 0);
+    assert_eq!(receiver.reserved_bytes(), 0);
+    Ok(())
+}

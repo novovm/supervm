@@ -56,9 +56,9 @@ This file defines the current public documentation surface for NOVOVM and lists 
    - `docs/NOVOVM_MAINLINE_SOAK_EVIDENCE_V2.md` (ETH WORKER SNAPSHOT EVIDENCE, DURATION AND FAILURE CONTRACT)
    - `docs_CN/NOVOVM-NETWORK/NOVOVM-EVM-NIGHTLY-SOAK-SOP-2026-04-17.md` (NIGHTLY OPERATOR SOP)
    - `artifacts/mainline/mainline-nightly-soak-gate-report.json` (v2 outcome report; presence alone does not imply success)
-6. Product overlay operational runtime (not a claim of public topology completion)
-   - `docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`
-   - `docs/novovm-product-topology-preflight-v1.md`
+6. Native main-chain deployment and separate application transport services
+   - `docs/NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md`
+   - `docs/NOVOVM_CI_CHECK_TIERS.md`
    - `docs/novovm-product-relay-daemon-v1.md`
    - `docs/novovm-product-relay-client-v1.md`
    - `docs/NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md`
@@ -100,7 +100,7 @@ When documentation conflicts occur, resolve in this order:
 - If you add a new public interface, runtime entry, or gate entry, update this file in the same change.
 - Runtime artifacts are evidence only after the corresponding command or CI job succeeds; missing generated artifacts prove no result and must not be replaced with placeholders.
 - Mainline soak v2 consumes the existing ETH worker snapshot. A passing `short_smoke` or `idle_health` report is not full-duration workload soak evidence; nightly success requires fresh valid samples, sampled body progress and the nominal duration for every requested workload profile. These reports do not establish NativeTransaction block agreement, QC, finality or mainnet throughput. The native pipeline workflow's separate two-second production-profile check is a smoke test, including its artifact name.
-- The product overlay now has an opt-in `novovm-node` native-pipeline lifecycle and AOEM ingress bridge defined by `docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`. Local real-WSS lifecycle coverage is not a claim of a public VPS, NAT, cellular, VPN, or CGNAT result; those claims still require signed topology evidence.
+- The WSS/Relay main-chain lifecycle is retired. The current node uses the original native tick, NativeLifecycle/NativeChannel and NovoRUDP/APFL; application Relay/mailbox/discovery services do not supply an alternate main-chain runtime. Historical WSS failures are not native-network acceptance results.
 - Product Overlay durable NativeTransaction delivery semantics are defined by `docs/NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md`: relay admission and verified recipient ACK are separate facts, and ACK proves only Host journal plus pending-only ingress acceptance, never AOEM execution, QC, or finality. NativeSeal durable verification/quarantine ownership remains a separate unfinished activation gate.
 - Current public documents should describe established capabilities, current boundaries, and current reading order rather than development history.
 - If the project adds a new sealed capability or decision policy, publish that seal first and then update this entry point.

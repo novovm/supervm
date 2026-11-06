@@ -77,7 +77,7 @@ class ScopeTests(unittest.TestCase):
             self.assertEqual(ci.validate_results(needs), scope)
             for job in needs:
                 original = needs[job]["result"]
-                for wrong in ("cancelled", "failure", "skipped", "success"):
+                for wrong in ("cancelled", "failure", "skipped", "success", "in_progress", "queued"):
                     if wrong != original:
                         changed = copy.deepcopy(needs)
                         changed[job]["result"] = wrong
@@ -89,7 +89,7 @@ class ScopeTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, job):
                         ci.validate_results(missing)
 
-    def test_recovery_split_keeps_gate_commands_and_fail_closed_aggregation(self):
+    def test_current_native_recovery_keeps_real_process_gates_and_fail_closed_aggregation(self):
         workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
         recovery = jobs["native_recovery"]
@@ -105,25 +105,49 @@ class ScopeTests(unittest.TestCase):
         self.assertIn('git lfs pull --include="$env:NATIVE_RUNTIME_CANDIDATE_ROOT/linux/libaoem_ffi.so" --exclude=""', recovery)
         self.assertNotIn("lfs: true", recovery)
         self.assertIn("./scripts/ci-native-runtime-candidate.ps1 -Platform linux-x86_64 -GitHubEnvironment", recovery)
-        for group in ("fresh_pool_tests", "native_fresh_rpc"):
-            command = 'cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib ' + group + ' --locked -- --test-threads=1'
+        for group in ("native_only_", "native_uca_process_"):
+            command = f'cargo test -p novovm-node --lib {group} --locked -- --ignored --nocapture --test-threads=1'
             self.assertEqual(recovery.count(command), 1)
-            self.assertIn(group + ' --locked -- --list', recovery)
-        for value in ("timeout-minutes: 15", "NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '1'",
-                      "sudo unshare --net sh -c 'ip link set lo up; exec env",
-                      "NOVOVM_NATIVE_FRESH_HANDOFF_TRACE=1", "AOEM_DLL_MANIFEST_REQUIRED=1",
-                      'NOVOVM_AOEM_TEST_LIBRARY="$2" NOVOVM_AOEM_DLL="$2"',
-                      'NOVOVM_AOEM_TEST_MANIFEST="$3" NOVOVM_AOEM_MANIFEST="$3"',
-                      "fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1",
-                      "native_seal_main_process::process_exit_wait_uses_reaping_budget_after_completed_business --exact --test-threads=1",
-                      'test "$(grep -c \': test$\' "$RUNNER_TEMP/fresh-process-tests.txt")" = 1',
-                      "if: always()", "name: fresh-ingress-history-recovery",
-                      "artifacts/audit/candidate-node-processes/**/*.process.json",
-                      "artifacts/audit/candidate-node-processes/**/*.stdout.log",
-                      "artifacts/audit/candidate-node-processes/**/*.stderr.log"):
+            self.assertIn(group + ' --locked -- --ignored --list', recovery)
+            self.assertNotIn(command, jobs["rust"])
+        for name in ("native_only_genesis_transactions_queries_and_cold_recovery",
+                     "native_only_status_readiness_survives_first_query_timeout",
+                     "native_only_minority_and_pending_signature_conflict_recover",
+                     "native_only_recovery_late_lowest_validator_original_database_and_minority",
+                     "native_only_recovery_late_highest_validator_original_database_and_minority",
+                     "native_only_a_a_b_real_honest_signers_recover_and_restart",
+                     "native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery"):
+            self.assertIn(f"grep -q '{name}: test'", recovery)
+        for value in ("timeout-minutes: 15", "timeout-minutes: 10", "NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'",
+                      "cargo build -p novovm-node --bin novovm-node --bin novovm-native-client --locked",
+                      "cargo test -p novovm-node --lib --locked --no-run",
+                      'test -x "$target_dir/debug/novovm-node"',
+                      'test -x "$target_dir/debug/novovm-native-client"',
+                      'echo "NOVOVM_RESIDENT_NODE_BINARY=$target_dir/debug/novovm-node" >> "$GITHUB_ENV"',
+                      'test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"',
+                      'test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"',
+                      "export AOEM_DLL_MANIFEST_REQUIRED=1", "set -euo pipefail",
+                      "if: always()", "name: native-process-recovery",
+                      "target/native-product-rpc/**/recovery-report.json",
+                      "target/native-product-rpc/**/native-aab-report.json",
+                      "target/native-product-rpc/**/uca-recovery-report.json",
+                      "target/native-product-rpc/**/*.stdout.log",
+                      "target/native-product-rpc/**/*.stderr.log"):
             with self.subTest(value=value):
                 self.assertIn(value, recovery)
-        self.assertNotIn("fresh_genesis_main_nodes_continue_three_heights_without_restart", jobs["rust"])
+        for retired in ("fresh_genesis_main_nodes_continue_three_heights_without_restart",
+                        "fresh_record_transfers_conflict_failure_serial_parity",
+                        "product_mainline_overlay::tests",
+                        "novovm-local-readiness.py"):
+            self.assertNotIn(retired, workflow)
+        self.assertNotIn("NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '1'", recovery)
+        self.assertNotIn("--test native_candidate_node_cli", recovery)
+        # Shared pool/RPC and neutral CLI process-exit checks were not retired.
+        for group in ("fresh_pool_tests", "native_fresh_rpc"):
+            command = f'cargo test -p novovm-node --lib {group} --locked -- --test-threads=1'
+            self.assertEqual(jobs["rust"].count(command), 1)
+            self.assertNotIn(group, recovery)
+        self.assertIn("--test native_candidate_node_cli --locked -- --test-threads=1", jobs["rust"])
         self.assertIn("name: fresh-ingress-related-evidence", jobs["rust"])
         self.assertIn("${{ runner.temp }}/nuas-native-service.log", jobs["rust"])
         self.assertIn("target/runtime-rebuild/consensus-tests/uca-native-services/**/report.json", jobs["rust"])
@@ -133,6 +157,36 @@ class ScopeTests(unittest.TestCase):
         out["recovery"] = "false"
         with self.assertRaisesRegex(ValueError, "contradicts"):
             ci.validate_results({"detect": {"result": "success", "outputs": out}})
+
+    def test_retired_wss_mainchain_readiness_runner_is_not_an_active_entry(self):
+        root = Path(__file__).parents[2]
+        self.assertFalse((root / "scripts/novovm-local-readiness.py").exists())
+        self.assertFalse((root / "scripts/tests/test_local_readiness.py").exists())
+
+    def test_current_native_short_gates_enumerate_required_tests(self):
+        root = Path(__file__).parents[2]
+        gate = (root / "crates/novovm-node/src/bin/supervm-mainline-gate.rs").read_text(encoding="utf-8")
+        for field in ("test_native_transport_source_binding", "test_native_collector_evidence"):
+            self.assertIn(field + ": bool", gate)
+            self.assertIn("gate." + field + " = true", gate)
+        for retired in ("test_product_mainline_overlay_lifecycle", "test_authenticated_seal_ingress_quarantine",
+                        '"native_seal_service_cli"', '"product_mainline_"'):
+            self.assertNotIn(retired, gate)
+        for required in ("original_transport_rejects_unbound_local_and_remote_identities",
+                         "original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery",
+                         "hostile_signed_domain_wrong_lane_and_bad_signature_cannot_become_evidence",
+                         "two_of_four_do_not_certify_three_same_value_do",
+                         "duplicate_and_equivocation_never_add_weight_or_overwrite_the_first_vote",
+                         "every_context_field_is_pinned_and_context_advancement_rejects_old_votes",
+                         "retired_wss_mainchain_selection_fails_before_opening_state"):
+            self.assertIn(required, gate)
+        self.assertIn('.args(["--", "--list"])', gate)
+        self.assertIn('line.strip_suffix(": test") == Some(*expected)', gate)
+        self.assertIn('bail!("Step {name} did not enumerate required test: {expected}")', gate)
+        self.assertIn('if !listing.status.success()', gate)
+        self.assertIn('if !status.success()', gate)
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("grep -q 'native_archive_control_duplicates_preserve_distinct_votes_and_retry_after_delivery: test'", workflow)
 
     def test_manual_recovery_summary_cannot_claim_full_qualification(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -147,7 +201,7 @@ class ScopeTests(unittest.TestCase):
                 ci.main()
             self.assertIn("scope=recovery\n", output.read_text())
             self.assertIn("full=false\n", output.read_text())
-            self.assertIn("Historical recovery only", summary.read_text())
+            self.assertIn("Current NovoRUDP recovery only", summary.read_text())
             self.assertIn("Not release qualification", summary.read_text())
 
     def test_runtime_split_retains_both_platforms_and_independent_budgets(self):
@@ -232,10 +286,12 @@ class ScopeTests(unittest.TestCase):
         self.assertLess(resident, pin)
         self.assertLess(pin, current)
         self.assertNotIn('export NOVOVM_AOEM_TEST_LIBRARY="$PWD/aoem/linux/core/bin/libaoem_ffi.so"', rust[pin:])
-        for command in ("private-profile-ffi", "native_successor_", "native_only_",
-                        "actual_mldsa_uca_initialized_spend_respend_journal_recovery",
-                        "native_uca_process_"):
+        for command in ("private-profile-ffi", "native_successor_",
+                        "actual_mldsa_uca_initialized_spend_respend_journal_recovery"):
             self.assertIn(command, rust)
+        for command in ("native_only_", "native_uca_process_"):
+            self.assertIn(command, jobs["native_recovery"])
+            self.assertNotIn(command, rust)
         self.assertNotIn("ci-native-runtime-candidate", jobs["runtime_modules_release"])
         self.assertIn('test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"', rust[pin:])
         self.assertIn('export AOEM_DLL_MANIFEST_REQUIRED=1', rust[pin:])

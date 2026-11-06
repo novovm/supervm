@@ -6,14 +6,12 @@
 
 #[path = "chain_integration.rs"]
 mod chain_integration;
-// Historical relay/controller suites remain on disk, not in this native build:
-// network_integration, controller_integration, controller_workload,
-// controller/tests, resident_rpc_process (including aab/load/offline).
-// Their old service/duplex dependencies are not an alternate active signer.
-// Exclusion is NOT a passing result: progress_split tests do not replace actual
-// native-node A/A/B, interrupted-signing or offline catch-up integration gates.
-// Native product and load tests below exercise the original tick entrance;
-// journal/pacemaker/chain tests retain durability and recovery counterexamples.
+// Native product gates below exercise the original tick for continuous finality,
+// A/A/B, minority rejection and interrupted original-database catch-up. Component
+// journal/pacemaker/chain tests retain their separate durability counterexamples.
+// These do not qualify process death immediately after an undecided durable vote
+// or OS EROFS/ENOSPC during native startup/publication; those process gates remain
+// missing and must not inherit a passing result from other recovery scenarios.
 #[path = "journal_recovery_integration.rs"]
 mod journal_recovery_integration;
 #[path = "native_product_rpc.rs"]

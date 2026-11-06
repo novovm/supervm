@@ -62,11 +62,6 @@ fn decision_mode_disabled(enabled: &bool) -> bool {
     !enabled
 }
 
-pub(crate) struct StartupCandidateBindingV1 {
-    pub(crate) block_hash: [u8; 32],
-    pub(crate) justify_qc_hash: Option<[u8; 32]>,
-}
-
 /// One owner, one signer identity, one already locally executed candidate.
 /// Remote caches are bounded by the pinned validator set and may be recollected.
 /// Keys are never stored here; the local scheduler supplies its key to `poll`.
@@ -97,42 +92,6 @@ pub struct NovNativeSealRoundDriverV1 {
 }
 
 impl NovNativeSealRoundDriverV1 {
-    /// Read only the existing owner binding. This is not permission to sign;
-    /// configured service startup must still verify the exact live candidate.
-    pub(crate) fn startup_candidate(
-        store: &NovNativeBlockSealStoreV1,
-        authority: &NovNativeSealEpochAuthorityV1,
-        height: u64,
-        local_validator_id: [u8; 32],
-    ) -> Result<Option<StartupCandidateBindingV1>> {
-        let key = format!(
-            "native_block_seal/v1/round-driver/{}/{}/{}/{}",
-            authority.chain_id,
-            authority.epoch,
-            height,
-            hex_v1(&local_validator_id)
-        );
-        let Some(binding) =
-            read_json_v1::<DriverBinding>(&store.db, key.as_bytes(), "startup round owner")?
-        else {
-            return Ok(None);
-        };
-        if binding.schema != "novovm-native-seal-round-driver-binding/v1"
-            || binding.authority != *authority
-            || binding.height != height
-            || binding.local_validator_id != local_validator_id
-            || binding.block_hash == [0; 32]
-            || !binding.decision_v3
-            || binding.commit_v2
-        {
-            bail!("startup round owner differs from pinned V3 configuration");
-        }
-        Ok(Some(StartupCandidateBindingV1 {
-            block_hash: binding.block_hash,
-            justify_qc_hash: binding.justify_qc_hash,
-        }))
-    }
-
     /// Read-only transport binding; attaching a transport cannot replace it.
     pub fn authority(&self) -> &NovNativeSealEpochAuthorityV1 {
         &self.binding.authority
@@ -1003,20 +962,6 @@ impl NovNativeSealRoundDriverV1 {
         } else {
             self.prepared.as_ref()
         }
-    }
-
-    pub(crate) fn local_body_proposal(&self) -> Option<Message> {
-        let proposal = self.proposal.as_ref()?;
-        if self.halted
-            || proposal.proposer_id != self.binding.local_validator_id
-            || proposal.subject.round != self.state.current.round
-        {
-            return None;
-        }
-        Some(Message::Proposal {
-            proposal: Box::new(proposal.clone()),
-            certificate: self.certificate.clone().map(Box::new),
-        })
     }
 
     pub fn status(&self) -> NovNativeSealRoundDriverStatusV1 {

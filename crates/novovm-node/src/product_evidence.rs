@@ -345,34 +345,6 @@ fn validate_product_report_v1(path: &Path, verifier: &dyn TransportVerifier) -> 
                 _ => bail!("peer report frame counters do not match role"),
             }
         }
-        "novovm_product_mainline_topology_plan_v1" => {
-            if value.get("full_mesh_symmetric").and_then(Value::as_bool) != Some(true)
-                || value
-                    .get("external_network_executed")
-                    .and_then(Value::as_bool)
-                    != Some(false)
-                || value
-                    .get("real_public_topology_proven")
-                    .and_then(Value::as_bool)
-                    != Some(false)
-                || value.get("real_cross_nat_proven").and_then(Value::as_bool) != Some(false)
-            {
-                bail!("mainline topology preflight boundary invalid");
-            }
-            let node_count = value
-                .get("node_count")
-                .and_then(Value::as_u64)
-                .context("topology preflight missing node_count")?;
-            let directed_edges = value
-                .get("directed_peer_edge_count")
-                .and_then(Value::as_u64)
-                .context("topology preflight missing directed_peer_edge_count")?;
-            if !(2..=64).contains(&node_count)
-                || directed_edges != node_count.saturating_mul(node_count.saturating_sub(1))
-            {
-                bail!("mainline topology preflight is not a complete mesh");
-            }
-        }
         _ => bail!("unsupported product evidence report scope: {scope}"),
     }
     Ok(())
@@ -818,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn signed_evidence_accepts_offline_topology_without_external_claims() {
+    fn signed_evidence_rejects_retired_mainchain_topology_scope() {
         let root = std::env::temp_dir().join(format!("novovm-topology-evidence-{}", now_ms_v1()));
         fs::create_dir_all(&root).unwrap();
         let report_path = root.join("topology.json");
@@ -841,11 +813,11 @@ mod tests {
         .unwrap();
         let signer =
             crate::native_pipeline::consensus::crypto::component_transport_identity([133; 32]);
-        let manifest =
-            build_product_evidence_manifest_v1(&root, &[report_path], &signer, 1_000).unwrap();
-        let manifest_path = root.join("evidence.json");
-        write_product_evidence_manifest_v1(&manifest_path, &manifest).unwrap();
-        assert!(verify_product_evidence_manifest_v1(&root, &manifest_path, &signer).accepted);
+        let error =
+            build_product_evidence_manifest_v1(&root, &[report_path], &signer, 1_000).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("unsupported product evidence report scope"));
         let _ = fs::remove_dir_all(root);
     }
 }

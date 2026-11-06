@@ -7,7 +7,7 @@ fn exercise_fresh_successor_signing(
     id: [u8; 32],
     competing: [u8; 32],
 ) {
-    exercise_fresh_candidate_service(path, params, compiled, id, Some(parent));
+    prepare_offline_candidate_config(path, params, compiled, id, Some(parent));
     use crate::native_block_seal::commit_v3::NovNativeSealDecisionCertificateV3 as Certificate;
     use crate::native_block_seal::{
         NovNativeBlockSealStoreV1 as Seal, NovNativeSealLocalProposalRequestV1 as Request,

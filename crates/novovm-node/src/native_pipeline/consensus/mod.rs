@@ -3,9 +3,9 @@
 //! conditional durability and recovery are unchanged. No relay/controller is
 //! introduced here; the node owns its native transport and lifecycle.
 // Active adapters are NativeChannel -> NativeLifecycle / RoundProgress below.
-// channel.rs and controller.rs (including their test sources) are retained for
-// historical comparison, NOT compiled as a parallel product/signing owner.
-// See docs/NOVOVM_JULY_MAIN_INTEGRATION_MAP.md for replacement/coverage limits.
+// The former WSS channel/controller and their private fixtures are retired.
+// Required source binding, quorum and recovery checks exercise these native
+// owners; archived passes/failures do not qualify the current deployment.
 pub mod bodies;
 mod chain;
 pub mod crypto;

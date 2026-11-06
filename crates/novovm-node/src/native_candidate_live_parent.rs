@@ -37,6 +37,7 @@ pub(crate) struct FinalizedParentViewV1(ParentView);
 /// Restricted reads from one already captured finalized parent. This is not a
 /// live authority or an arbitrary state-tree interface. Callers provide the
 /// same nonce identity key used by native authentication, not an account alias.
+#[cfg(test)]
 pub(crate) trait FinalizedRecordReaderV1 {
     fn next_nonce(&self, identity: &str) -> Result<u64>;
     fn nov_balance(&self, account: &str) -> Result<Option<u128>>;
@@ -46,8 +47,10 @@ pub(crate) trait FinalizedRecordReaderV1 {
     }
 }
 
+#[cfg(test)]
 struct ColdFinalizedRecords<'a>(&'a NovNativeExecutionStoreV1);
 
+#[cfg(test)]
 impl FinalizedRecordReaderV1 for ColdFinalizedRecords<'_> {
     fn nov_balance(&self, account: &str) -> Result<Option<u128>> {
         Ok(self
@@ -79,8 +82,10 @@ impl FinalizedRecordReaderV1 for ColdFinalizedRecords<'_> {
     }
 }
 
+#[cfg(test)]
 struct RootedFinalizedRecords<'a>(&'a dyn NativeRecordAccessV1);
 
+#[cfg(test)]
 impl<'a> RootedFinalizedRecords<'a> {
     fn new(access: &'a dyn NativeRecordAccessV1) -> Result<Self> {
         // A missing map is corruption, never evidence that every key is absent.
@@ -101,6 +106,7 @@ impl<'a> RootedFinalizedRecords<'a> {
     }
 }
 
+#[cfg(test)]
 impl FinalizedRecordReaderV1 for RootedFinalizedRecords<'_> {
     fn nov_balance(&self, account: &str) -> Result<Option<u128>> {
         let parent = self
@@ -394,6 +400,7 @@ impl FinalizedParentViewV1 {
     /// and blob reader for the whole callback. It does not recheck the live head
     /// or grant permission to admit, sign or publish against this saved image.
     /// The callback must not re-enter workspace APIs while this lock is held.
+    #[cfg(test)]
     pub(crate) fn with_records<T>(
         &self,
         params: &serde_json::Value,
@@ -539,39 +546,6 @@ impl FinalizedParentViewV1 {
             physical: &RecordOverlayV1::new(&reader, physical),
             state: &RecordOverlayV1::new(&reader, state),
             receipts: &RecordOverlayV1::new(&reader, receipts),
-        })
-    }
-    /// Select from the pool's established order in one immutable-parent scope.
-    /// Raw entries are authenticated individually; this neither mutates the
-    /// pool nor replaces the final batch/live checks performed by preparation.
-    pub(crate) fn select_ordered_transactions(
-        &self,
-        ordered: Vec<Vec<u8>>,
-        limit: usize,
-        params: &serde_json::Value,
-    ) -> Result<Vec<Vec<u8>>> {
-        let h = &self.block().header;
-        let workspace = WorkspaceStore::open(h.chain_id, params)?;
-        let protocol = self.genesis_config().protocol_config_commitment;
-        if workspace.protocol != protocol
-            || workspace.namespace
-                != native_aoem_owned_state_namespace_digest_v1(params, h.chain_id)
-        {
-            bail!("historical parent selection workspace/protocol/namespace mismatch");
-        }
-        if let ParentView::Cold(parent) = &self.0 {
-            return auth::select_transactions(
-                h.chain_id,
-                protocol,
-                parent.state(),
-                ordered,
-                params,
-                limit,
-            );
-        }
-        self.with_record_access(&workspace, |access| {
-            verify_record_domain(access, &workspace, h.state_version)?;
-            auth::select_record_transactions(h.chain_id, protocol, access, ordered, params, limit)
         })
     }
     /// Authenticate an immutable historical parent. This neither reads live

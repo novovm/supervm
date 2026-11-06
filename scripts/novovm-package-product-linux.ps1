@@ -202,7 +202,6 @@ try {
     "novovm-product-node-overlay",
     "novovm-product-nat",
     "novovm-product-peer",
-    "novovm-product-topology",
     "novovm-product-evidence"
   )
   # One original package, using the real crate/feature contracts. These are
@@ -349,9 +348,8 @@ try {
     "NOVONET_TRANSPORT_POLICY_V1.md",
     "NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
     "NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
-    "NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md",
     "NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md",
-    "novovm-product-topology-preflight-v1.md", "novovm-product-relay-daemon-v1.md",
+    "novovm-product-relay-daemon-v1.md",
     "novovm-product-node-overlay-v1.md", "novovm-product-nat-runtime-v1.md",
     "novovm-product-peer-runtime-v1.md", "novovm-product-evidence-v1.md",
     "novovm-product-relay-client-v1.md", "NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md",
@@ -489,64 +487,6 @@ try {
 
   @'
 {
-  "chain_id": "REVIEW_APPROVED_CHAIN_ID",
-  "role": "duplex",
-  "identity_key_path": "/etc/novovm/keys/transport.sealed",
-  "library": "/opt/novovm/aoem/linux/core/bin/libaoem_ffi.so",
-  "library_sha256": "APPROVED_AOEM_CORE_SHA256",
-  "delivery_journal_path": "/var/lib/novovm/state/product-delivery-journal.rocksdb",
-  "peers": [
-    {
-      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-b-public-key>",
-      "metric_peer_id": 9991002
-    },
-    {
-      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-c-public-key>",
-      "metric_peer_id": 9991003
-    },
-    {
-      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-peer-d-public-key>",
-      "metric_peer_id": 9991004
-    }
-  ],
-  "overlay": {
-    "cache_path": "/var/lib/novovm/bootstrap-cache.json",
-    "trusted_signer_public_keys": ["REVIEW_REPLACE_WITH_FULL_1952_BYTE_MLDSA65_PUBLIC_KEY_ARRAY"],
-    "minimum_bootstrap_signatures": 1,
-    "embedded_sources": [],
-    "cooldown_base_ms": 2000,
-    "cooldown_max_ms": 300000
-  },
-  "connect_timeout_ms": 10000,
-  "read_timeout_ms": 250,
-  "tls_trust": "native_web_pki",
-  "channel_capacity": 1024,
-  "resource_limits": {
-    "pending_per_peer_count": 1024,
-    "pending_per_peer_bytes": 67108864,
-    "pending_total_count": 16384,
-    "pending_total_bytes": 268435456,
-    "pending_ttl_ms": 60000,
-    "event_total_bytes": 268435456,
-    "preauth_per_peer_count": 64,
-    "preauth_per_peer_bytes": 4194304,
-    "preauth_total_count": 1024,
-    "preauth_total_bytes": 67108864,
-    "preauth_ttl_ms": 30000,
-    "journal_max_entries": 65536,
-    "journal_max_bytes": 536870912,
-    "journal_obligation_ttl_ms": 86400000,
-    "journal_terminal_retention_ms": 604800000,
-    "journal_retry_interval_ms": 1000
-  },
-  "metric_peer_id": 9991000,
-  "reconnect_base_delay_ms": 250,
-  "reconnect_max_delay_ms": 30000
-}
-'@.Replace('APPROVED_AOEM_CORE_SHA256', $actualAoemSha) | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\node-mainline-overlay.json.example")
-
-  @'
-{
   "version": 2,
   "mode": "observed_endpoint_probe",
   "bind_addr": "0.0.0.0:0",
@@ -601,36 +541,6 @@ NOVOVM_AOEM_MANIFEST=/opt/novovm/aoem/manifest/aoem-manifest.json
 NOVOVM_AOEM_RUNTIME_PROFILE=/opt/novovm/aoem/config/aoem-runtime-profile.json
 NOVOVM_AOEM_PLUGIN_DIR=/opt/novovm/aoem/linux/core/plugins
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\novovm-node.env.example")
-
-  @'
-{
-  "scope": "novovm_product_mainline_topology_plan_v1",
-  "chain_id": 1,
-  "require_identity_files": false,
-  "nodes": [
-    {
-      "name": "node-a",
-      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-a-public-key>",
-      "config_path": "node-a.json"
-    },
-    {
-      "name": "node-b",
-      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-b-public-key>",
-      "config_path": "node-b.json"
-    },
-    {
-      "name": "node-c",
-      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-c-public-key>",
-      "config_path": "node-c.json"
-    },
-    {
-      "name": "node-d",
-      "peer_id": "novovm-mldsa65:<64-lowercase-hex-SHA256-of-full-node-d-public-key>",
-      "config_path": "node-d.json"
-    }
-  ]
-}
-'@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "config\topology-plan.json.example")
 
   if (!$windowsPackage) {
   @'
@@ -852,10 +762,11 @@ Packaging is not installation, startup, multi-host acceptance or mainnet launch.
    run the node once in the foreground with START=create. Stop it normally
    before enabling the existing-mode service. Retain the original database and
    signing journal across every restart; create is not a recovery command.
-8. Product relay/peer/topology tools and `node-mainline-overlay.json.example` are retained
-   for their explicit communication/compatibility callers. They are NOT the
-   native validator owner and must not be enabled beside native CONFIG. Their
-   preflight/evidence does not qualify native finality or automatic NAT routing.
+8. Product relay/peer/overlay tools remain for their explicit communication
+   callers. They are NOT the native validator owner and must not be enabled
+   beside native CONFIG. The retired WSS mainchain topology tool and node-overlay
+   configuration are not shipped. Communication preflight/evidence does not
+   qualify native finality or automatic NAT routing.
 9. Check actual native query responses, AOEM-backed ledger readability, peer and
    recovery state, mailbox signed readiness and real communication separately.
    PID or listener status alone is not healthy delivery. A mailbox health check
@@ -999,13 +910,8 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
   if ((Get-FileHash -LiteralPath $copiedAoem -Algorithm SHA256).Hash.ToLowerInvariant() -ne $actualAoemSha) {
     throw "Copied AOEM runtime differs from its validated source; existing package remains untouched."
   }
-  $ackWireVersion = "novovm-product-mainline-recipient-ack/v2"
   $journalSchema = "novovm-product-delivery-journal/v1"
-  $overlaySource = Get-Content -Raw -LiteralPath (Join-Path $repo "crates\novovm-node\src\product_mainline_overlay.rs")
   $journalSource = Get-Content -Raw -LiteralPath (Join-Path $repo "crates\novovm-node\src\product_delivery_journal.rs")
-  if (-not $overlaySource.Contains($ackWireVersion)) {
-    throw "Release manifest ACK wire version does not match the Product Overlay source."
-  }
   if (-not $journalSource.Contains($journalSchema)) {
     throw "Release manifest journal schema does not match the delivery-journal source."
   }
@@ -1053,7 +959,6 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
     }
     compatibility_tools = [PSCustomObject]@{
       active_validator_owner = $false
-      product_overlay_ack_wire = $ackWireVersion
       delivery_journal_schema = $journalSchema
     }
     mixed_version_rolling_upgrade_supported = $false

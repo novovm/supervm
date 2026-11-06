@@ -25,12 +25,8 @@ pub mod newview;
 pub mod round_driver;
 #[path = "native_block_seal_round_message.rs"]
 pub mod round_message;
-#[path = "native_block_seal_round_overlay.rs"]
-pub mod round_overlay;
 #[path = "native_block_seal_round_wire.rs"]
 pub mod round_wire;
-#[path = "native_block_seal_service.rs"]
-pub mod service;
 #[path = "native_block_seal_service_config.rs"]
 pub mod service_config;
 #[path = "native_block_seal_service_paths.rs"]
@@ -2921,10 +2917,6 @@ pub(crate) mod tests {
     }
     mod commit {
         include!("native_block_seal_commit_tests.rs");
-    }
-    pub(crate) mod native_seal_round_network {
-        include!("native_block_seal_round_network_tests.rs");
-        include!("native_block_seal_service_tests.rs");
     }
     mod round_driver {
         include!("native_block_seal_round_driver_tests.rs");

@@ -1,5 +1,112 @@
 # 旧完整CI的高度4超时：保留失败，补足失败现场
 
+## 2026-11-06 最新范围纠正：旧 WSS 主链退役
+
+本文件下方是历史失败及当时修正记录，不再作为运行旧主链的操作指令。
+`fresh_genesis_main_nodes_continue_three_heights_without_restart` 实际使用
+`RelayTransportV1::Wss443`、本机 Relay、`NOVOVM_JULY_HISTORICAL_FIXTURE=1`
+及 `NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true`，不是实机 A/B/C/D 的
+ML-DSA-65 NovoRUDP 配置。`49a7e65f` 的失败不能直接定性为原生主网丢包或
+安装阻断；旧失败仍为失败，根因未归因，不因退役改为通过。
+
+用户现已明确取消该主链承载。本轮从原节点去掉 WSS 主链启动闭包，移除专属
+service/lifecycle、夹具、主链拓扑模板及操作指引，不保留待开兼容模式。
+旧环境变量即使配合 JULY 开关，也在开库/开钥/监听前拒绝；应用 Relay/邮箱/
+Web 不受此操作影响，B/C/D 没有服务变更。实际主链继续沿原 NativeChannel/
+NativeLifecycle/NovoRUDP/APFL；原共识门槛、签名、AEAD、nonce及账务不改。
+
+| 原正确性责任 | 当前原生所有者及验证范围 |
+| --- | --- |
+| 正文来源、完整性、父状态和预算 | `novovm-network::novorudp::fragments` 的按认证 peer＋对象 hash 重组；原 `consensus/transport`、`native_lifecycle_integration`；不沿旧 WSS manifest inbox 再建一套 |
+| 重复输入/投票、不同签票人和轮次 | 原 NativeLifecycle 有界 pending/发送交付及 RoundProgress/VoteCollector；不迁入旧 WSS FIFO |
+| 当前制品真实确认与账务 | `native_only_genesis_transactions_queries_and_cold_recovery`、`native_only_minority_and_pending_signature_conflict_recover` |
+| 连续高度、离线原库追赶、2/4拒绝、原库恢复 | 两项 `native_only_recovery_late_*_validator_original_database_and_minority`；原生 A/A/B 恢复测试 |
+| ML-DSA/UCA 大正文、费用、再花、追赶中断及四库恢复 | `native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery` |
+
+独立 recovery job 保留并改由上述既有原生进程测试承担，从原 rust job 移动而非
+重复跑；full 仍要求它成功。旧 WSS 专属测试不再列为主链必过，纯验证、离线候选、
+配置 pin、子进程回收及其他应用测试继续保留。尚缺的实际原生故障点：
+
+- proposal/prevote 已持久化而未最终确认时的精确强杀、不重新注入钱包恢复。
+  旧 `controller_crash` 在本轮删除之前已未挂接编译；不是本轮新丢覆盖。
+- 真实 EROFS/ENOSPC、启动存储失败保持文件不变、QC持久化后发布失败恢复。
+  旧 WSS 专项是可选 ignored 测试，现有原生冷恢复不是等价验收。
+
+### 删除清单与共用能力误删复核
+
+对照清理前 `49a7e65f488c137ba310ba5878631fa96dca81a3`，
+[删除清单](RETIRED-WSS-MAINCHAIN-FILES.txt)列出82个源码、专属夹具/工具/文档文件。
+其中包括此前已无mod/include挂接的旧controller/channel源码；不是82项现用能力。
+另在原文件中移除旧启动分支、打包模板和CI调用。历史内容可由Git恢复；没有删除
+数据库、签票日志、用途钥、应用数据或既有审计证据。经济文档的既有未提交修改
+不混入本工作包。原生运行与纯离线校验分开，未把离线参考当作主网兼容运行模式。
+
+用户补充外部审计后，由两路只读复核按真实调用核对，而不是按文件名含有
+`overlay`/`relay`就删除；结论为未发现所列共用能力误删阻断，不等于安全全覆盖。
+
+| 共用能力 | 本地差异核对结果 |
+| --- | --- |
+| 原传输身份与用途钥 | `service.rs`的`purpose_keys`传输/验证者分离加载、`crypto::transport_identity`、`network::product_overlay`及`transport_binding`、整个relay custody实现与清理前Git blob一致；删除的是node的`product_mainline_overlay`，不是共享认证模块 |
+| 原生正文/证据/共识 | 原`NativeChannel -> message_evidence::verify -> RoundProgress`、`bodies`的父状态/业务pin/正文身份/预算、`chain`归档及证书验证没有生产差异 |
+| 原持久化与执行 | `journal`的签票绑定/恢复/条件写、原AOEM bindings/exec及consensus crate未改；保留同步离线artifact验证与独立持久回读断言 |
+| 应用Relay | `product_relay_client`只移除旧主链独占的`has_buffered_events`观察方法；`recv_event`缓冲消费、来源/目标/session/sequence/bytes检查、TLS、认证、deadline、队列上限保留 |
+| 应用证据与包 | suite65、公钥/peer_id、签名、路径、哈希、Relay/peer/strategy验证保留；只拒绝退役topology scope。应用relay/peer/overlay/NAT/evidence/mailbox门禁及随包程序保留 |
+
+新增队列测试首次运行24通过/1失败，失败是新增测试误要求完成后的重投永远不交付。
+原`fragments`明定at-least-once，完成元数据按容量和TTL淘汰；本夹具每peer仅留4项，
+先完成多项后允许再交付。没有为测试改生产去重、缓存、超时或认证。
+修正测试保留7个不同签票人/轮次/相位/候选控制对象的唯一初始交付；pending重复
+只占1槽/一份字节，离队重试必须经原DONE排空，允许有界历史内直接DONE或最多一次
+相同fragment及完整消息再交付。业务重复计票仍由原collector反例验证。
+初次失败日志保留为`target/native-only-retirement-validation/archive-initial-failed-linux.log`，
+不改写该次为通过；修正后同组25项通过。
+
+### 本轮受影响验证与制品边界
+
+下列是本工作包的本地结果，不继承旧WSS运行结果，也不等于冻结提交的完整CI。
+原始日志在`target/native-only-retirement-validation/`；脚本与合成装配日志在
+`target/wss-mainchain-retirement-ci-script-checks-cff92b95e48b4341ada3e34669655976/`。
+
+| 范围 | 本地结果 |
+| --- | --- |
+| Windows/Linux原node全部target | 两平台`cargo check`及严格Clippy通过；格式与差异检查通过 |
+| 旧主链配置拒绝 | Windows/Linux各1项，覆盖15种配置组合；在开库、开钥和监听前失败，不因JULY开关绕过 |
+| 原NovoRUDP分片重组 | 27项通过，含新增认证来源隔离反例 |
+| 原NativeLifecycle归档/有界控制队列 | 修正上述新增测试后25项通过，保留首轮失败日志 |
+| 原生来源绑定及collector | 12项、21项通过，分别验证实际来源与独立票据责任 |
+| 共享seal纯验证、RPC和应用evidence | 144项、18项、5项通过，不包含退役WSS生命周期 |
+| 离线候选CLI及原AOEM发布/回读 | 9项、1项通过；此组显式使用原离线Host参考，不能替代原生主链验收 |
+| 原生真实四进程确认/恢复 | 6项通过，336.78秒；包括A/A/B、冷恢复、少票/冲突、就绪重试、最高/最低排序验证者原库追赶 |
+| ML-DSA/UCA真实进程恢复 | 1项通过，137.07秒；40高度含1,024行大正文，落后节点在高度1追赶中断后重启，恢复后再花及四库冷恢复通过 |
+| mainline门禁和CI范围 | 51字段一致性及原bin lockset反例通过；23项scope/严格汇总测试通过 |
+| Windows/Linux原打包器 | 各10项二进制合同及7项拒绝反例通过；34项包安全检查通过；仅合成装配，不是实机安装资格 |
+
+一次探索性`mainline_preflight::tests`筛选命中0项，未计作通过证据；有效门禁证据
+来自实际bin lockset测试及scope/汇总断言。完整CI先列出并逐项核对六项`native_only_`
+和一项`native_uca_process_`的名称，再执行；`full`只接受被选择任务的`success`，
+失败、取消、跳过、缺失和未完成不能汇总为成功。应用安全门禁未被删除。
+
+本次真实进程验收强制`NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0`并固定实际AOEM。
+实际运行的是test依赖特性统一后构建的二进制，不能误用此前dev build的哈希：
+
+| 制品 | SHA256 |
+| --- | --- |
+| Linux node | `eee3876d8ddd8f425bd98a220dae86d35e6267dd32607ad008ae77935ce2ad52` |
+| Linux native client | `7b78660ded6280107d5a7aa5e3af5d0e52bb8d8f3a58dc7d2511c352efa8d99f` |
+| 实际AOEM libaoem_ffi.so | `d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33` |
+| 对应manifest | `e1443e482a3463d8102e06a2264a97c3057eb9d9a7ac59f8d2e571e678e1f4db` |
+
+[本轮原始本地日志](native-only-retirement-local-evidence.zip)只收录上述明确列出的
+29个日志/命令/哈希文件，共24,069字节，SHA256：
+`2b0f6fcdf824480ba6e539cb1d04f13d40ba3870ca0d987c3827e46382f6dd43`。
+不包含进程配置、数据库、用途钥、签票journal或钱包材料。测试后的实际二进制及库
+再次核对，与上表一致；完整本地流水线退出0。
+
+本工作包将在main集中提交推送，远端检查点仍为`49a7e65f`；最终CI结果必须绑定
+实际新SHA，当前本地通过不预报完整CI成功。GitHub直连失败后，核实本机代理监听
+在`::`:7897（首轮地址筛选漏掉该监听），仅命令级使用已有代理恢复连接；没有改动
+全局网络、Git配置或SSH信任。未启链、未安装SCM、未部署、未替换正式库、无新TPS。
+
 完整CI41757929427（facd175b）的Rust任务126338555224也失败了，不能只记录该轮
 Windows mirror失败。原`fresh_genesis_main_nodes_continue_three_heights_without_restart`
 运行332.81秒，在`continuous height 4 deadline`退出。
@@ -409,3 +516,45 @@ CI结果必须绑定该提交，不能沿用 `54bf0c16` 或旧实机制品资格
 220.28秒多进程恢复证据继续保留，本次只增加上述离队重试断言并定向复核。
 经济分配/AGENTS等另有未提交工作，未混入本次冻结。历史高度停滞仍未归因；
 SCM安装、B/C/D、正式库、性能及四机重新认证均不由这次推送授权或登记通过。
+
+### 2026-11-06 冻结提交的自动完整CI及新失败现场
+
+上述14个相关文件已集中提交并推送到 `main@49a7e65f488c137ba310ba5878631fa96dca81a3`。
+经济/AGENTS/共同配置的其他未提交工作保留，未混入本次提交。
+自动运行 [42125305209](https://github.com/novovm/supervm/actions/runs/42125305209)
+绑定该SHA，`event=push`、`run_attempt=1`，选择的是完整检查，不是手工recovery范围。
+截至本段初记，完整运行尚未结束，但恢复必检已失败，候选不能签收；没有重跑或取消。
+本段属于取得结果后的本地回执，不为文档单独再推送触发完整CI。
+
+恢复作业 `127588061705` 在13分39秒结束。`fresh_pool` 10项、`native_fresh_rpc`
+18项、真实子进程回收反例1项全部通过；随后原
+`fresh_genesis_main_nodes_continue_three_heights_without_restart` 失败，退出101，
+测试总时长300.83秒。实际断言是 `native_seal_continuous_process.rs:354` 的
+`continuous height 4 deadline`，由原每高度120秒业务窗口触发，尚未进入正常结束
+及进程回收；不是15分钟步骤超时，也不是拆分回收时钟产生的误报。
+
+公开现场核对：
+
+| 观察对象 | 本次能确认的事实及不能越过的边界 |
+| --- | --- |
+| 拓扑及状态 | 在线node0/1/2、离线node3，门槛3。node0仍为高度3 `PublishedCertificateRelay`、`awaiting_successor_body=true`；node1/2为高度4、round0 `CollectingVotes`。CI编号不是实机A/B/C/D。 |
+| 候选及投票 | node1/2的完整subject相同，proposal `404536ea…597bbc71`、parent `d574d767…4774f832`、pre-state `68c5182d…50dedd78`；两边已有票身份均为node1和node2，只有2票。node0没有进入该高度4候选。不能把这次对齐自动套回旧失败。 |
+| 高度4正文 | node2向node0的manifest `cb08ebc5…f95473f6`、chunk `847d0587…115dee56`有 `queue_accepted=true`；node1收到并完成同一正文。该字段仅证明发送方本地入队，不证明实际发包、对端ACK或收齐。 |
+| node0拒绝记录 | 所列3次 `body fragment has no active signed manifest` 对应高度3旧chunk `142c687a…448f8c4`；其余记录主要是投票不满足正文入口合同，不是高度4正文损坏的证明。node0仅记录一次高度3正文完成。 |
+| 仍缺的证据 | 首轮及早期重投窗口未见高度4正文进入node0认证后交接点；接收采样随后达到64条上限，不能以之后无记录证明始终未到。当前缺口只能界定为本地入队到认证后应用交接之间；实际发送、ACK及重组证据不足，根因未确定。 |
+
+原网络命名空间、单测试线程、实际AOEM选择器、票数及生产轮超时不变。
+独立恢复作业使用新的runner和工作目录、不再等待完整Rust前置步骤；冷编译单列，
+增加回收反例和有界观察。这些属于运行上下文差异，本轮没有CPU/内存实测，不能
+声称物理资源完全同条件，也不能据此认定CI拆分导致或未影响此次停滞。
+
+原始恢复日志保存在 `target/stall-freeze-ci-42125305209-recovery.log`；
+artifact `fresh-ingress-history-recovery`（ID `13461586595`）已下载到
+`target/stall-freeze-ci-42125305209-recovery/`。其中87个文件为26份process JSON、
+30份stdout、30份stderr及1份测试列表。包含三个deadline快照和拓扑，
+**没有原数据库、签票journal、配置、用途钥或成功acceptance报告**；这里只能登记
+日志与公开现场保留，不能写成原库已保全或恢复通过。
+
+冻结后的生产源码未再修改。两项消息处理反例的本地修复证据继续成立；
+本次高度3→4停滞仍失败、尚未归因，旧停滞也未结案。不部署SCM、不触动B/C/D、
+不替换正式库，不产生新的稳定性或TPS结论。

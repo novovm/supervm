@@ -16,7 +16,7 @@ fn with_parent_round_fixture_at(
 ) {
     std::thread::Builder::new()
         .name("candidate-less-round-test".into())
-        .stack_size(crate::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
+        .stack_size(crate::native_candidate_plan::CANDIDATE_EXECUTION_STACK_BYTES_V1)
         .spawn(move || {
             let _guard = PLAN_RUNTIME_TEST_LOCK
                 .lock()

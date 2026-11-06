@@ -1,4 +1,3 @@
-use crate::native_block_seal::service::FreshChainLifecycleV1;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
@@ -8,6 +7,7 @@ use std::time::{Duration, Instant};
 const MAX_CONNECTIONS: usize = 8;
 const MAX_REQUEST: usize = crate::tx_ingress::fresh_pool::MAX_RAW_BYTES * 2 + 8192;
 const DEADLINE: Duration = Duration::from_secs(3);
+#[cfg(test)]
 const IDLE_POLL_PAUSE: Duration = Duration::from_millis(5);
 
 struct Connection {
@@ -160,6 +160,7 @@ fn body_bounded(bytes: &[u8], max_request: usize) -> Result<Option<&[u8]>> {
     Ok((bytes.len() == expected).then_some(&bytes[end + 4..]))
 }
 
+#[cfg(test)]
 fn decode_hex(text: &str) -> Result<Vec<u8>> {
     let text = text.strip_prefix("0x").unwrap_or(text);
     if text.is_empty()
@@ -175,57 +176,9 @@ fn decode_hex(text: &str) -> Result<Vec<u8>> {
         .collect()
 }
 
-pub fn handle_fresh_rpc(request: Value, lifecycle: &mut FreshChainLifecycleV1) -> Value {
-    let id = request.get("id").cloned().unwrap_or(Value::Null);
-    let result = (|| -> Result<Value> {
-        if request["jsonrpc"] != "2.0" || !(id.is_null() || id.is_string() || id.is_number()) {
-            bail!("invalid JSON-RPC request");
-        }
-        match request["method"].as_str() {
-            Some("nov_sendRawTransaction") => {
-                let params = request["params"]
-                    .as_array()
-                    .context("params array required")?;
-                if params.len() != 1 {
-                    bail!("one raw transaction required");
-                }
-                let raw = decode_hex(params[0].as_str().context("raw hex required")?)?;
-                crate::native_fresh_timing::measure("rpc.submit_raw_transaction", || {
-                    lifecycle.submit_raw_transaction(raw)
-                })
-            }
-            Some("nov_getTransactionStatus") => {
-                let params = request["params"]
-                    .as_array()
-                    .context("params array required")?;
-                if params.len() != 1 {
-                    bail!("one transaction hash required");
-                }
-                let hash: [u8; 32] = decode_hex(params[0].as_str().context("hash hex required")?)?
-                    .try_into()
-                    .map_err(|_| anyhow::anyhow!("32-byte hash required"))?;
-                crate::native_fresh_timing::measure("rpc.transaction_status", || {
-                    lifecycle.transaction_status(hash)
-                })
-            }
-            Some("nov_getAssetBalance") => {
-                let account = nov_balance_account(&request["params"])?;
-                lifecycle.finalized_nov_balance(&account)
-            }
-            Some("nov_chainStatus") => Ok(lifecycle.status_json()),
-            _ => bail!("method not supported"),
-        }
-    })();
-    match result {
-        Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-        Err(error) => {
-            json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":error.to_string()}})
-        }
-    }
-}
-
 // Reuse the product method and its named parameters, but not the old Host
 // projection reader. This first finalized wallet query covers public NOV only.
+#[cfg(test)]
 fn nov_balance_account(params: &Value) -> Result<String> {
     let params = params
         .as_object()
@@ -259,6 +212,7 @@ fn nov_balance_account(params: &Value) -> Result<String> {
 
 // Only adjacent submissions share an admission turn. A status/query request
 // is an ordering barrier: later submissions cannot become visible to it early.
+#[cfg(test)]
 fn coalesce_ready_requests(
     requests: Vec<Value>,
     mut handle: impl FnMut(Vec<Value>) -> Vec<Value>,
@@ -281,25 +235,7 @@ fn coalesce_ready_requests(
     responses
 }
 
-fn handle_fresh_rpc_requests(
-    requests: Vec<Value>,
-    lifecycle: &mut FreshChainLifecycleV1,
-) -> Vec<Value> {
-    coalesce_ready_requests(requests, |requests| {
-        if requests[0]["method"] != "nov_sendRawTransaction" {
-            return requests
-                .into_iter()
-                .map(|request| handle_fresh_rpc(request, lifecycle))
-                .collect();
-        }
-        handle_submit_requests(requests, |raws| {
-            crate::native_fresh_timing::measure("rpc.submit_raw_transactions", || {
-                lifecycle.submit_raw_transactions(raws)
-            })
-        })
-    })
-}
-
+#[cfg(test)]
 fn handle_submit_requests(
     requests: Vec<Value>,
     submit: impl FnOnce(Vec<Vec<u8>>) -> Vec<Result<Value>>,
@@ -371,32 +307,6 @@ impl FreshRpcServer {
         Ok(self.listener.local_addr()?)
     }
 
-    pub fn poll(&mut self, lifecycle: &mut FreshChainLifecycleV1) -> Result<()> {
-        self.poll_batch_when(!lifecycle.candidate_storage_busy(), |requests| {
-            handle_fresh_rpc_requests(requests, lifecycle)
-        })
-    }
-
-    /// Service the existing bounded RPC poll within the owner's idle budget.
-    /// The budget never restarts when requests arrive. An individual synchronous
-    /// handler may overrun it; no additional poll or sleep then delays consensus.
-    pub fn poll_during_idle(
-        &mut self,
-        lifecycle: &mut FreshChainLifecycleV1,
-        idle: Duration,
-    ) -> Result<()> {
-        let started = Instant::now();
-        poll_during_idle_with(
-            idle,
-            || {
-                crate::native_fresh_timing::measure("rpc.idle_poll", || self.poll(lifecycle))?;
-                Ok(lifecycle.candidate_completion_ready())
-            },
-            || started.elapsed(),
-            std::thread::park_timeout,
-        )
-    }
-
     /// Reuse the product HTTP transport with an explicitly selected execution
     /// lifecycle. This does not select a signer, database, or execution policy.
     #[cfg(test)]
@@ -409,6 +319,7 @@ impl FreshRpcServer {
         self.poll_batch_when(true, handle)
     }
 
+    #[cfg(test)]
     fn poll_batch_when(
         &mut self,
         storage_available: bool,
@@ -547,6 +458,7 @@ impl FreshRpcServer {
 // Clock/sleep closures keep budget and error tests deterministic; production
 // uses one monotonic start. A real queued candidate completion wakes the owner
 // without paying another full idle interval; RPC arrivals never reset a budget.
+#[cfg(test)]
 fn poll_during_idle_with(
     idle: Duration,
     mut poll: impl FnMut() -> Result<bool>,

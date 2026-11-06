@@ -613,11 +613,143 @@ fn candidate_node_cli_real_aoem_common_plan_and_restart_match_across_processes()
     }
 }
 
-#[path = "support/native_seal_main_process.rs"]
-mod native_seal_main_process;
-
 #[path = "support/native_fresh_genesis_cli.rs"]
 mod native_fresh_genesis_cli;
+
+#[test]
+fn retired_wss_mainchain_selection_fails_before_opening_state() {
+    for (name, value) in [
+        ("NOVOVM_NATIVE_SEAL_ENABLED", "true"),
+        ("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED", "true"),
+        ("NOVOVM_NATIVE_SEAL_CONFIG", "missing-seal.json"),
+        (
+            "NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG",
+            "missing-overlay.json",
+        ),
+        ("NOVOVM_NATIVE_FRESH_RPC_BIND", "127.0.0.1:18545"),
+    ] {
+        for selection in ["raw-fixture", "current-config", "query-override"] {
+            let node = Node::new("retired-wss-preflight");
+            let mut command = node.command();
+            command
+                .env("NOVOVM_NODE_MODE", "native_execution_tick")
+                .env(name, value);
+            match selection {
+                "raw-fixture" => {
+                    command.env("NOVOVM_JULY_HISTORICAL_FIXTURE", "1");
+                }
+                "current-config" => {
+                    command
+                        .env("NOVOVM_NATIVE_EXECUTION_CONFIG", "unread-native.json")
+                        .env("NOVOVM_NATIVE_EXECUTION_START", "create");
+                }
+                _ => {
+                    command.env(
+                        "NOVOVM_MAINLINE_QUERY_METHOD",
+                        "nov_getNativeBlockLedgerStatus",
+                    );
+                }
+            }
+            let result = node.run(&mut command, "rejected");
+            assert!(!result.0, "retired selection accepted: {name}, {selection}");
+            assert!(
+                result.2.contains("retired WSS main-chain owner"),
+                "{}",
+                result.2
+            );
+            for marker in [
+                "native_tick_start:",
+                "native_execution_startup_recovery:",
+                "native_block_ledger_startup_recovery:",
+            ] {
+                assert!(!result.1.contains(marker) && !result.2.contains(marker));
+            }
+            // Only the two diagnostic files created by Node::run may exist.
+            let mut files = fs::read_dir(&node.0)
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    assert!(entry.file_type().unwrap().is_file());
+                    entry.file_name().into_string().unwrap()
+                })
+                .collect::<Vec<_>>();
+            files.sort();
+            assert_eq!(files, ["rejected.stderr.log", "rejected.stdout.log"]);
+        }
+    }
+}
+
+// This assertion is independent of the retired Relay/WSS main-chain fixture.
+// Child reaping remains a separate obligation after business confirmation.
+struct ProcessExitChild(std::process::Child);
+
+impl Drop for ProcessExitChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn wait_for_main_process_exit(
+    child: &mut std::process::Child,
+    started: Instant,
+) -> anyhow::Result<std::process::ExitStatus> {
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        anyhow::ensure!(
+            started.elapsed() < Duration::from_secs(180),
+            "main-process deadline"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[test]
+fn process_exit_wait_uses_reaping_budget_after_completed_business() {
+    if std::env::var("NOVOVM_PROCESS_EXIT_WAIT_CHILD").as_deref() == Ok("1") {
+        let mut byte = [0];
+        std::io::Read::read_exact(&mut std::io::stdin(), &mut byte).unwrap();
+        return;
+    }
+    let mut child = ProcessExitChild(
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process_exit_wait_uses_reaping_budget_after_completed_business",
+            ])
+            .env("NOVOVM_PROCESS_EXIT_WAIT_CHILD", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let completed_business_started = Instant::now()
+        .checked_sub(Duration::from_secs(181))
+        .unwrap();
+    let old_result = wait_for_main_process_exit(&mut child.0, completed_business_started);
+    assert!(
+        old_result
+            .unwrap_err()
+            .to_string()
+            .contains("main-process deadline"),
+        "reusing the expired business budget must reject a still-live child"
+    );
+    assert!(child.0.try_wait().unwrap().is_none());
+    child.0.kill().unwrap();
+    let exit_started = Instant::now();
+    assert!(!wait_for_main_process_exit(&mut child.0, exit_started)
+        .unwrap()
+        .success());
+    // Already-observed exit wins even when the earlier business budget expired.
+    assert!(
+        !wait_for_main_process_exit(&mut child.0, completed_business_started)
+            .unwrap()
+            .success()
+    );
+}
 
 #[test]
 fn candidate_child_fixture_preserves_explicit_artifact_and_credential_selection() {

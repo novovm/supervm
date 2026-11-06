@@ -1,5 +1,11 @@
 NOVOVM 正式上线前：运营者入门与逐项确认
 
+2026-11-06 当前入口纠正：以下旧开发记录不是当前安装步骤。唯一主链路径为
+native_execution_tick -> NativeLifecycle/NativeChannel/NovoRUDP/APFL -> 原执行/共识/持久化。
+WSS/Relay 主链服务、旧 seal 启动配置及其专属 readiness 已退役；应用 Relay/邮箱
+不受此退役影响。实际安装只使用 NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md
+中批准的配置与对应制品，不从下方历史说明复制启动参数，不静默回退旧网络。
+
 2026-10-20 当前操作：真实多设备隔离测试链
 
 本节优先于下方历史说明。核对基线 main@0d77cd0e；当前入口是原
@@ -221,11 +227,10 @@ relay 是转发通道。它不拥有用户余额、不代替验证者投票，�
 - 对应发布提交的完整 CI、独立安全审查和密钥运营流程。
 - 最终批准的创世、初始分配及验证集合。
 
-本轮已实现签名用户的回环 RPC、持久交易队列和按高度追赶，说明见
-NOVOVM_FRESH_CHAIN_INGRESS_RECOVERY_V1.txt。queued 只表示本机持久入队，
-只有 finalized 加最终回执才表示链上确认；回执本身还可能记录业务执行失败。
-当前接口不是已公开的互联网钱包服务；公网接入需要受控 HTTPS 网关及独立验收。
-尚未处理无候选 leader 离线活性等故障，不能用本机 PASS 替代所有上线门禁。
+2026-11-06：上述历史 WSS/回环 RPC 主链运行指引已退役，不作为启动配置。
+当前唯一主链运行指引见 NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md，
+使用原 native_execution_tick、NativeChannel/NovoRUDP/APFL；原生提交/查询
+及恢复必须由当前制品验证，不沿旧 HTTP/Relay 入口，也不继承旧测试的通过声明。
 
 七、现在需要你提供什么
 

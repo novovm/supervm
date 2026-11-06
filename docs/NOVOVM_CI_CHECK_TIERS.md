@@ -1,32 +1,79 @@
 # CI scope and candidate validation
 
-## 2026-11-06 recovery is an independently runnable required job
+## 2026-11-06 current native recovery; user-authorized WSS mainchain retirement
 
-The original `Durable user ingress and multi-height process recovery` gate now
-lives in `native_recovery`, rather than late inside the long `rust` job. Full
-candidate runs select both jobs; the existing result checker requires both to
-succeed. No signature, quorum, recovery assertion, production deadline or main
-push/PR selection has been removed. The reviewed-prose allowlist is unchanged.
+The user explicitly retired the historical WSS mainchain, not the independent
+WSS communication/relay/mailbox products. Its process harness, readiness runner,
+mainchain topology package/configuration and dedicated CI commands no longer
+qualify the active mainchain. This supersedes the earlier same-day instruction
+to retain that historical recovery case as a required gate. It does not rewrite
+run `42125305209` / `49a7e65f` as success: its height-4 business deadline failure
+remains historical evidence, without a proven root cause or claimed repair.
 
-The recovery job retains `fresh_pool_tests`, `native_fresh_rpc` and the original
-ignored multi-process recovery case, its network namespace, single test thread,
-bounded handoff evidence, and isolated AOEM candidate selected by the same
-manifest/hash checker. It also runs the process-reaping deadline counterexample.
-It checks that the filters select tests. Cold compilation
-is separate from the original 15-minute execution step; this is not an extension
-of the fixture's per-phase deadlines. Only this job's Linux candidate is fetched
-from LFS. Other jobs' formal SDK negative controls remain unchanged.
+`native_recovery` remains independently runnable and mandatory for `full`.
+Its two original NovoRUDP process groups move out of `rust`, once each, without
+changing their assertions, quorum, fixture/production deadlines or runtime
+semantics. `NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0`, the original native node and
+client, and the same hash/manifest-qualified isolated AOEM library are required.
+Each filter is enumerated and checked for required test names before execution;
+missing tests, command failures and failed `tee` pipelines cannot report success.
+Cold compilation is separate from the retained 15/10-minute execution budgets.
+This relocation does not assert identical physical runner performance.
 
-The public `fresh-ingress-history-recovery` artifact is emitted by the recovery
-job even on failure. The former Rust job still uploads its other ingress/native
-service evidence as `fresh-ingress-related-evidence`; logs, private keys and
-databases are not conflated, and no private custody/database upload is added.
+| Existing current-native group | Required evidence retained |
+| --- | --- |
+| `native_only_` (six ignored real-node cases) | Genesis, transactions/queries, original-store cold recovery, first-query readiness, minority/pending-signature refusal, lowest/highest late validator catch-up, honest A/A/B signing and restart |
+| `native_uca_process_` | Real controller-signed asset transfers, late validator/interrupted catch-up, credited NOV respend, balance/nonce/fee checks and all-four original-store cold recovery |
+| Shared `fresh_pool_tests`, `native_fresh_rpc` and ordinary node CLI suite in `rust` | Shared ingress/state safety and neutral `process_exit_wait_uses_reaping_budget_after_completed_business`; not the retired WSS service |
+| Existing Windows/Linux native transport qualification | Actual packaged AOEM capability, ML-DSA identity/authentication/custody gates; remains separate from mainchain process recovery |
+
+The existing short mainline gate replaces only its two WSS-specific fields with
+`test_native_transport_source_binding` and `test_native_collector_evidence`.
+They run the original native transport/source/role rejection tests and the
+original Round-BFT collector tests (2/4 cannot confirm, 3/4 same-value can;
+duplicates/equivocation do not add weight; old/cross-domain votes are rejected).
+Required full test names must be listed before running either group. These short
+checks do not duplicate or substitute for the real process-recovery groups.
+
+This is a coverage mapping, not a claim that every retired fault injection has
+an identical native counterpart. The old candidate-less-leader/partition window,
+disk-full/storage-startup injection profiles and seven-transfer mixed serial
+reference scenario are not automatically signed off by this map. Any applicable
+unmapped product requirement remains pending original-native acceptance; old WSS
+passes/failures do not prove that acceptance. No new multi-host, Windows SCM,
+stability or TPS result follows from moving the commands.
+
+The public `native-process-recovery` artifact is emitted even on failure. It
+allowlists test lists, command logs and original native JSON/stdout/stderr
+evidence under `target/native-product-rpc`; it does **not** upload original
+databases, journals, configs or private custody. A partial report collection is
+not a preserved database. The Rust job retains `fresh-ingress-related-evidence`
+for its actual shared ingress/native-service checks. The obsolete
+`scripts/novovm-local-readiness.py` and its dedicated tests are removed; callers
+must use current original-native gates, not a replacement WSS runner.
+
+The packager retains native node/client/ctl and independent relay, peer, overlay,
+NAT and mailbox tools. It removes only `novovm-product-topology`, the WSS
+mainchain topology/overlay examples and obsolete recipient-ACK claim. The
+independent delivery-journal schema and communication capabilities remain.
+Synthetic package tests verify both presence of retained tools and absence of
+retired entries; this is assembly evidence, not real deployment qualification.
+
+Local validation of this retirement work package (not cloud/full acceptance):
+23 scope/coverage/result tests; Linux and Windows synthetic package assembly,
+each with 10 binary contracts and seven runtime-qualification rejection cases;
+34 package safety assertions; original build-failure/artifact/feature/identity
+rejection checks; changed gate `rustfmt --check`; `actionlint` 1.7.12 with
+shellcheck/pyflakes disabled. Logs are retained under
+`target/wss-mainchain-retirement-ci-script-checks-cff92b95e48b4341ada3e34669655976`.
+Rust integration and the eventual frozen-candidate CI remain distinct gates;
+this script validation did not start, rerun or cancel cloud CI.
 
 | Work being checked | Run scope |
 | --- | --- |
 | Local defect iteration | Original targeted test and affected regression/lint checks; no automatic cloud dispatch |
 | Same-SHA failed recovery job | Rerun the failed job, not the whole monolithic Rust sequence; this cannot validate later code changes |
-| Cloud-only recovery investigation | Explicit manual `profile=recovery`; original recovery job only, **not full candidate qualification** |
+| Cloud-only recovery investigation | Explicit manual `profile=recovery`; current NovoRUDP recovery job only, **not full candidate qualification** |
 | Frozen candidate | Existing automatic full main checks or explicitly requested `profile=full`; every selected job must succeed |
 
 Manual recovery uses the original workflow and selected ref, not a new branch
@@ -245,7 +292,9 @@ does not dispatch or cancel CI and does not rebuild Rust locally.
 
 ## Reused checks, conservative selection
 
-The existing `.github/workflows/ci.yml` still owns all existing test commands.
+The existing `.github/workflows/ci.yml` owns the active test commands; the
+explicitly authorized WSS mainchain retirement above is the scoped exception
+to the original historical coverage inventory below.
 `scripts/ci_scope.py` replaces repository-presence-only detection with a complete
 push-range / PR merge-base comparison. Only the exact reviewed prose files in
 `PROSE_ONLY` select `docs`. They are not compiled or consumed by deployment gates
@@ -260,9 +309,10 @@ malformed event data and empty/unknown comparisons select full checks; failure
 of the router or its tests cannot produce a passing result.
 
 This first slice intentionally does NOT attempt crate-level dependency pruning.
-Product changes still run the complete existing checks, including historical
-comparison cases and preserved runtime components. No assertions, tests or
-security advisories are ignored or removed.
+Product changes still select full active checks, including independent historical
+comparisons and preserved runtime components. Only the explicitly retired WSS
+mainchain checks above leave the active scope; no active native assertion or
+security advisory is ignored to obtain success.
 
 | Trigger | Selected scope |
 | --- | --- |
@@ -272,7 +322,7 @@ security advisories are ignored or removed.
 | Weekly Sunday `47 3 * * 0` UTC (11:47 Asia/Shanghai) | Complete existing CI suite |
 | Manual dispatch, default `profile=full` | Complete existing CI suite on the selected ref/SHA |
 | Manual dispatch `profile=security` | Security only, explicitly not product qualification |
-| Manual dispatch `profile=recovery` (2026-11-06) | Original historical recovery job only, explicitly not full candidate qualification |
+| Manual dispatch `profile=recovery` (2026-11-06) | Current NovoRUDP process recovery only, explicitly not full candidate qualification |
 
 `native-auth-relation.yml` retains its existing independent path filters.
 `mainline-nightly-soak.yml` is unchanged and remains historical comparison,

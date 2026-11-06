@@ -6,12 +6,15 @@
 
 use super::super::native_store_records::NativeRecordAccessV1;
 use super::super::*;
+#[cfg(test)]
 use crate::native_block_ledger::{
     NOV_NATIVE_BLOCK_LEDGER_MAX_BODY_BYTES_V1, NOV_NATIVE_BLOCK_LEDGER_MAX_TXS_V1,
 };
 use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
 use serde::de::DeserializeOwned;
-use std::collections::{HashMap, HashSet};
+#[cfg(test)]
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// A peer-supplied candidate is invalid. Storage reads, corrupt parent records,
 /// local configuration and AOEM failures must not acquire this classification:
@@ -370,6 +373,7 @@ pub(crate) fn require_new_successor_execution(raw_txs: &[Vec<u8>]) -> Result<()>
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn select_transactions(
     chain: u64,
     protocol: [u8; 32],
@@ -381,6 +385,7 @@ pub(super) fn select_transactions(
     select_parent_transactions(chain, protocol, parent, ordered, params, limit)
 }
 
+#[cfg(test)]
 pub(super) fn select_record_transactions(
     chain: u64,
     protocol: [u8; 32],
@@ -403,6 +408,7 @@ pub(super) fn select_record_transactions(
 /// Authenticate raw bytes rather than trusting cached signer/nonce metadata.
 /// An item rejection cannot consume candidate-local nonce/bytes; parent read
 /// failures abort the whole selection instead of masquerading as absence.
+#[cfg(test)]
 fn select_parent_transactions(
     chain: u64,
     protocol: [u8; 32],

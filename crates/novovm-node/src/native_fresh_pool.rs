@@ -1,12 +1,19 @@
+#[cfg(test)]
 use super::*;
+#[cfg(test)]
 use rocksdb::{IteratorMode, Options, WriteBatch, WriteOptions, DB};
+#[cfg(test)]
 use std::collections::BTreeMap;
 
 pub const MAX_RAW_BYTES: usize = 64 * 1024;
+#[cfg(test)]
 pub(crate) const MAX_ENTRIES: usize = 1024;
+#[cfg(test)]
 const MAX_BYTES: usize = 16 * 1024 * 1024;
+#[cfg(test)]
 const MAX_PER_SIGNER: usize = 64;
 
+#[cfg(test)]
 #[derive(Clone)]
 pub struct PendingTransaction {
     pub(crate) hash: [u8; 32],
@@ -15,6 +22,7 @@ pub struct PendingTransaction {
     pub(crate) nonce: u64,
 }
 
+#[cfg(test)]
 impl PendingTransaction {
     pub fn authenticate(raw: Vec<u8>, chain: u64, params: &serde_json::Value) -> Result<Self> {
         if raw.is_empty() || raw.len() > MAX_RAW_BYTES {
@@ -45,6 +53,7 @@ impl PendingTransaction {
     }
 }
 
+#[cfg(test)]
 pub struct FreshTransactionPool {
     db: DB,
     entries: BTreeMap<[u8; 32], PendingTransaction>,
@@ -55,12 +64,14 @@ pub struct FreshTransactionPool {
     fail_next_admission_write: bool,
 }
 
+#[cfg(test)]
 pub(crate) struct BatchAdmission {
     pub(crate) rejected: u64,
     /// One result per original input, never a hash-only acknowledgement map.
     pub(crate) retained: Vec<bool>,
 }
 
+#[cfg(test)]
 impl FreshTransactionPool {
     pub fn open(
         path: &Path,

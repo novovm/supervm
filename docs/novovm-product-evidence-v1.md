@@ -53,8 +53,6 @@ The verifier checks:
   handshake version 2/suite 65, session identity, local identity and role-specific
   request/reply/round-trip stages;
 - node strategy receipt signature and decentralized-control-plane boundary.
-- offline mainline topology full-mesh symmetry while requiring all external
-  execution/proof flags to remain false.
 
 The endpoint observation report does not automatically prove hole punching or
 promote a route. Server-side reply submission is not proof of remote application
@@ -74,15 +72,11 @@ same `session_id`; the current manifest verifier does not perform that paired
 topology acceptance automatically. See the
 [current NAT tool boundary](novovm-product-nat-runtime-v1.md).
 
-An offline topology preflight can be signed into the manifest:
-
-```bash
-novovm-product-topology /etc/novovm/topology-plan.json \
-  > /var/lib/novovm/reports/topology-preflight.json
-```
-
-This records deployable configuration intent only. It is not a replacement for
-the later signed reports from actual public/VPN/cellular runs.
+The historical WSS mainchain topology tool and its deployment template were
+retired on 2026-11-06. They are not current package commands or mainchain
+qualification. Retained application evidence verification does not re-enable
+that route; current mainchain acceptance uses the original NovoRUDP owner and
+actual paired reports, not an offline topology plan.
 
 It intentionally reports `real_public_topology_proven=false` and
 `real_cross_nat_proven=false`: report integrity alone cannot prove an external

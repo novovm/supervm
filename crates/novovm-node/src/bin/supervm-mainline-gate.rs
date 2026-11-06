@@ -59,8 +59,8 @@ struct MainlineGate {
     test_native_nonce_source_qc: bool,
     test_native_seal_new_view: bool,
     test_native_seal_new_view_admission: bool,
-    test_product_mainline_overlay_lifecycle: bool,
-    test_authenticated_seal_ingress_quarantine: bool,
+    test_native_transport_source_binding: bool,
+    test_native_collector_evidence: bool,
     test_queue_replay_smoke: bool,
 }
 
@@ -126,6 +126,41 @@ fn run_step(name: &str, program: &str, args: &[&str]) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn run_required_tests(
+    name: &str,
+    package: &str,
+    target: &[&str],
+    filter: &str,
+    required: &[&str],
+) -> Result<()> {
+    let mut args = vec!["test", "-p", package];
+    args.extend_from_slice(target);
+    args.extend_from_slice(&[filter, "--locked"]);
+    let listing = Command::new("cargo")
+        .args(&args)
+        .args(["--", "--list"])
+        .env("CARGO_TARGET_DIR", resolve_gate_target_dir_v1())
+        .output()
+        .with_context(|| format!("failed to enumerate step: {name}"))?;
+    if !listing.status.success() {
+        bail!(
+            "Step enumeration failed: {name}: {}",
+            String::from_utf8_lossy(&listing.stderr)
+        );
+    }
+    let listed = String::from_utf8(listing.stdout)?;
+    for expected in required {
+        if !listed
+            .lines()
+            .any(|line| line.strip_suffix(": test") == Some(*expected))
+        {
+            bail!("Step {name} did not enumerate required test: {expected}");
+        }
+    }
+    args.extend_from_slice(&["--", "--test-threads=1"]);
+    run_step(name, "cargo", &args)
 }
 
 fn resolve_gate_target_dir_v1() -> String {
@@ -206,8 +241,8 @@ fn main() -> Result<()> {
         test_native_nonce_source_qc: false,
         test_native_seal_new_view: false,
         test_native_seal_new_view_admission: false,
-        test_product_mainline_overlay_lifecycle: false,
-        test_authenticated_seal_ingress_quarantine: false,
+        test_native_transport_source_binding: false,
+        test_native_collector_evidence: false,
         test_queue_replay_smoke: false,
     };
 
@@ -416,16 +451,12 @@ fn main() -> Result<()> {
             "native_seal_service_write_inventory",
         ],
     )?;
-    run_step(
-        "test native seal main-node explicit opt-in and pre-startup refusal",
-        "cargo",
-        &[
-            "test",
-            "-p",
-            "novovm-node",
-            "--test",
-            "native_seal_service_cli",
-        ],
+    run_required_tests(
+        "test retired WSS mainchain refuses before opening state",
+        "novovm-node",
+        &["--test", "native_candidate_node_cli"],
+        "retired_wss_mainchain_selection_fails_before_opening_state",
+        &["retired_wss_mainchain_selection_fails_before_opening_state"],
     )?;
     gate.test_native_seal_new_view = true;
 
@@ -933,11 +964,18 @@ fn main() -> Result<()> {
         ],
     )?;
 
-    run_step(
-        "test product mainline overlay mesh, ACK, recovery, and topology preflight",
-        "cargo",
-        &["test", "-p", "novovm-node", "--lib", "product_mainline_"],
+    run_required_tests(
+        "test original NovoRUDP source, lane and signed evidence binding",
+        "novovm-node",
+        &["--lib"],
+        "native_pipeline::consensus::native::tests",
+        &[
+            "native_pipeline::consensus::native::tests::original_transport_rejects_unbound_local_and_remote_identities",
+            "native_pipeline::consensus::native::tests::original_udp_split_keys_preserve_signed_evidence_and_reject_transport_forgery",
+            "native_pipeline::consensus::native::tests::hostile_signed_domain_wrong_lane_and_bad_signature_cannot_become_evidence",
+        ],
     )?;
+    gate.test_native_transport_source_binding = true;
     run_step(
         "test main-node pipeline execution, unsealed state and session shutdown",
         "cargo",
@@ -952,7 +990,6 @@ fn main() -> Result<()> {
             "--test-threads=1",
         ],
     )?;
-    gate.test_product_mainline_overlay_lifecycle = true;
     run_step(
         "test real main processes execute a common AOEM candidate and restart",
         "cargo",
@@ -981,27 +1018,18 @@ fn main() -> Result<()> {
         ],
     )?;
 
-    for test_name in [
-        "native_block_seal_overlay::tests::authority_canonical_wire_and_source_binding_fail_closed",
-        "native_block_seal_overlay::tests::quarantine_replay_restart_and_local_bridge_preserve_unsealed_ledger",
-        "native_block_seal_overlay::tests::competing_same_slot_proposals_block_both_sides_across_restart",
-        "native_block_seal_overlay::tests::authority_and_ingress_bounds_reject_oversized_or_stale_domains",
-    ] {
-        run_step(
-            "test authenticated native seal ingress exact gate",
-            "cargo",
-            &[
-                "test",
-                "-p",
-                "novovm-node",
-                "--lib",
-                test_name,
-                "--",
-                "--exact",
-            ],
-        )?;
-    }
-    gate.test_authenticated_seal_ingress_quarantine = true;
+    run_required_tests(
+        "test original consensus evidence domains, quorum and duplicate weight",
+        "novovm-consensus",
+        &["--lib"],
+        "round_bft::collector::tests",
+        &[
+            "round_bft::collector::tests::two_of_four_do_not_certify_three_same_value_do",
+            "round_bft::collector::tests::duplicate_and_equivocation_never_add_weight_or_overwrite_the_first_vote",
+            "round_bft::collector::tests::every_context_field_is_pinned_and_context_advancement_rejects_old_votes",
+        ],
+    )?;
+    gate.test_native_collector_evidence = true;
 
     run_step(
         "test queue_replay_smoke",

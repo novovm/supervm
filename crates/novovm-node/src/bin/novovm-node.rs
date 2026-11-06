@@ -5,10 +5,6 @@
 #![forbid(unsafe_code)]
 #![recursion_limit = "512"]
 
-#[cfg(test)]
-#[path = "novovm_node_partition_test.rs"]
-mod partition_test;
-
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use k256::elliptic_curve::sec1::ToSec1Point;
@@ -106,29 +102,8 @@ use novovm_node::mainline_query::{
     is_mainline_native_execution_query_method, mainline_query_method_from_env,
     mainline_query_params_from_env, run_mainline_query_from_path,
 };
-use novovm_node::native_block_seal::service::{
-    native_seal_config_selection_v1, NovNativeSealServiceV1,
-};
-use novovm_node::native_block_seal::service_config::NovNativeSealServiceConfigV1;
-use novovm_node::native_block_seal::service_paths::validate_service_paths_v1;
-use novovm_node::product_delivery_journal::{
-    product_delivery_payload_sha256_v1, ProductDeliveryCleanupSummaryV1,
-    ProductDeliveryInboundPrepareDispositionV1, ProductDeliveryInboundRecordV1,
-    ProductDeliveryInboundStateV1, ProductDeliveryJournalConfigV1, ProductDeliveryJournalScopeV1,
-    ProductDeliveryJournalV1, ProductDeliveryPrepareDispositionV1, ProductDeliveryRecipientAckV1,
-    PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_SEAL_V1,
-    PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1,
-};
-use novovm_node::product_mainline_overlay::{
-    ingest_product_mainline_overlay_peer_payload_v1, load_product_mainline_overlay_config_v1,
-    ProductMainlineOverlayEventV1, ProductMainlineOverlayInboundV1,
-    ProductMainlineOverlayIngressFailureClassV1, ProductMainlineOverlayPayloadClassV1,
-    ProductMainlineOverlayRecipientAckV1, ProductMainlineOverlayRoleV1,
-    ProductMainlineOverlayRuntimeV1,
-};
 use novovm_node::tx_ingress::{
-    available_ingress_codecs, canonical_nov_native_tx_hash_from_payload_v1,
-    decode_eth_send_raw_hex_payload_v1, get_nov_native_execution_receipt_by_hash_v1,
+    available_ingress_codecs, decode_eth_send_raw_hex_payload_v1,
     ingest_local_eth_raw_tx_payload_v1, ingest_local_nov_raw_tx_payload_v1,
     ingest_remote_nov_raw_tx_payload_v1, load_exec_batch_from_wire_file, load_ops_wire_v1_file,
     load_ops_wire_v1_from_tx_wire_file, load_ops_wire_v1_payload_file,
@@ -152,7 +127,7 @@ use novovm_protocol::{
 use rand::seq::SliceRandom;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use std::collections::{hash_map::DefaultHasher, BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::Write;
@@ -1043,7 +1018,7 @@ const L3_DISCOVERY_MEMBERSHIP_PRIORITY_FINGERPRINT: &str =
 const L3_DISCOVERY_MEMBERSHIP_PRIORITY_ORDERING: &str =
     "seen_unix_ms|source_priority|health|score|capacity|addr|region";
 const L3_DISCOVERY_MAX_DYNAMIC_CANDIDATES_PER_REFRESH: usize = 256;
-const MAINLINE_GATE_LOCKSET_V1: &str = "check_novovm_network+check_novovm_node+test_scheduler_gate_matrix+test_manual_route_env_lock_matrix+test_l2_l1_export_equivalence_batch_vs_replay+test_l2_l1_export_equivalence_batch_vs_watch+test_l2_l1_anchor_fingerprint_stable+test_mainline_status_freshness_gate_contract_is_frozen+test_discovery_membership_freshness_contract_default_is_frozen+test_discovery_membership_gossip_json_supports_single_and_vec_message+test_discovery_source_governance_contract_is_frozen+test_discovery_source_breakdown_contract_is_frozen+test_discovery_membership_priority_contract_is_frozen+test_cross_node_runtime_membership_closed_loop+test_cross_node_runtime_membership_cross_region_is_not_admitted+test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy+test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_operator_forced_still_dominates_route_selection_across_batch_replay_watch+test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch+test_concurrent_runtime_membership_order_keeps_selection_view_stable+test_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_cross_node_gossip_membership_order_keeps_selection_view_stable+test_cross_node_gossip_membership_respects_operator_forced_selection+test_runtime_membership_unavailable_update_prunes_existing_discovered_relay+test_v2_matrix_a_order_perturbation_consistency+test_v2_matrix_b_multi_source_conflict_consistency+test_v2_matrix_c_weak_network_disturbance_consistency+test_v2_matrix_d_multi_region_view_consistency+test_v2_stage2a_large_scale_distributed_adjudication_consistency+test_v2_stage2b_weak_network_robustness_consistency+test_v2_stage2c_multi_region_real_route_consistency+test_v2_stage3a_convergence_recovery_consistency+test_v2_stage3b_convergence_time_recovery_budget_consistency+test_relay_path_tests+test_mainline_soak_evidence+test_mainline_soak_cli+test_mainline_duty_report_evidence+test_common_candidate_execution_plan+test_native_candidate_workspace+test_native_nonce_identity_v2+test_native_nonce_checkpoint_bundle+test_native_nonce_upgrade_staging+test_native_nonce_upgrade_authorization+test_native_nonce_source_qc+test_native_seal_new_view+test_native_seal_new_view_admission+test_product_mainline_overlay_lifecycle+test_authenticated_seal_ingress_quarantine+test_queue_replay_smoke";
+const MAINLINE_GATE_LOCKSET_V1: &str = "check_novovm_network+check_novovm_node+test_scheduler_gate_matrix+test_manual_route_env_lock_matrix+test_l2_l1_export_equivalence_batch_vs_replay+test_l2_l1_export_equivalence_batch_vs_watch+test_l2_l1_anchor_fingerprint_stable+test_mainline_status_freshness_gate_contract_is_frozen+test_discovery_membership_freshness_contract_default_is_frozen+test_discovery_membership_gossip_json_supports_single_and_vec_message+test_discovery_source_governance_contract_is_frozen+test_discovery_source_breakdown_contract_is_frozen+test_discovery_membership_priority_contract_is_frozen+test_cross_node_runtime_membership_closed_loop+test_cross_node_runtime_membership_cross_region_is_not_admitted+test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy+test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_operator_forced_still_dominates_route_selection_across_batch_replay_watch+test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch+test_concurrent_runtime_membership_order_keeps_selection_view_stable+test_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_cross_node_gossip_membership_order_keeps_selection_view_stable+test_cross_node_gossip_membership_respects_operator_forced_selection+test_runtime_membership_unavailable_update_prunes_existing_discovered_relay+test_v2_matrix_a_order_perturbation_consistency+test_v2_matrix_b_multi_source_conflict_consistency+test_v2_matrix_c_weak_network_disturbance_consistency+test_v2_matrix_d_multi_region_view_consistency+test_v2_stage2a_large_scale_distributed_adjudication_consistency+test_v2_stage2b_weak_network_robustness_consistency+test_v2_stage2c_multi_region_real_route_consistency+test_v2_stage3a_convergence_recovery_consistency+test_v2_stage3b_convergence_time_recovery_budget_consistency+test_relay_path_tests+test_mainline_soak_evidence+test_mainline_soak_cli+test_mainline_duty_report_evidence+test_common_candidate_execution_plan+test_native_candidate_workspace+test_native_nonce_identity_v2+test_native_nonce_checkpoint_bundle+test_native_nonce_upgrade_staging+test_native_nonce_upgrade_authorization+test_native_nonce_source_qc+test_native_seal_new_view+test_native_seal_new_view_admission+test_native_transport_source_binding+test_native_collector_evidence+test_queue_replay_smoke";
 
 fn evaluate_mainline_gate_fields_v1(status: &serde_json::Value) -> (bool, bool, Vec<String>) {
     let expected = MAINLINE_GATE_LOCKSET_V1.split('+').collect::<Vec<_>>();
@@ -10510,27 +10485,24 @@ fn runtime_mainline_gate_requires_every_lockset_field_in_order() {
         assert_eq!(failed, vec![key.to_string()]);
     }
 
-    status["gate"]["test_authenticated_seal_ingress_quarantine"] = serde_json::Value::Bool(false);
+    status["gate"]["test_native_collector_evidence"] = serde_json::Value::Bool(false);
     let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&status);
     assert!(!passed);
     assert!(key_order_ok);
-    assert_eq!(
-        failed,
-        vec!["test_authenticated_seal_ingress_quarantine".to_string()]
-    );
+    assert_eq!(failed, vec!["test_native_collector_evidence".to_string()]);
 
-    status["gate"]["test_authenticated_seal_ingress_quarantine"] = serde_json::Value::Bool(true);
+    status["gate"]["test_native_collector_evidence"] = serde_json::Value::Bool(true);
     status
         .get_mut("gate")
         .and_then(serde_json::Value::as_object_mut)
         .expect("gate object")
-        .remove("test_product_mainline_overlay_lifecycle");
+        .remove("test_native_transport_source_binding");
     let (passed, key_order_ok, failed) = evaluate_mainline_gate_fields_v1(&status);
     assert!(!passed);
     assert!(!key_order_ok);
     assert_eq!(
         failed,
-        vec!["test_product_mainline_overlay_lifecycle".to_string()]
+        vec!["test_native_transport_source_binding".to_string()]
     );
 }
 
@@ -33903,59 +33875,10 @@ struct NativeExecutionPipelineIngressDriveV1 {
     max_per_tick: usize,
 }
 
-struct NativeExecutionPipelineProductOverlayDriveV1 {
-    chain_id: u64,
-    runtime: ProductMainlineOverlayRuntimeV1,
-    seal_service: Option<NovNativeSealServiceV1>,
-    delivery_journal: ProductDeliveryJournalV1,
-    journal_scan_limit: usize,
-    startup_recovery_pending: bool,
-    in_flight: HashMap<[u8; 32], HashSet<String>>,
-    recipient_acks_in_flight: HashSet<[u8; 32]>,
-    max_per_tick: usize,
-    max_propagations: u64,
-    event_budget: usize,
-    relay_connected: bool,
-    relay_peer_id: Option<String>,
-    e2e_session_established: bool,
-    e2e_peer_ids: HashSet<String>,
-    isolated_peer_ids: HashSet<String>,
-    remote_peer_id: String,
-    remote_peer_ids: Vec<String>,
-    reconnect_total: u64,
-    relay_rotation_total: u64,
-    peer_isolation_total: u64,
-    peer_rejection_total: u64,
-    peer_delivery_failure_total: u64,
-    peer_delivery_failure_counts: BTreeMap<String, u64>,
-    last_relay_error: Option<String>,
-    last_peer_error: Option<String>,
-    received_total: u64,
-    submitted_total: u64,
-    relay_admitted_total: u64,
-    recipient_ack_queued_total: u64,
-    recipient_ack_relay_admitted_total: u64,
-    recipient_acked_total: u64,
-    recipient_ack_duplicate_total: u64,
-    inbound_duplicate_total: u64,
-    inbound_commitment_rejection_total: u64,
-    journal_recovered_outbound_total: u64,
-    journal_recovered_inbound_total: u64,
-    journal_completed_inbound_total: u64,
-    journal_outbound_expired_total: u64,
-    journal_inbound_prepared_expired_total: u64,
-    delivered_total: u64,
-    failed_total: u64,
-    worker_stopped: bool,
-    worker_error: Option<String>,
-}
-
 const NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_SOURCE_V1: &str =
     "nov_sendRawTransaction_product_raw_tx_ingress";
 const NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1: &str =
     "ingest_local_nov_raw_tx_payload_v1";
-const NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1: &str =
-    "novovm_product_mainline_overlay_runtime_v1";
 
 impl NativeExecutionPipelineIngressDriveV1 {
     fn from_env(chain_id: u64) -> Result<Option<Self>> {
@@ -34052,1363 +33975,6 @@ impl NativeExecutionPipelineIngressDriveV1 {
     }
 }
 
-impl NativeExecutionPipelineProductOverlayDriveV1 {
-    fn from_env(
-        chain_id: u64,
-        seal_config: Option<NovNativeSealServiceConfigV1>,
-        execution_params: &serde_json::Value,
-    ) -> Result<Option<Self>> {
-        if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED") {
-            if seal_config.is_some() {
-                bail!("native seal requires Product Overlay");
-            }
-            return Ok(None);
-        }
-        let config_path = string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG").context(
-            "NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG is required when product overlay is enabled",
-        )?;
-        let config = load_product_mainline_overlay_config_v1(&config_path)?;
-        if config.chain_id != chain_id {
-            bail!(
-                "product mainline overlay chain_id {} does not match native pipeline chain_id {}",
-                config.chain_id,
-                chain_id
-            );
-        }
-        let journal_path = config
-            .delivery_journal_path
-            .clone()
-            .context("product mainline overlay delivery journal path is missing")?;
-        let journal_limits = config.resource_limits.clone();
-        let runtime = ProductMainlineOverlayRuntimeV1::start(config, now_unix_ms())?;
-        let seal_service = seal_config
-            .map(|config| {
-                let ledger_path = novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
-                    &nov_native_execution_store_path_v1(),
-                );
-                NovNativeSealServiceV1::open_configured(
-                    config,
-                    &ledger_path,
-                    execution_params,
-                    &runtime,
-                    Instant::now(),
-                )
-            })
-            .transpose()?;
-        if let Some(service) = &seal_service {
-            println!("native_seal_service_startup: {}", service.status_json());
-        }
-        let local_peer_id = runtime.startup().local_peer_id.clone();
-        let remote_peer_ids = runtime.remote_peer_ids().to_vec();
-        let remote_peer_id = remote_peer_ids
-            .first()
-            .cloned()
-            .context("product mainline overlay remote peer id is missing")?;
-        let delivery_journal = ProductDeliveryJournalV1::open(
-            ProductDeliveryJournalConfigV1 {
-                path: journal_path,
-                max_entries: journal_limits.journal_max_entries,
-                max_bytes: journal_limits.journal_max_bytes,
-                obligation_ttl_ms: journal_limits.journal_obligation_ttl_ms,
-                terminal_retention_ms: journal_limits.journal_terminal_retention_ms,
-                retry_interval_ms: journal_limits.journal_retry_interval_ms,
-            },
-            ProductDeliveryJournalScopeV1 {
-                chain_id,
-                local_peer_id,
-            },
-            now_unix_ms(),
-        )?;
-        let recovered_outbound =
-            delivery_journal.load_due_outbound(u64::MAX, journal_limits.journal_max_entries)?;
-        let recovered_inbound =
-            delivery_journal.load_inbound_recovery(journal_limits.journal_max_entries)?;
-        let mut in_flight = HashMap::<[u8; 32], HashSet<String>>::new();
-        for record in &recovered_outbound {
-            if !remote_peer_ids
-                .iter()
-                .any(|configured| configured == &record.recipient_peer_id)
-            {
-                bail!(
-                    "product delivery journal contains obligation for unconfigured peer {}",
-                    record.recipient_peer_id
-                );
-            }
-            if record.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
-                in_flight
-                    .entry(record.object_hash)
-                    .or_default()
-                    .insert(record.recipient_peer_id.clone());
-            }
-        }
-        Ok(Some(Self {
-            chain_id,
-            runtime,
-            seal_service,
-            delivery_journal,
-            journal_scan_limit: journal_limits.journal_max_entries,
-            startup_recovery_pending: true,
-            in_flight,
-            recipient_acks_in_flight: HashSet::new(),
-            max_per_tick: usize_env_allow_zero(
-                "NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PER_TICK",
-                1_024,
-            )?
-            .clamp(1, 16_384),
-            max_propagations: u64_env_positive(
-                "NOVOVM_PRODUCT_MAINLINE_OVERLAY_MAX_PROPAGATIONS",
-                3,
-            )?,
-            event_budget: usize_env_allow_zero(
-                "NOVOVM_PRODUCT_MAINLINE_OVERLAY_EVENT_BUDGET",
-                4_096,
-            )?
-            .clamp(1, 65_536),
-            relay_connected: false,
-            relay_peer_id: None,
-            e2e_session_established: false,
-            e2e_peer_ids: HashSet::new(),
-            isolated_peer_ids: HashSet::new(),
-            remote_peer_id,
-            remote_peer_ids,
-            reconnect_total: 0,
-            relay_rotation_total: 0,
-            peer_isolation_total: 0,
-            peer_rejection_total: 0,
-            peer_delivery_failure_total: 0,
-            peer_delivery_failure_counts: BTreeMap::new(),
-            last_relay_error: None,
-            last_peer_error: None,
-            received_total: 0,
-            submitted_total: 0,
-            relay_admitted_total: 0,
-            recipient_ack_queued_total: 0,
-            recipient_ack_relay_admitted_total: 0,
-            recipient_acked_total: 0,
-            recipient_ack_duplicate_total: 0,
-            inbound_duplicate_total: 0,
-            inbound_commitment_rejection_total: 0,
-            journal_recovered_outbound_total: recovered_outbound.len() as u64,
-            journal_recovered_inbound_total: recovered_inbound.len() as u64,
-            journal_completed_inbound_total: 0,
-            journal_outbound_expired_total: 0,
-            journal_inbound_prepared_expired_total: 0,
-            delivered_total: 0,
-            failed_total: 0,
-            worker_stopped: false,
-            worker_error: None,
-        }))
-    }
-
-    fn drive_once(&mut self) -> serde_json::Value {
-        let mut received = 0u64;
-        let mut delivered = 0u64;
-        let mut delivery_failed = 0u64;
-        let mut tx_hashes = Vec::new();
-        if let Err(error) = self.maintain_delivery_journal_v1() {
-            self.record_local_delivery_journal_fault_v1(error);
-        }
-        for event in self.runtime.drain_events(self.event_budget) {
-            match event {
-                ProductMainlineOverlayEventV1::RelayConnected { relay_peer_id } => {
-                    self.relay_connected = true;
-                    self.relay_peer_id = Some(relay_peer_id);
-                    self.last_relay_error = None;
-                }
-                ProductMainlineOverlayEventV1::RelayDisconnected {
-                    error,
-                    reconnect_in_ms: _,
-                    relay_peer_id: _,
-                } => {
-                    self.relay_connected = false;
-                    self.e2e_session_established = false;
-                    self.e2e_peer_ids.clear();
-                    self.isolated_peer_ids.clear();
-                    self.reconnect_total = self.reconnect_total.saturating_add(1);
-                    self.last_relay_error = Some(error);
-                }
-                ProductMainlineOverlayEventV1::RelayRotated {
-                    previous_relay_peer_id: _,
-                    next_relay_peer_id: _,
-                } => {
-                    self.relay_rotation_total = self.relay_rotation_total.saturating_add(1);
-                }
-                ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
-                    self.isolated_peer_ids.remove(&remote_peer_id);
-                    self.e2e_peer_ids.insert(remote_peer_id.clone());
-                    self.e2e_session_established =
-                        self.e2e_peer_ids.len() == self.remote_peer_ids.len();
-                    self.remote_peer_id = remote_peer_id;
-                }
-                ProductMainlineOverlayEventV1::PeerIsolated {
-                    remote_peer_id,
-                    reason,
-                    session_failure_count,
-                    retry_in_ms,
-                } => {
-                    self.e2e_peer_ids.remove(&remote_peer_id);
-                    self.e2e_session_established =
-                        self.e2e_peer_ids.len() == self.remote_peer_ids.len();
-                    self.isolated_peer_ids.insert(remote_peer_id.clone());
-                    self.peer_isolation_total = self.peer_isolation_total.saturating_add(1);
-                    self.last_peer_error = Some(format!(
-                        "peer {remote_peer_id} isolated after {session_failure_count} session failure(s): {reason}; retry in {retry_in_ms} ms"
-                    ));
-                }
-                ProductMainlineOverlayEventV1::Inbound(inbound) => {
-                    if inbound.payload_class == ProductMainlineOverlayPayloadClassV1::NativeSeal {
-                        if let Some(service) = self.seal_service.as_mut() {
-                            service.enqueue(inbound);
-                        }
-                        // Seal evidence is not a transaction or a journal-persisted ACK.
-                        continue;
-                    }
-                    match self.accept_product_overlay_inbound_v1(inbound) {
-                        Ok(Some(tx_hash)) => {
-                            received = received.saturating_add(1);
-                            tx_hashes.push(to_hex_prefixed(&tx_hash));
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            self.record_local_delivery_journal_fault_v1(error);
-                            break;
-                        }
-                    }
-                }
-                ProductMainlineOverlayEventV1::RelayAdmission(admission) => {
-                    if admission.payload_class
-                        != ProductMainlineOverlayPayloadClassV1::NativeTransaction
-                    {
-                        // Seal queues do not participate in transaction delivery accounting.
-                        continue;
-                    }
-                    if admission.admitted {
-                        match self
-                            .delivery_journal
-                            .load_outbound(admission.delivery_id)
-                            .and_then(|record| match record {
-                                Some(_) => self
-                                    .delivery_journal
-                                    .mark_outbound_relay_admitted(
-                                        admission.delivery_id,
-                                        now_unix_ms(),
-                                    )
-                                    .map(Some),
-                                None => Ok(None),
-                            }) {
-                            Ok(Some(_)) => {
-                                self.relay_admitted_total =
-                                    self.relay_admitted_total.saturating_add(1);
-                            }
-                            Ok(None) => {
-                                // A recipient ACK can race a stale relay-admission event. The
-                                // durable ACK tombstone remains authoritative.
-                            }
-                            Err(error) => {
-                                self.record_local_delivery_journal_fault_v1(error);
-                                break;
-                            }
-                        }
-                    } else {
-                        delivery_failed = delivery_failed.saturating_add(1);
-                        record_product_mainline_peer_delivery_failure_v1(
-                            &admission.remote_peer_id,
-                            admission.error,
-                            &mut self.peer_delivery_failure_total,
-                            &mut self.peer_delivery_failure_counts,
-                            &mut self.last_peer_error,
-                        );
-                    }
-                }
-                ProductMainlineOverlayEventV1::RecipientAckRelayAdmission(admission) => {
-                    if admission.admitted {
-                        self.recipient_acks_in_flight.remove(&admission.delivery_id);
-                        match self.delivery_journal.load_inbound(admission.delivery_id) {
-                            Ok(Some(_)) => {
-                                if let Err(error) = self
-                                    .delivery_journal
-                                    .mark_inbound_ack_emitted(admission.delivery_id, now_unix_ms())
-                                {
-                                    self.record_local_delivery_journal_fault_v1(error);
-                                    break;
-                                }
-                            }
-                            Ok(None) => {
-                                // AOEM completion may already have compacted the active inbox
-                                // to a durable tombstone while this ACK was in transit.
-                            }
-                            Err(error) => {
-                                self.record_local_delivery_journal_fault_v1(error);
-                                break;
-                            }
-                        }
-                        self.recipient_ack_relay_admitted_total =
-                            self.recipient_ack_relay_admitted_total.saturating_add(1);
-                    } else {
-                        record_product_mainline_peer_delivery_failure_v1(
-                            admission.original_sender_peer_id.as_str(),
-                            admission.error,
-                            &mut self.peer_delivery_failure_total,
-                            &mut self.peer_delivery_failure_counts,
-                            &mut self.last_peer_error,
-                        );
-                    }
-                }
-                ProductMainlineOverlayEventV1::RecipientAck {
-                    ack,
-                    metric_peer_id,
-                } => match self.accept_product_overlay_recipient_ack_v1(ack, metric_peer_id) {
-                    Ok(completed) => {
-                        if completed {
-                            delivered = delivered.saturating_add(1);
-                        }
-                    }
-                    Err(error) => {
-                        self.record_local_delivery_journal_fault_v1(error);
-                        break;
-                    }
-                },
-                ProductMainlineOverlayEventV1::WorkerStopped => {
-                    self.worker_stopped = true;
-                }
-                ProductMainlineOverlayEventV1::WorkerFailed(error) => {
-                    self.worker_error = Some(error);
-                    self.failed_total = self.failed_total.saturating_add(1);
-                }
-            }
-        }
-
-        let mut submitted = 0u64;
-        let mut candidate_count = 0u64;
-        if self.worker_error.is_none()
-            && !self.worker_stopped
-            && self.runtime.role() != ProductMainlineOverlayRoleV1::Responder
-        {
-            let candidates =
-                snapshot_network_runtime_native_pending_tx_broadcast_candidates_including_native_v1(
-                    self.chain_id,
-                    self.max_per_tick,
-                    self.max_propagations,
-                );
-            candidate_count = candidates.len() as u64;
-            for candidate in candidates {
-                if self.in_flight.contains_key(&candidate.tx_hash) {
-                    continue;
-                }
-                match self.delivery_journal.prepare_outbound_fanout(
-                    PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1,
-                    candidate.tx_hash,
-                    candidate.tx_payload.as_slice(),
-                    self.runtime.startup().local_peer_id.as_str(),
-                    self.remote_peer_ids.as_slice(),
-                    now_unix_ms(),
-                ) {
-                    Ok(prepared) => {
-                        if let Err(error) =
-                            self.apply_delivery_cleanup_summary_v1(&prepared.cleanup)
-                        {
-                            self.record_local_delivery_journal_fault_v1(error);
-                            break;
-                        }
-                        let pending_peers = prepared
-                            .recipients
-                            .into_iter()
-                            .filter(|recipient| {
-                                matches!(
-                                    recipient.disposition,
-                                    ProductDeliveryPrepareDispositionV1::Inserted
-                                        | ProductDeliveryPrepareDispositionV1::ExistingActive
-                                )
-                            })
-                            .map(|recipient| recipient.recipient_peer_id)
-                            .collect::<HashSet<_>>();
-                        if !pending_peers.is_empty() {
-                            self.in_flight.insert(candidate.tx_hash, pending_peers);
-                        }
-                    }
-                    Err(error) => {
-                        self.record_local_delivery_journal_fault_v1(error);
-                        break;
-                    }
-                }
-            }
-            if self.worker_error.is_none() {
-                let due_limit = self
-                    .max_per_tick
-                    .saturating_mul(self.remote_peer_ids.len().max(1))
-                    .clamp(1, self.journal_scan_limit);
-                match self
-                    .delivery_journal
-                    .load_due_outbound(now_unix_ms(), due_limit)
-                {
-                    Ok(due) => {
-                        for record in due {
-                            let payload_class = match product_overlay_payload_class_from_label_v1(
-                                record.payload_class.as_str(),
-                            ) {
-                                Ok(payload_class) => payload_class,
-                                Err(error) => {
-                                    self.record_local_delivery_journal_fault_v1(error);
-                                    break;
-                                }
-                            };
-                            match self.runtime.try_submit_to_peer(
-                                record.recipient_peer_id.as_str(),
-                                payload_class,
-                                record.object_hash,
-                                record.payload,
-                            ) {
-                                Ok(true) => {
-                                    if let Err(error) = self
-                                        .delivery_journal
-                                        .mark_outbound_attempt(record.delivery_id, now_unix_ms())
-                                    {
-                                        self.record_local_delivery_journal_fault_v1(error);
-                                        break;
-                                    }
-                                    submitted = submitted.saturating_add(1);
-                                    self.submitted_total = self.submitted_total.saturating_add(1);
-                                }
-                                Ok(false) => break,
-                                Err(error) => {
-                                    self.record_local_delivery_journal_fault_v1(error);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => self.record_local_delivery_journal_fault_v1(error),
-                }
-            }
-        }
-        if candidate_count > 0 || delivered > 0 || delivery_failed > 0 {
-            observe_network_runtime_native_pending_tx_broadcast_dispatch_v1(
-                self.chain_id,
-                self.runtime.metric_peer_id(),
-                candidate_count,
-                delivered,
-                delivery_failed == 0,
-            );
-        }
-        let journal_usage = match self.delivery_journal.usage() {
-            Ok(usage) => Some(usage),
-            Err(error) => {
-                self.record_local_delivery_journal_fault_v1(error);
-                None
-            }
-        };
-        if let Some(service) = self.seal_service.as_mut() {
-            if self.worker_error.is_some() || self.worker_stopped {
-                service.halt("overlay_worker_fault");
-            } else if let Err(error) = service.poll(&self.runtime, Instant::now()) {
-                self.worker_error = Some(format!("native seal local fault: {error:#}"));
-            }
-        }
-        let mut report = serde_json::json!({
-            "enabled": true,
-            "ok": self.worker_error.is_none() && !self.worker_stopped,
-            "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
-            "role": match self.runtime.role() {
-                ProductMainlineOverlayRoleV1::Initiator => "initiator",
-                ProductMainlineOverlayRoleV1::Responder => "responder",
-                ProductMainlineOverlayRoleV1::Duplex => "duplex",
-            },
-            "lifecycle_owner": "novovm_node",
-            "relay_connected": self.relay_connected,
-            "relay_peer_id": self.relay_peer_id,
-            "e2e_session_established": self.e2e_session_established,
-            "remote_peer_id": self.remote_peer_id,
-            "remote_peer_ids": self.remote_peer_ids,
-            "e2e_peer_count": self.e2e_peer_ids.len() as u64,
-            "isolated_peer_ids": self.sorted_isolated_peer_ids_v1(),
-            "isolated_peer_count": self.isolated_peer_ids.len() as u64,
-            "reconnect_total": self.reconnect_total,
-            "relay_rotation_total": self.relay_rotation_total,
-            "peer_isolation_total": self.peer_isolation_total,
-            "peer_rejection_total": self.peer_rejection_total,
-            "last_relay_error": self.last_relay_error,
-            "last_peer_error": self.last_peer_error,
-            "selected_path": self.runtime.startup().route_plan.selected_path,
-            "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
-            "payload_treated_opaque_by_relay": true,
-            "relay_is_trusted_authority": false,
-            "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
-            "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
-            "execution_owner_after_ingress": "aoem_runtime",
-            "delivery_completion_authority": "recipient_identity_signed_durable_journal_ack",
-            "relay_admission_is_delivery_completion": false,
-            "recipient_ack_proves_aoem_execution": false,
-            "recipient_ack_proves_consensus_finality": false,
-            "delivery_journal_path": self.delivery_journal.path(),
-            "delivery_journal_entries": journal_usage.as_ref().map(|usage| usage.entries),
-            "delivery_journal_payload_bytes": journal_usage.as_ref().map(|usage| usage.payload_bytes),
-            "journal_recovered_outbound_total": self.journal_recovered_outbound_total,
-            "journal_recovered_inbound_total": self.journal_recovered_inbound_total,
-            "journal_completed_inbound_total": self.journal_completed_inbound_total,
-            "journal_outbound_expired_total": self.journal_outbound_expired_total,
-            "journal_inbound_prepared_expired_total": self.journal_inbound_prepared_expired_total,
-            "received": received,
-            "received_total": self.received_total,
-            "inbound_duplicate_total": self.inbound_duplicate_total,
-            "inbound_commitment_rejection_total": self.inbound_commitment_rejection_total,
-            "candidate_count": candidate_count,
-            "submitted": submitted,
-            "submitted_total": self.submitted_total,
-            "relay_admitted_total": self.relay_admitted_total,
-            "recipient_ack_queued_total": self.recipient_ack_queued_total,
-            "recipient_ack_relay_admitted_total": self.recipient_ack_relay_admitted_total,
-            "recipient_acked_total": self.recipient_acked_total,
-            "recipient_ack_duplicate_total": self.recipient_ack_duplicate_total,
-            "delivered": delivered,
-            "delivered_total": self.delivered_total,
-            "delivery_failed": delivery_failed,
-            "failed_total": self.failed_total,
-            "in_flight": self.in_flight.len() as u64,
-            "in_flight_peer_deliveries": self
-                .in_flight
-                .values()
-                .map(HashSet::len)
-                .sum::<usize>() as u64,
-            "recipient_acks_in_flight": self.recipient_acks_in_flight.len() as u64,
-            "worker_stopped": self.worker_stopped,
-            "error": self.worker_error,
-            "tx_hashes": tx_hashes,
-        });
-        if let Some(report) = report.as_object_mut() {
-            report.insert("native_seal".to_string(), self.native_seal_status_v1());
-            report.insert(
-                "peer_delivery_failure_total".to_string(),
-                self.peer_delivery_failure_total.into(),
-            );
-            report.insert(
-                "peer_delivery_failure_counts".to_string(),
-                serde_json::json!(&self.peer_delivery_failure_counts),
-            );
-        }
-        report
-    }
-
-    fn native_seal_status_v1(&self) -> serde_json::Value {
-        self.seal_service.as_ref().map(NovNativeSealServiceV1::status_json)
-            .unwrap_or_else(|| serde_json::json!({"enabled":false,"ok":true,"prepared":false,"finalized":false}))
-    }
-
-    fn ensure_native_seal_healthy_v1(&self) -> Result<()> {
-        if self
-            .seal_service
-            .as_ref()
-            .is_some_and(NovNativeSealServiceV1::halted)
-        {
-            bail!(
-                "native seal service halted: {}",
-                self.native_seal_status_v1()
-            );
-        }
-        Ok(())
-    }
-
-    fn record_local_delivery_journal_fault_v1(&mut self, error: impl std::fmt::Display) {
-        if self.worker_error.is_none() {
-            self.worker_error = Some(format!("product delivery journal local fault: {error}"));
-        }
-        self.failed_total = self.failed_total.saturating_add(1);
-    }
-
-    fn record_peer_ingress_rejection_v1(&mut self, error: impl Into<String>) {
-        self.peer_rejection_total = self.peer_rejection_total.saturating_add(1);
-        self.last_peer_error = Some(error.into());
-    }
-
-    fn maintain_delivery_journal_v1(&mut self) -> Result<()> {
-        let now_ms = now_unix_ms();
-        let cleanup = self.delivery_journal.cleanup_expired(now_ms)?;
-        self.apply_delivery_cleanup_summary_v1(&cleanup)?;
-        let startup_recovery = self.startup_recovery_pending;
-        let inbound = self
-            .delivery_journal
-            .load_inbound_recovery(self.journal_scan_limit)?;
-        for record in inbound {
-            self.maintain_inbound_record_v1(record, startup_recovery, now_ms)?;
-        }
-        if startup_recovery {
-            self.startup_recovery_pending = false;
-        }
-        let unobserved = self
-            .delivery_journal
-            .load_unobserved_completed_fanouts(self.journal_scan_limit)?;
-        for fanout in unobserved {
-            self.observe_completed_outbound_fanout_v1(fanout.fanout_id, None, now_ms)?;
-        }
-        Ok(())
-    }
-
-    fn apply_delivery_cleanup_summary_v1(
-        &mut self,
-        cleanup: &ProductDeliveryCleanupSummaryV1,
-    ) -> Result<()> {
-        self.journal_outbound_expired_total = self
-            .journal_outbound_expired_total
-            .saturating_add(cleanup.outbound_expired as u64);
-        self.journal_inbound_prepared_expired_total = self
-            .journal_inbound_prepared_expired_total
-            .saturating_add(cleanup.inbound_prepared_expired as u64);
-        if cleanup.outbound_expired > 0 {
-            self.rebuild_native_outbound_in_flight_v1()?;
-        }
-        Ok(())
-    }
-
-    fn rebuild_native_outbound_in_flight_v1(&mut self) -> Result<()> {
-        let active = self
-            .delivery_journal
-            .load_due_outbound(u64::MAX, self.journal_scan_limit)?;
-        let mut rebuilt = HashMap::<[u8; 32], HashSet<String>>::new();
-        for record in active {
-            if !self
-                .remote_peer_ids
-                .iter()
-                .any(|configured| configured == &record.recipient_peer_id)
-            {
-                bail!(
-                    "active product delivery obligation targets unconfigured peer {}",
-                    record.recipient_peer_id
-                );
-            }
-            if record.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
-                rebuilt
-                    .entry(record.object_hash)
-                    .or_default()
-                    .insert(record.recipient_peer_id);
-            }
-        }
-        self.in_flight = rebuilt;
-        Ok(())
-    }
-
-    fn maintain_inbound_record_v1(
-        &mut self,
-        record: ProductDeliveryInboundRecordV1,
-        startup_recovery: bool,
-        now_ms: u64,
-    ) -> Result<()> {
-        if record.payload_class != PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
-            // Native seals require their own durable verification/quarantine owner before ACK.
-            return Ok(());
-        }
-        let receipt_exists = get_nov_native_execution_receipt_by_hash_v1(
-            to_hex_prefixed(&record.object_hash).as_str(),
-        )?
-        .is_some();
-        match record.state {
-            ProductDeliveryInboundStateV1::Prepared if startup_recovery => {
-                let preview = canonical_nov_native_tx_hash_from_payload_v1(&record.payload)
-                    .context("recover product delivery canonical transaction hash")?;
-                if preview != record.object_hash {
-                    bail!("recovered product delivery object hash commitment mismatch");
-                }
-                match classify_product_mainline_peer_ingress_v1(
-                    self.chain_id,
-                    record.original_sender_peer_id.as_str(),
-                    record.object_hash,
-                    record.payload.as_slice(),
-                ) {
-                    ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash } => {
-                        if tx_hash != record.object_hash {
-                            bail!("recovered ingress returned a different canonical tx hash");
-                        }
-                        let accepted = self
-                            .delivery_journal
-                            .accept_inbound(record.delivery_id, now_ms)?;
-                        self.queue_recipient_ack_for_record_v1(&accepted)?;
-                    }
-                    ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
-                        self.record_peer_ingress_rejection_v1(error);
-                    }
-                    ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => bail!(error),
-                }
-            }
-            ProductDeliveryInboundStateV1::Prepared => {}
-            ProductDeliveryInboundStateV1::Accepted => {
-                if startup_recovery && !receipt_exists {
-                    match classify_product_mainline_peer_ingress_v1(
-                        self.chain_id,
-                        record.original_sender_peer_id.as_str(),
-                        record.object_hash,
-                        record.payload.as_slice(),
-                    ) {
-                        ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash }
-                            if tx_hash == record.object_hash => {}
-                        ProductMainlinePeerIngressOutcomeV1::Accepted { .. } => {
-                            bail!("recovered accepted ingress returned a different tx hash")
-                        }
-                        ProductMainlinePeerIngressOutcomeV1::Rejected { error }
-                        | ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => {
-                            bail!("recover accepted product delivery failed: {error}")
-                        }
-                    }
-                }
-                if record.ack_pending {
-                    self.queue_recipient_ack_for_record_v1(&record)?;
-                }
-                if receipt_exists && !record.ack_pending {
-                    self.delivery_journal
-                        .complete_inbound(record.delivery_id, now_ms)?;
-                    self.journal_completed_inbound_total =
-                        self.journal_completed_inbound_total.saturating_add(1);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn accept_product_overlay_inbound_v1(
-        &mut self,
-        inbound: ProductMainlineOverlayInboundV1,
-    ) -> Result<Option<[u8; 32]>> {
-        if inbound.payload_class != ProductMainlineOverlayPayloadClassV1::NativeTransaction {
-            return Ok(None);
-        }
-        let payload = inbound.frame.payload.as_slice();
-        let preview = match canonical_nov_native_tx_hash_from_payload_v1(payload) {
-            Ok(preview) => preview,
-            Err(error) => {
-                self.inbound_commitment_rejection_total =
-                    self.inbound_commitment_rejection_total.saturating_add(1);
-                self.record_peer_ingress_rejection_v1(format!(
-                    "product overlay canonical transaction preview failed for peer {}: {error}",
-                    inbound.source_peer_id
-                ));
-                return Ok(None);
-            }
-        };
-        if preview != inbound.object_hash {
-            self.inbound_commitment_rejection_total =
-                self.inbound_commitment_rejection_total.saturating_add(1);
-            self.record_peer_ingress_rejection_v1(format!(
-                "product overlay object hash commitment mismatch for peer {}",
-                inbound.source_peer_id
-            ));
-            return Ok(None);
-        }
-        if product_delivery_payload_sha256_v1(payload) != inbound.payload_sha256 {
-            bail!("authenticated product overlay payload digest changed before journal prepare");
-        }
-        let now_ms = now_unix_ms();
-        let prepared = self.delivery_journal.prepare_inbound(
-            inbound.delivery_id,
-            inbound.payload_class.label(),
-            inbound.object_hash,
-            payload,
-            inbound.source_peer_id.as_str(),
-            now_ms,
-        )?;
-        self.apply_delivery_cleanup_summary_v1(&prepared.cleanup)?;
-        match prepared.disposition {
-            ProductDeliveryInboundPrepareDispositionV1::ExistingCompleted => {
-                self.inbound_duplicate_total = self.inbound_duplicate_total.saturating_add(1);
-                let tombstone = prepared
-                    .tombstone
-                    .context("completed inbound delivery tombstone is missing")?;
-                self.queue_recipient_ack_binding_v1(
-                    inbound.payload_class,
-                    inbound.object_hash,
-                    inbound.payload_sha256,
-                    inbound.delivery_id,
-                    inbound.source_peer_id.as_str(),
-                    tombstone.terminal_at_unix_ms,
-                )?;
-                Ok(None)
-            }
-            ProductDeliveryInboundPrepareDispositionV1::ExistingAccepted => {
-                self.inbound_duplicate_total = self.inbound_duplicate_total.saturating_add(1);
-                let record = prepared
-                    .record
-                    .context("accepted inbound delivery record is missing")?;
-                self.queue_recipient_ack_for_record_v1(&record)?;
-                Ok(None)
-            }
-            ProductDeliveryInboundPrepareDispositionV1::ExistingExpired => {
-                self.record_peer_ingress_rejection_v1(format!(
-                    "product overlay delivery from peer {} replayed after journal expiry",
-                    inbound.source_peer_id
-                ));
-                Ok(None)
-            }
-            ProductDeliveryInboundPrepareDispositionV1::Inserted
-            | ProductDeliveryInboundPrepareDispositionV1::ExistingPrepared => {
-                match classify_product_mainline_peer_ingress_v1(
-                    self.chain_id,
-                    inbound.source_peer_id.as_str(),
-                    inbound.object_hash,
-                    payload,
-                ) {
-                    ProductMainlinePeerIngressOutcomeV1::Accepted { tx_hash } => {
-                        if tx_hash != inbound.object_hash {
-                            bail!("native ingress hash changed after commitment validation");
-                        }
-                        let accepted = self
-                            .delivery_journal
-                            .accept_inbound(inbound.delivery_id, now_ms)?;
-                        self.queue_recipient_ack_for_record_v1(&accepted)?;
-                        self.received_total = self.received_total.saturating_add(1);
-                        Ok(Some(tx_hash))
-                    }
-                    ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
-                        self.record_peer_ingress_rejection_v1(error);
-                        Ok(None)
-                    }
-                    ProductMainlinePeerIngressOutcomeV1::LocalFault { error } => bail!(error),
-                }
-            }
-        }
-    }
-
-    fn queue_recipient_ack_for_record_v1(
-        &mut self,
-        record: &ProductDeliveryInboundRecordV1,
-    ) -> Result<bool> {
-        let payload_class =
-            product_overlay_payload_class_from_label_v1(record.payload_class.as_str())?;
-        self.queue_recipient_ack_binding_v1(
-            payload_class,
-            record.object_hash,
-            record.payload_sha256,
-            record.delivery_id,
-            record.original_sender_peer_id.as_str(),
-            record
-                .accepted_at_unix_ms
-                .context("accepted inbound delivery timestamp is missing")?,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn queue_recipient_ack_binding_v1(
-        &mut self,
-        payload_class: ProductMainlineOverlayPayloadClassV1,
-        object_hash: [u8; 32],
-        payload_sha256: [u8; 32],
-        delivery_id: [u8; 32],
-        original_sender_peer_id: &str,
-        accepted_at_ms: u64,
-    ) -> Result<bool> {
-        if self.recipient_acks_in_flight.contains(&delivery_id) {
-            return Ok(true);
-        }
-        let queued = self.runtime.try_submit_recipient_ack_binding(
-            payload_class,
-            object_hash,
-            payload_sha256,
-            delivery_id,
-            original_sender_peer_id,
-            accepted_at_ms,
-        )?;
-        if queued {
-            self.recipient_acks_in_flight.insert(delivery_id);
-            self.recipient_ack_queued_total = self.recipient_ack_queued_total.saturating_add(1);
-        }
-        Ok(queued)
-    }
-
-    fn accept_product_overlay_recipient_ack_v1(
-        &mut self,
-        ack: ProductMainlineOverlayRecipientAckV1,
-        metric_peer_id: u64,
-    ) -> Result<bool> {
-        let Some(binding) = legacy_journal_recipient_ack_binding_v1(&ack) else {
-            return Ok(false);
-        };
-        let result = self
-            .delivery_journal
-            .mark_outbound_recipient_ack(&binding, now_unix_ms())?;
-        self.apply_delivery_cleanup_summary_v1(&result.cleanup)?;
-        if result.late_after_expiry {
-            record_product_mainline_peer_delivery_failure_v1(
-                ack.recipient_peer_id.as_str(),
-                Some("recipient ACK arrived after durable obligation expiry".to_string()),
-                &mut self.peer_delivery_failure_total,
-                &mut self.peer_delivery_failure_counts,
-                &mut self.last_peer_error,
-            );
-            return Ok(false);
-        }
-        if result.duplicate {
-            self.recipient_ack_duplicate_total =
-                self.recipient_ack_duplicate_total.saturating_add(1);
-        } else {
-            self.recipient_acked_total = self.recipient_acked_total.saturating_add(1);
-        }
-        let tx_hash = result.tombstone.object_hash;
-        let delivery_complete = self
-            .in_flight
-            .get_mut(&tx_hash)
-            .is_some_and(|pending_peers| {
-                pending_peers.remove(&ack.recipient_peer_id);
-                pending_peers.is_empty()
-            });
-        if delivery_complete {
-            self.in_flight.remove(&tx_hash);
-        }
-        if result.fanout_all_acked {
-            let fanout_id = result
-                .tombstone
-                .fanout_id
-                .context("recipient ACK tombstone is missing its fanout id")?;
-            return self.observe_completed_outbound_fanout_v1(
-                fanout_id,
-                Some(metric_peer_id),
-                now_unix_ms(),
-            );
-        }
-        Ok(false)
-    }
-
-    fn observe_completed_outbound_fanout_v1(
-        &mut self,
-        fanout_id: [u8; 32],
-        metric_peer_id: Option<u64>,
-        now_ms: u64,
-    ) -> Result<bool> {
-        let Some(claim) = self
-            .delivery_journal
-            .claim_outbound_completion(fanout_id, now_ms)?
-        else {
-            return Ok(false);
-        };
-        if claim.fanout.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 {
-            observe_network_runtime_native_pending_tx_propagated_with_context_v1(
-                self.chain_id,
-                claim.fanout.object_hash,
-                metric_peer_id.or(Some(self.runtime.metric_peer_id())),
-                Some("product_overlay_recipient_durable_ack"),
-                Some(self.max_propagations),
-            );
-            self.in_flight.remove(&claim.fanout.object_hash);
-            self.delivered_total = self.delivered_total.saturating_add(1);
-        }
-        self.delivery_journal
-            .mark_outbound_completion_observed(fanout_id, now_ms)?;
-        Ok(claim.fanout.payload_class == PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1)
-    }
-
-    fn decorate_summary(&self, summary: &mut serde_json::Value) {
-        let Some(object) = summary.as_object_mut() else {
-            return;
-        };
-        let journal_usage = self.delivery_journal.usage().ok();
-        let mut overlay = serde_json::json!({
-            "enabled": true,
-            "source": NATIVE_EXECUTION_PIPELINE_PRODUCT_OVERLAY_SOURCE_V1,
-            "lifecycle_owner": "novovm_node",
-            "role": match self.runtime.role() {
-                ProductMainlineOverlayRoleV1::Initiator => "initiator",
-                ProductMainlineOverlayRoleV1::Responder => "responder",
-                ProductMainlineOverlayRoleV1::Duplex => "duplex",
-            },
-            "relay_connected": self.relay_connected,
-            "relay_peer_id": self.relay_peer_id,
-            "e2e_session_established": self.e2e_session_established,
-            "remote_peer_id": self.remote_peer_id,
-            "remote_peer_ids": self.remote_peer_ids,
-            "e2e_peer_count": self.e2e_peer_ids.len() as u64,
-            "isolated_peer_ids": self.sorted_isolated_peer_ids_v1(),
-            "isolated_peer_count": self.isolated_peer_ids.len() as u64,
-            "reconnect_total": self.reconnect_total,
-            "relay_rotation_total": self.relay_rotation_total,
-            "peer_isolation_total": self.peer_isolation_total,
-            "peer_rejection_total": self.peer_rejection_total,
-            "last_relay_error": self.last_relay_error,
-            "last_peer_error": self.last_peer_error,
-            "selected_path": self.runtime.startup().route_plan.selected_path,
-            "bootstrap_candidate_count": self.runtime.startup().bootstrap.valid_relay_candidate_count,
-            "payload_treated_opaque_by_relay": true,
-            "relay_is_trusted_authority": false,
-            "inbound_entry": NATIVE_EXECUTION_PIPELINE_PRODUCT_INGRESS_ENTRY_V1,
-            "inbound_policy": "signature_identity_nonce_chain_domain_before_pending",
-            "execution_owner_after_ingress": "aoem_runtime",
-            "delivery_completion_authority": "recipient_identity_signed_durable_journal_ack",
-            "relay_admission_is_delivery_completion": false,
-            "recipient_ack_proves_aoem_execution": false,
-            "recipient_ack_proves_consensus_finality": false,
-            "delivery_journal_path": self.delivery_journal.path(),
-            "delivery_journal_entries": journal_usage.as_ref().map(|usage| usage.entries),
-            "delivery_journal_payload_bytes": journal_usage.as_ref().map(|usage| usage.payload_bytes),
-            "journal_recovered_outbound_total": self.journal_recovered_outbound_total,
-            "journal_recovered_inbound_total": self.journal_recovered_inbound_total,
-            "journal_completed_inbound_total": self.journal_completed_inbound_total,
-            "journal_outbound_expired_total": self.journal_outbound_expired_total,
-            "journal_inbound_prepared_expired_total": self.journal_inbound_prepared_expired_total,
-            "received_total": self.received_total,
-            "inbound_duplicate_total": self.inbound_duplicate_total,
-            "inbound_commitment_rejection_total": self.inbound_commitment_rejection_total,
-            "submitted_total": self.submitted_total,
-            "relay_admitted_total": self.relay_admitted_total,
-            "recipient_ack_queued_total": self.recipient_ack_queued_total,
-            "recipient_ack_relay_admitted_total": self.recipient_ack_relay_admitted_total,
-            "recipient_acked_total": self.recipient_acked_total,
-            "recipient_ack_duplicate_total": self.recipient_ack_duplicate_total,
-            "delivered_total": self.delivered_total,
-            "failed_total": self.failed_total,
-            "in_flight": self.in_flight.len() as u64,
-            "in_flight_peer_deliveries": self
-                .in_flight
-                .values()
-                .map(HashSet::len)
-                .sum::<usize>() as u64,
-            "recipient_acks_in_flight": self.recipient_acks_in_flight.len() as u64,
-            "worker_stopped": self.worker_stopped,
-            "error": self.worker_error,
-        });
-        if let Some(overlay) = overlay.as_object_mut() {
-            overlay.insert("native_seal".to_string(), self.native_seal_status_v1());
-            overlay.insert(
-                "peer_delivery_failure_total".to_string(),
-                self.peer_delivery_failure_total.into(),
-            );
-            overlay.insert(
-                "peer_delivery_failure_counts".to_string(),
-                serde_json::json!(&self.peer_delivery_failure_counts),
-            );
-        }
-        object.insert("product_mainline_overlay".to_string(), overlay);
-    }
-
-    fn sorted_isolated_peer_ids_v1(&self) -> Vec<String> {
-        let mut peer_ids = self.isolated_peer_ids.iter().cloned().collect::<Vec<_>>();
-        peer_ids.sort();
-        peer_ids
-    }
-
-    fn validate_signoff(&self) -> Result<()> {
-        self.ensure_native_seal_healthy_v1()?;
-        if let Some(service) = &self.seal_service {
-            if service.status_json()["prepared"] != true {
-                bail!("native seal stopped without a prepare QC; this is not successful consensus completion");
-            }
-        }
-        if !bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_SIGNOFF_REQUIRED") {
-            return Ok(());
-        }
-        if self.startup_recovery_pending {
-            bail!("product mainline overlay signoff did not run journal startup recovery");
-        }
-        if let Some(error) = self.worker_error.as_deref() {
-            bail!("product mainline overlay worker failed: {error}");
-        }
-        if self.worker_stopped {
-            bail!("product mainline overlay worker stopped before node shutdown");
-        }
-        if !self.relay_connected {
-            bail!("product mainline overlay signoff missing authenticated relay connection");
-        }
-        if !self.e2e_session_established {
-            bail!("product mainline overlay signoff missing authenticated E2E peer session");
-        }
-        let expected_received =
-            u64_env_allow_zero("NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_RECEIVED", 0)?;
-        let expected_delivered =
-            u64_env_allow_zero("NOVOVM_PRODUCT_MAINLINE_OVERLAY_EXPECTED_DELIVERED", 0)?;
-        if self.received_total < expected_received {
-            bail!(
-                "product mainline overlay received_total {} below expected {}",
-                self.received_total,
-                expected_received
-            );
-        }
-        if self.delivered_total < expected_delivered {
-            bail!(
-                "product mainline overlay delivered_total {} below expected {}",
-                self.delivered_total,
-                expected_delivered
-            );
-        }
-        if !self.in_flight.is_empty() {
-            bail!(
-                "product mainline overlay signoff has {} in-flight transactions",
-                self.in_flight.len()
-            );
-        }
-        if !self.recipient_acks_in_flight.is_empty() {
-            bail!(
-                "product mainline overlay signoff has {} recipient ACKs not yet relay-admitted",
-                self.recipient_acks_in_flight.len()
-            );
-        }
-        let active_outbound = self
-            .delivery_journal
-            .load_due_outbound(u64::MAX, self.journal_scan_limit)?;
-        if !active_outbound.is_empty() {
-            bail!(
-                "product mainline overlay signoff has {} durable outbound recipient obligations",
-                active_outbound.len()
-            );
-        }
-        let inbound = self
-            .delivery_journal
-            .load_inbound_recovery(self.journal_scan_limit)?;
-        let unresolved_inbound = inbound
-            .iter()
-            .filter(|record| {
-                record.state == ProductDeliveryInboundStateV1::Prepared || record.ack_pending
-            })
-            .count();
-        if unresolved_inbound > 0 {
-            bail!(
-                "product mainline overlay signoff has {unresolved_inbound} durable inbound obligations not ACK-admitted"
-            );
-        }
-        let unobserved = self
-            .delivery_journal
-            .load_unobserved_completed_fanouts(self.journal_scan_limit)?;
-        if !unobserved.is_empty() {
-            bail!(
-                "product mainline overlay signoff has {} unobserved durable fanout completions",
-                unobserved.len()
-            );
-        }
-        if self.journal_outbound_expired_total > 0
-            || self.journal_inbound_prepared_expired_total > 0
-        {
-            bail!(
-                "product mainline overlay signoff observed durable delivery expiry: outbound={} inbound_prepared={}",
-                self.journal_outbound_expired_total,
-                self.journal_inbound_prepared_expired_total
-            );
-        }
-        Ok(())
-    }
-}
-
-fn product_overlay_payload_class_from_label_v1(
-    label: &str,
-) -> Result<ProductMainlineOverlayPayloadClassV1> {
-    match label {
-        PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_TRANSACTION_V1 => {
-            Ok(ProductMainlineOverlayPayloadClassV1::NativeTransaction)
-        }
-        PRODUCT_DELIVERY_PAYLOAD_CLASS_NATIVE_SEAL_V1 => {
-            Ok(ProductMainlineOverlayPayloadClassV1::NativeSeal)
-        }
-        _ => bail!("unsupported product delivery payload class {label}"),
-    }
-}
-
-fn record_product_mainline_peer_delivery_failure_v1(
-    remote_peer_id: &str,
-    error: Option<String>,
-    peer_delivery_failure_total: &mut u64,
-    peer_delivery_failure_counts: &mut BTreeMap<String, u64>,
-    last_peer_error: &mut Option<String>,
-) {
-    *peer_delivery_failure_total = (*peer_delivery_failure_total).saturating_add(1);
-    let failure_count = peer_delivery_failure_counts
-        .entry(remote_peer_id.to_string())
-        .or_default();
-    *failure_count = (*failure_count).saturating_add(1);
-    let error = error.unwrap_or_else(|| "delivery failed without a relay reason".to_string());
-    *last_peer_error = Some(format!(
-        "product overlay delivery to peer {remote_peer_id} failed: {error}"
-    ));
-}
-
-// Overlay verifies the signature before dispatch. This conversion additionally
-// gates the storage meaning: a fresh pool receipt cannot finish a journal obligation.
-fn legacy_journal_recipient_ack_binding_v1(
-    ack: &ProductMainlineOverlayRecipientAckV1,
-) -> Option<ProductDeliveryRecipientAckV1> {
-    if ack.disposition
-        != novovm_node::product_mainline_overlay::ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted
-    {
-        return None;
-    }
-    Some(ProductDeliveryRecipientAckV1 {
-        delivery_id: ack.delivery_id,
-        chain_id: ack.chain_id,
-        payload_class: ack.payload_class.label().to_string(),
-        object_hash: ack.object_hash,
-        payload_sha256: ack.payload_sha256,
-        original_sender_peer_id: ack.original_sender_peer_id.clone(),
-        recipient_peer_id: ack.recipient_peer_id.clone(),
-    })
-}
-
-enum ProductMainlinePeerIngressOutcomeV1 {
-    Accepted { tx_hash: [u8; 32] },
-    Rejected { error: String },
-    LocalFault { error: String },
-}
-
-fn classify_product_mainline_peer_ingress_v1(
-    chain_id: u64,
-    source_peer_id: &str,
-    announced_object_hash: [u8; 32],
-    payload: &[u8],
-) -> ProductMainlinePeerIngressOutcomeV1 {
-    match canonical_nov_native_tx_hash_from_payload_v1(payload) {
-        Ok(actual) if actual == announced_object_hash => {}
-        Ok(_) => {
-            return ProductMainlinePeerIngressOutcomeV1::Rejected {
-                error: format!(
-                    "product overlay transaction object hash mismatch for payload from {source_peer_id}"
-                ),
-            };
-        }
-        Err(error) => {
-            return ProductMainlinePeerIngressOutcomeV1::Rejected {
-                error: format!(
-                    "product overlay transaction commitment validation failed for payload from {source_peer_id}: {error}"
-                ),
-            };
-        }
-    }
-    match ingest_product_mainline_overlay_peer_payload_v1(chain_id, payload) {
-        Ok(receipt) => ProductMainlinePeerIngressOutcomeV1::Accepted {
-            tx_hash: receipt.tx_hash,
-        },
-        Err(failure) => {
-            let error = format!(
-                "product overlay transaction ingress failed for payload from {source_peer_id}: {}",
-                failure.message
-            );
-            match failure.class {
-                ProductMainlineOverlayIngressFailureClassV1::PeerRejected => {
-                    ProductMainlinePeerIngressOutcomeV1::Rejected { error }
-                }
-                ProductMainlineOverlayIngressFailureClassV1::LocalFault => {
-                    ProductMainlinePeerIngressOutcomeV1::LocalFault { error }
-                }
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod product_mainline_peer_ingress_tests {
-    use super::*;
-    use novovm_node::product_mainline_overlay::ProductMainlineOverlayRecipientAckDispositionV1;
-
-    fn recipient_ack_binding_fixture(
-        disposition: ProductMainlineOverlayRecipientAckDispositionV1,
-    ) -> ProductMainlineOverlayRecipientAckV1 {
-        // The helper tests the typed storage boundary, not signature verification.
-        ProductMainlineOverlayRecipientAckV1 {
-            version: 2,
-            chain_id: 7_991_337,
-            payload_class: ProductMainlineOverlayPayloadClassV1::NativeTransaction,
-            object_hash: [0x11; 32],
-            payload_sha256: [0x22; 32],
-            delivery_id: [0x33; 32],
-            original_sender_peer_id: "44".repeat(32),
-            recipient_peer_id: "55".repeat(32),
-            accepted_at_ms: 123_456,
-            disposition,
-            suite: 65,
-            recipient_public_key: vec![0; 1952],
-            signature: vec![0; 3309],
-        }
-    }
-
-    #[test]
-    fn journal_recipient_ack_conversion_preserves_every_mutation_binding() {
-        let mut ack = recipient_ack_binding_fixture(
-            ProductMainlineOverlayRecipientAckDispositionV1::JournalPersisted,
-        );
-        for payload_class in [
-            ProductMainlineOverlayPayloadClassV1::NativeTransaction,
-            ProductMainlineOverlayPayloadClassV1::NativeSeal,
-        ] {
-            ack.payload_class = payload_class;
-            let binding = legacy_journal_recipient_ack_binding_v1(&ack)
-                .expect("journal disposition must retain the legacy binding");
-            assert_eq!(binding.delivery_id, ack.delivery_id);
-            assert_eq!(binding.chain_id, ack.chain_id);
-            assert_eq!(binding.payload_class, ack.payload_class.label());
-            assert_eq!(binding.object_hash, ack.object_hash);
-            assert_eq!(binding.payload_sha256, ack.payload_sha256);
-            assert_eq!(binding.original_sender_peer_id, ack.original_sender_peer_id);
-            assert_eq!(binding.recipient_peer_id, ack.recipient_peer_id);
-        }
-    }
-
-    #[test]
-    fn pending_transaction_ack_cannot_produce_a_journal_mutation_binding() {
-        let ack = recipient_ack_binding_fixture(
-            ProductMainlineOverlayRecipientAckDispositionV1::PendingTransactionPersisted,
-        );
-        assert!(legacy_journal_recipient_ack_binding_v1(&ack).is_none());
-    }
-
-    #[test]
-    fn failed_delivery_is_counted_and_reported_as_peer_error() {
-        let mut peer_delivery_failure_total = 0u64;
-        let mut peer_delivery_failure_counts = BTreeMap::new();
-        let mut last_peer_error = None;
-
-        record_product_mainline_peer_delivery_failure_v1(
-            "peer-expired",
-            Some("relay admission expired at ttl".to_string()),
-            &mut peer_delivery_failure_total,
-            &mut peer_delivery_failure_counts,
-            &mut last_peer_error,
-        );
-
-        assert_eq!(peer_delivery_failure_total, 1);
-        assert_eq!(peer_delivery_failure_counts.get("peer-expired"), Some(&1));
-        assert!(last_peer_error
-            .as_deref()
-            .is_some_and(|error| error.contains("peer-expired") && error.contains("ttl")));
-    }
-
-    #[test]
-    fn invalid_authenticated_peer_transaction_is_a_peer_rejection_not_worker_error() {
-        let outcome = classify_product_mainline_peer_ingress_v1(
-            7,
-            "peer-malicious",
-            [0u8; 32],
-            b"not-a-native-transaction",
-        );
-        match outcome {
-            ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
-                assert!(error.contains("peer-malicious"));
-                assert!(error.contains("commitment validation failed"));
-            }
-            ProductMainlinePeerIngressOutcomeV1::Accepted { .. }
-            | ProductMainlinePeerIngressOutcomeV1::LocalFault { .. } => {
-                panic!("invalid peer payload unexpectedly entered pending state")
-            }
-        }
-    }
-
-    #[test]
-    fn announced_hash_mismatch_is_rejected_before_pending_ingress() {
-        let chain_id = 9_991_337;
-        let payload = build_native_execution_pipeline_fixture_payloads_v1(chain_id, 1)
-            .expect("build signed fixture")
-            .remove(0);
-        let actual_hash =
-            canonical_nov_native_tx_hash_from_payload_v1(&payload).expect("canonical hash");
-        let mut announced_hash = actual_hash;
-        announced_hash[0] ^= 0xff;
-
-        let outcome = classify_product_mainline_peer_ingress_v1(
-            chain_id,
-            "peer-equivocation",
-            announced_hash,
-            &payload,
-        );
-
-        match outcome {
-            ProductMainlinePeerIngressOutcomeV1::Rejected { error } => {
-                assert!(error.contains("object hash mismatch"));
-            }
-            ProductMainlinePeerIngressOutcomeV1::Accepted { .. }
-            | ProductMainlinePeerIngressOutcomeV1::LocalFault { .. } => {
-                panic!("mismatched commitment unexpectedly entered pending state")
-            }
-        }
-        assert!(get_network_runtime_native_pending_tx_v1(chain_id, actual_hash).is_none());
-    }
-}
-
 struct NativeExecutionPipelineBroadcastDriveV1 {
     chain_id: u64,
     peer_id: u64,
@@ -35418,13 +33984,8 @@ struct NativeExecutionPipelineBroadcastDriveV1 {
 }
 
 impl NativeExecutionPipelineBroadcastDriveV1 {
-    fn from_env(chain_id: u64, product_overlay_enabled: bool) -> Result<Self> {
-        let enabled =
-            if std::env::var_os("NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED").is_some() {
-                bool_env_default_true("NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED")
-            } else {
-                !product_overlay_enabled
-            };
+    fn from_env(chain_id: u64) -> Result<Self> {
+        let enabled = bool_env_default_true("NOVOVM_NATIVE_EXECUTION_PIPELINE_BROADCAST_ENABLED");
         Ok(Self {
             chain_id,
             peer_id: u64_env_allow_zero(
@@ -43816,214 +42377,13 @@ mod native_execution_pipeline_tests {
     }
 }
 
-// The first candidate has no legacy host projection or selected ledger head.
-// Publish the configured fresh-chain candidate, then relay certificates. Explicit
-// successor reception may execute a signed body and re-enter V3 confirmation.
-// Ordinary pending-pool scheduling is not enabled here.
-fn run_fresh_genesis_confirmation_v1(
-    config: NovNativeSealServiceConfigV1,
-    execution_params: &serde_json::Value,
-    max_ticks: u64,
-    interval_ms: u64,
-) -> Result<()> {
-    let _session_scope = novovm_node::tx_ingress::NativeAoemSemanticSessionScopeV1::default();
-    // One physical provider remains on its explicit owner thread. The control
-    // thread and candidate worker use the same exec client; no Rc/FFI handle
-    // crosses threads. Declaration order joins lifecycle workers before owner.
-    let storage_owner =
-        novovm_node::tx_ingress::start_native_candidate_storage_owner_v1(execution_params)?;
-    let _storage_scope = storage_owner.client().enter()?;
-    // Keep startup/recovery computation scoped here. Ongoing candidate
-    // computation uses its own same-thread scope on the resident worker.
-    let _compute_scope = novovm_exec::AoemComputeSessionScopeV1::enter()?;
-    let mut rpc = string_env_nonempty("NOVOVM_NATIVE_FRESH_RPC_BIND")
-        .map(|address| -> Result<_> {
-            if config.transaction_pool_path().is_none() {
-                bail!("fresh RPC requires durable successor ingress");
-            }
-            novovm_node::native_fresh_rpc::FreshRpcServer::bind(address.parse()?)
-        })
-        .transpose()?;
-    if let Some(rpc) = &rpc {
-        println!("native_fresh_rpc_listening: {}", rpc.local_addr()?);
-    }
-    if !config.is_fresh_genesis() {
-        bail!("fresh genesis startup requires an explicit genesis configuration");
-    }
-    let overlay_path = string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
-        .context("fresh genesis confirmation requires Product Overlay configuration")?;
-    let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;
-    let runtime = ProductMainlineOverlayRuntimeV1::start(overlay, now_unix_ms())?;
-    let ledger_path = novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(
-        &nov_native_execution_store_path_v1(),
-    );
-    let mut lifecycle = novovm_node::native_block_seal::service::FreshChainLifecycleV1::open(
-        config,
-        &ledger_path,
-        execution_params,
-        &runtime,
-        Instant::now(),
-    )?;
-    lifecycle.enable_candidate_pipeline(storage_owner.client())?;
-    // Retain the physical ledger and its exact validated DB revision after
-    // startup. ANY ledger write invalidates that content validation. Existing
-    // authority/candidate locks and live bindings still guard every transition;
-    // an unchanged history is not replayed on every normal poll.
-    let _ledger_session =
-        novovm_node::native_block_ledger::NovNativeBlockLedgerV1::retain_existing_fresh_session_v1(
-            &ledger_path,
-        )?;
-    println!("native_seal_service_startup: {}", lifecycle.status_json());
-    let mut ticks = 0u64;
-    let mut confirmation_reported = None;
-    let handoff_trace =
-        std::env::var("NOVOVM_NATIVE_FRESH_HANDOFF_TRACE").is_ok_and(|value| value == "1");
-    let mut last_handoff_tick = Instant::now();
-    #[cfg(test)]
-    let mut faults = partition_test::Controller::open()?;
-    loop {
-        let tick_started = Instant::now();
-        // Early phases have no transaction RPC. Keep sparse progress evidence
-        // across their 180-second test deadline without opening another ingress.
-        let trace_tick =
-            handoff_trace && (ticks < 4 || last_handoff_tick.elapsed() >= Duration::from_secs(5));
-        if trace_tick {
-            last_handoff_tick = tick_started;
-            novovm_node::native_fresh_timing::handoff_trace(
-                "main.tick_enter",
-                || serde_json::json!({ "tick": ticks }),
-            );
-        }
-        #[cfg(test)]
-        if let Some(faults) = &mut faults {
-            faults.refresh()?;
-        }
-        if let Some(rpc) = &mut rpc {
-            novovm_node::native_fresh_timing::measure("main.rpc_poll", || {
-                rpc.poll(&mut lifecycle)
-            })?;
-        }
-        for event in runtime.drain_events(128) {
-            lifecycle.observe_transaction_transport_event(&event, runtime.identity_verifier());
-            match event {
-                ProductMainlineOverlayEventV1::Inbound(inbound) => {
-                    #[cfg(test)]
-                    if let Some(faults) = &mut faults {
-                        if !faults.allow(&inbound.source_peer_id, &inbound.frame.payload) {
-                            continue;
-                        }
-                    }
-                    lifecycle.enqueue(inbound);
-                }
-                // Preserve the worker's bounded failure evidence on the actual
-                // fresh-node path. Never log transaction/envelope payloads.
-                ProductMainlineOverlayEventV1::RelayDisconnected {
-                    relay_peer_id,
-                    error,
-                    reconnect_in_ms,
-                } => eprintln!(
-                    "native_fresh_overlay_disconnected: {}",
-                    serde_json::json!({
-                        "relay_peer_id": relay_peer_id,
-                        "error": error,
-                        "reconnect_in_ms": reconnect_in_ms,
-                    })
-                ),
-                ProductMainlineOverlayEventV1::PeerIsolated {
-                    remote_peer_id,
-                    reason,
-                    session_failure_count,
-                    retry_in_ms,
-                } => eprintln!(
-                    "native_fresh_overlay_peer_isolated: {}",
-                    serde_json::json!({
-                        "remote_peer_id": remote_peer_id,
-                        "reason": reason,
-                        "session_failure_count": session_failure_count,
-                        "retry_in_ms": retry_in_ms,
-                    })
-                ),
-                ProductMainlineOverlayEventV1::WorkerFailed(error) => eprintln!(
-                    "native_fresh_overlay_worker_failed: {}",
-                    serde_json::json!({ "error": error })
-                ),
-                ProductMainlineOverlayEventV1::WorkerStopped => {
-                    eprintln!("native_fresh_overlay_worker_stopped");
-                }
-                ProductMainlineOverlayEventV1::RelayConnected { relay_peer_id } => {
-                    novovm_node::native_fresh_timing::handoff_trace(
-                        "main.overlay_ready",
-                        || serde_json::json!({ "kind": "relay", "peer": relay_peer_id, "tick": ticks }),
-                    );
-                }
-                ProductMainlineOverlayEventV1::E2eSessionEstablished { remote_peer_id } => {
-                    novovm_node::native_fresh_timing::handoff_trace(
-                        "main.overlay_ready",
-                        || serde_json::json!({ "kind": "e2e", "peer": remote_peer_id, "tick": ticks }),
-                    );
-                }
-                _ => {}
-            }
-        }
-        novovm_node::native_fresh_timing::measure("main.lifecycle_poll", || {
-            lifecycle.poll(&runtime, Instant::now())
-        })?;
-        let status = lifecycle.status_json();
-        if trace_tick {
-            novovm_node::native_fresh_timing::handoff_trace(
-                "main.tick_status",
-                || serde_json::json!({ "tick": ticks, "status": &status }),
-            );
-        }
-        #[cfg(test)]
-        if let Some(faults) = &faults {
-            faults.record(&status)?;
-        }
-        let height = status["height"].as_u64();
-        if confirmation_reported != height && status["decision_confirmed"] == true {
-            println!("native_fresh_genesis_decision_confirmed: {status}");
-            confirmation_reported = height;
-        }
-        ticks = ticks.saturating_add(1);
-        if max_ticks > 0 && ticks >= max_ticks {
-            break;
-        }
-        let idle =
-            novovm_node::native_block_seal::service::FreshChainLifecycleV1::remaining_tick_idle(
-                Duration::from_millis(interval_ms),
-                tick_started.elapsed(),
-            );
-        if let Some(rpc) = &mut rpc {
-            // Service bounded RPC work within this turn's remaining budget.
-            // Overruns add no sleep and never accumulate catch-up turns.
-            rpc.poll_during_idle(&mut lifecycle, idle)?;
-        } else {
-            std::thread::park_timeout(idle);
-        }
-    }
-    println!(
-        "native_fresh_genesis_confirmation_summary: {}",
-        serde_json::json!({
-            "ticks": ticks,
-            "ordinary_execution_enabled": false,
-            "native_seal_service": lifecycle.status_json(),
-        })
-    );
-    Ok(())
-}
-
 fn run_native_execution_tick_node_mode_v1(
     verbose: bool,
-    seal_config_path: Option<PathBuf>,
     service_control: Option<novovm_node::native_service::Control>,
 ) -> Result<()> {
     let configured_product = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG").is_some();
     if configured_product {
         validate_original_native_tick_selection_v1("native_execution_tick")?;
-        anyhow::ensure!(
-            seal_config_path.is_none(),
-            "native tick cannot activate the old seal owner"
-        );
     } else {
         anyhow::ensure!(bool_env("NOVOVM_JULY_HISTORICAL_FIXTURE"),
             "native tick requires NOVOVM_NATIVE_EXECUTION_CONFIG; old raw/recovery wiring is historical-fixture only");
@@ -44082,78 +42442,8 @@ fn run_native_execution_tick_node_mode_v1(
             );
         }
     }
-    let mut product_overlay_drive = None;
     if !configured_product {
         let startup_recovery_params = native_execution_tick_params_from_env_v1()?;
-        let seal_config = seal_config_path
-            .as_ref()
-            .map(|path| NovNativeSealServiceConfigV1::load(path, chain_id))
-            .transpose()?;
-        if let Some(config) = &seal_config {
-            let native_path = nov_native_execution_store_path_v1();
-            let ledger_path =
-                novovm_node::tx_ingress::nov_native_block_ledger_rocksdb_path_v1(&native_path);
-            let overlay_path = PathBuf::from(
-                string_env_nonempty("NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG")
-                    .context("native seal requires the Product Overlay configuration")?,
-            );
-            let overlay = load_product_mainline_overlay_config_v1(&overlay_path)?;
-            let mut writes = novovm_node::tx_ingress::native_persistence_write_paths_v1(
-                &startup_recovery_params,
-            )
-            .into_iter()
-            .filter(|(label, _)| *label != "native block ledger")
-            .map(|(_, path)| path)
-            .collect::<Vec<_>>();
-            writes.push(overlay.overlay.cache_path.clone());
-            // Bootstrap cache replacement writes this fixed staging file first.
-            writes.push(overlay.overlay.cache_path.with_extension("json.tmp"));
-            if let Some(journal) = overlay.delivery_journal_path {
-                writes.push(journal);
-            }
-            for name in [
-                "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
-                "NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH",
-            ] {
-                if let Some(path) = string_env_nonempty(name) {
-                    writes.push(PathBuf::from(path));
-                }
-            }
-            let mut reads = vec![overlay_path, overlay.identity_key_path];
-            if let novovm_node::product_relay_client::ProductRelayTlsTrustV1::ExplicitCa {
-                certificate_path,
-            } = overlay.tls_trust
-            {
-                reads.push(certificate_path);
-            }
-            // Before startup AOEM recovery, cache updates, journal creation or report writes.
-            validate_service_paths_v1(config, &ledger_path, &writes, &reads)?;
-        }
-        if seal_config
-            .as_ref()
-            .is_some_and(|config| config.is_fresh_genesis())
-        {
-            let config = seal_config.context("fresh genesis seal configuration missing")?;
-            // Windows' main stack is smaller than the bounded genesis/candidate
-            // verification call chain in debug builds. One joined lifecycle thread
-            // supplies an explicit stack; this is not a transaction worker pool.
-            return std::thread::Builder::new()
-                .name("fresh-genesis-confirmation".into())
-                .stack_size(
-                    novovm_node::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1,
-                )
-                .spawn(move || {
-                    run_fresh_genesis_confirmation_v1(
-                        config,
-                        &startup_recovery_params,
-                        max_ticks,
-                        interval_ms,
-                    )
-                })
-                .context("start fresh genesis confirmation lifecycle")?
-                .join()
-                .map_err(|_| anyhow::anyhow!("fresh genesis confirmation lifecycle panicked"))?;
-        }
         apply_native_execution_pipeline_retention_budget_v1(chain_id)?;
         verify_native_business_protocol_config_pin_for_aoem_production_v1(&startup_recovery_params)
             .context("validate cross-machine NOV protocol configuration pin at startup failed")?;
@@ -44177,11 +42467,6 @@ fn run_native_execution_tick_node_mode_v1(
                     .context("encode native block ledger startup recovery report failed")?
             );
         }
-        product_overlay_drive = NativeExecutionPipelineProductOverlayDriveV1::from_env(
-            chain_id,
-            seal_config,
-            &startup_recovery_params,
-        )?;
     }
     let mut network_drive = if configured_product {
         None
@@ -44196,10 +42481,7 @@ fn run_native_execution_tick_node_mode_v1(
     let broadcast_drive = if configured_product {
         None
     } else {
-        Some(NativeExecutionPipelineBroadcastDriveV1::from_env(
-            chain_id,
-            product_overlay_drive.is_some(),
-        )?)
+        Some(NativeExecutionPipelineBroadcastDriveV1::from_env(chain_id)?)
     };
     let soak_gate = NativeExecutionPipelineSoakGateV1::from_env()?;
     let progress_report_path =
@@ -44380,26 +42662,11 @@ fn run_native_execution_tick_node_mode_v1(
                 "reason": "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED is not set",
             }),
         };
-        let product_overlay_drive_out = match product_overlay_drive.as_mut() {
-            Some(drive) => drive.drive_once(),
-            None => serde_json::json!({
-                "enabled": false,
-                "ok": true,
-                "reason": "NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED is not set",
-            }),
-        };
-        if let Some(drive) = &product_overlay_drive {
-            drive.ensure_native_seal_healthy_v1()?;
-        }
         let network_enabled = network_drive_out
             .get("enabled")
             .and_then(|value| value.as_bool())
             .unwrap_or(false)
             || udp_drive_out
-                .get("enabled")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false)
-            || product_overlay_drive_out
                 .get("enabled")
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
@@ -44410,17 +42677,12 @@ fn run_native_execution_tick_node_mode_v1(
             && udp_drive_out
                 .get("ok")
                 .and_then(|value| value.as_bool())
-                .unwrap_or(true)
-            && product_overlay_drive_out
-                .get("ok")
-                .and_then(|value| value.as_bool())
                 .unwrap_or(true);
         let network_drive_out = serde_json::json!({
             "enabled": network_enabled,
             "ok": network_ok,
             "rlpx": network_drive_out,
             "udp": udp_drive_out,
-            "product_overlay": product_overlay_drive_out,
         });
         let broadcast_drive_out = broadcast_drive
             .as_ref()
@@ -44485,9 +42747,6 @@ fn run_native_execution_tick_node_mode_v1(
                     }
                 }
                 let mut progress_summary = aggregate.to_json();
-                if let Some(drive) = product_overlay_drive.as_ref() {
-                    drive.decorate_summary(&mut progress_summary);
-                }
                 decorate_aoem_runtime_worker_scheduler_summary_v1(
                     &mut progress_summary,
                     aoem_runtime_worker_pipeline_enabled,
@@ -44559,9 +42818,6 @@ fn run_native_execution_tick_node_mode_v1(
         ticks = ticks.saturating_add(1);
         if bool_env("NOVOVM_NATIVE_EXECUTION_PIPELINE_EXIT_WHEN_SUMMARY_VALID") {
             let mut summary = aggregate.to_json();
-            if let Some(drive) = product_overlay_drive.as_ref() {
-                drive.decorate_summary(&mut summary);
-            }
             decorate_aoem_runtime_worker_scheduler_summary_v1(
                 &mut summary,
                 aoem_runtime_worker_pipeline_enabled,
@@ -44628,9 +42884,6 @@ fn run_native_execution_tick_node_mode_v1(
     }
 
     let mut summary = aggregate.to_json();
-    if let Some(drive) = product_overlay_drive.as_ref() {
-        drive.decorate_summary(&mut summary);
-    }
     decorate_aoem_runtime_worker_scheduler_summary_v1(
         &mut summary,
         aoem_runtime_worker_pipeline_enabled,
@@ -44679,9 +42932,6 @@ fn run_native_execution_tick_node_mode_v1(
         serde_json::to_string_pretty(&summary)
             .context("encode native execution pipeline summary failed")?
     );
-    if let Some(drive) = product_overlay_drive.as_ref() {
-        drive.validate_signoff()?;
-    }
     soak_gate.validate_summary(&summary)?;
     Ok(())
 }
@@ -44691,6 +42941,27 @@ mod native_candidate_node_mode;
 
 /// Configuration-only preflight, before any old recovery, signer or listener.
 fn validate_original_native_tick_selection_v1(node_mode: &str) -> Result<()> {
+    // A stale WSS main-chain configuration must fail before any database,
+    // key or socket is opened, including when no current native config is set.
+    for name in [
+        "NOVOVM_NATIVE_SEAL_ENABLED",
+        "NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED",
+    ] {
+        anyhow::ensure!(
+            !bool_env(name),
+            "{name} selects the retired WSS main-chain owner; use the original NovoRUDP native tick"
+        );
+    }
+    for name in [
+        "NOVOVM_NATIVE_SEAL_CONFIG",
+        "NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG",
+        "NOVOVM_NATIVE_FRESH_RPC_BIND",
+    ] {
+        anyhow::ensure!(
+            std::env::var_os(name).is_none(),
+            "{name} belongs to the retired WSS main-chain owner; use NOVOVM_NATIVE_EXECUTION_CONFIG"
+        );
+    }
     let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG") else {
         return Ok(());
     };
@@ -44706,8 +42977,6 @@ fn validate_original_native_tick_selection_v1(node_mode: &str) -> Result<()> {
         "native tick configuration cannot be combined with a query override"
     );
     for name in [
-        "NOVOVM_NATIVE_SEAL_ENABLED",
-        "NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED",
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_NETWORK_DRIVE_ENABLED",
         "NOVOVM_JULY_HISTORICAL_FIXTURE",
         "NOVOVM_ALLOW_LEGACY_HOST_EXECUTION",
@@ -44719,13 +42988,10 @@ fn validate_original_native_tick_selection_v1(node_mode: &str) -> Result<()> {
         );
     }
     for name in [
-        "NOVOVM_NATIVE_SEAL_CONFIG",
-        "NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG",
         "NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_PATH",
         "NOVOVM_NATIVE_FRESH_GENESIS_CONFIG_COMMITMENT",
         "NOVOVM_NATIVE_CANDIDATE_PLAN_PATH",
         "NOVOVM_NATIVE_CANDIDATE_PLAN_COMMITMENT",
-        "NOVOVM_NATIVE_FRESH_RPC_BIND",
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX",
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_INGRESS_RAW_TX_FILE",
     ] {
@@ -44776,7 +43042,7 @@ fn run_native_scm_tick(
 ) -> Result<()> {
     request.prepare_existing_tick()?;
     validate_original_native_tick_selection_v1("native_execution_tick")?;
-    run_native_execution_tick_node_mode_v1(false, None, Some(control))
+    run_native_execution_tick_node_mode_v1(false, Some(control))
 }
 
 fn main() -> Result<()> {
@@ -44801,17 +43067,6 @@ fn main() -> Result<()> {
     let candidate_mode = native_candidate_node_mode::selected(
         &node_mode,
         mainline_query_method_from_env().is_some(),
-    )?;
-    let seal_native_mode = mainline_query_method_from_env().is_none()
-        && (node_mode.eq_ignore_ascii_case("native_execution_pipeline")
-            || node_mode.eq_ignore_ascii_case("native_execution_tick")
-            || (node_mode.eq_ignore_ascii_case("full")
-                && bool_env("NOVOVM_NATIVE_EXECUTION_TICK_ENABLED")));
-    let seal_config_path = native_seal_config_selection_v1(
-        std::env::var("NOVOVM_NATIVE_SEAL_ENABLED").ok().as_deref(),
-        std::env::var("NOVOVM_NATIVE_SEAL_CONFIG").ok().as_deref(),
-        seal_native_mode,
-        bool_env("NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED"),
     )?;
     let cli_overrides = parse_node_cli_overrides_v1()?;
     let verbose = bool_env("NOVOVM_NODE_VERBOSE");
@@ -44940,7 +43195,7 @@ fn main() -> Result<()> {
         return std::thread::Builder::new()
             .name("novovm-native-tick".into())
             .stack_size(novovm_node::native_service::TICK_STACK_BYTES)
-            .spawn(move || run_native_execution_tick_node_mode_v1(verbose, seal_config_path, None))?
+            .spawn(move || run_native_execution_tick_node_mode_v1(verbose, None))?
             .join()
             .map_err(|_| anyhow::anyhow!("original native tick panicked"))?;
     }

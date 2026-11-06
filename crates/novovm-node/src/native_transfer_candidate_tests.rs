@@ -57,7 +57,7 @@ fn transfer_candidate_fee(raw: &[u8]) -> u128 {
 fn transfer_candidate_on_runtime_stack(test: fn()) {
     std::thread::Builder::new()
         .name("transfer-candidate-integration".into())
-        .stack_size(crate::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
+        .stack_size(crate::native_candidate_plan::CANDIDATE_EXECUTION_STACK_BYTES_V1)
         .spawn(test)
         .unwrap()
         .join()

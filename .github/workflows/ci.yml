@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: "Full candidate validation, security scan, or historical recovery only"
+        description: "Full candidate validation, security scan, or current NovoRUDP recovery only"
         type: choice
         options: [full, security, recovery]
         default: full
@@ -361,6 +361,7 @@ jobs:
           cargo test -p novovm-node --lib native_archive_ --locked -- --ignored --list > target/native-archive-test-list.txt
           grep -q 'native_archive_delivery_inflight_takeover_retains_original_handle: test' target/native-archive-test-list.txt
           grep -q 'native_archive_request_older_completion_cannot_replace_newer_responsibility: test' target/native-archive-test-list.txt
+          grep -q 'native_archive_control_duplicates_preserve_distinct_votes_and_retry_after_delivery: test' target/native-archive-test-list.txt
           cargo test -p novovm-node --lib native_archive_ --locked -- --ignored --test-threads=1
           cargo test -p novovm-node --lib native_realtime_retirement_ --locked -- --ignored --list > target/native-retirement-test-list.txt
           grep -q 'native_realtime_retirement_partial_remote_object_drains_to_real_done: test' target/native-retirement-test-list.txt
@@ -383,40 +384,6 @@ jobs:
           # Retained test-only opaque attachment durability. This does not enable
           # the retired backend-specific product proof service or prove ZK/GPU.
           cargo test -p novovm-node --lib real_proof_storage_multichunk_reopen_immutable_and_corruption_rejection --locked -- --ignored --test-threads=1
-          cargo build -p novovm-node --bin novovm-node --bin novovm-native-client --locked
-          target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
-          export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
-          # Fail instead of silently passing a filter matching zero tests.
-          cargo test -p novovm-node --lib native_only_ --locked -- --ignored --list > target/native-test-list.txt
-          grep -q 'native_only_genesis_transactions_queries_and_cold_recovery: test' target/native-test-list.txt
-          grep -q 'native_only_status_readiness_survives_first_query_timeout: test' target/native-test-list.txt
-          grep -q 'native_only_minority_and_pending_signature_conflict_recover: test' target/native-test-list.txt
-          grep -q 'native_only_recovery_late_lowest_validator_original_database_and_minority: test' target/native-test-list.txt
-          grep -q 'native_only_recovery_late_highest_validator_original_database_and_minority: test' target/native-test-list.txt
-          grep -q 'native_only_a_a_b_real_honest_signers_recover_and_restart: test' target/native-test-list.txt
-          cargo test -p novovm-node --lib native_only_ --locked -- --ignored --test-threads=1
-          # The current native process suites above must really be enumerated;
-          # old Relay results are not inherited by a renamed test or controller.
-
-      - name: Upload current native recovery and historical AAB evidence even on failure
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-and-historical-aab-evidence
-          if-no-files-found: ignore
-          # Explicit evidence allowlist: never upload configs, signing keys or DBs.
-          path: |
-            target/native-product-rpc/**/report.json
-            target/native-product-rpc/**/recovery-report.json
-            target/native-product-rpc/**/native-aab-report.json
-            target/native-product-rpc/**/aab-before-recovery.json
-            target/native-product-rpc/**/*.stdout.log
-            target/native-product-rpc/**/*.stderr.log
-            target/resident-rpc-aab-tests/**/result.json
-            target/resident-rpc-aab-tests/**/byzantine-signed-proposals.json
-            target/resident-rpc-aab-tests/**/a-a-b-before-recovery.json
-            target/resident-rpc-aab-tests/**/*.stdout.log
-            target/resident-rpc-aab-tests/**/*.stderr.log
 
       - name: Shared ML-DSA-65 spend contract and AOEM compatibility
         shell: bash
@@ -436,34 +403,6 @@ jobs:
           cargo test -p novovm-exec --lib pq_signature --locked
           cargo test -p novovm-exec --test uca_spend_runtime --locked -- --ignored --test-threads=1
           cargo test -p novovm-prover --test pq_signature_runtime --locked -- --ignored --test-threads=1
-
-      - name: NUAS original-node process recovery and credited NOV respend
-        timeout-minutes: 10
-        shell: bash
-        env:
-          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
-        run: |
-          set -euo pipefail
-          test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"
-          target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
-          export NOVOVM_RESIDENT_NODE_BINARY="$target_dir/debug/novovm-node"
-          test -x "$NOVOVM_RESIDENT_NODE_BINARY"
-          cargo test -p novovm-node --lib native_uca_process_ --locked -- --ignored --list > target/nuas-process-test-list.txt
-          grep -q 'native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery: test' target/nuas-process-test-list.txt
-          cargo test -p novovm-node --lib native_uca_process_ --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/nuas-native-process.log"
-
-      - name: Upload NUAS process recovery evidence even on failure
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nuas-native-process-recovery
-          if-no-files-found: ignore
-          # Never upload node configuration, test private keys or databases.
-          path: |
-            ${{ runner.temp }}/nuas-native-process.log
-            target/native-product-rpc/uca-recovery-*/uca-recovery-report.json
-            target/native-product-rpc/uca-recovery-*/*.stdout.log
-            target/native-product-rpc/uca-recovery-*/*.stderr.log
 
       - name: Original AOEM Transfer and recovery without Host compatibility permission
         timeout-minutes: 10
@@ -491,7 +430,7 @@ jobs:
           cargo test -p novovm-node --lib finalized_nov_balance --locked -- --test-threads=1
           cargo test -p novovm-node --lib native_fresh_rpc --locked -- --test-threads=1
 
-      - name: Native seal safety and authenticated WSS lifecycle regressions
+      - name: Shared native seal safety regressions
         timeout-minutes: 20
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_block_seal --locked -- --test-threads=2
 
@@ -574,37 +513,6 @@ jobs:
             artifacts/audit/candidate-node-processes/**/*.stderr.log
           if-no-files-found: warn
 
-      - name: Signed Transfer RPC finality and wallet recovery without Host permission
-        timeout-minutes: 15
-        env:
-          NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test -p novovm-node --lib --locked --no-run --message-format=json > "$RUNNER_TEMP/r2-oracle-build.jsonl"
-          oracle=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "novovm_node" and .profile.test) | .executable // empty' "$RUNNER_TEMP/r2-oracle-build.jsonl")
-          test -x "$oracle"
-          cargo test -p novovm-node --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/r2-rpc-build.jsonl"
-          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/r2-rpc-build.jsonl")
-          test -x "$binary"
-          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=0 NOVOVM_TRANSFER_PARITY_WORKER="$2" NOVOVM_AOEM_TEST_LIBRARY="$3" NOVOVM_AOEM_DLL="$3" NOVOVM_AOEM_TEST_MANIFEST="$4" NOVOVM_AOEM_MANIFEST="$4" AOEM_DLL_MANIFEST="$4" AOEM_DLL_MANIFEST_REQUIRED=1 "$1" fresh_record_transfers_conflict_failure_serial_parity --ignored --test-threads=1' r2-product-rpc "$binary" "$oracle" "$NOVOVM_AOEM_TEST_LIBRARY" "$NOVOVM_AOEM_TEST_MANIFEST"
-
-      - name: Upload signed Transfer RPC acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: original-node-transfer-rpc-recovery
-          # Preserve this step's startup/recovery logs on failure, without keys,
-          # node configuration or databases. The earlier upload predates this run.
-          path: |
-            artifacts/audit/candidate-node-processes/**/*.process.json
-            artifacts/audit/candidate-node-processes/**/*.stdout.log
-            artifacts/audit/candidate-node-processes/**/*.stderr.log
-            artifacts/audit/candidate-node-processes/**/mixed-*.json
-            artifacts/audit/candidate-node-processes/**/continuous-mixed-*.stdout.log
-            artifacts/audit/candidate-node-processes/**/continuous-mixed-*.stderr.log
-          if-no-files-found: warn
-
       - name: Mainline soak freshness coverage and progress tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib mainline_soak::tests
 
@@ -660,9 +568,6 @@ jobs:
 
       - name: Product relay client daemon and overlay tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_relay_
-
-      - name: Product mainline overlay resource-bound tests
-        run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_mainline_overlay::tests
 
       - name: Product durable delivery journal tests
         run: cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib product_delivery_journal::tests
@@ -721,7 +626,7 @@ jobs:
           if-no-files-found: error
 
   native_recovery:
-    name: Native historical ingress and process recovery
+    name: Current NovoRUDP process recovery
     needs: detect
     if: needs.detect.outputs.recovery == 'true'
     concurrency:
@@ -730,7 +635,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
-      NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '1'
+      NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
       NATIVE_RUNTIME_CANDIDATE_ROOT: artifacts/runtime-candidates/native-transport-mldsa65-20261103
     steps:
       - uses: actions/checkout@v4
@@ -745,14 +650,19 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Build the original recovery test targets
+      - name: Build the original native node, client and recovery tests
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib --test native_candidate_node_cli --locked --no-run --message-format=json > "$RUNNER_TEMP/fresh-process-build.jsonl"
-      - name: Durable user ingress and multi-height process recovery (historical comparison only)
-        # The original per-process/height deadlines and isolated network remain.
-        # Cold compilation is separate from this existing execution budget.
+          cargo build -p novovm-node --bin novovm-node --bin novovm-native-client --locked
+          cargo test -p novovm-node --lib --locked --no-run
+          target_dir="$(cargo metadata --no-deps --format-version 1 | python -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+          test -x "$target_dir/debug/novovm-node"
+          test -x "$target_dir/debug/novovm-native-client"
+          echo "NOVOVM_RESIDENT_NODE_BINARY=$target_dir/debug/novovm-node" >> "$GITHUB_ENV"
+      - name: Current native finality, minority, Byzantine and original-database recovery
+        # Relocated unchanged original-node tests, not the retired WSS harness.
+        # Cold compilation is separate; production and fixture deadlines stay intact.
         timeout-minutes: 15
         shell: bash
         run: |
@@ -760,31 +670,43 @@ jobs:
           test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"
           test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"
           export AOEM_DLL_MANIFEST_REQUIRED=1
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib fresh_pool_tests --locked -- --list > "$RUNNER_TEMP/fresh-pool-tests.txt"
-          grep -q ': test$' "$RUNNER_TEMP/fresh-pool-tests.txt"
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib fresh_pool_tests --locked -- --test-threads=1
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_fresh_rpc --locked -- --list > "$RUNNER_TEMP/fresh-rpc-tests.txt"
-          grep -q ': test$' "$RUNNER_TEMP/fresh-rpc-tests.txt"
-          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" -p novovm-node --lib native_fresh_rpc --locked -- --test-threads=1
-          binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "native_candidate_node_cli" and .profile.test) | .executable // empty' "$RUNNER_TEMP/fresh-process-build.jsonl")
-          test -x "$binary"
-          "$binary" native_seal_main_process::process_exit_wait_uses_reaping_budget_after_completed_business --exact --list > "$RUNNER_TEMP/process-exit-tests.txt"
-          test "$(grep -c ': test$' "$RUNNER_TEMP/process-exit-tests.txt")" = 1
-          "$binary" native_seal_main_process::process_exit_wait_uses_reaping_budget_after_completed_business --exact --test-threads=1
-          "$binary" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --list > "$RUNNER_TEMP/fresh-process-tests.txt"
-          test "$(grep -c ': test$' "$RUNNER_TEMP/fresh-process-tests.txt")" = 1
-          sudo unshare --net sh -c 'ip link set lo up; exec env NOVOVM_NATIVE_FRESH_HANDOFF_TRACE=1 NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 NOVOVM_AOEM_TEST_LIBRARY="$2" NOVOVM_AOEM_DLL="$2" NOVOVM_AOEM_TEST_MANIFEST="$3" NOVOVM_AOEM_MANIFEST="$3" AOEM_DLL_MANIFEST="$3" AOEM_DLL_MANIFEST_REQUIRED=1 "$1" fresh_genesis_main_nodes_continue_three_heights_without_restart --ignored --test-threads=1' fresh-process-gate "$binary" "$NOVOVM_AOEM_TEST_LIBRARY" "$NOVOVM_AOEM_TEST_MANIFEST"
-      - name: Upload historical ingress and recovery evidence even on failure
+          cargo test -p novovm-node --lib native_only_ --locked -- --ignored --list > "$RUNNER_TEMP/native-test-list.txt"
+          grep -q 'native_only_genesis_transactions_queries_and_cold_recovery: test' "$RUNNER_TEMP/native-test-list.txt"
+          grep -q 'native_only_status_readiness_survives_first_query_timeout: test' "$RUNNER_TEMP/native-test-list.txt"
+          grep -q 'native_only_minority_and_pending_signature_conflict_recover: test' "$RUNNER_TEMP/native-test-list.txt"
+          grep -q 'native_only_recovery_late_lowest_validator_original_database_and_minority: test' "$RUNNER_TEMP/native-test-list.txt"
+          grep -q 'native_only_recovery_late_highest_validator_original_database_and_minority: test' "$RUNNER_TEMP/native-test-list.txt"
+          grep -q 'native_only_a_a_b_real_honest_signers_recover_and_restart: test' "$RUNNER_TEMP/native-test-list.txt"
+          cargo test -p novovm-node --lib native_only_ --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/native-process-recovery.log"
+      - name: NUAS original-node process recovery and credited NOV respend
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$NOVOVM_AOEM_TEST_LIBRARY" = "$NOVOVM_AOEM_DLL"
+          test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"
+          export AOEM_DLL_MANIFEST_REQUIRED=1
+          test -x "$NOVOVM_RESIDENT_NODE_BINARY"
+          cargo test -p novovm-node --lib native_uca_process_ --locked -- --ignored --list > "$RUNNER_TEMP/nuas-process-test-list.txt"
+          grep -q 'native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recovery: test' "$RUNNER_TEMP/nuas-process-test-list.txt"
+          cargo test -p novovm-node --lib native_uca_process_ --locked -- --ignored --nocapture --test-threads=1 2>&1 | tee "$RUNNER_TEMP/nuas-native-process.log"
+      - name: Upload current native recovery evidence even on failure
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fresh-ingress-history-recovery
+          name: native-process-recovery
           path: |
-            ${{ runner.temp }}/fresh-process-tests.txt
-            artifacts/audit/candidate-node-processes/**/continuous-acceptance.json
-            artifacts/audit/candidate-node-processes/**/*.process.json
-            artifacts/audit/candidate-node-processes/**/*.stdout.log
-            artifacts/audit/candidate-node-processes/**/*.stderr.log
+            ${{ runner.temp }}/native-test-list.txt
+            ${{ runner.temp }}/nuas-process-test-list.txt
+            ${{ runner.temp }}/native-process-recovery.log
+            ${{ runner.temp }}/nuas-native-process.log
+            target/native-product-rpc/**/report.json
+            target/native-product-rpc/**/recovery-report.json
+            target/native-product-rpc/**/native-aab-report.json
+            target/native-product-rpc/**/aab-before-recovery.json
+            target/native-product-rpc/**/uca-recovery-report.json
+            target/native-product-rpc/**/*.stdout.log
+            target/native-product-rpc/**/*.stderr.log
           if-no-files-found: warn
 
   rust_security:

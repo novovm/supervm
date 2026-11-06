@@ -46,7 +46,10 @@ mod common_candidate_plan_tests {
         .expect("build self-consistent local execution plan")
     }
 
-    pub(super) fn genesis_plan(chain_id: u64, raw_txs: Vec<Vec<u8>>) -> NovNativeCandidateExecutionPlanV1 {
+    pub(super) fn genesis_plan(
+        chain_id: u64,
+        raw_txs: Vec<Vec<u8>>,
+    ) -> NovNativeCandidateExecutionPlanV1 {
         let mut genesis = NovNativeExecutionStoreV1::default();
         bind_native_business_protocol_config_v1(&mut genesis).expect("bind genesis protocol");
         make_plan(
@@ -129,7 +132,11 @@ mod common_candidate_plan_tests {
         block
     }
 
-    pub(super) fn heads(path: &Path, params: &serde_json::Value, chain_id: u64) -> serde_json::Value {
+    pub(super) fn heads(
+        path: &Path,
+        params: &serde_json::Value,
+        chain_id: u64,
+    ) -> serde_json::Value {
         let envelope = load_validated_native_state_envelope_from_aoem_owner_v1(params, chain_id)
             .expect("read AOEM authority head");
         let ledger = NovNativeBlockLedgerV1::open(&nov_native_block_ledger_rocksdb_path_v1(path))
@@ -531,11 +538,11 @@ mod common_candidate_plan_tests {
 }
 
 mod candidate_workspace_tests {
-    use super::*;
     use super::common_candidate_plan_tests::{
         committed_block, genesis_plan, heads, make_plan, raw_fixture, successor_plan,
         with_plan_runtime, PLAN_RUNTIME_TEST_LOCK,
     };
+    use super::*;
     use crate::native_candidate_plan::NovNativeCandidateExecutionPlanV1;
     use std::sync::Mutex;
 
@@ -544,8 +551,6 @@ mod candidate_workspace_tests {
     include!("native_candidate_legacy_inline_tests.rs");
     include!("native_transfer_candidate_tests.rs");
     include!("native_candidate_registration_tests.rs");
-    include!("native_candidate_service_tests.rs");
-    include!("native_candidate_service_quorum_tests.rs");
     include!("native_fresh_genesis_publication_tests.rs");
     include!("native_round_bft_candidate_tests.rs");
 }

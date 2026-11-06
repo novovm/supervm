@@ -19,6 +19,10 @@ use crate::native_block_ledger::{
 };
 use crate::native_root_codecs::NativeRootCodecProfileV1;
 
+/// Local candidate preparation retains the bounded debug AOEM call-stack budget.
+/// This is not a transport or consensus worker setting.
+pub const CANDIDATE_EXECUTION_STACK_BYTES_V1: usize = 8 * 1024 * 1024;
+
 pub const NOV_NATIVE_CANDIDATE_EXECUTION_PLAN_SCHEMA_V1: &str =
     "novovm-native-candidate-execution-plan/v1";
 

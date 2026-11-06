@@ -331,28 +331,16 @@ Expected summary evidence: `execution_kernel=AOEM`, `aoem_concurrency_owner=AOEM
 
 The fixture source only builds valid NOV native raw transactions. Submission still goes through `ingest_local_nov_raw_tx_payload_v1`, which is the product raw transaction ingress used by `nov_sendRawTransaction`, before the pending runtime is drained by the AOEM tick. Production raw transaction entry must run with `NOVOVM_NATIVE_SEND_RAW_TRANSACTION_PIPELINE_ONLY=true` or equivalent `pipeline_only/pending_only` request metadata: it accepts and indexes the tx, but receipt/state projection is produced only by the AOEM tick lifecycle. The legacy immediate dispatch path is compatibility/debug behavior, not the product high-frequency pipeline.
 
-The Product Overlay can be owned by this same node lifecycle with
-`NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true` and
-`NOVOVM_PRODUCT_MAINLINE_OVERLAY_CONFIG=<config.json>`. Inbound E2E NovoRUDP
-payloads re-enter `ingest_local_nov_raw_tx_payload_v1`; relay transport never
-bypasses native authentication or becomes an AOEM policy owner. See
-`docs/NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`.
-The product-mainline `duplex` role propagates in both directions over one
-authenticated E2E session per configured peer, multiplexed over one relay
-connection for the local node identity. Relay disconnects use bounded
-reconnect backoff and rotate only to another verified signed candidate; bounded
-outbound obligations remain node-owned per peer until the relay returns a
-correlated accepted `ForwardOutcome`. This is relay admission, not a durable
-recipient ACK. An individual peer restart can replace only that peer's E2E channel
-without requiring the other nodes to reconnect their relay sessions.
-Before distributing configs to multiple machines, run
-`novovm-product-topology <topology-plan.json>` to verify chain consistency,
-unique peer metrics, and a symmetric full mesh. This is an offline config gate
-and always reports external/public topology as not executed. It does not compare
-release fingerprints or resource-limit profiles: deploy the identical clean-worktree
-package checksum on all machines; mixed relay wire versions are not a supported rolling
-upgrade. See
-`docs/novovm-product-topology-preflight-v1.md`.
+Main-chain deployment uses only the original `native_execution_tick` with
+`NOVOVM_NATIVE_EXECUTION_CONFIG` and an explicit `NOVOVM_NATIVE_EXECUTION_START`.
+Transactions, candidate bodies, votes and catch-up use the existing
+`NativeLifecycle / NativeChannel / NovoRUDP / APFL` owners. The former WSS/Relay
+main-chain lifecycle and its topology templates are retired; their environment
+switches fail before opening state rather than selecting a parallel runtime.
+Relay, mailbox and application discovery remain separate supported services,
+not a main-chain fallback. Use the approved shared deployment configuration in
+`docs/NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md` and the current validation scopes
+in `docs/NOVOVM_CI_CHECK_TIERS.md`; package creation does not authorize activation.
 
 For UDP node-to-node pipeline probes, enable the UDP drive on each node:
 

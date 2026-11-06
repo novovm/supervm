@@ -9,17 +9,10 @@ it merges signed bootstrap sources, restores a local cache, verifies every relay
 record, selects a relay, and emits a signed strategy receipt. It does not expose
 or request a global raw-IP directory.
 
-The same signed bootstrap and relay-selection runtime is now also owned by the
-`novovm-node` native execution pipeline when
-`NOVOVM_PRODUCT_MAINLINE_OVERLAY_ENABLED=true`. See
-`NOVOVM_PRODUCT_MAINLINE_OVERLAY_LIFECYCLE_V1.md`. The standalone binary
-remains a discovery/receipt diagnostic and does not execute transactions.
-The node-owned lifecycle supports a deterministic duplex E2E session, bounded
-reconnect backoff, and rotation only among candidates verified from the signed
-bootstrap/cache set.
-For a mesh, one local relay session multiplexes independent E2E channels and
-pending-delivery queues for up to 64 explicitly configured peers; duplicate
-peer IDs and duplicate or zero metric IDs are rejected at startup.
+This standalone binary remains an application discovery/receipt diagnostic and
+does not execute transactions. Its former attachment to the WSS main-chain
+lifecycle is retired. Main-chain transaction, vote, body and recovery traffic
+uses the original NativeChannel/NovoRUDP path, not a relay-selection fallback.
 
 ## Configuration
 

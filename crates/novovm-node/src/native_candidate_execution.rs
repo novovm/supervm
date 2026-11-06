@@ -24,6 +24,7 @@ mod rooted_compute_tests;
 pub(crate) use publication_readback_tests::exercise_publication_readback_for_test_v1;
 #[path = "native_candidate_rooted_output.rs"]
 mod rooted_output;
+#[cfg(test)]
 pub(super) use block_artifact::load_block_artifact_inner_v1;
 pub use block_artifact::{
     load_block_artifact_v1, prepare_genesis_promotion_v1, register_block_candidate_v1,
@@ -49,7 +50,6 @@ pub(crate) use promotion::{
     publish_with_checkpoint_v1, retire_with_checkpoint_v1, PromotionCheckpointV1,
     RetirementCheckpointV1,
 };
-pub(crate) use promotion::{load_startup_artifact_v1, load_startup_successor_v1};
 #[cfg(test)]
 pub(crate) use rooted_compute_tests::{
     exercise_light_first_compute_for_test_v1, exercise_light_output_recovery_for_test_v1,
@@ -64,9 +64,11 @@ use rooted_output::{authenticate_payload, read_output_view, OutputView};
 mod pipeline;
 #[cfg(test)]
 pub(crate) use pipeline::exercise_execution_pipeline_for_test_v1;
+#[cfg(not(test))]
+use pipeline::ExecutionStartV1;
+#[cfg(test)]
 pub(crate) use pipeline::{
-    capture_execution_from_finalized_v1, finish_execution_v1, ExecutionJobV1, ExecutionStartV1,
-    PreparedExecutionV1,
+    capture_execution_from_finalized_v1, finish_execution_v1, ExecutionStartV1,
 };
 
 pub(super) const OUTPUT_SCHEMA: &str = "novovm-native-candidate-execution/v1";
@@ -1004,9 +1006,9 @@ impl PreparedOutput {
         }
     }
 
-    // Only the private worker continuation consumes this preview. All public
-    // artifact loaders still require durable completion and full readback.
-    fn preview_artifact(
+    // Preserve artifact validation before durable completion. A successful
+    // check is not a public artifact or permission to sign or publish.
+    fn validated_artifact(
         &self,
         input: &Descriptor,
         verified: &VerifiedInput,

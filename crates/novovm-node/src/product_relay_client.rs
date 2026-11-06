@@ -684,12 +684,6 @@ impl ProductRelayClientV1 {
         self.heartbeat_health.smoothed_response_ms
     }
 
-    /// Already decoded inbound events buffered while waiting for a correlated
-    /// send outcome. Partial TLS/WebSocket bytes are not ready events.
-    pub(crate) fn has_buffered_events(&self) -> bool {
-        !self.pending_events.is_empty()
-    }
-
     pub fn recv_event(&mut self) -> Result<ProductRelayClientEventV1> {
         self.stream.sock.check_io_deadlines_v1()?;
         self.heartbeat_health.check(Instant::now())?;

@@ -22,11 +22,9 @@ pub(crate) struct FinalizedWorkspaceTipV1 {
     pub(crate) previous: Option<[u8; 32]>,
 }
 
-pub(crate) struct FreshStartupTipV1 {
-    pub(crate) block: NovNativeDurableBlockV1,
+struct FreshStartupTipV1 {
     pub(crate) execution: NovNativeIsolatedExecutionBindingV1,
     pub(crate) previous: Option<[u8; 32]>,
-    pub(crate) authority: crate::native_block_seal_overlay::NovNativeSealEpochAuthorityV1,
     pub(crate) pending_promotion: bool,
 }
 
@@ -185,6 +183,7 @@ impl NovNativeBlockLedgerV1 {
     /// validation and the same write lock that registration takes. The caller
     /// holds the workspace and AOEM authority locks across this callback; it
     /// must not re-enter ledger APIs from the callback.
+    #[cfg(test)]
     pub(crate) fn with_unregistered_fresh_workspaces_v1<T>(
         path: &Path,
         genesis: [u8; 32],
@@ -258,7 +257,7 @@ impl NovNativeBlockLedgerV1 {
         }))
     }
 
-    pub(crate) fn fresh_startup_tip_v1(
+    fn fresh_startup_tip_v1(
         path: &Path,
         genesis: [u8; 32],
         namespace: [u8; 32],
@@ -308,47 +307,10 @@ impl NovNativeBlockLedgerV1 {
             None
         };
         Ok(Some(FreshStartupTipV1 {
-            block: current.block,
             execution: current.execution,
-            authority: current.proof.authority,
             previous,
             pending_promotion,
         }))
-    }
-
-    pub(crate) fn fresh_startup_successor_v1(
-        path: &Path,
-        genesis: [u8; 32],
-        namespace: [u8; 32],
-        parent_height: u64,
-        parent_hash: [u8; 32],
-        hash: [u8; 32],
-    ) -> Result<(NovNativeDurableBlockV1, NovNativeIsolatedExecutionBindingV1)> {
-        let ledger = Self::open_existing_read_only_inner_v1(path, true)?
-            .context("startup ledger missing")?;
-        load_verified(&ledger, genesis, namespace)?;
-        if tip_height(&ledger)? != parent_height {
-            bail!("startup finalized frontier changed");
-        }
-        let parent = record_at(&ledger, parent_height)?.block;
-        if parent.header.block_hash != parent_hash {
-            bail!("startup parent binding changed");
-        }
-        let record = ledger
-            .load_candidate_record_inner_v1(parent.header.chain_id, hash)?
-            .context("startup pinned candidate is not registered")?;
-        if record.lifecycle_status != CANDIDATE_STATUS_ACTIVE_V1 {
-            bail!("startup pinned candidate is closed");
-        }
-        let execution = record
-            .isolated_execution_binding
-            .clone()
-            .context("startup execution binding missing")?;
-        let block = ledger
-            .load_candidate_block_for_record_inner_v1(&record)?
-            .context("startup candidate body missing")?;
-        validate_child(&parent, &block)?;
-        Ok((block, execution))
     }
 
     pub(crate) fn verify_retirable_fresh_candidate_v1(
@@ -487,16 +449,6 @@ impl NovNativeBlockLedgerV1 {
         load_verified(&ledger, genesis, namespace)?;
         let record = record_at(&ledger, height)?;
         Ok((record.execution, record.commitment, record.block))
-    }
-
-    pub(crate) fn fresh_successor_parent_workspace_v1(&self) -> Result<Option<[u8; 32]>> {
-        self.ensure_schema_v1()?;
-        if self.fresh_successor_parent_target.is_none() {
-            return Ok(None);
-        }
-        Ok(Some(
-            record_at(self, tip_height(self)?)?.execution.workspace_id,
-        ))
     }
 
     pub(crate) fn fresh_successor_parent_target_v1(&self) -> Result<Option<[u8; 32]>> {

@@ -4,7 +4,7 @@ fn candidate_workspace_execution_fresh_genesis_real_aoem_publication_and_retry()
     // including its debug-build AOEM execution stack budget. No global test override.
     std::thread::Builder::new()
         .name("fresh-chain-integration".into())
-        .stack_size(crate::native_block_seal::service::FRESH_CHAIN_LIFECYCLE_STACK_BYTES_V1)
+        .stack_size(crate::native_candidate_plan::CANDIDATE_EXECUTION_STACK_BYTES_V1)
         .spawn(|| {
             exercise_fresh_genesis_publication_and_retry(
                 crate::tx_ingress::fresh_genesis::GENESIS_SCHEMA_V1,
@@ -399,7 +399,7 @@ fn exercise_fresh_genesis_publication_and_retry(genesis_schema: &'static str) {
             input.workspace_id,
             competing.workspace_id,
         );
-        exercise_fresh_genesis_service(path, params, &compiled, competing.workspace_id);
+        prepare_offline_candidate_config(path, params, &compiled, competing.workspace_id, None);
         workspace::abort_v1(chain, competing.workspace_id, params).unwrap();
         assert!(workspace::with_verified_genesis_block_candidate_v1(
             chain,
@@ -1609,15 +1609,7 @@ fn exercise_fresh_genesis_publication_and_retry(genesis_schema: &'static str) {
         db.put(finality_key, original).unwrap(); // Explicit fixture restoration.
         drop(db);
         assert_eq!(verify_successor().unwrap(), finalized_successor);
-        exercise_fresh_successor_relay(
-            path,
-            params,
-            chain,
-            input.workspace_id,
-            next_input.workspace_id,
-            pin,
-            &archived,
-        );
+
         let latest_parent = workspace::load_finalized_genesis_parent_v1(
             chain,
             next_input.workspace_id,
@@ -1778,10 +1770,10 @@ fn exercise_fresh_genesis_publication_and_retry(genesis_schema: &'static str) {
 
 include!("native_fresh_genesis_signing_tests.rs");
 include!("native_fresh_successor_signing_tests.rs");
-include!("native_fresh_genesis_service_tests.rs");
-include!("native_fresh_successor_relay_tests.rs");
+include!("native_fresh_offline_config_tests.rs");
+
 include!("native_fresh_sequence_tests.rs");
 include!("native_fresh_independent_tests.rs");
 include!("native_fresh_parent_round_tests.rs");
-include!("native_fresh_pacemaker_tests.rs");
+
 include!("native_fresh_promotion_process_tests.rs");
