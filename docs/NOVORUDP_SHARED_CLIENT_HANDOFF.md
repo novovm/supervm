@@ -1,5 +1,92 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-07 validator-C → A：NOVONET 通信能力复用交接
+
+本节只交接公开源码、既有验收和制品摘要；不重跑手机/四机测试，不修改共享网络，
+不读取或传递私钥、受保护身份、会话状态、联系人、数据库或私有连接配置。
+**C负责手机端消费与验收；A负责共享网络审阅、NOV主节点统一选路接线及验证。**
+不得把本节的调用链审查计为新部署、测试通过或所有通信消费者已经迁到ML-DSA。
+
+### 1. 输入版本、未推送修改和实际制品
+
+2026-11-07重新fetch后，SUPERVM main为`54b59f6edd69ee9531b660c342ac7e61184f506e`，
+NOVOCHAT main为`45e3c917225ad2d4bded1a7560037b58a2ebd701`。两仓开始审查时工作树均干净、
+本地ahead均为0；C已ff到SUPERVM该提交，没有夹带未推送通信实现。本次新增仅交接文档。
+
+| 对象 | 已确认事实 | 状态及边界 |
+| --- | --- | --- |
+| 两部手机主聊天包 | `org.novochat.app.dev`、profile v110，App来源`aa192ba`，SDK `06801146afe0ef3f8535b5b53694cdb6ed20e87b` | 最近逐机安装/验收记录为2026-11-02；不是当前共享main的手机部署，未重新读设备或重启App |
+| v110保留APK | SHA256 `9e0fa3cc6e36c6ab03942792dd1c9c677214070406f195ae199cc6787efa0467`；buildId `bf89c181e1ba471ea777ad0d2ec13547` | 本次只读重新计算保留APK及包内ARM64 native哈希，与原公开候选记录一致 |
+| v110通信native | `libnovochat_core.so` SHA256 `0a9d90f28578cc9e997fcd8bbd41708f558b3e6b4e3b972e10068df36fb175a5`，与v109相同 | features为`tls-transport,mailbox-delivery`；该包没有后续P2资产V3改动；普通构建未开native诊断观察器 |
+| 手机实测范围 | 同签名原位升级、身份历史保留、双向文字/图片及持久设备回执、输入、有限L4组合；v109离线/独立补收/B后台，v110反向后台及最终配对 | 有限已实测，不把v109项目改写成v110全部重跑；不签深度休眠、长期稳定、任意NAT直连或生产可靠性 |
+| C的selfrun候选 | 程序`9a6153f1eebda4da5c10829abf77575aa106ba8f`，r2 ZIP和AOEM pin见[原C公开回执](../artifacts/audit/validator-c-selfrun-install-20261106/README.md) | 已安装独立ProgramData目录、LocalService用途钥生成/读回及验签KAT通过；未安装节点服务、未启链，不是手机SDK升级 |
+| C旧信箱/relay宿主 | 本次只读进程枚举未观察到`novovm-rendezvous-service.exe`、`novovm-node.exe`或`novovm-relay-service.exe` | 不将历史PID/历史宿主版本当作当前正在服务；不能由该枚举推断云端/B或其他命名入口状态；本轮不启动或更换服务 |
+
+手机公开证据为[候选记录](https://github.com/XujueKing/NOVOCHAT/blob/45e3c917225ad2d4bded1a7560037b58a2ebd701/docs/implementation/evidence/sdk-migration-20261102/candidate-v110.json)、
+[逐项验收](https://github.com/XujueKing/NOVOCHAT/blob/45e3c917225ad2d4bded1a7560037b58a2ebd701/docs/implementation/MOBILE_CANDIDATE_ACCEPTANCE_2026-11-02.md)。
+旧v108回退及聊天身份、历史继续保留。P2的V3源码/构建成功与旧Android AOEM批量能力拒绝分别成立；
+Windows新selfrun KAT通过不解除Android运行库交付缺口，也不代表手机已做资产扣款。
+
+### 2. 真实调用链：发现到重连
+
+以下App符号固定于上述NOVOCHAT提交；v110共享实现按`06801146`读取，不拿最新共享签名API替换历史解释。
+这些是并行且受门禁的路径，并非每条消息都顺序经过每一类载体或所有节点层级。
+
+| 阶段 | 已有调用入口与所有者 | 已实现/实测和仍缺的证据 |
+| --- | --- | --- |
+| 启动及网络代次 | Android `MessagingService` / `NetworkLifecycleOwner` → `NativeNetwork` JNI → `MobileNetwork` → App原automatic owner；`app_delivery_owner::endpoint`保留Iroh endpoint，换代前等待旧借用任务结束，再调用`network_change`并清原peer cache | 手机App接线已部署；相同LinkProperties不重复增代次。不能据此承诺系统强停后自动复活 |
+| 引导、信任及发现 | `app_delivery_adaptive::AdaptiveWork::run`先核验本地授权/ApprovedProfile；已有`refresh_bootstrap_sources_observed_v1`、`ServiceLeaseBookV1`读取签名服务声明；`discovery_round::discover_peer`及`endpoint_lease`处理成对不透明slot、短期密文地址、签名/代次/期限；消息路径还读L3/L4签名描述符 | App已有接线及有限双机收发，不是公开链上好友目录，也不是全网DHT已部署。不能从未认证声明接受任意relay或新身份 |
+| NAT与候选连接 | `connection_attempt::CandidateSpec::{new,relay_only}` → `IrohConfigV1` / `IrohEndpointOwnerV1` → `IrohScopeV1::connect`；Iroh负责QUIC地址探测/穿透及可达性选择。构建采用Minimal、清默认address lookup、显式relay集合/UDP DNS、禁fallback DNS及portmapper；relay-only禁IP transport | 这是现有Iroh能力消费，不是自研打洞完成。v110闭环未逐连接证明打洞成功率；L4实测含IPv4成功与原IPv6失败，不允许改写为任意公网NAT已通 |
+| 原生UDP优先路径 | `ContinuousMailboxWork::run_native_attempt`取原pin的最新合法locator → `io_owner::native::native_mailboxes` → `NativeEndpoint::connect_clients` → `mailbox_link` / `NativeObjectLink` / `NativeMailboxDriver`；`native_locator::prepare`、`prepare_native_bulk`及`maintain`核对/维持路由 | 已接App，存在真实L4 Put/证明/Fetch/解密/Consume证据；该证据不证明当前NOV主节点已接动态发现/选路 |
+| 认证载体上的原生业务 | `MailboxWork::run_service_node` → `run_native_primary` → `drive_carrier_mailbox`；签名能力选择NVMBOX07或V8，不是任意Iroh地址自动升级。V7结构化bound认证或V8 `authenticate_mailbox_native_v8`及双向Finished → `NativeCarrierPump::attach_continuous_v7` → 同一`NativeObjectLink` / driver / 原MailboxService | App已有消费；UDP和carrier按同pin的`ServiceRoutes/ReceiptLane`互斥交接，仍健康L4不因L3路径失败被无条件关闭。没有另建信箱、身份或账本 |
+| 端到端内容与送达 | `message_delivery` / `MailboxWork::run_native_lanes_v7` / 原outbox/inbox及回执队列；L3临时密文保管、可选收件方L4快路径、本地可靠提交与设备回执分别处理 | 手机有限文字/图片/独立补收通过。socket ACK、节点存储证明、设备持久回执是不同层级；不能拿寄存当最终送达 |
+| 直连、单中继与多跳 | 自动候选可由Iroh选择direct或单relay，显式relay-only是路径限制；App `RouteGate`仍检查Privacy资格。共享`adaptive_overlay::{adaptive_overlay_candidate_routes_v0,decide_adaptive_overlay_route_with_family_cooldown_v0}`已有direct/relay/multihop候选、健康和家族冷却选择 | 前者有既有工程模式手机通信证据，但不是匿名。后者有源码/原选择测试及overlay gate消费者，不等于v110或NOV主节点已完成可用多跳执行/匿名实网验收；本轮未重跑这些测试 |
+| 重连与任务接替 | Android网络变化 → 原owner退役旧操作；`run_native`、`run_service_node`按类型化可恢复边界重连，同pin重取新locator；`app_automatic_chat`在原消息/日志上重新核验。`ChatLeaseExpired`仅允许原所有者重新授权，撤销/认证/协议/未知错误不自动重试 | 旧v108本地到期接替修复及v109/v110有限恢复证据保留，不将其他历史E8、停滞、TLS长尾关闭。当前SDK `NativeEndpoint`另有configured/client reconnect入口，不能仅因存在就称全网发现和换路已接通 |
+
+App入口位置：[App adaptive owner](https://github.com/XujueKing/NOVOCHAT/blob/45e3c917225ad2d4bded1a7560037b58a2ebd701/crates/chat-core/src/app_delivery_adaptive.rs)、
+[UDP owner](https://github.com/XujueKing/NOVOCHAT/blob/45e3c917225ad2d4bded1a7560037b58a2ebd701/crates/chat-core/src/app_native_io.rs)、
+[carrier接线](https://github.com/XujueKing/NOVOCHAT/blob/45e3c917225ad2d4bded1a7560037b58a2ebd701/crates/chat-core/src/app_native_carrier.rs)、
+[L4宿主](https://github.com/XujueKing/NOVOCHAT/blob/45e3c917225ad2d4bded1a7560037b58a2ebd701/crates/chat-core/src/app_l4_task.rs)。
+发现、地址和重连的合法性检查应复用现有owner，不复制App业务信箱到共识主节点。
+
+### 3. 实际算法、SDK和外部依赖（按层区分）
+
+| 层 | 当前可核实算法/依赖 | 不应扩大宣称的范围 |
+| --- | --- | --- |
+| v110通信身份、声明/连接绑定 | 旧SDK `product_overlay` / `transport_binding`仍用Ed25519身份签名；会话为k256/secp256k1 ECDH、HKDF-SHA256、ChaCha20-Poly1305，双向Finished及防重放 | 未因后续NOV资产采用ML-DSA而自动升级；不能把k256误写成X25519，也不能称旧手机全链路抗量子 |
+| 联系人私密发现、离线密文、本地数据 | App `contact_discovery`为X25519/HKDF-SHA256；短期地址用Ed25519签名及ChaCha20-Poly1305；SDK `mailbox_seal`为HPKE X25519/HKDF-SHA256/ChaCha20-Poly1305；本机目录/消息日志使用XChaCha20-Poly1305 | 这些均非抗量子密钥交换/密文方案；ML-DSA签名不能替代它们的保密性迁接，也不自动赋予匿名 |
+| 当前共享原生身份 | `product_overlay::TransportIdentity` / `transport_binding`已迁为ML-DSA-65，公钥1952、签名3309字节，由原qualified crypto owner供签验；当前会话仍用上述k256 ECDH及对称算法 | 新网络签名策略与已装旧手机身份是不同状态；不放宽检查或静默重建原手机身份。不把单签身份资格写成端到端PQ保密已交付 |
+| 可靠载体及解析 | 实际锁文件：vendored Iroh/iroh-dns/iroh-relay/noq均1.3.0、rustls0.23.46，TLS/QUIC使用既有aws-lc-rs后端；HPKE0.13.0、ChaCha20Poly1305 0.10.1。App通过兄弟仓path依赖直接消费，不是已发布独立SDK版本 | 签名目录可信与载体安全是两层；TLS套件未在本轮抓取协商结果，不推断TLS/PQ协商成功 |
+| 外部基础设施 | 获准的Iroh HTTPS relay、显式DNS解析和Android Connectivity/后台执行规则仍是现有依赖；wrapper未启用默认N0 address lookup/PKARR发现，不能据此说无任何外部服务 | 不将Iroh relay替换为NOVOVM WSS URL冒称互通；现有验收记录明确有公共Iroh relay依赖，本轮不读取/公开私有配置来补猜具体地址 |
+| Tor/其他适配 | Arti/tor-chanmgr0.47.0为显式onion/privacy-probe诊断特性；snow0.10.0在App dev-dependencies | 不属于v110普通main构建启用的默认聊天通道；依赖存在不等于Tor或Noise已成为当前生产会话协议 |
+
+算法证据固定在旧SDK [product_overlay](https://github.com/novovm/supervm/blob/06801146afe0ef3f8535b5b53694cdb6ed20e87b/crates/novovm-network/src/product_overlay.rs)、
+[carrier配置](https://github.com/novovm/supervm/blob/06801146afe0ef3f8535b5b53694cdb6ed20e87b/crates/novovm-network/src/iroh_transport.rs)，
+以及当前[共享签名owner接口](../crates/novovm-network/src/product_overlay/identity.rs)。
+不同签名格式/能力必须显式迁接并验收，不能把当前main直接当v110构建输入或声明已兼容。
+
+### 4. A/C接续边界与接收回执
+
+当前NOV主节点原链路为`service/config::NativePeerConfig` → `NativeChannel::from_transport` →
+`UdpTransport::into_authenticated_objects_v1` → `NativeEndpoint` / `NativeObjectLink` →
+原`NativeLifecycle`、共识/查询/执行。应用客户端另复用`NativeApplicationClient::connect`。
+参见[主节点装配](../crates/novovm-node/src/native_pipeline/consensus/native.rs)、
+[UDP入口](../crates/novovm-network/src/transport/native_ingress.rs)、
+[应用客户端](../crates/novovm-node/src/native_pipeline/service/client.rs)。
+现有配置对端列表/地址装配不等于统一选路完成；`product_nat::fallback_after_nat_failure_v1`
+只是结果分类，不能拿返回RelayNovoRudp枚举当作已经建立中继或完成NAT打洞。
+
+- **A**：审阅复用现有发现/签名声明、地址资格、候选选择、NativeEndpoint/ObjectLink及
+  原重连机制，完成主节点接线和对应验证；固定最终共享commit、实际调用入口、能力/运行库
+  pin及失败传播边界。不得把聊天单中继/多跳候选或旧手机Ed25519实现原样当新主链资格。
+- **C**：只消费A交付的统一接口及Android合格运行库；明确原身份兼容/显式迁移后再更新
+  手机JNI、确认页、原owner及App恢复接线，保留身份历史。不重复修改共享发现、密码、选路或账本。
+- **本轮交付**：仅源码/既有证据和保留APK摘要核对；没有新构建、安装、网络探测、测试、
+  配置变更、服务启动、资产操作或生产收费。后继缺口不能用重复已通过的手机用例代替。
+- **A接收时回传**：`received_commit / shared_network_owner=A / mobile_owner=C /
+  reused_entrypoints / node_route_integration_status / Android_runtime_delivery / remaining_evidence`。
+  Git推送仅代表交接可取得，不代表A已经签收或节点统一选路已完成。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
