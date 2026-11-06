@@ -1,0 +1,285 @@
+{
+  "host_id": "validator-D",
+  "hostname": "SUPERVM-L2-01",
+  "review_git_head": "f791cfed85f6d49c3e73b7344db975a3c37618f0",
+  "program_git_commit": "9a6153f1eebda4da5c10829abf77575aa106ba8f",
+  "archive": {
+    "filename": "selfrun-9a6153f1-windows-x86_64-r2.zip",
+    "bytes": 140196230,
+    "sha256": "57bf8bc6fab08d5b7a85f4d15b2df30bbedcc1fa69d7ca361d3d3f99d63847eb",
+    "independent_r2_reference": "validator-C receipt at f791cfed85f6d49c3e73b7344db975a3c37618f0",
+    "A_r2_archive_pin_published": false
+  },
+  "independent_release_manifest_sha256": "58c92085ca738c1e3e280960df9f16d5432ff38fabcf08fa1dca170b905eff5d",
+  "reviewed_installer_sha256": "3edee735b7c208b93a9a65b3a12da0744f8b613af50fa1e506ea5478d928deec",
+  "package_verification": {
+    "target": "x86_64-pc-windows-msvc",
+    "archive_entries": 101,
+    "unmanifested_files": 0,
+    "archive_artifacts_verified": 77,
+    "extracted_artifacts_verified": 77,
+    "build_contracts": 10,
+    "checksum_counts": {
+      "CHECKSUMS.sha256": 77,
+      "aoem/windows/CHECKSUMS.sha256": 26
+    }
+  },
+  "launch": {
+    "host_id": "D",
+    "started_utc": "2026-11-06T06:36:01.9423916Z",
+    "elevated": true,
+    "installer_exit_code": 0,
+    "node_service_exists": false,
+    "temporary_task_exists": false,
+    "old_transport_metadata_unchanged": true,
+    "old_transport_length": 6230,
+    "old_transport_last_write_utc": "2026-11-03T21:46:13.051564Z",
+    "existing_execution_service": {
+      "before_state": "Running",
+      "after_state": "Running",
+      "before_pid": 51076,
+      "after_pid": 51076,
+      "unchanged": true
+    },
+    "private_state_acl_metadata": [
+      {
+        "name": "D",
+        "is_directory": true,
+        "inheritance_protected": true,
+        "access": [
+          {
+            "sid": "S-1-5-18",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": false
+          },
+          {
+            "sid": "S-1-5-19",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": false
+          },
+          {
+            "sid": "S-1-5-32-544",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": false
+          }
+        ]
+      },
+      {
+        "name": "validator.protected",
+        "is_directory": false,
+        "inheritance_protected": false,
+        "access": [
+          {
+            "sid": "S-1-5-19",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": true
+          },
+          {
+            "sid": "S-1-5-32-544",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": true
+          },
+          {
+            "sid": "S-1-5-18",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": true
+          }
+        ]
+      },
+      {
+        "name": "transport.protected",
+        "is_directory": false,
+        "inheritance_protected": false,
+        "access": [
+          {
+            "sid": "S-1-5-19",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": true
+          },
+          {
+            "sid": "S-1-5-32-544",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": true
+          },
+          {
+            "sid": "S-1-5-18",
+            "rights": "FullControl",
+            "type": "Allow",
+            "inherited": true
+          }
+        ]
+      }
+    ],
+    "finished_utc": "2026-11-06T06:36:16.2133706Z"
+  },
+  "provision": {
+    "action": "install-program-and-service-purpose-keys",
+    "success": true,
+    "chain_id": 91129655606029,
+    "release": "C:\\ProgramData\\NOVOVM\\releases\\selfrun-9a6153f1-windows-x86_64",
+    "state": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D",
+    "service_account": "NT AUTHORITY\\LocalService",
+    "service_installed": false,
+    "node_started": false,
+    "genesis_created": false,
+    "private_material_exported": false,
+    "source_artifacts_verified": 77,
+    "installed_artifacts_verified": 77,
+    "key_preparation": {
+      "success": true,
+      "sid": "S-1-5-19",
+      "name": "NT AUTHORITY\\LOCAL SERVICE",
+      "node_started": false,
+      "genesis_created": false,
+      "private_material_exported": false
+    },
+    "task_exit_code": 0,
+    "temporary_task_removed": true
+  },
+  "runtime": {
+    "ok": true,
+    "command": "native-identity",
+    "timestamp_unix_ms": 1793946971297,
+    "host": "SUPERVM-L2-01",
+    "data": {
+      "action": "qualify-runtime",
+      "qualification": "ml-dsa-65-native-verification-owner",
+      "algorithm": "ML-DSA-65",
+      "signature_suite": 65,
+      "library": "\\\\?\\C:\\ProgramData\\NOVOVM\\releases\\selfrun-9a6153f1-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "verification_qualified": true,
+      "scalar_verification_kat_passed": true,
+      "unified_semantic_verification_kat_passed": true,
+      "mixed_batch_verification_kat_passed": true,
+      "primitive_sign_interface_size_checked": true,
+      "signing_tested": false,
+      "keygen_tested": false,
+      "protected_key_created": false,
+      "custody_accessed": false,
+      "database_created": false,
+      "service_started": false,
+      "whole_node_post_quantum_qualified": false
+    }
+  },
+  "identities": {
+    "validator": {
+      "schema_version": 3,
+      "purpose": "validator",
+      "chain_id": 91129655606029,
+      "public_key": "6d2383d08a9d0d316129139247a8b9ebc4bb528eb99c1661e2b26f113e27ed93006a4ffb9ecc6525b8c0a10fca1c7e29059aaa299b2dc615ab4986c7c470bdcf05a8941313262b1801391e334549f0d9a16f2326a2572455175bc73f234445589b7257e4c7a3a537644bcf34cd552fed8325dd724b8217a967f8e860788790273501ed4967a2c96c91bf20328909d8152a9d432d9ee16c7838a6a8f21fb5ed6875083451d43741f26a048ac7078a964a9b5fefe4dc01dc2aafe4ac9ba07c10e0a708fa408b8af49e49dbefc7a9a4134ba16ca5176ddc64edeb76113e7469af9b0ef02d7859901153d4bb37c48b4321735419c998ec349f3571b795f81feeabc2dccb71d55fbc83458e696e4d932a2b5907fe6a20d9b5409931b0c65c6e19ea88af50a4e1ebe6ce2973ad520b9febaba1675502466eb55289236fb7ffdf0eb6e64f494ed938fe5f045490ecbd04b3e87a40f8ce9452de29171bee63917b871f61f1b16ecac3fe9ec1a0642f083d034d63c2c80a954374c905e0b0776fd3b15aecdc8029963d67f783e1d573906a946819e371c206c12c715e4c1a9aa6995f781184dc302b0ab608941dd37ad441e7b0c458f4af0e491ec43eda9372c103d42e4881794ac9ac6a795b30d0705aec34e063c4bc492ec44150d6bc90bc35a542298d551b93219d935d3a22f6bc54fba350872a4751ed9405c2f6149b7f348a6d4129c99c86dd0c18ed88dac2bab898a4073108f0bc727808ba252d10e85493414b084c4fb2ac54204691b3b5a899fa11caa7828f0dc5390d4e7192af8d1264ca9505cb6680f5f47cb3676e32aaa03957efbb191cd0bef0e662f6f5a5bd0ca6752b879cc95114815b7d6d1682f7692b7f581cddfca7305724e5d20256d7b2742898efb2af799102ad92cc99e4edc93426127699d8bc64215b3912507c9b38e53784429e6880191b3bc28034ea746cd3904cff62304db55ac42804bb57decd60afb4ce81a9bedd8331a5d336bce7f74ca34473df98343e3aa03a7475fdb139421b0b01c4880a358ce7c512a8c6bbd67ff14fb5feae27affda039a1f7ab87bbc8a0ce0f9587e1825e91b95037342cdf6f23baf6f01d3db472c8586062a190072a1dab985be5499c615c106f1893a533ec24ecf7b9cb63b1221a71d9d92cdfdf3b63d7fe8a1949ebfb0e1dc2135a9e3aa28d32386294d3a4edd7ce4381f38d160e3e43cd40c4182fb3595a5f29d1a3a671ec48296aa48dcef0d2b8093a5e1fd84a0a337b08afba2c8b31ce0b4c8a05ae45cfd0873fbb443ef0c011dd10b6f1645b810639258fe7dbfb3329801e710f1f044b8ca1ebbe1cdaf9e247de667323a702e8eca3efefb8dc9e8a24487f639a701b995656806c36de35a5c189711d347baf075aba65d72d107b43376a7c0b69935f10368e021dceb5195cd1b3e12f3853802869f53c2d626e73a7cf72ee59b67068c4a22f2bd12cdf92b39b34a81121f1fbdf0583c4f9fe89d224b398be413e01959092a76208e5f8dacdb3b389543b4a527f0ddff8942b2d216100de0fe50ada722677d333a449d4d2ba0721382287a17e1bcdca23158d135de5445dcaf38bc9e88c4490bc6f110062338769c479447953eea339d25bbe287c866cf9a3885b1337e34c33a48471306beb52f2ef2a9c3fa9159177308c7f2147917ae22ed95e7bb4222b0af1014e1c87afdbaf91e065aab5e11eabc18b6d20e834a396117de6a53113e86f36fc8bd221cf4807949e125c070935ac192ac83a7ec816d9c16273b88cbe8bb41de1ea941a07dd780dfbb355c2aab32a8712d3fbbba2be47ed17e21cc3038296d09504ee332180572631f9b6b590d325b4e065ef668dc011a19bcf8e62123dd00def4fbefce4fae39d6cc444c14c6502376a4197ed7927b7ce47865e5e20a5793640fbd40f7d21c5d132c1bb73c207c7d89772d000f251fc165f932f1bc5c94df534bc08836c52c635040a9e5b7f6341cd25b9f58fe5ca442ac461c5457e4d698628d8102e4d3a15ed205f3064d890c410c7bc9805c31bdd40728e3ec1023b98df86f2b32ca714ffa0ac3a3e08cb730659c91f0b3e156484a053f5ee43384bd6dfc52b9f0dee8306655fdd26796a84d3cefc94f0d6fccda82a075808fb8f034b37c852aff76994553730df90f1673fe793b26ac15d9842f58da8193664974bb23eb46af898e55ba96008b13e0a8c63297c07dd95a193e4b3f66772a49b3238d797c90b3b08532417610c077a72e785366dc097a9c8f48e54b2705f1d44894a30155240b73484bb5154efb93d3c52e2e270dea495d4eb8690b9a50b87ca31a770d3c1bf560973135403f75a731285a2aef1013ba995b56f27ea80ae78dec21a01ad1d9100e1dfd5228e0c32ae6bfdbb4132e143cad8776ad915fb0950eec8ab858745f1c87a543cff68f02b0ba3c040dd329d12641b4fc6a4acb79dedb59f3add79d309aeab9b86778588fe1bf82a6615769351e4caa934ec1ccca31235f076e9572ccdab1ab6ec5efd6a8cc9b583df526a7cbd12340042dc66757d425ca8ea0671053be1b41280167eb05845969ca81d6d0fd53b056dc46cb332f760389bf3814bf57657e50f0326afbf3745de52d8837d272bd0c4f65971eb1ef36a87fc7f8dd364f84848b04e1987312aa7e9cddab08bdd65b18890393c37281703f3aa7e129d3bea73c02f2ea9ab5e31733b4b6c01d3245abb9b7fcc468fb74738700228ec65d594998be9e6e42eabde78683d1336",
+      "algorithm": "ML-DSA-65",
+      "qualification": "purpose_key_only_not_membership_launch_or_whole_node_pq",
+      "public_key_encoding": "hex",
+      "public_key_bytes": 1952,
+      "public_key_sha256": "cac6c513f90eb836466ed6a6a175c2c091736192634c536099dd10dfb96cbb96",
+      "generate_inspect_equal": true,
+      "differs_from_C": true
+    },
+    "transport": {
+      "schema_version": 3,
+      "purpose": "transport",
+      "chain_id": 91129655606029,
+      "public_key": "e4b696da00e9ef83acd37015e1170590702d31b25eab6f43af56296d5c9414015f67336862941dbc681b3799a1b186105c45a68005d2fcede8c9e03bced6917c70ae24fffcac1f85fa220a2466146156cd8de79e8dcd6324ede6ff801f6ba962ec15d0a78b94520b5faad240c84ab23c886333162c609d9d275dbd5a360c12dffe40e0dff16100453ede5d4d1353a5c4bb0a8426ed029e2d9f5fe70de7e33bc1f0307a9b78ff2a4deeed92526910176d8428f991041da84b1cfe07789e53079df7c63765d05308579764d742c9911b22e84c84628b1f7b598e2fdc2093a9a98d64e4ebe31a1edc9926ffa2a57e1462d329ba3cf0e02b756226ecee6dc560da49c42ea5f59522e4b0a072d1891d88a4454a5713a25fcf4c1f6d525361f9e8658a9587443fcdb666ef3eab69a3a406181f904cc18754a15461cac9f3c97b36c774a4fc1630f41e3726a2410d7b94b67a177198f372747c6ffe500ae7fc178f1e4968a2661692de6b582c66aa14b4f4883b6aef08eed0cfd95869965bac27cd031f94cf3500b3f9ca9940ee2b20f9de6ea054d4817d4e9a44acff4e64d697522c7395a9ca3951004f932e3f8697ed627b437d87acbf2fc9913892dc55fc8ef0dbbd1f7a46fc50395190c49822dc5a69e72ee717357d3cc32e633bc74bc18563956953c0848103f1eed23757d30f1b41fb70f8a24f0029d76afa9f4b6ac454c10cf46f2ee99f76a35f1135b68ac958270f0288ba38a96f7a76387e1b17b5a4b22e17670857262f08d03dd05e7d2e188a88ed65b1f0c27fe02dc9f8f866aefb2f36453d2a1300f185cf05cacf25284f60d12c74b1707df5cc9fd70a7df245490a9bf10cc86bc4b531d7d5df54fcc97a10da0c0665e37bb868d03500f4f1e025087a029da273c663b079929499a2c20e06f8dafead973bb88d86bff4df040db62f01c2a8de63673f4415babcb9e6aaa47ff199dbf01f33efb6ea4f3de8b9f74530e4541d561b3f44e5792777705bc81a762cb355d25057cdb3ae139d5df4b41cab790d47c52d48f1f45ec4c5a6a0f7158d8f67f4170df67e61e9b740517303eaaa7851cf7894512246a410d98de0bbea0303c166cd161c5946368b5505203e7a436260468eec380388c352cb73bd9bee41ffca598753d5f11b00ef9bac9816c6360054574c9b09dacacd3b15ce911e29d29ab80ae56627976b6c6a200d3846b5f2b2ef29fb97a7a165b50196a694ee3059c14159925837dee073e84e14d94a1bc8f647b86afe9cdc1de1ad71b6c18b806e9c5c9d84a63a57eb81396121a4b2b3b88ac8bb9efed6b50131c1e9ec3a85390399422cb3479ab2feb2b77215edc9e5de01a5d50ddfc6226b0f1a8161449bb062662a8335af3ca6e42cda4cdb4e0fe1d7fc947b09fc4ad90e3029d3d18c004c9ac87b96288b09f01b6775a3e7bb0dab0412bbdf51931bc1e365e5cd9955810fc07d3434c2c691048acd5204f66370c871ca21b1506022538c761d25a7c50dec728b5ca8bd58459e99ad1a62cfe6d9453661d567c7546aa17e5d788025debf43f9e379fb6c23ea3f3431304db9ad4e02eae66fc31d1ba2b07da80c7e987f9393d01d95d985764c7a846aaf222052b516ffa57978f0e571a29a6c41964cca1f4f783c5b85ed60dbc155cfcc0f588d7254aa4ac415703cc59138de2ac2f0d51a24b7eb48373bb92be54f8bfae2f453b1a9e7c0b7d6de4fbc0512eac3c1c190ce062b78e313916e6cb8270b24078a0dcc6d5a7c5e0e15d637e07b9e318d29ecd1c8cbce0eaad61aa62d9f11211cef6344df2994bbcd87be2fcbdd4e23e5e4cc1e40bd0fd3fa54c7989bf06e61e4b01bd2a9c4284ec138547ab166cc642babafc185fce6d0ad7a9bb6b0e4ff9f5f0bcdf447675609afc3c6058f5775355a7830dc94cbdfed3f80150a4570a9c431d250c2c6f985b10d101e6e5f9f4dc361a5addf5cc26731cb0931af49f5d7c4945fc435c5142e5e75690841221dca23cef14a7ff9b288750089270ccf096551512f748f5dcb3f4fd266dafd8e14f058a7b05402c6298e1f6aad48a027cfe90ce59d79c48802e5db2c867e26a460c5adbf37965a900352f7495c2dafbdd31e31550aea840ad5beb52cbae70347e0fc286d317e24fcda684649d0dd0c94cc72d896c38f10a4c8f0fa473a88096b8cd9db7cf815b848c1d53b98e8da32a8bdb3ba315d7e17c37e34de7966f9708322b0f13ac5b141d722081fe428bff06648c24400031596e31746533201c8a1275e0b6f0e60e4f43baeda3af6ce8bb563d50e574aa9cdb7cb800064749d276ec1eef8b4236e58d64fa79db0ea2fceefbe34b559a4cb39c55e3c86586561cf7fa9aa2dcfaad4927fc6e124c86467682400586f137a6bba47a69ea2cbfcf9812cbce52fa7bf33feabe0751671bb3242144d5436c93cb6531e9021b57e23d940a0279b83e90ecb7b930c48ac09f8dc340f57f307b836f6edb325eb2f491c0d99754518e64d687cf05507c967bb57d2a10b0c9a33c833abac8305c2e34c5bc7b37d2dcfb237b7e806d2d27eced3dbe2711da42d389ab48d7d9c558fe9ae09b832b9dfb40250b019135abd1c079445df2150aa9645fb1f7d5c597e5f6078ec0a115cc8233014c6241bf18eca64d19a8ba9af1982ac3221a726e7ec850161abc0aa85880882b105e155b4849e71689f084aa6dd98a0685dda6c1c5da3cee0651d511e6a7735126b3c01bc542614a7be954367dd21ebe285ecf70ed3ab2598",
+      "algorithm": "ML-DSA-65",
+      "qualification": "purpose_key_only_not_membership_launch_or_whole_node_pq",
+      "public_key_encoding": "hex",
+      "public_key_bytes": 1952,
+      "public_key_sha256": "01663acfa5f718969673922846042817fa359eece95d9fdfc837ebd8014099fb",
+      "generate_inspect_equal": true,
+      "differs_from_C": true
+    }
+  },
+  "postcheck": {
+    "node_service_exists": false,
+    "temporary_task_exists": false,
+    "installer_stderr_bytes": 0,
+    "old_transport_preservation_evidence": "length and last-write metadata only; sealed content not read",
+    "old_transport_metadata_unchanged": true,
+    "existing_execution_service": {
+      "before_state": "Running",
+      "after_state": "Running",
+      "before_pid": 51076,
+      "after_pid": 51076,
+      "unchanged": true
+    }
+  },
+  "boundaries": {
+    "node_service_lifecycle_qualified": false,
+    "node_started": false,
+    "genesis_created": false,
+    "database_created": false,
+    "private_material_exported": false,
+    "four_host_new_domain_authenticated": false,
+    "full_CI_qualified": false,
+    "performance_qualified": false,
+    "whole_node_post_quantum_qualified": false
+  },
+  "original_public_reports": {
+    "file": "original-public-reports.zip",
+    "bytes": 31398,
+    "sha256": "5a9e7659b3ff6022182fa83dd280faac2933b8364a55d3a0f2d6521182e634ef",
+    "members": {
+      "d-provision-result.json": {
+        "bytes": 1014,
+        "sha256": "fd8b9da716cb497945881b55b62ce1c13ddd6a1ed54a2d39553bcb55628b048a"
+      },
+      "d-launch-result.json": {
+        "bytes": 6265,
+        "sha256": "7d0af606f98c24415fa588522ca9e724e91aa226389f55e1fdae9c90aeb444a9"
+      },
+      "d-runtime.json": {
+        "bytes": 1992,
+        "sha256": "c81b9311bef600fc996f0c3f4fc038c882a54c0b926bfffa980c6927c48153eb"
+      },
+      "d-key-preparation-result.json": {
+        "bytes": 204,
+        "sha256": "5e872b0b2caa683dfdea5a7e79b7e2da092b73add7b2330522937bb75af92714"
+      },
+      "d-validator-generate.json": {
+        "bytes": 54468,
+        "sha256": "94e32c415abd1985b76abb38905ca0eb4a837910dcba707b165dce83fb2592fd"
+      },
+      "d-validator-inspect.json": {
+        "bytes": 54468,
+        "sha256": "5cecf6bc375e3edf8ff52bb0ae93df1ee5ee457778a0ba1ed9d2cc622d474af3"
+      },
+      "d-transport-generate.json": {
+        "bytes": 54480,
+        "sha256": "a4f4a3c484cb306c6d3b1431ca1d5baaecdaf9b27d46ed65a0651131f12c5fbe"
+      },
+      "d-transport-inspect.json": {
+        "bytes": 54480,
+        "sha256": "3dfdde75104c71cae14f51e72629c42b65ee148f25bd1dea2c0051f7b77b5eb0"
+      },
+      "d-installer.stdout.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "d-installer.stderr.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "d-package-verification.json": {
+        "bytes": 14468,
+        "sha256": "7dcbfc6e23712c30cf237bc2f8a877ccf9292dd9872c4fc29cb70a1554c0281b"
+      },
+      "Install-Selfrun-Windows-20261106.ps1": {
+        "bytes": 9416,
+        "sha256": "3edee735b7c208b93a9a65b3a12da0744f8b613af50fa1e506ea5478d928deec"
+      },
+      "invoke-D-once.ps1": {
+        "bytes": 3953,
+        "sha256": "22720602e185adbcf32ed2b385a4ad7199d4c63d9d424b1d64a35ce3339f6a9f"
+      }
+    }
+  }
+}
