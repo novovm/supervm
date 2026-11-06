@@ -200,6 +200,12 @@ pub struct NativeChannel {
     input_trace: Option<Arc<NativeTransferDiagnosticsV1>>,
 }
 impl NativeChannel {
+    /// Explicit deployment policy, after genesis-bound identities have been
+    /// checked by from_transport and before any network traffic is progressed.
+    pub fn enable_configured_route_learning_v1(&mut self) -> Result<()> {
+        self.link.enable_configured_route_learning_v1()
+    }
+
     // Explicit deployment budgets and domains remain distinct at owner transfer.
     #[allow(clippy::too_many_arguments)]
     pub fn from_transport(
@@ -725,6 +731,13 @@ enum ChannelLink {
 }
 #[cfg(test)]
 impl ChannelLink {
+    fn enable_configured_route_learning_v1(&mut self) -> Result<()> {
+        match self {
+            Self::Original(link) => link.enable_configured_route_learning_v1(),
+            Self::HistoricalFixture(link) => link.enable_configured_route_learning_v1(),
+        }
+    }
+
     fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
         match self {
             Self::Original(link) => link.set_diagnostics_v1(observer),

@@ -42,6 +42,31 @@ impl NativeEndpoint {
         Ok(())
     }
 
+    /// Learn a configured identity's actual UDP source only after the original
+    /// signed handshake and fresh-secret AEAD confirmation. This is an explicit
+    /// routing policy, not open admission or permission to replace a pinned key.
+    /// The old source/session remains authoritative until confirmation.
+    pub fn enable_configured_route_learning_v1(&mut self) -> Result<()> {
+        ensure!(
+            !self.traffic_started,
+            "configured route learning requires an unstarted endpoint"
+        );
+        let policy = self
+            .configured
+            .as_mut()
+            .context("configured peers missing")?;
+        ensure!(
+            policy.reconnect_v1,
+            "configured route learning requires configured recovery"
+        );
+        ensure!(
+            !policy.route_learning_v1,
+            "configured route learning already enabled"
+        );
+        policy.route_learning_v1 = true;
+        Ok(())
+    }
+
     /// Opt in on an explicit open-client listener. Configured validator peers
     /// remain pinned. This is a lifecycle policy, not a wire/credential rewrite.
     /// One pending attempt per existing client, bounded by the original slots.
@@ -137,6 +162,29 @@ impl NativeEndpoint {
                 return self.receive_configured_handshake(index, source, wire, wall_ms, now);
             }
         }
+        if !self.sources.contains_key(&source)
+            && matches!(source, NativeRoute::Udp(_))
+            && self
+                .configured
+                .as_ref()
+                .is_some_and(|policy| policy.route_learning_v1)
+        {
+            use crate::product_overlay::handshake_wire::{decode, HandshakeMessage};
+            if let HandshakeMessage::Offer(offer) = decode(wire)? {
+                if let Some(index) = self.peers.iter().find_map(|(&index, peer)| {
+                    (peer.configured_key.as_deref()
+                        == Some(offer.initiator_identity_public_key.as_slice()))
+                    .then_some(index)
+                }) {
+                    // A NAT-only initiator may be either side of the key-order
+                    // election. Its unknown source cannot receive our original
+                    // configured offer; authenticate its responder flight instead.
+                    // Existing cookie assembly and one pending slot per peer are
+                    // retained. A signed offer alone does not install this route.
+                    return self.prepare_reconnect(index, source, wire, wall_ms, now);
+                }
+            }
+        }
         self.accept_client(source, wire, wall_ms, now)
     }
 
@@ -196,12 +244,9 @@ impl NativeEndpoint {
         now: Instant,
     ) -> Result<()> {
         use crate::product_overlay::handshake_wire::{decode, HandshakeMessage};
+        self.expire_reconnects(now);
         let peer = &self.peers[&index];
         let (identity, budget) = if peer.configured_key.is_some() {
-            ensure!(
-                self.sources.get(&source) == Some(&index),
-                "configured reconnect source changed"
-            );
             let policy = self
                 .configured
                 .as_ref()
@@ -209,6 +254,11 @@ impl NativeEndpoint {
             ensure!(
                 policy.reconnect_v1,
                 "configured reconnect policy not enabled"
+            );
+            ensure!(
+                self.sources.get(&source) == Some(&index)
+                    || (policy.route_learning_v1 && matches!(source, NativeRoute::Udp(_))),
+                "configured reconnect source changed"
             );
             (policy.identity.clone(), policy.budget.clone())
         } else {
@@ -248,6 +298,13 @@ impl NativeEndpoint {
         let HandshakeMessage::Offer(offer) = decode(wire)? else {
             anyhow::bail!("client must initiate")
         };
+        ensure!(
+            self.peers[&index]
+                .configured_key
+                .as_deref()
+                .is_none_or(|key| { key == offer.initiator_identity_public_key.as_slice() }),
+            "configured reconnect identity mismatch"
+        );
         ensure!(
             peer_id_from_mldsa65_public_key_v1(&offer.initiator_identity_public_key)
                 == self
@@ -299,9 +356,16 @@ impl NativeEndpoint {
         let index = self.peers.iter().find_map(|(&i, p)| {
             p.reconnect
                 .as_ref()
-                .is_some_and(|r| r.source == source)
+                .is_some_and(|r| r.source == source && now < r.deadline)
                 .then_some(i)
         })?;
+        if self
+            .sources
+            .get(&source)
+            .is_some_and(|bound| *bound != index)
+        {
+            return None;
+        }
         let peer = self.peers.get_mut(&index)?;
         let frame = peer
             .reconnect

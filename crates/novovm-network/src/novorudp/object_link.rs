@@ -342,6 +342,11 @@ impl NativeObjectLink {
     pub fn enable_configured_reconnect_v1(&mut self) -> Result<()> {
         self.endpoint.enable_configured_reconnect_v1()
     }
+    /// Opt into authenticated UDP route learning before this owner's first I/O.
+    /// Does not change pinned identities, lane budgets or object completion.
+    pub fn enable_configured_route_learning_v1(&mut self) -> Result<()> {
+        self.endpoint.enable_configured_route_learning_v1()
+    }
     pub fn local_identity(&self) -> &[u8] {
         self.endpoint.local_identity()
     }

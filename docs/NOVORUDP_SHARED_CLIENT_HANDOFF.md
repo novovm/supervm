@@ -87,6 +87,64 @@ App入口位置：[App adaptive owner](https://github.com/XujueKing/NOVOCHAT/blo
   reused_entrypoints / node_route_integration_status / Android_runtime_delivery / remaining_evidence`。
   Git推送仅代表交接可取得，不代表A已经签收或节点统一选路已完成。
 
+### 5. 2026-11-07 validator-A实际接收回执
+
+- `received_commit`：SUPERVM `d6980df85ea930548a5837e1375e49796ec0c9b3`，
+  NOVOCHAT `04f1cccb3b81901d2f9afb1e49351e4da6df288d`。A已fetch，NOVOCHAT本地
+  main快进至04f1ccc；SUPERVM以main合并提交`49f1882b7e7ba31271fa5820af99b17e96112720`
+  无损接入d698，保留A原有本地提交及未提交修改，无新开发分支、reset或强推。
+- `shared_network_owner=A / mobile_owner=C`：确认本交接分工。A只负责共享网络及
+  原主节点消费接线，不接管手机owner/JNI或重新安排已通过的手机验收。
+- `reused_entrypoints`：原`NativeEndpoint / NativeObjectLink`、
+  `UdpTransport::into_authenticated_objects_v1`、`NativeChannel::from_transport`与
+  configured reconnect；原`NativeCarrierPump::attach_continuous_v7`、签名发现及
+  候选/健康选路能力按实际合同复用，不复制App信箱业务到共识循环。
+- `node_route_integration_status`：**未完成**。A已对照本机service/config、native ingress
+  与App native/carrier入口，当前验证者仍由`NativePeerConfig.address`装配固定UDP对端；
+  共用对象/认证底座不等于已经消费统一发现、NAT和选路。不是另写了一套UDP协议，
+  但独立固定地址装配的漏接由A负责，不能以底座同名将其销账。下一项修改须在原
+  网络所有者内闭合实际会话/IO、预期传输身份与验证者绑定，不用临时探测映射冒充。
+- `Android_runtime_delivery`：**当前合格Android运行库仍待单独交付/消费验证**。
+  A已有Windows/Linux候选及KAT不能代替Android ARM64资格，不要求C自行造库、
+  删能力检查或回退Ed25519。v110继续按其SDK06801146/旧通信算法和有限已通过范围登记。
+- `remaining_evidence`：当前ML-DSA主节点的原所有者选路/真实中继执行、路径失效恢复、
+  旧会话拒绝及合法新会话继续工作，尚须对应接线后验证；多跳候选不冒算实网多跳。
+  A已核对仓内v110公开candidate JSON中的APK/native摘要与本节一致，但未取得或重算
+  C保留APK，未访问手机、私钥或其原始私有现场；摘要一致不写成新实机测试。
+
+本回执是A实际阅读与分工接收，不是通信迁接、Android新包或主链部署完成。
+本次未触发云端CI，不要求C/D重复清点/配对，不操作B现有服务；接线工作包本地验证
+后集中交付，不能因签收就让C用A当前未冻结工作树重编译覆盖v110。
+
+### 6. A接线切片：唯一NOVONET的认证UDP源学习
+
+当前实际改动沿原endpoint/reconnect → ObjectLink → AuthenticatedUdpIngress →
+NativeChannel → service启动。主节点的本地显式`learn_authenticated_peer_routes`
+默认false，开启后仍固定完整传输公钥/验证者映射、peer索引、原握手、AEAD和重放；
+仅新secret确认后换路，旧会话在确认前保留。没有新网络、线程、探测codec或账户。
+原`product_nat_runtime`增加同策略的薄验收开关，只允许明确配置peer候选的observer，
+不开普通client槽；配置开关为true不单独等于实际换源成功，须核对真实源及新会话。
+
+本地本轮实际结果：网络Windows936通过/13忽略、Linux933通过/13忽略；配置各10项；
+真实AOEM四服务/四库原流程各1项；受保护探测的原默认重连及新configured学习各平台
+2项；NAT配置形状各2通过/4原忽略。后者的ignored实库用例中上述2项已独立显式执行，
+不把普通筛选中的忽略计成通过。Windows原genesis CLI14通过/3忽略，仅受新字段
+夹具影响，不重写旧真实审批资格。两平台network/node lib严格Clippy及Windows
+network测试目标严格Clippy通过，格式/差异检查通过；未触发云端CI。
+本地原日志及Linux首次custody拒绝保存在`target/novonet-route-integration-20261107/`。
+
+Windows/Linux的原网络回归、配置及真实AOEM四服务/四库/回执和原库恢复已按
+[共同配置当前节](NOVOVM-FOUR-HOST-COMMON-CONFIG-20261102.md#2026-11-07-网络优先既定身份下的实际udp源认证学习)
+记录。实际跨公网新候选资格单列，不把旧9a网络观察或v110手机成绩升级为新包验收。
+当前只闭合已配置身份在当前UDP/NAT拓扑的路由接线，统一carrier/完整多跳执行与
+公开自动发现仍有后继缺口，不把本地构建或分类枚举当作它们完成。
+
+对C的算法答复也已按实际调用核对：v110并非只有登录用Ed25519；新Message、
+DeviceReceipt、寄存SignedContent、附件对象/manifest和地址声明均有签名。相同ID
+消息、回执及持久寄存plan重试复用原字节，不是每个NovoRUDP分片公钥签名。
+迁接ML-DSA须保留这些复用、原消息/用途/历史及密码边界；当前无手机ML-DSA时延/
+字节/CPU/能耗对照，不承诺无体验变化。C暂不据A未冻结代码升级v110或清身份。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

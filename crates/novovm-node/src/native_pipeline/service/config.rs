@@ -48,6 +48,11 @@ pub struct ResidentConfig {
     pub key_storage: NodeKeyStorage,
     pub udp_addr: SocketAddr,
     pub peers: Vec<NativePeerConfig>,
+    /// Local NOVONET policy for NAT peers whose full transport identity is
+    /// already genesis-bound. Only fresh authenticated traffic may install a
+    /// changed source; omission retains strict configured-address pinning.
+    #[serde(default)]
+    pub learn_authenticated_peer_routes: bool,
     /// Explicit bounded key-possession admission, never a client allowlist.
     /// Zero preserves the old validator-only deployment contract.
     #[serde(default)]
@@ -233,6 +238,10 @@ impl ResidentConfig {
         ensure!(
             self.peers.len() + 1 == self.genesis.validators.len(),
             "every remote validator route required"
+        );
+        ensure!(
+            !self.learn_authenticated_peer_routes || !self.peers.is_empty(),
+            "authenticated route learning requires configured validator peers"
         );
         let mut addresses = BTreeSet::new();
         let mut keys = BTreeSet::new();
@@ -838,6 +847,7 @@ mod tests {
         genesis.genesis_config_commitment = genesis.derive_commitment()?;
         let config = ResidentConfig {
             native_client_limit: 0,
+            learn_authenticated_peer_routes: false,
             profile: PROFILE.into(),
             library,
             database: root.join("state.rocksdb"),

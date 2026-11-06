@@ -73,6 +73,7 @@ fn config(size: usize) -> ResidentConfig {
         rpc_addr: None,
         udp_addr: "127.0.0.1:0".parse().unwrap(),
         peers: Vec::new(),
+        learn_authenticated_peer_routes: false,
         native_client_limit: 1,
         uca_initialization: None,
         workers: 1,
@@ -236,6 +237,18 @@ fn resident_config_reads_large_mldsa_metadata_but_rejects_oversized_documents() 
     let loaded = ResidentConfig::load(&path)?;
     assert_eq!(loaded.genesis.validators.len(), 64);
     assert_eq!(loaded.peers.len(), 63);
+    assert!(!loaded.learn_authenticated_peer_routes);
+    let mut explicit: serde_json::Value = serde_json::from_slice(&encoded)?;
+    explicit["learn_authenticated_peer_routes"] = true.into();
+    let learned: ResidentConfig = serde_json::from_value(explicit.clone())?;
+    assert!(learned.learn_authenticated_peer_routes);
+    assert_eq!(
+        learned.genesis.derive_commitment()?,
+        loaded.genesis.derive_commitment()?,
+        "routing is local policy, not a change to the approved genesis"
+    );
+    explicit["learn_authenticated_peer_routes"] = "true".into();
+    assert!(serde_json::from_value::<ResidentConfig>(explicit).is_err());
     assert!(
         !fixture.database.exists(),
         "configuration read must not open the store"

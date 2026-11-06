@@ -165,6 +165,11 @@ impl AuthenticatedUdpIngressV1 {
     pub fn enable_configured_reconnect_v1(&mut self) -> Result<()> {
         self.link.enable_configured_reconnect_v1()
     }
+    /// Learn a configured identity's actual UDP source only after the original
+    /// fresh-secret confirmation. Open clients never inherit validator routes.
+    pub fn enable_configured_route_learning_v1(&mut self) -> Result<()> {
+        self.link.enable_configured_route_learning_v1()
+    }
     pub fn send_protocol(&self, peer: NodeId, message: &ProtocolMessage) -> Result<()> {
         ensure!(
             self.observe_legacy_protocol,

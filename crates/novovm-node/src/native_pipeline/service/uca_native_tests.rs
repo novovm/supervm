@@ -388,7 +388,13 @@ fn actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures() -
 }
 
 fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
-    run_native_uca_service_fixture_with(pool_pressure, None, None)
+    run_native_uca_service_fixture_with(pool_pressure, None, None, false)
+}
+
+#[test]
+#[ignore = "qualified AOEM; four original services, authenticated source learning and cold recovery, run alone"]
+fn actual_native_uca_authenticated_route_learning_and_cold_recovery() -> Result<()> {
+    run_native_uca_service_fixture_with(false, None, None, true)
 }
 
 #[test]
@@ -414,26 +420,27 @@ fn actual_native_proportional_fee_respend_and_cold_recovery() -> Result<()> {
         network_share_bps: 3766,
         split_remainder: SplitRemainderV2::Service,
     });
-    run_native_uca_service_fixture_with(false, None, Some(p.clone()))?;
+    run_native_uca_service_fixture_with(false, None, Some(p.clone()), false)?;
     // Small explicit bounds keep this original funded fixture valid; candidate
     // commercial units are independently checked in the arithmetic table.
     let m = p.amount_fee_v3.as_mut().unwrap();
     m.rate_bps = 1000;
     m.minimum_fee_units = 5;
     m.maximum_fee_units = 7;
-    run_native_uca_service_fixture_with(false, None, Some(p))
+    run_native_uca_service_fixture_with(false, None, Some(p), false)
 }
 
 type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV3]) -> Result<()>;
 
 pub(super) fn with_uca_gossip_service_fixture(check: GossipServiceCheck) -> Result<()> {
-    run_native_uca_service_fixture_with(false, Some(check), None)
+    run_native_uca_service_fixture_with(false, Some(check), None, false)
 }
 
 fn run_native_uca_service_fixture_with(
     pool_pressure: bool,
     gossip_check: Option<GossipServiceCheck>,
     amount_policy: Option<DirectNovFeePolicy>,
+    learn_routes: bool,
 ) -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
@@ -445,13 +452,19 @@ fn run_native_uca_service_fixture_with(
         "keygen/library mismatch"
     );
     let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/runtime-rebuild/consensus-tests/uca-native-services")
-        .join(format!(
-            "{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        ));
+    // Protected custody requires real Unix ownership/0700. A checkout on WSL
+    // DrvFs may not supply that metadata; use the original platform temp owner
+    // rather than weakening custody checks or borrowing a service credential.
+    #[cfg(unix)]
+    let evidence_root = std::env::temp_dir().join("novovm-uca-native-services");
+    #[cfg(not(unix))]
+    let evidence_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/runtime-rebuild/consensus-tests/uca-native-services");
+    let directory = evidence_root.join(format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
     std::fs::create_dir_all(&directory)?;
     let directory = config::native_path(&directory.canonicalize()?);
     let _credential = config::test_custody::TestCredentialGuard::new(&directory)?;
@@ -561,7 +574,7 @@ fn run_native_uca_service_fixture_with(
         .iter()
         .map(UdpSocket::local_addr)
         .collect::<std::io::Result<Vec<_>>>()?;
-    let configs = (0..4)
+    let mut configs = (0..4)
         .map(|i| {
             Ok(ResidentConfig {
                 profile: config::ORIGINAL_PROFILE.into(),
@@ -580,6 +593,7 @@ fn run_native_uca_service_fixture_with(
                     })
                     .collect(),
                 native_client_limit: 2,
+                learn_authenticated_peer_routes: false,
                 genesis: genesis.clone(),
                 uca_initialization: Some(material.clone()),
                 workers: 2,
@@ -589,6 +603,22 @@ fn run_native_uca_service_fixture_with(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    // Model the public node's stale/private peer candidates using distinct
+    // reserved sockets which never respond. Other nodes still dial its real
+    // address. Only the configured ML-DSA peer's actual authenticated source
+    // can make this node publish and answer all-four final receipt queries.
+    let _unreachable_candidates = if learn_routes {
+        let reserved = (0..3)
+            .map(|_| UdpSocket::bind("127.0.0.1:0"))
+            .collect::<std::io::Result<Vec<_>>>()?;
+        for (peer, socket) in configs[0].peers.iter_mut().zip(&reserved) {
+            peer.address = socket.local_addr()?;
+        }
+        configs[0].learn_authenticated_peer_routes = true;
+        reserved
+    } else {
+        Vec::new()
+    };
     drop(reserved);
     let mut nodes = start(&configs, StartMode::CreateNew)?;
     let validators = nodes[0].node.validators.clone();
@@ -1155,6 +1185,7 @@ fn run_native_uca_service_fixture_with(
             "http":false, "direct_transaction_injection":false, "first":first, "second":second,
             "state_before_and_after":before, "invalid_signature_rejected":true, "wrong_authorization_epoch_rejected":true,
             "published_replay_unchanged":true, "cold_restart":true, "TPS_acceptance":false, "production_activation":false,
+            "authenticated_peer_route_learning":learn_routes,
             "asset_lifecycle": {
                 "rotate":rotated_receipt, "replacement_key_spend":new_spend_receipt,
                 "freeze":freeze_receipt, "recover":recovery_receipt, "recovered_key_spend":recovered_spend_receipt,

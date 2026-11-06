@@ -46,6 +46,10 @@ pub struct ProductNatRuntimeConfigV1 {
     pub peer_public_key: Vec<u8>,
     #[serde(default)]
     pub peer_addr: Option<String>,
+    /// Explicitly exercise the same configured-peer source-learning policy as
+    /// the native node. Never open admission or a replacement NAT protocol.
+    #[serde(default)]
+    pub learn_authenticated_peer_routes: bool,
     #[serde(default)]
     pub expected_peer_id: Option<String>,
     #[serde(default = "default_timeout_ms_v1")]
@@ -71,6 +75,7 @@ pub struct ProductNatRuntimeReportV1 {
     pub round_trip_confirmed: bool,
     pub handshake_version: u16,
     pub signature_suite: u16,
+    pub configured_peer_route_learning: bool,
     pub novorudp_inner_frame_preserved: bool,
     pub novorudp_wire_changed: bool,
     pub network_only: bool,
@@ -125,7 +130,11 @@ fn validate_config(config: &ProductNatRuntimeConfigV1) -> Result<()> {
             "peer label differs from full public-key pin"
         );
     }
-    if !is_server(&config.mode) {
+    ensure!(
+        !config.learn_authenticated_peer_routes || is_server(&config.mode),
+        "only a configured observer may learn authenticated peer routes"
+    );
+    if !is_server(&config.mode) || config.learn_authenticated_peer_routes {
         required_peer_address(config)?;
     }
     Ok(())
@@ -179,7 +188,22 @@ fn run_with_identity(
         retry: Duration::from_millis(100.min(config.timeout_ms - 1)),
     };
     let started = Instant::now();
-    let mut endpoint = if server {
+    let mut endpoint = if config.learn_authenticated_peer_routes {
+        let mut endpoint = NativeEndpoint::bind(
+            socket,
+            identity,
+            vec![NativePeer {
+                key: config.peer_public_key.clone(),
+                address: required_peer_address(&config)?,
+            }],
+            budget,
+            now_ms_v1(),
+            started,
+        )?;
+        endpoint.enable_configured_reconnect_v1()?;
+        endpoint.enable_configured_route_learning_v1()?;
+        endpoint
+    } else if server {
         NativeEndpoint::listen_clients(socket, identity, 4, vec![STREAM], budget)?
     } else {
         NativeEndpoint::connect_client(
@@ -194,7 +218,7 @@ fn run_with_identity(
             started,
         )?
     };
-    if server {
+    if server && !config.learn_authenticated_peer_routes {
         endpoint.enable_client_reconnect_v1()?;
     }
     let mut nonce = [0; 16];
@@ -216,6 +240,7 @@ fn run_with_identity(
         round_trip_confirmed: false,
         handshake_version: 2,
         signature_suite: 65,
+        configured_peer_route_learning: config.learn_authenticated_peer_routes,
         novorudp_inner_frame_preserved: true,
         novorudp_wire_changed: false,
         network_only: true,
@@ -621,6 +646,16 @@ mod tests {
     #[cfg(any(windows, target_os = "linux"))]
     #[ignore = "requires explicit trusted NOVOVM_AOEM_TEST_LIBRARY; actual protected qualification entry and reconnect"]
     fn actual_aoem_protected_probe_entry_reconnects_and_reports_observed_source() -> Result<()> {
+        protected_probe_entry_fixture(false)
+    }
+
+    #[test]
+    #[ignore = "trusted AOEM; actual configured source learning, wrong initial address and real socket reconnect"]
+    fn actual_aoem_protected_configured_route_learning_and_reconnect() -> Result<()> {
+        protected_probe_entry_fixture(true)
+    }
+
+    fn protected_probe_entry_fixture(learn_routes: bool) -> Result<()> {
         use crate::native_pipeline::{
             consensus::crypto::AoemConsensusCrypto,
             service::config::test_custody::{generate_transport_key, TestCredentialGuard},
@@ -661,6 +696,7 @@ mod tests {
                 library_sha256: sha256.clone(),
                 peer_public_key,
                 peer_addr: Some(address.to_string()),
+                learn_authenticated_peer_routes: false,
                 expected_peer_id: None,
                 timeout_ms: 1000,
                 report_path: None,
@@ -673,6 +709,14 @@ mod tests {
             client.public_key().to_vec(),
         );
         observer.report_path = Some(root.join("observer.json"));
+        let _stale_candidate = if learn_routes {
+            let stale = UdpSocket::bind("127.0.0.1:0")?;
+            observer.peer_addr = Some(stale.local_addr()?.to_string());
+            observer.learn_authenticated_peer_routes = true;
+            Some(stale)
+        } else {
+            None
+        };
         let mut probe = config(
             ProductNatRuntimeModeV1::ObservedEndpointProbe,
             "127.0.0.1:0".into(),
@@ -691,6 +735,7 @@ mod tests {
         let first = first?;
         let second = second?;
         assert!(first.accepted && second.accepted && observed.accepted);
+        assert_eq!(observed.configured_peer_route_learning, learn_routes);
         assert!(!observed.round_trip_confirmed);
         assert_eq!(
             observed.authenticated_exchanges,
@@ -712,6 +757,34 @@ mod tests {
             assert_eq!(result.signature_suite, 65);
             assert_eq!(result.handshake_version, 2);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn configured_route_learning_requires_observer_and_explicit_peer_candidate() -> Result<()> {
+        let mut document = serde_json::json!({
+            "version":2, "mode":"observed_endpoint_observer", "bind_addr":"127.0.0.1:0",
+            "identity_key_path":"not-read.sealed", "chain_id":19,
+            "library":"not-loaded", "library_sha256":"not-checked-before-loading",
+            "peer_public_key":vec![1u8; MLDSA65_PUBLIC_KEY_BYTES],
+            "timeout_ms":1000, "run_for_ms":3000,
+            "learn_authenticated_peer_routes":true
+        });
+        let mut config: ProductNatRuntimeConfigV1 = serde_json::from_value(document.clone())?;
+        assert!(validate_config(&config).is_err());
+        config.peer_addr = Some("127.0.0.1:41051".into());
+        validate_config(&config)?;
+        config.mode = ProductNatRuntimeModeV1::ObservedEndpointProbe;
+        assert!(validate_config(&config).is_err());
+        config.learn_authenticated_peer_routes = false;
+        validate_config(&config)?;
+        document
+            .as_object_mut()
+            .unwrap()
+            .remove("learn_authenticated_peer_routes");
+        config = serde_json::from_value(document)?;
+        assert!(!config.learn_authenticated_peer_routes);
+        validate_config(&config)?;
         Ok(())
     }
 

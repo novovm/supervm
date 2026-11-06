@@ -69,6 +69,7 @@ struct ConfiguredAdmission {
     identity: TransportIdentity,
     budget: NativeHandshakeBudget,
     reconnect_v1: bool,
+    route_learning_v1: bool,
 }
 
 struct OpenAdmission {
@@ -409,6 +410,7 @@ impl NativeEndpoint {
                 identity,
                 budget,
                 reconnect_v1: false,
+                route_learning_v1: false,
             }),
             wire_budget: None,
             traffic_started: false,
@@ -1334,3 +1336,6 @@ mod validator_reconnect_tests;
 
 #[cfg(test)]
 mod continuation_tests;
+
+#[cfg(test)]
+mod route_learning_tests;

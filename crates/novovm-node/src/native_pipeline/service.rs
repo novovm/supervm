@@ -562,7 +562,7 @@ fn start_native(
             inflight: 2,
         },
     )?;
-    let channel = NativeChannel::from_transport(
+    let mut channel = NativeChannel::from_transport(
         transport,
         identities.transport,
         identities.bindings.clone(),
@@ -614,6 +614,9 @@ fn start_native(
             ttl: Duration::from_secs(30),
         },
     )?;
+    if config.learn_authenticated_peer_routes {
+        channel.enable_configured_route_learning_v1()?;
+    }
     NativeLifecycle::new(
         progress,
         bodies,
