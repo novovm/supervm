@@ -1,0 +1,123 @@
+{
+  "host_id": "validator-C",
+  "hostname": "KING-LENOVO",
+  "review_git_head": "a0d2b4fd",
+  "program_git_commit": "9a6153f1eebda4da5c10829abf77575aa106ba8f",
+  "archive": {
+    "filename": "selfrun-9a6153f1-windows-x86_64-r2.zip",
+    "bytes": 140196230,
+    "observed_sha256": "57bf8bc6fab08d5b7a85f4d15b2df30bbedcc1fa69d7ca361d3d3f99d63847eb",
+    "independent_r2_archive_pin_available": false
+  },
+  "independent_release_manifest_sha256": "58c92085ca738c1e3e280960df9f16d5432ff38fabcf08fa1dca170b905eff5d",
+  "reviewed_installer_sha256": "3edee735b7c208b93a9a65b3a12da0744f8b613af50fa1e506ea5478d928deec",
+  "checksum_files_verified": {
+    "CHECKSUMS.sha256": 77,
+    "aoem/windows/CHECKSUMS.sha256": 26
+  },
+  "launch": {
+    "started_utc": "2026-11-06T06:25:45.7654007Z",
+    "finished_utc": "2026-11-06T06:26:02.5979785Z",
+    "exit_code": 0,
+    "host_id": "C"
+  },
+  "provision": {
+    "action": "install-program-and-service-purpose-keys",
+    "success": true,
+    "chain_id": 91129655606029,
+    "release": "C:\\ProgramData\\NOVOVM\\releases\\selfrun-9a6153f1-windows-x86_64",
+    "state": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C",
+    "service_account": "NT AUTHORITY\\LocalService",
+    "service_installed": false,
+    "node_started": false,
+    "genesis_created": false,
+    "private_material_exported": false,
+    "source_artifacts_verified": 77,
+    "installed_artifacts_verified": 77,
+    "key_preparation": {
+      "success": true,
+      "sid": "S-1-5-19",
+      "name": "NT AUTHORITY\\LOCAL SERVICE",
+      "node_started": false,
+      "genesis_created": false,
+      "private_material_exported": false
+    },
+    "task_exit_code": 0,
+    "temporary_task_removed": true
+  },
+  "runtime": {
+    "ok": true,
+    "command": "native-identity",
+    "timestamp_unix_ms": 1793946356996,
+    "host": "KING-LENOVO",
+    "data": {
+      "action": "qualify-runtime",
+      "qualification": "ml-dsa-65-native-verification-owner",
+      "algorithm": "ML-DSA-65",
+      "signature_suite": 65,
+      "library": "\\\\?\\C:\\ProgramData\\NOVOVM\\releases\\selfrun-9a6153f1-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+      "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "verification_qualified": true,
+      "scalar_verification_kat_passed": true,
+      "unified_semantic_verification_kat_passed": true,
+      "mixed_batch_verification_kat_passed": true,
+      "primitive_sign_interface_size_checked": true,
+      "signing_tested": false,
+      "keygen_tested": false,
+      "protected_key_created": false,
+      "custody_accessed": false,
+      "database_created": false,
+      "service_started": false,
+      "whole_node_post_quantum_qualified": false
+    }
+  },
+  "identities": {
+    "validator": {
+      "schema_version": 3,
+      "purpose": "validator",
+      "chain_id": 91129655606029,
+      "public_key": "75a904ec3ee633bea274d95cac727ed88d1625e384c37efaa1def049fa7167c1cd39d5bbce027306783333ac799233c633e00777abec6abc57cb9e3b45be8df8498d1747dcff6115e6ed23d73d7f0f5d04d02bf7ac4384b4219704f31b422649a7ac11eb33c7880a54b5ac51676a206a8f7de2dedbc4b9959205ab8b43398d229bb2c30bc41dbc849aa96f231e89afbc3527ac98d9b428edd5a1bd27892010b1037b0ede8a305e6429988fb868c3debb303ae4ac8931cd13657632aa2bff08ddd1ee425d604c9e91a2c41b80e23c66d866400e72404d85d8cf80523869371aa3a59ebc1d52523057561dce7b5e13f1a65ca0778d4cb0ff6619dafb3ccd7c6498b504b424959c22825343777a10fa3c462c3584c8b532378ac42229bcbeeec867d18ea15d07933f570dc62881cda6a992dab6422a8eb62bb8acb6a7e5360f54bc0600b0e800366d4ede0beccad2b9cc62c0b8ecb238a4ca8ddddd059aa40498e296238b2ab14a3252579b17619f79fbd5fefe81b7cdd0d018585fc819891e3047611d86434a22b5a098c3cfa0510f1a0fbf4bb9e10e3bbfef7d5d9d4799b3d653d8d5f84e2878cae98dd7a104236864ccac2673f7614105465a38823206edea3c02d90e198990aad5bab2541f2bad8a0010397ca610ce0adaf9183a2a7532e2b26b9f039f5ac00ad4142d282ad77ac8fff429ecffc57113c8babd911478dce7f9ad30339b8829612ecf6219c1c859f24998d699851d11640aeb9902d0c4499471775edee3ca49d7db2b729377b9f6e74a553fc492407799d02a878d07bb395646e7d814cf609ee325c1fe06537dab9a698eb76b17606835b78f2d8d377e5da21a8d2aecd3dcd3687881fdcc7085759dfcbf5a61370c91859091c5b6174e25468e4d93ccfb3482c41c65fb944c816759e4d59ac754ccc962a32738f71a4f828b3d4e2f3fd0b1109042359123b50182b1cdf5e5ed9de985bafbac8fbfb020f1e8ec2ee17f0063eb95aabf08b79a72a885274a77a6e5348cd6d78c8fc74fd2d028ad5f86fba1f8e410cd6ecf95e65ad1613111b5b913544096520fd96458207c00227e5b33c9be7dfa6ee27fe92a721a30a50b653fb863f48ea9199324ef5dc3f754c9a2e4ceeccc085c709a4fa7d42b3afa58dd9d828b554eb6e736da2a6baa7b519438cda52fdb34de265f8cb526d9b2d351a9e52f564e5a89630d2b36f07e0db47b7dcdb82194e8632a934d2cdab35d8ba461f918b16c694c06b0aeee478ffe40db3fa46be493b1d92c5b6f3e9e65953026805e545625127de3de803329bc0794ad20956efb7937b7be460557b950aedee1126c526cca26d411ef293b09915ea61d0bfdd67e2de7e8ce9d593c274ec7169721699946d1cda76f01b1aec2cdb66c6a21e4d7177b805c46b96b36d033e20d98e523ebec86a3be1d1bd2919b0ab099eadb51f3dd6b8edaa9ed5e21e74b33a20a4fa76166496dad8625fc8a4140379dbda04238f7587b849e497e7897980c808753501e20f33a494b741088609cf936bc9aebe3de7c9687426649bbb19550ae2a30dbcef748f529667be6aa7ec5a9b303bbf5689fa6f3e150bb18e59fd2f63100df6a744b04469a3e63f65cd5cc4126f0f510bd60b03672a7076e596389f5bdb308396875a4ed07c9c398273347673d910e130c26e278105b2afeb347ed0721841e490b0acad7385591daa711dbebe1464a217f423166658a09768b8142faf41817f6190606cf5c8c0440f25018880ef041f4fb38bd6452e2bde1cedaf95e701b8c23dcf899d6dc1c9999e99f83a380ee99f9f52e255079c9b836393d0a36e59a019bfb32cfdd4fac0f12db44d9870d8549e60ee9e4807b5f33f37a36dbcd9f2299e5bd673ec7cdae40d116acde50d5736da914b43312cc1d943a4fcf61713e32ab66f3c3f73880da9b7e01530b5a0dbacce62aa223c69f431bad26c796980aa1484d02d45fa688c2fd97111a44ae28fb2dc8224ad9ee5936a9084baf11a7c84dee5e25bd0801ffda4206c9d8f0d8e72a0d0021bfcff101510f744976dec9ecdabeb41b5591aad1ae3ded716405ed8f5ca1e72248210057234f6425c64fbe4f5e1d41a61612a4f6b7547e4bd775ad1e8ce5c6ecb31f47993a643a86357f7c796c5b67c6a3f9d645f84a47f2e082a7c89d070a263719e1f3a394e3d9a18963c747cd876d8a8fbbada93bad29c009fe6a831fd859bdda79e84ab0ccadbafc65a9451182ea46a8b44242094216c91403057b0b8ab82e95e7863b28bd21bdc3dd2aabf95cf6c114fe5241fec4cfe458fa9c57cebe17122a76c15545a4bd627ec63f1e2cb2e60dfa381bdefcb51b49c343830436f51e0366f5f66f90738fbae44c75a64c46b0fa6e45943dac8ceacb60a72b76b2c16eee2b67d8a33f59a946310e8def9dba3fc7c4e1a9b60446281276387465c1026b0de0c58ec645902c1231af0797f4151da6d6970bddae7de034943bb89552296fc4ef59855af509bc28fc2e9d502740c499622470e3b5312d94297ac63645cd33977be777fbd2675c6a7a0a21251233d402a10f4cd3254fd1482a336d8020422bd51df5ce478164f2f2f6182db1e6c7d982e9109f697718ba4aea806924576b49e34892431cb121e965008f9584d819374678b1d561c4c900140e3047a5ffd09489aecca97c1d6713a370b9ae00c6bc9d9d99ef77056b558e6e72899f01c83193724816cea2a87fbe95d1b8237c3968926f251b21c826ebd3329e6c7d",
+      "algorithm": "ML-DSA-65",
+      "qualification": "purpose_key_only_not_membership_launch_or_whole_node_pq",
+      "public_key_encoding": "hex",
+      "public_key_bytes": 1952,
+      "public_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+      "generate_inspect_equal": true
+    },
+    "transport": {
+      "schema_version": 3,
+      "purpose": "transport",
+      "chain_id": 91129655606029,
+      "public_key": "b6ada9e995e19a2d4225a3df203e989c40872a86e1f4a58dfe6a2e51a5d9d1da20e44d7045b39ab5748e7bed6954e083a001583b52cd091bae55ac31d7f5064f5981fb611b5bbd803f1d98b463b012c2800179324ca0f57b1a650203af5cf8d0069784e8f8d02b492548e4768a33b6ea196b74228bb52e8152ac97321b2ab19bb835e57ab9dd0a1252c762073ec1f03d645657740a8672b121d617d53661125cd89f9ce32e107e9e77a5986d9e3de6ba6347576965d051c07fb441d5cc8cd36084113a86088b5a7e4130cc8b51991337e04d9962cd915ba4c23d231703cbdd14b712dc53e31a8adab77fad3c164edf7ef558b502fbf8fd4901213cf5dc3e2d266b46a940cb45a79bc4a104ac16c0aafe2d3967a422729ceeec363a73d34adeea9b9f68929ec68dee07b6eac0c3836261d7317f9e78e557bcd38bfb39a7804db1b5e5d891fc358fa01a57b0f48a3dd6cc3abe085a6c3600793cd66cbd43018046bd56c79c2f1ed6ae0fd7f83f5f405b7a5fe0c1de801f8b5f0fc12e321f5a829f67ccc3d2f2b90635baef289ecb34c6233c285bec7ab9294e2d7c6633d08e680d7c900a83b07ce364b77bfd1ae419d300195623d3ede4eb3da0565a4039ff9dbab2a368c7e10cfc44913abb064be5456dacdcdc7b688a81c823ef8597d6286f803a8af7d3bcf27f3dd77a1d35406c25de3dfed8c8eec5c0d93f0c7891c0f407565a2978045577cb6cb075cd3accc2f89bfe9e02242358ccec90a50b0d8b81a72bf179556de7a6bed4d94b8670b86aab146d1b499b0a6746309fb8aa83ed97e117d0c45650465e0deacc2dc6c2f48c158e7c75870176852d3b0c6c9a0c9692db14771881d0ba9c6a17d816b57f075c31f453f3fe17cd2e73428c093f4e42f30b5675aae05895086af2ac1d554f48212293f808644ae4673c033b5f63e315ddc76b2c55d747fad1658dd7a3b595b90dfdbca36c38e4b9fd3a64c8b06ff06e4e652fa255956b7b804bd35de210f991f10209feb9dacc0b5227f24f7f8d69633c53242fd1acbd69bb1a58721b5c5539dcc961496d0e45f4d9ade4cfdbab88f86367061215558185f6a42dc26ce17beafc1e333b8de7dd87c8ed834e86643b3d5f48387665e5275f1ceab5d399876f6de6e2912d39ca21a98fdc4f9a60eb15edbf84de6a1b90fd7fc2751b9dac88bc8c56b99ad8e277402ff1fa8e4f58ac4b03babd1f4d54771eff57cf71fccc00531c513ba4aece6c7bf288157322696fd673104a9343f368efb66e25fd4daf7138714c64f4852f57b0b29019027c89af9fe3bc6bb44e8ccace08e9c5c89b37de2c8fbe7dd3f39d2c826d96f5d07fb7b19f961e1ca3a0a50ba38c46bed4ebb04b64fd91fce32ef14dc1194a0d5651bc12df1573327fca40a6e0a828b6d67f49e5df5ef1f46c0cbfdc7f8a6b679ad2e5c5d690b01276b3c17011b3578643bae6fef79c22e7f973177a979af344cb329ec3d02950752ac0347008ca52570620b62bc839578da7914121d2201168d8b3b6a2685a0c8e7b23fbc749a0d9aa3c930979f5928a56ca0f35e7e615edd594c9552e626db2a247dbb997b3768623ed128db8656c83a69c4149638f77c319481ef7f0d7752ade62327ca08e5cea2c3a71b9466557fcd9caf3da77cfefdb80d670c3078f1076b541bb360e5c20476ba56020c2b1f7daacad739117151301e4af50c960e00575d30895e8dcb7b64119ff2fcac804d417cb2f620e90df3a739d3e3b015d89932937aa2797de53da7e3aae2284277a8c93647424248bc994157965d5236688a0a4294ce8e9cbe0fd8bea1088e013b42637b70278f8868c231e827ae1949213be5697883d595e4dbe04e52801b01063b4f311674e00c1d18472b544b0ffb857a9451cbcd2d9cf823f846132f22922bad47e674166a5744dc345cef7acc75df97aa1e23669464f971affe62b977eee60e2bbe631764fbc0dd84dcf3402593c9ff967e4b788a500ced90f025b4208e32084d5fe845ed4080678105beee6fdc2d25753e75e59353d3e186253a910dee92c5415492b2275aea8f64c53906bc6d7bdbb632a1facdf9fa5132e79cc3f8474b77d452c0bbd0a91cc25b8d28bae1bf0247bac685be7ec624ba373dc6407f4cdf96443541b2192c7eb821df5e792d4977dcbda95c87c2048b5f33e335b2e20653befac03bdfe085c32ab5cef921e14fb90f445ef37e54724a9320c0cc313426ce8f818bb37478d3e7223a801a22bf8f6cce1b319941b0650f0c03d27ac48b5378eb3ea18163af1177c4be9389cee087d7186857d741a1d99ead8fe24d8545ee1d3d7c62fa3202d500c4aac10eb43ce50061372fa1f8ca5b80d220af4f5249e2baa01a92bcb7530ea609f30edad34da131f66452a80f34add63a02289040e8da03ba8e0918c62b810fec6914d0d9cedcbb3678a20cedf3c710b071b3ca6f7cedc1012ff1165c8909d0a415743b496d1855d429b1d279966d4be242fa665b29bfa8d7479ba4170c634a1f14a62272a3a3d47161e9bf19b69140e28bd0e223412ad7061f075a2be54265b4ae8bc0506ac5da833d9f5361776532abe3f57345469fb6f6efaa193fb11e1dd09d38d7d734039447080bea5afcd47c9a2b75cc545cde209d2451035691979f32f73d59ca94a8277e673d70dd1ad2e8ef39e9c19ae71b6953014c4939b326c177eb6ca72ce1019e77f4784bfc5eb230b4910ac34702025b6fdda3252351d7ad2e3bd2e98d61ad9df883cf828",
+      "algorithm": "ML-DSA-65",
+      "qualification": "purpose_key_only_not_membership_launch_or_whole_node_pq",
+      "public_key_encoding": "hex",
+      "public_key_bytes": 1952,
+      "public_key_sha256": "610885e9dc34eaa2c979a95e55bebde247d8f40e23f071f727a7fbf0b4c50e4a",
+      "generate_inspect_equal": true
+    }
+  },
+  "postcheck": {
+    "node_service_exists": false,
+    "temporary_task_exists": false,
+    "installer_stderr_bytes": 0
+  },
+  "original_public_reports": {
+    "file": "original-public-reports.zip",
+    "sha256": "d921582349d827be34bced0a278d63db8c06e8118a3d319dc797bd5076f4507d",
+    "members": {
+      "c-provision-result.json": "2fb0bce9a2ecc46803db0818ab9a7853d2c92b068c3e80f686d62de4d0fb010e",
+      "c-launch-result.json": "adbbfb537ed03a3abbdf27d8883ed3e04ba7e5a04cd14d1b2bc5b617bad64b7a",
+      "c-runtime.json": "4c0c3766444c6f0bdb67d22964d5f36ac328d5dfa772f7674b47cea6be6a0d1b",
+      "c-key-preparation-result.json": "5e872b0b2caa683dfdea5a7e79b7e2da092b73add7b2330522937bb75af92714",
+      "c-validator-generate.json": "92932beddf0b22344450afbab4cefa4abe56d0816e16fbbeae250e413ef631ea",
+      "c-validator-inspect.json": "5a01c6864242b71ee96008e3e1cea10a58f139ce5abfbbb9c8fdd33c284dbcdc",
+      "c-transport-generate.json": "20e23c137896c71d708c3def4d74aa9a5cea4da88b1f3fa5fa636b64e7a18274",
+      "c-transport-inspect.json": "d6cee0203da27fd5ec766d2518089bb86768c9052e304b5806a5e25658b67518",
+      "c-installer.stdout.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "c-installer.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "Install-Selfrun-Windows-20261106.ps1": "3edee735b7c208b93a9a65b3a12da0744f8b613af50fa1e506ea5478d928deec",
+      "invoke-C-once.ps1": "134e315ae44148ae9529ea2e6fdd92e31cbbe7b1796aafb5b3016a99e0bd06b4"
+    }
+  }
+}
