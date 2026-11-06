@@ -14,8 +14,35 @@ pub struct NativeGenesisArgs {
 pub enum NativeGenesisCommand {
     /// Review the manifest and optionally select one original approval transcript.
     Prepare(PrepareArgs),
+    /// Sign one reviewed original approval with its protected purpose key; public output only.
+    Approve(ApproveArgs),
     /// Verify independent identity/asset approvals and derive review-only startup material; not launch approval.
     VerifyApprovals(VerifyArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ApproveArgs {
+    /// Public manifest reviewed by the holder; no state is initialized.
+    #[arg(long)]
+    pub manifest: PathBuf,
+    /// Independently reviewed canonical signing domain, exactly 64 lowercase hex characters.
+    #[arg(long)]
+    pub expected_domain: String,
+    /// Exact subject index from this manifest's prepare output.
+    #[arg(long)]
+    pub approval_index: usize,
+    /// Absolute protected key path. Purpose, chain and public key must match the subject.
+    #[arg(long)]
+    pub key_file: PathBuf,
+    /// Explicit trusted AOEM library; original ABI/manifest checks remain enabled.
+    #[arg(long)]
+    pub library: PathBuf,
+    /// Independently verified SHA-256 of this exact platform library.
+    #[arg(long)]
+    pub library_sha256: String,
+    /// Exclusively create a public one-element original approval array; never overwrite.
+    #[arg(long)]
+    pub output: PathBuf,
 }
 
 #[derive(Debug, Args)]

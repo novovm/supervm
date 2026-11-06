@@ -1006,7 +1006,7 @@ fn run_actual_approvals(amount_fee: bool) -> TestResult {
         });
     }
     let domain = input.signing_domain()?;
-    let library_hash = Sha256::digest(fs::read(&library)?).into();
+    let library_hash: [u8; 32] = Sha256::digest(fs::read(&library)?).into();
     fixture.write_manifest(&input)?;
     fixture.write_approvals(&approvals)?;
     let success = fixture.verify("verified", domain, &library, library_hash)?;
@@ -1139,6 +1139,345 @@ fn run_actual_approvals(amount_fee: bool) -> TestResult {
             library_hash,
         )?,
         "original genesis compiler",
+    );
+    Ok(())
+}
+
+fn approve_args(
+    fixture: &Fixture,
+    domain: [u8; 32],
+    index: usize,
+    key: &Path,
+    library: &Path,
+    library_hash: [u8; 32],
+    output: &Path,
+) -> Vec<String> {
+    vec![
+        "approve".into(),
+        "--manifest".into(),
+        fixture.manifest.to_string_lossy().into_owned(),
+        "--expected-domain".into(),
+        hex(&domain),
+        "--approval-index".into(),
+        index.to_string(),
+        "--key-file".into(),
+        key.to_string_lossy().into_owned(),
+        "--library".into(),
+        library.to_string_lossy().into_owned(),
+        "--library-sha256".into(),
+        hex(&library_hash),
+        "--output".into(),
+        output.to_string_lossy().into_owned(),
+    ]
+}
+
+#[test]
+fn protected_approval_rejects_unreviewed_domain_index_recovery_and_overwrite_before_custody(
+) -> TestResult {
+    let fixture = Fixture::new("protected-approval-preconditions")?;
+    let input = manifest()?;
+    fixture.write_manifest(&input)?;
+    let domain = input.signing_domain()?;
+    let missing = fixture.root.join("must-not-be-opened");
+    let output = fixture.root.join("public-approval.json");
+    let args = |domain, index| {
+        approve_args(
+            &fixture, domain, index, &missing, &missing, [0; 32], &output,
+        )
+    };
+    rejected(
+        &fixture.invoke("unreviewed-domain", &args([0; 32], 0))?,
+        "no auto-repin",
+    );
+    rejected(
+        &fixture.invoke("invalid-index", &args(domain, usize::MAX))?,
+        "outside this manifest",
+    );
+    let recovery = input.required_approval_subjects().iter().position(|(subject, _)| {
+        matches!(subject, novovm_node::native_pipeline::service::config::uca_genesis::UcaGenesisApprovalSubjectV2::AssetRecovery(_))
+    }).ok_or("recovery subject")?;
+    rejected(
+        &fixture.invoke("no-recovery-substitution", &args(domain, recovery))?,
+        "protected asset-recovery purpose is not supported",
+    );
+    fs::write(&output, b"existing public approval must remain unchanged")?;
+    rejected(
+        &fixture.invoke("no-overwrite", &args(domain, 0))?,
+        "refusing overwrite",
+    );
+    assert_eq!(
+        fs::read(&output)?,
+        b"existing public approval must remain unchanged"
+    );
+    Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+struct ApprovalCustody(PathBuf);
+
+#[cfg(any(windows, target_os = "linux"))]
+impl ApprovalCustody {
+    fn new() -> Result<Self, Box<dyn Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "novovm-genesis-approval-custody-{}-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&root)?;
+        Ok(Self(root))
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+impl Drop for ApprovalCustody {
+    fn drop(&mut self) {
+        if self.0.parent() == Some(std::env::temp_dir().as_path())
+            && self.0.file_name().is_some_and(|name| {
+                name.to_string_lossy()
+                    .starts_with("novovm-genesis-approval-custody-")
+            })
+        {
+            // Only this test's uniquely created temporary custody, never a
+            // deployed path. Public test reports remain in the fixture root.
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+#[ignore = "explicit qualified AOEM and disposable OS custody; actual protected approval CLI, no activation"]
+fn actual_protected_genesis_approvals_match_original_compiler_and_reject_wrong_material(
+) -> TestResult {
+    use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
+    let library = PathBuf::from(
+        std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
+            .ok_or("explicit trusted NOVOVM_AOEM_TEST_LIBRARY required")?,
+    )
+    .canonicalize()?;
+    let library_hash: [u8; 32] = Sha256::digest(fs::read(&library)?).into();
+    let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())?;
+    let signer = runtime.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
+    let fixture = Fixture::new("actual-protected-approvals")?;
+    // Use the OS temporary filesystem: WSL checkout mounts need not implement
+    // Linux 0700/0600 custody semantics. Do not relax the original checks.
+    let custody = ApprovalCustody::new()?;
+    let keys_dir = custody.0.join("keys");
+    let credentials = custody.0.join("credentials");
+    for path in [&keys_dir, &credentials] {
+        fs::create_dir(path)?;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::{io::Write, os::unix::fs::OpenOptionsExt};
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(credentials.join("owner-key"))?;
+        file.write_all(&[93; 32])?;
+        file.sync_all()?;
+    }
+    let mut input = manifest()?;
+    input.genesis.policy = proportional_fixture_policy(input.genesis.policy);
+    let mut keys = BTreeMap::new();
+    {
+        let mut generate =
+            |label: &str, purpose: &str, chain_id: u64| -> Result<Vec<u8>, Box<dyn Error>> {
+                let path = keys_dir.join(format!("{label}.protected"));
+                let result = Command::new(env!("CARGO_BIN_EXE_novovmctl"))
+                    .args([
+                        "native-identity",
+                        "generate",
+                        "--purpose",
+                        purpose,
+                        "--chain-id",
+                        &chain_id.to_string(),
+                        "--key-file",
+                    ])
+                    .arg(&path)
+                    .arg("--library")
+                    .arg(&library)
+                    .arg("--library-sha256")
+                    .arg(hex(&library_hash))
+                    .env("CREDENTIALS_DIRECTORY", &credentials)
+                    .output()?;
+                let report = data(&result)?;
+                assert_eq!(report["private_material_exported"], false);
+                let public = serde_json::from_value(report["identity"]["public_key"].clone())?;
+                keys.insert(label.to_owned(), path);
+                Ok(public)
+            };
+        for index in 0..input.accounts.len() {
+            input.accounts[index].management_public_key = generate(
+                &format!("asset-{index}"),
+                "asset-management",
+                input.genesis.chain_id,
+            )?;
+            input.accounts[index].recovery_public_key = None;
+            input.identities[index].identity_public_key = generate(
+                &format!("identity-{index}"),
+                "identity",
+                input.genesis.chain_id,
+            )?;
+        }
+        generate("wrong-chain", "identity", input.genesis.chain_id + 1)?;
+        generate("wrong-purpose", "transport", input.genesis.chain_id)?;
+    }
+    for validator in &mut input.genesis.validators {
+        validator.public_key = signer.generate_keypair()?.public_key;
+        validator.transport_public_key = signer.generate_keypair()?.public_key;
+    }
+    fixture.write_manifest(&input)?;
+    let domain = input.signing_domain()?;
+    let run = |label: &str,
+               index: usize,
+               key: &Path,
+               output: &Path,
+               allowed_creation: bool|
+     -> Result<Output, Box<dyn Error>> {
+        let mut before = snapshot(&fixture.root)?;
+        let custody_before = snapshot(&custody.0)?;
+        let result = Command::new(env!("CARGO_BIN_EXE_novovmctl"))
+            .arg("native-genesis")
+            .args(approve_args(
+                &fixture,
+                domain,
+                index,
+                key,
+                &library,
+                library_hash,
+                output,
+            ))
+            .current_dir(&fixture.root)
+            .env("CREDENTIALS_DIRECTORY", &credentials)
+            .output()?;
+        let after = snapshot(&fixture.root)?;
+        if allowed_creation && result.status.success() {
+            before.insert(
+                output.strip_prefix(&fixture.root)?.to_path_buf(),
+                Some(Sha256::digest(fs::read(output)?).into()),
+            );
+        }
+        assert_eq!(before, after, "approve modified unexpected files: {label}");
+        assert_eq!(
+            custody_before,
+            snapshot(&custody.0)?,
+            "approve changed custody: {label}"
+        );
+        fs::write(fixture.root.join(format!("{label}.stdout")), &result.stdout)?;
+        fs::write(fixture.root.join(format!("{label}.stderr")), &result.stderr)?;
+        Ok(result)
+    };
+    let required = input.required_approval_subjects();
+    let identity_index = required
+        .iter()
+        .position(|(_, public)| *public == input.identities[0].identity_public_key)
+        .ok_or("identity subject")?;
+    for (label, key, expected) in [
+        ("wrong-chain", &keys["wrong-chain"], "chain mismatch"),
+        ("wrong-purpose", &keys["wrong-purpose"], "purpose"),
+        ("wrong-subject-key", &keys["identity-1"], "does not match"),
+        ("role-swap", &keys["asset-0"], "purpose"),
+    ] {
+        rejected(
+            &run(
+                label,
+                identity_index,
+                key,
+                &fixture.root.join(format!("{label}.json")),
+                false,
+            )?,
+            expected,
+        );
+    }
+    let mut approvals = Vec::new();
+    for (index, (subject, public_key)) in required.iter().enumerate() {
+        let label = input
+            .identities
+            .iter()
+            .position(|identity| identity.identity_public_key == *public_key)
+            .map(|i| format!("identity-{i}"))
+            .or_else(|| {
+                input
+                    .accounts
+                    .iter()
+                    .position(|account| account.management_public_key == *public_key)
+                    .map(|i| format!("asset-{i}"))
+            })
+            .ok_or("protected subject key")?;
+        let output = fixture.root.join(format!("approval-{index}.json"));
+        let report = data(&run(
+            &format!("approve-{index}"),
+            index,
+            &keys[&label],
+            &output,
+            true,
+        )?)?;
+        assert_non_activation(&report);
+        assert_eq!(report["private_material_exported"], false);
+        assert_eq!(report["subject"], serde_json::to_value(subject)?);
+        assert_eq!(report["observed_signing_domain"], hex(&domain));
+        let approval = UcaInitializationConfigV2::read_approvals_file(&output)?;
+        assert_eq!(approval.len(), 1);
+        assert_eq!(&approval[0].subject, subject);
+        signer.verify(
+            public_key,
+            &input.approval_signing_bytes(subject)?,
+            INITIALIZATION_CONTEXT_V2,
+            &approval[0].signature,
+        )?;
+        approvals.extend(approval);
+        rejected(
+            &run(
+                &format!("overwrite-{index}"),
+                index,
+                &keys[&label],
+                &output,
+                false,
+            )?,
+            "refusing overwrite",
+        );
+    }
+    input.compile(&runtime, domain, &approvals)?;
+    fixture.write_approvals(&approvals)?;
+    data(&fixture.verify("protected-original-startup", domain, &library, library_hash)?)?;
+    let mut replayed = approvals.clone();
+    replayed[1].signature = replayed[0].signature.clone();
+    assert!(
+        input.compile(&runtime, domain, &replayed).is_err(),
+        "approval replayed across subjects"
+    );
+    let mut corrupt = approvals.clone();
+    corrupt[0].signature[0] ^= 1;
+    assert!(
+        input.compile(&runtime, domain, &corrupt).is_err(),
+        "corrupt approval accepted"
+    );
+    input.genesis.timestamp_unix_ms += 1;
+    fixture.write_manifest(&input)?;
+    let stale_output = fixture.root.join("stale-review-must-not-sign.json");
+    rejected(
+        &run(
+            "changed-manifest-old-pin",
+            identity_index,
+            &keys["identity-0"],
+            &stale_output,
+            false,
+        )?,
+        "no auto-repin",
+    );
+    assert!(
+        input
+            .compile(&runtime, input.signing_domain()?, &approvals)
+            .is_err(),
+        "old approvals replayed into changed manifest"
     );
     Ok(())
 }

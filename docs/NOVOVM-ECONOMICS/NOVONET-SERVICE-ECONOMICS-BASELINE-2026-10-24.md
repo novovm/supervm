@@ -1,5 +1,34 @@
 # NOVONET service economics: synchronized baseline
 
+Latest direct decision, 2026-11-06: proceed with the single chain's first team-operated
+run, using the seven amounts and fees below. For this run only, the user explicitly
+waives S1 locks/multiparty control and personally controls the seven independent keys.
+Public-operation governance remains separate; historical S1 activation blockers below
+do not override this later approval. No third-party paid service is enabled by it.
+
+## 2026-11-06 A-only internal rehearsal selection
+
+The user explicitly selected 20 bps, minimum 0.002 NOV, cap 50 NOV, ceil before
+clamping, service budget 90% / network 10%, with integer remainder to the service
+budget, for the A-side isolated functional rehearsal. These inputs are no longer
+pending for that scope; formal mainnet policy remains unselected. Subscription
+80/20/0 is unchanged. The user also delegated the internal allocation/account
+preparation. The subsequent correction restores the original S1 seven-purpose
+allocation: founder 15m, team 5m, research/operations 20m, construction 30m,
+project sales 20m, liquidity 5m and promotion 5m NOV. Seven preparation keys
+have been generated and read back; the erroneous nine-account allocation is withdrawn.
+Ordinary payments without mandatory grants do not remove genesis restrictions.
+S1 release/governance proposals are retained, not silently approved or enforced;
+no unrestricted executable genesis is generated. Existing holder/quick/savings
+keys are preserved; only the exact erroneous November 6 materials are authorized for deletion.
+Automatic deletion was initially blocked. The user subsequently ran the UTF-8-corrected
+cleanup script: 13 erroneous files and their empty directory are removed. Read-only
+verification confirms all four original material hashes unchanged and seven new keys present.
+The hash inventory is retained; no erroneous private-key backup was created.
+See [reference section 12](NOV-ECONOMICS-DESIGN-AND-FORMULA-REFERENCE-2026-11-05.md#12-2026-11-06-a侧内测参数已选定与账户准备).
+Local key/descriptors and planned allocation inputs are not on-chain credit,
+provider earnings, service deployment or an override of failed CI42066085246.
+
 ## 2026-11-05 later clarification: proportional transfers are distinct from resource-service quotes
 
 The user's recorded direction is `transfer_fee_NOV = amount_NOV * r`; 0.1%-0.2% (10-20 bps)

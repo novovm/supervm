@@ -1,17 +1,26 @@
-//! Thin offline adapter to the original node compiler. No private keys, store,
-//! journal, service manager, network socket or candidate publication is opened.
+//! Thin offline adapter to the original node compiler and protected signer.
+//! Only explicit approve accesses custody; no store, journal, service or network.
 use super::native_nonce_migration::read_bounded_document_v1;
-use crate::cli::native_genesis::{NativeGenesisArgs, NativeGenesisCommand, VerifyArgs};
+use crate::cli::native_genesis::{
+    ApproveArgs, NativeGenesisArgs, NativeGenesisCommand, VerifyArgs,
+};
 use crate::{error::CtlError, output};
-use novovm_exec::{AoemExecFacade, AoemExecOpenOptions};
+use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade, AoemExecOpenOptions};
 use novovm_node::native_pipeline::service::config::uca_genesis::{
-    UcaGenesisManifestV2, UcaInitializationConfigV2, INITIALIZATION_CONTEXT_V2,
+    UcaGenesisApprovalSubjectV2, UcaGenesisApprovalV2, UcaGenesisManifestV2,
+    UcaInitializationConfigV2, INITIALIZATION_CONTEXT_V2,
 };
 use novovm_node::native_pipeline::service::config::MAX_STARTUP_DOCUMENT_BYTES;
+use novovm_relay::purpose_keys::{self, PurposeV1};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, fs::File, io::Read, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
 
 const COMMAND: &str = "native-genesis";
 const MAX_DOCUMENT_BYTES: usize = MAX_STARTUP_DOCUMENT_BYTES;
@@ -42,6 +51,7 @@ pub fn run(args: NativeGenesisArgs) -> Result<(), CtlError> {
 fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
     let input = match command {
         NativeGenesisCommand::Prepare(args) => args,
+        NativeGenesisCommand::Approve(args) => return approve(args),
         NativeGenesisCommand::VerifyApprovals(args) => &args.input,
     };
     if !(1..=128).contains(&input.approval_limit) {
@@ -49,15 +59,7 @@ fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
             "approval listing limit must be 1..=128".into(),
         ));
     }
-    let bytes =
-        read_bounded_document_v1(&input.manifest, MAX_DOCUMENT_BYTES, "UCA genesis manifest")?;
-    let manifest = UcaGenesisManifestV2::read_file(&input.manifest)
-        .map_err(|e| CtlError::InvalidArgument(format!("UCA genesis manifest: {e:#}")))?;
-    let fields: BTreeMap<String, serde::de::IgnoredAny> = serde_json::from_slice(&bytes)
-        .map_err(|e| CtlError::InvalidArgument(format!("UCA genesis manifest: {e}")))?;
-    if !fields.contains_key("pages") {
-        reject_ignored_grant_fields(&bytes, &manifest)?;
-    }
+    let manifest = read_manifest(&input.manifest)?;
     let canonical = manifest.canonical_bytes().map_err(|error| {
         CtlError::InvalidArgument(format!("original manifest validation: {error:#}"))
     })?;
@@ -134,6 +136,138 @@ fn inspect(command: &NativeGenesisCommand) -> Result<Review, CtlError> {
         verify(args, &manifest, domain, &mut report)?;
     }
     Ok(report)
+}
+
+fn read_manifest(path: &Path) -> Result<UcaGenesisManifestV2, CtlError> {
+    let bytes = read_bounded_document_v1(path, MAX_DOCUMENT_BYTES, "UCA genesis manifest")?;
+    let manifest = UcaGenesisManifestV2::read_file(path)
+        .map_err(|e| CtlError::InvalidArgument(format!("UCA genesis manifest: {e:#}")))?;
+    let fields: BTreeMap<String, serde::de::IgnoredAny> = serde_json::from_slice(&bytes)
+        .map_err(|e| CtlError::InvalidArgument(format!("UCA genesis manifest: {e}")))?;
+    if !fields.contains_key("pages") {
+        reject_ignored_grant_fields(&bytes, &manifest)?;
+    }
+    Ok(manifest)
+}
+
+fn approve(args: &ApproveArgs) -> Result<Review, CtlError> {
+    let manifest = read_manifest(&args.manifest)?;
+    let plan = manifest.prepare_approvals().map_err(|error| {
+        CtlError::InvalidArgument(format!("original signing domain: {error:#}"))
+    })?;
+    let domain = plan.domain();
+    if parse_digest(&args.expected_domain)? != domain {
+        return Err(CtlError::InvalidArgument(
+            "manifest differs from independently reviewed signing domain; no auto-repin".into(),
+        ));
+    }
+    let (subject, public_key) = plan.subjects().nth(args.approval_index).ok_or_else(|| {
+        CtlError::InvalidArgument(
+            "approval index is outside this manifest's ordered subjects".into(),
+        )
+    })?;
+    let purpose = match subject {
+        UcaGenesisApprovalSubjectV2::Identity(_) => PurposeV1::Identity,
+        UcaGenesisApprovalSubjectV2::AssetManagement(_) => PurposeV1::AssetManagement,
+        UcaGenesisApprovalSubjectV2::AssetRecovery(_) => {
+            return Err(CtlError::InvalidArgument(
+                "protected asset-recovery purpose is not supported; never substitute a management key".into(),
+            ));
+        }
+    };
+    // Fail before custody/signing if the caller selected an existing artifact.
+    // create_new below also closes the concurrent-creation overwrite window.
+    match std::fs::symlink_metadata(&args.output) {
+        Ok(_) => {
+            return Err(CtlError::InvalidArgument(
+                "approval output already exists; refusing overwrite".into(),
+            ))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(CtlError::FileReadFailed(format!(
+                "public approval output: {error}"
+            )))
+        }
+    }
+    let expected_library = parse_digest(&args.library_sha256)?;
+    let library = args
+        .library
+        .canonicalize()
+        .map_err(|error| CtlError::FileReadFailed(format!("explicit AOEM library: {error}")))?;
+    if file_digest(&library)? != expected_library {
+        return Err(CtlError::InvalidArgument(
+            "AOEM library SHA-256 mismatch before load".into(),
+        ));
+    }
+    let key = purpose_keys::read_mldsa_material(&args.key_file, purpose, manifest.genesis.chain_id)
+        .map_err(|error| {
+            CtlError::IntegrationFailed(format!("protected approval purpose key: {error:#}"))
+        })?;
+    if key.public_key != public_key {
+        return Err(CtlError::InvalidArgument(
+            "protected key does not match the selected manifest approval subject".into(),
+        ));
+    }
+    let message = plan.signing_bytes(subject).map_err(|error| {
+        CtlError::InvalidArgument(format!("original approval transcript: {error:#}"))
+    })?;
+    let runtime = AoemExecFacade::open(&library, AoemExecOpenOptions::default())
+        .map_err(|error| CtlError::IntegrationFailed(format!("original AOEM loader: {error:#}")))?;
+    let signer = runtime
+        .mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)
+        .map_err(|error| CtlError::IntegrationFailed(format!("AOEM ML-DSA-65 signer: {error}")))?;
+    // Original signer returns only after verification against this exact public
+    // key, subject/whole-manifest transcript and initialization context.
+    let signature = signer
+        .sign(
+            &key.public_key,
+            &key.expanded_secret_key,
+            &message,
+            INITIALIZATION_CONTEXT_V2,
+        )
+        .map_err(|error| {
+            CtlError::IntegrationFailed(format!("original approval signing: {error}"))
+        })?;
+    if file_digest(&library)? != expected_library {
+        return Err(CtlError::IntegrationFailed(
+            "AOEM library changed during approval signing".into(),
+        ));
+    }
+    let approvals = [UcaGenesisApprovalV2 {
+        subject: subject.clone(),
+        signature,
+    }];
+    let bytes = serde_json::to_vec(&approvals)
+        .map_err(|error| CtlError::FileWriteFailed(format!("public approval encoding: {error}")))?;
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&args.output)
+        .map_err(|error| {
+            CtlError::FileWriteFailed(format!("exclusive public approval output: {error}"))
+        })?;
+    output
+        .write_all(&bytes)
+        .and_then(|()| output.sync_all())
+        .map_err(|error| CtlError::FileWriteFailed(format!("public approval output: {error}")))?;
+    Ok(Review {
+        metadata: json!({
+            "schema_version": 3, "action": "approve",
+            "source": "novovm-node/UcaGenesisManifestV2",
+            "signing_algorithm": "ML-DSA-65", "approval_index": args.approval_index,
+            "subject": subject, "observed_signing_domain": hex(&domain),
+            "expected_domain_verified": true, "approval_written": true,
+            "output": args.output, "aoem_library": library,
+            "aoem_library_sha256": hex(&expected_library),
+            "custody_accessed": true, "private_material_exported": false,
+            "identity_and_asset_approvals_verified": false,
+            "operator_launch_authorized": false, "existing_uca_authority_verified": false,
+            "database_created": false, "activation_ready": false, "state_published": false,
+            "whole_node_post_quantum_qualified": false
+        }),
+        review_only_startup_fragment: None,
+    })
 }
 
 fn verify(
