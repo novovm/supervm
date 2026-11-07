@@ -390,6 +390,82 @@ Windows最终日志为`windows-cold-hop-3-*`与`windows-cold-hop-final-*`；Linu
 没有覆盖旧证据或把未执行检查记通过。本次没有手动触发云端长测、重放六组配对、
 打正式平台包、启链、变更经济/身份规则或产生TPS结论。
 
+### 10. 2026-11-07 参考审阅：原APFL/统一语义、指纹边界与固定制品
+
+用户本轮提供的ChatGPT附件与正文均已全文读取。附件SHA256为
+`01dea4f4875896ed550e9981e849cc4d84a838a6c5f184569bfdd4d61fc838d0`。
+它们是设计参考，不以其中的建议名称或伪代码覆盖已有最高架构、签名与接口合同。
+本轮源码审阅及候选程序基线均为`ce1f54ea545e69dc64763f1f24f6048d90e4ef12`；
+本节之后的文档提交不重标程序来源。本轮不开发第二套APP/ATIR、注册表、执行器、
+选路器或载体，也不把参考保存成新一轮架构重写任务。
+
+**第二/三层不是从零缺失。** 沿原APFL与`node → exec → bindings → AOEM`逐项映射：
+
+| 参考目标 | 当前实际资产 | 不能扩大成什么 |
+| --- | --- | --- |
+| Schema/字典/参数列 | [通用APFL BatchView](../crates/novovm-protocol/src/apfl_batch.rs)已有schema/context、借用列、共享/字典/密集残差和展开/偏移预算；[NUAPFL03](../crates/novovm-protocol/src/uca_spend_batch.rs)已有15列及不可伪造的AssetSpendViewV3 | 不是另建APP注册表才能开始结构化，也不是任意业务自动lowering |
+| 结构化资产批次进入主节点 | [consensus/transport/uca.rs](../crates/novovm-node/src/native_pipeline/consensus/transport/uca.rs)固定program/semantic/receipt profile，原批次编解码→AssetBody→BatchRequest::from_uca_batch→原BatchSource::Uca | 不拿旧NNX3/96字节投影代替当前ML-DSA账户合同 |
+| Delta/Commitment/减少重复传输 | 同一UCA transport已有原pool正文引用，intent定位键只找材料，完整body_id仍绑定公钥和签名 | 不是通用跨批字典/StorageDelta协议，不是签名聚合或免验签 |
+| AOEM原生结构执行 | [full_effects.rs](../crates/novovm-node/src/native_pipeline/business/nov_transfer_batch/full_effects.rs)约994行起原完整效应编译，经原integer/resident资源进入[semantic_integer.rs](../crates/novovm-exec/src/semantic_integer.rs)的run_composition_v1、统一wire opcode113及binary result take | 不是只有空接口；但默认CpuCallbacks与显式AoemIntegerV7不能混称所有部署均已直执行。实际配置与包能力分别核对 |
+
+实际残留应按成本再处理，而不是新增一层名字：`pipeline/compute.rs`约543/558行
+仍由`batch.row()`还原完整签名对象后批验签；`uca_spend_batch.rs`约334行复制key/
+signature，签名原文准备仍分配；`persistence/packet/uca.rs`约72–82行仍有canonical
+投影、decode/encode核对。先区分归档必要物化、可避免准备与当前父状态重验，再在
+原owner内减工作量；不删原签名、承诺、nonce/费用/权限和持久化检查，也不能仅凭
+发现复制就认定它是当前最大瓶颈。后续如确需跨批字典、通用StorageDeltaBatch或
+ProgramOperationBatch，应先明确原语义/内容所有者及缺失、版本、哈希和资源合同。
+旧opcode114诊断消费者不冒充当前UCA主线或已覆盖其授权关系。
+
+“优先二进制热路径”继续适用，但“AOEM所有生产JSON均关闭”不成立：实际
+ML-DSA消费者沿原二进制统一wire；整数数值结果走binary take，资源管理仍有JSON
+状态读回；AOEM Production Surface还明确保留`aoem_capabilities_json`与canonical
+privacy `aoem_privacy_execute_v1` JSON v2。不能为统一名字擅改这些合同，也不能将
+离线配置/报告JSON混成APFL→JSON→二进制业务往返。普通聊天/文件不强制变成转账
+Tensor或每包ML-DSA；原逐包AEAD不变。附件“永远保留聊天Ed25519”不覆盖已批准
+的原生身份/用途签名ML-DSA迁移；旧手机包与第三方载体密码学仍分开记录，不改手机。
+这里AOEM接口引用为本机`main@4c57372a`中未修改的Production Surface文档；
+不拿其他未提交AOEM草稿替随包能力背书，实际库资格仍以本节独立制品回执为准。
+
+**指纹与加密覆盖：只读源码事实，不是地区可达性或DPI实验。**
+
+| 观察层 | 当前可见/受保护范围 | 源码锚点 |
+| --- | --- | --- |
+| 原生UDP公网旁观者 | IP/端口/包长/时序可见；NVRLY002、版本、session、双方peer_id、sequence、nonce、密文长度也是明文外层。AAD认证不等于隐藏 | [product_overlay/binary.rs](../crates/novovm-network/src/product_overlay/binary.rs)约41–65行；[product_overlay.rs](../crates/novovm-network/src/product_overlay.rs)的原AEAD/AAD |
+| 原生UDP握手旁观者 | NVHCONT1分片可还原NVHSHK02握手的公开身份/公钥/临时公钥/挑战/时间/签名；回程cookie不是保密层 | [handshake_wire.rs](../crates/novovm-network/src/product_overlay/handshake_wire.rs)、[handshake_continuation.rs](../crates/novovm-network/src/novorudp/handshake_continuation.rs) |
+| 已认证原生数据产品路径 | Frame kind/stream/object/ACK和APFL业务正文在原AEAD密文内；不将本结论扩大到全仓底层UDP/诊断API都自动加密 | [novorudp/datagram.rs](../crates/novovm-network/src/novorudp/datagram.rs)、原secure channel |
+| Iroh下层旁观者 | 可观察QUIC/TLS及流量特征；流内NVNETH01等分派标记不等于公网明文magic；固定ALPN的实际可见性及识别率仍需抓包验证 | [iroh_transport.rs](../crates/novovm-network/src/iroh_transport.rs)、[transport_binding.rs](../crates/novovm-network/src/transport_binding.rs) |
+| 逐跳中继 | 解密OPEN可见origin、整条path、context/circuit/期限/当前跳；也可见被转发的E2E初始握手公开身份及内层信封头，但没有E2E业务解密钥 | [relay/hop.rs](../crates/novovm-network/src/relay/hop.rs)、[hop/e2e.rs](../crates/novovm-network/src/relay/hop/e2e.rs)；不是洋葱匿名 |
+
+当前Iroh复用QUIC，不再为“可选QUIC”另造平行载体。实际owner显式指定DNS、关闭
+解析器fallback/默认address lookup/portmapper，Relay关闭或只用本地配置的custom
+集合；对端direct/relay数量与允许集合仍有界，不是任意HTTPS自动托底。身份与地址
+分离、健康连接复用、原生恢复及多来源发现已有接线，不重新定义Capability框架。
+没有新抓包、UDP封锁注入、跨地区识别率或全路径抗封锁结论；不因二进制/E2EE声称
+匿名、不可识别或所有路径被阻断仍可达。本轮不改协议头/端口/密码学或做流量伪装。
+
+**继续原交付主线：两平台隔离候选已实际生成并离线核验。**
+
+- 原打包器：`scripts/novovm-package-product-linux.ps1`，不重装、不启动服务，旧包不覆盖。
+- 程序来源固定为上述`ce1f54ea`；node实际Cargo feature包含`iroh-transport`，默认
+  NovoRUDP与原node/tick/执行/账本所有者不变。
+- Windows：`artifacts/product-overlay/novonet-ce1f54ea-windows-x86_64`，77个清单文件。
+  release-manifest SHA256：`6f9f222f738ca990636572ffcad6256b1cd294b082254912bfbd604f7081978f`。
+- Linux x86_64：`artifacts/product-overlay/novonet-ce1f54ea-linux-x86_64`，80个清单文件。
+  release-manifest SHA256：`d8375d86fa6d1ff50bc61c2f809776d6d7f7cb1e0259ce0832bd78403fd9ea5d`。
+- 两平台独立重核每份artifact长度/SHA256及CHECKSUMS映射，并用**复制进包内的**
+  novovmctl实际加载包内AOEM、manifest及固定hash，通过scalar/unified/mixed-batch
+  验签KAT和sign接口形状检查；没有生成用途钥或以源目录库代替包内库。
+- 两平台包内实际node `--service-contract`核对原existing入口与平台合同，
+  service_started/database_opened/custody_accessed均false。独立回执位于
+  `target/novonet-candidate-ce1f54ea-20261107/verified-{windows,linux}.json`，原构建及
+  核验日志同目录保存。源码审阅不当作抓包，KAT不当作新逐跳路径实际AOEM资产验收。
+
+本次只完成源码参考审阅、原候选构建和包内离线资格，未额外手动触发云端长测，
+不宣布该SHA完整CI、SCM生命周期、四机新包安装/真实中继资产、自动公众入网或TPS
+已经通过。B既有服务、C/D及手机均未操作。后继沿这些固定制品继续既定四机验收，
+不为了参考材料重新搭网络、执行器或长期测试链。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
