@@ -969,7 +969,7 @@ Packet/fragment ACK、Object DONE（完整有界接管）、业务接纳/执行/
 
 Windows/Linux原生命周期各3项真实AOEM store/native组件回归已通过：跨节点并发
 对象DONE及相同Session、重复/错接收者隔离、默认关闭、取消/过期、准入后排空和
-接收限额/观察淘汰。使用原本地夹具及品牌化组件签名，**不是四机实网或新ML-DSA
+接收限额/观察淘汰。使用原本地夹具及显式标记的ML-DSA-shaped组件签名provider，**不是四机实网或新ML-DSA
 制品已部署**。Windows另有原三高度业务默认关闭诊断回归1项通过，7项原底层观察
 回归通过（含竞争不阻塞、保留/淘汰、ACK与完成分层）；本地命令实际异步读取1项、
 CLI安全发布两平台各1项通过。codec/命令截断、图样篡改、任意输入拒绝已覆盖。
@@ -1012,8 +1012,46 @@ CLI all-target检查还发现原genesis夹具遗漏已有novonet_config_file，�
    消耗原配额及少量有界内存/公开元数据；不收测试对象的NOV费，不产生Business Receipt。
    回滚丢弃的是进程内未完成诊断，结果保持未知/取消，不替换或回退资产历史。
 
-当前仅实现与候选准备，不能据此执行上述步骤。Windows/Linux固定制品及最终原件
-哈希在构建完成后追加于本节；不额外手工触发云端完整CI，main自动检查不关闭。
+#### 本轮固定候选（已构建、未更新）
+
+源码固定`ddd89e8e05721a2ddb8a7ae9255405d395b39a46`，完整diff相对`adf3b64e`，
+SHA256 `d4eac1425009973fca8777e7db92d7c611ec5c8dbeabcf8f737e893cca7ef66e`。
+原`novovm-package-product-linux.ps1`在干净源码上分别构建十个原角色程序；
+node真实包含`iroh-transport`，未改变默认UDP优先或引入额外服务。
+源码提交后的本节制品登记属于文档/证据，不是后继源码已重建。
+
+包目录：`artifacts/product-overlay/novonet-probe-ddd89e8e-{windows,linux}-x86_64`。
+两平台原包内AOEM沿用082固定库，不修改正式SDK；独立再次核对全部文件、checksum
+索引、实际加载路径/哈希、scalar/unified/mixed-batch ML-DSA验证资格及原节点服务
+合同。Windows 77项411410349字节，Linux 80项792043567字节，均通过。
+实际包内ctl的prepare/cancel冒烟各通过，377字节固定文件，返回sent/object_done/
+business_receipt/node_started均false；没有读取原库、解封用途或启动服务。
+
+| 固定内容 SHA256 | Windows x86_64 | Linux x86_64 |
+| --- | --- | --- |
+| release-manifest.json | `badaf819c3a8cc03a0e4e200d45f9f37a15c1c34937b3482b3940b6491c83d1f` | `f9845e3bdaef188dc7c40db55f09de6bc75f37cb4cfbb3a3d02939af9aa4802e` |
+| novovm-node | `19883c8b95fc059ec7838ff0556284b1ddd434b7a72bfbe93e3f3410f458a0fc` | `603ab7f063274b03e1d81599a57fcb1765b626c04da6d9aef0df963aa24d39cb` |
+| novovm-native-client | `ec8cff28ef0065bdca9e0865c8ee63bcd038df4571bef30834c0be312ab45553` | `bd0354874d9e87d0c9950d26889cc008713a04ebf841bc9a97d7f19f27056fb0` |
+| novovmctl | `690556730d3dea8e5664a4b7d87db77c5bd073175a3f1a1635aa4576ce070f02` | `12ec773f4bbb9a8e82b51c08c5675b9868b0e682e704e14741a344e66a385006` |
+| 实际AOEM core | `1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50` | `d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33` |
+
+分发归档在A本地`target/novonet-probe-candidate-20261108/`，不混入源码Git：
+
+- `novonet-probe-ddd89e8e-windows-x86_64.zip`，150476966字节，SHA256
+  `9841a060ab37dc6fbca174ee91048f3e3e54d106957d6e9e0781e7fe44a9115e`。
+- `novonet-probe-ddd89e8e-linux-x86_64.tar.gz`，359196043字节，SHA256
+  `38f520b3110691cafdb690ff46cb56578c1a7d2682b98ae688b0c5e6dcc03a94`。
+
+本地最终network diagnostics两平台各7/7；Node lib/tests、Network lib/tests和
+ctl all-targets严格Clippy两平台通过，fmt/diff检查通过。原首错摘录、后继完整
+构建/定向日志、独立制品核验、完整源码diff随本节公开证据归档；没有protected、
+资产钥、carrier钥、数据库或原签票journal。未保留完整输出的前序网络组仅标摘要，
+不冒充完整原始stderr。此交付不包含实际四机对象、全局发现、资产Receipt、TPS或
+新云端CI通过结论。公开原件包：[27份代码差异/日志/制品核验](../artifacts/audit/validator-b-program-install-20261102/novonet-probe-ddd89e8e-evidence.zip)，
+65644字节，SHA256 `d0fd5820120db1bfd50caef818bad57ab49dd2ae5fc269ac1595bd7d7b0947cc`。
+Windows分发ZIP另读回77项压缩成员hash通过，Linux归档gzip CRC通过；两者不混称
+全部重新解包验证。当前节点仍082，**上述existing更新方案须另获批准才执行**。
+不额外手工触发云端完整CI，main自动检查不关闭。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
