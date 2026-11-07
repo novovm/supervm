@@ -540,6 +540,30 @@ jobs:
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_application_transport -- --test-threads=1
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal --test native_mailbox_session -- --test-threads=1
 
+      - name: NOVONET UDP-first per-peer fallback and retained reactor (component IO)
+        shell: bash
+        run: |
+          set -euo pipefail
+          native_tests=(cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-node --features iroh-transport --lib)
+          "${native_tests[@]}" -- --list > "$RUNNER_TEMP/novonet-node-tests.txt"
+          for name in \
+            native_pipeline::service::network::tests::retained_tick_reactor_reauthenticates_after_peer_owner_restart_without_reopening_native_owner \
+            native_pipeline::service::network::tests::retained_tick_reactor_uses_backup_only_when_requested_and_delivers_original_binary_messages \
+            native_pipeline::service::network::tests::retained_tick_reactor_rejects_wrong_chain_selection_before_native_handoff \
+            native_pipeline::consensus::native::tests::carrier_tests::original_native_channel_consumes_authenticated_iroh_carrier \
+            native_pipeline::consensus::native::tests::carrier_tests::original_udp_channel_adopts_real_iroh_fallback_without_losing_client_ingress
+          do
+            grep -Fxq "$name: test" "$RUNNER_TEMP/novonet-node-tests.txt"
+          done
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport --lib -- --list > "$RUNNER_TEMP/novonet-network-tests.txt"
+          grep -Fxq 'transport_binding::tests::carrier_feedback_tests::configured_carrier_rejects_wrong_identity_streams_and_returns_to_original_udp: test' "$RUNNER_TEMP/novonet-network-tests.txt"
+          grep -Fxq 'transport_binding::tests::carrier_feedback_tests::udp_owner_initial_bound_fallback_keeps_other_udp_peer_clients_and_global_budget: test' "$RUNNER_TEMP/novonet-network-tests.txt"
+          grep -Fxq 'transport_binding::tests::carrier_feedback_tests::failed_configured_carrier_retains_work_until_authenticated_replacement_or_original_expiry: test' "$RUNNER_TEMP/novonet-network-tests.txt"
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport --lib carrier_feedback_tests -- --test-threads=1
+          "${native_tests[@]}" carrier_tests -- --test-threads=1
+          "${native_tests[@]}" retained_tick_reactor_ -- --test-threads=1
+          cargo check --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-node --features iroh-transport --bin novovm-node
+
       - name: Native locator authenticity and temporal metadata regressions
         shell: bash
         run: |

@@ -381,6 +381,11 @@ impl NativeEndpoint {
         {
             return None;
         }
+        #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+        if self.peer_uses_reliable_carrier(index) {
+            self.retire_peer_pending_send(index, now).ok()?;
+        }
+        let peer = self.peers.get_mut(&index)?;
         let mut pending = peer.reconnect.take()?;
         let previous = peer.session.as_ref().map(NativeUdpSession::session_id);
         let current = pending.session.session_id();

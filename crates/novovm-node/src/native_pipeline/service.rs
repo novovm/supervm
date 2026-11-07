@@ -2,6 +2,8 @@
 //! Native NovoRUDP owns transport; no Relay controller or alternate chain head.
 pub mod client;
 pub mod config;
+#[cfg(feature = "iroh-transport")]
+pub mod network;
 pub mod rpc;
 #[cfg(test)]
 mod tests;
@@ -64,6 +66,8 @@ pub struct ResidentNode {
     pub pipeline: CandidatePipeline,
     pub template: BatchContext,
     pub validators: Arc<ValidatorSet>,
+    #[cfg(feature = "iroh-transport")]
+    transport_identity: TransportIdentity,
 }
 
 /// Local initial content only, not a chain head, signed vote or finality claim.
@@ -186,6 +190,8 @@ impl ResidentNode {
             },
             initial,
         )?;
+        #[cfg(feature = "iroh-transport")]
+        let transport_identity = identities.transport.clone();
         let result = start_native(
             &config,
             &pipeline,
@@ -201,6 +207,8 @@ impl ResidentNode {
                 pipeline,
                 template,
                 validators,
+                #[cfg(feature = "iroh-transport")]
+                transport_identity,
             }),
             Err(error) => {
                 let drain = pipeline.shutdown();
@@ -223,6 +231,13 @@ impl ResidentNode {
             crate::native_pipeline::profile::Phase::NativeAssembly,
         );
         self.controller.poll(&self.pipeline, now)
+    }
+
+    /// Share the already qualified purpose signer with NOVONET. No private
+    /// bytes, repeated custody read or second crypto runtime is introduced.
+    #[cfg(feature = "iroh-transport")]
+    pub fn transport_identity(&self) -> TransportIdentity {
+        self.transport_identity.clone()
     }
 
     /// Administrative drain. Always drains pipeline even if network shutdown
@@ -562,6 +577,41 @@ fn start_native(
             inflight: 2,
         },
     )?;
+    let domain = MessageDomain {
+        chain_id: template.chain_id,
+        genesis: template.genesis_config_commitment,
+        protocol: template.protocol_commitment,
+        validators: validators.clone(),
+    };
+    // Control evidence does not grow with transaction bodies. Keep its
+    // original lane ceiling; body/ingress lanes share the larger policy.
+    let lanes = std::array::from_fn(|lane| {
+        native_lane_limits(if lane == 0 {
+            512 * 1024
+        } else {
+            codec.message_bytes
+        })
+    });
+    let policy = NativeSendPolicy {
+        window: NovoRudpWindowConfig {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+            ..Default::default()
+        },
+        pacing: NovoRudpPacingProfile {
+            packet_copies: 1,
+            tail_packet_copies: 1,
+            batch_size: 32,
+            batch_pause_ms: 0,
+            ack_wait_ms: 10,
+            no_progress_backoff: false,
+        },
+        ttl: Duration::from_secs(30),
+    };
     let mut channel = NativeChannel::from_transport(
         transport,
         identities.transport,
@@ -577,42 +627,10 @@ fn start_native(
             })
             .collect::<Result<Vec<_>>>()?,
         config.native_client_limit,
-        MessageDomain {
-            chain_id: template.chain_id,
-            genesis: template.genesis_config_commitment,
-            protocol: template.protocol_commitment,
-            validators: validators.clone(),
-        },
+        domain,
         codec,
-        // Control evidence does not grow with transaction bodies. Keep its
-        // original lane ceiling; body/ingress lanes share the larger policy.
-        std::array::from_fn(|lane| {
-            native_lane_limits(if lane == 0 {
-                512 * 1024
-            } else {
-                codec.message_bytes
-            })
-        }),
-        NativeSendPolicy {
-            window: NovoRudpWindowConfig {
-                packet_copies: 1,
-                tail_packet_copies: 1,
-                batch_size: 32,
-                batch_pause_ms: 0,
-                ack_wait_ms: 10,
-                no_progress_backoff: false,
-                ..Default::default()
-            },
-            pacing: NovoRudpPacingProfile {
-                packet_copies: 1,
-                tail_packet_copies: 1,
-                batch_size: 32,
-                batch_pause_ms: 0,
-                ack_wait_ms: 10,
-                no_progress_backoff: false,
-            },
-            ttl: Duration::from_secs(30),
-        },
+        lanes,
+        policy,
     )?;
     if config.learn_authenticated_peer_routes {
         channel.enable_configured_route_learning_v1()?;

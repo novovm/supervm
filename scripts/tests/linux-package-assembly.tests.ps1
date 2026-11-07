@@ -203,6 +203,10 @@ foreach ($bin in @('novovm-rendezvous-service', 'supervm-relay')) {
   if ($contract.package -ne 'novovm-relay' -or $contract.features -notcontains 'iroh-transport' -or
       $contract.features -notcontains 'tls-transport') { throw "Communication feature contract missing: $bin" }
 }
+$nodeContract = @($manifest.build_contracts | Where-Object binary -eq 'novovm-node')[0]
+if ($nodeContract.package -ne 'novovm-node' -or $nodeContract.features -notcontains 'iroh-transport') {
+  throw 'Original node package must include its explicit NOVONET fallback feature'
+}
 if (@($manifest.build_contracts | Where-Object binary -eq 'novovmctl')[0].package -ne 'novovmctl') {
   throw 'Existing management binary must be built from its original crate'
 }

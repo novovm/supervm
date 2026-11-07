@@ -8,8 +8,10 @@ pub use super::message_evidence::{MessageDomain, VerifiedEvidence};
 use super::{message_evidence, transport};
 use crate::native_pipeline::profile::{self, Phase};
 use anyhow::{ensure, Context, Result};
+#[cfg(any(test, feature = "iroh-transport"))]
+use novovm_network::novorudp::endpoint::NativeEndpoint;
 #[cfg(test)]
-use novovm_network::novorudp::{endpoint::NativeEndpoint, object_link::NativeObjectLink};
+use novovm_network::novorudp::object_link::NativeObjectLink;
 use novovm_network::{
     novorudp::{
         diagnostics::{transfer_tag_v1, NativeTransferDiagnosticsV1},
@@ -181,9 +183,6 @@ impl IoProgressHint {
     }
 }
 
-#[cfg(not(test))]
-type ChannelLink = AuthenticatedUdpIngressV1;
-
 pub struct NativeChannel {
     link: ChannelLink,
     domain: MessageDomain,
@@ -269,7 +268,6 @@ impl NativeChannel {
         if link.peer_count() != 0 {
             link.enable_configured_reconnect_v1()?;
         }
-        #[cfg(test)]
         let link = ChannelLink::Original(link);
         Ok(Self::with_link(
             link,
@@ -279,6 +277,59 @@ impl NativeChannel {
             applications,
             control_send,
         ))
+    }
+
+    /// The same native message/evidence/object pipeline over NOVONET's
+    /// exporter-bound carriers. The caller retains the original carrier pumps.
+    /// This assembly seam does not select routes; the default UDP owner uses
+    /// per-peer replacement rather than restarting as a carrier-only node.
+    #[cfg(all(test, feature = "iroh-transport"))]
+    pub fn from_bound_carriers(
+        endpoint: NativeEndpoint,
+        expected_local_key: &[u8],
+        domain: MessageDomain,
+        bindings: ValidatorTransportBindings,
+        codec: transport::DecodeLimits,
+        lanes: [LaneLimits; 3],
+        policy: NativeSendPolicy,
+    ) -> Result<Self> {
+        ensure!(
+            endpoint.local_identity() == expected_local_key,
+            "carrier local identity differs from protected node transport identity"
+        );
+        endpoint.validate_bound_carriers_v1(&STREAMS)?;
+        let control_send = lanes[0].send.clone();
+        let configs = Self::lane_configs(&domain, codec, lanes, false)?;
+        bindings.validate_for(&domain.validators)?;
+        let local =
+            bindings.validator_for_peer(&peer_id_from_mldsa65_public_key_v1(expected_local_key))?;
+        let mut seen = BTreeSet::new();
+        for peer in endpoint.peer_indices() {
+            let remote = bindings.validator_for_peer(endpoint.peer_id(peer)?)?;
+            ensure!(
+                remote != local && seen.insert(remote),
+                "duplicate or local native validator route"
+            );
+        }
+        Ok(Self::with_link(
+            ChannelLink::Objects(NativeObjectLink::new(endpoint, configs, policy)?),
+            domain,
+            bindings,
+            codec,
+            false,
+            control_send,
+        ))
+    }
+
+    /// Streams selected by the original native protocol, not peer-supplied IDs.
+    #[cfg(feature = "iroh-transport")]
+    pub fn carrier_streams() -> Vec<u64> {
+        // A configured validator originally shares this owner's application
+        // lanes as well. Preserve that contract on replacement while open UDP
+        // clients retain their separate, application-only stream restriction.
+        let mut streams = STREAMS.to_vec();
+        streams.extend([APPLICATION_STREAM, novovm_protocol::native_query::STREAM]);
+        streams
     }
 
     #[cfg(test)]
@@ -302,7 +353,7 @@ impl NativeChannel {
             bindings.validator_for_peer(endpoint.peer_id(peer)?)?;
         }
         Ok(Self::with_link(
-            ChannelLink::HistoricalFixture(NativeObjectLink::new(endpoint, configs, policy)?),
+            ChannelLink::Objects(NativeObjectLink::new(endpoint, configs, policy)?),
             domain,
             bindings,
             codec,
@@ -419,6 +470,38 @@ impl NativeChannel {
     pub fn session_id(&self, peer: usize) -> Option<[u8; 16]> {
         self.link.session_id(peer)
     }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_uses_bound_carrier(&self, peer: usize) -> Result<bool> {
+        let route = match &self.link {
+            ChannelLink::Original(link) => link.peer_route(peer)?,
+            #[cfg(test)]
+            ChannelLink::Objects(link) => link.peer_route(peer)?,
+        };
+        Ok(matches!(
+            route,
+            novovm_network::novorudp::carrier::NativeRoute::Carrier(_)
+        ))
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_transport_key(&self, peer: usize) -> Result<Vec<u8>> {
+        let id = self.bindings.validator_for_peer(self.link.peer_id(peer)?)?;
+        let validator = self
+            .domain
+            .validators
+            .members()
+            .iter()
+            .find(|validator| validator.id() == id)
+            .context("unknown configured validator")?;
+        self.bindings.transport_public_key(validator.public_key())
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_last_authenticated(&self, peer: usize) -> Option<Instant> {
+        match &self.link {
+            ChannelLink::Original(link) => link.peer_last_authenticated(peer),
+            #[cfg(test)]
+            ChannelLink::Objects(link) => link.peer_last_authenticated(peer),
+        }
+    }
 
     /// Full-body work, not the consensus tick. Reuses the reviewed canonical
     /// message and evidence contracts; only the fragment profile is native.
@@ -531,6 +614,38 @@ impl NativeChannel {
             }
         }
         Ok(admitted)
+    }
+    /// Replacement cannot bypass object generation invalidation or fabricate
+    /// completion. The network owner must first authenticate the new carrier.
+    #[cfg(feature = "iroh-transport")]
+    pub fn replace_bound_carrier_v1(
+        &mut self,
+        peer: usize,
+        replacement: NativeEndpoint,
+        now: Instant,
+    ) -> Result<NativeLinkPoll> {
+        let report = match &mut self.link {
+            ChannelLink::Original(link) => link.replace_bound_carrier_v1(peer, replacement, now)?,
+            #[cfg(test)]
+            ChannelLink::Objects(link) => link.replace_bound_carrier_v1(peer, replacement, now)?,
+        };
+        self.io_progress.observe(&report);
+        self.poll_query_deliveries(report, now)
+    }
+    /// A bounded probe does not interrupt a healthy fallback. Only the original
+    /// authenticated UDP handshake can activate the preferred native route.
+    #[cfg(feature = "iroh-transport")]
+    pub fn request_udp_recovery_v1(
+        &mut self,
+        peer: usize,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<()> {
+        match &mut self.link {
+            ChannelLink::Original(link) => link.request_udp_recovery_v1(peer, wall_ms, now),
+            #[cfg(test)]
+            ChannelLink::Objects(link) => link.request_udp_recovery_v1(peer, wall_ms, now),
+        }
     }
     pub fn poll_io(
         &mut self,
@@ -722,44 +837,47 @@ impl NativeChannel {
     }
 }
 
-/// Only old unit fixtures may own a standalone NativeObjectLink. Production
-/// uses the original UdpTransport owner directly, without this adapter enum.
-#[cfg(test)]
+/// Both entrypoints retain the SAME object owner and message/evidence consumer.
 enum ChannelLink {
     Original(AuthenticatedUdpIngressV1),
-    HistoricalFixture(NativeObjectLink),
+    #[cfg(test)]
+    Objects(NativeObjectLink),
 }
-#[cfg(test)]
 impl ChannelLink {
     fn enable_configured_route_learning_v1(&mut self) -> Result<()> {
         match self {
             Self::Original(link) => link.enable_configured_route_learning_v1(),
-            Self::HistoricalFixture(link) => link.enable_configured_route_learning_v1(),
+            #[cfg(test)]
+            Self::Objects(link) => link.enable_configured_route_learning_v1(),
         }
     }
 
     fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
         match self {
             Self::Original(link) => link.set_diagnostics_v1(observer),
-            Self::HistoricalFixture(link) => link.set_diagnostics_v1(observer),
+            #[cfg(test)]
+            Self::Objects(link) => link.set_diagnostics_v1(observer),
         }
     }
     fn peer_count(&self) -> usize {
         match self {
             Self::Original(link) => link.peer_count(),
-            Self::HistoricalFixture(link) => link.peer_count(),
+            #[cfg(test)]
+            Self::Objects(link) => link.peer_count(),
         }
     }
     fn peer_id(&self, peer: usize) -> Result<&str> {
         match self {
             Self::Original(link) => link.peer_id(peer),
-            Self::HistoricalFixture(link) => link.peer_id(peer),
+            #[cfg(test)]
+            Self::Objects(link) => link.peer_id(peer),
         }
     }
     fn session_id(&self, peer: usize) -> Option<[u8; 16]> {
         match self {
             Self::Original(link) => link.session_id(peer),
-            Self::HistoricalFixture(link) => link.session_id(peer),
+            #[cfg(test)]
+            Self::Objects(link) => link.session_id(peer),
         }
     }
     fn try_send(
@@ -771,7 +889,8 @@ impl ChannelLink {
     ) -> Result<bool> {
         match self {
             Self::Original(link) => link.try_send(peer, stream, body, now),
-            Self::HistoricalFixture(link) => link.try_send(peer, stream, body, now),
+            #[cfg(test)]
+            Self::Objects(link) => link.try_send(peer, stream, body, now),
         }
     }
     fn try_send_until(
@@ -784,13 +903,15 @@ impl ChannelLink {
     ) -> Result<bool> {
         match self {
             Self::Original(link) => link.try_send_until(peer, stream, body, now, deadline),
-            Self::HistoricalFixture(link) => link.try_send_until(peer, stream, body, now, deadline),
+            #[cfg(test)]
+            Self::Objects(link) => link.try_send_until(peer, stream, body, now, deadline),
         }
     }
     fn poll(&mut self, wall_ms: u64, now: Instant, quantum: usize) -> Result<NativeUdpPollV1> {
         match self {
             Self::Original(link) => link.poll(wall_ms, now, quantum),
-            Self::HistoricalFixture(link) => Ok(NativeUdpPollV1 {
+            #[cfg(test)]
+            Self::Objects(link) => Ok(NativeUdpPollV1 {
                 native: link.poll(wall_ms, now, quantum)?,
                 protocol: Vec::new(),
                 rejected_protocol: 0,
@@ -808,10 +929,11 @@ impl ChannelLink {
     )> {
         match self {
             Self::Original(link) => link.poll_complete_with_progress(stream, now, quantum),
-            Self::HistoricalFixture(link) => link.poll_complete_with_progress(stream, now, quantum),
+            #[cfg(test)]
+            Self::Objects(link) => link.poll_complete_with_progress(stream, now, quantum),
         }
     }
 }
 
 #[cfg(test)]
-pub(super) mod tests;
+pub(crate) mod tests;

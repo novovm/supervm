@@ -17,6 +17,9 @@ use std::{net::UdpSocket, time::Duration};
 #[path = "../native_recovery_namespace_tests.rs"]
 mod recovery_namespace;
 
+#[cfg(feature = "iroh-transport")]
+mod carrier_tests;
+
 #[test]
 fn io_hint_ignores_duplicate_rejected_and_stalled_io() {
     let mut hint = IoProgressHint::default();
@@ -465,7 +468,7 @@ type SeparatedMaterial = (
     VoteContext,
 );
 
-fn separated_material() -> Result<SeparatedMaterial> {
+pub(crate) fn separated_material() -> Result<SeparatedMaterial> {
     let signing = (101..105)
         .map(|seed| FixtureSigningKey::from_bytes(&[seed; 32]))
         .collect::<Vec<_>>();
@@ -504,7 +507,7 @@ fn separated_material() -> Result<SeparatedMaterial> {
     ))
 }
 
-fn split_bindings(
+pub(crate) fn split_bindings(
     domain: &MessageDomain,
     signing: &[FixtureSigningKey],
     transport: &[TransportIdentity],
@@ -520,7 +523,7 @@ fn split_bindings(
     )
 }
 
-fn split_lanes() -> [LaneLimits; 3] {
+pub(crate) fn split_lanes() -> [LaneLimits; 3] {
     std::array::from_fn(|_| LaneLimits {
         receive: ReassemblyLimits {
             max_message_bytes: codec().message_bytes,

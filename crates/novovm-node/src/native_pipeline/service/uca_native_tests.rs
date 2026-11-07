@@ -594,6 +594,7 @@ fn run_native_uca_service_fixture_with(
                     .collect(),
                 native_client_limit: 2,
                 learn_authenticated_peer_routes: false,
+                novonet_config_file: None,
                 genesis: genesis.clone(),
                 uca_initialization: Some(material.clone()),
                 workers: 2,

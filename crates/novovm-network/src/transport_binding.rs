@@ -671,6 +671,17 @@ impl BoundSecureChannelV1 {
         }
     }
 
+    /// The complete native identity authenticated by this channel, not the
+    /// carrier's endpoint key or a caller-provided route label.
+    #[must_use]
+    pub fn remote_identity_public_key(&self) -> &[u8] {
+        if self.initiator {
+            &self.context.responder_identity_public_key
+        } else {
+            &self.context.initiator_identity_public_key
+        }
+    }
+
     #[must_use]
     pub fn local_peer_id(&self) -> &str {
         self.channel.local_peer_id()
@@ -1087,6 +1098,8 @@ mod tests {
         right.verify_transport_binding(&binding(false, 7)).unwrap();
         assert_eq!(left.local_identity_public_key(), public(1));
         assert_eq!(right.local_identity_public_key(), public(2));
+        assert_eq!(left.remote_identity_public_key(), public(2));
+        assert_eq!(right.remote_identity_public_key(), public(1));
         assert!(left.verify_transport_binding(&binding(true, 8)).is_err());
         assert!(left.verify_transport_binding(&binding(false, 7)).is_err());
         let different_peer = VerifiedTransportBinding::from_authenticated_transport(

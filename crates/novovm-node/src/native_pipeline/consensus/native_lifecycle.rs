@@ -320,6 +320,36 @@ impl NativeLifecycle {
     pub fn io_progress_generation(&self) -> u64 {
         self.channel.io_progress_generation()
     }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_count(&self) -> usize {
+        self.peers.len()
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_session_id(&self, peer: usize) -> Option<[u8; 16]> {
+        self.channel.session_id(peer)
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_uses_bound_carrier(&self, peer: usize) -> Result<bool> {
+        ensure!(peer < self.peers.len(), "not a configured validator peer");
+        self.channel.peer_uses_bound_carrier(peer)
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_transport_key(&self, peer: usize) -> Result<Vec<u8>> {
+        ensure!(peer < self.peers.len(), "not a configured validator peer");
+        self.channel.peer_transport_key(peer)
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_last_authenticated(&self, peer: usize) -> Option<Instant> {
+        self.channel.peer_last_authenticated(peer)
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_pending_deliveries(&self, peer: usize) -> Result<usize> {
+        Ok(self
+            .deliveries
+            .get(peer)
+            .context("unknown configured peer")?
+            .len())
+    }
     pub(crate) fn send_poll_evidence(
         &self,
     ) -> Option<novovm_network::novorudp::diagnostics::NativeLinkPollEvidenceV1> {
@@ -368,8 +398,44 @@ impl NativeLifecycle {
         }
         result
     }
+    /// A NOVONET route change keeps the same lifecycle, journal and immutable
+    /// delivery obligations. Authentication failure leaves the old route intact.
+    #[cfg(feature = "iroh-transport")]
+    pub fn replace_bound_carrier_v1(
+        &mut self,
+        peer: usize,
+        replacement: novovm_network::novorudp::endpoint::NativeEndpoint,
+        now: Instant,
+    ) -> Result<()> {
+        ensure!(!self.is_frozen(), "native lifecycle frozen");
+        let report = self
+            .channel
+            .replace_bound_carrier_v1(peer, replacement, now)?;
+        let result = self.accept_io_report(report, now);
+        if result.is_err() {
+            self.frozen = true;
+        }
+        result
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn request_udp_recovery_v1(
+        &mut self,
+        peer: usize,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<()> {
+        ensure!(!self.is_frozen(), "native lifecycle frozen");
+        self.channel.request_udp_recovery_v1(peer, wall_ms, now)
+    }
     fn io_inner(&mut self, wall_ms: u64, now: Instant) -> Result<()> {
         let report = self.channel.poll_io(wall_ms, now, 64)?;
+        self.accept_io_report(report, now)
+    }
+    fn accept_io_report(
+        &mut self,
+        report: novovm_network::novorudp::object_link::NativeLinkPoll,
+        now: Instant,
+    ) -> Result<()> {
         self.rejected_messages += report.rejected as u64;
         for completed in report.completed {
             let queue = self

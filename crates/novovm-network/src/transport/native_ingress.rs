@@ -154,6 +154,12 @@ impl AuthenticatedUdpIngressV1 {
     pub fn session_id(&self, peer: usize) -> Option<[u8; 16]> {
         self.link.session_id(peer)
     }
+    pub fn peer_route(&self, peer: usize) -> Result<crate::novorudp::carrier::NativeRoute> {
+        self.link.peer_route(peer)
+    }
+    pub fn peer_last_authenticated(&self, peer: usize) -> Option<Instant> {
+        self.link.peer_last_authenticated(peer)
+    }
     pub fn peer_id(&self, peer: usize) -> Result<&str> {
         self.link.peer_id(peer)
     }
@@ -169,6 +175,26 @@ impl AuthenticatedUdpIngressV1 {
     /// fresh-secret confirmation. Open clients never inherit validator routes.
     pub fn enable_configured_route_learning_v1(&mut self) -> Result<()> {
         self.link.enable_configured_route_learning_v1()
+    }
+    /// Attach one freshly Finished-verified fallback to the SAME configured
+    /// peer, retaining this UDP receiver, client admission and global quotas.
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub fn replace_bound_carrier_v1(
+        &mut self,
+        peer: usize,
+        replacement: NativeEndpoint,
+        now: Instant,
+    ) -> Result<NativeLinkPoll> {
+        self.link.replace_bound_carrier_v1(peer, replacement, now)
+    }
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub fn request_udp_recovery_v1(
+        &mut self,
+        peer: usize,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<()> {
+        self.link.request_udp_recovery_v1(peer, wall_ms, now)
     }
     pub fn send_protocol(&self, peer: NodeId, message: &ProtocolMessage) -> Result<()> {
         ensure!(

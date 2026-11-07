@@ -207,7 +207,10 @@ try {
   # One original package, using the real crate/feature contracts. These are
   # service adapters, not another network, account or execution implementation.
   $buildContracts = @($nodeBins | ForEach-Object {
-    [PSCustomObject]@{ package = 'novovm-node'; binary = $_; features = @(); default_features = $true }
+    # Compile the qualified backup into the original node; configuration still
+    # defaults to UDP. Other tools retain their own existing feature contracts.
+    $nodeFeatures = if ($_ -eq 'novovm-node') { @('iroh-transport') } else { @() }
+    [PSCustomObject]@{ package = 'novovm-node'; binary = $_; features = @($nodeFeatures); default_features = $true }
   }) + @(
     [PSCustomObject]@{ package = 'novovm-relay'; binary = 'novovm-rendezvous-service'; features = @('iroh-transport', 'tls-transport'); default_features = $true },
     [PSCustomObject]@{ package = 'novovm-relay'; binary = 'supervm-relay'; features = @('iroh-transport', 'tls-transport'); default_features = $true },

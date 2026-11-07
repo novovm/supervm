@@ -145,6 +145,94 @@ DeviceReceipt、寄存SignedContent、附件对象/manifest和地址声明均有
 迁接ML-DSA须保留这些复用、原消息/用途/历史及密码边界；当前无手机ML-DSA时延/
 字节/CPU/能耗对照，不承诺无体验变化。C暂不据A未冻结代码升级v110或清身份。
 
+### 7. 2026-11-07 A继续整合：UDP优先、逐对端认证备用与原账换代
+
+输入为A本地main `8ee31340`，C交接仍按第5节固定版本；后继在本地main累计，尚未冻结可交付候选或推送，
+不要求C读取未提交实现或更新手机。**NOVOCHAT仓库/App/JNI和保留v110本轮未修改。**
+
+共享网络沿现有`NativeCarrierPump -> NativeEndpoint -> NativeObjectLink`增加
+`NativeEndpoint::join_bound_carriers_v1`：只消费原已完成载体绑定和Finished的fresh
+会话，同一完整本地身份、不同远端身份及真实载体路由，进入一个对象owner；
+所有连接共享原lane总消息/字节预算。没有新握手、网络线程、转发daemon或JSON热载荷。
+缺少所需stream、重复身份、错误本地身份、已开始会话不能冒充合法装配。
+
+生产主线继续是原`UdpTransport -> AuthenticatedUdpIngress -> NativeChannel`，
+**默认NovoRUDP，Iroh仅合格备用**。新增`replace_bound_carrier_v1`逐对端消费
+完整Finished endpoint，完整ML-DSA钥、原peer索引和lane集合不变，不能以Iroh端点
+key代替原传输身份。原UDP收包/客户端准入/批量发送保持原处，所有路径共用原对象
+与wire预算；`novovm-node/iroh-transport`显式消费既有共享feature，不改变默认入口。
+
+`NativeLifecycle`直接消费原ObjectLink换代报告，旧发送返回`SessionReplaced`，
+不会记送达；保留同一份不可变业务消息，pipeline/journal/AOEM不重开。旧deferred
+write的reservation沿原取消路径结算，未知结果保守计账，不发明实际发送字节。
+`request_udp_recovery_v1`仅请求原配置UDP重新握手；未完成认证前仍使用备用，
+不是调用成功即宣布恢复。已删除本轮尚未提交的全对端carrier-only服务装配草稿，
+没有将其保留为另一个产品启动模式或要求关闭客户端。测试专用carrier构造保留，
+不作为部署入口。本次未切现场包、主链或AOEM。
+
+原`novovm-node` tick已接入`service::network::Driver`，仍先构造原UDP节点；
+`ResidentConfig.novonet_config_file`明确配置后才启用同tick中的原Iroh owner。
+单一保留current-thread runtime驱动原认证/Finished/NativeCarrierPump，无新增网络线程。
+原签名目录/ServiceLeaseBook/RelayCandidatePool复用，完整原传输钥与固定chain/genesis/
+protocol二进制选择共同核验后才换代；不借用信箱能力、签票权或资产钥。
+每peer原UDP有保留待发且收件停滞后才请求备用，健康UDP不为凑备用会话而改路；
+备用期间以原UDP握手试恢复，实际认证通过后原UDP接管。对端owner重启的新签名地址
+允许重新拨号、认证和原对象交付，不重开本地账本。原选路退避/错误记录继续有界。
+
+**发现范围尚有限**：目前自动刷新的是本地公开签名locator输入，不是跨机器自动传播
+的发现目录；序号/新鲜度、固定peer钥映射不能代替公开分布式发现。记录每40秒发布、
+120秒有效，需要继续接合原发现RPC的实际分发，不能靠Git不断拷贝短租约冒充自动发现。
+真实原生多跳仍未接通，状态明确输出`global_auto_discovery=false`和
+`native_multihop_accepted=false`。本机IO、源码接线及合成打包不构成SCM或四机上线验收。
+
+本地定向10项通过（含既有carrier回归），覆盖混合UDP对端与真实开放UDP客户端、
+65片、共享预算、错误身份/lane拒绝、换代预算退休及原UDP重认证。恢复后实际
+双向收件/DONE及重复维护不重置握手的加强断言已重测通过。另有两项实际localhost Iroh
+测试通过：原二进制通道往返，以及已认证UDP通道逐peer切入Iroh且保留客户端入口。
+这些使用品牌化密码组件夹具，不是实际AOEM/PQ、手机、物理多机或性能签收。
+全network默认并发结果1257通过/20失败/13忽略，失败记录保留，包含共享endpoint
+准入耗尽及进程全局计数相互干扰；原生产限额未提高。同network完整串行结果为
+1280通过/0失败/13忽略，不覆盖尚未执行的实机/移动场景。
+
+原tick保留reactor的三项实际本机IO测试通过：无需求时不替代健康UDP；请求备用后
+原二进制消息收件/DONE；错误chain在handoff前拒绝；以及对端owner退出重建后以
+新会话继续原NativeChannel双向交付。它们使用组件密码夹具，不替实际AOEM资格。
+Windows相同feature下原`native_pipeline`分组581通过/151忽略，Linux分组580通过/
+150忽略；实际AOEM四原服务的
+认证地址学习、转账/重花、账户权限、费用及冷恢复定向用例通过。这项实际AOEM用例
+仍走UDP，不冒充备用链路的完整资产验收。网络/node测试目标及实际node bin严格
+Clippy通过。两平台原打包器合成装配、34项安全断言和构建失败传播检查通过；
+合成制品不发布，node实际build合同现明确包含`iroh-transport`，无配置仍默认UDP。
+
+另保留`node-full-feature-regressions.log`：将全部node测试混在同一默认启动环境的
+初次本地运行出现失败且未完成，已停止该确切测试进程；直接复查一个原始失败表明
+它要求原CI专用Host兼容测试环境，未据此归因其余全部失败，也未修改生产执行设置。
+后续沿原CI分组显式配置实际库与manifest验证，不把该失败改写为全套通过。
+日志在`target/novonet-route-integration-20261107/`；当前没有新云CI或实机部署结论。
+
+随后审查发现备用断线时仍有待发数据的窗口：原ObjectLink将终止载体IO错误向上返回，
+配置型节点会冻结，空队列后才重启的测试未覆盖它。新增反例在修正前返回
+`native carrier IO failed: connection aborted`，修正后10项通过。现在只有明确启用
+configured reconnect的已绑定对端，可保留未知发送直到原TTL或新的认证会话；错误计数
+保留，不推进发送游标、不伪造收件或新session。反馈/过期取消仍沿原reservation结算，
+独立可靠流没有该重连owner时终止错误继续拒绝；签名/AEAD/协议错误不按IO吞掉。
+真实Iroh重启用例也加强为带待发数据断开：原通道继续poll、记录失败，认证替换后恰好
+一次`SessionReplaced`，然后合法新消息双向收件/DONE通过。它不证明业务已自动重放。
+新增修正后的日志使用`*-reconnect-final-*`独立名字，不覆盖先前的成功或失败证据。
+该修正后的Windows/Linux分组、实际AOEM定向恢复、严格Clippy和默认UDP配置检查已
+分别重验通过，旧结果不冒充新源码。两平台另有原SDK消费者回归：
+`native_application_transport`各3项、`native_mailbox_session`各12项通过（组件密码、
+实际本机IO，不是手机v110已迁移）。两平台实际`novovm-node`带`iroh-transport`构建
+成功，`--service-contract`确认原tick及existing；Windows支持SCM、Linux如实不支持
+SCM，三个副作用字段均false。这只是debug可执行文件的离线入口检查，不是服务启停、
+候选发布、四机安装或启动验收。状态里的bound数量也只是已装配路由，不是对端在线、
+业务送达或最终确认的证明。本轮NOVOCHAT/App/SDK发布依然未变，C无需操作。
+
+审计另核实：原`relay/data_plane.rs`的Direct分支直接构造`delivered=true`，
+MultiHop调用内存`forward_multihop`。这些是现有smoke模型，不是可靠的真实逐跳
+交付证据；不能接入主网后沿用其成功口径。产品relay的认证来源绑定不能删除来
+让转发“通过”。后续应沿现有选路、认证和relay所有者补真实执行，不另造通讯产品。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

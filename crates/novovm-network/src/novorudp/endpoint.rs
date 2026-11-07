@@ -176,6 +176,10 @@ pub struct NativeEndpoint {
     local_key: Vec<u8>,
     #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
     identity_verifier: TransportIdentity,
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    bound_carriers: Option<Arc<carriers::BoundCarrierSet>>,
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    bound_keys: BTreeMap<usize, Vec<u8>>,
     peers: BTreeMap<usize, Peer>,
     next_peer: usize,
     // Up to MAX_WAITING_CLIENTS fully verified admissions wait, in arrival
@@ -191,6 +195,9 @@ pub struct NativeEndpoint {
     traffic_started: bool,
     continuation: handshake_continuation::Receiver,
 }
+
+#[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+mod carriers;
 
 impl NativeEndpoint {
     /// Adopt a Finished-verified channel on its original authenticated carrier.
@@ -211,21 +218,26 @@ impl NativeEndpoint {
             !streams.is_empty()
                 && streams.len() <= 16
                 && !streams.contains(&0)
-                && !streams.contains(&u64::MAX),
+                && !streams.contains(&u64::MAX)
+                && streams.iter().copied().collect::<BTreeSet<_>>().len() == streams.len(),
             "invalid bound native streams"
         );
         channel.verify_transport_binding(binding)?;
         let local_key = channel.local_identity_public_key().to_vec();
+        let remote_key = channel.remote_identity_public_key().to_vec();
         let identity_verifier = channel.identity_verifier().clone();
         let id: Arc<str> = channel.remote_peer_id().into();
         let route =
             NativeRoute::Carrier(super::carrier::VerifiedCarrierRoute::from_binding(binding));
         let session = NativeUdpSession::from_bound_channel(channel, binding)?;
+        let carriers = Arc::new(carriers::BoundCarrierSet::new(vec![(route, io)]));
         Ok(Self {
-            io,
+            io: carriers.clone(),
             receive_scratch: vec![0; 65536],
             local_key,
             identity_verifier,
+            bound_carriers: Some(carriers),
+            bound_keys: BTreeMap::from([(0, remote_key)]),
             peers: BTreeMap::from([(
                 0,
                 Peer {
@@ -292,6 +304,10 @@ impl NativeEndpoint {
             local_key: identity.public_key().to_vec(),
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             identity_verifier: identity.clone(),
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            bound_carriers: None,
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            bound_keys: BTreeMap::new(),
             peers: BTreeMap::new(),
             next_peer: 0,
             waiting_clients: VecDeque::new(),
@@ -399,6 +415,10 @@ impl NativeEndpoint {
             local_key: identity.public_key().to_vec(),
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             identity_verifier: identity.clone(),
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            bound_carriers: None,
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            bound_keys: BTreeMap::new(),
             next_peer: owned.len(),
             waiting_clients: VecDeque::new(),
             peers: owned,
@@ -558,6 +578,10 @@ impl NativeEndpoint {
             local_key,
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             identity_verifier: identity.clone(),
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            bound_carriers: None,
+            #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+            bound_keys: BTreeMap::new(),
             next_peer: peers.len(),
             waiting_clients: VecDeque::new(),
             peers,
@@ -829,7 +853,12 @@ impl NativeEndpoint {
         );
         self.sources
             .iter()
-            .find_map(|(route, peer)| (*peer == index).then_some(*route))
+            .find_map(|(route, peer)| {
+                (*peer == index
+                    && matches!(route, NativeRoute::Carrier(_))
+                        == self.peer_uses_reliable_carrier(index))
+                .then_some(*route)
+            })
             .context("authenticated peer lost its route")
     }
     pub fn session_id(&self, index: usize) -> Option<[u8; 16]> {
@@ -838,6 +867,12 @@ impl NativeEndpoint {
             .session
             .as_ref()
             .map(NativeUdpSession::session_id)
+    }
+    /// Last authenticated input, not an advertised reachability promise.
+    pub fn peer_last_authenticated(&self, index: usize) -> Option<Instant> {
+        let peer = self.peers.get(&index)?;
+        peer.session.as_ref()?;
+        Some(peer.last_authenticated)
     }
     pub fn expired_handshakes(&self, now: Instant) -> usize {
         self.peers
@@ -918,7 +953,7 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
         quantum: usize,
-        receiver: F,
+        mut receiver: F,
     ) -> Result<NativePoll>
     where
         F: FnMut(&mut [u8]) -> std::io::Result<Option<ReceivedDatagram>>,
@@ -931,7 +966,23 @@ impl NativeEndpoint {
         // borrow this owner. Restore on EVERY Result path, including I/O errors.
         // Exclusive &mut self prevents a second safe caller from reentering.
         let mut wire = std::mem::take(&mut self.receive_scratch);
-        let result = self.poll_with_scratch(wall_ms, now, quantum, receiver, &mut wire);
+        // The transport still owns UDP reception/draining. Already bound
+        // carrier frames share this same bounded authentication quantum.
+        #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+        let carriers = self.configured.as_ref().and(self.bound_carriers.clone());
+        let result = self.poll_with_scratch(
+            wall_ms,
+            now,
+            quantum,
+            |wire| {
+                #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+                if let Some(carriers) = &carriers {
+                    return carriers.receive_with(wire, &mut receiver);
+                }
+                receiver(wire)
+            },
+            &mut wire,
+        );
         self.receive_scratch = wire;
         result
     }
@@ -961,10 +1012,11 @@ impl NativeEndpoint {
         // have exact receive accounting on Windows (no WSAEMSGSIZE truncation).
         // An adopted reliable carrier has no unrelated UDP ICMP notifications.
         // A reset/refusal there must reach the owner so it retires this stream.
-        let udp_io = self
-            .sources
-            .keys()
-            .all(|route| matches!(route, NativeRoute::Udp(_)));
+        let udp_io = self.configured.is_some()
+            || self
+                .sources
+                .keys()
+                .all(|route| matches!(route, NativeRoute::Udp(_)));
         for _ in 0..quantum {
             let packet = match receiver(wire) {
                 Ok(Some(value)) => value,
@@ -1027,6 +1079,8 @@ impl NativeEndpoint {
                         .rejection_reasons
                         .record(NativeRejectReasonV1::Handshake);
                 }
+                #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+                self.promote_udp_recoveries(&mut result, now)?;
                 continue;
             }
             if bytes.starts_with(b"NVHSHK") {
@@ -1036,11 +1090,15 @@ impl NativeEndpoint {
                         .rejection_reasons
                         .record(NativeRejectReasonV1::Handshake);
                 }
+                #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+                self.promote_udp_recoveries(&mut result, now)?;
                 continue;
             }
             if let Some((frame, change)) = self.confirm_reconnect(source, bytes, now) {
                 result.frames.push(frame);
                 result.session_changes.extend(change);
+                #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+                self.promote_udp_recoveries(&mut result, now)?;
                 continue;
             }
             let Some(&index) = self.sources.get(&source) else {
@@ -1130,6 +1188,8 @@ impl NativeEndpoint {
                 Err(_) => result.handshake_send_failures += 1,
             }
         }
+        #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+        self.promote_udp_recoveries(&mut result, now)?;
         // A quantum can contain old data BEFORE the handover. Never hand it to
         // consumers after exposing a replacement generation.
         result
@@ -1204,6 +1264,7 @@ impl NativeEndpoint {
 
     pub fn try_send(&mut self, peer: usize, frame: &NovoRudpTransportFrameV0) -> Result<bool> {
         self.traffic_started = true;
+        let io = self.peer_io(peer)?;
         let session = self
             .peers
             .get_mut(&peer)
@@ -1213,7 +1274,7 @@ impl NativeEndpoint {
             .context("native peer not authenticated")?;
         session
             .try_send_limited(
-                self.io.as_ref(),
+                io.as_ref(),
                 frame,
                 Instant::now(),
                 self.wire_budget.as_mut(),
@@ -1222,7 +1283,43 @@ impl NativeEndpoint {
     }
 
     pub(crate) fn uses_deferred_writes(&self) -> bool {
+        #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+        if self
+            .bound_carriers
+            .as_ref()
+            .is_some_and(|io| io.deferred_writes())
+        {
+            return true;
+        }
         self.io.deferred_writes()
+    }
+
+    pub(crate) fn peer_uses_deferred_writes(&self, peer: usize) -> bool {
+        self.peer_io(peer).is_ok_and(|io| io.deferred_writes())
+    }
+
+    /// Terminal failure of ONE adopted stream, not an authentication success or
+    /// permission to reuse it. Only a configured reconnect owner can retain
+    /// unknown work while it obtains a freshly authenticated replacement.
+    pub(crate) fn recoverable_carrier_failure(&self, peer: usize, error: &anyhow::Error) -> bool {
+        self.configured
+            .as_ref()
+            .is_some_and(|policy| policy.reconnect_v1)
+            && self.peer_uses_reliable_carrier(peer)
+            && error.is::<super::carrier::NativeCarrierIoFailure>()
+    }
+
+    fn peer_io(&self, peer: usize) -> Result<Arc<dyn NativeDatagramIo>> {
+        #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+        if self.peer_uses_reliable_carrier(peer) {
+            return Ok(self
+                .bound_carriers
+                .as_ref()
+                .context("bound carrier owner missing")?
+                .for_route(self.peer_route(peer)?)?);
+        }
+        let _ = peer;
+        Ok(self.io.clone())
     }
 
     pub(crate) fn peer_uses_reliable_carrier(&self, peer: usize) -> bool {
@@ -1239,6 +1336,7 @@ impl NativeEndpoint {
         id: [u8; 32],
         now: Instant,
     ) -> Result<bool> {
+        let io = self.peer_io(peer)?;
         let session = self
             .peers
             .get_mut(&peer)
@@ -1246,7 +1344,7 @@ impl NativeEndpoint {
             .session
             .as_mut()
             .context("native peer not authenticated")?;
-        session.drain_object_send(self.io.as_ref(), stream, id, self.wire_budget.as_mut(), now)
+        session.drain_object_send(io.as_ref(), stream, id, self.wire_budget.as_mut(), now)
     }
 
     pub(crate) fn cancel_object_send(
@@ -1272,6 +1370,7 @@ impl NativeEndpoint {
         id: [u8; 32],
         feedback: bool,
     ) -> Result<()> {
+        let io = self.peer_io(peer)?;
         let session = self
             .peers
             .get_mut(&peer)
@@ -1280,7 +1379,7 @@ impl NativeEndpoint {
             .as_mut()
             .context("native peer not authenticated")?;
         session.cancel_send(
-            self.io.as_ref(),
+            io.as_ref(),
             stream,
             id,
             feedback,
@@ -1297,6 +1396,7 @@ impl NativeEndpoint {
         quantum: usize,
     ) -> Result<usize> {
         self.traffic_started = true;
+        let io = self.peer_io(peer)?;
         let session = self
             .peers
             .get_mut(&peer)
@@ -1305,7 +1405,7 @@ impl NativeEndpoint {
             .as_mut()
             .context("native peer not authenticated")?;
         object.poll_send_limited(
-            self.io.as_ref(),
+            io.as_ref(),
             session,
             now,
             quantum,

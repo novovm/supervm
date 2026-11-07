@@ -469,6 +469,18 @@ U2/U3 可按文件归属并行；手机只消费同一协议，不用本地余�
 
 ## 8. 用户纠正：禁止双机重复开发（当前执行边界）
 
+2026-11-07 A从main `8ee31340`继续认领唯一NOVONET主节点接线：复用原Iroh/
+载体绑定握手及Finished、NativeCarrierPump、NativeEndpoint/ObjectLink，接入原
+NativeChannel/ResidentNode。不新增网络或执行器，不恢复旧WSS主链。多个已认证
+载体必须共享原对象总预算；载体路由不能代替NOV身份、共识票或应用回执。
+当次SSH fetch关闭失败；随后只读HTTPS fetch成功，SUPERVM远端仍d6980df8，
+NOVOCHAT消费基线04f1cccb，本轮App未改。默认UDP及客户端保持，备用仅逐peer
+认证替换，未保留本轮carrier-only服务草稿。本地实现/验证继续，推送前重新核对
+上游。C暂不改共享层或升级手机；若涉及
+NOVOCHAT消费者变更，A在原共享传输交接中给固定版本、接口和实际验证范围。
+自动发现、真实多跳转发、主节点持续owner和故障换路分别按实际接通验收，
+不得将现有候选枚举或内存forward结果当成真实网络交付。
+
 2026-11-04 四机认证封存后，A从main b4658189认领既有CI双向背压失败收口。
 仅检查原RelayByteStream及真实加密回归的队列/写入/恢复条件；先保留旧失败和实际
 队列快照，证实原因后最小修正。A独占相关测试/实现与构建槽，不增加网络路径、

@@ -378,7 +378,20 @@ impl NativeUdpSession {
         if !matches {
             return Ok(());
         }
-        let pending = self.pending.take().expect("matched pending write");
+        self.retire_pending_send(io, budget, now)
+    }
+
+    /// Retire the exact retained write before replacing this authenticated
+    /// session. Unknown completion is conservatively charged, never delivered.
+    pub(crate) fn retire_pending_send(
+        &mut self,
+        io: &dyn NativeDatagramIo,
+        budget: Option<&mut NativeWireBudget>,
+        now: Instant,
+    ) -> Result<()> {
+        let Some(pending) = self.pending.take() else {
+            return Ok(());
+        };
         match io.cancel_send(&pending.wire, self.remote) {
             Ok(count) if count == 0 || count == pending.wire.len() => {
                 if count != 0 {

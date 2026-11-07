@@ -304,7 +304,7 @@ pub(crate) fn relay_record_time_v1(
 }
 
 /// Authentic signed metadata only, never a currently usable directory entry.
-pub(crate) fn verify_relay_record_authenticity_v1(
+pub fn verify_relay_record_authenticity_v1(
     record: &PeerSignedRelayRecordV1,
     verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<(), ProductDirectoryErrorV1> {

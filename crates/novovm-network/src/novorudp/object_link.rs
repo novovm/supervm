@@ -298,6 +298,40 @@ impl NativeObjectLink {
     pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
         self.diagnostics = Some(observer);
     }
+    /// Adopt a fresh, Finished-verified connection to the SAME peer. Retire
+    /// old generation objects through the original session-change owner; their
+    /// business outcome is unknown, never an inferred successful delivery.
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub fn replace_bound_carrier_v1(
+        &mut self,
+        peer: usize,
+        replacement: NativeEndpoint,
+        now: Instant,
+    ) -> Result<NativeLinkPoll> {
+        replacement.validate_bound_carriers_v1(&self.streams)?;
+        let change = self
+            .endpoint
+            .replace_bound_carrier_v1(peer, replacement, now)?;
+        self.process_poll(
+            NativePoll {
+                session_changes: change.into_iter().collect(),
+                ..Default::default()
+            },
+            now,
+            64,
+        )
+    }
+    /// Probe the retained, configured UDP route without retiring the carrier.
+    /// Only the original fresh UDP handshake can activate the recovered route.
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    pub fn request_udp_recovery_v1(
+        &mut self,
+        peer: usize,
+        wall_ms: u64,
+        now: Instant,
+    ) -> Result<()> {
+        self.endpoint.request_udp_recovery_v1(peer, wall_ms, now)
+    }
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn note_response_diagnostic_v1(
         &self,
@@ -356,6 +390,13 @@ impl NativeObjectLink {
     }
     pub fn session_id(&self, peer: usize) -> Option<[u8; 16]> {
         self.endpoint.session_id(peer)
+    }
+    /// Actual active route only, not a claimed advertised address.
+    pub fn peer_route(&self, peer: usize) -> Result<super::carrier::NativeRoute> {
+        self.endpoint.peer_route(peer)
+    }
+    pub fn peer_last_authenticated(&self, peer: usize) -> Option<Instant> {
+        self.endpoint.peer_last_authenticated(peer)
     }
     pub fn peer_id(&self, peer: usize) -> Result<&str> {
         self.endpoint.peer_id(peer)
@@ -908,6 +949,12 @@ impl NativeObjectLink {
                 }
                 match sent {
                     Ok(sent) => report.data_sent += sent,
+                    Err(error) if self.endpoint.recoverable_carrier_failure(key.0, &error) => {
+                        // No cursor/completion advances. The failed stream
+                        // remains terminal; fresh authentication or the SAME
+                        // object's original TTL resolves retained ownership.
+                        report.send_failures += 1;
+                    }
                     Err(error) if error.downcast_ref::<std::io::Error>().is_some() => {
                         report.send_failures += 1
                     }
@@ -920,7 +967,7 @@ impl NativeObjectLink {
             if sender.status() == ObjectSendState::Sending {
                 self.order.push_back(key);
                 if report.data_sent == quantum
-                    || (report.data_sent > 0 && self.endpoint.uses_deferred_writes())
+                    || (report.data_sent > 0 && self.endpoint.peer_uses_deferred_writes(key.0))
                 {
                     break;
                 }
@@ -941,14 +988,25 @@ impl NativeObjectLink {
                             self.order.push_back(key);
                             continue;
                         }
+                        Err(error) if self.endpoint.recoverable_carrier_failure(key.0, &error) => {
+                            // Delivered was established by a genuine complete
+                            // ACK above, never by this failed redundant write.
+                            // Its reservation is already settled as unknown;
+                            // the terminal stream cannot accept another frame.
+                            report.send_failures += 1;
+                        }
                         Err(error) => {
                             self.order.push_front(key);
                             return Err(error);
                         }
                     }
                 } else if let Err(error) = self.endpoint.cancel_object_send(key.0, key.1, key.2) {
-                    self.order.push_front(key);
-                    return Err(error);
+                    if self.endpoint.recoverable_carrier_failure(key.0, &error) {
+                        report.send_failures += 1;
+                    } else {
+                        self.order.push_front(key);
+                        return Err(error);
+                    }
                 }
             }
             let sender = self.jobs.remove(&key).expect("finished send job");
@@ -1070,8 +1128,12 @@ impl NativeObjectLink {
             };
             let Some(ack) = ack else {
                 if let Err(error) = self.endpoint.cancel_feedback_send(peer, stream, id) {
-                    lane.requeue_feedback(peer, id);
-                    return Err(error);
+                    if self.endpoint.recoverable_carrier_failure(peer, &error) {
+                        report.send_failures += 1;
+                    } else {
+                        lane.requeue_feedback(peer, id);
+                        return Err(error);
+                    }
                 }
                 lane.pending_feedback.remove(&key);
                 continue;
@@ -1122,11 +1184,15 @@ impl NativeObjectLink {
                         lane.feedback(peer, id);
                     }
                     // Let data use the freed slot before queuing another ACK.
-                    if self.endpoint.uses_deferred_writes() {
+                    if self.endpoint.peer_uses_deferred_writes(peer) {
                         break;
                     }
                 }
                 Ok(false) => lane.requeue_feedback(peer, id),
+                Err(error) if self.endpoint.recoverable_carrier_failure(peer, &error) => {
+                    report.send_failures += 1;
+                    lane.requeue_feedback(peer, id);
+                }
                 Err(error) if error.downcast_ref::<std::io::Error>().is_some() => {
                     report.send_failures += 1;
                     lane.requeue_feedback(peer, id);

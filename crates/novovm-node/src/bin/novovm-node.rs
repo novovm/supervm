@@ -34070,6 +34070,8 @@ struct NativeExecutionPipelineUdpDriveV1 {
     local_node: NodeId,
     transport: Option<UdpTransport>,
     product: Option<novovm_node::native_pipeline::service::rpc::RpcLifecycle>,
+    #[cfg(feature = "iroh-transport")]
+    novonet: Option<novovm_node::native_pipeline::service::network::Driver>,
     peers: Vec<NodeId>,
     recv_budget: usize,
     broadcast_enabled: bool,
@@ -34116,12 +34118,36 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 chain_id,
             )?;
             let batch_size = config.batch_size;
+            #[cfg(feature = "iroh-transport")]
+            let network_config = config
+                .novonet_config_file
+                .as_ref()
+                .map(|path| novovm_node::native_pipeline::service::network::Config::load(path))
+                .transpose()?;
             let node = ResidentNode::start_on_transport(config, mode, transport)?;
+            #[cfg(feature = "iroh-transport")]
+            let novonet = match network_config {
+                Some(config) => {
+                    match novovm_node::native_pipeline::service::network::Driver::new(config, &node)
+                    {
+                        Ok(driver) => Some(driver),
+                        Err(error) => {
+                            let drain = node.shutdown();
+                            return Err(error.context(format!(
+                                "NOVONET setup rejected; original node drained: {drain:?}"
+                            )));
+                        }
+                    }
+                }
+                None => None,
+            };
             return Ok(Some(Self {
                 chain_id,
                 local_node,
                 transport: None,
                 product: Some(RpcLifecycle::new(node, batch_size)?),
+                #[cfg(feature = "iroh-transport")]
+                novonet,
                 peers: Vec::new(),
                 recv_budget: 0,
                 broadcast_enabled: false,
@@ -34162,6 +34188,8 @@ impl NativeExecutionPipelineUdpDriveV1 {
             local_node,
             transport: Some(transport),
             product: None,
+            #[cfg(feature = "iroh-transport")]
+            novonet: None,
             peers,
             recv_budget: usize_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_RECV_BUDGET",
@@ -41850,6 +41878,8 @@ mod native_execution_pipeline_tests {
             local_node: local,
             transport: Some(local_transport),
             product: None,
+            #[cfg(feature = "iroh-transport")]
+            novonet: None,
             peers: vec![remote],
             recv_budget: 4,
             broadcast_enabled: true,
@@ -42563,6 +42593,28 @@ fn run_native_execution_tick_node_mode_v1(
         if max_ticks > 0 && ticks >= max_ticks {
             break;
         }
+        #[cfg(feature = "iroh-transport")]
+        if let Some(drive) = &mut udp_drive {
+            if let (Some(network), Some(product)) = (&mut drive.novonet, &mut drive.product) {
+                if let Err(error) = network.step(&mut product.node.controller, Instant::now()) {
+                    let drain = drive.product.take().unwrap().node.shutdown();
+                    return Err(
+                        error.context(format!("NOVONET stopped; original node drained: {drain:?}"))
+                    );
+                }
+            }
+        }
+        #[cfg(feature = "iroh-transport")]
+        let novonet_observation = if last_progress_report_at.elapsed()
+            >= Duration::from_millis(progress_report_interval_ms)
+        {
+            udp_drive
+                .as_ref()
+                .and_then(|drive| drive.novonet.as_ref())
+                .map(|network| network.observation())
+        } else {
+            None
+        };
         if let Some(product) = udp_drive.as_mut().and_then(|drive| drive.product.as_mut()) {
             // This is the original tick's receive owner. Reuse the reviewed
             // admission/projection and protocol drivers; do NOT call the old
@@ -42579,6 +42631,10 @@ fn run_native_execution_tick_node_mode_v1(
             {
                 use novovm_node::native_pipeline::service::rpc::{observe_tick, TickStage};
                 let mut status = observe_tick(TickStage::Status, || product.status());
+                #[cfg(feature = "iroh-transport")]
+                if let Some(observation) = novonet_observation {
+                    status["novonet"] = observation;
+                }
                 status["entry"] = serde_json::json!("original_native_execution_tick");
                 status["ticks"] = serde_json::json!(ticks);
                 if let Some(path) = &progress_report_path {
@@ -42865,6 +42921,14 @@ fn run_native_execution_tick_node_mode_v1(
             std::thread::yield_now();
         }
     }
+    #[cfg(feature = "iroh-transport")]
+    let network_drain = udp_drive
+        .as_mut()
+        .and_then(|drive| drive.novonet.as_mut())
+        .map(|network| network.close())
+        .transpose();
+    #[cfg(not(feature = "iroh-transport"))]
+    let network_drain: Result<Option<()>> = Ok(None);
     if let Some(product) = udp_drive.as_mut().and_then(|drive| drive.product.take()) {
         let mut status = product.status();
         status["entry"] = serde_json::json!("original_native_execution_tick");
@@ -42880,7 +42944,7 @@ fn run_native_execution_tick_node_mode_v1(
             fs::write(path, serde_json::to_vec_pretty(&status)?)?;
         }
         println!("{}", status);
-        return drain;
+        return network_drain.and(drain);
     }
 
     let mut summary = aggregate.to_json();

@@ -53,6 +53,11 @@ pub struct ResidentConfig {
     /// changed source; omission retains strict configured-address pinning.
     #[serde(default)]
     pub learn_authenticated_peer_routes: bool,
+    /// Optional local NOVONET routing settings, shared by console and SCM.
+    /// Absent keeps the original native UDP owner unchanged. Not a chain pin
+    /// override or authority to add validators.
+    #[serde(default)]
+    pub novonet_config_file: Option<PathBuf>,
     /// Explicit bounded key-possession admission, never a client allowlist.
     /// Zero preserves the old validator-only deployment contract.
     #[serde(default)]
@@ -179,6 +184,9 @@ impl ResidentConfig {
         ] {
             resolve_relative(base, target);
         }
+        if let Some(network) = &mut config.novonet_config_file {
+            resolve_relative(base, network);
+        }
         if let Some(initialization) = &mut config.uca_initialization {
             initialization.hydrate_pages_with_genesis(base, &mut config.genesis)?;
         }
@@ -196,9 +204,22 @@ impl ResidentConfig {
         ] {
             *target = native_path(target);
         }
+        if let Some(network) = &mut self.novonet_config_file {
+            *network = native_path(network);
+        }
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let Some(network) = &self.novonet_config_file {
+            ensure!(
+                cfg!(feature = "iroh-transport"),
+                "NOVONET fallback config requires the qualified iroh-transport build"
+            );
+            ensure!(
+                self.profile == ORIGINAL_PROFILE && network.is_absolute() && network.is_file(),
+                "NOVONET config requires original native profile and an explicit existing file"
+            );
+        }
         ensure!(self.key_storage == NodeKeyStorage::ProtectedV1,
             "ML-DSA-65 node startup requires protected purpose custody; raw development keys are retired");
         ensure!(
@@ -848,6 +869,7 @@ mod tests {
         let config = ResidentConfig {
             native_client_limit: 0,
             learn_authenticated_peer_routes: false,
+            novonet_config_file: None,
             profile: PROFILE.into(),
             library,
             database: root.join("state.rocksdb"),

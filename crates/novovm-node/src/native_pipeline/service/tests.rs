@@ -39,6 +39,33 @@ pub(super) fn signed_raw(index: u64, nonce: u64) -> Vec<u8> {
     encode_transfer_v3(&transaction).unwrap()
 }
 
+#[test]
+fn novonet_config_requires_explicit_qualified_build_and_existing_local_path() -> Result<()> {
+    let mut cfg = config(1);
+    assert!(cfg.novonet_config_file.is_none());
+    cfg.novonet_config_file = Some("relative-and-not-loaded/novonet.json".into());
+    let error = cfg.validate().unwrap_err().to_string();
+    assert!(
+        error.contains(if cfg!(feature = "iroh-transport") {
+            "NOVONET config requires original native profile"
+        } else {
+            "NOVONET fallback config requires the qualified iroh-transport build"
+        }),
+        "{error}"
+    );
+    #[cfg(feature = "iroh-transport")]
+    {
+        cfg.novonet_config_file = Some(std::env::current_exe()?);
+        cfg.profile = config::PROFILE.into();
+        assert!(cfg
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("NOVONET config requires original native profile"));
+    }
+    Ok(())
+}
+
 fn config(size: usize) -> ResidentConfig {
     let policy = DirectNovFeePolicy {
         amount_fee_v3: None,
@@ -74,6 +101,7 @@ fn config(size: usize) -> ResidentConfig {
         udp_addr: "127.0.0.1:0".parse().unwrap(),
         peers: Vec::new(),
         learn_authenticated_peer_routes: false,
+        novonet_config_file: None,
         native_client_limit: 1,
         uca_initialization: None,
         workers: 1,

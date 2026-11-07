@@ -197,6 +197,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
             .collect(),
         native_client_limit: 0,
         learn_authenticated_peer_routes: false,
+        novonet_config_file: None,
         genesis,
         uca_initialization: Some(material),
         workers: 2,
