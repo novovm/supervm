@@ -1,0 +1,15 @@
+{
+  "host_id": "D",
+  "review_git_head": "698b19169294fcd5b5974750da073a2acb4482ed",
+  "archive_bytes": 150354733,
+  "archive_sha256": "79cdfcf8636ddb881b2c9fa56d28c990ef5b12c8c7010f52cff0fea3a2576c9b",
+  "archive_artifacts_verified": 77,
+  "archive_entries": 86,
+  "checksum_counts": {
+    "CHECKSUMS.sha256": 77,
+    "aoem/windows/CHECKSUMS.sha256": 26
+  },
+  "verifier_sha256": "c4ecbf44ad620f7a9caa605b4770feaabdf9dbdb272243660adf5fc2a237a481",
+  "extraction_root": "C:\\Users\\ASUS\\AppData\\Local\\NOVOVM\\incoming\\novonet-ce1f54ea-r2-D-20261108",
+  "observed_at_utc": "2026-11-07T16:17:23.3937086Z"
+}

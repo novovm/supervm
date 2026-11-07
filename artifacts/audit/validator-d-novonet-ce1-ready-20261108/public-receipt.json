@@ -1,0 +1,37 @@
+{
+  "host_id": "validator-D",
+  "status": "READY_NOVONET_CE1_D",
+  "review_git_head": "698b19169294fcd5b5974750da073a2acb4482ed",
+  "lan_ipv4": "192.168.71.59",
+  "prefix_length": 24,
+  "interface_index": 16,
+  "link_speed": "1 Gbps",
+  "observed_at_utc": "2026-11-07T16:18:19.5956154Z",
+  "receiver_exit_code": 0,
+  "original_reports": {
+    "report.json": {
+      "bytes": 2291,
+      "sha256": "968f25115efcc9988d60ec96425deaec732a2627e1f9b0756fdf93fcc95e4560"
+    },
+    "runtime.stdout": {
+      "bytes": 1017,
+      "sha256": "fa4c32e7f269f4bd34a155d57bde458a7b83cfb17f8d8b87a22bb5e55d115f61"
+    },
+    "runtime.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "node-contract.stdout": {
+      "bytes": 225,
+      "sha256": "43b5bd271004a7459b5dca694b14904afe93e06791ccd2c2f318de383add1e0a"
+    },
+    "node-contract.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "node_started": false,
+  "service_installed": false,
+  "custody_accessed": false,
+  "relay_path_accepted": false
+}
