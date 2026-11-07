@@ -1,0 +1,125 @@
+{
+  "status": "START_OBSERVED_082_D",
+  "host_id": "validator-D",
+  "review_git_head": "fcb5eb37facbfedc3f899663eb3f3e2b647d40c2",
+  "program_commit": "08236129320da2e71c5fa112d249fa7afc741e78",
+  "archive_sha256": "38a871d5dc024ba90461a1c6da451ef2b76a39c3b39c905cf7034c9a920d582a",
+  "archive_bytes": 150438312,
+  "manifest_sha256": "a1a4082dcff2af227738e7e37013ae9a41b2546ecf25474eccda22166cb2f506",
+  "launcher_sha256": "5a4ce2d71dcb62ef3f861aae585ce2097d633d2866a89cc404cf4bd517d0da23",
+  "launcher_exit_code": 0,
+  "owner": {
+    "host_id": "D",
+    "sid": "S-1-5-19",
+    "account": "NT AUTHORITY\\LOCAL SERVICE",
+    "purpose_keys_regenerated": false,
+    "asset_keys_accessed": false,
+    "service_registered": false
+  },
+  "initialization": {
+    "schema_version": 3,
+    "action": "initialize",
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\chain-state",
+    "chain_id": 91129655606029,
+    "genesis_config_commitment": "f8396bae7c0150eef98ab2f1532057b706a5576b89c149c12561ef5d6b847ec6",
+    "protocol_commitment": "2132270f6d2f70bdf00ff09ddfb062fed56bd22e741e05a3cf7ba0d89ee7bfa5",
+    "initial_state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+    "aoem_library": "C:\\ProgramData\\NOVOVM\\releases\\novonet-08236129-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+    "aoem_library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+    "database_created": true,
+    "initial_state_persisted": true,
+    "original_owners_drained": true,
+    "private_material_exported": false,
+    "node_started": false,
+    "service_started": false,
+    "network_opened": false,
+    "consensus_vote_signed": false,
+    "state_published": false,
+    "finality_verified": false,
+    "review_only_startup_fragment": null
+  },
+  "transport_public_key_sha256": "01663acfa5f718969673922846042817fa359eece95d9fdfc837ebd8014099fb",
+  "matches_original_D_transport": true,
+  "task": {
+    "name": "NOVOVM-D-08236129-Network-20261108",
+    "state_at_collection": "Running",
+    "last_task_result": 267009,
+    "last_task_result_means": "267009 is running, not successful exit",
+    "collected_utc": "2026-11-07T19:30:53.4125444Z",
+    "kept_online": true,
+    "SCM_lifecycle_qualified": false
+  },
+  "progress_snapshot": {
+    "current_height": 1,
+    "ticks": 1,
+    "durable_decisions": 0,
+    "executed_batches": 0,
+    "execution_failures": 0,
+    "native_pending_deliveries": 3,
+    "native_rejected_messages": 0,
+    "novonet": {
+      "default": "native_novorudp",
+      "fallback": "iroh",
+      "installed_bound_peer_routes": 0,
+      "peer_discovery_rpc": true,
+      "connection_failures": 0,
+      "global_auto_discovery": false,
+      "native_multihop_accepted": false
+    }
+  },
+  "initialization_retried": false,
+  "purpose_keys_regenerated": false,
+  "private_material_exported": false,
+  "four_host_network_accepted": false,
+  "single_relay_accepted": false,
+  "double_relay_accepted": false,
+  "recovery_accepted": false,
+  "performance_accepted": false,
+  "raw_evidence": {
+    "file": "original-public-results.zip",
+    "bytes": 13633,
+    "sha256": "f912fc14fa4ec47a51e4834743f7072679cfadc3857d734712b38897826fdd23",
+    "members": {
+      "owner.json": {
+        "bytes": 210,
+        "sha256": "88e281fd6cc8115c59fb568f7802ac60813d1980316749db2f114ef217c8a2d2"
+      },
+      "initialize.stdout": {
+        "bytes": 2424,
+        "sha256": "3027bae9ebf3cfef7b766b02e72111d2102e0983fb38b71f4d585ea699cc1679"
+      },
+      "initialize.stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "locator.json": {
+        "bytes": 19617,
+        "sha256": "54be527d80a00c41a5569a8711d141b552abef658eebe385fed0ce34c1fec53c"
+      },
+      "progress.json": {
+        "bytes": 5215,
+        "sha256": "531737e494332135ebb1d2268aba6972ffb9f24af2db0cebf3d16cf1282a1643"
+      },
+      "node.stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observation.json": {
+        "bytes": 2104,
+        "sha256": "78b97b0463afc7fc4a674087bccad177cea7a813fc5a3f6242ebb34b6bae35e2"
+      },
+      "launcher.stdout": {
+        "bytes": 300,
+        "sha256": "bbe408d9034f0e774e31b2672961b0f2c921f314df97411bf7469aa4cf6700c0"
+      },
+      "launcher.stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "archive-verification.json": {
+        "bytes": 860,
+        "sha256": "dd492b7a67b93b6d84e5be895a1e7703df1fe532c9ffe603d159b2fc3d942c3e"
+      }
+    }
+  }
+}
