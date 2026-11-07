@@ -1,0 +1,13 @@
+{
+  "zip_bytes": 150354733,
+  "zip_sha256": "79cdfcf8636ddb881b2c9fa56d28c990ef5b12c8c7010f52cff0fea3a2576c9b",
+  "manifest_sha256": "6f9f222f738ca990636572ffcad6256b1cd294b082254912bfbd604f7081978f",
+  "artifacts_verified": 77,
+  "checksum_entries": {
+    "CHECKSUMS.sha256": 77,
+    "aoem/windows/CHECKSUMS.sha256": 26
+  },
+  "verifier_sha256": "c4ecbf44ad620f7a9caa605b4770feaabdf9dbdb272243660adf5fc2a237a481",
+  "extraction": "D:\\WEB3_AI\\SUPERVM\\target\\novonet-ce1-C-incoming-20261108",
+  "source_commit": "ce1f54ea545e69dc64763f1f24f6048d90e4ef12"
+}

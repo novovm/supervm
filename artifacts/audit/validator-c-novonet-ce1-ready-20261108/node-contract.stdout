@@ -1,0 +1,1 @@
+{"schema_version":1,"contract":"windows-scm-existing-v1","platform":"windows","supported":true,"entry":"native_execution_tick","start_mode":"existing","service_started":false,"database_opened":false,"custody_accessed":false}

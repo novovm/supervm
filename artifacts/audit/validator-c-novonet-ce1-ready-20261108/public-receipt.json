@@ -1,0 +1,31 @@
+{
+  "status": "READY_NOVONET_CE1_C",
+  "receiver_exit_code": 0,
+  "review_main": "46fbeac0",
+  "lan_ipv4": "192.168.71.125",
+  "prefix_length": 24,
+  "interface_index": 24,
+  "link_speed": "1 Gbps",
+  "raw_files": {
+    "report.json": {
+      "bytes": 2249,
+      "sha256": "1863903f71b1486383cef882fcc3745f1f5bf9a324246d30ec53b68c60910e7a"
+    },
+    "runtime.stdout": {
+      "bytes": 995,
+      "sha256": "0a3a7e22de2c44e0f5d2ef8a06a0602c8ef2999abc36e69ed62fb949e5bf7a2b"
+    },
+    "runtime.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "node-contract.stdout": {
+      "bytes": 225,
+      "sha256": "43b5bd271004a7459b5dca694b14904afe93e06791ccd2c2f318de383add1e0a"
+    },
+    "node-contract.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}
