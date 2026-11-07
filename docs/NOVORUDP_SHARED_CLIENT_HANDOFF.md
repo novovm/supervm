@@ -847,6 +847,68 @@ SSH远端与本地一致。离线脚本只解码以太网/IP/UDP及原公开握�
 连接、双中继、连续最终确认、自动公众入网、SCM或性能已经通过。C/D不重复初始化或
 旧配对；若需本机当前只读证据，再给一次具体采集任务，不改本次既有运行配置。
 
+### 17. 2026-11-08 当前实例被动核对：发现与对象DONE证据缺口
+
+本轮按用户范围只读检查，不重启/初始化/换钥/改配置/防火墙，不重复A到B/C/D Status，
+不改NOVOCHAT、签名或资源上限，也不启新socket冒充验证者owner。程序仍08236129。
+A实际LAN41051/42051仍由PID30708持有；B原node PID1661875、novovm账户、02:52:27
+启动的原unit仍active，41050/42050由同一PID持有。本会话不能读A受保护progress，
+C/D当前运行内部状态没有新回传；旧启动快照不当作当前候选池或对象事件。
+
+B两份指定公开文件快照在北京时间05:25:28.725578及05:26:09.875293取得，均由原
+文件原字节base64保存在证据中；只读配置投影，不取protected、credential、DB或journal。
+
+| 原指标 | 首份→末份 | 这41.15秒能证明的范围 |
+| --- | --- | --- |
+| native_rejected_messages | 96→96 | 窗口内无新增；不能分类全部历史拒绝或宣布永久不再发生 |
+| native_expired_sends | 105→105 | 窗口内无新增；不清零旧数 |
+| novonet.connection_failures | 164→164 | 窗口内无新增；不等于164个当前故障 |
+| native_pending_deliveries | 2→0 | 队列变化，不能确定哪份Object完成或冒充DONE |
+| locator sequence | 287→289 | B仍实际发布，末份issued/expires覆盖采集时刻；完整公钥匹配批准B |
+| height / executed / execution failures | 1/0/0→1/0/0 | 未执行资产业务，不代表最终性验证 |
+
+更正本轮中途口头更新的首序号288：原件和离线比较实际为**287→289**。不覆盖原件。
+B stderr0，bound routes保持1；不能由这个总数知道具体哪位对端，也不能当原生UDP
+会话计数。B discovery=true、relay_forwarding=true，seeds/peer_records为空是当前
+发现服务端角色的实际配置，不据此认定它没有收到A/C/D发布。其RendezvousStore和
+candidate/pool在内存，现行observation只公开discovery开关、总bound数和总失败数，
+没有逐身份发布/获取/入池结果；B自己的locator不是其他三台已进池的证据。
+discovery-cache是引导检查点，不是完整已发现邻居表；不能拿缺少它推断无发现。
+
+源码已核到实际路径：`service/network/discovery.rs`的原认证NODE_PUT/NODE_GET和
+`maintain/poll`产出记录，`service/network.rs`校验record_kind、配置公钥、签名/期限及
+ServiceLeaseBook后，才upsert_verified_record并更新原candidate/routes。这是调用链
+核对，不是四台实机候选逐项已通过。
+
+**实际对象验收在当前约束下尚不能执行或签收，具体缺项不是另造网络：**
+
+1. 当前固定包的native-client operator只开放status/query/submit；query是只读业务查询，
+   submit只接受合法签名资产批次。没有让**运行中的A原NativeLifecycle**向指定C发一个
+   非业务测试对象的外部控制入口。NativeEndpoint/ObjectLink组件能力存在，不等于这项
+   实机触发/观测已接通。另起客户端/测试进程不能冒充A验证者，提前提交资产也违反本轮
+   “资产最后”顺序，因此都未采用。
+2. 原profile已有`delivery_event`收发/fragment记录，但B实际stage_profile显示
+   native_delivery.enabled=false且events为空，native_delivery_traffic也未提供。开关
+   `NOVOVM_PROFILE_NATIVE_DELIVERY`由原进程OnceLock读取，不能从外面修改父进程环境
+   热开启。不注入进程、不因缺记录而擅自重启。当前无逐对象ObjectID/SessionID/DONE
+   可读取记录，队列归零和没有新增过期不足以补成这些事件。
+3. 原合同需保持三层：包ACK、对象完整接管的DONE/Delivered、业务接纳/回执/最终性。
+   native_lifecycle明确DONE是bounded custody，不是签名准入；operator submit也明确
+   transport_delivery_only。不能把对象DONE重新定义成资产执行成功，也不新增一个同名
+   “Application DONE”来改变已有完成合同。后续必须分别核原对象完成与实际业务结果。
+
+阶段一仅完成A/B实际监听、B公开发现材料/计数窗口及调用关系审查；四机逐身份入池
+未验收，A→C指定对象和DONE未发送/未验收，单/双中继与重启恢复均未执行。当前限制
+明确禁止重启和配置变化，所以不自行更新运行包或开诊断。若用户后继批准受控更新，
+只应在原owner接合现有逐对象观察及既有只读控制消息的有界触发，固定影响范围后再
+按原库existing执行；不新增测试网络/任意内容服务/身份表，也不降低票数或扩大预算。
+本轮只提出该实际接线缺项，不表示上述修改或重启已经获准。
+
+[被动核对原件ZIP](../artifacts/audit/validator-b-program-install-20261102/novonet-082-passive-object-audit-20261108.zip)
+为52133字节，SHA256 `1b4788393c64a7006886f88253c20737cab67a1e5ea885996e9fae9fcf1c688b`，
+9项含两次原字节公开文件/有界配置投影、实际监听及原比较脚本，读回CRC/逐项字节通过。
+没有改产品代码、跑组件替身、发Status或资产请求；不触发手工完整CI。C/D无重复操作。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
