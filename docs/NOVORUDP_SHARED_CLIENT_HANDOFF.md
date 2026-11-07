@@ -612,6 +612,79 @@ node格式及差异检查通过。完整CI、
 当前后续：先固定已本地验证的最小修正源码，再生成**新**候选、在B原库复验跨
 轮换运行；不改写/覆盖ce1归档，不让C/D运行已知有反例的旧候选。不另外手动发云CI。
 
+### 13. 2026-11-08 08236129固定包与B原库跨轮换通过，A手动启动
+
+**不再停在修前候选。** 原打包器以干净`main@08236129320da2e71c5fa112d249fa7afc741e78`
+分别生成新包；node实际feature含iroh-transport，原AOEM core仍为Windows1b764a36、
+Linux d73e4a2f，未替换算法、经济、共识、APFL或AOEM。交付脚本/文档的后继提交
+不是另一份程序来源。没有额外手动触发云CI，亦不宣称该SHA云端全量已经通过。
+
+| 制品 | 实际清单与固定SHA256 |
+| --- | --- |
+| `artifacts/product-overlay/novonet-08236129-windows-x86_64` | 77项411023277字节；manifest `a1a4082dcff2af227738e7e37013ae9a41b2546ecf25474eccda22166cb2f506`；node `9040ac63828c30011e8e7c4801be31183ecb69960854dd4974671df3d5d14d51` |
+| `artifacts/product-overlay/novonet-08236129-linux-x86_64` | 80项791242831字节；manifest `ed2705ac1943ed231fd17d6a79e5a13126739474d08049bb1976c2f05f476483`；node `2dbb493ac286fed4ca1bbce879d448027d087d1d3d6ff4d3445b3ca5d70bff29` |
+| Windows交付ZIP（程序、原批准公开输入、B签名引导及启动脚本；无私钥/数据库） | `target/novonet-clock-fixed-08236129-20261108/novonet-08236129-windows-x86_64.zip`，150438312字节；`38a871d5dc024ba90461a1c6da451ef2b76a39c3b39c905cf7034c9a920d582a` |
+| Linux程序归档 | 同目录`novonet-08236129-linux-x86_64.tar.gz`，358788713字节；`51bfb427697132a56064a186a098516b70b9403da4dc572d947ebd9ecc811932` |
+
+两平台各独立核对清单每文件长度/哈希及索引，实际包内ctl加载包内AOEM通过原
+scalar/unified/mixed-batch KAT，实际node的离线existing合同与副作用字段通过。
+Windows ZIP还逐条重核全部77个归档流和额外文件集合，公开共同输入仍为原a9b8a240，
+不是重建创世或新分配。Linux第一次启动命令找不到pwsh，未执行构建；随后使用既有
+`/home/aoem-a1/.local/opt/powershell-7.6.9/pwsh`完成，无重装/改全局环境或覆盖旧包。
+
+**B是真实原库、真实原账户与轮换，不是本机模拟。** 新程序并列在
+`/opt/novovm/releases/novonet-08236129-linux-x86_64`，B再次独立核对80项与实际KAT。
+只把原运行配置的library指向该新包，database、原genesis/批准、validator/transport
+及原carrier路径不变。实际运行账户仍novovm及原encrypted credential，START=existing，
+没有调用initialize。原node按240000ms软边界运行，systemd记录02:43:19开始、
+02:47:21正常退出；外部观测245.05秒含5秒轮询/收口，不是交易性能计时。
+
+观测到发布序号6–12共7份、三个不同发现实例（两次原100秒轮换），同一carrier key
+不变，stderr为空、退出码0。三份受保护用途文件前后哈希相同，原邮箱/Relay/nginx/
+Docker的状态与PID完全相同。A独立核对回传ZIP、实例与序号、原服务快照和空stderr。
+公开locator投影为3831–3910字节，仍小于原4096上限，不靠扩容取得通过。
+
+本次stdout未提供novonet错误计数；初次附加导出要求该字段而失败，随后明确将其
+记录为`counter_present=false / connection_failures=null`，不把缺失当成零。这个导出
+缺项不修改原运行报告或替代实际轮换证据，更不能据此宣布真实RPC/四机交付成功。
+原SSH等待连接在远端完成后没有返回；A经新连接独立读取成功报告、systemd正常退出，
+才结束经路径/命令行核对的**本机SSH等待客户端**，未重跑B或终止node。等待客户端
+的本地-1结果保留为控制连接结果，不冒写成SSH成功；后续连接显式设置有界keepalive。
+
+公开证据：
+
+- [B原库实测](../artifacts/audit/validator-b-program-install-20261102/novonet-08236129-B-original-db-proof.zip)，76199字节，`3de15f6cbb35acc50bc42afcd60fc1ff87a50d3815dd73df8977d736728d073b`。
+- [两平台离线资格与实际PS5.1检查](../artifacts/audit/validator-b-program-install-20261102/novonet-08236129-offline-qualified.zip)，6225字节，`529b0d3f259934686f8cfe74ecc730f310710b55103b33ea10233e1c19aa1324`；含实际B接收/同库运行脚本供复核，不含credential值、私钥、数据库或journal。
+
+**下一实际操作只有A一次，不重试旧UAC。** 当前B已使用同一修正版、同库/钥以原node
+软运行上限24小时再次在线（另有24小时+120秒系统兜底；非生产TTL调整、非预约时间窗），
+不配置失败自动重启。A在**管理员PowerShell**执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "D:\WorksArea\SUPERVM\target\novonet-clock-fixed-08236129-20261108\Start-A-08236129.ps1"
+```
+
+该A本地薄入口调用[`scripts/Start-NovonetFixedHost.ps1`](../scripts/Start-NovonetFixedHost.ps1)，
+其本次原字节SHA为`5a4ce2d71dcb62ef3f861aae585ce2097d633d2866a89cc404cf4bd517d0da23`。
+原Windows PS5.1实测解析、77项固定制品核验、真实node离线输出解析、精确经济整数
+和CreateNew拒绝覆盖通过，**但实际LocalService/安装和节点首启仍待这次执行**。
+
+具体副作用不隐藏：并列复制固定新程序；复用本机现有validator/transport材料；
+按原批准输入由LocalService执行原initialize（已有库即拒绝，不清理/重建）；
+原node existing启动，同一owner接原NOVONET。增加一条限定新node程序、实际LAN、
+两端口及LAN/24+B公网来源的Windows入站UDP规则，不开全端口/DMZ或改VPN。创建
+仅此一次的LocalService任务，不是替代网络守护程序，也**不是SCM资格已通过**。
+原生默认/Iroh合格备用、独立carrier首次保护、显式中继参与沿原owner完成；无
+私钥复制或资产账户权限提升。已有work/database/task/同名rule均拒绝覆盖，失败保留。
+
+收集公开结果在`target/novonet-clock-fixed-08236129-20261108/A-start-observed/`；
+必须看到实际owner/初始化/locator及任务仍运行，不能把注册任务或Running单独当作
+网络/共识/资产通过。任务有原24小时软退出边界，不是启动时改写账户有效期或票数。
+紧急结束进程只能按强杀原库恢复记录，不能伪称优雅SCM停止或删除原库/journal。
+此阶段C/D暂不运行新任务，A结果核对后再各用同一ZIP/入口一次接线；不重做硬件、
+校时、用途钥、已封存配对，也不另加一轮只为READY的人工预约。普通公网自动入网、
+多跳、四机资产和持续TPS仍按原范围继续实测，不由B单节点轮换自动签收。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
