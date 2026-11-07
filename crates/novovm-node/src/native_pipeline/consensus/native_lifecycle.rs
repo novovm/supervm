@@ -22,6 +22,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+pub mod probe;
 
 #[derive(Clone, Copy)]
 pub struct DeliveryLimits {
@@ -81,6 +82,7 @@ struct Incoming {
 /// retired only after durable context/round advancement; decided history stays
 /// available through the same owner's checked archive, not an unbounded queue.
 pub struct NativeLifecycle {
+    probe: Option<probe::ProbeState>,
     pub progress: RoundProgress,
     bodies: CandidateBodies,
     channel: NativeChannel,
@@ -267,6 +269,7 @@ impl NativeLifecycle {
             served_bodies: 0,
             expired_sends: 0,
             retired_sends: 0,
+            probe: None,
             archive_decisions: 0,
             archive_reads_started: 0,
             archive_cache_reused: 0,
@@ -428,6 +431,7 @@ impl NativeLifecycle {
         self.channel.request_udp_recovery_v1(peer, wall_ms, now)
     }
     fn io_inner(&mut self, wall_ms: u64, now: Instant) -> Result<()> {
+        self.expire_network_probe(now);
         let report = self.channel.poll_io(wall_ms, now, 64)?;
         self.accept_io_report(report, now)
     }
@@ -438,6 +442,9 @@ impl NativeLifecycle {
     ) -> Result<()> {
         self.rejected_messages += report.rejected as u64;
         for completed in report.completed {
+            if self.complete_network_probe(&completed, now) {
+                continue;
+            }
             let queue = self
                 .deliveries
                 .get_mut(completed.peer)
@@ -521,17 +528,48 @@ impl NativeLifecycle {
             // One pending attempt per native lane. A full BODY lane must not
             // block a control message queued behind it for this same peer.
             let mut attempted = [false; 3];
+            let probe_object = self
+                .probe
+                .as_ref()
+                .and_then(|state| state.object_for_peer(peer));
+            let regular_control_due = probe_object.is_some()
+                && self.deliveries[peer].iter().any(|delivery| {
+                    !delivery.admitted
+                        && !delivery.retiring
+                        && delivery.prepared.lane() == 0
+                        && Some(delivery.prepared.fragment_id()) != probe_object
+                });
             for delivery in self.deliveries[peer]
                 .iter_mut()
                 .filter(|d| !d.admitted && !d.retiring)
             {
                 let lane = delivery.prepared.lane();
+                if regular_control_due && Some(delivery.prepared.fragment_id()) == probe_object {
+                    continue;
+                }
                 if attempted[lane] {
                     continue;
                 }
                 attempted[lane] = true;
-                if self.channel.try_send(peer, &delivery.prepared, now)? {
+                let admitted = if let Some(deadline) = self
+                    .probe
+                    .as_ref()
+                    .and_then(|state| state.deadline(delivery.prepared.fragment_id()))
+                {
+                    self.channel
+                        .try_send_probe(peer, &delivery.prepared, now, deadline)?
+                } else {
+                    self.channel.try_send(peer, &delivery.prepared, now)?
+                };
+                if admitted {
                     delivery.admitted = true;
+                    if let Some(probe) = &mut self.probe {
+                        probe.admitted(
+                            delivery.prepared.fragment_id(),
+                            self.channel.probe_transport(peer),
+                            self.peers[peer],
+                        );
+                    }
                     self.channel.note_send_admission();
                     crate::native_pipeline::profile::delivery_event(
                         "admitted",
@@ -721,6 +759,10 @@ impl NativeLifecycle {
                                 .peer_names
                                 .get(&message.peer)
                                 .context("unmapped authenticated peer")?;
+                            if let Message::NetworkProbe(probe) = &message.message {
+                                self.receive_network_probe(peer, probe, message.fragment_id, now);
+                                continue;
+                            }
                             let height = match &message.message {
                                 Message::Proposal { proposal, .. }
                                 | Message::Decision { proposal, .. } => proposal.context.height,

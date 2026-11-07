@@ -419,6 +419,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
             .collect(),
         native_client_limit: 1,
         learn_authenticated_peer_routes: false,
+        novonet_config_file: None,
         genesis: startup_genesis,
         uca_initialization: Some(initialization),
         workers: 2,

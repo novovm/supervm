@@ -27,6 +27,12 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[derive(Clone, Copy, serde::Serialize)]
+pub(super) struct ProbeTransport {
+    pub session_id: Option<[u8; 16]>,
+    pub path: &'static str,
+    pub route: Option<novovm_network::novorudp::carrier::NativeRoute>,
+}
 mod bindings;
 mod query;
 pub use bindings::ValidatorTransportBindings;
@@ -620,6 +626,55 @@ impl NativeChannel {
             }
         }
         Ok(admitted)
+    }
+
+    pub(super) fn enable_probe_observation(&mut self) {
+        let observer = Arc::new(if self.input_trace.is_some() {
+            NativeTransferDiagnosticsV1::new()
+        } else {
+            NativeTransferDiagnosticsV1::for_stream(STREAMS[0])
+        });
+        self.link.set_diagnostics_v1(observer.clone());
+        self.input_trace = Some(observer);
+    }
+
+    pub(super) fn probe_observation(
+        &self,
+    ) -> Option<novovm_network::novorudp::diagnostics::NativeEvidenceSnapshotV1> {
+        self.input_trace.as_ref()?.snapshot()
+    }
+
+    pub(super) fn try_send_probe(
+        &mut self,
+        peer: usize,
+        message: &PreparedMessage,
+        now: Instant,
+        deadline: Instant,
+    ) -> Result<bool> {
+        ensure!(
+            Arc::ptr_eq(&message.owner, &self.owner) && message.stream == STREAMS[0],
+            "foreign probe handle"
+        );
+        self.link
+            .try_send_until(peer, message.stream, &message.object, now, deadline)
+    }
+
+    pub(super) fn probe_transport(&self, peer: usize) -> ProbeTransport {
+        use novovm_network::novorudp::carrier::NativeRoute;
+        let route = match &self.link {
+            ChannelLink::Original(link) => link.peer_route(peer).ok(),
+            #[cfg(test)]
+            ChannelLink::Objects(link) => link.peer_route(peer).ok(),
+        };
+        ProbeTransport {
+            session_id: self.session_id(peer),
+            route,
+            path: match route {
+                Some(NativeRoute::Udp(_)) => "native_udp",
+                Some(NativeRoute::Carrier(_)) => "authenticated_bound_carrier",
+                None => "unavailable",
+            },
+        }
     }
     /// Replacement cannot bypass object generation invalidation or fabricate
     /// completion. The network owner must first authenticate the new carrier.

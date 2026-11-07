@@ -909,6 +909,112 @@ ServiceLeaseBook后，才upsert_verified_record并更新原candidate/routes。�
 9项含两次原字节公开文件/有界配置投影、实际监听及原比较脚本，读回CRC/逐项字节通过。
 没有改产品代码、跑组件替身、发Status或资产请求；不触发手工完整CI。C/D无重复操作。
 
+### 18. 2026-11-08 获批原owner最小增强：候选开发，不自动更新节点
+
+用户后继明确批准第17节缺项的代码/候选开发，不授权重启、安装或更新现有A/B/C/D。
+本节不是重跑四机实网；运行程序仍08236129，原库、用途、网络配置及旧失败均保留。
+
+#### 实际接线与固定边界
+
+- 原`transport::Message`新增显式可拒绝的tag21 `NetworkProbe`，走**原控制lane**。
+  它只有nonce、发送/接收validator ID、issued/expires和固定256字节确定性图样；
+  整条原Host对象379字节，命令377字节。无任意payload、资产、聊天、执行或签票内容。
+  Object ID由原fragment domain及全部规范字节产生，nonce只标记诊断，不是新身份。
+  旧082不支持此可选tag，不能拿旧接收端签收新测试对象；没有旧算法或WSS回退。
+- `NativeLifecycle::network_probe_command`核本地原validator、原配置对端和有效期。
+  每节点最多1个出站、每秒最多1次新发，最长10秒；接收每节点每秒最多4个，
+  活跃期去重/观察各最多64项。命令占**原deliveries及原lane额度**，不增加连接、
+  发送/重组/转发/字节预算；普通控制消息先于未准入诊断，诊断不能拿走控制保留。
+- 明确opt-in：现有NOVONET配置增加可选`probe_control_file`（默认无）。原`Driver.step`
+  在**现有reactor**中每秒最多进展一次有界异步普通文件读取，最多一个读future；
+  只解码固定本地二进制命令，记录同内容摘要后不重复执行。畸形/过大/重复/错身份
+  只拒绝诊断，不停止原node。不新增socket、端口、HTTP/IPC服务、守护进程或网络队列。
+  文件不能与locator、引导检查点、peer文件或carrier用途文件相同。
+- 现有`novovmctl native-network-probe prepare/cancel`仅发布本地`.nvprobe`命令。
+  无socket/私钥/节点启动；拒绝覆盖非诊断文件，原命令经有界解析后才可原子替换。
+  `sender/recipient`是原validator ID，**不是资产账户、UCA或carrier公钥**；由A依据
+  原批准公开材料派生，不让用户手填/另建表。CLI返回`sent=false/object_done=false`。
+- 取消未准入对象直接归还其原队列占用；已准入则保留原sender及原期限排空，避免
+  丢弃共享carrier半帧。可能记录`probe_cancelled_drained_object_done`，明确远端仍可能
+  已接管；不承诺取消能撤回远端字节。会话替换只在剩余原期限内重发相同对象，
+  不续TTL；过期、取消、会话替换分开记录，不伪报DONE。
+
+调用链：本地ctl固定二进制文件 → 原NOVONET Driver有界读取 → 原NativeLifecycle
+身份/资源准入 → 原NativeChannel.prepare → 原NativeEndpoint/NativeObjectLink/
+NovoRUDP（或原合格备用/逐跳载体） → 原对象完整性/域/身份校验 → 诊断接收者核对
+及有界去重 → 原对象DONE。没有进入NOV资产、聊天、AOEM执行或账本/签票journal。
+
+#### 观察与完成语义
+
+保留原`delivery_event`，可由获批的显式启动配置启用，原环境变量OnceLock行为不
+假装能进程外热改。默认关闭；启动配置未启用时不读命令文件、不安装新观察器。
+关闭通过后继受控启动去掉该配置/原环境开关完成，不在本轮热修改运行实例。
+
+原delivery环2048条与原NativeTransferDiagnostics的256对象/120秒上限不增加。
+写入改为try_lock，竞争时丢**诊断观察**并显式累计，不等待、不丢网络数据，不把缺
+记录补成成功；没有同步磁盘日志。原状态报告投影新增`native_network_probe`，64条
+上下文包含Object ID、nonce、声明两端与实际peer、Session ID、issued/expires/观察时刻、
+原路由种类及实际UDP地址或已认证carrier首跳公钥/连接binding摘要。不能把即时首跳
+说成全部中继证明，不能输出原始exporter、会话秘密或protected材料。会话替换后的
+终态保留实际原发送会话/路径，而不是拿当前新session冒充旧发送的完成。
+
+底层原观察保留分片、hash完成、feedback窗口、ACK进展、TransportDone和未归属拒绝
+分类；通过原`transfer_tag(session, stream, object)`与同对象上下文关联。
+Packet/fragment ACK、Object DONE（完整有界接管）、业务接纳/执行/持久化Receipt
+仍是三层。错误接收者/关闭诊断的节点可能已在对象层接管后拒绝诊断，必须同时核
+接收端`probe_received_integrity_verified`和发送端真实DONE；单方DONE不算本诊断签收，
+更不算资产成功。低层记录缺失/竞争/淘汰有覆盖计数，不用百分比或队列归零补齐证据。
+
+#### 本地检查与失败（构建前收口记录）
+
+Windows/Linux原生命周期各3项真实AOEM store/native组件回归已通过：跨节点并发
+对象DONE及相同Session、重复/错接收者隔离、默认关闭、取消/过期、准入后排空和
+接收限额/观察淘汰。使用原本地夹具及品牌化组件签名，**不是四机实网或新ML-DSA
+制品已部署**。Windows另有原三高度业务默认关闭诊断回归1项通过，7项原底层观察
+回归通过（含竞争不阻塞、保留/淘汰、ACK与完成分层）；本地命令实际异步读取1项、
+CLI安全发布两平台各1项通过。codec/命令截断、图样篡改、任意输入拒绝已覆盖。
+
+原中继IO回归保留原普通对象，追加固定Probe对象；Windows原批次6项通过、新单中继
+首版失败，恢复原61秒滚动资源窗口分隔后单例81.19秒通过。原双中继含并发和中继
+断开重认证已通过本地IO；Linux该网络组7/7通过（233.23秒）。不得把首个6/7改成7/7或把这些
+localhost真实IO组件试验写成四台物理机器通过。失败摘录/完整后继日志随候选归档。
+CLI all-target检查还发现原genesis夹具遗漏已有novonet_config_file，显式补None；
+没有弱化启动合同。两平台Node的lib/tests及CLI all-target严格Clippy通过；最终
+生命周期定向复验Windows 3/3（0.84秒）、Linux 3/3（1.76秒）。源码/制品身份另固定。
+
+#### 待批准的A/B原库existing更新与回滚（本轮不执行）
+
+1. 先冻结源码、两平台各自manifest/node/ctl/AOEM/hash及必要本地结果。两平台语义
+   相同但二进制hash不同；不覆盖现有release，不下载未知库，不改变共同域/三pin、
+   四验证者/3票、七用途余额/控制或费用。当前不存在已批准的新部署操作。
+2. A原任务`NOVOVM-A-08236129-Network-20261108`的动作**包含initialize**，绝不可
+   重启该动作来更新。新受控启动必须直接用原node模式和START=existing，复用原
+   LocalService custody、原A数据库/journal和carrier；不注册第二套网络或附带SCM迁移。
+   A原库`C:\ProgramData\NOVOVM\selfrun\91129655606029\A\chain-state`不清理/重建。
+3. B只更新独立自营unit和`/var/lib/novovm/selfrun/91129655606029/B/chain-state`的
+   原owner程序配置，继续novovm账户/原受保护credential、用途及carrier。不动邮箱、
+   Relay、Web、Docker。新旧节点不同时打开同库/同端口，不删除LOCK绕过占用。
+4. 当前A任务/B临时unit不是“已验SCM优雅停止”。可等待原24h软运行自然排空；若要
+   提前更新，需明确批准精确终止目标进程的副作用，按**中断后原库恢复**验证，不能
+   把TaskStop/systemctl stop未经验证就称为已优雅排空。不在此文执行任何停止命令。
+5. 停止/退出后原目录、journal及旧日志原地保留；不拿运行中的原库直接文件复制当
+   一致备份。启动新候选前比较全部身份/域/库路径，独立工作目录及新日志CreateNew。
+   诊断命令目录仅管理员/SYSTEM可写，原服务账户只读；报告沿原工作目录权限写入。
+   不把七把资产钥交给服务账户，不发布protected、credential或数据库。
+6. 后继配置只显式增加已审命令路径；原native优先、Iroh备用、发现/中继策略和额度
+   不变。回滚先停止新实例并保全其现场，再用**旧082程序+旧配置**existing重开同库；
+   旧082拒绝probe_control_file/tag21，不可拿新配置强喂旧程序。无DB/journal格式变更
+   或迁移；若原Existing检查拒绝，停止并报告，不清库、不强开、不重创世。
+7. A/B更新不自动签收A→C：C仍082时会拒绝新可选tag。A→C正式对象验收前，必须
+   另行批准C使用同候选existing更新并启用同一原owner观察；不是再做初始化/钥准备。
+   D同理，只在获准的单/双中继阶段需要时一次安排，不重复已封存认证或机器清点。
+8. 更新计划的副作用：一次目标节点短暂离线、原会话重新认证、发现序号推进、诊断
+   消耗原配额及少量有界内存/公开元数据；不收测试对象的NOV费，不产生Business Receipt。
+   回滚丢弃的是进程内未完成诊断，结果保持未知/取消，不替换或回退资产历史。
+
+当前仅实现与候选准备，不能据此执行上述步骤。Windows/Linux固定制品及最终原件
+哈希在构建完成后追加于本节；不额外手工触发云端完整CI，main自动检查不关闭。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

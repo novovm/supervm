@@ -40,6 +40,7 @@ impl Pair {
         let mut channels = Vec::new();
         for side in 0..count {
             let config = Config {
+                probe_control_file: None,
                 relays: Vec::new(),
                 nameserver: "127.0.0.1".parse()?,
                 bind_address: "127.0.0.1:0".parse()?,

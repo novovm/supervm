@@ -162,6 +162,15 @@ fn fixed_binding(
 
 pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvidence> {
     match message {
+        Message::NetworkProbe(probe) => {
+            probe.validate()?;
+            ensure!(
+                config.validators.member(&probe.sender).is_some()
+                    && config.validators.member(&probe.recipient).is_some(),
+                "probe endpoints outside fixed domain"
+            );
+            Ok(VerifiedEvidence::None)
+        }
         Message::Body { context, .. }
         | Message::ApflBody { context, .. }
         | Message::AssetBody { context, .. }

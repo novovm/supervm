@@ -107,6 +107,11 @@ static CRITICAL_START: OnceLock<Instant> = OnceLock::new();
 // Reuse the same bounded record/clock implementation; keep delivery diagnostics
 // from evicting the execution/consensus timeline. No payload or signing data.
 static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
+static DELIVERY_EXPLICIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static DELIVERY_CONTENDED: AtomicU64 = AtomicU64::new(0);
+pub(crate) fn enable_native_delivery_observation() {
+    DELIVERY_EXPLICIT.store(true, Ordering::Relaxed);
+}
 static CONTROL: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());
 const ASSET_EVENTS: usize = 8192;
 static ASSET: std::sync::Mutex<(VecDeque<Value>, u64)> =
@@ -160,6 +165,9 @@ pub(crate) fn asset_event(event: &'static str, height: u64, detail: impl FnOnce(
 }
 
 fn delivery_enabled() -> bool {
+    if DELIVERY_EXPLICIT.load(Ordering::Relaxed) {
+        return true;
+    }
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var("NOVOVM_PROFILE_NATIVE_DELIVERY")
@@ -180,7 +188,7 @@ pub(crate) fn delivery_event(
         return;
     }
     let started = CRITICAL_START.get_or_init(Instant::now);
-    if let Ok(mut buffer) = DELIVERY.lock() {
+    if let Ok(mut buffer) = DELIVERY.try_lock() {
         // Retain the latest window for a late stall, with explicit loss count.
         buffer.push_latest(CriticalRecord {
             seq: 0,
@@ -194,6 +202,8 @@ pub(crate) fn delivery_event(
             duration_ns: None,
             fragment: None,
         });
+    } else {
+        DELIVERY_CONTENDED.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -573,8 +583,9 @@ pub(crate) fn snapshot() -> Value {
         json!({"enabled":false,"capacity":CRITICAL_EVENTS,"dropped":0,"events":[]})
     };
     let delivery = if delivery_enabled() {
-        DELIVERY.lock().ok().map(|buffer| json!({
+        DELIVERY.try_lock().ok().map(|buffer| json!({
             "enabled":true, "capacity":CRITICAL_EVENTS, "evicted":buffer.dropped,
+            "contended_events":DELIVERY_CONTENDED.load(Ordering::Relaxed),
             "scope":"bounded latest local ownership/transport events; purpose bits 1=realtime 2=recovery; height 0=not carried; transport DONE is not finality",
             "events":buffer.records.iter().map(|record| json!({
                 "seq":record.seq, "elapsed_ns":record.elapsed_ns,

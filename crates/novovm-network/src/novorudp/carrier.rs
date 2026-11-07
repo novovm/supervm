@@ -9,7 +9,7 @@ use std::{
 };
 
 /// Actual transport provenance, never an address synthesized from a peer key.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub enum NativeRoute {
     Udp(SocketAddr),
     Carrier(VerifiedCarrierRoute),
@@ -36,7 +36,7 @@ impl NativeRoute {
 /// The exporter includes the carrier's connection/stream generation. This is
 /// routing provenance, not a replacement for the signed native handshake or
 /// proof that its transcript is cryptographically bound to this carrier.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 pub struct VerifiedCarrierRoute {
     peer_key: [u8; 32],
     binding: [u8; 32],

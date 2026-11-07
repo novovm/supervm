@@ -41,6 +41,7 @@ fn run() -> Result<(), CtlError> {
         TopCommand::GovernanceStats(args) => commands::governance_stats::run(args),
         TopCommand::NativeGenesis(args) => commands::native_genesis::run(args),
         TopCommand::NativeIdentity(args) => commands::native_identity::run(args),
+        TopCommand::NativeNetworkProbe(args) => commands::native_network_probe::run(args),
         TopCommand::NativeNonceMigration(args) => commands::native_nonce_migration::run(args),
         TopCommand::RolloutControl(args) => commands::rollout_control::run(args),
         TopCommand::Rollout(args) => commands::rollout::run(args),

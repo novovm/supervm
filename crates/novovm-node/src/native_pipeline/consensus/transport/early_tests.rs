@@ -544,7 +544,8 @@ fn legacy_encode(message: &Message) -> Vec<u8> {
                 })[..184],
             );
         }
-        Message::EarlyBody { .. }
+        Message::NetworkProbe(_)
+        | Message::EarlyBody { .. }
         | Message::BindBody { .. }
         | Message::Transactions { .. }
         | Message::ApflBody { .. }

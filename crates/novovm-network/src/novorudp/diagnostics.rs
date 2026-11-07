@@ -498,6 +498,7 @@ pub(crate) struct NativeSendProgressV1 {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct NativeEvidenceSnapshotV1 {
+    pub contended_observations: u64,
     pub scope: &'static str,
     pub elapsed_us: u64,
     pub rejection_names: [&'static str; 16],
@@ -524,6 +525,7 @@ struct State {
     records: VecDeque<NativeTransferEvidenceV1>,
 }
 pub struct NativeTransferDiagnosticsV1 {
+    contentions: std::sync::atomic::AtomicU64,
     origin: Instant,
     stream_filter: Option<u64>,
     state: Mutex<State>,
@@ -607,8 +609,9 @@ impl State {
 }
 impl NativeTransferDiagnosticsV1 {
     pub fn new() -> Self {
-        Self { origin: Instant::now(), stream_filter: None, state: Mutex::new(State {
+        Self { contentions: std::sync::atomic::AtomicU64::new(0), origin: Instant::now(), stream_filter: None, state: Mutex::new(State {
             snapshot: NativeEvidenceSnapshotV1 {
+                contended_observations: 0,
                 scope: "local monotonic clock; rejection association unknown; bounded test evidence",
                 elapsed_us: 0,
                 rejection_names: ["wire_budget","oversize","handshake","unknown_source","no_session","secure_route","secure_nonce","secure_replay_pre_auth","secure_authentication","wire_or_frame","stream_denied","open_other","unknown_stream","ack_short","object_ack","object_fragment"],
@@ -634,6 +637,14 @@ impl NativeTransferDiagnosticsV1 {
     pub fn elapsed_us(&self, now: Instant) -> u64 {
         self.micros(now)
     }
+    fn lock_state(&self) -> std::sync::TryLockResult<std::sync::MutexGuard<'_, State>> {
+        let result = self.state.try_lock();
+        if result.is_err() {
+            self.contentions
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        result
+    }
     fn micros(&self, now: Instant) -> u64 {
         now.saturating_duration_since(self.origin)
             .as_micros()
@@ -643,7 +654,7 @@ impl NativeTransferDiagnosticsV1 {
         if counts.total() == 0 {
             return;
         }
-        if let Ok(mut s) = self.state.lock() {
+        if let Ok(mut s) = self.lock_state() {
             let at = self.micros(now);
             s.expire(at);
             s.snapshot.first_unattributed_reject_us.get_or_insert(at);
@@ -662,7 +673,7 @@ impl NativeTransferDiagnosticsV1 {
         if queued == 0 {
             return;
         }
-        let Ok(mut s) = self.state.lock() else { return };
+        let Ok(mut s) = self.lock_state() else { return };
         let p = &mut s.snapshot.send_polls;
         p.active_calls = p.active_calls.saturating_add(1);
         p.offered_budget = p.offered_budget.saturating_add(budget as u64);
@@ -688,7 +699,7 @@ impl NativeTransferDiagnosticsV1 {
         amount: u64,
         now: Instant,
     ) {
-        let Ok(mut s) = self.state.lock() else {
+        let Ok(mut s) = self.lock_state() else {
             return;
         };
         let at = self.micros(now);
@@ -748,7 +759,7 @@ impl NativeTransferDiagnosticsV1 {
         repair: bool,
         now: Instant,
     ) {
-        let Ok(mut s) = self.state.lock() else { return };
+        let Ok(mut s) = self.lock_state() else { return };
         let at = self.micros(now);
         use super::fragments::FragmentObservation;
         let totals = &mut s.snapshot.receive_totals;
@@ -809,7 +820,7 @@ impl NativeTransferDiagnosticsV1 {
         }
     }
     pub(crate) fn send_progress(&self, tag: [u8; 32], p: NativeSendProgressV1, now: Instant) {
-        let Ok(mut s) = self.state.lock() else { return };
+        let Ok(mut s) = self.lock_state() else { return };
         let Some(r) = s.record(tag, self.micros(now)) else {
             return;
         };
@@ -840,7 +851,7 @@ impl NativeTransferDiagnosticsV1 {
         });
     }
     pub(crate) fn send_finished(&self, tag: [u8; 32], state: &'static str, now: Instant) {
-        let Ok(mut s) = self.state.lock() else { return };
+        let Ok(mut s) = self.lock_state() else { return };
         let at = self.micros(now);
         let Some(r) = s.record(tag, at) else { return };
         r.send_terminal_us.get_or_insert(at);
@@ -855,7 +866,7 @@ impl NativeTransferDiagnosticsV1 {
         first_missing: Option<u64>,
         now: Instant,
     ) {
-        let Ok(mut s) = self.state.lock() else { return };
+        let Ok(mut s) = self.lock_state() else { return };
         let at = self.micros(now);
         let Some(r) = s.record(tag, at) else { return };
         let f = if sent {
@@ -888,7 +899,7 @@ impl NativeTransferDiagnosticsV1 {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn response(&self, request: [u8; 32], response: [u8; 32], now: Instant) {
         self.progress(request, NativeProgressStageV1::ResponseQueued, 0, now);
-        if let Ok(mut s) = self.state.lock() {
+        if let Ok(mut s) = self.lock_state() {
             if let Some(r) = s.records.iter_mut().find(|r| r.tag == request) {
                 r.response_tag = Some(response);
             }
@@ -900,8 +911,7 @@ impl NativeTransferDiagnosticsV1 {
     /// Read one retained record without refreshing its lifetime or expiring
     /// unrelated records. The owner can export it at its normal handoff.
     pub fn snapshot_transfer(&self, tag: [u8; 32]) -> Option<NativeTransferEvidenceV1> {
-        self.state
-            .lock()
+        self.lock_state()
             .ok()?
             .records
             .iter()
@@ -910,7 +920,7 @@ impl NativeTransferDiagnosticsV1 {
     }
     /// Scalar coverage evidence without cloning or changing the record set.
     pub fn snapshot_retention(&self) -> Option<NativeEvidenceRetentionV1> {
-        let s = self.state.lock().ok()?;
+        let s = self.lock_state().ok()?;
         Some(NativeEvidenceRetentionV1 {
             retained_records: s.records.len(),
             omitted_records: s.snapshot.omitted_records,
@@ -920,19 +930,21 @@ impl NativeTransferDiagnosticsV1 {
     }
     /// Cumulative observer-wide rejection counters, not attributed to one object.
     pub fn snapshot_rejections(&self) -> Option<NativeRejectCountsV1> {
-        Some(self.state.lock().ok()?.snapshot.rejections)
+        Some(self.lock_state().ok()?.snapshot.rejections)
     }
     pub fn snapshot_send_polls(&self) -> Option<NativeLinkPollEvidenceV1> {
-        Some(self.state.lock().ok()?.snapshot.send_polls.clone())
+        Some(self.lock_state().ok()?.snapshot.send_polls.clone())
     }
     pub fn snapshot_receive_totals(&self) -> Option<NativeReceiveTotalsV1> {
-        Some(self.state.lock().ok()?.snapshot.receive_totals)
+        Some(self.lock_state().ok()?.snapshot.receive_totals)
     }
     fn snapshot_at(&self, now: Instant) -> Option<NativeEvidenceSnapshotV1> {
-        let mut s = self.state.lock().ok()?;
+        let mut s = self.lock_state().ok()?;
         s.expire(self.micros(now));
         let mut snapshot = s.snapshot.clone();
         snapshot.elapsed_us = self.micros(now);
+        snapshot.contended_observations =
+            self.contentions.load(std::sync::atomic::Ordering::Relaxed);
         snapshot.objects = s.records.iter().cloned().collect();
         Some(snapshot)
     }
@@ -946,6 +958,33 @@ impl Default for NativeTransferDiagnosticsV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_contention_never_blocks_transport_observation() {
+        let observer = std::sync::Arc::new(NativeTransferDiagnosticsV1::new());
+        let guard = observer.state.lock().unwrap();
+        let copy = observer.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            copy.progress(
+                [7; 32],
+                NativeProgressStageV1::TransportDone,
+                0,
+                Instant::now(),
+            );
+            send.send(()).unwrap();
+        });
+        let immediate = receive.recv_timeout(std::time::Duration::from_secs(1));
+        drop(guard);
+        worker.join().unwrap();
+        assert!(immediate.is_ok(), "diagnostic waited for an exporter lock");
+        let snapshot = observer.snapshot().unwrap();
+        assert_eq!(snapshot.contended_observations, 1);
+        assert!(
+            snapshot.objects.is_empty(),
+            "omitted observation became fake DONE"
+        );
+    }
     use std::time::Duration;
     #[test]
     fn feedback_tracks_actual_window_progress_with_bounded_evidence() {

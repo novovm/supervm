@@ -24,6 +24,7 @@ use novovm_network::{
     product_service_lease::{IrohServiceEndpointV1, SelfOwnedTrustV1, ServiceLeaseBookV1},
 };
 mod discovery;
+mod probe;
 mod relay;
 use discovery::Discovery;
 use serde::Deserialize;
@@ -52,6 +53,9 @@ const DISCOVERY_ENTRY: &[u8; 8] = b"NVNETDS1";
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Local, opt-in bounded binary diagnostic commands; never remote input.
+    #[serde(default)]
+    pub probe_control_file: Option<PathBuf>,
     /// Existing approved Iroh relays, not automatically obtained from a peer.
     pub relays: Vec<String>,
     pub nameserver: IpAddr,
@@ -85,6 +89,7 @@ impl Config {
             .chain(config.peer_records.iter_mut())
             .chain(config.discovery_seeds.iter_mut())
             .chain(config.carrier_identity_file.iter_mut())
+            .chain(config.probe_control_file.iter_mut())
         {
             if path.is_relative() {
                 *path = base.join(&*path);
@@ -112,6 +117,18 @@ impl Config {
             "duplicate NOVONET locator source"
         );
         config.carrier()?;
+        ensure!(
+            config.probe_control_file.as_ref().is_none_or(|path| path
+                != &config.public_record_file
+                && path
+                    != &config
+                        .public_record_file
+                        .with_extension("discovery-cache.json")
+                && config.carrier_identity_file.as_ref() != Some(path)
+                && !config.peer_records.contains(path)
+                && !config.discovery_seeds.contains(path)),
+            "probe command cannot alias network identity or locator inputs"
+        );
         ensure!(
             config.carrier_identity_file.as_ref().is_none_or(|path| path
                 != &config.public_record_file
@@ -165,6 +182,7 @@ struct CarrierAttempt<'a> {
 /// The pinned future owns its scope/streams. No borrowed pump escapes into the
 /// node struct, and no partial frame future is discarded between tick polls.
 pub struct Driver {
+    probe_control: Option<probe::Control>,
     work: Job<'static>,
     runtime: tokio::runtime::Runtime,
     views: Arc<Mutex<Vec<PeerView>>>,
@@ -242,6 +260,7 @@ impl Driver {
                 .len()
         ];
         Ok(Self {
+            probe_control: config.probe_control_file.clone().map(probe::Control::new),
             work,
             runtime,
             views,
@@ -257,6 +276,18 @@ impl Driver {
         })
     }
     pub fn step(&mut self, node: &mut NativeLifecycle, now: Instant) -> Result<()> {
+        if let Some(control) = &mut self.probe_control {
+            node.enable_network_probe(now);
+            if let Some(command) = self
+                .runtime
+                .block_on(async { poll_fn(|cx| Poll::Ready(control.poll(cx, now))).await })
+            {
+                control.record(
+                    command
+                        .and_then(|command| node.network_probe_command(command, wall_ms()?, now)),
+                );
+            }
+        }
         {
             let mut views = self
                 .views
@@ -338,6 +369,7 @@ impl Driver {
             })
             .ok();
         serde_json::json!({"default":"native_novorudp","fallback":"iroh","installed_bound_peer_routes":bound,
+            "probe_control":self.probe_control.as_ref().map(|control| control.observation()),
             "peer_discovery_rpc":self.config.discovery,
             "connection_failures":self.failures.load(Ordering::Relaxed),"global_auto_discovery":false,"native_multihop_accepted":false})
     }

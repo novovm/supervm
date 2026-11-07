@@ -37,6 +37,7 @@ pub enum TopCommand {
     GovernanceStats(GovernanceStatsArgs),
     NativeGenesis(native_genesis::NativeGenesisArgs),
     NativeIdentity(crate::commands::native_identity::NativeIdentityArgs),
+    NativeNetworkProbe(crate::commands::native_network_probe::NativeNetworkProbeArgs),
     NativeNonceMigration(NativeNonceMigrationArgs),
     RolloutControl(RolloutControlArgs),
     Rollout(RolloutArgs),

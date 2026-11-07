@@ -3,21 +3,31 @@ use super::*;
 #[test]
 fn actual_two_relay_native_objects_use_both_physical_hops_and_complete_concurrent_work(
 ) -> Result<()> {
+    run_relay_objects(2)
+}
+
+#[test]
+fn actual_single_relay_fixed_probe_objects_done_and_reauthenticate() -> Result<()> {
+    run_relay_objects(1)
+}
+
+fn run_relay_objects(relay_count: usize) -> Result<()> {
     use novovm_network::novorudp::carrier::NativeRoute;
-    let mut peers = Pair::configured(false, true, 4)?;
+    let count = relay_count + 2;
+    let mut peers = Pair::configured(false, true, count)?;
     let root = peers.drivers[0]
         .config
         .public_record_file
         .parent()
         .unwrap()
         .to_owned();
-    let source = (0..4)
+    let source = (0..count)
         .min_by_key(|i| peers.identities[*i].public_key())
         .unwrap();
-    let target = (0..4)
+    let target = (0..count)
         .max_by_key(|i| peers.identities[*i].public_key())
         .unwrap();
-    let relays = (0..4)
+    let relays = (0..count)
         .filter(|i| *i != source && *i != target)
         .collect::<Vec<_>>();
     let peer_index = |side: usize, other: usize| if other < side { other } else { other - 1 };
@@ -30,7 +40,7 @@ fn actual_two_relay_native_objects_use_both_physical_hops_and_complete_concurren
         config.discovery = false;
         config.discovery_seeds.clear();
         config.relay_forwarding = true;
-        config.peer_records = (0..4)
+        config.peer_records = (0..count)
             .filter(|other| *other != side)
             .map(|other| root.join(format!("leg-{side}-{other}.json")))
             .collect();
@@ -57,14 +67,14 @@ fn actual_two_relay_native_objects_use_both_physical_hops_and_complete_concurren
     let unreachable = UdpSocket::bind("127.0.0.1:0")?;
     let identities = peers.identities.clone();
     let publish_legs = |revision| -> Result<()> {
-        for side in 0..4 {
-            for other in (0..4).filter(|other| *other != side) {
+        for side in 0..count {
+            for other in (0..count).filter(|other| *other != side) {
                 let mut endpoint = IrohServiceEndpointV1::from_record(&original[other])?;
                 // Real source-specific stale coordinates force A -> R1 -> R2 -> D.
                 // No fake success, mocked IO, altered authentication or test-only
                 // route shortcut. Each failed dial uses the actual carrier owner.
-                if (side == source && (other == target || other == relays[1]))
-                    || (side == relays[0] && other == target)
+                if (side == source && (other == target || (relay_count == 2 && other == relays[1])))
+                    || (relay_count == 2 && side == relays[0] && other == target)
                 {
                     endpoint.address.direct = vec![unreachable.local_addr()?];
                     endpoint.address.relays.clear();
@@ -115,7 +125,7 @@ fn actual_two_relay_native_objects_use_both_physical_hops_and_complete_concurren
     );
     ensure!(
         last.peer_key()
-            == IrohServiceEndpointV1::from_record(&original[relays[1]])?
+            == IrohServiceEndpointV1::from_record(&original[*relays.last().unwrap()])?
                 .address
                 .endpoint_key
     );
@@ -166,7 +176,7 @@ fn actual_two_relay_native_objects_use_both_physical_hops_and_complete_concurren
                     .address
                     .endpoint_key
         {
-            for side in (0..4).filter(|side| *side != middle) {
+            for side in (0..count).filter(|side| *side != middle) {
                 publish(&root.join(format!("leg-{side}-{middle}.json")), &record)?;
             }
             break;
@@ -196,6 +206,10 @@ fn complete_objects(
     deadline: Instant,
 ) -> Result<()> {
     let from = if target < source { target } else { target - 1 };
+    let to = if source < target { source } else { source - 1 };
+    let sender = peers.channels[target].validator_for_peer(to)?;
+    let recipient = peers.channels[source].validator_for_peer(from)?;
+    let issued_at_ms = wall_ms()?;
     let messages = [
         Message::RequestBody {
             body_id: [marker; 32],
@@ -203,6 +217,20 @@ fn complete_objects(
         Message::RequestBody {
             body_id: [marker + 1; 32],
         },
+        Message::NetworkProbe(crate::native_pipeline::consensus::transport::NetworkProbe {
+            nonce: [marker + 2; 32],
+            sender,
+            recipient,
+            issued_at_ms,
+            expires_at_ms: issued_at_ms + 10_000,
+        }),
+        Message::NetworkProbe(crate::native_pipeline::consensus::transport::NetworkProbe {
+            nonce: [marker + 3; 32],
+            sender,
+            recipient,
+            issued_at_ms,
+            expires_at_ms: issued_at_ms + 10_000,
+        }),
     ];
     for message in &messages {
         let prepared = peers.channels[source].prepare(message)?;
@@ -210,7 +238,7 @@ fn complete_objects(
     }
     let mut received = BTreeSet::new();
     let mut completed = BTreeSet::new();
-    while received.len() != 2 || completed.len() != 2 {
+    while received.len() != messages.len() || completed.len() != messages.len() {
         ensure!(
             Instant::now() < deadline,
             "relayed concurrent objects did not actually receive/DONE"
@@ -237,6 +265,9 @@ fn complete_objects(
                         && messages.contains(&event.message)
                         && received.insert(event.fragment_id)
                 );
+                if let Message::NetworkProbe(probe) = &event.message {
+                    probe.validate_time(wall_ms()?)?;
+                }
             }
         }
     }

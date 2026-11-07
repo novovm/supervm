@@ -371,7 +371,7 @@ pub(crate) fn with_delivery_peer_lifecycle_for_test(
     })
 }
 
-fn with_delivery_nodes_for_test(
+pub(crate) fn with_delivery_nodes_for_test(
     check: impl FnOnce(
         &mut [crate::native_pipeline::consensus::native_lifecycle::NativeLifecycle],
         usize,
