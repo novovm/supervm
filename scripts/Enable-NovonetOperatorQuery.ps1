@@ -7,9 +7,6 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
-if(-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
-    throw 'Run once in Administrator PowerShell. No changes made.'
-}
 $program=(Resolve-Path -LiteralPath (Join-Path $PackageRoot 'bin\novovm-native-client.exe')).Path
 if((Get-FileHash -LiteralPath $program -Algorithm SHA256).Hash.ToLowerInvariant() -cne '597b4de7a369bc6e5fcaf8114694ed1ef91f6248ca61431c866b070f9a5c4ca1'){
     throw 'Frozen original client hash mismatch'
@@ -25,11 +22,21 @@ if((Test-Path -LiteralPath $ReportDirectory) -or (Get-NetFirewallRule -Name $all
 $blocked=Get-NetFirewallRule -Name $blockedName
 $application=$blocked | Get-NetFirewallApplicationFilter
 $port=$blocked | Get-NetFirewallPortFilter
-if($blocked.Action.ToString() -cne 'Block' -or $blocked.Direction.ToString() -cne 'Inbound' -or
+if($blocked.Direction.ToString() -cne 'Inbound' -or
    $blocked.Enabled.ToString() -cne 'True' -or $blocked.Profile.ToString() -cne 'Public' -or
    $port.Protocol.ToString() -notin @('UDP','17') -or
    -not [string]::Equals($application.Program,$program,[StringComparison]::OrdinalIgnoreCase)){
-    throw 'Original UDP block no longer matches the inspected rule; no changes made'
+    throw ('Original UDP rule shape changed; no changes made. Observed action='+$blocked.Action.ToString()+', enabled='+$blocked.Enabled.ToString()+', profile='+$blocked.Profile.ToString()+', protocol='+$port.Protocol.ToString())
+}
+if($blocked.Action.ToString() -ceq 'Allow'){
+    Write-Output 'A_OPERATOR_EXISTING_UDP_ALLOW. Existing rule already permits this client; no firewall changes made. Continue original read-only queries; this is not network acceptance.'
+    exit 0
+}
+if($blocked.Action.ToString() -cne 'Block'){
+    throw ('Unexpected original UDP action: '+$blocked.Action.ToString()+'; no changes made')
+}
+if(-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+    throw 'Run once in Administrator PowerShell. No changes made.'
 }
 New-Item -ItemType Directory -Path $ReportDirectory | Out-Null
 $before=[ordered]@{scope='A_original_native_operator_reply_only';observed_utc=[DateTime]::UtcNow.ToString('o');program=$program;disabled_rule=$blockedName;original_enabled=$true;original_action='Block';local_address='192.168.71.74';local_udp_port=41190;remote_addresses=@('47.103.59.206','192.168.71.125','192.168.71.59');remote_udp_ports=@(41050,41052,41053);node_or_state_changed=$false}

@@ -754,6 +754,18 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "$unpacked\Start-N
 
 ### 15. 2026-11-08 C/D启动签收，原客户端查询与A本机防火墙阻断
 
+**后继实测覆盖本节的防火墙待执行命令：用户执行时该条规则已经为Allow，原脚本
+在任何修改前拒绝，未改变防火墙。A重新逐项读回action=Allow、Inbound、Public、UDP、
+Enabled=True及同一程序路径。脚本现明确识别既有Allow并无修改退出，Windows PS5
+真实执行该分支退出0，未创建操作目录。无需用户再执行防火墙脚本。**
+
+随后在已有Allow下，原client沿相同独立用途钥、相同域和原30秒期限，从A固定UDP41190
+依次查询B/C/D，三项仍退出1、`native query deadline; no fresh node observation`。
+因此先前Block观察是真实历史值，但不能据此归因全部超时，规则变Allow也不是网络
+修复通过。B同期SSH绑定A LAN仍连接超时；未执行远端tcpdump。没有重启/清库/换钥，
+下一诊断必须取得实际包收发或当前对端处理证据，不盲目重跑、不提高超时。下文
+修正规则的命令仅留作本次操作历史，不再作为用户待办。
+
 A已ff到C回执`d84bf08f`（含D `2185d5bb`），独立核对两份原ZIP的CRC、每份公开
 原件长度/哈希、实际LocalService SID、共同初始根与完整传输公钥。C在03:38、D在
 03:30观察到原node Running；四台初始化根均为f6186d40。新程序仍是08236129，
