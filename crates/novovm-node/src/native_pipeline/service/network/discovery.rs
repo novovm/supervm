@@ -217,17 +217,21 @@ impl<'a> Discovery<'a> {
                 .revision
                 .checked_add(1)
                 .context("discovery revision exhausted")?;
-            let result = self
-                .store
-                .lock()
-                .map_err(|_| anyhow::anyhow!("discovery store poisoned"))?
-                .put_node_locator_v1(
+            let result = {
+                let mut store = self
+                    .store
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("discovery store poisoned"))?;
+                // The tick may predate a rotation or an intervening RPC. Use
+                // admission time under this SAME store's lock, not tick time.
+                store.put_node_locator_v1(
                     node_owner_id_v1(self.identity.public_key())?,
                     self.revision,
                     Duration::from_secs(30),
                     bytes.clone(),
-                    now,
-                );
+                    Instant::now(),
+                )
+            };
             if result.is_err() {
                 self.failures.fetch_add(1, Ordering::Relaxed);
             }
@@ -316,8 +320,9 @@ impl<'a> Discovery<'a> {
             .store
             .lock()
             .map_err(|_| anyhow::anyhow!("discovery store poisoned"))?;
+        let observed = Instant::now();
         for key in &self.keys {
-            if let Some(record) = store.node_locator_v1(node_owner_id_v1(key)?, now)? {
+            if let Some(record) = store.node_locator_v1(node_owner_id_v1(key)?, observed)? {
                 if let Ok(record) =
                     decode_node_locator_v1(&record.ciphertext, key, self.pins, wall, &self.identity)
                 {
@@ -479,6 +484,104 @@ async fn select(
 mod tests {
     use super::*;
     use crate::native_pipeline::consensus::native::tests::separated_material;
+
+    #[test]
+    fn rotated_discovery_store_uses_time_sampled_after_its_lock() -> Result<()> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(async {
+                let owner = IrohEndpointOwnerV1::bind(
+                    IrohConfigV1::new(&[], "127.0.0.1".parse()?)?
+                        .with_bind_address("127.0.0.1:0".parse()?)?,
+                    || Ok(()),
+                )
+                .await?;
+                let result = owner
+                    .with_continuous_service_v4(
+                        || Ok(()),
+                        |scope| {
+                            Box::pin(async move {
+                                let (_, keys, domain, _) = separated_material()?;
+                                let pins = (domain.chain_id, domain.genesis, domain.protocol);
+                                let config = Config {
+                                    relays: Vec::new(),
+                                    nameserver: "127.0.0.1".parse()?,
+                                    bind_address: "127.0.0.1:0".parse()?,
+                                    public_record_file: std::env::temp_dir().join(format!(
+                                        "novonet-clock-{:016x}.json",
+                                        rand::random::<u64>()
+                                    )),
+                                    carrier_identity_file: None,
+                                    peer_records: Vec::new(),
+                                    discovery: true,
+                                    discovery_seeds: Vec::new(),
+                                    relay_forwarding: false,
+                                    fallback_after_ms: 1000,
+                                    retry_ms: 1000,
+                                    udp_recovery_ms: 5000,
+                                };
+                                let mut discovery = Discovery::new(
+                                    scope,
+                                    &config,
+                                    &keys[0],
+                                    &[keys[1].public_key().to_vec()],
+                                    pins,
+                                    Arc::new(AtomicU64::new(0)),
+                                )?;
+                                for sequence in 1..=3 {
+                                    // Reproduce the real 100-second rotation without a
+                                    // sleep or changing production rotation/lifetime.
+                                    let tick = Instant::now() - Duration::from_millis(1);
+                                    discovery.rotate_at = tick;
+                                    let previous = discovery.store.clone();
+                                    ensure!(discovery.rotate_if_due(tick)?);
+                                    ensure!(
+                                        previous.lock().unwrap().instance()
+                                            != discovery.instance()?
+                                    );
+                                    let wall = wall_ms()?;
+                                    let record = sign_relay_record_v1(
+                                        &keys[0],
+                                        native_locator_id_v1(pins),
+                                        vec![IrohServiceEndpointV1 {
+                                            instance: discovery.instance()?,
+                                            address: scope.address()?,
+                                        }
+                                        .endpoint()?],
+                                        wall,
+                                        wall + 120_000,
+                                        sequence,
+                                    )?;
+                                    discovery.set_local(&record)?;
+                                    discovery.publish_at = tick;
+                                    ensure!(discovery.maintain(tick, wall)?.is_empty());
+                                    ensure!(discovery
+                                        .store
+                                        .lock()
+                                        .unwrap()
+                                        .node_locator_v1(
+                                            node_owner_id_v1(keys[0].public_key())?,
+                                            Instant::now()
+                                        )?
+                                        .is_some());
+                                    // Old in-flight RPCs retain their original store;
+                                    // rotation must not invalidate it or reset its TTL.
+                                    previous.lock().unwrap().stats(Instant::now())?;
+                                    // Also cover a sampled tick preceding an RPC store
+                                    // observation, without weakening ClockRegression.
+                                    discovery.maintain(tick, wall)?;
+                                }
+                                ensure!(discovery.failures.load(Ordering::Relaxed) == 0);
+                                Ok(())
+                            })
+                        },
+                    )
+                    .await;
+                owner.close().await?;
+                result
+            })
+    }
 
     #[test]
     fn bootstrap_rejects_bad_signature_domain_future_key_change_and_rollback() -> Result<()> {

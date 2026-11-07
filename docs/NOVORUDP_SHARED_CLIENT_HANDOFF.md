@@ -546,6 +546,72 @@ B公网对端；实际路径以两端和中继记录确定，不能把B不能直
 当前本节的READY、源代码、实际网络、实际资产业务和抓包是五层证据。除接收包
 核验以外，其余实网场景均保持待执行；没有新TPS、全球自动入网或匿名性结论。
 
+### 12. 2026-11-08 C/D签收、B首启与发现轮换反例修复
+
+**READY已接收，不再重复。** A快进到`bc41986e`后，读取C/D的README、公开回执、
+归档检查和原始五文件，逐个核对长度/SHA256，核对actual runtime/node stdout与
+report中的对象完全一致。C的`bc41986e`及D的`018d009b`、原字节修正`46fbeac0`
+均对应同一个ce1程序/Windows r2归档、77项411022253字节、c4ecbf44接收脚本及
+1b764a36实际包内AOEM。C实际LAN192.168.71.125，D为192.168.71.59。
+这是包内资格的签收，不是中继已验；没有要求C/D再安装或重复认证。
+
+**首次真正打开原批准状态。** B新增并列程序目录
+`/opt/novovm/releases/novonet-ce1f54ea-linux-x86_64`，旧9a和current别名未覆盖。
+复用`novovm`实际运行账户、原encrypted owner credential与原validator/transport
+用途材料；原共同输入从已核验的Windows批准片段派生，未重选创世时间、账户、
+金额、费用或票数。原`native-genesis initialize`先核对完整身份/三pin/持钥批准，
+再创建`/var/lib/novovm/selfrun/91129655606029/B/chain-state`，实际初始根为原批准的
+f6186d40，原owner排空成功。不能再泛称“四台都尚未建库”。
+
+B原`native_execution_tick`使用这个原库existing启动20秒并正常退出，实际发布了
+签名locator，原逐包传输与Iroh备用均由原node驱动，没有另外启动路由器、执行器
+或HTTP入口。独立carrier seed由原保护用途owner首次创建，原验证者/传输/资产钥
+未替换、未导出。B LAN候选仍标为私有、不能称公网可达；Iroh使用已有NOVOCHAT
+记录中的显式`euc1-1.relay.n0.iroh.link`及223.5.5.5 DNS，未放开任意载体回退。
+
+**连续运行确有失败，不以短测通过覆盖。** B随后在02:15:43重开同一原库，约103秒
+后报`NOVONET stopped; original node drained: Ok(())`，原因是
+`rendezvous monotonic clock moved backwards`，02:17:26退出码1。该新临时unit已
+inactive；没有自动重启刷绿，也不删除原库/签票journal/carrier材料。原四个应用
+服务仍active；20秒前后还逐项核对过其原PID不变。本次A提权API返回取消、未执行；
+用户明确未看到窗口，不能写成用户主动点了取消。不重复启动旧候选。
+A/C/D没有创建本轮库或启动；未签收SCM生命周期、四机确认、资产中继或性能。
+
+**已定位到原发现owner，不是系统时钟倒退。** `serve`在循环开头采集Instant，
+约100秒后`rotate_if_due`创建新RendezvousStore，构造器记录更晚的Instant。
+同一轮`maintain`仍把旧循环时间传给新store，原ClockRegression检查将store置为
+终止，后续读取传播为node退出。原store的防倒退检查本身正确，不应关闭。
+
+修正在同一`service/network/discovery.rs`内：本地locator写入、读取分别取得原store
+锁后采集实际Instant。循环时间仍负责原调度；100秒轮换、120秒实例、30秒记录、
+额度、认证、链pin及共识不变。确定性反例使用原Iroh scope和原store，令调用tick
+早于构造1毫秒，连续驱动三次真实轮换、写读及旧RPC store存活；旧实现0.06秒以
+同一ClockRegression失败，新实现通过，不靠等待100秒或增大生产期限。
+
+Windows/Linux原network组各8项通过（包括新反例、冷恢复、真实localhost双中继、
+并发DONE/重连及错误链拒绝），各约152秒；不是新增四物理机通过。Windows原store
+15项含倒退终止/过期/所有权及严格Clippy通过；Linux对应原store15项、同范围严格
+Clippy也通过。日志保存在`target/novonet-four-host-ce1f54ea-20261108/clock-*`。
+node格式及差异检查通过。完整CI、
+新release、B修后跨轮换实测及C/D新包另记，不能继承ce1的旧离线回执。
+
+[B原始首启/失败及对照证据](../artifacts/audit/validator-b-program-install-20261102/novonet-ce1-first-run-20261108.zip)
+为16333字节，SHA256 `1d1bba44c6ad08c4d83090cef94a79a8ceb21608b8b505d4d9738813c2706120`。
+包含初始化、20秒启动、连续失败、systemd journal、旧失败/新通过本地网络日志及
+500包有界头部PCAP；无数据库、签票journal或私钥。完整原库与用途材料仍留在B，
+不能称Git ZIP也保全了原库。A准备的旧候选启动脚本留在ignored本地并明确未合格，
+未向C/D交付、未提交为可运行入口。
+
+**有限抓包结论。** B eth0限定41050/42050 UDP、snaplen128、最多500包；实际
+捕获500包71896字节，PCAP SHA256为
+`568608f0df8697c668731167e4f9d51d3a9f5cd61f0fcd7bfafe25e9543a9a10`。
+485个样本确见明文NVHCONT1，另15个为其他/短前缀；其中485包是B向三个私有LAN
+候选发送，不能算对端收到，另有42050↔7842载体流量。不称四机E2E已抓全、不由
+可见前缀推断业务可解密或区域封锁率，也不因发现此故障修改协议指纹/密码学。
+
+当前后续：先固定已本地验证的最小修正源码，再生成**新**候选、在B原库复验跨
+轮换运行；不改写/覆盖ce1归档，不让C/D运行已知有反例的旧候选。不另外手动发云CI。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
