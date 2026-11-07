@@ -656,7 +656,7 @@ Docker的状态与PID完全相同。A独立核对回传ZIP、实例与序号、�
 - [B原库实测](../artifacts/audit/validator-b-program-install-20261102/novonet-08236129-B-original-db-proof.zip)，76199字节，`3de15f6cbb35acc50bc42afcd60fc1ff87a50d3815dd73df8977d736728d073b`。
 - [两平台离线资格与实际PS5.1检查](../artifacts/audit/validator-b-program-install-20261102/novonet-08236129-offline-qualified.zip)，6225字节，`529b0d3f259934686f8cfe74ecc730f310710b55103b33ea10233e1c19aa1324`；含实际B接收/同库运行脚本供复核，不含credential值、私钥、数据库或journal。
 
-**下一实际操作只有A一次，不重试旧UAC。** 当前B已使用同一修正版、同库/钥以原node
+**本段A命令现已执行，结果及C/D后继见第14节，不得再次初始化A。** 当时B已使用同一修正版、同库/钥以原node
 软运行上限24小时再次在线（另有24小时+120秒系统兜底；非生产TTL调整、非预约时间窗），
 不配置失败自动重启。A在**管理员PowerShell**执行：
 
@@ -684,6 +684,71 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "D:\WorksArea\SUPE
 此阶段C/D暂不运行新任务，A结果核对后再各用同一ZIP/入口一次接线；不重做硬件、
 校时、用途钥、已封存配对，也不另加一轮只为READY的人工预约。普通公网自动入网、
 多跳、四机资产和持续TPS仍按原范围继续实测，不由B单节点轮换自动签收。
+
+### 14. 2026-11-08 A真实启动已核，C/D各一次接线
+
+A已执行第13节的可见管理员命令。已读取其原始7份输出，而非只看截图：实际SID
+S-1-5-19、LocalService账户，原validator/transport材料未重新生成、未访问资产私钥；
+initialize实际成功，初始根仍为f6186d40、协议2132270f、创世域f8396bae及原AOEM
+1b764a36。locator里的完整传输公钥与原共同配置A的公钥逐字节相等。观察报告任务
+Running，267009是运行中状态，不是已完成退出码；当前非提权会话不能取得该任务
+对象，但可见novovm-node进程30708，不能将任务查询不可见直接记为进程退出。
+
+这完成的是A本机真实用途材料/原初始化/原节点启动观察，**不是SCM生命周期或
+四机通信通过**。A的原库已创建，绝不再跑Start-A初始化脚本。后续需要恢复必须
+existing打开原库，不能清理database/journal再调用initialize。
+
+[A原始启动观察及B端对应观察](../artifacts/audit/validator-b-program-install-20261102/novonet-08236129-A-start-observed.zip)
+为13179字节，SHA256 `7b319e716105182f92585cf2e32bdfd8ec08235881417bc58998f0251181542d`，
+原始UTF-16/UTF-8字节在ZIP中保留；没有用途材料、carrier.protected、数据库或journal。
+B进程仍active、stderr为空，首次观察待交付4/拒绝3，归档时待交付5/拒绝仍3、执行
+失败0、尚在高度1。待交付是动态队列数，不能据此签收DONE；拒绝3原样保留，尚未
+归因，不以“启动成功”抹掉。此轮只有A/B在线，不能降低3票要求制造确认。
+
+**现在C/D各只做一次“新包接线+原初始化+原节点启动”，不另跑READY轮次。**
+
+将第13节的**新082 ZIP**复制给C/D，原ce1 ZIP/安装保留但不用于本轮启动。新ZIP
+150438312字节，SHA256 `38a871d5dc024ba90461a1c6da451ef2b76a39c3b39c905cf7034c9a920d582a`。
+仅git同步不会取得程序；无需cargo重编或重新准备钥。C/D各机Codex按以下指令执行：
+
+> 同步main并读取本节，保留本机改动，不创建分支或强制覆盖。核对上述ZIP大小/哈希，
+> 解压到新目录；如下载来源被标记，仅在核对后解除该ZIP的阻止，不修改全局执行策略。
+> 核对包内脚本原字节SHA为`5a4ce2d71dcb62ef3f861aae585ce2097d633d2866a89cc404cf4bd517d0da23`，
+> 新程序manifest pin为a1a4082d（完整值见13节），程序源08236129。
+> 在管理员PowerShell调用包内同一个Start-NovonetFixedHost.ps1；C填HostId C，D填D。
+> PackageRoot/InputsRoot由Codex按实际解压路径解析，不要求用户手填技术参数。此处
+> 管理员是本机OS权限，不是NOVONET机构准入。权限不足给用户一条可见的管理员命令，
+> 不反复隐式RunAs、不改UAC或全局策略。
+
+```powershell
+# $unpacked由本机Codex设为已核验ZIP的实际新解压目录。
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "$unpacked\Start-NovonetFixedHost.ps1" -HostId C -PackageRoot "$unpacked\novonet-08236129-windows-x86_64" -InputsRoot "$unpacked\public-inputs"
+# D只将HostId C改为HostId D。
+```
+
+> 脚本复用原C/D LocalService用途材料、原共同批准与1亿NOV安排，不拷贝私钥。
+> 它并列安装固定程序、由LocalService完成原初始化并existing运行原节点，新增规则
+> 只限新node程序、该机实际LAN、41052/42052或41053/42053以及LAN/B来源；其余
+> 副作用与第13节相同。若已有work、chain-state、任务或同名规则就停住并报告，不能
+> 删除、覆盖或重试initialize；A/B、旧程序、手机和B应用服务不操作。
+>
+> 任务注册后观察原owner实际生成结果（通常数秒；有界等候，未到条件不能记通过）。
+> 只有owner.json的SID为S-1-5-19、initialize.stdout的ok=true/初始根f6186d40、locator
+> 已由原node生成、任务仍Running，才能报告START_OBSERVED_082_C或D；Running或
+> STARTED字样本身不足。保持任务在线，原24小时边界不是预约短窗口。
+>
+> 用管理员权限将该机`C:\ProgramData\NOVOVM\selfrun\91129655606029\C或D\novonet-08236129-20261108`
+> 下**仅**owner.json、initialize.stdout/stderr、locator.json、progress.json、node.stderr
+> 复制到新的公开证据目录；另记录实际task State/LastTaskResult及采集时间。运行中的
+> 267009不要当退出码0。将这些原字节打ZIP并回传main，可分别使用
+> `artifacts/audit/validator-c-novonet-082-start-20261108/`、D对应目录。未生成文件或出现
+> 错误如实记录，原库和完整现场保留，不清理、不重跑；不要把任何protected文件、
+> 资产钥、数据库或journal塞进公开ZIP。不重复硬件、校时、密钥生成或旧配对。
+
+这份新ZIP及脚本与A已执行的是同一字节组合，不改程序或增加网络框架。目前部署
+只给出既有B引导来源，不能称两个独立引导均已实机签收；第二来源、冷恢复和真实
+单/双中继仍在后续实际网络验收中按原owner完成。C/D实际启动后再统一看四端记录、
+路径与对象DONE，随后用原账户/库做业务与最终回执，不在此阶段宣称TPS或开放L1。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
