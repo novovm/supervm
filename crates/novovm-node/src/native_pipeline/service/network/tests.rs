@@ -24,23 +24,36 @@ struct Pair {
 }
 impl Pair {
     fn new(wrong_domain: bool) -> Result<Self> {
+        Self::configured(wrong_domain, false, 2)
+    }
+    fn configured(wrong_domain: bool, discovery: bool, count: usize) -> Result<Self> {
         let root =
             std::env::temp_dir().join(format!("novonet-node-owner-{:016x}", rand::random::<u64>()));
         std::fs::create_dir(&root)?;
         let (signing, identities, domain, _) = separated_material()?;
         let bindings = split_bindings(&domain, &signing, &identities)?;
-        let unused = (0..2)
+        let unused = (0..count)
             .map(|_| UdpSocket::bind("127.0.0.1:0"))
             .collect::<std::io::Result<Vec<_>>>()?;
         let mut drivers = Vec::new();
         let mut channels = Vec::new();
-        for side in 0..2 {
+        for side in 0..count {
             let config = Config {
                 relays: Vec::new(),
                 nameserver: "127.0.0.1".parse()?,
                 bind_address: "127.0.0.1:0".parse()?,
                 public_record_file: root.join(format!("{side}.json")),
-                peer_records: vec![root.join(format!("{}.json", 1 - side))],
+                peer_records: if discovery {
+                    Vec::new()
+                } else {
+                    vec![root.join(format!("{}.json", 1 - side))]
+                },
+                discovery,
+                discovery_seeds: if discovery && side != 0 {
+                    vec![root.join("0.json")]
+                } else {
+                    Vec::new()
+                },
                 fallback_after_ms: 100,
                 retry_ms: 100,
                 udp_recovery_ms: 1000,
@@ -48,7 +61,10 @@ impl Pair {
             drivers.push(Driver::with_material(
                 config,
                 identities[side].clone(),
-                vec![identities[1 - side].public_key().to_vec()],
+                (0..count)
+                    .filter(|other| *other != side)
+                    .map(|other| identities[other].public_key().to_vec())
+                    .collect(),
                 (
                     domain.chain_id + u64::from(wrong_domain && side == 1),
                     domain.genesis,
@@ -64,10 +80,15 @@ impl Pair {
                 transport,
                 identities[side].clone(),
                 bindings.clone(),
-                vec![NativePeer {
-                    key: identities[1 - side].public_key().to_vec(),
-                    address: unused[side].local_addr()?,
-                }],
+                (0..count)
+                    .filter(|other| *other != side)
+                    .map(|other| {
+                        Ok(NativePeer {
+                            key: identities[other].public_key().to_vec(),
+                            address: unused[other].local_addr()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
                 1,
                 domain.clone(),
                 codec(),
@@ -79,17 +100,23 @@ impl Pair {
             drivers,
             channels,
             _unused_udp: unused,
-            identities: identities[..2].to_vec(),
+            identities: identities[..count].to_vec(),
             pins: (domain.chain_id, domain.genesis, domain.protocol),
             replaced_sends: 0,
         })
     }
     fn pump(&mut self) -> Result<()> {
         for (driver, channel) in self.drivers.iter_mut().zip(&mut self.channels) {
+            if driver.closed || driver.finished {
+                continue;
+            }
             driver.poll_network()?;
             if let Ok(connection) = driver.connected.try_recv() {
-                let report =
-                    channel.replace_bound_carrier_v1(0, connection.endpoint, Instant::now())?;
+                let report = channel.replace_bound_carrier_v1(
+                    connection.peer,
+                    connection.endpoint,
+                    Instant::now(),
+                )?;
                 for completed in report.completed {
                     ensure!(
                         completed.state == ObjectSendState::SessionReplaced,
@@ -97,8 +124,8 @@ impl Pair {
                     );
                     self.replaced_sends += 1;
                 }
-                driver.views.lock().unwrap()[0] = PeerView {
-                    session: channel.session_id(0),
+                driver.views.lock().unwrap()[connection.peer] = PeerView {
+                    session: channel.session_id(connection.peer),
                     bound: true,
                     fallback: false,
                 };
@@ -113,7 +140,9 @@ impl Pair {
     }
     fn allow_fallback(&self) {
         for driver in &self.drivers {
-            driver.views.lock().unwrap()[0].fallback = true;
+            for view in driver.views.lock().unwrap().iter_mut() {
+                view.fallback = true;
+            }
         }
     }
     fn close(&mut self) -> Result<()> {
@@ -164,6 +193,97 @@ impl Pair {
         }
         Ok(())
     }
+}
+
+#[test]
+fn native_owner_discovers_peers_through_shared_rpc_then_delivers_original_objects() -> Result<()> {
+    let mut peers = Pair::configured(false, true, 3)?;
+    // No peer files for ANY node; two nodes know only the first seed's locator.
+    // They must learn each other via actual authenticated RPC, not shared files.
+    ensure!(peers
+        .drivers
+        .iter()
+        .all(|d| d.config.peer_records.is_empty()));
+    peers.allow_fallback();
+    let deadline = Instant::now() + Duration::from_secs(35);
+    while peers
+        .channels
+        .iter()
+        .any(|c| (0..2).any(|p| c.session_id(p).is_none()))
+    {
+        ensure!(
+            Instant::now() < deadline,
+            "network discovery did not establish all original peer routes"
+        );
+        peers.pump()?;
+    }
+    // Node 1 <-> node 2 are NOT a seed pair. Actual original object delivery
+    // and DONE are required, not a directory hit or connection observation.
+    let deliver = |peers: &mut Pair, marker, seed_offline: bool| -> Result<()> {
+        let message = Message::RequestBody {
+            body_id: [marker; 32],
+        };
+        let prepared = peers.channels[1].prepare(&message)?;
+        ensure!(peers.channels[1].try_send(1, &prepared, Instant::now())?);
+        let mut received = false;
+        let mut delivered = false;
+        let mut disconnected_io = 0;
+        while !received || !delivered {
+            ensure!(
+                Instant::now() < deadline,
+                "discovered peer object did not complete"
+            );
+            peers.pump()?;
+            for side in 1..3 {
+                let report = peers.channels[side].poll_io(wall_ms()?, Instant::now(), 64)?;
+                ensure!(report.rejected == 0);
+                if seed_offline {
+                    // poll_io covers ALL original peers, including the seed
+                    // deliberately stopped below. Retain its failure count;
+                    // only actual receipt/DONE establishes the OTHER route.
+                    disconnected_io += report.receive_errors + report.send_failures;
+                } else {
+                    ensure!(report.receive_errors == 0 && report.send_failures == 0);
+                }
+                for done in report.completed {
+                    ensure!(side == 1 && !delivered && done.state == ObjectSendState::Delivered);
+                    delivered = true;
+                }
+                if let Some(event) = peers.channels[side].poll_receive(Instant::now(), 64)? {
+                    let ReceiveEvent::Message(incoming) = event else {
+                        anyhow::bail!("discovered object rejected")
+                    };
+                    ensure!(side == 2 && !received && incoming.message == message);
+                    received = true;
+                }
+            }
+        }
+        if seed_offline {
+            ensure!(disconnected_io > 0, "stopped seed IO was not observed");
+        }
+        Ok(())
+    };
+    deliver(&mut peers, 171, false)?;
+    // Discovery is metadata, not a runtime dependency of a healthy session.
+    peers.drivers[0].close()?;
+    let keep = (
+        peers.channels[1].session_id(1),
+        peers.channels[2].session_id(1),
+    );
+    for _ in 0..10 {
+        for side in 1..3 {
+            peers.drivers[side].poll_network()?;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    ensure!(
+        keep == (
+            peers.channels[1].session_id(1),
+            peers.channels[2].session_id(1)
+        )
+    );
+    deliver(&mut peers, 172, true)?;
+    peers.close()
 }
 
 #[test]
@@ -304,6 +424,35 @@ fn retained_tick_reactor_uses_backup_only_when_requested_and_delivers_original_b
 #[test]
 fn retained_tick_reactor_rejects_wrong_chain_selection_before_native_handoff() -> Result<()> {
     let mut pair = Pair::new(true)?;
+    let ready = Instant::now() + Duration::from_secs(10);
+    while pair
+        .drivers
+        .iter()
+        .any(|driver| !driver.config.public_record_file.exists())
+    {
+        ensure!(
+            Instant::now() < ready,
+            "native locator publication not ready"
+        );
+        pair.pump()?;
+    }
+    let initiator = usize::from(pair.identities[1].public_key() < pair.identities[0].public_key());
+    let responder = 1 - initiator;
+    let path = &pair.drivers[responder].config.public_record_file;
+    let record: PeerSignedRelayRecordV1 = read_document(path)?;
+    let pins = (pair.pins.0 + initiator as u64, pair.pins.1, pair.pins.2);
+    // A peer can sign a plausible locator for our domain while actually
+    // running another chain. Exercise the ENCRYPTED selection, not just the
+    // cheap directory-domain filter introduced by network discovery.
+    let record = sign_relay_record_v1(
+        &pair.identities[responder],
+        novovm_network::discovery_control::native_locator_id_v1(pins),
+        record.endpoints,
+        record.issued_at_ms,
+        record.expires_at_ms,
+        record.sequence + 1,
+    )?;
+    publish(path, &record)?;
     pair.allow_fallback();
     let deadline = Instant::now() + Duration::from_secs(15);
     while pair

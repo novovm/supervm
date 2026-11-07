@@ -1,4 +1,6 @@
-//! Bounded, process-local opaque rendezvous records. No network or file IO.
+//! Bounded, process-local rendezvous records. No network or file IO. Private
+//! capability slots and explicitly public, publisher-owned node metadata use
+//! separate index domains within the same store and shared quotas.
 //!
 //! The caller authenticates `owner`, authorizes access before calling, supplies
 //! fresh unguessable 32-byte slot capabilities and a fresh service instance, and
@@ -136,10 +138,39 @@ impl RendezvousStoreV1 {
         now: Instant,
     ) -> Result<RendezvousReceiptV1, RendezvousErrorV1> {
         self.observe(now)?;
+        let slot_hash = self.slot_hash(slot)?;
+        self.put_hashed(owner, slot_hash, revision, ttl, ciphertext, now)
+    }
+
+    /// Explicit public routing metadata, owned by the authenticated publisher.
+    /// This is not a contact capability. It shares the SAME storage/quotas but
+    /// has a domain-separated index: opaque PUT/GET/ACK cannot claim or consume
+    /// a public publisher's record, and no caller supplies a different owner.
+    pub fn put_node_locator_v1(
+        &mut self,
+        owner: [u8; 32],
+        revision: u64,
+        ttl: Duration,
+        bytes: Vec<u8>,
+        now: Instant,
+    ) -> Result<RendezvousReceiptV1, RendezvousErrorV1> {
+        self.observe(now)?;
+        let slot_hash = self.node_slot_hash(owner)?;
+        self.put_hashed(owner, slot_hash, revision, ttl, bytes, now)
+    }
+
+    fn put_hashed(
+        &mut self,
+        owner: [u8; 32],
+        slot_hash: [u8; 32],
+        revision: u64,
+        ttl: Duration,
+        ciphertext: Vec<u8>,
+        now: Instant,
+    ) -> Result<RendezvousReceiptV1, RendezvousErrorV1> {
         if owner == [0; 32] {
             return Err(RendezvousErrorV1::InvalidCapability);
         }
-        let slot_hash = self.slot_hash(slot)?;
         if revision == 0
             || ttl.is_zero()
             || ttl > RENDEZVOUS_MAX_TTL_V1
@@ -245,6 +276,27 @@ impl RendezvousStoreV1 {
     ) -> Result<Option<RendezvousRecordV1>, RendezvousErrorV1> {
         self.observe(now)?;
         let slot_hash = self.slot_hash(slot)?;
+        self.get_hashed(slot_hash, now)
+    }
+
+    /// Public metadata is fetched by publisher identity, never by enumerating
+    /// the store. The consumer must independently verify its signature/domain
+    /// and expiry before admitting a route; storage possession proves neither.
+    pub fn node_locator_v1(
+        &mut self,
+        owner: [u8; 32],
+        now: Instant,
+    ) -> Result<Option<RendezvousRecordV1>, RendezvousErrorV1> {
+        self.observe(now)?;
+        let slot_hash = self.node_slot_hash(owner)?;
+        self.get_hashed(slot_hash, now)
+    }
+
+    fn get_hashed(
+        &self,
+        slot_hash: [u8; 32],
+        now: Instant,
+    ) -> Result<Option<RendezvousRecordV1>, RendezvousErrorV1> {
         let Some(entry) = self
             .entries
             .iter()
@@ -302,6 +354,17 @@ impl RendezvousStoreV1 {
         hasher.update(self.instance);
         hasher.update(slot);
         Ok(hasher.finalize().into())
+    }
+
+    fn node_slot_hash(&self, owner: [u8; 32]) -> Result<[u8; 32], RendezvousErrorV1> {
+        if owner == [0; 32] {
+            return Err(RendezvousErrorV1::InvalidCapability);
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"NOVONET/public-node-locator/v1\0");
+        hash.update(self.instance);
+        hash.update(owner);
+        Ok(hash.finalize().into())
     }
 
     fn observe(&mut self, now: Instant) -> Result<(), RendezvousErrorV1> {
@@ -380,6 +443,80 @@ fn receipt(entry: &Entry, now: Instant) -> RendezvousReceiptV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_locator_and_private_slots_share_quota_but_not_ownership_or_ack_namespace() {
+        let (mut store, now) = fixture();
+        let owner = [2; 32];
+        let public = store
+            .put_node_locator_v1(owner, 1, Duration::from_secs(2), vec![8; 100], now)
+            .unwrap();
+        assert!(store.get(owner, now).unwrap().is_none());
+        assert!(!store.ack(owner, 1, public.digest, now).unwrap());
+        store
+            .put([3; 32], owner, 1, Duration::from_secs(2), vec![9; 100], now)
+            .unwrap();
+        assert_eq!(
+            store
+                .node_locator_v1(owner, now)
+                .unwrap()
+                .unwrap()
+                .ciphertext,
+            vec![8; 100]
+        );
+        assert_eq!(
+            store.get(owner, now).unwrap().unwrap().ciphertext,
+            vec![9; 100]
+        );
+        assert_eq!(store.stats(now).unwrap().live_records, 2);
+        let repeated = store
+            .put_node_locator_v1(
+                owner,
+                1,
+                Duration::from_secs(30),
+                vec![8; 100],
+                now + Duration::from_secs(1),
+            )
+            .unwrap();
+        assert!(
+            repeated.remaining_ttl_ms <= 1000,
+            "same revision must not extend its original expiry"
+        );
+        assert!(store
+            .node_locator_v1(owner, now + Duration::from_secs(2))
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .put_node_locator_v1(
+                    owner,
+                    1,
+                    Duration::from_secs(2),
+                    vec![8; 100],
+                    now + Duration::from_secs(2)
+                )
+                .err()
+                .unwrap(),
+            RendezvousErrorV1::RetiredRevision
+        );
+        store
+            .put_node_locator_v1(
+                owner,
+                2,
+                Duration::from_secs(2),
+                vec![10; 100],
+                now + Duration::from_secs(2),
+            )
+            .unwrap();
+        assert_eq!(
+            store
+                .node_locator_v1(owner, now + Duration::from_secs(2))
+                .unwrap()
+                .unwrap()
+                .revision,
+            2
+        );
+    }
 
     fn fixture() -> (RendezvousStoreV1, Instant) {
         let store =

@@ -233,6 +233,74 @@ MultiHop调用内存`forward_multihop`。这些是现有smoke模型，不是可�
 交付证据；不能接入主网后沿用其成功口径。产品relay的认证来源绑定不能删除来
 让转发“通过”。后续应沿现有选路、认证和relay所有者补真实执行，不另造通讯产品。
 
+### 8. 2026-11-07 A接回原发现RPC：公开节点locator与私密联系人分域
+
+本轮继续基于`6ed6ea39`的同一个主节点owner，不重写NOVOCHAT发现流程。
+已逐字读取用户最新发现参考；并核对NOVOCHAT的`discovery_control.rs`只是共享模块
+重导出，`discovery_round.rs`实际调用共享RPC；`endpoint_lease`的4096字节加密租约、
+联系人共享秘密/slot及ACK属于私密联系人合同，不能直接拿来公开发布验证者地址。
+这些组件已存在，不登记为本轮新开发，也不据旧手机包替当前主链取得资格。
+
+现在复用同一个`discovery_control`二进制编解码、请求/回执及`RendezvousStoreV1`，
+增加显式公开节点profile（NODE_PUT/NODE_GET）。公开slot由当前Finished认证身份
+派生，客户端不能指定别人的发布槽；与联系人opaque PUT/GET/ACK分域，不能互读、
+抢占或确认删除。共享原16条/64KiB live、64条retained、每owner8槽、4KiB载荷、
+30秒租约及32次RPC限额，不扩配额、不做身份枚举。普通持钥设备可提供元数据；
+取到元数据不获得共识票或花费权，也不变成官方准入证。
+
+`discovery_control::node_locator`是原`PeerSignedRelayRecordV1`的严格二进制投影：
+保留原签名、公钥预期和签名验证器，chain/genesis/protocol由消费者独立固定。
+完整ML-DSA公钥由原peer映射取得，不在每条RPC记录重复发送；固定字段只能按明确
+profile恢复，无法无损表达的endpoint政策或超过原4KiB的地址声明明确拒绝。
+没有把JSON记录塞进数据通道；本地locator配置/审计仍允许JSON，不宣称全程零复制。
+
+主节点原IrohScope内增加公开profile分派与后台有界lookup，复用原结构化ML-DSA
+Finished认证。`NVNETOB1`/`NVNETDS1`仅分派用途，不授予身份；随后的加密选择核对
+固定链承诺，发现实例由本次认证服务提供。原RPC从选择后的AEAD序号2接续，
+不重置nonce/认证计数。Object通道继续原NativeCarrierPump/NativeChannel；入站
+对象身份必须匹配原完整peer钥映射，不依赖未认证Iroh端点hint取得权限。
+
+新增可选配置`discovery`（默认false）、`discovery_seeds`（最多2个本地批准的公开
+引导locator文件）。原`peer_records`仍可用；启用发现后可为空，节点通过实际RPC
+发布自己的签名声明、查询原peer钥对应的最新声明并接回原选路owner。引导的历史
+坐标仅用于原self-owned策略允许的新持钥认证，不能当成已延长的业务租约；取回的
+业务候选仍验证原签名/期限/序号。实例100秒轮换、原120秒到期，已建立的健康对象
+通道不依赖发现TTL续命；UDP依旧默认，只有原条件请求后才使用Iroh备用。
+
+这两个入口标记属于本轮尚未部署的node适配器组合，需匹配制品；不能把旧node包
+当作新profile已部署。NOVOCHAT/App/JNI、v110及手机配置未修改，C当前无需操作。
+
+**范围仍须明确**：这是固定自营peer集合的真实网络元数据交换，不是任意未知设备的
+完整自动入网、开放L1、ZK同步或全球分布式目录。Iroh坐标不能冒充实际UDP socket
+的NAT映射。引导owner冷启动后端点变化仍需可用来源，所有引导同时冷重启的自主
+恢复未签收；真实逐跳relay转发/最终收件也未完成，`global_auto_discovery`及
+`native_multihop_accepted`保持false。不把本机QUIC直连称为实际公网Relay或多跳。
+
+本地证据继续记录于`target/novonet-route-integration-20261107/`，不覆盖旧日志。
+首轮发现RPC15项、后补公开profile反例后的16项及store15项通过。节点首轮4项通过：
+三节点只有一个引导地址、没有彼此peer文件，实际RPC发现后原对象收件/DONE；以及
+既有默认UDP/按需备用、重启重认证、错误链域拒绝。后续将错误链用例加强为对端签出
+可接受locator但实际运行另一链，必须由加密选择拒绝；又加强引导离线后原peer继续
+实际交付（不只比较session ID）。最终受影响作业与两平台范围按后续结果追加，
+不以首轮结果替后继源码，也未启链、变更B/C/D或产生TPS/候选发布结论。
+
+最终同一工作包的本地受影响作业已完成：Windows原`native_pipeline`582通过/151
+忽略，Linux 581通过/150忽略；其中包含上述加强后的4项真实本机网络用例。两平台
+共享发现RPC各16、store各15、混合carrier各10、默认UDP配置各11及SDK消费者
+各3+12项通过。两平台实际指定AOEM库/manifest的四原服务认证地址学习、转账/重花、
+权限/费用与冷恢复定向用例各1项通过（该资产用例仍走UDP，不是备用资产验收）。
+库/测试目标及实际node bin严格Clippy、fmt与差异检查通过；两平台实际debug node
+构建和`--service-contract`核验通过，三个副作用字段均false。这不是候选包发布或
+真实SCM生命周期验收，也没有新增手机/公网Relay/多跳/TPS成绩。
+
+保留`windows-discovery-validation.log`中的580通过/2失败，不改写为通过：首次加强
+用例只poll一次便读文件，声明尚未真正发布；另一个故障注入用例关闭引导后仍要求
+覆盖全部peer的IO报告零错误。现按真实发布条件等待，断线IO计数保留且必须被观测，
+另外两台的指定新消息仍须实际收件/DONE、session保持不变，不能用计数归零代替。
+修正后的独立日志为`windows-discovery-final-2-*`、`linux-discovery-rpc-final-*`及
+`*-discovery-consumers-final-*`，不覆盖失败。没有提高生产超时、放宽认证或更改共识。
+本轮及时提交同步main，不额外手动触发云CI；main原自动工作流及候选门禁保持不变。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

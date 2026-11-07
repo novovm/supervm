@@ -31,6 +31,8 @@ const PUT: u8 = 1;
 const GET: u8 = 2;
 const ACK: u8 = 3;
 const CLOSE: u8 = 4;
+const NODE_PUT: u8 = 5;
+const NODE_GET: u8 = 6;
 const RECEIPT: u8 = 11;
 const RECORD: u8 = 12;
 const MISSING: u8 = 13;
@@ -55,6 +57,9 @@ pub enum DiscoveryLookupDelayStage {
 }
 
 const DIAGNOSTIC_LOOKUP_DELAY: Duration = Duration::from_secs(10);
+
+mod node_locator;
+pub use node_locator::{decode_node_locator_v1, encode_node_locator_v1, native_locator_id_v1};
 
 /// A typed transport IO error from a carrier operation. The private constructor
 /// and upstream IO marker keep framing validation, RPC decoding, AEAD checks,
@@ -243,8 +248,28 @@ pub struct DiscoveryClient<'a, 'scope> {
     instance: [u8; 32],
     sequence: u64,
     failed: bool,
+    node_locators: bool,
 }
 impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
+    /// Compose the original RPC with the caller's completed native handshake
+    /// and ONE encrypted service-selection exchange. No reauthentication,
+    /// sequence reset or private-contact capability is manufactured here.
+    pub fn from_authenticated_node_locators_v1(
+        stream: &'a mut CarrierStreamV1<'scope>,
+        channel: BoundSecureChannelV1,
+        instance: [u8; 32],
+    ) -> Result<Self> {
+        ensure!(instance != [0; 32], "empty discovery instance");
+        channel.verify_transport_binding(&stream.binding()?)?;
+        Ok(Self {
+            stream,
+            channel,
+            instance,
+            sequence: 1,
+            failed: false,
+            node_locators: true,
+        })
+    }
     pub async fn connect(
         stream: &'a mut CarrierStreamV1<'scope>,
         identity: &TransportIdentity,
@@ -313,6 +338,7 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
             instance,
             sequence: 0,
             failed: false,
+            node_locators: false,
         })
     }
     async fn request(
@@ -324,8 +350,16 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
         body: Vec<u8>,
     ) -> Result<Message> {
         ensure!(
-            !self.failed && self.sequence < MAX_REQUESTS,
+            !self.failed && self.sequence < MAX_REQUESTS + u64::from(self.node_locators),
             "discovery session exhausted"
+        );
+        ensure!(
+            if self.node_locators {
+                matches!(kind, NODE_PUT | NODE_GET | CLOSE)
+            } else {
+                matches!(kind, PUT | GET | ACK | CLOSE)
+            },
+            "discovery service profile differs"
         );
         // Latch before any cancellable await. Only a whole authenticated reply
         // clears it, so cancellation cannot leave a reusable half-frame stream.
@@ -366,6 +400,30 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
         ttl_ms: u32,
         ciphertext: Vec<u8>,
     ) -> Result<()> {
+        self.put_inner(PUT, slot, revision, ttl_ms, ciphertext)
+            .await
+    }
+
+    /// A public signed locator, not a private contact. The server derives its
+    /// publication slot from THIS stream's authenticated owner, not a hint.
+    pub async fn put_node_locator_v1(
+        &mut self,
+        revision: u64,
+        ttl_ms: u32,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        self.put_inner(NODE_PUT, [0; 32], revision, ttl_ms, bytes)
+            .await
+    }
+
+    async fn put_inner(
+        &mut self,
+        kind: u8,
+        slot: [u8; 32],
+        revision: u64,
+        ttl_ms: u32,
+        ciphertext: Vec<u8>,
+    ) -> Result<()> {
         ensure!(
             revision > 0 && (1..=30_000).contains(&ttl_ms),
             "invalid discovery lease"
@@ -376,7 +434,7 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
         );
         let digest: [u8; 32] = Sha256::digest(&ciphertext).into();
         let reply = self
-            .request(PUT, slot, revision, ttl_ms, ciphertext)
+            .request(kind, slot, revision, ttl_ms, ciphertext)
             .await?;
         ensure!(
             reply.kind == RECEIPT
@@ -391,7 +449,16 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
         Ok(())
     }
     pub async fn get(&mut self, slot: [u8; 32]) -> Result<Option<RendezvousRecordV1>> {
-        let reply = self.request(GET, slot, 0, 0, Vec::new()).await?;
+        self.get_inner(GET, slot).await
+    }
+    pub async fn get_node_locator_v1(
+        &mut self,
+        publisher: &[u8],
+    ) -> Result<Option<RendezvousRecordV1>> {
+        self.get_inner(NODE_GET, node_owner_id_v1(publisher)?).await
+    }
+    async fn get_inner(&mut self, kind: u8, slot: [u8; 32]) -> Result<Option<RendezvousRecordV1>> {
+        let reply = self.request(kind, slot, 0, 0, Vec::new()).await?;
         let record = if reply.kind == MISSING {
             ensure!(reply.is_empty(), "nonempty missing reply");
             None
@@ -512,14 +579,14 @@ async fn serve_rendezvous_inner<O, D>(
     allowed: &[Vec<u8>],
     store: Arc<Mutex<RendezvousStoreV1>>,
     observer: &mut O,
-    mut lookup_delay: Option<Duration>,
+    lookup_delay: Option<Duration>,
     delay_observer: &mut D,
 ) -> Result<Vec<u8>>
 where
     O: FnMut(BoundSessionStage, &'static str) -> Result<()> + Send + ?Sized,
     D: FnMut(DiscoveryLookupDelayStage) -> Result<()> + Send + ?Sized,
 {
-    let (mut channel, owner) = tokio::time::timeout(
+    let (channel, owner) = tokio::time::timeout(
         Duration::from_secs(8),
         crate::bound_session::authenticate_allowed_service_client_observed(
             stream,
@@ -530,13 +597,60 @@ where
         ),
     )
     .await??;
+    serve_finished_rpc(
+        stream,
+        channel,
+        owner,
+        store,
+        false,
+        lookup_delay,
+        delay_observer,
+    )
+    .await
+}
+
+/// Same framed RPC/store/budgets, after native authentication and explicit
+/// encrypted node-locator service selection. It never enumerates identities,
+/// grants consensus rights or opens the private-contact namespace.
+pub async fn serve_authenticated_node_locators_v1(
+    stream: &mut CarrierStreamV1<'_>,
+    channel: BoundSecureChannelV1,
+    store: Arc<Mutex<RendezvousStoreV1>>,
+) -> Result<Vec<u8>> {
+    channel.verify_transport_binding(&stream.binding()?)?;
+    let owner = channel.remote_identity_public_key().to_vec();
+    serve_finished_rpc(stream, channel, owner, store, true, None, &mut |_| Ok(())).await
+}
+
+pub fn node_owner_id_v1(public_key: &[u8]) -> Result<[u8; 32]> {
+    ensure!(
+        public_key.len() == crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES
+            && public_key.iter().any(|byte| *byte != 0),
+        "native discovery publisher key shape"
+    );
+    let mut hash = Sha256::new();
+    hash.update(b"NOVONET/discovery-owner/ML-DSA-65/v2\0");
+    hash.update(public_key);
+    Ok(hash.finalize().into())
+}
+
+async fn serve_finished_rpc<D>(
+    stream: &mut CarrierStreamV1<'_>,
+    mut channel: BoundSecureChannelV1,
+    owner: Vec<u8>,
+    store: Arc<Mutex<RendezvousStoreV1>>,
+    node_locators: bool,
+    mut lookup_delay: Option<Duration>,
+    delay_observer: &mut D,
+) -> Result<Vec<u8>>
+where
+    D: FnMut(DiscoveryLookupDelayStage) -> Result<()> + Send + ?Sized,
+{
     // The existing ephemeral store indexes an opaque owner, not a public key.
     // Bind that stable index to the authenticated ML-DSA identity, never a hint.
-    let mut owner_hash = Sha256::new();
-    owner_hash.update(b"NOVONET/discovery-owner/ML-DSA-65/v2\0");
-    owner_hash.update(&owner);
-    let owner_id: [u8; 32] = owner_hash.finalize().into();
-    for sequence in 1..=MAX_REQUESTS {
+    let owner_id = node_owner_id_v1(&owner)?;
+    let offset = u64::from(node_locators);
+    for sequence in (1 + offset)..=(MAX_REQUESTS + offset) {
         let request = receive(stream, &mut channel, sequence, REQUEST).await?;
         if request.kind == GET
             && request.revision == 0
@@ -596,23 +710,50 @@ where
             store.stats(now)?;
             let mut reply = request.empty(REJECTED);
             match request.kind {
-                PUT if request.revision > 0 && (1..=30_000).contains(&request.ttl_ms) => {
-                    if let Ok(receipt) = store.put(
-                        owner_id,
-                        request.slot,
-                        request.revision,
-                        Duration::from_millis(u64::from(request.ttl_ms)),
-                        request.body,
-                        now,
-                    ) {
+                PUT | NODE_PUT
+                    if (request.kind == NODE_PUT) == node_locators
+                        && (!node_locators || request.slot == [0; 32])
+                        && request.revision > 0
+                        && (1..=30_000).contains(&request.ttl_ms) =>
+                {
+                    let ttl = Duration::from_millis(u64::from(request.ttl_ms));
+                    let stored = if node_locators {
+                        store.put_node_locator_v1(
+                            owner_id,
+                            request.revision,
+                            ttl,
+                            request.body,
+                            now,
+                        )
+                    } else {
+                        store.put(
+                            owner_id,
+                            request.slot,
+                            request.revision,
+                            ttl,
+                            request.body,
+                            now,
+                        )
+                    };
+                    if let Ok(receipt) = stored {
                         reply.kind = RECEIPT;
                         reply.revision = receipt.revision;
                         reply.slot = receipt.digest;
                         reply.ttl_ms = receipt.remaining_ttl_ms.try_into()?;
                     }
                 }
-                GET if request.revision == 0 && request.ttl_ms == 0 && request.body.is_empty() => {
-                    if let Some(record) = store.get(request.slot, now)? {
+                GET | NODE_GET
+                    if (request.kind == NODE_GET) == node_locators
+                        && request.revision == 0
+                        && request.ttl_ms == 0
+                        && request.body.is_empty() =>
+                {
+                    let found = if node_locators {
+                        store.node_locator_v1(request.slot, now)?
+                    } else {
+                        store.get(request.slot, now)?
+                    };
+                    if let Some(record) = found {
                         reply.kind = RECORD;
                         reply.revision = record.revision;
                         reply.slot = record.digest;
@@ -622,7 +763,11 @@ where
                         reply.kind = MISSING;
                     }
                 }
-                ACK if request.revision > 0 && request.ttl_ms == 0 && request.body.len() == 32 => {
+                ACK if !node_locators
+                    && request.revision > 0
+                    && request.ttl_ms == 0
+                    && request.body.len() == 32 =>
+                {
                     reply.kind = if store.ack(
                         request.slot,
                         request.revision,
@@ -669,6 +814,156 @@ mod tests {
             .unwrap()
             .with_bind_address("127.0.0.1:0".parse().unwrap())
             .unwrap()
+    }
+
+    #[tokio::test]
+    async fn real_public_rpc_binds_publisher_and_cannot_read_or_ack_private_slots() -> Result<()> {
+        let _permit = SERIAL.acquire().await?;
+        let client_identity = TransportIdentity::from_bytes(&[111; 32]);
+        let node_identity = TransportIdentity::from_bytes(&[112; 32]);
+        let client_pin = client_identity.public_key().to_vec();
+        let node_pin = node_identity.public_key().to_vec();
+        let instance = [113; 32];
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let store = Arc::new(Mutex::new(RendezvousStoreV1::new(instance, deadline)?));
+        let owner = node_owner_id_v1(&client_pin)?;
+        let private = store.lock().unwrap().put(
+            owner,
+            owner,
+            1,
+            Duration::from_secs(5),
+            vec![19; 64],
+            Instant::now(),
+        )?;
+        let check = store.clone();
+        let (node_tx, node_rx) = oneshot::channel();
+        let (client_tx, client_rx) = oneshot::channel();
+        let node = with_iroh_scope_v1(
+            local_config(),
+            IrohControlV1::new(deadline, || Ok(()))?,
+            move |scope| {
+                Box::pin(async move {
+                    node_tx.send(scope.address()?).unwrap();
+                    let peer: IrohAddressV1 = client_rx.await?;
+                    let mut stream: CarrierStreamV1<'_> =
+                        scope.accept(peer.endpoint_key).await?.into();
+                    let (mut channel, _) =
+                        crate::bound_session::authenticate_structured_service_client_observed(
+                            &mut stream,
+                            &node_identity,
+                            crate::bound_session::ServicePeerPolicyV1::AnyAuthenticated,
+                            &mut crate::duplex::HandshakeReplayCacheV1::new(8),
+                            &mut |_, _| Ok(()),
+                        )
+                        .await?;
+                    // Model ONLY the composing caller's first encrypted selection.
+                    // The original RPC must continue at sequence 2, never reset it.
+                    let wire = stream.read_frame().await?;
+                    let envelope = decode_iroh_envelope_v1(&wire)?;
+                    ensure!(envelope.sequence == 1);
+                    let frame = channel.open_novorudp_frame(&envelope)?;
+                    stream
+                        .write_frame(&encode_iroh_envelope_v1(
+                            &channel.seal_novorudp_frame(&frame)?,
+                        )?)
+                        .await?;
+                    let result =
+                        serve_authenticated_node_locators_v1(&mut stream, channel, store).await;
+                    // Last request is a forbidden owner override. Its rejection must
+                    // not become a receipt; the client then discards that session.
+                    ensure!(result.is_err());
+                    Ok(())
+                })
+            },
+        );
+        let client = with_iroh_scope_v1(
+            local_config(),
+            IrohControlV1::new(deadline, || Ok(()))?,
+            move |scope| {
+                Box::pin(async move {
+                    client_tx.send(scope.address()?).unwrap();
+                    let mut stream: CarrierStreamV1<'_> =
+                        scope.connect(&node_rx.await?).await?.into();
+                    let mut channel =
+                        crate::bound_session::authenticate_structured_bound_session_observed(
+                            &mut stream,
+                            &client_identity,
+                            node_pin.clone(),
+                            true,
+                            &mut crate::duplex::HandshakeReplayCacheV1::new(8),
+                            &mut |_, _| Ok(()),
+                        )
+                        .await?;
+                    let frame = NovoRudpTransportFrameV0::new(
+                        NovoRudpTransportFrameKindV0::Data,
+                        channel.session_id(),
+                        0,
+                        1,
+                        0,
+                        0,
+                        vec![1],
+                    );
+                    stream
+                        .write_frame(&encode_iroh_envelope_v1(
+                            &channel.seal_novorudp_frame(&frame)?,
+                        )?)
+                        .await?;
+                    let wire = stream.read_frame().await?;
+                    ensure!(
+                        channel.open_novorudp_frame(&decode_iroh_envelope_v1(&wire)?)? == frame
+                    );
+                    let mut client = DiscoveryClient::from_authenticated_node_locators_v1(
+                        &mut stream,
+                        channel,
+                        instance,
+                    )?;
+                    ensure!(client.get(owner).await.is_err());
+                    ensure!(client.ack(owner, 1, private.digest).await.is_err());
+                    client.put_node_locator_v1(1, 5000, vec![21; 64]).await?;
+                    ensure!(
+                        client
+                            .get_node_locator_v1(client_identity.public_key())
+                            .await?
+                            .context("public record absent")?
+                            .ciphertext
+                            == vec![21; 64]
+                    );
+                    ensure!(client.get_node_locator_v1(&node_pin).await?.is_none());
+                    ensure!(client
+                        .request(
+                            NODE_PUT,
+                            node_owner_id_v1(&node_pin)?,
+                            2,
+                            5000,
+                            vec![22; 64]
+                        )
+                        .await
+                        .is_err());
+                    ensure!(client.failed);
+                    Ok(())
+                })
+            },
+        );
+        let (server, client) = tokio::join!(node, client);
+        server?;
+        client?;
+        let mut store = check.lock().unwrap();
+        ensure!(
+            store
+                .get(owner, Instant::now())?
+                .context("private record changed")?
+                .ciphertext
+                == vec![19; 64]
+        );
+        ensure!(
+            store
+                .node_locator_v1(owner, Instant::now())?
+                .context("publisher record lost")?
+                .ciphertext
+                == vec![21; 64]
+        );
+        ensure!(store.stats(Instant::now())?.live_records == 2);
+        Ok(())
     }
 
     #[tokio::test]

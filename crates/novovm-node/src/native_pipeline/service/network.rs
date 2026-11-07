@@ -5,7 +5,10 @@ use super::ResidentNode;
 use crate::native_pipeline::consensus::{native::NativeChannel, native_lifecycle::NativeLifecycle};
 use anyhow::{ensure, Context, Result};
 use novovm_network::{
-    bound_session::authenticate_structured_bound_session_observed,
+    bound_session::{
+        authenticate_structured_bound_session_observed,
+        authenticate_structured_service_client_observed, ServicePeerPolicyV1,
+    },
     carrier_stream::CarrierStreamV1,
     duplex::{decode_iroh_envelope_v1, encode_iroh_envelope_v1, HandshakeReplayCacheV1},
     iroh_transport::{IrohAddressV1, IrohConfigV1, IrohEndpointOwnerV1, IrohScopeV1},
@@ -20,6 +23,8 @@ use novovm_network::{
     product_overlay::TransportIdentity,
     product_service_lease::{IrohServiceEndpointV1, SelfOwnedTrustV1, ServiceLeaseBookV1},
 };
+mod discovery;
+use discovery::Discovery;
 use serde::Deserialize;
 use std::{
     collections::BTreeSet,
@@ -40,7 +45,8 @@ use tokio::sync::oneshot;
 const MAX_CONFIG: usize = 1024 * 1024;
 const SELECTOR: &[u8; 8] = b"NVCHAIN1";
 const SELECT_STREAM: u64 = u64::from_be_bytes(*b"NVCHAIN1");
-const RECORD_KIND: &str = "native-chain-locator-v1";
+const OBJECT_ENTRY: &[u8; 8] = b"NVNETOB1";
+const DISCOVERY_ENTRY: &[u8; 8] = b"NVNETDS1";
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +60,12 @@ pub struct Config {
     /// This self-run validator set's public locator inputs, refreshed in place.
     /// Their keys MUST match the original genesis transport mapping.
     pub peer_records: Vec<PathBuf>,
+    /// Explicitly provide/consume public routing metadata, not chat contacts.
+    #[serde(default)]
+    pub discovery: bool,
+    /// Locally selected bootstrap coordinates; they grant no consensus rights.
+    #[serde(default)]
+    pub discovery_seeds: Vec<PathBuf>,
     pub fallback_after_ms: u64,
     pub retry_ms: u64,
     pub udp_recovery_ms: u64,
@@ -62,8 +74,9 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let mut config: Self = read_document(path)?;
         let base = path.parent().context("NOVONET config directory missing")?;
-        for path in
-            std::iter::once(&mut config.public_record_file).chain(config.peer_records.iter_mut())
+        for path in std::iter::once(&mut config.public_record_file)
+            .chain(config.peer_records.iter_mut())
+            .chain(config.discovery_seeds.iter_mut())
         {
             if path.is_relative() {
                 *path = base.join(&*path);
@@ -76,13 +89,18 @@ impl Config {
             "NOVONET bounded timing settings"
         );
         ensure!(
-            !config.peer_records.is_empty()
+            (!config.peer_records.is_empty() || config.discovery)
                 && config.peer_records.len() <= 63
-                && !config.peer_records.contains(&config.public_record_file),
+                && config.discovery_seeds.len() <= 2
+                && (config.discovery || config.discovery_seeds.is_empty())
+                && !config.peer_records.contains(&config.public_record_file)
+                && !config.discovery_seeds.contains(&config.public_record_file),
             "NOVONET locator inventory"
         );
         ensure!(
-            config.peer_records.iter().collect::<BTreeSet<_>>().len() == config.peer_records.len(),
+            config.peer_records.iter().collect::<BTreeSet<_>>().len() == config.peer_records.len()
+                && config.discovery_seeds.iter().collect::<BTreeSet<_>>().len()
+                    == config.discovery_seeds.len(),
             "duplicate NOVONET locator source"
         );
         config.carrier()?;
@@ -147,7 +165,8 @@ impl Driver {
             .map(|peer| node.controller.peer_transport_key(peer))
             .collect::<Result<Vec<_>>>()?;
         ensure!(
-            keys.len() == config.peer_records.len(),
+            (config.discovery && config.peer_records.len() <= keys.len())
+                || keys.len() == config.peer_records.len(),
             "NOVONET locator inputs must cover original validator peers"
         );
         let identity = node.transport_identity();
@@ -165,7 +184,9 @@ impl Driver {
         pins: (u64, [u8; 32], [u8; 32]),
     ) -> Result<Self> {
         ensure!(
-            !keys.is_empty() && keys.len() == config.peer_records.len(),
+            !keys.is_empty()
+                && ((config.discovery && config.peer_records.len() <= keys.len())
+                    || keys.len() == config.peer_records.len()),
             "NOVONET peer inventory"
         );
         let started = Instant::now();
@@ -297,7 +318,8 @@ impl Driver {
                 }
             })
             .ok();
-        serde_json::json!({"default":"native_novorudp","fallback":"iroh","active_bound_peers":bound,
+        serde_json::json!({"default":"native_novorudp","fallback":"iroh","installed_bound_peer_routes":bound,
+            "peer_discovery_rpc":self.config.discovery,
             "connection_failures":self.failures.load(Ordering::Relaxed),"global_auto_discovery":false,"native_multihop_accepted":false})
     }
     pub fn close(&mut self) -> Result<()> {
@@ -328,6 +350,7 @@ impl Drop for Driver {
     }
 }
 
+#[derive(Clone)]
 struct Candidate {
     key: Vec<u8>,
     route: IrohAddressV1,
@@ -342,6 +365,16 @@ impl std::fmt::Display for ServiceSelectionMismatch {
     }
 }
 impl std::error::Error for ServiceSelectionMismatch {}
+fn terminal_session_rejection(error: &anyhow::Error) -> bool {
+    error.is::<ServiceSelectionMismatch>()
+        || matches!(
+            error.downcast_ref::<novovm_network::bound_session::BoundSessionError>(),
+            Some(
+                novovm_network::bound_session::BoundSessionError::Authentication(_)
+                    | novovm_network::bound_session::BoundSessionError::Local(_)
+            )
+        )
+}
 // Distinct existing owners are passed explicitly; no combined authority object.
 #[allow(clippy::too_many_arguments)]
 async fn run(
@@ -424,13 +457,22 @@ async fn serve<'a>(
         })
         .collect::<Vec<_>>();
     let mut quarantined = vec![None; keys.len()];
-    let instance = rand::random::<[u8; 32]>();
+    let record_kind = novovm_network::discovery_control::native_locator_id_v1(pins);
+    let mut discovery = config
+        .discovery
+        .then(|| Discovery::new(scope, config, identity, keys, pins, failures.clone()))
+        .transpose()?;
+    let mut instance = discovery
+        .as_ref()
+        .map(Discovery::instance)
+        .transpose()?
+        .unwrap_or_else(rand::random);
     let mut sequence = if config.public_record_file.exists() {
         let old: PeerSignedRelayRecordV1 = read_document(&config.public_record_file)?;
         novovm_network::product_directory::verify_relay_record_authenticity_v1(&old, identity)?;
         ensure!(
-            old.relay_public_key == identity.public_key(),
-            "public locator file belongs to a different identity"
+            old.relay_public_key == identity.public_key() && old.record_id == record_kind,
+            "public locator file belongs to a different identity or chain domain"
         );
         old.sequence
     } else {
@@ -439,6 +481,8 @@ async fn serve<'a>(
     let mut refresh = Instant::now();
     let mut publish_at = refresh;
     let mut accepting = Box::pin(scope.accept_inbound());
+    let mut incoming: Vec<Job<'a>> = Vec::new();
+    let mut updates = Vec::new();
     loop {
         if stop.load(Ordering::Acquire) {
             return Ok(());
@@ -446,6 +490,12 @@ async fn serve<'a>(
         let now = Instant::now();
         if now >= refresh {
             let wall = wall_ms()?;
+            if let Some(discovery) = &mut discovery {
+                if discovery.rotate_if_due(now)? {
+                    instance = discovery.instance()?;
+                    publish_at = now;
+                }
+            }
             if now >= publish_at {
                 sequence = sequence
                     .checked_add(1)
@@ -456,7 +506,7 @@ async fn serve<'a>(
                 };
                 let record = sign_relay_record_v1(
                     identity,
-                    RECORD_KIND,
+                    &record_kind,
                     vec![route.endpoint()?],
                     wall,
                     wall.checked_add(120_000)
@@ -464,13 +514,23 @@ async fn serve<'a>(
                     sequence,
                 )?;
                 publish(&config.public_record_file, &record)?;
+                if let Some(discovery) = &mut discovery {
+                    discovery.set_local(&record)?;
+                }
                 publish_at = now + Duration::from_secs(40);
             }
             for path in &config.peer_records {
                 let Ok(record) = read_document::<PeerSignedRelayRecordV1>(path) else {
                     continue;
                 };
-                if record.record_id != RECORD_KIND {
+                updates.push(record);
+            }
+            if let Some(discovery) = &mut discovery {
+                updates.extend(discovery.maintain(now, wall)?);
+                discovery.update_bootstraps(&updates, wall);
+            }
+            for record in updates.drain(..) {
+                if record.record_id != record_kind {
                     continue;
                 }
                 let Some(peer) = keys.iter().position(|key| *key == record.relay_public_key) else {
@@ -574,45 +634,49 @@ async fn serve<'a>(
                     continue;
                 };
                 if let Poll::Ready(result) = job.future.as_mut().poll(cx) {
-                    if let Err(error)=result {
+                    if let Err(error) = result {
                         failures.fetch_add(1, Ordering::Relaxed);
-                        pools[peer].record_failure(&novovm_network::product_overlay::peer_id_from_mldsa65_public_key_v1(&keys[peer]),poll_wall);
-                        if error.downcast_ref::<ServiceSelectionMismatch>().is_some()
-                            || matches!(error.downcast_ref::<novovm_network::bound_session::BoundSessionError>(),
-                                Some(novovm_network::bound_session::BoundSessionError::Authentication(_)
-                                    | novovm_network::bound_session::BoundSessionError::Local(_))) {
-                            quarantined[peer]=candidates[peer].as_ref().map(|candidate|candidate.sequence);
+                        pools[peer].record_failure(
+                            &novovm_network::product_overlay::peer_id_from_mldsa65_public_key_v1(
+                                &keys[peer],
+                            ),
+                            poll_wall,
+                        );
+                        if terminal_session_rejection(&error) {
+                            quarantined[peer] = candidates[peer]
+                                .as_ref()
+                                .map(|candidate| candidate.sequence);
                         }
                     }
                     jobs[peer] = None;
                 }
             }
+            let mut index = 0;
+            while index < incoming.len() {
+                if let Poll::Ready(result) = incoming[index].as_mut().poll(cx) {
+                    if result.is_err() {
+                        failures.fetch_add(1, Ordering::Relaxed);
+                    }
+                    drop(incoming.swap_remove(index));
+                } else {
+                    index += 1;
+                }
+            }
+            if let Some(discovery) = &mut discovery {
+                updates.extend(discovery.poll(cx));
+            }
             match accepting.as_mut().poll(cx) {
                 Poll::Ready(Ok(stream)) => {
-                    let endpoint = stream.remote_endpoint_key();
-                    if let Ok(endpoint) = endpoint {
-                        if let Some(peer) = candidates.iter().position(|candidate| {
-                            candidate.as_ref().is_some_and(|c| {
-                                c.route.endpoint_key == endpoint
-                                    && wall_ms().is_ok_and(|now| now < c.expires)
-                            })
-                        }) {
-                            if jobs[peer].is_none() && quarantined[peer].is_none_or(|sequence|
-                                candidates[peer].as_ref().is_none_or(|candidate|sequence<candidate.sequence)) {
-                                let adopted=Arc::new(AtomicBool::new(false));
-                                jobs[peer] = Some(CarrierAttempt {endpoint_key:endpoint,adopted:adopted.clone(),future:Box::pin(connection(
-                                    stream.into(),
-                                    identity.clone(),
-                                    keys[peer].clone(),
-                                    peer,
-                                    false,
-                                    pins,
-                                    views.clone(),
-                                    connected.clone(),
-                                    adopted,
-                                ))});
-                            }
-                        }
+                    if incoming.len() < novovm_network::iroh_transport::IROH_MAX_CONNECTIONS_V1 {
+                        incoming.push(Box::pin(incoming_connection(
+                            stream.into(),
+                            identity.clone(),
+                            keys.to_vec(),
+                            pins,
+                            views.clone(),
+                            connected.clone(),
+                            discovery.as_ref().map(|d| d.store.clone()),
+                        )));
                     }
                     accepting = Box::pin(scope.accept_inbound());
                 }
@@ -640,7 +704,9 @@ async fn connection(
     connected: mpsc::SyncSender<Connected>,
     adopted: Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut channel = authenticate_structured_bound_session_observed(
+    ensure!(initiator, "outbound connection requires initiating role");
+    stream.write_frame(OBJECT_ENTRY).await?;
+    let channel = authenticate_structured_bound_session_observed(
         &mut stream,
         &identity,
         expected,
@@ -649,6 +715,78 @@ async fn connection(
         &mut |_, _| Ok(()),
     )
     .await?;
+    object_connection(
+        stream, channel, peer, initiator, pins, views, connected, adopted,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn incoming_connection(
+    mut stream: CarrierStreamV1<'_>,
+    identity: TransportIdentity,
+    keys: Vec<Vec<u8>>,
+    pins: (u64, [u8; 32], [u8; 32]),
+    views: Arc<Mutex<Vec<PeerView>>>,
+    connected: mpsc::SyncSender<Connected>,
+    store: Option<Arc<Mutex<novovm_network::opaque_rendezvous::RendezvousStoreV1>>>,
+) -> Result<()> {
+    // Only a bounded dispatcher precedes authentication. The selector confers
+    // no authority; the actual Finished identity determines the object peer.
+    let entry = stream.read_frame().await?;
+    if entry == DISCOVERY_ENTRY {
+        return discovery::serve(
+            stream,
+            identity,
+            pins,
+            store.context("node discovery disabled")?,
+        )
+        .await;
+    }
+    ensure!(entry == OBJECT_ENTRY, "unknown NOVONET service entry");
+    let (channel, remote) = tokio::time::timeout(
+        Duration::from_secs(8),
+        authenticate_structured_service_client_observed(
+            &mut stream,
+            &identity,
+            ServicePeerPolicyV1::AnyAuthenticated,
+            &mut HandshakeReplayCacheV1::new(8),
+            &mut |_, _| Ok(()),
+        ),
+    )
+    .await??;
+    let peer = keys
+        .iter()
+        .position(|key| *key == remote)
+        .context("authenticated identity has no native peer mapping")?;
+    ensure!(
+        remote.as_slice() < identity.public_key(),
+        "native connection initiation role differs"
+    );
+    object_connection(
+        stream,
+        channel,
+        peer,
+        false,
+        pins,
+        views,
+        connected,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn object_connection(
+    mut stream: CarrierStreamV1<'_>,
+    mut channel: novovm_network::transport_binding::BoundSecureChannelV1,
+    peer: usize,
+    initiator: bool,
+    pins: (u64, [u8; 32], [u8; 32]),
+    views: Arc<Mutex<Vec<PeerView>>>,
+    connected: mpsc::SyncSender<Connected>,
+    adopted: Arc<AtomicBool>,
+) -> Result<()> {
     // A versioned, AEAD-bound service selection under the original Finished
     // channel. No mailbox selector, chain override or JSON business payload.
     let mut payload = SELECTOR.to_vec();
