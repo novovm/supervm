@@ -687,6 +687,8 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "D:\WorksArea\SUPE
 
 ### 14. 2026-11-08 A真实启动已核，C/D各一次接线
 
+**C/D已执行本节启动，原库已创建；不再执行初始化。当前结果及下一操作见第15节。**
+
 A已执行第13节的可见管理员命令。已读取其原始7份输出，而非只看截图：实际SID
 S-1-5-19、LocalService账户，原validator/transport材料未重新生成、未访问资产私钥；
 initialize实际成功，初始根仍为f6186d40、协议2132270f、创世域f8396bae及原AOEM
@@ -749,6 +751,44 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "$unpacked\Start-N
 只给出既有B引导来源，不能称两个独立引导均已实机签收；第二来源、冷恢复和真实
 单/双中继仍在后续实际网络验收中按原owner完成。C/D实际启动后再统一看四端记录、
 路径与对象DONE，随后用原账户/库做业务与最终回执，不在此阶段宣称TPS或开放L1。
+
+### 15. 2026-11-08 C/D启动签收，原客户端查询与A本机防火墙阻断
+
+A已ff到C回执`d84bf08f`（含D `2185d5bb`），独立核对两份原ZIP的CRC、每份公开
+原件长度/哈希、实际LocalService SID、共同初始根与完整传输公钥。C在03:38、D在
+03:30观察到原node Running；四台初始化根均为f6186d40。新程序仍是08236129，
+不是文档回执提交。C/D不重复启动、换钥、清库或六组旧认证。
+
+A随后用固定包内原native-client、同一组批准域/验证者及独立OS保护传输用途钥，
+依次执行只读status。该客户端钥不同于全部签票/传输/资产钥，不取得投票或花费权。
+A退出0，返回height=0/current_height=1、原初始根、projection_failed=false；这只是
+认证节点观察，不是独立最终性证明。B/C/D各退出1，原30秒期限内未取得新观察。
+不得把启动通过写成四机通信、DONE、连续确认、中继或资产通过。
+
+已读到A当前WLAN/Meta均Public，系统存在针对**这份native-client.exe**的显式
+Public/Inbound/UDP Block规则，TCP另有Block。它是远端回复的具体阻断，尚未通过
+修正前后对照证明全部超时都由它造成；不据此认定C/D或原网络算法故障。B端本轮
+SSH直接绑定LAN两次连接超时，默认路径一次banner超时；限时tcpdump未启动。
+固定41190端口的额外B查询也超时并单列保留，不称已抓到包或拒绝认证。
+
+下一步仅A在管理员PowerShell执行一次：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File "D:\WorksArea\SUPERVM\scripts\Enable-NovonetOperatorQuery.ps1"
+```
+
+脚本核固定client哈希及实际A地址，仅停用已核对的该条UDP Block，保留TCP阻止，
+新增同程序/Public/A地址/UDP41190、仅B/C/D地址及41050/41052/41053的回复Allow。
+不会关闭全局防火墙、修改node规则、初始化/重启节点或读取资产钥。原规则和操作
+结果写入新的target/operator-firewall目录；已存在则拒绝重跑，新增失败恢复原Block。
+当前只通过Windows PowerShell5/PowerShell7语法解析；**尚未提权执行，不记实测通过**。
+完成后A使用原client固定绑定192.168.71.74:41190进行对照，不增加超时或更换身份。
+C/D此刻不需操作；B SSH可用后才进行原端口限时抓包，不改全局VPN/路由或B服务。
+
+[公开原件ZIP](../artifacts/audit/validator-b-program-install-20261102/novonet-082-four-starts-query-observation.zip)
+为10345字节，SHA256 `a073b19d4152655832b67e207c3889d0fb0c251827bfae79c1a387d5f429c331`，
+15项含原查询输出、失败、C/D核验及A规则观察；独立读回CRC和每项字节通过。
+不含client protected、配置私密材料、数据库或journal；未转账、收费、重启或产生TPS。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
