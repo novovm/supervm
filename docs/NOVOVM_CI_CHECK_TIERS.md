@@ -1,5 +1,17 @@
 # CI scope and candidate validation
 
+## 2026-11-07 latest: prompt source publication is not candidate acceptance
+
+The user requires timely commits and pushes to main. Do not withhold completed,
+locally checked changes until the whole network project or full candidate CI is
+finished. Source synchronization and candidate acceptance are separate events;
+publication does not qualify an untested artifact or erase a failure.
+Do not manually dispatch a full cloud run for each ordinary synchronization.
+Keep the applicable local checks and eventual candidate validation. Existing
+automatic main triggers remain explicit and unchanged by this scheduling rule;
+do not disable checks, cancel runs or add skip markers to conceal them. This
+supersedes older concentrated-push wording below, not test/reporting obligations.
+
 ## 2026-11-06 customer correction: local CI before another candidate push
 
 Cloud CI is a final candidate gate, not the local debugging environment. Before
