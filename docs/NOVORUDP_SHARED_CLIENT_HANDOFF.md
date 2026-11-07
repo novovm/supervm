@@ -466,6 +466,86 @@ Tensor或每包ML-DSA；原逐包AEAD不变。附件“永远保留聊天Ed25519
 已经通过。B既有服务、C/D及手机均未操作。后继沿这些固定制品继续既定四机验收，
 不为了参考材料重新搭网络、执行器或长期测试链。
 
+### 11. 2026-11-07 四机实网：固定候选接收，不以READY冒充交付
+
+已全文读取本次参考审计，附件SHA256为
+`7d8daa4561492e82ec8478be372afb44a349ac517da3ca49bfa22d3641d6b567`。程序仍固定为第10节的
+`ce1f54ea545e69dc64763f1f24f6048d90e4ef12`，不是随文档提交重新编译。原签名合同
+继续有效；参考中的“永久保留聊天Ed25519”不覆盖现行用途迁移要求，本轮不修改
+NOVOCHAT、手机、算法、共识、AOEM或经济。四机实网与包内离线核验分别记录。
+
+沿已生成的两平台目录归档，**只分发下列r2归档**；初次归档使用了修改前的接收
+脚本，未交给C/D，留在本机不作交付。r2没有改变包内程序或release-manifest。
+二进制不放入Git；仅同步main不能取得程序。复制时不得覆盖9a安装、用途钥或原库。
+
+| 接收物 | A本地路径（均在`target/novonet-four-host-ce1f54ea-20261107/`） | 字节数 | SHA256 |
+| --- | --- | --- | --- |
+| C/D同一Windows ZIP | `novonet-ce1f54ea-windows-x86_64-r2.zip` | 150354733 | `79cdfcf8636ddb881b2c9fa56d28c990ef5b12c8c7010f52cff0fea3a2576c9b` |
+| B Linux TAR.GZ | `novonet-ce1f54ea-linux-x86_64-r2.tar.gz` | 358788674 | `e2da38deafb0a97e4f47739cee8eb0aea14e450a97c7bace3be5a803b0911fce` |
+
+两归档分别核对原77/80项清单文件的**归档流**长度与哈希，清单、校验索引、原SDK
+辅助校验索引与接收脚本另外核对；没有用途材料、账户钥、数据库或多余文件。原
+打包器不把`CHECKSUMS.sha256`自身列入artifact；不能把“77清单项”误写成归档只有
+77个文件。Windows辅助SDK索引作为额外元数据已核对，不修改生成包来凑文件数。
+
+本次可复用接收入口为[`scripts/novonet-verify-fixed-candidate.py`](../scripts/novonet-verify-fixed-candidate.py)，
+仅用Python标准库，Windows/Linux接收同一脚本。它独立固定两平台manifest pin，
+逐项查长度/哈希及索引、实际node feature，再运行**接收包里的**ctl对**接收包里的**
+AOEM做KAT，并运行实际node的离线service-contract；核对实际库路径及所有副作用
+字段。缺失/错误清单在任何程序执行前拒绝。结果目录必须新建，原始stdout/stderr
+保留；不创建钥、不访问custody、不建库、不注册服务、不监听或启动节点。
+
+**C/D各只需一次接收操作，无管理员窗口、无预约短窗口：**
+
+1. 将上述同一个Windows r2 ZIP复制到各机，核对外层字节数与SHA256后解压到新目录。
+   不运行旧9a安装脚本，不cargo重编，不移动任何受保护用途材料。
+2. 在解压目录运行下式。C使用`C`，D仅将`--host-id C`及报告目录名换成`D`；
+   Python命令如为`py -3`，仅替换启动命令，不改脚本及候选文件。
+
+```powershell
+python .\novonet-verify-fixed-candidate.py --host-id C --package-root .\novonet-ce1f54ea-windows-x86_64 --report-directory .\ready-ce1-C
+```
+
+3. 将新报告目录中的`report.json`、`runtime.stdout/stderr`、`node-contract.stdout/stderr`
+   作为公开回执回传main，并回报当前实际LAN IPv4供本轮拓扑使用；不重做硬件/身份
+   清点。成功状态为`READY_NOVONET_CE1_C/D`。失败则原样回传，不改包、不清目录或
+   覆盖失败，不补跑认证/交易。程序包、私钥、数据库不提交Git。
+
+A已用该接收脚本对固定Windows包实际通过一次；错误manifest反例明确在执行ctl
+前失败。B当前沿原SSH配置绑定A的LAN源地址已恢复访问，未改VPN、known_hosts、
+防火墙或B服务。Linux归档只进入新建的`/home/ecs-user/novovm-incoming-ce1f54ea-20261107`，
+不替换`/opt/novovm/releases/selfrun-9a6153f1-linux-x86_64`及任何current别名。
+B已在该新目录完成归档SHA核对、解包及同一接收脚本的实际执行，取得
+`READY_NOVONET_CE1_B`：80项791242071字节、包内core为第10节固定的d73e4a2f，
+scalar/unified/mixed-batch KAT及实际Linux node合同均通过。不是A的WSL替代结果。
+前后只读快照中原docker/nginx/novonet-mailbox/supervm-relay仍active，UDP监听集合
+未变、`/opt/novovm/releases`名称未变。首次未绑定LAN的SSH在banner前超时，保留
+该失败；沿原配置绑定192.168.71.74后成功，未改全局网络。
+
+[A/B公开原始接收证据](../artifacts/audit/validator-b-program-install-20261102/novonet-ce1f54ea-ready-public-evidence.zip)
+为6368字节，SHA256 `c63248910a36af45da6613c9e0afa89cf8f9f594923a0aee07f56c2d20576593`。
+含实际stdout/stderr、原报告、B前后只读快照、接收记录和错误manifest反例；不含钥或库。
+接收脚本SHA256为`c4ecbf44ad620f7a9caa605b4770feaabdf9dbdb272243660adf5fc2a237a481`，
+与两归档及A/B实际报告一致。Python语法检查、差异检查和上述实际运行已在本地完成；
+不额外手动触发或重复云端CI，不以本次源码/交接推送冒充ce1完整CI已通过。
+
+**后续实网范围不缩水，也不提前记通过。** 待四端接收后，沿原node的
+`native_execution_tick`与`ResidentConfig.novonet_config_file`组织实际拓扑。
+新逐跳驱动在这个原入口中，旧`novovm-product-nat`成功不能替代它；不为方便另写
+探测路由器或拿内存/localhost用例冒充四物理机。初步角色为A源、C/D逐跳参与者、
+B公网对端；实际路径以两端和中继记录确定，不能把B不能直接路由的192.168地址
+标为公网可达。不得为全网状会话加双中继而提高原连接/转发额度。
+
+分别取得NovoRUDP直连、单中继、双中继、并发对象最终DONE、中继重启/重新认证、
+引导冷恢复及Iroh备用后原生恢复的实际证据；资产业务必须另有指定实际AOEM、
+签名/账户/nonce/费用/receipt/持久化与重复拒绝。主节点只打开合法已初始化状态，
+不借旧钥、降票或偷偷生成另一条夹具链来凑运行。真实进程的必要初始化沿原已批准
+共同输入及原owner进行，不自动切换主网服务。本轮不提前发布主网或第三方业务。
+抓包仅限本轮明确端口、长度和时间，区分旁观者、中继与最终端；目前尚无新PCAP。
+
+当前本节的READY、源代码、实际网络、实际资产业务和抓包是五层证据。除接收包
+核验以外，其余实网场景均保持待执行；没有新TPS、全球自动入网或匿名性结论。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
