@@ -1,0 +1,122 @@
+{
+  "status": "START_OBSERVED_082_C",
+  "review_main": "2185d5bbdb0804a7f421281c332677c984b232ef",
+  "host_id": "C",
+  "archive": {
+    "zip_bytes": 150438312,
+    "zip_sha256": "38a871d5dc024ba90461a1c6da451ef2b76a39c3b39c905cf7034c9a920d582a",
+    "manifest_sha256": "a1a4082dcff2af227738e7e37013ae9a41b2546ecf25474eccda22166cb2f506",
+    "source_commit": "08236129320da2e71c5fa112d249fa7afc741e78",
+    "script_sha256": "5a4ce2d71dcb62ef3f861aae585ce2097d633d2866a89cc404cf4bd517d0da23",
+    "artifacts_verified": 77
+  },
+  "observation": {
+    "host_id": "C",
+    "started_utc": "2026-11-07T19:38:33.1938097Z",
+    "launcher_exit_code": 0,
+    "observation_complete": true,
+    "task_state": "Running",
+    "last_task_result": 267009,
+    "copied_public_files": [
+      "owner.json",
+      "initialize.stdout",
+      "initialize.stderr",
+      "locator.json",
+      "progress.json",
+      "node.stderr"
+    ],
+    "missing_public_files": [],
+    "finished_utc": "2026-11-07T19:38:53.1815930Z"
+  },
+  "owner": {
+    "host_id": "C",
+    "sid": "S-1-5-19",
+    "account": "NT AUTHORITY\\LOCAL SERVICE",
+    "purpose_keys_regenerated": false,
+    "asset_keys_accessed": false,
+    "service_registered": false
+  },
+  "initialization": {
+    "ok": true,
+    "command": "native-genesis",
+    "timestamp_unix_ms": 1794080331104,
+    "host": "KING-LENOVO",
+    "data": {
+      "schema_version": 3,
+      "action": "initialize",
+      "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+      "chain_id": 91129655606029,
+      "genesis_config_commitment": "f8396bae7c0150eef98ab2f1532057b706a5576b89c149c12561ef5d6b847ec6",
+      "protocol_commitment": "2132270f6d2f70bdf00ff09ddfb062fed56bd22e741e05a3cf7ba0d89ee7bfa5",
+      "initial_state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+      "aoem_library": "C:\\ProgramData\\NOVOVM\\releases\\novonet-08236129-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+      "aoem_library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "database_created": true,
+      "initial_state_persisted": true,
+      "original_owners_drained": true,
+      "private_material_exported": false,
+      "node_started": false,
+      "service_started": false,
+      "network_opened": false,
+      "consensus_vote_signed": false,
+      "state_published": false,
+      "finality_verified": false,
+      "review_only_startup_fragment": null
+    }
+  },
+  "transport_public_key_sha256": "610885e9dc34eaa2c979a95e55bebde247d8f40e23f071f727a7fbf0b4c50e4a",
+  "original_transport_key_matches_locator": true,
+  "original_validator_key_matches_approved_input": true,
+  "progress_at_capture": {
+    "current_height": 1,
+    "round": 0,
+    "native_pending_deliveries": 3,
+    "native_rejected_messages": 0,
+    "native_expired_sends": 0,
+    "execution_failures": 0,
+    "durable_decisions": 0
+  },
+  "public_evidence": {
+    "sha256": "c5355d7f200ff327012e6b2e5544985c84a3c517e12119810250c60b961375a1",
+    "files": {
+      "owner.json": {
+        "bytes": 210,
+        "sha256": "bebca2cfa1191221932de3e2aaf0dfeff2f433411e71a2143c8fe2b75e201c06"
+      },
+      "initialize.stdout": {
+        "bytes": 2420,
+        "sha256": "5d4ecb5ac8dacec6d59a1c2b929a6e96e8306b06a37ffe903512a7f50e778195"
+      },
+      "initialize.stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "locator.json": {
+        "bytes": 19639,
+        "sha256": "0c5c2eec58e2c19590217987826686d982803235602d361da8d356c1787c7bee"
+      },
+      "progress.json": {
+        "bytes": 5214,
+        "sha256": "9b1d3bbdf52c98665ea9a0053a805921633c62a05576b7c9e79cec8747ac9cf6"
+      },
+      "node.stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "observation.json": {
+        "bytes": 700,
+        "sha256": "1aa81b388a6f78b31a46c1044146239987e28c5a76cf68eb9035f0851bdfc9c0"
+      },
+      "launcher.stdout": {
+        "bytes": 602,
+        "sha256": "5761413c536803c0e34e528c965d5fdbd4435e81c4f99bd8495b7233c161a5d0"
+      },
+      "launcher.stderr": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "four_host_network_accepted": false,
+  "single_double_relay_accepted": false
+}
