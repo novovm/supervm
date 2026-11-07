@@ -1,2 +1,3 @@
+report.json -text whitespace=cr-at-eol
 *.stdout -text
 *.stderr -text

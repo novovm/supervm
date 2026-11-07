@@ -23,7 +23,7 @@
   只读取本轮地址，没有重新清点硬件、校时或更改 VPN/防火墙。
 
 [report.json](report.json) 为原接收报告；`runtime.stdout/stderr` 和
-`node-contract.stdout/stderr` 保留原始字节，由本目录 `.gitattributes` 禁止行尾转换。
+`node-contract.stdout/stderr` 及原报告保留原始字节，由本目录 `.gitattributes` 禁止行尾转换。
 [public-receipt.json](public-receipt.json) 包含原始文件长度/哈希和 LAN 地址，
 [archive-verification.json](archive-verification.json) 为独立归档核验记录。
 原始时间戳保留 UTC（2026-11-07 16:17，即北京时间 2026-11-08 00:17），未改写。
