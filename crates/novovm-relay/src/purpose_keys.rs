@@ -17,6 +17,10 @@ pub const TRANSPORT_PAIR_CONTEXT: &[u8] = b"NOVOVM/transport-purpose-key-pair/v3
 pub const IDENTITY_PAIR_CONTEXT: &[u8] = b"NOVOVM/identity-purpose-key-pair/v3";
 pub const ASSET_MANAGEMENT_PAIR_CONTEXT: &[u8] = b"NOVOVM/asset-management-purpose-key-pair/v3";
 
+/// Independent third-party carrier material. Never an alternative native
+/// authorization algorithm: native ML-DSA readers reject this distinct suite.
+pub mod carrier;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PurposeV1 {

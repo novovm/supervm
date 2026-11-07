@@ -12,6 +12,22 @@ impl IrohStreamV1<'_> {
     pub(crate) fn split_native_continuous_v7(
         &mut self,
     ) -> Result<(IrohWriteHalfV1<'_>, IrohReadHalfV1<'_>)> {
+        self.split_continuous_frames(MAX_DATAGRAM_BYTES)
+    }
+
+    /// Authenticated relay envelopes use the existing general carrier limit,
+    /// not the inner native datagram limit. Admission, cancellation and partial
+    /// frame deadlines remain identical to the original continuous IO owner.
+    pub(crate) fn split_relay_continuous(
+        &mut self,
+    ) -> Result<(IrohWriteHalfV1<'_>, IrohReadHalfV1<'_>)> {
+        self.split_continuous_frames(IROH_MAX_FRAME_V1)
+    }
+
+    fn split_continuous_frames(
+        &mut self,
+        limit: usize,
+    ) -> Result<(IrohWriteHalfV1<'_>, IrohReadHalfV1<'_>)> {
         self.check()?;
         ensure!(
             self.scope.control.deadline.is_none()
@@ -33,14 +49,14 @@ impl IrohStreamV1<'_> {
                 connection: &self.connection,
                 send: &mut self.send,
                 failed: &self.failed,
-                native: true,
+                continuous_frame_limit: Some(limit),
             },
             IrohReadHalfV1 {
                 control: &self.io_control,
                 connection: &self.connection,
                 recv: &mut self.recv,
                 failed: &self.failed,
-                native: true,
+                continuous_frame_limit: Some(limit),
             },
         ))
     }
@@ -52,10 +68,11 @@ pub(super) async fn write(
     failed: &AtomicBool,
     send: &mut SendStream,
     bytes: &[u8],
+    limit: usize,
 ) -> Result<()> {
     check_frame_io(control, connection, failed)?;
     ensure!(
-        !bytes.is_empty() && bytes.len() <= MAX_DATAGRAM_BYTES,
+        !bytes.is_empty() && bytes.len() <= limit,
         "native carrier frame limit"
     );
     let mut guard = FrameIoGuard {
@@ -83,6 +100,7 @@ pub(super) async fn read(
     connection: &Connection,
     failed: &AtomicBool,
     recv: &mut RecvStream,
+    limit: usize,
 ) -> Result<Vec<u8>> {
     check_frame_io(control, connection, failed)?;
     let mut guard = FrameIoGuard {
@@ -107,7 +125,7 @@ pub(super) async fn read(
         result = tokio::time::timeout_at(deadline.into(), async {
             recv.read_exact(&mut length[1..]).await.map_err(|error| IrohStreamIoFailureV1(error.into()))?;
             let length = u32::from_be_bytes(length) as usize;
-            ensure!(length > 0 && length <= MAX_DATAGRAM_BYTES, "native carrier frame limit");
+            ensure!(length > 0 && length <= limit, "continuous carrier frame limit");
             let mut bytes = vec![0; length];
             recv.read_exact(&mut bytes).await.map_err(|error| IrohStreamIoFailureV1(error.into()))?;
             Ok::<_, anyhow::Error>(bytes)

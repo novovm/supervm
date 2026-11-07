@@ -472,15 +472,21 @@ impl NativeChannel {
     }
     #[cfg(feature = "iroh-transport")]
     pub fn peer_uses_bound_carrier(&self, peer: usize) -> Result<bool> {
-        let route = match &self.link {
+        Ok(matches!(
+            self.peer_route(peer)?,
+            novovm_network::novorudp::carrier::NativeRoute::Carrier(_)
+        ))
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub fn peer_route(
+        &self,
+        peer: usize,
+    ) -> Result<novovm_network::novorudp::carrier::NativeRoute> {
+        Ok(match &self.link {
             ChannelLink::Original(link) => link.peer_route(peer)?,
             #[cfg(test)]
             ChannelLink::Objects(link) => link.peer_route(peer)?,
-        };
-        Ok(matches!(
-            route,
-            novovm_network::novorudp::carrier::NativeRoute::Carrier(_)
-        ))
+        })
     }
     #[cfg(feature = "iroh-transport")]
     pub fn peer_transport_key(&self, peer: usize) -> Result<Vec<u8>> {

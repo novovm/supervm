@@ -226,10 +226,61 @@ impl NativeEndpoint {
         let local_key = channel.local_identity_public_key().to_vec();
         let remote_key = channel.remote_identity_public_key().to_vec();
         let identity_verifier = channel.identity_verifier().clone();
-        let id: Arc<str> = channel.remote_peer_id().into();
         let route =
             NativeRoute::Carrier(super::carrier::VerifiedCarrierRoute::from_binding(binding));
         let session = NativeUdpSession::from_bound_channel(channel, binding)?;
+        Self::from_authenticated_carrier(
+            io,
+            local_key,
+            remote_key,
+            identity_verifier,
+            route,
+            session,
+            streams,
+        )
+    }
+
+    /// Original native ML-DSA and route-bound AEAD confirmation through actual
+    /// authenticated hops. Provenance remains the REAL first-hop binding, not
+    /// a fabricated TLS exporter for the final native peer. No relay owns the
+    /// end-to-end channel. The proof cannot be manufactured from an address.
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn from_relayed_session(
+        io: Arc<dyn NativeDatagramIo>,
+        proof: crate::relay::hop::VerifiedRelaySession,
+        streams: Vec<u64>,
+    ) -> Result<Self> {
+        let local = proof.identity.public_key().to_vec();
+        let remote = proof.remote;
+        ensure!(
+            peer_id_from_mldsa65_public_key_v1(&remote) == proof.channel.remote_peer_id(),
+            "relayed final identity differs"
+        );
+        let route = NativeRoute::Carrier(proof.route);
+        let session = NativeUdpSession::from_relayed_channel(proof.channel, proof.route);
+        Self::from_authenticated_carrier(io, local, remote, proof.identity, route, session, streams)
+    }
+
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    #[allow(clippy::too_many_arguments)]
+    fn from_authenticated_carrier(
+        io: Arc<dyn NativeDatagramIo>,
+        local_key: Vec<u8>,
+        remote_key: Vec<u8>,
+        identity_verifier: TransportIdentity,
+        route: NativeRoute,
+        session: NativeUdpSession,
+        streams: Vec<u64>,
+    ) -> Result<Self> {
+        ensure!(
+            !streams.is_empty()
+                && streams.len() <= 16
+                && !streams.contains(&0)
+                && !streams.contains(&u64::MAX)
+                && streams.iter().copied().collect::<BTreeSet<_>>().len() == streams.len(),
+            "invalid authenticated native streams"
+        );
+        let id: Arc<str> = session.remote_peer_id().into();
         let carriers = Arc::new(carriers::BoundCarrierSet::new(vec![(route, io)]));
         Ok(Self {
             io: carriers.clone(),

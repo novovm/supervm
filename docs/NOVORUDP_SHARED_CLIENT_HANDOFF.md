@@ -301,6 +301,95 @@ Finished认证。`NVNETOB1`/`NVNETDS1`仅分派用途，不授予身份；随后
 `*-discovery-consumers-final-*`，不覆盖失败。没有提高生产超时、放宽认证或更改共识。
 本轮及时提交同步main，不额外手动触发云CI；main原自动工作流及候选门禁保持不变。
 
+### 9. 2026-11-07 引导冷恢复与真实逐跳接线（基于b0594b89）
+
+沿第8节的同一发现RPC、store、ServiceLeaseBook及主节点owner继续接线；没有
+重写NOVOCHAT、另建发现服务、UDP socket、路由守护程序或执行/共识队列。
+原生NovoRUDP仍是默认，只有原按需备用条件触发后才考虑本节的Iroh载体路径。
+
+**冷恢复。** 可选`carrier_identity_file`沿原用途信封与OS custody保存独立随机
+carrier seed，绑定本机ML-DSA传输公钥及链域，不从资产钥派生。不同suite不能被
+读成ML-DSA签票/花费钥。丢失已发布身份的保管材料时拒绝静默重生。实际调用仍是
+原IrohEndpointOwner的稳定身份入口；第三方载体密码学不取得原生授权。
+
+本地公开`*.discovery-cache.json`最多保留两个已签引导坐标检查点，身份信任仍从
+独立配置的原引导pin取得；缓存不能引入新pin。原签名、链承诺、未来时间、序号与
+同序号冲突检查继续有效；旧磁盘副本不能回滚已学到的新声明。过期坐标只用于原
+self-owned引导策略的新持钥握手，不能更新业务租约；取回的实际数据候选仍须新鲜。
+稳定carrier身份不等于地址永远可达：同时冷启动仍需至少一条可达的既有引导坐标、
+固定监听地址或获准可用的载体路径，不能无中生有发现全部消失的来源。
+
+**真实逐跳。** 显式`relay_forwarding`（默认false）表示本owner愿意消费/提供这项
+受限转发。已有验证候选按有界轮次尝试直连、一个中继、两个中继，不逐消息重选；
+健康会话复用，断开先重试已认证工作的轮次，再沿原候选池失败/冷却推进。仍受原
+Iroh连接/流数量及每分钟64KiB声明预算约束，不以增加线程、连接额度或批量掩盖。
+这不是任意规模路由发现、所有peer全网状并发或物理抗封锁资格。
+
+本轮恢复反例还定位到：原取消检查只覆盖最终对端的carrier key，未覆盖正在连接
+的中间跳。现沿同一已验签locator更新入口核对待连接路径的每跳key/direct/relay
+坐标，更新后取消旧尝试并在同一有界轮次重新认证；绝不据新声明拆掉健康会话。
+
+`relay::hop`接在原载体分派`NVNETH01`，每跳沿原结构化ML-DSA/Finished和真实载体
+binding认证；二进制OPEN固定有界路径、随机circuit、链/创世/协议上下文、30秒
+建路期及当前跳。接收方必须核对当前跳和实际上一跳认证钥，origin提示不授予转发
+身份。READY仅表示下游建路，不是对象交付。DATA逐包经原AEAD与重放检查绑定同一
+不可变路径摘要；不新增JSON业务热路径、不解释APFL/业务内容、不跨会话复用认证。
+
+源与最终接收方另外沿**原native ML-DSA握手及AEAD**验证独立预期钥并双向确认同一
+路径摘要，只有成功后才产生不透明`VerifiedRelaySession`并交原NativeCarrierPump/
+NativeEndpoint/NativeObjectLink。端到端钥不交给中继，来源仍记录真实第一跳binding，
+**没有伪造最终节点的TLS exporter**。这项原生E2E确认与逐跳Finished是两层不同
+证据，不宣称新增抗量子密钥协商、匿名性、ZK最终性或共识资格。
+
+本轮真实逐跳的**下层载体是Iroh备用流，不是新建的UDP逐跳转发或已退役WSS**；
+转发的是原native二进制对象密文。桥接每方向最多保留一帧，写完成才继续读；
+同owner的全部线路共享原NativeWireBudget，耗尽明确失败且不产生DONE。取消中的
+发送保留原unknown/uncertain记账，释放预留槽而不把未知字节算成功；收件及DONE
+继续由最终原对象所有者判断。不能拿这个组件结果宣称四机APFL资产已经过中继。
+这里计量OPEN/READY/DATA封装字节，不是QUIC/TLS、载体握手及物理链路总流量；
+本轮不声称完成真实中继带宽、吞吐或完整计费验收。
+
+封装修正仍用原连续帧IO所有者：native内部数据报保持1,200字节上限；中继外层
+承载握手及密文信封，使用原通用16KiB帧上限。保持有限scope不可升级、空闲撤销/
+取消终止、首字节后固定30秒部分帧期限，不通过延长生产超时解决错误的帧profile。
+
+本机结果、保留失败及最终受影响作业见本节后续收口；没有部署或操作B/C/D。
+冷恢复/逐跳用例使用原component crypto夹具与真实QUIC/原对象IO，不是实际AOEM
+后端的中继资产验收；实际AOEM指定库的原UDP业务回归单列，不相互替代。
+NOVOCHAT/App/JNI未修改，C当前无需重做发现或更新手机。`global_auto_discovery`
+及物理多跳验收仍未签收；任意未知设备、开放L1、ZK主网同步和公网拓扑另记真实缺项。
+
+本轮本地收口证据仍在`target/novonet-route-integration-20261107/`，不覆盖旧记录：
+
+| 实际范围 | 结果与口径 |
+| --- | --- |
+| Windows原native_pipeline | 585通过、151按原规则忽略，包含新冷恢复、逐跳/空闲/中继重启及新引导反例；不是忽略项也已执行 |
+| Linux原native_pipeline与定向修复 | 修正前整轮583通过、1失败、150忽略；保留该失败。修正每跳待连接坐标取消后，只复验原network组7项，全部通过，不将它写成另一次完整整轮全绿 |
+| 两平台逐跳协议反例 | 各3项通过，其中真实IO用例包含7种上下文/上一跳/目标/过期/重放/最终原生身份/签名反例；另含路由长度/环路/严格到期及共享额度/取消预留检查 |
+| 两平台原连续帧回归 | 各3项通过：原生超长、取消/撤销终止、部分帧固定期限及原认证帧来源/重放检查仍保留 |
+| 两平台OS carrier custody、混合载体、默认UDP配置 | 分别各2、10、11项通过；没有将全部peer改成carrier-only |
+| 两平台指定AOEM库原服务用例 | 各1项通过，包含四个原服务/原库的转账、再花、权限、费用和冷恢复；实际仍走UDP，不能替中继资产签收 |
+| 两平台SDK消费者 | 原应用transport各3项、原mailbox session各12项通过；不是手机重测或v110升级 |
+| 两平台严格检查 | network/node/relay库与测试目标、实际node bin严格Clippy通过；fmt及差异检查通过 |
+| 两平台实际debug node | 实际构建与离线`--service-contract`检查通过，service_started/database_opened/custody_accessed均false；不等于SCM启停、release包或部署资格 |
+
+Windows最终日志为`windows-cold-hop-3-*`与`windows-cold-hop-final-*`；Linux最终
+受影响复验为`linux-cold-hop-final-*`，其他既有未改范围见`linux-cold-hop-3-*`。
+`two-hop-native-reconnect-3.log`还单独记录修正后的112.34秒通过样本；用例刻意保留
+61秒真实空闲来覆盖原计量窗口及长期空闲，不是重连耗时112秒或新增生产等待。
+只在额度可用时验收恢复；即时连续重连耗尽额度的失败保留，不声称限流时仍必达。
+
+首次`two-hop-native-{1,2}.log`暴露外层误用1,200字节profile；修正后首个实际
+双中继收件/DONE通过样本为`two-hop-native-3.log`（47.35秒）。后续恢复首轮夹具
+误把旧文件的较高序号当成新owner实际发布，已改为核对真实新carrier key；
+`windows-cold-hop-2-native-pipeline.log`还保存额度不足的失败。可用额度恢复用例
+仍在旧中间跳坐标上超时（`two-hop-native-reconnect-2.log`及Linux修前整轮），
+进而定位并修正上述真实每跳取消缺口，不靠重复运行、扩大资源或放宽期限过关。
+早先`cold-native-owners-1.log`的原4验证者映射夹具错误与初轮严格检查的测试迭代
+写法错误也如实保留。验证脚本拒绝复用同名日志的一次中止只补跑剩余步骤，
+没有覆盖旧证据或把未执行检查记通过。本次没有手动触发云端长测、重放六组配对、
+打正式平台包、启链、变更经济/身份规则或产生TPS结论。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

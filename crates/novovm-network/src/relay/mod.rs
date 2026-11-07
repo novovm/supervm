@@ -1,6 +1,8 @@
 pub mod client;
 pub mod data_plane;
 pub mod frame;
+#[cfg(feature = "iroh-transport")]
+pub mod hop;
 pub mod loopback;
 pub mod server;
 

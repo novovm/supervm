@@ -34,6 +34,8 @@ pub(super) struct Discovery<'a> {
     seeds: Vec<Seed<'a>>,
     failures: Arc<AtomicU64>,
     lookup_turn: usize,
+    cache_path: PathBuf,
+    cached: Vec<PeerSignedRelayRecordV1>,
 }
 impl<'a> Discovery<'a> {
     pub(super) fn new(
@@ -45,6 +47,24 @@ impl<'a> Discovery<'a> {
         failures: Arc<AtomicU64>,
     ) -> Result<Self> {
         let now = Instant::now();
+        let cache_path = config
+            .public_record_file
+            .with_extension("discovery-cache.json");
+        let cached: Vec<PeerSignedRelayRecordV1> = if cache_path.try_exists()? {
+            read_document(&cache_path)?
+        } else {
+            Vec::new()
+        };
+        ensure!(
+            cached.len() <= 2
+                && cached
+                    .iter()
+                    .map(|r| &r.relay_public_key)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == cached.len(),
+            "bounded unique discovery bootstrap checkpoint"
+        );
         Ok(Self {
             scope,
             identity: identity.clone(),
@@ -72,6 +92,8 @@ impl<'a> Discovery<'a> {
                 .collect(),
             failures,
             lookup_turn: 0,
+            cache_path,
+            cached,
         })
     }
     pub(super) fn instance(&self) -> Result<[u8; 32]> {
@@ -148,6 +170,40 @@ impl<'a> Discovery<'a> {
             }
         }
     }
+    pub(super) fn persist_bootstraps(&mut self) -> Result<()> {
+        let mut checkpoint = self
+            .cached
+            .iter()
+            .map(|r| (r.relay_public_key.clone(), r.clone()))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let mut active = BTreeSet::new();
+        for seed in &self.seeds {
+            if let Some(book) = &seed.book {
+                for record in book.self_owned_records()? {
+                    active.insert(record.relay_public_key.clone());
+                    if let Some(old) = checkpoint.get(&record.relay_public_key) {
+                        ensure!(
+                            record.sequence != old.sequence || record == *old,
+                            "conflicting signed bootstrap checkpoint"
+                        );
+                        if record.sequence < old.sequence {
+                            continue;
+                        }
+                    }
+                    checkpoint.insert(record.relay_public_key.clone(), record);
+                }
+            }
+        }
+        if checkpoint.len() > 2 {
+            checkpoint.retain(|key, _| active.contains(key));
+        }
+        let records = checkpoint.into_values().collect::<Vec<_>>();
+        if !records.is_empty() && records != self.cached {
+            publish(&self.cache_path, &records)?;
+            self.cached = records;
+        }
+        Ok(())
+    }
     pub(super) fn maintain(
         &mut self,
         now: Instant,
@@ -184,7 +240,44 @@ impl<'a> Discovery<'a> {
             seed.next = now + Duration::from_secs(10);
             if let Ok(record) = read_document::<PeerSignedRelayRecordV1>(&seed.path) {
                 // A stale disk copy must not roll back a newer network record.
-                let _ = Self::update_seed(seed, &record, self.pins, &self.identity, wall);
+                if seed.book.is_none() {
+                    if record.issued_at_ms > wall {
+                        continue;
+                    }
+                    if Self::update_seed(
+                        seed,
+                        &record,
+                        self.pins,
+                        &self.identity,
+                        record.issued_at_ms,
+                    )
+                    .is_ok()
+                    {
+                        if let Some(cached) = self.cached.iter().find(|r| {
+                            r.relay_public_key == record.relay_public_key
+                                && r.sequence >= record.sequence
+                        }) {
+                            // Retain the independently configured root pin. A
+                            // checkpoint supplies coordinates, never new trust.
+                            if cached.issued_at_ms > wall
+                                || Self::update_seed(
+                                    seed,
+                                    cached,
+                                    self.pins,
+                                    &self.identity,
+                                    cached.issued_at_ms,
+                                )
+                                .is_err()
+                            {
+                                seed.book = None;
+                                seed.key = None;
+                                self.failures.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                } else {
+                    let _ = Self::update_seed(seed, &record, self.pins, &self.identity, wall);
+                }
             }
             if seed.quarantined.is_some() {
                 continue;
@@ -300,6 +393,7 @@ async fn query(
     client.close().await?;
     Ok(found)
 }
+
 pub(super) async fn serve(
     mut stream: CarrierStreamV1<'_>,
     identity: TransportIdentity,
@@ -379,4 +473,90 @@ async fn select(
             .await?;
     }
     Ok(remote)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_pipeline::consensus::native::tests::separated_material;
+
+    #[test]
+    fn bootstrap_rejects_bad_signature_domain_future_key_change_and_rollback() -> Result<()> {
+        let (_, keys, domain, _) = separated_material()?;
+        let pins = (domain.chain_id, domain.genesis, domain.protocol);
+        let endpoint = IrohServiceEndpointV1 {
+            instance: [1; 32],
+            address: IrohAddressV1 {
+                endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[17; 32])
+                    .verifying_key()
+                    .to_bytes(),
+                direct: vec!["127.0.0.1:12345".parse()?],
+                relays: Vec::new(),
+            },
+        }
+        .endpoint()?;
+        let now = wall_ms()?;
+        let record = sign_relay_record_v1(
+            &keys[0],
+            native_locator_id_v1(pins),
+            vec![endpoint],
+            now,
+            now + 120_000,
+            2,
+        )?;
+        let empty = || Seed {
+            path: PathBuf::new(),
+            book: None,
+            key: None,
+            job: None,
+            next: Instant::now(),
+            quarantined: None,
+        };
+        let mut seed = empty();
+        Discovery::update_seed(&mut seed, &record, pins, &keys[1], now)?;
+        // The original signed record and sequence owner, not another parser or
+        // a checkpoint's alleged identity, remains authoritative.
+        let mut tampered = record.clone();
+        tampered.endpoints[0].uri.push('x');
+        ensure!(Discovery::update_seed(&mut empty(), &tampered, pins, &keys[1], now).is_err());
+        ensure!(Discovery::update_seed(
+            &mut empty(),
+            &record,
+            (pins.0 + 1, pins.1, pins.2),
+            &keys[1],
+            now
+        )
+        .is_err());
+        ensure!(Discovery::update_seed(&mut empty(), &record, pins, &keys[1], now - 1).is_err());
+        let other = sign_relay_record_v1(
+            &keys[2],
+            &record.record_id,
+            record.endpoints.clone(),
+            now,
+            now + 120_000,
+            3,
+        )?;
+        ensure!(Discovery::update_seed(&mut seed, &other, pins, &keys[1], now).is_err());
+        let older = sign_relay_record_v1(
+            &keys[0],
+            &record.record_id,
+            record.endpoints.clone(),
+            now,
+            now + 120_000,
+            1,
+        )?;
+        ensure!(Discovery::update_seed(&mut seed, &older, pins, &keys[1], now).is_err());
+        ensure!(seed.book.as_ref().unwrap().self_owned_records()?[0] == record);
+        // Expired coordinates may locate a pinned fresh handshake, never become
+        // an active data lease. This is the original bootstrap owner contract.
+        let mut stale = empty();
+        Discovery::update_seed(&mut stale, &record, pins, &keys[1], now + 120_001)?;
+        ensure!(!stale
+            .book
+            .as_mut()
+            .unwrap()
+            .bootstrap_candidates(now + 120_001)?
+            .is_empty());
+        Ok(())
+    }
 }

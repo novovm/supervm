@@ -1,5 +1,5 @@
 //! Real reactor/QUIC/Finished/service-selection IO. Component crypto identities,
-//! not AOEM qualification, four-host discovery or native multihop acceptance.
+//! not AOEM qualification or physical four-host discovery/multihop acceptance.
 use super::*;
 use crate::native_pipeline::consensus::native::{
     tests::{codec, separated_material, split_bindings, split_lanes},
@@ -13,6 +13,7 @@ use novovm_network::{
     UdpTransport,
 };
 use std::net::UdpSocket;
+mod hop;
 
 struct Pair {
     drivers: Vec<Driver>,
@@ -43,6 +44,8 @@ impl Pair {
                 nameserver: "127.0.0.1".parse()?,
                 bind_address: "127.0.0.1:0".parse()?,
                 public_record_file: root.join(format!("{side}.json")),
+                carrier_identity_file: None,
+                relay_forwarding: false,
                 peer_records: if discovery {
                     Vec::new()
                 } else {
@@ -145,6 +148,61 @@ impl Pair {
             }
         }
     }
+    fn restart_drivers(&mut self, configs: Vec<Config>) -> Result<()> {
+        self.close()?;
+        self.drivers = configs
+            .into_iter()
+            .enumerate()
+            .map(|(side, config)| {
+                Driver::with_material(
+                    config,
+                    self.identities[side].clone(),
+                    self.identities
+                        .iter()
+                        .enumerate()
+                        .filter(|(other, _)| *other != side)
+                        .map(|(_, key)| key.public_key().to_vec())
+                        .collect(),
+                    self.pins,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.allow_fallback();
+        Ok(())
+    }
+    fn cold_channels(&mut self) -> Result<()> {
+        let (signing, transport, domain, _) = separated_material()?;
+        let bindings = split_bindings(&domain, &signing, &transport)?;
+        self.channels.clear();
+        for side in 0..self.identities.len() {
+            self.channels.push(NativeChannel::from_transport(
+                UdpTransport::bind_for_chain(
+                    novovm_protocol::NodeId(side as u64 + 1),
+                    "127.0.0.1:0",
+                    domain.chain_id,
+                )?,
+                self.identities[side].clone(),
+                bindings.clone(),
+                self.identities
+                    .iter()
+                    .enumerate()
+                    .filter(|(other, _)| *other != side)
+                    .map(|(other, key)| {
+                        Ok(NativePeer {
+                            key: key.public_key().to_vec(),
+                            address: self._unused_udp[other].local_addr()?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?,
+                1,
+                domain.clone(),
+                codec(),
+                split_lanes(),
+                NativeSendPolicy::reliable_carrier_v1(Duration::from_secs(10)),
+            )?);
+        }
+        Ok(())
+    }
     fn close(&mut self) -> Result<()> {
         for driver in &mut self.drivers {
             driver.close()?;
@@ -193,6 +251,151 @@ impl Pair {
         }
         Ok(())
     }
+}
+
+#[test]
+fn all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates() -> Result<()>
+{
+    let mut peers = Pair::configured(false, true, 3)?;
+    let root = peers.drivers[0]
+        .config
+        .public_record_file
+        .parent()
+        .unwrap()
+        .to_owned();
+    let _credential = super::super::config::test_custody::TestCredentialGuard::new(&root)?;
+    let mut configs = peers
+        .drivers
+        .iter()
+        .map(|d| d.config.clone())
+        .collect::<Vec<_>>();
+    for (side, config) in configs.iter_mut().enumerate() {
+        config.carrier_identity_file = Some(root.join(format!("carrier-{side}.sealed")));
+        config.bind_address = UdpSocket::bind("127.0.0.1:0")?.local_addr()?;
+        config.discovery_seeds = match side {
+            0 => vec![root.join("bootstrap-1.json")],
+            1 => vec![root.join("bootstrap-0.json")],
+            _ => vec![root.join("bootstrap-0.json"), root.join("bootstrap-1.json")],
+        };
+    }
+    peers.restart_drivers(configs.clone())?;
+    let ready = Instant::now() + Duration::from_secs(15);
+    while peers
+        .drivers
+        .iter()
+        .any(|d| !d.config.public_record_file.exists())
+    {
+        ensure!(Instant::now() < ready, "cold fixture locator not published");
+        peers.pump()?;
+    }
+    for (side, config) in configs.iter().enumerate().take(2) {
+        std::fs::copy(
+            &config.public_record_file,
+            root.join(format!("bootstrap-{side}.json")),
+        )?;
+    }
+    let frozen = std::fs::read(root.join("bootstrap-0.json"))?;
+    let initial = read_document::<PeerSignedRelayRecordV1>(&configs[0].public_record_file)?;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while peers
+        .channels
+        .iter()
+        .any(|c| (0..2).any(|p| c.session_id(p).is_none()))
+    {
+        ensure!(
+            Instant::now() < deadline,
+            "initial independent discovery not ready"
+        );
+        peers.pump()?;
+    }
+    peers.drivers[0].close()?;
+    configs[0].bind_address = UdpSocket::bind("127.0.0.1:0")?.local_addr()?;
+    peers.drivers[0] = Driver::with_material(
+        configs[0].clone(),
+        peers.identities[0].clone(),
+        peers.identities[1..]
+            .iter()
+            .map(|k| k.public_key().to_vec())
+            .collect(),
+        peers.pins,
+    )?;
+    peers.allow_fallback();
+    let cache = configs[2]
+        .public_record_file
+        .with_extension("discovery-cache.json");
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "relocated seed was not learned through the other seed"
+        );
+        peers.pump()?;
+        let learned = read_document::<Vec<PeerSignedRelayRecordV1>>(&cache).unwrap_or_default();
+        if learned.iter().any(|r| {
+            r.relay_public_key == peers.identities[0].public_key()
+                && IrohServiceEndpointV1::from_record(r)
+                    .is_ok_and(|e| e.address.direct.contains(&configs[0].bind_address))
+        }) {
+            break;
+        }
+    }
+    let changed = read_document::<PeerSignedRelayRecordV1>(&configs[0].public_record_file)?;
+    ensure!(
+        IrohServiceEndpointV1::from_record(&changed)?
+            .address
+            .endpoint_key
+            == IrohServiceEndpointV1::from_record(&initial)?
+                .address
+                .endpoint_key
+    );
+    ensure!(
+        std::fs::read(root.join("bootstrap-0.json"))? == frozen,
+        "test must not refresh bootstrap copies by filesystem"
+    );
+    peers.close()?;
+    peers.cold_channels()?;
+    peers.restart_drivers(configs)?;
+    let cold = Instant::now() + Duration::from_secs(40);
+    while peers
+        .channels
+        .iter()
+        .any(|c| (0..2).any(|p| c.session_id(p).is_none()))
+    {
+        ensure!(
+            Instant::now() < cold,
+            "all owners did not cold recover from frozen sources"
+        );
+        peers.pump()?;
+    }
+    let message = Message::RequestBody { body_id: [181; 32] };
+    let prepared = peers.channels[1].prepare(&message)?;
+    ensure!(peers.channels[1].try_send(1, &prepared, Instant::now())?);
+    let mut received = false;
+    let mut done = false;
+    while !received || !done {
+        ensure!(
+            Instant::now() < cold,
+            "cold recovered object did not actually complete"
+        );
+        peers.pump()?;
+        for side in 0..3 {
+            let report = peers.channels[side].poll_io(wall_ms()?, Instant::now(), 64)?;
+            ensure!(
+                report.rejected == 0 && report.receive_errors == 0 && report.send_failures == 0
+            );
+            for completion in report.completed {
+                ensure!(side == 1 && !done && completion.state == ObjectSendState::Delivered);
+                done = true;
+            }
+            if let Some(event) = peers.channels[side].poll_receive(Instant::now(), 64)? {
+                let ReceiveEvent::Message(event) = event else {
+                    anyhow::bail!("cold recovered object rejected")
+                };
+                ensure!(side == 2 && !received && event.message == message);
+                received = true;
+            }
+        }
+    }
+    peers.close()
 }
 
 #[test]

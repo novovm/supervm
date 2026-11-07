@@ -120,9 +120,43 @@ impl NativeDatagramIo for CarrierIo {
     }
 }
 
-type Reading<'a> =
-    Pin<Box<dyn Future<Output = (CarrierReadHalfV1<'a>, Result<Vec<u8>>)> + Send + 'a>>;
-type Writing<'a> = Pin<Box<dyn Future<Output = (CarrierWriteHalfV1<'a>, Result<()>)> + Send + 'a>>;
+type Reading<'a> = Pin<Box<dyn Future<Output = (FrameRead<'a>, Result<Vec<u8>>)> + Send + 'a>>;
+type Writing<'a> = Pin<Box<dyn Future<Output = (FrameWrite<'a>, Result<()>)> + Send + 'a>>;
+enum FrameRead<'a> {
+    Carrier(CarrierReadHalfV1<'a>),
+    #[cfg(feature = "iroh-transport")]
+    Hop(crate::relay::hop::HopReadHalf<'a>),
+}
+enum FrameWrite<'a> {
+    Carrier(CarrierWriteHalfV1<'a>),
+    #[cfg(feature = "iroh-transport")]
+    Hop(crate::relay::hop::HopWriteHalf<'a>),
+}
+impl FrameRead<'_> {
+    async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        match self {
+            Self::Carrier(read) => read.read_frame().await,
+            #[cfg(feature = "iroh-transport")]
+            Self::Hop(read) => read.read_frame().await,
+        }
+    }
+}
+impl FrameWrite<'_> {
+    async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
+        match self {
+            Self::Carrier(write) => write.write_frame(bytes).await,
+            #[cfg(feature = "iroh-transport")]
+            Self::Hop(write) => write.write_frame(bytes).await,
+        }
+    }
+    fn selected_rtt(&self) -> Option<(&'static str, std::time::Duration)> {
+        match self {
+            Self::Carrier(write) => write.selected_rtt(),
+            #[cfg(feature = "iroh-transport")]
+            Self::Hop(_) => None,
+        }
+    }
+}
 
 /// Poll alongside the SAME NativeObjectLink/application owner. `progress()` may
 /// be selected with application events: incomplete frame futures remain here,
@@ -133,10 +167,45 @@ type Writing<'a> = Pin<Box<dyn Future<Output = (CarrierWriteHalfV1<'a>, Result<(
 pub struct NativeCarrierPump<'a> {
     io: Arc<CarrierIo>,
     reading: Option<Reading<'a>>,
-    writer: Option<CarrierWriteHalfV1<'a>>,
+    writer: Option<FrameWrite<'a>>,
     writing: Option<Writing<'a>>,
 }
 impl<'a> NativeCarrierPump<'a> {
+    #[cfg(feature = "iroh-transport")]
+    pub fn attach_relayed_v1(
+        hop: &'a mut crate::relay::hop::HopStream<'_>,
+        proof: crate::relay::hop::VerifiedRelaySession,
+        streams: Vec<u64>,
+    ) -> Result<(NativeEndpoint, Self)> {
+        anyhow::ensure!(
+            hop.first_hop_route()? == proof.route,
+            "relayed proof belongs to another first-hop stream"
+        );
+        let io = Self::make_io(NativeRoute::Carrier(proof.route));
+        let endpoint = NativeEndpoint::from_relayed_session(io.clone(), proof, streams)?;
+        let (writer, reader) = hop.split()?;
+        Ok((
+            endpoint,
+            Self {
+                io,
+                reading: Some(reading(FrameRead::Hop(reader))),
+                writer: Some(FrameWrite::Hop(writer)),
+                writing: None,
+            },
+        ))
+    }
+    fn make_io(route: NativeRoute) -> Arc<CarrierIo> {
+        Arc::new(CarrierIo {
+            route,
+            state: Mutex::new(State {
+                write: WriteState::Idle,
+                capacity_released: false,
+                incoming: None,
+                failed: false,
+                wake: None,
+            }),
+        })
+    }
     /// Passive current carrier path and smoothed RTT. Missing/busy/closed or
     /// unsupported observations remain None, never a zero-latency path. No
     /// probe, cloned connection, admission decision or extra task is created.
@@ -176,16 +245,9 @@ impl<'a> NativeCarrierPump<'a> {
         continuous: bool,
     ) -> Result<(NativeEndpoint, Self)> {
         let binding = stream.binding()?;
-        let io = Arc::new(CarrierIo {
-            route: NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(&binding)),
-            state: Mutex::new(State {
-                write: WriteState::Idle,
-                capacity_released: false,
-                incoming: None,
-                failed: false,
-                wake: None,
-            }),
-        });
+        let io = Self::make_io(NativeRoute::Carrier(VerifiedCarrierRoute::from_binding(
+            &binding,
+        )));
         let endpoint = NativeEndpoint::from_bound_channel(io.clone(), channel, &binding, streams)?;
         #[cfg(feature = "iroh-transport")]
         let (writer, reader) = if continuous {
@@ -202,8 +264,8 @@ impl<'a> NativeCarrierPump<'a> {
             endpoint,
             Self {
                 io,
-                reading: Some(reading(reader)),
-                writer: Some(writer),
+                reading: Some(reading(FrameRead::Carrier(reader))),
+                writer: Some(FrameWrite::Carrier(writer)),
                 writing: None,
             },
         ))
@@ -307,7 +369,7 @@ impl Drop for NativeCarrierPump<'_> {
         CarrierIo::wake(&mut state);
     }
 }
-fn reading<'a>(mut reader: CarrierReadHalfV1<'a>) -> Reading<'a> {
+fn reading<'a>(mut reader: FrameRead<'a>) -> Reading<'a> {
     Box::pin(async move {
         let result = reader.read_frame().await;
         (reader, result)

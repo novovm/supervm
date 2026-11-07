@@ -1695,7 +1695,7 @@ pub struct IrohWriteHalfV1<'a> {
     connection: &'a Connection,
     send: &'a mut SendStream,
     failed: &'a AtomicBool,
-    native: bool,
+    continuous_frame_limit: Option<usize>,
 }
 
 /// A borrowed framed reader, independent of the writer's mutable borrow. Keep
@@ -1706,7 +1706,7 @@ pub struct IrohReadHalfV1<'a> {
     connection: &'a Connection,
     recv: &'a mut RecvStream,
     failed: &'a AtomicBool,
-    native: bool,
+    continuous_frame_limit: Option<usize>,
 }
 
 struct FrameIoGuard<'a> {
@@ -1844,13 +1844,14 @@ impl IrohWriteHalfV1<'_> {
     }
 
     pub async fn write_frame(&mut self, bytes: &[u8]) -> Result<()> {
-        if self.native {
+        if let Some(limit) = self.continuous_frame_limit {
             return native_frames::write(
                 self.control,
                 self.connection,
                 self.failed,
                 self.send,
                 bytes,
+                limit,
             )
             .await;
         }
@@ -1860,9 +1861,15 @@ impl IrohWriteHalfV1<'_> {
 
 impl IrohReadHalfV1<'_> {
     pub async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        if self.native {
-            return native_frames::read(self.control, self.connection, self.failed, self.recv)
-                .await;
+        if let Some(limit) = self.continuous_frame_limit {
+            return native_frames::read(
+                self.control,
+                self.connection,
+                self.failed,
+                self.recv,
+                limit,
+            )
+            .await;
         }
         read_frame_io(self.control, self.connection, self.failed, self.recv).await
     }
@@ -1890,14 +1897,14 @@ impl IrohStreamV1<'_> {
                 connection: &self.connection,
                 send: &mut self.send,
                 failed: &self.failed,
-                native: false,
+                continuous_frame_limit: None,
             },
             IrohReadHalfV1 {
                 control: &self.io_control,
                 connection: &self.connection,
                 recv: &mut self.recv,
                 failed: &self.failed,
-                native: false,
+                continuous_frame_limit: None,
             },
         ))
     }

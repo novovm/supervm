@@ -289,6 +289,30 @@ impl CarrierStreamV1<'_> {
         }
     }
 
+    /// Relay framing is an authenticated service on the original Iroh owner.
+    /// It does not change native UDP frame limits or admit an alternate TLS
+    /// main-chain transport.
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn split_relay_continuous(
+        &mut self,
+    ) -> anyhow::Result<(CarrierWriteHalfV1<'_>, CarrierReadHalfV1<'_>)> {
+        match &mut self.inner {
+            Stream::Iroh(stream) => {
+                let (write, read) = stream.split_relay_continuous()?;
+                Ok((
+                    CarrierWriteHalfV1 {
+                        inner: WriteHalf::Iroh(write),
+                    },
+                    CarrierReadHalfV1 {
+                        inner: ReadHalf::Iroh(read),
+                    },
+                ))
+            }
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => anyhow::bail!("native relay requires original Iroh fallback owner"),
+        }
+    }
+
     pub async fn finish(&mut self) -> anyhow::Result<()> {
         match &mut self.inner {
             #[cfg(feature = "iroh-transport")]

@@ -72,8 +72,10 @@ impl NativeEndpoint {
     }
 
     /// Check capability before a consumer adopts this endpoint. Merely having
-    /// a carrier address never passes: each session must have verified Finished
-    /// on that exact exporter and must admit every requested native stream.
+    /// a carrier address never passes: direct sessions require Finished on that
+    /// exact exporter; relayed sessions require the opaque original native
+    /// end-to-end proof and their real first-hop binding. Both must admit every
+    /// requested native stream.
     pub fn validate_bound_carriers_v1(&self, streams: &[u64]) -> Result<()> {
         ensure!(
             !self.traffic_started

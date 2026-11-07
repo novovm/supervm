@@ -23,6 +23,8 @@ enum NativeChannel {
     Udp(Box<E2eSecureChannelV1>),
     #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
     Bound(Box<crate::transport_binding::BoundSecureChannelV1>),
+    #[cfg(feature = "iroh-transport")]
+    Relayed(Box<E2eSecureChannelV1>),
 }
 
 pub struct NativeUdpSession {
@@ -65,16 +67,31 @@ impl NativeUdpSession {
     pub(crate) fn is_bound_reliable_carrier(&self) -> bool {
         #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
         {
-            matches!(self.channel, NativeChannel::Bound(_))
-                && matches!(self.remote, NativeRoute::Carrier(_))
+            let verified = matches!(self.channel, NativeChannel::Bound(_));
+            #[cfg(feature = "iroh-transport")]
+            let verified = verified || matches!(self.channel, NativeChannel::Relayed(_));
+            verified && matches!(self.remote, NativeRoute::Carrier(_))
         }
         #[cfg(not(any(feature = "iroh-transport", feature = "tls-transport")))]
         false
+    }
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn from_relayed_channel(
+        channel: E2eSecureChannelV1,
+        route: super::carrier::VerifiedCarrierRoute,
+    ) -> Self {
+        Self {
+            channel: NativeChannel::Relayed(Box::new(channel)),
+            remote: NativeRoute::Carrier(route),
+            pending: None,
+        }
     }
 
     pub fn remote_peer_id(&self) -> &str {
         match &self.channel {
             NativeChannel::Udp(channel) => channel.remote_peer_id(),
+            #[cfg(feature = "iroh-transport")]
+            NativeChannel::Relayed(channel) => channel.remote_peer_id(),
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => channel.remote_peer_id(),
         }
@@ -82,6 +99,8 @@ impl NativeUdpSession {
     pub fn session_id(&self) -> [u8; 16] {
         match &self.channel {
             NativeChannel::Udp(channel) => channel.session_id(),
+            #[cfg(feature = "iroh-transport")]
+            NativeChannel::Relayed(channel) => channel.session_id(),
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => channel.session_id(),
         }
@@ -100,6 +119,10 @@ impl NativeUdpSession {
         );
         match &mut self.channel {
             NativeChannel::Udp(channel) => channel.seal_novorudp_wire(frame, MAX_DATAGRAM_BYTES),
+            #[cfg(feature = "iroh-transport")]
+            NativeChannel::Relayed(channel) => {
+                channel.seal_novorudp_wire(frame, MAX_DATAGRAM_BYTES)
+            }
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => {
                 let envelope = channel.seal_novorudp_frame(frame)?;
@@ -159,6 +182,8 @@ impl NativeUdpSession {
         };
         let frame = match &mut self.channel {
             NativeChannel::Udp(channel) => channel.open_novorudp_frame_owned(envelope)?,
+            #[cfg(feature = "iroh-transport")]
+            NativeChannel::Relayed(channel) => channel.open_novorudp_frame_owned(envelope)?,
             #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
             NativeChannel::Bound(channel) => {
                 channel.open_novorudp_frame(&crate::duplex::SecureNovoRudpEnvelopeV1 {

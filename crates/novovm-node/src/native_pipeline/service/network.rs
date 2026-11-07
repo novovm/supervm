@@ -24,6 +24,7 @@ use novovm_network::{
     product_service_lease::{IrohServiceEndpointV1, SelfOwnedTrustV1, ServiceLeaseBookV1},
 };
 mod discovery;
+mod relay;
 use discovery::Discovery;
 use serde::Deserialize;
 use std::{
@@ -57,6 +58,9 @@ pub struct Config {
     pub bind_address: SocketAddr,
     /// Public signed locator; never a secret/custody file.
     pub public_record_file: PathBuf,
+    /// Independent protected carrier seed; never the ML-DSA/asset secret.
+    #[serde(default)]
+    pub carrier_identity_file: Option<PathBuf>,
     /// This self-run validator set's public locator inputs, refreshed in place.
     /// Their keys MUST match the original genesis transport mapping.
     pub peer_records: Vec<PathBuf>,
@@ -66,6 +70,9 @@ pub struct Config {
     /// Locally selected bootstrap coordinates; they grant no consensus rights.
     #[serde(default)]
     pub discovery_seeds: Vec<PathBuf>,
+    /// Opt-in resource provision/consumption under the original hop contract.
+    #[serde(default)]
+    pub relay_forwarding: bool,
     pub fallback_after_ms: u64,
     pub retry_ms: u64,
     pub udp_recovery_ms: u64,
@@ -77,6 +84,7 @@ impl Config {
         for path in std::iter::once(&mut config.public_record_file)
             .chain(config.peer_records.iter_mut())
             .chain(config.discovery_seeds.iter_mut())
+            .chain(config.carrier_identity_file.iter_mut())
         {
             if path.is_relative() {
                 *path = base.join(&*path);
@@ -104,6 +112,17 @@ impl Config {
             "duplicate NOVONET locator source"
         );
         config.carrier()?;
+        ensure!(
+            config.carrier_identity_file.as_ref().is_none_or(|path| path
+                != &config.public_record_file
+                && path
+                    != &config
+                        .public_record_file
+                        .with_extension("discovery-cache.json")
+                && !config.peer_records.contains(path)
+                && !config.discovery_seeds.contains(path)),
+            "private carrier file cannot be a public locator"
+        );
         Ok(config)
     }
     fn carrier(&self) -> Result<IrohConfigV1> {
@@ -139,7 +158,7 @@ struct Connected {
 type Job<'a> = Pin<Box<dyn Future<Output = Result<()>> + 'a>>;
 struct CarrierAttempt<'a> {
     future: Job<'a>,
-    endpoint_key: [u8; 32],
+    coordinates: Vec<(Vec<u8>, IrohAddressV1)>,
     adopted: Arc<AtomicBool>,
 }
 
@@ -367,6 +386,7 @@ impl std::fmt::Display for ServiceSelectionMismatch {
 impl std::error::Error for ServiceSelectionMismatch {}
 fn terminal_session_rejection(error: &anyhow::Error) -> bool {
     error.is::<ServiceSelectionMismatch>()
+        || error.is::<novovm_network::relay::hop::RelayProtocolRejected>()
         || matches!(
             error.downcast_ref::<novovm_network::bound_session::BoundSessionError>(),
             Some(
@@ -388,7 +408,20 @@ async fn run(
     failures: Arc<AtomicU64>,
 ) -> Result<()> {
     let check_stop = stop.clone();
-    let owner = IrohEndpointOwnerV1::bind(config.carrier()?, move || {
+    let mut carrier = config.carrier()?;
+    if let Some(path) = &config.carrier_identity_file {
+        if !path.try_exists()? {
+            ensure!(
+                !config.public_record_file.try_exists()?,
+                "carrier custody missing after locator publication; no silent regeneration"
+            );
+            novovm_relay::purpose_keys::carrier::create(path, pins.0, identity.public_key())?;
+        }
+        carrier = carrier.with_owned_service_identity(
+            novovm_relay::purpose_keys::carrier::read(path, pins.0, identity.public_key())?,
+        )?;
+    }
+    let owner = IrohEndpointOwnerV1::bind(carrier, move || {
         ensure!(!check_stop.load(Ordering::Acquire), "NOVONET owner stopped");
         Ok(())
     })
@@ -457,6 +490,13 @@ async fn serve<'a>(
         })
         .collect::<Vec<_>>();
     let mut quarantined = vec![None; keys.len()];
+    let routes = Arc::new(Mutex::new(vec![None; keys.len()]));
+    // SAME advertised IrohServiceEndpointV1 allowance, shared across circuits,
+    // not multiplied by peers, directions, retries or intermediate hops.
+    let hop_budget = Arc::new(Mutex::new(
+        novovm_network::novorudp::wire_budget::NativeWireBudget::new(65536, Instant::now())?,
+    ));
+    let mut attempts = vec![0usize; keys.len()];
     let record_kind = novovm_network::discovery_control::native_locator_id_v1(pins);
     let mut discovery = config
         .discovery
@@ -528,6 +568,7 @@ async fn serve<'a>(
             if let Some(discovery) = &mut discovery {
                 updates.extend(discovery.maintain(now, wall)?);
                 discovery.update_bootstraps(&updates, wall);
+                discovery.persist_bootstraps()?;
             }
             for record in updates.drain(..) {
                 if record.record_id != record_kind {
@@ -560,13 +601,23 @@ async fn serve<'a>(
                 };
                 if accepted.is_ok() {
                     pools[peer].upsert_verified_record(validated)?;
-                    if jobs[peer].as_ref().is_some_and(|job| {
-                        !job.adopted.load(Ordering::Acquire)
-                            && job.endpoint_key != endpoint.address.endpoint_key
-                    }) {
-                        // A newer signed locator can replace a still-connecting
-                        // attempt. It must NOT tear down an already live session.
-                        jobs[peer] = None;
+                    for slot in &mut jobs {
+                        if slot.as_ref().is_some_and(|job| {
+                            !job.adopted.load(Ordering::Acquire)
+                                && job.coordinates.iter().any(|(key, address)| {
+                                    key == &keys[peer]
+                                        && (address.endpoint_key != endpoint.address.endpoint_key
+                                            || address.direct != endpoint.address.direct
+                                            || address.relays != endpoint.address.relays)
+                                })
+                        }) {
+                            // SAME signed-locator cancellation owner, now for
+                            // every actual relay leg as well as direct targets.
+                            // A connecting stale hop must not finish timing out
+                            // against coordinates we already know were replaced.
+                            // Healthy authenticated circuits are never torn down.
+                            *slot = None;
+                        }
                     }
                     candidates[peer] = Some(Candidate {
                         key: keys[peer].clone(),
@@ -574,6 +625,10 @@ async fn serve<'a>(
                         expires: record.expires_at_ms,
                         sequence: record.sequence,
                     });
+                    routes
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("NOVONET route view poisoned"))?[peer] =
+                        candidates[peer].clone();
                 }
             }
             refresh = now + Duration::from_secs(1);
@@ -602,11 +657,30 @@ async fn serve<'a>(
                     let views = views.clone();
                     let adopted = Arc::new(AtomicBool::new(false));
                     let flag = adopted.clone();
-                    let endpoint_key = route.endpoint_key;
+                    let path = if config.relay_forwarding {
+                        relay::fallback_path(peer, attempts[peer], &candidates, wall_ms()?)
+                    } else {
+                        Vec::new()
+                    };
+                    let budget = hop_budget.clone();
+                    let coordinates = if path.is_empty() {
+                        vec![(key.clone(), route.clone())]
+                    } else {
+                        path.iter()
+                            .map(|c| (c.key.clone(), c.route.clone()))
+                            .collect()
+                    };
                     jobs[peer] = Some(CarrierAttempt {
-                        endpoint_key,
+                        coordinates,
                         adopted,
                         future: Box::pin(async move {
+                            if !path.is_empty() {
+                                return relay::outgoing(
+                                    scope, identity, key, peer, pins, views, connected, flag, path,
+                                    budget,
+                                )
+                                .await;
+                            }
                             let stream = scope.connect(&route).await?;
                             connection(
                                 stream.into(),
@@ -635,6 +709,23 @@ async fn serve<'a>(
                 };
                 if let Poll::Ready(result) = job.future.as_mut().poll(cx) {
                     if let Err(error) = result {
+                        #[cfg(test)]
+                        if failures.load(Ordering::Relaxed) < 16 {
+                            eprintln!(
+                                "NOVONET outbound peer={peer} turn={} adopted={} failed: {error:#}",
+                                attempts[peer],
+                                job.adopted.load(Ordering::Relaxed)
+                            );
+                        }
+                        attempts[peer] = if job.adopted.load(Ordering::Acquire) {
+                            // Reuse the authenticated working path first after
+                            // a transport break, not a fresh round of failed
+                            // alternatives. A failed new attempt still advances
+                            // through the same bounded candidate turns below.
+                            attempts[peer]
+                        } else {
+                            attempts[peer].saturating_add(1)
+                        };
                         failures.fetch_add(1, Ordering::Relaxed);
                         pools[peer].record_failure(
                             &novovm_network::product_overlay::peer_id_from_mldsa65_public_key_v1(
@@ -647,6 +738,8 @@ async fn serve<'a>(
                                 .as_ref()
                                 .map(|candidate| candidate.sequence);
                         }
+                    } else {
+                        attempts[peer] = 0;
                     }
                     jobs[peer] = None;
                 }
@@ -654,7 +747,16 @@ async fn serve<'a>(
             let mut index = 0;
             while index < incoming.len() {
                 if let Poll::Ready(result) = incoming[index].as_mut().poll(cx) {
-                    if result.is_err() {
+                    if let Err(error) = result {
+                        #[cfg(test)]
+                        if failures.load(Ordering::Relaxed) < 16 {
+                            eprintln!(
+                                "NOVONET inbound local={} failed: {error:#}",
+                                identity.peer_id()
+                            );
+                        }
+                        #[cfg(not(test))]
+                        let _ = error;
                         failures.fetch_add(1, Ordering::Relaxed);
                     }
                     drop(incoming.swap_remove(index));
@@ -676,6 +778,11 @@ async fn serve<'a>(
                             views.clone(),
                             connected.clone(),
                             discovery.as_ref().map(|d| d.store.clone()),
+                            config.relay_forwarding.then(|| relay::Ingress {
+                                scope,
+                                routes: routes.clone(),
+                                budget: hop_budget.clone(),
+                            }),
                         )));
                     }
                     accepting = Box::pin(scope.accept_inbound());
@@ -730,10 +837,23 @@ async fn incoming_connection(
     views: Arc<Mutex<Vec<PeerView>>>,
     connected: mpsc::SyncSender<Connected>,
     store: Option<Arc<Mutex<novovm_network::opaque_rendezvous::RendezvousStoreV1>>>,
+    relay: Option<relay::Ingress<'_>>,
 ) -> Result<()> {
     // Only a bounded dispatcher precedes authentication. The selector confers
     // no authority; the actual Finished identity determines the object peer.
     let entry = stream.read_frame().await?;
+    if entry == novovm_network::relay::hop::ENTRY {
+        return relay::incoming(
+            stream,
+            identity,
+            keys,
+            pins,
+            views,
+            connected,
+            relay.context("native relay forwarding disabled")?,
+        )
+        .await;
+    }
     if entry == DISCOVERY_ENTRY {
         return discovery::serve(
             stream,
@@ -824,11 +944,21 @@ async fn object_connection(
             )?)
             .await?;
     }
-    let (endpoint, mut pump) = NativeCarrierPump::attach_continuous_v7(
+    let (endpoint, pump) = NativeCarrierPump::attach_continuous_v7(
         &mut stream,
         channel,
         NativeChannel::carrier_streams(),
     )?;
+    run_native_pump(endpoint, pump, peer, views, connected, adopted).await
+}
+async fn run_native_pump(
+    endpoint: NativeEndpoint,
+    mut pump: NativeCarrierPump<'_>,
+    peer: usize,
+    views: Arc<Mutex<Vec<PeerView>>>,
+    connected: mpsc::SyncSender<Connected>,
+    adopted: Arc<AtomicBool>,
+) -> Result<()> {
     let session = endpoint
         .session_id(0)
         .context("Finished carrier session missing")?;
@@ -857,7 +987,7 @@ async fn object_connection(
         }
     }
 }
-fn publish(path: &Path, record: &PeerSignedRelayRecordV1) -> Result<()> {
+fn publish<T: serde::Serialize>(path: &Path, record: &T) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
