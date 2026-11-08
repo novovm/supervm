@@ -1,5 +1,10 @@
 # 原owner UDP恢复观察接线
 
+2026-11-09最新：A/C已以5181da73及原库existing运行；C-run3和120秒观察签收。
+A对更新后的C认证Status及状态根核验通过。新A→C固定对象在发送端实际为native_udp、
+ACK及Object DONE；**待C同一对象/会话的只读接收证据匹配，不重发、不再更新**。
+旧崩溃与历史恢复停顿根因不因此结案。实际证据及当前操作见本文末节和C指令末节。
+
 基于bec85de4审计，在原network crate及原观察器内实现。完整源码diff随本提交保留，
 调用链和新字段合同见共享交接第22节。不新增网络或身份，不更改发送/恢复/权限决策。
 
@@ -182,3 +187,55 @@ PS字符串AppendChild及对不存在的report_id取值两处测试错误也已�
 本次仅修部署脚本，不改5181da73程序或包，不需重传ZIP。C按原文末节新C-run3
 入口执行一次，C-run1/C-run2及旧崩溃记录不覆盖；B/D和运行A不变，不额外手工发CI。
 C现场内核退出、新节点启动、120秒观察及原UDP恢复仍未签收。
+
+## 2026-11-09 C原库恢复签收，新A→C对象原生UDP发送及DONE
+
+已fast-forward并逐项读取C回执`5e82ce20`，C原字节公开ZIP SHA256核对一致：
+LocalService PID34844、固定node/AOEM、原chain-state existing、三份用途材料不变；
+内核same-handle wait=0证明PID8672已退出，未杀残留PID。新41052/42052监听正常。
+25次采样120.550797秒，read_errors=0、最大观测陈旧1.704092秒，ticks/round推进，
+执行失败0。bound=0、udp_recovery为空；该事实不等于UDP故障或恢复成功。
+完整C证据见[原C-run3报告](../validator-c-5181-existing-run3-20261109/README.md)。
+
+A于北京时间07:08通过原认证SDK查询C，104ms，height0，状态根与原根一致。
+随后按已批准“必要的一条新固定对象”范围，原管理员入口向A现有377字节命令槽
+发布一次命令，实际发送仍是原NativeLifecycle/NativeChannel/NativeObjectLink。
+未为对象检查创建独立发送socket/服务/身份，未停节点、改防火墙、重创世或改变原额度/超时。
+
+| 字段 | 实际A发送端证据 |
+| --- | --- |
+| 固定程序 | 5181da733d59d998afa898bb9964db5deae9e72c，A PID13964 |
+| Object ID | 6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524 |
+| Session ID | 624b3e7ba0878c772d60c1ade8ef9212 |
+| stream | NVBFT001 |
+| transfer tag | 9260805feef25d32b491140a426cddedc48fdf47bbb52d1e75449f6278a153a5 |
+| 路径 | native_udp，192.168.71.125:41052 |
+| 原owner事件 | probe_owned、probe_admitted、probe_object_done，均同Object/Session及路径 |
+| ACK/传输明细 | acknowledged_best=1、1次发送、send_terminal_state=delivered、transport_done有原时刻 |
+
+tag由原公开算法对Session、stream、Object计算，与唯一原发送明细一致，不把另两条
+其他对象的收发明细混入。原命令prepare时刻1794179420722、owned/admitted
+1794179420905、DONE1794179420909；4ms只是本次原owner到DONE差值，187ms是
+命令prepare到DONE差值，不是UI延迟、持续TPS或分位数成绩。
+
+A继续完成原120秒窗口：07:10:20.733263至07:12:20.764587，60个采样，58个完整；
+第34/35条解析后的progress缺少novonet属性，被明确记录为read_ok=false和原错误，
+未删除、补零或重跑。其余/最终原执行失败0；全局handshake拒绝2586、no_session19
+前后不变，connection_failures2前后不变，未清计数。两条投影缺项的原因未定位，
+不把它们当作C收包失败，也不假报观察全成功。
+
+这次对象直接使用已有原生UDP会话，bound=0、udp_recovery为空，**不是Iroh切回
+UDP恢复分支的实测**，更不证明旧停顿已找到根因。对象后原认证Status A/C分别
+28/59ms，均height0和同一原状态根，未涉及交易、扣款、账务发布或最终性。
+
+[发送端摘要](a-c-native-20261109/sender-summary.json)及
+[原公开结果ZIP](a-c-native-20261109/original-a-public-results.zip)保留全部60条采样、
+原命令/事件/结果和对象后两端SDK Status；ZIP40567字节，SHA256
+`9ff0d1fd0ae9b95ba11b0066db1725dc7091633e3cd46595a4314edd366e9bdc`。
+原本地执行脚本/结果在A `target/novonet-5181-update-20261109/A-C-object-5181`；
+本次不手动启动CI，不用组件或localhost代替真实A/C。
+
+当前可登记C原库恢复成功及A发送端原生UDP ACK/DONE。双端对象交付仍待C只读导出
+同Object/Session的probe_received_integrity_verified及实际路径，原投影若已淘汰
+逐对象明细需注明，不重发。见[C当前只读指令](C-UPDATE-5181da73.md#c-run3已签收只读回传既有ac对象接收记录不再更新或重发)。
+原0xc0000005、历史停顿、Iroh→UDP实机恢复、多跳、四机业务与TPS均未由本样本签收。

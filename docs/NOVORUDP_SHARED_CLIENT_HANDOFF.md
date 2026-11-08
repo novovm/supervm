@@ -1171,7 +1171,7 @@ C原事件received_integrity_verified、1/1片及hash完成、原反馈3次且mi
 [双端独立匹配报告](../artifacts/audit/validator-a-c-ddd-object-match-20261108/README.md)。
 C继续当前节点在线；D及NOVOCHAT处于本轮操作范围之外。
 
-### 22. 2026-11-08 原owner有界UDP恢复观察：源码接线，未更新实机
+### 22. 2026-11-08 原owner有界UDP恢复观察；11-09 A/C更新及原生UDP发送证据
 
 承接A/C短报头e58b33cb和原owner审计bec85de4，本次仅补充原网络观察器，
 不修改恢复决策、身份/角色选举、握手/AEAD、资源额度、重试或超时。
@@ -1245,6 +1245,16 @@ C新包已过但未启动：回执5cb5736e证明旧ddd在更新前已崩溃，0x
 A已按真实字段反例改用DOM InnerText，8项XML及原门禁本地通过；这是A的恢复脚本
 缺陷，不归因数据库或原身份。C需同步脚本后按上述C指令使用独立C-run3，不复用
 C-launch2的旧哈希/旧目录。ZIP不变，旧失败保留，C内核退出及新版运行仍待实际记录。
+最新C回执5e82ce20已签收：C-run3内核证明旧残留已退出，LocalService PID34844以
+原库existing启动5181，固定程序/AOEM/用途材料保持，25样本120秒观察完成。A原
+SDK查询C104ms、原根一致。随后A原owner仅发一条新固定对象，发送端实际为native_udp
+至192.168.71.125:41052，同一Object/Session记录owned/admitted/ACK/Object DONE：
+Object `6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524`，
+Session `624b3e7ba0878c772d60c1ade8ef9212`。A后续120秒采样保留2次缺novonet投影，
+不假报全成功；原拒绝计数和connection_failures未清零且前后不变。
+详见[实际发送证据](../artifacts/audit/udp-recovery-observation-20261108/README.md#2026-11-09-c原库恢复签收新ac对象原生udp发送及done)。
+C现在仅需按上述C指令末节只读回传同一接收事件，不再更新、重启或重发。
+这是已有原生UDP会话上的新对象，不是Iroh→UDP切回验收；旧崩溃/恢复根因未结案。
 实机根因仍未定位，旧证据不自动覆盖新代码；B/D及NOVOCHAT不动、不换钥或初始化。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）

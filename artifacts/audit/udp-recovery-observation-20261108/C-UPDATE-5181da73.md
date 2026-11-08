@@ -1,5 +1,9 @@
 # C接收与更新5181da73：已批准，A健康后切换
 
+**2026-11-09当前状态：A/C更新均已完成，不再执行下方历史更新命令。**
+请直接到末节“C-run3已签收”只读导出既有对象接收证据。旧失败/更新过程仅作可追溯
+记录，不能再次安装、重启或重发同一对象。
+
 用户2026-11-09已批准A/C更新、原库existing及必要的同范围新程序规则。
 **C需要新Windows程序包**，ddd89e8e不含本次UDP恢复观察字段。不是重装数据库、
 换身份或重新创世。B/D不动；不运行082初始化脚本，也不复用ddd旧版安装脚本。
@@ -126,3 +130,40 @@ PackageFullName/PackageRelativeAppId时，严格模式访问不存在的`#text`�
 管理员短入口，创建新的C-launch3，核对当前仓库脚本；不能覆盖前次归档。
 原ZIP和已核验解包目录继续使用，不重新复制、不使用ResumePrepared或force。
 成功后完成原120秒观察并回传，失败则保留C-run3实际error，不自行反复补跑。
+
+## C-run3已签收：只读回传既有A→C对象接收记录，不再更新或重发
+
+A已读取`5e82ce20`：C以原LocalService、原库existing启动5181da73，PID34844，
+原用途材料保持，25次/120.550797秒观察完成。残留PID8672已由同句柄内核wait=0
+证明退出，没有杀它。A于北京时间07:08完成对C的原认证SDK Status，104ms，height0、
+原根f6186d40…f56333一致。此阶段无需再安装、换包、重启、初始化或增加采集窗口。
+
+A于北京时间07:10:20仅从其原owner发出一条新的固定非业务对象，发送端已记录：
+
+- Object ID：`6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524`
+- Session ID：`624b3e7ba0878c772d60c1ade8ef9212`
+- 原stream：`NVBFT001`
+- Transfer evidence tag：`9260805feef25d32b491140a426cddedc48fdf47bbb52d1e75449f6278a153a5`
+- Sender：`b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43`
+- Recipient：`1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a`
+- 发送端path=`native_udp`，route=`192.168.71.125:41052`，owned/admitted→object_done。
+- owned/admitted wall_ms=1794179420905，DONE wall_ms=1794179420909。
+
+请C Codex现在只做一次只读导出：
+
+1. 使用必要的管理员读取权限，读取现有新work的`logs/progress.json`，不改运行配置。
+   路径：`C:\ProgramData\NOVOVM\selfrun\91129655606029\C\novonet-probe-5181da73-20261109`。
+2. 在`native_network_probe.events`查找上述Object、Session、双方身份及
+   `probe_received_integrity_verified`，保留原数组/时间/path/route，不凭A结果补写。
+3. 同时导出`native_network_probe.transport.objects`中匹配tag的原记录（若仍在），
+   以及原receive_totals/rejection_names/rejections、retention遗漏/淘汰字段和原
+   `stage_profile.native_delivery`中仍保留的匹配事件。已过120秒的逐对象明细可能
+   按原有界保留策略过期，缺失就明确缺失，不能据此重发对象或提高保留/队列上限。
+   探针自身的64项事件历史与逐对象120秒保留不同，不因传输明细缺失就假称没接收。
+4. 结果放新的`target/novonet-5181-update-20261109/C-receive-5181`，保留UTC读取
+   时刻、progress文件更新时间及当前原节点身份/哈希。若某次progress缺少novonet
+   字段，明确记录该投影缺项，不删除有效probe证据或自动记为网络失败。
+5. 向GitHub只回传公开投影和原匹配记录；原配置、数据库、用途钥、dump不上传。
+
+**不调用prepare/cancel，不发新对象，不重启、换钥、清计数或更改网络。**
+本次只完成C→A原证据回读，A再做双端匹配。A侧ACK/DONE不能替代C的实际接收记录。

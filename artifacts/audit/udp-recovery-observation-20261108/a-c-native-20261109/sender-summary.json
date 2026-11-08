@@ -1,0 +1,280 @@
+{
+  "program_source": "5181da733d59d998afa898bb9964db5deae9e72c",
+  "c_update_receipt": "5e82ce20",
+  "a_pid": 13964,
+  "c_pid_from_run3": 34844,
+  "chain_id": 91129655606029,
+  "single_command_issued": true,
+  "sender": "b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+  "recipient": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+  "object_id": "6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524",
+  "session_id": "624b3e7ba0878c772d60c1ade8ef9212",
+  "stream": "NVBFT001",
+  "transfer_tag": "9260805feef25d32b491140a426cddedc48fdf47bbb52d1e75449f6278a153a5",
+  "command_issued_at_ms": 1794179420722,
+  "command_expires_at_ms": 1794179430722,
+  "events": [
+    {
+      "event": "probe_owned",
+      "wall_ms": 1794179420905,
+      "path": "native_udp",
+      "route": {
+        "Udp": "192.168.71.125:41052"
+      },
+      "object_id": "6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524",
+      "session_id": "624b3e7ba0878c772d60c1ade8ef9212"
+    },
+    {
+      "event": "probe_admitted",
+      "wall_ms": 1794179420905,
+      "path": "native_udp",
+      "route": {
+        "Udp": "192.168.71.125:41052"
+      },
+      "object_id": "6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524",
+      "session_id": "624b3e7ba0878c772d60c1ade8ef9212"
+    },
+    {
+      "event": "probe_object_done",
+      "wall_ms": 1794179420909,
+      "path": "native_udp",
+      "route": {
+        "Udp": "192.168.71.125:41052"
+      },
+      "object_id": "6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524",
+      "session_id": "624b3e7ba0878c772d60c1ade8ef9212"
+    }
+  ],
+  "sender_object_evidence": {
+    "tag": [
+      146,
+      96,
+      128,
+      95,
+      238,
+      242,
+      93,
+      50,
+      180,
+      145,
+      20,
+      10,
+      66,
+      108,
+      221,
+      237,
+      196,
+      143,
+      223,
+      71,
+      187,
+      181,
+      45,
+      30,
+      117,
+      68,
+      159,
+      98,
+      120,
+      161,
+      83,
+      165
+    ],
+    "first_seen_us": 9722914410,
+    "last_progress_us": 9722918320,
+    "transport_done_us": 9722918320,
+    "response_validated_us": null,
+    "fragments": 0,
+    "assemblies_started": 0,
+    "assembly_start_observed": false,
+    "duplicate_data": 0,
+    "duplicate_repair": 0,
+    "completed_history_hits": 0,
+    "total_fragments": 1,
+    "first_fragment_us": null,
+    "last_fragment_us": null,
+    "fragments_complete_us": null,
+    "last_fragment_index": null,
+    "repair_fragments": 0,
+    "hash_chunks": 0,
+    "first_hash_us": null,
+    "last_hash_us": null,
+    "send_admitted_us": 9722914410,
+    "send_attempts_observed": 1,
+    "send_terminal_us": 9722918320,
+    "send_terminal_state": "delivered",
+    "send": {
+      "polls": {
+        "calls": 26,
+        "offered_budget": 1664,
+        "initial_calls": 1,
+        "initial_max_gap_us": 0,
+        "pacing_wait": 0,
+        "feedback_wait": 25,
+        "backoff_wait": 0,
+        "send_blocked": 0,
+        "udp_would_block": 0,
+        "batch_limited": 0
+      },
+      "initial_packets": 1,
+      "repair_packets": 0,
+      "probe_packets": 0,
+      "first_initial_us": 9722914502,
+      "last_initial_us": 9722914502,
+      "initial_complete_us": 9722914502,
+      "first_repair_us": null,
+      "first_repair_index": null,
+      "repair_retry_passes": 0,
+      "first_repair_retry_us": null,
+      "first_repair_retry_index": null,
+      "last_repair_us": null,
+      "first_probe_us": null,
+      "last_probe_us": null,
+      "last_repair_index": null
+    },
+    "feedback_sent": {
+      "packets": 0,
+      "first_us": null,
+      "last_us": null,
+      "max_gap_us": 0,
+      "omitted_windows": 0,
+      "windows": []
+    },
+    "feedback_received": {
+      "packets": 2,
+      "first_us": 9722918314,
+      "last_us": 9722918316,
+      "max_gap_us": 2,
+      "omitted_windows": 0,
+      "windows": [
+        {
+          "at_us": 9722918314,
+          "epoch": 4429,
+          "missing": 0,
+          "first_missing": null
+        }
+      ]
+    },
+    "acknowledged_best": 1,
+    "verified_us": null,
+    "work_entered_us": null,
+    "work_finished_us": null,
+    "stored_receipt_created_us": null,
+    "response_queued_us": null,
+    "response_tag": null
+  },
+  "sample_count": 60,
+  "successful_samples": 58,
+  "failed_samples": [
+    {
+      "index": 34,
+      "utc": "2026-11-08T23:11:29.9639481Z",
+      "error": "在此对象上找不到属性“novonet”。请验证该属性是否存在。"
+    },
+    {
+      "index": 35,
+      "utc": "2026-11-08T23:11:31.9968254Z",
+      "error": "在此对象上找不到属性“novonet”。请验证该属性是否存在。"
+    }
+  ],
+  "sample_first_utc": "2026-11-08T23:10:20.7332634Z",
+  "sample_last_utc": "2026-11-08T23:12:20.7645869Z",
+  "sample_elapsed_seconds": 120.0,
+  "udp_recovery_rows": [],
+  "before_novonet": {
+    "default": "native_novorudp",
+    "fallback": "iroh",
+    "installed_bound_peer_routes": 0,
+    "probe_control": {
+      "enabled": true,
+      "accepted_commands": 0,
+      "rejected_commands": 0,
+      "last": null,
+      "scope": "local commands; never business or transport completion"
+    },
+    "peer_discovery_rpc": true,
+    "connection_failures": 2,
+    "global_auto_discovery": false,
+    "native_multihop_accepted": false
+  },
+  "after_novonet": {
+    "default": "native_novorudp",
+    "fallback": "iroh",
+    "installed_bound_peer_routes": 0,
+    "probe_control": {
+      "enabled": true,
+      "accepted_commands": 1,
+      "rejected_commands": 0,
+      "last": "accepted_by_original_owner_not_DONE",
+      "scope": "local commands; never business or transport completion"
+    },
+    "peer_discovery_rpc": true,
+    "connection_failures": 2,
+    "global_auto_discovery": false,
+    "native_multihop_accepted": false
+  },
+  "before_rejections": {
+    "counts": [
+      0,
+      0,
+      2586,
+      0,
+      19,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "after_rejections": {
+    "counts": [
+      0,
+      0,
+      2586,
+      0,
+      19,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "execution_failures": 0,
+  "authenticated_status_after_object": [
+    {
+      "node": "A",
+      "height": 0,
+      "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+      "elapsed_ms": 28
+    },
+    {
+      "node": "C",
+      "height": 0,
+      "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+      "elapsed_ms": 59
+    }
+  ],
+  "receiver_evidence_received": false,
+  "two_ended_object_acceptance": false,
+  "recovery_root_cause_resolved": false,
+  "native_recovery_path_exercised": false,
+  "business_receipt": false,
+  "four_host_finality": false,
+  "tps_measured": false,
+  "node_restarted": false,
+  "database_initialized": false
+}
