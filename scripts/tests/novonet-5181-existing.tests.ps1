@@ -1,5 +1,5 @@
 #Requires -Version 7.0
-param([string]$PackageRoot)
+param([string]$PackageRoot,[switch]$InspectPreparedFirewall)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $path=Join-Path $PSScriptRoot '../windows/Update-Novonet5181Existing.ps1'
@@ -7,7 +7,7 @@ $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $path),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Update script parse errors'}
 $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false))
-foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package')) {
+foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope')) {
     $function=@($functions|Where-Object Name -CEQ $name)
     if($function.Count -ne 1){throw 'Expected original deployment gate missing'}
     . ([scriptblock]::Create($function[0].Extent.Text))
@@ -41,3 +41,64 @@ foreach($command in $commands) {
 if($PackageRoot){Assert-Package $PackageRoot}
 Write-Output 'PASS 7 deployment gates: syntax, new-only evidence, duplicate preservation, real path, bad package, host scope, forbidden actions'
 if($PackageRoot){Write-Output 'PASS actual fixed Windows package through the same deployment gate'}
+
+function New-FilterFixture([string]$Name) {
+    $values=[ordered]@{
+        InstanceID=$Name
+        CreationClassName=('MSFT|FW|FirewallRule|'+$Name)
+        SystemCreationClassName='MSFT_NetFirewallRule'
+        Protocol='UDP'
+        LocalPort=@('41051','42051')
+        RemotePort=@('Any')
+        LocalAddress=@('192.168.71.74')
+        RemoteAddress=@('192.168.71.0/255.255.255.0','47.103.59.206')
+        InterfaceAlias=@('Any')
+        InterfaceType=@('Any')
+        LocalUser='Any'
+        ServiceName='Any'
+    }
+    $properties=@($values.Keys|ForEach-Object {[pscustomobject]@{Name=$_}})
+    $values.CimClass=[pscustomobject]@{CimClassName='fixture_filter';CimClassProperties=$properties}
+    return [pscustomobject]$values
+}
+$oldFilter=New-FilterFixture 'old'
+$newFilter=New-FilterFixture 'new'
+Assert-FirewallFilterScope $oldFilter $newFilter 'old' 'new'
+$cases=@{
+    LocalPort=@('Any')
+    RemotePort=@('1234')
+    LocalAddress=@('Any')
+    RemoteAddress=@('Any')
+    Protocol='TCP'
+    InterfaceAlias=@('Other')
+    InterfaceType=@('Wireless')
+    LocalUser='Other'
+    ServiceName='Other'
+    SystemCreationClassName='Other'
+}
+foreach($name in $cases.Keys) {
+    $changed=New-FilterFixture 'new'
+    $changed.$name=$cases[$name]
+    $rejected=$false
+    try{Assert-FirewallFilterScope $oldFilter $changed 'old' 'new'}catch{if($_.Exception.Message -cne 'Copied firewall filter scope differs'){throw};$rejected=$true}
+    if(!$rejected){throw "Changed $name must fail"}
+}
+$newFilter=New-FilterFixture 'wrong-rule'
+$rejected=$false
+try{Assert-FirewallFilterScope $oldFilter $newFilter 'old' 'new'}catch{if($_.Exception.Message -cne 'Copied firewall filter rule association differs'){throw};$rejected=$true}
+if(!$rejected){throw 'Wrong associated rule must fail'}
+$newFilter=New-FilterFixture 'new'
+$newFilter.CimClass.CimClassName='wrong-class'
+$rejected=$false
+try{Assert-FirewallFilterScope $oldFilter $newFilter 'old' 'new'}catch{if($_.Exception.Message -cne 'Copied firewall filter class differs'){throw};$rejected=$true}
+if(!$rejected){throw 'Wrong filter class must fail'}
+Write-Output 'PASS 13 firewall cases: renamed association accepted; 10 semantic changes, wrong association and wrong class rejected'
+
+if($InspectPreparedFirewall) {
+    $oldRule=Get-NetFirewallRule -Name 'NOVOVM-ddd89e8e-A-20261108'
+    $newRule=Get-NetFirewallRule -Name 'NOVOVM-5181da73-A-20261109'
+    foreach($command in @('Get-NetFirewallPortFilter','Get-NetFirewallAddressFilter','Get-NetFirewallInterfaceFilter','Get-NetFirewallInterfaceTypeFilter','Get-NetFirewallSecurityFilter','Get-NetFirewallServiceFilter')) {
+        Assert-FirewallFilterScope (& $command -AssociatedNetFirewallRule $oldRule) (& $command -AssociatedNetFirewallRule $newRule) $oldRule.Name $newRule.Name
+    }
+    Write-Output 'PASS 6 actual prepared Windows firewall filter comparisons; read-only, no rule changes'
+}

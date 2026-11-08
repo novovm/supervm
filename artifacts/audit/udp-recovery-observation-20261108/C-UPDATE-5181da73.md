@@ -18,11 +18,12 @@
 
 `6f28ddee10711ab9a4f72b2820f28c93475f075ddceee805ef2f10412510e811`
 
-C Codex同步GitHub main，先保留本机未提交修改，仅正常fast-forward，不建分支、
+C Codex同步GitHub main（须包含后继规则关联比较修正），先保留本机未提交修改，仅正常fast-forward，不建分支、
 不reset、不覆盖。读取本节及父目录候选清单。二进制不在GitHub源码中，需上面的ZIP。
 只将已核验ZIP解包到新的空目录，例如
 `E:\区块链四机通讯\novonet-5181-update-20261109`；解包后包根目录应为其下的
 `novonet-probe-5181da73-windows-x86_64`。不能覆盖旧包或安装目录来规避核验。
+规则关联修正只改更新脚本，不改变候选程序/ZIP；已复制并通过上述哈希的包不用重传。
 
 ## A通知健康后，由C Codex执行一次
 

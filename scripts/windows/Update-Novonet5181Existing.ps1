@@ -75,6 +75,14 @@ function Get-CustodyHashes($Config,$Network) {
     }
     return $keys
 }
+function Assert-FirewallFilterScope($OldFilter,$NewFilter,[string]$OldName,[string]$NewName) {
+    if($OldFilter.CimClass.CimClassName -cne $NewFilter.CimClass.CimClassName){throw 'Copied firewall filter class differs'}
+    # Windows embeds the associated rule name here; a clone MUST bind its new rule.
+    $prefix='MSFT|FW|FirewallRule|'
+    if($OldFilter.CreationClassName -cne ($prefix+$OldName) -or $NewFilter.CreationClassName -cne ($prefix+$NewName)){throw 'Copied firewall filter rule association differs'}
+    $properties=@($OldFilter.CimClass.CimClassProperties.Name|Where-Object {$_ -notin @('InstanceID','Caption','Description','ElementName','CreationClassName')})
+    if(($OldFilter|Select-Object $properties|ConvertTo-Json -Depth 10 -Compress) -cne ($NewFilter|Select-Object $properties|ConvertTo-Json -Depth 10 -Compress)){throw 'Copied firewall filter scope differs'}
+}
 function Start-ExistingTask([string]$Name,[switch]$Old) {
     if(Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue){throw 'Task exists; inspect, do not repeat startup'}
     $arguments='-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "'+(Join-Path $work 'ExistingOwner.ps1')+'" -HostId '+$HostId+' -Owner'
@@ -190,8 +198,7 @@ try {
     foreach($command in @('Get-NetFirewallPortFilter','Get-NetFirewallAddressFilter','Get-NetFirewallInterfaceFilter','Get-NetFirewallInterfaceTypeFilter','Get-NetFirewallSecurityFilter','Get-NetFirewallServiceFilter')) {
         $oldFilter=& $command -AssociatedNetFirewallRule $rule
         $newFilter=& $command -AssociatedNetFirewallRule $freshRule
-        $properties=@($oldFilter.CimClass.CimClassProperties.Name|Where-Object {$_ -notin @('InstanceID','Caption','Description','ElementName')})
-        if(($oldFilter|Select-Object $properties|ConvertTo-Json -Depth 10 -Compress) -cne ($newFilter|Select-Object $properties|ConvertTo-Json -Depth 10 -Compress)){throw 'Copied firewall filter scope differs'}
+        Assert-FirewallFilterScope $oldFilter $newFilter $rule.Name $freshRule.Name
     }
     if($freshRule.Profile -ne $rule.Profile -or $freshRule.Enabled -ne $rule.Enabled -or $freshRule.Direction -ne $rule.Direction -or $freshRule.Action -ne $rule.Action -or ($freshRule|Get-NetFirewallApplicationFilter).Program -ine $newExe){throw 'Copied firewall policy differs'}
     if(($profiles|ConvertTo-Json -Compress) -cne (@(Get-NetFirewallProfile|Select-Object Name,Enabled)|ConvertTo-Json -Compress)){throw 'Firewall profiles changed'}

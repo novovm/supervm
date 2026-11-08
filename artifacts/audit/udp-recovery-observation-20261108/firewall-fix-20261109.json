@@ -1,0 +1,304 @@
+{
+  "observed_at": "2026-11-08T20:24:11.3276950Z",
+  "old_comparator_source": "eb2d5b2aceddc40b2d0e83d3fb7f2878a579885a",
+  "program_source_unchanged": "5181da733d59d998afa898bb9964db5deae9e72c",
+  "failure": {
+    "error": "Copied firewall filter scope differs",
+    "old_node_stopped": false,
+    "time": "2026-11-08T20:20:18.2920228Z"
+  },
+  "old_node_observed_pid": 24444,
+  "old_node_stopped": false,
+  "old_rule": "NOVOVM-ddd89e8e-A-20261108",
+  "new_rule": "NOVOVM-5181da73-A-20261109",
+  "filters": [
+    {
+      "filter": "Get-NetFirewallPortFilter",
+      "cim_class": "MSFT_NetProtocolPortFilter",
+      "old_rule_association": "MSFT|FW|FirewallRule|NOVOVM-ddd89e8e-A-20261108",
+      "new_rule_association": "MSFT|FW|FirewallRule|NOVOVM-5181da73-A-20261109",
+      "only_old_comparison_difference": [
+        "CreationClassName"
+      ],
+      "old_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "DynamicTransport": 0,
+        "IcmpType": "Any",
+        "LocalPort": [
+          "41051",
+          "42051"
+        ],
+        "Protocol": "UDP",
+        "RemotePort": "Any"
+      },
+      "new_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "DynamicTransport": 0,
+        "IcmpType": "Any",
+        "LocalPort": [
+          "41051",
+          "42051"
+        ],
+        "Protocol": "UDP",
+        "RemotePort": "Any"
+      },
+      "semantic_scope_equal": true
+    },
+    {
+      "filter": "Get-NetFirewallAddressFilter",
+      "cim_class": "MSFT_NetAddressFilter",
+      "old_rule_association": "MSFT|FW|FirewallRule|NOVOVM-ddd89e8e-A-20261108",
+      "new_rule_association": "MSFT|FW|FirewallRule|NOVOVM-5181da73-A-20261109",
+      "only_old_comparison_difference": [
+        "CreationClassName"
+      ],
+      "old_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "LocalAddress": "192.168.71.74",
+        "RemoteAddress": [
+          "192.168.71.0/255.255.255.0",
+          "47.103.59.206"
+        ]
+      },
+      "new_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "LocalAddress": "192.168.71.74",
+        "RemoteAddress": [
+          "192.168.71.0/255.255.255.0",
+          "47.103.59.206"
+        ]
+      },
+      "semantic_scope_equal": true
+    },
+    {
+      "filter": "Get-NetFirewallInterfaceFilter",
+      "cim_class": "MSFT_NetInterfaceFilter",
+      "old_rule_association": "MSFT|FW|FirewallRule|NOVOVM-ddd89e8e-A-20261108",
+      "new_rule_association": "MSFT|FW|FirewallRule|NOVOVM-5181da73-A-20261109",
+      "only_old_comparison_difference": [
+        "CreationClassName"
+      ],
+      "old_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "InterfaceAlias": "Any"
+      },
+      "new_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "InterfaceAlias": "Any"
+      },
+      "semantic_scope_equal": true
+    },
+    {
+      "filter": "Get-NetFirewallInterfaceTypeFilter",
+      "cim_class": "MSFT_NetInterfaceTypeFilter",
+      "old_rule_association": "MSFT|FW|FirewallRule|NOVOVM-ddd89e8e-A-20261108",
+      "new_rule_association": "MSFT|FW|FirewallRule|NOVOVM-5181da73-A-20261109",
+      "only_old_comparison_difference": [
+        "CreationClassName"
+      ],
+      "old_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "InterfaceType": 0
+      },
+      "new_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "InterfaceType": 0
+      },
+      "semantic_scope_equal": true
+    },
+    {
+      "filter": "Get-NetFirewallSecurityFilter",
+      "cim_class": "MSFT_NetNetworkLayerSecurityFilter",
+      "old_rule_association": "MSFT|FW|FirewallRule|NOVOVM-ddd89e8e-A-20261108",
+      "new_rule_association": "MSFT|FW|FirewallRule|NOVOVM-5181da73-A-20261109",
+      "only_old_comparison_difference": [
+        "CreationClassName"
+      ],
+      "old_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "Authentication": 0,
+        "Encryption": 0,
+        "LocalUsers": null,
+        "OverrideBlockRules": false,
+        "RemoteMachines": null,
+        "RemoteUsers": null
+      },
+      "new_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "Authentication": 0,
+        "Encryption": 0,
+        "LocalUsers": null,
+        "OverrideBlockRules": false,
+        "RemoteMachines": null,
+        "RemoteUsers": null
+      },
+      "semantic_scope_equal": true
+    },
+    {
+      "filter": "Get-NetFirewallServiceFilter",
+      "cim_class": "MSFT_NetServiceFilter",
+      "old_rule_association": "MSFT|FW|FirewallRule|NOVOVM-ddd89e8e-A-20261108",
+      "new_rule_association": "MSFT|FW|FirewallRule|NOVOVM-5181da73-A-20261109",
+      "only_old_comparison_difference": [
+        "CreationClassName"
+      ],
+      "old_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "ServiceName": null
+      },
+      "new_policy": {
+        "CommunicationStatus": null,
+        "DetailedStatus": null,
+        "HealthState": null,
+        "InstallDate": null,
+        "Name": "",
+        "OperatingStatus": null,
+        "OperationalStatus": null,
+        "PrimaryStatus": null,
+        "Status": null,
+        "StatusDescriptions": null,
+        "IsNegated": null,
+        "SystemCreationClassName": "",
+        "SystemName": "",
+        "ServiceName": null
+      },
+      "semantic_scope_equal": true
+    }
+  ],
+  "read_only": true,
+  "rules_modified_by_this_diagnosis": false,
+  "node_updated": false,
+  "recovery_root_cause_resolved": false
+}

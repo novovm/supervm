@@ -79,6 +79,9 @@ C `novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9
 & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -ExecutionPolicy RemoteSigned -File 'D:\WorksArea\SUPERVM\target\novonet-5181-update-20261109\Start-A.ps1'
 ```
 
-该本地短入口仅调用本节固定更新脚本，不自提权、不调用初始化；结果保存在
-`D:\WorksArea\SUPERVM\target\novonet-5181-update-20261109\A-run1`。
-如果该目录已存在，先检查原结果，不自动覆盖或重复启动。
+该本地短入口仅调用本节固定更新脚本，不自提权、不调用初始化。
+用户后继手动执行A-run1停在复制规则的关联字段比较，`old_node_stopped=false`。
+已核实原规则范围一致，仅CreationClassName自然关联新规则；修正及真实对照见
+[本轮记录](README.md#2026-11-09-固定更新脚本的规则关联比较修正)。
+短入口现显式`ResumePrepared`并保存到独立`A-run2`，不覆盖A-run1或重建已有规则。
+如果A-run2已经存在，先检查结果，不自动覆盖或重复启动。

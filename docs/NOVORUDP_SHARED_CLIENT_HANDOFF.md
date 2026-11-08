@@ -1228,6 +1228,11 @@ lib检查通过，Windows默认feature严格Clippy通过。固定时钟旧例不
 已提供原owner固定部署脚本及[C一次性接收/更新指令](../artifacts/audit/udp-recovery-observation-20261108/C-UPDATE-5181da73.md)。
 本地部署门禁和原进程屏障通过；A的一次UAC最终报告用户取消，助手未启动，
 没有更新原节点。不重复弹窗，原库计划提供管理员终端直接运行入口。
+用户后继手动运行停在规则比较，旧进程未停止。已只读确认六类过滤范围相同，仅
+CreationClassName随新规则关联名称变化；部署脚本改为验证各自正确关联后比较实际
+范围，并通过13项正反例及6类真实过滤器门禁。见[修正记录](../artifacts/audit/udp-recovery-observation-20261108/README.md#2026-11-09-固定更新脚本的规则关联比较修正)。
+程序5181da73及ZIP不变，C仅同步新脚本；A短入口已改为核验后ResumePrepared，
+独立A-run2保留原失败，不自动重复UAC或初始化。
 实机根因仍未定位，旧证据不自动覆盖新代码；B/D及NOVOCHAT不动、不换钥或初始化。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
