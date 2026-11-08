@@ -81,5 +81,15 @@ Windows日志`build-windows.log`/`verify-windows.log`、Linux对应日志及构�
 取消或skip。该结果不替代尚未执行的A/C新包实机恢复和对象DONE验收。
 
 后继一次性A/C更新、观察、触发和回退范围见
-[原库更新与定位方案](UPDATE-PLAN-5181da73.md)。原批准固定ddd89e8e，不自动覆盖
-5181da73更新；本轮未停止原进程，不动B/D及NOVOCHAT，不重做已完成对象验收。
+[原库更新与定位方案](UPDATE-PLAN-5181da73.md)。2026-11-09用户已明确批准此次
+5181da73 A/C更新，不再重复申请；此前ddd的授权不冒充本次授权。
+新增固定部署脚本复用原进程屏障、LocalService owner及原库existing，独立新目录，
+回退为当前ddd程序而非082或账本回退。部署门禁7项、实际固定包门禁及原进程屏障5项
+本地通过。首次部署门禁发现路径祖先的.NET DirectoryInfo无PSIsContainer扩展属性，
+已在任何提权执行前改用真实DirectoryInfo类型判断；原失败没有归到网络或节点。
+A更新前原认证SDK Status成功，height0、原根f6186d40…f56333，耗时20ms。
+本次只请求A一次UAC，Start-Process最终返回“操作已被用户取消”；助手未启动，
+没有A-run1实施目录，未执行节点更新。没有再次弹窗。可由用户在A管理员终端直接运行
+`target/novonet-5181-update-20261109/Start-A.ps1`；这不是重新申请授权。
+[C接收与更新指令](C-UPDATE-5181da73.md)允许先核验新ZIP；A健康后C才切换，
+B/D及NOVOCHAT不动，不重做已完成对象验收。

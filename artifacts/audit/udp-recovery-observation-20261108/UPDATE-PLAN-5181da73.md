@@ -1,6 +1,7 @@
 # A/C原库更新与原生UDP恢复定位：一次工作包
 
-状态：候选已构建核验，**尚未批准或执行本次版本更新**。本计划不重新申请已完成的
+状态：候选已构建核验；**2026-11-09用户已明确批准A/C更新及必要同范围规则**。
+实施状态另据实际进程和结果记录，不以授权替代完成。本计划不重新申请已完成的
 四机认证、不另建测试网络、不要求B/D操作；目标是取得当前A/C恢复停顿的实际状态，
 随后只修首个有证据的断点。最终完成标准不是“又加了一份日志”。
 
@@ -66,5 +67,18 @@ C `novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9
 `existing`重开**同一原库**。不清库、不删除LOCK、不改签票日志、不更换钥、不重创世。
 若无法证明库格式仍兼容，先保全并报告，不能盲目强开。B邮箱/Relay/Web/Docker不动。
 
-本次版本替换以及必要同范围新路径规则需一次明确批准；获准后由A推进全流程，C只需
-执行一次对应原owner更新/采集指令，不再人工协调一串短抓包窗口。
+本次版本替换以及必要同范围新路径规则已获一次明确批准，不重复申请。
+沿[原进程屏障复用的固定更新脚本](../../../scripts/windows/Update-Novonet5181Existing.ps1)
+实施；A先通过健康检查再通知C切换。C接收与执行见
+[C一次性更新指令](C-UPDATE-5181da73.md)，不再人工协调一串短抓包窗口。
+
+2026-11-09本次A的UAC请求被系统报告“操作已被用户取消”，助手未启动，不计更新。
+不反复发起UAC；用户可在A管理员PowerShell运行：
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -ExecutionPolicy RemoteSigned -File 'D:\WorksArea\SUPERVM\target\novonet-5181-update-20261109\Start-A.ps1'
+```
+
+该本地短入口仅调用本节固定更新脚本，不自提权、不调用初始化；结果保存在
+`D:\WorksArea\SUPERVM\target\novonet-5181-update-20261109\A-run1`。
+如果该目录已存在，先检查原结果，不自动覆盖或重复启动。
