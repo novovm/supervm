@@ -1,0 +1,302 @@
+{
+  "capture": {
+    "started_utc": "2026-11-08T08:47:13.4692823Z",
+    "duration_seconds": 300,
+    "expected_pid": 23024,
+    "capture_started": true,
+    "log_mode": "multi-file",
+    "segment_mib": 16,
+    "space_stop_threshold_mib": 224,
+    "space_budget_mib": 256,
+    "capture_started_utc": "2026-11-08T08:47:15.0422188Z",
+    "latest_stop_utc": "2026-11-08T08:52:15.0422188Z",
+    "stop_reason": "five_minute_limit",
+    "capture_stopped_utc": "2026-11-08T08:52:16.5356541Z",
+    "segments": [
+      {
+        "Name": "C-AC-UDP1.etl",
+        "Length": 553648128
+      },
+      {
+        "Name": "C-AC-UDP2.etl",
+        "Length": 15179
+      }
+    ],
+    "success": true,
+    "finished_utc": "2026-11-08T08:52:17.7239446Z"
+  },
+  "packet_records": 11228,
+  "first_record_utc": "2026-11-08T08:47:15.055762+00:00",
+  "last_record_utc": "2026-11-08T08:52:15.621732+00:00",
+  "continuation_tags": {
+    "1": 11228
+  },
+  "directions": {
+    "192.168.71.125:41052 -> 192.168.71.74:41051": 11228
+  },
+  "transcripts": [
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "3ce987545b80362edfa61b6362a6dad4",
+      "transcript_sha256": "fef99a35106bfa2b14f09696d94e41f8b8912dc313be42ad66edb58838ee84f8",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 492
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "2f95f52358f7807a16606668bd266fac",
+      "transcript_sha256": "c4928bb21a6abae295b2d307fa245785cf5f6f66d0b7393af29156b8be87994b",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1127
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "ad984636cac428bf39dbfca8a5048faf",
+      "transcript_sha256": "b4796e90a86840cf6e75fcb9b5f557dbfd4ed48badb25f8d0ef956f0ed2d2568",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1124
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "65423b122f9d700e47e5d4c471795ced",
+      "transcript_sha256": "c6bf15f85e3b084729c293729bb7b958089fbbe5abce6066b4d25531b2af9d07",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1118
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "6da6f869fecf3d79fc90a41c8a873ddd",
+      "transcript_sha256": "be8a099f97026501125333434e8553c1cfd23fa9170f95d1f6fa26c02cda1528",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1117
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "47ff5fa8f67b0cb5e22d00db2c9f1ef7",
+      "transcript_sha256": "2a0e2b09b1e1d7f21f9a13eb4325a98b94983d8c1a4024062714cf2f0afb1b12",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1129
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "123d67e5fbd0f660b11276d6d7883697",
+      "transcript_sha256": "de94d273cb31f70bb27d18df496c5b381f9fc029472a6a6edbbc9604fc9a03a1",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1122
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "dbf700b98c497a5b550f091e91fb6696",
+      "transcript_sha256": "fd9eb05a42f73825509b985ffcc7f0f8a2c7649186ee4148024f54e73017bf9f",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1132
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "8656eb92d70f2491f87720ffc0215da2",
+      "transcript_sha256": "bf69fdea9405d2108d661dd2061fc5248fb1b2097d3e585caf275859f478b13d",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1109
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "18421f97cbee7261f124edc67561deb7",
+      "transcript_sha256": "999066aaf4d88c5dd0561375dc4f386a2f74e2201475ca8b0f89d1351073c710",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 1103
+      },
+      "part_indices": [],
+      "complete": false
+    },
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "9af0e0ba327aefcf7c492a2faee450ca",
+      "transcript_sha256": "d1ff857d3ecf0affc436458a0d3f338bd9750288eae2222de7a3c048a45f7909",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 655
+      },
+      "part_indices": [],
+      "complete": false
+    }
+  ],
+  "a_report_commit": "d93db73c3cae3ad907349a03424cd195a6941091",
+  "a_entry_start_utc": "2026-11-08T08:48:29.5309343Z",
+  "a_entry_end_utc": "2026-11-08T08:49:11.8403598Z",
+  "c_records_in_a_entry_bounds": 1577,
+  "unique_datagrams_claimed": false,
+  "space_budget_gate_passed": false,
+  "raw_etl_bytes": 553663307,
+  "before": {
+    "process": {
+      "utc": "2026-11-08T08:47:13.8206439Z",
+      "pid": 23024,
+      "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-probe-ddd89e8e-windows-x86_64\\bin\\novovm-node.exe",
+      "sha256": "19883C8B95FC059EC7838FF0556284B1DDD434B7A72BFBE93E3F3410F458A0FC",
+      "listeners": [
+        {
+          "LocalAddress": "192.168.71.125",
+          "LocalPort": 42052,
+          "OwningProcess": 23024
+        },
+        {
+          "LocalAddress": "192.168.71.125",
+          "LocalPort": 41052,
+          "OwningProcess": 23024
+        }
+      ],
+      "network_public": {
+        "bind_address": "192.168.71.125:42052",
+        "peer_records": [],
+        "public_record_file": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-08236129-20261108\\locator.json",
+        "fallback_after_ms": 1000,
+        "udp_recovery_ms": 5000,
+        "retry_ms": 1000
+      }
+    },
+    "network": {
+      "default": "native_novorudp",
+      "fallback": "iroh",
+      "installed_bound_peer_routes": 1,
+      "probe_control": {
+        "enabled": true,
+        "accepted_commands": 0,
+        "rejected_commands": 0,
+        "last": null,
+        "scope": "local commands; never business or transport completion"
+      },
+      "peer_discovery_rpc": true,
+      "connection_failures": 328,
+      "global_auto_discovery": false,
+      "native_multihop_accepted": false
+    },
+    "rejections": {
+      "wire_budget": 0,
+      "oversize": 0,
+      "handshake": 2983,
+      "unknown_source": 0,
+      "no_session": 34,
+      "secure_route": 1,
+      "secure_nonce": 0,
+      "secure_replay_pre_auth": 0,
+      "secure_authentication": 0,
+      "wire_or_frame": 0,
+      "stream_denied": 0,
+      "open_other": 0,
+      "unknown_stream": 0,
+      "ack_short": 0,
+      "object_ack": 0,
+      "object_fragment": 0
+    }
+  },
+  "after": {
+    "process": {
+      "utc": "2026-11-08T08:52:17.4891973Z",
+      "pid": 23024,
+      "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-probe-ddd89e8e-windows-x86_64\\bin\\novovm-node.exe",
+      "sha256": "19883C8B95FC059EC7838FF0556284B1DDD434B7A72BFBE93E3F3410F458A0FC",
+      "listeners": [
+        {
+          "LocalAddress": "192.168.71.125",
+          "LocalPort": 42052,
+          "OwningProcess": 23024
+        },
+        {
+          "LocalAddress": "192.168.71.125",
+          "LocalPort": 41052,
+          "OwningProcess": 23024
+        }
+      ],
+      "network_public": {
+        "bind_address": "192.168.71.125:42052",
+        "peer_records": [],
+        "public_record_file": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-08236129-20261108\\locator.json",
+        "fallback_after_ms": 1000,
+        "udp_recovery_ms": 5000,
+        "retry_ms": 1000
+      }
+    },
+    "network": {
+      "default": "native_novorudp",
+      "fallback": "iroh",
+      "installed_bound_peer_routes": 1,
+      "probe_control": {
+        "enabled": true,
+        "accepted_commands": 0,
+        "rejected_commands": 0,
+        "last": null,
+        "scope": "local commands; never business or transport completion"
+      },
+      "peer_discovery_rpc": true,
+      "connection_failures": 330,
+      "global_auto_discovery": false,
+      "native_multihop_accepted": false
+    },
+    "rejections": {
+      "wire_budget": 0,
+      "oversize": 0,
+      "handshake": 2983,
+      "unknown_source": 0,
+      "no_session": 34,
+      "secure_route": 1,
+      "secure_nonce": 0,
+      "secure_replay_pre_auth": 0,
+      "secure_authentication": 0,
+      "wire_or_frame": 0,
+      "stream_denied": 0,
+      "open_other": 0,
+      "unknown_stream": 0,
+      "ack_short": 0,
+      "object_ack": 0,
+      "object_fragment": 0
+    }
+  }
+}
