@@ -200,6 +200,14 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<()> {
+        let observer = self.recovery_diagnostics.clone();
+        let session = self.session_id(index);
+        let note = |event| {
+            if let Some(observer) = &observer {
+                observer.udp_recovery(index, event, session, now, None);
+            }
+        };
+        note(UdpRecoveryEvent::Request);
         let policy = self
             .configured
             .as_ref()
@@ -219,15 +227,18 @@ impl NativeEndpoint {
         // An existing bounded attempt retains its original deadline. Repeated
         // owner maintenance requests neither restart it nor kill the fallback.
         if peer.reconnect.is_some() {
+            note(UdpRecoveryEvent::PendingReconnect);
             return Ok(());
         }
         // Both owners may retry together. Elect one initiator exactly as the
         // original configured handshake; the other keeps its carrier until
         // prepare/confirm_reconnect proves the new UDP secret.
         if peer_id_from_mldsa65_public_key_v1(&self.local_key).as_str() > peer.id.as_ref() {
+            note(UdpRecoveryEvent::PassiveRole);
             return Ok(());
         }
         if peer.handshake.as_ref().is_some_and(|h| !h.is_expired(now)) {
+            note(UdpRecoveryEvent::ActiveAttempt);
             return Ok(());
         }
         peer.handshake = Some(NativeHandshake::start_role(
@@ -242,6 +253,7 @@ impl NativeEndpoint {
             policy.budget.retry,
             Some(true),
         )?);
+        note(UdpRecoveryEvent::AttemptStarted);
         Ok(())
     }
 
@@ -296,6 +308,7 @@ impl NativeEndpoint {
                 previous,
                 current,
             });
+            self.observe_udp_recovery(index, UdpRecoveryEvent::UdpActivated, now);
         }
         if self.bound_keys.keys().all(|index| {
             self.peers.get(index).is_some_and(|peer| {

@@ -175,6 +175,42 @@ impl NativeHandshake {
         }
     }
 
+    /// Observe the existing result, never run a second admission or IO decision.
+    pub(crate) fn try_send_observed(
+        &mut self,
+        io: &dyn NativeDatagramIo,
+        wall_ms: u64,
+        now: Instant,
+        budget: Option<&mut NativeWireBudget>,
+        observer: Option<(&super::diagnostics::NativeTransferDiagnosticsV1, usize)>,
+    ) -> Result<bool> {
+        let Some((observer, peer)) = observer else {
+            return self.try_send_limited(io, wall_ms, now, budget);
+        };
+        use super::diagnostics::UdpRecoveryEvent as Event;
+        let before = budget.as_deref().map(NativeWireBudget::send_deferred_count);
+        let mut budget = budget;
+        let result = self.try_send_limited(io, wall_ms, now, budget.as_deref_mut());
+        let after = budget.as_deref().map(NativeWireBudget::send_deferred_count);
+        let event = match &result {
+            Ok(true) => Event::DatagramSent,
+            _ if now >= self.deadline => Event::AttemptDeadline,
+            _ if wall_ms > self.outgoing_expiry && self.outgoing.is_some() => Event::SignedExpiry,
+            Err(_) => Event::SendFailed,
+            Ok(false) if now < self.next_send => Event::RetryWait,
+            Ok(false) if self.outgoing.is_none() => Event::NoTranscript,
+            Ok(false) if before != after => Event::BudgetDeferred,
+            Ok(false) => Event::IoWouldBlock,
+        };
+        let os_error = result
+            .as_ref()
+            .err()
+            .and_then(|e| e.downcast_ref::<std::io::Error>())
+            .and_then(std::io::Error::raw_os_error);
+        observer.udp_recovery(peer, event, None, now, os_error);
+        result
+    }
+
     pub(super) fn receive_continuation_challenge(
         &mut self,
         source: NativeRoute,

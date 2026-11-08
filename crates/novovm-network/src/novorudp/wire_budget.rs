@@ -112,6 +112,11 @@ impl NativeWireBudget {
         self.usage
     }
 
+    /// Read-only diagnostic comparison around the original single send call.
+    pub(crate) fn send_deferred_count(&self) -> u64 {
+        self.usage.send_deferred
+    }
+
     /// Follow the owner's current resource decision. Bytes already in the
     /// rolling window stay charged: lowering takes effect at once and raising
     /// never forgives past traffic. Outstanding reservations are unaffected.

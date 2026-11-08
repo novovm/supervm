@@ -497,6 +497,74 @@ pub(crate) struct NativeSendProgressV1 {
     pub last_repair_index: Option<u64>,
 }
 #[derive(Clone, Debug, Serialize)]
+pub struct NativeUdpRecoveryEvidenceV1 {
+    /// Original configured peer index; no second identity or membership table.
+    pub peer: usize,
+    pub counts: [u64; 22],
+    pub last_event: &'static str,
+    pub last_event_us: u64,
+    pub last_send_event: Option<&'static str>,
+    pub last_send_us: Option<u64>,
+    pub last_send_os_error: Option<i32>,
+    pub active_session: Option<[u8; 16]>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum UdpRecoveryEvent {
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    Request = 0,
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    PassiveRole = 1,
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    PendingReconnect = 2,
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    ActiveAttempt = 3,
+    #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
+    AttemptStarted = 4,
+    RetryWait = 5,
+    NoTranscript,
+    AttemptDeadline,
+    SignedExpiry,
+    DatagramSent,
+    BudgetDeferred,
+    IoWouldBlock,
+    SendFailed,
+    InitObserved,
+    ChallengeObserved,
+    PartObserved,
+    ContinuationRejected,
+    HandshakeObserved,
+    HandshakeRejected,
+    AwaitingConfirmation,
+    UdpActivated,
+    PendingExpired,
+}
+const UDP_RECOVERY_NAMES: [&str; 22] = [
+    "request",
+    "passive_role",
+    "pending_reconnect",
+    "active_attempt",
+    "attempt_started",
+    "retry_wait",
+    "no_transcript",
+    "attempt_deadline",
+    "signed_expiry",
+    "datagram_sent",
+    "budget_deferred",
+    "io_would_block",
+    "send_failed",
+    "init_observed_unvalidated",
+    "challenge_observed_unvalidated",
+    "part_observed_unvalidated",
+    "continuation_rejected",
+    "handshake_observed_unvalidated",
+    "handshake_rejected",
+    "awaiting_aead_confirmation",
+    "udp_route_activated",
+    "pending_expired",
+];
+
+#[derive(Clone, Debug, Serialize)]
 pub struct NativeEvidenceSnapshotV1 {
     pub contended_observations: u64,
     pub scope: &'static str,
@@ -512,6 +580,10 @@ pub struct NativeEvidenceSnapshotV1 {
     /// All link lanes, independent of the per-object stream filter.
     pub send_polls: NativeLinkPollEvidenceV1,
     pub receive_totals: NativeReceiveTotalsV1,
+    /// Opt-in local recovery evidence, independent of object eviction/stream filtering.
+    pub udp_recovery_event_names: [&'static str; 22],
+    pub udp_recovery: Vec<NativeUdpRecoveryEvidenceV1>,
+    pub udp_recovery_omitted: u64,
 }
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct NativeEvidenceRetentionV1 {
@@ -620,6 +692,8 @@ impl NativeTransferDiagnosticsV1 {
                 evicted_records: 0, expired_records: 0, objects: Vec::new(),
                 send_polls: NativeLinkPollEvidenceV1::default(),
                 receive_totals: NativeReceiveTotalsV1::default(),
+                udp_recovery_event_names: UDP_RECOVERY_NAMES,
+                udp_recovery: Vec::new(), udp_recovery_omitted: 0,
             }, records: VecDeque::new(),
         }) }
     }
@@ -649,6 +723,58 @@ impl NativeTransferDiagnosticsV1 {
         now.saturating_duration_since(self.origin)
             .as_micros()
             .min(u64::MAX as u128) as u64
+    }
+    pub(crate) fn udp_recovery(
+        &self,
+        peer: usize,
+        event: UdpRecoveryEvent,
+        session: Option<[u8; 16]>,
+        now: Instant,
+        os_error: Option<i32>,
+    ) {
+        let Ok(mut state) = self.lock_state() else {
+            return;
+        };
+        let snapshot = &mut state.snapshot;
+        let index = match snapshot.udp_recovery.iter().position(|r| r.peer == peer) {
+            Some(index) => index,
+            None if snapshot.udp_recovery.len() < 64 => {
+                snapshot.udp_recovery.push(NativeUdpRecoveryEvidenceV1 {
+                    peer,
+                    counts: [0; 22],
+                    last_event: UDP_RECOVERY_NAMES[event as usize],
+                    last_event_us: 0,
+                    last_send_event: None,
+                    last_send_us: None,
+                    last_send_os_error: None,
+                    active_session: None,
+                });
+                snapshot.udp_recovery.len() - 1
+            }
+            None => {
+                snapshot.udp_recovery_omitted = snapshot.udp_recovery_omitted.saturating_add(1);
+                return;
+            }
+        };
+        let row = &mut snapshot.udp_recovery[index];
+        let at = self.micros(now);
+        row.counts[event as usize] = row.counts[event as usize].saturating_add(1);
+        row.last_event = UDP_RECOVERY_NAMES[event as usize];
+        row.last_event_us = at;
+        if session.is_some() {
+            row.active_session = session;
+        }
+        if matches!(
+            event,
+            UdpRecoveryEvent::DatagramSent
+                | UdpRecoveryEvent::BudgetDeferred
+                | UdpRecoveryEvent::IoWouldBlock
+                | UdpRecoveryEvent::SendFailed
+        ) {
+            row.last_send_event = Some(row.last_event);
+            row.last_send_us = Some(at);
+            row.last_send_os_error = os_error;
+        }
     }
     pub fn reject(&self, counts: NativeRejectCountsV1, now: Instant) {
         if counts.total() == 0 {
@@ -958,6 +1084,57 @@ impl Default for NativeTransferDiagnosticsV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn udp_recovery_evidence_is_bounded_saturating_and_independent_of_objects() {
+        let observer = NativeTransferDiagnosticsV1::for_stream(7);
+        let now = observer.origin;
+        for peer in 0..70 {
+            observer.udp_recovery(peer, UdpRecoveryEvent::RetryWait, Some([3; 16]), now, None);
+        }
+        observer.udp_recovery(0, UdpRecoveryEvent::SendFailed, None, now, Some(10013));
+        let snapshot = observer.snapshot_at(now).unwrap();
+        assert_eq!(snapshot.udp_recovery.len(), 64);
+        assert_eq!(snapshot.udp_recovery_omitted, 6);
+        assert!(snapshot.objects.is_empty());
+        assert_eq!(
+            snapshot.udp_recovery[0].last_send_event,
+            Some("send_failed")
+        );
+        assert_eq!(snapshot.udp_recovery[0].last_send_os_error, Some(10013));
+        assert_eq!(snapshot.udp_recovery[0].active_session, Some([3; 16]));
+        observer.state.lock().unwrap().snapshot.udp_recovery[0].counts[5] = u64::MAX;
+        observer.udp_recovery(0, UdpRecoveryEvent::RetryWait, None, now, None);
+        assert_eq!(
+            observer.snapshot_at(now).unwrap().udp_recovery[0].counts[5],
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn udp_recovery_observation_never_waits_for_an_exporter() {
+        let observer = std::sync::Arc::new(NativeTransferDiagnosticsV1::new());
+        let guard = observer.state.lock().unwrap();
+        let copy = observer.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            copy.udp_recovery(
+                0,
+                UdpRecoveryEvent::DatagramSent,
+                None,
+                Instant::now(),
+                None,
+            );
+            send.send(()).unwrap();
+        });
+        let immediate = receive.recv_timeout(Duration::from_secs(1));
+        drop(guard);
+        worker.join().unwrap();
+        assert!(immediate.is_ok());
+        let snapshot = observer.snapshot().unwrap();
+        assert_eq!(snapshot.contended_observations, 1);
+        assert!(snapshot.udp_recovery.is_empty());
+    }
 
     #[test]
     fn diagnostic_contention_never_blocks_transport_observation() {

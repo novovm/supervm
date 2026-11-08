@@ -14,6 +14,118 @@ fn keys() -> (TransportIdentity, TransportIdentity) {
     }
 }
 
+#[test]
+fn recovery_observer_distinguishes_original_send_deferrals_errors_and_deadlines() -> Result<()> {
+    use crate::novorudp::diagnostics::NativeTransferDiagnosticsV1;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Io {
+        mode: AtomicUsize,
+        calls: AtomicUsize,
+    }
+    impl NativeDatagramIo for Io {
+        fn try_receive(&self, _: &mut [u8]) -> std::io::Result<Option<(usize, NativeRoute)>> {
+            Err(ErrorKind::WouldBlock.into())
+        }
+        fn try_send(&self, bytes: &[u8], _: NativeRoute) -> std::io::Result<usize> {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            match self.mode.load(Ordering::Relaxed) {
+                0 => Err(ErrorKind::WouldBlock.into()),
+                1 => Ok(bytes.len()),
+                _ => Err(std::io::Error::from_raw_os_error(10013)),
+            }
+        }
+    }
+    let (key, remote) = keys();
+    let now = Instant::now();
+    let mut handshake = NativeHandshake::start(
+        key,
+        remote.public_key().to_vec(),
+        "127.0.0.1:41052".parse()?,
+        1000,
+        now,
+        Duration::from_secs(2),
+        Duration::from_millis(10),
+    )?;
+    let observer = NativeTransferDiagnosticsV1::new();
+    let io = Io {
+        mode: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+    };
+    let mut budget = NativeWireBudget::new(2400, now)?;
+    assert!(budget.admit_receive(2400, now));
+    assert!(!handshake.try_send_observed(
+        &io,
+        1000,
+        now,
+        Some(&mut budget),
+        Some((&observer, 0))
+    )?);
+    assert_eq!(
+        io.calls.load(Ordering::Relaxed),
+        0,
+        "budget refusal never calls IO"
+    );
+    assert!(!handshake.try_send_observed(&io, 1000, now, None, Some((&observer, 0)))?);
+    io.mode.store(2, Ordering::Relaxed);
+    assert!(handshake
+        .try_send_observed(&io, 1000, now, None, Some((&observer, 0)))
+        .is_err());
+    assert_eq!(
+        observer.snapshot().unwrap().udp_recovery[0].last_send_os_error,
+        Some(10013)
+    );
+    io.mode.store(1, Ordering::Relaxed);
+    assert!(handshake.try_send_observed(&io, 1000, now, None, Some((&observer, 0)))?);
+    let calls = io.calls.load(Ordering::Relaxed);
+    assert!(!handshake.try_send_observed(&io, 1000, now, None, Some((&observer, 0)))?);
+    assert_eq!(
+        io.calls.load(Ordering::Relaxed),
+        calls,
+        "original retry clock retained"
+    );
+    assert!(handshake
+        .try_send_observed(
+            &io,
+            4000,
+            now + Duration::from_millis(10),
+            None,
+            Some((&observer, 0))
+        )
+        .is_err());
+    assert!(handshake
+        .try_send_observed(
+            &io,
+            4000,
+            now + Duration::from_secs(3),
+            None,
+            Some((&observer, 0))
+        )
+        .is_err());
+    let snapshot = observer.snapshot().unwrap();
+    for name in [
+        "budget_deferred",
+        "io_would_block",
+        "send_failed",
+        "datagram_sent",
+        "retry_wait",
+        "signed_expiry",
+        "attempt_deadline",
+    ] {
+        let index = snapshot
+            .udp_recovery_event_names
+            .iter()
+            .position(|n| *n == name)
+            .unwrap();
+        assert_eq!(snapshot.udp_recovery[0].counts[index], 1, "{name}");
+    }
+    assert_eq!(
+        snapshot.udp_recovery[0].last_send_event,
+        Some("datagram_sent")
+    );
+    assert_eq!(snapshot.udp_recovery[0].last_send_os_error, None);
+    Ok(())
+}
+
 fn receive(socket: &UdpSocket) -> Result<(Vec<u8>, SocketAddr)> {
     let until = Instant::now() + Duration::from_secs(2);
     let mut buffer = [0; MAX_DATAGRAM_BYTES + 1];

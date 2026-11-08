@@ -296,6 +296,7 @@ impl NativeObjectLink {
     }
     /// Explicit local test observer. It cannot change peer/session or IO state.
     pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
+        self.endpoint.set_recovery_diagnostics_v1(observer.clone());
         self.diagnostics = Some(observer);
     }
     /// Adopt a fresh, Finished-verified connection to the SAME peer. Retire

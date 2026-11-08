@@ -165,6 +165,7 @@ fn udp_owner_initial_bound_fallback_keeps_other_udp_peer_clients_and_global_budg
 
 #[test]
 fn configured_carrier_rejects_wrong_identity_streams_and_returns_to_original_udp() -> Result<()> {
+    use crate::novorudp::diagnostics::NativeTransferDiagnosticsV1;
     let now = Instant::now();
     let a_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
     let b_socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
@@ -181,6 +182,10 @@ fn configured_carrier_rejects_wrong_identity_streams_and_returns_to_original_udp
         now,
     )?)?;
     let (ab, ba) = bound_pair_to(2)?;
+    let a_observer = Arc::new(NativeTransferDiagnosticsV1::new());
+    let b_observer = Arc::new(NativeTransferDiagnosticsV1::new());
+    a.set_diagnostics_v1(a_observer.clone());
+    b.set_diagnostics_v1(b_observer.clone());
     let report = a.replace_bound_carrier_v1(0, ab, now)?;
     assert!(report.session_changes.is_empty() && report.completed.is_empty());
     let report = b.replace_bound_carrier_v1(0, ba, now)?;
@@ -258,12 +263,64 @@ fn configured_carrier_rejects_wrong_identity_streams_and_returns_to_original_udp
             assert_eq!(a.peer_id(0)?, super::key(2).peer_id());
             assert_eq!(a.peer_count(), 1);
             assert_eq!(b.peer_count(), 1);
+            let mut started = 0;
+            let mut passive = 0;
+            for observer in [&a_observer, &b_observer] {
+                let snapshot = observer.snapshot().unwrap();
+                let row = &snapshot.udp_recovery[0];
+                let count = |name| row.counts[snapshot.udp_recovery_event_names.iter().position(|n| *n == name).unwrap()];
+                started += count("attempt_started");
+                passive += count("passive_role");
+                assert_eq!(count("udp_route_activated"), 1);
+                assert!(count("datagram_sent") > 0);
+                assert_eq!(row.active_session, a.session_id(0));
+            }
+            assert_eq!(started, 1, "one elected initiator, not two parallel handshakes");
+            assert!(passive > 0);
             return Ok(());
         }
     }
     anyhow::bail!(
         "original UDP recovery did not authenticate and deliver: {received:?}/{completed:?}"
     )
+}
+
+#[test]
+fn udp_recovery_observer_tracks_timed_retry_without_replacing_healthy_carrier() -> Result<()> {
+    use crate::novorudp::diagnostics::NativeTransferDiagnosticsV1;
+    let now = Instant::now();
+    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0")?);
+    let remote_socket = UdpSocket::bind("127.0.0.1:0")?;
+    let local = if super::key(1).peer_id() < super::key(2).peer_id() { 1 } else { 2 };
+    let remote = if local == 1 { 2 } else { 1 };
+    let mut target = link(configured_udp(socket, local, vec![udp_peer(remote, remote_socket.local_addr()?)], now)?)?;
+    let (ab, ba) = bound_pair_to(2)?;
+    let no_handover = |report: crate::novorudp::object_link::NativeLinkPoll| {
+        assert!(report.session_changes.is_empty() && report.completed.is_empty());
+    };
+    no_handover(target.replace_bound_carrier_v1(0, if local == 1 { ab } else { ba }, now)?);
+    let previous = target.session_id(0);
+    let observer = Arc::new(NativeTransferDiagnosticsV1::new());
+    target.set_diagnostics_v1(observer.clone());
+    target.request_udp_recovery_v1(0, NOW, now)?;
+    no_handover(target.poll(NOW, now, 64)?);
+    target.request_udp_recovery_v1(0, NOW + 1, now + Duration::from_millis(1))?;
+    no_handover(target.poll(NOW + 1, now + Duration::from_millis(1), 64)?);
+    // No remote UDP poll: the first original attempt really reaches its deadline.
+    let later = now + Duration::from_secs(3);
+    no_handover(target.poll(NOW + 3000, later, 64)?);
+    target.request_udp_recovery_v1(0, NOW + 3000, later)?;
+    no_handover(target.poll(NOW + 3000, later, 64)?);
+    assert_eq!(target.session_id(0), previous, "no authentication, no invented handover");
+    assert!(matches!(target.peer_route(0)?, NativeRoute::Carrier(_)));
+    let snapshot = observer.snapshot().unwrap();
+    let count = |name| snapshot.udp_recovery[0].counts[snapshot.udp_recovery_event_names.iter().position(|n| *n == name).unwrap()];
+    assert_eq!(count("attempt_started"), 2);
+    assert_eq!(count("active_attempt"), 1);
+    assert_eq!(count("datagram_sent"), 2);
+    assert_eq!(count("attempt_deadline"), 1);
+    assert_eq!(count("udp_route_activated"), 0);
+    Ok(())
 }
 
 struct HeldCarrier {

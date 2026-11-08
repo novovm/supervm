@@ -125,8 +125,23 @@ impl NativeEndpoint {
     }
 
     pub(super) fn expire_reconnects(&mut self, now: Instant) {
-        for peer in self.peers.values_mut() {
+        for (&index, peer) in &mut self.peers {
             if peer.reconnect.as_ref().is_some_and(|r| now >= r.deadline) {
+                if peer
+                    .session
+                    .as_ref()
+                    .is_some_and(NativeUdpSession::is_bound_reliable_carrier)
+                {
+                    if let Some(observer) = &self.recovery_diagnostics {
+                        observer.udp_recovery(
+                            index,
+                            UdpRecoveryEvent::PendingExpired,
+                            peer.session.as_ref().map(NativeUdpSession::session_id),
+                            now,
+                            None,
+                        );
+                    }
+                }
                 peer.reconnect = None;
             }
         }
@@ -344,6 +359,9 @@ impl NativeEndpoint {
                 .checked_add(budget.lifetime)
                 .context("reconnect deadline overflow")?,
         });
+        if self.peer_uses_reliable_carrier(index) {
+            self.observe_udp_recovery(index, UdpRecoveryEvent::AwaitingConfirmation, now);
+        }
         Ok(())
     }
 
@@ -387,6 +405,10 @@ impl NativeEndpoint {
         }
         let peer = self.peers.get_mut(&index)?;
         let mut pending = peer.reconnect.take()?;
+        let recovered_carrier = peer
+            .session
+            .as_ref()
+            .is_some_and(NativeUdpSession::is_bound_reliable_carrier);
         let previous = peer.session.as_ref().map(NativeUdpSession::session_id);
         let current = pending.session.session_id();
         peer.last_authenticated = now;
@@ -397,6 +419,17 @@ impl NativeEndpoint {
         peer.handshake = Some(pending.handshake);
         self.sources.retain(|_, i| *i != index);
         self.sources.insert(source, index);
+        if recovered_carrier {
+            if let Some(observer) = &self.recovery_diagnostics {
+                observer.udp_recovery(
+                    index,
+                    UdpRecoveryEvent::UdpActivated,
+                    Some(current),
+                    now,
+                    None,
+                );
+            }
+        }
         Some((
             NativeReceivedFrame {
                 peer: index,

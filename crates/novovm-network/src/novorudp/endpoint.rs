@@ -6,7 +6,9 @@
 use super::{
     carrier::{NativeDatagramIo, NativeRoute},
     datagram::{NativeUdpSession, MAX_DATAGRAM_BYTES},
-    diagnostics::{NativeRejectCountsV1, NativeRejectReasonV1},
+    diagnostics::{
+        NativeRejectCountsV1, NativeRejectReasonV1, NativeTransferDiagnosticsV1, UdpRecoveryEvent,
+    },
     handshake::NativeHandshake,
     handshake_continuation::{self, Received as ContinuationReceived},
     object_sender::NativeObjectSender,
@@ -193,6 +195,7 @@ pub struct NativeEndpoint {
     configured: Option<ConfiguredAdmission>,
     wire_budget: Option<NativeWireBudget>,
     traffic_started: bool,
+    recovery_diagnostics: Option<Arc<NativeTransferDiagnosticsV1>>,
     continuation: handshake_continuation::Receiver,
 }
 
@@ -200,6 +203,27 @@ pub struct NativeEndpoint {
 mod carriers;
 
 impl NativeEndpoint {
+    pub(crate) fn set_recovery_diagnostics_v1(
+        &mut self,
+        observer: Arc<NativeTransferDiagnosticsV1>,
+    ) {
+        self.recovery_diagnostics = Some(observer);
+    }
+
+    fn observe_udp_recovery(&self, peer: usize, event: UdpRecoveryEvent, now: Instant) {
+        if let Some(observer) = &self.recovery_diagnostics {
+            observer.udp_recovery(peer, event, self.session_id(peer), now, None);
+        }
+    }
+
+    fn recovery_peer_for_source(&self, source: NativeRoute) -> Option<usize> {
+        if self.recovery_diagnostics.is_none() || !matches!(source, NativeRoute::Udp(_)) {
+            return None;
+        }
+        let peer = *self.sources.get(&source)?;
+        (self.peers.get(&peer)?.configured_key.is_some() && self.peer_uses_reliable_carrier(peer))
+            .then_some(peer)
+    }
     /// Adopt a Finished-verified channel on its original authenticated carrier.
     /// This consumes the existing channel; it never performs a second UDP
     /// handshake or treats a transport route as a node identity proof.
@@ -310,6 +334,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            recovery_diagnostics: None,
             continuation: handshake_continuation::Receiver::new(Instant::now()),
         })
     }
@@ -369,6 +394,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            recovery_diagnostics: None,
             continuation: handshake_continuation::Receiver::new(Instant::now()),
         };
         endpoint.allow_clients(identity, clients, streams, budget)?;
@@ -485,6 +511,7 @@ impl NativeEndpoint {
             }),
             wire_budget: None,
             traffic_started: false,
+            recovery_diagnostics: None,
             continuation,
         })
     }
@@ -643,6 +670,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            recovery_diagnostics: None,
             continuation,
         })
     }
@@ -1121,10 +1149,29 @@ impl NativeEndpoint {
                 ReceivedDatagram::Owned(bytes, _) => bytes.as_slice(),
             };
             if bytes.starts_with(handshake_continuation::MAGIC) {
+                let recovery_peer = self.recovery_peer_for_source(source);
+                if let Some(peer) = recovery_peer {
+                    let event = match bytes.get(8) {
+                        Some(1) => Some(UdpRecoveryEvent::InitObserved),
+                        Some(2) => Some(UdpRecoveryEvent::ChallengeObserved),
+                        Some(3) => Some(UdpRecoveryEvent::PartObserved),
+                        _ => None,
+                    };
+                    if let Some(event) = event {
+                        self.observe_udp_recovery(peer, event, now);
+                    }
+                }
                 if self
                     .receive_continuation(source, bytes, wall_ms, now, &mut result)
                     .is_err()
                 {
+                    if let Some(peer) = recovery_peer {
+                        self.observe_udp_recovery(
+                            peer,
+                            UdpRecoveryEvent::ContinuationRejected,
+                            now,
+                        );
+                    }
                     result.rejected_datagrams += 1;
                     result
                         .rejection_reasons
@@ -1135,7 +1182,14 @@ impl NativeEndpoint {
                 continue;
             }
             if bytes.starts_with(b"NVHSHK") {
+                let recovery_peer = self.recovery_peer_for_source(source);
+                if let Some(peer) = recovery_peer {
+                    self.observe_udp_recovery(peer, UdpRecoveryEvent::HandshakeObserved, now);
+                }
                 if self.receive_handshake(source, bytes, wall_ms, now).is_err() {
+                    if let Some(peer) = recovery_peer {
+                        self.observe_udp_recovery(peer, UdpRecoveryEvent::HandshakeRejected, now);
+                    }
                     result.rejected_datagrams += 1;
                     result
                         .rejection_reasons
@@ -1209,13 +1263,20 @@ impl NativeEndpoint {
                 .map(|(&i, _)| i)
                 .expect("nonempty peers");
             self.turn = index.saturating_add(1);
+            let recovery = self.configured.is_some() && self.peer_uses_reliable_carrier(index);
+            let observer = self
+                .recovery_diagnostics
+                .as_deref()
+                .filter(|_| recovery)
+                .map(|observer| (observer, index));
             let peer = self.peers.get_mut(&index).expect("known native peer");
             if let Some(pending) = &mut peer.reconnect {
-                match pending.handshake.try_send_limited(
+                match pending.handshake.try_send_observed(
                     self.io.as_ref(),
                     wall_ms,
                     now,
                     self.wire_budget.as_mut(),
+                    observer,
                 ) {
                     Ok(true) => result.handshakes_sent += 1,
                     Ok(false) => {}
@@ -1226,13 +1287,17 @@ impl NativeEndpoint {
                 continue;
             };
             if handshake.is_expired(now) {
+                if let Some((observer, peer)) = observer {
+                    observer.udp_recovery(peer, UdpRecoveryEvent::AttemptDeadline, None, now, None);
+                }
                 continue;
             }
-            match handshake.try_send_limited(
+            match handshake.try_send_observed(
                 self.io.as_ref(),
                 wall_ms,
                 now,
                 self.wire_budget.as_mut(),
+                observer,
             ) {
                 Ok(true) => result.handshakes_sent += 1,
                 Ok(false) => {}
@@ -1262,13 +1327,41 @@ impl NativeEndpoint {
         };
         match self.continuation.receive(address, wire, now)? {
             ContinuationReceived::Reply(reply) => {
-                match super::wire_budget::try_send_datagram(
+                let recovery_peer = self.recovery_peer_for_source(source);
+                let deferred_before = self
+                    .wire_budget
+                    .as_ref()
+                    .map(NativeWireBudget::send_deferred_count);
+                let sent = super::wire_budget::try_send_datagram(
                     self.io.as_ref(),
                     &reply,
                     source,
                     now,
                     self.wire_budget.as_mut(),
-                ) {
+                );
+                if let Some(peer) = recovery_peer {
+                    let deferred_after = self
+                        .wire_budget
+                        .as_ref()
+                        .map(NativeWireBudget::send_deferred_count);
+                    let event = match &sent {
+                        Ok(true) => UdpRecoveryEvent::DatagramSent,
+                        Ok(false) if deferred_before != deferred_after => {
+                            UdpRecoveryEvent::BudgetDeferred
+                        }
+                        Ok(false) => UdpRecoveryEvent::IoWouldBlock,
+                        Err(_) => UdpRecoveryEvent::SendFailed,
+                    };
+                    let os_error = sent
+                        .as_ref()
+                        .err()
+                        .and_then(|e| e.downcast_ref::<std::io::Error>())
+                        .and_then(std::io::Error::raw_os_error);
+                    if let Some(observer) = &self.recovery_diagnostics {
+                        observer.udp_recovery(peer, event, self.session_id(peer), now, os_error);
+                    }
+                }
+                match sent {
                     Ok(true) => result.handshakes_sent += 1,
                     Ok(false) => {}
                     Err(_) => result.handshake_send_failures += 1,
@@ -1306,7 +1399,17 @@ impl NativeEndpoint {
             ContinuationReceived::Complete(transcript) => {
                 // A valid cookie and digest do NOT authenticate a peer. Keep
                 // the same admission/replay/reconnect and signed expiry checks.
-                self.receive_handshake(source, &transcript, wall_ms, now)?;
+                let recovery_peer = self.recovery_peer_for_source(source);
+                if let Some(peer) = recovery_peer {
+                    self.observe_udp_recovery(peer, UdpRecoveryEvent::HandshakeObserved, now);
+                }
+                let accepted = self.receive_handshake(source, &transcript, wall_ms, now);
+                if accepted.is_err() {
+                    if let Some(peer) = recovery_peer {
+                        self.observe_udp_recovery(peer, UdpRecoveryEvent::HandshakeRejected, now);
+                    }
+                }
+                accepted?;
             }
             ContinuationReceived::Pending => {}
         }

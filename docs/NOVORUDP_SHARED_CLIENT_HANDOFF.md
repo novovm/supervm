@@ -1171,6 +1171,46 @@ C原事件received_integrity_verified、1/1片及hash完成、原反馈3次且mi
 [双端独立匹配报告](../artifacts/audit/validator-a-c-ddd-object-match-20261108/README.md)。
 C继续当前节点在线；D及NOVOCHAT处于本轮操作范围之外。
 
+### 22. 2026-11-08 原owner有界UDP恢复观察：源码接线，未更新实机
+
+承接A/C短报头e58b33cb和原owner审计bec85de4，本次仅补充原网络观察器，
+不修改恢复决策、身份/角色选举、握手/AEAD、资源额度、重试或超时。
+NativeObjectLink.set_diagnostics_v1将**同一个**原观察器交给NativeEndpoint，
+仍由已有probe opt-in或原profile入口开启；默认无观察器，不新增环境变量、
+socket、任务、RPC、协议或业务JSON转换。NOVOCHAT与运行节点未动。
+
+新数据沿原progress输出：`native_network_probe.transport.udp_recovery`，
+以及`udp_recovery_event_names`、`udp_recovery_omitted`。
+peer为原配置peer索引，不能当作validator全局编号或新成员表。
+每个原观察器最多64个peer记录、22个饱和计数及最后阶段/发送时刻、
+实际send错误的OS错误号和本地active Session ID。没有载荷、公钥或私钥。
+沿用try_lock和原contended_observations，导出竞争不等待，遗漏明确计数；
+不保留无界事件历史，不受256对象记录淘汰影响，不改原对象DONE语义。
+
+状态包括request、passive_role、pending_reconnect、active_attempt、attempt_started；
+retry_wait、no_transcript、attempt_deadline、signed_expiry；datagram_sent、
+budget_deferred、io_would_block、send_failed；未认证的INIT/challenge/part观察、
+续传/握手拒绝、awaiting_aead_confirmation、pending_expired及udp_route_activated。
+发送观察包围原try_send_limited的一次实际调用，用原budget拒绝计数的只读前后值
+区分预算延后与WouldBlock；不重新做准入、调用两次IO或把排队记为发送成功。
+cookie challenge回复也按原实际IO结果记录，完整续传正文才进入原握手检查。
+未知/未归属来源不猜测peer，不把未认证观察标为身份认证通过。
+
+`udp_route_activated`仅表示本地原owner安装了认证UDP会话，不代表对方已确认、
+对象DONE、Business Receipt或四机最终性。计数为观察次数，不是唯一包/尝试总数；
+attempt_started才统计实际新建尝试。较大的恢复角色仍被动等待，不能为产生日志改选举。
+
+本轮本地验证：Windows接线阶段网络库串行1292通过/0失败/13忽略；最终命名及测试
+清理后Windows/Linux各5项定向通过，含真实本机UDP切回、推进时钟后的过期重试、
+预算/IO/错误/签名过期区分、64peer边界和观察锁竞争。两平台严格Iroh Clippy及节点
+lib检查通过，Windows默认feature严格Clippy通过。固定时钟旧例不冒充长期实机资格。
+开发中较宽并行筛选触发两项原bootstrap测试端点许可耗尽，串行原全库包含它们通过；
+原失败及中间Clippy问题保留在[本轮记录](../artifacts/audit/udp-recovery-observation-20261108/README.md)。
+
+本提交不是固定候选包或部署验收。运行A/B/C仍ddd89e8e、D未操作；旧实机证据不
+自动覆盖新代码。后继先按原打包器固定新程序/AOEM清单，再单独批准A/C原库existing
+更新，才能从实际恢复状态定位当前实机停顿；不自动启动、重装、换钥或初始化。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
