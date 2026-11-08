@@ -8,11 +8,17 @@
 A三类防火墙按追加授权恢复启用，新程序仅增加同范围41051/42051规则，旧规则保留。
 前后状态根均f6186d40…，height0/current_height1，最终认证Status通过；不是最终性
 或TPS。启动没有自动发Probe；A→B提权命令被取消，未执行。B→A一条固定对象随后
-经原native_udp获得发送端ObjectDONE及对应ACK；A接收侧观察未读回，不签双端完整链。
+经原native_udp获得发送端ObjectDONE及对应ACK；后继只读补证已取得A恰好1条
+probe_received_integrity_verified，同Object ID/Session ID/双方身份匹配，详见
+[第20节](../../../docs/NOVORUDP_SHARED_CLIENT_HANDOFF.md#20-2026-11-08-a接收记录只读补齐同一ba对象双端匹配)。
+该条B→A双端有界接管可登记，不代表Business Receipt、A→C或四机。
 B初期1884次unknown_source之后不增长，来源未归因，旧计数和失败记录保留。
 精确hash、原库、退出、发现与限制见[共享交接第19节](../../../docs/NOVORUDP_SHARED_CLIENT_HANDOFF.md#19-2026-11-08-获批ab原库更新已执行cd保持082)。
 [29份公开更新证据](novonet-probe-ddd89e8e-AB-update-evidence.zip)，67510字节，SHA256
 `bb97f8aceda13cbd4b51371c663838a295e1c8c87c48b81885920722057ca7cb`。
+[8份A接收补证](novonet-probe-ddd89e8e-A-receive-evidence.zip)，57461字节，SHA256
+`65251131756ca8d13d2c78642532be5b6da11f5952fa02646f4bcd2bafa65130`。补证未重启、
+重发、修改ACL或读私钥；此前缺口是取证遗漏，不是接收失败，旧汇总按当时时间保留。
 C/D本轮未操作；下一步C同版本existing更新及A→C双端Object ID/Session ID/DONE
 须后继批准，不重初始化，不把B→A发送端DONE冒充四机或资产业务完成。
 
