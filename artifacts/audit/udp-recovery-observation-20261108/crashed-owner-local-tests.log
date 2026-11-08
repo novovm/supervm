@@ -1,0 +1,10 @@
+PASS 5 isolated node-exit barrier cases
+PASS 8 process-state cases including actual live and terminated Windows processes; no node was stopped
+PASS 7 deployment gates: syntax, new-only evidence, duplicate preservation, real path, bad package, host scope, forbidden actions
+PASS actual fixed Windows package through the same deployment gate
+PASS 13 firewall cases: renamed association accepted; 10 semantic changes, wrong association and wrong class rejected
+PASS 6 actual prepared Windows firewall filter comparisons; read-only, no rule changes
+PASS 12 crashed-owner gates: exact crash accepted; live task, authority, restart, trigger, result, application, path, exception, pid and timeline counterexamples rejected
+PASS actual C crash receipt through original crash-evidence gate; not a live C process-state qualification
+PASS 5 isolated node-exit barrier cases
+PASS 8 process-state cases including actual live and terminated Windows processes; no node was stopped

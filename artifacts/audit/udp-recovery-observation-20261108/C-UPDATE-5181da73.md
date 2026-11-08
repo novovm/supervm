@@ -65,3 +65,45 @@ release目录、建立独立logs/空commands路径。复用原进程句柄退出
 A用原认证SDK查询C，匹配更新前后状态根；脚本的progress一致不代替这项实测。
 此处不提前记为原生UDP恢复或对象DONE通过，不重新运行旧A→C对象。下一条固定
 对象由A统一安排，保持唯一Object ID及双方实际路径记录。
+
+## 2026-11-09 C旧节点已在更新前崩溃：使用异常恢复分支
+
+A已签收C的`a074d90d`及`5cb5736e`回执。ZIP/77项制品已通过，不用重拷或重新解包。
+C-run1拒绝发生在更新前身份门禁，旧节点未被更新脚本停止；后继Application事件已
+证明旧PID23024于北京时间00:51:52以0xc0000005崩溃，早于04:41更新尝试。
+旧任务Ready、最后结果0xC0000005、旧progress停更，不能继续冒充健康活跃进程。
+
+A已完成5181原库更新，PID13964；04:56的原认证SDK Status耗时29ms，height0，
+状态根仍为`f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`。
+这允许继续已授权的C阶段，但不是UDP恢复或业务最终性验收。
+
+C Codex同步包含本节及`RecoverCrashed`的最新main，使用原管理员PowerShell 7执行：
+
+```powershell
+$repo = (git rev-parse --show-toplevel).Trim()
+& "$repo\scripts\windows\Update-Novonet5181Existing.ps1" `
+  -HostId C `
+  -PackageRoot 'E:\区块链四机通讯\novonet-5181-update-20261109\novonet-probe-5181da73-windows-x86_64' `
+  -EvidenceRoot "$repo\target\novonet-5181-update-20261109\C-run2" `
+  -RecoverCrashed
+```
+
+`RecoverCrashed`不是force，也不修改普通活跃进程更新的身份规则：
+
+- 原program/AOEM/库路径/用途材料必须仍匹配；原任务必须Ready、LocalService、
+  无自动重启/触发器、退出码0xC0000005，并有本次运行期间匹配的原程序崩溃事件。
+- 对所有仍被CIM列出的novovm-node进程，使用同一内核句柄的PID、创建时间和
+  `WaitForSingleObject(0)`查询状态。仅内核PROCESS已经signaled的退出对象可从
+  活跃owner集合中排除，仍保留其PID、父PID及退出证据。ThreadCount=0、HandleCount=0、
+  路径为空、仅退出码或事件记录均不能单独替代此证明。
+- 查询权限不足、PID换代、内核等待仍未退出、未知进程或原端口仍被占用，一律拒绝。
+  不杀PID8672、不结束未知进程、不重启机器或删除LOCK来让它通过。
+- 启动前重新验证旧任务未变活跃、没有执行中node；新实例仍由原AOEM existing
+  打开原库并执行原锁/恢复检查，不绕过数据库锁。旧停更progress只作恢复前参考，
+  不称健康；恢复后仍核对原状态、实际库、用途哈希和新监听。
+
+保留C-run1及其入口/身份/崩溃日志；此次只新建C-run2，不使用ResumePrepared（C尚无
+5181 work），不清理残留、不更换钥或创世。失败则回传error与kernel证明，不能重复
+换目录刷成功。成功后按上节完成120秒观察及公开回传；原配置/DB/转储留本机。
+0xc0000005的具体代码根因仍未知，原WER日志/若已有崩溃dump请保全并记录哈希，
+不得把含内存/用途材料的dump上传公开GitHub，也不据本次启动适配声称崩溃已修复。

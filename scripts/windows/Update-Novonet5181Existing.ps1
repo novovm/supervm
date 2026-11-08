@@ -6,7 +6,8 @@ param(
     [string]$EvidenceRoot,
     [switch]$Owner,
     [switch]$Rollback,
-    [switch]$ResumePrepared
+    [switch]$ResumePrepared,
+    [switch]$RecoverCrashed
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -16,7 +17,7 @@ $manifestPin='f381ccd4eed0a9176e3b91aded8f699f19bb64bd983307c44f1dbf8086162ab3'
 $nodePin='ff68c5930b9b205b25ba5351a17ad08aa68f51d7cf71779d0507b6269f4087f3'
 $oldNodePin='19883c8b95fc059ec7838ff0556284b1ddd434b7a72bfbe93e3f3410f458a0fc'
 $corePin='1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50'
-$helperPin='367e239d0ae89cfb5cbb2cc20746adf73f3d31d4a946e17cae3c4a6fa8eeb741'
+$helperPin='659d2cdecf3e5ca0e58472a25c9f85b4f85a05095fca7b0cc0fc4277077f7b66'
 $state="C:\ProgramData\NOVOVM\selfrun\91129655606029\$HostId"
 $oldWork=Join-Path $state 'novonet-probe-ddd89e8e-20261108'
 $work=Join-Path $state 'novonet-probe-5181da73-20261109'
@@ -83,6 +84,11 @@ function Assert-FirewallFilterScope($OldFilter,$NewFilter,[string]$OldName,[stri
     $properties=@($OldFilter.CimClass.CimClassProperties.Name|Where-Object {$_ -notin @('InstanceID','Caption','Description','ElementName','CreationClassName')})
     if(($OldFilter|Select-Object $properties|ConvertTo-Json -Depth 10 -Compress) -cne ($NewFilter|Select-Object $properties|ConvertTo-Json -Depth 10 -Compress)){throw 'Copied firewall filter scope differs'}
 }
+function Assert-CrashedOwnerEvidence($Evidence,[string]$ExpectedPath) {
+    if($Evidence.task_state -cne 'Ready' -or $Evidence.task_sid -cne 'S-1-5-19' -or $Evidence.restart_count -ne 0 -or $Evidence.trigger_count -ne 0 -or $Evidence.task_exit_code -ne 3221225477){throw 'Crashed task lifecycle not proven'}
+    if($Evidence.application -cne 'novovm-node.exe' -or $Evidence.application_path -cne $ExpectedPath -or $Evidence.exception_code -cne 'c0000005' -or $Evidence.fault_pid -le 0){throw 'Matching original application crash not proven'}
+    if($Evidence.created_utc -lt $Evidence.last_run_utc.AddSeconds(-5) -or $Evidence.created_utc -gt $Evidence.event_utc -or $Evidence.event_utc -lt $Evidence.last_run_utc -or $Evidence.event_utc -gt [DateTime]::UtcNow.AddSeconds(5)){throw 'Original crash timeline differs'}
+}
 function Start-ExistingTask([string]$Name,[switch]$Old) {
     if(Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue){throw 'Task exists; inspect, do not repeat startup'}
     $arguments='-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "'+(Join-Path $work 'ExistingOwner.ps1')+'" -HostId '+$HostId+' -Owner'
@@ -134,7 +140,7 @@ $stopped=$false
 try {
     if($Rollback) {
         if((Get-FileHash -LiteralPath $oldExe).Hash.ToLowerInvariant() -cne $oldNodePin){throw 'Rollback program mismatch'}
-        $nodes=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'")
+        $nodes=@((Get-NovonetNodeExecutionState).active)
         if($nodes.Count -gt 1){throw 'Unknown concurrent nodes; preserve state'}
         if($nodes.Count -eq 1){Stop-NovonetExactProcess -ProcessId $nodes[0].ProcessId -ExpectedPath $newExe -ExpectedSha256 $nodePin}else{Wait-NovonetNodeExit}
         Start-ExistingTask $rollbackTask -Old
@@ -149,17 +155,40 @@ try {
     if($config.database -cne (Join-Path $state 'chain-state')){throw 'Original database path differs'}
     Assert-NoRedirect $config.database
     if((Get-FileHash -LiteralPath $oldExe).Hash.ToLowerInvariant() -cne $oldNodePin -or (Get-FileHash -LiteralPath $config.library).Hash.ToLowerInvariant() -cne $corePin){throw 'Original program/runtime differs'}
-    $nodes=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'")
-    if($nodes.Count -ne 1 -or $nodes[0].ExecutablePath -cne $oldExe -or (Invoke-CimMethod $nodes[0] -MethodName GetOwnerSid).Sid -cne 'S-1-5-19'){throw 'Original process identity not confirmed'}
-    $original=$nodes[0]
+    $execution=Get-NovonetNodeExecutionState
+    $nodes=@($execution.active)
+    $original=$null;$crash=$null
     $task=Get-ScheduledTask -TaskName $oldTask
     $taskSid=if($task.Principal.UserId.StartsWith('S-1-')){$task.Principal.UserId}else{([Security.Principal.NTAccount]::new($task.Principal.UserId)).Translate([Security.Principal.SecurityIdentifier]).Value}
-    if($task.State -ne 'Running' -or [int]$task.Settings.RestartCount -ne 0 -or $taskSid -cne 'S-1-5-19'){throw 'Original task lifecycle differs'}
+    if($RecoverCrashed) {
+        if($nodes.Count -ne 0){throw 'Crashed recovery requires no executing node; do not kill unknown processes'}
+        $info=Get-ScheduledTaskInfo -TaskName $oldTask
+        $crashes=@(Get-WinEvent -FilterHashtable @{LogName='Application';Id=1000;StartTime=$info.LastRunTime}|ForEach-Object {
+            $xml=[xml]$_.ToXml();$fields=@{}
+            foreach($field in $xml.Event.EventData.Data){$fields[[string]$field.Name]=[string]$field.'#text'}
+            if($fields.AppPath -ceq $oldExe -and $fields.ExceptionCode -ceq 'c0000005') {
+                [pscustomobject]@{event_id=$_.Id;record_id=$_.RecordId;event_utc=$_.TimeCreated.ToUniversalTime();application=$fields.AppName;application_path=$fields.AppPath;exception_code=$fields.ExceptionCode;fault_pid=[Convert]::ToInt32($fields.ProcessId,16);created_utc=[DateTime]::FromFileTimeUtc([Convert]::ToInt64($fields.ProcessCreationTime,16));report_id=$fields.IntegratorReportId}
+            }
+        }|Sort-Object event_utc -Descending)
+        if($crashes.Count -lt 1){throw 'Original crash event missing; preserve state'}
+        $crash=$crashes[0]
+        $crash|Add-Member -NotePropertyMembers @{task_state=$task.State.ToString();task_sid=$taskSid;restart_count=[int]$task.Settings.RestartCount;trigger_count=@($task.Triggers|Where-Object {$null -ne $_}).Count;task_exit_code=[uint32]$info.LastTaskResult;last_run_utc=$info.LastRunTime.ToUniversalTime()}
+        Assert-CrashedOwnerEvidence $crash $oldExe
+        $expectedPorts=if($HostId -ceq 'A'){@(41051,42051)}else{@(41052,42052)}
+        if(@(Get-NetUDPEndpoint|Where-Object {$_.LocalPort -in $expectedPorts}).Count){throw 'Original ports still have an owner; preserve state'}
+        Wait-NovonetNodeExit
+        Write-NewJson "$out/crash-recovery-preflight.json" ([ordered]@{crash=$crash;execution=$execution;no_executing_nodes=$true;original_ports_unbound=$true;terminated_processes_not_killed=$true})
+    } else {
+        if($nodes.Count -ne 1 -or $nodes[0].ExecutablePath -cne $oldExe -or (Invoke-CimMethod $nodes[0] -MethodName GetOwnerSid).Sid -cne 'S-1-5-19'){throw 'Original process identity not confirmed'}
+        $original=$nodes[0]
+        if($task.State -ne 'Running' -or [int]$task.Settings.RestartCount -ne 0 -or $taskSid -cne 'S-1-5-19'){throw 'Original task lifecycle differs'}
+    }
     $progress=Get-Content -LiteralPath "$oldWork/logs/progress.json" -Raw|ConvertFrom-Json
-    if($progress.chain_id -ne 91129655606029 -or $progress.execution_failures -ne 0 -or ((Get-Date)-(Get-Item -LiteralPath "$oldWork/logs/progress.json").LastWriteTime).TotalSeconds -gt 30){throw 'Original progress not live and healthy'}
+    $progressAge=((Get-Date)-(Get-Item -LiteralPath "$oldWork/logs/progress.json").LastWriteTime).TotalSeconds
+    if($progress.chain_id -ne 91129655606029 -or $progress.execution_failures -ne 0 -or (!$RecoverCrashed -and $progressAge -gt 30)){throw 'Original progress not live and healthy'}
     $keys=Get-CustodyHashes $config $network
     $profiles=@(Get-NetFirewallProfile|Select-Object Name,Enabled)
-    Write-NewJson "$out/before.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');pid=$original.ProcessId;exe=$oldExe;node_sha256=$oldNodePin;sid='S-1-5-19';database=$config.database;custody_sha256=$keys;config=$config;network=$network;progress=$progress;firewall_profiles=$profiles})
+    Write-NewJson "$out/before.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');pid=$(if($null -ne $original){$original.ProcessId}else{$null});exe=$oldExe;node_sha256=$oldNodePin;sid='S-1-5-19';database=$config.database;custody_sha256=$keys;config=$config;network=$network;progress=$progress;progress_age_seconds=$progressAge;prior_owner_crashed=[bool]$RecoverCrashed;crash=$crash;firewall_profiles=$profiles})
     if((Test-Path -LiteralPath $work) -and !$ResumePrepared){throw 'Prepared work exists; inspect before explicit resume'}
     if(Test-Path -LiteralPath $release){Assert-Package $release}else{Copy-Item -LiteralPath $PackageRoot -Destination $release -Recurse;Assert-Package $release}
     foreach($item in @((Get-Item -LiteralPath $release))+@(Get-ChildItem -LiteralPath $release -Recurse -Force)){Set-OwnerAcl $item.FullName}
@@ -204,13 +233,17 @@ try {
     if(($profiles|ConvertTo-Json -Compress) -cne (@(Get-NetFirewallProfile|Select-Object Name,Enabled)|ConvertTo-Json -Compress)){throw 'Firewall profiles changed'}
     Write-NewJson "$out/firewall.json" ([ordered]@{old_rule=$rule.Name;new_rule=$newRule;old_preserved=$true;filters_copied_exactly=$true;program=$newExe;profiles_unchanged=$true})
     if(Get-ScheduledTask -TaskName $newTask -ErrorAction SilentlyContinue){throw 'New task already exists'}
-    Stop-NovonetExactProcess -ProcessId $original.ProcessId -ExpectedPath $oldExe -ExpectedSha256 $oldNodePin
+    if($RecoverCrashed) {
+        if((Get-ScheduledTask -TaskName $oldTask).State -ne 'Ready'){throw 'Old task became active; preserve state'}
+        Wait-NovonetNodeExit
+    }else{Stop-NovonetExactProcess -ProcessId $original.ProcessId -ExpectedPath $oldExe -ExpectedSha256 $oldNodePin}
     $stopped=$true
-    Write-NewJson "$out/old-exit.json" ([ordered]@{pid=$original.ProcessId;exe=$oldExe;process_handle_waited=$true;node_enumeration_quiescent=$true;scope='authorized exact interrupted-process recovery; not graceful drain';time=(Get-Date).ToUniversalTime().ToString('o')})
+    Write-NewJson "$out/old-exit.json" ([ordered]@{pid=$(if($null -ne $original){$original.ProcessId}else{$crash.fault_pid});exe=$oldExe;process_handle_waited=$true;no_executing_node=$true;terminated_by_updater=(!$RecoverCrashed);scope='authorized original-database interrupted recovery; not graceful drain';time=(Get-Date).ToUniversalTime().ToString('o')})
     Start-ExistingTask $newTask
     for($i=0;$i -lt 120 -and !(Test-Path -LiteralPath "$work/logs/progress.json");$i++){Start-Sleep -Milliseconds 500}
     if(!(Test-Path -LiteralPath "$work/logs/progress.json")){throw 'No new original-owner progress'}
-    $new=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'")
+    $newExecution=Get-NovonetNodeExecutionState
+    $new=@($newExecution.active)
     if($new.Count -ne 1 -or $new[0].ExecutablePath -cne $newExe -or (Invoke-CimMethod $new[0] -MethodName GetOwnerSid).Sid -cne 'S-1-5-19'){throw 'New process identity differs'}
     $current=Get-Content -LiteralPath "$work/logs/progress.json" -Raw|ConvertFrom-Json
     if($current.chain_id -ne 91129655606029 -or $current.execution_failures -ne 0 -or $current.current_height -ne $progress.current_height -or ($current.head|ConvertTo-Json -Compress) -cne ($progress.head|ConvertTo-Json -Compress)){throw 'Original state progress differs'}
@@ -219,14 +252,14 @@ try {
     foreach($path in $keys.Keys){if($keys[$path] -cne $afterKeys[$path]){throw 'Custody changed'}}
     $modules=@((Get-Process -Id $new[0].ProcessId).Modules|Where-Object ModuleName -EQ 'aoem_ffi.dll')
     if($modules.Count -ne 1 -or $modules[0].FileName -ine $config.library -or (Get-FileHash -LiteralPath $modules[0].FileName).Hash.ToLowerInvariant() -cne $corePin){throw 'Actually loaded AOEM differs'}
-    Write-NewJson "$out/after.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');source=$source;pid=$new[0].ProcessId;exe=$newExe;node_sha256=$nodePin;sid='S-1-5-19';database=$config.database;start='existing';initialize_executed=$false;keys_generated=$false;custody_unchanged=$true;aoem_module=$modules[0].FileName;aoem_sha256=$corePin;old_task=(Get-ScheduledTask -TaskName $oldTask).State.ToString();new_task=$newTask;progress=$current;listeners=@(Get-NetUDPEndpoint|Where-Object OwningProcess -EQ $new[0].ProcessId|Select-Object LocalAddress,LocalPort,OwningProcess);new_command_file_present=(Test-Path -LiteralPath $network.probe_control_file)})
+    Write-NewJson "$out/after.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');source=$source;pid=$new[0].ProcessId;exe=$newExe;node_sha256=$nodePin;sid='S-1-5-19';database=$config.database;start='existing';initialize_executed=$false;keys_generated=$false;custody_unchanged=$true;aoem_module=$modules[0].FileName;aoem_sha256=$corePin;old_task=(Get-ScheduledTask -TaskName $oldTask).State.ToString();new_task=$newTask;prior_owner_crashed=[bool]$RecoverCrashed;terminated_process_observations=$newExecution.exited;progress=$current;listeners=@(Get-NetUDPEndpoint|Where-Object OwningProcess -EQ $new[0].ProcessId|Select-Object LocalAddress,LocalPort,OwningProcess);new_command_file_present=(Test-Path -LiteralPath $network.probe_control_file)})
     Write-NewJson "$out/result.json" ([ordered]@{host_id=$HostId;source=$source;update_completed=$true;start='existing';database=$config.database;pid=$new[0].ProcessId;custody_unchanged=$true;progress_state_unchanged=$true;authenticated_state_root_external_check_required=$true;recovery_observer_available=$true;new_object_sent=$false;root_cause_resolved=$false;initialize_executed=$false;business_receipt=$false})
     Write-Output "PASS $HostId 5181da73 existing update; external authenticated Status and UDP recovery observation remain required"
 } catch {
     $problem=$_.ToString()
-    Write-NewJson "$out/error.json" ([ordered]@{error=$problem;old_node_stopped=$stopped;time=(Get-Date).ToUniversalTime().ToString('o')})
+    Write-NewJson "$out/error.json" ([ordered]@{error=$problem;old_node_stopped=($stopped -and !$RecoverCrashed);existing_start_attempted=$stopped;prior_owner_crashed=[bool]$RecoverCrashed;time=(Get-Date).ToUniversalTime().ToString('o')})
     if($stopped) {
-        $remaining=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'")
+        $remaining=@((Get-NovonetNodeExecutionState).active)
         if($remaining.Count -gt 1){throw 'Unknown concurrent processes; preserve state, no automatic rollback'}
         if($remaining.Count -eq 1){Stop-NovonetExactProcess -ProcessId $remaining[0].ProcessId -ExpectedPath $newExe -ExpectedSha256 $nodePin}else{Wait-NovonetNodeExit}
         Start-ExistingTask $rollbackTask -Old

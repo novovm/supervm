@@ -1233,6 +1233,14 @@ CreationClassName随新规则关联名称变化；部署脚本改为验证各自
 范围，并通过13项正反例及6类真实过滤器门禁。见[修正记录](../artifacts/audit/udp-recovery-observation-20261108/README.md#2026-11-09-固定更新脚本的规则关联比较修正)。
 程序5181da73及ZIP不变，C仅同步新脚本；A短入口已改为核验后ResumePrepared，
 独立A-run2保留原失败，不自动重复UAC或初始化。
+后继A-run2实际成功：LocalService PID13964，新固定node/AOEM匹配，原库existing及
+用途材料保持，认证SDK Status 27/29ms、height0、原根一致。见[公开摘要](../artifacts/audit/udp-recovery-observation-20261108/a-update-confirmed-20261109.json)。
+C新包已过但未启动：回执5cb5736e证明旧ddd在更新前已崩溃，0xc0000005；残留PID
+仍需内核证明退出。已在同一固定部署脚本补显式RecoverCrashed，经过原任务/匹配
+崩溃事件、内核signaled且无活跃owner及空闲原端口，才由原owner existing恢复原库。
+不杀未知进程或删LOCK，不将0线程/路径为空当退出。A本地PS7/5.1及正反例通过，
+不冒充C现场内核资格。C按[后继C-run2指令](../artifacts/audit/udp-recovery-observation-20261108/C-UPDATE-5181da73.md#2026-11-09-c旧节点已在更新前崩溃使用异常恢复分支)
+同步脚本后执行一次；5181程序和ZIP不变，B/D不动。崩溃与实机UDP恢复根因均未销账。
 实机根因仍未定位，旧证据不自动覆盖新代码；B/D及NOVOCHAT不动、不换钥或初始化。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）

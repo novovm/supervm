@@ -117,3 +117,39 @@ B/D及NOVOCHAT不动，不重做已完成对象验收。
 覆盖旧报告。用户可在原管理员终端执行同一条Start-A命令继续；本轮未重复弹UAC。
 脚本修正不改变5181da73程序或ZIP，**不需要重新构建/复制候选包**；C需同步最新
 更新脚本后再执行。A尚未完成更新，C仍等待A健康确认。
+
+## 2026-11-09 A已完成、C先前崩溃回执已签收
+
+A随后手动完成A-run2，固定node ff68c593…087f3、AOEM 1b764a36…ce50，
+LocalService PID13964、原库existing、用途文件不变、41051/42051监听，22项恢复
+观察字段可用。04:30与04:56两次原认证SDK Status分别27/29ms，height0、原根不变。
+实际原始结果及查询保存于A本地`target/novonet-5181-update-20261109`；
+[公开摘要](a-update-confirmed-20261109.json)不含配置或密钥。这是原库/程序健康检查，
+不是UDP切回、四机最终性、Business Receipt或新TPS结论。
+
+只读接收并fast-forward至C回执5cb5736e：新ZIP及77项已核验，但C-run1没有启动
+新版。后继原Windows Application事件确认旧ddd PID23024在北京时间00:51:52崩溃，
+早于本次更新，原任务结果0xC0000005；PID8672的路径为空、零线程/句柄并不证明
+其已经退出。完整原回执见[原C报告](../validator-c-5181-update-preflight-20261109/README.md)。
+
+现有固定更新脚本此前只接受活跃健康旧节点，不能处理该已崩溃owner。因此在同一
+脚本增加显式RecoverCrashed：原任务/崩溃路径/时间/状态匹配，所有CIM残留PID经只读
+Windows内核查询证明已退出，原端口无人监听，才由原owner existing恢复原库。
+共享退出屏障继续等待两次“无执行中node”，终止对象仍记录，不将CIM行等同活跃线程。
+内核查询只请求QUERY_LIMITED_INFORMATION及SYNCHRONIZE，无Terminate、调试或
+读写内存权；访问失败或不确定即拒绝。启动前再次核对，不删除LOCK或强开原库。
+不能借此忽略活跃进程身份、降低数据库恢复义务或启动第二个网络。
+
+本地验证：原退出屏障5项仍过；新增进程状态8项（含真实隔离Windows进程运行/
+退出及同句柄创建时间），PowerShell7与5.1各通过；12项崩溃owner正反例、实际C事件
+通过同一证据门禁；原7项部署、13项规则及6类真实过滤器、实际固定包门禁通过。
+核验日志`target/novonet-5181-update-20261109/crashed-owner-tests-final.log`。
+这是A本机验证，**不是C残留PID已获内核退出资格**。本轮未停止任何现用节点；
+C需按[后继一次性指令](C-UPDATE-5181da73.md#2026-11-09-c旧节点已在更新前崩溃使用异常恢复分支)
+执行一次C-run2，原授权已覆盖，不再询问换包或重复清点。
+
+进程终止证明的API边界核对依据微软
+[Process termination](https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process)
+及[WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject)：
+已终止PROCESS对象会signaled；不能只把STILL_ACTIVE数值、线程快照或过期CIM信息
+当成退出证明。0xc0000005具体根因仍未定位，不把部署适配当崩溃修复。

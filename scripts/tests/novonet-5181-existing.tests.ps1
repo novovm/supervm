@@ -7,7 +7,7 @@ $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $path),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Update script parse errors'}
 $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false))
-foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope')) {
+foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence')) {
     $function=@($functions|Where-Object Name -CEQ $name)
     if($function.Count -ne 1){throw 'Expected original deployment gate missing'}
     . ([scriptblock]::Create($function[0].Extent.Text))
@@ -101,4 +101,29 @@ if($InspectPreparedFirewall) {
         Assert-FirewallFilterScope (& $command -AssociatedNetFirewallRule $oldRule) (& $command -AssociatedNetFirewallRule $newRule) $oldRule.Name $newRule.Name
     }
     Write-Output 'PASS 6 actual prepared Windows firewall filter comparisons; read-only, no rule changes'
+}
+
+function New-CrashFixture {
+    [pscustomobject]@{task_state='Ready';task_sid='S-1-5-19';restart_count=0;trigger_count=0;task_exit_code=3221225477;application='novovm-node.exe';application_path='C:\fixed\novovm-node.exe';exception_code='c0000005';fault_pid=23024;last_run_utc=[DateTime]::UtcNow.AddHours(-4);created_utc=[DateTime]::UtcNow.AddHours(-4).AddSeconds(1);event_utc=[DateTime]::UtcNow.AddHours(-2)}
+}
+Assert-CrashedOwnerEvidence (New-CrashFixture) 'C:\fixed\novovm-node.exe'
+$changes=@{task_state='Running';task_sid='S-1-5-18';restart_count=1;trigger_count=1;task_exit_code=1;application='other.exe';application_path='C:\other\novovm-node.exe';exception_code='other';fault_pid=0;created_utc=[DateTime]::UtcNow.AddHours(-5);event_utc=[DateTime]::UtcNow.AddHours(-6)}
+foreach($name in $changes.Keys) {
+    $fixture=New-CrashFixture;$fixture.$name=$changes[$name];$rejected=$false
+    try{Assert-CrashedOwnerEvidence $fixture 'C:\fixed\novovm-node.exe'}catch{$rejected=$true}
+    if(!$rejected){throw "Invalid crashed owner $name accepted"}
+}
+Write-Output 'PASS 12 crashed-owner gates: exact crash accepted; live task, authority, restart, trigger, result, application, path, exception, pid and timeline counterexamples rejected'
+$receipt=Join-Path $PSScriptRoot '../../artifacts/audit/validator-c-5181-update-preflight-20261109/application-crash-events.json'
+if(Test-Path -LiteralPath $receipt) {
+    $record=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+    $fields=@{};foreach($field in $record.fields){$fields[$field.name]=$field.value}
+    $reported=New-CrashFixture
+    $reported.application=$fields.AppName;$reported.application_path=$fields.AppPath;$reported.exception_code=$fields.ExceptionCode
+    $reported.fault_pid=[Convert]::ToInt32($fields.ProcessId,16)
+    $reported.created_utc=[DateTime]::FromFileTimeUtc([Convert]::ToInt64($fields.ProcessCreationTime,16))
+    $reported.event_utc=[DateTime]::Parse($record.utc).ToUniversalTime()
+    $reported.last_run_utc=[DateTime]::Parse('2026-11-08T10:30:13+08:00').ToUniversalTime()
+    Assert-CrashedOwnerEvidence $reported 'C:\ProgramData\NOVOVM\releases\novonet-probe-ddd89e8e-windows-x86_64\bin\novovm-node.exe'
+    Write-Output 'PASS actual C crash receipt through original crash-evidence gate; not a live C process-state qualification'
 }

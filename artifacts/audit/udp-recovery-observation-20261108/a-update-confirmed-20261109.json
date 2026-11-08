@@ -1,0 +1,26 @@
+{
+  "host_id": "A",
+  "source_commit": "5181da733d59d998afa898bb9964db5deae9e72c",
+  "pid_observed": 13964,
+  "running_account_sid": "S-1-5-19",
+  "node_sha256": "ff68c5930b9b205b25ba5351a17ad08aa68f51d7cf71779d0507b6269f4087f3",
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+  "start": "existing",
+  "custody_unchanged": true,
+  "initialize_executed": false,
+  "native_udp_port": 41051,
+  "carrier_udp_port": 42051,
+  "udp_recovery_event_names": 22,
+  "authenticated_status": [
+    {"local_time": "2026-11-09T04:30:48+08:00", "elapsed_ms": 27, "height": 0},
+    {"local_time": "2026-11-09T04:56:42+08:00", "elapsed_ms": 29, "height": 0}
+  ],
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "c_updated": false,
+  "udp_recovery_resolved": false,
+  "new_object_done": false,
+  "business_receipt": false,
+  "four_host_finality": false,
+  "new_tps_measured": false
+}
