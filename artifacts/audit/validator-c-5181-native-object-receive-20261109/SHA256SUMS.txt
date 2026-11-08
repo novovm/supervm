@@ -1,0 +1,3 @@
+8f3442771d827199c9fa2f55fbf540bc9f07e1048aa2f1f9e4a7e52d6527eddc  original-public-results.zip
+49a3d6ed32d368709823b608f929f9226590bec8a8ead8db11cef2f032263def  README.md
+e38dca6a1bc3defed113ef859513d7e606f0f10f2a52ce01dfa55b28c6a716b5  receive-public.json
