@@ -1,0 +1,36 @@
+{
+  "status": "STOPPED_BEFORE_NODE_UPDATE",
+  "host": "C",
+  "old_pid": 22860,
+  "old_node_sha256": "9040ac63828c30011e8e7c4801be31183ecb69960854dd4974671df3d5d14d51",
+  "old_aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "original_database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "old_process_still_observed": 22860,
+  "candidate_zip_bytes": 150476966,
+  "candidate_zip_sha256": "9841a060ab37dc6fbca174ee91048f3e3e54d106957d6e9e0781e7fe44a9115e",
+  "candidate_artifacts_verified": 77,
+  "error": {
+    "success": false,
+    "error": "\u627e\u4e0d\u5230\u8def\u5f84\u201cC:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\novonet-08236129-20261108\\run.json\u201d\uff0c\u56e0\u4e3a\u8be5\u8def\u5f84\u4e0d\u5b58\u5728\u3002",
+    "observed_utc": "2026-11-08T02:02:46.9843316Z"
+  },
+  "new_node_started": false,
+  "old_node_stopped": false,
+  "initialize_executed": false,
+  "corrected_script_executed": false,
+  "A_to_C_probe_executed": false,
+  "public_zip_sha256": "0ba794eabb717ae7c86f7a062d1f16dae721fb725be28695a8bdaa57de59ff75",
+  "files_sha256": {
+    "C-before.json": "41679eb926b8dae1b5f467a3a754bb8dc4758c1832aa38ee75730c9e8d0d2f8a",
+    "C-operation-error.json": "ccdaeff540945bed175871142b0188cbe6bcdd91708504897a3b4aca64c31f37",
+    "C-update-error.txt": "a36b5bdf82f512dc01fe77798c3b96d7ad6ae353af4b6ff936fe591d6c28c700",
+    "qualified-runtime.json": "2af61bbcd5c9af7b797d053cf2ab13ef7943e9f28b7d0b733491f17d76b34812",
+    "qualified-runtime.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "node-contract.json": "43b5bd271004a7459b5dca694b14904afe93e06791ccd2c2f318de383add1e0a",
+    "node-contract.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "Inspect-C.ps1": "05174cb550d856c0fcd8bbfd10d91061aa959214d70d0e168c0abe500ebb9e84",
+    "Update-C.ps1": "516080e95507087a64aa9aa683f86b53ed162292b080815614cbafee681b6f91",
+    "Run-C-Update-Once.ps1": "b7c60f7d1956b4e8f824a40742cca542ecd2a2a33229c5b612fb138496f6e809",
+    "Update-C-corrected-not-executed.ps1": "b26eb2ae6049403d49c24f663e4a09216b1909432359af23854b76f2329d1f10"
+  }
+}
