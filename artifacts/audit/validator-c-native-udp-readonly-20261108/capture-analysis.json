@@ -1,0 +1,131 @@
+{
+  "packet_count": 3,
+  "unsupported_link_records": {},
+  "directions": {
+    "192.168.71.125:41052 -> 192.168.71.74:41051": 3
+  },
+  "magic_counts": {
+    "NVHCONT1": 3
+  },
+  "transcripts": [
+    {
+      "source": "192.168.71.125",
+      "destination": "192.168.71.74",
+      "transfer": "01178c2a6d4a96a735223ee4e37cd442",
+      "transcript_sha256": "cb1f30adf7d8b9be759d2e1a9f908464972ebbd081c86174dac2e825e6d382c2",
+      "transcript_bytes": 5529,
+      "tags": {
+        "1": 3
+      },
+      "part_indices": [],
+      "complete": false
+    }
+  ],
+  "before_network": {
+    "default": "native_novorudp",
+    "fallback": "iroh",
+    "installed_bound_peer_routes": 1,
+    "probe_control": {
+      "enabled": true,
+      "accepted_commands": 0,
+      "rejected_commands": 0,
+      "last": null,
+      "scope": "local commands; never business or transport completion"
+    },
+    "peer_discovery_rpc": true,
+    "connection_failures": 200,
+    "global_auto_discovery": false,
+    "native_multihop_accepted": false
+  },
+  "after_network": {
+    "default": "native_novorudp",
+    "fallback": "iroh",
+    "installed_bound_peer_routes": 1,
+    "probe_control": {
+      "enabled": true,
+      "accepted_commands": 0,
+      "rejected_commands": 0,
+      "last": null,
+      "scope": "local commands; never business or transport completion"
+    },
+    "peer_discovery_rpc": true,
+    "connection_failures": 200,
+    "global_auto_discovery": false,
+    "native_multihop_accepted": false
+  },
+  "authentication_verified_by_offline_parser": false,
+  "files": {
+    "after-progress.json": {
+      "bytes": 813756,
+      "sha256": "79436e14dba0d26f9b47bac0ea65d6b428f9268d3df30c184c232e1ffb6f7845"
+    },
+    "after-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "after.json": {
+      "bytes": 854,
+      "sha256": "85a1707e7ad97cf059d9a667355d4043b06aba0c1ef09a4573e343dcb18871fd"
+    },
+    "before-progress.json": {
+      "bytes": 813726,
+      "sha256": "c228e0d9ffc0eef72df206e9dead01097e1814a9309bbadab349d0ee104e3547"
+    },
+    "before-stderr.txt": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "before.json": {
+      "bytes": 854,
+      "sha256": "3f9bf9e0f1c35064640b19a2d306d4f3c37d4646ab69aa3bcda0d6c22671cd97"
+    },
+    "C-AC-UDP.etl": {
+      "bytes": 28182,
+      "sha256": "4cbb4d31d77608f41b734237d78edcc6e5956afb7ba2d5489ef71780eb70216d"
+    },
+    "C-AC-UDP.pcapng": {
+      "bytes": 680,
+      "sha256": "b384cf8017b440852d1a95885928922f23877022d267f4b9f8ea3e1d1be9d2bd"
+    },
+    "Capture-C-UDP.ps1": {
+      "bytes": 3541,
+      "sha256": "43a956432e268dc7b666f98918ec33685b84a2cb613c8ee77389613afc162510"
+    },
+    "capture-start.txt": {
+      "bytes": 705,
+      "sha256": "12bfdd0b9da957cf22521b2ba4d3731d46813a88f08795f2342560e06e56a1b0"
+    },
+    "capture-stop.txt": {
+      "bytes": 150,
+      "sha256": "5df29fa47c90da9cefdcf01c039a2add9ced049b562d04dab8370e3e7a3e9053"
+    },
+    "convert.txt": {
+      "bytes": 204,
+      "sha256": "46902ee6d982e46f3e5c406e2e0c304748aaa82c651495a9ae3ed743c64a8894"
+    },
+    "counters.txt": {
+      "bytes": 547,
+      "sha256": "81ea8aa4e3ff9d5a9667e9d45c87c66924c1a9251d410f71c88379269a4fc90e"
+    },
+    "filter-add.txt": {
+      "bytes": 23,
+      "sha256": "117c3b8eff1c94f1eae4cbc2276ecf6b7b7920207d6cf5c393d437261517bc2b"
+    },
+    "filter-remove.txt": {
+      "bytes": 29,
+      "sha256": "08ebecea3e4367758d9d7a1405e0088540328e6e2e0c8ab69c4e973e18e47348"
+    },
+    "filters-before.txt": {
+      "bytes": 32,
+      "sha256": "7bfd9ec3b99d52549328d2d3918e3cfd5a9ebb9713b40b6445e7a359ee8a7522"
+    },
+    "pktmon-before.txt": {
+      "bytes": 39,
+      "sha256": "e92ddb8baecc431e631815744e5422889cf1fee3f4756c00acaaaf79057550a5"
+    },
+    "result.json": {
+      "bytes": 207,
+      "sha256": "6bcb5eca0dcba0af26085a90a20434ed8692ac56dbcece51669229e959c14dd8"
+    }
+  }
+}
