@@ -153,3 +153,32 @@ C需按[后继一次性指令](C-UPDATE-5181da73.md#2026-11-09-c旧节点已在�
 及[WaitForSingleObject](https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-waitforsingleobject)：
 已终止PROCESS对象会signaled；不能只把STILL_ACTIVE数值、线程快照或过期CIM信息
 当成退出证明。0xc0000005具体根因仍未定位，不把部署适配当崩溃修复。
+
+## 2026-11-09 C-run2空XML字段失败已定位，仍未启动新版
+
+已签收远端`49dffb0b`，[C-run2原报告](../validator-c-5181-crashed-recovery-run2-20261109/README.md)
+及3237字节原字节ZIP保留。失败UTC21:02:01，old_node_stopped=false、
+existing_start_attempted=false；没有新work/任务或120秒观察，不以此前已执行的
+内核查询代码推定C已取得落盘的退出证明。ZIP实际SHA256与C的SHA256SUMS一致；
+README在A被Git检出为CRLF，归一LF后也与C公布的README哈希一致，不把检出换行
+差异当作原归档损坏。
+
+直接原因：恢复脚本逐字段读取`$field.'#text'`，遇到真实Application事件中两个
+空Package字段时，StrictMode Latest抛属性不存在。C对同一原XML的InnerText
+只读对照通过。A采用该修正，提取同一个ConvertFrom-NovonetCrashEvent供原
+事件读取流水线及定向测试复用。使用DOM节点和InnerText而非PowerShell空元素的
+字符串适配，支持Windows事件命名空间；无关provider缺应用字段不冒充目标事件，
+匹配事件仍要求原必要字段、程序/异常、任务及时间线，未关闭StrictMode或吞错。
+
+本地用C已公开的完整原字段重建XML（不是谎称取得其完整原XML文件），保留两项
+空字段，证明旧读取在严格模式失败、新读取正常得到PID23024/时间/Report ID。
+8项XML回归还实际执行原Get-WinEvent→转换→排序表达式（仅事件源隔离），并覆盖
+Windows命名空间、无关路径/异常/provider和必要PID为空。原7项部署、实际包、
+13项规则、6类真实过滤器、12项崩溃owner、实际C事件、5+8项进程门禁通过。
+[本地最终日志](crash-event-xml-local-tests.log)保留。开发中新夹具对空EventData使用
+PS字符串AppendChild及对不存在的report_id取值两处测试错误也已修正，早期日志仍在
+本机target；没有把它们称为运行节点失败，也未通过取消严格检查取得通过。
+
+本次仅修部署脚本，不改5181da73程序或包，不需重传ZIP。C按原文末节新C-run3
+入口执行一次，C-run1/C-run2及旧崩溃记录不覆盖；B/D和运行A不变，不额外手工发CI。
+C现场内核退出、新节点启动、120秒观察及原UDP恢复仍未签收。

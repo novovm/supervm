@@ -7,7 +7,7 @@ $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $path),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Update script parse errors'}
 $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false))
-foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence')) {
+foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence','ConvertFrom-NovonetCrashEvent')) {
     $function=@($functions|Where-Object Name -CEQ $name)
     if($function.Count -ne 1){throw 'Expected original deployment gate missing'}
     . ([scriptblock]::Create($function[0].Extent.Text))
@@ -126,4 +126,47 @@ if(Test-Path -LiteralPath $receipt) {
     $reported.last_run_utc=[DateTime]::Parse('2026-11-08T10:30:13+08:00').ToUniversalTime()
     Assert-CrashedOwnerEvidence $reported 'C:\ProgramData\NOVOVM\releases\novonet-probe-ddd89e8e-windows-x86_64\bin\novovm-node.exe'
     Write-Output 'PASS actual C crash receipt through original crash-evidence gate; not a live C process-state qualification'
+
+    # Rebuild XML from every original public field, including the two empty package fields.
+    $eventXml=[xml]'<Event><EventData /></Event>'
+    $eventData=$eventXml.SelectSingleNode('/Event/EventData')
+    foreach($field in $record.fields) {
+        $node=$eventXml.CreateElement('Data')
+        $node.SetAttribute('Name',$field.name)
+        if($null -ne $field.value){$node.InnerText=[string]$field.value}
+        $null=$eventData.AppendChild($node)
+    }
+    $oldRejected=$false
+    try {
+        foreach($field in $eventXml.Event.EventData.Data){$null=[string]$field.'#text'}
+    }catch [Management.Automation.PropertyNotFoundException]{$oldRejected=$true}
+    if(!$oldRejected){throw 'Original strict XML parser must reproduce C empty-field failure'}
+    $expected='C:\ProgramData\NOVOVM\releases\novonet-probe-ddd89e8e-windows-x86_64\bin\novovm-node.exe'
+    $converted=ConvertFrom-NovonetCrashEvent $eventXml ([DateTime]::Parse($record.utc).ToUniversalTime()) $record.record_id $expected
+    if($converted.fault_pid -ne 23024 -or $converted.application_path -cne $expected -or $converted.report_id -cne '5e688e6e-3c03-4ea0-b514-01716e847494' -or $converted.created_utc -ne $reported.created_utc){throw 'Original complete C event did not retain required identity/timing fields'}
+    $converted|Add-Member -NotePropertyMembers @{task_state='Ready';task_sid='S-1-5-19';restart_count=0;trigger_count=0;task_exit_code=3221225477;last_run_utc=$reported.last_run_utc}
+    Assert-CrashedOwnerEvidence $converted $expected
+    if(@(ConvertFrom-NovonetCrashEvent $eventXml $reported.event_utc $record.record_id 'C:\other\novovm-node.exe').Count){throw 'Unrelated application event must not qualify'}
+    $bad=$eventXml.CloneNode($true)
+    foreach($field in $bad.Event.EventData.Data){if($field.GetAttribute('Name') -ceq 'ExceptionCode'){$field.InnerText='other'}}
+    if(@(ConvertFrom-NovonetCrashEvent $bad $reported.event_utc $record.record_id $expected).Count){throw 'Unrelated exception must not qualify'}
+    $bad=$eventXml.CloneNode($true)
+    foreach($field in $bad.Event.EventData.Data){if($field.GetAttribute('Name') -ceq 'ProcessId'){$field.InnerText=''}}
+    $rejected=$false
+    try{$null=ConvertFrom-NovonetCrashEvent $bad $reported.event_utc $record.record_id $expected}catch{if($_.Exception.Message -cne 'Matching crash event missing ProcessId'){throw};$rejected=$true}
+    if(!$rejected){throw 'Required empty process identity must still fail'}
+    $namespaced=[xml]$eventXml.OuterXml.Replace('<Event>','<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">')
+    $convertedNs=ConvertFrom-NovonetCrashEvent $namespaced $reported.event_utc $record.record_id $expected
+    if($convertedNs.fault_pid -ne 23024 -or $convertedNs.report_id -cne $fields.IntegratorReportId){throw 'Windows event XML namespace must not hide required fields'}
+    $unrelated=[xml]'<Event><EventData><Data Name="Other">unrelated provider</Data></EventData></Event>'
+    if(@(ConvertFrom-NovonetCrashEvent $unrelated $reported.event_utc 1 $expected).Count){throw 'Unrelated provider without application fields must not qualify'}
+    $pipelineEvent=[pscustomobject]@{TimeCreated=$reported.event_utc;RecordId=$record.record_id}
+    $pipelineEvent|Add-Member -MemberType ScriptMethod -Name ToXml -Value {$namespaced.OuterXml}
+    function Get-WinEvent {param($FilterHashtable) if($FilterHashtable.Id -ne 1000){throw 'Unexpected event filter'}; $pipelineEvent}
+    $info=[pscustomobject]@{LastRunTime=$reported.last_run_utc};$oldExe=$expected
+    $assignment=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$crashes'},$true))
+    if($assignment.Count -ne 1){throw 'Actual original crash-reading pipeline missing'}
+    . ([scriptblock]::Create($assignment[0].Extent.Text))
+    if($crashes.Count -ne 1 -or $crashes[0].fault_pid -ne 23024 -or $crashes[0].record_id -ne 545045){throw 'Actual full Get-WinEvent to converter/sort pipeline differs'}
+    Write-Output 'PASS 8 complete XML regression cases: old parser fails; complete C XML, Windows namespace and actual reader pipeline pass; unrelated events and empty required pid reject'
 }

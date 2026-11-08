@@ -89,6 +89,18 @@ function Assert-CrashedOwnerEvidence($Evidence,[string]$ExpectedPath) {
     if($Evidence.application -cne 'novovm-node.exe' -or $Evidence.application_path -cne $ExpectedPath -or $Evidence.exception_code -cne 'c0000005' -or $Evidence.fault_pid -le 0){throw 'Matching original application crash not proven'}
     if($Evidence.created_utc -lt $Evidence.last_run_utc.AddSeconds(-5) -or $Evidence.created_utc -gt $Evidence.event_utc -or $Evidence.event_utc -lt $Evidence.last_run_utc -or $Evidence.event_utc -gt [DateTime]::UtcNow.AddSeconds(5)){throw 'Original crash timeline differs'}
 }
+function ConvertFrom-NovonetCrashEvent([xml]$EventXml,[DateTime]$TimeCreatedUtc,[long]$RecordId,[string]$ExpectedPath) {
+    $fields=@{}
+    foreach($field in $EventXml.SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data']")) {
+        # InnerText also represents empty XML elements; #text is absent in strict mode.
+        $fields[$field.GetAttribute('Name')]=[string]$field.InnerText
+    }
+    if($fields['AppPath'] -cne $ExpectedPath -or $fields['ExceptionCode'] -cne 'c0000005'){return}
+    foreach($required in @('AppName','ProcessId','ProcessCreationTime')) {
+        if([string]::IsNullOrWhiteSpace($fields[$required])){throw "Matching crash event missing $required"}
+    }
+    [pscustomobject]@{event_id=1000;record_id=$RecordId;event_utc=$TimeCreatedUtc;application=$fields['AppName'];application_path=$fields['AppPath'];exception_code=$fields['ExceptionCode'];fault_pid=[Convert]::ToInt32($fields['ProcessId'],16);created_utc=[DateTime]::FromFileTimeUtc([Convert]::ToInt64($fields['ProcessCreationTime'],16));report_id=$fields['IntegratorReportId']}
+}
 function Start-ExistingTask([string]$Name,[switch]$Old) {
     if(Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue){throw 'Task exists; inspect, do not repeat startup'}
     $arguments='-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File "'+(Join-Path $work 'ExistingOwner.ps1')+'" -HostId '+$HostId+' -Owner'
@@ -164,11 +176,7 @@ try {
         if($nodes.Count -ne 0){throw 'Crashed recovery requires no executing node; do not kill unknown processes'}
         $info=Get-ScheduledTaskInfo -TaskName $oldTask
         $crashes=@(Get-WinEvent -FilterHashtable @{LogName='Application';Id=1000;StartTime=$info.LastRunTime}|ForEach-Object {
-            $xml=[xml]$_.ToXml();$fields=@{}
-            foreach($field in $xml.Event.EventData.Data){$fields[[string]$field.Name]=[string]$field.'#text'}
-            if($fields.AppPath -ceq $oldExe -and $fields.ExceptionCode -ceq 'c0000005') {
-                [pscustomobject]@{event_id=$_.Id;record_id=$_.RecordId;event_utc=$_.TimeCreated.ToUniversalTime();application=$fields.AppName;application_path=$fields.AppPath;exception_code=$fields.ExceptionCode;fault_pid=[Convert]::ToInt32($fields.ProcessId,16);created_utc=[DateTime]::FromFileTimeUtc([Convert]::ToInt64($fields.ProcessCreationTime,16));report_id=$fields.IntegratorReportId}
-            }
+            ConvertFrom-NovonetCrashEvent ([xml]$_.ToXml()) $_.TimeCreated.ToUniversalTime() $_.RecordId $oldExe
         }|Sort-Object event_utc -Descending)
         if($crashes.Count -lt 1){throw 'Original crash event missing; preserve state'}
         $crash=$crashes[0]

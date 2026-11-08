@@ -84,7 +84,7 @@ $repo = (git rev-parse --show-toplevel).Trim()
 & "$repo\scripts\windows\Update-Novonet5181Existing.ps1" `
   -HostId C `
   -PackageRoot 'E:\区块链四机通讯\novonet-5181-update-20261109\novonet-probe-5181da73-windows-x86_64' `
-  -EvidenceRoot "$repo\target\novonet-5181-update-20261109\C-run2" `
+  -EvidenceRoot "$repo\target\novonet-5181-update-20261109\C-run3" `
   -RecoverCrashed
 ```
 
@@ -102,8 +102,27 @@ $repo = (git rev-parse --show-toplevel).Trim()
   打开原库并执行原锁/恢复检查，不绕过数据库锁。旧停更progress只作恢复前参考，
   不称健康；恢复后仍核对原状态、实际库、用途哈希和新监听。
 
-保留C-run1及其入口/身份/崩溃日志；此次只新建C-run2，不使用ResumePrepared（C尚无
+保留C-run1、C-run2及其入口/身份/崩溃日志；此次只新建C-run3，不使用ResumePrepared（C尚无
 5181 work），不清理残留、不更换钥或创世。失败则回传error与kernel证明，不能重复
 换目录刷成功。成功后按上节完成120秒观察及公开回传；原配置/DB/转储留本机。
 0xc0000005的具体代码根因仍未知，原WER日志/若已有崩溃dump请保全并记录哈希，
 不得把含内存/用途材料的dump上传公开GitHub，也不据本次启动适配声称崩溃已修复。
+
+### C-run2后继：已修正真实事件空XML字段，执行C-run3
+
+A已签收`49dffb0b`原始回传并核验ZIP归档。C-run2在读取Application事件的空
+PackageFullName/PackageRelativeAppId时，严格模式访问不存在的`#text`属性失败；
+原库启动未尝试，新work/任务未创建，也未完成120秒观察。这个失败属于A提供的
+恢复脚本，不是包损坏、身份换代、数据库锁或内核退出证明失败。
+
+固定读取改用真实XML节点InnerText，保留空值；对匹配事件的必要AppName/PID/
+创建时间仍明确要求非空，原程序、异常、任务权限、时间线及内核退出门禁不变。
+本地8项完整XML回归覆盖旧法失败、新法按原C全部字段及Windows命名空间通过、
+原读取/解析/排序调用链通过，错误路径/异常/其他provider及必要空PID拒绝。
+原部署/实际固定包/防火墙/崩溃证据/进程门禁均已重验，不手动调云端CI。
+
+请C Codex同步包含本节的最新main，**使用上方已改为C-run3的命令**执行一次，
+不要再运行C-launch2中固定旧脚本哈希/旧C-run2目录的Start-C.ps1。若需要保留
+管理员短入口，创建新的C-launch3，核对当前仓库脚本；不能覆盖前次归档。
+原ZIP和已核验解包目录继续使用，不重新复制、不使用ResumePrepared或force。
+成功后完成原120秒观察并回传，失败则保留C-run3实际error，不自行反复补跑。
