@@ -1146,6 +1146,31 @@ bound peer routes2、connection_failures0。global_auto_discovery及native_multi
 credential、数据库/journal或资产钥。运行程序仍ddd89e8e，C/D保持082未操作。
 后继仍是获准C更新后做A→C双端验收，不以本条B→A替代。
 
+### 21. 2026-11-08 C原库更新及A→C单对象双端接管匹配通过
+
+用户批准C脚本修复、定向验证、existing更新及A→C对象验收。原路径适配错误、
+退出枚举错误和082回滚均保留在各自公开目录。修复4beeea61持有精确进程句柄等待退出，
+再有界等待两次空节点枚举；PowerShell7/5.1各5项隔离定向检查通过。
+复核上轮prepared目录、原配置/材料和同范围规则后，C实际19752→23024，沿原
+LocalService及chain-state、START=existing运行固定ddd89e8e，原三份用途材料摘要一致。
+实际node19883c8b、AOEM1b764a36、41052/42052及完整locator传输公钥均匹配。
+本轮初始化执行字段为false，旧证据、原库及journal原地保留。更新公开提交11e03a08。
+
+A原运行owner仅发布一条固定非业务对象，发送公开提交cc6d5a08；C有界只读采集
+保存原接收及底层反馈，接收公开提交f7d5ec6d。独立核对双方原始文件及摘要后，
+Object `8ed4aa5273e61b563f402fe9490aaa0690c020bfd840bb888744e80392740343`、
+Session `1d1181eae8f4d2117ff43dd624f4fafe`、nonce、sender/recipient及carrier binding一致。
+A原阶段owned→admitted→object_done，底层ACK best=1、delivered及TransportDone存在；
+C原事件received_integrity_verified、1/1片及hash完成、原反馈3次且missing=0，
+实际peer身份互相匹配，双方目标transfer tag唯一对应。
+
+实际路径是authenticated_bound_carrier。此次登记A→C该固定对象双端有界接管通过，
+原生UDP直连、多跳、四机拓扑、业务Receipt和共识最终性仍分别验收。
+原始wall/monotonic按所属机器保留，跨机壁钟不用于性能计算。
+完整逐项时间线、覆盖计数和原始证据链接见
+[双端独立匹配报告](../artifacts/audit/validator-a-c-ddd-object-match-20261108/README.md)。
+C继续当前节点在线；D及NOVOCHAT处于本轮操作范围之外。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
