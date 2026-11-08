@@ -1,0 +1,67 @@
+{
+  "utc": "2026-11-08T16:51:52.9562574Z",
+  "record_id": 545045,
+  "event_id": 1000,
+  "fields": [
+    {
+      "name": "AppName",
+      "value": "novovm-node.exe"
+    },
+    {
+      "name": "AppVersion",
+      "value": "0.0.0.0"
+    },
+    {
+      "name": "AppTimeStamp",
+      "value": "6aefab2c"
+    },
+    {
+      "name": "ModuleName",
+      "value": "novovm-node.exe"
+    },
+    {
+      "name": "ModuleVersion",
+      "value": "0.0.0.0"
+    },
+    {
+      "name": "ModuleTimeStamp",
+      "value": "6aefab2c"
+    },
+    {
+      "name": "ExceptionCode",
+      "value": "c0000005"
+    },
+    {
+      "name": "FaultingOffset",
+      "value": "00000000011e6f9d"
+    },
+    {
+      "name": "ProcessId",
+      "value": "0x59f0"
+    },
+    {
+      "name": "ProcessCreationTime",
+      "value": "0x1dd6f2916d54a2d"
+    },
+    {
+      "name": "AppPath",
+      "value": "C:\\ProgramData\\NOVOVM\\releases\\novonet-probe-ddd89e8e-windows-x86_64\\bin\\novovm-node.exe"
+    },
+    {
+      "name": "ModulePath",
+      "value": "C:\\ProgramData\\NOVOVM\\releases\\novonet-probe-ddd89e8e-windows-x86_64\\bin\\novovm-node.exe"
+    },
+    {
+      "name": "IntegratorReportId",
+      "value": "5e688e6e-3c03-4ea0-b514-01716e847494"
+    },
+    {
+      "name": "PackageFullName",
+      "value": null
+    },
+    {
+      "name": "PackageRelativeAppId",
+      "value": null
+    }
+  ]
+}

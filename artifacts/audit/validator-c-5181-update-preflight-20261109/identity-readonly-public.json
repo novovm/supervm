@@ -1,0 +1,88 @@
+{
+  "utc": "2026-11-08T20:49:23.6024954Z",
+  "nodes": [
+    {
+      "pid": 8672,
+      "parent_pid": 23024,
+      "exe": null,
+      "command_line": null,
+      "created": "2026-11-09T00:51:52.393677+08:00",
+      "sid": "S-1-5-19",
+      "sha256": null,
+      "parent": []
+    }
+  ],
+  "works": [
+    {
+      "work": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-probe-ddd89e8e-20261108",
+      "exists": true,
+      "owner": {
+        "sid": "S-1-5-19",
+        "start": "existing",
+        "config": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-probe-ddd89e8e-20261108\\run.json",
+        "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+        "initialize_executed": false,
+        "keys_generated": false
+      },
+      "progress": {
+        "chain_id": 91129655606029,
+        "head": null,
+        "current_height": 1,
+        "round": 272,
+        "execution_failures": 0,
+        "ticks": 42516378,
+        "novonet": {
+          "default": "native_novorudp",
+          "fallback": "iroh",
+          "installed_bound_peer_routes": 1,
+          "probe_control": {
+            "enabled": true,
+            "accepted_commands": 0,
+            "rejected_commands": 0,
+            "last": null,
+            "scope": "local commands; never business or transport completion"
+          },
+          "peer_discovery_rpc": true,
+          "connection_failures": 785,
+          "global_auto_discovery": false,
+          "native_multihop_accepted": false
+        }
+      },
+      "last_write_utc": "2026-11-08T16:51:47.3189594Z"
+    },
+    {
+      "work": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-probe-5181da73-20261109",
+      "exists": false
+    }
+  ],
+  "listeners": [],
+  "tasks": [
+    {
+      "name": "NOVOVM-C-08236129-Existing-Rollback-20261108",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "info": {
+        "LastRunTime": "2026-11-08T10:11:34+08:00",
+        "LastTaskResult": 4294967295
+      }
+    },
+    {
+      "name": "NOVOVM-C-08236129-Network-20261108",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "info": {
+        "LastRunTime": "2026-11-08T03:38:48+08:00",
+        "LastTaskResult": 1
+      }
+    },
+    {
+      "name": "NOVOVM-C-ddd89e8e-Existing-20261108",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "info": {
+        "LastRunTime": "2026-11-08T10:30:13+08:00",
+        "LastTaskResult": 3221225477
+      }
+    }
+  ]
+}
