@@ -1,0 +1,26 @@
+{
+  "counts": {
+    "packet_records": 279,
+    "wireless_data": 279,
+    "approved_pair_udp_ports_decoded": 279
+  },
+  "max_captured_prefix_bytes": 64,
+  "port_records": [
+    {
+      "source": "192.168.71.74",
+      "source_port": 42051,
+      "destination": "192.168.71.125",
+      "destination_port": 42052,
+      "records": 144
+    },
+    {
+      "source": "192.168.71.125",
+      "source_port": 42052,
+      "destination": "192.168.71.74",
+      "destination_port": 42051,
+      "records": 135
+    }
+  ],
+  "unique_datagrams_claimed": false,
+  "payload_emitted": false
+}

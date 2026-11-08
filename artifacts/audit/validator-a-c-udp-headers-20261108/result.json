@@ -1,0 +1,13 @@
+{
+  "started_at": "2026-11-08T18:30:06.5277490+08:00",
+  "max_seconds": 5,
+  "max_captured_prefix_bytes": 64,
+  "node_restarted": false,
+  "firewall_changed": false,
+  "vpn_changed": false,
+  "new_object_sent": false,
+  "capture_started_at": "2026-11-08T18:30:07.9862137+08:00",
+  "capture_stop_returned_at": "2026-11-08T18:30:13.6919887+08:00",
+  "completed": true,
+  "finished_at": "2026-11-08T18:30:13.8304801+08:00"
+}
