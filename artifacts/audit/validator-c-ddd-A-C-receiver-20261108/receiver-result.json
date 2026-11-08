@@ -1,0 +1,119 @@
+{
+  "scope": "C receiver original owner evidence; A sender evidence pending",
+  "pid": 23024,
+  "fixed_source": "ddd89e8e05721a2ddb8a7ae9255405d395b39a46",
+  "watch": {
+    "started_utc": "2026-11-08T02:32:52.8894412Z",
+    "finished_utc": "2026-11-08T02:41:08.1086533Z",
+    "read_errors": 0
+  },
+  "receiver_event": {
+    "event": "probe_received_integrity_verified",
+    "object_id": "8ed4aa5273e61b563f402fe9490aaa0690c020bfd840bb888744e80392740343",
+    "nonce": "a459da3038f61b7693797cb80cc39c32c95a80c4c3a4643580013ef8a1abfc48",
+    "sender": "b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+    "recipient": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+    "issued_at_ms": 1794105659677,
+    "expires_at_ms": 1794105669677,
+    "peer": "b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+    "session_id": "1d1181eae8f4d2117ff43dd624f4fafe",
+    "path": "authenticated_bound_carrier",
+    "route": {
+      "Carrier": {
+        "peer_key": "1a310a49d78a3ccd03c7a8e5cd14be2f79684bd85b618a51f34109d218dbd901",
+        "binding": "8ff60ccc50577baea0dfa6d93492c0240c3d7d27ebfe33fc5941878a8e318835"
+      }
+    },
+    "wall_ms": 1794105660253
+  },
+  "transfer_tag": "fc4142b2cde83e9e6238e8304d02d35981ad7100f2c73c5d2d92f270572591c9",
+  "receiver_transport": {
+    "tag": "fc4142b2cde83e9e6238e8304d02d35981ad7100f2c73c5d2d92f270572591c9",
+    "first_seen_us": 643861980,
+    "last_progress_us": 643861991,
+    "transport_done_us": null,
+    "response_validated_us": null,
+    "fragments": 1,
+    "assemblies_started": 1,
+    "assembly_start_observed": true,
+    "duplicate_data": 0,
+    "duplicate_repair": 0,
+    "completed_history_hits": 3,
+    "total_fragments": 1,
+    "first_fragment_us": 643861980,
+    "last_fragment_us": 643861980,
+    "fragments_complete_us": 643861980,
+    "last_fragment_index": 0,
+    "repair_fragments": 0,
+    "hash_chunks": 1,
+    "first_hash_us": 643861987,
+    "last_hash_us": 643861987,
+    "send_admitted_us": null,
+    "send_attempts_observed": 0,
+    "send_terminal_us": null,
+    "send_terminal_state": null,
+    "send": null,
+    "feedback_sent": {
+      "packets": 3,
+      "first_us": 643877382,
+      "last_us": 643972472,
+      "max_gap_us": 63546,
+      "omitted_windows": 0,
+      "windows": [
+        {
+          "at_us": 643877382,
+          "epoch": 10925,
+          "missing": 0,
+          "first_missing": null
+        }
+      ]
+    },
+    "feedback_received": {
+      "packets": 0,
+      "first_us": null,
+      "last_us": null,
+      "max_gap_us": 0,
+      "omitted_windows": 0,
+      "windows": ""
+    },
+    "acknowledged_best": 0,
+    "verified_us": 643861991,
+    "work_entered_us": null,
+    "work_finished_us": null,
+    "stored_receipt_created_us": null,
+    "response_queued_us": null,
+    "response_tag": null
+  },
+  "coverage": {
+    "contended_observations": 0,
+    "omitted_records": 0,
+    "evicted_records": 0,
+    "expired_records": 40
+  },
+  "sender_Object_DONE_verified": false,
+  "dual_end_accepted": false,
+  "business_receipt": false,
+  "public_zip_sha256": "240589bff369899bb18a4a6653adbdbd9c7904a096dedd6fe6cfd1ec09ff269e",
+  "raw_files": {
+    "C-before.json": {
+      "bytes": 814824,
+      "sha256": "5e42414ec3fc10f71927ad706f7199370cab7f0bd5f06af4312da723042d53a1"
+    },
+    "C-received-progress.json": {
+      "bytes": 809809,
+      "sha256": "6cdcd807d73d2436449c0d6e06d0e4d1bb6699d7038bda2f2de0e09d5d217a1e"
+    },
+    "C-after-progress.json": {
+      "bytes": 809809,
+      "sha256": "6cdcd807d73d2436449c0d6e06d0e4d1bb6699d7038bda2f2de0e09d5d217a1e"
+    },
+    "C-locator.json": {
+      "bytes": 19667,
+      "sha256": "4401178a2cd4907c86ab2e171938f4f42a76268a20b364f932ea3048975c1731"
+    },
+    "watch.json": {
+      "bytes": 4238,
+      "sha256": "f5c9fb42c989e68de36589ffa1e325029a6c9b1066b8ccf2aba77b05b908c995"
+    }
+  }
+}
