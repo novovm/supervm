@@ -1053,6 +1053,68 @@ Windows分发ZIP另读回77项压缩成员hash通过，Linux归档gzip CRC通过
 全部重新解包验证。当前节点仍082，**上述existing更新方案须另获批准才执行**。
 不额外手工触发云端完整CI，main自动检查不关闭。
 
+### 19. 2026-11-08 获批A/B原库更新已执行，C/D保持082
+
+用户后继明确批准固定ddd89e8e候选、先B后A、必要时精确终止旧node进程及
+START=existing原库恢复；随后另批A同范围新程序UDP规则和恢复三类防火墙启用。
+本节更新第18节“未部署”的时间状态，不改变其对象/业务完成边界。
+交付提交252f7249对应自动CI42423130454 completed/success已只读确认，未重跑。
+
+| 项目 | A Windows | B Ubuntu |
+| --- | --- | --- |
+| 旧 → 新PID | 30708 → 24444 | 1661875 → 1816591 |
+| 实际账户 | 原LocalService / S-1-5-19 | 原novovm / UID996 |
+| 新程序 | `C:\ProgramData\NOVOVM\releases\novonet-probe-ddd89e8e-windows-x86_64\bin\novovm-node.exe` | `/opt/novovm/releases/novonet-probe-ddd89e8e-linux-x86_64/bin/novovm-node` |
+| 实际node SHA256 | `19883c8b95fc059ec7838ff0556284b1ddd434b7a72bfbe93e3f3410f458a0fc` | `603ab7f063274b03e1d81599a57fcb1765b626c04da6d9aef0df963aa24d39cb` |
+| 实际AOEM SHA256 | `1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50` | `d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33` |
+| 原库 | `C:\ProgramData\NOVOVM\selfrun\91129655606029\A\chain-state` | `/var/lib/novovm/selfrun/91129655606029/B/chain-state` |
+| 启动 | 新existing-only原owner任务；旧含initialize任务Ready、未重跑 | 原credential/账户的新独立unit，直接existing |
+| 原监听 | 192.168.71.74:41051 / 42051 | 0.0.0.0:41050 / 42050 |
+
+各机安装目录逐文件哈希复验；B包内实际库KAT通过，A新进程实际加载模块哈希已核。
+旧进程归属先核再精确结束，退出记录保留；不以终止成功声称完整优雅排空。没有
+initialize、清LOCK、改账本/journal、重新生成用途材料或运行中数据库复制。原
+protected材料比对不变。B既有novonet-mailbox/supervm-relay/nginx/docker状态/PID
+严格不变；未切换其他应用或正式SDK。仍沿原24h有界运行，不冒充永久SCM验收。
+
+更新前/后及最后A/B认证Status的状态根均为
+`f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`，
+height=0/current_height=1，recovering/projection_failed=false；最终查询27/60ms。
+这不是连续确认、资产业务或性能结论。B公开身份不变，locator703→719→724且新鲜；
+A最新locator直接读回受普通token ACL限制，不能将“不可读”当“缺失”或谎称完整
+导出。A初始启用发现/诊断、实际监听和后继原生对象接管分别有证据。
+
+诊断显式配置已启用，但启动时commands/events均0，不自动发对象。用户取消了
+A→B命令的UAC，该命令未写入，未反复重弹、未改为成功。随后只通过已批准B
+root通道向原owner发布**一条B→A固定非业务命令**，不绕过A本地文件权限：
+
+- Object ID `36c112d46a0b31fdce33ccd3e8b5270d2afda6349975912ff767629aa25928dd`。
+- Session ID `668e6e9ccd7ecd5ce873bbf2c951e658`。
+- 原事件`probe_owned → probe_admitted → probe_object_done`，路由`native_udp`；
+  本会话实际目标`114.92.30.222:61758`是动态NAT坐标，不写成固定公网配置。
+- 按原`transfer_tag(session,NVBFT001,object)`关联实际反馈，acknowledged_best=1、
+  feedback_packets=2、send_terminal_state=delivered及TransportDone存在。
+- **这是B发送端的原生对象DONE证据，A接收侧Probe观察尚未读回**；不签双端
+  完整链，不代替A→C、四机、多跳或Business Receipt，无资产交易/TPS。
+
+保留首错：A切换前严格规则核验拒绝了Windows将/24规范显示为/255.255.255.0的
+差异，当时未停旧节点；取得原属性并确认完全等价范围后恢复准备态继续，不放宽
+端口/地址。新规则只绑定新程序，旧规则保留；随后Domain/Private/Public全启用，
+之后认证Status及B→A对象DONE通过，不依赖全局关闭防火墙签收。
+
+B新进程初期1884次unknown_source拒绝，后两个快照1884→1884、连接失败1→1，
+其他认证等拒绝分类0、stderr为空；具体来源尚未归因，不能凭停止增长销账。
+旧epoch的96拒绝/105过期/207连接失败及原日志原样保留，不把进程重启后的新计数
+说成清除了旧故障。没有发生回滚；辅助脚本具明确旧082+旧config+existing回滚
+分支，但未以未执行分支冒充回滚实测。
+
+[A/B更新公开证据29份](../artifacts/audit/validator-b-program-install-20261102/novonet-probe-ddd89e8e-AB-update-evidence.zip)，
+67510字节，SHA256 `bb97f8aceda13cbd4b51371c663838a295e1c8c87c48b81885920722057ca7cb`。
+含原PID退出、实际程序/库、状态查询、其他服务、固定对象/ACK/DONE和辅助脚本；
+不含protected/credential/资产私钥、数据库或journal。源程序仍ddd89e8e，记录提交
+不等于另一版程序。C/D未更新、未启动或清点；下一步仅申请C同版本原库existing
+更新及A→C双端逐对象证据，不自动授权C/D或四机资产业务。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
