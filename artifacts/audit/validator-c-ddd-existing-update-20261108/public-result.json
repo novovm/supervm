@@ -1,0 +1,184 @@
+{
+  "status": "C_DDD_EXISTING_RUNNING_A_C_PROBE_PENDING",
+  "fixed_source": "ddd89e8e05721a2ddb8a7ae9255405d395b39a46",
+  "old_pid": 19752,
+  "new_pid": 23024,
+  "node_sha256": "19883c8b95fc059ec7838ff0556284b1ddd434b7a72bfbe93e3f3410f458a0fc",
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "original_database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "start": "existing",
+  "initialize_executed": false,
+  "custody_unchanged": true,
+  "sid": "S-1-5-19",
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 42052,
+      "OwningProcess": 23024
+    },
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 41052,
+      "OwningProcess": 23024
+    }
+  ],
+  "observation": {
+    "success": true,
+    "collected_utc": "2026-11-08T02:30:19.4422864Z",
+    "task_state": "Running",
+    "last_task_result": 267009,
+    "initialize_executed": false,
+    "source": "ddd89e8e05721a2ddb8a7ae9255405d395b39a46"
+  },
+  "exact_exit": {
+    "pid": 19752,
+    "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-08236129-windows-x86_64\\bin\\novovm-node.exe",
+    "terminated": true,
+    "exit_handle_waited": true,
+    "node_enumeration_quiescent": true,
+    "scope": "authorized interrupted-process recovery",
+    "time": "2026-11-08T10:30:12.3480239+08:00"
+  },
+  "locator_original_transport_match": true,
+  "locator_sequence": 737,
+  "A_validator_id": "b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+  "C_validator_id": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+  "targeted_process_barrier_checks": {
+    "powershell_7": 5,
+    "powershell_5_1": 5,
+    "scope": "isolated enumeration fixtures, not network qualification"
+  },
+  "initial_probe_observation": {
+    "enabled": true,
+    "scope": "diagnostic only; original Object DONE is bounded custody, never business acceptance or finality",
+    "max_active": 1,
+    "max_events": 64,
+    "evicted_events": 0,
+    "events": [],
+    "transport": {
+      "contended_observations": 0,
+      "scope": "local monotonic clock; rejection association unknown; bounded test evidence",
+      "elapsed_us": 14870,
+      "rejection_names": [
+        "wire_budget",
+        "oversize",
+        "handshake",
+        "unknown_source",
+        "no_session",
+        "secure_route",
+        "secure_nonce",
+        "secure_replay_pre_auth",
+        "secure_authentication",
+        "wire_or_frame",
+        "stream_denied",
+        "open_other",
+        "unknown_stream",
+        "ack_short",
+        "object_ack",
+        "object_fragment"
+      ],
+      "rejections": {
+        "counts": [
+          0,
+          0,
+          0,
+          0,
+          30,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "first_unattributed_reject_us": 13616,
+      "last_unattributed_reject_us": 13616,
+      "omitted_records": 0,
+      "evicted_records": 0,
+      "expired_records": 0,
+      "objects": [],
+      "send_polls": {
+        "active_calls": 0,
+        "offered_budget": 0,
+        "reported_data_writes": 0,
+        "jobs_visited": 0,
+        "jobs_unvisited": 0,
+        "budget_exhausted": 0,
+        "deferred_yield": 0,
+        "visit_cap": 0,
+        "one_pass_end": 0
+      },
+      "receive_totals": {
+        "accepted_data": 0,
+        "accepted_repair": 0,
+        "duplicate_data": 0,
+        "duplicate_repair": 0,
+        "history_data": 0,
+        "history_repair": 0
+      }
+    }
+  },
+  "execution_failures": 0,
+  "initial_rejected_messages": 30,
+  "public_zip_sha256": "0d535e135eb6e626bc75d2b14252a0324dcc5e770f3fb6f7a85a973d21e9b60b",
+  "raw_files": {
+    "Inspect-C.ps1": {
+      "bytes": 2426,
+      "sha256": "05174cb550d856c0fcd8bbfd10d91061aa959214d70d0e168c0abe500ebb9e84"
+    },
+    "Update-C-fixed.ps1": {
+      "bytes": 17315,
+      "sha256": "d55c36400419ee6b1dc46d5f9168f6a05a2c081c8026f31ad62499a8434b0301"
+    },
+    "Run-C-Fixed-Once.ps1": {
+      "bytes": 2930,
+      "sha256": "bf3584b18b8e9866e66e8ea5ff65285be57052e8fac642d97269e6ea077b03af"
+    },
+    "C-before.json": {
+      "bytes": 769273,
+      "sha256": "3e6293ab6b487a6e7b3ae128f6ecf232aa6b3cc67dd686f786d7d3cc73e63ca8"
+    },
+    "C-after.json": {
+      "bytes": 10384,
+      "sha256": "459e592799cd528ffadae758e9d90ce850766db0fccaf6fa5b2a08929b4973af"
+    },
+    "C-firewall.json": {
+      "bytes": 608,
+      "sha256": "f9fec939a58e9d224bee898e7c940e310c361dcc8316f8d5aa89ccf34fed6199"
+    },
+    "C-old-exit.json": {
+      "bytes": 318,
+      "sha256": "41eca394c4e21242a3dde478ab11ecb61e40cb4f02c0e27c1132e756d46546a6"
+    },
+    "C-locator.json": {
+      "bytes": 19686,
+      "sha256": "133f59d6cf808e2127f2c482203d38c0a4c7b6ae02c91f327576c14b84e80a26"
+    },
+    "C-observation.json": {
+      "bytes": 226,
+      "sha256": "1b314a041f79ce0fcbcf1e021855fa16ea950fa10055a196f5c7ce9a8202660d"
+    },
+    "C-owner.json": {
+      "bytes": 304,
+      "sha256": "4c88076048fb082c9fdcf8ad8452d064cf4265decf02aee74aa7bb97cd72129c"
+    },
+    "C-progress.json": {
+      "bytes": 8578,
+      "sha256": "ffd57e957ab4cb60737e2910851795cf82008faff8cabca0149cb6035f6ccab7"
+    },
+    "C-node.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "C-update-result.txt": {
+      "bytes": 82,
+      "sha256": "f500ea9c6e992c76d6b1f4facff47b72133c2f2927634f1bc660bb1228f5f15a"
+    }
+  }
+}
