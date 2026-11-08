@@ -1,9 +1,9 @@
 # 原owner UDP恢复观察接线
 
 2026-11-09最新：A/C已以5181da73及原库existing运行；C-run3和120秒观察签收。
-A对更新后的C认证Status及状态根核验通过。新A→C固定对象在发送端实际为native_udp、
-ACK及Object DONE；**待C同一对象/会话的只读接收证据匹配，不重发、不再更新**。
-旧崩溃与历史恢复停顿根因不因此结案。实际证据及当前操作见本文末节和C指令末节。
+A对更新后的C认证Status及状态根核验通过；**新A→C固定对象的原生UDP双端接收及
+发送ACK/Object DONE已与C回执267eae81匹配完成**，不再要求C读取、重发或更新。
+旧崩溃与历史恢复停顿根因不因此结案。实际证据和验收边界见本文末节。
 
 基于bec85de4审计，在原network crate及原观察器内实现。完整源码diff随本提交保留，
 调用链和新字段合同见共享交接第22节。不新增网络或身份，不更改发送/恢复/权限决策。
@@ -235,7 +235,54 @@ UDP恢复分支的实测**，更不证明旧停顿已找到根因。对象后原
 原本地执行脚本/结果在A `target/novonet-5181-update-20261109/A-C-object-5181`；
 本次不手动启动CI，不用组件或localhost代替真实A/C。
 
-当前可登记C原库恢复成功及A发送端原生UDP ACK/DONE。双端对象交付仍待C只读导出
+截至94240da4的发送阶段，可登记C原库恢复成功及A发送端原生UDP ACK/DONE，当时仍待C只读导出
 同Object/Session的probe_received_integrity_verified及实际路径，原投影若已淘汰
 逐对象明细需注明，不重发。见[C当前只读指令](C-UPDATE-5181da73.md#c-run3已签收只读回传既有ac对象接收记录不再更新或重发)。
 原0xc0000005、历史停顿、Iroh→UDP实机恢复、多跳、四机业务与TPS均未由本样本签收。
+
+## 2026-11-09 指定A→C原生UDP对象双端匹配完成
+
+已签收`267eae81`，[C原接收报告](../validator-c-5181-native-object-receive-20261109/README.md)
+及4423字节原字节ZIP完整读取。ZIP SHA256为
+`8f3442771d827199c9fa2f55fbf540bc9f07e1048aa2f1f9e4a7e52d6527eddc`，与C清单一致。
+C原归档的receive-public.json及A工作区检出文件同为CRLF，原字节SHA256为
+`a0f721b830268de0a381e41cc8fdc9994f4a9b48d4b9f7d28fa9436abab438fe`；
+归一LF后为C清单的e38dca6a…716b5，两份JSON语义逐字段相同。
+不混淆原ZIP完整性、文本检出换行与内容差异，也没有覆盖C原文件。
+
+离线匹配直接读取A/C两份原ZIP，不仅采用双方README的结论：
+
+| 检查 | 实际匹配结果 |
+| --- | --- |
+| Object | 6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524 |
+| Session | 624b3e7ba0878c772d60c1ade8ef9212 |
+| nonce | 8acb3ecfbd46381387cb835977e135469a180689227f2d3bf8b9b943cc1c4e82 |
+| 身份与域内对象绑定 | A原命令/owned/admitted/DONE与C原事件的sender、recipient、nonce、有效期一致；C authenticated peer为预期A |
+| 发送路径 | native_udp，目标192.168.71.125:41052 |
+| 接收路径 | native_udp，来源192.168.71.74:41051 |
+| C实际接收事件 | 恰一条保留的probe_received_integrity_verified，PID34844/LocalService/固定node及41052监听匹配 |
+| A ACK与DONE | 原tag对应记录acknowledged_best=1、delivered、transport_done及同一会话Object DONE |
+
+C的matching_probe_events和exact_receive_events是**同一条事件的两种投影**，没有
+计为两份独立收件。C当前逐对象tag明细和stage明细均已缺失：transport全局
+expired_records=30、stage全局evicted=30221，不能把这些累计值全部归因本对象，
+也不补造C逐片计数/ACK/DONE。C探针64项事件历史evicted_events=0，目标真实
+完整性/接收者核验事件仍在，并足以与A的独立发送ACK/DONE匹配本条交付合同。
+transfer tag按原算法由Session/stream/Object计算，与A实际发送明细匹配；C公开
+tag字段仅是其筛选输入，不伪称C仍有该tag传输明细。
+
+C事件wall_ms=1794179420829、A owned/admitted=1794179420905、DONE=1794179420909。
+这些是各机本地时钟，未作跨机相减的单向延迟、时钟误差或端到端性能结论。
+原绝对时刻全部保留，不为制造正延迟篡改C时间。
+
+[双端原始字段匹配报告](a-c-native-20261109/two-ended-match.json)已生成，并再次
+从同两份固定归档生成另一份本地结果，字节一致；这是离线核对，不是重新发对象。
+匹配脚本/核对副本保留A本地`target/novonet-5181-update-20261109/Match-AC-5181.ps1`。
+
+**本项结案：指定单条非业务对象，经原A/C owner的实际原生UDP传输，C完整性及
+接收者身份核验、A Transport ACK/Object DONE双端记录匹配。** A/C部署和本条
+验收不再要求C重装、重启、换钥、重复采集或重发。本次离线比对未操作B/D、NOVOCHAT，
+未更换任何库或用途材料。
+后继工作回到既定单中继/双中继和恢复场景，但不自动授权阻断直连、重启中继或更新B/D。
+本项不是资产执行、Business Receipt、共识最终性、Iroh→UDP切回、多跳或TPS验收，
+0xc0000005和历史停顿根因仍独立保留。没有为本次文档/离线核对手动发云端CI。

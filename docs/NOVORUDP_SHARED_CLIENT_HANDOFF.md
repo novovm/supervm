@@ -1253,8 +1253,15 @@ Object `6cdfebd7bf6555c6a60962d3f11a51863d1fe9246dd41fed50f2e5d363de4524`，
 Session `624b3e7ba0878c772d60c1ade8ef9212`。A后续120秒采样保留2次缺novonet投影，
 不假报全成功；原拒绝计数和connection_failures未清零且前后不变。
 详见[实际发送证据](../artifacts/audit/udp-recovery-observation-20261108/README.md#2026-11-09-c原库恢复签收新ac对象原生udp发送及done)。
-C现在仅需按上述C指令末节只读回传同一接收事件，不再更新、重启或重发。
+94240da4阶段仅待C只读回传同一接收事件，不再更新、重启或重发，后继已完成如下。
 这是已有原生UDP会话上的新对象，不是Iroh→UDP切回验收；旧崩溃/恢复根因未结案。
+最新C回执267eae81已读取原ZIP并与A原ZIP匹配：同Object/Session/nonce及双方身份，
+C确有一条probe_received_integrity_verified，native_udp来源192.168.71.74:41051，
+与A native_udp目标192.168.71.125:41052的ACK/delivered/Object DONE一致。
+[双端匹配报告](../artifacts/audit/udp-recovery-observation-20261108/a-c-native-20261109/two-ended-match.json)
+签收**本条固定非业务对象的原生UDP双端交付**，不再让C操作或重发。
+C逐对象/stage明细缺失照实记录，同一事件两种投影不重复计数；各机本地时间不作
+单向延迟结论。不扩大为业务执行、最终性、Iroh切回、多跳、持续TPS或历史根因已修复。
 实机根因仍未定位，旧证据不自动覆盖新代码；B/D及NOVOCHAT不动、不换钥或初始化。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
