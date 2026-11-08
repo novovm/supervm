@@ -1,0 +1,120 @@
+{
+  "status": "UPDATE_STOPPED_OLD_082_EXISTING_ROLLBACK_RUNNING",
+  "host_id": "C",
+  "source_review": "42ed14f7d386f3b6b79dcacf1161559b6eecba67",
+  "candidate_source": "ddd89e8e05721a2ddb8a7ae9255405d395b39a46",
+  "old_pid": 22860,
+  "original_database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "preflight_same_process_and_config": true,
+  "old_exit": {
+    "pid": 22860,
+    "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-08236129-windows-x86_64\\bin\\novovm-node.exe",
+    "terminated": true,
+    "scope": "authorized exact interrupted-process recovery; not certified graceful drain",
+    "time": "2026-11-08T10:10:33.1029750+08:00"
+  },
+  "update_error": "Another node remains; no shared DB open",
+  "operation_error": {
+    "success": false,
+    "error": "Unknown process; preserve and stop",
+    "observed_utc": "2026-11-08T02:10:33.3394731Z"
+  },
+  "rollback": {
+    "success": true,
+    "pid": 19752,
+    "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-08236129-windows-x86_64\\bin\\novovm-node.exe",
+    "sid": "S-1-5-19",
+    "node_sha256": "9040ac63828c30011e8e7c4801be31183ecb69960854dd4974671df3d5d14d51",
+    "start": "existing",
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+    "custody_unchanged": true,
+    "initialize_executed": false,
+    "time": "2026-11-08T02:11:38.5220801Z",
+    "task": "Running"
+  },
+  "rollback_owner": {
+    "sid": "S-1-5-19",
+    "start": "existing",
+    "config": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-08236129-20261108\\run.json",
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+    "initialize_executed": false,
+    "keys_generated": false
+  },
+  "rollback_progress": {
+    "current_height": 1,
+    "round": 150,
+    "execution_failures": 0,
+    "durable_decisions": 0,
+    "native_rejected_messages": 64,
+    "native_pending_deliveries": 3
+  },
+  "rollback_node_stderr_bytes": 0,
+  "locator_original_transport_key_match": true,
+  "locator_sequence": 703,
+  "new_version_started": false,
+  "A_to_C_probe_executed": false,
+  "D_updated": false,
+  "public_zip_sha256": "9ed58926fd1bf3aec008d0cce4dee3ef0ee947749901f0069d3305404f8cd93d",
+  "raw_files": {
+    "Inspect-C.ps1": {
+      "bytes": 2426,
+      "sha256": "05174cb550d856c0fcd8bbfd10d91061aa959214d70d0e168c0abe500ebb9e84"
+    },
+    "Update-C-corrected.ps1": {
+      "bytes": 14612,
+      "sha256": "b26eb2ae6049403d49c24f663e4a09216b1909432359af23854b76f2329d1f10"
+    },
+    "Run-C-Resume-Checked.ps1": {
+      "bytes": 2919,
+      "sha256": "14e1f56a9a607777c32110d20fc9b87fdfc286b4fdb04d4aac335562a0d9d4da"
+    },
+    "Rollback-C-Observed.ps1": {
+      "bytes": 2351,
+      "sha256": "e3ddd134447aa0ac9d56199d06a1935a7a0250662fc3b82b7bfd0c265450941b"
+    },
+    "C-before.json": {
+      "bytes": 768989,
+      "sha256": "3f7b2910de7c53e3be05debf4cda6349041a11c554b35f6da2487c0aa16c3f19"
+    },
+    "C-firewall.json": {
+      "bytes": 608,
+      "sha256": "f9fec939a58e9d224bee898e7c940e310c361dcc8316f8d5aa89ccf34fed6199"
+    },
+    "C-old-exit.json": {
+      "bytes": 284,
+      "sha256": "acb41e12c8bd5aad997441d2e9ca033c630185b88c6038c24a061537878c0ca9"
+    },
+    "C-update-error.txt": {
+      "bytes": 41,
+      "sha256": "7e9be304fbbbf0387ef847f6ad7d832a3f482f313274d8afb1f5f434cd51e4dd"
+    },
+    "C-operation-error.json": {
+      "bytes": 127,
+      "sha256": "6da7687da493e2877e597fa36a0edfcfe51b34040a7ff126330d7504cb8a7d00"
+    },
+    "C-explicit-rollback.json": {
+      "bytes": 268,
+      "sha256": "ad3d4ff3f08e94465e055beb6ef1476b88cb207c095f83425a56a0a4933c2e1a"
+    },
+    "rollback-owner.json": {
+      "bytes": 298,
+      "sha256": "898c80b0a98e914521a5dfcfd2e2ef3014ea1db557e58abe854a5d5ab8e8a9fc"
+    },
+    "rollback-progress.json": {
+      "bytes": 5218,
+      "sha256": "1a858ca62a601d9f7040c049e60e3b080f3fe285a2aee4fcba720e0c9f9d3096"
+    },
+    "rollback-node.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "rollback-locator.json": {
+      "bytes": 19656,
+      "sha256": "0a725be44f93a7bde4685e15d1660aeba63e9a52c69f918e5b53494181642fcd"
+    },
+    "C-rollback-observation.json": {
+      "bytes": 487,
+      "sha256": "7d16a61c56eeda7871031bafa5645462624d414bc2a3b7614c418e052f062a1d"
+    }
+  }
+}
