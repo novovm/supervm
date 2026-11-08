@@ -1,0 +1,43 @@
+{
+  "source_commit": "5181da733d59d998afa898bb9964db5deae9e72c",
+  "created_at": "2026-11-08T18:03:17.4923036Z",
+  "archive_directory_on_A": "D:\\WorksArea\\SUPERVM\\target\\udp-recovery-candidate-20261109",
+  "platforms": [
+    {
+      "platform": "windows",
+      "archive": "novonet-probe-5181da73-windows-x86_64.zip",
+      "archive_bytes": 150464532,
+      "archive_sha256": "6f28ddee10711ab9a4f72b2820f28c93475f075ddceee805ef2f10412510e811",
+      "release_manifest_sha256": "f381ccd4eed0a9176e3b91aded8f699f19bb64bd983307c44f1dbf8086162ab3",
+      "artifact_count": 77,
+      "node_sha256": "ff68c5930b9b205b25ba5351a17ad08aa68f51d7cf71779d0507b6269f4087f3",
+      "client_sha256": "000c36a0614f2299dbff653f197f22f74b63fa9f6884db76a32da9ed4a5ca7a5",
+      "ctl_sha256": "d8f4d60bd705eeb331c3ffb464ec8fe769c659a981410c665a385db7b0e1710f",
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "actual_packaged_runtime_verification": true,
+      "actual_existing_service_contract_verification": true,
+      "bounded_binary_probe_prepare_cancel": true
+    },
+    {
+      "platform": "linux",
+      "archive": "novonet-probe-5181da73-linux-x86_64.tar.gz",
+      "archive_bytes": 359111230,
+      "archive_sha256": "67ea573bdcb7ac8b90f4617ad6adeaf583da1515be399a481eeb08c609cd9f25",
+      "release_manifest_sha256": "5fb039bb26c266afe53c68b1c31bbb961e155d683d3a71ecaaa937ae71374dfd",
+      "artifact_count": 80,
+      "node_sha256": "7306580b501ccbee539a12c2a36436d1d8a49b2f4f071919b5738a93dc534790",
+      "client_sha256": "2d9532360736d863f5bec2a8bf580bf3a0561a7c1407520bcbab74a638550ef7",
+      "ctl_sha256": "362f3ef3b4ab1fcc2d9d8c7592b45991e52f1e8fa31bbdb7c08a0f1726845899",
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "actual_packaged_runtime_verification": true,
+      "actual_existing_service_contract_verification": true,
+      "bounded_binary_probe_prepare_cancel": true
+    }
+  ],
+  "installed": false,
+  "running_nodes_updated": false,
+  "actual_udp_recovery_root_cause_resolved": false,
+  "new_four_host_acceptance": false,
+  "new_object_done": false,
+  "new_tps": false
+}

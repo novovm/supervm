@@ -1207,9 +1207,25 @@ lib检查通过，Windows默认feature严格Clippy通过。固定时钟旧例不
 开发中较宽并行筛选触发两项原bootstrap测试端点许可耗尽，串行原全库包含它们通过；
 原失败及中间Clippy问题保留在[本轮记录](../artifacts/audit/udp-recovery-observation-20261108/README.md)。
 
-本提交不是固定候选包或部署验收。运行A/B/C仍ddd89e8e、D未操作；旧实机证据不
-自动覆盖新代码。后继先按原打包器固定新程序/AOEM清单，再单独批准A/C原库existing
-更新，才能从实际恢复状态定位当前实机停顿；不自动启动、重装、换钥或初始化。
+该源码提交本身不代表固定候选或部署验收。2026-11-09已完成其固定候选构建及包内
+离线核验，程序源码为`5181da733d59d998afa898bb9964db5deae9e72c`：
+
+- Windows ZIP 150464532字节，SHA256
+  `6f28ddee10711ab9a4f72b2820f28c93475f075ddceee805ef2f10412510e811`。
+- Linux tar.gz 359111230字节，SHA256
+  `67ea573bdcb7ac8b90f4617ad6adeaf583da1515be399a481eeb08c609cd9f25`。
+- 两包位于A `D:\WorksArea\SUPERVM\target\udp-recovery-candidate-20261109`。
+  包内77/80项长度/哈希、实际AOEM验签KAT、node existing合同、377字节离线命令
+  prepare/cancel及归档内容核验通过；不发包、不启节点、不接触用途钥或库。
+
+[固定制品记录](../artifacts/audit/udp-recovery-observation-20261108/README.md#2026-11-09-固定候选完成未更新节点)
+含node/client/ctl/AOEM/manifest哈希及实际核验报告。
+[一次性A/C原库更新与定位方案](../artifacts/audit/udp-recovery-observation-20261108/UPDATE-PLAN-5181da73.md)
+明确原库/身份、当前ddd回退、必要同范围路径规则及观察判据。
+既有自动CI 42492089086只读核对为该完整源码SHA、push/attempt1、completed/success，
+本轮未手动重跑；不以云端成功替代新包实机验收。
+原批准是固定ddd89e8e，不能自动覆盖新版本更新。运行A/B/C未被本轮更新，D未操作；
+实机根因仍未定位，旧证据不自动覆盖新代码，不自动启动、重装、换钥或初始化。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
