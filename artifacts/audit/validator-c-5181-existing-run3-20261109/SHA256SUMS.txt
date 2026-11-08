@@ -1,0 +1,3 @@
+ac89f8e3620af683dc9b9967832c70acfce4a7cd88068f3c76d7900221a36b8e  original-public-results.zip
+fc17858bc62d9b0f3472846b910129b095bcfb899c855296b97d86df8bacfbde  public-result.json
+f0ac2c4aee6103b8ddfe91b724012c37d5f4104437b5b72ffebe78ff83b02559  README.md
