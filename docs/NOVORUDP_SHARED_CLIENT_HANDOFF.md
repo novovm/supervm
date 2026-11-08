@@ -1081,8 +1081,8 @@ protected材料比对不变。B既有novonet-mailbox/supervm-relay/nginx/docker�
 `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`，
 height=0/current_height=1，recovering/projection_failed=false；最终查询27/60ms。
 这不是连续确认、资产业务或性能结论。B公开身份不变，locator703→719→724且新鲜；
-A最新locator直接读回受普通token ACL限制，不能将“不可读”当“缺失”或谎称完整
-导出。A初始启用发现/诊断、实际监听和后继原生对象接管分别有证据。
+A当时最新locator直接读回受普通token ACL限制，未把“不可读”当“缺失”。后继
+第20节已只读补齐locator与接收事件。A初始发现/诊断、监听及对象接管分别留证。
 
 诊断显式配置已启用，但启动时commands/events均0，不自动发对象。用户取消了
 A→B命令的UAC，该命令未写入，未反复重弹、未改为成功。随后只通过已批准B
@@ -1094,8 +1094,8 @@ root通道向原owner发布**一条B→A固定非业务命令**，不绕过A本�
   本会话实际目标`114.92.30.222:61758`是动态NAT坐标，不写成固定公网配置。
 - 按原`transfer_tag(session,NVBFT001,object)`关联实际反馈，acknowledged_best=1、
   feedback_packets=2、send_terminal_state=delivered及TransportDone存在。
-- **这是B发送端的原生对象DONE证据，A接收侧Probe观察尚未读回**；不签双端
-  完整链，不代替A→C、四机、多跳或Business Receipt，无资产交易/TPS。
+- **该次汇总只有B发送端DONE，A接收侧观察当时未读回**；后继第20节补齐同一
+  对象的双端匹配。仍不代替A→C、四机、多跳或Business Receipt，无资产交易/TPS。
 
 保留首错：A切换前严格规则核验拒绝了Windows将/24规范显示为/255.255.255.0的
 差异，当时未停旧节点；取得原属性并确认完全等价范围后恢复准备态继续，不放宽
@@ -1114,6 +1114,37 @@ B新进程初期1884次unknown_source拒绝，后两个快照1884→1884、连�
 不含protected/credential/资产私钥、数据库或journal。源程序仍ddd89e8e，记录提交
 不等于另一版程序。C/D未更新、未启动或清点；下一步仅申请C同版本原库existing
 更新及A→C双端逐对象证据，不自动授权C/D或四机资产业务。
+
+### 20. 2026-11-08 A接收记录只读补齐：同一B→A对象双端匹配
+
+前次缺的是取证收尾，不是已证明的接收缺陷。普通token不能读LocalService目录，
+Agent未另完成只读导出便留下待项；取消的UAC实际是A→B发命令，不能用它解释
+A历史接收记录不存在。本次用户要求处理后，一次只读UAC导出原记录，未改网络代码、
+ACL或运行配置，未重启/重发、未访问用途私钥/数据库。原PID24444/LocalService和
+程序哈希19883c8b…均一致；原27份/29份历史证据不改写，其false字段按当时范围使用。
+
+同一历史对象`36c112d46a0b31fdce33ccd3e8b5270d2afda6349975912ff767629aa25928dd`，
+同一Session `668e6e9ccd7ecd5ce873bbf2c951e658`：A保留**1条**
+`probe_received_integrity_verified`，与B原`probe_object_done`的Object ID、Session ID、
+发送/接收validator ID逐字节匹配；A实际认证peer也等于B发送方。两端实际native_udp，
+B目标114.92.30.222:61758、A来源47.103.59.206:41050，仅为本次动态会话坐标。
+A Probe上下文evicted=0，本地accepted_commands=0；补证没有另发对象或伪造成功。
+
+B先前保存的低层反馈按原transfer_tag关联ACK及DONE继续有效；A低层120秒留存窗
+可能已过，不声称本次重新取得其全部分片日志。各机wall clock不同，不将壁钟相减
+当网络延迟或完整因果时序。现可登记**这一条B→A真实对象双端有界接管证据匹配**，
+不是Business Receipt、资产执行/最终性、A→C、四机、多跳或TPS。
+
+同时直接读回A原签名locator sequence709，在导出时新鲜；原发现RPC启用、已安装
+bound peer routes2、connection_failures0。global_auto_discovery及native_multihop_accepted
+仍false，不靠本次补证提升未验收范围。无需为读取报告放宽受保护目录权限；以后复用
+本次最小只读导出入口，不把采集权限缺口再当网络故障或新增架构任务。
+
+[8份接收补证原件](../artifacts/audit/validator-b-program-install-20261102/novonet-probe-ddd89e8e-A-receive-evidence.zip)，
+57461字节，SHA256 `65251131756ca8d13d2c78642532be5b6da11f5952fa02646f4bcd2bafa65130`。
+含原progress/公开locator、双端匹配结果、原B反馈及只读导出脚本；不含protected、
+credential、数据库/journal或资产钥。运行程序仍ddd89e8e，C/D保持082未操作。
+后继仍是获准C更新后做A→C双端验收，不以本条B→A替代。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
