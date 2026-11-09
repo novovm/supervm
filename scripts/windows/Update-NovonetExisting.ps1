@@ -13,20 +13,20 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference=$false
-$source='883c6183a9dbaf73686e46381b178379bebf8217'
-$manifestPin='22ddaa91542f77ee593705348fc8515fe9151e7a236e73dca85388c0b437b6b2'
-$nodePin='e02c4bb3020f348d33b87283fd6578d98db74ea523d96e32d86e60e2d2f7cbd0'
+$source='2b97fc8e5d1f83c521669e6f82803794ad4fd5ed'
+$manifestPin='0e54db51af068682e875f720a9f0e11807076c7d421e94117a2f13887f272e35'
+$nodePin='255381b4825de9d5da29aa6ac64d0aec35d5028d53671aacb60aae22c5f4c91c'
 $oldNodePin=if($HostId -ceq 'D'){'9040ac63828c30011e8e7c4801be31183ecb69960854dd4974671df3d5d14d51'}else{'ff68c5930b9b205b25ba5351a17ad08aa68f51d7cf71779d0507b6269f4087f3'}
 $corePin='1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50'
 $helperPin='659d2cdecf3e5ca0e58472a25c9f85b4f85a05095fca7b0cc0fc4277077f7b66'
 $state="C:\ProgramData\NOVOVM\selfrun\91129655606029\$HostId"
 $oldWork=Join-Path $state $(if($HostId -ceq 'D'){'novonet-08236129-20261108'}else{'novonet-probe-5181da73-20261109'})
-$work=Join-Path $state 'novonet-relay-evidence-883c6183-20261109'
+$work=Join-Path $state 'novonet-relay-evidence-2b97fc8e-20261109'
 $oldRelease='C:\ProgramData\NOVOVM\releases\'+$(if($HostId -ceq 'D'){'novonet-08236129-windows-x86_64'}else{'novonet-probe-5181da73-windows-x86_64'})
-$release='C:\ProgramData\NOVOVM\releases\novonet-relay-evidence-883c6183-windows-x86_64'
+$release='C:\ProgramData\NOVOVM\releases\novonet-relay-evidence-2b97fc8e-windows-x86_64'
 $oldTask=if($HostId -ceq 'D'){'NOVOVM-D-08236129-Network-20261108'}else{"NOVOVM-$HostId-5181da73-Existing-20261109"}
-$newTask="NOVOVM-$HostId-883c6183-Existing-20261109"
-$rollbackTask="NOVOVM-$HostId-Pre883c-Existing-Rollback-20261109"
+$newTask="NOVOVM-$HostId-2b97fc8e-Existing-20261109"
+$rollbackTask="NOVOVM-$HostId-Pre2b97fc8e-Existing-Rollback-20261109"
 $oldProgressPath=Join-Path $oldWork $(if($HostId -ceq 'D'){'progress.json'}else{'logs\progress.json'})
 $oldRuleName=if($HostId -ceq 'D'){'NOVOVM-08236129-D-20261108'}else{"NOVOVM-5181da73-$HostId-20261109"}
 $oldExe=Join-Path $oldRelease 'bin\novovm-node.exe'
@@ -245,7 +245,7 @@ try {
     $app=$rule|Get-NetFirewallApplicationFilter
     $address=$rule|Get-NetFirewallAddressFilter
     Assert-OriginalFirewallScope $rule $port $app $address $oldExe $expectedPorts ([Net.IPEndPoint]::Parse($config.udp_addr).Address.ToString())
-    $newRule="NOVOVM-883c6183-$HostId-20261109"
+    $newRule="NOVOVM-2b97fc8e-$HostId-20261109"
     if(Get-NetFirewallRule -Name $newRule -ErrorAction SilentlyContinue) {
         if(!$ResumePrepared){throw 'New firewall rule exists; inspect before explicit resume'}
     }else{
@@ -284,7 +284,7 @@ try {
     if($modules.Count -ne 1 -or $modules[0].FileName -ine $config.library -or (Get-FileHash -LiteralPath $modules[0].FileName).Hash.ToLowerInvariant() -cne $corePin){throw 'Actually loaded AOEM differs'}
     Write-NewJson "$out/after.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');source=$source;pid=$new[0].ProcessId;exe=$newExe;node_sha256=$nodePin;sid='S-1-5-19';database=$config.database;start='existing';initialize_executed=$false;keys_generated=$false;custody_unchanged=$true;aoem_module=$modules[0].FileName;aoem_sha256=$corePin;old_task=(Get-ScheduledTask -TaskName $oldTask).State.ToString();new_task=$newTask;prior_owner_crashed=[bool]$RecoverCrashed;terminated_process_observations=$newExecution.exited;progress=$current;listeners=@(Get-NetUDPEndpoint|Where-Object OwningProcess -EQ $new[0].ProcessId|Select-Object LocalAddress,LocalPort,OwningProcess);new_command_file_present=(Test-Path -LiteralPath $network.probe_control_file)})
     Write-NewJson "$out/result.json" ([ordered]@{host_id=$HostId;source=$source;update_completed=$true;start='existing';database=$config.database;pid=$new[0].ProcessId;custody_unchanged=$true;progress_state_unchanged=$true;authenticated_state_root_external_check_required=$true;recovery_observer_available=$true;new_object_sent=$false;root_cause_resolved=$false;initialize_executed=$false;business_receipt=$false})
-    Write-Output "PASS $HostId 883c6183 existing update; external authenticated Status and physical relay evidence remain required"
+    Write-Output "PASS $HostId 2b97fc8e existing update; external authenticated Status and physical relay evidence remain required"
 } catch {
     $problem=$_.ToString()
     Write-NewJson "$out/error.json" ([ordered]@{error=$problem;old_node_stopped=($stopped -and !$RecoverCrashed -and !$ResumeStopped);existing_start_attempted=$stopped;prior_owner_crashed=[bool]$RecoverCrashed;prior_owner_cleanly_stopped=[bool]$ResumeStopped;time=(Get-Date).ToUniversalTime().ToString('o')})

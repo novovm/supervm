@@ -12,9 +12,9 @@ foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-
     if($function.Count -ne 1){throw 'Expected original deployment gate missing'}
     . ([scriptblock]::Create($function[0].Extent.Text))
 }
-$source='883c6183a9dbaf73686e46381b178379bebf8217'
-$manifestPin='22ddaa91542f77ee593705348fc8515fe9151e7a236e73dca85388c0b437b6b2'
-$nodePin='e02c4bb3020f348d33b87283fd6578d98db74ea523d96e32d86e60e2d2f7cbd0'
+$source='2b97fc8e5d1f83c521669e6f82803794ad4fd5ed'
+$manifestPin='0e54db51af068682e875f720a9f0e11807076c7d421e94117a2f13887f272e35'
+$nodePin='255381b4825de9d5da29aa6ac64d0aec35d5028d53671aacb60aae22c5f4c91c'
 $root=Join-Path $PSScriptRoot ('../../target/relay-evidence-20261109/gate-tests-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root|Out-Null
 $json=Join-Path $root 'record.json'

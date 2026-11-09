@@ -1,4 +1,4 @@
-"""Approved B-only 883c update, adapted from the original 20261108 Update-B.py.
+"""B-only 2b97 candidate updater, adapted from the original 20261108 Update-B.py.
 
 prepare stages and qualifies a side-by-side package; update is a separate action.
 No initializer, key generation, DB copying, LOCK removal or application-unit changes.
@@ -16,22 +16,22 @@ import subprocess
 import tarfile
 import time
 
-SOURCE = '883c6183a9dbaf73686e46381b178379bebf8217'
-ARCHIVE_PIN = '3fa3b66645d99720e297c3688a704a601385c41ed36b20fefaca40420a87c91e'
-MANIFEST_PIN = 'd26b7b5973b22027b1b7399539907892360226fcde4a243bdb3aa7ea62381ac3'
-NODE_PIN = 'ee99594116dd2fcf3ea6eef93d61783abe700657b8cc77442e80e4dc2f05e5c9'
+SOURCE = '2b97fc8e5d1f83c521669e6f82803794ad4fd5ed'
+ARCHIVE_PIN = '332a2ef237a35b0169c98c5677cc59135046031d86f0845625c16a15078eb554'
+MANIFEST_PIN = '3569fb70b4b7b6f5cfa8306bedf384351f2eb02680523beb730da02dea060730'
+NODE_PIN = 'dbdcd2f08bd0ddb83ebd0a6027cf54f8d4dee9f03a7a9ab8b988750d8f79a8b7'
 OLD_NODE_PIN = '603ab7f063274b03e1d81599a57fcb1765b626c04da6d9aef0df963aa24d39cb'
 CORE_PIN = 'd73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33'
-incoming = Path('/home/ecs-user/novovm-relay-update-883c6183-20261109')
+incoming = Path('/home/ecs-user/novovm-relay-update-2b97fc8e-20261109')
 evidence = incoming / 'evidence'
-release = Path('/opt/novovm/releases/novonet-relay-evidence-883c6183-linux-x86_64')
+release = Path('/opt/novovm/releases/novonet-relay-evidence-2b97fc8e-linux-x86_64')
 old_release = Path('/opt/novovm/releases/novonet-probe-ddd89e8e-linux-x86_64')
 state = Path('/var/lib/novovm/selfrun/91129655606029/B')
 old_work = state / 'novonet-probe-ddd89e8e-20261108'
-work = state / 'novonet-relay-evidence-883c6183-20261109'
+work = state / 'novonet-relay-evidence-2b97fc8e-20261109'
 old_unit = 'novovm-B-ddd89e8e-network-20261108.service'
-new_unit = 'novovm-B-883c6183-network-20261109.service'
-rollback_unit = 'novovm-B-pre883c-existing-rollback-20261109.service'
+new_unit = 'novovm-B-2b97fc8e-network-20261109.service'
+rollback_unit = 'novovm-B-pre2b97fc8e-existing-rollback-20261109.service'
 uid = gid = None
 
 
@@ -60,6 +60,14 @@ def no_redirect(path):
     path = Path(path).absolute()
     require(all(not p.is_symlink() for p in (path, *path.parents)), 'Redirected deployment path')
     return path
+
+
+def make_directory(path, owner_uid, mode):
+    path = no_redirect(path)
+    path.mkdir(mode=mode)
+    os.chown(path, owner_uid, gid)
+    # mkdir's requested mode is reduced by the updater's private umask.
+    path.chmod(mode)
 
 
 def services():
@@ -175,6 +183,15 @@ def stop_exact(unit, expected, expected_hash):
 
 def launch(unit, root, config, logs):
     no_node_or_listener()
+    settings = read(config)
+    routing = read(settings['novonet_config_file'])
+    for path in (config, settings['novonet_config_file'], settings['signing_key_file'],
+                 settings['transport_key_file'], routing['carrier_identity_file'],
+                 root / 'aoem/manifest/aoem-manifest.json'):
+        subprocess.run(['runuser', '-u', 'novovm', '--', 'test', '-r', str(path)], check=True)
+    for path in (logs, Path(settings['database'])):
+        for permission in ('-r', '-w', '-x'):
+            subprocess.run(['runuser', '-u', 'novovm', '--', 'test', permission, str(path)], check=True)
     for name in ('node.stdout', 'node.stderr'):
         p = logs / name
         p.touch(exist_ok=False)
@@ -187,7 +204,7 @@ def launch(unit, root, config, logs):
            f'NOVOVM_NATIVE_EXECUTION_RUN_MS=86400000 NOVOVM_PROFILE_NATIVE_DELIVERY=1 '
            f'NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH={logs / "progress.json"}')
     subprocess.run(['systemd-run', '--quiet', '--collect', '--unit=' + unit,
-                    '-p', 'User=novovm', '-p', 'Group=novovm', '-p', 'UMask=0077', '-p', 'RuntimeMaxSec=86520',
+                    '-p', 'Type=exec', '-p', 'User=novovm', '-p', 'Group=novovm', '-p', 'UMask=0077', '-p', 'RuntimeMaxSec=86520',
                     '-p', 'LoadCredentialEncrypted=owner-key:/etc/novovm/credentials/node-owner-key.cred',
                     '-p', 'Environment=' + env, '-p', 'StandardOutput=append:' + str(logs / 'node.stdout'),
                     '-p', 'StandardError=append:' + str(logs / 'node.stderr'), str(root / 'bin/novovm-node')], check=True)
@@ -252,11 +269,9 @@ def prepare(resume_stopped):
     require(runtime['ok'] and os.path.samefile(runtime['data']['library'], library), 'Actual library differs')
     require(all(runtime['data'][k] is True for k in ('verification_qualified', 'scalar_verification_kat_passed',
                 'unified_semantic_verification_kat_passed', 'mixed_batch_verification_kat_passed')), 'Runtime KAT failed')
-    work.mkdir(mode=0o750)
-    os.chown(work, 0, gid)
+    make_directory(work, 0, 0o750)
     for name, owner_uid, mode in [('logs', uid, 0o700), ('commands', 0, 0o750)]:
-        (work / name).mkdir(mode=mode)
-        os.chown(work / name, owner_uid, gid)
+        make_directory(work / name, owner_uid, mode)
     for name, value in [('run.json', fresh), ('network.json', routing)]:
         write(work / name, value)
         os.chown(work / name, 0, gid)
@@ -270,24 +285,25 @@ def prepare(resume_stopped):
     print('PASS B staged package/runtime; no node started, no database opened')
 
 
-def recover_old(before):
+def recover_old(before, suffix=''):
     require(before['custody'] == custody(before['config'], before['network']), 'Custody changed; no automatic rollback')
     require(digest(old_release / 'bin/novovm-node') == OLD_NODE_PIN, 'Original rollback binary differs')
     require(digest(old_work / 'run.json') == before['config_sha256']
             and digest(old_work / 'network.json') == before['network_sha256'], 'Original rollback config changed')
+    logs = no_redirect(work / ('rollback-logs' + suffix))
+    require(not logs.exists() and not (evidence / 'rollback-requested.json').exists(),
+            'Rollback already attempted; preserve evidence before stopping any node')
     pid = mainpid(new_unit)
     if pid:
         stop_exact(new_unit, release / 'bin/novovm-node', NODE_PIN)
     no_node_or_listener()
-    logs = work / 'rollback-logs'
-    logs.mkdir(mode=0o700)
-    os.chown(logs, uid, gid)
+    make_directory(logs, uid, 0o700)
     pid = launch(rollback_unit, old_release, old_work / 'run.json', logs)
     write(evidence / 'rollback-requested.json', {'pid': pid, 'start': 'existing', 'initialize_executed': False,
           'scope': 'restart requested; original logs and authenticated Status must still be checked'})
 
 
-def update(resume_stopped):
+def update(resume_stopped, suffix=''):
     before, prepared = read(evidence / 'before.json'), read(evidence / 'prepared.json')
     require(prepared['source'] == SOURCE and prepared['resume_stopped'] == resume_stopped, 'Preparation mode differs')
     require(not (evidence / 'old-exit.json').exists(), 'Cutover already attempted; preserve evidence')
@@ -303,15 +319,16 @@ def update(resume_stopped):
     require(not (work / 'commands/control.nvprobe').exists(), 'Unexpected probe command; refuse activation')
     stop = current_owner if resume_stopped else stop_exact(old_unit, old_release / 'bin/novovm-node', OLD_NODE_PIN)
     write(evidence / 'old-exit.json', stop)
+    logs = work / ('logs' + suffix)
     try:
-        pid = launch(new_unit, release, work / 'run.json', work / 'logs')
+        pid = launch(new_unit, release, work / 'run.json', logs)
         identity(pid, release / 'bin/novovm-node')
         for _ in range(120):
             require(mainpid(new_unit) == pid and Path(f'/proc/{pid}').exists(), 'New node exited during startup')
-            if (work / 'logs/progress.json').exists():
+            if (logs / 'progress.json').exists():
                 break
             time.sleep(.5)
-        progress = read(work / 'logs/progress.json')
+        progress = read(logs / 'progress.json')
         require(state_projection(progress) == state_projection(before['progress']), 'Recovered head/height differs')
         probe = progress['native_network_probe']
         require(probe['enabled'] and len(probe['transport']['udp_recovery_event_names']) == 22,
@@ -333,17 +350,55 @@ def update(resume_stopped):
         print('PASS B existing startup; authenticated Status still required before A update')
     except Exception as error:
         write(evidence / 'startup-failure.json', {'error': str(error)})
-        recover_old(before)
+        recover_old(before, suffix)
         raise
+
+
+def retry_failed_start():
+    global evidence
+    original = evidence
+    before, prepared = read(original / 'before.json'), read(original / 'prepared.json')
+    require(prepared['source'] == SOURCE and prepared['resume_stopped'], 'Wrong failed candidate')
+    require(read(original / 'startup-failure.json')['error'] == 'Target PID owner differs',
+            'Not the inspected failed startup')
+    rollback = read(original / 'rollback-requested.json')
+    require(rollback['start'] == 'existing' and rollback['initialize_executed'] is False,
+            'Rollback history differs')
+    no_node_or_listener()
+    require(mainpid(new_unit) == 0 and mainpid(rollback_unit) == 0, 'A previous launch is still active')
+    check_package(release)
+    require(before['services'] == services() and before['custody'] == custody(before['config'], before['network']),
+            'Services/custody changed since failed startup')
+    for root, pins in ((old_work, before), (work, prepared)):
+        require(digest(root / 'run.json') == pins['config_sha256']
+                and digest(root / 'network.json') == pins['network_sha256'], 'Prepared config changed')
+    permissions = {}
+    for path in (work, work / 'commands'):
+        info = no_redirect(path).stat()
+        require(path.is_dir() and info.st_uid == 0 and info.st_gid == gid
+                and info.st_mode & 0o7777 == 0o700, 'Not the inspected umask-reduced directory')
+        permissions[str(path)] = {'before': '0700', 'after': '0750', 'uid': 0, 'gid': gid}
+    attempt = no_redirect(incoming / 'evidence-retry-start-1')
+    require(not attempt.exists() and not (work / 'logs-retry-start-1').exists(), 'Retry already attempted')
+    make_directory(attempt, 0, 0o700)
+    write(attempt / 'before.json', before)
+    write(attempt / 'prepared.json', prepared)
+    write(attempt / 'permission-repair.json', {'original_failure_evidence': str(original),
+          'directories': permissions, 'database_permissions_changed': False, 'keys_changed': False})
+    for path in (work, work / 'commands'):
+        path.chmod(0o750)
+    make_directory(work / 'logs-retry-start-1', uid, 0o700)
+    evidence = attempt
+    update(True, '-retry-start-1')
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['prepare', 'update', 'rollback'])
+    parser.add_argument('mode', choices=['prepare', 'update', 'rollback', 'retry-failed-start'])
     parser.add_argument('--resume-stopped', action='store_true')
     args = parser.parse_args()
     require(os.getuid() == 0, 'Root required for this approved single-node updater')
-    global uid, gid
+    global uid, gid, evidence
     account = pwd.getpwnam('novovm')
     uid, gid = account.pw_uid, account.pw_gid
     os.umask(0o077)
@@ -353,8 +408,19 @@ def main():
         prepare(args.resume_stopped)
     elif args.mode == 'update':
         update(args.resume_stopped)
+    elif args.mode == 'retry-failed-start':
+        require(args.resume_stopped, 'Failed stopped-owner retry must be explicit')
+        retry_failed_start()
     else:
-        recover_old(read(evidence / 'before.json'))
+        retry = no_redirect(incoming / 'evidence-retry-start-1')
+        if (retry / 'started.json').exists():
+            started = read(retry / 'started.json')
+            require(started['source'] == SOURCE and started['node_sha256'] == NODE_PIN,
+                    'Successful retry source differs')
+            evidence = retry
+            recover_old(read(evidence / 'before.json'), '-after-retry-start-1')
+        else:
+            recover_old(read(evidence / 'before.json'))
 
 
 if __name__ == '__main__':

@@ -1492,6 +1492,96 @@ B-clean-stop-journal、B-883c-prepare、B-883c-prepared-runtime原记录，原CI
 nat-linux-two-cpu-window-1、nat-linux-window-counterexample-1和后继coordinated-start日志。
 原public配置有大公钥/签名数组，不把它们或任何受保护用途材料上传充当所需摘要。
 
+### 26. 2026-11-09 固定2b97候选与获批B→A交付
+
+用户已在本轮明确批准：以`2b97fc8e5d1f83c521669e6f82803794ad4fd5ed`替代此前883c
+固定候选，沿原B→A范围逐台existing更新，必要时精确停止原节点、绑定Windows
+原窄范围规则。不操作C/D，不初始化、不换钥、不动B邮箱/Relay/nginx/Docker。
+包内实测和该源码必需完整CI通过后才切换；不能用准备/部分CI结果提前签收。
+
+本轮已经完成两平台原打包器的真实release构建和独立核验。构建起止源码均为同一
+干净2b97工作树，后继仅部署脚本的固定pin/版本化路径及交付记录变化，不改变已封包
+程序。Windows复用复制到C的原编译缓存，Linux复用原WSL缓存；没有清理D现有
+缓存、源码、原库或证据。压缩包改存C以避免D剩余空间不足。
+
+包目录：`D:\WorksArea\SUPERVM\artifacts\product-overlay\novonet-relay-evidence-2b97fc8e-{windows,linux}-x86_64`。
+归档/更新器/回滚和状态检查入口：
+`C:\Users\leadb\AppData\Local\NOVOVM\delivery-2b97fc8e-20261109`。
+大归档不进入普通Git历史。完整哈希见[本轮候选清单](../artifacts/audit/udp-recovery-observation-20261108/relay-20261109/coordinated-2b97fc8e/candidate-manifest.json)。
+
+| 固定项 | Windows x86_64 | Linux x86_64 |
+| --- | --- | --- |
+| 归档字节 | 150370301 | 359149673 |
+| 归档SHA256 | afe1f9911bb72c8cade93a09238deb77d6c5aaffc00ab47c787d77902025f778 | 332a2ef237a35b0169c98c5677cc59135046031d86f0845625c16a15078eb554 |
+| manifest SHA256 | 0e54db51af068682e875f720a9f0e11807076c7d421e94117a2f13887f272e35 | 3569fb70b4b7b6f5cfa8306bedf384351f2eb02680523beb730da02dea060730 |
+| node SHA256 | 255381b4825de9d5da29aa6ac64d0aec35d5028d53671aacb60aae22c5f4c91c | dbdcd2f08bd0ddb83ebd0a6027cf54f8d4dee9f03a7a9ab8b988750d8f79a8b7 |
+| 全量独立核验 | 77项，ZIP逐成员hash一致 | 80项，原tar diff一致 |
+| 实际包内CLI/NAT全7项 | 通过，19.46秒 | 通过，96.17秒 |
+
+两平台实际包内AOEM仍为原1b764a36/d73e4a2f库，实际加载路径、scalar/统一语义/
+mixed-batch验签KAT、原service-contract/existing及377字节固定probe prepare/cancel
+通过。上述7项使用包内ctl/NAT和包内AOEM/manifest，不借开发目录debug程序背书；
+包括protected身份生成/反例、同UDP端口两次新session往返、缺批验签能力的正式旧库
+反例和未应答失败report。仅用临时隔离材料，不访问部署钥或链数据库。
+
+原Windows/Linux更新器只改本候选固定hash、版本路径/unit/task名；不新增更新框架。
+Windows原7/13/12/8/10/7/4守卫组及本次实际包通过；Linux原6项及其反例通过。
+B新归档和原更新器已上传独立`/home/ecs-user/novovm-relay-update-2b97fc8e-20261109`，
+远端归档hash匹配，脚本hash为
+`786460b015241aaf834a583d3598192845996b3c3e580047c05c021202b9f8db`。
+暂存未执行程序、未触碰原库。首次目录创建的Python命令因本机引号传递出错，在
+任何远端写入前退出；改用原生单条mkdir后完成暂存，错误不归因于SSH/节点。
+
+原自动CI42567619087已于北京时间2026-11-09 15:24:57结束，总结果success，
+push/attempt1、源码完整SHA为上述2b97；没有手工新增、取消或重跑。它证明固定
+程序检查通过，不覆盖下述后继部署控制器修正，也不代表A/B已更新。
+
+首次B prepare通过；15:25的启动及自动旧版恢复都实际失败。新程序stderr为
+`resolve resident configuration / Permission denied`；旧版恢复stderr为
+`progress report failed / Permission denied`。首个控制器异常为
+`Target PID owner differs`，不能据此认定实际身份被替换。
+
+已由现场namei/stat和本地真实文件系统对照定位共同原因：控制器设置umask077，
+原mkdir(mode=0750)被削成0700；新work和commands实际为root:novovm/0700。
+因此新程序不能遍历work读取配置，旧版恢复也不能访问该work下的进度目录。
+并非AOEM、密钥、账本、NovoRUDP或固定程序CI失败，不恢复废弃通信入口。
+
+原更新器现对新目录chown后显式chmod为既定模式：work/commands0750、日志0700；
+未改数据库、受保护钥或其他目录权限。launch在启动前以实际novovm账户检查原
+配置、用途材料、manifest及日志/原库目录访问能力；systemd Type=exec避免默认
+simple在exec/降权前返回PID的观察窗口，身份/程序检查继续保留，不跳过校验。
+这项启动时序修正不反推其就是原身份异常的唯一原因。
+
+只对本次已检查的失败增设一次显式retry-failed-start：固定同源码/制品/原配置、
+服务/用途材料、无节点/端口占用、精确0700目录均须匹配，且要求旧失败记录存在。
+在新evidence-retry-start-1及logs-retry-start-1留痕；既有失败/恢复日志不覆盖。
+原远端控制器保留，新控制器另名update-novonet-existing-permissions.py，SHA256
+`95dc1edcfa60a1e429341e2a9f2ec4c81ec43defe164c6f4c710f98bdf38c4b2`。
+首次本地原6项加umask/真实目录/启动访问与Type=exec/拒绝错误重试等共10项通过。
+后继再补重复回滚的停进程前拒绝反例，最终11项通过；原10项日志和回执快照保留。
+最终控制器还为成功重入后的显式rollback选择独立回滚日志与该次证据；旧日志或
+已请求回滚会在停止任何节点前拒绝。最终入口已另名暂存B（未再次执行回滚）：
+`/home/ecs-user/novovm-relay-update-2b97fc8e-20261109/update-novonet-existing-recovery.py`，
+SHA256 `3ec1353b41766c185d6f2b63fde8cf233dce7bd76fe3899ad88323e5d90e2e5f`。
+需要时仍显式调用原rollback模式；当前健康实例不因验证入口而重启。
+
+**B现已以固定2b97程序existing恢复运行**：PID2587563、UID996，实际node和加载
+AOEM均与上表匹配；原库/用途材料/配置规则不变。原UDP41050/42050均由该PID
+监听，locator序号从3287增至3289，默认未执行测试对象。独立原客户端认证Status
+成功63ms，返回原状态根f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333，
+height0/current_height1、无恢复/投影失败。mailbox/Relay/nginx/Docker前后仍active/running，
+PID分别944911/958/627770/1414一致。未再次停新实例切回旧版做回滚演练，不把
+共用权限修正冒充另一轮真实旧版恢复已验收。
+
+本次按用户最新要求先收口B启动/恢复失败；A仍5181/PID13964，C/D不操作。
+未发送新的测试对象，不签收双端Object DONE、资产业务、最终性或多跳。
+详见[实际B修正结果](../artifacts/audit/udp-recovery-observation-20261108/relay-20261109/coordinated-2b97fc8e/B-permission-fix-result.json)
+及[原始证据说明](../artifacts/audit/udp-recovery-observation-20261108/relay-20261109/coordinated-2b97fc8e/README.md)。
+
+实际使用的回滚仍为B旧ddd、A旧5181程序和各自原库existing；不运行旧初始化任务。
+保持原24小时有界运行，不宣称永久SCM或公开生产服务已验收。旧恢复停滞/旧C崩溃
+不因本次候选通过而注销；无新的资产、最终性、多跳实网或TPS结论。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

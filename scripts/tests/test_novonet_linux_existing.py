@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -95,6 +96,94 @@ class ExistingGuards(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 update.write(root / 'report.json', {'original': False})
             self.assertEqual(json.loads((root / 'report.json').read_text()), {'original': True})
+
+    def test_actual_directory_modes_survive_private_umask(self):
+        with tempfile.TemporaryDirectory(prefix='novonet-umask-') as directory:
+            root = Path(directory)
+            previous = os.umask(0o077)
+            try:
+                # This is the former implementation's actual filesystem failure.
+                (root / 'old-work').mkdir(mode=0o750)
+                self.assertEqual((root / 'old-work').stat().st_mode & 0o777, 0o700)
+                with patch.object(update, 'gid', os.getgid()):
+                    for name, mode in (('work', 0o750), ('commands', 0o750), ('logs', 0o700)):
+                        path = root / name
+                        update.make_directory(path, os.getuid(), mode)
+                        self.assertEqual(path.stat().st_mode & 0o777, mode)
+                        self.assertEqual(path.stat().st_uid, os.getuid())
+                        with self.assertRaises(FileExistsError):
+                            update.make_directory(path, os.getuid(), 0o777)
+                        self.assertEqual(path.stat().st_mode & 0o777, mode)
+            finally:
+                os.umask(previous)
+
+    def test_launch_checks_service_account_access_before_exec_ready_systemd_start(self):
+        from subprocess import CalledProcessError, CompletedProcess
+        with tempfile.TemporaryDirectory(prefix='novonet-launch-') as directory:
+            root = Path(directory)
+            config, network, logs = root / 'run.json', root / 'network.json', root / 'logs'
+            logs.mkdir()
+            config.write_text(json.dumps({'novonet_config_file': str(network), 'database': str(root / 'db'),
+                                         'signing_key_file': 'validator.protected',
+                                         'transport_key_file': 'transport.protected'}))
+            network.write_text(json.dumps({'carrier_identity_file': 'carrier.protected'}))
+            with patch.object(update, 'no_node_or_listener'), patch.object(update, 'uid', os.getuid()), \
+                    patch.object(update, 'gid', os.getgid()), patch.object(update, 'mainpid', return_value=123), \
+                    patch.object(update.subprocess, 'run', return_value=CompletedProcess([], 0)) as run:
+                self.assertEqual(update.launch('target.service', root, config, logs), 123)
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertTrue(all(command[:4] == ['runuser', '-u', 'novovm', '--']
+                                    for command in commands[:-1]))
+                self.assertEqual(len(commands[:-1]), 12)
+                self.assertEqual(commands[-1][0], 'systemd-run')
+                self.assertIn('Type=exec', commands[-1])
+                self.assertIn('User=novovm', commands[-1])
+                self.assertIn('NOVOVM_NATIVE_EXECUTION_START=existing', ' '.join(commands[-1]))
+                self.assertNotIn('initialize', ' '.join(commands[-1]))
+            with patch.object(update, 'no_node_or_listener'), \
+                    patch.object(update.subprocess, 'run', side_effect=CalledProcessError(1, 'runuser')) as run:
+                with self.assertRaises(CalledProcessError):
+                    update.launch('must-not-start.service', root, config, logs)
+                self.assertEqual(run.call_count, 1)
+
+    def test_retry_requires_inspected_failure_and_same_candidate(self):
+        for prepared, failure in (({'source': 'different', 'resume_stopped': True}, {}),
+                                  ({'source': update.SOURCE, 'resume_stopped': False}, {}),
+                                  ({'source': update.SOURCE, 'resume_stopped': True}, {'error': 'other failure'})):
+            with self.subTest(prepared=prepared, failure=failure), \
+                    patch.object(update, 'read', side_effect=[{}, prepared, failure]), \
+                    patch.object(update, 'no_node_or_listener') as inventory, \
+                    patch.object(update, 'make_directory') as create:
+                with self.assertRaises(RuntimeError):
+                    update.retry_failed_start()
+                inventory.assert_not_called()
+                create.assert_not_called()
+
+    def test_retry_never_bypasses_existing_process_or_port(self):
+        prepared = {'source': update.SOURCE, 'resume_stopped': True}
+        records = [{}, prepared, {'error': 'Target PID owner differs'},
+                   {'start': 'existing', 'initialize_executed': False}]
+        with patch.object(update, 'read', side_effect=records), \
+                patch.object(update, 'no_node_or_listener', side_effect=RuntimeError('live node')), \
+                patch.object(update, 'make_directory') as create:
+            with self.assertRaisesRegex(RuntimeError, 'live node'):
+                update.retry_failed_start()
+            create.assert_not_called()
+
+    def test_repeated_rollback_is_rejected_before_stopping_a_live_node(self):
+        with tempfile.TemporaryDirectory(prefix='novonet-rollback-') as directory:
+            root = Path(directory)
+            (root / 'rollback-logs').mkdir()
+            before = {'custody': {}, 'config': {}, 'network': {}, 'config_sha256': 'fixed',
+                      'network_sha256': 'fixed'}
+            with patch.object(update, 'work', root), patch.object(update, 'evidence', root), \
+                    patch.object(update, 'custody', return_value={}), \
+                    patch.object(update, 'digest', side_effect=[update.OLD_NODE_PIN, 'fixed', 'fixed']), \
+                    patch.object(update, 'mainpid') as pid, patch.object(update, 'stop_exact') as stop:
+                with self.assertRaisesRegex(RuntimeError, 'Rollback already attempted'):
+                    update.recover_old(before)
+                pid.assert_not_called()
+                stop.assert_not_called()
 
 
 if __name__ == '__main__':

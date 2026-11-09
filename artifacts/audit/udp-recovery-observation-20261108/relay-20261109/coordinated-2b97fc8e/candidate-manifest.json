@@ -1,0 +1,43 @@
+{
+  "source_commit": "2b97fc8e5d1f83c521669e6f82803794ad4fd5ed",
+  "created_at": "2026-11-09T05:45:52.0805760Z",
+  "archive_directory_on_A": "C:/Users/leadb/AppData/Local/NOVOVM/delivery-2b97fc8e-20261109",
+  "platforms": [
+    {
+      "platform": "windows",
+      "archive": "novonet-relay-evidence-2b97fc8e-windows-x86_64.zip",
+      "archive_bytes": 150370301,
+      "archive_sha256": "afe1f9911bb72c8cade93a09238deb77d6c5aaffc00ab47c787d77902025f778",
+      "release_manifest_sha256": "0e54db51af068682e875f720a9f0e11807076c7d421e94117a2f13887f272e35",
+      "artifact_count": 77,
+      "node_sha256": "255381b4825de9d5da29aa6ac64d0aec35d5028d53671aacb60aae22c5f4c91c",
+      "client_sha256": "4f56cfd86ab92be47dd5c425ae9be8f0fc049d2112074f05bd093df99123a596",
+      "ctl_sha256": "fa25fdb9ee823ae64f5c40993b8d964a64a0789d12aa88e443f604246588cdc0",
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "actual_packaged_runtime_verification": true,
+      "actual_existing_service_contract_verification": true,
+      "bounded_binary_probe_prepare_cancel": true
+    },
+    {
+      "platform": "linux",
+      "archive": "novonet-relay-evidence-2b97fc8e-linux-x86_64.tar.gz",
+      "archive_bytes": 359149673,
+      "archive_sha256": "332a2ef237a35b0169c98c5677cc59135046031d86f0845625c16a15078eb554",
+      "release_manifest_sha256": "3569fb70b4b7b6f5cfa8306bedf384351f2eb02680523beb730da02dea060730",
+      "artifact_count": 80,
+      "node_sha256": "dbdcd2f08bd0ddb83ebd0a6027cf54f8d4dee9f03a7a9ab8b988750d8f79a8b7",
+      "client_sha256": "babacdf1b4f3dfddd85f7f3a6f87215e367cecf78051d2a8724165c3bfa39695",
+      "ctl_sha256": "0c2c4dc6600d4cf1aa3ac14f5729d4f9efc461e3bb9de39b795c5d295634833e",
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "actual_packaged_runtime_verification": true,
+      "actual_existing_service_contract_verification": true,
+      "bounded_binary_probe_prepare_cancel": true
+    }
+  ],
+  "installed": false,
+  "running_nodes_updated": false,
+  "actual_udp_recovery_root_cause_resolved": false,
+  "new_four_host_acceptance": false,
+  "new_object_done": false,
+  "new_tps": false
+}

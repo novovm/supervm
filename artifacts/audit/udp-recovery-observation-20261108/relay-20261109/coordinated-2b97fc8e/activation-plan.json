@@ -1,0 +1,42 @@
+{
+  "program_source": "2b97fc8e5d1f83c521669e6f82803794ad4fd5ed",
+  "state": "prepared_not_activated",
+  "required_original_full_ci_run": 42567619087,
+  "fixed_version_authorization_required": true,
+  "order": ["B", "A"],
+  "C_D_operations": false,
+  "start": "existing",
+  "initialize": false,
+  "key_generation": false,
+  "database_or_journal_copy_reset_migration": false,
+  "B_other_services_change": false,
+  "run_for_ms_unchanged": 86400000,
+  "B": {
+    "old_program": "ddd89e8e",
+    "old_unit": "novovm-B-ddd89e8e-network-20261108.service",
+    "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+    "account": "novovm",
+    "incoming": "/home/ecs-user/novovm-relay-update-2b97fc8e-20261109",
+    "prepare_after_authorization": "sudo -n python3 /home/ecs-user/novovm-relay-update-2b97fc8e-20261109/update-novonet-existing.py prepare --resume-stopped",
+    "activate_after_qualification": "sudo -n python3 /home/ecs-user/novovm-relay-update-2b97fc8e-20261109/update-novonet-existing.py update --resume-stopped",
+    "rollback_on_target_failure": "sudo -n python3 /home/ecs-user/novovm-relay-update-2b97fc8e-20261109/update-novonet-existing.py rollback",
+    "no_A_update_before_B_external_authenticated_status": true
+  },
+  "A": {
+    "old_program": "5181da73",
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+    "account": "LocalService/S-1-5-19",
+    "activate_launcher": "Start-A.ps1",
+    "rollback_launcher": "Rollback-A.ps1",
+    "old_task_not_rerun": true,
+    "firewall": "clone exact existing node UDP scope, bind new program only; preserve old rule and all enabled profiles"
+  },
+  "health": {
+    "expected_state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+    "expected_chain_id": 91129655606029,
+    "expected_height": 0,
+    "sdk_status_launcher": "Read-Authenticated-Status.ps1",
+    "status_is_object_done": false,
+    "object_done_is_business_receipt": false
+  }
+}
