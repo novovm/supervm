@@ -1,25 +1,9 @@
 name: Native auth relation (host checks only)
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'proofs/native-auth/**'
-      - 'crates/novovm-adapter-api/**'
-      - 'crates/novovm-protocol/**'
-      - 'crates/novovm-exec/**'
-      - 'crates/aoem-bindings/**'
-      - 'rust-toolchain.toml'
-      - '.github/workflows/native-auth-relation.yml'
-  pull_request:
-    paths:
-      - 'proofs/native-auth/**'
-      - 'crates/novovm-adapter-api/**'
-      - 'crates/novovm-protocol/**'
-      - 'crates/novovm-exec/**'
-      - 'crates/aoem-bindings/**'
-      - 'rust-toolchain.toml'
-      - '.github/workflows/native-auth-relation.yml'
+  # The original CI calls this for full candidates/PRs; ordinary pushes do not
+  # launch a second Rust build beside the lightweight source-sync check.
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:

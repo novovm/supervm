@@ -184,8 +184,9 @@ jobs:
           if-no-files-found: error
 
   detect:
-    name: Select conservative CI scope
+    name: Validate source sync and select CI scope
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       scope: ${{ steps.detect.outputs.scope }}
       full: ${{ steps.detect.outputs.full }}
@@ -208,6 +209,12 @@ jobs:
       - name: Classify complete change range (unknown means full)
         id: detect
         run: python3 scripts/ci_scope.py
+
+  native_auth_relation:
+    name: Original native auth relation
+    needs: detect
+    if: needs.detect.outputs.full == 'true'
+    uses: ./.github/workflows/native-auth-relation.yml
 
   rust:
     name: Rust checks
@@ -1018,7 +1025,7 @@ jobs:
   result:
     name: CI scope result
     if: always()
-    needs: [detect, lan_script_launch, rust, native_recovery, rust_security, python, node, runtime_modules, runtime_modules_release, native_transport_qualification]
+    needs: [detect, lan_script_launch, rust, native_recovery, rust_security, python, node, runtime_modules, runtime_modules_release, native_transport_qualification, native_auth_relation]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -1026,3 +1033,17 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 scripts/ci_scope.py --check-results
+
+  candidate:
+    name: Full candidate result
+    if: always() && needs.detect.outputs.full == 'true'
+    needs: [detect, result]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Full scope must complete successfully on this exact source
+        env:
+          SCOPE_RESULT: ${{ needs.result.result }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          echo "Full candidate checks passed for $SOURCE_SHA; deployment and real-network acceptance remain separate." >> "$GITHUB_STEP_SUMMARY"

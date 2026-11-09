@@ -10,6 +10,7 @@ import tempfile
 import hashlib
 import shutil
 import unittest
+import zipfile
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("ci_scope", Path(__file__).parents[1] / "ci_scope.py")
@@ -18,36 +19,42 @@ SPEC.loader.exec_module(ci)
 
 
 class ScopeTests(unittest.TestCase):
-    def test_only_reviewed_prose_is_light(self):
+    def test_pr_only_reviewed_prose_is_light(self):
         for name in ci.PROSE_ONLY:
-            self.assertEqual(ci.select_scope("push", {}, [name]), "docs")
+            self.assertEqual(ci.select_scope("pull_request", {}, [name]), "docs")
         self.assertEqual(ci.select_scope("pull_request", {}, sorted(ci.PROSE_ONLY)), "docs")
 
-    def test_code_dependencies_and_unknown_docs_are_full(self):
+    def test_main_sync_is_light_but_pr_code_dependencies_unknown_docs_are_full(self):
         for name in ("docs/NOVORUDP_BOUNDARY.md", "docs/new.md", "docs/config.json",
                      "docs/example.rs", "Cargo.lock", "runtime/Cargo.toml", "aoem/sdk.json",
                      "scripts/ci_scope.py", ".github/workflows/ci.yml", "new/file", "crates/a/lib.rs"):
             with self.subTest(name=name):
-                self.assertEqual(ci.select_scope("push", {}, ["AGENTS.md", name]), "full")
+                self.assertEqual(ci.select_scope("pull_request", {}, ["AGENTS.md", name]), "full")
+                self.assertEqual(ci.select_scope("push", {"ref": "refs/heads/main"}, ["AGENTS.md", name]), "sync")
+        for name in ("docs/NOVORUDP_SHARED_CLIENT_HANDOFF.md",
+                     "artifacts/audit/run/candidate-manifest.json", "artifacts/audit/run/evidence.zip"):
+            self.assertEqual(ci.select_scope("push", {"ref": "refs/heads/main"}, [name]), "sync")
+        for ref in (None, "refs/heads/other", "refs/tags/candidate"):
+            self.assertEqual(ci.select_scope("push", {"ref": ref}, ["AGENTS.md"]), "full")
 
     def test_empty_unknown_and_missing_diff_fail_closed(self):
         for event in ("push", "pull_request", "unexpected"):
             for paths in (None, []):
-                self.assertEqual(ci.select_scope(event, {}, paths), "full")
+                self.assertEqual(ci.select_scope(event, {"ref": "refs/heads/main"}, paths), "full")
 
     def test_dispatch_and_schedules(self):
         self.assertEqual(ci.select_scope("workflow_dispatch", {}), "full")
         self.assertEqual(ci.select_scope("workflow_dispatch", {"inputs": {"profile": "unknown"}}), "full")
         self.assertEqual(ci.select_scope("workflow_dispatch", {"inputs": {"profile": "security"}}), "security")
         self.assertEqual(ci.select_scope("workflow_dispatch", {"inputs": {"profile": "recovery"}}), "recovery")
-        self.assertEqual(ci.select_scope("push", {"inputs": {"profile": "recovery"}}, ["crates/a/lib.rs"]), "full")
+        self.assertEqual(ci.select_scope("push", {"ref": "refs/heads/main", "inputs": {"profile": "full"}}, ["crates/a/lib.rs"]), "sync")
         self.assertEqual(ci.select_scope("schedule", {"schedule": ci.DAILY_SECURITY}), "security")
         self.assertEqual(ci.select_scope("schedule", {"schedule": "47 3 * * 0"}), "full")
         self.assertEqual(ci.select_scope("schedule", {}), "full")
 
     def test_outputs_never_claim_unrun_product_tests(self):
         tracked = ["Cargo.toml", "runtime/Cargo.toml", "scripts/a.py", "package.json"]
-        for scope in ("docs", "security", "recovery", "full"):
+        for scope in ("sync", "docs", "security", "recovery", "full"):
             out = ci.outputs_for(scope, tracked)
             for name in ("has_rust", "has_python", "has_node", "full"):
                 self.assertEqual(out[name], str(scope == "full").lower())
@@ -64,12 +71,13 @@ class ScopeTests(unittest.TestCase):
             ci.outputs_for("full", ["runtime/Cargo.toml"])
 
     def test_summary_rejects_skipped_cancelled_failed_selected_jobs(self):
-        for scope in ("docs", "security", "recovery", "full"):
+        for scope in ("sync", "docs", "security", "recovery", "full"):
             out = ci.outputs_for(scope, ["Cargo.toml", "scripts/a.py", "package.json"])
             needs = {"detect": {"result": "success", "outputs": out}}
             for job, key in {"lan_script_launch": "full", "runtime_modules": "full",
                              "runtime_modules_release": "full",
                              "native_transport_qualification": "full",
+                             "native_auth_relation": "full",
                              "native_recovery": "recovery",
                              "rust": "has_rust", "rust_security": "security",
                              "python": "has_python", "node": "has_node"}.items():
@@ -333,10 +341,13 @@ class ScopeTests(unittest.TestCase):
                 self.assertIn("scope=full\n", output.read_text())
 
     def test_summary_rejects_inconsistent_full_claim(self):
-        out = ci.outputs_for("docs", ["Cargo.toml"])
-        out["scope"] = "full"
-        with self.assertRaisesRegex(ValueError, "contradicts"):
-            ci.validate_results({"detect": {"result": "success", "outputs": out}})
+        for scope in ("sync", "docs"):
+            out = ci.outputs_for(scope, ["Cargo.toml"])
+            out["scope"] = "full"
+            with self.assertRaisesRegex(ValueError, "contradicts"):
+                ci.validate_results({"detect": {"result": "success", "outputs": out}})
+        with self.assertRaisesRegex(ValueError, "unknown"):
+            ci.outputs_for("unreviewed", ["Cargo.toml"])
 
     def test_git_push_range_and_rename_cannot_hide_code(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -357,7 +368,8 @@ class ScopeTests(unittest.TestCase):
             with patch.object(ci, "git", side_effect=git):
                 paths = ci.changed_paths("push", {"before": base, "after": head})
                 self.assertCountEqual(paths, ["logic.rs", "AGENTS.md"])
-                self.assertEqual(ci.select_scope("push", {}, paths), "full")
+                self.assertEqual(ci.select_scope("push", {"ref": "refs/heads/main"}, paths), "sync")
+                self.assertEqual(ci.select_scope("pull_request", {}, paths), "full")
                 pr = {"pull_request": {"base": {"sha": base}, "head": {"sha": head}}}
                 self.assertCountEqual(ci.changed_paths("pull_request", pr), paths)
                 # A later docs-only commit must not hide earlier code changes
@@ -367,9 +379,95 @@ class ScopeTests(unittest.TestCase):
                 git("commit", "-m", "prose")
                 final = git("rev-parse", "HEAD").decode().strip()
                 whole = ci.changed_paths("push", {"before": base, "after": final})
-                self.assertEqual(ci.select_scope("push", {}, whole), "full")
+                self.assertEqual(ci.select_scope("push", {"ref": "refs/heads/main"}, whole), "sync")
+                self.assertEqual(ci.select_scope("pull_request", {}, whole), "full")
                 prose = ci.changed_paths("push", {"before": head, "after": final})
-                self.assertEqual(ci.select_scope("push", {}, prose), "docs")
+                self.assertEqual(ci.select_scope("pull_request", {}, prose), "docs")
+
+    def test_full_gate_keeps_original_auth_workflow_without_push_duplicates(self):
+        root = Path(__file__).parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        self.assertIn("if: needs.detect.outputs.full == 'true'", jobs["native_auth_relation"])
+        self.assertIn("uses: ./.github/workflows/native-auth-relation.yml", jobs["native_auth_relation"])
+        self.assertIn("native_auth_relation]", jobs["result"])
+        self.assertIn("if: always() && needs.detect.outputs.full == 'true'", jobs["candidate"])
+        self.assertIn("needs: [detect, result]", jobs["candidate"])
+        self.assertIn('test "$SCOPE_RESULT" = success', jobs["candidate"])
+        self.assertIn("SOURCE_SHA: ${{ github.sha }}", jobs["candidate"])
+        auth = (root / ".github/workflows/native-auth-relation.yml").read_text(encoding="utf-8")
+        self.assertIn("  workflow_call:", auth)
+        self.assertIn("  workflow_dispatch:", auth)
+        self.assertNotRegex(auth, re.compile(r"^  (push|pull_request):", re.M))
+        self.assertIn("cargo test --manifest-path proofs/native-auth/Cargo.toml --workspace --locked", auth)
+        self.assertIn("cargo clippy --manifest-path proofs/native-auth/Cargo.toml --workspace --all-targets --locked -- -D warnings", auth)
+
+    def test_sync_checks_syntax_evidence_crc_deletions_and_propagates_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            script = root / "scripts/check.py"
+            script.parent.mkdir()
+            script.write_text("print('valid')\n", encoding="utf-8")
+            manifest = root / "Cargo.toml"
+            manifest.write_text('[package]\nname="example"\n', encoding="utf-8")
+            evidence = root / "artifacts/audit/example"
+            evidence.mkdir(parents=True)
+            report = evidence / "result.json"
+            report.write_text('{"accepted": false}', encoding="utf-8")
+            archive = evidence / "evidence.zip"
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr("original.log", b"original evidence")
+            paths = [str(p.relative_to(root)).replace("\\", "/") for p in (script, manifest, report, archive)]
+            paths.append("deleted.md")
+            original = Path.cwd()
+            try:
+                os.chdir(root)
+                with patch.object(ci, "change_range", return_value=("a" * 40, "b" * 40)), patch.object(ci, "git") as git:
+                    ci.check_sync("push", {}, paths)
+                    git.assert_called_once_with("diff", "--check", "a" * 40, "b" * 40, "--")
+                    for file, invalid in ((script, b"def broken("), (manifest, b"[broken"),
+                                          (report, b"{broken"), (archive, b"not a ZIP")):
+                        saved = file.read_bytes()
+                        try:
+                            file.write_bytes(invalid)
+                            with self.assertRaises((ValueError, SyntaxError, zipfile.BadZipFile)):
+                                ci.check_sync("push", {}, paths)
+                        finally:
+                            file.write_bytes(saved)
+                    saved = archive.read_bytes()
+                    try:
+                        # Valid ZIP structure, corrupted stored payload: exercise CRC,
+                        # not just the malformed-header rejection above.
+                        self.assertIn(b"original evidence", saved)
+                        archive.write_bytes(saved.replace(b"original evidence", b"modified evidence"))
+                        with self.assertRaisesRegex(ValueError, "Corrupt evidence ZIP"):
+                            ci.check_sync("push", {}, paths)
+                    finally:
+                        archive.write_bytes(saved)
+                    with patch.object(ci, "git", side_effect=subprocess.CalledProcessError(2, "git")):
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            ci.check_sync("push", {}, paths)
+            finally:
+                os.chdir(original)
+
+    def test_sync_main_runs_checks_before_outputs_and_never_claims_full(self):
+        with tempfile.TemporaryDirectory() as temp:
+            event = Path(temp) / "event.json"
+            output = Path(temp) / "output"
+            summary = Path(temp) / "summary"
+            event.write_text(json.dumps({"ref": "refs/heads/main"}), encoding="utf-8")
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_EVENT_PATH": str(event),
+                   "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)}
+            with patch.dict(os.environ, env), patch.object(ci, "changed_paths", return_value=["Cargo.lock"]), patch.object(ci, "git", return_value=b"Cargo.toml\0"), patch.object(ci, "check_sync") as check:
+                check.side_effect = ValueError("bad evidence")
+                with self.assertRaisesRegex(ValueError, "bad evidence"):
+                    ci.main()
+                self.assertFalse(output.exists())
+                check.side_effect = None
+                ci.main()
+                self.assertIn("scope=sync\n", output.read_text())
+                self.assertIn("full=false\n", output.read_text())
+                self.assertIn("NOT EXECUTED. Not release qualification", summary.read_text())
 
 
 class RuntimeCandidateTests(unittest.TestCase):

@@ -8,6 +8,10 @@
 in_progress，conclusion为空；因此只交付本地固定制品，**完整候选门禁尚未签收**。
 本轮没有手动触发、取消或重跑CI。快照保留在原始证据ZIP。
 
+后继CI分流核对：该运行已于北京时间07:35:01结束，Rust作业为cancelled，整轮
+结论cancelled，不能签收完整候选。原快照不改写；文档提交5c6a6b48的旧规则运行
+42721507092当时仍在进行。新版同步/候选分流见 `docs/NOVOVM_CI_CHECK_TIERS.md`。
+
 ## 制品身份与原始证据
 
 原打包器 `scripts/novovm-package-product-linux.ps1` 为两平台生成实际程序，保留

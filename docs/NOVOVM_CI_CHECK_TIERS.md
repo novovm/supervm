@@ -1,5 +1,54 @@
 # CI scope and candidate validation
 
+## 2026-11-10 authorized: lightweight main sync, explicit full candidate
+
+The user approved separating ordinary source publication from hour-long cloud
+candidate checks. This supersedes the older requirement below to leave every
+main push on automatic full checks. It does not remove a product test, weaken
+assertions, cancel an existing run, or authorize deployment.
+
+| Event | Selected scope and meaning |
+| --- | --- |
+| Ordinary main push with a verified change range | `sync`: selector/runtime-pin regression tests, Git diff whitespace, changed scripts Python syntax, Cargo/toolchain/deny TOML syntax, audit JSON parsing and ZIP CRC; no product compilation |
+| PR with only explicitly reviewed prose | `docs`; lightweight checks, not candidate acceptance |
+| Other PR | Original `full` checks |
+| Fixed candidate after local qualification | Existing manual `profile=full`, once for the frozen source; verify returned headSha |
+| Explicit failure investigation | Existing `profile=recovery` or `profile=security`; not full acceptance |
+| Daily security / weekly full schedule | Unchanged |
+| Unknown event/ref, missing history or empty change range | Conservative `full`, never silently qualify unknown input |
+
+The original native-auth host workflow is called once by full CI instead of a
+separate main-push build. Its commands, budgets and host-only proof boundary are
+unchanged; its standalone manual entry remains. The existing full product jobs
+retain their commands and budgets. The aggregate includes the auth result and
+rejects failure, cancellation, missing or skipped selected jobs.
+
+`CI scope result` is only the selected-scope result. A separate **Full candidate
+result** runs only for full scope after the aggregate succeeds, and records the
+exact event SHA. A green sync run cannot supply this result. No branch protection
+or external deployment rule was edited; consumers must require full scope and
+the correct source rather than accepting any green workflow of the same name.
+
+Lightweight syntax/ZIP CRC checks do not prove audit claims, linked remote content,
+package SHA identities, database recovery or product behavior. Those retain their
+local/candidate owners. Deleted paths and renames remain in the complete Git diff;
+symlinks are not followed for syntax checks. No untrusted ZIP is extracted or run.
+
+Continue local affected checks before ordinary pushes. After a coherent candidate
+is frozen, use the existing full entry (no new branch/tag required):
+
+```powershell
+gh workflow run ci.yml --repo novovm/supervm --ref main -f profile=full
+```
+
+Read the resulting run's headSha before using it as evidence. New program changes
+need their own affected checks and eventual full candidate run; a later docs-only
+receipt is not a new binary and must not invalidate the original program evidence.
+Same-SHA failed jobs can be rerun selectively after diagnosis; do not rerun the
+whole suite by default or use an old SHA's job to validate new code. Running cloud
+checks do not prevent unrelated local progress. This workflow edit itself is
+validated locally; it does not trigger a manual full run or change A/B/C/D.
+
 ## 2026-11-07 latest: prompt source publication is not candidate acceptance
 
 The user requires timely commits and pushes to main. Do not withhold completed,
