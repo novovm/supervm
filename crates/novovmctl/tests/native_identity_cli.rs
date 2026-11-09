@@ -36,9 +36,11 @@ struct Fixture {
 // parent waits, and every failure path reaps only its own temporary child.
 struct NatProcess {
     child: Child,
+    stdout: PathBuf,
     stderr: PathBuf,
     report: PathBuf,
     label: String,
+    started: Instant,
 }
 impl NatProcess {
     fn spawn(
@@ -47,16 +49,20 @@ impl NatProcess {
         config: &Path,
         report: &Path,
         label: &str,
+        coordinated_start: bool,
     ) -> Result<Self, Box<dyn Error>> {
+        let stdout = fixture.root.join(format!("{label}.stdout"));
         let stderr = fixture.root.join(format!("{label}.stderr"));
         let mut command = Command::new(binary);
+        command.arg(config);
+        if coordinated_start {
+            command.arg("--wait-for-start").stdin(Stdio::piped());
+        } else {
+            command.stdin(Stdio::null());
+        }
         command
-            .arg(config)
             .env("CREDENTIALS_DIRECTORY", &fixture.credentials)
-            .stdin(Stdio::null())
-            .stdout(std::fs::File::create(
-                fixture.root.join(format!("{label}.stdout")),
-            )?)
+            .stdout(std::fs::File::create(&stdout)?)
             .stderr(std::fs::File::create(&stderr)?);
         #[cfg(windows)]
         {
@@ -65,15 +71,56 @@ impl NatProcess {
         }
         Ok(Self {
             child: command.spawn()?,
+            stdout,
             stderr,
             report: report.to_owned(),
             label: label.to_owned(),
+            started: Instant::now(),
         })
+    }
+    fn wait_prepared(&mut self) -> TestResult {
+        let deadline = self.started + Duration::from_secs(25);
+        loop {
+            if self.child.try_wait()?.is_some() {
+                self.finish()?;
+                return Err(format!("NAT {} exited before start", self.label).into());
+            }
+            if std::fs::read_to_string(&self.stdout)?.lines().next() == Some("NAT_PREPARED_V1") {
+                println!(
+                    "NAT {} prepared elapsed_ms={}",
+                    self.label,
+                    self.started.elapsed().as_millis()
+                );
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(
+                    format!("NAT {} preparation exceeded process watchdog", self.label).into(),
+                );
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    fn start(&mut self) -> TestResult {
+        use std::io::Write;
+        let mut input = self
+            .child
+            .stdin
+            .take()
+            .ok_or("NAT start is not available")?;
+        input.write_all(&[1])?;
+        input.flush()?;
+        Ok(())
     }
     fn finish(&mut self) -> TestResult {
         let deadline = Instant::now() + Duration::from_secs(25);
         loop {
             if let Some(status) = self.child.try_wait()? {
+                println!(
+                    "NAT {} process elapsed_ms={} status={status}",
+                    self.label,
+                    self.started.elapsed().as_millis()
+                );
                 if !status.success() {
                     // The fixture removes its protected keys on drop. Surface
                     // only the original public report before that cleanup,
@@ -693,8 +740,9 @@ fn actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_p
         &observer_config,
         &observer_report,
         "observer",
+        true,
     )?;
-    let mut sessions = Vec::new();
+    let mut probes = Vec::new();
     for attempt in 0..2 {
         let config = fixture.root.join(format!("probe-{attempt}.json"));
         let report_path = fixture.root.join(format!("probe-{attempt}-report.json"));
@@ -707,15 +755,44 @@ fn actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_p
                 "timeout_ms":3000,"run_for_ms":3000,"report_path":report_path
             }))?,
         )?;
-        NatProcess::spawn(
+        let mut probe = NatProcess::spawn(
             &binary,
             &fixture,
             &config,
             &report_path,
             &format!("probe-{attempt}"),
-        )?
-        .finish()?;
-        let report: Value = serde_json::from_slice(&std::fs::read(report_path)?)?;
+            true,
+        )?;
+        // Linux custody takes an exclusive read lock. Prepare the two owners
+        // of the same envelope serially; do not weaken or bypass that lock.
+        probe.wait_prepared()?;
+        probes.push(probe);
+    }
+    // Both fresh processes qualify their own protected identity on their main
+    // thread before any network clock starts. A slow second cold load must not
+    // outlive the observer's original 15s observation window. No timeout grows.
+    observer.wait_prepared()?;
+    // Preparation neither binds the future sockets nor emits a success report.
+    drop(UdpSocket::bind(&observer_address)?);
+    drop(UdpSocket::bind(&probe_address)?);
+    assert!(!observer_report.exists());
+    assert!(probes.iter().all(|probe| !probe.report.exists()));
+    observer.start()?;
+    let mut sessions = Vec::new();
+    for probe in &mut probes {
+        probe.start()?;
+        let outcome = probe.finish();
+        if let Err(error) = outcome {
+            let observer_status = observer.child.try_wait()?;
+            let observer_public = std::fs::read_to_string(&observer_report)
+                .unwrap_or_else(|_| "observer report not yet written".to_owned());
+            return Err(format!(
+                "{error}; observer status={observer_status:?} elapsed_ms={}; observer public report: {observer_public}",
+                observer.started.elapsed().as_millis()
+            )
+            .into());
+        }
+        let report: Value = serde_json::from_slice(&std::fs::read(&probe.report)?)?;
         assert_eq!(report["accepted"], true);
         assert_eq!(report["scope"], "novovm_native_authenticated_endpoint_v2");
         assert_eq!(report["signature_suite"], 65);
@@ -777,6 +854,7 @@ fn actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_p
         &failure_config,
         &failure_report,
         "unreachable",
+        false,
     )?
     .finish()
     .expect_err("unanswered native probe must fail");

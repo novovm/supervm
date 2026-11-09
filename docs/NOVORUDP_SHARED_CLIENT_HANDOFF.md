@@ -1414,6 +1414,84 @@ Clippy记录；这项本地验证与B的公网SSH问题分别记账。
 据此推断其退出原因或自动恢复。B/A未更新前，C/D不要
 提前执行本节更新器或旧初始化任务。C的单次路由诊断已完成，不需要新ZIP或再次操作。
 
+### 25. 2026-11-09 B旁路准备完成；原NAT观察窗口与冷启动分离
+
+用户要求SSH恢复后立即回到原阻断点。本轮不再做SSH/VPN/路由/账单取证，只用已恢复
+的原SSH执行必要的B更新前检查、上传和旁路prepare。没有重新申请已有883c更新授权。
+
+**B实际状态与动作：**
+
+- 原`novovm-B-ddd89e8e-network-20261108.service`的systemd管理者日志确认：
+  11月8日09:17:44启动，11月9日09:17:49 `Deactivated successfully`；两条事件同
+  INVOCATION_ID `bd9a8d297728477ca5461674ed539ac7`，最后progress为09:17:41。
+  不是仅凭MainPID=0认定安全；无其他node、41050/42050监听，原24小时任务已正常结束。
+- 第23节Linux归档实际上传至`/home/ecs-user/novovm-relay-update-883c6183-20261109`，
+  359230285字节，远端SHA256仍为`3fa3b66645d99720e297c3688a704a601385c41ed36b20fefaca40420a87c91e`。
+- 原B更新器适配为`scripts/linux/update-novonet-existing.py`，只执行
+  `prepare --resume-stopped`；在独立release目录核验80项manifest/artifact/hash，
+  实际加载固定SO `d73e4a2f...bc33`并通过scalar/unified-semantic/mixed-batch验签KAT。
+  不是用开发目录另一个库代替安装目录的实际库。
+- 新配置目录`/var/lib/novovm/selfrun/91129655606029/B/novonet-relay-evidence-883c6183-20261109`。
+  run只改library和原network配置路径，network只改空probe命令路径；peer、域、
+  genesis输入、carrier/validator/transport用途材料、locator所有者、限额和端口不变。
+  原库仍`/var/lib/novovm/selfrun/91129655606029/B/chain-state`，没有复制、打开、迁移或初始化。
+- prepare前后其他服务仍active/running：mailbox PID944911、Relay PID958、nginx
+  PID627770、Docker PID1414。用途材料哈希相同。没有新node PID，探针未执行。
+  新配置SHA256 `7b98117a1ea97846b2a72e81db3663f99b4ac44dd8b90ffcb15c9ea59282c36d`，
+  network SHA256 `28a00280135b0832c296060f89a85bce70926dd7615ee1a00e5b028235901022`。
+
+Linux更新器保留prepare/update/rollback分离，程序固定pin、原账户/加密credential和
+existing。精确停止用原进程身份与pidfd，不误杀复用PID；中断退出不冒称正常排空。
+已停止恢复需原systemd完整同调用start/stop和同期progress，不凭空缺进程推断。
+失败回滚使用旧ddd程序、旧配置与原库existing，不重运行初始化。仅update操作才会
+启动节点，调用者仍须先核对候选必检。本轮未调用update/rollback，不能将prepare写成
+节点恢复通过。6项本地更新器守卫测试及实际固定Linux包全量核验通过，不是实机恢复。
+
+**独立的候选认证阻断与本地纠正：**
+
+自动运行42564342275（0b97718f），Linux作业128987599060再次6通过/1失败；标签已
+明确为`probe-1`，accepted=false、session=null、exchange=0。第一probe已通过其
+完整断言，但云端未保留observer退出报告，不能直接将下述本地机制宣称为该次根因。
+
+两CPU本地原流程通过一次，但两个独立probe从启动到退出分别8332/8225ms。原identity
+准备会对160MB实际SO做hash/load/资格和protected校验，发生在各自3秒网络计时前；
+observer一旦就绪却只存活15秒，第二probe冷准备会消耗它的剩余窗口。一次明确标记的
+临时16秒延迟反例得到：probe-0成功，probe-1无session/往返，observer已正常exit0，
+原report仅1次request/reply。临时延迟已撤除，旧失败原样保留；不把故意制造的反例
+计作普通门禁回归，也不将此延迟假定为云端实际耗时。
+
+修正在**原诊断owner**分离protected准备与网络run，CLI显式`--wait-for-start`在
+准备完成后报告本地marker并等父进程单字节启动；缺失/错误/超时控制失败。没有新
+网络服务、socket协议、身份缓存或远端控制。默认CLI行为不变，原3秒握手、15秒观察
+及原网络资源上限不变。两实际probe各自load自己的同一protected身份，依次prepare
+以保留Linux独占读锁，再依次在同一UDP端口建立两个新session。原lib保护用途入口
+的两个相关fixture也沿同一prepare/run顺序，不改其1秒/3秒窗口。
+
+本地首轮并发准备错误触发Linux `journal exclusive lock unavailable`，已如实保留；
+不是放宽锁或复制私钥绕过，而是改为两个同钥读取依次完成。测试明确检查prepare时
+尚未绑定两个端口、没有成功report；之后仍须双向实际认证、不同session、两次观察、
+严格身份/地址核对和原未应答反例。
+
+后继最终本地检查：Windows/Linux各14项实际执行通过：完整CLI7项（25.87/116.05秒，
+Linux taskset限定CPU0/1）、原product_nat_runtime6项（6.78/18.98秒）、原实际bin
+启动命令1项（正确字节/错误字节/EOF）。后两类测试均非零命中，未将ignored跳过算作
+通过。两平台实际debug程序构建、bin/CLI严格Clippy及fmt/diff检查通过。Linux两次
+prepared用时8935/8903ms，之后两次真实新会话往返均完成，observer从网络启动到
+退出仍15秒；没有靠增加3秒握手、1秒lib探测或15秒观察窗口取得通过。
+这是本机实际运行库及隔离身份验证，不是发布包/完整云端或四机实网通过。
+
+此次会改变随包`novovm-product-nat`及源码身份。原883c两个归档仍保持原字节，B的
+旁路准备不代表新修改已部署；不得用新诊断验证结果冒充旧包全门禁已通过或自动把
+既有固定SHA部署授权扩大为新包。A/C/D不操作，不需用户重新清点、换钥或做SSH对照。
+尚无新的真实Object DONE、中继链路、资产交易、最终性或TPS结论。
+
+精选原始结果归档为[本轮本地证据](../artifacts/audit/udp-recovery-observation-20261108/relay-20261109/nat-startup-local-results.zip)，
+28577字节/23项，SHA256 `5f0f886726faa55b3ef261b875033b4360d34d3e768306dbdabe20753c963081`。
+完整证据仍保存在A的`target/relay-evidence-20261109`：B-update-preflight-state/config、
+B-clean-stop-journal、B-883c-prepare、B-883c-prepared-runtime原记录，原CI日志，
+nat-linux-two-cpu-window-1、nat-linux-window-counterexample-1和后继coordinated-start日志。
+原public配置有大公钥/签名数组，不把它们或任何受保护用途材料上传充当所需摘要。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

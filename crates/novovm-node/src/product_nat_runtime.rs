@@ -163,6 +163,20 @@ fn required_peer_address(config: &ProductNatRuntimeConfigV1) -> Result<SocketAdd
 pub fn run_product_nat_runtime_v1(
     config: ProductNatRuntimeConfigV1,
 ) -> Result<ProductNatRuntimeReportV1> {
+    prepare_product_nat_runtime_v1(config)?.run()
+}
+
+/// Protected identity qualification precedes the bounded network observation.
+/// The CLI may coordinate prepared processes without opening sockets, sharing
+/// private material, or counting cold library loading as a reconnect timeout.
+pub struct PreparedProductNatRuntimeV1 {
+    config: ProductNatRuntimeConfigV1,
+    identity: TransportIdentity,
+}
+
+pub fn prepare_product_nat_runtime_v1(
+    config: ProductNatRuntimeConfigV1,
+) -> Result<PreparedProductNatRuntimeV1> {
     validate_config(&config)?;
     let identity = novovm_relay::transport_identity::load_transport_identity(
         &config.identity_key_path,
@@ -170,17 +184,23 @@ pub fn run_product_nat_runtime_v1(
         &config.library,
         &config.library_sha256,
     )?;
-    run_with_identity(config, identity)
+    ensure!(
+        identity.public_key() != config.peer_public_key,
+        "native probe self identity"
+    );
+    Ok(PreparedProductNatRuntimeV1 { config, identity })
+}
+
+impl PreparedProductNatRuntimeV1 {
+    pub fn run(self) -> Result<ProductNatRuntimeReportV1> {
+        run_with_identity(self.config, self.identity)
+    }
 }
 
 fn run_with_identity(
     config: ProductNatRuntimeConfigV1,
     identity: TransportIdentity,
 ) -> Result<ProductNatRuntimeReportV1> {
-    ensure!(
-        identity.public_key() != config.peer_public_key,
-        "native probe self identity"
-    );
     let server = is_server(&config.mode);
     let socket = UdpSocket::bind(&config.bind_addr)?;
     let budget = NativeHandshakeBudget {
@@ -725,9 +745,15 @@ mod tests {
         );
         probe.run_for_ms = 1000;
         probe.expected_peer_id = Some(server.peer_id());
-        let observer = std::thread::spawn(move || run_product_nat_runtime_v1(observer));
-        let first = run_product_nat_runtime_v1(probe.clone());
-        let second = run_product_nat_runtime_v1(probe);
+        // Preparation includes the protected read and actual library hashing.
+        // Keep it outside both short network windows, including the second
+        // independent identity load, without changing their deadlines.
+        let observer = prepare_product_nat_runtime_v1(observer)?;
+        let first = prepare_product_nat_runtime_v1(probe.clone())?;
+        let second = prepare_product_nat_runtime_v1(probe)?;
+        let observer = std::thread::spawn(move || observer.run());
+        let first = first.run();
+        let second = second.run();
         // Always join the original owner, including a failed probe.
         let observed = observer
             .join()

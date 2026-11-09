@@ -125,6 +125,29 @@ timeout. The observer/target normally runs for its bounded duration; the probe
 can finish after its matching authenticated reply. The tool does not change
 production timeouts or start a validator.
 
+### Coordinated local qualification startup
+
+`novovm-product-nat <approved-config-path> --wait-for-start` is an explicit
+local process-orchestration mode. It completes the same qualified library load,
+protected identity read and key-pair checks on the main thread, then prints and
+flushes `NAT_PREPARED_V1`. No UDP socket, handshake or observation timer exists
+at that point. The parent sends the single binary byte `0x01` through that
+process's inherited stdin to start the unchanged runtime. Closed/invalid input
+fails; the prepared wait is bounded to 25 seconds. It is not a remote command,
+authentication result, Object DONE, business receipt or reusable network lease.
+
+The two independent reconnect probe processes are prepared serially because
+Linux custody retains its exclusive read lock. Both are prepared before the
+observer's network window begins; each still opens its own original endpoint
+on the same UDP port, in sequence, with a new authenticated session. Readiness
+does not skip loading/manifest/key qualification and cannot supply a cached
+identity from another process. The normal invocation above does not wait for
+stdin, and the original network timeouts, budgets and wire protocol are unchanged.
+
+This option changes the diagnostic executable: an older package without it
+cannot claim the new coordinated qualification result. Candidate/source and
+per-platform artifact identities must be recorded separately from deployed nodes.
+
 ## Report interpretation
 
 The report's `scope` is `novovm_native_authenticated_endpoint_v2`,
