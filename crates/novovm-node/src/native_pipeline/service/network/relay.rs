@@ -6,6 +6,7 @@ pub(super) struct Ingress<'a> {
     pub scope: &'a IrohScopeV1,
     pub routes: Arc<Mutex<Vec<Option<Candidate>>>>,
     pub budget: HopBudget,
+    pub observer: Option<Arc<NativeTransferDiagnosticsV1>>,
 }
 
 fn context(pins: (u64, [u8; 32], [u8; 32])) -> [u8; 32] {
@@ -63,6 +64,7 @@ pub(super) async fn outgoing(
     adopted: Arc<AtomicBool>,
     path: Vec<Candidate>,
     budget: HopBudget,
+    observer: Option<Arc<NativeTransferDiagnosticsV1>>,
 ) -> Result<()> {
     ensure!(
         path.iter()
@@ -84,6 +86,9 @@ pub(super) async fn outgoing(
         .await
     })
     .await??;
+    if let Some(observer) = observer {
+        hop.observe(observer, &identity);
+    }
     let proof = hop.authenticate_native(&identity, &key, true).await?;
     let (endpoint, pump) =
         NativeCarrierPump::attach_relayed_v1(&mut hop, proof, NativeChannel::carrier_streams())?;
@@ -105,6 +110,9 @@ pub(super) async fn incoming(
         HopStream::accept(stream, &identity, context(pins), ingress.budget.clone()),
     )
     .await??;
+    if let Some(observer) = ingress.observer {
+        hop.observe(observer, &identity);
+    }
     if let Some(next) = hop.route().next() {
         let next = ingress
             .routes

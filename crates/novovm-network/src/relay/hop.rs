@@ -10,6 +10,7 @@ use crate::{
     duplex::{decode_iroh_envelope_v1, encode_iroh_envelope_v1, HandshakeReplayCacheV1},
     novorudp::{
         carrier::VerifiedCarrierRoute,
+        diagnostics::{NativeRelayRouteEvidenceV1, NativeTransferDiagnosticsV1},
         wire_budget::{NativeSendReservation, NativeWireBudget},
         NovoRudpTransportFrameKindV0 as Kind, NovoRudpTransportFrameV0 as Frame,
     },
@@ -170,10 +171,64 @@ pub struct HopStream<'a> {
     route: HopRoute,
     budget: Option<HopBudget>,
     ready: bool,
+    observation: Option<ObservedHop>,
+}
+
+struct ObservedHop {
+    observer: Arc<NativeTransferDiagnosticsV1>,
+    digest: [u8; 32],
+}
+impl Drop for ObservedHop {
+    fn drop(&mut self) {
+        // Cancellation/error/ordinary close all release the real stream. This
+        // is deliberately not a delivery/failure verdict for an opaque object.
+        self.observer.relay_dropped(self.digest);
+    }
 }
 impl<'a> HopStream<'a> {
     pub fn route(&self) -> &HopRoute {
         &self.route
+    }
+    /// Install only after the original hop authentication accepted this route.
+    /// Reuse the node's original opt-in observer, never construct another one.
+    pub fn observe(
+        &mut self,
+        observer: Arc<NativeTransferDiagnosticsV1>,
+        local: &TransportIdentity,
+    ) {
+        if self.observation.is_some() {
+            return;
+        }
+        let Ok(first_hop) = self.first_hop_route() else {
+            return;
+        };
+        let role = if local.public_key() == self.route.origin {
+            "origin"
+        } else if local.public_key() == self.route.path[self.route.cursor] {
+            if self.route.next().is_some() {
+                "relay"
+            } else {
+                "target"
+            }
+        } else {
+            return;
+        };
+        let digest = self.route.digest();
+        let peer_id = crate::product_overlay::peer_id_from_mldsa65_public_key_v1;
+        observer.relay_authenticated(
+            NativeRelayRouteEvidenceV1 {
+                route_digest: digest,
+                circuit: self.route.circuit,
+                origin: peer_id(&self.route.origin),
+                path: self.route.path.iter().map(|key| peer_id(key)).collect(),
+                local_peer: local.peer_id().to_owned(),
+                role,
+                cursor: self.route.cursor,
+                first_hop,
+            },
+            self.ready,
+        );
+        self.observation = Some(ObservedHop { observer, digest });
     }
     pub async fn connect(
         mut stream: CarrierStreamV1<'a>,
@@ -207,6 +262,7 @@ impl<'a> HopStream<'a> {
             route,
             budget,
             ready: false,
+            observation: None,
         };
         hop.write(&hop.route.encode()?).await?;
         let mut expected = READY.to_vec();
@@ -277,6 +333,7 @@ impl<'a> HopStream<'a> {
             route,
             budget: Some(budget),
             ready: false,
+            observation: None,
         })
     }
     pub async fn confirm(&mut self) -> Result<()> {
@@ -284,6 +341,9 @@ impl<'a> HopStream<'a> {
         payload.extend_from_slice(&self.route.digest());
         self.write(&payload).await?;
         self.ready = true;
+        if let Some(observation) = &self.observation {
+            observation.observer.relay_ready(observation.digest);
+        }
         Ok(())
     }
     pub async fn write(&mut self, bytes: &[u8]) -> Result<()> {
@@ -508,12 +568,25 @@ pub async fn bridge(upstream: &mut HopStream<'_>, downstream: &mut HopStream<'_>
         "relay downstream route differs"
     );
     upstream.confirm().await?;
+    let observation = upstream
+        .observation
+        .as_ref()
+        .map(|o| (o.observer.clone(), o.digest));
+    if let Some((observer, digest)) = &observation {
+        if let Ok(route) = downstream.first_hop_route() {
+            observer.relay_downstream(*digest, route);
+        }
+    }
     let (mut uw, mut ur) = upstream.split()?;
     let (mut dw, mut dr) = downstream.split()?;
     let a = async {
         loop {
             let bytes = ur.read_frame().await?;
-            dw.write_frame(&bytes).await?;
+            let result = dw.write_frame(&bytes).await;
+            if let Some((observer, digest)) = &observation {
+                observer.relay_forwarded(*digest, false, bytes.len(), result.is_ok());
+            }
+            result?;
         }
         #[allow(unreachable_code)]
         Ok::<(), anyhow::Error>(())
@@ -521,7 +594,11 @@ pub async fn bridge(upstream: &mut HopStream<'_>, downstream: &mut HopStream<'_>
     let b = async {
         loop {
             let bytes = dr.read_frame().await?;
-            uw.write_frame(&bytes).await?;
+            let result = uw.write_frame(&bytes).await;
+            if let Some((observer, digest)) = &observation {
+                observer.relay_forwarded(*digest, true, bytes.len(), result.is_ok());
+            }
+            result?;
         }
         #[allow(unreachable_code)]
         Ok::<(), anyhow::Error>(())

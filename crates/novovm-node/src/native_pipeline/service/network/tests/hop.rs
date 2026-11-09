@@ -45,7 +45,10 @@ fn run_relay_objects(relay_count: usize) -> Result<()> {
             .map(|other| root.join(format!("leg-{side}-{other}.json")))
             .collect();
     }
-    peers.restart_drivers(configs.clone())?;
+    let observers = (0..count)
+        .map(|_| Arc::new(NativeTransferDiagnosticsV1::new()))
+        .collect::<Vec<_>>();
+    peers.restart_drivers(configs.clone(), Some(&observers))?;
     for driver in &peers.drivers {
         for view in driver.views.lock().unwrap().iter_mut() {
             view.fallback = false;
@@ -131,6 +134,74 @@ fn run_relay_objects(relay_count: usize) -> Result<()> {
     );
     ensure!(peers.channels[source].session_id(from) == peers.channels[target].session_id(to));
     complete_objects(&mut peers, source, target, 191, deadline)?;
+    // SAME actual IO as the existing delivery regression, not a simulated
+    // route report. Every relay independently observed completed writes.
+    let source_snapshot = observers[source]
+        .snapshot()
+        .context("source observation contended")?;
+    let session = peers.channels[source]
+        .session_id(from)
+        .context("source session")?;
+    let source_circuit = source_snapshot
+        .relay_circuits
+        .iter()
+        .find(|r| r.native_session == Some(session))
+        .context("no authenticated source circuit")?;
+    ensure!(
+        source_circuit.route.role == "origin" && source_circuit.route.path.len() == relay_count + 1
+    );
+    let target_snapshot = observers[target]
+        .snapshot()
+        .context("target observation contended")?;
+    let target_circuit = target_snapshot
+        .relay_circuits
+        .iter()
+        .find(|r| r.route.route_digest == source_circuit.route.route_digest)
+        .context("no matching final circuit")?;
+    ensure!(
+        target_circuit.route.role == "target" && target_circuit.native_session == Some(session)
+    );
+    for (cursor, side) in relays.iter().enumerate() {
+        let snapshot = observers[*side]
+            .snapshot()
+            .context("relay observation contended")?;
+        let circuit = snapshot
+            .relay_circuits
+            .iter()
+            .find(|r| r.route.route_digest == source_circuit.route.route_digest)
+            .context("actual intermediate relay evidence missing")?;
+        ensure!(circuit.route.role == "relay" && circuit.route.cursor == cursor);
+        let next = if cursor + 1 < relays.len() {
+            relays[cursor + 1]
+        } else {
+            target
+        };
+        ensure!(
+            circuit
+                .downstream
+                .context("relay actual next carrier missing")?
+                .peer_key()
+                == IrohServiceEndpointV1::from_record(&original[next])?
+                    .address
+                    .endpoint_key
+        );
+        ensure!(
+            circuit.route.origin == source_circuit.route.origin
+                && circuit.route.path == source_circuit.route.path
+        );
+        ensure!(
+            circuit.native_session.is_none(),
+            "relay must not acquire E2E authority"
+        );
+        ensure!(
+            circuit.downstream_ready_us.is_some()
+                && circuit
+                    .forwarded
+                    .iter()
+                    .all(|d| d.packets > 0 && d.bytes > 0)
+        );
+        ensure!(circuit.failed_writes == [0; 2]);
+    }
     let old_session = peers.channels[source].session_id(from);
     // Deliberately separate recovery with available provider capacity from
     // exhaustion (covered by hop_budget tests). Retain REAL rolling accounting,
@@ -158,6 +229,7 @@ fn run_relay_objects(relay_count: usize) -> Result<()> {
             .map(|(_, k)| k.public_key().to_vec())
             .collect(),
         peers.pins,
+        Some(observers[middle].clone()),
     )?;
     peers.drivers[source].views.lock().unwrap()[from].fallback = true;
     let restart = Instant::now() + Duration::from_secs(110);
@@ -195,6 +267,21 @@ fn run_relay_objects(relay_count: usize) -> Result<()> {
     }
     ensure!(peers.channels[source].session_id(from) == peers.channels[target].session_id(to));
     complete_objects(&mut peers, source, target, 193, restart)?;
+    let snapshot = observers[source]
+        .snapshot()
+        .context("reconnect evidence contended")?;
+    let renewed = snapshot
+        .relay_circuits
+        .iter()
+        .find(|r| r.native_session == peers.channels[source].session_id(from))
+        .context("renewed native session not bound to an observed circuit")?;
+    ensure!(renewed.route.route_digest != source_circuit.route.route_digest);
+    let closed = snapshot
+        .relay_circuits
+        .iter()
+        .find(|r| r.route.route_digest == source_circuit.route.route_digest)
+        .context("old circuit evidence was lost")?;
+    ensure!(closed.stream_dropped_us.is_some());
     peers.close()
 }
 

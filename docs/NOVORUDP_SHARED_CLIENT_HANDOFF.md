@@ -1264,6 +1264,55 @@ C逐对象/stage明细缺失照实记录，同一事件两种投影不重复计�
 单向延迟结论。不扩大为业务执行、最终性、Iroh切回、多跳、持续TPS或历史根因已修复。
 实机根因仍未定位，旧证据不自动覆盖新代码；B/D及NOVOCHAT不动、不换钥或初始化。
 
+### 23. 2026-11-09 实机中继前的原观察器接线（开发中，未更新节点）
+
+第22节指定A→C原生UDP对象双端验收已经完成，不重发、不重采集。当前进入原计划
+单中继/双中继阶段；没有将本机Iroh/QUIC测试改名为四机实网通过。
+
+只读核对时A仍是5181 PID13964，41051/42051均属于该进程；B原ddd unit仍active、
+PID1816591。原观察投影分别为0/1条bound路由、execution_failures=0；这是采样事实，
+不是所有节点当前仍健康或中继已通过。A/B累计connection_failures分别4/167，未清零、
+未据此将历史计数定性为本对象失败。C依据267eae81原回执，D未重新清点或操作。
+
+#### 当前源码的实质缺口及最小改动
+
+`network::relay::{outgoing,incoming}`及`relay::hop::bridge`已有真实逐跳实现；但旧
+逐对象投影只有首跳carrier binding，没有原节点中继实际转发证据。新接线将**同一个**
+`NativeTransferDiagnosticsV1` Arc从原NativeLifecycle/NativeChannel交给原Driver及
+HopStream；不是另建观察服务、传输、socket、路由表或可靠交付协议。
+
+- 原`probe_control_file`显式启用后才共享观察器；默认关闭不安装中继观察器。
+  配置/诊断JSON不是业务wire，APFL、签名、AEAD及二进制帧完全不变。
+- `native_network_probe.transport.relay_circuits`最多保留最新64条已认证circuit。
+  输出route digest/circuit、原传输peer ID路径、本地角色/cursor及实际首跳binding；
+  中继另外输出实际下游binding。不是从IP猜身份，也不输出私钥/exporter/业务内容。
+- origin/最终接收方只在原native握手及路径绑定AEAD确认后记录native_session；
+  中继没有该字段的授权信息。READY只表示建路，不是Object DONE。
+- 原bridge两个方向仅在下游`write_frame`真正成功后累计opaque帧数/字节数。
+  returned write error单列；取消/读错不能补成成功。计量包含E2E握手和反馈，不是
+  业务对象个数、物理网络字节或中继计费凭证。流drop只记观察时间，不记业务成功。
+- 同原观察器try_lock、不等待；竞争与64条淘汰/遗漏有显式计数，不阻塞热路径、
+  不新增同步磁盘输出、不改变转发带宽/连接/消息期限和共识门槛。
+
+实网签收须独立匹配：两端固定对象Object/nonce/身份/Session和Carrier实际binding →
+同Session已完成E2E认证的circuit → 各中继相同route digest/path及其真实上下游binding、
+两个方向实际转发 → 接收端完整接管及发送端原ACK/DONE。中继不能解密/打印Object ID
+来凑证据；单方READY、规划路径、累计转发字节或状态根一致都不替代该闭环。
+
+#### 实机执行边界
+
+当前默认选路仍是健康NovoRUDP优先、Iroh合格备用；原fallback_path只在原失败轮次
+推进。固定对象命令没有`--via`强制选路。仅封锁A↔C UDP不保证经B：Iroh还可能直连
+或经外部relay；后者不等于NOVOVM节点B/D逐跳转发。
+
+本轮不为制造多跳擅自禁用直连、改防火墙/代理、伪造或重签失效locator、放宽额度，
+不更新/重启任何现有节点。新源码/观察字段尚未进入A/C的5181、B的ddd或D的082包；
+后继真实窗口必须先固定合格制品，再明确需要的existing更新与有界路径实验范围。
+不得复用旧A初始化任务、重创世、换钥或影响B既有应用服务。C/D目前无需操作。
+
+本地验证结果及最终源码身份见后继收口记录；本段不提前登记候选、实网中继、Iroh
+切回、资产执行、最终性、稳定性或TPS通过，也不销账旧C崩溃及历史恢复停滞。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

@@ -34124,12 +34124,14 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 .as_ref()
                 .map(|path| novovm_node::native_pipeline::service::network::Config::load(path))
                 .transpose()?;
-            let node = ResidentNode::start_on_transport(config, mode, transport)?;
+            #[allow(unused_mut)]
+            let mut node = ResidentNode::start_on_transport(config, mode, transport)?;
             #[cfg(feature = "iroh-transport")]
             let novonet = match network_config {
                 Some(config) => {
-                    match novovm_node::native_pipeline::service::network::Driver::new(config, &node)
-                    {
+                    match novovm_node::native_pipeline::service::network::Driver::new(
+                        config, &mut node,
+                    ) {
                         Ok(driver) => Some(driver),
                         Err(error) => {
                             let drain = node.shutdown();

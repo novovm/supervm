@@ -36,7 +36,18 @@ fn network_probe_original_owner_concurrent_done_and_isolation() -> Result<()> {
         let start = Instant::now();
         let wall = wall_ms();
         for node in nodes.iter_mut() {
+            #[cfg(feature = "iroh-transport")]
+            assert!(node.network_probe_diagnostics().is_none());
             node.enable_network_probe(start);
+            #[cfg(feature = "iroh-transport")]
+            {
+                let shared = node.network_probe_diagnostics().unwrap();
+                node.enable_network_probe(start);
+                assert!(std::sync::Arc::ptr_eq(
+                    &shared,
+                    &node.network_probe_diagnostics().unwrap()
+                ));
+            }
         }
         let make = |source: usize, target: usize, nonce| NetworkProbe {
             nonce: [nonce; 32],

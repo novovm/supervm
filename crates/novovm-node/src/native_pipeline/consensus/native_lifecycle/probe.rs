@@ -151,6 +151,15 @@ impl ProbeState {
 }
 
 impl NativeLifecycle {
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn network_probe_diagnostics(
+        &self,
+    ) -> Option<std::sync::Arc<novovm_network::novorudp::diagnostics::NativeTransferDiagnosticsV1>>
+    {
+        self.probe.as_ref()?;
+        self.channel.probe_diagnostics()
+    }
+
     pub fn enable_network_probe(&mut self, now: Instant) {
         if self.probe.is_none() {
             self.channel.enable_probe_observation();

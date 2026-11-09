@@ -13,8 +13,9 @@ use novovm_network::{
     duplex::{decode_iroh_envelope_v1, encode_iroh_envelope_v1, HandshakeReplayCacheV1},
     iroh_transport::{IrohAddressV1, IrohConfigV1, IrohEndpointOwnerV1, IrohScopeV1},
     novorudp::{
-        carrier_io::NativeCarrierPump, endpoint::NativeEndpoint,
-        NovoRudpTransportFrameKindV0 as Kind, NovoRudpTransportFrameV0 as Frame,
+        carrier_io::NativeCarrierPump, diagnostics::NativeTransferDiagnosticsV1,
+        endpoint::NativeEndpoint, NovoRudpTransportFrameKindV0 as Kind,
+        NovoRudpTransportFrameV0 as Frame,
     },
     product_directory::{
         sign_relay_record_v1, validate_relay_record_v1, PeerSignedRelayRecordV1,
@@ -197,7 +198,7 @@ pub struct Driver {
     failures: Arc<AtomicU64>,
 }
 impl Driver {
-    pub fn new(config: Config, node: &ResidentNode) -> Result<Self> {
+    pub fn new(config: Config, node: &mut ResidentNode) -> Result<Self> {
         let keys = (0..node.controller.peer_count())
             .map(|peer| node.controller.peer_transport_key(peer))
             .collect::<Result<Vec<_>>>()?;
@@ -212,13 +213,18 @@ impl Driver {
             node.template.genesis_config_commitment,
             node.template.protocol_commitment,
         );
-        Self::with_material(config, identity, keys, pins)
+        if config.probe_control_file.is_some() {
+            node.controller.enable_network_probe(Instant::now());
+        }
+        let observer = node.controller.network_probe_diagnostics();
+        Self::with_material(config, identity, keys, pins, observer)
     }
     fn with_material(
         config: Config,
         identity: TransportIdentity,
         keys: Vec<Vec<u8>>,
         pins: (u64, [u8; 32], [u8; 32]),
+        observer: Option<Arc<NativeTransferDiagnosticsV1>>,
     ) -> Result<Self> {
         ensure!(
             !keys.is_empty()
@@ -251,6 +257,7 @@ impl Driver {
             sender,
             stop.clone(),
             failures.clone(),
+            observer,
         ));
         let next_udp_probe = vec![
             started;
@@ -438,6 +445,7 @@ async fn run(
     connected: mpsc::SyncSender<Connected>,
     stop: Arc<AtomicBool>,
     failures: Arc<AtomicU64>,
+    observer: Option<Arc<NativeTransferDiagnosticsV1>>,
 ) -> Result<()> {
     let check_stop = stop.clone();
     let mut carrier = config.carrier()?;
@@ -478,6 +486,7 @@ async fn run(
                         &connected,
                         &service_stop,
                         &failures,
+                        observer,
                     )
                     .await
                 })
@@ -503,6 +512,7 @@ async fn serve<'a>(
     connected: &mpsc::SyncSender<Connected>,
     stop: &Arc<AtomicBool>,
     failures: &Arc<AtomicU64>,
+    observer: Option<Arc<NativeTransferDiagnosticsV1>>,
 ) -> Result<()> {
     let mut books = (0..keys.len())
         .map(|_| None)
@@ -695,6 +705,7 @@ async fn serve<'a>(
                         Vec::new()
                     };
                     let budget = hop_budget.clone();
+                    let observer = observer.clone();
                     let coordinates = if path.is_empty() {
                         vec![(key.clone(), route.clone())]
                     } else {
@@ -709,7 +720,7 @@ async fn serve<'a>(
                             if !path.is_empty() {
                                 return relay::outgoing(
                                     scope, identity, key, peer, pins, views, connected, flag, path,
-                                    budget,
+                                    budget, observer,
                                 )
                                 .await;
                             }
@@ -814,6 +825,7 @@ async fn serve<'a>(
                                 scope,
                                 routes: routes.clone(),
                                 budget: hop_budget.clone(),
+                                observer: observer.clone(),
                             }),
                         )));
                     }

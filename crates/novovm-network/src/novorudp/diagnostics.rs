@@ -3,6 +3,8 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{collections::VecDeque, sync::Mutex, time::Instant};
+mod relay;
+pub use relay::{NativeRelayEvidenceV1, NativeRelayRouteEvidenceV1};
 #[cfg(windows)]
 pub(crate) mod windows_batch;
 
@@ -584,6 +586,10 @@ pub struct NativeEvidenceSnapshotV1 {
     pub udp_recovery_event_names: [&'static str; 22],
     pub udp_recovery: Vec<NativeUdpRecoveryEvidenceV1>,
     pub udp_recovery_omitted: u64,
+    /// Local authenticated circuits and completed opaque writes, not object DONE.
+    pub relay_circuits: Vec<NativeRelayEvidenceV1>,
+    pub relay_evicted_records: u64,
+    pub relay_omitted_observations: u64,
 }
 #[derive(Clone, Copy, Debug, Serialize)]
 pub struct NativeEvidenceRetentionV1 {
@@ -694,6 +700,8 @@ impl NativeTransferDiagnosticsV1 {
                 receive_totals: NativeReceiveTotalsV1::default(),
                 udp_recovery_event_names: UDP_RECOVERY_NAMES,
                 udp_recovery: Vec::new(), udp_recovery_omitted: 0,
+                relay_circuits: Vec::new(), relay_evicted_records: 0,
+                relay_omitted_observations: 0,
             }, records: VecDeque::new(),
         }) }
     }

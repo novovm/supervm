@@ -106,6 +106,11 @@ impl HopStream<'_> {
             )?)
             .await?;
         }
+        if let Some(observation) = &self.observation {
+            observation
+                .observer
+                .relay_native_session(observation.digest, channel.session_id());
+        }
         Ok(VerifiedRelaySession {
             channel,
             identity: identity.clone(),

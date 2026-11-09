@@ -74,6 +74,7 @@ impl Pair {
                     domain.genesis,
                     domain.protocol,
                 ),
+                None,
             )?);
             let transport = UdpTransport::bind_for_chain(
                 novovm_protocol::NodeId(side as u64 + 1),
@@ -149,7 +150,11 @@ impl Pair {
             }
         }
     }
-    fn restart_drivers(&mut self, configs: Vec<Config>) -> Result<()> {
+    fn restart_drivers(
+        &mut self,
+        configs: Vec<Config>,
+        observers: Option<&[Arc<NativeTransferDiagnosticsV1>]>,
+    ) -> Result<()> {
         self.close()?;
         self.drivers = configs
             .into_iter()
@@ -165,6 +170,7 @@ impl Pair {
                         .map(|(_, key)| key.public_key().to_vec())
                         .collect(),
                     self.pins,
+                    observers.map(|observers| observers[side].clone()),
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -279,7 +285,7 @@ fn all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordin
             _ => vec![root.join("bootstrap-0.json"), root.join("bootstrap-1.json")],
         };
     }
-    peers.restart_drivers(configs.clone())?;
+    peers.restart_drivers(configs.clone(), None)?;
     let ready = Instant::now() + Duration::from_secs(15);
     while peers
         .drivers
@@ -319,6 +325,7 @@ fn all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordin
             .map(|k| k.public_key().to_vec())
             .collect(),
         peers.pins,
+        None,
     )?;
     peers.allow_fallback();
     let cache = configs[2]
@@ -354,7 +361,7 @@ fn all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordin
     );
     peers.close()?;
     peers.cold_channels()?;
-    peers.restart_drivers(configs)?;
+    peers.restart_drivers(configs, None)?;
     let cold = Instant::now() + Duration::from_secs(40);
     while peers
         .channels
@@ -529,6 +536,7 @@ fn retained_tick_reactor_reauthenticates_after_peer_owner_restart_without_reopen
         pair.identities[1].clone(),
         vec![pair.identities[0].public_key().to_vec()],
         pair.pins,
+        None,
     )?;
     pair.drivers[1] = replacement;
     pair.drivers[1].views.lock().unwrap()[0] = PeerView {

@@ -644,6 +644,11 @@ impl NativeChannel {
         self.input_trace.as_ref()?.snapshot()
     }
 
+    #[cfg(feature = "iroh-transport")]
+    pub(super) fn probe_diagnostics(&self) -> Option<Arc<NativeTransferDiagnosticsV1>> {
+        self.input_trace.clone()
+    }
+
     pub(super) fn try_send_probe(
         &mut self,
         peer: usize,
