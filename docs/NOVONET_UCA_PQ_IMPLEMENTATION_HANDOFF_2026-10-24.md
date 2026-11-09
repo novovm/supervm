@@ -469,6 +469,12 @@ U2/U3 可按文件归属并行；手机只消费同一协议，不用本地余�
 
 ## 8. 用户纠正：禁止双机重复开发（当前执行边界）
 
+2026-11-09 A在main从112e9cca接续原NOVONET认领，固定源码883c6183：仅原
+NativeLifecycle/NativeChannel同一观察器及Driver/relay::hop的有界逐跳证据；未改
+协议、算法、选路或NOVOCHAT消费者。两平台定向验证及固定候选已收口，未部署。
+原共享交接第23节给出接口/制品/原日志和待授权的existing更新范围。C/D目前无需
+改共享层、重装、重配对或升级手机；Git发布仍不代替其他设备签收或实网多跳。
+
 2026-11-07 A从main `8ee31340`继续认领唯一NOVONET主节点接线：复用原Iroh/
 载体绑定握手及Finished、NativeCarrierPump、NativeEndpoint/ObjectLink，接入原
 NativeChannel/ResidentNode。不新增网络或执行器，不恢复旧WSS主链。多个已认证
