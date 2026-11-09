@@ -1720,6 +1720,26 @@ A同一时钟上的admitted→DONE为15ms，仅此单对象观察，不是TPS/P9
 ZIP为128708字节，SHA256 `68b4fbdfe7bfd8bb26634b0eb2e81d8aba114bdfbba685646e857a698368fe99`。
 C/D本轮没有操作；当前A→B通过不代替A→C、四机中继/多跳或资产验收。
 
+### 31. 2026-11-10 观测候选先修原自动CI的OpenSSL安全依赖
+
+第30节源码`55f947c9`的自动CI42683324372中，Rust security job129383748040
+在根Cargo audit因`RUSTSEC-2026-0463`失败；其他作业当时仍在执行，不改旧结果、
+不手动重跑。公告涉及`openssl::aes::unwrap_key`输出长度断言反向导致越界写，
+并非SQLite、EVM或NOVONET网络回归失败，也不能用它解释A的发现失败累计。
+
+实际依赖为lettre/native-tls的Linux邮件TLS消费者。Cargo只更新根锁文件
+openssl0.10.76→0.10.78、openssl-sys0.9.112→0.9.118；runtime没有这两项，
+无需改锁。没有ignore公告、修改门禁或改AOEM/存储/网络/身份/共识合同。
+根及runtime Audit/Deny全部退出0，既有informational/yanked警告保留。
+Windows/Linux原network owner各8/8、discovery各2/2、node严格Clippy通过；
+Linux实际邮件依赖消费者严格Clippy、两平台rollout-policy现有测试各1/1通过。
+该HTTP回执用例不是SMTP TLS实网验收。完整证据见
+[安全修正记录](../artifacts/audit/openssl-security-20261110/README.md)。
+
+接下来用新固定源码复用原打包器和包内7项身份/NAT资格检查，再B→A更新原节点。
+本节提交时尚未制成新包/更新节点；3fa的A→B原生DONE继续有效，未扩大为四机成绩。
+C/D无需操作。不以新增日志冒称现场发现根因已修复，不再追加无关架构或重复认证。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

@@ -1,0 +1,9 @@
+{
+  "archive": "original-evidence.zip",
+  "bytes": 42504,
+  "sha256": "acdea1c29651e405811a5405b533c56f46ef184df5ba7e9488b43316040bb7b8",
+  "members": 18,
+  "root_lock_sha256": "e5d86ffe30449478709bd2a257951cf991f55af2b78eda457d7a329ac03b7074",
+  "source_base": "55f947c9344bcdff0d7c17288439acd35df4ff38",
+  "scope": "local affected checks and original failed CI log; not packaged or deployed"
+}
