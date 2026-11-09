@@ -1,0 +1,227 @@
+{
+  "recorded_at": "2026-11-09T11:24:09.0510478Z",
+  "source_parent": "4ca654cfaf7062529d4a6e289e5ebfb79cd9b972",
+  "fixed_advisory": "RUSTSEC-2026-0459",
+  "rusqlite": "0.41.0",
+  "libsqlite3_sys": "0.39.1",
+  "source_pins": {
+    "Cargo.lock": "693788294b76406e5bff97783b9fa4038a011741f7a27400d3c6ac021348514d",
+    "deny.toml": "dfbd66ed5b0daf88018794020aef05d146ff5cdac13eb8e4a68220c7a5330646",
+    "crates/novovm-network/Cargo.toml": "bf6ede98e8897c6567a25a9f721907cf5190d8e48544d1eb40b6d3ccc83645e4",
+    "runtime/Cargo.lock": "3dafe4b90d2cb062d162896b894fd44889040ad361be5cf323293f3c763021ad",
+    "crates/novovm-storage-budget/Cargo.toml": "3a93ee0a5206aeb00c06251b913f01ea4f5758ff0c66e37ba3d9952ed6ba8642",
+    "crates/novovm-storage-budget/src/tests.rs": "1b397373b839ef62ea0df38c5881ebbccd00fcd49d7ebb09300f5e29356e21b8"
+  },
+  "checks": [
+    {
+      "check": "audit-root",
+      "ignore": [],
+      "warnings_retained": true,
+      "database": {
+        "advisory-count": 1429,
+        "last-commit": "899077d9d471b9fd3dbf4b2faea8ef26e83692e8",
+        "last-updated": "2026-11-09T18:48:10+08:00"
+      },
+      "vulnerabilities": 0,
+      "exit_code": 0
+    },
+    {
+      "exit_code": 0,
+      "check": "deny-root",
+      "original_policies_unchanged": true
+    },
+    {
+      "check": "audit-runtime",
+      "ignore": [],
+      "warnings_retained": true,
+      "database": {
+        "advisory-count": 1429,
+        "last-commit": "899077d9d471b9fd3dbf4b2faea8ef26e83692e8",
+        "last-updated": "2026-11-09T18:48:10+08:00"
+      },
+      "vulnerabilities": 0,
+      "exit_code": 0
+    },
+    {
+      "exit_code": 0,
+      "check": "deny-runtime",
+      "original_policies_unchanged": true
+    },
+    {
+      "exit_code": 0,
+      "check": "storage-tests",
+      "passed": 12,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "mailbox-store-policy",
+      "passed": 8,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "mailbox-store-integration",
+      "passed": 12,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "mailbox-runtime-integration",
+      "passed": 6,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "native-mailbox-session",
+      "passed": 12,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "node-store-guards-actual",
+      "passed": 6,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection",
+      "passed": 1,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "actual_native_proportional_fee_respend_and_cold_recovery",
+      "passed": 1,
+      "ignored": 0,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "storage-closure-clippy",
+      "warnings_denied": true,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "network-closure-clippy",
+      "warnings_denied": true,
+      "platform": "windows"
+    },
+    {
+      "exit_code": 0,
+      "check": "storage-tests",
+      "passed": 10,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "mailbox-store-policy",
+      "passed": 8,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "mailbox-store-integration",
+      "passed": 12,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "mailbox-runtime-integration",
+      "passed": 6,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "native-mailbox-session",
+      "passed": 12,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "node-store-guards-actual",
+      "passed": 6,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "actual_uca_startup_three_pins_reopen_and_legacy_asset_rejection",
+      "passed": 1,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "actual_native_proportional_fee_respend_and_cold_recovery",
+      "passed": 1,
+      "ignored": 0,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "storage-closure-clippy",
+      "warnings_denied": true,
+      "platform": "linux"
+    },
+    {
+      "exit_code": 0,
+      "check": "network-closure-clippy",
+      "warnings_denied": true,
+      "platform": "linux"
+    }
+  ],
+  "negative_samples": [
+    {
+      "original_result": "test result: FAILED. 935 passed; 3 failed; 13 ignored; 0 measured; 0 filtered out; finished in 10.79s",
+      "check": "linux-network-tests",
+      "accepted_as_success": false
+    },
+    {
+      "original_result": "test result: FAILED. 1297 passed; 26 failed; 13 ignored; 0 measured; 0 filtered out; finished in 221.90s",
+      "check": "windows-network-features-tests",
+      "accepted_as_success": false
+    },
+    {
+      "original_result": "test result: FAILED. 1293 passed; 27 failed; 13 ignored; 0 measured; 0 filtered out; finished in 220.61s",
+      "check": "linux-network-features-tests",
+      "accepted_as_success": false
+    },
+    {
+      "original_result": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1768 filtered out; finished in 0.00s",
+      "check": "windows-node-store-guards",
+      "accepted_as_success": false
+    },
+    {
+      "original_result": "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1760 filtered out; finished in 0.00s",
+      "check": "linux-node-store-guards",
+      "accepted_as_success": false
+    }
+  ],
+  "extra_diagnostics": [],
+  "unrestricted_parallel_network_suites_accepted": false,
+  "listed_sqlite_and_native_recovery_checks_passed": true,
+  "old_linux_dependency_baseline": "938 passed; 0 failed; 13 ignored",
+  "candidate_linux_serial_diagnostic": "938 passed; 0 failed; 13 ignored",
+  "linux_parallel_evm_root_cause_resolved": false,
+  "new_schema_or_database_migration": false,
+  "new_production_limits": false,
+  "nodes_updated": false,
+  "A_B_C_D_restarted": false,
+  "deployed_keys_or_databases_changed": false,
+  "four_host_network_accepted": false,
+  "new_tps": false
+}

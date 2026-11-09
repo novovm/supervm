@@ -1,6 +1,20 @@
 use super::*;
 use rusqlite::Connection;
 
+#[test]
+fn bundled_sqlite_includes_wal_page_size_security_fix() {
+    let connection = Connection::open_in_memory().unwrap();
+    let version: String = connection
+        .query_row("SELECT sqlite_version()", [], |row| row.get(0))
+        .unwrap();
+    // RUSTSEC-2026-0459 is fixed in SQLite 3.54.0 and libsqlite3-sys 0.39.
+    assert!(
+        rusqlite::version_number() >= 3_054_000,
+        "linked SQLite: {version}"
+    );
+    assert_eq!(version, rusqlite::version());
+}
+
 fn db(path: &Path) -> Connection {
     let c = Connection::open(path).unwrap();
     c.execute_batch("PRAGMA journal_mode=DELETE; CREATE TABLE IF NOT EXISTS items(id INTEGER PRIMARY KEY, value BLOB);").unwrap();

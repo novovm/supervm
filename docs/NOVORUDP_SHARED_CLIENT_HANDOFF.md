@@ -1582,6 +1582,32 @@ PID分别944911/958/627770/1414一致。未再次停新实例切回旧版做回�
 保持原24小时有界运行，不宣称永久SCM或公开生产服务已验收。旧恢复停滞/旧C崩溃
 不因本次候选通过而注销；无新的资产、最终性、多跳实网或TPS结论。
 
+### 27. 2026-11-09 SQLite安全依赖修正，不迁移主链存储
+
+4ca654cf的CI42600865983实际命中libsqlite3-sys0.38.2 / RUSTSEC-2026-0459，
+安全job失败，后继检查被跳过；不是B的启动/回滚再次失败。与此前2b97安全检查
+1422条公告相比，本次数据库1429条；旧锁文件未变，不用旧CI成功覆盖新增安全证据。
+
+确认并沿用存储边界：原主链RocksDB/AOEM和CandidateStore/StorageSession所有者
+不变，SQLite是唯一NOVONET L3/L4加密信箱及应用目录quota VFS，不是NOV账本。
+最小修正将两个直接消费者同步固定rusqlite0.41.0/libsqlite3-sys0.39.1，保留bundled
+及原C quota VFS，锁文件由Cargo生成且只变更这两个包；不改schema、业务、协议、
+身份、共识、费用或原库，不增加忽略和迁移程序。
+
+本地根/runtime两份锁文件audit均漏洞0、ignore=[]，两份原deny全范围通过。
+两平台storage quota/WAL、真实SQL MailboxStore事务/TTL/领取/删除/原迁移、串行
+信箱运行时/native session及严格Clippy通过；原库guard实际6项/平台、真实AOEM
+启动重开和比例费用冷恢复各1项/平台通过。最初guard筛选零命中不计通过，原记录保留。
+
+额外扩大并行试跑的默认Linux组3失败、Windows/Linux全feature组26/27失败均保留，
+未声称全部并行回归通过。旧依赖Linux默认组通过、候选串行诊断通过，不等于已定位
+首次3项EVM时序失败。原4端点额度及相关串行隔离要求不放宽；源码同步不签收新候选。
+详细调用/检查边界、精确数量和原始日志见[SQLite安全修正](../artifacts/audit/sqlite-security-20261109/README.md)。
+
+本轮不操作A/B/C/D。B仍为上节实测2b97，运行中的旧二进制不会自动得到这次SQLite
+修正；新源码后续仍需固定新平台候选并按实际授权existing换包，不能沿用旧包哈希
+冒充已经升级。只及时同步main，不手工新增/重跑、跳过或取消CI；原自动结果另记。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
