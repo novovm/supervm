@@ -32,7 +32,7 @@ pub(super) struct Discovery<'a> {
     publish_at: Instant,
     revision: u64,
     seeds: Vec<Seed<'a>>,
-    failures: Arc<AtomicU64>,
+    failures: Arc<NetworkFailures>,
     lookup_turn: usize,
     cache_path: PathBuf,
     cached: Vec<PeerSignedRelayRecordV1>,
@@ -44,7 +44,7 @@ impl<'a> Discovery<'a> {
         identity: &TransportIdentity,
         keys: &[Vec<u8>],
         pins: Pins,
-        failures: Arc<AtomicU64>,
+        failures: Arc<NetworkFailures>,
     ) -> Result<Self> {
         let now = Instant::now();
         let cache_path = config
@@ -232,8 +232,9 @@ impl<'a> Discovery<'a> {
                     Instant::now(),
                 )
             };
-            if result.is_err() {
-                self.failures.fetch_add(1, Ordering::Relaxed);
+            if let Err(error) = result {
+                self.failures
+                    .record("discovery_local_publish", None, &error.into());
             }
             self.publish_at = now + Duration::from_secs(10);
         }
@@ -275,7 +276,11 @@ impl<'a> Discovery<'a> {
                             {
                                 seed.book = None;
                                 seed.key = None;
-                                self.failures.fetch_add(1, Ordering::Relaxed);
+                                self.failures.record(
+                                    "discovery_checkpoint",
+                                    None,
+                                    &anyhow::anyhow!("cached bootstrap is future-dated or invalid"),
+                                );
                             }
                         }
                     }
@@ -299,21 +304,15 @@ impl<'a> Discovery<'a> {
                 .map(|i| self.keys[(self.lookup_turn + i) % self.keys.len()].clone())
                 .collect();
             self.lookup_turn = (self.lookup_turn + count) % self.keys.len();
-            seed.job = Some(Box::pin(async move {
-                tokio::time::timeout(
-                    Duration::from_secs(8),
-                    query(
-                        scope,
-                        identity,
-                        candidate.public_key,
-                        candidate.endpoint.address,
-                        pins,
-                        own,
-                        lookups,
-                    ),
-                )
-                .await?
-            }));
+            seed.job = Some(Box::pin(query(
+                scope,
+                identity,
+                candidate.public_key,
+                candidate.endpoint.address,
+                pins,
+                own,
+                lookups,
+            )));
         }
         let mut records = Vec::new();
         let mut store = self
@@ -340,7 +339,7 @@ impl<'a> Discovery<'a> {
                 match result {
                     Ok(found) => records.extend(found),
                     Err(error) => {
-                        self.failures.fetch_add(1, Ordering::Relaxed);
+                        self.failures.record("discovery_lookup", None, &error);
                         if terminal_session_rejection(&error) {
                             seed.quarantined = seed
                                 .book
@@ -365,38 +364,66 @@ async fn query(
     own: Vec<u8>,
     lookups: Vec<Vec<u8>>,
 ) -> Result<Vec<PeerSignedRelayRecordV1>> {
-    let mut stream: CarrierStreamV1<'_> = scope.connect(&route).await?.into();
-    stream.write_frame(DISCOVERY_ENTRY).await?;
-    let mut channel = authenticate_structured_bound_session_observed(
-        &mut stream,
-        &identity,
-        key,
-        true,
-        &mut HandshakeReplayCacheV1::new(8),
-        &mut |_, _| Ok(()),
-    )
-    .await?;
-    let instance = select(&mut stream, &mut channel, pins, None).await?;
-    let mut client =
-        DiscoveryClient::from_authenticated_node_locators_v1(&mut stream, channel, instance)?;
-    let publication_revision = wall_ms()?;
-    client
-        .put_node_locator_v1(publication_revision, 30_000, own)
-        .await?;
-    let mut found = Vec::new();
-    for key in lookups {
-        if let Some(record) = client.get_node_locator_v1(&key).await? {
-            found.push(decode_node_locator_v1(
-                &record.ciphertext,
-                &key,
-                pins,
-                wall_ms()?,
-                &identity,
-            )?);
+    let stage = std::cell::Cell::new("carrier connect");
+    // Keep the original single eight-second deadline, including every RPC.
+    // The phase survives cancellation so timeout does not erase the actual boundary.
+    tokio::time::timeout(Duration::from_secs(8), async {
+        let mut stream: CarrierStreamV1<'_> = scope
+            .connect(&route)
+            .await
+            .context("discovery carrier connect")?
+            .into();
+        stage.set("entry write");
+        stream
+            .write_frame(DISCOVERY_ENTRY)
+            .await
+            .context("discovery entry write")?;
+        stage.set("bound authentication");
+        let mut channel = authenticate_structured_bound_session_observed(
+            &mut stream,
+            &identity,
+            key,
+            true,
+            &mut HandshakeReplayCacheV1::new(8),
+            &mut |_, _| Ok(()),
+        )
+        .await
+        .context("discovery bound authentication")?;
+        stage.set("domain selection");
+        let instance = select(&mut stream, &mut channel, pins, None)
+            .await
+            .context("discovery domain selection")?;
+        let mut client =
+            DiscoveryClient::from_authenticated_node_locators_v1(&mut stream, channel, instance)?;
+        let publication_revision = wall_ms()?;
+        stage.set("remote publication");
+        client
+            .put_node_locator_v1(publication_revision, 30_000, own)
+            .await
+            .context("discovery remote publication")?;
+        let mut found = Vec::new();
+        stage.set("remote lookup");
+        for key in lookups {
+            if let Some(record) = client
+                .get_node_locator_v1(&key)
+                .await
+                .context("discovery remote lookup")?
+            {
+                found.push(decode_node_locator_v1(
+                    &record.ciphertext,
+                    &key,
+                    pins,
+                    wall_ms()?,
+                    &identity,
+                )?);
+            }
         }
-    }
-    client.close().await?;
-    Ok(found)
+        stage.set("close");
+        client.close().await.context("discovery close")?;
+        Ok(found)
+    })
+    .await
+    .with_context(|| format!("discovery deadline at {}", stage.get()))?
 }
 
 pub(super) async fn serve(
@@ -528,7 +555,7 @@ mod tests {
                                     &keys[0],
                                     &[keys[1].public_key().to_vec()],
                                     pins,
-                                    Arc::new(AtomicU64::new(0)),
+                                    Arc::new(NetworkFailures::default()),
                                 )?;
                                 for sequence in 1..=3 {
                                     // Reproduce the real 100-second rotation without a
@@ -573,7 +600,7 @@ mod tests {
                                     // observation, without weakening ClockRegression.
                                     discovery.maintain(tick, wall)?;
                                 }
-                                ensure!(discovery.failures.load(Ordering::Relaxed) == 0);
+                                ensure!(discovery.failures.count.load(Ordering::Relaxed) == 0);
                                 Ok(())
                             })
                         },

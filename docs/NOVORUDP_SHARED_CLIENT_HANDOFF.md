@@ -1664,6 +1664,62 @@ Linux更新器去掉其他服务PID不变的阻断并保留状态观察，本地
 仍增长、bound路由0，B可选novonet投影在第二次样本为null，均保留原始现场。
 下一步在新版本原owner上继续发现/选路及真实对象交付，不回到旧WSS或平行网络。
 
+### 30. 2026-11-10 原网络owner保留有界失败阶段，实网原因尚未结案
+
+继续第29节部署后的发现/交付定位，输入源码`b37a9155`。A/B实际仍运行`3fa11f94`，
+没有重新初始化、换钥、修改防火墙或NOVOCHAT。A本轮样本connection_failures达到184，
+旧生产程序只累加计数并丢弃错误，不能据此确定是连接、认证、域选择还是发现RPC失败。
+`installed_bound_peer_routes=0`只表示没有已安装的备用载体会话，不是UDP路由总数；
+原owner在存在待发对象时才请求备用，空闲零值不构成发现失败的独立证据。
+
+A保留的B引导声明与B当前声明的传输公钥、Iroh endpoint key、直连地址及relay地址
+一致；旧声明sequence12与当前4223不同，不等于指向错误身份。原引导合同允许用旧的
+已签坐标建立新的固定身份认证，再取得当前实例，不能直接把过期引导归为根因。
+B在03:02:45–46的限定42050/UDP短报头采集中出现双向数据（15 captured，0 dropped）；
+观察到的公网对端为91.99.237.97，未认证其属于A。端口有流量不等于A的发现或交付成功，
+也不构成Meta、运营商或防火墙归因。
+
+本次修改只在原`service/network`owner保留最早/最近保留的失败详情：阶段、
+原计数ordinal、可知的peer下标及最多512字符错误链。争用时try_lock立即返回，累计
+计数照常增加，另记omitted；不建立日志队列、第二服务、网络socket或逐包阻塞输出。
+原进度投影增加`failure_details`；原累计计数保留，并补记此前被忽略的carrier accept错误。
+发现查询仍使用同一个8秒总期限；只把期限包裹放回原query内以保存取消前阶段，并为
+连接、入口写入、绑定认证、域选择、发布、查询及关闭增加错误上下文。类型化终止拒绝
+仍沿anyhow链识别，不因增加文本而变成无限重试。原超时、连接限制、认证及业务规则不变。
+
+Windows/Linux release受影响网络组各8/8通过（234.38s/230.33s），覆盖原引导冷启动、
+动态发现交付、单中继、双中继并发DONE、断开后重认证、错误链域拒绝及有界失败记录。
+两平台发现安全/时钟回归各2/2通过，原node lib/tests严格Clippy `-D warnings`均通过，
+fmt及diff检查通过。原始输出位于`target/novonet-failure-observation-20261110/`。
+首次WSL验证启动因未安装pwsh退出，尚未运行测试；改用同参数bash入口，不安装额外工具。
+Linux第一轮因未指定既有target而重编译独立缓存，已精确停止该本地构建进程组，保留
+未完成日志；第二轮显式指定原`x86_64-unknown-linux-gnu`target复用缓存，不记首轮通过。
+本次修改尚未制成部署候选，未取得对应云端CI或实网失败根因，不用这些组件结果替代四机证据。
+
+#### 同轮现有3fa程序的真实A→B对象已完成，不依赖新观测代码
+
+03:22:38（北京时间）调用固定3fa ctl只发布一条原377字节非业务命令；原A PID25216
+接管并发往`47.103.59.206:41050`，B从`114.92.30.222:60735`接收，双方均标记native_udp。
+没有新socket、节点重启、身份变化或资产交易。A记录`probe_object_done`，B记录唯一的
+`probe_received_integrity_verified`，两端sender/recipient/nonce及下列标识逐项相等：
+
+- Object ID：`843f247ca223d7c75039e064f7c043eb682f1aac075ada23e483950884c8f654`
+- Session ID：`82dc48bfc7babd903750d82a068d57c2`
+- 原控制lane transfer tag：`83a3e1ed2be3a7bf33944138e7cdab38e0893882b3b43fee2957cea1628e5eb2`
+
+原tag按session、`NVBFT001`及Object ID重算后匹配双方传输记录；A确认1/1分片、
+send_terminal_state=delivered及transport_done；B有完整片、hash verified及对象接管。
+A同一时钟上的admitted→DONE为15ms，仅此单对象观察，不是TPS/P95或跨机单程延迟。
+两端墙钟存在偏差，B接收时间早于A准入时间，不能相减计算网络耗时。A/B execution_failures
+均0；不把非业务对象DONE当作资产授权、执行、持久化或共识最终性。A发现/连接失败累计
+313、B为0仍保留，证明“发现失败累计”与“已有原生对象路径不能交付”不能混为一谈。
+
+[双端比较结果](../artifacts/audit/novonet-discovery-observation-20261110/A-B-comparison.json)
+及[原始证据ZIP](../artifacts/audit/novonet-discovery-observation-20261110/original-evidence.zip)
+包含18项：双端原进度、命令、核对脚本、本地回归/Clippy及未完成构建日志；无私钥。
+ZIP为128708字节，SHA256 `68b4fbdfe7bfd8bb26634b0eb2e81d8aba114bdfbba685646e857a698368fe99`。
+C/D本轮没有操作；当前A→B通过不代替A→C、四机中继/多跳或资产验收。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

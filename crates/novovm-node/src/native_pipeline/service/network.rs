@@ -28,7 +28,7 @@ mod discovery;
 mod probe;
 mod relay;
 use discovery::Discovery;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     future::{poll_fn, Future},
@@ -180,6 +180,53 @@ struct CarrierAttempt<'a> {
     adopted: Arc<AtomicBool>,
 }
 
+#[derive(Clone, Serialize)]
+struct FailureDetail {
+    ordinal: u64,
+    stage: &'static str,
+    peer: Option<usize>,
+    error: String,
+}
+#[derive(Default, Serialize)]
+struct FailureDetails {
+    first: Option<FailureDetail>,
+    last: Option<FailureDetail>,
+}
+#[derive(Default)]
+struct NetworkFailures {
+    count: AtomicU64,
+    omitted: AtomicU64,
+    details: Mutex<FailureDetails>,
+}
+impl NetworkFailures {
+    fn record(&self, stage: &'static str, peer: Option<usize>, error: &anyhow::Error) {
+        let ordinal = self.count.fetch_add(1, Ordering::Relaxed) + 1;
+        // Only first/latest bounded control-plane errors. Never wait for the report writer.
+        let Ok(mut details) = self.details.try_lock() else {
+            self.omitted.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        let detail = FailureDetail {
+            ordinal,
+            stage,
+            peer,
+            error: format!("{error:#}").chars().take(512).collect(),
+        };
+        if details.first.is_none() {
+            details.first = Some(detail.clone());
+        }
+        details.last = Some(detail);
+    }
+    fn observation(&self) -> serde_json::Value {
+        match self.details.try_lock() {
+            Ok(details) => serde_json::json!({"available":true,"first":details.first,
+                "last":details.last,"omitted":self.omitted.load(Ordering::Relaxed)}),
+            Err(_) => serde_json::json!({"available":false,
+                "omitted":self.omitted.load(Ordering::Relaxed)}),
+        }
+    }
+}
+
 /// The pinned future owns its scope/streams. No borrowed pump escapes into the
 /// node struct, and no partial frame future is discarded between tick polls.
 pub struct Driver {
@@ -195,7 +242,7 @@ pub struct Driver {
     closed: bool,
     finished: bool,
     activated: bool,
-    failures: Arc<AtomicU64>,
+    failures: Arc<NetworkFailures>,
 }
 impl Driver {
     pub fn new(config: Config, node: &mut ResidentNode) -> Result<Self> {
@@ -242,7 +289,7 @@ impl Driver {
             keys.len()
         ]));
         let stop = Arc::new(AtomicBool::new(false));
-        let failures = Arc::new(AtomicU64::new(0));
+        let failures = Arc::new(NetworkFailures::default());
         // One result per configured connection, not a business/data send queue.
         let (sender, connected) = mpsc::sync_channel(keys.len());
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -378,7 +425,9 @@ impl Driver {
         serde_json::json!({"default":"native_novorudp","fallback":"iroh","installed_bound_peer_routes":bound,
             "probe_control":self.probe_control.as_ref().map(|control| control.observation()),
             "peer_discovery_rpc":self.config.discovery,
-            "connection_failures":self.failures.load(Ordering::Relaxed),"global_auto_discovery":false,"native_multihop_accepted":false})
+            "connection_failures":self.failures.count.load(Ordering::Relaxed),
+            "failure_details":self.failures.observation(),
+            "global_auto_discovery":false,"native_multihop_accepted":false})
     }
     pub fn close(&mut self) -> Result<()> {
         if self.closed || self.finished || !self.activated {
@@ -444,7 +493,7 @@ async fn run(
     views: Arc<Mutex<Vec<PeerView>>>,
     connected: mpsc::SyncSender<Connected>,
     stop: Arc<AtomicBool>,
-    failures: Arc<AtomicU64>,
+    failures: Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
 ) -> Result<()> {
     let check_stop = stop.clone();
@@ -511,7 +560,7 @@ async fn serve<'a>(
     views: &Arc<Mutex<Vec<PeerView>>>,
     connected: &mpsc::SyncSender<Connected>,
     stop: &Arc<AtomicBool>,
-    failures: &Arc<AtomicU64>,
+    failures: &Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
 ) -> Result<()> {
     let mut books = (0..keys.len())
@@ -753,7 +802,7 @@ async fn serve<'a>(
                 if let Poll::Ready(result) = job.future.as_mut().poll(cx) {
                     if let Err(error) = result {
                         #[cfg(test)]
-                        if failures.load(Ordering::Relaxed) < 16 {
+                        if failures.count.load(Ordering::Relaxed) < 16 {
                             eprintln!(
                                 "NOVONET outbound peer={peer} turn={} adopted={} failed: {error:#}",
                                 attempts[peer],
@@ -769,7 +818,7 @@ async fn serve<'a>(
                         } else {
                             attempts[peer].saturating_add(1)
                         };
-                        failures.fetch_add(1, Ordering::Relaxed);
+                        failures.record("object_outbound", Some(peer), &error);
                         pools[peer].record_failure(
                             &novovm_network::product_overlay::peer_id_from_mldsa65_public_key_v1(
                                 &keys[peer],
@@ -792,15 +841,13 @@ async fn serve<'a>(
                 if let Poll::Ready(result) = incoming[index].as_mut().poll(cx) {
                     if let Err(error) = result {
                         #[cfg(test)]
-                        if failures.load(Ordering::Relaxed) < 16 {
+                        if failures.count.load(Ordering::Relaxed) < 16 {
                             eprintln!(
                                 "NOVONET inbound local={} failed: {error:#}",
                                 identity.peer_id()
                             );
                         }
-                        #[cfg(not(test))]
-                        let _ = error;
-                        failures.fetch_add(1, Ordering::Relaxed);
+                        failures.record("inbound_session", None, &error);
                     }
                     drop(incoming.swap_remove(index));
                 } else {
@@ -831,7 +878,8 @@ async fn serve<'a>(
                     }
                     accepting = Box::pin(scope.accept_inbound());
                 }
-                Poll::Ready(Err(_)) => {
+                Poll::Ready(Err(error)) => {
+                    failures.record("carrier_accept", None, &error);
                     accepting = Box::pin(scope.accept_inbound());
                 }
                 Poll::Pending => {}

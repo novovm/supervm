@@ -109,7 +109,7 @@ fn run_relay_objects(relay_count: usize) -> Result<()> {
             peers
                 .drivers
                 .iter()
-                .map(|d| d.failures.load(Ordering::Relaxed))
+                .map(|d| d.failures.count.load(Ordering::Relaxed))
                 .collect::<Vec<_>>()
         );
         peers.pump()?;

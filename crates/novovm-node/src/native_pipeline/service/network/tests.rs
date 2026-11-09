@@ -15,6 +15,44 @@ use novovm_network::{
 use std::net::UdpSocket;
 mod hop;
 
+#[test]
+fn network_failure_observation_retains_first_last_without_blocking_or_unbounded_history() {
+    let failures = NetworkFailures::default();
+    let error = anyhow::anyhow!("{}", "错".repeat(2048));
+    failures.record("discovery_lookup", None, &error);
+    for peer in 0..100 {
+        failures.record(
+            "object_outbound",
+            Some(peer),
+            &anyhow::anyhow!("connection refused"),
+        );
+    }
+    let report = failures.observation();
+    assert_eq!(failures.count.load(Ordering::Relaxed), 101);
+    assert_eq!(report["first"]["stage"], "discovery_lookup");
+    assert_eq!(
+        report["first"]["error"].as_str().unwrap().chars().count(),
+        512
+    );
+    assert_eq!(report["last"]["ordinal"], 101);
+    assert_eq!(report["last"]["peer"], 99);
+    let guard = failures.details.lock().unwrap();
+    failures.record("inbound_session", None, &anyhow::anyhow!("rejected"));
+    assert_eq!(failures.count.load(Ordering::Relaxed), 102);
+    assert_eq!(failures.observation()["available"], false);
+    drop(guard);
+    assert_eq!(failures.observation()["omitted"], 1);
+    assert_eq!(failures.observation()["last"]["ordinal"], 101);
+
+    // Added stage context must not turn a terminal rejection into a retryable IO error.
+    let rejection =
+        anyhow::Error::new(ServiceSelectionMismatch).context("discovery domain selection");
+    assert!(terminal_session_rejection(&rejection));
+    assert!(!terminal_session_rejection(
+        &anyhow::anyhow!("connection refused").context("discovery carrier connect")
+    ));
+}
+
 struct Pair {
     drivers: Vec<Driver>,
     channels: Vec<NativeChannel>,
@@ -670,7 +708,7 @@ fn retained_tick_reactor_rejects_wrong_chain_selection_before_native_handoff() -
     while pair
         .drivers
         .iter()
-        .all(|driver| driver.failures.load(Ordering::Relaxed) == 0)
+        .all(|driver| driver.failures.count.load(Ordering::Relaxed) == 0)
     {
         ensure!(
             Instant::now() < deadline,
