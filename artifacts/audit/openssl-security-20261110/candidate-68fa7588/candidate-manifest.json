@@ -1,0 +1,38 @@
+{
+  "source_commit": "68fa758820889c3f5e8bb230aa42cef100b77b4b",
+  "local_delivery_directory": "C:/Users/leadb/AppData/Local/NOVOVM/candidate-observation-68fa7588-20261110",
+  "packages": [
+    {
+      "platform": "windows",
+      "source_commit": "68fa758820889c3f5e8bb230aa42cef100b77b4b",
+      "archive": "novonet-observation-68fa7588-windows-x86_64.zip",
+      "archive_bytes": 150522473,
+      "archive_sha256": "0a846927d1a1f505afcd6b2a37ac92c0a11c576ffd56464c7a98f3540795fbf6",
+      "manifest_sha256": "b9de603995c925463051484337f6d9019ebb537f47db6ebf8396f9c0016e3a64",
+      "artifacts_verified": 77,
+      "node_sha256": "f75a8a88f619f9af3b11462900b8ecfef0ffb3b31d0d68597da01e1eefb930b8",
+      "client_sha256": "472efde699d858dbf932a47737c63261d564da4f295688517034f4883424fa42",
+      "ctl_sha256": "839a0c2c0b9cc7a79f54c6ce0b9a98d6e42ce5d11d96de4dffe22746bc135bae",
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "packaged_identity_nat_tests_passed": 7,
+      "deployed": false
+    },
+    {
+      "platform": "linux",
+      "source_commit": "68fa758820889c3f5e8bb230aa42cef100b77b4b",
+      "archive": "novonet-observation-68fa7588-linux-x86_64.tar.gz",
+      "archive_bytes": 359357929,
+      "archive_sha256": "73ce6e609a91d4273c314625a5305b40e6e286c34653b78f6d18b5eba0dd0b49",
+      "manifest_sha256": "5146cf03f8a159f1839442a0fed62756a0c71963c9a19325f07a0a88e93354fe",
+      "artifacts_verified": 80,
+      "node_sha256": "0faa7dbc2e59c1108403cb5e5aef482f72131b9bc1e070aeca29242a3ac0b549",
+      "client_sha256": "af7ea5471192fb36ebb9c2550d727ea7ae8ce00ba1965ef5b25db3d55ddb2258",
+      "ctl_sha256": "eb994cb51cf46f21e997294bc2dea18e3f360b9064c80138f580dba05c9e8bf0",
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "packaged_identity_nat_tests_passed": 7,
+      "deployed": false
+    }
+  ],
+  "package_evidence_sha256": "58f857cb788702d39667ad8271ab9f06a9f110808cb3828d16b5a8f56ab2baa4",
+  "scope": "actual local package qualification; CI and deployment separate"
+}

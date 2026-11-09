@@ -1,0 +1,157 @@
+{
+  "C_D_updated": false,
+  "failure_boundary": "A discovery_lookup: carrier connect deadline before entry write, NOVONET bound authentication and RPC; exact carrier subphase unknown",
+  "source": "68fa758820889c3f5e8bb230aa42cef100b77b4b",
+  "other_services_after": "MainPID=944911\nId=novonet-mailbox.service\nActiveState=active\nSubState=running\n\nMainPID=958\nId=supervm-relay.service\nActiveState=active\nSubState=running\n\nMainPID=627770\nId=nginx.service\nActiveState=active\nSubState=running\n\nMainPID=1414\nId=docker.service\nActiveState=active\nSubState=running\n",
+  "time_utc": "2026-11-09T21:50:12.7878074Z",
+  "ci_conclusion": "success",
+  "root_cause_resolved": false,
+  "new_probe_sent": false,
+  "initialize_executed": false,
+  "keys_generated": false,
+  "other_services_unchanged": true,
+  "ci_run": 42685932056,
+  "rollback_executed": false,
+  "hosts": [
+    {
+      "node_sha256": "0faa7dbc2e59c1108403cb5e5aef482f72131b9bc1e070aeca29242a3ac0b549",
+      "ticks_first": 174839,
+      "owner": "novovm uid=996",
+      "ticks_final": 245169,
+      "locator_fresh": true,
+      "custody_unchanged": true,
+      "health": {
+        "before": {
+          "elapsed_ms": 58,
+          "height": 0,
+          "current_height": 1,
+          "root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "projection_failed": false,
+          "recovering": false
+        },
+        "after": {
+          "elapsed_ms": 56,
+          "height": 0,
+          "current_height": 1,
+          "root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "projection_failed": false,
+          "recovering": false
+        }
+      },
+      "new_pid": 2858350,
+      "host": "B",
+      "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+      "locator_sequence_first": 4523,
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "start": "existing",
+      "old_pid": 2777931,
+      "locator_sequence_final": 4525,
+      "novonet": {
+        "default": "native_novorudp",
+        "fallback": "iroh",
+        "installed_bound_peer_routes": 0,
+        "probe_control": {
+          "enabled": true,
+          "accepted_commands": 0,
+          "rejected_commands": 0,
+          "last": null,
+          "scope": "local commands; never business or transport completion"
+        },
+        "peer_discovery_rpc": true,
+        "connection_failures": 0,
+        "failure_details": {
+          "available": true,
+          "first": null,
+          "last": null,
+          "omitted": 0
+        },
+        "global_auto_discovery": false,
+        "native_multihop_accepted": false
+      }
+    },
+    {
+      "node_sha256": "f75a8a88f619f9af3b11462900b8ecfef0ffb3b31d0d68597da01e1eefb930b8",
+      "ticks_first": 102814,
+      "owner": "S-1-5-19",
+      "ticks_final": 154282,
+      "locator_fresh": true,
+      "custody_unchanged": true,
+      "health": {
+        "before": {
+          "elapsed_ms": 40,
+          "height": 0,
+          "current_height": 1,
+          "root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "projection_failed": false,
+          "recovering": false
+        },
+        "after": {
+          "elapsed_ms": 28,
+          "height": 0,
+          "current_height": 1,
+          "root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "projection_failed": false,
+          "recovering": false
+        }
+      },
+      "new_pid": 37496,
+      "host": "A",
+      "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+      "locator_sequence_first": 5453,
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "start": "existing",
+      "old_pid": 25216,
+      "locator_sequence_final": 5454,
+      "novonet": {
+        "default": "native_novorudp",
+        "fallback": "iroh",
+        "installed_bound_peer_routes": 0,
+        "probe_control": {
+          "enabled": true,
+          "accepted_commands": 0,
+          "rejected_commands": 0,
+          "last": null,
+          "scope": "local commands; never business or transport completion"
+        },
+        "peer_discovery_rpc": true,
+        "connection_failures": 16,
+        "failure_details": {
+          "available": true,
+          "first": {
+            "ordinal": 1,
+            "stage": "discovery_lookup",
+            "peer": null,
+            "error": "discovery deadline at carrier connect: deadline has elapsed"
+          },
+          "last": {
+            "ordinal": 16,
+            "stage": "discovery_lookup",
+            "peer": null,
+            "error": "discovery deadline at carrier connect: deadline has elapsed"
+          },
+          "omitted": 0
+        },
+        "global_auto_discovery": false,
+        "native_multihop_accepted": false
+      }
+    }
+  ],
+  "firewall_profiles": [
+    {
+      "Name": "Domain",
+      "Enabled": 1
+    },
+    {
+      "Name": "Private",
+      "Enabled": 1
+    },
+    {
+      "Name": "Public",
+      "Enabled": 1
+    }
+  ],
+  "order": [
+    "B",
+    "A"
+  ]
+}

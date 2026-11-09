@@ -1740,6 +1740,29 @@ Linux实际邮件依赖消费者严格Clippy、两平台rollout-policy现有测�
 本节提交时尚未制成新包/更新节点；3fa的A→B原生DONE继续有效，未扩大为四机成绩。
 C/D无需操作。不以新增日志冒称现场发现根因已修复，不再追加无关架构或重复认证。
 
+### 32. 2026-11-10 68fa7588完整CI通过，B→A原库更新及发现失败阶段实证
+
+程序固定`68fa758820889c3f5e8bb230aa42cef100b77b4b`；原自动CI42685932056
+最终success，Windows/Linux实际包内身份/NAT各7/7。原工具按B→A更新完成：
+B PID2777931→2858350，A PID25216→37496，均existing打开原chain-state；
+原身份/custody、实际AOEM/程序哈希、监听、locator发布及原状态根核验成功。
+认证Status B前58/后56ms、A前40/后28ms，root均为
+`f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`。
+原进程按授权精确终止，不称正常排空；无初始化、换钥或回滚。A同范围程序规则、
+三类防火墙启用；B其他开发服务本轮状态/PID未变。C/D不操作，手机不换包。
+
+新观察取得A首次至第16次相同错误：stage=`discovery_lookup`，
+`discovery deadline at carrier connect: deadline has elapsed`。B该累计为0。
+实际发现query尚未从原IrohScope::connect返回，因此未进入入口写入、NOVONET
+绑定认证、链域选择及发现RPC。connect内部地址/QUIC/流准备尚不能细分；
+不能将该失败直接写成原生UDP对象丢包、ML-DSA拒绝或DONE丢失，也没有根因修复结论。
+旧seed与B当前locator的公钥、endpoint及地址集合一致，不凭序号旧直接归因。
+
+完整[更新、候选哈希和原始证据](../artifacts/audit/openssl-security-20261110/README.md)
+已保留。程序与记录提交分开；不将后继文档SHA写成实机程序SHA。
+本轮未新增对象触发；3fa的真实A→B原生DONE继续按旧版本范围保留，不继承为68或四机
+中继/多跳通过。后继只定位原Carrier connect与双端同连接，不提高超时/资源或改签名。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
