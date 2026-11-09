@@ -2,20 +2,20 @@
 param([string]$PackageRoot,[switch]$InspectPreparedFirewall)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
-$path=Join-Path $PSScriptRoot '../windows/Update-Novonet5181Existing.ps1'
+$path=Join-Path $PSScriptRoot '../windows/Update-NovonetExisting.ps1'
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $path),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Update script parse errors'}
 $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false))
-foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence','ConvertFrom-NovonetCrashEvent')) {
+foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence','ConvertFrom-NovonetCrashEvent','Assert-StoppedOwnerEvidence','Assert-OriginalFirewallScope')) {
     $function=@($functions|Where-Object Name -CEQ $name)
     if($function.Count -ne 1){throw 'Expected original deployment gate missing'}
     . ([scriptblock]::Create($function[0].Extent.Text))
 }
-$source='5181da733d59d998afa898bb9964db5deae9e72c'
-$manifestPin='f381ccd4eed0a9176e3b91aded8f699f19bb64bd983307c44f1dbf8086162ab3'
-$nodePin='ff68c5930b9b205b25ba5351a17ad08aa68f51d7cf71779d0507b6269f4087f3'
-$root=Join-Path $PSScriptRoot ('../../target/novonet-5181-update-20261109/gate-tests-'+[Guid]::NewGuid().ToString('N'))
+$source='883c6183a9dbaf73686e46381b178379bebf8217'
+$manifestPin='22ddaa91542f77ee593705348fc8515fe9151e7a236e73dca85388c0b437b6b2'
+$nodePin='e02c4bb3020f348d33b87283fd6578d98db74ea523d96e32d86e60e2d2f7cbd0'
+$root=Join-Path $PSScriptRoot ('../../target/relay-evidence-20261109/gate-tests-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root|Out-Null
 $json=Join-Path $root 'record.json'
 Write-NewJson $json ([ordered]@{test=$true;start='existing'})
@@ -95,8 +95,8 @@ if(!$rejected){throw 'Wrong filter class must fail'}
 Write-Output 'PASS 13 firewall cases: renamed association accepted; 10 semantic changes, wrong association and wrong class rejected'
 
 if($InspectPreparedFirewall) {
-    $oldRule=Get-NetFirewallRule -Name 'NOVOVM-ddd89e8e-A-20261108'
-    $newRule=Get-NetFirewallRule -Name 'NOVOVM-5181da73-A-20261109'
+    $oldRule=Get-NetFirewallRule -Name 'NOVOVM-5181da73-A-20261109'
+    $newRule=Get-NetFirewallRule -Name 'NOVOVM-883c6183-A-20261109'
     foreach($command in @('Get-NetFirewallPortFilter','Get-NetFirewallAddressFilter','Get-NetFirewallInterfaceFilter','Get-NetFirewallInterfaceTypeFilter','Get-NetFirewallSecurityFilter','Get-NetFirewallServiceFilter')) {
         Assert-FirewallFilterScope (& $command -AssociatedNetFirewallRule $oldRule) (& $command -AssociatedNetFirewallRule $newRule) $oldRule.Name $newRule.Name
     }
@@ -170,3 +170,44 @@ if(Test-Path -LiteralPath $receipt) {
     if($crashes.Count -ne 1 -or $crashes[0].fault_pid -ne 23024 -or $crashes[0].record_id -ne 545045){throw 'Actual full Get-WinEvent to converter/sort pipeline differs'}
     Write-Output 'PASS 8 complete XML regression cases: old parser fails; complete C XML, Windows namespace and actual reader pipeline pass; unrelated events and empty required pid reject'
 }
+
+function New-StoppedFixture {
+    [pscustomobject]@{task_state='Ready';task_sid='S-1-5-19';restart_count=0;trigger_count=0;task_exit_code=0;executing_nodes=0;bound_ports=0;last_run_utc=[DateTime]::UtcNow.AddHours(-25);progress_utc=[DateTime]::UtcNow.AddHours(-1)}
+}
+Assert-StoppedOwnerEvidence (New-StoppedFixture)
+foreach($case in @{task_state='Running';task_sid='S-1-5-18';restart_count=1;trigger_count=1;task_exit_code=3221225477;executing_nodes=1;bound_ports=1;last_run_utc=[DateTime]::UtcNow.AddMinutes(1);progress_utc=[DateTime]::UtcNow.AddHours(-26)}.GetEnumerator()) {
+    $fixture=New-StoppedFixture;$fixture.($case.Key)=$case.Value;$rejected=$false
+    try{Assert-StoppedOwnerEvidence $fixture}catch{$rejected=$true}
+    if(!$rejected){throw "Unproven clean stop accepted: $($case.Key)"}
+}
+Write-Output 'PASS 10 clean-stop gates: proven normal stop accepted; active, authority, restart, trigger, failure, live process/port and timeline counterexamples rejected'
+
+$portFixture=[pscustomobject]@{Protocol='UDP';LocalPort=@('41051','42051');RemotePort='Any'}
+$addressFixture=[pscustomobject]@{LocalAddress='192.168.71.74';RemoteAddress=@('192.168.71.0/255.255.255.0','47.103.59.206')}
+$ruleFixture=[pscustomobject]@{Enabled='True';Action='Allow';Direction='Inbound'}
+$appFixture=[pscustomobject]@{Program='C:\fixed\novovm-node.exe'}
+Assert-OriginalFirewallScope $ruleFixture $portFixture $appFixture $addressFixture $appFixture.Program @(41051,42051) '192.168.71.74'
+foreach($case in @(@('port','LocalPort',@('Any')),@('port','RemotePort',@('1234')),@('address','LocalAddress','Any'),@('address','RemoteAddress',@('Any')),@('address','RemoteAddress',@('192.168.71.0/24','1.1.1.1')),@('rule','Direction','Outbound'))) {
+    $portCopy=$portFixture.PSObject.Copy();$addressCopy=$addressFixture.PSObject.Copy();$ruleCopy=$ruleFixture.PSObject.Copy()
+    switch($case[0]){'port'{$portCopy.($case[1])=$case[2]} 'address'{$addressCopy.($case[1])=$case[2]} 'rule'{$ruleCopy.($case[1])=$case[2]}}
+    $rejected=$false
+    try{Assert-OriginalFirewallScope $ruleCopy $portCopy $appFixture $addressCopy $appFixture.Program @(41051,42051) '192.168.71.74'}catch{$rejected=$true}
+    if(!$rejected){throw 'Changed original scope must not be cloned'}
+}
+Write-Output 'PASS 7 original-scope gates: exact current scope accepted; port/address expansion and wrong direction rejected'
+
+$names=@('$state','$oldWork','$work','$oldRelease','$release','$oldTask','$newTask','$rollbackTask','$oldNodePin','$oldProgressPath','$oldRuleName')
+$assignments=@($ast.EndBlock.Statements|Where-Object {$_ -is [Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -in $names})
+foreach($HostId in @('A','C','D')) {
+    foreach($assignment in $assignments){. ([scriptblock]::Create($assignment.Extent.Text))}
+    if($oldTask -ceq $newTask -or $oldRelease -ceq $release -or $oldWork -ceq $work){throw 'Old/new deployment paths alias'}
+    if($HostId -ceq 'D') {
+        if($oldNodePin -cne '9040ac63828c30011e8e7c4801be31183ecb69960854dd4974671df3d5d14d51' -or $oldTask -cne 'NOVOVM-D-08236129-Network-20261108' -or $oldProgressPath -cne "$oldWork\progress.json"){throw 'D original 082 mapping differs'}
+    }elseif($oldNodePin -cne 'ff68c5930b9b205b25ba5351a17ad08aa68f51d7cf71779d0507b6269f4087f3' -or $oldProgressPath -cne "$oldWork\logs\progress.json"){throw 'A/C original 5181 mapping differs'}
+}
+$network=[pscustomobject]@{discovery=$true;relay_forwarding=$true}
+$probeAssignment=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.PipelineAst] -and $node.Extent.Text.StartsWith('$network|Add-Member -NotePropertyName probe_control_file')},$true))
+if($probeAssignment.Count -ne 1){throw 'Original optional field adaptation missing'}
+. ([scriptblock]::Create($probeAssignment[0].Extent.Text))
+if($network.probe_control_file -cne "$work\commands\control.nvprobe" -or !$network.discovery -or !$network.relay_forwarding){throw '082 field adaptation changes routing or command owner'}
+Write-Output 'PASS 4 actual source adaptations: A/C/D old-version mappings and missing 082 optional field'

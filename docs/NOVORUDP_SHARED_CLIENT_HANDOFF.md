@@ -1319,6 +1319,38 @@ AOEM哈希、原日志和本轮未决项见[本轮记录](../artifacts/audit/udp
 完整云端CI、现有实例更新及真实单/双中继尚未签收。C/D目前不操作；不扩大为Iroh
 切回、资产执行、最终性、稳定性或TPS通过，也不销账旧C崩溃及历史恢复停滞。
 
+### 24. 2026-11-09 已批准883c逐台existing更新（尚未执行）
+
+用户已明确批准第23节固定候选按 **B→A→C→D** 顺序更新；每台必要健康检查通过后
+才操作下一台。包括必要的精确目标进程终止和Windows原规则完全同范围的程序绑定，
+不再重复申请这项授权。完整候选当前自动CI为42542288594，绑定记录提交71d5c225、
+程序883c6183；本次检查仍在运行、尚无失败，不手动重跑或以局部成功替代最终结果。
+本节仅记录授权与本地准备，不表示已停止、更新或重启任何节点。
+
+原Windows更新入口改为`scripts/windows/Update-NovonetExisting.ps1`，覆盖A/C原5181
+及D原082，固定第23节包内manifest/node/AOEM。沿原LocalService、原进程内核句柄退出
+屏障及原库existing打开；D旧任务包含initialize，更新和回滚均不执行该任务。
+原版本专用脚本由这个入口替代，不保留第二套活动更新器。
+
+新脚本区分仍运行的精确旧进程、已匹配崩溃事件的原进程及有明确任务/退出/时间证据
+的正常停止；后两种需显式`-RecoverCrashed`或`-ResumeStopped`，不能仅凭缺少PID/端口
+认定可以打开原库。D旧配置没有可选probe_control_file，由原配置owner补入新空命令
+路径，保留全部发现/中继策略。复制防火墙前核对原UDP端口、本地地址、LAN/B来源，
+复制后逐过滤器验证不扩张，不改全局profile。失败回滚仍用各机旧程序existing，
+不运行初始化、不复制或清除DB/journal/LOCK、不生成/替换任何用途钥。
+
+本地`pwsh -NoProfile -File scripts/tests/novonet-existing-update.tests.ps1 -PackageRoot
+artifacts/product-overlay/novonet-relay-evidence-883c6183-windows-x86_64`通过：7项部署
+门禁及实际固定包、13项过滤器、12项崩溃owner、8项完整事件XML、10项正常停止、
+7项窄范围规则、4项A/C/D真实源码映射/旧配置适配；另保留原C事件反例的离线解析。
+这些不等于已执行系统任务、防火墙变更或实机恢复。
+
+B原SSH配置没有ProxyCommand/ProxyJump；当前系统到47.103.59.206的路由为Meta
+接口37、源198.18.0.1、下一跳198.18.0.2。原SSH在服务器横幅前超时，SOCKS只读
+对照能读到OpenSSH_9.6p1横幅但没有认证成功；不能归因密钥错误，也尚未证明是安全组
+或TUN导致。用户确认VPN未切换。本轮未改路由、代理、B防火墙或任何B应用服务，
+未上传/安装B候选；B/A未更新前，C/D不要提前执行本节脚本或旧初始化任务。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
