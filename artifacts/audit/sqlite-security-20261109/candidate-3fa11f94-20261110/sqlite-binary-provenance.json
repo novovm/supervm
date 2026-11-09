@@ -1,0 +1,212 @@
+{
+  "source_commit": "3fa11f940b18e54b46e6b927d3d66294bea37088",
+  "required_ci": 42609044443,
+  "rusqlite": "0.41.0",
+  "libsqlite3_sys": "0.39.1",
+  "sqlite_version": "3.54.1",
+  "sqlite_source_id": "2026-10-16 14:45:20 555e07ef33f69a0957d24d8e555b702464a131d6f1607f4c3c1e4551e8e6ca76",
+  "method": "Actual executable source/version markers, fixed Cargo build contracts and manifest hashes; actual ELF SQLite/quota symbols and dynamic dependency list",
+  "node_runtime_sql_version_api_invoked": false,
+  "companion_real_sql_and_quota_tests": "frozen 3fa source checks in sqlite-security-20261109; not an added node API",
+  "artifacts": [
+    {
+      "sha256": "5a471fc805f86aaf57d6b06a4cfc1f4ba8aacff7eea67c74fabe036718a27b27",
+      "binary": "novovm-node",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "9d8ae5db7532c59f3ae445c8176a66bc0f608d6d97e2133977b2f13065109cc2",
+      "binary": "novovm-native-client",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "f4c62b5932080b5ffab0652df3daded8cff931233ad3bfde13c6954729f1d07e",
+      "binary": "novovm-product-relay",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "0bb22102ee85c052369baed7a4c204a92a9ba7e9510bc505f734263067a3b90b",
+      "binary": "novovm-product-node-overlay",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "22031c9133a6f27353c48175fdb41275ee6d5f619653613521d4293b4ea5871a",
+      "binary": "novovm-product-nat",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "1700556e476a88bd2c14497ce516abe6b2fdfb27b6cb899b0665dd5c7d377a34",
+      "binary": "novovm-product-peer",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "db4de134e217eafc1fc01cd4d63f51305b6d20cfaa3dc00acb54bc1102810cbc",
+      "binary": "novovm-product-evidence",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "dfa278246c356eb6acde80532317d958366c04ac3700758d735b6df8f43597df",
+      "binary": "novovm-rendezvous-service",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "b2a8bff6810c1c70322bd13441b8b2acb1d96580a17722396f449590556ce12f",
+      "binary": "supervm-relay",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "6c9f53dfad098291d7e42f8464bb1c244463b368b5712ccf14ed8badc0aafd2e",
+      "binary": "novovmctl",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "windows",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "8ae62f05146112f792b7868e170a1ae03445c783bf7964f2416bfb7ebff2184c",
+      "binary": "novovm-node",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "1af18e1f0c15f42895e690aa6d0d640a84d88d91778eb406c2a6238dc51b8a07",
+      "binary": "novovm-native-client",
+      "sqlite_3_54_1_version_marker": false,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": true,
+      "sqlite_3_54_1_source_id": false,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "69498bd8ff41f204f265e328f15c096b92b97fec1d4fdd7b930e29869049bea6",
+      "binary": "novovm-product-relay",
+      "sqlite_3_54_1_version_marker": false,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": true,
+      "sqlite_3_54_1_source_id": false,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "4ccc65f224643a97206ddea276f354ec5dbcf7fb4c2c95994fab5f158790d156",
+      "binary": "novovm-product-node-overlay",
+      "sqlite_3_54_1_version_marker": false,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": true,
+      "sqlite_3_54_1_source_id": false,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "ab211ac715b2fa411444f7fc083b59ce13a8149bdb4c0f186d23f9d725f07cce",
+      "binary": "novovm-product-nat",
+      "sqlite_3_54_1_version_marker": false,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": true,
+      "sqlite_3_54_1_source_id": false,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "14fb16098fe8aa3e3b9d58ec09575b1d2de5d6ae61ae5b54b75b8eddc1792603",
+      "binary": "novovm-product-peer",
+      "sqlite_3_54_1_version_marker": false,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": true,
+      "sqlite_3_54_1_source_id": false,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "5defe27516c42b78a16870dba30f2cfe76c8f5dbd66d2653253ee076f6dc9cca",
+      "binary": "novovm-product-evidence",
+      "sqlite_3_54_1_version_marker": false,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": true,
+      "sqlite_3_54_1_source_id": false,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "b603d555ed9ab4ed0c85bafb6d5c5fbac57ced9e171d16c474645521bc0ce8da",
+      "binary": "novovm-rendezvous-service",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "7cdf3ecf2511e86048384c1ac616694ac93f1742f62321c346c3818aa5b318eb",
+      "binary": "supervm-relay",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    },
+    {
+      "sha256": "bcf0f63cd0284ecad344a8607a5e439d0190aafd5aa360e65ad72c8329e790fc",
+      "binary": "novovmctl",
+      "sqlite_3_54_1_version_marker": true,
+      "platform": "linux",
+      "marker_absence_does_not_prove_no_sqlite": false,
+      "sqlite_3_54_1_source_id": true,
+      "old_sqlite_source_id": false
+    }
+  ],
+  "linux_node_sqlite_and_quota_symbols": [
+    "0000000001af57a0 T novovm_quota_refresh",
+    "0000000001af5730 T novovm_quota_release",
+    "0000000001af5680 T novovm_quota_reserve",
+    "0000000001afa820 T sqlite3_libversion",
+    "0000000001afa830 T sqlite3_libversion_number",
+    "0000000001afc0f0 T sqlite3_sourceid"
+  ],
+  "linux_node_dynamic_libraries": [
+    "\tlinux-vdso.so.1 (0x00007ffd271fc000)",
+    "\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000074ae1c200000)",
+    "\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000074ae1c539000)",
+    "\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000074ae1c117000)",
+    "\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000074ae1be00000)",
+    "\t/lib64/ld-linux-x86-64.so.2 (0x000074ae1f41a000)"
+  ],
+  "database_opened": false,
+  "node_started": false,
+  "new_product_interface": false
+}

@@ -1,5 +1,10 @@
 # SQLite安全依赖修正（源码/本地验证，不是节点换包）
 
+> 2026-11-10更新：固定源码`3fa11f94`的原完整CI及Windows/Linux候选已完成，
+> 运行节点尚未更新。当前交付、额外并行失败分类及existing方案见
+> [3fa候选收口](candidate-3fa11f94-20261110/README.md)。以下保留首次源码修复时的结果，
+> 其中“CI/候选尚未签收”是当时状态，不再作为当前等待项。
+
 基线main `4ca654cfaf7062529d4a6e289e5ebfb79cd9b972`。
 该提交自动CI42600865983的[Rust security job129104943856](https://github.com/novovm/supervm/actions/runs/42600865983/job/129104943856)实际失败：根Cargo.lock
 命中libsqlite3-sys0.38.2 / RUSTSEC-2026-0459，exit1，后继runtime审计和Cargo deny

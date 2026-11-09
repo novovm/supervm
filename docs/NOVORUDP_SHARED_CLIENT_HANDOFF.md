@@ -1608,6 +1608,41 @@ PID分别944911/958/627770/1414一致。未再次停新实例切回旧版做回�
 修正；新源码后续仍需固定新平台候选并按实际授权existing换包，不能沿用旧包哈希
 冒充已经升级。只及时同步main，不手工新增/重跑、跳过或取消CI；原自动结果另记。
 
+### 28. 2026-11-10 原生主网3fa候选已固定，existing更新待本版本批准
+
+固定程序仍为`3fa11f940b18e54b46e6b927d3d66294bea37088`，本节文档提交不产生新程序。
+原自动CI42609044443/attempt1已completed/success，14项job成功、2项按范围跳过；
+本轮只读核对，未额外触发、重跑、取消或跳过门禁。第27节“源码同步不签收候选”
+是前一阶段的准确状态，本节新增同源码的CI与平台制品证据，不覆盖旧失败。
+
+原打包器的Windows/Linux release固定包已完成，分别77/80个成员hash核验，
+实际AOEM加载及scalar/统一语义/mixed-batch KAT通过，包内protected identity/NAT/
+reconnect等原用例各7/7通过；实际node的existing服务合同核对、probe prepare/cancel
+通过，未启动服务或发送对象。AOEM保留原1b764a36/d73e4a2f，不改变主链RocksDB。
+真实node二进制已核bundled SQLite3.54.1源身份及Linux quota/SQLite静态链接证据，
+不是仅看Cargo.lock，也不冒称调用了不存在的node运行时SQLite版本API。
+
+| 平台候选 | 字节 | SHA256 |
+| --- | ---: | --- |
+| novonet-sqlite-3fa11f94-windows-x86_64.zip | 150496796 | 3fc6a8ac67c84cabea906a0f2af39ad01a2f0e10e06bf4b25cf423359d995302 |
+| novonet-sqlite-3fa11f94-linux-x86_64.tar.gz | 359238562 | d6ed8d869c46530077e9feb61b4ce0ef83dddcddc907f2e6d8a443825ae3e692 |
+
+归档在A的`C:\Users\leadb\AppData\Local\NOVOVM\candidate-sqlite-3fa11f94-20261110`。
+完整node/client/ctl/AOEM/manifest哈希、原CI/构建/测试及证据ZIP见
+[候选交付](../artifacts/audit/sqlite-security-20261109/candidate-3fa11f94-20261110/README.md)。
+
+额外并行组的56次失败/34个不同用例已逐条分类；原隔离方式逐例一次Windows26、
+Linux30通过，不等于全并行通过或原根因全部解决。端点额度与全局计数、EVM测试
+共享命名域、时限以及尚缺首错的锁/通道案例分别记录，没有提高生产限额或延时。
+EVM只承担兼容插件/适配职责，不接管NOVONET、原生共识或AOEM状态所有者；插件
+专属问题不成为原生主网新增前置。仅对已证实影响原生共用代码的问题按实际范围处理。
+
+本轮未操作A/B/C/D，未上传新包、换钥、initialize、改防火墙或启用Ethereum网关。
+当前运行版本沿第26节最后实测记录，不能把它写成本轮存活检查；旧24小时窗口可能结束。
+下一步只需批准[固定3fa的B→A existing升级范围](../artifacts/audit/sqlite-security-20261109/candidate-3fa11f94-20261110/EXISTING-UPGRADE-PLAN.md)，
+复用原部署所有者，原库/身份/日志保护与失败回滚条件不变；C/D继续不动。
+新版本批准前不执行旧pin脚本或启动任务。没有新的四机DONE、资产/最终性或TPS结论。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
