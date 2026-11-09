@@ -25,6 +25,7 @@ use novovm_network::{
     product_service_lease::{IrohServiceEndpointV1, SelfOwnedTrustV1, ServiceLeaseBookV1},
 };
 mod discovery;
+mod observation;
 mod probe;
 mod relay;
 use discovery::Discovery;
@@ -194,6 +195,7 @@ struct FailureDetails {
 }
 #[derive(Default)]
 struct NetworkFailures {
+    carrier: observation::CarrierObservations,
     count: AtomicU64,
     omitted: AtomicU64,
     details: Mutex<FailureDetails>,
@@ -427,6 +429,7 @@ impl Driver {
             "peer_discovery_rpc":self.config.discovery,
             "connection_failures":self.failures.count.load(Ordering::Relaxed),
             "failure_details":self.failures.observation(),
+            "carrier_observation":self.failures.carrier.report(),
             "global_auto_discovery":false,"native_multihop_accepted":false})
     }
     pub fn close(&mut self) -> Result<()> {
@@ -498,6 +501,15 @@ async fn run(
 ) -> Result<()> {
     let check_stop = stop.clone();
     let mut carrier = config.carrier()?;
+    // Same opt-in as the original delivery observer; no telemetry on normal IO.
+    failures
+        .carrier
+        .enabled
+        .store(observer.is_some(), Ordering::Relaxed);
+    if observer.is_some() {
+        let observations = failures.clone();
+        carrier = carrier.with_inbound_observer(move |event| observations.carrier.inbound(event));
+    }
     if let Some(path) = &config.carrier_identity_file {
         if !path.try_exists()? {
             ensure!(

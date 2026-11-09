@@ -1763,6 +1763,86 @@ B PID2777931→2858350，A PID25216→37496，均existing打开原chain-state；
 本轮未新增对象触发；3fa的真实A→B原生DONE继续按旧版本范围保留，不继承为68或四机
 中继/多跳通过。后继只定位原Carrier connect与双端同连接，不提高超时/资源或改签名。
 
+### 33. 2026-11-10 发现冷启动候选保留与原 Carrier 观察（本地收口，不部署）
+
+本轮输入为源码 `e9e8f01f`，A/B 实际程序仍为 `68fa7588`。用户只批准代码和本地
+回归，明确不清缓存、不重启/更新 A/B/C/D；本节不构成换包或公网验收授权。
+
+**对第32节的补充纠正：** 当时比较的是原 seed 与 B 当前 locator，遗漏了 A 实际
+加载的较新 discovery-cache。只读现场显示：已验证原 seed 序号12含
+`47.103.59.206:42050` 和已批准 Relay；缓存序号4166只有 B 私网坐标、Relay为空。
+原 `maintain → update_seed → bootstrap_candidates → query → scope.connect` 只取
+较新记录，未留下原 seed 坐标作拨号备用。第1/108次错误仍是 Carrier connect
+deadline；没有同连接双端包证据，不把本次候选缺陷等同完整 QUIC/NAT 根因。
+原始只读输入摘要与日志保留在 `target/carrier-connect-readonly-20261110`，不改现场。
+
+实现仍在原 discovery owner：
+
+- 原 ServiceLeaseBook 保留最高已验证声明/序号及撤销。每个现有 seed 至多额外保留
+  一份原始已验证地址投影，最多仍是2个 seed；没有新缓存文件、发现服务或选路器。
+- 首次仍拨最新记录。只有实际连接不可达的类型化错误、或尚未建立 QUIC 时原8秒
+  deadline，才在原10秒调度周期的下一次尝试轮换配置 seed。每 seed 同时仍最多1个
+  job，不在一次请求内增加重试、deadline、连接/转发/字节额度。
+- seed 只提供地址，不提供最新声明或服务权限。必须是原固定 ML-DSA 身份/链域；
+  Carrier endpoint key 也必须与最新记录相同。Carrier换钥、撤销、隔离阻止旧地址
+  复活；认证/域拒绝、额度拒绝及未知本地错误不授予地址切换许可。
+- 只将较新签名记录持久化到原 cache，不保存 hint 为新 locator，不修改签名字段，
+  不延长旧业务租约。每次连接继续原 Iroh认证、NOVONET bound身份与链域选择。
+- 原 connect_observed/with_inbound_observer 接入原节点观察。沿原 delivery observer
+  开关，最多64条公开控制面事件、try_lock、不写盘、不等待日志消费者，丢弃有计数。
+  记录候选来源/权威序号、公开端点、候选地址、原8秒deadline、地址/QUIC/流准备、
+  本地Relay状态、RPC阶段、取消/额度/类型化失败。实际选中路径仅从已建连接被动
+  快照取得，失败前未知就留空；不把候选当作实际路径，不调用授权回调来做观察。
+- 入站 attempt 仍是本进程局部计数，不是跨机连接ID。后继需按实际端点与同一时窗
+  核对；缺共同连接标识时不能仅凭计数相等宣布两端匹配。
+- NOVOCHAT 对连接进度枚举有穷举消费者，本轮不扩充该枚举、不改手机代码。仅增加
+  额度错误的类型标识和被动路径投影，错误仍拒绝；原错误文字、限额与回调合同保留。
+
+验证边界及记录：
+
+- 原实现先执行新增真实 owner 冷启动反例，失败为
+  `cold discovery discarded the reachable frozen seed`（0通过/1失败）。不是内存
+  选路模拟：冻结 seed 指向真实服务，较新 cache 指向不响应的本地 UDP 地址；成功
+  条件包含原发现RPC、原 NativeChannel 收件及 Object DONE。仅本地，不称公网通过。
+- 纯候选测试另用实际现场公网/私网地址形状（不向这些地址发包），验证序号4166
+  不回退、同身份备用、不同域/钥/坏签名/未来输入拒绝、换 Carrier 身份及撤销拒绝。
+- 两地址均不可达测试按原8秒逐次失败并检查 owner 退出；原额度、取消、stream setup、
+  原生 NovoRUDP、发现RPC、中继/双中继和 DONE 回归单独记录，不提高期限来通过。
+- 中间 Linux 新测试有一次生命周期编译错误；Windows 新夹具有一次准备阶段
+  `NOVONET owner stopped`：原夹具只等待第一端发布，现要求两端都实际发布后才停，
+  仍检查关闭结果。失败不覆盖、不当作候选丢地址或生产网络故障。
+- 定向组结果如下，均为本地真实实现，不是四机公网验收；同一原节点组含冷启动、
+  备用切换、单/双中继、重新认证和原对象 DONE。没有把筛选零项计为通过。
+
+| 本地门禁 | Windows | Linux |
+| --- | --- | --- |
+| 原节点 network owner | 15/15，265.11秒 | 15/15，260.61秒 |
+| 原 Iroh Carrier owner | 54/54，38.19秒 | 54/54，37.39秒 |
+| 原 discovery control RPC | 15/15，2.81秒 | 15/15，2.43秒 |
+| 原 NovoRUDP 组 | 209/209，5.78秒 | 206/206，5.64秒 |
+| node/network lib+tests 严格 Clippy | 通过，`-D warnings` | 通过，`-D warnings` |
+| node/native-client release 构建 | 通过 | 通过 |
+| 最终源码新增4项复核（不重复计入上述总数） | 4/4 | 4/4 |
+
+原始结果及旧版反例见
+[`artifacts/audit/novonet-seed-retention-20261110`](../artifacts/audit/novonet-seed-retention-20261110)。
+上述总计 Windows 293项、Linux 290项均通过；最后源码的冷启动、候选/撤销/预算、
+观察开关4项在两平台复核通过。原组串行执行是本地隔离验证，不声称并行网络组全过。
+`original-evidence.zip` 保留27份原始文件（包含完整 Rust diff `source.patch`、旧失败、
+最终日志及原字节哈希清单），逐文件解压读取核验通过；日志原有行尾/空白不人为修饰，
+也不经 Git 文本换行归一化。`result.json` 区分本地结果与部署，`local-builds.json`
+记录本次本地可执行文件身份（不是已冻结部署包）。源码/文档格式及 diff 检查通过。
+未签收发布候选、未触发本次部署。
+
+受控更新方案（待另行批准）：最终代码本地通过后及时同步main，自动CI按原规则运行，
+不手动重跑/跳过。若制作部署候选，绑定同一源码、两平台node/client、实际AOEM及
+manifest哈希，再审查包内合同；本次不把旧68包验证转记给新包。批准后先B后A，沿原
+工具 `START=existing` 打开各自原库、原身份/密钥/域；不改缓存、不增加防火墙范围。
+保留68程序和配置，失败停止新进程后用68 `existing` 恢复，不运行旧initialize任务。
+本补丁不改变数据库或cache格式，无需状态迁移。启用观察会增加有界公开地址元数据，
+仅在本地审计通道使用；关闭时不构造事件。C/D保持不动。更新后仍须证明真实 A→B
+Carrier连接、bound认证、NODE_GET以及对象DONE，才能关闭现场故障。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

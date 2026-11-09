@@ -1,0 +1,19 @@
+{
+  "scope": "Local release build outputs, not frozen deployment packages or installed nodes",
+  "source": "Containing commit Rust changes, source.patch SHA256 f2c6a3c80933294139f3e39958ff862968a8b32319bd86f873dd1fbf5001cfe3",
+  "captured_at": "2026-11-10T07:00:59+08:00",
+  "build_directory_note": "Historical cache directory names do not identify this build's source version",
+  "windows": {
+    "directory": "C:/Users/leadb/AppData/Local/NOVOVM/build-2b97fc8e-windows/release",
+    "novovm-node.exe": "daeff87d620293d9e091bfd0ebca22c14d43618170d49e8dd5e25c8a9a51909b",
+    "novovm-native-client.exe": "9e1c7b607ba6126ecfa09ea7bf5afb667c3b0ba98464e88386d703708e762c33"
+  },
+  "linux": {
+    "directory": "/home/aoem-a1/novovm-build-b-20261102/x86_64-unknown-linux-gnu/release",
+    "novovm-node": "d1614d2d9cda0fbc8a978cb12ae2c0d06522787c63c7e11ee891550b3b19197d",
+    "novovm-native-client": "c8a95c81a365a2205c90404703f30802bfa561f2b41d1a068c58246ad4016194"
+  },
+  "runtime_hashes": "result.json actual_runtime",
+  "deployed": false,
+  "public_network_acceptance": false
+}

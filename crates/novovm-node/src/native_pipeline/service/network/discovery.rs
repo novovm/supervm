@@ -13,13 +13,81 @@ use novovm_network::{
 type Pins = (u64, [u8; 32], [u8; 32]);
 type Lookup<'a> = Pin<Box<dyn Future<Output = Result<Vec<PeerSignedRelayRecordV1>>> + 'a>>;
 const TAG: &[u8; 8] = b"NVDISC01";
+#[cfg(test)]
+mod dial_tests;
 struct Seed<'a> {
     path: PathBuf,
     book: Option<ServiceLeaseBookV1>,
     key: Option<Vec<u8>>,
+    // At most one validated configured seed, never a second authority record.
+    bootstrap: Option<IrohAddressV1>,
+    fallback: bool,
     job: Option<Lookup<'a>>,
     next: Instant,
     quarantined: Option<u64>,
+}
+struct DialCandidate {
+    key: Vec<u8>,
+    route: IrohAddressV1,
+    source: &'static str,
+    sequence: u64,
+}
+#[derive(Debug)]
+struct BootstrapDialUnavailable;
+impl std::fmt::Display for BootstrapDialUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("discovery dial coordinates unavailable before QUIC establishment")
+    }
+}
+impl std::error::Error for BootstrapDialUnavailable {}
+impl Seed<'_> {
+    fn dial_candidate(&mut self, wall: u64) -> Result<Option<DialCandidate>> {
+        if self.quarantined.is_some() {
+            return Ok(None);
+        }
+        let Some(book) = &mut self.book else {
+            return Ok(None);
+        };
+        // Query the original authority owner first, including local revocation.
+        let Some(current) = book.bootstrap_candidates(wall)?.into_iter().next() else {
+            return Ok(None);
+        };
+        let sequence = book
+            .self_owned_records()?
+            .first()
+            .context("bootstrap record missing")?
+            .sequence;
+        let hint = self.bootstrap.as_ref().filter(|hint| {
+            self.fallback
+                && hint.endpoint_key == current.endpoint.address.endpoint_key
+                && (hint.direct != current.endpoint.address.direct
+                    || hint.relays != current.endpoint.address.relays)
+        });
+        Ok(Some(DialCandidate {
+            key: current.public_key,
+            route: hint.cloned().unwrap_or(current.endpoint.address),
+            source: if hint.is_some() {
+                "configured_seed"
+            } else {
+                "latest_signed_record"
+            },
+            sequence,
+        }))
+    }
+    fn finish(&mut self, result: &Result<Vec<PeerSignedRelayRecordV1>>) {
+        match result {
+            Ok(_) => self.fallback = false,
+            Err(error) if terminal_session_rejection(error) => {
+                self.quarantined = self
+                    .book
+                    .as_ref()
+                    .and_then(|b| b.self_owned_records().ok())
+                    .and_then(|r| r.first().map(|r| r.sequence));
+            }
+            Err(error) if error.is::<BootstrapDialUnavailable>() => self.fallback = !self.fallback,
+            Err(_) => {}
+        }
+    }
 }
 pub(super) struct Discovery<'a> {
     scope: &'a IrohScopeV1,
@@ -85,6 +153,8 @@ impl<'a> Discovery<'a> {
                     path: path.clone(),
                     book: None,
                     key: None,
+                    bootstrap: None,
+                    fallback: false,
                     job: None,
                     next: now,
                     quarantined: None,
@@ -155,6 +225,14 @@ impl<'a> Discovery<'a> {
                 identity.clone(),
             )?);
             seed.key = Some(record.relay_public_key.clone());
+            seed.bootstrap = seed
+                .book
+                .as_mut()
+                .unwrap()
+                .bootstrap_candidates(record.issued_at_ms)?
+                .into_iter()
+                .next()
+                .map(|candidate| candidate.endpoint.address);
         }
         if seed.quarantined.is_some_and(|old| record.sequence > old) {
             seed.quarantined = None;
@@ -276,6 +354,8 @@ impl<'a> Discovery<'a> {
                             {
                                 seed.book = None;
                                 seed.key = None;
+                                seed.bootstrap = None;
+                                seed.fallback = false;
                                 self.failures.record(
                                     "discovery_checkpoint",
                                     None,
@@ -288,11 +368,7 @@ impl<'a> Discovery<'a> {
                     let _ = Self::update_seed(seed, &record, self.pins, &self.identity, wall);
                 }
             }
-            if seed.quarantined.is_some() {
-                continue;
-            }
-            let Some(book) = &mut seed.book else { continue };
-            let Some(candidate) = book.bootstrap_candidates(wall)?.into_iter().next() else {
+            let Some(candidate) = seed.dial_candidate(wall)? else {
                 continue;
             };
             let identity = self.identity.clone();
@@ -307,11 +383,11 @@ impl<'a> Discovery<'a> {
             seed.job = Some(Box::pin(query(
                 scope,
                 identity,
-                candidate.public_key,
-                candidate.endpoint.address,
+                candidate,
                 pins,
                 own,
                 lookups,
+                self.failures.clone(),
             )));
         }
         let mut records = Vec::new();
@@ -336,17 +412,11 @@ impl<'a> Discovery<'a> {
         for seed in &mut self.seeds {
             let Some(job) = &mut seed.job else { continue };
             if let Poll::Ready(result) = job.as_mut().poll(cx) {
+                seed.finish(&result);
                 match result {
                     Ok(found) => records.extend(found),
                     Err(error) => {
                         self.failures.record("discovery_lookup", None, &error);
-                        if terminal_session_rejection(&error) {
-                            seed.quarantined = seed
-                                .book
-                                .as_ref()
-                                .and_then(|b| b.self_owned_records().ok())
-                                .and_then(|r| r.first().map(|r| r.sequence));
-                        }
                     }
                 }
                 seed.job = None;
@@ -358,51 +428,85 @@ impl<'a> Discovery<'a> {
 async fn query(
     scope: &IrohScopeV1,
     identity: TransportIdentity,
-    key: Vec<u8>,
-    route: IrohAddressV1,
+    candidate: DialCandidate,
     pins: Pins,
     own: Vec<u8>,
     lookups: Vec<Vec<u8>>,
+    failures: Arc<NetworkFailures>,
 ) -> Result<Vec<PeerSignedRelayRecordV1>> {
-    let stage = std::cell::Cell::new("carrier connect");
+    use novovm_network::iroh_transport::{IrohConnectProgressV1, IrohConnectUnavailableV1};
+    let mut observation =
+        failures
+            .carrier
+            .start(candidate.source, candidate.sequence, &candidate.route);
+    let quic_ready = AtomicBool::new(false);
+    let attempt = observation.attempt;
+    let started = observation.started;
     // Keep the original single eight-second deadline, including every RPC.
     // The phase survives cancellation so timeout does not erase the actual boundary.
-    tokio::time::timeout(Duration::from_secs(8), async {
-        let mut stream: CarrierStreamV1<'_> = scope
-            .connect(&route)
+    let result = tokio::time::timeout(Duration::from_secs(8), async {
+        let stream = scope
+            .connect_observed(&candidate.route, |progress| {
+                if matches!(
+                    progress,
+                    IrohConnectProgressV1::QuicReady
+                        | IrohConnectProgressV1::StreamReady
+                        | IrohConnectProgressV1::Retained
+                ) {
+                    quic_ready.store(true, Ordering::Relaxed);
+                }
+                failures.carrier.event(|| {
+                    serde_json::json!({"direction":"outbound", "attempt":attempt,
+                    "phase":format!("{progress:?}"), "elapsed_ms":started.elapsed().as_millis()})
+                });
+            })
             .await
-            .context("discovery carrier connect")?
-            .into();
-        stage.set("entry write");
+            .map_err(|error| {
+                if error.is::<IrohConnectUnavailableV1>() {
+                    error.context(BootstrapDialUnavailable)
+                } else {
+                    error
+                }
+            })
+            .context("discovery carrier connect")?;
+        failures.carrier.event(|| {
+            let selected = stream.selected_route_observation();
+            serde_json::json!({"direction":"outbound", "attempt":attempt,
+            "phase":"selected_path", "kind":selected.as_ref().map(|s|s.0),
+            "selected_remote":selected.as_ref().map(|s|&s.1),
+            "elapsed_ms":started.elapsed().as_millis()})
+        });
+        let mut stream: CarrierStreamV1<'_> = stream.into();
+        observation.stage("entry write");
         stream
             .write_frame(DISCOVERY_ENTRY)
             .await
             .context("discovery entry write")?;
-        stage.set("bound authentication");
+        observation.stage("bound authentication");
         let mut channel = authenticate_structured_bound_session_observed(
             &mut stream,
             &identity,
-            key,
+            candidate.key,
             true,
             &mut HandshakeReplayCacheV1::new(8),
             &mut |_, _| Ok(()),
         )
         .await
         .context("discovery bound authentication")?;
-        stage.set("domain selection");
+        observation.stage("domain selection");
         let instance = select(&mut stream, &mut channel, pins, None)
             .await
             .context("discovery domain selection")?;
         let mut client =
             DiscoveryClient::from_authenticated_node_locators_v1(&mut stream, channel, instance)?;
         let publication_revision = wall_ms()?;
-        stage.set("remote publication");
+        observation.stage("remote publication");
         client
             .put_node_locator_v1(publication_revision, 30_000, own)
             .await
             .context("discovery remote publication")?;
         let mut found = Vec::new();
-        stage.set("remote lookup");
+        observation.stage("remote lookup");
         for key in lookups {
             if let Some(record) = client
                 .get_node_locator_v1(&key)
@@ -418,12 +522,35 @@ async fn query(
                 )?);
             }
         }
-        stage.set("close");
+        observation.stage("close");
         client.close().await.context("discovery close")?;
         Ok(found)
     })
-    .await
-    .with_context(|| format!("discovery deadline at {}", stage.get()))?
+    .await;
+    let result = match result {
+        Ok(result) => {
+            observation.finish(
+                if result.is_ok() {
+                    "completed"
+                } else {
+                    "failed"
+                },
+                result.as_ref().err(),
+            );
+            result
+        }
+        Err(error) => {
+            let mut error = anyhow::Error::new(error)
+                .context(format!("discovery deadline at {}", observation.phase.get()));
+            // A stream/RPC timeout is NOT evidence that dial coordinates failed.
+            if observation.phase.get() == "carrier connect" && !quic_ready.load(Ordering::Relaxed) {
+                error = error.context(BootstrapDialUnavailable);
+            }
+            observation.finish("deadline", Some(&error));
+            Err(error)
+        }
+    };
+    result
 }
 
 pub(super) async fn serve(
@@ -639,6 +766,8 @@ mod tests {
             path: PathBuf::new(),
             book: None,
             key: None,
+            bootstrap: None,
+            fallback: false,
             job: None,
             next: Instant::now(),
             quarantined: None,

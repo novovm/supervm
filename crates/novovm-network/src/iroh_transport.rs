@@ -248,6 +248,11 @@ pub fn is_iroh_scope_deadline_v1(error: &anyhow::Error) -> bool {
 #[error("carrier connect unavailable: {0:#}")]
 pub struct IrohConnectUnavailableV1(#[source] anyhow::Error);
 
+/// Local shared-budget refusal, before a dial. Observation only, not retry authority.
+#[derive(Debug, thiserror::Error)]
+#[error("carrier connection limit")]
+pub struct IrohConnectionCapacityV1(#[source] tokio::sync::TryAcquireError);
+
 /// An actual outbound QUIC handshake was refused before a stream existed.
 /// This is NOT a generic retry grant: a caller can await newer verified node
 /// evidence and make a fresh authorized attempt. Authentication, stream and
@@ -1392,7 +1397,7 @@ impl IrohScopeV1 {
             .connections
             .clone()
             .try_acquire_owned()
-            .context("carrier connection limit")?;
+            .map_err(IrohConnectionCapacityV1)?;
         observe(DialStarted);
         let connecting = async {
             let pending = self
@@ -1982,6 +1987,26 @@ impl IrohStreamV1<'_> {
             }
         }
         Ok("unknown")
+    }
+
+    /// Public diagnostic projection of the actually selected path, if known.
+    /// Not a candidate list, a delivery receipt, or permission to reuse a route.
+    pub fn selected_route_observation(&self) -> Option<(&'static str, String)> {
+        // Passive telemetry must not invoke an authority callback or change IO.
+        if self.failed.load(Ordering::Acquire) || self.connection.close_reason().is_some() {
+            return None;
+        }
+        self.connection
+            .paths()
+            .iter()
+            .find(|path| path.is_selected())
+            .and_then(|path| match path.remote_addr() {
+                TransportAddr::Ip(address) => Some(("direct", address.to_string())),
+                TransportAddr::Relay(relay) => {
+                    Some(("relay", relay.to_string().chars().take(512).collect()))
+                }
+                _ => None,
+            })
     }
 
     /// Local QUIC smoothed RTT, not a probe, identity or delivery proof.
@@ -4054,6 +4079,7 @@ mod tests {
                     .await
                     .err()
                     .context("inbound sessions did not consume outbound capacity")?;
+                ensure!(error.is::<IrohConnectionCapacityV1>());
                 ensure!(
                     error.to_string().contains("connection limit"),
                     "inbound and outbound admission are not shared"
@@ -4094,6 +4120,7 @@ mod tests {
                     .await
                     .err()
                     .context("excess outbound started")?;
+                ensure!(error.is::<IrohConnectionCapacityV1>());
                 ensure!(
                     error.to_string().contains("connection limit"),
                     "wrong capacity error"

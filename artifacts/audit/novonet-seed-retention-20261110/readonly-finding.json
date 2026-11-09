@@ -1,0 +1,44 @@
+{
+  "finding": "Newer cached bootstrap replaces configured public bootstrap coordinates with private-only candidates and no relay",
+  "running_source": "68fa758820889c3f5e8bb230aa42cef100b77b4b",
+  "root_seed_sequence": 12,
+  "root_seed_public_candidate": "47.103.59.206:42050",
+  "root_seed_relay": "https://euc1-1.relay.n0.iroh.link/",
+  "cached_sequence": 4166,
+  "cached_direct": ["172.16.0.48:42050", "172.17.0.1:42050", "172.18.0.1:42050"],
+  "cached_relays": [],
+  "cache_last_write_utc": "2026-11-09T18:30:04Z",
+  "cache_predates_current_process": true,
+  "code_path": [
+    "Discovery::new reads locator.discovery-cache.json",
+    "maintain creates the original pinned seed book then applies same-key cached sequence >= seed sequence",
+    "update_seed -> replace_self_owned_records replaces entry.current after signature/domain/sequence verification",
+    "bootstrap_candidates returns only entry.current decoded coordinates",
+    "query passes that address to scope.connect; older seed replacement errors are ignored",
+    "peer_address uses peer.direct and peer.relays; configured local relay list is an allowlist, not automatically a peer Relay address",
+    "Endpoint builder clears automatic address lookup"
+  ],
+  "observed": "A first/last failure ordinal 1/108 are discovery carrier connect deadline; B failure counter zero. No detailed inbound callback is installed.",
+  "conclusion_scope": "A concrete bootstrap candidate retention defect is identified from actual persisted input and source selection. No packet-level proof of which address was dialed or B receiving this attempt; no complete QUIC/NAT root-cause claim.",
+  "correction_to_prior_report": "Comparing root seed against current B locator omitted the higher-sequence cached record that overrides the seed. Root seed equality does not establish effective candidates.",
+  "minimal_change_plan": [
+    "Keep highest signed record/sequence and rollback guards; do not replace it with an older record or rewrite signed fields.",
+    "Within the original discovery seed owner, retain separately validated configured bootstrap coordinates as bounded dial fallback for the same pinned transport identity and carrier endpoint; do not infer all private addresses are invalid.",
+    "Reuse existing retry cadence and per-attempt deadline; rotate to original bootstrap on transport unavailability only. Terminal authentication/authority rejection must not fall back.",
+    "Reuse connect_observed and with_inbound_observer; retain bounded attempt timing, last progress stage, candidate origin, cancellation/limit outcome. Candidate list is not selected-path proof.",
+    "Do not invent a cross-host connection ID from process-local attempt counters. Correlate public authenticated endpoint identity and overlapping windows where available; use actual shared transport identifier or narrowly scoped headers if still needed."
+  ],
+  "regression_plan": [
+    "Original seed has a reachable route, higher signed cache retains same identity but only unavailable routes; original-owner cold restart must recover discovery through approved fallback and original object delivery.",
+    "Latest cache remains first choice when usable; newer successful signed publication updates cache without downgrade.",
+    "Wrong signature/domain/identity, future record, rollback and terminal authentication failure remain rejected.",
+    "Unreachable attempts, cancellation, connection permit release and failed stream cleanup retain original limits and deadlines.",
+    "Observation disabled preserves behavior; observation contention/drops are bounded and nonblocking.",
+    "Run original cold bootstrap/discovery/object tests plus affected Iroh owner tests and strict Clippy on Windows/Linux. Local results are not public-network acceptance."
+  ],
+  "production_code_changed": false,
+  "cache_removed_or_modified": false,
+  "nodes_restarted_or_updated": false,
+  "C_D_operated": false,
+  "runtime_limits_changed": false
+}

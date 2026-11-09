@@ -299,6 +299,141 @@ impl Pair {
 }
 
 #[test]
+fn cold_private_only_checkpoint_keeps_authenticated_seed_as_dial_hint() -> Result<()> {
+    let mut peers = Pair::configured(false, true, 2)?;
+    let root = peers.drivers[0]
+        .config
+        .public_record_file
+        .parent()
+        .unwrap()
+        .to_owned();
+    let _credential = super::super::config::test_custody::TestCredentialGuard::new(&root)?;
+    let mut configs = peers
+        .drivers
+        .iter()
+        .map(|d| d.config.clone())
+        .collect::<Vec<_>>();
+    for (side, config) in configs.iter_mut().enumerate() {
+        config.carrier_identity_file = Some(root.join(format!("cold-hint-{side}.sealed")));
+        config.bind_address = UdpSocket::bind("127.0.0.1:0")?.local_addr()?;
+        config.discovery_seeds = if side == 1 {
+            vec![root.join("frozen-bootstrap.json")]
+        } else {
+            Vec::new()
+        };
+    }
+    peers.restart_drivers(configs.clone(), None)?;
+    let ready = Instant::now() + Duration::from_secs(15);
+    while configs
+        .iter()
+        .any(|config| !config.public_record_file.exists())
+    {
+        ensure!(Instant::now() < ready, "fixture locator not published");
+        peers.pump()?;
+    }
+    let original = read_document::<PeerSignedRelayRecordV1>(&configs[0].public_record_file)?;
+    publish(&root.join("frozen-bootstrap.json"), &original)?;
+    peers
+        .close()
+        .context("close fully published cold fixture")?;
+    // Bind, but never service, the unreachable address. No external traffic or
+    // substitute transport: the real Carrier must hit its original deadline.
+    let blackhole = UdpSocket::bind("127.0.0.1:0")?;
+    let mut endpoint = IrohServiceEndpointV1::from_record(&original)?;
+    endpoint.address.direct = vec![blackhole.local_addr()?];
+    endpoint.address.relays.clear();
+    let now = wall_ms()?;
+    let cached = sign_relay_record_v1(
+        &peers.identities[0],
+        &original.record_id,
+        vec![endpoint.endpoint()?],
+        now,
+        now + 120_000,
+        original.sequence + 1,
+    )?;
+    let cache = configs[1]
+        .public_record_file
+        .with_extension("discovery-cache.json");
+    publish(&cache, &vec![cached.clone()])?;
+    // The live publisher has advanced, but the cold client cannot learn its
+    // usable address until it actually performs the original authenticated RPC.
+    let live = sign_relay_record_v1(
+        &peers.identities[0],
+        &original.record_id,
+        original.endpoints.clone(),
+        now,
+        now + 120_000,
+        cached.sequence + 1,
+    )?;
+    publish(&configs[0].public_record_file, &live)?;
+    peers.cold_channels()?;
+    let observers = (0..2)
+        .map(|_| Arc::new(NativeTransferDiagnosticsV1::new()))
+        .collect::<Vec<_>>();
+    peers.restart_drivers(configs.clone(), Some(&observers))?;
+    let deadline = Instant::now() + Duration::from_secs(35);
+    while peers.channels.iter().any(|c| c.session_id(0).is_none()) {
+        ensure!(
+            Instant::now() < deadline,
+            "cold discovery discarded the reachable frozen seed"
+        );
+        peers.pump()?;
+    }
+    let learned = read_document::<Vec<PeerSignedRelayRecordV1>>(&cache)?;
+    let client = peers.drivers[1].failures.carrier.report();
+    let events = client["events"].as_array().unwrap();
+    ensure!(events
+        .iter()
+        .any(|e| e["phase"] == "candidate" && e["source"] == "configured_seed"));
+    ensure!(events.iter().any(|e| e["outcome"] == "deadline"));
+    ensure!(events.iter().any(|e| e["phase"] == "selected_path"
+        && e["kind"] == "direct"
+        && e["selected_remote"].is_string()));
+    let server = peers.drivers[0].failures.carrier.report();
+    ensure!(server["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["direction"] == "inbound" && e["phase"] == "Stream" && e["outcome"] == "Ready"));
+    ensure!(learned
+        .iter()
+        .any(|r| r.relay_public_key == original.relay_public_key && r.sequence > cached.sequence));
+    ensure!(
+        read_document::<PeerSignedRelayRecordV1>(&root.join("frozen-bootstrap.json"))? == original
+    );
+    let message = Message::RequestBody { body_id: [182; 32] };
+    let prepared = peers.channels[1].prepare(&message)?;
+    ensure!(peers.channels[1].try_send(0, &prepared, Instant::now())?);
+    let mut received = false;
+    let mut done = false;
+    while !received || !done {
+        ensure!(
+            Instant::now() < deadline,
+            "cold seed object did not reach DONE"
+        );
+        peers.pump()?;
+        for side in 0..2 {
+            let report = peers.channels[side].poll_io(wall_ms()?, Instant::now(), 64)?;
+            ensure!(
+                report.rejected == 0 && report.receive_errors == 0 && report.send_failures == 0
+            );
+            for completion in report.completed {
+                ensure!(side == 1 && !done && completion.state == ObjectSendState::Delivered);
+                done = true;
+            }
+            if let Some(event) = peers.channels[side].poll_receive(Instant::now(), 64)? {
+                let ReceiveEvent::Message(event) = event else {
+                    anyhow::bail!("cold seed object rejected")
+                };
+                ensure!(side == 0 && !received && event.message == message);
+                received = true;
+            }
+        }
+    }
+    peers.close().context("close cold seed after object DONE")
+}
+
+#[test]
 fn all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates() -> Result<()>
 {
     let mut peers = Pair::configured(false, true, 3)?;

@@ -1,0 +1,53 @@
+{
+  "scope": "Original discovery seed dial hints and opt-in Carrier observation; local validation only",
+  "baseline": "e9e8f01fa2ceca4994e4132821ef46b25b766ac3",
+  "source_identity": "Containing commit; source.patch contains the complete Rust change against baseline",
+  "source_patch_sha256": "f2c6a3c80933294139f3e39958ff862968a8b32319bd86f873dd1fbf5001cfe3",
+  "original_counterexample": {
+    "result": "failed before the production fix",
+    "error": "cold discovery discarded the reachable frozen seed",
+    "passed": 0,
+    "failed": 1,
+    "log": "old-owner-regression.log"
+  },
+  "intermediate_failures_preserved": [
+    "linux-initial-test-compile-failure.log",
+    "windows-initial-fixture-failure.log"
+  ],
+  "local_groups": {
+    "windows": { "node_network_owner": 15, "iroh_transport": 54, "discovery_control": 15, "novorudp": 209, "failed": 0, "strict_clippy": "passed" },
+    "linux": { "node_network_owner": 15, "iroh_transport": 54, "discovery_control": 15, "novorudp": 206, "failed": 0, "strict_clippy": "passed" }
+  },
+  "local_build_and_final_source_recheck": "Windows/Linux node and native-client release builds passed; four final-source tests passed per platform, not added again to group totals",
+  "commands": [
+    "cargo test --release --locked -p novovm-node --lib --features iroh-transport native_pipeline::service::network:: -- --test-threads=1 --nocapture",
+    "cargo test --release --locked -p novovm-network --lib --features iroh-transport iroh_transport::tests -- --test-threads=1 --nocapture",
+    "cargo test --release --locked -p novovm-network --lib --features iroh-transport discovery_control::tests -- --test-threads=1 --nocapture",
+    "cargo test --release --locked -p novovm-network --lib --features iroh-transport novorudp:: -- --test-threads=1 --nocapture",
+    "cargo clippy --release --locked -p novovm-node -p novovm-network --lib --tests --features iroh-transport -- -D warnings",
+    "cargo build --release --locked -p novovm-node --bin novovm-node --bin novovm-native-client --features iroh-transport"
+  ],
+  "environment": { "rust_toolchain": "1.94.0", "build_jobs": 2, "aoem_workers": 2, "legacy_host_execution": false, "aoem_manifest_required": true, "linux": "local WSL Ubuntu-24.04 x86_64-unknown-linux-gnu", "windows": "local Windows x86_64" },
+  "actual_runtime": {
+    "windows": { "library_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50", "manifest_sha256": "07d61c1cab0ab57844d0cf18c5f32609161ed65b6a9fcb3c044929cd19bc24b1" },
+    "linux": { "library_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33", "manifest_sha256": "0ccb0a626c06de4eb92f04192062dad3e9df655816525c4a46ceb1930c6726e2" }
+  },
+  "review": {
+    "authoritative_latest_record_preserved": true,
+    "fixed_identity_domain_and_carrier_key_required": true,
+    "old_hint_grants_no_lease_or_permission": true,
+    "fresh_authentication_required": true,
+    "changed_protocol_timeouts_or_limits": false,
+    "changed_cache_or_database_format": false,
+    "novochat_modified": false,
+    "observations": "existing observer opt-in, 64 event ring, try_lock, no file IO; candidate is not selected path; attempt numbers are process-local",
+    "remaining_evidence_gap": "No A/B same-attempt public-network QUIC, bound-authentication, NODE_GET or object DONE evidence for this fix"
+  },
+  "deployment": {
+    "A_B_C_D_updated_or_restarted": false,
+    "runtime_cache_removed_or_changed": false,
+    "cloud_ci_manually_dispatched": false,
+    "release_candidate_accepted": false,
+    "update_plan": "docs/NOVORUDP_SHARED_CLIENT_HANDOFF.md section 33; separately approved B then A existing update, retain 68fa7588 existing rollback, C/D unchanged"
+  }
+}
