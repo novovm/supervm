@@ -1843,6 +1843,42 @@ manifest哈希，再审查包内合同；本次不把旧68包验证转记给新�
 仅在本地审计通道使用；关闭时不构造事件。C/D保持不动。更新后仍须证明真实 A→B
 Carrier连接、bound认证、NODE_GET以及对象DONE，才能关闭现场故障。
 
+### 34. 2026-11-10 1ef31893两平台固定候选与包内资格（未部署）
+
+本轮按用户批准只制作固定候选，不更新或重启A/B/C/D。程序固定
+`1ef3189307382ef579775c7ce2b55a08d829d04a`，第33节代码及原失败不再修改。
+原自动CI42717131364为push/attempt1，07:30:25北京时间快照仍in_progress；
+完整门禁未完成不能签收完整发布候选。没有手动发起、取消或重跑CI。
+
+两平台沿原打包器完成实际构建、AOEM资格及合同核验。包内身份/NAT各7/7，
+实际包内node的原生进程恢复各6/6、包内node/client的UCA恢复各1/1，原启动
+三项pin与冷重开各1/1；同源码原network owner加载包内AOEM各15/15，覆盖
+冷启动旧seed备用、发现RPC、单/双中继、并发DONE和重新认证。
+15项为本地组件真实IO，不伪称包内node四机发现或公网连接成功；其他进程测试
+使用隔离测试库，不是操作现有A/B库。严格Clippy和源码组仍按第33节同一源码引用。
+
+| 固定归档 | 字节数 | SHA256 |
+| --- | --- | --- |
+| novonet-observation-1ef31893-windows-x86_64.zip | 150528007 | a374d1dc47eb209999e65b2066a39a01e96bb1d2e8d459fbff069e1df6fa5b8c |
+| novonet-observation-1ef31893-linux-x86_64.tar.gz | 359271810 | 0ffcb14a76581fc17a8f479a3048bcdeb5bc434291d1ec87b6f4de84936f7509 |
+
+本机目录为 `C:\Users\leadb\AppData\Local\NOVOVM\candidate-observation-1ef31893-20261110`。
+完整node/client/ctl/AOEM、manifest及嵌套校验表摘要见
+[候选清单](../artifacts/audit/novonet-seed-retention-20261110/candidate-1ef31893/candidate-manifest.json)。
+Windows80/Linux83个归档文件全部核验；原打包器按basename排除嵌套CHECKSUMS，
+导致首次独立复核退出1。核对后仅将原输入同字节AOEM表单独pin并逐行验算
+Windows26/Linux25项，不改程序或release manifest，不放行任意额外文件。
+原失败转录、构建/包内结果、CI快照与复现脚本一并保留在
+[原始证据](../artifacts/audit/novonet-seed-retention-20261110/candidate-1ef31893/original-package-evidence.zip)，
+SHA256 `0f400c439730eaf00d649364c1fd1ca8dce92e38c022a84af6fa7bfc04c2cd50`。
+
+[完整交付与B→A更新/回滚方案](../artifacts/audit/novonet-seed-retention-20261110/candidate-1ef31893/README.md)
+明确：必要门禁通过并获本版本部署批准后，先B再A，原账户、原库 `existing`、
+原身份/密钥/域和最新cache不变；保留68程序和配置，回滚只退程序不退账。
+不运行含initialize旧任务、不改超时/额度/签名/共识，C/D不动。实施前再读真实
+进程/状态根，旧回执不是当前存活证明。分别核验seed候选、实际Carrier连接、
+bound认证、NODE_GET、Object DONE；任何缺项不得登记公网故障已关闭。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

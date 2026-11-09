@@ -1,0 +1,124 @@
+{
+  "CI": {
+    "snapshot": "ci-run-20261109T233025Z.json",
+    "run": 42717131364,
+    "url": "https://github.com/novovm/supervm/actions/runs/42717131364",
+    "status": "in_progress",
+    "head_sha": "1ef3189307382ef579775c7ce2b55a08d829d04a",
+    "conclusion": null,
+    "attempt": 1,
+    "event": "push"
+  },
+  "scope": "fixed local candidate; actual package process recovery and same-source owner IO are separate; no public network acceptance",
+  "A_B_C_D_changed": false,
+  "evidence_archive_sha256": "0f400c439730eaf00d649364c1fd1ca8dce92e38c022a84af6fa7bfc04c2cd50",
+  "deployment_approved": false,
+  "packages": [
+    {
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "total_files": 80,
+      "qualification": [
+        {
+          "log": "owner-with-packaged-aoem-windows.log",
+          "exit": 0,
+          "scope": "source-matched owner component IO with packaged AOEM, not packaged node process",
+          "passed": 15,
+          "name": "owner-with-packaged-aoem"
+        },
+        {
+          "log": "packaged-node-recovery-windows.log",
+          "exit": 0,
+          "scope": "actual packaged node process, native protocol and original isolated database recovery",
+          "passed": 6,
+          "name": "packaged-node-recovery"
+        },
+        {
+          "log": "packaged-uca-recovery-windows.log",
+          "exit": 0,
+          "scope": "actual packaged node and adjacent client, isolated UCA recovery",
+          "passed": 1,
+          "name": "packaged-uca-recovery"
+        },
+        {
+          "log": "packaged-runtime-startup-windows.log",
+          "exit": 0,
+          "scope": "original startup owner with packaged AOEM, isolated state",
+          "passed": 1,
+          "name": "packaged-runtime-startup"
+        }
+      ],
+      "source_commit": "1ef3189307382ef579775c7ce2b55a08d829d04a",
+      "manifest_sha256": "9f9ec5531652bce1cdec552705339e7e2743af5f04d6ccad3625713ddbf037b6",
+      "archive": "novonet-observation-1ef31893-windows-x86_64.zip",
+      "package_identity_tests": 7,
+      "deployed": false,
+      "manifest_members": 77,
+      "aoem_manifest_sha256": "07d61c1cab0ab57844d0cf18c5f32609161ed65b6a9fcb3c044929cd19bc24b1",
+      "node_sha256": "d419df614d6b804136eca82fd7427d84155241c82b7f74c3c00bf2fdb3ea6087",
+      "archive_sha256": "a374d1dc47eb209999e65b2066a39a01e96bb1d2e8d459fbff069e1df6fa5b8c",
+      "archive_bytes": 150528007,
+      "client_sha256": "c72ce01d023238a4339de75adf2f28cb79e909dcb9f9f4d4974cc2444f780507",
+      "ctl_sha256": "00955e09f3f610df00745ade00f8438d2cb650ab721ed88854efefafe3e1a730",
+      "inherited_aoem_checksum": {
+        "sha256": "cac4db2bdced355ed2e2473fbc092095c0bef1f791fa6654dd00691310d39d30",
+        "path": "aoem/windows/CHECKSUMS.sha256",
+        "entries_verified": 26
+      },
+      "platform": "windows"
+    },
+    {
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "total_files": 83,
+      "qualification": [
+        {
+          "log": "owner-with-packaged-aoem-linux.log",
+          "name": "owner-with-packaged-aoem",
+          "exit": 0,
+          "passed": 15,
+          "scope": "source-matched owner component IO with packaged AOEM, not packaged node process"
+        },
+        {
+          "log": "packaged-node-recovery-linux.log",
+          "name": "packaged-node-recovery",
+          "exit": 0,
+          "passed": 6,
+          "scope": "actual packaged node process, native protocol and original isolated database recovery"
+        },
+        {
+          "log": "packaged-uca-recovery-linux.log",
+          "name": "packaged-uca-recovery",
+          "exit": 0,
+          "passed": 1,
+          "scope": "actual packaged node and adjacent client, isolated UCA recovery"
+        },
+        {
+          "log": "packaged-runtime-startup-linux.log",
+          "name": "packaged-runtime-startup",
+          "exit": 0,
+          "passed": 1,
+          "scope": "original startup owner with packaged AOEM, isolated state"
+        }
+      ],
+      "source_commit": "1ef3189307382ef579775c7ce2b55a08d829d04a",
+      "manifest_sha256": "89f33dff183baf537b45eb8c909e59692fcd9868d4aa7d4eddc2c3464137adad",
+      "archive": "novonet-observation-1ef31893-linux-x86_64.tar.gz",
+      "package_identity_tests": 7,
+      "deployed": false,
+      "manifest_members": 80,
+      "aoem_manifest_sha256": "0ccb0a626c06de4eb92f04192062dad3e9df655816525c4a46ceb1930c6726e2",
+      "node_sha256": "d1614d2d9cda0fbc8a978cb12ae2c0d06522787c63c7e11ee891550b3b19197d",
+      "archive_sha256": "0ffcb14a76581fc17a8f479a3048bcdeb5bc434291d1ec87b6f4de84936f7509",
+      "archive_bytes": 359271810,
+      "client_sha256": "af7ea5471192fb36ebb9c2550d727ea7ae8ce00ba1965ef5b25db3d55ddb2258",
+      "ctl_sha256": "eb994cb51cf46f21e997294bc2dea18e3f360b9064c80138f580dba05c9e8bf0",
+      "inherited_aoem_checksum": {
+        "sha256": "94ae7322b1eeedcd9c358d97bbafab389b722378e53a796a393782f14fb71734",
+        "path": "aoem/linux/CHECKSUMS.sha256",
+        "entries_verified": 25
+      },
+      "platform": "linux"
+    }
+  ],
+  "source_commit": "1ef3189307382ef579775c7ce2b55a08d829d04a",
+  "local_delivery_directory": "C:/Users/leadb/AppData/Local/NOVOVM/candidate-observation-1ef31893-20261110"
+}
