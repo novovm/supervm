@@ -37,12 +37,15 @@ struct Fixture {
 struct NatProcess {
     child: Child,
     stderr: PathBuf,
+    report: PathBuf,
+    label: String,
 }
 impl NatProcess {
     fn spawn(
         binary: &Path,
         fixture: &Fixture,
         config: &Path,
+        report: &Path,
         label: &str,
     ) -> Result<Self, Box<dyn Error>> {
         let stderr = fixture.root.join(format!("{label}.stderr"));
@@ -63,17 +66,29 @@ impl NatProcess {
         Ok(Self {
             child: command.spawn()?,
             stderr,
+            report: report.to_owned(),
+            label: label.to_owned(),
         })
     }
     fn finish(&mut self) -> TestResult {
         let deadline = Instant::now() + Duration::from_secs(25);
         loop {
             if let Some(status) = self.child.try_wait()? {
-                assert!(
-                    status.success(),
-                    "NAT executable failed ({status}): {}",
-                    std::fs::read_to_string(&self.stderr)?
-                );
+                if !status.success() {
+                    // The fixture removes its protected keys on drop. Surface
+                    // only the original public report before that cleanup,
+                    // never the credential/key directory or configuration.
+                    let report = match std::fs::read_to_string(&self.report) {
+                        Ok(value) => value,
+                        Err(error) => format!("public report unavailable: {error}"),
+                    };
+                    return Err(format!(
+                        "NAT {} failed ({status}): {}; public report: {report}",
+                        self.label,
+                        std::fs::read_to_string(&self.stderr)?
+                    )
+                    .into());
+                }
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -672,7 +687,13 @@ fn actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_p
             "run_for_ms":15000,"report_path":observer_report
         }))?,
     )?;
-    let mut observer = NatProcess::spawn(&binary, &fixture, &observer_config, "observer")?;
+    let mut observer = NatProcess::spawn(
+        &binary,
+        &fixture,
+        &observer_config,
+        &observer_report,
+        "observer",
+    )?;
     let mut sessions = Vec::new();
     for attempt in 0..2 {
         let config = fixture.root.join(format!("probe-{attempt}.json"));
@@ -686,7 +707,14 @@ fn actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_p
                 "timeout_ms":3000,"run_for_ms":3000,"report_path":report_path
             }))?,
         )?;
-        NatProcess::spawn(&binary, &fixture, &config, &format!("probe-{attempt}"))?.finish()?;
+        NatProcess::spawn(
+            &binary,
+            &fixture,
+            &config,
+            &report_path,
+            &format!("probe-{attempt}"),
+        )?
+        .finish()?;
         let report: Value = serde_json::from_slice(&std::fs::read(report_path)?)?;
         assert_eq!(report["accepted"], true);
         assert_eq!(report["scope"], "novovm_native_authenticated_endpoint_v2");
@@ -727,6 +755,42 @@ fn actual_protected_nat_executables_authenticate_and_reconnect_on_the_same_udp_p
         report["round_trip_confirmed"], false,
         "local reply submission must not impersonate the probe's observed round trip"
     );
+
+    // Exercise the actual failure reporter without an answering peer. The
+    // socket only reserves this fixture's loopback port; it never replies.
+    let silent_socket = UdpSocket::bind("127.0.0.1:0")?;
+    let failure_config = fixture.root.join("unreachable.json");
+    let failure_report = fixture.root.join("unreachable-report.json");
+    std::fs::write(
+        &failure_config,
+        serde_json::to_vec(&serde_json::json!({
+            "version":2,"mode":"observed_endpoint_probe","bind_addr":probe_address,
+            "identity_key_path":probe_key,"chain_id":47,"library":library,"library_sha256":digest,
+            "peer_public_key":public[0],"expected_peer_id":peers[0],
+            "peer_addr":silent_socket.local_addr()?.to_string(),
+            "timeout_ms":100,"run_for_ms":100,"report_path":failure_report
+        }))?,
+    )?;
+    let failure = NatProcess::spawn(
+        &binary,
+        &fixture,
+        &failure_config,
+        &failure_report,
+        "unreachable",
+    )?
+    .finish()
+    .expect_err("unanswered native probe must fail");
+    let failure = failure.to_string();
+    let raw_report = std::fs::read_to_string(&failure_report)?;
+    let failed: Value = serde_json::from_str(&raw_report)?;
+    assert_eq!(failed["accepted"], false);
+    assert_eq!(failed["round_trip_confirmed"], false);
+    assert!(failure.contains("NAT unreachable failed"));
+    assert!(failure.contains("native authenticated probe did not complete"));
+    assert!(failure.contains(&raw_report));
+    for private_path in [&observer_key, &probe_key, &fixture.credentials] {
+        assert!(!failure.contains(private_path.to_string_lossy().as_ref()));
+    }
     assert_eq!(std::fs::read(observer_key)?, protected_before[0]);
     assert_eq!(std::fs::read(probe_key)?, protected_before[1]);
     assert!(!fixture.root.join("database").exists());
