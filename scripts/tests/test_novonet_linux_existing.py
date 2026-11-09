@@ -15,6 +15,36 @@ spec.loader.exec_module(update)
 
 
 class ExistingGuards(unittest.TestCase):
+    def test_application_service_continuity_does_not_block_cutover_but_custody_does(self):
+        with tempfile.TemporaryDirectory(prefix='novonet-development-') as directory:
+            before = {'services': 'old application PID', 'custody': {'key': 'same'},
+                      'config': {}, 'network': {}, 'config_sha256': 'fixed',
+                      'network_sha256': 'fixed', 'owner': {'pid': 123}}
+            prepared = {'source': update.SOURCE, 'resume_stopped': False,
+                        'config_sha256': 'fixed', 'network_sha256': 'fixed'}
+            for custody, expected in (({'key': 'same'}, 'stop boundary'),
+                                      ({'key': 'changed'}, 'Custody changed')):
+                with self.subTest(custody=custody), \
+                        patch.object(update, 'work', Path(directory)), \
+                        patch.object(update, 'evidence', Path(directory)), \
+                        patch.object(update, 'read', side_effect=[before, prepared]), \
+                        patch.object(update, 'check_package'), \
+                        patch.object(update, 'digest', side_effect=[update.OLD_NODE_PIN] + ['fixed'] * 4), \
+                        patch.object(update, 'services', return_value='new application PID'), \
+                        patch.object(update, 'custody', return_value=custody), \
+                        patch.object(update, 'owner', return_value=before['owner']), \
+                        patch.object(update, 'stop_exact', side_effect=RuntimeError('stop boundary')) as stop:
+                    with self.assertRaisesRegex(RuntimeError, expected):
+                        update.update(False)
+                    self.assertEqual(stop.call_count, int(custody == before['custody']))
+
+    def test_fixed_candidate_uses_successful_previous_owner_logs(self):
+        self.assertEqual(update.SOURCE, '3fa11f940b18e54b46e6b927d3d66294bea37088')
+        self.assertEqual(update.old_unit, 'novovm-B-2b97fc8e-network-20261109.service')
+        self.assertEqual(update.old_progress, update.old_work / 'logs-retry-start-1/progress.json')
+        self.assertNotEqual(update.old_work, update.work)
+        self.assertNotEqual(update.old_release, update.release)
+
     def records(self):
         base = {'_PID': '1', '_UID': '0', '_COMM': 'systemd', 'UNIT': update.old_unit, 'INVOCATION_ID': 'same'}
         return [dict(base, __REALTIME_TIMESTAMP='100000000',

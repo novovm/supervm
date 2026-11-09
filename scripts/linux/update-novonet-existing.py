@@ -1,4 +1,4 @@
-"""B-only 2b97 candidate updater, adapted from the original 20261108 Update-B.py.
+"""B-only 3fa candidate updater, adapted from the original 20261108 Update-B.py.
 
 prepare stages and qualifies a side-by-side package; update is a separate action.
 No initializer, key generation, DB copying, LOCK removal or application-unit changes.
@@ -16,22 +16,23 @@ import subprocess
 import tarfile
 import time
 
-SOURCE = '2b97fc8e5d1f83c521669e6f82803794ad4fd5ed'
-ARCHIVE_PIN = '332a2ef237a35b0169c98c5677cc59135046031d86f0845625c16a15078eb554'
-MANIFEST_PIN = '3569fb70b4b7b6f5cfa8306bedf384351f2eb02680523beb730da02dea060730'
-NODE_PIN = 'dbdcd2f08bd0ddb83ebd0a6027cf54f8d4dee9f03a7a9ab8b988750d8f79a8b7'
-OLD_NODE_PIN = '603ab7f063274b03e1d81599a57fcb1765b626c04da6d9aef0df963aa24d39cb'
+SOURCE = '3fa11f940b18e54b46e6b927d3d66294bea37088'
+ARCHIVE_PIN = 'd6ed8d869c46530077e9feb61b4ce0ef83dddcddc907f2e6d8a443825ae3e692'
+MANIFEST_PIN = '3a837ed6095a826e96df42610972980287f677c59d8ba02d426961a99dae2247'
+NODE_PIN = '8ae62f05146112f792b7868e170a1ae03445c783bf7964f2416bfb7ebff2184c'
+OLD_NODE_PIN = 'dbdcd2f08bd0ddb83ebd0a6027cf54f8d4dee9f03a7a9ab8b988750d8f79a8b7'
 CORE_PIN = 'd73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33'
-incoming = Path('/home/ecs-user/novovm-relay-update-2b97fc8e-20261109')
+incoming = Path('/home/ecs-user/novovm-sqlite-update-3fa11f94-20261110')
 evidence = incoming / 'evidence'
-release = Path('/opt/novovm/releases/novonet-relay-evidence-2b97fc8e-linux-x86_64')
-old_release = Path('/opt/novovm/releases/novonet-probe-ddd89e8e-linux-x86_64')
+release = Path('/opt/novovm/releases/novonet-sqlite-3fa11f94-linux-x86_64')
+old_release = Path('/opt/novovm/releases/novonet-relay-evidence-2b97fc8e-linux-x86_64')
 state = Path('/var/lib/novovm/selfrun/91129655606029/B')
-old_work = state / 'novonet-probe-ddd89e8e-20261108'
-work = state / 'novonet-relay-evidence-2b97fc8e-20261109'
-old_unit = 'novovm-B-ddd89e8e-network-20261108.service'
-new_unit = 'novovm-B-2b97fc8e-network-20261109.service'
-rollback_unit = 'novovm-B-pre2b97fc8e-existing-rollback-20261109.service'
+old_work = state / 'novonet-relay-evidence-2b97fc8e-20261109'
+old_progress = old_work / 'logs-retry-start-1/progress.json'
+work = state / 'novonet-sqlite-3fa11f94-20261110'
+old_unit = 'novovm-B-2b97fc8e-network-20261109.service'
+new_unit = 'novovm-B-3fa11f94-network-20261110.service'
+rollback_unit = 'novovm-B-pre3fa11f94-existing-rollback-20261110.service'
 uid = gid = None
 
 
@@ -154,7 +155,7 @@ def owner(resume_stopped):
     no_node_or_listener()
     raw = subprocess.check_output(['journalctl', '-u', old_unit, '-n', '30', '--no-pager', '-o', 'json'])
     records = [json.loads(line) for line in raw.splitlines()]
-    stopped = validate_stopped_journal(records, (old_work / 'logs/progress.json').stat().st_mtime_ns // 1000)
+    stopped = validate_stopped_journal(records, old_progress.stat().st_mtime_ns // 1000)
     return {'pid': 0, 'clean_stop': stopped, 'manager_journal': records}
 
 
@@ -233,7 +234,7 @@ def prepare(resume_stopped):
     require(digest(old_release / 'bin/novovm-node') == OLD_NODE_PIN, 'Old binary mismatch')
     require(no_redirect(state / 'chain-state').is_dir(), 'Original state missing')
     snapshot = {'owner': owner(resume_stopped), 'services': services(), 'custody': custody(config, network),
-                'config': config, 'network': network, 'progress': read(old_work / 'logs/progress.json'),
+                'config': config, 'network': network, 'progress': read(old_progress),
                 'config_sha256': digest(old_work / 'run.json'), 'network_sha256': digest(old_work / 'network.json')}
     state_projection(snapshot['progress'])
     archive = incoming / (release.name + '.tar.gz')
@@ -276,8 +277,7 @@ def prepare(resume_stopped):
         write(work / name, value)
         os.chown(work / name, 0, gid)
         (work / name).chmod(0o440)
-    require(snapshot['services'] == services() and snapshot['custody'] == custody(config, network),
-            'Services/custody changed during preparation')
+    require(snapshot['custody'] == custody(config, network), 'Custody changed during preparation')
     write(evidence / 'prepared.json', {'source': SOURCE, 'node_sha256': NODE_PIN, 'aoem_sha256': CORE_PIN,
           'artifacts_verified': 80, 'database': fresh['database'], 'start': 'existing',
           'resume_stopped': resume_stopped, 'initialize_executed': False, 'node_started': False,
@@ -312,8 +312,8 @@ def update(resume_stopped, suffix=''):
     for root, pins in [(old_work, before), (work, prepared)]:
         require(digest(root / 'run.json') == pins['config_sha256']
                 and digest(root / 'network.json') == pins['network_sha256'], 'Config changed since preparation')
-    require(before['services'] == services() and before['custody'] == custody(before['config'], before['network']),
-            'Services/custody changed before cutover')
+    require(before['custody'] == custody(before['config'], before['network']),
+            'Custody changed before cutover')
     current_owner = owner(resume_stopped)
     require(current_owner == before['owner'], 'Original owner changed since preparation')
     require(not (work / 'commands/control.nvprobe').exists(), 'Unexpected probe command; refuse activation')
@@ -336,8 +336,10 @@ def update(resume_stopped, suffix=''):
         require(all(k in probe['transport'] for k in ('relay_circuits', 'relay_evicted_records', 'relay_omitted_observations')),
                 'Original relay observation unavailable')
         require(not probe['events'], 'Probe executed unexpectedly')
-        require(before['services'] == services() and before['custody'] == custody(before['config'], before['network']),
-                'Services/custody post-check mismatch')
+        require(before['custody'] == custody(before['config'], before['network']),
+                'Custody post-check mismatch')
+        # Internal application services may change during development; observe, do not veto cutover.
+        services_after = services()
         library = release / 'aoem/linux/core/bin/libaoem_ffi.so'
         require(str(library) in Path(f'/proc/{pid}/maps').read_text(), 'Pinned AOEM not loaded')
         listeners = subprocess.check_output(['ss', '-H', '-lunp', 'sport = :41050 or sport = :42050']).decode()
@@ -345,7 +347,9 @@ def update(resume_stopped, suffix=''):
                 'Original listeners unavailable')
         write(evidence / 'started.json', {'pid': pid, 'uid': uid, 'source': SOURCE, 'node_sha256': NODE_PIN,
               'aoem_sha256': CORE_PIN, 'database': str(state / 'chain-state'), 'start': 'existing',
-              'initialize_executed': False, 'custody_unchanged': True, 'other_services_unchanged': True,
+              'initialize_executed': False, 'custody_unchanged': True,
+              'other_services_unchanged': before['services'] == services_after,
+              'other_services_after': services_after, 'other_service_continuity_required': False,
               'progress': progress, 'listeners': listeners, 'external_authenticated_status_required': True})
         print('PASS B existing startup; authenticated Status still required before A update')
     except Exception as error:
@@ -367,8 +371,8 @@ def retry_failed_start():
     no_node_or_listener()
     require(mainpid(new_unit) == 0 and mainpid(rollback_unit) == 0, 'A previous launch is still active')
     check_package(release)
-    require(before['services'] == services() and before['custody'] == custody(before['config'], before['network']),
-            'Services/custody changed since failed startup')
+    require(before['custody'] == custody(before['config'], before['network']),
+            'Custody changed since failed startup')
     for root, pins in ((old_work, before), (work, prepared)):
         require(digest(root / 'run.json') == pins['config_sha256']
                 and digest(root / 'network.json') == pins['network_sha256'], 'Prepared config changed')

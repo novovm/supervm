@@ -7,14 +7,14 @@ $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $path),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Update script parse errors'}
 $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false))
-foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence','ConvertFrom-NovonetCrashEvent','Assert-StoppedOwnerEvidence','Assert-OriginalFirewallScope')) {
+foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence','ConvertFrom-NovonetCrashEvent','Assert-StoppedOwnerEvidence','Assert-OriginalFirewallScope','Assert-RollbackReady')) {
     $function=@($functions|Where-Object Name -CEQ $name)
     if($function.Count -ne 1){throw 'Expected original deployment gate missing'}
     . ([scriptblock]::Create($function[0].Extent.Text))
 }
-$source='2b97fc8e5d1f83c521669e6f82803794ad4fd5ed'
-$manifestPin='0e54db51af068682e875f720a9f0e11807076c7d421e94117a2f13887f272e35'
-$nodePin='255381b4825de9d5da29aa6ac64d0aec35d5028d53671aacb60aae22c5f4c91c'
+$source='3fa11f940b18e54b46e6b927d3d66294bea37088'
+$manifestPin='424e70b8b0acf847598f2bd7b5aefb4276bad052ab2afb64f7e8412d60d9e1bb'
+$nodePin='5a471fc805f86aaf57d6b06a4cfc1f4ba8aacff7eea67c74fabe036718a27b27'
 $root=Join-Path $PSScriptRoot ('../../target/relay-evidence-20261109/gate-tests-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root|Out-Null
 $json=Join-Path $root 'record.json'
@@ -211,3 +211,15 @@ if($probeAssignment.Count -ne 1){throw 'Original optional field adaptation missi
 . ([scriptblock]::Create($probeAssignment[0].Extent.Text))
 if($network.probe_control_file -cne "$work\commands\control.nvprobe" -or !$network.discovery -or !$network.relay_forwarding){throw '082 field adaptation changes routing or command owner'}
 Write-Output 'PASS 4 actual source adaptations: A/C/D old-version mappings and missing 082 optional field'
+
+$rollbackLogs=Join-Path $root 'rollback-logs'
+New-Item -ItemType Directory -Path $rollbackLogs|Out-Null
+Assert-RollbackReady $rollbackLogs $false
+$rejected=$false
+try{Assert-RollbackReady $rollbackLogs $true}catch{$rejected=$true}
+if(!$rejected){throw 'Existing rollback task accepted'}
+Write-NewJson (Join-Path $rollbackLogs 'owner.json') @{historical=$true}
+$rejected=$false
+try{Assert-RollbackReady $rollbackLogs $false}catch{$rejected=$true}
+if(!$rejected){throw 'Prior rollback evidence accepted for overwrite'}
+Write-Output 'PASS 3 rollback-readiness gates: fresh logs accepted; existing task or log rejected before process stop'

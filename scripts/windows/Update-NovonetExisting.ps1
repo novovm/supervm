@@ -13,20 +13,20 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference=$false
-$source='2b97fc8e5d1f83c521669e6f82803794ad4fd5ed'
-$manifestPin='0e54db51af068682e875f720a9f0e11807076c7d421e94117a2f13887f272e35'
-$nodePin='255381b4825de9d5da29aa6ac64d0aec35d5028d53671aacb60aae22c5f4c91c'
+$source='3fa11f940b18e54b46e6b927d3d66294bea37088'
+$manifestPin='424e70b8b0acf847598f2bd7b5aefb4276bad052ab2afb64f7e8412d60d9e1bb'
+$nodePin='5a471fc805f86aaf57d6b06a4cfc1f4ba8aacff7eea67c74fabe036718a27b27'
 $oldNodePin=if($HostId -ceq 'D'){'9040ac63828c30011e8e7c4801be31183ecb69960854dd4974671df3d5d14d51'}else{'ff68c5930b9b205b25ba5351a17ad08aa68f51d7cf71779d0507b6269f4087f3'}
 $corePin='1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50'
 $helperPin='659d2cdecf3e5ca0e58472a25c9f85b4f85a05095fca7b0cc0fc4277077f7b66'
 $state="C:\ProgramData\NOVOVM\selfrun\91129655606029\$HostId"
 $oldWork=Join-Path $state $(if($HostId -ceq 'D'){'novonet-08236129-20261108'}else{'novonet-probe-5181da73-20261109'})
-$work=Join-Path $state 'novonet-relay-evidence-2b97fc8e-20261109'
+$work=Join-Path $state 'novonet-sqlite-3fa11f94-20261110'
 $oldRelease='C:\ProgramData\NOVOVM\releases\'+$(if($HostId -ceq 'D'){'novonet-08236129-windows-x86_64'}else{'novonet-probe-5181da73-windows-x86_64'})
-$release='C:\ProgramData\NOVOVM\releases\novonet-relay-evidence-2b97fc8e-windows-x86_64'
+$release='C:\ProgramData\NOVOVM\releases\novonet-sqlite-3fa11f94-windows-x86_64'
 $oldTask=if($HostId -ceq 'D'){'NOVOVM-D-08236129-Network-20261108'}else{"NOVOVM-$HostId-5181da73-Existing-20261109"}
-$newTask="NOVOVM-$HostId-2b97fc8e-Existing-20261109"
-$rollbackTask="NOVOVM-$HostId-Pre2b97fc8e-Existing-Rollback-20261109"
+$newTask="NOVOVM-$HostId-3fa11f94-Existing-20261110"
+$rollbackTask="NOVOVM-$HostId-Pre3fa11f94-Existing-Rollback-20261110"
 $oldProgressPath=Join-Path $oldWork $(if($HostId -ceq 'D'){'progress.json'}else{'logs\progress.json'})
 $oldRuleName=if($HostId -ceq 'D'){'NOVOVM-08236129-D-20261108'}else{"NOVOVM-5181da73-$HostId-20261109"}
 $oldExe=Join-Path $oldRelease 'bin\novovm-node.exe'
@@ -123,6 +123,11 @@ function Start-ExistingTask([string]$Name,[switch]$Old) {
     Register-ScheduledTask -TaskName $Name -Action $action -Principal $principal -Settings $settings|Out-Null
     Start-ScheduledTask -TaskName $Name
 }
+function Assert-RollbackReady([string]$Logs,[bool]$TaskExists) {
+    if($TaskExists){throw 'Rollback task already exists; do not stop a healthy node'}
+    Assert-NoRedirect $Logs
+    if(!(Test-Path -LiteralPath $Logs -PathType Container) -or @(Get-ChildItem -LiteralPath $Logs -Force).Count){throw 'Fresh rollback logs required before stopping any node'}
+}
 if($Owner) {
     if([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -cne 'S-1-5-19'){throw 'Actual LocalService required'}
     $root=if($Rollback){$oldRelease}else{$release}
@@ -142,6 +147,7 @@ if($Owner) {
     $env:NOVOVM_NATIVE_EXECUTION_CONFIG=$configPath
     $env:NOVOVM_NATIVE_EXECUTION_START='existing'
     $env:NOVOVM_NATIVE_EXECUTION_RUN_MS='86400000'
+    $env:NOVOVM_PROFILE_NATIVE_DELIVERY='1'
     $env:NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH=Join-Path $logs 'progress.json'
     & "$root/bin/novovm-node.exe" 1> "$logs/node.stdout" 2> "$logs/node.stderr"
     $code=$LASTEXITCODE
@@ -165,6 +171,7 @@ $stopped=$false
 try {
     if($Rollback) {
         if((Get-FileHash -LiteralPath $oldExe).Hash.ToLowerInvariant() -cne $oldNodePin){throw 'Rollback program mismatch'}
+        Assert-RollbackReady (Join-Path $work 'rollback-logs') ([bool](Get-ScheduledTask -TaskName $rollbackTask -ErrorAction SilentlyContinue))
         $nodes=@((Get-NovonetNodeExecutionState).active)
         if($nodes.Count -gt 1){throw 'Unknown concurrent nodes; preserve state'}
         if($nodes.Count -eq 1){Stop-NovonetExactProcess -ProcessId $nodes[0].ProcessId -ExpectedPath $newExe -ExpectedSha256 $nodePin}else{Wait-NovonetNodeExit}
@@ -245,7 +252,7 @@ try {
     $app=$rule|Get-NetFirewallApplicationFilter
     $address=$rule|Get-NetFirewallAddressFilter
     Assert-OriginalFirewallScope $rule $port $app $address $oldExe $expectedPorts ([Net.IPEndPoint]::Parse($config.udp_addr).Address.ToString())
-    $newRule="NOVOVM-2b97fc8e-$HostId-20261109"
+    $newRule="NOVOVM-3fa11f94-$HostId-20261110"
     if(Get-NetFirewallRule -Name $newRule -ErrorAction SilentlyContinue) {
         if(!$ResumePrepared){throw 'New firewall rule exists; inspect before explicit resume'}
     }else{
@@ -262,6 +269,7 @@ try {
     if(($profiles|ConvertTo-Json -Compress) -cne (@(Get-NetFirewallProfile|Select-Object Name,Enabled)|ConvertTo-Json -Compress)){throw 'Firewall profiles changed'}
     Write-NewJson "$out/firewall.json" ([ordered]@{old_rule=$rule.Name;new_rule=$newRule;old_preserved=$true;filters_copied_exactly=$true;program=$newExe;profiles_unchanged=$true})
     if(Get-ScheduledTask -TaskName $newTask -ErrorAction SilentlyContinue){throw 'New task already exists'}
+    Assert-RollbackReady (Join-Path $work 'rollback-logs') ([bool](Get-ScheduledTask -TaskName $rollbackTask -ErrorAction SilentlyContinue))
     if($RecoverCrashed -or $ResumeStopped) {
         if((Get-ScheduledTask -TaskName $oldTask).State -ne 'Ready'){throw 'Old task became active; preserve state'}
         Wait-NovonetNodeExit
@@ -284,11 +292,12 @@ try {
     if($modules.Count -ne 1 -or $modules[0].FileName -ine $config.library -or (Get-FileHash -LiteralPath $modules[0].FileName).Hash.ToLowerInvariant() -cne $corePin){throw 'Actually loaded AOEM differs'}
     Write-NewJson "$out/after.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');source=$source;pid=$new[0].ProcessId;exe=$newExe;node_sha256=$nodePin;sid='S-1-5-19';database=$config.database;start='existing';initialize_executed=$false;keys_generated=$false;custody_unchanged=$true;aoem_module=$modules[0].FileName;aoem_sha256=$corePin;old_task=(Get-ScheduledTask -TaskName $oldTask).State.ToString();new_task=$newTask;prior_owner_crashed=[bool]$RecoverCrashed;terminated_process_observations=$newExecution.exited;progress=$current;listeners=@(Get-NetUDPEndpoint|Where-Object OwningProcess -EQ $new[0].ProcessId|Select-Object LocalAddress,LocalPort,OwningProcess);new_command_file_present=(Test-Path -LiteralPath $network.probe_control_file)})
     Write-NewJson "$out/result.json" ([ordered]@{host_id=$HostId;source=$source;update_completed=$true;start='existing';database=$config.database;pid=$new[0].ProcessId;custody_unchanged=$true;progress_state_unchanged=$true;authenticated_state_root_external_check_required=$true;recovery_observer_available=$true;new_object_sent=$false;root_cause_resolved=$false;initialize_executed=$false;business_receipt=$false})
-    Write-Output "PASS $HostId 2b97fc8e existing update; external authenticated Status and physical relay evidence remain required"
+    Write-Output "PASS $HostId 3fa11f94 existing update; external authenticated Status and physical relay evidence remain required"
 } catch {
     $problem=$_.ToString()
     Write-NewJson "$out/error.json" ([ordered]@{error=$problem;old_node_stopped=($stopped -and !$RecoverCrashed -and !$ResumeStopped);existing_start_attempted=$stopped;prior_owner_crashed=[bool]$RecoverCrashed;prior_owner_cleanly_stopped=[bool]$ResumeStopped;time=(Get-Date).ToUniversalTime().ToString('o')})
     if($stopped) {
+        Assert-RollbackReady (Join-Path $work 'rollback-logs') ([bool](Get-ScheduledTask -TaskName $rollbackTask -ErrorAction SilentlyContinue))
         $remaining=@((Get-NovonetNodeExecutionState).active)
         if($remaining.Count -gt 1){throw 'Unknown concurrent processes; preserve state, no automatic rollback'}
         if($remaining.Count -eq 1){Stop-NovonetExactProcess -ProcessId $remaining[0].ProcessId -ExpectedPath $newExe -ExpectedSha256 $nodePin}else{Wait-NovonetNodeExit}

@@ -1,0 +1,128 @@
+{
+  "source": "3fa11f940b18e54b46e6b927d3d66294bea37088",
+  "time_utc": "2026-11-09T18:32:45.6038439Z",
+  "order": [
+    "B",
+    "A"
+  ],
+  "hosts": [
+    {
+      "host": "B",
+      "old_pid": 2587563,
+      "new_pid": 2777931,
+      "node_sha256": "8ae62f05146112f792b7868e170a1ae03445c783bf7964f2416bfb7ebff2184c",
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "owner": "novovm uid=996",
+      "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+      "start": "existing",
+      "custody_unchanged": true,
+      "status": {
+        "before": {
+          "elapsed_ms": 133,
+          "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "height": 0,
+          "current_height": 1,
+          "recovering": false,
+          "projection_failed": false
+        },
+        "after": {
+          "elapsed_ms": 62,
+          "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "height": 0,
+          "current_height": 1,
+          "recovering": false,
+          "projection_failed": false
+        }
+      },
+      "ticks_before": 100017,
+      "ticks_after": 197316,
+      "locator_sequence_before": 4168,
+      "locator_sequence_after": 4170,
+      "locator_issued_at_ms": 1794249142127,
+      "locator_expires_at_ms": 1794249262127,
+      "locator_fresh_at_collection": true,
+      "novonet": null,
+      "udp_observation_names": 22,
+      "probe_events": 0
+    },
+    {
+      "host": "A",
+      "old_pid": 13964,
+      "new_pid": 25216,
+      "node_sha256": "5a471fc805f86aaf57d6b06a4cfc1f4ba8aacff7eea67c74fabe036718a27b27",
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "owner": "S-1-5-19",
+      "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+      "start": "existing",
+      "custody_unchanged": true,
+      "status": {
+        "before": {
+          "elapsed_ms": 29,
+          "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "height": 0,
+          "current_height": 1,
+          "recovering": false,
+          "projection_failed": false
+        },
+        "after": {
+          "elapsed_ms": 28,
+          "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+          "height": 0,
+          "current_height": 1,
+          "recovering": false,
+          "projection_failed": false
+        }
+      },
+      "ticks_before": 51706,
+      "ticks_after": 122483,
+      "locator_sequence_before": 5098,
+      "locator_sequence_after": 5100,
+      "locator_issued_at_ms": 1794249130913,
+      "locator_expires_at_ms": 1794249250913,
+      "locator_fresh_at_collection": true,
+      "novonet": {
+        "default": "native_novorudp",
+        "fallback": "iroh",
+        "installed_bound_peer_routes": 0,
+        "probe_control": {
+          "enabled": true,
+          "accepted_commands": 0,
+          "rejected_commands": 0,
+          "last": null,
+          "scope": "local commands; never business or transport completion"
+        },
+        "peer_discovery_rpc": true,
+        "connection_failures": 13,
+        "global_auto_discovery": false,
+        "native_multihop_accepted": false
+      },
+      "udp_observation_names": 22,
+      "probe_events": 0
+    }
+  ],
+  "other_services_unchanged": true,
+  "other_service_continuity_required": false,
+  "other_services_after": "MainPID=944911\nId=novonet-mailbox.service\nActiveState=active\nSubState=running\n\nMainPID=958\nId=supervm-relay.service\nActiveState=active\nSubState=running\n\nMainPID=627770\nId=nginx.service\nActiveState=active\nSubState=running\n\nMainPID=1414\nId=docker.service\nActiveState=active\nSubState=running\n",
+  "windows_firewall_profiles": [
+    {
+      "Name": "Domain",
+      "Enabled": 1
+    },
+    {
+      "Name": "Private",
+      "Enabled": 1
+    },
+    {
+      "Name": "Public",
+      "Enabled": 1
+    }
+  ],
+  "C_D_updated": false,
+  "initialize_executed": false,
+  "keys_generated": false,
+  "object_probe_sent": false,
+  "new_business_receipt": false,
+  "new_finality_acceptance": false,
+  "new_tps_claim": false,
+  "rollback_executed": false
+}
