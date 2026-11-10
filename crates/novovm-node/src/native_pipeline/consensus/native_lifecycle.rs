@@ -23,6 +23,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub mod probe;
+mod time;
 
 #[derive(Clone, Copy)]
 pub struct DeliveryLimits {
@@ -82,6 +83,9 @@ struct Incoming {
 /// retired only after durable context/round advancement; decided history stays
 /// available through the same owner's checked archive, not an unbounded queue.
 pub struct NativeLifecycle {
+    #[cfg(test)]
+    time_test_offset_ms: i64,
+    time_peers: Vec<time::TimePeer>,
     probe: Option<probe::ProbeState>,
     pub progress: RoundProgress,
     bodies: CandidateBodies,
@@ -270,6 +274,9 @@ impl NativeLifecycle {
             expired_sends: 0,
             retired_sends: 0,
             probe: None,
+            #[cfg(test)]
+            time_test_offset_ms: 0,
+            time_peers: (0..count).map(|_| time::TimePeer::default()).collect(),
             archive_decisions: 0,
             archive_reads_started: 0,
             archive_cache_reused: 0,
@@ -442,6 +449,9 @@ impl NativeLifecycle {
     ) -> Result<()> {
         self.rejected_messages += report.rejected as u64;
         for completed in report.completed {
+            if self.complete_network_time(&completed) {
+                continue;
+            }
             if self.complete_network_probe(&completed, now) {
                 continue;
             }
@@ -555,6 +565,7 @@ impl NativeLifecycle {
                     .probe
                     .as_ref()
                     .and_then(|state| state.deadline(delivery.prepared.fragment_id()))
+                    .or_else(|| self.time_peers[peer].deadline(delivery.prepared.fragment_id()))
                 {
                     self.channel
                         .try_send_probe(peer, &delivery.prepared, now, deadline)?
@@ -701,6 +712,8 @@ impl NativeLifecycle {
         result
     }
     fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {
+        self.poll_network_time()?;
+        self.poll_network_probe_time(now);
         self.progress
             .poll_recovery(pipeline, &self.policy, self.codec)?;
         self.bodies
@@ -761,6 +774,12 @@ impl NativeLifecycle {
                                 .context("unmapped authenticated peer")?;
                             if let Message::NetworkProbe(probe) = &message.message {
                                 self.receive_network_probe(peer, probe, message.fragment_id, now);
+                                continue;
+                            }
+                            if let Message::NetworkTime(time) = &message.message {
+                                if self.receive_network_time(peer, time).is_err() {
+                                    self.rejected_messages += 1;
+                                }
                                 continue;
                             }
                             let height = match &message.message {

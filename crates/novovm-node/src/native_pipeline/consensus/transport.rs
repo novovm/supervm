@@ -38,6 +38,8 @@ pub(crate) use uca::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
+    /// Shared authenticated relative-time exchange; never execution evidence.
+    NetworkTime(novovm_network::network_time::coordination::TimeExchangeV1),
     /// Explicit opt-in, fixed non-business diagnostic (tag 21). Older nodes
     /// reject it. It never enters execution, voting, chat or persistence.
     NetworkProbe(NetworkProbe),
@@ -218,6 +220,7 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::AssetTransactions { .. } => 15,
         Message::AssetBodyReference { .. } => 20,
         Message::NetworkProbe(_) => 21,
+        Message::NetworkTime(_) => 22,
     });
     match message {
         Message::Body {
@@ -296,6 +299,7 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
             uca::append_transactions(&mut out, scope, batch, limits)?;
         }
         Message::NetworkProbe(probe) => probe.append(&mut out)?,
+        Message::NetworkTime(time) => out.extend_from_slice(&time.encode()?),
         Message::AssetBodyReference {
             context,
             body_id,
@@ -343,7 +347,7 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
     );
     match bytes[10] {
         1 | 7 | 11 | 12 | 14 | 17..=20 => Ok(1),
-        2..=6 | 8 | 10 | 16 | 21 => Ok(0),
+        2..=6 | 8 | 10 | 16 | 21 | 22 => Ok(0),
         9 | 13 | 15 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
@@ -445,6 +449,11 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
         15 => uca::decode_transactions(&mut reader, limits)?,
         20 => uca::decode_reference(&mut reader, limits)?,
         21 => Message::NetworkProbe(NetworkProbe::read(&mut reader)?),
+        22 => Message::NetworkTime(
+            novovm_network::network_time::coordination::TimeExchangeV1::decode(
+                reader.take(novovm_network::network_time::coordination::EXCHANGE_BYTES)?,
+            )?,
+        ),
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(

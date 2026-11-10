@@ -162,6 +162,12 @@ fn fixed_binding(
 
 pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvidence> {
     match message {
+        Message::NetworkTime(time) => {
+            time.encode()?;
+            // The original fragment domain and pinned authenticated transport
+            // precede this; lifecycle checks exact directional session context.
+            Ok(VerifiedEvidence::None)
+        }
         Message::NetworkProbe(probe) => {
             probe.validate()?;
             ensure!(

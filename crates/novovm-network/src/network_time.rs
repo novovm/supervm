@@ -6,6 +6,8 @@
 use anyhow::{ensure, Context, Result};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub mod coordination;
+
 pub const NETWORK_TIME_MAX_MEASUREMENT_V1: Duration = Duration::from_secs(30);
 // Each endpoint has at most 1ms capture uncertainty plus whole-millisecond
 // quantization. Cover both endpoints and never round an interval inward.

@@ -3,6 +3,28 @@
 use super::*;
 use crate::native_pipeline::consensus::tests::progress_integration::with_delivery_nodes_for_test;
 
+fn warm_time(nodes: &mut [NativeLifecycle], pipelines: &[CandidatePipeline]) -> Result<()> {
+    let start = Instant::now();
+    loop {
+        ensure!(
+            start.elapsed() < Duration::from_secs(8),
+            "authenticated time did not converge"
+        );
+        for (i, node) in nodes.iter_mut().enumerate() {
+            node.poll_io(1000 + start.elapsed().as_millis() as u64, Instant::now())?;
+            node.poll(&pipelines[i], Instant::now())?;
+        }
+        if nodes.iter().all(|node| {
+            node.time_peers
+                .iter()
+                .all(|p| p.reference.interval(Instant::now()).is_ok())
+        }) {
+            return Ok(());
+        }
+        std::thread::yield_now();
+    }
+}
+
 #[test]
 fn probe_command_is_fixed_binary_and_rejects_arbitrary_content() -> Result<()> {
     let probe = NetworkProbe {
@@ -30,9 +52,107 @@ fn probe_command_is_fixed_binary_and_rejects_arbitrary_content() -> Result<()> {
 }
 
 #[test]
+#[ignore = "real AOEM and four original local UDP owners; not physical four-host acceptance"]
+fn adaptive_time_original_owner_skew_jump_and_replay() -> Result<()> {
+    with_delivery_nodes_for_test(|nodes, _, _, pipelines| {
+        nodes[0].time_test_offset_ms = 900;
+        nodes[1].time_test_offset_ms = -444;
+        nodes[2].time_test_offset_ms = 1200;
+        nodes[3].time_test_offset_ms = -900;
+        warm_time(nodes, pipelines)?;
+        let start = Instant::now();
+        for node in nodes.iter_mut() {
+            node.enable_network_probe(start);
+        }
+        let wall = nodes[0].time_clock()?.wall_ms();
+        let probe = NetworkProbe {
+            nonce: [92; 32],
+            sender: nodes[0].progress.local_validator(),
+            recipient: nodes[1].progress.local_validator(),
+            issued_at_ms: wall,
+            expires_at_ms: wall + 10000,
+        };
+        // Old direct comparison reproduces C's failure before the new path.
+        assert!(probe
+            .validate_time(nodes[1].time_clock()?.wall_ms())
+            .is_err());
+        let id = nodes[0].network_probe_command(ProbeCommand::Start(probe.clone()), wall, start)?;
+        loop {
+            ensure!(
+                start.elapsed() < Duration::from_secs(8),
+                "adaptive probe did not complete"
+            );
+            for (i, node) in nodes.iter_mut().enumerate() {
+                node.poll_io(1000 + start.elapsed().as_millis() as u64, Instant::now())?;
+                node.poll(&pipelines[i], Instant::now())?;
+            }
+            let sent = nodes[0]
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations
+                .iter()
+                .any(|o| o.object_id == id && o.event == "probe_object_done");
+            let received = nodes[1]
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations
+                .iter()
+                .any(|o| o.object_id == id && o.event == "probe_received_integrity_verified");
+            if sent && received {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let peer = nodes[1]
+            .peers
+            .iter()
+            .position(|key| *key == probe.sender)
+            .unwrap();
+        nodes[1].time_test_offset_ms += 2000;
+        let new_probe = NetworkProbe {
+            nonce: [93; 32],
+            ..probe.clone()
+        };
+        nodes[1].receive_network_probe(peer, &new_probe, [93; 32], Instant::now());
+        assert_eq!(
+            nodes[1]
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations
+                .back()
+                .unwrap()
+                .event,
+            "probe_rejected_time_untrusted_or_outside_validity"
+        );
+        warm_time(nodes, pipelines)?;
+        nodes[1].receive_network_probe(peer, &new_probe, [93; 32], Instant::now());
+        assert_eq!(
+            nodes[1]
+                .probe
+                .as_ref()
+                .unwrap()
+                .observations
+                .back()
+                .unwrap()
+                .event,
+            "probe_rejected_duplicate"
+        );
+        for node in nodes {
+            assert_eq!(node.executed(), 0);
+            assert!(node.progress.head().is_none());
+        }
+        Ok(())
+    })
+}
+
+#[test]
 #[ignore = "real AOEM stores and original native lifecycle; not real four-host acceptance"]
 fn network_probe_original_owner_concurrent_done_and_isolation() -> Result<()> {
     with_delivery_nodes_for_test(|nodes, _, _, pipelines| {
+        warm_time(nodes, pipelines)?;
         let start = Instant::now();
         let wall = wall_ms();
         for node in nodes.iter_mut() {
@@ -53,8 +173,8 @@ fn network_probe_original_owner_concurrent_done_and_isolation() -> Result<()> {
             nonce: [nonce; 32],
             sender: nodes[source].progress.local_validator(),
             recipient: nodes[target].progress.local_validator(),
-            issued_at_ms: wall,
-            expires_at_ms: wall + 10_000,
+            issued_at_ms: wall - 100,
+            expires_at_ms: wall + 9_900,
         };
         let first = make(0, 1, 17);
         let second = make(2, 3, 18);
@@ -68,11 +188,11 @@ fn network_probe_original_owner_concurrent_done_and_isolation() -> Result<()> {
         loop {
             ensure!(
                 Instant::now() < deadline,
-                "original probe did not reach DONE"
+                "original probe did not reach both DONE and receiver acceptance"
             );
             for (i, node) in nodes.iter_mut().enumerate() {
                 node.poll_io(1000 + start.elapsed().as_millis() as u64, Instant::now())?;
-                node.poll(&pipelines[i], start)?;
+                node.poll(&pipelines[i], Instant::now())?;
                 assert_eq!(node.executed(), 0);
                 assert!(node.progress.head().is_none());
             }
@@ -84,6 +204,14 @@ fn network_probe_original_owner_concurrent_done_and_isolation() -> Result<()> {
                     .observations
                     .iter()
                     .any(|o| o.event == "probe_object_done")
+            }) && [1, 3].iter().all(|i| {
+                nodes[*i]
+                    .probe
+                    .as_ref()
+                    .unwrap()
+                    .observations
+                    .iter()
+                    .any(|o| o.event == "probe_received_integrity_verified")
             }) {
                 break;
             }

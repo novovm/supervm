@@ -72,6 +72,15 @@ struct Flight {
     transport: ProbeTransport,
     cancel_requested: bool,
 }
+struct PendingTimeReceipt {
+    peer: usize,
+    probe: NetworkProbe,
+    object: Hash,
+    ready: Instant,
+    deadline: Instant,
+    generation: u64,
+    transport: ProbeTransport,
+}
 #[derive(Clone, Serialize)]
 struct Observation {
     event: &'static str,
@@ -85,12 +94,15 @@ struct Observation {
     #[serde(flatten)]
     transport: ProbeTransport,
     wall_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_time_interval_ms: Option<(u64, u64)>,
 }
 pub(super) struct ProbeState {
     active: Option<Flight>,
     next_send: Instant,
     seen: VecDeque<(Hash, Instant)>,
     received: VecDeque<((Hash, Hash), Instant)>,
+    pending_time: Vec<PendingTimeReceipt>,
     receive_window: Instant,
     receive_count: usize,
     observations: VecDeque<Observation>,
@@ -146,6 +158,7 @@ impl ProbeState {
             peer,
             transport,
             wall_ms: wall_ms(),
+            peer_time_interval_ms: None,
         });
     }
 }
@@ -169,6 +182,7 @@ impl NativeLifecycle {
                 next_send: now,
                 seen: VecDeque::with_capacity(HISTORY),
                 received: VecDeque::with_capacity(HISTORY),
+                pending_time: Vec::new(),
                 receive_window: now,
                 receive_count: 0,
                 observations: VecDeque::with_capacity(HISTORY),
@@ -359,11 +373,11 @@ impl NativeLifecycle {
         object: Hash,
         now: Instant,
     ) {
+        let validity = self.peer_validity_window(peer, probe.issued_at_ms, probe.expires_at_ms);
         let Some(state) = &mut self.probe else {
             self.rejected_messages += 1;
             return;
         };
-        let wall = wall_ms();
         state.received.retain(|(_, expiry)| now < *expiry);
         if now.saturating_duration_since(state.receive_window) >= Duration::from_secs(1) {
             state.receive_window = now;
@@ -373,8 +387,6 @@ impl NativeLifecycle {
             || probe.recipient != self.progress.local_validator()
         {
             "probe_rejected_receiver_or_sender"
-        } else if probe.validate_time(wall).is_err() {
-            "probe_rejected_outside_validity"
         } else if state
             .received
             .iter()
@@ -385,11 +397,32 @@ impl NativeLifecycle {
             "probe_rejected_rate_or_quota"
         } else {
             state.receive_count += 1;
+            // Remember rejected as well as accepted nonces through the full
+            // original lifetime. Re-measuring must not revive this object.
             state.received.push_back((
                 (probe.sender, probe.nonce),
-                now + Duration::from_millis(probe.expires_at_ms - wall),
+                now + Duration::from_millis(super::super::transport::probe::MAX_LIFETIME_MS),
             ));
-            "probe_received_integrity_verified"
+            match &validity {
+                Ok((ready, deadline, generation, _)) if *ready > now => {
+                    if state.pending_time.len() >= 4 {
+                        "probe_rejected_rate_or_quota"
+                    } else {
+                        state.pending_time.push(PendingTimeReceipt {
+                            peer,
+                            probe: probe.clone(),
+                            object,
+                            ready: *ready,
+                            deadline: *deadline,
+                            generation: *generation,
+                            transport: self.channel.probe_transport(peer),
+                        });
+                        "probe_pending_time_boundary"
+                    }
+                }
+                Ok(_) => "probe_received_integrity_verified",
+                Err(_) => "probe_rejected_time_untrusted_or_outside_validity",
+            }
         };
         state.note(
             event,
@@ -398,8 +431,42 @@ impl NativeLifecycle {
             self.peers[peer],
             self.channel.probe_transport(peer),
         );
-        if event != "probe_received_integrity_verified" {
+        if let Some(observation) = state.observations.back_mut() {
+            observation.peer_time_interval_ms = validity.ok().map(|(_, _, _, interval)| interval);
+        }
+        if event != "probe_received_integrity_verified" && event != "probe_pending_time_boundary" {
             self.rejected_messages += 1;
+        }
+    }
+    pub(super) fn poll_network_probe_time(&mut self, now: Instant) {
+        let Some(state) = &mut self.probe else { return };
+        let mut index = 0;
+        while index < state.pending_time.len() {
+            let pending = &state.pending_time[index];
+            let reference = &self.time_peers[pending.peer].reference;
+            let invalid = reference.generation() != pending.generation
+                || reference.interval(now).is_err()
+                || self.channel.probe_transport(pending.peer).session_id
+                    != pending.transport.session_id;
+            let event = if invalid || now >= pending.deadline {
+                "probe_rejected_time_untrusted_or_outside_validity"
+            } else if now < pending.ready {
+                index += 1;
+                continue;
+            } else {
+                "probe_received_integrity_verified"
+            };
+            let pending = state.pending_time.remove(index);
+            state.note(
+                event,
+                pending.object,
+                &pending.probe,
+                self.peers[pending.peer],
+                pending.transport,
+            );
+            if event != "probe_received_integrity_verified" {
+                self.rejected_messages += 1;
+            }
         }
     }
     pub fn network_probe_observation(&self) -> Option<serde_json::Value> {
@@ -407,7 +474,8 @@ impl NativeLifecycle {
         Some(
             serde_json::json!({"enabled":true,"scope":"diagnostic only; original Object DONE is bounded custody, never business acceptance or finality",
             "max_active":1,"max_events":HISTORY,"evicted_events":state.evicted,
-            "events":state.observations,"transport":self.channel.probe_observation()}),
+            "events":state.observations,"transport":self.channel.probe_observation(),
+            "protocol_time":self.network_time_observation()}),
         )
     }
 }

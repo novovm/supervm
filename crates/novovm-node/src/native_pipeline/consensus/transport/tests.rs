@@ -8,6 +8,36 @@ use novovm_consensus::round_bft::test_vectors::FixtureSigningKey;
 use novovm_network::novorudp::fragments::{FragmentAdmission, Reassembler, ReassemblyLimits};
 use std::time::{Duration, Instant};
 
+#[test]
+fn time_exchange_uses_original_control_codec_and_strict_shape() -> Result<()> {
+    let value = novovm_network::network_time::coordination::TimeExchangeV1 {
+        response: false,
+        context: [7; 32],
+        challenge: [8; 32],
+        receive_ms: 0,
+        send_ms: 0,
+        residence_ns: 0,
+    };
+    let message = Message::NetworkTime(value);
+    let bytes = encode(&message, limits())?;
+    assert_eq!(
+        bytes.len(),
+        11 + novovm_network::network_time::coordination::EXCHANGE_BYTES
+    );
+    assert_eq!(message_lane(&bytes)?, 0);
+    assert_eq!(decode(&bytes, limits())?, message);
+    for length in 0..bytes.len() {
+        assert!(decode(&bytes[..length], limits()).is_err());
+    }
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(decode(&trailing, limits()).is_err());
+    let mut unknown = bytes;
+    unknown[11] = 2;
+    assert!(decode(&unknown, limits()).is_err());
+    Ok(())
+}
+
 pub(super) fn limits() -> DecodeLimits {
     DecodeLimits {
         transactions: 1024,
