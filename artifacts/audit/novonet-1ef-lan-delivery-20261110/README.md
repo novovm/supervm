@@ -1,5 +1,54 @@
 # 1ef四机换包收口与A→C/D真实原生对象
 
+## A 双端复核结论（覆盖下方待回传状态）
+
+A 已读取 main@e966fee7 中 C/D 原始回传，核验回传摘要，并与原 A 发送快照逐项匹配
+Object ID、Session ID、nonce、sender、recipient；两个方向五项均一致。
+
+| 方向 | A 发送端 | 接收端原节点 | 本轮结论 |
+| --- | --- | --- | --- |
+| A→C | native_udp / Object DONE | probe_rejected_outside_validity | 对象已到达，但诊断验收失败 |
+| A→D | native_udp / Object DONE | probe_received_integrity_verified | 双端对象事件匹配，接收侧短时传输明细缺失 |
+
+C issued_at_ms=1794281524742、expires_at_ms=1794281534742，接收事件
+wall_ms=1794281524298，比签发时间早444ms。A admitted_ms=1794281525118、
+DONE_ms=1794281525131。源码 `consensus/transport/probe.rs::validate_time` 要求
+`issued_at_ms <= wall_ms < expires_at_ms`；`native_lifecycle/probe.rs` 在接收端
+执行该检查，传输 custody DONE 不等于诊断验收或 Business Receipt。
+这些跨机时间戳说明本次时间依据不一致，不足以确定哪台时钟错误、当前偏差或历史校时原因；
+不得把444ms直接登记为已经测出的NTP偏差，也不通过倒填签发时间或放宽有效期消除反例。
+
+D 接收 wall_ms=1794281547245；issued_at_ms=1794281547111，A DONE_ms=1794281547189。
+双方路径为 native_udp；不以不同主机的壁钟相减声称单向网络延迟。
+[D原始报告](../validator-d-1ef-lan-receiver-20261110/README.md)。
+
+两份接收报告的 transport 均为空。原 `novorudp/diagnostics.rs::State::expire` 会清理
+first_seen 达120秒的传输记录，而本次发送后约7分钟才人工回读，已超过保留窗口。
+旧采集器没有导出 expired_records，evicted_records=0 不证明没有到期清理。
+此次采集时序不适合短时证据；不能用缺失记录否认D已有收件事件，也不能补造接收ACK/分片时间线。
+保留原脚本和原回传，不覆写其摘要，不将两条均登记为完整交付验收通过。
+
+### 当前动作：仅 C 只读核对时钟，D 无需操作
+
+C Codex 在本机记录开始/结束UTC，并一次执行以下命令，逐条保留退出码及原始输出：
+
+```powershell
+[DateTimeOffset]::UtcNow.ToString('o')
+w32tm /query /status /verbose
+w32tm /query /source
+w32tm /query /configuration
+Get-Service W32Time | Select-Object Name,Status,StartType
+[DateTimeOffset]::UtcNow.ToString('o')
+```
+
+这是查询，不执行 `/resync`、改时间服务配置或重启；失败照实返回，不循环重试。
+A 同样已读时钟：当时 source=time.windows.com,0x9，stratum=5，最后成功同步显示
+2026-11-10 08:58:25；这个状态本身不证明与C同步。C回传后核对两端依据，再决定是否需要校时。
+下一次对象验证先让接收端有界只读观察器就绪，在120秒保留期内自动保存匹配证据，
+然后A通过原owner发新的唯一对象；不重放旧对象，不扩大生产TTL或日志保留上限。
+
+本轮未重发、未更新/重启节点、未改时钟/密钥/数据库/网络配置；不额外触发Full CI。
+
 ## C 已回传接收记录（2026-11-10 11:39:35 北京时间）
 
 C 按 `7480930a` 只读采集一次，退出码 0。
@@ -9,7 +58,7 @@ C 按 `7480930a` 只读采集一次，退出码 0。
 [原始公开报告、执行结果和脚本摘要](../validator-c-1ef-lan-receiver-20261110/README.md)。
 未重发、重启、更新或改时钟；请 A 对照发送端及时间依据定位，D 回传由 D 独立负责。
 
-## 当前结论
+## 版本与查询结论（已完成）
 
 A已核验D `6c49668f`的ZIP摘要、字节数和全部17成员：D以1ef原库existing运行，
 PID2068 / LocalService，77项制品、实际AOEM、原用途材料及本地progress比较通过。
@@ -23,7 +72,7 @@ recovering=false、projection_failed=false。根为
 这项加上各机已回传的实机更新记录，完成A/B/C/D本轮1ef版本切换及逐机健康查询。
 不是同时在线长期稳定性、四机共识或交易验收。
 
-## 两次原owner对象发送（接收端取证待回传）
+## 两次原owner对象发送（历史发送阶段，回传结论见顶部）
 
 | 方向 | Object ID | Session ID | 实际发送路径 | 发送端结果 |
 | --- | --- | --- | --- | --- |
@@ -40,7 +89,7 @@ A端分别在北京时间11:32:17、11:32:40收集发送后快照。每方向只
 tag仍待双端匹配**，不能把Status或ACK替代。A→B先前通过不重发。
 单/双中继、并发、中继恢复、备用切回及资产业务三票确认仍未签收。
 
-## C/D现在各做一次只读回传
+## 原只读回传指令（已执行，不要重复运行）
 
 不再更新、不重发对象、不重启。同步包含本节的main，用管理员PowerShell7在本目录：
 
