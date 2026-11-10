@@ -1,5 +1,27 @@
 # C→D：1ef31893原库更新交接
 
+## C回传后的当前动作：只读核对旧进度结构
+
+`471f163e`回传证明C已取得并核验固定包，正常停止守卫通过，但旧progress缺少
+顶层`chain_id`，固定更新器在任何新程序准备/原库打开前退出。C尚未就绪，D继续等待。
+A复核了原错误ZIP摘要和旧5181源码：原生status正常应输出chain_id/current_height/
+head/execution_failures；因此不能仅凭错误推断数据库损坏或随意补字段。
+
+C Codex同步本提交后，仅用管理员PowerShell 7执行本目录脚本：
+
+```powershell
+./Inspect-C-Progress.ps1 -EvidenceRoot '<一个尚不存在的本次结构核对目录>'
+```
+
+将生成的`progress-structure-public.json`和退出结果回传GitHub。脚本只读取固定旧
+progress及原stdout最后12行的JSON结构/白名单公开字段、exit摘要，记录原文件哈希；
+不启动节点、不打开DB、不读取用途材料、不改旧报告，不导出整份配置或任意日志内容。
+A本地已验证脚本语法及对象/数组/null结构投影与公开字段过滤；未冒称已在C执行。
+本次不要重跑Update-CD或初始化。取得真实结构后修正对应读取/恢复条件，不以默认
+chain_id、历史别机状态或删除检查替代C实际链状态。
+
+## 原串行更新步骤（上述阻断处理后继续）
+
 用户已批准同版本四机串行更新，无需重复申请停旧节点/existing权限。
 B→A已成功，真实A→B发现及原生对象DONE已在本目录README记录。现在只执行C；
 C本机及A外部健康核验成功后再通知D执行。不要同时停C/D，不重启整机。
