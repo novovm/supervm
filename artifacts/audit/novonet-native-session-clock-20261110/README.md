@@ -2,6 +2,48 @@
 
 ## Current cutover status: expired time-queue defect, not downtime permission
 
+### Fixed replacement 8fed4b76 (2026-11-10 16:00 CST)
+
+Fixed program source is `8fed4b76f518935b30fcfb13930ccd3d7aae7381`.
+Both Windows/Linux original source-process recovery suites passed **6/6**.
+Both fixed packages then independently passed identity/NAT **7/7**, original
+owner component I/O **15/15**, actual packaged-node recovery **6/6**, packaged
+UCA recovery **1/1**, and startup/runtime **1/1**. Every archive member was
+verified independently, including inherited AOEM checksums. These are local
+qualifications, not four-host acceptance.
+
+[Fixed manifest](candidate-8fed4b76/candidate-manifest.json) binds all program,
+client, library and archive hashes. Windows archive: **150603521 bytes**,
+`29bee97601a7fb8ba698bf8bb5bff356e1c97c8e8d2a750be871f3c928fe73e4`;
+Linux archive: **359039913 bytes**,
+`c279cc1a4860f14e2142e0fa6bbf245d9f0f48f1e05358a9bd3efae7efa9953a`.
+Local directory:
+`C:\Users\leadb\AppData\Local\NOVOVM\candidate-observation-8fed4b76-20261110`.
+
+One exact-source Full **42776380753**, attempt 1, was dispatched after local
+validation. At this snapshot native recovery, security and both actual-runtime
+platform jobs passed; Rust checks and the aggregate result were still pending.
+The creation-time candidate manifest retains its earlier CI snapshot, not a
+claim of final success. Do not dispatch another Full or reuse failed e7 output.
+
+Original updater adaptations passed Windows ten gate groups (including actual
+package hashes) and Linux thirteen tests. The first generated Windows test
+incorrectly retained historical 082/5181 expected pins; it failed before any
+deployment. The generator now derives current 1ef pins from its verified
+manifest. The updater itself and its rejection checks were not weakened.
+Raw evidence and the old generated test are retained in `updater-evidence.zip`.
+The process helper's canonical LF digest still matches its original fixed pin.
+
+The new fixed operator has an exact-scope clone of its old UDP reply rule;
+firewall profiles are unchanged. A/B pre-update authenticated Status returned
+the same original root (17ms/51ms). B archive upload is in progress; no installed
+node has changed. After Full qualification proceed directly B -> A -> C -> D
+with the [existing update plan](candidate-8fed4b76/UPGRADE.md), without another
+stop-permission request. C/D package transfer instructions are in
+[CD-UPDATE.md](candidate-8fed4b76/CD-UPDATE.md).
+
+### Prior failed candidate and the correction
+
 The user explicitly authorizes direct stop/cutover of this unused internal
 development system. Downtime is not a deployment blocker and no repeated
 stop permission is required. No installed node has been changed in this round.
@@ -45,9 +87,9 @@ the unchanged six process cases. Correction validation: **44/44 lifecycle tests
 on Windows and 44/44 on Linux passed**, including real AOEM and UDP component
 owners, skew/jump/replay, object DONE/cancel, recovery queues and the new expiry
 counterexample. Strict node lib/tests Clippy (`iroh-transport`, release) passed
-on both platforms; 27 CI-scope tests, format and diff checks passed. The six
-original-process recovery cases are being rebuilt/run locally and are not yet
-counted as passed. No cloud rerun or node cutover has been performed for the fix.
+on both platforms; 27 CI-scope tests, format and diff checks passed. Subsequent
+source/package recovery results and the one replacement Full are recorded above.
+This does not rewrite the failed e7 run or close unrelated historical stalls.
 
 Raw cloud failure evidence: `ci-native-recovery-e7b0cca7.zip`, 313841 bytes,
 SHA256 `03c9a93a40f577adab873b0aea31226563c883c146b1b8d09efc5875e0b7c2e5`.

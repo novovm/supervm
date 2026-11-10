@@ -1,0 +1,43 @@
+{
+  "source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+  "tool_archive_sha256": "63855bf03bcc8912fc07068503344e3a887a8d1f6d57a318ebcc0cb2ab96d255",
+  "tool_archive_bytes": 33017,
+  "files": [
+    {
+      "name": "Update-Windows.ps1",
+      "sha256": "1abe055135ac1469bac56b91d813844befc14173e8461edbf61e003e2f641a98"
+    },
+    {
+      "name": "Test-Update-Windows.ps1",
+      "sha256": "5351d6f27730e099ee6731e1d13de9070a07b1eced8de35206396068f4ca4810"
+    },
+    {
+      "name": "NovonetExistingProcess.ps1",
+      "sha256": "4d6f1b1dc79251034493c0d55fbda942da5515cee95b756293801e3177b415be"
+    },
+    {
+      "name": "Update-B.py",
+      "sha256": "274eff55e47ea5d68db16eefd28a53887b58e913cf844b551e9b727ef0dad066"
+    },
+    {
+      "name": "test_update_b.py",
+      "sha256": "138f92045afe504f3f672ee27fb0e7ffaba902771ef59b002bc8df0072d36d55"
+    },
+    {
+      "name": "Read-Status.ps1",
+      "sha256": "72ca009e510fe31d9c23ef26941a04da507c80a58d930fe587eaa6fea9a96d9d"
+    },
+    {
+      "name": "Prepare-OperatorRule.ps1",
+      "sha256": "036487980722ada9522f7b5d2ebc2768893db3b513c257cebe8597ad6ee1cad6"
+    },
+    {
+      "name": "Check-Full.ps1",
+      "sha256": "9cf80be6ac97e7c46587edb51c0488a9dc6fe53b012d28450d9b39855fd7c117"
+    }
+  ],
+  "windows_updater_groups": 10,
+  "windows_updater_actual_package_verified": true,
+  "linux_updater_tests": 13,
+  "scope": "Offline updater gates; no installed node changed. Initial generated Windows test still expected historical 082/5181; retained and corrected to verified current 1ef pins. No updater or node assertion was relaxed."
+}

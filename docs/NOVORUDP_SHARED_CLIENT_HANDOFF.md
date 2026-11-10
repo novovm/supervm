@@ -2061,9 +2061,30 @@ e7b0cca7两平台包内资格通过，Linux包已上传B并核验哈希，尚未
 已过期的未接管对象，导致期限拒绝传播至节点退出。修正在原I/O报告/发送入口复用
 同一清理所有者；已接管对象仍等原传输终态释放，不改期限、额度、共识或资产。
 两平台生命周期回归各44/44及严格Clippy已通过，27项CI范围测试通过；原六项进程
-恢复仍在本地构建/执行，不提前记通过。C/D不需要重跑旧脚本或清库。原始失败及实际结果见
+恢复随后在Windows/Linux各6/6通过。C/D不需要重跑旧脚本或清库。原始失败及实际结果见
 [首次握手记录](../artifacts/audit/novonet-native-session-clock-20261110/README.md)。
 修正源码、新包与实际切换分别登记，不把旧e7包称作含本修正，也不宣布历史停滞全部结案。
+
+### 37.2 固定8fed候选与四机直接切换（16:00现场快照）
+
+程序固定`8fed4b76f518935b30fcfb13930ccd3d7aae7381`；两平台包内身份/NAT7、
+owner I/O15、实际打包节点恢复6、UCA恢复1、启动资格1均通过，全部归档成员独立核验。
+Windows包150603521字节，SHA256
+`29bee97601a7fb8ba698bf8bb5bff356e1c97c8e8d2a750be871f3c928fe73e4`。
+Linux包359039913字节，SHA256
+`c279cc1a4860f14e2142e0fa6bbf245d9f0f48f1e05358a9bd3efae7efa9953a`。
+
+一次Full `42776380753`绑定相同程序SHA、attempt1；当前原生恢复、安全及两平台
+实际runtime作业通过，Rust与汇总仍待结束，不把轻量同步或局部绿灯当完整通过。
+四机尚未切换，B新包上传中；A新operator同范围规则已准备。原更新器离线组通过，
+初次生成测试残留082/5181旧期待已按实际1ef修正，未放宽程序/库/状态检查。
+
+停服许可已具备，完整门禁通过后直接B→A→C→D existing，不再申请同一许可。
+新profile3节点必须配新operator，不能拿旧profile2失败当新节点不可用或启用降级。
+C/D可先复制新Windows包，收到A/B完成回执再逐台执行；不运行旧初始化/恢复脚本。
+固定包、工具、原始测试及当前状态见
+[8fed交付](../artifacts/audit/novonet-native-session-clock-20261110/README.md)和
+[C/D交接](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)。
 
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
