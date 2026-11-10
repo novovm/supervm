@@ -1,0 +1,44 @@
+{
+  "source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+  "full_run": 42776380753,
+  "full_attempt": 1,
+  "full_conclusion": "success",
+  "completed_utc": "2026-11-10T09:32:06.1432042Z",
+  "hosts": [
+    {
+      "host_id": "A",
+      "pid": 21708,
+      "source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+      "node_sha256": "021e7f8b0b41d8b72577d7394cd9c1fb9edb8388c4ae90903dca6f86a53a8a32",
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+      "start": "existing",
+      "custody_unchanged": true,
+      "initialize_executed": false,
+      "current_height": 1,
+      "finalized_height": 0,
+      "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+      "authenticated_status_ms": 27,
+      "object_DONE_verified": false
+    },
+    {
+      "host_id": "B",
+      "pid": 3133881,
+      "source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+      "node_sha256": "93394930458df988b789cab036bebb18bb77e6babf028f179b9a62e82e108f07",
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+      "start": "existing",
+      "custody_unchanged": true,
+      "initialize_executed": false,
+      "current_height": 1,
+      "finalized_height": 0,
+      "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+      "authenticated_status_ms": 79,
+      "object_DONE_verified": false
+    }
+  ],
+  "C_update_released": true,
+  "D_waits_for_C_and_A_query": true,
+  "scope": "B/A existing cutover and external authenticated Status; not four-host object or business acceptance"
+}

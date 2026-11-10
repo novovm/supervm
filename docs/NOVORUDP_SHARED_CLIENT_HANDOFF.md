@@ -2086,6 +2086,21 @@ C/D可先复制新Windows包，收到A/B完成回执再逐台执行；不运行�
 [8fed交付](../artifacts/audit/novonet-native-session-clock-20261110/README.md)和
 [C/D交接](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)。
 
+### 37.3 Full通过、B/A切换完成，C现在执行
+
+`8fed4b76`唯一Full `42776380753` attempt1已completed/success，Rust及两项汇总
+均成功。自动B→A existing切换于2026-11-10北京时间17:32:06完成；A PID21708、
+B PID3133881，实际固定程序/AOEM与候选摘要匹配，原库、用途材料及状态根保持一致。
+新operator外部认证Status：A27ms、B79ms；这不是对象DONE或资产业务验收。
+本轮写交接时再次确认两台新进程仍运行。
+
+C/D准备回执e9ab5b61、9ed96eac已读取并合入。**现在C直接执行既有已批准更新，
+无需等待A/B或再次复制包/申请停服**；C回传后由A做新客户端认证查询，然后D执行。
+具体固定路径和命令在[CD-UPDATE当前首节](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)。
+[AB公开回执](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/AB-CUTOVER-PUBLIC.json)
+及同目录证据ZIP保留Full原始响应、切换与查询结果。此前只口头报告、未及时更新Git，
+导致C按旧交接暂停；本次补齐，不把先前准备快照改写成当时已部署。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

@@ -1,5 +1,26 @@
 # Native first-handshake session clock — 2026-11-10
 
+## CURRENT: Full passed, B/A cutover completed, C released
+
+Exact-source Full **42776380753** (`8fed4b76`, attempt 1) is **completed/success**;
+Rust checks and both aggregate gates passed. The automatic B -> A update then
+completed at **17:32:06 Beijing**, using the fixed packages and original
+databases with `existing`. A PID **21708**, B PID **3133881**; original custody
+and state root unchanged. External authenticated Status passed (A **27ms**, B
+**79ms**), not Object DONE or business receipt. Both new processes were observed
+running again while preparing this handoff.
+
+See [public cutover receipt](candidate-8fed4b76/AB-CUTOVER-PUBLIC.json) and
+`candidate-8fed4b76/AB-cutover-evidence.zip`. The candidate manifest below is
+its original preparation-time snapshot; this section records the later outcome.
+The old e7 Full failure remains a failure and has not been rewritten.
+
+C/D package readiness receipts are accepted. **C may now run the already-approved
+existing updater**; D follows after C returns startup evidence and A verifies C
+with the fixed operator. [Current C instruction](candidate-8fed4b76/CD-UPDATE.md).
+No further copy, stop approval or Full run is required. The previous spoken
+completion was not promptly committed; this update fixes that handoff omission.
+
 ## Current cutover status: expired time-queue defect, not downtime permission
 
 ### Fixed replacement 8fed4b76 (2026-11-10 16:00 CST)

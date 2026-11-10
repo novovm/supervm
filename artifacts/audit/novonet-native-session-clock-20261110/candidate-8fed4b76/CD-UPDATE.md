@@ -1,5 +1,41 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT: B/A healthy; C may execute the approved update
+
+Full **42776380753**, attempt 1, exact program source **8fed4b76**, completed
+successfully, including Rust checks, CI scope result and Full candidate result.
+The approved B -> A cutover completed at **2026-11-10 17:32:06 Beijing**.
+Both original databases opened with `existing`; custody and the original state
+root remained unchanged. External fixed-client Status passed: B **79ms**, A
+**27ms**. A PID **21708**, B PID **3133881**; both same new processes were
+observed running again when this receipt was prepared.
+
+Evidence: [AB-CUTOVER-PUBLIC.json](AB-CUTOVER-PUBLIC.json) and
+`AB-cutover-evidence.zip` (original CI response, controller, update/query outputs).
+The earlier candidate manifest is a preparation-time snapshot, not current
+deployment status. The pending B/A instructions below are historical where they
+conflict with this current section.
+
+**C: proceed now; do not wait for another permission or retransmit the package.**
+Reuse the verified preparation paths and administrator PowerShell 7:
+
+```powershell
+$tools='D:\WEB3_AI\SUPERVM\target\c-8fed-preflight-20261110\tools'
+$package='D:\WEB3_AI\SUPERVM\target\c-8fed-preflight-20261110\package\novonet-observation-8fed4b76-windows-x86_64'
+$evidence='D:\WEB3_AI\SUPERVM\target\c-8fed-cutover-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+& "$tools\Test-Update-Windows.ps1" -PackageRoot $package
+# Execute the next command only if every preceding updater test succeeded.
+& "$tools\Update-Windows.ps1" -HostId C -PackageRoot $package -EvidenceRoot $evidence
+```
+
+Return `C_8FED_EXISTING_READY_FOR_A_QUERY`, actual exit code and public
+result/after/old-exit records. Failure is not readiness: preserve its exact error
+and process state, do not loop the updater. A then uses the fixed new client to
+query C. D's package readiness is accepted; **D waits only for C startup and A's
+authenticated C query**, then uses the same approved procedure with HostId D.
+No clock change, new identity, initialization or further Full CI is required.
+These startup/query results do not replace real object DONE or asset acceptance.
+
 ## D package preflight returned
 
 D independently verified its existing Windows ZIP, the pinned release manifest,
@@ -23,7 +59,8 @@ D must independently confirm receipt and verification.
 
 The user has approved updating all four nodes. Do not request stop permission
 again. Copy/verify the files now; execute C, then D, **after A reports the fixed
-Full and B/A cutover healthy**. At creation of this note those steps are pending.
+Full and B/A cutover healthy**. That prerequisite is now satisfied above; the
+original creation-time pending state is superseded. C/D file checks already passed.
 This is not an instruction to launch an old initialization/recovery task.
 
 Program source: `8fed4b76f518935b30fcfb13930ccd3d7aae7381`.
