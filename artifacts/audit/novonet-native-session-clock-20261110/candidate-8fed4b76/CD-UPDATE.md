@@ -1,5 +1,15 @@
 # C/D: fixed 8fed session-clock existing update
 
+## D package preflight returned
+
+D independently verified its existing Windows ZIP, the pinned release manifest,
+all 77 artifacts and all 8 tools; fresh extraction and PowerShell syntax checks
+passed. [D public preparation receipt](../../validator-d-8fed-package-ready-20261110/README.md).
+Status: `D_8FED_INPUTS_VERIFIED_UPDATE_NOT_STARTED`. Updater tests and update
+have not run; no node or clock operations occurred. D waits for the fixed Full,
+B/A healthy cutover, then C startup and A's authenticated C query. This receipt
+does not authorize an early switch or claim an updated D node.
+
 ## C package preflight returned
 
 C verified the original Windows ZIP already present in its E: receiving directory,
