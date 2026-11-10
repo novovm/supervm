@@ -704,6 +704,9 @@ jobs:
           test "$NOVOVM_AOEM_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"
           test "$AOEM_DLL_MANIFEST" = "$NOVOVM_AOEM_TEST_MANIFEST"
           export AOEM_DLL_MANIFEST_REQUIRED=1
+            cargo test -p novovm-node --lib expired_time_queue_is_retired_before_io_without_assembly_poll --locked -- --ignored --list > "$RUNNER_TEMP/native-time-expiry-test-list.txt"
+            grep -q 'expired_time_queue_is_retired_before_io_without_assembly_poll: test' "$RUNNER_TEMP/native-time-expiry-test-list.txt"
+            cargo test -p novovm-node --lib expired_time_queue_is_retired_before_io_without_assembly_poll --locked -- --ignored --nocapture --test-threads=1
           cargo test -p novovm-node --lib native_only_ --locked -- --ignored --list > "$RUNNER_TEMP/native-test-list.txt"
           grep -q 'native_only_genesis_transactions_queries_and_cold_recovery: test' "$RUNNER_TEMP/native-test-list.txt"
           grep -q 'native_only_status_readiness_survives_first_query_timeout: test' "$RUNNER_TEMP/native-test-list.txt"

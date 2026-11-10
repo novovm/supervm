@@ -447,6 +447,7 @@ impl NativeLifecycle {
         report: novovm_network::novorudp::object_link::NativeLinkPoll,
         now: Instant,
     ) -> Result<()> {
+        self.retire_network_time(now);
         self.rejected_messages += report.rejected as u64;
         for completed in report.completed {
             if self.complete_network_time(&completed) {

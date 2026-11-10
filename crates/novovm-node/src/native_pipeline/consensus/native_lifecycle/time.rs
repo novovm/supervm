@@ -13,6 +13,7 @@ struct Flight {
     id: Hash,
     deadline: Instant,
 }
+
 #[derive(Default)]
 pub(super) struct TimePeer {
     pub reference: PeerTimeReferenceV1,
@@ -82,14 +83,10 @@ impl NativeLifecycle {
         });
         Ok(true)
     }
-    pub(super) fn poll_network_time(&mut self) -> Result<()> {
-        let Ok(clock) = self.time_clock() else {
-            for peer in &mut self.time_peers {
-                peer.reference.invalidate();
-            }
-            return Ok(());
-        };
-        let now = clock.instant();
+    // I/O may run while assembly/execution is waiting. Retire stale auxiliary
+    // work at its own send boundary, independently of wall-clock availability.
+    // Admitted objects remain charged until the original link returns custody.
+    pub(super) fn retire_network_time(&mut self, now: Instant) {
         for peer in 0..self.peers.len() {
             let session = self.channel.probe_transport(peer).session_id;
             let changed = self.time_peers[peer].session != session;
@@ -119,6 +116,18 @@ impl NativeLifecycle {
                     }
                 }
             }
+        }
+    }
+    pub(super) fn poll_network_time(&mut self) -> Result<()> {
+        let Ok(clock) = self.time_clock() else {
+            for peer in &mut self.time_peers {
+                peer.reference.invalidate();
+            }
+            return Ok(());
+        };
+        let now = clock.instant();
+        self.retire_network_time(now);
+        for peer in 0..self.peers.len() {
             let Some(context) = self.time_context(peer, false) else {
                 continue;
             };
@@ -227,6 +236,69 @@ impl NativeLifecycle {
                     "accepted_samples":state.accepted_samples,"rejected_samples":state.rejected_samples,
                     "inflight":state.flights.len()})
             }).collect::<Vec<_>>()
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_pipeline::consensus::tests::progress_integration::with_delivery_nodes_for_test;
+
+    #[test]
+    #[ignore = "real AOEM and original UDP lifecycle; not physical four-host acceptance"]
+    fn expired_time_queue_is_retired_before_io_without_assembly_poll() -> Result<()> {
+        with_delivery_nodes_for_test(|nodes, leader, message, _| {
+            let node = &mut nodes[leader];
+            let peer = 0;
+            let now = Instant::now();
+            node.time_peers[peer].session = node.channel.probe_transport(peer).session_id;
+            let prepared = node.channel.prepare(&message)?;
+            let consensus_id = prepared.fragment_id();
+            let consensus_bytes = prepared.byte_len();
+            let request = TimeExchangeV1 {
+                response: false,
+                context: [7; 32],
+                challenge: [8; 32],
+                receive_ms: 0,
+                send_ms: 0,
+                residence_ns: 0,
+            };
+            // Deterministic queue age; no sleep, enlarged TTL or mocked send.
+            assert!(node.queue_network_time(peer, request.clone(), now - MEASUREMENT_LIFETIME)?);
+            let expired_id = node.time_peers[peer].flights[0].id;
+            assert!(node.enqueue(peer, prepared));
+            assert!(node.bytes[peer] > consensus_bytes);
+            // Recovery/execution can keep I/O progressing without assembly.
+            // The expired auxiliary object must not freeze that same owner.
+            node.poll_io(1000, now)?;
+            assert!(!node.is_frozen());
+            assert!(node.time_peers[peer].flights.is_empty());
+            assert!(!node.deliveries[peer]
+                .iter()
+                .any(|d| d.prepared.fragment_id() == expired_id));
+            assert!(node.deliveries[peer]
+                .iter()
+                .any(|d| d.prepared.fragment_id() == consensus_id));
+            assert_eq!(node.bytes[peer], consensus_bytes);
+            // Fresh work is still admitted. Once admitted, expiry is returned
+            // by the original object owner before bytes/capacity are released.
+            let fresh = TimeExchangeV1 {
+                challenge: [9; 32],
+                ..request
+            };
+            assert!(node.queue_network_time(peer, fresh, now)?);
+            let fresh_id = node.time_peers[peer].flights[0].id;
+            node.poll_io(1000, now)?;
+            assert!(node.deliveries[peer]
+                .iter()
+                .any(|d| d.prepared.fragment_id() == fresh_id && d.admitted));
+            assert!(node.bytes[peer] > consensus_bytes);
+            node.poll_io(3000, now + MEASUREMENT_LIFETIME)?;
+            assert!(!node.is_frozen());
+            assert!(node.time_peers[peer].flights.is_empty());
+            assert_eq!(node.bytes[peer], consensus_bytes);
+            Ok(())
         })
     }
 }

@@ -1,5 +1,63 @@
 # Native first-handshake session clock — 2026-11-10
 
+## Current cutover status: expired time-queue defect, not downtime permission
+
+The user explicitly authorizes direct stop/cutover of this unused internal
+development system. Downtime is not a deployment blocker and no repeated
+stop permission is required. No installed node has been changed in this round.
+
+The fixed `e7b0cca7` Windows/Linux archives passed their local package checks
+(identity 7, owner I/O 15, original-node recovery 6, UCA recovery 1 and startup
+qualification 1 per platform). The Linux archive was uploaded to B, and its
+SHA256 matches `e531af4b7ddcbed564e98d4114e5ca66f8640c97dc0af8b445e74b634d905e97`.
+Staging is not installation. The generated candidate manifest retains its
+creation-time CI snapshot; this section supersedes that snapshot for acceptance.
+
+Full run **42770392703**, attempt 1, is bound to exact source
+`e7b0cca7fb823a7b15e8788090052b17ddfd2454`. Its native recovery job
+**129676752806 failed**: 4 cases passed, late-highest and late-lowest failed.
+Both retained node stderr files contain `original tick stopped; drain=Ok(())`
+caused by `native send operation deadline`. The remaining CI jobs do not
+override this failure. This candidate is not qualified for cutover.
+
+The original lifecycle queued time measurements with a two-second monotonic
+deadline, but retired them only in assembly `poll_inner`. I/O is deliberately
+independent of assembly and could attempt an expired, unadmitted time object
+first. `NativeObjectLink::try_send_until` correctly rejected that operation;
+the error propagated through `poll_io` and stopped the original node. This is
+not a RocksDB opening, Finished authentication or stop-permission failure.
+
+The minimal correction reuses that same time-flight retirement in
+`accept_io_report`, before send admission, including carrier replacement.
+It does not require a wall-clock capture. Unadmitted stale objects are released;
+admitted objects retain custody/accounting until the original link returns a
+terminal event. Assembly still retires stale sessions before creating samples.
+Consensus deliveries, TTLs, authentication and resource budgets are unchanged.
+
+A deterministic original-lifecycle counterexample uses an already-expired
+queued measurement, without sleeping or changing timeouts. On the old Linux
+owner it reproduces exactly `native send operation deadline`. An earlier
+Windows ordering variant also showed the expired flight remained queued behind
+consensus traffic. The final regression additionally checks fresh admission,
+terminal expiry/accounting and preservation of the queued consensus object.
+The existing recovery CI step explicitly lists and runs this regression before
+the unchanged six process cases. Correction validation: **44/44 lifecycle tests
+on Windows and 44/44 on Linux passed**, including real AOEM and UDP component
+owners, skew/jump/replay, object DONE/cancel, recovery queues and the new expiry
+counterexample. Strict node lib/tests Clippy (`iroh-transport`, release) passed
+on both platforms; 27 CI-scope tests, format and diff checks passed. The six
+original-process recovery cases are being rebuilt/run locally and are not yet
+counted as passed. No cloud rerun or node cutover has been performed for the fix.
+
+Raw cloud failure evidence: `ci-native-recovery-e7b0cca7.zip`, 313841 bytes,
+SHA256 `03c9a93a40f577adab873b0aea31226563c883c146b1b8d09efc5875e0b7c2e5`.
+Local old/new output and reproduction script: `time-expiry-local-evidence.zip`.
+The first Windows test invocation used a mistyped DLL path and failed before
+the test; the corrected executable invocation produced the retained old-owner
+counterexample. An initial WSL runner omitted Cargo from PATH and ran no test;
+the retained `old-repro` run uses the login environment and reproduces the
+actual deadline error. Neither setup failure is counted as a product result.
+
 Source base: `b4f22132`. The containing commit implements the next step after
 the post-session relative-time work (`c87855ac`); it is not an installed version
 or four-machine acceptance. No OS clock, A/B/C/D process, database, identity,

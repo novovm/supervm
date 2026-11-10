@@ -1,0 +1,124 @@
+{
+  "local_delivery_directory": "C:/Users/leadb/AppData/Local/NOVOVM/candidate-observation-e7b0cca7-20261110",
+  "A_B_C_D_changed": false,
+  "evidence_archive_sha256": "1d3f2b4af1d330e2217d2d524b1689c564eeaa3df3f46f994ed7143e764af885",
+  "scope": "fixed local candidate; actual package process recovery and same-source owner IO are separate; no public network acceptance",
+  "source_commit": "e7b0cca7fb823a7b15e8788090052b17ddfd2454",
+  "packages": [
+    {
+      "source_commit": "e7b0cca7fb823a7b15e8788090052b17ddfd2454",
+      "aoem_manifest_sha256": "07d61c1cab0ab57844d0cf18c5f32609161ed65b6a9fcb3c044929cd19bc24b1",
+      "node_sha256": "4f55bf9303c2ecd3c9739b6a42d5b848a28902d33e645fd5eea3ebf77ea04d67",
+      "ctl_sha256": "9d529c10693d7e903254243e10926e97a94fcbe84320a5b187fbabb6677d69d5",
+      "manifest_members": 77,
+      "platform": "windows",
+      "package_identity_tests": 7,
+      "deployed": false,
+      "inherited_aoem_checksum": {
+        "path": "aoem/windows/CHECKSUMS.sha256",
+        "entries_verified": 26,
+        "sha256": "cac4db2bdced355ed2e2473fbc092095c0bef1f791fa6654dd00691310d39d30"
+      },
+      "manifest_sha256": "dd17ea483c563e345fa25cef425cf8e2b15b4650cb393d1b2df0e30e66b320ea",
+      "archive": "novonet-observation-e7b0cca7-windows-x86_64.zip",
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "client_sha256": "503ba2dc52150c4282336ae9e2aa8768dca11b8bc8cc9e62369a368161b56acb",
+      "total_files": 80,
+      "qualification": [
+        {
+          "exit": 0,
+          "log": "owner-with-packaged-aoem-windows.log",
+          "scope": "source-matched owner component IO with packaged AOEM, not packaged node process",
+          "passed": 15,
+          "name": "owner-with-packaged-aoem"
+        },
+        {
+          "exit": 0,
+          "log": "packaged-node-recovery-windows.log",
+          "scope": "actual packaged node process, native protocol and original isolated database recovery",
+          "passed": 6,
+          "name": "packaged-node-recovery"
+        },
+        {
+          "exit": 0,
+          "log": "packaged-uca-recovery-windows.log",
+          "scope": "actual packaged node and adjacent client, isolated UCA recovery",
+          "passed": 1,
+          "name": "packaged-uca-recovery"
+        },
+        {
+          "exit": 0,
+          "log": "packaged-runtime-startup-windows.log",
+          "scope": "original startup owner with packaged AOEM, isolated state",
+          "passed": 1,
+          "name": "packaged-runtime-startup"
+        }
+      ],
+      "archive_sha256": "399a2a35e250bddfcf09578336309befcc92eeec06df67568e8e6d8280472931",
+      "archive_bytes": 150606429
+    },
+    {
+      "source_commit": "e7b0cca7fb823a7b15e8788090052b17ddfd2454",
+      "aoem_manifest_sha256": "0ccb0a626c06de4eb92f04192062dad3e9df655816525c4a46ceb1930c6726e2",
+      "node_sha256": "28e6a7b60595adf33935ff9e8b3a7c72d3b0bcfae289f0d31c9e43dd1ef8390b",
+      "ctl_sha256": "d46c7b34ed5a14eea29af28b668cdfab76d10ae395a5c4464a5c6c1a7eb7bd50",
+      "manifest_members": 80,
+      "platform": "linux",
+      "package_identity_tests": 7,
+      "deployed": false,
+      "inherited_aoem_checksum": {
+        "path": "aoem/linux/CHECKSUMS.sha256",
+        "entries_verified": 25,
+        "sha256": "94ae7322b1eeedcd9c358d97bbafab389b722378e53a796a393782f14fb71734"
+      },
+      "manifest_sha256": "6c7fa35850e78aeff9529514ab0d96665b39c46159018ac502bd88e65c3012ec",
+      "archive": "novonet-observation-e7b0cca7-linux-x86_64.tar.gz",
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "client_sha256": "3cd39cf3cf63b41f751814e5ee622f99ebb77abf3f7dcc7770b93d2532226630",
+      "total_files": 83,
+      "qualification": [
+        {
+          "scope": "source-matched owner component IO with packaged AOEM, not packaged node process",
+          "exit": 0,
+          "log": "owner-with-packaged-aoem-linux.log",
+          "passed": 15,
+          "name": "owner-with-packaged-aoem"
+        },
+        {
+          "scope": "actual packaged node process, native protocol and original isolated database recovery",
+          "exit": 0,
+          "log": "packaged-node-recovery-linux.log",
+          "passed": 6,
+          "name": "packaged-node-recovery"
+        },
+        {
+          "scope": "actual packaged node and adjacent client, isolated UCA recovery",
+          "exit": 0,
+          "log": "packaged-uca-recovery-linux.log",
+          "passed": 1,
+          "name": "packaged-uca-recovery"
+        },
+        {
+          "scope": "original startup owner with packaged AOEM, isolated state",
+          "exit": 0,
+          "log": "packaged-runtime-startup-linux.log",
+          "passed": 1,
+          "name": "packaged-runtime-startup"
+        }
+      ],
+      "archive_sha256": "e531af4b7ddcbed564e98d4114e5ca66f8640c97dc0af8b445e74b634d905e97",
+      "archive_bytes": 359386130
+    }
+  ],
+  "CI": {
+    "head_sha": "e7b0cca7fb823a7b15e8788090052b17ddfd2454",
+    "event": "workflow_dispatch",
+    "status": "in_progress",
+    "run": 42770392703,
+    "attempt": 1,
+    "snapshot": "ci-run-20261110T065531657Z.json",
+    "url": "https://github.com/novovm/supervm/actions/runs/42770392703",
+    "conclusion": null
+  },
+  "deployment_approved": true
+}
