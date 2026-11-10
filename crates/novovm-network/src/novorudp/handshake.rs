@@ -18,12 +18,14 @@ use std::{
     net::{SocketAddr, UdpSocket},
     time::{Duration, Instant},
 };
+mod finished;
 
 pub struct NativeHandshake {
     identity: TransportIdentity,
     remote_peer: String,
     remote: NativeRoute,
     initiator: Option<NodeHandshakeInitiatorV1>,
+    is_initiator: bool,
     cached_offer: Option<Vec<u8>>,
     cached_response: Option<Vec<u8>>,
     outgoing: Option<Vec<u8>>,
@@ -33,7 +35,8 @@ pub struct NativeHandshake {
     deadline: Instant,
     ttl_ms: u64,
     retry: Duration,
-    outgoing_expiry: u64,
+    pending_finished: Option<finished::Pending>,
+    cached_finished: Option<Vec<u8>>,
     ready: bool,
     session: Option<NativeUdpSession>,
 }
@@ -58,7 +61,7 @@ impl NativeHandshake {
         identity: TransportIdentity,
         remote_key: Vec<u8>,
         remote: impl Into<NativeRoute>,
-        wall_ms: u64,
+        _wall_ms: u64,
         now: Instant,
         ttl: Duration,
         retry: Duration,
@@ -81,10 +84,9 @@ impl NativeHandshake {
         ensure!(local != remote_peer, "native self handshake");
         // One deterministic initiator, not two competing sessions per peer.
         let initiator = if initiate.unwrap_or(local < remote_peer) {
-            Some(NodeHandshakeInitiatorV1::start(
+            Some(NodeHandshakeInitiatorV1::start_native_session(
                 &identity,
                 remote_peer.clone(),
-                wall_ms,
                 ttl_ms,
             )?)
         } else {
@@ -94,14 +96,11 @@ impl NativeHandshake {
             .as_ref()
             .map(|i| handshake_wire::encode_offer(i.offer()))
             .transpose()?;
-        let outgoing_expiry = initiator
-            .as_ref()
-            .map(|i| i.offer().expires_at_ms)
-            .unwrap_or(0);
         Ok(Self {
             identity,
             remote_peer,
             remote,
+            is_initiator: initiator.is_some(),
             initiator,
             cached_offer: None,
             cached_response: None,
@@ -114,7 +113,8 @@ impl NativeHandshake {
                 .context("handshake deadline overflow")?,
             ttl_ms,
             retry,
-            outgoing_expiry,
+            pending_finished: None,
+            cached_finished: None,
             ready: false,
             session: None,
         })
@@ -129,11 +129,11 @@ impl NativeHandshake {
     pub(crate) fn try_send_limited(
         &mut self,
         io: &dyn NativeDatagramIo,
-        wall_ms: u64,
+        _wall_ms: u64,
         now: Instant,
         budget: Option<&mut NativeWireBudget>,
     ) -> Result<bool> {
-        if now >= self.deadline || wall_ms > self.outgoing_expiry {
+        if now >= self.deadline {
             ensure!(
                 self.ready || self.outgoing.is_none(),
                 "native handshake expired"
@@ -169,6 +169,12 @@ impl NativeHandshake {
         }
         if try_send_datagram(io, wire, self.remote, now, budget)? {
             self.next_send = now + self.retry;
+            if wire.starts_with(finished::MAGIC) {
+                if let Some(pending) = &mut self.pending_finished {
+                    pending.sent();
+                }
+                self.finish_if_complete()?;
+            }
             Ok(true)
         } else {
             Ok(false)
@@ -195,7 +201,6 @@ impl NativeHandshake {
         let event = match &result {
             Ok(true) => Event::DatagramSent,
             _ if now >= self.deadline => Event::AttemptDeadline,
-            _ if wall_ms > self.outgoing_expiry && self.outgoing.is_some() => Event::SignedExpiry,
             Err(_) => Event::SendFailed,
             Ok(false) if now < self.next_send => Event::RetryWait,
             Ok(false) if self.outgoing.is_none() => Event::NoTranscript,
@@ -268,14 +273,14 @@ impl NativeHandshake {
         &mut self,
         wire: &[u8],
         offer: &NodeHandshakeOfferV1,
-        wall_ms: u64,
+        _wall_ms: u64,
         replay: &mut HandshakeReplayCacheV1,
     ) -> Result<()> {
         ensure!(
             offer.responder_peer_id == self.identity.peer_id(),
             "configured offer target mismatch"
         );
-        validate_handshake_offer_v1(offer, wall_ms, replay, &self.identity)?;
+        validate_native_session_offer(offer, replay, &self.identity)?;
         // Reuse the original exact-offer retry slot. Losing election does not
         // make an already verified transcript a new reconnect on its next retry.
         self.cached_offer = Some(wire.to_vec());
@@ -297,24 +302,39 @@ impl NativeHandshake {
         &mut self,
         source: NativeRoute,
         wire: &[u8],
-        wall_ms: u64,
+        _wall_ms: u64,
         now: Instant,
         replay: &mut HandshakeReplayCacheV1,
     ) -> Result<()> {
         ensure!(source == self.remote, "native handshake source mismatch");
         ensure!(now < self.deadline, "native handshake attempt expired");
+        if wire.starts_with(finished::MAGIC) {
+            if self.ready {
+                ensure!(
+                    self.cached_finished.as_deref() == Some(wire),
+                    "different native Finished after activation"
+                );
+                return Ok(());
+            }
+            let pending = self
+                .pending_finished
+                .as_mut()
+                .context("no pending native Finished")?;
+            pending.receive(wire)?;
+            self.outgoing = Some(pending.wire()?);
+            self.next_send = now;
+            return self.finish_if_complete();
+        }
         match handshake_wire::decode(wire)? {
             HandshakeMessage::Offer(offer) => {
+                ensure!(
+                    offer.version == NATIVE_SESSION_VERSION,
+                    "native session profile required"
+                );
                 if self.cached_offer.as_deref() == Some(wire) {
-                    ensure!(
-                        wall_ms <= offer.expires_at_ms && wall_ms <= self.outgoing_expiry,
-                        "expired offer cannot retry a live attempt"
-                    );
                     // Only the responder retries its authenticated response;
                     // a losing offer cannot accelerate the elected initiator.
-                    if self.ready && self.outgoing.is_some() {
-                        self.next_send = now;
-                    }
+                    // Retry cadence is unchanged even under duplicate floods.
                     return Ok(());
                 }
                 ensure!(
@@ -326,47 +346,57 @@ impl NativeHandshake {
                     "unexpected native identity"
                 );
                 ensure!(
-                    !self.ready,
+                    !self.ready && self.pending_finished.is_none(),
                     "different/expired offer cannot replace live session"
                 );
-                let responder = NodeHandshakeResponderV1::respond(
+                let responder = NodeHandshakeResponderV1::respond_native_session(
                     &offer,
                     &self.identity,
-                    wall_ms,
-                    self.ttl_ms,
+                    self.ttl_ms.min(offer.expires_at_ms),
                     replay,
                 )?;
-                self.outgoing_expiry = responder.response().expires_at_ms;
+                self.deadline = self
+                    .deadline
+                    .min(now + Duration::from_millis(offer.expires_at_ms));
                 self.outgoing = Some(handshake_wire::encode_response(responder.response())?);
                 self.continuation = None;
-                self.session = Some(NativeUdpSession::new_route(
+                let transcript = handshake_transcript_hash_v1(&offer, responder.response());
+                self.pending_finished = Some(finished::Pending::new(
                     responder.into_channel(),
-                    self.remote,
-                )?);
+                    transcript,
+                    false,
+                ));
                 self.cached_offer = Some(wire.to_vec());
                 self.next_send = now;
-                self.ready = true;
             }
             HandshakeMessage::Response(response) => {
+                ensure!(
+                    response.version == NATIVE_SESSION_VERSION,
+                    "native session profile required"
+                );
                 ensure!(
                     response.responder_peer_id == self.remote_peer,
                     "unexpected responder identity"
                 );
-                if self.ready {
+                if self.ready || self.pending_finished.is_some() {
                     ensure!(
-                        self.cached_response.as_deref() == Some(wire)
-                            && wall_ms <= response.expires_at_ms,
+                        self.cached_response.as_deref() == Some(wire),
                         "different/expired response cannot replace live session"
                     );
                     return Ok(());
                 }
                 let initiator = self.initiator.take().context("no pending native offer")?;
-                match initiator.complete_owned(&response, wall_ms, replay) {
+                let transcript = handshake_transcript_hash_v1(initiator.offer(), &response);
+                match initiator.complete_native_session(&response, replay) {
                     Ok(channel) => {
-                        self.session = Some(NativeUdpSession::new_route(channel, self.remote)?);
+                        self.deadline = self
+                            .deadline
+                            .min(now + Duration::from_millis(response.expires_at_ms));
+                        let mut pending = finished::Pending::new(channel, transcript, true);
+                        self.outgoing = Some(pending.wire()?);
+                        self.pending_finished = Some(pending);
                         self.cached_response = Some(wire.to_vec());
-                        self.ready = true;
-                        self.outgoing = None;
+                        self.next_send = now;
                         // Retain this one flight's bounded metadata so a delayed
                         // Init reply still checks its original commitment and
                         // deadline. No transcript remains queued for sending.
@@ -377,6 +407,22 @@ impl NativeHandshake {
                         return Err(error.into());
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+    fn finish_if_complete(&mut self) -> Result<()> {
+        if self
+            .pending_finished
+            .as_ref()
+            .is_some_and(finished::Pending::complete)
+        {
+            let (channel, remote) = self.pending_finished.take().expect("complete").into_parts();
+            self.session = Some(NativeUdpSession::new_route(channel, self.remote)?);
+            self.cached_finished = Some(remote);
+            self.ready = true;
+            if self.is_initiator {
+                self.outgoing = None;
             }
         }
         Ok(())
@@ -396,5 +442,7 @@ impl NativeHandshake {
     }
 }
 
+#[cfg(test)]
+mod session_tests;
 #[cfg(test)]
 mod tests;

@@ -736,10 +736,8 @@ impl NativeEndpoint {
         )?;
         // All signature/domain/time/replay checks precede retaining a peer slot.
         handshake.receive_route(source, wire, wall_ms, now, &mut self.replay)?;
-        let session = handshake
-            .take_session()
-            .context("client handshake did not authenticate")?;
-        let (handshake, session, reconnect) = if open.retire_clients {
+        let session = handshake.take_session();
+        let (handshake, session, reconnect) = if open.retire_clients || session.is_none() {
             // A previously retired identity can arrive with a replayed signed
             // offer after the bounded replay cache rotates. Only fresh-channel
             // AEAD possession activates this new handle; pending offers expire.
@@ -756,7 +754,7 @@ impl NativeEndpoint {
                 }),
             )
         } else {
-            (Some(handshake), Some(session), None)
+            (Some(handshake), session, None)
         };
         let peer = Peer {
             id: id.into(),
@@ -779,7 +777,7 @@ impl NativeEndpoint {
         self.next_peer = index
             .checked_add(1)
             .context("native peer handle exhausted")?;
-        if peer.session.is_some() {
+        if peer.session.is_some() || peer.handshake.is_some() {
             self.sources.insert(source, index);
         }
         self.peers.insert(index, peer);
@@ -1282,6 +1280,9 @@ impl NativeEndpoint {
                     Ok(false) => {}
                     Err(_) => result.handshake_send_failures += 1,
                 }
+                if pending.session.is_none() {
+                    pending.session = pending.handshake.take_session();
+                }
             }
             let Some(handshake) = peer.handshake.as_mut() else {
                 continue;
@@ -1303,9 +1304,29 @@ impl NativeEndpoint {
                 Ok(false) => {}
                 Err(_) => result.handshake_send_failures += 1,
             }
+            if peer.session.is_none() {
+                peer.session = handshake.take_session();
+            }
         }
         #[cfg(any(feature = "iroh-transport", feature = "tls-transport"))]
         self.promote_udp_recoveries(&mut result, now)?;
+        // Ordinary first-contact listeners can expose a mutually Finished
+        // channel without waiting for business traffic. Reconnect/retirement
+        // policy still requires the original allowed-stream confirmation.
+        if self.open.as_ref().is_some_and(|open| !open.retire_clients) {
+            for (&index, peer) in &mut self.peers {
+                if peer.configured_key.is_none()
+                    && peer.session.is_none()
+                    && peer.reconnect.as_ref().is_some_and(|p| p.session.is_some())
+                {
+                    let mut pending = peer.reconnect.take().expect("completed pending client");
+                    peer.session = pending.session.take();
+                    peer.handshake = Some(pending.handshake);
+                    peer.last_authenticated = now;
+                    self.sources.insert(pending.source, index);
+                }
+            }
+        }
         // A quantum can contain old data BEFORE the handover. Never hand it to
         // consumers after exposing a replacement generation.
         result

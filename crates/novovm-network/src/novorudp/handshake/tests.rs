@@ -83,15 +83,18 @@ fn recovery_observer_distinguishes_original_send_deferrals_errors_and_deadlines(
         calls,
         "original retry clock retained"
     );
-    assert!(handshake
-        .try_send_observed(
-            &io,
-            4000,
-            now + Duration::from_millis(10),
-            None,
-            Some((&observer, 0))
-        )
-        .is_err());
+    assert!(
+        handshake
+            .try_send_observed(
+                &io,
+                4000,
+                now + Duration::from_millis(10),
+                None,
+                Some((&observer, 0))
+            )
+            .is_ok(),
+        "wall-clock jumps do not expire session-relative attempts"
+    );
     assert!(handshake
         .try_send_observed(
             &io,
@@ -108,7 +111,6 @@ fn recovery_observer_distinguishes_original_send_deferrals_errors_and_deadlines(
         "send_failed",
         "datagram_sent",
         "retry_wait",
-        "signed_expiry",
         "attempt_deadline",
     ] {
         let index = snapshot
@@ -116,7 +118,11 @@ fn recovery_observer_distinguishes_original_send_deferrals_errors_and_deadlines(
             .iter()
             .position(|n| *n == name)
             .unwrap();
-        assert_eq!(snapshot.udp_recovery[0].counts[index], 1, "{name}");
+        assert_eq!(
+            snapshot.udp_recovery[0].counts[index],
+            if name == "datagram_sent" { 2 } else { 1 },
+            "{name}"
+        );
     }
     assert_eq!(
         snapshot.udp_recovery[0].last_send_event,
@@ -126,7 +132,7 @@ fn recovery_observer_distinguishes_original_send_deferrals_errors_and_deadlines(
     Ok(())
 }
 
-fn receive(socket: &UdpSocket) -> Result<(Vec<u8>, SocketAddr)> {
+pub(super) fn receive(socket: &UdpSocket) -> Result<(Vec<u8>, SocketAddr)> {
     let until = Instant::now() + Duration::from_secs(2);
     let mut buffer = [0; MAX_DATAGRAM_BYTES + 1];
     loop {
@@ -204,7 +210,10 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
         .receive("127.0.0.1:1".parse()?, &offer, 1000, now, &mut right_cache)
         .is_err());
     right.receive(source, &offer, 1000, now, &mut right_cache)?;
-    let mut right_channel = right.take_session().context("responder channel missing")?;
+    assert!(
+        right.take_session().is_none(),
+        "signed offer alone is not liveness"
+    );
     assert!(right.try_send(&b, 1000, now)?);
     let (lost_response, _) = receive_handshake(&mut right, &b, &a, 1000, now)?;
     let later = now + Duration::from_millis(10);
@@ -226,9 +235,24 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
         .is_err());
     assert!(!left.is_ready());
     left.receive(source, &response, 1010, later, &mut left_cache)?;
+    assert!(left.take_session().is_none(), "Finished is mandatory");
+    assert!(left.try_send(&a, 999_999, later)?);
+    let (first_finished, source) = receive(&b)?;
+    right.receive(source, &first_finished, 0, later, &mut right_cache)?;
+    assert!(
+        right.take_session().is_none(),
+        "unsent Finished is not completion"
+    );
+    assert!(right.try_send(&b, 0, later)?);
+    let (last_finished, source) = receive(&a)?;
+    left.receive(source, &last_finished, 999_999, later, &mut left_cache)?;
+    let mut right_channel = right.take_session().context("responder channel missing")?;
     let mut left_channel = left.take_session().context("initiator channel missing")?;
     assert!(left.take_session().is_none());
     assert!(left.is_ready() && right.is_ready());
+    right.receive(a.local_addr()?, &first_finished, 0, later, &mut right_cache)?;
+    left.receive(source, &last_finished, 999_999, later, &mut left_cache)?;
+    assert!(left.take_session().is_none() && right.take_session().is_none());
     // Responder retries until it knows delivery; an exact duplicate is not a
     // new handshake and cannot reset the extracted channel's replay sequence.
     left.receive(source, &response, 1011, later, &mut left_cache)?;
@@ -237,7 +261,7 @@ fn lost_response_retries_same_native_handshake_and_live_channel_survives_expiry(
         .receive(source, &forged, 1011, later, &mut left_cache)
         .is_err());
     // A second offer cannot replace this session, even with a valid signature.
-    let fresh = NodeHandshakeInitiatorV1::start(
+    let fresh = NodeHandshakeInitiatorV1::start_native_test(
         &ka,
         peer_id_from_mldsa65_public_key_v1(kb.public_key()),
         1011,
@@ -301,7 +325,7 @@ fn pending_handshake_has_bounded_lifetime_and_never_accepts_unknown_identity() -
     assert!(left.is_expired(now + Duration::from_secs(1)));
     assert!(left.take_session().is_none());
     let unknown = crate::test_identity::key(88);
-    let offer = NodeHandshakeInitiatorV1::start(
+    let offer = NodeHandshakeInitiatorV1::start_native_test(
         &unknown,
         peer_id_from_mldsa65_public_key_v1(a.public_key()),
         1000,

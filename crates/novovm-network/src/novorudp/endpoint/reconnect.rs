@@ -6,7 +6,7 @@ use super::*;
 pub(super) struct PendingReconnect {
     pub(super) source: NativeRoute,
     pub(super) handshake: NativeHandshake,
-    pub(super) session: NativeUdpSession,
+    pub(super) session: Option<NativeUdpSession>,
     pub(super) deadline: Instant,
 }
 
@@ -125,6 +125,13 @@ impl NativeEndpoint {
     }
 
     pub(super) fn expire_reconnects(&mut self, now: Instant) {
+        // Unconfirmed first contact cannot occupy a listener slot forever.
+        // Handles remain monotonic; established/configured peers are untouched.
+        self.peers.retain(|_, peer| {
+            !(peer.configured_key.is_none()
+                && peer.session.is_none()
+                && peer.reconnect.as_ref().is_some_and(|p| now >= p.deadline))
+        });
         for (&index, peer) in &mut self.peers {
             if peer.reconnect.as_ref().is_some_and(|r| now >= r.deadline) {
                 if peer
@@ -154,6 +161,23 @@ impl NativeEndpoint {
         wall_ms: u64,
         now: Instant,
     ) -> Result<()> {
+        // A pending responder must receive Finished before exposing any channel.
+        // Match the original source/slot first; never allocate for a Finished.
+        if let Some(pending) = self
+            .peers
+            .values_mut()
+            .chain(self.waiting_clients.iter_mut())
+            .filter_map(|p| p.reconnect.as_mut())
+            .find(|p| p.source == source && now < p.deadline)
+        {
+            pending
+                .handshake
+                .receive_route(source, wire, wall_ms, now, &mut self.replay)?;
+            if pending.session.is_none() {
+                pending.session = pending.handshake.take_session();
+            }
+            return Ok(());
+        }
         if let Some(&index) = self.sources.get(&source) {
             let peer = self.peers.get_mut(&index).context("unknown native peer")?;
             // Old transcript retries keep their original replay semantics.
@@ -314,6 +338,10 @@ impl NativeEndpoint {
             anyhow::bail!("client must initiate")
         };
         ensure!(
+            Some(offer.session_id) != self.session_id(index),
+            "reconnect reused a session"
+        );
+        ensure!(
             self.peers[&index]
                 .configured_key
                 .as_deref()
@@ -341,13 +369,7 @@ impl NativeEndpoint {
             Some(false),
         )?;
         handshake.receive_route(source, wire, wall_ms, now, &mut self.replay)?;
-        let session = handshake
-            .take_session()
-            .context("reconnect did not authenticate")?;
-        ensure!(
-            Some(session.session_id()) != self.session_id(index),
-            "reconnect reused a session"
-        );
+        let session = handshake.take_session();
         self.peers
             .get_mut(&index)
             .context("unknown native peer")?
@@ -389,6 +411,7 @@ impl NativeEndpoint {
             .reconnect
             .as_mut()?
             .session
+            .as_mut()?
             .open_route(source, wire)
             .ok()?;
         // Authenticated but forbidden streams do not activate a connection.
@@ -410,9 +433,10 @@ impl NativeEndpoint {
             .as_ref()
             .is_some_and(NativeUdpSession::is_bound_reliable_carrier);
         let previous = peer.session.as_ref().map(NativeUdpSession::session_id);
-        let current = pending.session.session_id();
+        let session = pending.session.take()?;
+        let current = session.session_id();
         peer.last_authenticated = now;
-        peer.session = Some(pending.session);
+        peer.session = Some(session);
         if let Some(previous) = peer.handshake.as_mut() {
             pending.handshake.retain_replaced_flight(previous);
         }

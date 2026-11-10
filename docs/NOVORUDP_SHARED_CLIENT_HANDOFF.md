@@ -2011,6 +2011,45 @@ context、generation、样本、单调寿命和防复活下界。generation是�
 也不让待验证队列无界积压。本次仅记录决定，不修改系统时间、不更新A/B/C/D，
 不改变认证、账本、AOEM、共识、资源上限或默认传输路径。
 
+### 37. 2026-11-10 首次原生握手采用会话相对时间；四机统一升级授权
+
+输入`b4f22132`，本节更新36/36.1中“首次原生握手尚未接通”的源码状态，
+不追认旧实机结果。用户随后明确“全部直接升级就好了”：本轮节点和配套操作客户端
+按同一冻结版本推进A/B/C/D升级，不为同范围再申请；仍须完成固定制品及必要门禁，
+真实版本/进程/原库检查和更新结果如实记录。尚未因此停止或更新任何运行节点。
+
+原`NativeEndpoint -> NativeHandshake -> NodeHandshakeInitiatorV1/ResponderV1`
+改用显式签名profile3；复用原ML-DSA、ECDH、HKDF、AEAD、分片cookie、重放缓存及
+资源预算。版本3的零起点/相对寿命是**新签名域合同**，不是把旧签名报文时间置零
+并绕过验签；旧profile2检查不变，原生入口不降级接受它。没有新增socket或网络服务。
+
+原始可靠Carrier的SessionV2要求真实TLS exporter及VerifiedTransportBinding，不能
+直接冒用为裸UDP已认证证据。本次抽取共用Finished帧构造，原生采用独立domain和
+原签名transcript，交换双方AEAD Finished。必须验证对端Finished并真实提交本端
+Finished才暴露channel；双向sequence0只用于Finished，原业务从sequence1继续。
+Finished重传复用密文，不重置序号；不能充当业务帧、Object DONE或Business Receipt。
+
+所有flight保留原本地单调截止；对端相对寿命只可收紧、不延长。重放旧offer即使
+缓存已轮换，也不能用旧Finished证明新的响应密钥；重复offer不加速重试、不续期。
+首次未确认客户端到期释放原名额；现有重连/退役/地址学习仍等待原允许stream的
+AEAD确认，不凭新offer或Finished替换已有业务连接。
+
+这是持钥和新会话证明，不是UTC真实性、链最终性或资产授权。首次传输握手没有新增
+链域字段；原上层链/创世/协议承诺绑定仍必须执行，会话后时间挑战继续绑定这些字段。
+原ECDH未改，不能把ML-DSA签名称为抗量子密钥协商。发现租约/聊天及可信UTC尚未迁移，
+36.1的时间测量洪泛/重测风暴、平台休眠、真实C验证等剩余项目继续单列。
+
+**兼容性：原生两端和操作客户端必须一起更新。** 已安装1ef程序不能用旧原生握手
+与新程序完成会话；可靠Carrier合同继续独立核验，不作为静默绕过。准备固定候选时
+覆盖Node/Client/NAT/ctl及相应主机配置，不能只更换A或只更新库便宣布四机合格。
+双方新profile相对旧两flight增加两条小Finished报文；没有吞吐/延迟改善结论。
+
+源码调用、反例、实际测试及原始失败见
+[首次握手记录](../artifacts/audit/novonet-native-session-clock-20261110/README.md)。
+注入墙上时间和真实loopback UDP/QUIC测试不等于C实机校时/休眠或四机公网验收。
+下一阶段冻结同版本候选，核验包内程序及AOEM，再按已授权范围更新和双端取证；
+不修改共识、账本、资产期限、系统时钟或资源限额。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

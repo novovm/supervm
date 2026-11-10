@@ -834,6 +834,7 @@ impl crate::novorudp::carrier::NativeDatagramIo for BlockedFeedbackIo {
         // writes on that reliable-data slot.
         if self.stepped.load(Ordering::Relaxed)
             && !bytes.starts_with(b"NVHSHK02")
+            && !bytes.starts_with(b"NVHSHK03")
             && !bytes.starts_with(b"NVHCONT1")
         {
             let mut slot = self.write.lock().unwrap();

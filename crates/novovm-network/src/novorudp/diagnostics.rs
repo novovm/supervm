@@ -526,8 +526,9 @@ pub(crate) enum UdpRecoveryEvent {
     RetryWait = 5,
     NoTranscript,
     AttemptDeadline,
-    SignedExpiry,
-    DatagramSent,
+    // Slot 8 remains in the public historical counter layout, but native
+    // session-relative handshakes no longer emit UTC SignedExpiry.
+    DatagramSent = 9,
     BudgetDeferred,
     IoWouldBlock,
     SendFailed,

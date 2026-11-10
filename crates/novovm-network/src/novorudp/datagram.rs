@@ -108,6 +108,10 @@ impl NativeUdpSession {
 
     pub fn encode(&mut self, frame: &NovoRudpTransportFrameV0) -> Result<Vec<u8>> {
         ensure!(
+            frame.stream_id != u64::MAX,
+            "Finished stream is handshake-only"
+        );
+        ensure!(
             frame.session_id == self.session_id(),
             "inner frame session mismatch"
         );
@@ -197,7 +201,7 @@ impl NativeUdpSession {
                 })?
             }
         };
-        if frame.session_id != self.session_id() {
+        if frame.session_id != self.session_id() || frame.stream_id == u64::MAX {
             return Err(anyhow::anyhow!("inner frame session mismatch")
                 .context(NativeRejectReasonV1::SecureRoute));
         }

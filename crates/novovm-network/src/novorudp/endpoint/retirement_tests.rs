@@ -3,6 +3,45 @@ use super::*;
 use crate::novorudp::NovoRudpTransportFrameKindV0;
 
 #[test]
+fn unconfirmed_first_contact_expires_without_pinning_listener_capacity() -> Result<()> {
+    let key = crate::test_identity::key(251);
+    let client = crate::test_identity::key(252);
+    let socket = UdpSocket::bind("127.0.0.1:0")?;
+    let mut server = NativeEndpoint::listen_clients(
+        UdpSocket::bind("127.0.0.1:0")?,
+        key.clone(),
+        1,
+        vec![17],
+        NativeHandshakeBudget {
+            lifetime: Duration::from_secs(2),
+            retry: Duration::from_millis(10),
+        },
+    )?;
+    let now = Instant::now();
+    for index in 0..2 {
+        let offer = crate::product_overlay::NodeHandshakeInitiatorV1::start_native_test(
+            &client,
+            key.peer_id(),
+            0,
+            2000,
+        )?;
+        server.accept_client(
+            NativeRoute::Udp(socket.local_addr()?),
+            &crate::product_overlay::handshake_wire::encode_offer(offer.offer())?,
+            0,
+            now,
+        )?;
+        assert_eq!(server.peer_indices().collect::<Vec<_>>(), vec![index]);
+        assert!(server.session_id(index).is_none());
+        assert!(server.sources.is_empty());
+        server.expire_reconnects(now + Duration::from_secs(2));
+        assert_eq!(server.peer_count(), 0);
+        assert!(server.sources.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn one_listener_serves_128_identities_without_reusing_handles_or_accepting_old_frames() -> Result<()>
 {
     let key = crate::test_identity::key(250);
@@ -165,7 +204,7 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
     let start = Instant::now();
     let target = peer_id_from_mldsa65_public_key_v1(key.public_key());
     let source = UdpSocket::bind("127.0.0.1:0")?;
-    let offer = NodeHandshakeInitiatorV1::start(
+    let offer = NodeHandshakeInitiatorV1::start_native_test(
         &crate::test_identity::key(232),
         target.clone(),
         1000,
@@ -181,8 +220,12 @@ fn full_listener_retains_idle_peers_without_verified_admission_demand() -> Resul
     let later = start + Duration::from_secs(6);
     assert!(!server.needs_client_capacity(later));
     let other = UdpSocket::bind("127.0.0.1:0")?;
-    let offer =
-        NodeHandshakeInitiatorV1::start(&crate::test_identity::key(233), target, 1000, 1000)?;
+    let offer = NodeHandshakeInitiatorV1::start_native_test(
+        &crate::test_identity::key(233),
+        target,
+        1000,
+        1000,
+    )?;
     let mut wire = handshake_wire::encode_offer(offer.offer())?;
     *wire.last_mut().unwrap() ^= 1;
     assert!(server
@@ -248,7 +291,7 @@ fn admission_snapshot_tracks_verified_waiter_without_evicting_existing_peer() ->
         UdpSocket::bind("127.0.0.1:0")?,
     ];
     for (index, source) in sources.iter().enumerate() {
-        let offer = NodeHandshakeInitiatorV1::start(
+        let offer = NodeHandshakeInitiatorV1::start_native_test(
             &crate::test_identity::key(235 + index as u8),
             target.clone(),
             1000,
@@ -303,7 +346,7 @@ fn several_verified_waiters_wait_together_and_enter_in_arrival_order() -> Result
         .collect::<std::io::Result<_>>()?;
     let mut offers = Vec::new();
     for (index, source) in sources.iter().enumerate() {
-        let offer = NodeHandshakeInitiatorV1::start(
+        let offer = NodeHandshakeInitiatorV1::start_native_test(
             &crate::test_identity::key(242 + index as u8),
             target.clone(),
             1000,
@@ -317,8 +360,12 @@ fn several_verified_waiters_wait_together_and_enter_in_arrival_order() -> Result
     assert_eq!(server.peer_count(), 3);
     assert_eq!(server.waiting_clients.len(), 3);
     let excess_source = UdpSocket::bind("127.0.0.1:0")?;
-    let excess =
-        NodeHandshakeInitiatorV1::start(&crate::test_identity::key(249), target, 1000, 1000)?;
+    let excess = NodeHandshakeInitiatorV1::start_native_test(
+        &crate::test_identity::key(249),
+        target,
+        1000,
+        1000,
+    )?;
     assert!(server
         .accept_client(
             NativeRoute::Udp(excess_source.local_addr()?),

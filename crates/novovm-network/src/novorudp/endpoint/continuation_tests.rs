@@ -68,7 +68,7 @@ fn receive_response(endpoint: &mut NativeEndpoint, socket: &UdpSocket) -> Result
 fn continuation_cookie_never_admits_peer_but_complete_signed_input_uses_original_handshake(
 ) -> Result<()> {
     let (mut endpoint, socket, server_key, client_key) = listener()?;
-    let offer = NodeHandshakeInitiatorV1::start(
+    let offer = NodeHandshakeInitiatorV1::start_native_test(
         &client_key,
         peer_id_from_mldsa65_public_key_v1(server_key.public_key()),
         1000,
@@ -100,7 +100,7 @@ fn continuation_cookie_never_admits_peer_but_complete_signed_input_uses_original
         panic!("original endpoint did not sign response")
     };
     offer
-        .complete_owned(&response, 1000, &mut HandshakeReplayCacheV1::default())
+        .complete_native_session(&response, &mut HandshakeReplayCacheV1::default())
         .map_err(|_| anyhow::anyhow!("original signature verification failed"))?;
     Ok(())
 }
@@ -108,7 +108,7 @@ fn continuation_cookie_never_admits_peer_but_complete_signed_input_uses_original
 #[test]
 fn valid_cookie_cannot_admit_invalid_signature_or_large_unrecognized_transcript() -> Result<()> {
     let (mut endpoint, socket, server_key, client_key) = listener()?;
-    let offer = NodeHandshakeInitiatorV1::start(
+    let offer = NodeHandshakeInitiatorV1::start_native_test(
         &client_key,
         peer_id_from_mldsa65_public_key_v1(server_key.public_key()),
         1000,
@@ -367,10 +367,7 @@ fn configured_election_retains_own_delayed_challenge_after_responder_confirmatio
         .as_ref()
         .unwrap()
         .outgoing_wire_for_test()
-        .is_some_and(|wire| matches!(
-            handshake_wire::decode(wire),
-            Ok(handshake_wire::HandshakeMessage::Response(_))
-        )));
+        .is_some_and(|wire| wire.starts_with(b"NVHSHK03")));
 
     let mut wrong_flight = delayed_challenge.clone();
     wrong_flight[9] ^= 1;
@@ -459,7 +456,8 @@ fn configured_losing_offer_retry_is_idempotent_before_and_after_elected_session(
         .outgoing_wire_for_test()
         .context("configured initiator did not prepare offer")?
         .to_vec();
-    let loser = NodeHandshakeInitiatorV1::start(&high_key, low_key.peer_id(), 1000, 5000)?;
+    let loser =
+        NodeHandshakeInitiatorV1::start_native_test(&high_key, low_key.peer_id(), 1000, 5000)?;
     let loser_wire = handshake_wire::encode_offer(loser.offer())?;
     low.receive_handshake(source, &loser_wire, 1000, start)?;
     let before = low.receive_handshake(source, &loser_wire, 1000, start);
@@ -478,15 +476,33 @@ fn configured_losing_offer_retry_is_idempotent_before_and_after_elected_session(
     let handshake_wire::HandshakeMessage::Offer(offer) = handshake_wire::decode(&elected)? else {
         anyhow::bail!("elected transcript was not an offer")
     };
-    let responder = NodeHandshakeResponderV1::respond(
+    let responder = NodeHandshakeResponderV1::respond_native_session(
         &offer,
         &high_key,
-        1000,
         5000,
         &mut HandshakeReplayCacheV1::default(),
     )?;
     let response = handshake_wire::encode_response(responder.response())?;
+    let transcript =
+        crate::product_overlay::handshake_transcript_hash_v1(&offer, responder.response());
+    let mut channel = responder.into_channel();
     low.receive_handshake(source, &response, 1000, start)?;
+    assert!(low.session_id(0).is_none());
+    // Send the initiator Finished via the original IO before delivering the
+    // responder proof. Neither generated ciphertext nor a signature is readiness.
+    low.poll(1000, start, 64)?;
+    let frame = crate::product_overlay::session_finish::finished_frame(
+        b"novovm.native-session.finished.mldsa65.v3",
+        offer.session_id,
+        transcript,
+        false,
+    );
+    let mut finished = b"NVHSHK03".to_vec();
+    finished.extend(crate::product_overlay::binary::encode(
+        &channel.seal_novorudp_frame(&frame)?,
+        1192,
+    )?);
+    low.receive_handshake(source, &finished, 1000, start)?;
     let session = low
         .session_id(0)
         .context("elected session was not installed")?;

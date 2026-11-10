@@ -7,13 +7,14 @@
 //! Network authorization, cancellation and connection lifetime remain the
 //! carrier owner's responsibility, including before it opens any connection.
 
+#[cfg(test)]
+use crate::duplex::NovoRudpTransportFrameKindV0;
 use crate::duplex::{
     peer_id_from_mldsa65_public_key_v1, E2eSecureChannelV1, HandshakeReplayCacheV1,
     NodeHandshakeInitiatorV1, NodeHandshakeOfferV1, NodeHandshakeResponderV1,
-    NodeHandshakeResponseV1, NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
-    ProductOverlayErrorV1, SecureNovoRudpEnvelopeV1, TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES,
-    MLDSA65_SIGNATURE_BYTES, MLDSA65_SUITE, PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1,
-    PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+    NodeHandshakeResponseV1, NovoRudpTransportFrameV0, ProductOverlayErrorV1,
+    SecureNovoRudpEnvelopeV1, TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES,
+    MLDSA65_SUITE, PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1, PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
 };
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
@@ -601,18 +602,11 @@ impl PendingBoundChannelV1 {
     }
 
     fn finished_frame(&self, sender_is_initiator: bool) -> NovoRudpTransportFrameV0 {
-        let mut payload = Vec::with_capacity(FINISHED_DOMAIN.len() + 33);
-        payload.extend_from_slice(FINISHED_DOMAIN);
-        payload.push(if sender_is_initiator { 1 } else { 2 });
-        payload.extend_from_slice(&self.transcript);
-        NovoRudpTransportFrameV0::new(
-            NovoRudpTransportFrameKindV0::Endpoint,
+        crate::product_overlay::session_finish::finished_frame(
+            FINISHED_DOMAIN,
             self.channel.session_id(),
-            FINISHED_STREAM,
-            0,
-            0,
-            0,
-            payload,
+            self.transcript,
+            sender_is_initiator,
         )
     }
 }

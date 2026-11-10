@@ -66,7 +66,7 @@ fn rejects_legacy_unknown_suite_version_truncation_and_noncanonical_ids() {
         for (start, replacement) in [
             (0, b"NVHSHK01".as_slice()),
             (9, &[0, 1]),
-            (9, &[0, 3]),
+            (9, &[0, 4]),
             (11, &[0, 1]),
             (11, &[0, 44]),
             (11, &[0, 87]),

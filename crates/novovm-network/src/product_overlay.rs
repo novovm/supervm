@@ -3,6 +3,7 @@ use crate::novorudp::{NovoRudpTransportFrameDecodeErrorV0, NovoRudpTransportFram
 pub mod binary;
 pub mod handshake_wire;
 mod identity;
+pub(crate) mod session_finish;
 use chacha20poly1305::{aead::AeadInPlace, ChaCha20Poly1305, KeyInit, Nonce, Tag};
 use hkdf::Hkdf;
 pub use identity::{
@@ -19,6 +20,17 @@ use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const PRODUCT_OVERLAY_PROTOCOL_VERSION_V1: u16 = 2;
+/// Explicit native session-relative proof. Never interpreted as a UTC credential.
+pub(crate) const NATIVE_SESSION_VERSION: u16 = 3;
+const NATIVE_SESSION_DOMAIN: &[u8] = b"novovm-native-session-clock-mldsa65-v3";
+
+fn handshake_domain(version: u16) -> &'static [u8] {
+    if version == NATIVE_SESSION_VERSION {
+        NATIVE_SESSION_DOMAIN
+    } else {
+        PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1
+    }
+}
 /// Bound differences between independently synchronized device clocks. This
 /// tolerates future issuance only; signed expiration remains a strict deadline.
 pub const PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1: u64 = 5_000;
@@ -239,38 +251,51 @@ impl SlidingReplayWindowV1 {
 }
 
 impl NodeHandshakeInitiatorV1 {
+    #[cfg(test)]
+    pub(crate) fn start_native_test(
+        identity: &TransportIdentity,
+        responder: impl Into<String>,
+        _fixture_wall_ms: u64,
+        ttl_ms: u64,
+    ) -> Result<Self, ProductOverlayErrorV1> {
+        Self::start_native_session(identity, responder.into(), ttl_ms)
+    }
+    /// Only the native handshake owner may use this relative proof; it must
+    /// enforce its immutable monotonic deadline and exchange Finished.
+    pub(crate) fn start_native_session(
+        identity: &TransportIdentity,
+        responder: String,
+        ttl_ms: u64,
+    ) -> Result<Self, ProductOverlayErrorV1> {
+        Self::start_mode(identity, responder, 0, ttl_ms, NATIVE_SESSION_VERSION)
+    }
     pub fn start(
         identity: &TransportIdentity,
         responder_peer_id: impl Into<String>,
         now_ms: u64,
         ttl_ms: u64,
     ) -> Result<Self, ProductOverlayErrorV1> {
-        let responder_peer_id = responder_peer_id.into();
+        Self::start_mode(
+            identity,
+            responder_peer_id.into(),
+            now_ms,
+            ttl_ms,
+            PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+        )
+    }
+
+    fn start_mode(
+        identity: &TransportIdentity,
+        responder_peer_id: String,
+        now_ms: u64,
+        ttl_ms: u64,
+        version: u16,
+    ) -> Result<Self, ProductOverlayErrorV1> {
         let ephemeral_secret = SecretKey::generate();
         let mut session_id = [0u8; 16];
         let mut challenge = [0u8; 32];
         OsRng.fill_bytes(&mut session_id);
         OsRng.fill_bytes(&mut challenge);
-        Self::start_with_material(
-            identity,
-            responder_peer_id,
-            now_ms,
-            ttl_ms,
-            session_id,
-            challenge,
-            ephemeral_secret,
-        )
-    }
-
-    fn start_with_material(
-        identity: &TransportIdentity,
-        responder_peer_id: String,
-        now_ms: u64,
-        ttl_ms: u64,
-        session_id: [u8; 16],
-        challenge: [u8; 32],
-        ephemeral_secret: SecretKey,
-    ) -> Result<Self, ProductOverlayErrorV1> {
         let identity_public_key = identity.public_key().to_vec();
         let initiator_peer_id = identity.peer_id();
         let ephemeral_public_key = ephemeral_secret
@@ -282,7 +307,7 @@ impl NodeHandshakeInitiatorV1 {
             .checked_add(ttl_ms.max(1))
             .ok_or(ProductOverlayErrorV1::HandshakeExpired)?;
         let mut offer = NodeHandshakeOfferV1 {
-            version: PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+            version,
             session_id,
             initiator_peer_id,
             responder_peer_id,
@@ -296,7 +321,7 @@ impl NodeHandshakeInitiatorV1 {
         offer.signature = identity
             .sign(
                 &handshake_offer_signing_bytes_v1(&offer),
-                PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+                handshake_domain(version),
             )
             .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
         Ok(Self {
@@ -329,13 +354,37 @@ impl NodeHandshakeInitiatorV1 {
         now_ms: u64,
         replay_cache: &mut HandshakeReplayCacheV1,
     ) -> Result<E2eSecureChannelV1, Box<(Self, ProductOverlayErrorV1)>> {
+        self.complete_owned_mode(
+            response,
+            now_ms,
+            replay_cache,
+            PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+        )
+    }
+
+    pub(crate) fn complete_native_session(
+        self,
+        response: &NodeHandshakeResponseV1,
+        replay: &mut HandshakeReplayCacheV1,
+    ) -> Result<E2eSecureChannelV1, Box<(Self, ProductOverlayErrorV1)>> {
+        self.complete_owned_mode(response, 0, replay, NATIVE_SESSION_VERSION)
+    }
+
+    fn complete_owned_mode(
+        self,
+        response: &NodeHandshakeResponseV1,
+        now_ms: u64,
+        replay_cache: &mut HandshakeReplayCacheV1,
+        version: u16,
+    ) -> Result<E2eSecureChannelV1, Box<(Self, ProductOverlayErrorV1)>> {
         let result = (|| {
-            validate_handshake_response_v1(
+            validate_handshake_response_mode(
                 &self.offer,
                 response,
                 now_ms,
                 replay_cache,
                 &self.verifier,
+                version,
             )?;
             let remote_public =
                 PublicKey::from_sec1_bytes(&response.responder_ephemeral_public_key)
@@ -353,6 +402,14 @@ impl NodeHandshakeInitiatorV1 {
 }
 
 impl NodeHandshakeResponderV1 {
+    pub(crate) fn respond_native_session(
+        offer: &NodeHandshakeOfferV1,
+        identity: &TransportIdentity,
+        ttl_ms: u64,
+        replay: &mut HandshakeReplayCacheV1,
+    ) -> Result<Self, ProductOverlayErrorV1> {
+        Self::respond_mode(offer, identity, 0, ttl_ms, replay, NATIVE_SESSION_VERSION)
+    }
     pub fn respond(
         offer: &NodeHandshakeOfferV1,
         identity: &TransportIdentity,
@@ -360,7 +417,25 @@ impl NodeHandshakeResponderV1 {
         ttl_ms: u64,
         replay_cache: &mut HandshakeReplayCacheV1,
     ) -> Result<Self, ProductOverlayErrorV1> {
-        validate_handshake_offer_v1(offer, now_ms, replay_cache, identity)?;
+        Self::respond_mode(
+            offer,
+            identity,
+            now_ms,
+            ttl_ms,
+            replay_cache,
+            PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+        )
+    }
+
+    fn respond_mode(
+        offer: &NodeHandshakeOfferV1,
+        identity: &TransportIdentity,
+        now_ms: u64,
+        ttl_ms: u64,
+        replay_cache: &mut HandshakeReplayCacheV1,
+        version: u16,
+    ) -> Result<Self, ProductOverlayErrorV1> {
+        validate_handshake_offer_mode(offer, now_ms, replay_cache, identity, version)?;
         let responder_identity_public_key = identity.public_key().to_vec();
         let responder_peer_id = identity.peer_id();
         if responder_peer_id != offer.responder_peer_id {
@@ -380,7 +455,7 @@ impl NodeHandshakeResponderV1 {
             .checked_add(ttl_ms.max(1))
             .ok_or(ProductOverlayErrorV1::HandshakeExpired)?;
         let mut response = NodeHandshakeResponseV1 {
-            version: PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+            version,
             session_id: offer.session_id,
             initiator_peer_id: offer.initiator_peer_id.clone(),
             responder_peer_id,
@@ -396,7 +471,7 @@ impl NodeHandshakeResponderV1 {
         response.signature = identity
             .sign(
                 &handshake_response_signing_bytes_v1(&response),
-                PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+                handshake_domain(version),
             )
             .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
         let secrets =
@@ -682,8 +757,37 @@ pub fn validate_handshake_offer_v1(
     replay_cache: &mut HandshakeReplayCacheV1,
     verifier: &TransportIdentity,
 ) -> Result<(), ProductOverlayErrorV1> {
-    if offer.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 {
+    validate_handshake_offer_mode(
+        offer,
+        now_ms,
+        replay_cache,
+        verifier,
+        PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+    )
+}
+
+pub(crate) fn validate_native_session_offer(
+    offer: &NodeHandshakeOfferV1,
+    replay: &mut HandshakeReplayCacheV1,
+    verifier: &TransportIdentity,
+) -> Result<(), ProductOverlayErrorV1> {
+    validate_handshake_offer_mode(offer, 0, replay, verifier, NATIVE_SESSION_VERSION)
+}
+
+fn validate_handshake_offer_mode(
+    offer: &NodeHandshakeOfferV1,
+    now_ms: u64,
+    replay_cache: &mut HandshakeReplayCacheV1,
+    verifier: &TransportIdentity,
+    version: u16,
+) -> Result<(), ProductOverlayErrorV1> {
+    if offer.version != version {
         return Err(ProductOverlayErrorV1::UnsupportedVersion(offer.version));
+    }
+    if version == NATIVE_SESSION_VERSION
+        && (offer.issued_at_ms != 0 || offer.expires_at_ms == 0 || offer.expires_at_ms > 60_000)
+    {
+        return Err(ProductOverlayErrorV1::HandshakeExpired);
     }
     if offer.issued_at_ms > now_ms.saturating_add(PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1)
         || offer.expires_at_ms < offer.issued_at_ms
@@ -701,7 +805,7 @@ pub fn validate_handshake_offer_v1(
         .verify(
             &offer.initiator_identity_public_key,
             &handshake_offer_signing_bytes_v1(offer),
-            PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+            handshake_domain(version),
             &offer.signature,
         )
         .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
@@ -718,8 +822,34 @@ pub fn validate_handshake_response_v1(
     replay_cache: &mut HandshakeReplayCacheV1,
     verifier: &TransportIdentity,
 ) -> Result<(), ProductOverlayErrorV1> {
-    if response.version != PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 {
+    validate_handshake_response_mode(
+        offer,
+        response,
+        now_ms,
+        replay_cache,
+        verifier,
+        PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+    )
+}
+
+fn validate_handshake_response_mode(
+    offer: &NodeHandshakeOfferV1,
+    response: &NodeHandshakeResponseV1,
+    now_ms: u64,
+    replay_cache: &mut HandshakeReplayCacheV1,
+    verifier: &TransportIdentity,
+    version: u16,
+) -> Result<(), ProductOverlayErrorV1> {
+    if response.version != version || offer.version != version {
         return Err(ProductOverlayErrorV1::UnsupportedVersion(response.version));
+    }
+    if version == NATIVE_SESSION_VERSION
+        && (offer.issued_at_ms != 0
+            || response.issued_at_ms != 0
+            || response.expires_at_ms == 0
+            || response.expires_at_ms > 60_000)
+    {
+        return Err(ProductOverlayErrorV1::HandshakeExpired);
     }
     if offer.issued_at_ms > now_ms.saturating_add(PRODUCT_OVERLAY_CLOCK_SKEW_MS_V1)
         || offer.expires_at_ms < offer.issued_at_ms
@@ -753,7 +883,7 @@ pub fn validate_handshake_response_v1(
         .verify(
             &response.responder_identity_public_key,
             &handshake_response_signing_bytes_v1(response),
-            PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1,
+            handshake_domain(version),
             &response.signature,
         )
         .map_err(|_| ProductOverlayErrorV1::InvalidHandshakeSignature)?;
@@ -794,7 +924,7 @@ fn derive_session_secrets_v1(
 
 fn handshake_offer_signing_bytes_v1(offer: &NodeHandshakeOfferV1) -> Vec<u8> {
     let mut out = Vec::new();
-    append_field_v1(&mut out, PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1);
+    append_field_v1(&mut out, handshake_domain(offer.version));
     out.extend_from_slice(&offer.version.to_be_bytes());
     out.extend_from_slice(&MLDSA65_SUITE.to_be_bytes());
     out.extend_from_slice(&offer.session_id);
@@ -810,7 +940,7 @@ fn handshake_offer_signing_bytes_v1(offer: &NodeHandshakeOfferV1) -> Vec<u8> {
 
 fn handshake_response_signing_bytes_v1(response: &NodeHandshakeResponseV1) -> Vec<u8> {
     let mut out = Vec::new();
-    append_field_v1(&mut out, PRODUCT_OVERLAY_HANDSHAKE_DOMAIN_V1);
+    append_field_v1(&mut out, handshake_domain(response.version));
     out.extend_from_slice(&response.version.to_be_bytes());
     out.extend_from_slice(&MLDSA65_SUITE.to_be_bytes());
     out.extend_from_slice(&response.session_id);
@@ -842,7 +972,7 @@ fn handshake_response_hash_v1(response: &NodeHandshakeResponseV1) -> [u8; 32] {
     ])
 }
 
-fn handshake_transcript_hash_v1(
+pub(crate) fn handshake_transcript_hash_v1(
     offer: &NodeHandshakeOfferV1,
     response: &NodeHandshakeResponseV1,
 ) -> [u8; 32] {

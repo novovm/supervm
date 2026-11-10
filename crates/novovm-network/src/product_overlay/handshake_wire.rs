@@ -49,7 +49,7 @@ fn common(
     responder: &str,
 ) -> Result<Vec<u8>> {
     ensure!(
-        version == PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+        version == PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 || version == super::NATIVE_SESSION_VERSION,
         "unsupported native handshake version"
     );
     peer(initiator.as_bytes())?;
@@ -134,7 +134,7 @@ pub fn decode(wire: &[u8]) -> Result<HandshakeMessage> {
     );
     let version = u16::from_be_bytes(wire[9..11].try_into()?);
     ensure!(
-        version == PRODUCT_OVERLAY_PROTOCOL_VERSION_V1,
+        version == PRODUCT_OVERLAY_PROTOCOL_VERSION_V1 || version == super::NATIVE_SESSION_VERSION,
         "unsupported native handshake version"
     );
     ensure!(
