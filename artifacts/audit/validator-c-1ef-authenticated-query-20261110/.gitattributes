@@ -1,0 +1,4 @@
+# Preserve original query evidence and its SHA256 across platform checkouts.
+*.json -text
+*.stderr -text
+Read-C-Recovery.ps1 -text
