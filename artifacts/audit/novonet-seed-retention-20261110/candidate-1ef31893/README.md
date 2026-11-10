@@ -1,4 +1,49 @@
-# 1ef31893 固定候选：本地制品交付，不部署
+# 1ef31893 固定候选与串行实网交付
+
+## 2026-11-10 当前结果：B→A已更新，公网发现与原生对象交付已实测
+
+用户本轮已批准B→A→C→D串行existing更新。Full运行
+[42721507092](https://github.com/novovm/supervm/actions/runs/42721507092)已success，
+headSHA为`5c6a6b48db817f7ef2f9dd6c759698a7083423c6`；与固定程序`1ef31893`
+完整diff只有本候选的README/清单/证据ZIP与共享交接，没有程序、依赖、构建或CI变化。
+这是旧分流规则下实际执行完的Full，不是`0ddf0ebf`轻量结果；未另开或重跑CI。
+下方“待批准/尚未签收”为此前历史快照，由本节更新，不改写旧cancelled运行。
+
+- B：PID2858350→2944965，原novovm UID996；80项制品、包内AOEM资格、
+  原库existing、原身份/密钥、状态根、41050/42050监听通过，独立认证查询62→64ms。
+  邮箱、Relay、nginx、Docker状态及PID未变。
+- A：PID37496→17724，原LocalService；77项制品、实际加载AOEM、原库existing、
+  原身份/密钥及状态根通过，独立认证查询42→29ms。同范围规则绑定新程序，
+  防火墙三类配置不变。没有执行旧initialize任务，没有回滚、清库或换钥。
+- 两端原状态根均为`f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`。
+
+发现的真实阶段链：A保留序号4166缓存；attempt1使用其私网坐标，8001ms时
+carrier connect deadline。attempt2实际选择`configured_seed`，经
+`https://euc1-1.relay.n0.iroh.link/`完成QUIC、流、bound认证、发布及NODE_GET，
+1481ms完成。attempt3用新声明直连`47.103.59.206:42050`，198ms完成同一发现流程。
+B同窗记录入站TLS/Stream Ready。双方attempt是各进程本地编号，不冒称线上的共同ID。
+缓存后续序号4910，未清除或回退到seed12；原首次失败仍保留。
+
+独立的原生NovoRUDP验证：A原owner仅发出一条固定非业务对象，实际到
+`47.103.59.206:41050`，B观察对端`114.92.30.222:60735`。
+Object ID `65a9412ab1973d2af85cda5401d1a06bbb66d97119c44a69b03eba21d4027372`，
+Session ID `6f17d7154ef1199da11b37a5b70dbff4`。双端接收完整性、对象ID/session/nonce/
+双方身份一致，发送端终态delivered及`probe_object_done`、接收端verified均成立。
+单分片Transport ACK与Object DONE分别记录；A本机admitted→DONE为11ms，
+不作跨机器单向延迟、TPS或业务Receipt声明。
+
+原始结果：[update-result.json](update-result.json)；
+[更新与双端原始证据](original-update-evidence.zip)，SHA256
+`c2f964bf187fb8cf72f856132458e104bf5e9c157f665282699398f59e71b911`，
+归档后逐成员重新读取核验。含固定更新器、CI差异、旧/新PID、实际库摘要和观察，
+不含私钥、数据库或凭据。更新器本地守卫通过；不重复运行既有包内产品回归。
+
+当前C/D未更新；下一项按[原工具交接](CD-UPDATE.md)先C后D。
+四机自动发现、单/双中继、并发DONE、中继恢复和资产三票确认仍待实测。
+本轮不将Iroh relay称为原生节点单/双中继，不把这条A→B成功扩大为四机通过。
+节点沿原24小时有界运行配置，未改生产超时或签收永久服务运行。
+
+## 历史：本地固定制品阶段
 
 程序源码固定为 `1ef3189307382ef579775c7ce2b55a08d829d04a`。本目录所在后继
 文档提交不是程序版本。原第33节的源码修复及失败证据不改写，本轮没有新增 Rust 修改。

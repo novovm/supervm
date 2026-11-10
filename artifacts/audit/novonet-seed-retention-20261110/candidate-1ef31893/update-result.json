@@ -1,0 +1,52 @@
+{
+  "source": "1ef3189307382ef579775c7ce2b55a08d829d04a",
+  "ci_run": 42721507092,
+  "ci_head_sha": "5c6a6b48db817f7ef2f9dd6c759698a7083423c6",
+  "ci_conclusion": "success",
+  "program_difference": "only delivery docs/evidence between program SHA and CI SHA",
+  "order": [
+    "B",
+    "A"
+  ],
+  "start": "existing",
+  "A": {
+    "pid": 17724,
+    "owner": "S-1-5-19",
+    "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+    "node_sha256": "d419df614d6b804136eca82fd7427d84155241c82b7f74c3c00bf2fdb3ea6087",
+    "custody_unchanged": true,
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state"
+  },
+  "B": {
+    "pid": 2944965,
+    "other_services_unchanged": true,
+    "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+    "node_sha256": "d1614d2d9cda0fbc8a978cb12ae2c0d06522787c63c7e11ee891550b3b19197d",
+    "custody_unchanged": true,
+    "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+    "uid": 996
+  },
+  "initialize_executed": false,
+  "keys_changed": false,
+  "cache_cleared": false,
+  "rollback_executed": false,
+  "cache_sequence_before": 4166,
+  "cache_sequence_after": 4910,
+  "discovery": "attempt 1 latest private coordinates deadline; attempt 2 configured_seed selected Iroh relay, bound and NODE_GET completed; attempt 3 latest record selected public direct QUIC and completed",
+  "native_udp_probe": {
+    "business_receipt": false,
+    "object_id": "65a9412ab1973d2af85cda5401d1a06bbb66d97119c44a69b03eba21d4027372",
+    "session_id": "6f17d7154ef1199da11b37a5b70dbff4",
+    "sender_route": {
+      "Udp": "47.103.59.206:41050"
+    },
+    "dual_ended_done": true,
+    "receiver_route": {
+      "Udp": "114.92.30.222:60735"
+    }
+  },
+  "C_updated": false,
+  "D_updated": false,
+  "four_host_multihop_accepted": false,
+  "asset_consensus_acceptance": false
+}

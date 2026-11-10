@@ -1882,6 +1882,32 @@ SHA256 `0f400c439730eaf00d649364c1fd1ca8dce92e38c022a84af6fa7bfc04c2cd50`。
 进程/状态根，旧回执不是当前存活证明。分别核验seed候选、实际Carrier连接、
 bound认证、NODE_GET、Object DONE；任何缺项不得登记公网故障已关闭。
 
+### 35. 2026-11-10 1ef31893已完成B→A更新及真实发现/原生对象交付，C接续
+
+用户明确批准B→A→C→D逐台existing更新。Full `42721507092`已success，
+head `5c6a6b48`相对程序`1ef31893`仅增加交付文档/证据，程序/依赖/构建/CI无差异；
+因此复用这次完整资格，不触发另一轮Full，不拿`0ddf0ebf`轻量结果替代。
+
+B PID2858350→2944965、A PID37496→17724，原库existing、原用途材料及状态根
+保持一致；B/A认证查询分别64/29ms。B其他服务PID/状态未变，A仅同范围规则
+绑定新程序，防火墙配置不变。无初始化、清库、清缓存、换钥或回滚。
+
+A第一次使用序号4166的私网缓存拨号超时；第二次实际使用configured_seed，
+选择Iroh relay完成QUIC/流、bound认证及NODE_GET；第三次用新签名声明直接
+连接47.103.59.206:42050并完成发现。B同期入站TLS/Stream Ready已保存。
+cache继续推进至4910，未回退seed12；第一条deadline保留，不把累计失败清零。
+
+独立非业务对象沿原生NovoRUDP发送至B:41050，双方Object ID
+`65a9412ab1973d2af85cda5401d1a06bbb66d97119c44a69b03eba21d4027372`、Session ID
+`6f17d7154ef1199da11b37a5b70dbff4`、nonce及身份一致，B完整接收/校验，A最终DONE。
+Transport ACK与Object DONE分别核对，不是Business Receipt或四机共识通过。
+Iroh relay发现成功也不替代原生节点单/双中继验收。
+
+实际摘要、原始双端记录和固定脚本见[本轮回执](../artifacts/audit/novonet-seed-retention-20261110/candidate-1ef31893/README.md)。
+现在C按[固定工具交接](../artifacts/audit/novonet-seed-retention-20261110/candidate-1ef31893/CD-UPDATE.md)
+先核验本机真实旧版本及运行/退出现场，再执行已批准existing更新；C成功且A外部核验
+后才轮到D。C/D本轮尚未执行，原单/双中继、并发、恢复及资产三票验收继续待做。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
