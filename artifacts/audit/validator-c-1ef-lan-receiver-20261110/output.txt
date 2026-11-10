@@ -1,0 +1,1 @@
+READ_ONLY C receiver_verified_count=0; transport_records=0; D:\WEB3_AI\SUPERVM\target\c-1ef-receiver-20261110-113933\evidence\receiver-public.json

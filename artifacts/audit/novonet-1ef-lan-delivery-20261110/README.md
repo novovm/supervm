@@ -1,5 +1,14 @@
 # 1ef四机换包收口与A→C/D真实原生对象
 
+## C 已回传接收记录（2026-11-10 11:39:35 北京时间）
+
+C 按 `7480930a` 只读采集一次，退出码 0。
+同一 Object ID / Session ID 有 `probe_rejected_outside_validity`，native_udp，
+来源 192.168.71.74:41051；wall_ms 比 issued_at_ms 早 444ms。
+完整性通过事件数 0、匹配 transport 记录数 0，不能把 A 发送端 DONE 升格为接收验收通过。
+[原始公开报告、执行结果和脚本摘要](../validator-c-1ef-lan-receiver-20261110/README.md)。
+未重发、重启、更新或改时钟；请 A 对照发送端及时间依据定位，D 回传由 D 独立负责。
+
 ## 当前结论
 
 A已核验D `6c49668f`的ZIP摘要、字节数和全部17成员：D以1ef原库existing运行，
