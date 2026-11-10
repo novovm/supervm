@@ -1,6 +1,43 @@
 # C→D：1ef31893原库更新交接
 
-## C 已回传：C_EXISTING_RECOVERY_READY_FOR_A_QUERY
+## 当前：C恢复及A认证查询通过，只推进D
+
+已读取`80d23fb6`并验证九项原件摘要。A于2026-11-10 10:56:41北京时间，用原SDK
+对C `192.168.71.125:41052`仅查询一次，44ms成功；固定C公钥、链域和可信承诺匹配，
+height0/current_height1/state_version0，恢复及投影错误均为false，状态根与C历史
+锚点一致。详见[双侧恢复/查询收口](../../validator-c-1ef-authenticated-query-20261110/README.md)。
+不是找回关机前快照，不改写C原`update_completed=false`，不宣称DONE或共识通过。
+
+**C保持运行，不再重跑恢复；现在只让D执行同版本existing更新。**
+
+1. D同步本提交，使用本目录`CD-recovery-tools-v1.zip`（17960字节，SHA256
+   `22490a914d20760605ad8611eb4193e13295fb3c7a9201ae0e805248242dabf0`），
+   核验后解压到新的工具目录。原Windows候选包哈希仍见下方“固定输入”，不重编译。
+   若D已有同哈希包，直接复用；没有时从A或C复制同一ZIP，不复制数据库或私钥。
+2. 本机核对D真实旧任务/程序/账户/原库及现状。工具预期旧082程序和任务
+   `NOVOVM-D-08236129-Network-20261108`；不要重跑旧任务，其中有initialize。
+   不套用C的0xc0000005或全零现场，不运行Inspector或RecoverMissingProgress。
+3. 管理员PowerShell 7，先运行`Test-Update-CD.ps1 -PackageRoot '<已核验包目录>'`。
+   通过后运行以下一次。旧node确实活动时不加恢复参数；若任务Ready且正常停止的
+   原证据满足守卫，可加`-ResumeStopped`。未知退出/无有效progress时停止回传，
+   不补字段、不清库、不盲目多次重跑。
+
+```powershell
+$ErrorActionPreference='Stop'
+& '<新工具目录>/Update-CD.ps1' -HostId D -PackageRoot '<已核验包目录>' -EvidenceRoot '<新的本次D证据目录>'
+# 仅上述真实停止条件满足时，原命令追加 -ResumeStopped；不要两条都执行。
+```
+
+4. 原工具核验77项、旧身份/库路径/钥和进程，复制原窄范围规则绑定新包；仅以原
+   LocalService、原库existing启动1ef。禁止initialize、清DB/LOCK/journal/cache、
+   换钥、扩大规则/资源限额。遇到实际启动失败按原工具记录恢复/回滚，不凭请求写成功。
+5. 回传`D_1EF_EXISTING_READY_FOR_A_QUERY`或具体失败，附原result/after/old-exit/
+   firewall/退出码及原日志公开摘要。原before/config、DB及protected材料不上传。
+   D保持运行供A认证查询；A核对后才进入四机真实对象和中继验收。
+
+没有新增停服审批，也不要求C重复操作。D本机检查/更新和外部查询尚未执行。
+
+## 历史：C 已回传 C_EXISTING_RECOVERY_READY_FOR_A_QUERY
 
 2026-11-10 10:49:16 北京时间，C 按 `9a3160fa` 一次执行恢复入口成功，测试及更新器退出码均为 0。
 新 1ef31893 PID 24376 / LocalService，原库 existing，身份材料不变，UDP 41052/42052。
@@ -8,7 +45,7 @@
 保持运行供 A 原认证查询；previous_state_available=false，progress_state_unchanged=null，
 update_completed=false。尚未签收旧状态连续性，D 继续等待 A 指令。
 
-## 当前执行入口：C原库existing恢复验证（无需再做Inspector）
+## 已执行入口：C原库existing恢复验证（不要重跑）
 
 A已核验`71835030`回执的全部三个公开文件摘要。C旧progress全零、stdout空、
 exit缺失，旧投影不可恢复；不能再要求C拿不存在的chain_id通过普通更新比较。

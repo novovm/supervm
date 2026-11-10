@@ -1,0 +1,17 @@
+{
+  "status": "C_RECOVERY_AUTHENTICATED_QUERY_PASS",
+  "elapsed_ms": 44,
+  "address": "192.168.71.125:41052",
+  "chain_id": 91129655606029,
+  "height": 0,
+  "current_height": 1,
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "state_version": 0,
+  "identity_matches_historical_C": true,
+  "historical_anchor_matches": true,
+  "pre_shutdown_snapshot_available": false,
+  "pre_post_continuity_certified": false,
+  "object_done": false,
+  "business_receipt": false,
+  "independently_verified_finality": false
+}
