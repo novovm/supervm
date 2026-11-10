@@ -1,0 +1,1 @@
+C_EXISTING_RECOVERY_READY_FOR_A_QUERY; previous state continuity NOT certified

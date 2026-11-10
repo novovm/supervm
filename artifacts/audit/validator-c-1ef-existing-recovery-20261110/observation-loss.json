@@ -1,0 +1,10 @@
+{
+  "host_id": "C",
+  "progress_sha256": "A917D1DAF6F38D05748209520752B122ECDC1250812DF597B3CFD7B7021EA36F",
+  "progress_bytes": 813127,
+  "stdout_empty": true,
+  "exit_missing": true,
+  "previous_state_available": false,
+  "clean_node_shutdown_proven": false,
+  "scope": "existing recovery verification; not state continuity certification"
+}

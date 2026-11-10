@@ -1,5 +1,13 @@
 # C→D：1ef31893原库更新交接
 
+## C 已回传：C_EXISTING_RECOVERY_READY_FOR_A_QUERY
+
+2026-11-10 10:49:16 北京时间，C 按 `9a3160fa` 一次执行恢复入口成功，测试及更新器退出码均为 0。
+新 1ef31893 PID 24376 / LocalService，原库 existing，身份材料不变，UDP 41052/42052。
+[公开结果及原始报告](../../validator-c-1ef-existing-recovery-20261110/README.md)。
+保持运行供 A 原认证查询；previous_state_available=false，progress_state_unchanged=null，
+update_completed=false。尚未签收旧状态连续性，D 继续等待 A 指令。
+
 ## 当前执行入口：C原库existing恢复验证（无需再做Inspector）
 
 A已核验`71835030`回执的全部三个公开文件摘要。C旧progress全零、stdout空、

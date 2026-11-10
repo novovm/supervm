@@ -1,0 +1,11 @@
+{
+  "task_state": "Ready",
+  "task_sid": "S-1-5-19",
+  "restart_count": 0,
+  "trigger_count": 0,
+  "task_exit_code": 0,
+  "executing_nodes": 0,
+  "bound_ports": 0,
+  "last_run_utc": "2026-11-08T23:02:23Z",
+  "progress_utc": "2026-11-09T04:55:26.5561863Z"
+}

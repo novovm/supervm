@@ -1,0 +1,10 @@
+{
+  "host_id": "C",
+  "source_commit": "9a3160fa",
+  "start_utc": "2026-11-10T02:48:39.7893296Z",
+  "end_utc": "2026-11-10T02:49:16.5656708Z",
+  "phase": "existing_recovery",
+  "exit_code": 0,
+  "test_exit_code": 0,
+  "update_exit_code": 0
+}

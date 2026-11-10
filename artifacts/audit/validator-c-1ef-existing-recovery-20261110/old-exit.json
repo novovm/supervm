@@ -1,0 +1,11 @@
+{
+  "pid": null,
+  "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-probe-5181da73-windows-x86_64\\bin\\novovm-node.exe",
+  "process_handle_waited": true,
+  "no_executing_node": true,
+  "terminated_by_updater": false,
+  "prior_owner_cleanly_stopped": false,
+  "observation_loss_recovery": true,
+  "scope": "authorized original-database recovery; not a new graceful-drain qualification",
+  "time": "2026-11-10T02:49:12.6983942Z"
+}
