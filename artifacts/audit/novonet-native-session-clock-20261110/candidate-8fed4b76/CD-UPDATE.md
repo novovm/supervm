@@ -1,5 +1,14 @@
 # C/D: fixed 8fed session-clock existing update
 
+## C package preflight returned
+
+C verified the original Windows ZIP already present in its E: receiving directory,
+all 77 package artifacts and all 8 tool hashes. Fresh extraction is ready.
+[C public preflight](../../validator-c-8fed-package-ready-20261110/README.md).
+Status: `C_8FED_PACKAGE_TOOLS_VERIFIED_WAITING_A`. No updater, node stop/start,
+or clock operation was executed. C waits for the fixed Full and B/A healthy notice;
+D must independently confirm receipt and verification.
+
 ## Current action
 
 The user has approved updating all four nodes. Do not request stop permission

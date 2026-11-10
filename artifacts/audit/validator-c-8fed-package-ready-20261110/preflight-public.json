@@ -1,0 +1,60 @@
+{
+  "host_id": "C",
+  "utc": "2026-11-10T08:10:26.7962421+00:00",
+  "handoff_commit": "ba0f2371",
+  "program_source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+  "package_archive": "E:\\区块链四机通讯\\novonet-observation-8fed4b76-windows-x86_64.zip",
+  "package_bytes": 150603521,
+  "package_sha256": "29bee97601a7fb8ba698bf8bb5bff356e1c97c8e8d2a750be871f3c928fe73e4",
+  "tool_bytes": 33017,
+  "tool_sha256": "63855bf03bcc8912fc07068503344e3a887a8d1f6d57a318ebcc0cb2ab96d255",
+  "tool_checks": [
+    {
+      "name": "Update-Windows.ps1",
+      "sha256": "1abe055135ac1469bac56b91d813844befc14173e8461edbf61e003e2f641a98",
+      "verified": true
+    },
+    {
+      "name": "Test-Update-Windows.ps1",
+      "sha256": "5351d6f27730e099ee6731e1d13de9070a07b1eced8de35206396068f4ca4810",
+      "verified": true
+    },
+    {
+      "name": "NovonetExistingProcess.ps1",
+      "sha256": "4d6f1b1dc79251034493c0d55fbda942da5515cee95b756293801e3177b415be",
+      "verified": true
+    },
+    {
+      "name": "Update-B.py",
+      "sha256": "274eff55e47ea5d68db16eefd28a53887b58e913cf844b551e9b727ef0dad066",
+      "verified": true
+    },
+    {
+      "name": "test_update_b.py",
+      "sha256": "138f92045afe504f3f672ee27fb0e7ffaba902771ef59b002bc8df0072d36d55",
+      "verified": true
+    },
+    {
+      "name": "Read-Status.ps1",
+      "sha256": "72ca009e510fe31d9c23ef26941a04da507c80a58d930fe587eaa6fea9a96d9d",
+      "verified": true
+    },
+    {
+      "name": "Prepare-OperatorRule.ps1",
+      "sha256": "036487980722ada9522f7b5d2ebc2768893db3b513c257cebe8597ad6ee1cad6",
+      "verified": true
+    },
+    {
+      "name": "Check-Full.ps1",
+      "sha256": "9cf80be6ac97e7c46587edb51c0488a9dc6fe53b012d28450d9b39855fd7c117",
+      "verified": true
+    }
+  ],
+  "package_artifacts_verified": 77,
+  "package_manifest_sha256": "5ded6fb8bad59e5f2a2eb0d568e982dbf4f62dce595bc6a29a7dd0faa007201c",
+  "node_sha256": "021e7f8b0b41d8b72577d7394cd9c1fb9edb8388c4ae90903dca6f86a53a8a32",
+  "updater_executed": false,
+  "test_script_executed": false,
+  "full_and_BA_cutover_not_verified_here": true,
+  "status": "C_8FED_PACKAGE_TOOLS_VERIFIED_WAITING_A"
+}
