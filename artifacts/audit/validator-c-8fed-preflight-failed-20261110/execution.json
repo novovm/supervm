@@ -1,0 +1,11 @@
+{
+  "host_id": "C",
+  "handoff_commit": "219f9ace",
+  "start_utc": "2026-11-10T10:00:52.9723634+00:00",
+  "end_utc": "2026-11-10T10:00:56.6832951+00:00",
+  "exit_code": 1,
+  "test_exit_code": 0,
+  "update_exit_code": 1,
+  "updater_sha256": "1ABE055135AC1469BAC56B91D813844BEFC14173E8461EDBF61E003E2F641A98",
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\c-8fed-launch-20261110T100049990Z/evidence"
+}

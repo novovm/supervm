@@ -1,0 +1,9 @@
+{
+  "error": "Original process identity not confirmed",
+  "old_node_stopped": false,
+  "existing_start_attempted": false,
+  "prior_owner_crashed": false,
+  "prior_owner_cleanly_stopped": false,
+  "observation_loss_recovery": false,
+  "time": "2026-11-10T10:00:56.5432424Z"
+}

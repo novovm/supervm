@@ -1,5 +1,15 @@
 # C/D: fixed 8fed session-clock existing update
 
+## C attempted once: original process identity preflight failed
+
+At 2026-11-10 18:00:56 Beijing, C's fixed tests passed (exit 0), but the
+updater exited 1 with `Original process identity not confirmed`, before stopping
+the old node or attempting existing startup. [C original failure receipt](../../validator-c-8fed-preflight-failed-20261110/README.md).
+Post-failure read-only enumeration found no node process or 41052/42052 listener;
+exit cause is not established. C did not retry or choose recovery flags. C is
+NOT_READY; D still waits. Preserve this failure and inspect old-owner exit evidence
+before determining the next recovery action.
+
 ## CURRENT: B/A healthy; C may execute the approved update
 
 Full **42776380753**, attempt 1, exact program source **8fed4b76**, completed

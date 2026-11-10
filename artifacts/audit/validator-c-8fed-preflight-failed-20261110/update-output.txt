@@ -1,0 +1,5 @@
+Exception: D:\WEB3_AI\SUPERVM\target\c-8fed-preflight-20261110\tools\Update-Windows.ps1:349
+Line |
+ 349 |      throw $problem
+     |      ~~~~~~~~~~~~~~
+     | Original process identity not confirmed

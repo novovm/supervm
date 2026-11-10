@@ -1,0 +1,1 @@
+UAC request cancelled; only Run.ps1 existed; updater was not invoked. User requested relaunch.
