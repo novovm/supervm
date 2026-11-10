@@ -1,6 +1,40 @@
 # C→D：1ef31893原库更新交接
 
-## C回传后的当前动作：只读核对旧进度结构
+## 当前：C旧progress为全零，补读同次运行的完整退出证据
+
+已签收 `ec7c5d08` 的原始结构回执并核验公开文件摘要。A本地生成813127个零字节，
+SHA256精确等于C原progress的
+`a917d1daf6f38d05748209520752b122ecdc1250812df597b3cfd7b7021ea36f`；
+同样被PowerShell ConvertFrom-Json解析为null。由长度及密码学摘要对照可确认该报告
+是全零内容，不是正常status改名或嵌套。不能由报告损坏推断RocksDB损坏；为何写成
+全零尚未归因，不称其为正常24小时退出或已修复的节点持久化问题。
+
+前版Inspector对stdout仅按最后12行逐行尝试JSON解析，无法可靠读取节点完整多行
+退出投影；`owner_exit=null`也未区分文件缺失/全零/JSON null。因此修正原Inspector，
+不通过补chain_id、拿A/B状态或旧样本冒充当前C状态来绕过更新器。
+
+C Codex同步本节后，在管理员PowerShell 7 **仅执行一次**：
+
+```powershell
+./Inspect-C-Progress.ps1 -EvidenceRoot '<新的、不存在的本次退出证据目录>'
+```
+
+回传新`progress-structure-public.json`与退出码。v2一次读取原同目录
+`progress.json`、`node.stdout`、`exit.json`，每文件最多4MiB，报告长度、SHA256、
+NUL计数、更新时间、严格JSON分类、结构及公开白名单字段；完整解析多行stdout，
+不再把末尾12行失败静默当作无退出状态。文件过大明确标记不读，不上传整份日志，
+不读取protected材料/数据库。读取前后摘要不一致则停止，不混合写入中的快照。
+
+已有原包和CD更新工具均不变，不用重传ZIP或重跑更新；D继续等待。
+若有效退出状态存在，A核对其与旧进程运行区间/原exit匹配后接回原更新器；若退出
+记录也不可用，则明确转为原库恢复验证，不伪造升级前状态根，不称state unchanged。
+本次仅修观察脚本；C仍NOT_READY，未实际打开原库，A/B不操作。
+
+A本地`pwsh -NoProfile -File scripts/tests/novonet-progress-inspection.tests.ps1`通过11项：
+C全零摘要复现、缺失、空、字面null、完整多行、退出字段、非法JSON不泄漏内容、
+4MiB边界、UTF16 BOM、空白及尾NUL拒绝。未手工触发Full，固定程序仍为1ef31893。
+
+## 历史：首轮只读核对旧进度结构
 
 `471f163e`回传证明C已取得并核验固定包，正常停止守卫通过，但旧progress缺少
 顶层`chain_id`，固定更新器在任何新程序准备/原库打开前退出。C尚未就绪，D继续等待。

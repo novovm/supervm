@@ -33,42 +33,60 @@ function Shape($Value,[int]$Depth=0){
 function PublicFacts($Value){
     $r=[ordered]@{}
     if($Value -isnot [Collections.IDictionary]){return $r}
-    foreach($k in @('entry','schema','profile','chain_id','current_height','head','execution_failures','ticks','recovery_in_progress','projection_error')){
+    foreach($k in @('entry','schema','profile','chain_id','current_height','head','execution_failures','ticks','recovery_in_progress','exit_code','start','time')){
         if($Value.Contains($k)){$r[$k]=$Value[$k]}
     }
+    return $r
+}
+function Read-PublicArtifact([string]$Path){
+    # Do not mistake a JSON parser's null return for a valid report. No raw bytes
+    # or exception text (which can quote file contents) enter the public result.
+    if(!(Test-Path -LiteralPath $Path)){return [ordered]@{path=$Path;status='missing'}}
+    Assert-NoRedirect $Path
+    $item=Get-Item -LiteralPath $Path
+    $r=[ordered]@{path=$Path;bytes=$item.Length;last_write_utc=$item.LastWriteTimeUtc.ToString('o')}
+    if($item.PSIsContainer){$r.status='not_file';return $r}
+    if($item.Length -gt 4MB){$r.status='exceeds_bounded_read';return $r}
+    $bytes=[IO.File]::ReadAllBytes($Path)
+    $digest=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes))
+    $r.sha256=$digest
+    $zeroCount=0
+    foreach($b in $bytes){if($b -eq 0){$zeroCount++}}
+    $r.zero_bytes=$zeroCount
+    if($bytes.Length -eq 0){$r.status='empty'}
+    elseif($zeroCount -eq $bytes.Length){$r.status='all_zero_not_json'}
+    else {
+        try {
+            # StreamReader handles the BOM emitted by older PowerShell writers.
+            $stream=[IO.MemoryStream]::new($bytes,$false)
+            $reader=[IO.StreamReader]::new($stream,[Text.UTF8Encoding]::new($false,$true),$true)
+            try{$text=$reader.ReadToEnd()}finally{$reader.Dispose()}
+            $document=[System.Text.Json.JsonDocument]::Parse($text)
+            try{$r.json_kind=$document.RootElement.ValueKind.ToString()}finally{$document.Dispose()}
+            $v=ConvertFrom-Json -InputObject $text -AsHashtable -NoEnumerate
+            $r.status='valid_json';$r.shape=Shape $v;$r.facts=PublicFacts $v
+            $nested=[ordered]@{}
+            if($v -is [Collections.IDictionary]){
+                foreach($k in @($v.Keys|Select-Object -First 48)){if($v[$k] -is [Collections.IDictionary]){$nested[$k]=PublicFacts $v[$k]}}
+            }
+            $r.nested_facts=$nested
+        } catch {$r.status='invalid_json_or_encoding';$r.error_type=$_.Exception.GetType().Name}
+    }
+    if((Get-FileHash -LiteralPath $Path).Hash -cne $digest){throw 'Artifact changed during read; do not mix snapshots'}
     return $r
 }
 Assert-NoRedirect $file
 $item=Get-Item -LiteralPath $file
 if($item.Length -gt 2MB){throw 'Report exceeds bounded read; report size without exporting content'}
 $hash=(Get-FileHash -LiteralPath $file).Hash
-$value=Get-Content -LiteralPath $file -Raw|ConvertFrom-Json -AsHashtable -NoEnumerate
-$nested=[ordered]@{}
-if($value -is [Collections.IDictionary]){
-    foreach($k in @($value.Keys|Select-Object -First 48)){if($value[$k] -is [Collections.IDictionary]){$nested[$k]=PublicFacts $value[$k]}}
-}
-$stdout=Join-Path $work 'logs\node.stdout'
-$tail=@()
-if(Test-Path -LiteralPath $stdout){
-    Assert-NoRedirect $stdout
-    foreach($line in @(Get-Content -LiteralPath $stdout -Tail 12)){
-        if($line.Length -gt 2MB){continue}
-        try{$row=$line|ConvertFrom-Json -AsHashtable -NoEnumerate;$tail+=@{shape=(Shape $row);facts=(PublicFacts $row)}}catch{continue}
-    }
-}
-$exitPath=Join-Path $work 'logs\exit.json'
-$exitRecord=$null
-if(Test-Path -LiteralPath $exitPath){
-    Assert-NoRedirect $exitPath
-    $exitRecord=Get-Content -LiteralPath $exitPath -Raw|ConvertFrom-Json|Select-Object exit_code,start,time
-}
+$artifacts=@('progress.json','node.stdout','exit.json'|ForEach-Object {Read-PublicArtifact (Join-Path $work "logs\$_")})
 if((Get-FileHash -LiteralPath $file).Hash -cne $hash){throw 'Report changed during read; do not mix snapshots'}
 New-Item -ItemType Directory -Path $out|Out-Null
 Assert-NoRedirect $out
 [ordered]@{
     utc=[DateTime]::UtcNow.ToString('o');host_id='C';progress_path=$file
     progress_bytes=$item.Length;progress_sha256=$hash;last_write_utc=$item.LastWriteTimeUtc.ToString('o')
-    shape=(Shape $value);facts=(PublicFacts $value);nested_facts=$nested;stdout_json_tail=$tail;owner_exit=$exitRecord
+    inspection_version=2;artifacts=$artifacts
     node_started=$false;database_opened=$false;keys_read=$false;progress_modified=$false
 }|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $out 'progress-structure-public.json') -Encoding utf8NoBOM
 Write-Output "READ_ONLY_COMPLETE: $out\progress-structure-public.json"
