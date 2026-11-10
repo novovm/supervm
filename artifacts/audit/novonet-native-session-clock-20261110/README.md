@@ -1,5 +1,17 @@
 # Native first-handshake session clock — 2026-11-10
 
+## Latest C result: preflight failed before any cutover
+
+C receipt `f01f849f` records updater tests passing, then
+`Original process identity not confirmed` at 18:00:56 Beijing. The updater did
+not stop the old node or start 8fed. A later non-elevated observation found no
+node/listener, but has not established why the original 1ef owner exited.
+This is not evidence of a new-package crash or database failure.
+The old "C may proceed" instruction is now superseded: C performs the single
+administrator read-only collection in [CD-UPDATE](candidate-8fed4b76/CD-UPDATE.md),
+using the original process and public-artifact readers. D waits. B/A completion
+and Full success below remain valid; no new build or Full is requested.
+
 ## CURRENT: Full passed, B/A cutover completed, C released
 
 Exact-source Full **42776380753** (`8fed4b76`, attempt 1) is **completed/success**;

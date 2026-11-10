@@ -1,5 +1,38 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT C action: one administrator read-only old-owner collection
+
+A read and fast-forwarded C's failure receipt `f01f849f`. The fixed package and
+updater tests passed; no old process was stopped and no 8fed node was started.
+Do not interpret this as an 8fed startup crash. The old 1ef owner is currently
+unconfirmed, and its exit cause is unknown. **The earlier "C proceed now" command
+below is suspended by this section; D remains waiting.** No new package is needed.
+
+C Codex: sync this handoff, then use administrator PowerShell 7 to run the
+committed `Inspect-C-OldOwner.ps1` beside this document once, with a fresh
+EvidenceRoot. Example from the C repository root:
+
+```powershell
+$evidence='D:\WEB3_AI\SUPERVM\target\c-8fed-old-owner-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+& .\artifacts\audit\novonet-native-session-clock-20261110\candidate-8fed4b76\Inspect-C-OldOwner.ps1 -EvidenceRoot $evidence
+```
+
+It reuses the original public progress reader and pinned kernel process helper.
+One collection includes original task result/SID/timing/restart policy, live and
+kernel-terminated processes, ports 41052/42052, bounded original owner/progress/
+stdout/exit structure, stderr metadata/known failure markers and matching bounded
+Application crash events. It does not open the database, read purpose keys,
+change clocks, run an updater or stop/start any process. Return
+`C-old-owner-public.json`, actual exit code and script SHA256. Missing or unreadable
+evidence stays missing; no failure is converted into a clean stop.
+
+A will select the existing recovery entry only after this evidence: proven clean
+stop -> original ResumeStopped; matching crash -> original RecoverCrashed; a live
+owner/path mismatch or unknown exit -> diagnose the actual record. Do not add
+RecoverMissingProgress or any recovery flags speculatively, rerun initialization,
+clear locks, or rerun the ordinary live-process update into old evidence.
+This is one batch of exit evidence, not another package/CI/network qualification.
+
 ## C attempted once: original process identity preflight failed
 
 At 2026-11-10 18:00:56 Beijing, C's fixed tests passed (exit 0), but the
@@ -10,7 +43,7 @@ exit cause is not established. C did not retry or choose recovery flags. C is
 NOT_READY; D still waits. Preserve this failure and inspect old-owner exit evidence
 before determining the next recovery action.
 
-## CURRENT: B/A healthy; C may execute the approved update
+## Earlier release: B/A healthy; C attempted the approved update (see current action above)
 
 Full **42776380753**, attempt 1, exact program source **8fed4b76**, completed
 successfully, including Rust checks, CI scope result and Full candidate result.

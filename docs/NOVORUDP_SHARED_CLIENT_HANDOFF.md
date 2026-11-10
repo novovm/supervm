@@ -2101,6 +2101,19 @@ C/D准备回执e9ab5b61、9ed96eac已读取并合入。**现在C直接执行既�
 及同目录证据ZIP保留Full原始响应、切换与查询结果。此前只口头报告、未及时更新Git，
 导致C按旧交接暂停；本次补齐，不把先前准备快照改写成当时已部署。
 
+### 37.4 C更新预检失败：先一次采齐旧owner退出证据
+
+已下拉C回执`f01f849f`。C工具测试通过，但普通更新入口在停止旧进程之前报
+`Original process identity not confirmed`；没有启动8fed。后查未见进程/监听，
+旧1ef退出原因尚未知，不能称新版启动崩溃或原库损坏。B/A已完成结果不变，D等待。
+
+C按[CD-UPDATE最新首节](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
+执行同目录`Inspect-C-OldOwner.ps1`一次管理员只读采集；原任务结果、内核进程、
+监听、原owner/progress/stdout/exit结构、stderr已知标记及匹配崩溃事件一起回传。
+复用旧公开读取函数和固定进程helper，不读库/钥、不启停、不校时，不重传包。
+脚本已在A完成语法、仓库路径及只读命令边界检查，尚未在C执行；不冒称C退出已归因。
+取得实际记录后选已有停止/崩溃恢复入口，不猜测追加恢复开关，不重跑普通入口。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
