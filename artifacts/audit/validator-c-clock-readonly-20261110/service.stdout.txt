@@ -1,0 +1,6 @@
+
+Name     Status StartType
+----     ------ ---------
+W32Time Stopped    Manual
+
+

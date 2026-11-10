@@ -1,0 +1,3 @@
+*.stdout.txt -text
+*.stderr.txt -text
+execution.json -text

@@ -1,0 +1,43 @@
+{
+  "host_id": "C",
+  "source_commit": "01b1bbb3",
+  "start_utc": "2026-11-10T04:00:26.5852822+00:00",
+  "end_utc": "2026-11-10T04:00:26.6787100+00:00",
+  "commands": [
+    {
+      "command": "w32tm /query /status /verbose",
+      "start_utc": "2026-11-10T04:00:26.5878914+00:00",
+      "end_utc": "2026-11-10T04:00:26.6105441+00:00",
+      "exit_code": -2147023834,
+      "stdout": "status.stdout.txt",
+      "stderr": "status.stderr.txt"
+    },
+    {
+      "command": "w32tm /query /source",
+      "start_utc": "2026-11-10T04:00:26.6110492+00:00",
+      "end_utc": "2026-11-10T04:00:26.6300105+00:00",
+      "exit_code": -2147023834,
+      "stdout": "source.stdout.txt",
+      "stderr": "source.stderr.txt"
+    },
+    {
+      "command": "w32tm /query /configuration",
+      "start_utc": "2026-11-10T04:00:26.6300530+00:00",
+      "end_utc": "2026-11-10T04:00:26.6507313+00:00",
+      "exit_code": -2147023834,
+      "stdout": "configuration.stdout.txt",
+      "stderr": "configuration.stderr.txt"
+    },
+    {
+      "command": "Get-Service W32Time | Select-Object Name,Status,StartType",
+      "start_utc": "2026-11-10T04:00:26.6507786+00:00",
+      "end_utc": "2026-11-10T04:00:26.6781816+00:00",
+      "exit_code": 0,
+      "exit_code_kind": "PowerShell success/failure mapped to 0/1; no native process exit code",
+      "stdout": "service.stdout.txt",
+      "stderr": "service.stderr.txt"
+    }
+  ],
+  "read_only": true,
+  "resync_executed": false
+}
