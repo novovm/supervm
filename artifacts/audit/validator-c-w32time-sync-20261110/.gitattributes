@@ -1,0 +1,4 @@
+*.stdout.txt -text
+*.stderr.txt -text
+*.json -text
+Run.ps1 -text

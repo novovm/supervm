@@ -1,5 +1,12 @@
 # 1ef四机换包收口与A→C/D真实原生对象
 
+## C 获用户批准后完成一次原配置校时（2026-11-10 12:31:12）
+
+C 启动 W32Time 后核对原 NTP/time.windows.com,0x9 配置，仅一次 `/resync`，退出码0。
+紧随状态为 Leap=0、stratum=5、上次同步错误0，服务 Running，Manual启动类型及时间源未变。
+[前后原始状态、逐条退出码与UTC](../validator-c-w32time-sync-20261110/README.md)。
+未重发对象或重启节点；不把同步命令成功当作 A/C 偏差已验收，旧444ms拒绝证据保留。
+
 ## C 时钟证据已回传（2026-11-10 12:00:26 北京时间）
 
 C 按 `01b1bbb3` 一次只读查询：W32Time 为 Stopped / Manual；三条 w32tm 查询

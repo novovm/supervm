@@ -1,0 +1,43 @@
+[配置]
+
+EventLogFlags: 2 (本地)
+AnnounceFlags: 10 (本地)
+TimeJumpAuditOffset: 28800 (本地)
+MinPollInterval: 10 (本地)
+MaxPollInterval: 15 (本地)
+MaxNegPhaseCorrection: 54000 (本地)
+MaxPosPhaseCorrection: 54000 (本地)
+MaxAllowedPhaseOffset: 1 (本地)
+
+FrequencyCorrectRate: 4 (本地)
+PollAdjustFactor: 5 (本地)
+LargePhaseOffset: 50000000 (本地)
+SpikeWatchPeriod: 900 (本地)
+LocalClockDispersion: 10 (本地)
+HoldPeriod: 5 (本地)
+PhaseCorrectRate: 1 (本地)
+UpdateInterval: 360000 (本地)
+
+
+[TimeProviders]
+
+NtpClient (本地)
+DllName: C:\WINDOWS\system32\w32time.dll (本地)
+Enabled: 1 (本地)
+InputProvider: 1 (本地)
+AllowNonstandardModeCombinations: 1 (本地)
+ResolvePeerBackoffMinutes: 15 (本地)
+ResolvePeerBackoffMaxTimes: 7 (本地)
+CompatibilityFlags: 2147483648 (本地)
+EventLogFlags: 1 (本地)
+LargeSampleSkew: 3 (本地)
+SpecialPollInterval: 32768 (本地)
+Type: NTP (本地)
+NtpServer: time.windows.com,0x9 (本地)
+
+NtpServer (本地)
+DllName: C:\WINDOWS\system32\w32time.dll (本地)
+Enabled: 0 (本地)
+InputProvider: 0 (本地)
+
+

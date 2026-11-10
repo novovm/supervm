@@ -1,0 +1,94 @@
+{
+  "host_id": "C",
+  "start_utc": "2026-11-10T04:31:11.0849501+00:00",
+  "end_utc": "2026-11-10T04:31:12.7696341+00:00",
+  "elapsed_monotonic_ms": 1682,
+  "outcome": "resync_command_succeeded_verify_status",
+  "sync_attempted": true,
+  "sync_exit_code": 0,
+  "commands": [
+    {
+      "name": "before-status",
+      "command": "w32tm /query /status /verbose",
+      "start_utc": "2026-11-10T04:31:11.2021327+00:00",
+      "end_utc": "2026-11-10T04:31:11.2223178+00:00",
+      "exit_code": -2147023834
+    },
+    {
+      "name": "before-source",
+      "command": "w32tm /query /source",
+      "start_utc": "2026-11-10T04:31:11.2237059+00:00",
+      "end_utc": "2026-11-10T04:31:11.2335188+00:00",
+      "exit_code": -2147023834
+    },
+    {
+      "name": "before-configuration",
+      "command": "w32tm /query /configuration",
+      "start_utc": "2026-11-10T04:31:11.2336403+00:00",
+      "end_utc": "2026-11-10T04:31:11.2441323+00:00",
+      "exit_code": -2147023834
+    },
+    {
+      "name": "start-service",
+      "command": "Start-Service W32Time only if stopped",
+      "start_utc": "2026-11-10T04:31:11.2487575+00:00",
+      "end_utc": "2026-11-10T04:31:11.5224663+00:00",
+      "exit_code": 0,
+      "exit_code_kind": "PowerShell success/failure mapped 0/1",
+      "started": true
+    },
+    {
+      "name": "running-configuration",
+      "command": "w32tm /query /configuration",
+      "start_utc": "2026-11-10T04:31:11.5226171+00:00",
+      "end_utc": "2026-11-10T04:31:11.5401138+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "running-source",
+      "command": "w32tm /query /source",
+      "start_utc": "2026-11-10T04:31:11.5402872+00:00",
+      "end_utc": "2026-11-10T04:31:11.5529315+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "running-status",
+      "command": "w32tm /query /status /verbose",
+      "start_utc": "2026-11-10T04:31:11.5531148+00:00",
+      "end_utc": "2026-11-10T04:31:11.5664511+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "resync",
+      "command": "w32tm /resync",
+      "start_utc": "2026-11-10T04:31:11.5677686+00:00",
+      "end_utc": "2026-11-10T04:31:12.7138270+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "after-status",
+      "command": "w32tm /query /status /verbose",
+      "start_utc": "2026-11-10T04:31:12.7247214+00:00",
+      "end_utc": "2026-11-10T04:31:12.7378368+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "after-source",
+      "command": "w32tm /query /source",
+      "start_utc": "2026-11-10T04:31:12.7379856+00:00",
+      "end_utc": "2026-11-10T04:31:12.7494086+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "after-configuration",
+      "command": "w32tm /query /configuration",
+      "start_utc": "2026-11-10T04:31:12.7495720+00:00",
+      "end_utc": "2026-11-10T04:31:12.7695675+00:00",
+      "exit_code": 0
+    }
+  ],
+  "source_changed": false,
+  "startup_type_changed": false,
+  "manual_time_set": false,
+  "node_operated": false
+}
