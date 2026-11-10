@@ -1,0 +1,22 @@
+[
+  {
+    "name": "receiver-public.json",
+    "bytes": 3967,
+    "sha256": "b6210fee2045d85373ee20aaab23892cadf87d2edbc4a936ed146c4f92817727"
+  },
+  {
+    "name": "execution.json",
+    "bytes": 406,
+    "sha256": "112056dff2c3a0ddd39032278fe042a4612a233b248b4dfd9437e0cc07912a21"
+  },
+  {
+    "name": "collector.stdout",
+    "bytes": 137,
+    "sha256": "fdcdc21869e3bd119ed718760b9de7d560e2378bb8be794a1c40fa11a8ff7066"
+  },
+  {
+    "name": "collector.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]

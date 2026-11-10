@@ -1,0 +1,10 @@
+{
+  "host_id": "D",
+  "handoff_commit": "7480930a49487b0bbdcaad90e53c06758e5ab773",
+  "script_sha256": "edbb1dc9302dae5569d203e9ae4137560203791a4de5f306ad4f0125af95464c",
+  "started_utc": "2026-11-10T03:39:40.7860251Z",
+  "ended_utc": "2026-11-10T03:39:41.4392127Z",
+  "exit_code": 0,
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\d-1ef-receiver-20261110\\run1",
+  "collector_invocations": 1
+}

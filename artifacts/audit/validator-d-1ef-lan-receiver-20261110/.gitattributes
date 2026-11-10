@@ -1,0 +1,4 @@
+/receiver-public.json -text whitespace=cr-at-eol
+/execution.json -text whitespace=cr-at-eol
+/collector.stdout -text whitespace=cr-at-eol
+/collector.stderr -text whitespace=cr-at-eol
