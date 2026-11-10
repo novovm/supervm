@@ -1,0 +1,19 @@
+{
+  "utc": "2026-11-10T02:09:58.6011498Z",
+  "host_id": "C",
+  "progress_path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-probe-5181da73-20261109\\logs\\progress.json",
+  "progress_bytes": 813127,
+  "progress_sha256": "A917D1DAF6F38D05748209520752B122ECDC1250812DF597B3CFD7B7021EA36F",
+  "last_write_utc": "2026-11-09T04:55:26.5561863Z",
+  "shape": {
+    "type": "null"
+  },
+  "facts": {},
+  "nested_facts": {},
+  "stdout_json_tail": [],
+  "owner_exit": null,
+  "node_started": false,
+  "database_opened": false,
+  "keys_read": false,
+  "progress_modified": false
+}
