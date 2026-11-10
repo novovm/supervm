@@ -1,0 +1,8 @@
+{
+  "start_utc": "2026-11-10T02:30:44.1738930Z",
+  "end_utc": "2026-11-10T02:30:44.7271472Z",
+  "exit_code": 0,
+  "script_sha256": "A5E60A1F150EA4D2BE63317046AABB06D1620CB6300D9F9232173B2CD0C9F404",
+  "source_commit": "48c41b83",
+  "host_id": "C"
+}
