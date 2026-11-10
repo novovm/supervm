@@ -1,5 +1,74 @@
 # C→D：1ef31893原库更新交接
 
+## 当前执行入口：C原库existing恢复验证（无需再做Inspector）
+
+A已核验`71835030`回执的全部三个公开文件摘要。C旧progress全零、stdout空、
+exit缺失，旧投影不可恢复；不能再要求C拿不存在的chain_id通过普通更新比较。
+本节将已批准的C原库启动落实为**观察证据丢失后的恢复验证**，不是报告修补或清库。
+
+真正的入口仍是原`Update-NovonetExisting.ps1 -> LocalService ExistingOwner.ps1 ->
+novovm-node (native_execution_tick, START=existing) -> ResidentNode ->
+CandidatePipeline(OpenMode::Existing) -> AOEM/原持久状态`。
+`service.rs`的existing分支仍核对固定创世输入并走原持久状态恢复；不调用initialize。
+这不是离线只读检查：启动原节点会产生正常恢复、运行日志和网络活动，成功后留其运行
+供A认证查询。不会更换钥、清库、移除LOCK/journal/cache或触发资产测试。
+
+### C Codex现在执行一次
+
+原150528007字节Windows程序ZIP及已核验解包目录不变，不用重传。
+仅同步本提交的新小工具包`CD-recovery-tools-v1.zip`（17960字节，SHA256
+`22490a914d20760605ad8611eb4193e13295fb3c7a9201ae0e805248242dabf0`）。
+它由本目录`Prepare-CD-RecoveryTools.ps1`从原更新器生成，固定程序仍为1ef31893。
+
+管理员PowerShell 7，进入仓库根目录后执行；以下目录必须此前不存在，不能删除旧目录
+来使脚本通过。若目录已存在或现场检查失败，回传该失败，不加ResumePrepared或重试。
+
+```powershell
+$ErrorActionPreference='Stop'
+$repo=(git rev-parse --show-toplevel).Trim()
+$handoff=Join-Path $repo 'artifacts/audit/novonet-seed-retention-20261110/candidate-1ef31893'
+$zip=Join-Path $handoff 'CD-recovery-tools-v1.zip'
+if((Get-FileHash -LiteralPath $zip).Hash -ine '22490a914d20760605ad8611eb4193e13295fb3c7a9201ae0e805248242dabf0'){throw 'Recovery tools hash mismatch'}
+$tools=Join-Path $repo 'target/c-1ef-existing-recovery-20261110/tools'
+$evidence=Join-Path $repo 'target/c-1ef-existing-recovery-20261110/run1'
+if((Test-Path -LiteralPath $tools) -or (Test-Path -LiteralPath $evidence)){throw 'Preserve existing recovery evidence'}
+Expand-Archive -LiteralPath $zip -DestinationPath $tools
+$package='E:\区块链四机通讯\novonet-1ef31893-C-20261110\novonet-observation-1ef31893-windows-x86_64'
+& "$tools/Test-Update-CD.ps1" -PackageRoot $package
+& "$tools/Update-CD.ps1" -HostId C -PackageRoot $package -EvidenceRoot $evidence -ResumeStopped -RecoverMissingProgress
+```
+
+C若用子进程执行测试/更新，必须检查实际退出码；测试失败不能继续更新。包路径若与
+原回传不符，先报告，不临时另建包或替换manifest。
+
+### 恢复守卫和验收含义
+
+- 只允许C及本次精确全零文件长度/哈希、空stdout、缺失exit；现场变化则停止。
+- 原LocalService任务Ready/无触发器重启、内核确认无执行node、原端口空闲、原程序/
+  AOEM/库路径/用途材料及候选全部77项验证继续保留。任务结果0不冒充完整节点正常退出。
+- 新任务只启动固定新包及原库；旧5181任务不重跑。所有新日志写独立新work，旧全零文件
+  保留。原库打开、恢复或身份校验错误不清库解决。
+- 恢复必须输出真实原node状态：固定域、有效高度、head字段（创世前可为null）、
+  execution_failures=0、recovery_in_progress=false、新鲜progress、LocalService身份、
+  指定实际AOEM及用途哈希一致。原限额、认证和共识不改。
+- 成功只输出`C_EXISTING_RECOVERY_READY_FOR_A_QUERY`；结果明确
+  `previous_state_available=false`、`progress_state_unchanged=null`、`update_completed=false`。
+  这表示恢复入口实测已打开，**并非旧状态连续性已证明或更新最终签收**。
+- 新实例启动后验收失败：取消这次新任务，精确停止这次候选，保留原库及失败；不自动
+  再启动旧包、不反复试到绿。停止失败/未知进程单独报告，不扩大终止范围。
+
+### 一次回传与A后续
+
+回传退出码、`result.json`、`observation-loss.json`、`old-exit.json`、`after.json`、
+防火墙结果；失败回传`error.json`、若有`recovery-stopped.json`。原完整before/config/
+DB/受保护钥不上传。成功后保持新节点运行，由A做原认证SDK外部查询核对C身份、链域、
+高度、状态根及监听，结合C既有历史锚点分别记录；历史锚点不是遗失的关机前快照。
+A确认后再通知D更新，随后继续真实对象DONE。当前不发资产交易、不宣称四机共识通过。
+
+本地原更新器回归和生成后工具/实际固定包核验通过，新增8项现场守卫、17项恢复
+投影检查，结果见`recovery-tool-local-tests.txt`。未执行C恢复，未改Rust或重新打包
+节点，不手工触发Full；既有1ef候选资格不被当作本次C恢复通过。
+
 ## C 已执行 v2，只读回传（2026-11-10 10:30:44 北京时间）
 
 C 按 `48c41b83` 运行一次原 Inspector v2，管理员 PowerShell 7，退出码 0。
@@ -8,7 +77,7 @@ C 按 `48c41b83` 运行一次原 Inspector v2，管理员 PowerShell 7，退出�
 当前没有可用的同次退出投影，C 仍 NOT_READY；未重跑更新或打开原库，D 未操作。
 请 A 据此明确原库恢复验证入口，不以默认字段或其他机器状态替代旧 C 状态。
 
-## 当前：C旧progress为全零，补读同次运行的完整退出证据
+## 历史：C旧progress为全零，补读同次运行的完整退出证据
 
 已签收 `ec7c5d08` 的原始结构回执并核验公开文件摘要。A本地生成813127个零字节，
 SHA256精确等于C原progress的

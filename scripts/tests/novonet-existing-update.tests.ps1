@@ -7,7 +7,7 @@ $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $path),[ref]$tokens,[ref]$parseErrors)
 if($parseErrors.Count){throw 'Update script parse errors'}
 $functions=@($ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$false))
-foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence','ConvertFrom-NovonetCrashEvent','Assert-StoppedOwnerEvidence','Assert-OriginalFirewallScope','Assert-RollbackReady')) {
+foreach($name in @('Write-NewJson','Assert-NoRedirect','Assert-Package','Assert-FirewallFilterScope','Assert-CrashedOwnerEvidence','ConvertFrom-NovonetCrashEvent','Assert-StoppedOwnerEvidence','Assert-OriginalFirewallScope','Assert-RollbackReady','Assert-MissingProgressRecovery','Assert-RecoveredProgress')) {
     $function=@($functions|Where-Object Name -CEQ $name)
     if($function.Count -ne 1){throw 'Expected original deployment gate missing'}
     . ([scriptblock]::Create($function[0].Extent.Text))
@@ -223,3 +223,48 @@ $rejected=$false
 try{Assert-RollbackReady $rollbackLogs $false}catch{$rejected=$true}
 if(!$rejected){throw 'Prior rollback evidence accepted for overwrite'}
 Write-Output 'PASS 3 rollback-readiness gates: fresh logs accepted; existing task or log rejected before process stop'
+
+$lossLogs=Join-Path $root 'observation-loss'
+New-Item -ItemType Directory -Path $lossLogs|Out-Null
+[IO.File]::WriteAllBytes((Join-Path $lossLogs 'progress.json'),[byte[]]::new(813127))
+[IO.File]::WriteAllBytes((Join-Path $lossLogs 'node.stdout'),[byte[]]::new(0))
+Assert-MissingProgressRecovery 'C' $true $false $false $lossLogs
+foreach($argsCase in @(@('A',$true,$false,$false),@('D',$true,$false,$false),@('C',$false,$false,$false),@('C',$true,$true,$false),@('C',$true,$false,$true))) {
+    $rejected=$false
+    try{Assert-MissingProgressRecovery $argsCase[0] $argsCase[1] $argsCase[2] $argsCase[3] $lossLogs}catch{$rejected=$true}
+    if(!$rejected){throw 'Unreviewed recovery mode accepted'}
+}
+Write-NewJson (Join-Path $lossLogs 'exit.json') @{exit_code=0}
+$rejected=$false
+try{Assert-MissingProgressRecovery 'C' $true $false $false $lossLogs}catch{$rejected=$true}
+if(!$rejected){throw 'Changed exit evidence accepted'}
+$different=Join-Path $root 'different-loss'
+New-Item -ItemType Directory -Path $different|Out-Null
+[IO.File]::WriteAllBytes((Join-Path $different 'progress.json'),[byte[]]::new(813126))
+$rejected=$false
+try{Assert-MissingProgressRecovery 'C' $true $false $false $different}catch{$rejected=$true}
+if(!$rejected){throw 'Unmatched progress loss accepted'}
+Write-Output 'PASS 8 observation-loss scope gates; exact C bytes required; other hosts, lifecycle modes and changed evidence rejected'
+$recovered=[pscustomobject]@{entry='original_native_execution_tick';chain_id=91129655606029;current_height=1;head=$null;execution_failures=0;recovery_in_progress=$false}
+Assert-RecoveredProgress $recovered $null $true
+Assert-RecoveredProgress $recovered $recovered $false
+foreach($case in @{entry='other';chain_id=1;current_height=-1;execution_failures=1;recovery_in_progress=$true}.GetEnumerator()){
+    $bad=$recovered.PSObject.Copy();$bad.($case.Key)=$case.Value;$rejected=$false
+    try{Assert-RecoveredProgress $bad $null $true}catch{$rejected=$true}
+    if(!$rejected){throw 'Invalid recovery projection accepted'}
+}
+foreach($field in @('entry','chain_id','current_height','head','execution_failures','recovery_in_progress')){
+    $bad=$recovered.PSObject.Copy();$bad.PSObject.Properties.Remove($field);$rejected=$false
+    try{Assert-RecoveredProgress $bad $null $true}catch{$rejected=$true}
+    if(!$rejected){throw 'Missing recovered field accepted'}
+}
+foreach($tuple in @(@($recovered,$recovered,$true),@($recovered,$null,$false),@($null,$null,$true))){
+    $rejected=$false
+    try{Assert-RecoveredProgress $tuple[0] $tuple[1] $tuple[2]}catch{$rejected=$true}
+    if(!$rejected){throw 'Invented or missing prior state accepted'}
+}
+$changed=$recovered.PSObject.Copy();$changed.current_height=2
+$rejected=$false
+try{Assert-RecoveredProgress $changed $recovered $false}catch{$rejected=$true}
+if(!$rejected){throw 'Normal update state comparison weakened'}
+Write-Output 'PASS 17 recovered-state gates; genesis null head allowed; absent prior state never certified unchanged'
