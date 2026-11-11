@@ -1,0 +1,37 @@
+[
+  {
+    "file": "collector.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "collector.stdout",
+    "bytes": 131,
+    "sha256": "dfeda81ba09a783b4e72ff4a62be9c076c435639969a22b2f0e3e17996cf3cb2"
+  },
+  {
+    "file": "handoff.json",
+    "bytes": 224,
+    "sha256": "0cde5422a451f89bf4a216c70811c01b7333fac74208a1c799926ac553b6ec14"
+  },
+  {
+    "file": "launch.json",
+    "bytes": 732,
+    "sha256": "be35f6e7ce9d25e220e144ba601955fc123c76a1f8fea52d69d1b76262948bb4"
+  },
+  {
+    "file": "liveness.json",
+    "bytes": 175,
+    "sha256": "9e1cc63a966d9c6e0ed3d1fd3342517a0a5dee130774c26d56c67e7e2264d6ba"
+  },
+  {
+    "file": "old-observer-check.json",
+    "bytes": 261,
+    "sha256": "4dba96813ab437eaae4f56751f05fb22082f68d4aa35de2269666de0aaf42ddb"
+  },
+  {
+    "file": "ready.json",
+    "bytes": 353,
+    "sha256": "9efa0e2c3e941e51cbb1d85220f657d542825373e316ef7550ed1b392aefd2b7"
+  }
+]

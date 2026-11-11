@@ -1,0 +1,10 @@
+{
+  "host_id": "D",
+  "utc": "2026-11-11T12:21:12.9795785Z",
+  "previous_pid": 26224,
+  "previous_exit_code": 1,
+  "stop_performed": false,
+  "termination_record_created": false,
+  "old_evidence_preserved": true,
+  "previous_process_present": false
+}
