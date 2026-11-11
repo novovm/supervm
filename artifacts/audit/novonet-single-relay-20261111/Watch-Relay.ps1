@@ -54,7 +54,9 @@ try {
             if($null -eq $terminalAt -and (($HostId -eq 'D' -and $receiverTerminal) -or ($HostId -eq 'C' -and $closed))){$terminalAt=$clock.ElapsedMilliseconds}
             if($null -ne $terminalAt -and $clock.ElapsedMilliseconds-$terminalAt -ge 3000){break}
         }
-        Start-Sleep -Milliseconds 500
+        # At most64 one-second snapshots cover the full60-second diagnostic
+        # reservation; subsecond sampling could exhaust capture before its end.
+        Start-Sleep -Milliseconds 1000
     }
     [ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=$saved;terminal_observed=($null -ne $terminalAt);wait_expired=($clock.Elapsed.TotalSeconds -ge 1800);capture_limit_reached=($saved -ge 64);node_mutated=$false;business_receipt=$false}|ConvertTo-Json|Set-Content "$out/result.json" -Encoding utf8
 }catch{[ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=$saved;error=$_.Exception.Message}|ConvertTo-Json|Set-Content "$out/error.json" -Encoding utf8;throw}

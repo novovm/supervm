@@ -1,5 +1,74 @@
 # Single-relay real-object qualification
 
+## 2026-11-11 candidate63e9418e rejected; bounded pacing fix and security gate
+
+No running A/B/C/D node was updated and no new real-machine object was sent.
+Windows/Linux source qualification each passed19 owner,5 original probe,3 hop
+boundary and1 CLI tests; all three strict Clippy targets passed on both platforms.
+Both fixed packages built. Linux copied-package hashes/runtime KAT and7 packaged
+identity/NAT tests passed; packaged arm/send/cancel409-byte local commands passed.
+These successful samples did NOT qualify the candidate: the subsequent original
+owner qualification with packaged AOEM failed18/19 before diagnostic readiness,
+with `diagnostic time reply budget`. No probe object was sent in that failed case.
+Windows package owner qualification and remaining Linux recovery qualification
+were not completed. Candidate63e9418e must not be deployed.
+
+The old combined error does not identify which guard predicate fired. Inspection
+found a deterministic defect in its receive-side rate predicate: requests spaced
+250ms at their origin may arrive249ms apart after network jitter. The old
+`now >= next_reply` condition then terminates an otherwise authenticated session.
+The correction keeps a single pending authenticated response, captures its time
+at handoff, and dispatches only when the original250ms reply rate permits. Its
+original2-second deadline is not refreshed; queueing delay stays in uncertainty.
+Three samples, distinct challenges, context, flight and shared byte budgets stay
+unchanged. A deterministic test covers early arrival, no early reply, unchanged
+timestamps/deadline, occupied slot, wrong context, duplicate, sample limit and
+expiry. This is not an assertion that every prior combined-guard failure has been
+independently attributed to that one predicate.
+
+The already-triggered Full42961080141 uses88032d91, whose sole difference from
+program63e9418e is C's handoff Markdown. It is not cancelled and cannot qualify
+the new pacing correction, regardless of its eventual result. The next candidate
+must finish local package qualification before another Full is dispatched.
+
+Original63e9 evidence: `local-63e9418e-evidence.zip`, SHA256
+`e85bc8cb02816c1ec8baa9fa9fa739105e51fb651061d61193e0c2ac0fc12094`.
+The archive retains the local successful samples, initial failures, actual
+packaged-owner failure, build/runtime output and CI source-equivalence record.
+R4 correction: Windows/Linux each passed20 original-owner tests (276.61s/262.71s)
+and strict node Clippy. The four diagnostic boundary tests and actual three-node
+component delivery also passed independently. These are NOT real A/C/D evidence.
+The collector now samples at most64 snapshots one second apart, covering the
+60-second reservation without exhausting its record limit halfway through.
+
+The same original Full's security job130327715687 failed Cargo Audit: root lock
+`openssl0.10.78` has RUSTSEC-2026-0474,0476,0477; the last requires>=0.10.80.
+Its Linux dependency is lettre->native-tls->openssl (node/rollout-policy), not
+AOEM or NovoRUDP authentication. Cargo updated ONLY openssl to0.10.80; sys remains
+0.9.118 and runtime lock is unchanged. No advisory ignore or gate change was made.
+Root audit fetched advisory DB28d73fc95e5972af3403225a217def57dcaba3c4 and passed.
+Runtime's first fetch failed with a GitHub I/O error; both audits then passed
+against that same already-fetched1446-advisory database, without stale/ignore
+options. Root/runtime Deny passed with existing warnings preserved. Linux actual
+consumer regressions and Clippy after this dependency update are still pending.
+Original CI failure and local fetch failure remain separate records; neither is
+rewritten as passed. No runtime deployment follows from a local security result.
+
+The original Full recovery job130327715690 separately failed NUAS original-process
+recovery. Its artifact13829518517 reports a verified interruption at durable
+height1 (target40, three QC signatures), then existing restart. The test passed
+its subsequent wait_height call, but client3's first128-selector receipt query
+timed out at5000ms (1063 total selectors, shared deadline still84762ms). The query
+send completion was Delivered, not a business response. Existing-node stderr
+only records native tick startup, with no matching per-query ingress/response
+trace; the root cause is UNKNOWN. No database/journal is included in that CI
+artifact. This is not attributed to diagnostic routing, pacing or OpenSSL, nor
+declared fixed. The next package's original NUAS gate remains required, with its
+actual result retained separately. No timeout, quorum or receipt assertion changes.
+
+R4/R5 correction and security logs remain in `target/relay-constraint-20261111/`.
+No fresh firewall block or repeated real direct test is required.
+
 ## Diagnostic constraint implementation in progress (2026-11-11)
 
 User authorized a diagnostic-only path constraint in the original owner, followed

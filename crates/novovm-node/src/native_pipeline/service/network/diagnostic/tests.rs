@@ -1,5 +1,100 @@
 use super::*;
 
+#[test]
+fn relay_diagnostic_time_reply_jitter_preserves_rate_deadline_and_bounds() -> Result<()> {
+    let start = Instant::now();
+    let context = [7; 32];
+    let request = |id| coordination::TimeExchangeV1 {
+        response: false,
+        context,
+        challenge: [id; 32],
+        receive_ms: 0,
+        send_ms: 0,
+        residence_ns: 0,
+    };
+    let mut replies = TimeReplies::default();
+    replies.admit(
+        &request(1),
+        context,
+        ClockAnchorV1::from_parts(1000, start),
+        0,
+    )?;
+    assert!(replies.take_due(start)?.is_some());
+    let early = start + SAMPLE_INTERVAL - Duration::from_millis(1);
+    // The previous now>=next_reply guard rejected this legitimate request.
+    assert!(early < start + SAMPLE_INTERVAL);
+    replies.admit(
+        &request(2),
+        context,
+        ClockAnchorV1::from_parts(1249, early),
+        0,
+    )?;
+    assert!(replies.take_due(early)?.is_none());
+    assert!(replies
+        .admit(
+            &request(3),
+            context,
+            ClockAnchorV1::from_parts(1249, early),
+            0
+        )
+        .is_err());
+    let (reply, deadline) = replies.take_due(start + SAMPLE_INTERVAL)?.unwrap();
+    assert_eq!(
+        (reply.receive_ms, reply.send_ms, reply.residence_ns),
+        (1249, 1249, 0)
+    );
+    assert_eq!(deadline, early + MEASUREMENT_LIFETIME);
+    assert!(replies
+        .admit(
+            &request(2),
+            context,
+            ClockAnchorV1::from_parts(1250, start + SAMPLE_INTERVAL),
+            0
+        )
+        .is_err());
+    let third = start + SAMPLE_INTERVAL * 2;
+    assert!(replies
+        .admit(
+            &request(3),
+            [8; 32],
+            ClockAnchorV1::from_parts(1500, third),
+            0
+        )
+        .is_err());
+    assert!(replies
+        .admit(
+            &request(3),
+            context,
+            ClockAnchorV1::from_parts(1500, third),
+            2
+        )
+        .is_err());
+    replies.admit(
+        &request(3),
+        context,
+        ClockAnchorV1::from_parts(1500, third),
+        0,
+    )?;
+    assert!(replies.take_due(third)?.is_some());
+    assert!(replies
+        .admit(
+            &request(4),
+            context,
+            ClockAnchorV1::from_parts(1501, third),
+            0
+        )
+        .is_err());
+    let mut expired = TimeReplies::default();
+    expired.admit(
+        &request(1),
+        context,
+        ClockAnchorV1::from_parts(1000, start),
+        0,
+    )?;
+    assert!(expired.take_due(start + MEASUREMENT_LIFETIME).is_err());
+    Ok(())
+}
+
 fn probe() -> NetworkProbe {
     NetworkProbe {
         nonce: [9; 32],

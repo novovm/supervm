@@ -383,6 +383,57 @@ fn decode_message(bytes: &[u8]) -> Result<Message> {
     Ok(message)
 }
 
+/// Request pacing is measured at the other endpoint. Network jitter may deliver
+/// two legal requests less than SAMPLE_INTERVAL apart here. Retain at most one
+/// authenticated reply until our ORIGINAL response rate permits it; never abort
+/// a session merely because that reply arrived slightly early.
+#[derive(Default)]
+struct TimeReplies {
+    seen: BTreeSet<Hash>,
+    pending: Option<(coordination::TimeExchangeV1, Instant)>,
+    next: Option<Instant>,
+}
+impl TimeReplies {
+    fn admit(
+        &mut self,
+        message: &coordination::TimeExchangeV1,
+        expected: Hash,
+        clock: ClockAnchorV1,
+        in_flight: usize,
+    ) -> Result<()> {
+        ensure!(
+            self.pending.is_none(),
+            "diagnostic pending time reply occupied"
+        );
+        ensure!(in_flight < 2, "diagnostic time reply flight budget");
+        ensure!(
+            self.seen.len() < coordination::REQUIRED_SAMPLES
+                && !self.seen.contains(&message.challenge),
+            "diagnostic time reply sample/replay budget"
+        );
+        // Capture at authenticated handoff, not at the later send. The original
+        // estimator therefore includes the queued delay in its uncertainty.
+        let reply = message.reply(expected, clock)?;
+        self.seen.insert(message.challenge);
+        self.pending = Some((reply, clock.instant() + MEASUREMENT_LIFETIME));
+        Ok(())
+    }
+    fn take_due(
+        &mut self,
+        now: Instant,
+    ) -> Result<Option<(coordination::TimeExchangeV1, Instant)>> {
+        let Some((_, deadline)) = &self.pending else {
+            return Ok(None);
+        };
+        ensure!(now < *deadline, "diagnostic queued time reply expired");
+        if self.next.is_some_and(|next| now < next) {
+            return Ok(None);
+        }
+        self.next = Some(now + SAMPLE_INTERVAL);
+        Ok(self.pending.take())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn session(
     endpoint: NativeEndpoint,
@@ -433,10 +484,9 @@ async fn session(
     let time_context = coordination::context(domain, local, remote, session_id);
     let reverse = coordination::context(domain, remote, local, session_id);
     let mut flights: Vec<(Hash, bool)> = Vec::new();
-    let mut replies = BTreeSet::new();
+    let mut replies = TimeReplies::default();
     let mut completed_replies = 0;
     let session_deadline = Instant::now() + Duration::from_secs(20);
-    let mut next_reply = Instant::now();
     let mut sent: Option<(Hash, NetworkProbe)> = None;
     let mut done_at: Option<Instant> = None;
     let mut received = false;
@@ -462,6 +512,18 @@ async fn session(
             return Ok(());
         }
         reference.observe(time_context, clock);
+        if let Some((reply, deadline)) = replies.take_due(now)? {
+            flights.push((
+                send(
+                    &mut link,
+                    domain,
+                    Message::NetworkTime(reply),
+                    now,
+                    deadline,
+                )?,
+                true,
+            ));
+        }
         if let Some(ref request) = request {
             let mut s = state
                 .lock()
@@ -567,26 +629,8 @@ async fn session(
                             );
                         }
                     } else {
-                        ensure!(
-                            request.is_some()
-                                && now >= next_reply
-                                && flights.len() < 2
-                                && replies.len() < coordination::REQUIRED_SAMPLES
-                                && replies.insert(message.challenge),
-                            "diagnostic time reply budget"
-                        );
-                        let reply = message.reply(reverse, clock)?;
-                        flights.push((
-                            send(
-                                &mut link,
-                                domain,
-                                Message::NetworkTime(reply),
-                                now,
-                                now + MEASUREMENT_LIFETIME,
-                            )?,
-                            true,
-                        ));
-                        next_reply = now + SAMPLE_INTERVAL;
+                        ensure!(request.is_some(), "unexpected reverse time request");
+                        replies.admit(&message, reverse, clock, flights.len())?;
                     }
                 }
                 Message::NetworkProbe(probe) => {
