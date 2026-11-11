@@ -7,9 +7,10 @@ pub(super) struct Ingress<'a> {
     pub routes: Arc<Mutex<Vec<Option<Candidate>>>>,
     pub budget: HopBudget,
     pub observer: Option<Arc<NativeTransferDiagnosticsV1>>,
+    pub diagnostic: diagnostic::Shared,
 }
 
-fn context(pins: (u64, [u8; 32], [u8; 32])) -> [u8; 32] {
+pub(super) fn context(pins: (u64, [u8; 32], [u8; 32])) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     Sha256::digest(novovm_network::discovery_control::native_locator_id_v1(pins).as_bytes()).into()
 }
@@ -105,12 +106,36 @@ pub(super) async fn incoming(
     connected: mpsc::SyncSender<Connected>,
     ingress: Ingress<'_>,
 ) -> Result<()> {
+    let mut contexts = vec![context(pins)];
+    if ingress
+        .diagnostic
+        .lock()
+        .map_err(|_| anyhow::anyhow!("diagnostic state poisoned"))?
+        .enabled()
+    {
+        contexts.push(diagnostic::context(pins));
+    }
     let mut hop = tokio::time::timeout(
         Duration::from_secs(8),
-        HopStream::accept(stream, &identity, context(pins), ingress.budget.clone()),
+        HopStream::accept_contexts(stream, &identity, &contexts, ingress.budget.clone()),
     )
     .await??;
-    if let Some(observer) = ingress.observer {
+    let _diagnostic_occupancy = if hop.route().context() == diagnostic::context(pins) {
+        ensure!(
+            hop.route().path().len() == 2
+                && keys.iter().any(|k| k.as_slice() == hop.route().origin())
+                && hop
+                    .route()
+                    .path()
+                    .iter()
+                    .all(|k| k.as_slice() == identity.public_key() || keys.contains(k)),
+            "diagnostic route must contain one known relay and one known target"
+        );
+        Some(diagnostic::Occupancy::acquire(&ingress.diagnostic)?)
+    } else {
+        None
+    };
+    if let Some(observer) = ingress.observer.clone() {
         hop.observe(observer, &identity);
     }
     if let Some(next) = hop.route().next() {
@@ -134,13 +159,41 @@ pub(super) async fn incoming(
             .await
         })
         .await??;
-        return hop::bridge(&mut hop, &mut downstream).await;
+        return if _diagnostic_occupancy.is_some() {
+            tokio::time::timeout(
+                Duration::from_secs(60),
+                hop::bridge(&mut hop, &mut downstream),
+            )
+            .await
+            .context("diagnostic relay lease expired")?
+        } else {
+            hop::bridge(&mut hop, &mut downstream).await
+        };
     }
     let origin = hop.route().origin().to_vec();
     let peer = keys
         .iter()
         .position(|key| *key == origin)
         .context("relay origin has no native peer authority")?;
+    if hop.route().context() == diagnostic::context(pins) {
+        let remote = ingress
+            .diagnostic
+            .lock()
+            .map_err(|_| anyhow::anyhow!("diagnostic state poisoned"))?
+            .identities
+            .as_ref()
+            .context("diagnostic disabled")?
+            .1[peer];
+        return diagnostic::incoming(
+            hop,
+            &identity,
+            remote,
+            pins,
+            ingress.diagnostic,
+            ingress.observer,
+        )
+        .await;
+    }
     ensure!(
         origin.as_slice() < identity.public_key(),
         "native relayed initiation role differs"

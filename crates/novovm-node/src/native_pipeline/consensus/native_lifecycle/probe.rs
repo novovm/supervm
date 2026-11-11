@@ -16,17 +16,25 @@ fn wall_ms() -> u64 {
         .unwrap_or(0)
 }
 pub const COMMAND_BYTES: usize = 9 + super::super::transport::probe::WIRE_BYTES;
+pub const RELAY_COMMAND_BYTES: usize = COMMAND_BYTES + 32;
 
 #[derive(Clone, Debug)]
 pub enum ProbeCommand {
     Start(NetworkProbe),
     Cancel(NetworkProbe),
+    /// Local diagnostic reservation only; never installs a business peer route.
+    RelayArm(NetworkProbe, Hash),
+    RelaySend(NetworkProbe, Hash),
+    RelayCancel(NetworkProbe, Hash),
 }
 impl ProbeCommand {
     pub fn encode(&self) -> Result<Vec<u8>> {
         let (tag, probe) = match self {
             Self::Start(p) => (1, p),
             Self::Cancel(p) => (2, p),
+            Self::RelayArm(p, _) => (3, p),
+            Self::RelaySend(p, _) => (4, p),
+            Self::RelayCancel(p, _) => (5, p),
         };
         let codec = DecodeLimits {
             transactions: 1,
@@ -38,15 +46,28 @@ impl ProbeCommand {
         let mut out = COMMAND_MAGIC.to_vec();
         out.push(tag);
         out.extend_from_slice(&wire[11..]);
+        if let Self::RelayArm(_, via) | Self::RelaySend(_, via) | Self::RelayCancel(_, via) = self {
+            ensure!(
+                *via != [0; 32] && *via != probe.sender && *via != probe.recipient,
+                "invalid diagnostic relay"
+            );
+            out.extend_from_slice(via);
+        }
         Ok(out)
     }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         ensure!(
-            bytes.len() == COMMAND_BYTES && &bytes[..8] == COMMAND_MAGIC,
+            matches!(bytes.len(), COMMAND_BYTES | RELAY_COMMAND_BYTES)
+                && &bytes[..8] == COMMAND_MAGIC,
             "invalid bounded probe command"
         );
         let mut wire = b"NVHOSTN1\0\x01\x15".to_vec();
-        wire.extend_from_slice(&bytes[9..]);
+        ensure!(
+            (bytes[8] <= 2 && bytes.len() == COMMAND_BYTES)
+                || ((3..=5).contains(&bytes[8]) && bytes.len() == RELAY_COMMAND_BYTES),
+            "probe command kind/size mismatch"
+        );
+        wire.extend_from_slice(&bytes[9..COMMAND_BYTES]);
         let codec = DecodeLimits {
             transactions: 1,
             transaction_bytes: 512,
@@ -59,6 +80,18 @@ impl ProbeCommand {
         match bytes[8] {
             1 => Ok(Self::Start(probe)),
             2 => Ok(Self::Cancel(probe)),
+            3..=5 => {
+                let via: Hash = bytes[COMMAND_BYTES..].try_into()?;
+                ensure!(
+                    via != [0; 32] && via != probe.sender && via != probe.recipient,
+                    "invalid diagnostic relay"
+                );
+                Ok(match bytes[8] {
+                    3 => Self::RelayArm(probe, via),
+                    4 => Self::RelaySend(probe, via),
+                    _ => Self::RelayCancel(probe, via),
+                })
+            }
             _ => anyhow::bail!("unknown probe command"),
         }
     }
@@ -199,6 +232,7 @@ impl NativeLifecycle {
         ensure!(!self.is_frozen(), "native lifecycle frozen");
         let probe = match &command {
             ProbeCommand::Start(p) | ProbeCommand::Cancel(p) => p,
+            _ => anyhow::bail!("relay diagnostic command requires original NOVONET owner"),
         };
         probe.validate()?;
         ensure!(

@@ -1,4 +1,50 @@
-# Single-relay real-object qualification — bounded UDP isolation completed, no object sent
+# Single-relay real-object qualification
+
+## Diagnostic constraint implementation in progress (2026-11-11)
+
+User authorized a diagnostic-only path constraint in the original owner, followed
+by local qualification and real single-relay object delivery. The prior UDP
+isolation is complete and restored; it is not repeated or broadened.
+
+Implementation uses the existing Driver reactor, verified locator candidates,
+Iroh scope, HopStream authentication/forwarding, NativeEndpoint and
+NativeObjectLink. It creates no socket, listener, daemon, business queue or receipt
+protocol. A domain-separated diagnostic circuit is never installed through
+`Connected`: normal business peer routes and NovoRUDP-first policy remain unchanged.
+
+The original protected local command file supports bounded arm/send/cancel tags.
+Arm pins one known intermediate validator and one known recipient, reserves one
+session for at most60 seconds, and sends no probe. Send must match that reservation,
+follow authenticated readiness, and use the original fixed non-business payload
+with a fresh10-second lifetime. No arbitrary payload or asset submission is allowed.
+The original shared connection/hop-byte budgets are not raised. Diagnostic events
+retain at most64 entries; route digest/circuit, actual forwarding and native session
+are observed by the original relay diagnostics. Object DONE remains custody, not
+a business receipt or consensus result.
+
+Local failures retained separately:
+
+- Initial three-node fixture attempted a relay before its fresh next-hop locator
+  was available. The fixture now loads actual signed peer records and waits for
+  their verified availability; production discovery and timeouts are unchanged.
+- The initial diagnostic measured relative time in both directions and exhausted
+  the original shared relay-byte budget. The fixed probe is one-way: its recipient
+  now performs the original three authenticated time exchanges; the sender replies.
+  Receiver validity still requires its own established bounded reference. This
+  removes unnecessary exchanges, not authentication, sample count or budget checks.
+- Windows r3 targeted tests:3 boundary tests plus1 actual three-node relay test
+  passed. The latter checks matching object/session, sender DONE, receiver integrity,
+  middle-node forwarding, unchanged business sessions and subsequent business
+  delivery. These are component tests, NOT A/C/D real-machine evidence.
+- Linux r2 original-owner group:18 passed,1 failed (the pre-fix diagnostic budget
+  case). This failure is not relabeled as passing; final-code checks are pending.
+- Strict Clippy first identified a range-loop style error in the new test; fixed
+  without suppressing the lint. Final two-platform results are pending.
+
+Working logs: `target/relay-constraint-20261111/`. No candidate has been accepted,
+no running node has been updated, and no new real-machine object has been sent by
+this implementation work. Fixed-source qualification and actual relay/receiver
+evidence remain required before closing the real-network task.
 
 ## Authorized live window result (2026-11-11)
 

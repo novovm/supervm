@@ -1,7 +1,9 @@
 //! Local file operations borrow the existing NOVONET reactor. At most one
 //! bounded read future; no socket, server, node task or network retry owner.
 use super::*;
-use crate::native_pipeline::consensus::native_lifecycle::probe::{ProbeCommand, COMMAND_BYTES};
+use crate::native_pipeline::consensus::native_lifecycle::probe::{
+    ProbeCommand, COMMAND_BYTES, RELAY_COMMAND_BYTES,
+};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 
@@ -39,17 +41,19 @@ impl Control {
             self.read = Some(Box::pin(async move {
                 let metadata = tokio::fs::symlink_metadata(&path).await?;
                 ensure!(
-                    metadata.file_type().is_file() && metadata.len() == COMMAND_BYTES as u64,
+                    metadata.file_type().is_file()
+                        && [COMMAND_BYTES as u64, RELAY_COMMAND_BYTES as u64]
+                            .contains(&metadata.len()),
                     "probe command must be one bounded regular file"
                 );
-                let mut bytes = Vec::with_capacity(COMMAND_BYTES + 1);
+                let mut bytes = Vec::with_capacity(RELAY_COMMAND_BYTES + 1);
                 tokio::fs::File::open(path)
                     .await?
-                    .take((COMMAND_BYTES + 1) as u64)
+                    .take((RELAY_COMMAND_BYTES + 1) as u64)
                     .read_to_end(&mut bytes)
                     .await?;
                 ensure!(
-                    bytes.len() == COMMAND_BYTES,
+                    bytes.len() as u64 == metadata.len(),
                     "probe command changed during bounded read"
                 );
                 Ok(bytes)
@@ -138,7 +142,7 @@ mod tests {
             )
             .await;
             ensure!(replay.is_err(), "unchanged command replayed");
-            std::fs::write(&path, ProbeCommand::Cancel(probe).encode()?)?;
+            std::fs::write(&path, ProbeCommand::Cancel(probe.clone()).encode()?)?;
             let cancel = tokio::time::timeout(
                 Duration::from_secs(3),
                 poll_fn(|cx| {
@@ -149,12 +153,23 @@ mod tests {
             )
             .await??;
             ensure!(matches!(cancel, ProbeCommand::Cancel(_)));
+            std::fs::write(&path, ProbeCommand::RelayArm(probe, [4; 32]).encode()?)?;
+            let relay = tokio::time::timeout(
+                Duration::from_secs(3),
+                poll_fn(|cx| {
+                    control
+                        .poll(cx, now + Duration::from_secs(3))
+                        .map_or(Poll::Pending, Poll::Ready)
+                }),
+            )
+            .await??;
+            ensure!(matches!(relay, ProbeCommand::RelayArm(_, via) if via == [4; 32]));
             std::fs::write(&path, b"arbitrary input")?;
             let invalid = tokio::time::timeout(
                 Duration::from_secs(3),
                 poll_fn(|cx| {
                     control
-                        .poll(cx, now + Duration::from_secs(3))
+                        .poll(cx, now + Duration::from_secs(4))
                         .map_or(Poll::Pending, Poll::Ready)
                 }),
             )

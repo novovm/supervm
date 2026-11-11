@@ -11,7 +11,7 @@ pub const SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 const REFERENCE_LIFETIME: Duration = Duration::from_secs(30);
 const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 const DRIFT_PPM: u32 = 500;
-const REQUIRED_SAMPLES: usize = 3;
+pub const REQUIRED_SAMPLES: usize = 3;
 const MAX_POLL_GAP: Duration = Duration::from_secs(2);
 const CLOCK_JUMP_MS: u64 = 50;
 

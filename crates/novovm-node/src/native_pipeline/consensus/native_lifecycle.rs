@@ -335,6 +335,10 @@ impl NativeLifecycle {
         self.peers.len()
     }
     #[cfg(feature = "iroh-transport")]
+    pub(crate) fn network_probe_identities(&self) -> (Hash, Vec<Hash>) {
+        (self.progress.local_validator(), self.peers.clone())
+    }
+    #[cfg(feature = "iroh-transport")]
     pub fn peer_session_id(&self, peer: usize) -> Option<[u8; 16]> {
         self.channel.session_id(peer)
     }

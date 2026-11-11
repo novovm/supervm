@@ -116,6 +116,12 @@ impl HopRoute {
     pub fn target(&self) -> &[u8] {
         self.path.last().expect("validated path").as_slice()
     }
+    pub fn context(&self) -> [u8; 32] {
+        self.context
+    }
+    pub fn path(&self) -> &[Vec<u8>] {
+        &self.path
+    }
     pub fn forwarded(&self) -> Result<Self> {
         let mut route = self.clone();
         route.cursor += 1;
@@ -277,11 +283,22 @@ impl<'a> HopStream<'a> {
     /// ENTRY was consumed by the enclosing original stream dispatcher. The
     /// verified immediate sender, not an alleged origin, owns this hop's quota.
     pub async fn accept(
-        mut stream: CarrierStreamV1<'a>,
+        stream: CarrierStreamV1<'a>,
         identity: &TransportIdentity,
         context: [u8; 32],
         budget: HopBudget,
     ) -> Result<Self> {
+        Self::accept_contexts(stream, identity, &[context], budget).await
+    }
+    /// Locally pinned service contexts, never supplied by the remote caller.
+    /// Same wire/authentication/budget; a second context isolates opt-in diagnostics.
+    pub async fn accept_contexts(
+        mut stream: CarrierStreamV1<'a>,
+        identity: &TransportIdentity,
+        contexts: &[[u8; 32]],
+        budget: HopBudget,
+    ) -> Result<Self> {
+        ensure!((1..=2).contains(&contexts.len()), "bounded relay contexts");
         let (channel, remote) = authenticate_structured_service_client_observed(
             &mut stream,
             identity,
@@ -308,7 +325,7 @@ impl<'a> HopStream<'a> {
         let route =
             HopRoute::decode(&opened.payload).context(RelayProtocolRejected("open route"))?;
         ensure!(
-            route.context == context && route.path[route.cursor] == identity.public_key(),
+            contexts.contains(&route.context) && route.path[route.cursor] == identity.public_key(),
             RelayProtocolRejected("context/current hop")
         );
         let previous = if route.cursor == 0 {

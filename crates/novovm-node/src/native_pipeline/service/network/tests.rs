@@ -13,6 +13,7 @@ use novovm_network::{
     UdpTransport,
 };
 use std::net::UdpSocket;
+mod diagnostic;
 mod hop;
 
 #[test]

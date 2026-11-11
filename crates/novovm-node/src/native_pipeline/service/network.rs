@@ -24,6 +24,7 @@ use novovm_network::{
     product_overlay::TransportIdentity,
     product_service_lease::{IrohServiceEndpointV1, SelfOwnedTrustV1, ServiceLeaseBookV1},
 };
+mod diagnostic;
 mod discovery;
 mod observation;
 mod probe;
@@ -232,6 +233,7 @@ impl NetworkFailures {
 /// The pinned future owns its scope/streams. No borrowed pump escapes into the
 /// node struct, and no partial frame future is discarded between tick polls.
 pub struct Driver {
+    diagnostic: diagnostic::Shared,
     probe_control: Option<probe::Control>,
     work: Job<'static>,
     runtime: tokio::runtime::Runtime,
@@ -266,7 +268,16 @@ impl Driver {
             node.controller.enable_network_probe(Instant::now());
         }
         let observer = node.controller.network_probe_diagnostics();
-        Self::with_material(config, identity, keys, pins, observer)
+        let enabled = config.probe_control_file.is_some() && config.relay_forwarding;
+        let driver = Self::with_material(config, identity, keys, pins, observer)?;
+        if enabled {
+            driver
+                .diagnostic
+                .lock()
+                .map_err(|_| anyhow::anyhow!("diagnostic state poisoned"))?
+                .identities = Some(node.controller.network_probe_identities());
+        }
+        Ok(driver)
     }
     fn with_material(
         config: Config,
@@ -292,6 +303,7 @@ impl Driver {
         ]));
         let stop = Arc::new(AtomicBool::new(false));
         let failures = Arc::new(NetworkFailures::default());
+        let diagnostic = Arc::new(Mutex::new(diagnostic::State::default()));
         // One result per configured connection, not a business/data send queue.
         let (sender, connected) = mpsc::sync_channel(keys.len());
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -307,6 +319,7 @@ impl Driver {
             stop.clone(),
             failures.clone(),
             observer,
+            diagnostic.clone(),
         ));
         let next_udp_probe = vec![
             started;
@@ -316,6 +329,7 @@ impl Driver {
                 .len()
         ];
         Ok(Self {
+            diagnostic,
             probe_control: config.probe_control_file.clone().map(probe::Control::new),
             work,
             runtime,
@@ -338,10 +352,19 @@ impl Driver {
                 .runtime
                 .block_on(async { poll_fn(|cx| Poll::Ready(control.poll(cx, now))).await })
             {
-                control.record(
-                    command
-                        .and_then(|command| node.network_probe_command(command, wall_ms()?, now)),
-                );
+                control.record(command.and_then(|command| {
+                    use crate::native_pipeline::consensus::native_lifecycle::probe::ProbeCommand;
+                    match command {
+                        ProbeCommand::Start(_) | ProbeCommand::Cancel(_) => {
+                            node.network_probe_command(command, wall_ms()?, now)
+                        }
+                        _ => self
+                            .diagnostic
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("diagnostic state poisoned"))?
+                            .command(command, wall_ms()?, now),
+                    }
+                }));
             }
         }
         {
@@ -426,6 +449,7 @@ impl Driver {
             .ok();
         serde_json::json!({"default":"native_novorudp","fallback":"iroh","installed_bound_peer_routes":bound,
             "probe_control":self.probe_control.as_ref().map(|control| control.observation()),
+            "diagnostic_relay":self.diagnostic.try_lock().ok().map(|s|s.observation()),
             "peer_discovery_rpc":self.config.discovery,
             "connection_failures":self.failures.count.load(Ordering::Relaxed),
             "failure_details":self.failures.observation(),
@@ -498,6 +522,7 @@ async fn run(
     stop: Arc<AtomicBool>,
     failures: Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
+    diagnostic: diagnostic::Shared,
 ) -> Result<()> {
     let check_stop = stop.clone();
     let mut carrier = config.carrier()?;
@@ -548,6 +573,7 @@ async fn run(
                         &service_stop,
                         &failures,
                         observer,
+                        diagnostic,
                     )
                     .await
                 })
@@ -574,6 +600,7 @@ async fn serve<'a>(
     stop: &Arc<AtomicBool>,
     failures: &Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
+    diagnostic: diagnostic::Shared,
 ) -> Result<()> {
     let mut books = (0..keys.len())
         .map(|_| None)
@@ -625,12 +652,17 @@ async fn serve<'a>(
     let mut publish_at = refresh;
     let mut accepting = Box::pin(scope.accept_inbound());
     let mut incoming: Vec<Job<'a>> = Vec::new();
+    let mut diagnostic_job: Option<Job<'a>> = None;
     let mut updates = Vec::new();
     loop {
         if stop.load(Ordering::Acquire) {
             return Ok(());
         }
         let now = Instant::now();
+        if diagnostic_job.is_some() && diagnostic::stop_requested(&diagnostic) {
+            diagnostic_job = None;
+            diagnostic::stopped(&diagnostic);
+        }
         if now >= refresh {
             let wall = wall_ms()?;
             if let Some(discovery) = &mut discovery {
@@ -734,7 +766,29 @@ async fn serve<'a>(
                         candidates[peer].clone();
                 }
             }
+            if let Ok(mut state) = diagnostic.try_lock() {
+                state.verified_locators = candidates
+                    .iter()
+                    .flatten()
+                    .filter(|c| c.expires > wall)
+                    .count();
+            }
             refresh = now + Duration::from_secs(1);
+        }
+        if diagnostic_job.is_none() {
+            if let Some(request) = diagnostic::take_request(&diagnostic) {
+                diagnostic_job = Some(Box::pin(diagnostic::outgoing(
+                    scope,
+                    identity.clone(),
+                    keys.to_vec(),
+                    pins,
+                    candidates.clone(),
+                    hop_budget.clone(),
+                    observer.clone(),
+                    diagnostic.clone(),
+                    request,
+                )));
+            }
         }
         let snapshot = views
             .lock()
@@ -807,6 +861,14 @@ async fn serve<'a>(
         // is never interpreted as business delivery or a vote.
         let poll_wall = wall_ms()?;
         poll_fn(|cx| {
+            if let Some(job) = &mut diagnostic_job {
+                if let Poll::Ready(result) = job.as_mut().poll(cx) {
+                    if let Err(error) = result {
+                        failures.record("diagnostic_relay", None, &error);
+                    }
+                    diagnostic_job = None;
+                }
+            }
             for peer in 0..jobs.len() {
                 let Some(job) = &mut jobs[peer] else {
                     continue;
@@ -885,6 +947,7 @@ async fn serve<'a>(
                                 routes: routes.clone(),
                                 budget: hop_budget.clone(),
                                 observer: observer.clone(),
+                                diagnostic: diagnostic.clone(),
                             }),
                         )));
                     }

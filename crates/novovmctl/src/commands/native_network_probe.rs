@@ -2,7 +2,7 @@
 use crate::{error::CtlError, output};
 use clap::{Args, Subcommand};
 use novovm_node::native_pipeline::consensus::{
-    native_lifecycle::probe::{ProbeCommand, COMMAND_BYTES},
+    native_lifecycle::probe::{ProbeCommand, COMMAND_BYTES, RELAY_COMMAND_BYTES},
     transport::{probe::MAX_LIFETIME_MS, NetworkProbe},
 };
 use sha2::{Digest, Sha256};
@@ -27,11 +27,21 @@ pub enum Command {
         recipient: String,
         #[arg(long)]
         nonce: Option<String>,
+        /// Arm a bounded diagnostic session through this validator; sends no object.
+        #[arg(long)]
+        via: Option<String>,
         #[arg(long)]
         output: PathBuf,
     },
     /// Cancel only the exact original diagnostic command, never a business send.
     Cancel {
+        #[arg(long)]
+        from: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Send one fixed probe on the already-ready diagnostic relay reservation.
+    SendRelay {
         #[arg(long)]
         from: PathBuf,
         #[arg(long)]
@@ -55,15 +65,18 @@ fn hash(value: &str) -> Result<[u8; 32], CtlError> {
 fn read(path: &Path) -> Result<ProbeCommand, CtlError> {
     let meta =
         std::fs::symlink_metadata(path).map_err(|e| CtlError::FileReadFailed(e.to_string()))?;
-    if !meta.is_file() || meta.file_type().is_symlink() || meta.len() != COMMAND_BYTES as u64 {
+    if !meta.is_file()
+        || meta.file_type().is_symlink()
+        || ![COMMAND_BYTES as u64, RELAY_COMMAND_BYTES as u64].contains(&meta.len())
+    {
         return Err(CtlError::InvalidArgument(
             "not a bounded probe command file".into(),
         ));
     }
-    let mut bytes = Vec::with_capacity(COMMAND_BYTES + 1);
+    let mut bytes = Vec::with_capacity(RELAY_COMMAND_BYTES + 1);
     std::fs::File::open(path)
         .and_then(|file| {
-            file.take((COMMAND_BYTES + 1) as u64)
+            file.take((RELAY_COMMAND_BYTES + 1) as u64)
                 .read_to_end(&mut bytes)
         })
         .map_err(|e| CtlError::FileReadFailed(e.to_string()))?;
@@ -104,6 +117,7 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
                 sender,
                 recipient,
                 nonce,
+                via,
                 output,
             } => {
                 let sender = hash(&sender)?;
@@ -128,32 +142,61 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
                 let expires = issued
                     .checked_add(MAX_LIFETIME_MS)
                     .ok_or_else(|| CtlError::InvalidArgument("clock overflow".into()))?;
+                let probe = NetworkProbe {
+                    nonce,
+                    sender,
+                    recipient,
+                    issued_at_ms: issued,
+                    expires_at_ms: expires,
+                };
                 (
-                    ProbeCommand::Start(NetworkProbe {
-                        nonce,
-                        sender,
-                        recipient,
-                        issued_at_ms: issued,
-                        expires_at_ms: expires,
-                    }),
+                    match via {
+                        Some(via) => ProbeCommand::RelayArm(probe, hash(&via)?),
+                        None => ProbeCommand::Start(probe),
+                    },
                     output,
                 )
             }
             Command::Cancel { from, output } => {
-                let probe = match read(&from)? {
-                    ProbeCommand::Start(p) | ProbeCommand::Cancel(p) => p,
+                let command = match read(&from)? {
+                    ProbeCommand::Start(p) | ProbeCommand::Cancel(p) => ProbeCommand::Cancel(p),
+                    ProbeCommand::RelayArm(p, via)
+                    | ProbeCommand::RelaySend(p, via)
+                    | ProbeCommand::RelayCancel(p, via) => ProbeCommand::RelayCancel(p, via),
                 };
-                (ProbeCommand::Cancel(probe), output)
+                (command, output)
+            }
+            Command::SendRelay { from, output } => {
+                let ProbeCommand::RelayArm(mut probe, via) = read(&from)? else {
+                    return Err(CtlError::InvalidArgument(
+                        "original relay arm required".into(),
+                    ));
+                };
+                probe.issued_at_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|e| CtlError::InvalidArgument(e.to_string()))?
+                    .as_millis()
+                    .try_into()
+                    .map_err(|_| CtlError::InvalidArgument("clock overflow".into()))?;
+                probe.expires_at_ms = probe
+                    .issued_at_ms
+                    .checked_add(MAX_LIFETIME_MS)
+                    .ok_or_else(|| CtlError::InvalidArgument("clock overflow".into()))?;
+                (ProbeCommand::RelaySend(probe, via), output)
             }
         };
         publish(&path, &command)?;
         let probe = match &command {
             ProbeCommand::Start(p) | ProbeCommand::Cancel(p) => p,
+            ProbeCommand::RelayArm(p, _)
+            | ProbeCommand::RelaySend(p, _)
+            | ProbeCommand::RelayCancel(p, _) => p,
         };
         output::print_success_json(
             "native-network-probe",
             &serde_json::json!({
-                "scope":"local_binary_command_only","path":path,"bytes":COMMAND_BYTES,
+                "scope":"local_binary_command_only","path":path,"bytes":command.encode().map_err(|e| CtlError::InvalidArgument(e.to_string()))?.len(),
+                "relay":match &command { ProbeCommand::RelayArm(_, via) | ProbeCommand::RelaySend(_, via) | ProbeCommand::RelayCancel(_, via) => Some(via), _ => None },
                 "nonce":probe.nonce,"sender_validator_id":probe.sender,"recipient_validator_id":probe.recipient,
                 "issued_at_ms":probe.issued_at_ms,"expires_at_ms":probe.expires_at_ms,
                 "sent":false,"object_done":false,"business_receipt":false,"node_started":false
@@ -188,8 +231,18 @@ mod tests {
         };
         publish(&path, &ProbeCommand::Start(probe.clone()))?;
         assert!(matches!(read(&path)?, ProbeCommand::Start(_)));
-        publish(&path, &ProbeCommand::Cancel(probe))?;
+        publish(&path, &ProbeCommand::Cancel(probe.clone()))?;
         assert!(matches!(read(&path)?, ProbeCommand::Cancel(_)));
+        for command in [
+            ProbeCommand::RelayArm(probe.clone(), [4; 32]),
+            ProbeCommand::RelaySend(probe.clone(), [4; 32]),
+            ProbeCommand::RelayCancel(probe, [4; 32]),
+        ] {
+            let expected = command.encode().unwrap();
+            publish(&path, &command)?;
+            assert_eq!(read(&path)?.encode().unwrap(), expected);
+            assert_eq!(std::fs::read(&path).unwrap(), expected);
+        }
         let sentinel = root.join("untouched.nvprobe");
         std::fs::write(&sentinel, b"not a probe command")
             .map_err(|e| CtlError::FileWriteFailed(e.to_string()))?;

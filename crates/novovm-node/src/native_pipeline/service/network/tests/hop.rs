@@ -285,7 +285,7 @@ fn run_relay_objects(relay_count: usize) -> Result<()> {
     peers.close()
 }
 
-fn complete_objects(
+pub(super) fn complete_objects(
     peers: &mut Pair,
     source: usize,
     target: usize,

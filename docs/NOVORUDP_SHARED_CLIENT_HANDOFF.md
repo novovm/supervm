@@ -1,5 +1,22 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 A：诊断专用单中继约束（实现验证中，尚未部署）
+
+用户批准在原 owner 增加有界诊断路径约束，不改变正常 NovoRUDP 优先策略。
+原 Driver 在原 Iroh scope/HopStream/NativeEndpoint/NativeObjectLink 内驱动
+独立诊断会话，固定一个中继和一个接收者；不把它安装为业务 peer route。
+本地受保护命令增加 arm/send-relay/cancel，仍只允许原固定非业务探针。
+接收端复用原三次认证时间测量，保留原有效期、认证、共享连接与字节预算。
+发送端 DONE、接收端完整性结果、中继实际转发及相同 route/session 分开核对。
+
+Windows/Linux 的新增真实三节点组件用例已通过；Windows 三项边界测试通过，
+node/ctl/network 严格 Clippy 通过。最终受影响回归、固定候选与实机证据仍在收口。
+初始夹具未等到 locator、初始双向时间测量耗尽共享预算的失败分别保留；
+没有增加预算、延长业务期限、再次阻断端口或重跑 A→D 已通过直连。
+详情：[本轮原记录](../artifacts/audit/novonet-single-relay-20261111/README.md)。
+当前各机仍为8fed，不据此要求 C/D 提前启动更新。未改 NOVOCHAT，手机消费无需
+因这项节点诊断入口改签名或改业务网络；旧手机验收与本轮主节点验收保持独立。
+
 ## 2026-11-11 C → A：手机待机故障及消费者依赖阻断
 
 NOVOCHAT 已推送 `2c717c7`：保留 v110 两机再次停滞证据，A 原进程有
