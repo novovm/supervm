@@ -1,0 +1,252 @@
+{
+  "host": "validator-C",
+  "handoff": "cc9f874b",
+  "status": "C_875_EXISTING_RECOVERY_NOT_ELIGIBLE",
+  "completed_scope": "One owner snapshot, Application1000 supplement and offline original-guard evaluation; stopped without invoking update",
+  "owner_inspection_started_utc": "2026-11-11T11:18:33.1805931Z",
+  "owner_inspection_ended_utc": "2026-11-11T11:18:35.7034029Z",
+  "active_processes": [],
+  "kernel_signaled_exited_processes": [],
+  "target_udp_owners": [],
+  "original_task": {
+    "name": "NOVOVM-C-8fed4b76-Existing-20261110",
+    "path": "\\",
+    "state": "Ready",
+    "principal": "LOCAL SERVICE",
+    "sid": "S-1-5-19",
+    "last_run_utc": "2026-11-11T02:26:37.0000000Z",
+    "last_task_result": 3221226356,
+    "restart_count": 0,
+    "trigger_count": 0,
+    "execution_time_limit": "P1DT3M",
+    "last_run": "2026-11-11T02:26:37Z"
+  },
+  "other_C_tasks": [
+    {
+      "name": "NOVOVM-C-08236129-Existing-Rollback-20261108",
+      "path": "\\",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "sid": "S-1-5-19",
+      "last_run_utc": "2026-11-08T02:11:34.0000000Z",
+      "last_task_result": 4294967295,
+      "restart_count": 0,
+      "trigger_count": 0,
+      "execution_time_limit": "P1DT3M",
+      "last_run": "2026-11-08T02:11:34Z"
+    },
+    {
+      "name": "NOVOVM-C-08236129-Network-20261108",
+      "path": "\\",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "sid": "S-1-5-19",
+      "last_run_utc": "2026-11-07T19:38:48.0000000Z",
+      "last_task_result": 1,
+      "restart_count": 0,
+      "trigger_count": 0,
+      "execution_time_limit": "P1DT3M",
+      "last_run": "2026-11-07T19:38:48Z"
+    },
+    {
+      "name": "NOVOVM-C-1ef31893-Existing-20261110",
+      "path": "\\",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "sid": "S-1-5-19",
+      "last_run_utc": "2026-11-10T02:49:13.0000000Z",
+      "last_task_result": 3221225477,
+      "restart_count": 0,
+      "trigger_count": 0,
+      "execution_time_limit": "P1DT3M",
+      "last_run": "2026-11-10T02:49:13Z"
+    },
+    {
+      "name": "NOVOVM-C-5181da73-Existing-20261109",
+      "path": "\\",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "sid": "S-1-5-19",
+      "last_run_utc": "2026-11-08T23:02:23.0000000Z",
+      "last_task_result": 0,
+      "restart_count": 0,
+      "trigger_count": 0,
+      "execution_time_limit": "P1DT3M",
+      "last_run": "2026-11-08T23:02:23Z"
+    },
+    {
+      "name": "NOVOVM-C-ddd89e8e-Existing-20261108",
+      "path": "\\",
+      "state": "Ready",
+      "principal": "LOCAL SERVICE",
+      "sid": "S-1-5-19",
+      "last_run_utc": "2026-11-08T02:30:13.0000000Z",
+      "last_task_result": 3221225477,
+      "restart_count": 0,
+      "trigger_count": 0,
+      "execution_time_limit": "P1DT3M",
+      "last_run": "2026-11-08T02:30:13Z"
+    }
+  ],
+  "old_executable": {
+    "path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-8fed4b76-windows-x86_64\\bin\\novovm-node.exe",
+    "exists": true,
+    "bytes": 47687680,
+    "last_write_utc": "2026-11-10T07:37:54.0000000Z",
+    "sha256": "021e7f8b0b41d8b72577d7394cd9c1fb9edb8388c4ae90903dca6f86a53a8a32"
+  },
+  "original_progress_file": {
+    "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-8fed4b76-20261110\\logs\\progress.json",
+    "exists": true,
+    "bytes": 1540310,
+    "last_write_utc": "2026-11-11T05:40:41.1599371Z",
+    "sha256": "873f60a751a4fbf4857ac2fa9d53672f055df4df4d941ce4fd27e354cc80c4bc"
+  },
+  "original_progress": {
+    "entry": "original_native_execution_tick",
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  },
+  "original_exit_file": {
+    "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-8fed4b76-20261110\\logs\\exit.json",
+    "exists": true,
+    "bytes": 99,
+    "last_write_utc": "2026-11-11T05:40:51.9353392Z",
+    "sha256": "72eaaee7558823693a6d22323826d77150b2d6b2734177560d0407701547ac43"
+  },
+  "original_exit_public_fields": {
+    "exit_code": -1073740940,
+    "start": "existing",
+    "time": "2026-11-11T05:40:51.9240159Z"
+  },
+  "log_file_metadata": [
+    {
+      "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-8fed4b76-20261110\\logs\\node.stdout",
+      "exists": true,
+      "bytes": 133,
+      "last_write_utc": "2026-11-11T05:40:51.8818350Z",
+      "sha256": "0982ff53dc0718d8acc2bed1d808a99d641eb46131af75f919279fefd29d29ff"
+    },
+    {
+      "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-8fed4b76-20261110\\logs\\node.stderr",
+      "exists": true,
+      "bytes": 0,
+      "last_write_utc": "2026-11-11T02:26:38.7500736Z",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "bounded_redacted_failure_lines": [],
+  "exit_bit_pattern": {
+    "signed": -1073740940,
+    "unsigned": 3221226356,
+    "hex": "0xc0000374",
+    "task_and_exit_equal": true
+  },
+  "matching_application1000": {
+    "task_state": "Ready",
+    "task_sid": "S-1-5-19",
+    "restart_count": 0,
+    "trigger_count": 0,
+    "task_exit_code": 3221226356,
+    "last_run_utc": "2026-11-11T02:26:37Z",
+    "application": "novovm-node.exe",
+    "application_path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-8fed4b76-windows-x86_64\\bin\\novovm-node.exe",
+    "exception_code": "c0000374",
+    "fault_pid": 7816,
+    "created_utc": "2026-11-11T02:26:39.4581176Z",
+    "event_utc": "2026-11-11T05:40:46.444753Z"
+  },
+  "original_gate_results": [
+    {
+      "branch": "ResumeStopped",
+      "eligible": false,
+      "error": "Stopped owner lifecycle not proven"
+    },
+    {
+      "branch": "RecoverInterrupted",
+      "eligible": false,
+      "error": "Stopped owner lifecycle not proven"
+    },
+    {
+      "branch": "RecoverCrashed",
+      "eligible": false,
+      "error": "Crashed task lifecycle not proven"
+    }
+  ],
+  "recorder_error": {
+    "controller_exit_code": 1,
+    "error": "UInt32 conversion rejected the signed node exit code after all requested public owner fields had been recorded. Raw error and snapshot unchanged; interpretation completed offline, no repeated owner collection.",
+    "owner_snapshot_complete_flag": false,
+    "required_public_fields_available": true,
+    "original_updater_modified": false
+  },
+  "owner_snapshots": 1,
+  "application1000_supplement_queries": 1,
+  "recovery_updater_invocations": 0,
+  "new_node_started": false,
+  "old_program_started_first": false,
+  "D_touched": false,
+  "collector_started": false,
+  "initialize_executed": false,
+  "database_or_custody_modified": false,
+  "C_READY": false,
+  "automatic_retry": false,
+  "archive": "C-cc9f-inspection-public-original.zip",
+  "archive_sha256": "464b66f7e4f9063e87c5d5f662884b42cac4a79b38b6e86190a35da8ac8fedb0",
+  "entries": [
+    {
+      "name": "old-owner-public.json",
+      "bytes": 4875,
+      "sha256": "e74782fc26723b2e12ef42286ba1a5ec0bfdd9fc397226e820969cbae9fa1f1d"
+    },
+    {
+      "name": "controller-error.json",
+      "bytes": 275,
+      "sha256": "ee9a801b0d30ef6e81faf49b3ef287c45ac800ca7a331c1a05d8dd643dd2b357"
+    },
+    {
+      "name": "controller-exit.json",
+      "bytes": 340,
+      "sha256": "909af52ce4bf749335eafb5b4892ccf90f0de9168b94fa909d52a3bbdd1c27fc"
+    },
+    {
+      "name": "application1000-supplement.json",
+      "bytes": 835,
+      "sha256": "5093faf6a82abc39869ca07d8145c1012a73c9d129103d5d3d5a2b36b64ff8c8"
+    },
+    {
+      "name": "branch-evaluation-public.json",
+      "bytes": 1936,
+      "sha256": "29f3cdcb0e3bdd196a4434fa54d582d352be719aa4abea42d18b7165de8273ae"
+    },
+    {
+      "name": "inspection-invoked-once.json",
+      "bytes": 149,
+      "sha256": "9c9c30cca35ddbb613f819342f227af3e1594ef9a4c15a1ddd1fece001d34723"
+    },
+    {
+      "name": "launch2-public.json",
+      "bytes": 294,
+      "sha256": "17e7df84677fe882b78e2a4190eeddf33ed1a09ec33325311ab7703b7f97080a"
+    },
+    {
+      "name": "Inspect-And-Recover-C-Once.ps1",
+      "bytes": 13362,
+      "sha256": "2f40239935609012c9b16c0ed166fedce8d6640bf7ddd94e70a9641d1db5e04f"
+    }
+  ],
+  "private_material_excluded": [
+    "full configuration",
+    "network configuration",
+    "full progress payload",
+    "protected custody files",
+    "database",
+    "journal",
+    "raw node logs"
+  ],
+  "local_evidence": "D:\\WEB3_AI\\SUPERVM\\target\\c-875-recovery-cc9f874b-20261111T111017Z",
+  "next": "Existing branches do not cover task/exit and matching Application1000 code c0000374. Return to A; no recovery flags guessed or original gate widened."
+}
