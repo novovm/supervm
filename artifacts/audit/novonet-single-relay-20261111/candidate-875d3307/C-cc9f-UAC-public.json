@@ -1,0 +1,20 @@
+{
+  "host": "validator-C",
+  "handoff": "cc9f874b",
+  "status": "C_875_INSPECTION_NOT_EXECUTED_UAC_CANCELLED",
+  "time_utc": "2026-11-11T11:14:56.1547013Z",
+  "system_launch_error": "This command cannot be run due to the error: An error occurred trying to start process 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' with working directory 'D:\\WEB3_AI\\SUPERVM'. 操作已被用户取消。",
+  "inspection_invocations": 0,
+  "recovery_updater_invocations": 0,
+  "C_READY": false,
+  "database_or_identity_touched": false,
+  "old_program_started": false,
+  "collector_started": false,
+  "D_touched": false,
+  "existing_local_zip_reused": true,
+  "controller_local_path": "D:\\WEB3_AI\\SUPERVM\\target\\c-875-recovery-cc9f874b-20261111T111017Z\\Inspect-And-Recover-C-Once.ps1",
+  "controller_sha256": "2f40239935609012c9b16c0ed166fedce8d6640bf7ddd94e70a9641d1db5e04f",
+  "archive": "C-cc9f-UAC-original.zip",
+  "archive_sha256": "be6beef37c811c83463aa02a9be539e0790bc5a637f5304fb082896c9ba5283a",
+  "reason": "Windows RunAs returned user cancellation before the controller was started; no current-owner observation exists. Original prior update failure remains unchanged. Requires a fresh OS elevation launch when user is ready, not a repeated update."
+}
