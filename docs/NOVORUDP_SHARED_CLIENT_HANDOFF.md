@@ -1,5 +1,14 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 C_RELAY_OBSERVER_ARMED：实际ready已回传，窗口运行中
+
+按4f44244e启动一次原Watch-Relay.ps1：实际helper PID27480，原875节点PID31296，
+ready时间12:00:16.9208005UTC（北京时间20:00:16），最长等待1800秒，约至20:30:16。
+观察器是独立隐藏管理员PS7进程，保留stdout/stderr及最终退出；不等待采集结束才回READY。
+[原字节ready.json及SHA256](../artifacts/audit/novonet-single-relay-20261111/candidate-875d3307/C-relay-observer-20261111T120016Z/README.md)
+已经保存；未重启／换包／换钥／发对象，C不操作D。等待A收到D独立READY后单次发送。
+不重复启动观察器，后续从同一本机目录回传结果；本节不是中继交付验收。
+
 ## 2026-11-11 C：v2一次RecoverCrashed成功，C_875_EXISTING_READY_FOR_A_QUERY
 
 已按9bba5135使用新工具目录／证据目录执行一次v2，原更新器退出0，stderr空。

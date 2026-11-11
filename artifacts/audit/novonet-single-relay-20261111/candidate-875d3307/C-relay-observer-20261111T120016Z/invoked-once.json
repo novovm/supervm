@@ -1,0 +1,10 @@
+{
+  "host": "C",
+  "started_utc": "2026-11-11T12:00:16.2702258Z",
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "script_sha256": "2048bba7a26080fb774f3b97f9045e236c39345a9638ac822d77e2bb67a5e0b6",
+  "observer_invocations": 1,
+  "node_mutation_requested": false,
+  "new_object_requested": false,
+  "D_touched": false
+}
