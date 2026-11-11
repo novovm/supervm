@@ -49,7 +49,38 @@ B-original-public.zip contains9 selected public originals, including updater,
 manager-stop evidence, custody digests (not key material), health and observation.
 Member hashes were reread and verified. Whole run configs/database/keys omitted.
 
-## Remaining live acceptance
+## A automatic discovery recovered at21:17 Beijing
+
+The user-confirmed elevated read-only helper completed at13:17:01.6872644UTC,
+one actual snapshot, verified_locator_count=3 (previously0), execution_failures0.
+Original Carrier attempt1028: QuicReady/StreamReady49ms, selected direct address
+47.103.59.206:42050, bound authentication followed by domain selection87ms,
+publication99ms, remote lookup112ms, completion209ms. This is real automatic
+discovery through B; no injected peer file, cache reset, new key, A restart or
+additional direct object test. Failure history remains: first old Carrier
+deadline and retained last bound-auth deadline ordinal888 are not cleared.
+One successful sample is not a claim that every connection succeeds forever.
+
+A-recovery-original.zip preserves actual public progress/result, reread against
+member hashes. The former no-locator prerequisite is resolved in this sample.
+No diagnostic relay object was sent during this recovery observation.
+
+## Remaining live acceptance (updated21:18)
+
+C's original v2 observer ended normally at20:50:36, exit0, wait_expired=true,
+snapshots0 and terminal active=false; its latest receipt hashes were verified.
+D has only old active evidence sampled20:21:42, outside its30-minute window;
+no new D final report was present in remote main0c636b4d. Neither is armed now
+on the evidence available. The prior waiting-UAC status below is superseded.
+
+A's one-shot privileged sender coordinator was started with UAC at21:18:23,
+PID28600, bounded30-minute wait. It does not send until A independently checks
+new matching C/D READY/liveness and explicitly releases the local dispatch
+marker. It pins the original one-shot sender and shared reader hashes. It
+cannot create two sends or restart nodes. Fresh observer windows are now needed;
+no new package or node upgrade is needed.
+
+### Historical status before UAC confirmation
 
 A's automatic reacquisition of C/D locators and the one A->C->D object still
 require actual evidence. At this receipt A privileged read-only observation is

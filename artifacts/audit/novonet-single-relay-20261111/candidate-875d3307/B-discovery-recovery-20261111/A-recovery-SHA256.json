@@ -1,0 +1,15 @@
+{
+  "archive_sha256": "55408652b4c86381835ee7e32c5521aaec2335d89504c12bead193a71fdf582f",
+  "members": [
+    {
+      "file": "progress-0.json",
+      "bytes": 667581,
+      "sha256": "e0a63c939374f2133e8b7d132d2cd0230f94a021612d3b5ea4151ae4d39103c8"
+    },
+    {
+      "file": "result.json",
+      "bytes": 122,
+      "sha256": "fce7725f6d19db25d5280d0224fafaf63a938350112a4e9b90d6c18c37c4916b"
+    }
+  ]
+}

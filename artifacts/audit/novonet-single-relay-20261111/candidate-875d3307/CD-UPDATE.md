@@ -7,6 +7,41 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 21:18 Beijing: A discovery recovered; new relay window now
+
+A readback confirms verified locators0->3 and actual A->B Carrier/direct
+47.103.59.206:42050 -> bound auth -> publication/lookup -> completed209ms.
+Original state and failure counters preserved; no direct object retest or peer
+file injection. See B-discovery-recovery-20261111/README.md and raw recovery ZIP.
+
+C's prior observer ended normally20:50, exit0, zero snapshots. D's latest
+published active sample is20:21 and its original window has elapsed; this is
+not a current READY. Do not reuse either old receipt. A's elevated one-shot
+sender waiter is already running (21:18:23, PID28600, expires about21:48:23),
+so no initial A UAC wait is needed after the new C/D handoff.
+
+**C/D action:** verify each old observer's exact PID, creation identity and
+exit/result files first, preserving all original outputs. Do not start a second
+overlapping collector. If the prior collector has exited as expected, launch
+ONE new original v2 Watch-Relay.ps1 with adjacent Read-RelayProgress.ps1, same
+875 parameters below, fresh EvidenceRoot, hidden independent adminPowerShell7.
+No node restart/update/initialize, no object send. If the prior helper remains
+unexpectedly active or identity is unclear, report that rather than killing an
+unknown process or launching another collector.
+
+Immediately push byte-preserved actual ready.json and current liveness.json,
+launch/helper PID and script hashes, current terminal-record presence. Publish
+under distinct C-relay-after-B-20261111 / D-relay-after-B-20261111 directories
+inside this candidate directory (never overwrite previous evidence). Keep the
+new30-minute window running and report any exit promptly. A will recheck the
+same fixed owner and authenticated route, then send exactly one object via C
+to D. On failure preserve/cancel exact reservation, no automatic resend.
+
+After completion return existing relay snapshots, result/error, read-anomaly
+metadata, liveness and wrapper exit/stdout/stderr. Require actual circuit/path,
+C forward writes, matched A/D object/session and D integrity/time acceptance
+plus original DONE. B discovery completion alone is not this relay acceptance.
+
 ### CURRENT 2026-11-11 20:45 Beijing: B bootstrap restored; A discovery check pending
 
 Read-only inspection proved B's8fed node cleanly exited at17:31 after its
