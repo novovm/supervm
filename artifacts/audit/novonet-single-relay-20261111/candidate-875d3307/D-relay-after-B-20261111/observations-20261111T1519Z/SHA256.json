@@ -1,0 +1,32 @@
+[
+  {
+    "file": "collector.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "collector.stdout",
+    "bytes": 123,
+    "sha256": "e42d6dfd2650fb92b058f88ebff0e2d9637069c876362b821742cd024fcbf595"
+  },
+  {
+    "file": "liveness.json",
+    "bytes": 175,
+    "sha256": "6950d754c6b7cfd33a92fc1c9da6636366c2c36971ba2e221f5bfae8fcc2238b"
+  },
+  {
+    "file": "presence.json",
+    "bytes": 390,
+    "sha256": "69e0f90f5980b3505a60a574a683c0a31df8bd3447892023fed785709fca9573"
+  },
+  {
+    "file": "read-anomaly-first.json",
+    "bytes": 1702,
+    "sha256": "e6c502e50eba20953b1430867bf29f001e3105b7cd38cc7e431880835d906ec1"
+  },
+  {
+    "file": "read-anomaly-last.json",
+    "bytes": 1702,
+    "sha256": "b0ebd8d1c19405ad6f5f9a5138b0937dcdb0084d3d2287166ecb6bff8f363124"
+  }
+]

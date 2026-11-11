@@ -1,0 +1,15 @@
+{
+  "host_id": "D",
+  "sample_utc": "2026-11-11T15:19:28.0993873Z",
+  "observer_pid": 13168,
+  "process_present": true,
+  "creation_identity_matched": true,
+  "liveness_active": true,
+  "relay_snapshot_count": 0,
+  "result_present": false,
+  "error_present": false,
+  "exit_present": false,
+  "collector_restarted": false,
+  "node_restarted": false,
+  "object_sent": false
+}
