@@ -1,0 +1,17 @@
+[
+  {
+    "name": "single-relay-A-preflight.json",
+    "bytes": 828324,
+    "sha256": "036fcb691e99401c17649e958b47cefb1da89ffad8ea53397c9bdf2c3f9e2d12"
+  },
+  {
+    "name": "single-relay-B-preflight.json",
+    "bytes": 725087,
+    "sha256": "fa9df83b45880cfedaf94435a7a0e079a98b0e211606d086e70c24858275d8a4"
+  },
+  {
+    "name": "original-preflight.zip",
+    "bytes": 93228,
+    "sha256": "45eccd16907c4be16b70767189a361cf661910cb2ffe4e9276b4e72ff34f1249"
+  }
+]
