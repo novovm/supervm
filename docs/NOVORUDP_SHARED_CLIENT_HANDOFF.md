@@ -1,5 +1,14 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 C：875一次更新在原进程预检失败，未启动新节点
+
+按main@5a145197、CD-UPDATE.md执行一次原更新器，管理员PS7，无恢复开关。
+原工具退出1：`Original process identity not confirmed`；old_node_stopped=false、
+existing_start_attempted=false，未生成before/after/result。未初始化、换钥、采集或重发，
+失败保留且不自动重跑；不能返回C_875_EXISTING_READY_FOR_A_QUERY或据此放行D。
+原始公开退出／错误／stdout/stderr见[C本轮回传](../artifacts/audit/novonet-single-relay-20261111/candidate-875d3307/C-UPDATE.md)。
+原ZIP现已完整留存在C本机D盘target固定目录，大小／SHA与A一致，后续不再依赖E盘。
+
 ## 2026-11-11 C：875d3307包已核验，未更新／未采集
 
 C原接收目录已有用户指定ZIP，大小150,585,096与SHA256 e8e4e2a1…一致，

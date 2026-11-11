@@ -1,0 +1,77 @@
+{
+  "host": "validator-C",
+  "status": "C_875_EXISTING_UPDATE_PREFLIGHT_FAILED",
+  "handoff": "5a145197",
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "updater_exit_code": 1,
+  "updater_invocations": 1,
+  "error": "Original process identity not confirmed",
+  "old_node_stopped_by_this_update": false,
+  "existing_start_attempted": false,
+  "new_node_started": false,
+  "initialize_executed": false,
+  "database_or_custody_changed_by_updater": false,
+  "collector_started": false,
+  "new_object_sent": false,
+  "retry_executed": false,
+  "recovery_flags_used": [],
+  "error_time_utc": "2026-11-11T10:42:08.8746159Z",
+  "finished_utc": "2026-11-11T10:42:09.0927943Z",
+  "archive": "C-update-public-original.zip",
+  "archive_sha256": "1fdccc5445331d1cb7b0ac73f6ae7e36dfd576497b7a8a447b674624409fbae0",
+  "entries": [
+    {
+      "file": "controller-exit.json",
+      "bytes": 272,
+      "sha256": "12474c8cffac7bc28be9647295752768d83d5fec9371ba1e76cd360d2e1111d4"
+    },
+    {
+      "file": "error.json",
+      "bytes": 319,
+      "sha256": "e28ee487219eb9fedfff1c0140a2bac40c9427f3003c0c46d7d500c438adadcd"
+    },
+    {
+      "file": "update.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "update.stderr.log",
+      "bytes": 218,
+      "sha256": "b6850dd2f2b15940a9c91c54753ddfb4517d6c68dea0eef53f52e32e256ec1ba"
+    },
+    {
+      "file": "local-copy-public.json",
+      "bytes": 517,
+      "sha256": "ba382c51a9026a0c1b5d27cdd81bc3a4ad7ff2b5b5f1e7de2c666be85abbd3d7"
+    },
+    {
+      "file": "invoked-once.json",
+      "bytes": 292,
+      "sha256": "b0bc89d47aeaf8b8ca91015e5cf26d1ee0f1bcbcb700e61fe129599373f0ba32"
+    },
+    {
+      "file": "launch-public.json",
+      "bytes": 222,
+      "sha256": "473205c2bec0b2a82856577aee10802e0ee743a76df50277d424daedd3bdb9ee"
+    },
+    {
+      "file": "Run-C-875-Once.ps1",
+      "bytes": 4352,
+      "sha256": "fc01c404dc9147c290dfeec7752817a723efe9ce76fb3a850268f7a760162711"
+    }
+  ],
+  "original_local_evidence": "D:\\WEB3_AI\\SUPERVM\\target\\c-875-existing-update-20261111T103915Z\\C-update",
+  "local_copy": {
+    "host": "C",
+    "time_utc": "2026-11-11T10:43:40.8240589Z",
+    "source": "E:\\区块链四机通讯\\novonet-observation-875d3307-windows-x86_64.zip",
+    "local_archive": "D:\\WEB3_AI\\SUPERVM\\target\\c-875-existing-update-20261111T103915Z\\incoming\\novonet-observation-875d3307-windows-x86_64.zip",
+    "bytes": 150585096,
+    "sha256": "e8e4e2a192c127ca9a902779cb04228290d2e037ce9cbfc83e8ee52fd96aa5d8",
+    "copy_verified": true,
+    "future_update_requires_E_drive": false,
+    "update_retry_executed": false
+  },
+  "note": "Zero updater-owned before/after/result; failed before process stop or database startup. This does not certify the old node is healthy or explain its absence. Do not rerun updater or infer a recovery switch."
+}
