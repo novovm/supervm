@@ -7,6 +7,58 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT: C uses v2 RecoverCrashed once; no new program ZIP
+
+A verified C's mainc4bcc87d original archive and every member. C's old8fed
+PID7816 exited at05:40:51UTC, with matching task/event/exit code **c0000374**;
+there is no live node or41052/42052 owner. Original progress is present and valid.
+The original tool recognized only c0000005, so **875 has not yet started**.
+
+The original updater source now supports this second evidenced crash class:
+task result3221226356 must match Application1000 c0000374, the same old
+executable/creation timeline/LocalService task, and original exit.json with
+start=existing and the same signed/unsigned32-bit exit value. No unknown code
+or weakened process/port/state guard is accepted. On failed new recovery, stop
+the new instance and retain evidence; do not auto-start the heap-crashed8fed.
+This does not diagnose or fix the old process crash, and does not assert its
+database healthy until the new original owner actually opens it.
+
+**C now executes one `-RecoverCrashed` update using v2**, with the already
+verified local875 package and a fresh evidence directory. Do not first start
+old8fed, run the consumed prior wrapper, or reuse its old updater hash pin.
+Use the existing wrapper flow with the v2 tool hash and fresh output paths;
+capture exact stdout/stderr/exit and the public result fields defined below.
+
+- Fetch `existing-update-tools-875d3307-v2.zip` from this Git directory:
+  **19929 bytes**, SHA256
+  `10cbc7d6688aaddcf048e15651e98247ad7c6330e85fed434782e299b1d16dd9`.
+- Extract into a fresh local tools directory and verify every member with
+  `update-tools-v2-manifest.json`. Update-Windows.ps1 SHA256:
+  `f7c185500abd955089c92b8bd0edefb3cf20a20df65bfbfe53c1c9c0bcd55cb2`.
+- Administrator PowerShell7:
+
+```powershell
+& '<new-v2-tools>\Update-Windows.ps1' -HostId C -PackageRoot '<already-verified-local875-root>' -EvidenceRoot '<fresh-C-recovery-evidence>' -RecoverCrashed
+```
+
+Original updater rechecks live task/process/ports, original exit and event before
+opening the original database with875. Any mismatch stops; do not change flags
+or retry. Return `C_875_EXISTING_READY_FOR_A_QUERY` only after actual success.
+No D update, collector, initialization or object send in this step.
+
+Only deployment scripts changed; actual875 program, AOEM and their Full42967820361
+are unchanged. Both original-source Windows tests and the derived updater's
+fixed-package tests passed. Twenty heap-evidence cases plus failure-stop
+selection passed; the actual C record rejects under v1 and accepts under v2.
+Original local outputs are in `recovery-v2-local-evidence.zip` and its manifest.
+The optional Linux execution of this Windows suite failed on its original
+C-drive mapping after passing the new evidence cases; not recorded as full
+Linux success. No Linux updater changed. The first new XML test fixture error
+was corrected; both final Windows runs passed. No new Full was requested.
+
+The prior inspection instructions below are retained as history; C should not
+repeat a separate inspection round instead of using the now-reviewed v2 entry.
+
 ### C preflight failed: inspect once, then use only an evidenced original recovery mode
 
 A reviewed main277625b1 and independently verified the SHA256 of C's original

@@ -94,10 +94,22 @@ function Assert-OriginalFirewallScope($Rule,$Port,$App,$Address,[string]$Expecte
     if((@($Port.LocalPort|Sort-Object) -join ',') -cne (@($ExpectedPorts|ForEach-Object {[string]$_}|Sort-Object) -join ',') -or (@($Port.RemotePort) -join ',') -cne 'Any'){throw 'Original firewall ports differ'}
     if((@($Address.LocalAddress) -join ',') -cne $ExpectedLocalAddress -or (@($Address.RemoteAddress|ForEach-Object {([string]$_).Replace('/255.255.255.0','/24')}|Sort-Object) -join ',') -cne '192.168.71.0/24,47.103.59.206'){throw 'Original firewall addresses differ'}
 }
-function Assert-CrashedOwnerEvidence($Evidence,[string]$ExpectedPath) {
-    if($Evidence.task_state -cne 'Ready' -or $Evidence.task_sid -cne 'S-1-5-19' -or $Evidence.restart_count -ne 0 -or $Evidence.trigger_count -ne 0 -or $Evidence.task_exit_code -ne 3221225477){throw 'Crashed task lifecycle not proven'}
-    if($Evidence.application -cne 'novovm-node.exe' -or $Evidence.application_path -cne $ExpectedPath -or $Evidence.exception_code -cne 'c0000005' -or $Evidence.fault_pid -le 0){throw 'Matching original application crash not proven'}
+function Assert-CrashedOwnerEvidence($Evidence,[string]$ExpectedPath,$ExitEvidence=$null) {
+    # Both observed crash classes require the same task/event identity. A heap
+    # crash additionally needs the original owner's exit record, not a guessed code.
+    $expectedExit=switch -CaseSensitive ($Evidence.exception_code){'c0000005'{3221225477} 'c0000374'{3221226356} default{throw 'Unsupported original crash type'}}
+    if($Evidence.task_state -cne 'Ready' -or $Evidence.task_sid -cne 'S-1-5-19' -or $Evidence.restart_count -ne 0 -or $Evidence.trigger_count -ne 0 -or $Evidence.task_exit_code -ne $expectedExit){throw 'Crashed task lifecycle not proven'}
+    if($Evidence.application -cne 'novovm-node.exe' -or $Evidence.application_path -cne $ExpectedPath -or $Evidence.fault_pid -le 0){throw 'Matching original application crash not proven'}
     if($Evidence.created_utc -lt $Evidence.last_run_utc.AddSeconds(-5) -or $Evidence.created_utc -gt $Evidence.event_utc -or $Evidence.event_utc -lt $Evidence.last_run_utc -or $Evidence.event_utc -gt [DateTime]::UtcNow.AddSeconds(5)){throw 'Original crash timeline differs'}
+    if($Evidence.exception_code -ceq 'c0000374'){
+        if($null -eq $ExitEvidence -or $ExitEvidence.start -cne 'existing' -or $ExitEvidence.exit_code -isnot [ValueType]){throw 'Original heap-crash exit record required'}
+        $exitText=[string]$ExitEvidence.exit_code
+        if($exitText -cnotmatch '^-?\d+$'){throw 'Invalid original exit code'}
+        $exitValue=[long]$exitText
+        if($exitValue -lt -2147483648 -or $exitValue -gt 4294967295 -or ($exitValue -band 4294967295L) -ne $expectedExit){throw 'Original task/event/exit codes differ'}
+        $exitUtc=([DateTime]$ExitEvidence.time).ToUniversalTime()
+        if($exitUtc -lt $Evidence.event_utc.AddSeconds(-5) -or $exitUtc -gt [DateTime]::UtcNow.AddSeconds(5)){throw 'Original crash exit timeline differs'}
+    }
 }
 function Assert-StoppedOwnerEvidence($Evidence,[bool]$Interrupted=$false) {
     # SCHED_S_TASK_TERMINATED is not proof of a clean node drain or a crash cause.
@@ -133,7 +145,7 @@ function ConvertFrom-NovonetCrashEvent([xml]$EventXml,[DateTime]$TimeCreatedUtc,
         # InnerText also represents empty XML elements; #text is absent in strict mode.
         $fields[$field.GetAttribute('Name')]=[string]$field.InnerText
     }
-    if($fields['AppPath'] -cne $ExpectedPath -or $fields['ExceptionCode'] -cne 'c0000005'){return}
+    if($fields['AppPath'] -cne $ExpectedPath -or $fields['ExceptionCode'] -cnotin @('c0000005','c0000374')){return}
     foreach($required in @('AppName','ProcessId','ProcessCreationTime')) {
         if([string]::IsNullOrWhiteSpace($fields[$required])){throw "Matching crash event missing $required"}
     }
@@ -237,7 +249,14 @@ try {
         if($crashes.Count -lt 1){throw 'Original crash event missing; preserve state'}
         $crash=$crashes[0]
         $crash|Add-Member -NotePropertyMembers @{task_state=$task.State.ToString();task_sid=$taskSid;restart_count=[int]$task.Settings.RestartCount;trigger_count=@($task.Triggers|Where-Object {$null -ne $_}).Count;task_exit_code=[uint32]$info.LastTaskResult;last_run_utc=$info.LastRunTime.ToUniversalTime()}
-        Assert-CrashedOwnerEvidence $crash $oldExe
+        $crashExit=$null
+        if($crash.exception_code -ceq 'c0000374'){
+            $crashExitPath=Join-Path $oldWork 'logs\exit.json'
+            Assert-NoRedirect $crashExitPath
+            if((Get-Item -LiteralPath $crashExitPath).Length -gt 4096){throw 'Original exit record exceeds bound'}
+            $crashExit=Get-Content -LiteralPath $crashExitPath -Raw|ConvertFrom-Json
+        }
+        Assert-CrashedOwnerEvidence $crash $oldExe $crashExit
         if(@(Get-NetUDPEndpoint|Where-Object {$_.LocalPort -in $expectedPorts}).Count){throw 'Original ports still have an owner; preserve state'}
         Wait-NovonetNodeExit
         Write-NewJson "$out/crash-recovery-preflight.json" ([ordered]@{crash=$crash;execution=$execution;no_executing_nodes=$true;original_ports_unbound=$true;terminated_processes_not_killed=$true})
@@ -332,8 +351,8 @@ try {
     $problem=$_.ToString()
     Write-NewJson "$out/error.json" ([ordered]@{error=$problem;prior_owner_interrupted=[bool]$RecoverInterrupted;old_node_stopped=($stopped -and !$RecoverCrashed -and !$ResumeStopped -and !$RecoverInterrupted);existing_start_attempted=$stopped;prior_owner_crashed=[bool]$RecoverCrashed;prior_owner_cleanly_stopped=($ResumeStopped -and !$RecoverMissingProgress);observation_loss_recovery=[bool]$RecoverMissingProgress;time=(Get-Date).ToUniversalTime().ToString('o')})
     if($stopped) {
-        if($RecoverMissingProgress -or $RecoverInterrupted) {
-            # A lost projection or unexplained task termination is not a healthy
+        if($RecoverMissingProgress -or $RecoverInterrupted -or ($RecoverCrashed -and $null -ne $crash -and $crash.exception_code -ceq 'c0000374')) {
+            # A heap-crashed owner, lost projection or task interruption is not a healthy
             # rollback target. Stop this candidate; do not loop through old/new.
             # Cancel the one-shot owner too: a delayed task must not start a node
             # after the controller has reported recovery failure.

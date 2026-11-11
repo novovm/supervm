@@ -114,6 +114,53 @@ foreach($name in $changes.Keys) {
     if(!$rejected){throw "Invalid crashed owner $name accepted"}
 }
 Write-Output 'PASS 12 crashed-owner gates: exact crash accepted; live task, authority, restart, trigger, result, application, path, exception, pid and timeline counterexamples rejected'
+$heap=New-CrashFixture
+$heap.exception_code='c0000374';$heap.task_exit_code=3221226356
+$heapExit=[pscustomobject]@{exit_code=-1073740940;start='existing';time=$heap.event_utc.AddSeconds(6).ToString('o')}
+Assert-CrashedOwnerEvidence $heap $heap.application_path $heapExit
+$unsigned=$heapExit.PSObject.Copy();$unsigned.exit_code=3221226356
+Assert-CrashedOwnerEvidence $heap $heap.application_path $unsigned
+$count=2
+foreach($case in @{
+    missing=$null
+    access_violation=[pscustomobject]@{exit_code=-1073741819;start='existing';time=$heapExit.time}
+    unknown=[pscustomobject]@{exit_code=1;start='existing';time=$heapExit.time}
+    initialize=[pscustomobject]@{exit_code=-1073740940;start='initialize';time=$heapExit.time}
+    old_time=[pscustomobject]@{exit_code=-1073740940;start='existing';time=$heap.event_utc.AddMinutes(-1).ToString('o')}
+    future=[pscustomobject]@{exit_code=-1073740940;start='existing';time=[DateTime]::UtcNow.AddMinutes(1).ToString('o')}
+    wrapped=[pscustomobject]@{exit_code=7516193652L;start='existing';time=$heapExit.time}
+}.GetEnumerator()){
+    $rejected=$false
+    try{Assert-CrashedOwnerEvidence $heap $heap.application_path $case.Value}catch{$rejected=$true}
+    if(!$rejected){throw "Invalid heap exit evidence accepted: $($case.Key)"};$count++
+}
+foreach($name in $changes.Keys){
+    $bad=$heap.PSObject.Copy();$bad.$name=$changes[$name];$rejected=$false
+    try{Assert-CrashedOwnerEvidence $bad $heap.application_path $heapExit}catch{$rejected=$true}
+    if(!$rejected){throw "Invalid heap owner accepted: $name"};$count++
+}
+# The actual crash record preserves the old failure; this does not open C's DB.
+$heapReceipt=Join-Path $PSScriptRoot '../../artifacts/audit/novonet-single-relay-20261111/candidate-875d3307/C-cc9f-recovery-result.json'
+if(Test-Path $heapReceipt){
+    $actual=Get-Content $heapReceipt -Raw|ConvertFrom-Json
+    $event=$actual.matching_application1000
+    foreach($name in @('last_run_utc','created_utc','event_utc')){$event.$name=[DateTime]$event.$name}
+    Assert-CrashedOwnerEvidence $event $actual.old_executable.path $actual.original_exit_public_fields
+    $xml=[xml]'<Event><EventData /></Event>'
+    $fields=@{AppName=$event.application;AppPath=$event.application_path;ExceptionCode=$event.exception_code;ProcessId=$event.fault_pid.ToString('x');ProcessCreationTime=$event.created_utc.ToFileTimeUtc().ToString('x');IntegratorReportId='300130d1-ddbb-4a0f-b298-c4c2e81c5031'}
+    foreach($pair in $fields.GetEnumerator()){$field=$xml.CreateElement('Data');$field.SetAttribute('Name',$pair.Key);$field.InnerText=[string]$pair.Value;$null=$xml.SelectSingleNode('/Event/EventData').AppendChild($field)}
+    $parsed=ConvertFrom-NovonetCrashEvent $xml $event.event_utc 546046 $event.application_path
+    if($null -eq $parsed -or $parsed.fault_pid -ne 7816 -or $parsed.exception_code -cne 'c0000374'){throw 'Actual heap event parser lost identity'}
+    Write-Output 'PASS actual C c0000374 task/event/exit receipt and event parser; not live recovery acceptance'
+}
+$stopBranch=@($ast.FindAll({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -match 'RecoverMissingProgress -or \$RecoverInterrupted -or'},$true))
+if($stopBranch.Count -ne 1){throw 'Heap recovery failure stop branch missing'}
+$RecoverMissingProgress=$false;$RecoverInterrupted=$false;$RecoverCrashed=$true;$crash=$heap
+if(!(& ([scriptblock]::Create($stopBranch[0].Clauses[0].Item1.Extent.Text)))){throw 'Heap recovery failure must not restart crashed old program'}
+$crash=New-CrashFixture
+if(& ([scriptblock]::Create($stopBranch[0].Clauses[0].Item1.Extent.Text))){throw 'Existing access-violation rollback policy changed'}
+$RecoverCrashed=$false
+Write-Output "PASS $count heap-crash evidence cases and original failure-stop branch; unknown/mismatched states rejected"
 $receipt=Join-Path $PSScriptRoot '../../artifacts/audit/validator-c-5181-update-preflight-20261109/application-crash-events.json'
 if(Test-Path -LiteralPath $receipt) {
     $record=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json

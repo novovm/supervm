@@ -1,0 +1,39 @@
+{
+  "program_source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "program_package_unchanged": true,
+  "full_run": 42967820361,
+  "archive": "existing-update-tools-875d3307-v2.zip",
+  "bytes": 19929,
+  "sha256": "10cbc7d6688aaddcf048e15651e98247ad7c6330e85fed434782e299b1d16dd9",
+  "files": [
+    {
+      "name": "Update-Windows.ps1",
+      "sha256": "f7c185500abd955089c92b8bd0edefb3cf20a20df65bfbfe53c1c9c0bcd55cb2",
+      "bytes": 34990
+    },
+    {
+      "name": "Test-Update-Windows.ps1",
+      "sha256": "8614568dc3d3e0200bf72c8858e5fea0a2f58807767710fb230237c85cfd46c4",
+      "bytes": 26782
+    },
+    {
+      "name": "NovonetExistingProcess.ps1",
+      "sha256": "4d6f1b1dc79251034493c0d55fbda942da5515cee95b756293801e3177b415be",
+      "bytes": 6045
+    }
+  ],
+  "source_windows_exit": 0,
+  "derived_fixed_package_exit": 0,
+  "actual_C_original_guard_rejected": true,
+  "actual_C_new_guard_accepted": true,
+  "windows_heap_cases": 20,
+  "failure_stop_branch_tested": true,
+  "C_original_archive_and_members_verified": true,
+  "linux_attempt": "Windows-specific suite ran new evidence cases successfully, then failed at original C-drive mapping; not a Linux suite pass. No Linux updater changed.",
+  "first_test_failure": "New test XML fixture treated empty EventData as a string; corrected to SelectSingleNode, then both Windows suites passed.",
+  "evidence_archive": "recovery-v2-local-evidence.zip",
+  "evidence_sha256": "a5cd2bfb71786c1502e363881d605d9313ea145965cd779b16cef1654ba872b2",
+  "node_updated": false,
+  "heap_crash_root_cause_known": false,
+  "scope": "Deployment helper only; fixed binary and its Full qualification unchanged; not C existing or relay acceptance"
+}
