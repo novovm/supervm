@@ -8,5 +8,25 @@
     "file": "launch.json",
     "bytes": 294,
     "sha256": "6fdcb42e4acc08ae657e915d4406ca5f3eaed7e6802b99080f2651f1e840b187"
+  },
+  {
+    "file": "collector-exit.json",
+    "bytes": 109,
+    "sha256": "df2fcfe681ce3514d2239e41078617c5acb9e7b21f1caaae26c2a47fd7d851d0"
+  },
+  {
+    "file": "collector.stdout",
+    "bytes": 128,
+    "sha256": "090c4ee5e026018646ea21fcbb7d0c5c817ee797efd2749030af84e37b8d0c84"
+  },
+  {
+    "file": "collector.stderr",
+    "bytes": 604,
+    "sha256": "db0f20bfb20e3199ac3b5525bbd0efc36d58a7ab85c8de41787de9ff8c2a45f1"
+  },
+  {
+    "file": "error.json",
+    "bytes": 185,
+    "sha256": "b425a246d0902ef4027d2f4fa36eadaf01871d5ffdf0a72b37464878641f3bb0"
   }
 ]

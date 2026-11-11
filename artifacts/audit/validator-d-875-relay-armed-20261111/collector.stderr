@@ -1,0 +1,5 @@
+[31;1mParentContainsErrorRecordException: [0mD:\WEB3_AI\SUPERVM\artifacts\audit\novonet-single-relay-20261111\Watch-Relay.ps1:28[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m  28 | [0m     if([36;1m$p.chain_id -ne 91129655606029 -or !$p.novonet.diagnostic_rela[0m бн[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mThe property 'novonet' cannot be found on this object. Verify that the property exists.[0m
