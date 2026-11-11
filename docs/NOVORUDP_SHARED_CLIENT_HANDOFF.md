@@ -1,5 +1,15 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 C：v2观察器运行中，使用最新liveness而非旧READY
+
+已按c92d2172启动一次v2：helper PID6592，原875节点PID31296，READY为
+12:20:35UTC／北京时间20:20:35，最长窗口约至20:50:35。原Watch及相邻Reader都已
+核验使用。旧v1 PID27480在20:05退出1、零快照，原件保留且未被再次终止。
+当前原字节[READY／最新liveness及摘要](../artifacts/audit/novonet-single-relay-20261111/candidate-875d3307/C-relay-observer-v2-20261111T122035Z/README.md)
+已回传；每次补交liveness保留前一快照，不重新启动观察器。A应读取最新版本及终止有无，
+仍须D独立新鲜liveness，C不代签D。节点／包／密钥不动，不发对象；退出后立即另行回报。
+下节v1窗口是历史，不可据其旧READY发送。
+
 ## 2026-11-11 C_RELAY_OBSERVER_ARMED：实际ready已回传，窗口运行中
 
 按4f44244e启动一次原Watch-Relay.ps1：实际helper PID27480，原875节点PID31296，

@@ -3,11 +3,11 @@
   "status": "C_RELAY_OBSERVER_ARMED",
   "observer_version": 2,
   "handoff": "c92d2172",
-  "sample_utc": "2026-11-11T12:22:38.165797+00:00",
+  "sample_utc": "2026-11-11T12:27:34.403444+00:00",
   "observer_pid": 6592,
   "node_pid": 31296,
   "ready_utc": "2026-11-11T12:20:35.2926544Z",
-  "liveness_utc": "2026-11-11T12:22:37.6512230Z",
+  "liveness_utc": "2026-11-11T12:27:33.7986194Z",
   "active": true,
   "terminal_records_present": {
     "observer-exit.json": false,
@@ -34,7 +34,7 @@
     {
       "name": "liveness.json",
       "bytes": 174,
-      "sha256": "e142895a3a50b9559db0f8d5bddffa9faadf145f421a52612f971b8efd0fe0fc"
+      "sha256": "89eaf03fb23430d288997e70ede2fc1a6e33a3db9b96393c11c1cc98abb2e602"
     },
     {
       "name": "helper-started.json",
