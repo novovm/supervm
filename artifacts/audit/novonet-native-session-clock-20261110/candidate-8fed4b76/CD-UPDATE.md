@@ -1,5 +1,44 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT 2026-11-11 11:04: A restored, D arms receiver ONLY
+
+A's elevated check confirmed its current 8fed task had stopped, result267014.
+The SAME 8fed owner was resumed once with existing; PID13996, original custody,
+database, height/head and actual AOEM unchanged. Old interrupted logs preserved.
+A authenticated query passed **33ms**, original root unchanged; D's earlier
+authenticated query passed **34ms**. [A actual recovery evidence](../../validator-a-8fed-existing-resume-20261111/README.md).
+Neither termination cause nor object delivery is declared resolved.
+
+**No more updates. D now only starts the original progress observer. C is idle.**
+D Codex: sync this commit; in administrator PowerShell 7 from the D repository,
+start the collector as a hidden background helper so the Codex command timeout
+cannot end the observation. It waits up to 30 minutes for the next A object,
+captures up to 64 public snapshots, then exits automatically. No clock/config/
+database/node changes and no network socket or object send:
+
+```powershell
+$run=Join-Path (Get-Location) ('target/d-8fed-receiver-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
+if(Test-Path -LiteralPath $run){throw 'Fresh directory required'}
+New-Item -ItemType Directory -Path $run|Out-Null
+$script=Join-Path (Get-Location) 'artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/Watch-D-Receiver.ps1'
+$evidence=Join-Path $run 'evidence'
+$argsList='-NoProfile -NonInteractive -File "'+$script+'" -EvidenceRoot "'+$evidence+'"'
+$collector=Start-Process 'C:\Program Files\PowerShell\7\pwsh.exe' -ArgumentList $argsList -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $run 'collector.stdout') -RedirectStandardError (Join-Path $run 'collector.stderr')
+Start-Sleep -Seconds 2
+if($collector.HasExited -or !(Test-Path (Join-Path $evidence 'ready.json'))){Get-Content (Join-Path $run 'collector.stderr');throw 'Collector not armed'}
+Get-Content (Join-Path $evidence 'ready.json')
+```
+
+Immediately commit/push the real `ready.json`, collector PID and script hash as
+`D_RECEIVER_ARMED`, leaving the helper running. A then sends ONE fixed diagnostic
+object using its original owner. On automatic completion, return result/error
+and receiver-*.json with actual exit code. Rejection/no match stays rejection/no
+match; no resend or node restart. This replaces the old short manual capture
+window, not the protocol TTL or resource limits. If the 30-minute observer expires
+before A sends, report NOT_EXECUTED rather than network failure.
+
+This current section supersedes the A-blocked and deployment instructions below.
+
 ## CURRENT 2026-11-11: D update and A-to-D query complete; A send blocked locally
 
 A pulled D `61e08288`, verified every returned evidence digest, fixed node/AOEM,

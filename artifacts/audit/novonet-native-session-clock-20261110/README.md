@@ -1,5 +1,16 @@
 # Native first-handshake session clock — 2026-11-10
 
+## 2026-11-11 11:04: A resumed, D receiver may arm
+
+A's elevated inspection confirmed a terminated task and no node. The same 8fed
+LocalService owner resumed the original database once, PID13996, preserving old
+interrupted logs, custody and state. Independent authenticated query passed 33ms
+with the original root. [Raw recovery evidence](../validator-a-8fed-existing-resume-20261111/README.md).
+This clears A's immediate startup blocker, not the unknown old termination cause.
+D's fixed-client query already passed 34ms. D now only arms the bounded read-only
+receiver per [current handoff](candidate-8fed4b76/CD-UPDATE.md); then A sends one
+object. No object has yet been sent, no new Full/update or C operation required.
+
 ## 2026-11-11: D new owner and external authenticated query passed
 
 D receipt `61e08288` verified; new 8fed LocalService PID19756 opened the original

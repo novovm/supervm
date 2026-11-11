@@ -1,0 +1,34 @@
+{
+  "utc": "2026-11-11T03:01:30.1244658Z",
+  "node_mutated": false,
+  "task": {
+    "name": "NOVOVM-A-8fed4b76-Existing-20261110",
+    "state": "Ready",
+    "sid": "LOCAL SERVICE",
+    "last_result": 267014,
+    "last_run_utc": "2026-11-10T09:32:03.0000000Z"
+  },
+  "nodes": [],
+  "listeners": [],
+  "files": [
+    {
+      "Name": "progress.json",
+      "Length": 1277438,
+      "LastWriteTimeUtc": "2026-11-11T01:47:26.7525481Z"
+    },
+    {
+      "Name": "node.stderr",
+      "Length": 0,
+      "LastWriteTimeUtc": "2026-11-10T09:32:03.918659Z"
+    }
+  ],
+  "exit": null,
+  "progress": {
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  },
+  "command_exists": false
+}

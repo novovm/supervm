@@ -2160,6 +2160,18 @@ current_height1且无恢复或投影错误。D更新收口，不重复执行。
 原查询及[当前动作](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
 已保存；Status不等于A节点发送、Object DONE或业务Receipt。
 
+### 37.9 2026-11-11 A现版原库恢复通过，D开启自动收件观察
+
+用户提权检查确认A当前8fed任务Ready/267014，无进程/端口，旧progress有效、exit缺失。
+A核对固定包、原owner哈希与existing任务动作、LocalService及原库/用途材料后，仅将
+原logs完整移至同工作目录logs-interrupted-20261111，创建原ACL新logs，启动同一8fed
+owner。11:03:58恢复PID13996、41051/42051，独立认证查询33ms且原root一致。
+[实际执行与原始记录](../artifacts/audit/validator-a-8fed-existing-resume-20261111/README.md)。
+不是旧版本回退或初始化；停止原因仍未知，不宣布修复。D现版和查询此前已通过34ms。
+现在D仅按[CD-UPDATE首节](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
+后台开启30分钟有界只读观察并回传D_RECEIVER_ARMED，A再通过原owner只发一次对象。
+本步未发送对象、不重跑Full、不更新D/C；窗口超时未发送记未执行而非网络失败。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

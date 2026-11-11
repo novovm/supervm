@@ -1,0 +1,40 @@
+{
+  "utc": "2026-11-11T03:03:51.7512493Z",
+  "source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+  "start": "existing",
+  "initialize_executed": false,
+  "keys_changed": false,
+  "started": true,
+  "healthy": true,
+  "prior_exit_cause": "unknown",
+  "logs_archived": true,
+  "prior_task_result": 267014,
+  "prior_progress_sha256": "efc9c688c09de4c595472e91f0c71b37e33b4ebfa68f1edfa5183595b4729e3e",
+  "archive_path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\novonet-observation-8fed4b76-20261110\\logs-interrupted-20261111",
+  "pid": 13996,
+  "sid": "S-1-5-19",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+  "custody_unchanged": true,
+  "node_sha256": "021e7f8b0b41d8b72577d7394cd9c1fb9edb8388c4ae90903dca6f86a53a8a32",
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "progress": {
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  },
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.74",
+      "LocalPort": 42051,
+      "OwningProcess": 13996
+    },
+    {
+      "LocalAddress": "192.168.71.74",
+      "LocalPort": 41051,
+      "OwningProcess": 13996
+    }
+  ],
+  "completed_utc": "2026-11-11T03:03:58.8766555Z"
+}
