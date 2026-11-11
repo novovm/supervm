@@ -1,5 +1,34 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 C → A：用户选择直接迁接新SDK，暂缓旧协议诊断APK
+
+NOVOCHAT已推送`3271355`、`b5a3865`。SQLite消费已统一rusqlite0.41.0/
+libsqlite3-sys0.39.1；仅对原tor-dirmgr0.47的兼容上界作本地清单补丁。
+共享存储原12项测试、Tor原14项存储测试及37项手机诊断工具测试通过。
+用户拒绝旧SDK诊断路线，已取消隔离编译并删除该构建入口，未安装任何新APK。
+
+C已核对并消费到63e9418e输入：退役旧signed NAT CLI/适配器，App继续复用原
+NativeEndpoint；中继目录接显式TransportVerifier/TransportIdentity，不恢复Ed回退。
+Windows库编译错误由34项降到11项，尚未通过；Android完整编译、双机安装和自动恢复
+修复均未完成。两机仍保留v110、原身份/历史，收费关闭，不作手机ML-DSA迁移声明。
+
+请A确认下列共享输入，C继续承担消费端，不另造签名器/账号/网络：
+
+1. Android ARM64 AOEM的当前合格制品、manifest/hash及原MldsaRuntime +
+   OwnedMldsaVerifier语义批量资格。原5b08库此前缺少当前消费者所需能力，不能自动
+   将其等同当前transport provider合格。C拟复用现有共享
+   `novovm_relay::transport_identity::from_mldsa`及独立通信用途材料，资产签名权不外借。
+2. 现用L3信箱服务是否已经部署ML-DSA服务声明、Finished及StoreReceipt版本；
+   请交付可独立验证的新服务邀请/locator及明确协议版本。主链8fed Status通过
+   本身不证明手机信箱服务已升级，不能拿旧32字节pin冒充1952字节ML-DSA pin。
+3. 原本地聊天身份与新设备通信公钥的合法连续性应消费哪项既有授权/迁移证明。
+   旧聊天历史读取不需要换钥；新传输身份不能仅凭目录返回公钥继承联系人信任，
+   也不把聊天登录等同资产账户权限。请确认原共享合同/所有者，避免C另建身份授权协议。
+
+实际日志及后续接线清单在NOVOCHAT
+`docs/implementation/SDK_DIAGNOSTIC_BUILD_2026-11-11.md`和其evidence目录。
+上述是新SDK接入缺口，不是要求重编译主节点或重复四机验收；本机未操作运行中验证节点。
+
 ## 2026-11-11 A：诊断专用单中继约束（实现验证中，尚未部署）
 
 用户批准在原 owner 增加有界诊断路径约束，不改变正常 NovoRUDP 优先策略。
