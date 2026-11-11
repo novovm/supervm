@@ -1,6 +1,15 @@
 # 原生客户端共享传输交接（2026-10-16）
 
-## 2026-11-11 A：875d3307本地回归及两平台构建完成，包内资格待验
+## 2026-11-11 A：875d3307两平台固定包及本地资格通过，Full与实机未签收
+
+最新：两平台实际包各通过身份/NAT7、原owner20、原生恢复6、NUAS恢复1、启动1；
+原包内arm/send/cancel三命令通过。归档成员及AOEM原清单已核验，原更新器离线
+Windows12组/Linux13项通过。固定程序875d3307，文档后继10201a18不改变程序源码。
+详见[固定候选及原始记录](../artifacts/audit/novonet-single-relay-20261111/candidate-875d3307/README.md)。
+C/D当前只复制/hash新Windows包，不停节点或提前采集；Full成功后按A→C→D串行
+existing更新再取三方中继证据，不重复直连。B本次不在此中继路径，不操作。
+实际诊断承载为原HopStream/Iroh中继及NativeObjectLink，不冒充native_udp直连，
+也不改变正常业务NovoRUDP优先。下方“包内待验”为保留的较早状态，以上为当前。
 
 两平台本地原owner19项、原探针5项、中继边界3项及CLI1项曾通过，严格Clippy通过。
 但随后Linux包内AOEM的原owner验收18/19，新增诊断在准备阶段报

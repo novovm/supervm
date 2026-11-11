@@ -1,5 +1,16 @@
 # Single-relay real-object qualification
 
+## CURRENT:875d3307 fixed packages and all local owner gates passed
+
+Windows/Linux each passed7 packaged identity/NAT,20 original-owner,6 packaged
+node recovery,1 NUAS recovery and1 runtime startup/reopen. Actual packaged
+arm/send/cancel commands also passed; all archive members and inherited AOEM
+checksums were independently verified. Original updater checks passed12 Windows
+groups and13 Linux tests. [Fixed candidate, logs, hashes and existing plan](candidate-875d3307/README.md).
+Matching Full success and A/C/D deployment/real relay evidence are still pending.
+Only C/D package copy/hash preparation has been requested. No new live object,
+node update, firewall block, direct-test repeat or normal route-policy change.
+
 ## 2026-11-11 candidate63e9418e rejected; bounded pacing fix and security gate
 
 No running A/B/C/D node was updated and no new real-machine object was sent.
@@ -73,7 +84,7 @@ R4/R5 correction, security logs and the91-file public CI recovery artifact are
 archived in `local-pacing-security-evidence.zip`, SHA256
 `d371f4f3e6dafe19bc2136d7723780f7c4ca647aa5358fcdb946c31386f1711a`.
 Its adjacent JSON indexes the63 direct local logs; the additional CI files are
-under `ci-recovery/` in the archive. No database, journal or private keys included.
+under `ci-42961080141-recovery/` in the archive. No database, journal or private keys included.
 Original logs also remain in `target/relay-constraint-20261111/`.
 No fresh firewall block or repeated real direct test is required.
 

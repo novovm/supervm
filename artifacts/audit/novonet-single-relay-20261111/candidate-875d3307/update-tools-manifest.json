@@ -1,0 +1,31 @@
+{
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "tool_archive": "existing-update-tools-875d3307.zip",
+  "tool_archive_sha256": "1094cab94db24e9c4cbfcc5d39168a800b9dabf949541f3ea768090460583ed0",
+  "tool_archive_bytes": 29869,
+  "files": [
+    {
+      "sha256": "e50d180036b8d82eda6991ab7dd4cf2d4555970b231ef675d02cbb853b2ea7d2",
+      "name": "Update-Windows.ps1"
+    },
+    {
+      "sha256": "c668e88989d536a5be74eb44466097b317e58a743ebec3bf5e661c23ce88a30b",
+      "name": "Test-Update-Windows.ps1"
+    },
+    {
+      "sha256": "4d6f1b1dc79251034493c0d55fbda942da5515cee95b756293801e3177b415be",
+      "name": "NovonetExistingProcess.ps1"
+    },
+    {
+      "sha256": "f9998fe24568f3825430156d9a2a4f97029bccf85cc4ae0ddeba0b0a725ff7c5",
+      "name": "Update-B.py"
+    },
+    {
+      "sha256": "93d487e7db331918ead64c9cfac86c388ceda6d2172de76fefa277d4eeb4d4f3",
+      "name": "test_update_b.py"
+    }
+  ],
+  "windows_reported_pass_groups": 12,
+  "linux_tests": 13,
+  "scope": "Original updater offline gates and actual fixed Windows package; no node changed. First interactive wrapper expanded ErrorActionPreference in its parent, producing Continue=Stop before the same test script; these retained direct-File logs avoid that launcher error."
+}

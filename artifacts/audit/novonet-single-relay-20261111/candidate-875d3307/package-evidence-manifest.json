@@ -1,0 +1,238 @@
+{
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "archive": "original-package-evidence.zip",
+  "sha256": "ce6fd4f642de6676ec915f2492e33d780ab243cc6d48a30fdd069a0f668e6c56",
+  "members": [
+    {
+      "name": "build-linux.log",
+      "bytes": 6928,
+      "sha256": "9337780e639f98781b74c2487b25e7557891cc74520bc6460799c3065b84fd14"
+    },
+    {
+      "name": "build-windows.log",
+      "bytes": 7057,
+      "sha256": "80c4fa400b00e9a50a9619eb1fed54eb64074c198bdee9111cd6d281a82c0cd4"
+    },
+    {
+      "name": "owner-qualification-linux.json",
+      "bytes": 2132,
+      "sha256": "2ca90ac589a0bd9ffe1f0e17c00d21d1aa36fd40b871271039c64e3e3f5c57d0"
+    },
+    {
+      "name": "owner-qualification-windows.json",
+      "bytes": 2196,
+      "sha256": "0eb2b181e0aa23d34c440782b94fe84651706459e11cc02025cb76a519964add"
+    },
+    {
+      "name": "owner-test-build-linux.log",
+      "bytes": 995,
+      "sha256": "b4dca388e8d4698994b943ea84b0c90dfbddee326a400018b5c14ef664640732"
+    },
+    {
+      "name": "owner-test-build-windows.log",
+      "bytes": 553,
+      "sha256": "3aaae0ac81f28aca3d0af93b69abb7a66766147b867ba4c5da96bed93e1a6d1a"
+    },
+    {
+      "name": "owner-with-packaged-aoem-linux.log",
+      "bytes": 6164,
+      "sha256": "d5e14a07af24fc23ff3c4152fb5f81a0b27ace72a8fa6999559b04af1c6e1b99"
+    },
+    {
+      "name": "owner-with-packaged-aoem-windows.log",
+      "bytes": 6249,
+      "sha256": "1acef2ccc488cca35258ac0d7357209cd0dc81c076ec6167bbd7baa95d42a40b"
+    },
+    {
+      "name": "packaged-native-identity-linux.log",
+      "bytes": 2658,
+      "sha256": "ce54144ab593e08bc25323d534b73ee2821ae6c7276a39872968c3f180df6d11"
+    },
+    {
+      "name": "packaged-native-identity-windows.log",
+      "bytes": 2695,
+      "sha256": "56a8bd6909ed9f02ab4ed00541977fc714e48ee9521ae8309200212308b890db"
+    },
+    {
+      "name": "packaged-node-recovery-linux.log",
+      "bytes": 1824,
+      "sha256": "04a8d4846b20840360d4bf6e63a0ffd0e059b289b2523f3b0cc206c541aafc66"
+    },
+    {
+      "name": "packaged-node-recovery-windows.log",
+      "bytes": 1829,
+      "sha256": "98a1545e29fd1e0e1736c97f170d5836ad7102a64194d05496046e54bdaccf3c"
+    },
+    {
+      "name": "packaged-runtime-startup-linux.log",
+      "bytes": 427,
+      "sha256": "8d7d82903e9404f0ba7b9df3d3c73de0deec0184503a85503d38c7b13d3dbfde"
+    },
+    {
+      "name": "packaged-runtime-startup-windows.log",
+      "bytes": 434,
+      "sha256": "a4cd5be85c7274ff4cd6e10dacb3c957c408f2e87741f1eac617d7a02baa5a90"
+    },
+    {
+      "name": "packaged-uca-recovery-linux.log",
+      "bytes": 420,
+      "sha256": "a3316f155fce42c694ce2c1bc9da578c379f7664c27b9713669611688d95d12b"
+    },
+    {
+      "name": "packaged-uca-recovery-windows.log",
+      "bytes": 423,
+      "sha256": "b2ae921ce51cd61c3a95fc1041d14f8e2b1d6eaa497fe49c1c1ce84cfbdb9110"
+    },
+    {
+      "name": "updater-linux-tests.log",
+      "bytes": 268,
+      "sha256": "181a1cc98e3565ab6fd19ff38b3849d67fe76136122fc334afc22277d7e0944b"
+    },
+    {
+      "name": "updater-windows-tests.log",
+      "bytes": 1417,
+      "sha256": "db2042b515ca7f5925a2202f24bb353a42b03aefab195e412a73f1434d911781"
+    },
+    {
+      "name": "verified-linux.json",
+      "bytes": 5776,
+      "sha256": "9d26fd0744d4ae8f37b84dc1164d3d9646de3cc961507fec747c8ea9c9d2ab1e"
+    },
+    {
+      "name": "verified-windows.json",
+      "bytes": 6074,
+      "sha256": "b99f4bc55b71dce5a5fbde235b5b27f8c8e1219216f21056e5fe1a49c74749ac"
+    },
+    {
+      "name": "Candidate.ps1",
+      "bytes": 3727,
+      "sha256": "2b889b1310bedbf1e8d1fcd56eedef1585902d268a405f58d2feb8d700ca09cf"
+    },
+    {
+      "name": "Prepare-Update.ps1",
+      "bytes": 2548,
+      "sha256": "b6f697811f5238c60e616d3452bea165d0aba2b3e3a0c05ef9ff339d19fe26f7"
+    },
+    {
+      "name": "Freeze-Candidate.ps1",
+      "bytes": 6178,
+      "sha256": "1eeb47b1c4577f223d53a21669c511786a79b1ce1728e265fa5facbc4f03f6e2"
+    },
+    {
+      "name": "Publish-Local.ps1",
+      "bytes": 4182,
+      "sha256": "3086f7c3da012f47efbf232d7c93f9e83d58b4d57a08ffecec97eebb06fcfe8d"
+    },
+    {
+      "name": "Check-Packaged-Relay-Commands.ps1",
+      "bytes": 2727,
+      "sha256": "b189c205c52666c9f38d3056798daaa77681ad4a58a0968d310f0b1a82237dc9"
+    },
+    {
+      "name": "Send-A-C-D.ps1",
+      "bytes": 7901,
+      "sha256": "e06d68ee24ecf30ad8d3673e61e9c2da07af9398b16998cdd18e1187626fd05d"
+    },
+    {
+      "name": "relay-commands-windows/arm.json",
+      "bytes": 1891,
+      "sha256": "90a1e1797640ab7e89f24145604fff2dda2012974e72e19ac1819d8111feefed"
+    },
+    {
+      "name": "relay-commands-windows/arm.nvprobe",
+      "bytes": 409,
+      "sha256": "67f1a2dc1d46d5e39826c7566527cb788348c1ac0a3acfa0304a528801257434"
+    },
+    {
+      "name": "relay-commands-windows/arm.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-windows/cancel.json",
+      "bytes": 1894,
+      "sha256": "bf47a5f5397deee385af2aff8a3947e8175a4b02f7a71e6195215f7e4d55cdde"
+    },
+    {
+      "name": "relay-commands-windows/cancel.nvprobe",
+      "bytes": 409,
+      "sha256": "654896279072d183f02d266ec0b4768575322f1c53d22d162447447d6c7ff3bc"
+    },
+    {
+      "name": "relay-commands-windows/cancel.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-windows/result.json",
+      "bytes": 817,
+      "sha256": "0d9d421020b3dae72ed844458665e10d063ea319fcf41fbd928e69bd3b6786bc"
+    },
+    {
+      "name": "relay-commands-windows/send.json",
+      "bytes": 1892,
+      "sha256": "d73e3ea21837486084f3aedce291172ce2afb7e3e017689edcad0635d45d18c2"
+    },
+    {
+      "name": "relay-commands-windows/send.nvprobe",
+      "bytes": 409,
+      "sha256": "b698a29cd21c9a7ada1db0364c8c35b06f7a2c2eb85e13deb3077caf366fb794"
+    },
+    {
+      "name": "relay-commands-windows/send.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-linux/arm.json",
+      "bytes": 1891,
+      "sha256": "5e328e2bc0bf88b2444833b04938f1e3ad80479b4f6530d666d699f28033d246"
+    },
+    {
+      "name": "relay-commands-linux/arm.nvprobe",
+      "bytes": 409,
+      "sha256": "96de17ca82d323388096acd07048b1b830b85b9903007f362d280677af1842aa"
+    },
+    {
+      "name": "relay-commands-linux/arm.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-linux/cancel.json",
+      "bytes": 1894,
+      "sha256": "d77799be5cb93727438582b335dcabf48b9ff3b40536ae34a4fe0bff3ecff83d"
+    },
+    {
+      "name": "relay-commands-linux/cancel.nvprobe",
+      "bytes": 409,
+      "sha256": "88d3a1445161deb965ca5071ac4dd66518cfd3f7cf883f1024b9a82ed6459729"
+    },
+    {
+      "name": "relay-commands-linux/cancel.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-linux/result.json",
+      "bytes": 788,
+      "sha256": "524d19b61f1c81c72272baa6e2bf68d9a8cc290066263da75dbd8855016c5948"
+    },
+    {
+      "name": "relay-commands-linux/send.json",
+      "bytes": 1892,
+      "sha256": "52153392434b6ed67dc1b46e06ce3a187ced6b878cc17506e32fdeb5917c0001"
+    },
+    {
+      "name": "relay-commands-linux/send.nvprobe",
+      "bytes": 409,
+      "sha256": "fb481288954734d44dead2bea71eb2f36ab6fa9e44dea9d820e2d58c3303e6eb"
+    },
+    {
+      "name": "relay-commands-linux/send.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "scope": "Package build, qualification, local CLI commands and original updater logs; no real-node state, private keys, database or journal included"
+}
