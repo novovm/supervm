@@ -2125,6 +2125,17 @@ Application1000/PID24376一致；管理员采集无现存进程/监听、无读�
 给出可执行命令；C返回新节点结果后A查询，成功后D执行。旧访问冲突根因仍未定位，
 不能把新版恢复通过（尚待回传）写成该根因修复。这里的恢复是新版打开现有账本，不是恢复旧程序。
 
+### 37.6 2026-11-11 C新版与A认证查询通过，D现在更新
+
+已下拉C `2db1fead`，实际8fed node/AOEM摘要及LocalService原库恢复记录匹配。
+北京时间10:32 A用固定新版客户端查询C成功43ms，原状态根
+`f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`
+一致，height0/current_height1，未恢复中/无投影失败。原SDK输出已归档。
+**D立即按[CD-UPDATE最新首节](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
+执行已批准同版本existing更新**；无需重传包或等C，C不再操作。D须核对自己的当前
+owner，不盲抄C崩溃标志；回传后A认证查询，再做实际对象。查询不等于DONE/共识，
+旧C访问冲突根因不由新版恢复通过自动销账。未另触发Full。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

@@ -1,5 +1,17 @@
 # Native first-handshake session clock — 2026-11-10
 
+## 2026-11-11 10:32: C update/query passed; D released
+
+C's `2db1fead` receipt confirms new 8fed PID7816 / LocalService existing recovery,
+fixed node/AOEM hashes, unchanged custody, no initialization. A independently
+queried C with the fixed new client: **43ms**, original state root unchanged,
+height0/current_height1, not recovering, no projection failure. The original
+response and [release record](candidate-8fed4b76/C-QUERY-D-RELEASE.json) are retained.
+**D may now execute the approved update** using its already verified package;
+[current D command](candidate-8fed4b76/CD-UPDATE.md). C is not restarted/retested.
+No new Full or new program is created. Object DONE and the old C crash cause
+remain separate, unclosed scopes.
+
 ## 2026-11-11 current action: start new 8fed on C with existing crash recovery
 
 C's returned administrator evidence (`243ffb25`) establishes original 1ef

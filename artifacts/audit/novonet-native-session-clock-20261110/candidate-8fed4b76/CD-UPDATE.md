@@ -1,5 +1,41 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT 2026-11-11: C query passed; D executes now
+
+A pulled C receipt `2db1fead`, checked its actual 8fed node/AOEM hashes and
+custody, and completed an external authenticated query with the fixed new
+client at **10:32 Beijing**: **43ms**, original state root
+`f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`,
+current_height=1/finalized_height=0, not recovering and no projection failure.
+[Original SDK response](A-C-authenticated-after-20261111.json),
+[C-query/D-release record](C-QUERY-D-RELEASE.json).
+
+**C is complete for this update/query step. Do not restart C or repeat its recovery.
+D now executes its approved same-version existing update.** No package retransmit,
+new Full CI or repeated stop approval is needed. D uses its already verified
+local package/tool paths from its receipt, administrator PowerShell 7:
+
+```powershell
+$tools='D:\WEB3_AI\SUPERVM\target\d-8fed-preparation-20261110\tools'
+$package='D:\WEB3_AI\SUPERVM\target\d-8fed-preparation-20261110\package\novonet-observation-8fed4b76-windows-x86_64'
+$evidence='D:\WEB3_AI\SUPERVM\target\d-8fed-cutover-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+& "$tools\Test-Update-Windows.ps1" -PackageRoot $package
+# Only after all updater tests pass and the original D owner is still running:
+& "$tools\Update-Windows.ps1" -HostId D -PackageRoot $package -EvidenceRoot $evidence
+```
+
+Check D's actual task/process before choosing the entry. If its old owner has
+already exited, do not run the live-process entry or copy C's recovery flags
+blindly: return the exact task result/exit/progress and matching crash event,
+then select the existing stopped/crashed entry from D's own evidence. No clear,
+initialize or LOCK deletion. Failure is reported, not repeatedly retried.
+
+Return `D_8FED_EXISTING_READY_FOR_A_QUERY`, exit code and public result/after/
+old-exit records. A then queries D before the four-host object test. C's Status
+success is not Object DONE, consensus completion, or proof that the old access
+violation root cause was fixed. This current section supersedes all older wait
+and C-run instructions below.
+
 ## C completed: C_8FED_EXISTING_READY_FOR_A_QUERY (2026-11-11)
 
 C executed the approved `44cd9ffb` RecoverCrashed entry once, exit 0, at
@@ -11,7 +47,7 @@ The new process remains running for A's fixed-client authenticated query. D stil
 waits for that query. No CI, initialization, key rotation or object send occurred;
 the original 1ef access violation remains unresolved.
 
-## CURRENT 2026-11-11: C starts NEW 8fed via original RecoverCrashed entry
+## Completed C recovery instruction (do not rerun)
 
 A pulled receipt `243ffb25` and evaluated its actual fields with
 `Assert-CrashedOwnerEvidence` extracted from the pinned updater
