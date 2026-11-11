@@ -3,11 +3,11 @@
   "status": "C_RELAY_OBSERVER_ARMED",
   "observer_version": 2,
   "handoff": "c92d2172",
-  "sample_utc": "2026-11-11T12:27:34.403444+00:00",
+  "sample_utc": "2026-11-11T12:30:42.137934+00:00",
   "observer_pid": 6592,
   "node_pid": 31296,
   "ready_utc": "2026-11-11T12:20:35.2926544Z",
-  "liveness_utc": "2026-11-11T12:27:33.7986194Z",
+  "liveness_utc": "2026-11-11T12:30:41.6915854Z",
   "active": true,
   "terminal_records_present": {
     "observer-exit.json": false,
@@ -30,11 +30,6 @@
       "name": "ready.json",
       "bytes": 352,
       "sha256": "8929c403f55e3f591612c33e8442794d335a490a6162e8f173e12a101f230bbb"
-    },
-    {
-      "name": "liveness.json",
-      "bytes": 174,
-      "sha256": "89eaf03fb23430d288997e70ede2fc1a6e33a3db9b96393c11c1cc98abb2e602"
     },
     {
       "name": "helper-started.json",
@@ -70,6 +65,21 @@
       "name": "Launch-C-V2-Observer-Once.ps1",
       "bytes": 5585,
       "sha256": "8bdaf81f14c039ace9d725b027340e7ceb3f44a8cdc3589f13b54edc129b99f4"
+    },
+    {
+      "name": "liveness.json",
+      "bytes": 174,
+      "sha256": "37856b766db9609628f0f3179f76f3021f972684c14d40bcaedd4338af93ac29"
+    },
+    {
+      "name": "read-anomaly-first.json",
+      "bytes": 1702,
+      "sha256": "f936dc822134e678aa13163350aec5752ac82f1cae4a28ecbc6d432ef7052425"
+    },
+    {
+      "name": "read-anomaly-last.json",
+      "bytes": 1702,
+      "sha256": "a58e971cd2707e14ce1bdf38d81a183476cfd1e32888ddc4c87dc1c2999c4089"
     }
   ]
 }
