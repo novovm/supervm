@@ -1,0 +1,22 @@
+{
+  "utc": "2026-11-11T02:28:04.5879549+00:00",
+  "process": [
+    {
+      "Id": 7816,
+      "ProcessName": "novovm-node"
+    }
+  ],
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 42052,
+      "OwningProcess": 7816
+    },
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 41052,
+      "OwningProcess": 7816
+    }
+  ],
+  "scope": "read-only post-update process and listener check; not authenticated Status"
+}

@@ -1,0 +1,26 @@
+{
+  "crash": {
+    "event_id": 1000,
+    "record_id": 545473,
+    "event_utc": "2026-11-10T04:25:26.1118322Z",
+    "application": "novovm-node.exe",
+    "application_path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-1ef31893-windows-x86_64\\bin\\novovm-node.exe",
+    "exception_code": "c0000005",
+    "fault_pid": 24376,
+    "created_utc": "2026-11-10T02:49:14.6216866Z",
+    "report_id": "2d1b4b88-a3f0-4799-842f-175d9acb20cd",
+    "task_state": "Ready",
+    "trigger_count": 0,
+    "restart_count": 0,
+    "task_exit_code": 3221225477,
+    "last_run_utc": "2026-11-10T02:49:13Z",
+    "task_sid": "S-1-5-19"
+  },
+  "execution": {
+    "active": [],
+    "exited": []
+  },
+  "no_executing_nodes": true,
+  "original_ports_unbound": true,
+  "terminated_processes_not_killed": true
+}

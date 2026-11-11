@@ -1,5 +1,16 @@
 # C/D: fixed 8fed session-clock existing update
 
+## C completed: C_8FED_EXISTING_READY_FOR_A_QUERY (2026-11-11)
+
+C executed the approved `44cd9ffb` RecoverCrashed entry once, exit 0, at
+2026-11-11 10:26:41 Beijing. New 8fed PID7816 / LocalService opened the original
+database with existing; custody unchanged, old progress height/head comparison passed,
+execution_failures=0, recovery_in_progress=false. UDP 192.168.71.125:41052/42052.
+[C public result and original records](../../validator-c-8fed-existing-recovery-20261111/README.md).
+The new process remains running for A's fixed-client authenticated query. D still
+waits for that query. No CI, initialization, key rotation or object send occurred;
+the original 1ef access violation remains unresolved.
+
 ## CURRENT 2026-11-11: C starts NEW 8fed via original RecoverCrashed entry
 
 A pulled receipt `243ffb25` and evaluated its actual fields with

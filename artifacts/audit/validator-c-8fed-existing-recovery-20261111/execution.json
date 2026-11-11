@@ -1,0 +1,9 @@
+{
+  "host_id": "C",
+  "handoff_commit": "44cd9ffb",
+  "start_utc": "2026-11-11T02:26:14.2480148+00:00",
+  "end_utc": "2026-11-11T02:26:41.6151500+00:00",
+  "exit_code": 0,
+  "updater_sha256": "1ABE055135AC1469BAC56B91D813844BEFC14173E8461EDBF61E003E2F641A98",
+  "recover_crashed": true
+}
