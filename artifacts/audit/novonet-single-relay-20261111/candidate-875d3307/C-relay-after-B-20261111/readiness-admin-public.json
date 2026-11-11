@@ -1,0 +1,36 @@
+{
+  "host": "C",
+  "started_utc": "2026-11-11T14:56:36.4212029Z",
+  "read_only": true,
+  "node_mutated": false,
+  "observer_started": false,
+  "object_sent": false,
+  "D_touched": false,
+  "processes": [],
+  "task": {
+    "name": "NOVOVM-C-875d3307-Existing-20261111",
+    "state": "Ready",
+    "user": "LOCAL SERVICE",
+    "last_run_utc": "2026-11-11T11:32:22.0000000Z",
+    "last_task_result": 3221225477,
+    "execution_time_limit": "P1DT3M"
+  },
+  "udp": [],
+  "progress.json": {
+    "exists": true,
+    "length": 1507574,
+    "modified_utc": "2026-11-11T13:27:48.2904620Z",
+    "sha256": "d8e2322ad931a3be98933e43c3a7628e9daa8917902a0efd4d45ba02947e2e57"
+  },
+  "exit.json": {
+    "exists": true,
+    "length": 99,
+    "modified_utc": "2026-11-11T13:27:58.2423939Z",
+    "sha256": "a08e03d663eaa4bc9a3961afa202fa5d85fb0508574d74d3c4ce8798f7228ad0",
+    "summary": {
+      "exit_code": -1073741819
+    }
+  },
+  "finished_utc": "2026-11-11T14:56:37.8824182Z",
+  "status": "C_NOT_READY_NO_VERIFIED_OWNER"
+}

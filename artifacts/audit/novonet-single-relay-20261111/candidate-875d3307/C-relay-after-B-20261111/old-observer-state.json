@@ -1,0 +1,40 @@
+{
+  "host": "C",
+  "time_utc": "2026-11-11T14:49:35.6959971Z",
+  "prior_pid": 6592,
+  "prior_created_utc": "2026-11-11T12:20:34.1797478Z",
+  "prior_exit": {
+    "host": "C",
+    "observer_version": 2,
+    "helper_pid": 6592,
+    "finished_utc": "2026-11-11T12:50:36.5980373Z",
+    "exit_code": 0,
+    "node_mutated": false,
+    "object_sent": false
+  },
+  "prior_final_liveness": {
+    "host": "C",
+    "observer_version": 2,
+    "observer_pid": 6592,
+    "node_pid": 31296,
+    "utc": "2026-11-11T12:50:36.5703516Z",
+    "active": false,
+    "snapshots": 0
+  },
+  "prior_result": {
+    "host": "C",
+    "utc": "2026-11-11T12:50:36.5686391Z",
+    "snapshots": 0,
+    "terminal_observed": false,
+    "wait_expired": true,
+    "capture_limit_reached": false,
+    "node_mutated": false,
+    "business_receipt": false
+  },
+  "process_present": false,
+  "deliberate_termination": false,
+  "node_stop_requested": false,
+  "old_evidence_preserved": true,
+  "prior_pid_absent": true,
+  "prior_observer_exited": true
+}

@@ -1,0 +1,9 @@
+{
+  "host": "C",
+  "observer_version": 2,
+  "helper_pid": 1700,
+  "finished_utc": "2026-11-11T14:49:36.2943880Z",
+  "exit_code": 1,
+  "node_mutated": false,
+  "object_sent": false
+}

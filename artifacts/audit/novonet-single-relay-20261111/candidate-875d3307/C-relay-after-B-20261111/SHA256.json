@@ -1,0 +1,77 @@
+[
+  {
+    "file": ".gitattributes",
+    "bytes": 100,
+    "sha256": "204fafcf613492d9272db8fb47fae84355c6d34aeae0377448f450d958180554"
+  },
+  {
+    "file": "current-basic-readonly.json",
+    "bytes": 295,
+    "sha256": "7400547abf5771f7f40363b83054aa68f7e49883f20ece54add9265996e93789"
+  },
+  {
+    "file": "handoff.json",
+    "bytes": 444,
+    "sha256": "14e4c30905436f74b0fe543c9db41fff54299a12b1802dd33e098e86960d09c8"
+  },
+  {
+    "file": "helper-started.json",
+    "bytes": 862,
+    "sha256": "4c10093c36362cdcb41953afd75ab7f770da3ebd6c547e7369ad5ac982c4a98f"
+  },
+  {
+    "file": "Inspect-C-Readiness-Once.ps1",
+    "bytes": 2351,
+    "sha256": "228041a823bb82cf7806d4a8fe540fb5dda3d752dc1a0a8fed59ff9fe181deae"
+  },
+  {
+    "file": "invoked-once.json",
+    "bytes": 457,
+    "sha256": "aad4a18fb12fed38104682f204ff6bfc90c2a96e1ecd85ad0bf75693668585b9"
+  },
+  {
+    "file": "Launch-C-After-B-Once.ps1",
+    "bytes": 5093,
+    "sha256": "36c2a9cd78caa88a23fd3a81b8d63833f063d6a9b3c1a80f90af84b83d7ec454"
+  },
+  {
+    "file": "launch-public.json",
+    "bytes": 324,
+    "sha256": "1c4af812038413e10becb4e5f1a484fa6d3218e404e426b22c815d6bc36eea85"
+  },
+  {
+    "file": "observer-exit.json",
+    "bytes": 189,
+    "sha256": "5f1ce50644a7432f752639248aa9a35e7728c289bfa376631e87dc535934acb0"
+  },
+  {
+    "file": "observer.stderr.log",
+    "bytes": 534,
+    "sha256": "65fcbbf21fe62e49f176763c5efb98c9b90cb52f645eabfffc81a4a0e28e7724"
+  },
+  {
+    "file": "observer.stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "old-observer-state.json",
+    "bytes": 1048,
+    "sha256": "e93d532d44cc907500b8d1df2993dd1ef0913ed449c93732587f65984e5b8a64"
+  },
+  {
+    "file": "readiness-admin-public.json",
+    "bytes": 1045,
+    "sha256": "2249c327f7d34d3049786bfb3cad8cd4f62bc30c06e431fe6150c7a03ff19a70"
+  },
+  {
+    "file": "README.md",
+    "bytes": 2702,
+    "sha256": "39d84bf5b958510cb615de677353ddf62c3ea26e7794fccd0656b2b65c9a7e6b"
+  },
+  {
+    "file": "settings.json",
+    "bytes": 856,
+    "sha256": "2bf2d42d95462316532da5f988c8b2c848821b5a063af6c902741ef77490cd0b"
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "host": "C",
+  "status": "C_NOT_READY",
+  "reported_utc": "2026-11-11T14:57:35.7738556Z",
+  "ready_present": false,
+  "liveness_present": false,
+  "observer_result_present": false,
+  "observer_error_present": false,
+  "wrapper_exit_present": true,
+  "observer_exit_code": 1,
+  "observer_restarted": false,
+  "node_restarted": false,
+  "D_touched": false,
+  "object_sent": false,
+  "A_must_wait_for_new_actual_ready": true
+}

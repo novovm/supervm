@@ -1,0 +1,11 @@
+{
+  "host": "C",
+  "time_utc": "2026-11-11T14:49:35.1516420Z",
+  "launcher_pid": 22368,
+  "launcher_sha256": "36c2a9cd78caa88a23fd3a81b8d63833f063d6a9b3c1a80f90af84b83d7ec454",
+  "handoff": "94d98656",
+  "observer_version": 2,
+  "D_touched": false,
+  "node_mutation_requested": false,
+  "object_requested": false
+}

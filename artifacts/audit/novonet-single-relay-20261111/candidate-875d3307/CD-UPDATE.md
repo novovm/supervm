@@ -7,6 +7,20 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT C 2026-11-11 22:57 Beijing: NOT READY; confirm operability before observation
+
+User updated coordination: first confirm C can operate immediately, then open
+the observer window; A sends only after receiving fresh actual READY/liveness.
+C's one new observer attempt exited1 before READY (`Original LocalService owner
+not confirmed`). Elevated read-only inspection found no node process or UDP
+41052/42052 listener; original875 task/exit agree on 0xC0000005 termination.
+No automatic recovery or observer retry occurred. This is **C_NOT_READY**, not
+permission for A to send. A's old21:48 sender deadline is already past; do not
+reuse old C readiness or infer current A availability. See
+[C original failure and readiness evidence](C-relay-after-B-20261111/README.md).
+Node recovery needs separate coordination; this round does not restart/update
+nodes, change configuration, send objects, or operate D.
+
 ### CURRENT 2026-11-11 21:18 Beijing: A discovery recovered; new relay window now
 
 A readback confirms verified locators0->3 and actual A->B Carrier/direct
