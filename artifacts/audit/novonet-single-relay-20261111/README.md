@@ -1,4 +1,54 @@
-# Single-relay real-object execution preflight — NOT EXECUTED
+# Single-relay real-object qualification — bounded UDP isolation completed, no object sent
+
+## Authorized live window result (2026-11-11)
+
+User explicitly authorized at most five minutes of A↔D specific UDP isolation,
+automatic restoration, and exactly one new object **only after** an authenticated
+single-node relay route was established. That prerequisite was never satisfied.
+
+- Exact application: installed8fed novovm-node.exe, A original PID13996.
+- Two temporary Block rules (inbound/outbound), only A192.168.71.74 and
+  D192.168.71.59, local UDP41051/42051 and remote UDP41053/42053.
+  Other peers, TCP, profiles, original rules and node configuration were unchanged.
+- Independent SYSTEM restore task was armed **before** rules were added, with
+  deadline03:42:51Z. The primary runner removed its rules sooner, then unregistered
+  the now-unneeded watchdog. The watchdog itself did not need to run.
+- Rule window03:38:22.447Z–03:42:24.166Z: **241.72 seconds**, under five minutes.
+  Privileged final ActiveStore query: remaining_rules=0, restored=true.
+- A's23 interval snapshots and final pre-restoration snapshot retained zero relay
+  circuits. Installed bound-carrier count changed0→1; this is not a node-hop route.
+  Existing probe accepted_commands stayed1 (the previous direct object); no new
+  prepare command, test object, Object ID or DONE was created. execution_failures=0.
+- B's70 snapshots03:37:26Z–03:42:04Z retained only the same two historical dropped
+  circuits and zero forwarded frames. This sampling ended about19 seconds before
+  restoration; it is not continuous coverage of the final seconds. A still recorded
+  no relay circuit at window end; a separate B post-window projection is retained.
+
+Final runner status: **NO_AUTHENTICATED_SINGLE_RELAY_NO_OBJECT_SENT**.
+The isolation experiment completed; single-relay object delivery is **not executed**,
+not PASS. No D receiver action is required because no new object was sent.
+No direct test was repeated, and no failure or historical counter was erased.
+
+### Actual remaining execution gap
+
+Blocking those UDP coordinates does not exclude other Iroh reachability paths.
+The fixed owner can establish a bound Carrier without constructing a NOVOVM
+HopStream route. The code advances to node-relay candidates on connection failure;
+it does not force an intermediate node when the Carrier succeeds. These observations
+do not identify the exact underlying Iroh path and do not prove a relay defect.
+
+Do not expand the firewall experiment to arbitrary relay/DNS/TCP traffic or repeat
+it until a desired outcome appears. Deterministic single-node relay qualification
+needs a bounded original-owner diagnostic path constraint (with its own affected
+validation/candidate qualification), or a separately agreed reachable real topology.
+The actual product's healthy NovoRUDP priority, existing authentication/limits and
+business routing must not be silently changed. No such source change is made here.
+
+`udp-window-original.zip` contains the executed script, A original window results
+and snapshots, and B original read-only observations. `udp-window-SHA256SUMS.json`
+records exact source bytes and archive hash. No private configuration or key material.
+
+## Historical preflight (before the above authorization)
 
 2026-11-11, after the completed A→D native UDP object. No repeat of that
 delivery, new probe command, node restart, locator modification, firewall rule,

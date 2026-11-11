@@ -1,0 +1,164 @@
+{
+  "archive": {
+    "name": "udp-window-original.zip",
+    "bytes": 1186931,
+    "sha256": "ed204187c24636dbb1785823e9fdfe4251bd7a28426237a8fd5c55446c6caf25"
+  },
+  "members": [
+    {
+      "name": "single-relay-window-20261111/before-restore.json",
+      "bytes": 762853,
+      "sha256": "7e024ae08bca573a1d7cc90128bd0df265cf4f277b85773059cf167f6dc421ef"
+    },
+    {
+      "name": "single-relay-window-20261111/before.json",
+      "bytes": 785380,
+      "sha256": "e06b2de884194784d3fc8534bd00d12f7595a5cc6134878bcd424fbbfdc6aa3a"
+    },
+    {
+      "name": "single-relay-window-20261111/live.json",
+      "bytes": 727,
+      "sha256": "f755d21ec6d703d499c0089ff81b82207e226bc125a55dd8d2c9349034abd303"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-000.json",
+      "bytes": 785380,
+      "sha256": "32cdaca0f2fe75eb79fb0ac76863b409a5e8acac9aa5ac42d63631dc8eb88063"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-010.json",
+      "bytes": 773831,
+      "sha256": "b8bf1cbb5a5f04aebacb86222e252466ec9795bfa4f9a9ffd7db39f361f07957"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-020.json",
+      "bytes": 786079,
+      "sha256": "2a1b2cb0d2fbeb6d45a9aa7fb833a0bc1b335ea7ec1cc5e8a2b06330932930af"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-030.json",
+      "bytes": 787159,
+      "sha256": "8e4000bb22fa85b3569edafa46b099745eba051df704941b556823ea2ecc8735"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-040.json",
+      "bytes": 784554,
+      "sha256": "96d2e9dcb5b1bf915412737c17a510a346fa46466bc24e26b9f06375b6325061"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-050.json",
+      "bytes": 789479,
+      "sha256": "a80c8d4fe3bda37d2d61b3c237c37a62a843b13a11671b4536913aff36ae13de"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-060.json",
+      "bytes": 788532,
+      "sha256": "416e4e8fc53b576fa87e2cffde51d49a86c58a108e59704c0753c68979e080f2"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-070.json",
+      "bytes": 775400,
+      "sha256": "6b6325fea9f2ba4411562ea54411d8cbfb4dbde0bd117d8b2d4512135c141821"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-080.json",
+      "bytes": 787488,
+      "sha256": "c9e92172f40b2cd06cb08f1713845193e933af2bb282bf63629f0e6ce4a0daa4"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-090.json",
+      "bytes": 786393,
+      "sha256": "e7743095db5cf5da1c28b4222eacf41d8018380ead3fc7e1af11f46769a30220"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-100.json",
+      "bytes": 772034,
+      "sha256": "00e68572226eab42c833ba4d3c9e2d1ebeef5d66368abed644b9f74d10e73f16"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-110.json",
+      "bytes": 782736,
+      "sha256": "d15f00f4d3ad7d3fad88a3844a269e8810dd17bb5f5fb74091573ed43c916aa4"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-120.json",
+      "bytes": 737673,
+      "sha256": "6be140609bbe885608f8d1a7fed7494d12edf20374eaa2182967ee5c49166032"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-130.json",
+      "bytes": 748582,
+      "sha256": "46d33a09760692a7189ebec033b552838ec1c12d3bb1c4878839fe28359bc5eb"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-140.json",
+      "bytes": 756454,
+      "sha256": "4797e7c923fcd43646fc063de1ca5b500feebf8adb73b11b19994f3af6e3e4d9"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-150.json",
+      "bytes": 740202,
+      "sha256": "cd690ff760d21a171c1a11500c5403558445544b933d0fa534f4e918257535d5"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-160.json",
+      "bytes": 750486,
+      "sha256": "accbb5b0c17610771d6997ac5285c7a0fe5b9fb72e1d89604b42fdeb0506213c"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-170.json",
+      "bytes": 764228,
+      "sha256": "9d4106db57d2427d3d9286ce4b25d4d6b26e9c9c88e240e150530eab36342e9f"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-180.json",
+      "bytes": 763241,
+      "sha256": "c35a5c8157c2f797069aa7e29e24b451cf70c0438d294d14b254a756283368b0"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-190.json",
+      "bytes": 764191,
+      "sha256": "d0580b028dedf69acbed4b7bd806a1d51ba656dd3a181388ec494ca8b5dfd6de"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-200.json",
+      "bytes": 778208,
+      "sha256": "ac527f3794f4ab663279e33368c2ab4c50b5eea348301b961d5e56b1540598c2"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-210.json",
+      "bytes": 733367,
+      "sha256": "6dcf37c3d52f1b761f5928f34847f78efaa2766934cff8ca184f086f109942e0"
+    },
+    {
+      "name": "single-relay-window-20261111/observe-220.json",
+      "bytes": 763928,
+      "sha256": "ec18fee6570ced86248b3757df875b25eb43e0f4482e4921c9e4305484252580"
+    },
+    {
+      "name": "single-relay-window-20261111/result.json",
+      "bytes": 809,
+      "sha256": "50d613924c8302d369315879b970061618cb6cde3b8e271f0b6ceed78973e5b1"
+    },
+    {
+      "name": "single-relay-window-20261111/rules.json",
+      "bytes": 1177,
+      "sha256": "7b1435a6e6fff43f4d9e21911ed0afab9e356e9c6832556bb406d3e20173d39e"
+    },
+    {
+      "name": "Run-Single-Relay-Window.ps1",
+      "bytes": 9853,
+      "sha256": "1a055974432e0ca1e7b3d89ec94239cd722c54c6142609fd82ca7c76b6ace3dd"
+    },
+    {
+      "name": "single-relay-B-window.jsonl",
+      "bytes": 208524,
+      "sha256": "d11d55edbb7cc1fca687b6475f38d8df001748bed3a1f5413c945ee63ccabdbd"
+    },
+    {
+      "name": "single-relay-B-after.json",
+      "bytes": 2979,
+      "sha256": "9a3a6f1f2f8ef46200d6ab83ab26ef0ac5e70097ecf52940bded96bc1d63710b"
+    }
+  ]
+}
