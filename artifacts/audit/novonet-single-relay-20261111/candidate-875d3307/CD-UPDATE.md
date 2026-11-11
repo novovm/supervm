@@ -7,6 +7,27 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT A 2026-11-11 23:14 Beijing: C recovery authenticated; relay pending D refresh
+
+A read C84024d10 recovery and crash receipt. The19 public raw result/observer
+members match their hashes; README/.gitattributes checkout bytes differ from C's
+listed hashes and are not represented as byte-preserved raw evidence. C875
+PID3228 / LocalService opened the original database, same custody/config and
+node/AOEM hashes. Application1000 record546255 identifies priorPID31296 access
+violation c0000005 in novovm-node.exe offset0x65f59d; root cause remains unknown.
+
+A's fixed875 SDK authenticated query at15:14:08.3964666Z succeeded35ms, original
+state root f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333,
+height0/current_height1, no recovery/projection failure. Raw outputs are archived
+as C-current875-recovered-query-original.zip, SHA256
+2387e5cb5b0281d981916f4705ba3b813813045664e34a64820d64437530f140.
+This was health, not a direct object retest or relay acceptance. C observer21548
+is armed from23:11:27; actual published liveness23:12:42. D13168's22:52 window
+nominally ends23:22:30, but its last published sample22:53 is stale. D has been
+asked only to refresh that observer's actual liveness/terminal state, not restart
+it. A prepared the one-shot sender without starting another preliminary countdown.
+No new object has yet been sent.
+
 ### C RECEIPT 2026-11-11 23:12 Beijing: recovery exit0; fresh observer ARMED
 
 C executed 9a0aec5e recovery helper once: actual exit0; current875 PID3228,
