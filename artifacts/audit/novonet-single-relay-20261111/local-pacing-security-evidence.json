@@ -1,0 +1,324 @@
+{
+  "utc": "2026-11-11T05:16:41.7057458Z",
+  "parent_commit": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "archive": "local-pacing-security-evidence.zip",
+  "sha256": "d371f4f3e6dafe19bc2136d7723780f7c4ca647aa5358fcdb946c31386f1711a",
+  "advisory_db": "28d73fc95e5972af3403225a217def57dcaba3c4",
+  "files": [
+    {
+      "name": "full-42961080141-security.log",
+      "sha256": "99f37d4e607cd20d45df49fa7c1b1bc555ad1dba04e2017f3eb665683bb61b36",
+      "bytes": 78512
+    },
+    {
+      "name": "linux-r4-owner-0.log",
+      "sha256": "ea67cacf8ee773e88f91b77524482a4c8208580d24f1748e490b855df6ebe08c",
+      "bytes": 123
+    },
+    {
+      "name": "linux-r4-owner-0.log.result.json",
+      "sha256": "166df4e406d55bad5cfefd66d24b64f4da056696addc8c2a19c215b5f075b2ec",
+      "bytes": 128
+    },
+    {
+      "name": "linux-r4-targeted-0.log",
+      "sha256": "cdd0178a425948ff836472e009617929153d8b6a8b82516ec4cdf057336e3f6b",
+      "bytes": 1762
+    },
+    {
+      "name": "linux-r4-targeted-0.log.result.json",
+      "sha256": "9eac2ff4c207e0d46400adff0993ca13b73737639404437804a2a8dd485a7504",
+      "bytes": 345
+    },
+    {
+      "name": "linux-r4-targeted-1.log",
+      "sha256": "04adb259aaa2e96b6a10b2b9ac73d8b68c93d0514d90f01dfd9adcc896532159",
+      "bytes": 923
+    },
+    {
+      "name": "linux-r4-targeted-1.log.result.json",
+      "sha256": "9f03c3c696199b2c48496ee0be02d6e3da8950c37a8e8556e5e99261b1284206",
+      "bytes": 352
+    },
+    {
+      "name": "linux-r4b-nodeclippy-0.log",
+      "sha256": "54a876d67f5904f4b323edef4e6ef088d58bd056ffec982eb7398a9d9392fc67",
+      "bytes": 634
+    },
+    {
+      "name": "linux-r4b-nodeclippy-0.log.result.json",
+      "sha256": "c6e81c2d23b12bc3575c46c74bd8098d4396aec5ad7f0abcb13e99b6b48325d6",
+      "bytes": 311
+    },
+    {
+      "name": "linux-r4b-owner-0.log",
+      "sha256": "b751e9d4ef272dfefbb4fd9784dda6413f4720f2f96ec6cb67a02226abb8682b",
+      "bytes": 6857
+    },
+    {
+      "name": "linux-r4b-owner-0.log.result.json",
+      "sha256": "7790588ee13d54dfe8e8c4e065c2f6063c63354e26df7530f2a6ef8dc8375808",
+      "bytes": 332
+    },
+    {
+      "name": "linux-r5-clippy-0.log",
+      "sha256": "217eafe482d6f5e0eceb743901d2605c782898886bdfc096481c85d1ce378c66",
+      "bytes": 725
+    },
+    {
+      "name": "linux-r5-clippy-0.log.result.json",
+      "sha256": "3a576cf3b912a3361a95d582fc00fd8e0e70efa96d4015f5145f1fac0de25f14",
+      "bytes": 307
+    },
+    {
+      "name": "linux-r5-clippy-1.log",
+      "sha256": "203bb69fc6ca6024334fb82c97409c2ca916c272faf8dfbf629a6103105d737c",
+      "bytes": 769
+    },
+    {
+      "name": "linux-r5-clippy-1.log.result.json",
+      "sha256": "74dfeea05ccaf5d46d5347fea0f1779dbee27113c3865da736463025cc6f67ab",
+      "bytes": 267
+    },
+    {
+      "name": "linux-r5-clippy-2.log",
+      "sha256": "d44764a9ce2dbb8d6dc6ec4d0829f906df14f53f15e933386d50df1b6edcb45a",
+      "bytes": 555
+    },
+    {
+      "name": "linux-r5-clippy-2.log.result.json",
+      "sha256": "2add3a75cca2b1b75a54803024a9a499675ae838bf946b3ebc9287f9aa2b4da4",
+      "bytes": 310
+    },
+    {
+      "name": "linux-r5-regressions-0.log",
+      "sha256": "ebcd3e6e8a69c63c24abe490efef8890e71ee99cd9e2e36e63e0e9968c4425e9",
+      "bytes": 7081
+    },
+    {
+      "name": "linux-r5-regressions-0.log.result.json",
+      "sha256": "a34d3856db378f1f967ecf478c5e0a6c69ceae96064d31ea807a2b6f88fa4280",
+      "bytes": 338
+    },
+    {
+      "name": "linux-r5-regressions-1.log",
+      "sha256": "490c08ba9e530f5a003207f6f373a898782efe6a74527fe1844f714f0e56cbcf",
+      "bytes": 1443
+    },
+    {
+      "name": "linux-r5-regressions-1.log.result.json",
+      "sha256": "dcd70ba5e7bdd108e377adbbca34c358d0ab2b757e1653dd4c5a14ed0bb5b66c",
+      "bytes": 370
+    },
+    {
+      "name": "linux-r5-regressions-2.log",
+      "sha256": "b077e4ef797b0be94f355b0957761d32c4f70226b9f3abdd37cd8c087431ac49",
+      "bytes": 1331
+    },
+    {
+      "name": "linux-r5-regressions-2.log.result.json",
+      "sha256": "66ff00d596398c4355d77e94430e966621fa4792f07f833a1b188efb60dda3d8",
+      "bytes": 335
+    },
+    {
+      "name": "linux-r5-regressions-3.log",
+      "sha256": "497ed90a407a6f142ca97ea39be0df687f5769b0f2a5169974c0c4812bee1140",
+      "bytes": 2230
+    },
+    {
+      "name": "linux-r5-regressions-3.log.result.json",
+      "sha256": "83f0d28f7167189b0417f30d785d6dac5ed428f9f081aa38d4f20cc6361d8622",
+      "bytes": 285
+    },
+    {
+      "name": "linux-r5-rollout.log",
+      "sha256": "e467febddeb5bd2be6df9ccfb5e37a56e502a147a03f79246d1619a6284f170b",
+      "bytes": 1972
+    },
+    {
+      "name": "linux-r5-rollout.log.result.json",
+      "sha256": "42fa4b562f39b4b1c4ef2f43a75e448000d262cac1ec511a2a9699100c123070",
+      "bytes": 62
+    },
+    {
+      "name": "openssl-before-tree.log",
+      "sha256": "86a0209bcc269fdfa46bc446a3cc99381b4c5fceff5b56d4bd13685d60ef0626",
+      "bytes": 531
+    },
+    {
+      "name": "openssl-update.log",
+      "sha256": "d7cf78cd20826798605e8867f2f60d22726c053409f49dfb61cfd9fee77b1fc6",
+      "bytes": 145
+    },
+    {
+      "name": "RUSTSEC-2026-0474.md",
+      "sha256": "087943e9d57741f834bf9ab057dff47cee0344964e5c58fb3720517999d74a31",
+      "bytes": 1069
+    },
+    {
+      "name": "RUSTSEC-2026-0476.md",
+      "sha256": "faaabcc90d8d741b3145a7f6a1d6ad727e864b667e1f6006ab974c52a7750faa",
+      "bytes": 1410
+    },
+    {
+      "name": "RUSTSEC-2026-0477.md",
+      "sha256": "2fc403f04c822bbd8ff9b57b418ee20390b0009069431ee6867097f99b515d0d",
+      "bytes": 1059
+    },
+    {
+      "name": "security-fixed-0.log",
+      "sha256": "7860afc1fd60922721f5f9300686ae382d163d04b0d49bc43b8b964d3e71d168",
+      "bytes": 7996
+    },
+    {
+      "name": "security-fixed-0.log.result.json",
+      "sha256": "56757d8e0f06e6f09b153094250632785fde19984c93dfceee9b3452e9c9c69c",
+      "bytes": 118
+    },
+    {
+      "name": "security-fixed-1.log",
+      "sha256": "a7d57bf28ec03f47f8b50fa790ff4432ac18b432352483714bbb57f36e710773",
+      "bytes": 269
+    },
+    {
+      "name": "security-fixed-1.log.result.json",
+      "sha256": "21118a112f1d85c05621b5bba476839594487632c0696057e716d81060046cf0",
+      "bytes": 160
+    },
+    {
+      "name": "security-same-db-0.log",
+      "sha256": "ca4b528401b277d430ada06897d2428bd3fc13959f163f6168b593bed2fcb0a3",
+      "bytes": 7935
+    },
+    {
+      "name": "security-same-db-0.log.result.json",
+      "sha256": "f3af37b012e2b8c8ea8adaef565b2715a1e742ab4d19598f365db954ab0deeb0",
+      "bytes": 137
+    },
+    {
+      "name": "security-same-db-1.log",
+      "sha256": "f9ecad99ebded997725770231d33f631a3a2c150e9f30d60b272ffd7f100f5e9",
+      "bytes": 4039
+    },
+    {
+      "name": "security-same-db-1.log.result.json",
+      "sha256": "ec91f0ba06b172e8230fcf585486dcf8cf572dc11f3d47f1c1fc6e8c43102657",
+      "bytes": 179
+    },
+    {
+      "name": "security-same-db-2.log",
+      "sha256": "57a0979d149366fa2b4da9d4ea14817f91ea401653c81a4bdc12cf34f7a10b90",
+      "bytes": 163310
+    },
+    {
+      "name": "security-same-db-2.log.result.json",
+      "sha256": "131193c7457f1744fc885ee8bd55c4342a6a94d84079c461786dcf23ba52b0d5",
+      "bytes": 181
+    },
+    {
+      "name": "security-same-db-3.log",
+      "sha256": "4b70112498f8d6214e36a2bb59a426c8efbfa03f2799081179d8bacb684597b7",
+      "bytes": 34332
+    },
+    {
+      "name": "security-same-db-3.log.result.json",
+      "sha256": "a70866dba622bdf46a65491c2dda12d3e7aa8f6dd5f56798771aa950385b4631",
+      "bytes": 232
+    },
+    {
+      "name": "Security.ps1",
+      "sha256": "934cf5a5074f93bd0ea4fc346436f34f94b1dc164238e824ac110380585e0ffc",
+      "bytes": 1046
+    },
+    {
+      "name": "Validate-R4.ps1",
+      "sha256": "803f54b3f3983f161056b09b4db9b44d65b89e6390015d9604d5aabd6118ab64",
+      "bytes": 220
+    },
+    {
+      "name": "Validate-R5-Linux.ps1",
+      "sha256": "a620638b94605937e11e86177a95743c4684b4abc1576dbbcefbd57018425f52",
+      "bytes": 675
+    },
+    {
+      "name": "Validate-Security.ps1",
+      "sha256": "3013f627e9db653ec179a52056d8045517c5a96e2b19013d34de5e8032fdcc2a",
+      "bytes": 870
+    },
+    {
+      "name": "Validate.ps1",
+      "sha256": "291033332b82cd7bae60b0e203fec422ebd1f899072b451f279fb81b480a584a",
+      "bytes": 3331
+    },
+    {
+      "name": "windows-r4-targeted-0.log",
+      "sha256": "50e7f6af039aa6c7c2b162aa56b9cc2218b6667c3a02a8e2a2b239a83a0962d2",
+      "bytes": 1780
+    },
+    {
+      "name": "windows-r4-targeted-0.log.result.json",
+      "sha256": "d1413a4f3eaac483d3d3beaca3fc8276f6e9cf8e4b89ed04e198ce159602eeb7",
+      "bytes": 367
+    },
+    {
+      "name": "windows-r4-targeted-1.log",
+      "sha256": "935ba95d71912e0a3f2f676d7c86a837804304876d82bd3bc58340cdb5490fa4",
+      "bytes": 953
+    },
+    {
+      "name": "windows-r4-targeted-1.log.result.json",
+      "sha256": "60905ec3e8f3942393f593498754d2d7284bba9736ed9df9724459c59d232db7",
+      "bytes": 374
+    },
+    {
+      "name": "windows-r4b-nodeclippy-0.log",
+      "sha256": "a89213fead9fe6b114e0d433aa4a63427f14ac7ca31cda957a4e40b2cbf2d963",
+      "bytes": 629
+    },
+    {
+      "name": "windows-r4b-nodeclippy-0.log.result.json",
+      "sha256": "a3312196cb6a1ef17560224f554c314ec00e30ca4a9053b199f11fbd5954498e",
+      "bytes": 333
+    },
+    {
+      "name": "windows-r4b-owner-0.log",
+      "sha256": "78ee605931f150ce01991b457c7c82eeea08151c6c9fa5c7127935d3e30ef632",
+      "bytes": 6944
+    },
+    {
+      "name": "windows-r4b-owner-0.log.result.json",
+      "sha256": "2694cbd88f31b4885743a7126221fd87df6720b0fe7618fd498c600ff479b2f7",
+      "bytes": 354
+    },
+    {
+      "name": "windows-r5-clippy-0.log",
+      "sha256": "1cd794ce7ced1eeb5ac33e4c9f357fee6fa788cf659a4083527ef82f4ee9b11f",
+      "bytes": 553
+    },
+    {
+      "name": "windows-r5-clippy-0.log.result.json",
+      "sha256": "21bd5e732c82a6bf43db8585b354239f8437867ab14418939ba6508959ba51f3",
+      "bytes": 329
+    },
+    {
+      "name": "windows-r5-clippy-1.log",
+      "sha256": "a219b99081d2de64723970c4e42d49870fdea82ad0b3eabe6d88be1ddd268a84",
+      "bytes": 553
+    },
+    {
+      "name": "windows-r5-clippy-1.log.result.json",
+      "sha256": "102190ae05a07dee9e03670ec6863f41854936323ce52417abc0bcf649d91c66",
+      "bytes": 287
+    },
+    {
+      "name": "windows-r5-clippy-2.log",
+      "sha256": "d446ef3882df4a31787aaa9ebc01d875efdc224d8653df746ee7c48a1557bf1a",
+      "bytes": 553
+    },
+    {
+      "name": "windows-r5-clippy-2.log.result.json",
+      "sha256": "cebd87d9c9f80cf6916981117e2dc6cfe1f1dd2c83bb796eb6f34668cb1ed15c",
+      "bytes": 332
+    }
+  ]
+}

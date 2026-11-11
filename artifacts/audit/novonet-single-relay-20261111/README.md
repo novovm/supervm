@@ -50,7 +50,10 @@ Root audit fetched advisory DB28d73fc95e5972af3403225a217def57dcaba3c4 and passe
 Runtime's first fetch failed with a GitHub I/O error; both audits then passed
 against that same already-fetched1446-advisory database, without stale/ignore
 options. Root/runtime Deny passed with existing warnings preserved. Linux actual
-consumer regressions and Clippy after this dependency update are still pending.
+consumer regressions after this update passed:20 owner,5 probe,3 hop,1 CLI and
+1 rollout-policy; strict node/ctl/network Clippy passed. Windows20 owner and all
+three Clippy targets passed. Both original fixed-source875d3307 package builds
+completed; copied-package qualification is still pending. No real node changed.
 Original CI failure and local fetch failure remain separate records; neither is
 rewritten as passed. No runtime deployment follows from a local security result.
 
@@ -66,7 +69,12 @@ artifact. This is not attributed to diagnostic routing, pacing or OpenSSL, nor
 declared fixed. The next package's original NUAS gate remains required, with its
 actual result retained separately. No timeout, quorum or receipt assertion changes.
 
-R4/R5 correction and security logs remain in `target/relay-constraint-20261111/`.
+R4/R5 correction, security logs and the91-file public CI recovery artifact are
+archived in `local-pacing-security-evidence.zip`, SHA256
+`d371f4f3e6dafe19bc2136d7723780f7c4ca647aa5358fcdb946c31386f1711a`.
+Its adjacent JSON indexes the63 direct local logs; the additional CI files are
+under `ci-recovery/` in the archive. No database, journal or private keys included.
+Original logs also remain in `target/relay-constraint-20261111/`.
 No fresh firewall block or repeated real direct test is required.
 
 ## Diagnostic constraint implementation in progress (2026-11-11)
