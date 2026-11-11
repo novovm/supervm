@@ -1,0 +1,16 @@
+{
+  "host": "C",
+  "helper_pid": 27480,
+  "helper_created_utc": "2026-11-11T12:00:16.3032832Z",
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "script": "D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Watch-Relay.ps1",
+  "script_sha256": "2048bba7a26080fb774f3b97f9045e236c39345a9638ac822d77e2bb67a5e0b6",
+  "host_id": "C",
+  "evidence": "D:\\WEB3_AI\\SUPERVM\\target\\c-relay-observer-875-20261111T115955Z\\observer",
+  "hidden": true,
+  "maximum_wait_seconds": 1800,
+  "stdout": "observer.stdout.log",
+  "stderr": "observer.stderr.log",
+  "node_mutated": false,
+  "object_sent": false
+}
