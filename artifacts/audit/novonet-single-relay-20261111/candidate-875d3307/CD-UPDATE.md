@@ -7,8 +7,9 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
-Wait for A's `A_875_EXISTING_AND_AUTHENTICATED_STATUS_PASS` receipt here.
-Then C updates first and returns its original result. A checks authenticated
+**A_875_EXISTING_AND_AUTHENTICATED_STATUS_PASS is recorded in [A-UPDATE.md](A-UPDATE.md)
+at 2026-11-11T10:26:01UTC. C is released to execute this update now.**
+C updates first and returns its original result. A checks authenticated
 Status before releasing D's update. D follows the same procedure only after
 A records C health. Do not run collectors merely because the archive is ready.
 

@@ -34,9 +34,10 @@ below; it does not rewrite the old failed run or certify a real relay delivery.
 
 C and D archive receipts are now independently present in this directory.
 The user approved direct updates followed by the single-relay real test.
-A's original existing updater has been requested through Windows elevation;
-do not infer completed cutover from the elevation request. C/D wait for A's
-actual health receipt, then use [CD-UPDATE.md](CD-UPDATE.md), C before D.
+A's original existing update and authenticated Status have now passed at
+10:26:01UTC: [actual A receipt](A-UPDATE.md). C may now use
+[CD-UPDATE.md](CD-UPDATE.md); D waits for C's update and A's health check.
+No new real object has been sent; collector readiness is a separate stage.
 
 ### Historical dispatch snapshot (superseded by final result above)
 
