@@ -7,6 +7,23 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 20:45 Beijing: B bootstrap restored; A discovery check pending
+
+Read-only inspection proved B's8fed node cleanly exited at17:31 after its
+configured24-hour run. No41050/42050 listener remained. A used the original
+updater's new resume-current mode to resume that same fixed8fed executable,
+original custody/config/database with existing, without a process run-duration
+cap. B PID3766709 now owns both ports; A->B authenticated Status passed74ms,
+original state root unchanged; inbound Carrier TLS/Stream Ready observed.
+Details and original evidence: [B discovery recovery](B-discovery-recovery-20261111/README.md).
+
+No C/D update or new object has occurred. A is checking automatic locator
+reacquisition; its read-only observation awaits UAC. C/D only refresh current
+v2 liveness/terminal status, preserving this same observer window. If it has
+ended, report actual exit, do not silently re-arm. Once actual C/D locators and
+active windows are verified, A proceeds to the single relay object. B health
+alone is not discovery or relay acceptance.
+
 ### CURRENT 2026-11-11 20:30 Beijing: one A relay preparation failed before dial
 
 C/D v2 receipts were verified from main60299780. A performed one prepare;

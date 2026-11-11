@@ -15,6 +15,47 @@ spec.loader.exec_module(update)
 
 
 class ExistingGuards(unittest.TestCase):
+    def test_continuous_launch_only_changes_process_duration(self):
+        commands = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = {'novonet_config_file': 'network', 'signing_key_file': 'signer',
+                        'transport_key_file': 'transport', 'database': str(root)}
+            for continuous in (False, True):
+                logs = root / str(continuous)
+                logs.mkdir()
+                with patch.object(update, 'no_node_or_listener'), \
+                     patch.object(update, 'read', side_effect=[settings, {'carrier_identity_file': 'carrier'}]), \
+                     patch.object(update.os, 'chown'), \
+                     patch.object(update.subprocess, 'run') as run, \
+                     patch.object(update, 'mainpid', return_value=42):
+                    self.assertEqual(update.launch('fixed', root, root / 'run.json', logs, continuous=continuous), 42)
+                    command = run.call_args.args[0]
+                    environment = next(v for v in command if v.startswith('Environment='))
+                    self.assertIn('NOVOVM_NATIVE_EXECUTION_START=existing', environment)
+                    self.assertIn('AOEM_DLL_MANIFEST_REQUIRED=1', environment)
+                    self.assertEqual('NOVOVM_NATIVE_EXECUTION_RUN_MS=' in environment, not continuous)
+                    self.assertIn('RuntimeMaxSec=infinity' if continuous else 'RuntimeMaxSec=86520', command)
+                    self.assertNotIn('initialize', ' '.join(command))
+                    commands.append(command)
+            self.assertEqual(commands[0][-1], commands[1][-1])
+
+    def test_current_resume_requires_exact_current_manager_pair(self):
+        rows = self.records()
+        for row in rows:
+            row['UNIT'] = update.new_unit
+            row['MESSAGE'] = row['MESSAGE'].replace(update.old_unit, update.new_unit).replace(str(update.old_release), str(update.release))
+        self.assertEqual(update.validate_stopped_journal(rows, 198000000, update.new_unit, update.release)['invocation_id'], 'same')
+        with self.assertRaises(RuntimeError):
+            update.validate_stopped_journal(rows, 198000000)
+
+    def test_resume_refuses_an_existing_process_before_mutations(self):
+        with patch.object(update, 'no_node_or_listener', side_effect=RuntimeError('node remains')), \
+             patch.object(update, 'launch') as launch:
+            with self.assertRaisesRegex(RuntimeError, 'node remains'):
+                update.resume_current()
+            launch.assert_not_called()
+
     def test_application_service_continuity_does_not_block_cutover_but_custody_does(self):
         with tempfile.TemporaryDirectory(prefix='novonet-development-') as directory:
             before = {'services': 'old application PID', 'custody': {'key': 'same'},

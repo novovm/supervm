@@ -1,0 +1,50 @@
+{
+  "members": [
+    {
+      "name": "B-before.json",
+      "bytes": 7452,
+      "sha256": "b931411e7acf0919992291eadd8ff1598d932a768acb1f5143cd9ad4d397e5be"
+    },
+    {
+      "name": "B-result.json",
+      "bytes": 691,
+      "sha256": "dc2fb2f47e21a3206a9d2a34d87f8f5c4eac8ab14b416b4dcaec4d94da071c47"
+    },
+    {
+      "name": "B-public.json",
+      "bytes": 13904,
+      "sha256": "d55b41af6f76e0864fe8f18873ce24c3b1c763e0c1caee3b59a75a8711d2e62b"
+    },
+    {
+      "name": "Update-B.py",
+      "bytes": 26807,
+      "sha256": "95027fcbfdfcbac81d38bb75e8106e2de38598ae05f227e8d21afa3e65c374dc"
+    },
+    {
+      "name": "read_b_public.py",
+      "bytes": 943,
+      "sha256": "63f0f09d79becf1a3f95944fae81997b8b6d1339f9a9f21738965878597acf71"
+    },
+    {
+      "name": "B-status/health-public.json",
+      "bytes": 489,
+      "sha256": "f861291cfaa554a4b91c6cf884c4db40bc1998a41c930784c058d19b3e16931f"
+    },
+    {
+      "name": "B-status/query-exit.json",
+      "bytes": 141,
+      "sha256": "27424701c5b24dafa59193e0e7438049174dd28e686c1950d9e8628208549d85"
+    },
+    {
+      "name": "B-status/status-original.json",
+      "bytes": 23353,
+      "sha256": "3360efa6d67459e2d7de5e029f80fc6c995ad565174ae30dccc224c914d77b9e"
+    },
+    {
+      "name": "B-status/status-original.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "archive_sha256": "1d9354339ea7ca8f03c148bceeeee35941cdf82aadfee5b7373bb73e96f8b343"
+}

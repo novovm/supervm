@@ -125,17 +125,18 @@ def identity(pid, expected):
     return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
 
 
-def validate_stopped_journal(records, progress_mtime_us):
+def validate_stopped_journal(records, progress_mtime_us, unit=None, root=None):
     # A collected transient unit reports MainPID=0 even without a clean exit.
     # Require its last complete manager start/stop pair and contemporaneous progress.
+    unit, root = unit or old_unit, root or old_release
     starts, stops = [], []
     for row in records:
-        if row.get('_PID') != '1' or row.get('_UID') != '0' or row.get('_COMM') != 'systemd' or row.get('UNIT') != old_unit:
+        if row.get('_PID') != '1' or row.get('_UID') != '0' or row.get('_COMM') != 'systemd' or row.get('UNIT') != unit:
             continue
         stamp = int(row['__REALTIME_TIMESTAMP'])
-        if row.get('MESSAGE', '').startswith(f'Started {old_unit} - {old_release}/bin/novovm-node.'):
+        if row.get('MESSAGE', '').startswith(f'Started {unit} - {root}/bin/novovm-node.'):
             starts.append((stamp, row.get('INVOCATION_ID')))
-        if row.get('MESSAGE') == f'{old_unit}: Deactivated successfully.':
+        if row.get('MESSAGE') == f'{unit}: Deactivated successfully.':
             stops.append((stamp, row.get('INVOCATION_ID')))
     require(bool(starts) and bool(stops), 'No exact manager start/clean-stop evidence')
     (start, start_id), (stop, stop_id) = max(starts), max(stops)
@@ -182,7 +183,7 @@ def stop_exact(unit, expected, expected_hash):
             'scope': 'interrupted original-database recovery; not certified graceful drain'}
 
 
-def launch(unit, root, config, logs):
+def launch(unit, root, config, logs, *, continuous=False):
     no_node_or_listener()
     settings = read(config)
     routing = read(settings['novonet_config_file'])
@@ -199,17 +200,64 @@ def launch(unit, root, config, logs):
         os.chown(p, uid, gid)
         p.chmod(0o600)
     manifest = root / 'aoem/manifest/aoem-manifest.json'
+    # A discovery bootstrap is an ongoing service, not a 24-hour acceptance job.
+    # This controls process lifetime only, never connection/protocol deadlines.
+    duration = '' if continuous else 'NOVOVM_NATIVE_EXECUTION_RUN_MS=86400000 '
     env = (f'AOEM_DLL_MANIFEST={manifest} NOVOVM_AOEM_MANIFEST={manifest} AOEM_DLL_MANIFEST_REQUIRED=1 '
            f'AOEM_SEMANTIC_GRAPH_V2_WORKERS=1 NOVOVM_NODE_MODE=native_execution_tick '
            f'NOVOVM_NATIVE_EXECUTION_CONFIG={config} NOVOVM_NATIVE_EXECUTION_START=existing '
-           f'NOVOVM_NATIVE_EXECUTION_RUN_MS=86400000 NOVOVM_PROFILE_NATIVE_DELIVERY=1 '
+           f'{duration}NOVOVM_PROFILE_NATIVE_DELIVERY=1 '
            f'NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH={logs / "progress.json"}')
     subprocess.run(['systemd-run', '--quiet', '--collect', '--unit=' + unit,
-                    '-p', 'Type=exec', '-p', 'User=novovm', '-p', 'Group=novovm', '-p', 'UMask=0077', '-p', 'RuntimeMaxSec=86520',
+                    '-p', 'Type=exec', '-p', 'User=novovm', '-p', 'Group=novovm', '-p', 'UMask=0077', '-p', 'RuntimeMaxSec=infinity' if continuous else 'RuntimeMaxSec=86520',
                     '-p', 'LoadCredentialEncrypted=owner-key:/etc/novovm/credentials/node-owner-key.cred',
                     '-p', 'Environment=' + env, '-p', 'StandardOutput=append:' + str(logs / 'node.stdout'),
                     '-p', 'StandardError=append:' + str(logs / 'node.stderr'), str(root / 'bin/novovm-node')], check=True)
     return mainpid(unit)
+
+
+def resume_current():
+    """Resume a cleanly expired installed candidate, without another upgrade."""
+    no_node_or_listener()
+    check_package(release)
+    config, network = read(work / 'run.json'), read(work / 'network.json')
+    require(config['profile'] == 'native_execution_tick' and config['key_storage'] == 'protected_v1', 'Wrong original entry')
+    require(config['database'] == str(state / 'chain-state') and config['rpc_addr'] is None, 'Wrong original database')
+    require(config['novonet_config_file'] == str(work / 'network.json'), 'Wrong network config')
+    require(config['udp_addr'] == '0.0.0.0:41050' and network['bind_address'] == '0.0.0.0:42050', 'Wrong listeners')
+    require(config['library'] == str(release / 'aoem/linux/core/bin/libaoem_ffi.so'), 'Wrong runtime')
+    keys = custody(config, network)
+    original_progress = work / 'logs/progress.json'
+    before = state_projection(read(original_progress))
+    raw = subprocess.check_output(['journalctl', '-u', new_unit, '-n', '30', '--no-pager', '-o', 'json'])
+    records = [json.loads(line) for line in raw.splitlines()]
+    stopped = validate_stopped_journal(records, original_progress.stat().st_mtime_ns // 1000, new_unit, release)
+    logs = work / 'logs-continuous-resume'
+    receipt = incoming / 'continuous-resume'
+    require(not logs.exists() and not receipt.exists(), 'Resume already attempted; inspect its original evidence')
+    make_directory(receipt, 0, 0o700)
+    make_directory(logs, uid, 0o700)
+    write(receipt / 'before.json', {'source': SOURCE, 'clean_stop': stopped, 'journal': records,
+          'projection': before, 'config_sha256': digest(work / 'run.json'), 'network_sha256': digest(work / 'network.json'),
+          'custody_hashes': keys, 'continuous_process': True})
+    unit = new_unit.replace('.service', '-continuous.service')
+    pid = launch(unit, release, work / 'run.json', logs, continuous=True)
+    identity(pid, release / 'bin/novovm-node')
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            progress = read(logs / 'progress.json')
+            require(state_projection(progress) == before, 'Resumed state differs')
+            require(custody(config, network) == keys, 'Custody changed')
+            listeners = subprocess.check_output(['ss', '-H', '-lunp', 'sport = :41050 or sport = :42050']).decode()
+            require(f'pid={pid},' in listeners and ':41050' in listeners and ':42050' in listeners, 'Original ports not ready')
+            write(receipt / 'result.json', {'source': SOURCE, 'unit': unit, 'pid': pid, 'start': 'existing',
+                  'projection': before, 'node_sha256': NODE_PIN, 'aoem_sha256': CORE_PIN,
+                  'custody_unchanged': True, 'listeners': listeners, 'continuous_process': True})
+            return
+        except (FileNotFoundError, json.JSONDecodeError):
+            time.sleep(0.2)
+    raise RuntimeError('No resumed progress within startup observation bound; preserve the unit and logs')
 
 
 def check_package(root):
@@ -398,7 +446,7 @@ def retry_failed_start():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['prepare', 'update', 'rollback', 'retry-failed-start'])
+    parser.add_argument('mode', choices=['prepare', 'update', 'rollback', 'retry-failed-start', 'resume-current'])
     parser.add_argument('--resume-stopped', action='store_true')
     args = parser.parse_args()
     require(os.getuid() == 0, 'Root required for this approved single-node updater')
@@ -408,7 +456,9 @@ def main():
     os.umask(0o077)
     for path in (incoming, state, old_release, old_work):
         no_redirect(path)
-    if args.mode == 'prepare':
+    if args.mode == 'resume-current':
+        resume_current()
+    elif args.mode == 'prepare':
         prepare(args.resume_stopped)
     elif args.mode == 'update':
         update(args.resume_stopped)
