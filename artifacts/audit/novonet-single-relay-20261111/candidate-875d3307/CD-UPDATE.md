@@ -7,6 +7,18 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 19:50 Beijing: D updated; A query pending
+
+`D_875_EXISTING_READY_FOR_A_QUERY`: D's original v2 updater exited0 on
+main c4d11f57, ordinary existing mode with no recovery switches. Actual old8fed
+PID19756 was healthy and running; the updater replaced it with875 PID36464,
+LocalService, original database/custody/progress unchanged. No initialization,
+key change, collector or test-object send. C was not operated on.
+See [D original public results](../../validator-d-875-existing-update-20261111/README.md)
+for byte-preserved result/after/old-exit/firewall, inspection and execution logs.
+A now verifies authenticated A->D Status/root. Do not repeat D update or arm
+collectors yet; local startup is not external-query or relay-delivery acceptance.
+
 ### CURRENT 2026-11-11 19:37 Beijing: C healthy; D updates now
 
 C's v2 recovery returned `C_875_EXISTING_READY_FOR_A_QUERY`, PID31296,

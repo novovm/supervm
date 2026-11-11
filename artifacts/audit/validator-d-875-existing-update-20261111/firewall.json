@@ -1,0 +1,8 @@
+{
+  "old_rule": "NOVOVM-8fed4b76-D-20261110",
+  "new_rule": "NOVOVM-875d3307-D-20261111",
+  "old_preserved": true,
+  "filters_copied_exactly": true,
+  "program": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-875d3307-windows-x86_64\\bin\\novovm-node.exe",
+  "profiles_unchanged": true
+}
