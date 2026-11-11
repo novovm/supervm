@@ -7,7 +7,40 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
-### CURRENT: C uses v2 RecoverCrashed once; no new program ZIP
+### CURRENT 2026-11-11 19:37 Beijing: C healthy; D updates now
+
+C's v2 recovery returned `C_875_EXISTING_READY_FOR_A_QUERY`, PID31296,
+LocalService, fixed875 node/AOEM, unchanged original database/custody/progress.
+A verified the original C archive and all11 member hashes, then queried C with
+the fixed875 native client: **45ms**, chain91129655606029, height0/current_height1,
+state root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`,
+not recovering or projection-failed. See `C-QUERY-D-RELEASE.md` and raw archive.
+
+**D is released for its already-approved875 existing update. C stays running.**
+Use the same local875 ZIP/package already received; no retransmission. Use v2
+tools below (19929 bytes and manifest hashes unchanged), HostId **D**, a fresh
+tool/evidence directory, and the original updater. No old initialization task.
+
+Before the single update, check D's actual current process/task/ports and old
+progress/exit. If the exact old8fed LocalService node is live and healthy, use
+the ordinary update with no recovery switch. If it has stopped, use only the
+original evidenced branch: Ready/exit0/no live owner/valid progress permits
+ResumeStopped; Ready/result267014 with the same guards permits RecoverInterrupted;
+matched task+Application1000 crash permits RecoverCrashed (c0000374 additionally
+requires the matching original exit.json). Unknown/conflicting evidence stops.
+Do not first restart old8fed and do not use C-specific RecoverMissingProgress.
+The updater independently rechecks all guards; this is not permission to bypass
+them. If it fails, retain the original error/result and stop without retry.
+
+Return `D_875_EXISTING_READY_FOR_A_QUERY` only with actual updater exit0 and public
+result/after projection, old-exit, firewall, any recovery preflight and stdout/
+stderr. A then checks D's authenticated Status. Do not start Watch-Relay yet:
+both C/D observers will be armed together only after D health verification.
+No new object has been sent and no single-relay test is yet signed off.
+
+### Historical C recovery instruction (completed; do not rerun on C)
+
+### C uses v2 RecoverCrashed once; no new program ZIP
 
 A verified C's mainc4bcc87d original archive and every member. C's old8fed
 PID7816 exited at05:40:51UTC, with matching task/event/exit code **c0000374**;
