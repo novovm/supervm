@@ -1,0 +1,72 @@
+{
+  "sha256": "4d78a2dc0481a1e1a1c3c029e379f9a53cd59f3f03b8d60882472e55e67a0837",
+  "bytes": 310817,
+  "archive": "original-receiver-results.zip",
+  "members": [
+    {
+      "sha256": "1291b741091dbb58ea7da8bfd2037804254b3c2cf6a4fcc345bd15cc11512f28",
+      "bytes": 177,
+      "name": "ready.json"
+    },
+    {
+      "sha256": "42889c0bb68f9c1ca369a1a9a3956ec40871b5e5898602cb6869cf6ccb328338",
+      "bytes": 184,
+      "name": "result.json"
+    },
+    {
+      "sha256": "852e9f2699ab464c8e38d095bcf91a7067a715e04968de05ba0e7dfdb2ee3c92",
+      "bytes": 772048,
+      "name": "receiver-00.json"
+    },
+    {
+      "sha256": "df868ec4962dfe1f0e7ec40c64f54ce6b2aa7e841ea35bd953f738931540a1ea",
+      "bytes": 772048,
+      "name": "receiver-01.json"
+    },
+    {
+      "sha256": "2a82886a893f8eeef7e6e8cf1121d75cda81fcd27560443d00ccade2eb592305",
+      "bytes": 772048,
+      "name": "receiver-02.json"
+    },
+    {
+      "sha256": "e7e2583715ac1772f67d89eb034a08031360f585dd8b3b5d86b4fa445ecf5184",
+      "bytes": 772048,
+      "name": "receiver-03.json"
+    },
+    {
+      "sha256": "bac598edee6d62aeddb5a47b06aba2bf29eea8b95937c2f7745a2a7207c07a7d",
+      "bytes": 772048,
+      "name": "receiver-04.json"
+    },
+    {
+      "sha256": "1148dda19a09d02b2efcf6468d8840b401d272da7eab96f9d2e6e5e82b08fd50",
+      "bytes": 772048,
+      "name": "receiver-05.json"
+    },
+    {
+      "sha256": "1ff38173bcec683b697ceebc0ea99b2a7f53edbe39ef411153f515704ffc01f3",
+      "bytes": 772048,
+      "name": "receiver-06.json"
+    },
+    {
+      "sha256": "3df2c57fae68110cd5304476c874021b7d1fde5c34785c7ca8625c3d576c16a4",
+      "bytes": 89,
+      "name": "collector-exit.json"
+    },
+    {
+      "sha256": "a7ce9a5d63df14d79653692be3515aa5c9da2b7496e4d8780c18f3b14093d422",
+      "bytes": 227,
+      "name": "collector.stdout"
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "name": "collector.stderr"
+    },
+    {
+      "sha256": "874ac9a9bd60a336a7154fda8dfb29814021b0407dc72062093a323c988ea921",
+      "bytes": 308,
+      "name": "armed-process.json"
+    }
+  ]
+}

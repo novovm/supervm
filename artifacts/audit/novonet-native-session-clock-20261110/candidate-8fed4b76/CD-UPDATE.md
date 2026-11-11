@@ -1,5 +1,15 @@
 # C/D: fixed 8fed session-clock existing update
 
+## D capture returned: original evidence ready for A matching
+
+The existing D collector exited 0 at 11:13:39 Beijing and saved seven snapshots.
+The specified Object ID and Session match; snapshots retain pending-time-boundary
+and integrity-verified events on native_udp. These are repeated observations of
+one object, not seven deliveries. [All original D capture files and hashes](../../validator-d-8fed-receiver-result-20261111/README.md).
+No error.json was produced; stderr is empty. No capture rerun, resend or node
+operation occurred. A now matches sender DONE against the preserved receiver
+and transport evidence; no business or consensus acceptance is claimed here.
+
 ## CURRENT 2026-11-11 11:13: object sent once, D returns existing capture
 
 A pulled D `0ce2733e` and sent one original-owner object while the collector
