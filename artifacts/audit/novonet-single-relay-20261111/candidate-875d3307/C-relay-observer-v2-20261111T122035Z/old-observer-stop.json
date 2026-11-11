@@ -1,0 +1,21 @@
+{
+  "host": "C",
+  "time_utc": "2026-11-11T12:20:34.1628435Z",
+  "expected_pid": 27480,
+  "expected_created_utc": "2026-11-11T12:00:16.3032832Z",
+  "prior_exit_present": true,
+  "prior_exit": {
+    "host": "C",
+    "helper_pid": 27480,
+    "finished_utc": "2026-11-11T12:05:19.4505223Z",
+    "exit_code": 1,
+    "node_mutated": false,
+    "object_sent": false
+  },
+  "process_present": false,
+  "deliberate_termination": false,
+  "node_stop_requested": false,
+  "old_evidence_preserved": true,
+  "process_exit_proven": true,
+  "already_exited": true
+}

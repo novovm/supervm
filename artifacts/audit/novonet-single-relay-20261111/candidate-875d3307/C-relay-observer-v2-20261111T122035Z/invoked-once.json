@@ -1,0 +1,12 @@
+{
+  "host": "C",
+  "started_utc": "2026-11-11T12:20:34.0516838Z",
+  "observer_version": 2,
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "watch_sha256": "16783de0e2b59b862db5609cb6ccf4960cd289bdd608e654c93ee3bb88865219",
+  "reader_sha256": "ccc8f9592a9fb12d68531dc2ace804efb544b9921e4f43c51147f2de57cbcd44",
+  "observer_invocations_requested": 1,
+  "node_mutation_requested": false,
+  "object_requested": false,
+  "D_touched": false
+}
