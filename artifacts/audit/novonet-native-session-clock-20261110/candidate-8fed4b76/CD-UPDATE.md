@@ -1,5 +1,43 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT 2026-11-11: C starts NEW 8fed via original RecoverCrashed entry
+
+A pulled receipt `243ffb25` and evaluated its actual fields with
+`Assert-CrashedOwnerEvidence` extracted from the pinned updater
+`1abe055135ac1469bac56b91d813844befc14173e8461edbf61e003e2f641a98`.
+It passed: original LocalService task Ready, C0000005 result, no restart/trigger,
+matching original 1ef process path/PID24376 and creation/crash timeline. The
+administrator collection found no process or 41052/42052 listener and no read
+errors. The original progress is valid, not the historical all-zero report.
+
+**Proceed with the NEW 8fed program now. No old-version repair, new package,
+new Full CI, clock adjustment or another permission request is needed.**
+This supersedes the read-only/pending instructions below. Recovery means opening
+the existing database with the new qualified program after the old process exited;
+it does not mean restoring an old database or making the old program work first.
+
+C Codex: use the already verified tools/package in administrator PowerShell 7:
+
+```powershell
+$tools='D:\WEB3_AI\SUPERVM\target\c-8fed-preflight-20261110\tools'
+$package='D:\WEB3_AI\SUPERVM\target\c-8fed-preflight-20261110\package\novonet-observation-8fed4b76-windows-x86_64'
+$evidence='D:\WEB3_AI\SUPERVM\target\c-8fed-crashed-existing-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
+& "$tools\Update-Windows.ps1" -HostId C -PackageRoot $package -EvidenceRoot $evidence -RecoverCrashed
+```
+
+The original updater rechecks actual lifecycle, fixed hashes, empty process/port
+ownership, protected custody and database before starting 8fed in existing mode.
+Do not combine ResumeStopped/RecoverMissingProgress/ResumePrepared; do not rerun
+the ordinary live-process entry or an initialize task. Existing updater tests
+already passed; A's new check used the real returned evidence, not another fixture.
+
+Return `C_8FED_EXISTING_READY_FOR_A_QUERY`, exit code and public result/after/
+old-exit/crash-recovery-preflight records if successful. If it fails, return the
+original error and actual process/rollback state without repeated retries. A then
+checks C with the fixed new client; D follows after that query. The original
+access-violation cause remains unresolved; successful new-version recovery must
+not be described as proof that it was fixed, or as object/asset acceptance.
+
 ## C old-owner collection returned (2026-11-11)
 
 C ran the `30a4684f` Inspector once, administrator PowerShell 7, exit 0.
@@ -11,7 +49,7 @@ The old progress is valid JSON; stdout was not valid JSON, stderr empty.
 No updater or recovery mode was invoked. A should review this original crash
 evidence before selecting the next existing recovery entry; D remains waiting.
 
-## CURRENT C action: one administrator read-only old-owner collection
+## Completed prior action: one administrator read-only old-owner collection
 
 A read and fast-forwarded C's failure receipt `f01f849f`. The fixed package and
 updater tests passed; no old process was stopped and no 8fed node was started.

@@ -1,5 +1,21 @@
 # Native first-handshake session clock — 2026-11-10
 
+## 2026-11-11 current action: start new 8fed on C with existing crash recovery
+
+C's returned administrator evidence (`243ffb25`) establishes original 1ef
+C0000005 exit at 2026-11-10 12:25:26 Beijing, before the attempted upgrade.
+Task result, exit.json and matching Application1000/PID24376 agree. There is no
+current process/listener, and the original progress is valid JSON. A applied
+these actual fields to the original pinned updater's crash guard; it passed.
+No C process/database was accessed by that A-side offline guard evaluation.
+
+C now invokes the existing updater with **RecoverCrashed**, installing and
+starting the **new 8fed** package with the original database. This is not an old
+program repair or database rollback. [Exact current command](candidate-8fed4b76/CD-UPDATE.md).
+No new package, Full or repeated permission is required. D waits for C startup
+and A's new-client authenticated query. The access-violation root cause remains
+unresolved, and C's new startup is not yet reported successful.
+
 ## Latest C result: preflight failed before any cutover
 
 C receipt `f01f849f` records updater tests passing, then

@@ -2114,6 +2114,17 @@ C按[CD-UPDATE最新首节](../artifacts/audit/novonet-native-session-clock-2026
 脚本已在A完成语法、仓库路径及只读命令边界检查，尚未在C执行；不冒称C退出已归因。
 取得实际记录后选已有停止/崩溃恢复入口，不猜测追加恢复开关，不重跑普通入口。
 
+### 37.5 2026-11-11 C旧进程退出已核实，直接启动新版
+
+已下拉`243ffb25`：旧1ef于11月10日12:25:26访问冲突退出，任务结果、exit及
+Application1000/PID24376一致；管理员采集无现存进程/监听、无读取错误，progress
+是有效JSON。A将实际字段送入固定原更新器Assert-CrashedOwnerEvidence，检查通过。
+无需修复或重跑旧版本；C现在直接使用**新8fed包、原更新器-RecoverCrashed、existing**。
+原包和工具不重传，已有测试/Full不重跑，不追加停服审批，不猜测清库或换钥。
+[CD-UPDATE最新首节](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
+给出可执行命令；C返回新节点结果后A查询，成功后D执行。旧访问冲突根因仍未定位，
+不能把新版恢复通过（尚待回传）写成该根因修复。这里的恢复是新版打开现有账本，不是恢复旧程序。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
