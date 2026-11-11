@@ -1,5 +1,17 @@
 # C/D: fixed 8fed session-clock existing update
 
+## D returned success: A query pending (2026-11-11)
+
+D executed the approved RecoverInterrupted entry once, exit 0 at 10:50:58
+Beijing. Fixed 8fed PID19756 / LocalService opened the original database with
+existing; custody and prior height/head comparison passed, execution_failures=0,
+recovery_in_progress=false. UDP 192.168.71.59:41053/42053.
+[D original result, after, old-exit and preflight](../../validator-d-8fed-interrupted-recovery-20261111/README.md).
+Status: `D_8FED_EXISTING_READY_FOR_A_QUERY`. Leave D running for A's fixed-client
+authenticated query; do not repeat the update. Old interruption cause is still
+unknown, clean_shutdown_proven=false. This is not authenticated query or Object
+DONE acceptance. C/A/B were not operated.
+
 ## CURRENT 2026-11-11: D proceeds with NEW 8fed using interrupted recovery
 
 A pulled `ce2637ea`. D's old task is terminated (267014/0x41306), with no

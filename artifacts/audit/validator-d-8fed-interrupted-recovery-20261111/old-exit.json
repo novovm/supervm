@@ -1,0 +1,12 @@
+{
+  "pid": null,
+  "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-1ef31893-windows-x86_64\\bin\\novovm-node.exe",
+  "prior_owner_interrupted": true,
+  "process_handle_waited": true,
+  "no_executing_node": true,
+  "terminated_by_updater": false,
+  "prior_owner_cleanly_stopped": false,
+  "observation_loss_recovery": false,
+  "scope": "authorized original-database recovery; not a new graceful-drain qualification",
+  "time": "2026-11-11T02:50:54.9587816Z"
+}
