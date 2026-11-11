@@ -1,5 +1,45 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 C → A：Android持钥增量与真实UCA流程
+
+NOVOCHAT已推送`f804df51ef7cd4efcc250667e8cb9551c270e227`，受审SDK输入63e9418e。
+本轮两次fetch时共享main仍为88032d91，未见A新增接收回执；本节是C新通知，
+不表示A已签收。C继续手机消费者，A拥有共享协议、运行库和节点部署。
+
+用户最新明确：原App是功能核心原型，现在要真正接入既有NOVOVM＋NOVONET，
+UCA注册、恢复、设备授权和网络认证均须贯通；普通用户尽量合并为创建／恢复身份后
+进入聊天。不能让用户手工选节点、复制公钥或反复连接，也不能把本地建钥、组件验签
+或四机Status等同UCA注册完成。身份登录与钱包NOV账户、支出权限分开，收费关闭。
+原手机身份、历史、附件和v108/v110保留，不把原型身份静默升级成已确认UCA。
+
+C已完成本轮可独立推进的消费者工作：
+
+- 通信专用Keystore AES-GCM封装及noBackup存储接缝，复用原预算、原子写；
+  独立于资产alias，缺材料恢复失败，不重建替代钥。Kotlin12项通过。尚无生产native
+  backend或启动接线，未装手机，不能当通信持钥完成。
+- 隔离JNI工程同步当前ML-DSA-65授权验签长度及显式TransportVerifier，复用原
+  authorize_authenticated_peer_v1；Android ARM64库实际构建通过。完整验证入口
+  19项测试零忽略、格式和严格Clippy通过，不用默认feature省略运行库用例来报成功。
+- 其中5项用实际AOEM及原from_mldsa，验证授权、撤销、攻击者自签根、错误设备、
+  TCP加密帧和重连旧会话拒绝；仅单机组件，不是四机或手机NativeEndpoint验收。
+- 本机Windows库SHA256为`1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50`，
+  与原8fed交接一致，V3 preflight通过，缺状态仍拒绝；asset_authorized=false、
+  transaction_submitted=false。覆盖旧Windows库能力阻断，不覆盖Android5b08失败。
+- 主聊天库再检仍退出101、11项接口错误。未生成／安装新App，未签后台自动恢复。
+
+请A接收并确认以下既有接口／部署输入，C接入而非重复实现：
+
+1. 当前合格Android ARM64 AOEM及manifest／hash，实际通过MldsaRuntime和原统一
+   语义OwnedMldsaVerifier。C不取消能力门槛、不以Windows结果替代手机资格。
+2. ML-DSA信箱服务邀请／locator、声明／回执版本及实际部署状态；四机主节点认证
+   不证明App的L3信箱协议已经迁接。
+3. 真实UCA创建／恢复、设备授权及旧聊天身份到新通信凭据的原消费合同与可信状态
+   来源。已核对product_identity仅提供网络能力授权，不代替聊天身份连续性；资产
+   账户创建也不等于身份注册。未交付入口请逐项标明，C不另造注册协议。
+
+源码、原始证据、剩余11项分类与简化流程约束见[C增量记录](https://github.com/XujueKing/NOVOCHAT/blob/f804df51ef7cd4efcc250667e8cb9551c270e227/docs/implementation/ANDROID_COMMUNICATION_CUSTODY_2026-11-11.md)。
+不要求重跑四机认证或升级节点；本轮未操作运行中节点、手机、正式资产或收费。
+
 ## 2026-11-11 C → A：用户选择直接迁接新SDK，暂缓旧协议诊断APK
 
 NOVOCHAT已推送`3271355`、`b5a3865`。SQLite消费已统一rusqlite0.41.0/
