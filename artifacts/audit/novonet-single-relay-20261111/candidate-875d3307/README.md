@@ -24,6 +24,22 @@ not service installation or four-machine evidence.
 
 ## Current boundary
 
+2026-11-11 final refresh: Full **42967820361 completed / success**, attempt1,
+head **f47c05ba04ca12134addde8f139d3f9fe811432c**, updated07:36:30UTC.
+Rust checks, native recovery, security, both actual runtime owners and
+**Full candidate result** all succeeded. The diff from875d3307 contains only
+documentation and audit/tool archives, not program sources or dependencies.
+No new Full was triggered. This final result supersedes the pending snapshot
+below; it does not rewrite the old failed run or certify a real relay delivery.
+
+C and D archive receipts are now independently present in this directory.
+The user approved direct updates followed by the single-relay real test.
+A's original existing updater has been requested through Windows elevation;
+do not infer completed cutover from the elevation request. C/D wait for A's
+actual health receipt, then use [CD-UPDATE.md](CD-UPDATE.md), C before D.
+
+### Historical dispatch snapshot (superseded by final result above)
+
 Full [42967820361](https://github.com/novovm/supervm/actions/runs/42967820361)
 was dispatched ONCE after both local package qualifications, at05:45:25UTC.
 Actual head `f47c05ba04ca12134addde8f139d3f9fe811432c`, attempt1; its difference

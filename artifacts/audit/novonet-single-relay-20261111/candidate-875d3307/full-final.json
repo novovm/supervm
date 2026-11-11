@@ -1,0 +1,20 @@
+{
+  "id": 42967820361,
+  "head_sha": "f47c05ba04ca12134addde8f139d3f9fe811432c",
+  "program_source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "run_attempt": 1,
+  "status": "completed",
+  "conclusion": "success",
+  "updated_at": "2026-11-11T07:36:30Z",
+  "observed_at": "2026-11-11T10:11:09+00:00",
+  "html_url": "https://github.com/novovm/supervm/actions/runs/42967820361",
+  "full_candidate_result": "success",
+  "rust_checks": "success",
+  "native_recovery": "success",
+  "rust_security": "success",
+  "windows_runtime_owners": "success",
+  "linux_runtime_owners": "success",
+  "new_run_triggered": false,
+  "program_difference": "Only docs and audit/tool archives between program source and Full head; no program source or dependency change",
+  "real_relay_delivery_accepted": false
+}
