@@ -1,5 +1,16 @@
 # C/D: fixed 8fed session-clock existing update
 
+## C old-owner collection returned (2026-11-11)
+
+C ran the `30a4684f` Inspector once, administrator PowerShell 7, exit 0.
+[Public result, exit code and script digest](../../validator-c-1ef-old-owner-20261111/README.md).
+Original 1ef task result and exit.json both record C0000005. Application event
+545473 matches the 1ef executable and PID 24376 at 2026-11-10T04:25:26.1118322Z.
+No active/exited node or UDP listener was found; collection errors were empty.
+The old progress is valid JSON; stdout was not valid JSON, stderr empty.
+No updater or recovery mode was invoked. A should review this original crash
+evidence before selecting the next existing recovery entry; D remains waiting.
+
 ## CURRENT C action: one administrator read-only old-owner collection
 
 A read and fast-forwarded C's failure receipt `f01f849f`. The fixed package and

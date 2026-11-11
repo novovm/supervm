@@ -1,0 +1,510 @@
+{
+  "host_id": "C",
+  "started_utc": "2026-11-11T02:17:53.1318604Z",
+  "scope": "read-only original 1ef lifecycle; no updater invoked",
+  "errors": [],
+  "task": {
+    "name": "NOVOVM-C-1ef31893-Existing-20261110",
+    "state": "Ready",
+    "sid": "S-1-5-19",
+    "last_task_result": 3221225477,
+    "last_task_result_hex": "C0000005",
+    "last_run_utc": "2026-11-10T02:49:13.0000000Z",
+    "restart_count": 0,
+    "trigger_count": 0,
+    "execution_time_limit": "P1DT3M"
+  },
+  "active_nodes": [],
+  "exited_nodes": [],
+  "listeners": [],
+  "artifacts": [
+    {
+      "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-1ef31893-20261110\\logs\\owner.json",
+      "bytes": 351,
+      "last_write_utc": "2026-11-10T02:49:14.4133153Z",
+      "sha256": "00AD74E8AE5C11B8E9191D971C689D3920B11188C06FB19E401AEB23301606A6",
+      "zero_bytes": 0,
+      "json_kind": "Object",
+      "status": "valid_json",
+      "shape": {
+        "type": "object",
+        "keys": [
+          "host_id",
+          "sid",
+          "start",
+          "config",
+          "database",
+          "initialize_executed",
+          "keys_generated",
+          "rollback"
+        ],
+        "children": {
+          "host_id": {
+            "type": "String"
+          },
+          "sid": {
+            "type": "String"
+          },
+          "start": {
+            "type": "String"
+          },
+          "config": {
+            "type": "String"
+          },
+          "database": {
+            "type": "String"
+          },
+          "initialize_executed": {
+            "type": "Boolean"
+          },
+          "keys_generated": {
+            "type": "Boolean"
+          },
+          "rollback": {
+            "type": "Boolean"
+          }
+        }
+      },
+      "facts": {
+        "start": "existing"
+      },
+      "nested_facts": {}
+    },
+    {
+      "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-1ef31893-20261110\\logs\\progress.json",
+      "bytes": 828312,
+      "last_write_utc": "2026-11-10T04:25:20.9176535Z",
+      "sha256": "7F777040EDC391346D6CE11E0FB20E903392FA3B24519EBC8CE12DBDC3EAFEBD",
+      "zero_bytes": 0,
+      "json_kind": "Object",
+      "status": "valid_json",
+      "shape": {
+        "type": "object",
+        "keys": [
+          "profile",
+          "experimental",
+          "core",
+          "transport",
+          "consensus",
+          "chain_id",
+          "head",
+          "current_height",
+          "round",
+          "scheduled_proposer",
+          "local_proposer",
+          "recovery_in_progress",
+          "pending",
+          "pending_bytes",
+          "rpc_indexed_height",
+          "projection_error",
+          "warm_projection_blocks",
+          "archive_projection_blocks",
+          "executed_batches",
+          "durable_decisions",
+          "execution_failures",
+          "execution_backend",
+          "execution_integer_rows_total",
+          "execution_integer_plans_total",
+          "execution_apfl_view_transactions_total",
+          "requested_bodies",
+          "served_bodies",
+          "native_pending_deliveries",
+          "native_rejected_messages",
+          "native_expired_sends",
+          "successor_overlap_active",
+          "business_proof_required",
+          "business_proof_verified",
+          "mempool_gossip",
+          "gossip_delivery",
+          "gossip_repair",
+          "gossip_verified_inputs",
+          "gossip_rejected_inputs",
+          "authentication_cache_hits",
+          "rpc_authentication",
+          "pending_survives_restart",
+          "receipt_query_scope",
+          "historical_receipt_queries",
+          "pending_retained_payload_bytes",
+          "pending_retained_authentication_bytes",
+          "pending_retained_total_bytes",
+          "pending_retained_apfl_owners",
+          "signature_work"
+        ],
+        "children": {
+          "profile": {
+            "type": "String"
+          },
+          "experimental": {
+            "type": "Boolean"
+          },
+          "core": {
+            "type": "String"
+          },
+          "transport": {
+            "type": "String"
+          },
+          "consensus": {
+            "type": "String"
+          },
+          "chain_id": {
+            "type": "Int64"
+          },
+          "head": {
+            "type": "null"
+          },
+          "current_height": {
+            "type": "Int64"
+          },
+          "round": {
+            "type": "Int64"
+          },
+          "scheduled_proposer": {
+            "type": "String"
+          },
+          "local_proposer": {
+            "type": "Boolean"
+          },
+          "recovery_in_progress": {
+            "type": "Boolean"
+          },
+          "pending": {
+            "type": "Int64"
+          },
+          "pending_bytes": {
+            "type": "Int64"
+          },
+          "rpc_indexed_height": {
+            "type": "Int64"
+          },
+          "projection_error": {
+            "type": "null"
+          },
+          "warm_projection_blocks": {
+            "type": "Int64"
+          },
+          "archive_projection_blocks": {
+            "type": "Int64"
+          },
+          "executed_batches": {
+            "type": "Int64"
+          },
+          "durable_decisions": {
+            "type": "Int64"
+          },
+          "execution_failures": {
+            "type": "Int64"
+          },
+          "execution_backend": {
+            "type": "String"
+          },
+          "execution_integer_rows_total": {
+            "type": "Int64"
+          },
+          "execution_integer_plans_total": {
+            "type": "Int64"
+          },
+          "execution_apfl_view_transactions_total": {
+            "type": "Int64"
+          },
+          "requested_bodies": {
+            "type": "Int64"
+          },
+          "served_bodies": {
+            "type": "Int64"
+          },
+          "native_pending_deliveries": {
+            "type": "Int64"
+          },
+          "native_rejected_messages": {
+            "type": "Int64"
+          },
+          "native_expired_sends": {
+            "type": "Int64"
+          },
+          "successor_overlap_active": {
+            "type": "Boolean"
+          },
+          "business_proof_required": {
+            "type": "Boolean"
+          },
+          "business_proof_verified": {
+            "type": "Boolean"
+          },
+          "mempool_gossip": {
+            "type": "Boolean"
+          },
+          "gossip_delivery": {
+            "type": "String"
+          },
+          "gossip_repair": {
+            "type": "object",
+            "keys": [
+              "omitted_recipient_inputs",
+              "repair_batches_reserved",
+              "repair_inputs_reserved",
+              "scope"
+            ],
+            "children": {
+              "omitted_recipient_inputs": {
+                "type": "Int64"
+              },
+              "repair_batches_reserved": {
+                "type": "Int64"
+              },
+              "repair_inputs_reserved": {
+                "type": "Int64"
+              },
+              "scope": {
+                "type": "String"
+              }
+            }
+          },
+          "gossip_verified_inputs": {
+            "type": "Int64"
+          },
+          "gossip_rejected_inputs": {
+            "type": "Int64"
+          },
+          "authentication_cache_hits": {
+            "type": "Int64"
+          },
+          "rpc_authentication": {
+            "type": "object",
+            "keys": [
+              "owner",
+              "http_waiting",
+              "signature_batch_pending",
+              "uca_authority_pending",
+              "signature_completed_waiting_for_authority",
+              "next_signature_submitted_while_capture",
+              "signature_completed_while_capture",
+              "max_retained_stage_slots",
+              "submitted_batches",
+              "completed_batches",
+              "checked_rows",
+              "rejected_rows",
+              "cancelled_http",
+              "control_polls_while_checking",
+              "backpressured_polls",
+              "checked_source_returns",
+              "checked_source_resumes",
+              "uca_state_capture",
+              "scope"
+            ],
+            "children": {
+              "owner": {
+                "type": "String"
+              },
+              "http_waiting": {
+                "type": "Int64"
+              },
+              "signature_batch_pending": {
+                "type": "Boolean"
+              },
+              "uca_authority_pending": {
+                "type": "Boolean"
+              },
+              "signature_completed_waiting_for_authority": {
+                "type": "Boolean"
+              },
+              "next_signature_submitted_while_capture": {
+                "type": "Int64"
+              },
+              "signature_completed_while_capture": {
+                "type": "Int64"
+              },
+              "max_retained_stage_slots": {
+                "type": "Int64"
+              },
+              "submitted_batches": {
+                "type": "Int64"
+              },
+              "completed_batches": {
+                "type": "Int64"
+              },
+              "checked_rows": {
+                "type": "Int64"
+              },
+              "rejected_rows": {
+                "type": "Int64"
+              },
+              "cancelled_http": {
+                "type": "Int64"
+              },
+              "control_polls_while_checking": {
+                "type": "Int64"
+              },
+              "backpressured_polls": {
+                "type": "Int64"
+              },
+              "checked_source_returns": {
+                "type": "Int64"
+              },
+              "checked_source_resumes": {
+                "type": "Int64"
+              },
+              "uca_state_capture": {
+                "type": "object",
+                "keys": [
+                  "batches",
+                  "declared_keys",
+                  "unique_keys",
+                  "io_requests",
+                  "seed_nodes",
+                  "poll_turns",
+                  "local_steps",
+                  "io_nodes",
+                  "parent_restarts",
+                  "elapsed_us",
+                  "max_elapsed_us",
+                  "timing_enabled",
+                  "scope"
+                ]
+              },
+              "scope": {
+                "type": "String"
+              }
+            }
+          },
+          "pending_survives_restart": {
+            "type": "Boolean"
+          },
+          "receipt_query_scope": {
+            "type": "String"
+          },
+          "historical_receipt_queries": {
+            "type": "Int64"
+          },
+          "pending_retained_payload_bytes": {
+            "type": "Int64"
+          },
+          "pending_retained_authentication_bytes": {
+            "type": "Int64"
+          },
+          "pending_retained_total_bytes": {
+            "type": "Int64"
+          },
+          "pending_retained_apfl_owners": {
+            "type": "Int64"
+          },
+          "signature_work": {
+            "type": "object",
+            "keys": [
+              "strict_verified_rows",
+              "reused_rows",
+              "uca_batch_calls",
+              "asset_prepared_at_startup",
+              "asset_startup_us",
+              "scope"
+            ],
+            "children": {
+              "strict_verified_rows": {
+                "type": "Int64"
+              },
+              "reused_rows": {
+                "type": "Int64"
+              },
+              "uca_batch_calls": {
+                "type": "Int64"
+              },
+              "asset_prepared_at_startup": {
+                "type": "Boolean"
+              },
+              "asset_startup_us": {
+                "type": "Int64"
+              },
+              "scope": {
+                "type": "String"
+              }
+            }
+          }
+        }
+      },
+      "facts": {
+        "entry": "original_native_execution_tick",
+        "profile": "native_execution_tick",
+        "chain_id": 91129655606029,
+        "current_height": 1,
+        "head": null,
+        "execution_failures": 0,
+        "ticks": 7770937,
+        "recovery_in_progress": false
+      },
+      "nested_facts": {
+        "gossip_repair": {},
+        "rpc_authentication": {},
+        "signature_work": {}
+      }
+    },
+    {
+      "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-1ef31893-20261110\\logs\\exit.json",
+      "bytes": 99,
+      "last_write_utc": "2026-11-10T04:25:30.8167837Z",
+      "sha256": "4B64AB528BEE1583CFC73C5D5272C6C3C862847C87935E6D0D8E57EB190F0C9F",
+      "zero_bytes": 0,
+      "json_kind": "Object",
+      "status": "valid_json",
+      "shape": {
+        "type": "object",
+        "keys": [
+          "exit_code",
+          "start",
+          "time"
+        ],
+        "children": {
+          "exit_code": {
+            "type": "Int64"
+          },
+          "start": {
+            "type": "String"
+          },
+          "time": {
+            "type": "DateTime"
+          }
+        }
+      },
+      "facts": {
+        "exit_code": -1073741819,
+        "start": "existing",
+        "time": "2026-11-10T04:25:30.8015822Z"
+      },
+      "nested_facts": {}
+    },
+    {
+      "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-1ef31893-20261110\\logs\\node.stdout",
+      "bytes": 133,
+      "last_write_utc": "2026-11-10T04:25:30.7571924Z",
+      "sha256": "0982FF53DC0718D8ACC2BED1D808A99D641EB46131AF75F919279FEFD29D29FF",
+      "zero_bytes": 0,
+      "status": "invalid_json_or_encoding",
+      "error_type": "MethodInvocationException"
+    }
+  ],
+  "stderr": {
+    "path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-1ef31893-20261110\\logs\\node.stderr",
+    "bytes": 0,
+    "last_write_utc": "2026-11-10T02:49:14.4223266Z",
+    "content_exported": false,
+    "sha256": "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+    "known_markers": []
+  },
+  "event_query_errors": [],
+  "crash_events": [
+    {
+      "record_id": 545473,
+      "utc": "2026-11-10T04:25:26.1118322Z",
+      "application": "novovm-node.exe",
+      "application_path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-1ef31893-windows-x86_64\\bin\\novovm-node.exe",
+      "exception_code": "c0000005",
+      "process_id_raw": "0x5f38",
+      "process_created_raw": "0x1dd70be126d0da2",
+      "module": "novovm-node.exe",
+      "module_path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-1ef31893-windows-x86_64\\bin\\novovm-node.exe",
+      "report_id": "2d1b4b88-a3f0-4799-842f-175d9acb20cd"
+    }
+  ],
+  "node_started": false,
+  "database_opened": false,
+  "keys_read": false,
+  "completed_utc": "2026-11-11T02:17:55.8597334Z"
+}
