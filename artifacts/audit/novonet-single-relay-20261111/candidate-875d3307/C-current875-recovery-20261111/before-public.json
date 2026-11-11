@@ -1,0 +1,15 @@
+{
+  "host": "C",
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "task": "NOVOVM-C-875d3307-Existing-20261111",
+  "node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "original_logs": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-875d3307-20261111\\logs",
+  "preserved_logs": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-875d3307-20261111\\logs-crash-875-8e264dcea90d488bbb500e151b2a5a60",
+  "config_sha256": "CA13588A1A020D4D4AB30A6630FE1AC6077C725F3793B3D2DEF7F6FAFA42C404",
+  "network_sha256": "6812FC7765AD2629043581DD2E70E922D18191314A0C6473B86026719A56E8AB",
+  "current_height": 1,
+  "head": null,
+  "start": "existing"
+}

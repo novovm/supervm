@@ -7,6 +7,99 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT A 2026-11-11 23:14 Beijing: C recovery authenticated; relay pending D refresh
+
+A read C84024d10 recovery and crash receipt. The19 public raw result/observer
+members match their hashes; README/.gitattributes checkout bytes differ from C's
+listed hashes and are not represented as byte-preserved raw evidence. C875
+PID3228 / LocalService opened the original database, same custody/config and
+node/AOEM hashes. Application1000 record546255 identifies priorPID31296 access
+violation c0000005 in novovm-node.exe offset0x65f59d; root cause remains unknown.
+
+A's fixed875 SDK authenticated query at15:14:08.3964666Z succeeded35ms, original
+state root f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333,
+height0/current_height1, no recovery/projection failure. Raw outputs are archived
+as C-current875-recovered-query-original.zip, SHA256
+2387e5cb5b0281d981916f4705ba3b813813045664e34a64820d64437530f140.
+This was health, not a direct object retest or relay acceptance. C observer21548
+is armed from23:11:27; actual published liveness23:12:42. D13168's22:52 window
+nominally ends23:22:30, but its last published sample22:53 is stale. D has been
+asked only to refresh that observer's actual liveness/terminal state, not restart
+it. A prepared the one-shot sender without starting another preliminary countdown.
+No new object has yet been sent.
+
+### C RECEIPT 2026-11-11 23:12 Beijing: recovery exit0; fresh observer ARMED
+
+C executed 9a0aec5e recovery helper once: actual exit0; current875 PID3228,
+LocalService, original database existing, config/custody unchanged, both UDP
+41052/42052 restored. One original v2 observer PID21548 started after recovery;
+real READY at23:11:27, maximum window until23:41:27 Beijing. See
+[C recovery and actual READY/liveness](C-current875-recovery-20261111/README.md).
+At handoff no observer result/error/exit exists. Recovery does not fix or explain
+the c0000005 crash; original logs/event/task evidence remain local. A must query
+recovered C and check both C/D current liveness before sending the one object.
+No C object send, D operation, initialize or configuration change occurred.
+
+### CURRENT 2026-11-11 23:08 Beijing: authorized C875 crash evidence + same-owner recovery
+
+User explicitly authorized completing C crash evidence and recovering current875
+with existing, then A->C->D once. This supersedes the prior observation-only hold.
+No new program ZIP, old8fed launch, database initialization or Full run is needed.
+
+C Codex: sync this main handoff. In administrator PowerShell7, run ONCE from
+the repository (replace only the local repository prefix and fresh EvidenceRoot):
+
+```powershell
+& .\scripts\windows\Resume-Novonet875C.ps1 -EvidenceRoot 'D:\WEB3_AI\SUPERVM\target\c-875-current-recovery-20261111'
+```
+
+Use a fresh directory if that name already exists; do not overwrite it. The helper
+pins the installed v2 ExistingOwner, package, task action and LocalService owner;
+reads the matching Application1000 event, task result and exit; requires the
+reported875 PID31296 / c0000005 run; checks no executing database/port owner using
+the original kernel process barrier. It retains the crash logs in a uniquely
+named sibling under the exact875 work directory, recreates the empty original
+logs directory with the same ACL, and starts the SAME original existing task once.
+It does not alter task/config/key/database/cache/firewall or program. A mismatch
+stops before restart. A failed restart is NOT retried or rolled back automatically.
+
+Return actual exit code, crash-public.json, before-public.json, result-public.json
+or error-public.json and helper hashes. Keep crash-event-local.xml, task XML and
+all original logs locally; no database, credentials or dump uploads. If available,
+retain existing WER/dump paths locally for root-cause follow-up, without exporting
+their contents. Recovery success is NOT a claim to have fixed the access violation.
+
+On C_875_RECOVERED_READY_FOR_A_QUERY, immediately start ONE original v2 Watch-Relay
+in a hidden independent administrator PowerShell7 with a new EvidenceRoot, after
+confirming prior C observerPID1700 is exited. Return real READY/current liveness
+and launch identity immediately, not at window completion. Use the unchanged875
+parameters below. Publish recovery and observer receipts under a fresh
+`C-current875-recovery-20261111` directory here. Do not send an object from C.
+
+D: keep the current22:52 observer; refresh its actual liveness and terminal-file
+presence only. Do not restart the node or observer. If it expires, return that
+fact and evidence; no blind repeated window. A will query recovered C, check both
+actual observers, and start its sender only when they are ready (no preliminary
+A30-minute countdown). Never dispatch with stale READY or a stopped C node.
+
+Local helper checks:22 passed (task/action/authority/exit counterexamples, same
+directory log preservation + ACL and single restart/no forbidden mutation).
+These are helper checks, not C recovery, crash resolution or relay acceptance.
+
+### CURRENT C 2026-11-11 22:57 Beijing: NOT READY; confirm operability before observation
+
+User updated coordination: first confirm C can operate immediately, then open
+the observer window; A sends only after receiving fresh actual READY/liveness.
+C's one new observer attempt exited1 before READY (`Original LocalService owner
+not confirmed`). Elevated read-only inspection found no node process or UDP
+41052/42052 listener; original875 task/exit agree on 0xC0000005 termination.
+No automatic recovery or observer retry occurred. This is **C_NOT_READY**, not
+permission for A to send. A's old21:48 sender deadline is already past; do not
+reuse old C readiness or infer current A availability. See
+[C original failure and readiness evidence](C-relay-after-B-20261111/README.md).
+Node recovery needs separate coordination; this round does not restart/update
+nodes, change configuration, send objects, or operate D.
+
 ### CURRENT 2026-11-11 21:18 Beijing: A discovery recovered; new relay window now
 
 A readback confirms verified locators0->3 and actual A->B Carrier/direct

@@ -1,0 +1,34 @@
+{
+  "status": "C_875_RECOVERED_READY_FOR_A_QUERY",
+  "utc": "2026-11-11T15:11:26.7268882Z",
+  "host": "C",
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "pid": 3228,
+  "sid": "S-1-5-19",
+  "node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "start": "existing",
+  "current_height": 1,
+  "head": null,
+  "execution_failures": 0,
+  "ports": [
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 42052,
+      "OwningProcess": 3228
+    },
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 41052,
+      "OwningProcess": 3228
+    }
+  ],
+  "custody_unchanged": true,
+  "configuration_unchanged": true,
+  "preserved_logs": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-875d3307-20261111\\logs-crash-875-8e264dcea90d488bbb500e151b2a5a60",
+  "initialize_executed": false,
+  "new_object_sent": false,
+  "crash_root_cause_resolved": false,
+  "external_authenticated_query_required": true
+}
