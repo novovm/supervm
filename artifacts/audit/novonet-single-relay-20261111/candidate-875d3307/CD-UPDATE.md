@@ -7,6 +7,47 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 19:53 Beijing: D authenticated health passed; arm C/D observers now
+
+A verified all11 D original evidence files from mainb6958aea. New875 PID36464,
+LocalService, actual node/AOEM hashes match; original database/custody/progress
+unchanged. Fixed875 client A→D authenticated Status passed **44ms** at
+11:53:19.6599495UTC, original chain/state root and height0/current_height1;
+no recovery or projection failure. C already passed45ms. See D-QUERY-RELAY-ARM.md.
+
+**Do not run any more update/recovery commands on A/C/D.** C and D now each start
+one original `../Watch-Relay.ps1` observer in administrator PowerShell7, using
+the actual installed875 owner. No network probes, node restart or clock changes.
+Use distinct fresh local EvidenceRoot directories and the command in the
+"Arm only after A confirms both updated nodes healthy" section below.
+Parameters: HostId C or D; Source875d3307a1fc2ca34b45464ac3bf51a03619adc2;
+NodeSha2569174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7;
+WorkName novonet-observation-875d3307-20261111.
+
+Launch as an independent **hidden** helper, not a tool invocation killed on
+timeout; record its actual PID and capture stdout/stderr and exit code. Return
+the generated ready.json immediately after it exists, while leaving the helper
+running. It waits at most1800 seconds and saves at most64 snapshots. Preserve
+ready.json raw bytes (ZIP or -text Git attributes), include its SHA256, source,
+host and actual helper/node PID. Push each real READY promptly; do not wait until
+the30-minute observer exits to report that it is armed.
+
+Required statuses: `C_RELAY_OBSERVER_ARMED` and `D_RELAY_OBSERVER_ARMED`.
+If readiness fails, publish the actual error/exit instead; do not hand-write READY
+or repeatedly launch collectors. Once A has both current READYs, A alone uses
+its original owner's one diagnostic arm/send route **A→C→D**. No object is sent
+by C/D and no previous direct delivery is repeated.
+
+After the send, publish existing result/error, relay-*.json snapshots, collector
+exit/stdout/stderr without rerunning or clearing history. Acceptance requires
+matching route_digest/circuit at all3 hosts, C's actual authenticated upstream
+and downstream plus completed writes in both directions, matching A/D native
+session and unique Object ID/nonce, D integrity/time acceptance and original
+DONE feedback. Original HopStream/Iroh carrier relay is not native_udp direct;
+transport ACK, object custody DONE and business execution remain distinct.
+
+Earlier CURRENT sections below are historical; updates are complete.
+
 ### CURRENT 2026-11-11 19:50 Beijing: D updated; A query pending
 
 `D_875_EXISTING_READY_FOR_A_QUERY`: D's original v2 updater exited0 on
