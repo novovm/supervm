@@ -7,6 +7,67 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C preflight failed: inspect once, then use only an evidenced original recovery mode
+
+A reviewed main277625b1 and independently verified the SHA256 of C's original
+archive and every member. The exact error was `Original process identity not
+confirmed`; `old_node_stopped=false`, `existing_start_attempted=false`.
+875 has **not** been started on C. The error combines active-process count,
+path and LocalService identity checks; the receipt does not identify which failed.
+Do not label this a new-program crash, database fault or permission change.
+
+C should now collect one complete current-owner observation in administrator
+PowerShell7, without first restarting the old program:
+
+1. Use the already hash-verified `NovonetExistingProcess.ps1` from the original
+   tool bundle and call `Get-NovonetNodeExecutionState`. Record active and
+   kernel-signaled exited processes, PID/parent/creation time, executable path,
+   actual executable SHA256 and GetOwnerSid result. Do not export command lines.
+2. Read task `NOVOVM-C-8fed4b76-Existing-20261110`: state, principal/SID,
+   LastRunTime/LastTaskResult, restart count, triggers and execution-time limit.
+   Check for other C NOVOVM task owners, not just a process with the same name.
+3. Record actual owners of UDP41052/42052. Read old work
+   `C:\ProgramData\NOVOVM\selfrun\91129655606029\C\novonet-observation-8fed4b76-20261110\logs`:
+   exit.json if present; progress existence/size/hash/time and only public
+   entry/chain_id/current_height/head/execution_failures/recovery_in_progress.
+   Preserve existing stdout/stderr locally; return relevant bounded failure lines,
+   not full configurations, secrets or database contents.
+4. If a crash is indicated, collect the matching Application1000 event fields
+   used by the original updater: AppPath, ExceptionCode, ProcessId,
+   ProcessCreationTime, event UTC/record ID and report ID. An old unrelated crash
+   or a task code alone is not proof of the current process cause.
+
+After recording that evidence, C may complete **one** update through the original
+unchanged tool if exactly one existing recovery branch is conclusively applicable:
+
+- No executing node, no target-port owner, original task Ready/LocalService,
+  restart_count0/trigger_count0, valid original progress/timeline, task result0:
+  original `-ResumeStopped` branch. Task result0 alone does not certify node drain.
+- The same stopped-owner conditions but task result267014 (0x41306), valid
+  original progress: original `-RecoverInterrupted` branch. Record interruption
+  cause unknown, not clean shutdown. Do not first start the old8fed program.
+- Task result3221225477 with a matching original8fed c0000005 crash event and
+  all original crash/timeline guards satisfied: original `-RecoverCrashed` branch.
+
+Invoke `Update-Windows.ps1 -HostId C -PackageRoot <existing verified875 package>
+-EvidenceRoot <fresh directory>` plus that **single evidenced switch**. The
+original updater must independently enforce every precondition; no bypass or
+relaxation. Use the already copied internal-disk ZIP/extraction, not removable E.
+Keep the previous failed evidence unchanged. Do not rerun Run-C-875-Once.ps1;
+it correctly rejects its consumed evidence directory. Capture this invocation
+and its actual output/exit/public result under a fresh local wrapper/directory.
+
+If any process ownership is unknown, multiple live nodes exist, task/exit evidence
+conflicts, progress is missing/corrupt, or no branch qualifies, return the complete
+observation and stop. Do not guess switches, delete LOCK, initialize, regenerate
+keys or repeatedly retry. Do not use C's old1ef-specific RecoverMissingProgress.
+If a healthy live old8fed is actually present, return the exact mismatch and
+observation first rather than blindly repeating the same failed default branch.
+
+On success return `C_875_EXISTING_READY_FOR_A_QUERY` and the original public
+update evidence below. A performs authenticated Status, then releases D.
+Do not start the relay collector yet. D remains unchanged.
+
 **A_875_EXISTING_AND_AUTHENTICATED_STATUS_PASS is recorded in [A-UPDATE.md](A-UPDATE.md)
 at 2026-11-11T10:26:01UTC. C is released to execute this update now.**
 C updates first and returns its original result. A checks authenticated
