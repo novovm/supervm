@@ -1,0 +1,17 @@
+{
+  "source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+  "d_receipt_commit": "61e08288",
+  "d_pid": 19756,
+  "d_update_completed": true,
+  "query_elapsed_ms": 34,
+  "query_sha256": "319b3632a4b81620c497a4cef048445f444f5949df8c356686f371eb7608556c",
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "object_sent": false,
+  "object_done": false,
+  "a_status_query_exit": 1,
+  "a_status_error": "native query deadline; no fresh node observation",
+  "a_runtime_cause": "unknown",
+  "a_local_inspection": "non-elevated access denied; UAC launch cancelled",
+  "d_action": "keep new node running; do not repeat update or start receiver yet",
+  "new_full_triggered": false
+}

@@ -1,5 +1,18 @@
 # Native first-handshake session clock — 2026-11-10
 
+## 2026-11-11: D new owner and external authenticated query passed
+
+D receipt `61e08288` verified; new 8fed LocalService PID19756 opened the original
+database and retains custody/state. A's fixed SDK queried D successfully in 34ms,
+same original state root and healthy height0/current_height1. Original query and
+current action are in [CD-UPDATE](candidate-8fed4b76/CD-UPDATE.md).
+
+Object delivery is not yet executed. A's current tool account lacks access to its
+protected node task/logs; a new A Status query timed out and the read-only UAC
+inspection was cancelled. A runtime cause is unknown, not assigned to D or ATC.
+Complete A's local inspection before arming D's bounded receiver observer and
+issuing one original-owner object. No update rerun, Full, reset or object send.
+
 ## 2026-11-11: D terminated-owner recovery entry released
 
 Pulled D receipt `ce2637ea`: package/tests passed, but old 1ef task result is

@@ -2148,6 +2148,18 @@ owner，不盲抄C崩溃标志；回传后A认证查询，再做实际对象。�
 不重新传150MB包、不另触发Full。D按[CD-UPDATE首节](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
 直接执行新版恢复并回传，A再认证查询。C/A/B本步骤不动；D尚未启动成功，不称DONE。
 
+### 37.8 2026-11-11 D新版与认证查询通过，待A本机恢复可观察性
+
+已下拉D `61e08288`并逐文件核对摘要；8fed PID19756/LocalService existing、
+AOEM及原用途材料一致。A固定SDK对D认证Status成功34ms，原root一致、height0/
+current_height1且无恢复或投影错误。D更新收口，不重复执行。
+本轮未发送对象：当前A工具账户无权读取受保护任务/logs，对A的新Status查询超时，
+只读UAC检查被取消。不能由权限不足直接宣布A节点崩溃，原因未知。
+先完成A提权只读检查，再按实际状态恢复现版owner；之后D开启已准备的30分钟有界
+只读收件观察，A只发一个原owner对象并匹配双端记录。D/C暂不操作、不重传包、不发Full。
+原查询及[当前动作](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
+已保存；Status不等于A节点发送、Object DONE或业务Receipt。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

@@ -1,5 +1,32 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT 2026-11-11: D update and A-to-D query complete; A send blocked locally
+
+A pulled D `61e08288`, verified every returned evidence digest, fixed node/AOEM,
+LocalService PID19756 and existing recovery. Fixed new SDK authenticated D in
+**34ms**, original root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`,
+height0/current_height1, no recovery/projection failure. See
+`A-D-authenticated-after-20261111.json` and `D-QUERY-A-SEND-BLOCKER.json`.
+**D must not repeat its update. C also needs no operation.**
+
+No diagnostic object has been sent in this step. A's current desktop tool account
+cannot read the protected original task/progress, and its one new Status query to
+A timed out. The attempted read-only UAC inspection was cancelled. These facts do
+not establish A's exit cause or even a successful privileged process inspection.
+Do not call the D query a message from the A node: it used the approved SDK client.
+
+Next: complete A's read-only elevated task/process/progress inspection, then restore
+its current 8fed owner with existing only if actually needed. Before sending, D
+will run `Watch-D-Receiver.ps1 -EvidenceRoot <new-local-directory>` in administrator
+PowerShell 7. **Do not arm it yet while A is blocked.** It observes the original
+8fed progress only, waits at most 30 minutes using a monotonic stopwatch, records
+at most 64 public snapshots and exits shortly after a new A receive/reject event.
+It creates no socket and changes no node/time/configuration. Readiness is not
+acceptance; A will match actual Object ID, Session ID, nonce, path, transport
+observations and integrity result against sender DONE. Collector syntax was
+checked locally; actual D execution and dual-end object acceptance remain pending.
+This section supersedes all earlier update/run instructions below. No new Full.
+
 ## D returned success: A query pending (2026-11-11)
 
 D executed the approved RecoverInterrupted entry once, exit 0 at 10:50:58
