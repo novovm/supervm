@@ -24,6 +24,13 @@ not service installation or four-machine evidence.
 
 ## Current boundary
 
+Full [42967820361](https://github.com/novovm/supervm/actions/runs/42967820361)
+was dispatched ONCE after both local package qualifications, at05:45:25UTC.
+Actual head `f47c05ba04ca12134addde8f139d3f9fe811432c`, attempt1; its difference
+from875d3307 is reviewed documentation/evidence only. At05:45:54UTC it was
+in_progress, with no conclusion. [Recorded run identity](full-run.json).
+Read this existing run's final state; do not request another Full or cancel old runs.
+
 The fixed candidate Full still needs an actual successful result. Neither the
 old failed Full42961080141 nor lightweight sync qualifies this candidate.
 No A/B/C/D process was changed and no new real object was sent during this work.

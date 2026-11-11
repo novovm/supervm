@@ -1,0 +1,21 @@
+{
+  "program_source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "run_id": 42967820361,
+  "run_url": "https://github.com/novovm/supervm/actions/runs/42967820361",
+  "head_sha": "f47c05ba04ca12134addde8f139d3f9fe811432c",
+  "event": "workflow_dispatch",
+  "profile": "full",
+  "run_attempt": 1,
+  "created_at": "2026-11-11T05:45:25Z",
+  "observed_at": "2026-11-11T05:45:54Z",
+  "observed_status": "in_progress",
+  "observed_conclusion": null,
+  "source_equivalence_checked": true,
+  "intervening_changes": "reviewed docs and artifacts/audit Markdown, JSON, ZIP only; no program source or dependency change",
+  "local_package_gates_completed_before_dispatch": true,
+  "rerun_requested": false,
+  "previous_runs_cancelled": false,
+  "deployment_performed": false,
+  "real_relay_accepted": false,
+  "next_action": "Read this existing run's current final result; do not dispatch another Full. Require successful necessary gates before the existing A/C/D update plan."
+}
