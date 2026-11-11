@@ -1,0 +1,8 @@
+{
+  "status": "D_RECEIVER_ARMED",
+  "utc": "2026-11-11T03:10:37.4649862Z",
+  "pid": 19756,
+  "maximum_wait_seconds": 1800,
+  "source": "8fed4b76",
+  "read_only": true
+}

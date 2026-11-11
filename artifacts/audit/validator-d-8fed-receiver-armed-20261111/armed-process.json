@@ -1,0 +1,10 @@
+{
+  "supervisor_pid": 32616,
+  "script_sha256": "6a24cb41394fd5d67859e9abdd8ffff2931c035712880f6c4f63841444400be9",
+  "exit_code": null,
+  "handoff": "b1732b89",
+  "collector_running": true,
+  "observed_utc": "2026-11-11T03:10:38.8500468Z",
+  "collector_pid": 21680,
+  "status": "D_RECEIVER_ARMED"
+}
