@@ -7,6 +7,18 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C RECEIPT 2026-11-11 23:12 Beijing: recovery exit0; fresh observer ARMED
+
+C executed 9a0aec5e recovery helper once: actual exit0; current875 PID3228,
+LocalService, original database existing, config/custody unchanged, both UDP
+41052/42052 restored. One original v2 observer PID21548 started after recovery;
+real READY at23:11:27, maximum window until23:41:27 Beijing. See
+[C recovery and actual READY/liveness](C-current875-recovery-20261111/README.md).
+At handoff no observer result/error/exit exists. Recovery does not fix or explain
+the c0000005 crash; original logs/event/task evidence remain local. A must query
+recovered C and check both C/D current liveness before sending the one object.
+No C object send, D operation, initialize or configuration change occurred.
+
 ### CURRENT 2026-11-11 23:08 Beijing: authorized C875 crash evidence + same-owner recovery
 
 User explicitly authorized completing C crash evidence and recovering current875

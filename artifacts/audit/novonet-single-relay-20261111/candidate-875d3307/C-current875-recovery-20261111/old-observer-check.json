@@ -1,0 +1,15 @@
+{
+  "old_pid": 1700,
+  "old_created_utc": "2026-11-11T14:49:35.7103702Z",
+  "actual_exit": {
+    "host": "C",
+    "observer_version": 2,
+    "helper_pid": 1700,
+    "finished_utc": "2026-11-11T14:49:36.294388Z",
+    "exit_code": 1,
+    "node_mutated": false,
+    "object_sent": false
+  },
+  "process_present": false,
+  "process_stopped_by_launcher": false
+}

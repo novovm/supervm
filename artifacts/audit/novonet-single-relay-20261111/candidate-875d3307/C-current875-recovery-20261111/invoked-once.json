@@ -1,0 +1,12 @@
+{
+  "host": "C",
+  "utc": "2026-11-11T15:11:21.1613742Z",
+  "handoff": "9a0aec5e",
+  "launcher_pid": 12988,
+  "recovery_invocations": 1,
+  "recovery_sha256": "a33bb0985175675336452dab2020f4c5739ebd31164151fa74a708482eae8b2b",
+  "watch_sha256": "16783de0e2b59b862db5609cb6ccf4960cd289bdd608e654c93ee3bb88865219",
+  "reader_sha256": "ccc8f9592a9fb12d68531dc2ace804efb544b9921e4f43c51147f2de57cbcd44",
+  "D_touched": false,
+  "object_sent": false
+}

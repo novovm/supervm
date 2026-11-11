@@ -1,0 +1,18 @@
+{
+  "host": "C",
+  "status": "C_RELAY_OBSERVER_ARMED",
+  "utc": "2026-11-11T15:12:43.8982273Z",
+  "recovery_exit_code": 0,
+  "node_pid": 3228,
+  "observer_pid": 21548,
+  "ready_utc": "2026-11-11T15:11:27.622273Z",
+  "maximum_end_utc": "2026-11-11T15:41:27.6222730Z",
+  "liveness_utc": "2026-11-11T15:12:42.6669668Z",
+  "observer_result_present": false,
+  "observer_error_present": false,
+  "observer_exit_present": false,
+  "launcher_error_present": false,
+  "D_touched": false,
+  "object_sent": false,
+  "A_authenticated_query_required": true
+}
