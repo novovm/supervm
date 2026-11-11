@@ -1,5 +1,16 @@
 # Native first-handshake session clock — 2026-11-10
 
+## 2026-11-11: A -> D actual native UDP object dual-end PASS
+
+D receipt `d68074f7` is now independently matched against A's original archive:
+same object/session/nonce/identities/lifetime, native_udp direct addresses,
+sender ACK/delivered/DONE, receiver assembly/hash/feedback and integrity acceptance.
+D's pending-time-boundary event progressed to verified; seven snapshots describe
+one accepted object. [Reproducible match and originals](../novonet-8fed-a-d-object-20261111/README.md).
+This capture is complete; no rerun/update/Full is needed. Acceptance is limited
+to this actual A-to-D direct object, not all time scenarios, relays, assets,
+consensus or performance. Historical stopped-owner causes remain unresolved.
+
 ## 2026-11-11 11:04: A resumed, D receiver may arm
 
 A's elevated inspection confirmed a terminated task and no node. The same 8fed

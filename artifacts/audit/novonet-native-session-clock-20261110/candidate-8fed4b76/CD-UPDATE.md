@@ -1,5 +1,22 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT 2026-11-11: A -> D real native object dual-end verification PASS
+
+A pulled D `d68074f7`, verified archive/all 13 member hashes, then compared both
+original archives. Same Object ID, Session ID, nonce, sender/recipient and
+issued/expires match all seven D snapshots. Native route matches both endpoints.
+A has transport delivered/Object DONE; D has complete fragment assembly, hash
+verification, matching ACK feedback and **probe_received_integrity_verified**
+after the bounded pending-time-boundary event. One unique accepted object, not
+seven deliveries. Collector exited0 automatically; no timeout/error or resend.
+
+[Final matching record, verifier and original evidence](../../novonet-8fed-a-d-object-20261111/README.md).
+**D's current capture task is complete. Do not restart collector, resend, update
+or restart nodes for this acceptance. C needs no action in this completed step.**
+This accepts one A-to-D NovoRUDP direct object, not all four hosts, relay/multihop,
+Business Receipt, consensus, TPS or all ATC attack cases. No new Full triggered.
+All lower wait/arm/update instructions are historical and superseded.
+
 ## D capture returned: original evidence ready for A matching
 
 The existing D collector exited 0 at 11:13:39 Beijing and saved seven snapshots.

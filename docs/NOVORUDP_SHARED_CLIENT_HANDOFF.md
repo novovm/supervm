@@ -2183,6 +2183,18 @@ Session `d748367f3ba5e381bc8468467db43fb0`。
 D只需回传现有采集输出，不重启观察或节点、不重发。接收完整性/有效期尚待双端核对，
 不能把发送端DONE签收为业务Receipt、四机网络/共识完成；无新Full或TPS结论。
 
+### 37.11 2026-11-11 A→D真实原生对象双端核验通过
+
+已下拉D `d68074f7`并核验310817字节ZIP及13个原始成员。离线验证器直接读取A/D
+原始包，逐项匹配Object/Session/nonce/双方身份/原有效期/实际native_udp两端地址。
+A有ACK覆盖、delivered与Object DONE；D有单片完整组装、哈希验证、对应反馈epoch，
+先pending_time_boundary再probe_received_integrity_verified，同会话相对时间参考就绪。
+7份快照只对应1个唯一验收事件，不计作7次交付；D观察器自动退出0、无超时/错误。
+[双端匹配报告、复核脚本与原始证据](../artifacts/audit/novonet-8fed-a-d-object-20261111/README.md)。
+本条A→D直连对象已收口，不重复观察/重发，不再要求D操作。未发Full，未重启或改时钟。
+不外推四机全部路径、多跳/中继、资产Receipt、共识/TPS或全部ATC攻击场景；旧A/D任务
+终止及C旧崩溃原因仍分列，不由本次通过销账。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties
