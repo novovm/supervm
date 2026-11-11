@@ -1,0 +1,32 @@
+{
+  "host_id": "D",
+  "utc": "2026-11-11T02:41:11.4940398Z",
+  "matching_application_crashes": [],
+  "event_query_errors": [],
+  "logs": [
+    {
+      "name": "node.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "last_write_utc": "2026-11-10T03:26:34.7852859Z"
+    },
+    {
+      "name": "node.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "last_write_utc": "2026-11-10T03:26:34.7872851Z"
+    },
+    {
+      "exists": false,
+      "name": "exit.json"
+    },
+    {
+      "name": "progress.json",
+      "bytes": 1141805,
+      "sha256": "e0cff0ec0f4722888a3ca7ed616bb85c3f4f80c31e2c02218ef9ee7140b143ef",
+      "last_write_utc": "2026-11-11T00:00:08.9510573Z"
+    }
+  ],
+  "updater_invoked": false,
+  "scope": "Read-only original D exit evidence; absence of matching event does not prove clean shutdown"
+}

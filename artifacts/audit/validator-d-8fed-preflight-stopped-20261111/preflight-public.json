@@ -1,0 +1,23 @@
+{
+  "host_id": "D",
+  "utc": "2026-11-11T02:40:38.4666186Z",
+  "task_state": "Ready",
+  "task_sid": "S-1-5-19",
+  "task_exit_code": 267014,
+  "last_run_utc": "2026-11-10T03:26:33Z",
+  "restart_count": 0,
+  "trigger_count": 0,
+  "active_nodes": [],
+  "exited_nodes": [],
+  "listeners": [],
+  "progress_utc": "2026-11-11T00:00:08.9510573Z",
+  "progress": {
+    "current_height": 1,
+    "head": null,
+    "recovery_in_progress": false,
+    "chain_id": 91129655606029,
+    "execution_failures": 0
+  },
+  "exit_record": null,
+  "updater_invoked": false
+}

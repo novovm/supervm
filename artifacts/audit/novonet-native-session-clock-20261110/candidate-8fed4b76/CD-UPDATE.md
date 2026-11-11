@@ -1,5 +1,16 @@
 # C/D: fixed 8fed session-clock existing update
 
+## D actual preflight returned: update not started (2026-11-11)
+
+D ran the fixed updater tests successfully, but its original 1ef owner is no
+longer running: task Ready/result 267014 (0x41306), no node/listener, exit.json
+absent, stdout/stderr empty, valid old progress, no matching Application 1000
+crash event. [D original evidence](../../validator-d-8fed-preflight-stopped-20261111/README.md).
+The live entry was not invoked; neither the supplied clean-stop nor crash guard
+qualifies this observation. A must select the existing recovery entry from D's
+own evidence; no blind C flags, initialization, LOCK deletion or retry. C stays
+untouched. D is NOT yet ready for the new-client authenticated query.
+
 ## CURRENT 2026-11-11: C query passed; D executes now
 
 A pulled C receipt `2db1fead`, checked its actual 8fed node/AOEM hashes and
