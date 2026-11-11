@@ -1,3 +1,20 @@
+# CURRENT: C v2 observer window ended; active=false
+
+The same PID6592 observer naturally reached its original bound at
+2026-11-11T12:50:36.5703516Z (Beijing20:50:36). Actual wrapper exit0.
+result.json exists: wait_expired=true, snapshots=0, terminal_observed=false.
+error.json and launcher-error.json are absent. No relay-*.json exists.
+The actual terminal liveness/result/exit and final logs are adjacent; all existing
+raw observer outputs, read-anomaly first/latest and launch records are also in
+final-original.zip, with SHA256/member hashes in final-result-public.json.
+Historical liveness snapshots remain preserved; the previous READY is no longer active.
+
+A's f4ad41fc attempt failed before relay dial and sent no object. B recovery does not
+renew this completed C window. C did not re-arm, restart/update any node, change
+keys/clock, send or retry. No relay-delivery acceptance is claimed from zero snapshots.
+
+---
+
 # C_RELAY_OBSERVER_ARMED — observer_version=2
 
 Actual byte-preserved ready.json and current liveness.json are adjacent. Version2 helper PID6592,

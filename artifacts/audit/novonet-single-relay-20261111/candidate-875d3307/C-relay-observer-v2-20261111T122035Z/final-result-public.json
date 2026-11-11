@@ -1,0 +1,117 @@
+{
+  "host": "C",
+  "observer_version": 2,
+  "status": "C_RELAY_OBSERVER_V2_COMPLETED",
+  "ready_utc": "2026-11-11T12:20:35.2926544Z",
+  "final_liveness": {
+    "host": "C",
+    "observer_version": 2,
+    "observer_pid": 6592,
+    "node_pid": 31296,
+    "utc": "2026-11-11T12:50:36.5703516Z",
+    "active": false,
+    "snapshots": 0
+  },
+  "actual_exit": {
+    "host": "C",
+    "observer_version": 2,
+    "helper_pid": 6592,
+    "finished_utc": "2026-11-11T12:50:36.5980373Z",
+    "exit_code": 0,
+    "node_mutated": false,
+    "object_sent": false
+  },
+  "result": {
+    "host": "C",
+    "utc": "2026-11-11T12:50:36.5686391Z",
+    "snapshots": 0,
+    "terminal_observed": false,
+    "wait_expired": true,
+    "capture_limit_reached": false,
+    "node_mutated": false,
+    "business_receipt": false
+  },
+  "error": null,
+  "result_exists": true,
+  "error_exists": false,
+  "relay_snapshot_count": 0,
+  "relay_snapshot_files": [],
+  "anomaly_files": [
+    "read-anomaly-first.json",
+    "read-anomaly-last.json"
+  ],
+  "old_observer_deliberately_terminated": false,
+  "node_restarted": false,
+  "package_changed": false,
+  "observer_rearmed": false,
+  "object_sent_by_C": false,
+  "D_touched": false,
+  "A_attempt": "f4ad41fc: no verified diagnostic locator; object not sent; reservation cancelled",
+  "relay_delivery_accepted": false,
+  "archive": "final-original.zip",
+  "archive_sha256": "bbc743481b414692672ecac807ebdffb1a237c32af5be3eca9b3771648ee1e2d",
+  "entries": [
+    {
+      "name": "observer/ready.json",
+      "bytes": 352,
+      "sha256": "8929c403f55e3f591612c33e8442794d335a490a6162e8f173e12a101f230bbb"
+    },
+    {
+      "name": "observer/liveness.json",
+      "bytes": 175,
+      "sha256": "87589a7f0f11e6e5bc04a6b6714925b5b53fb004fc80add3c3becaea1184f424"
+    },
+    {
+      "name": "observer-exit.json",
+      "bytes": 189,
+      "sha256": "dbc711db7d3178812bef4dc77c56eeda7eae6fad0a916b3c9c81ae91bf5d8c05"
+    },
+    {
+      "name": "observer.stdout.log",
+      "bytes": 139,
+      "sha256": "c327c748b3b71a35ef96874bed2bfd10a7b7398195457d5bb5c4b39501253422"
+    },
+    {
+      "name": "observer.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "helper-started.json",
+      "bytes": 870,
+      "sha256": "0bd69adc027ff4124ab265e65b76edd95c917fc84673f71e798c03a836729170"
+    },
+    {
+      "name": "old-observer-stop.json",
+      "bytes": 571,
+      "sha256": "3ccc405b419fc5943a21151457ac37ed028a1005d22bfb211e88f0eabeab94c9"
+    },
+    {
+      "name": "invoked-once.json",
+      "bytes": 457,
+      "sha256": "d08d86e3b7d0ab791d97749e88c812c02f0ec883b98e8998083cd56743cb5bd1"
+    },
+    {
+      "name": "launch-public.json",
+      "bytes": 297,
+      "sha256": "17d1aeeef2b156556bf04678f58b05615824eb1129c8b384efa9c90456da9a80"
+    },
+    {
+      "name": "observer/result.json",
+      "bytes": 229,
+      "sha256": "b60ac59dec0394ad9c3928f4e6e07a78f3d5dae58e8b3025a98277d53503e590"
+    },
+    {
+      "name": "observer/read-anomaly-first.json",
+      "bytes": 1702,
+      "sha256": "f936dc822134e678aa13163350aec5752ac82f1cae4a28ecbc6d432ef7052425"
+    },
+    {
+      "name": "observer/read-anomaly-last.json",
+      "bytes": 1702,
+      "sha256": "717bc6bcd49a7e286f5bf55b77b66b20ebea44946d3f96326612e8282949ed71"
+    }
+  ],
+  "local_originals": "D:\\WEB3_AI\\SUPERVM\\target\\c-relay-observer-v2-875-20261111T121956Z",
+  "scope": "Original bounded v2 observer ended; byte-preserved existing output only. No forwarding acceptance inferred."
+}

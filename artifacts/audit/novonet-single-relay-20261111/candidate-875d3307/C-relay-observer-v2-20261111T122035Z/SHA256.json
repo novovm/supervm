@@ -1,17 +1,17 @@
 {
   "host": "C",
-  "status": "C_RELAY_OBSERVER_ARMED",
+  "status": "C_RELAY_OBSERVER_V2_COMPLETED",
   "observer_version": 2,
   "handoff": "c92d2172",
-  "sample_utc": "2026-11-11T12:30:42.137934+00:00",
+  "sample_utc": "2026-11-11T12:51:32.320869+00:00",
   "observer_pid": 6592,
   "node_pid": 31296,
   "ready_utc": "2026-11-11T12:20:35.2926544Z",
-  "liveness_utc": "2026-11-11T12:30:41.6915854Z",
-  "active": true,
+  "liveness_utc": "2026-11-11T12:50:36.5703516Z",
+  "active": false,
   "terminal_records_present": {
-    "observer-exit.json": false,
-    "observer/result.json": false,
+    "observer-exit.json": true,
+    "observer/result.json": true,
     "observer/error.json": false,
     "launcher-error.json": false
   },
@@ -52,6 +52,26 @@
       "sha256": "d08d86e3b7d0ab791d97749e88c812c02f0ec883b98e8998083cd56743cb5bd1"
     },
     {
+      "name": "Launch-C-V2-Observer-Once.ps1",
+      "bytes": 5585,
+      "sha256": "8bdaf81f14c039ace9d725b027340e7ceb3f44a8cdc3589f13b54edc129b99f4"
+    },
+    {
+      "name": "liveness.json",
+      "bytes": 175,
+      "sha256": "87589a7f0f11e6e5bc04a6b6714925b5b53fb004fc80add3c3becaea1184f424"
+    },
+    {
+      "name": "result.json",
+      "bytes": 229,
+      "sha256": "b60ac59dec0394ad9c3928f4e6e07a78f3d5dae58e8b3025a98277d53503e590"
+    },
+    {
+      "name": "observer-exit.json",
+      "bytes": 189,
+      "sha256": "dbc711db7d3178812bef4dc77c56eeda7eae6fad0a916b3c9c81ae91bf5d8c05"
+    },
+    {
       "name": "observer.stdout.log",
       "bytes": 139,
       "sha256": "c327c748b3b71a35ef96874bed2bfd10a7b7398195457d5bb5c4b39501253422"
@@ -62,16 +82,6 @@
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
     {
-      "name": "Launch-C-V2-Observer-Once.ps1",
-      "bytes": 5585,
-      "sha256": "8bdaf81f14c039ace9d725b027340e7ceb3f44a8cdc3589f13b54edc129b99f4"
-    },
-    {
-      "name": "liveness.json",
-      "bytes": 174,
-      "sha256": "37856b766db9609628f0f3179f76f3021f972684c14d40bcaedd4338af93ac29"
-    },
-    {
       "name": "read-anomaly-first.json",
       "bytes": 1702,
       "sha256": "f936dc822134e678aa13163350aec5752ac82f1cae4a28ecbc6d432ef7052425"
@@ -79,7 +89,10 @@
     {
       "name": "read-anomaly-last.json",
       "bytes": 1702,
-      "sha256": "a58e971cd2707e14ce1bdf38d81a183476cfd1e32888ddc4c87dc1c2999c4089"
+      "sha256": "717bc6bcd49a7e286f5bf55b77b66b20ebea44946d3f96326612e8282949ed71"
     }
-  ]
+  ],
+  "C_READY": false,
+  "final_archive": "final-original.zip",
+  "final_archive_sha256": "bbc743481b414692672ecac807ebdffb1a237c32af5be3eca9b3771648ee1e2d"
 }

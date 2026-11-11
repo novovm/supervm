@@ -1,5 +1,14 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 C：同一v2观察器原窗口已结束，active=false
+
+PID6592在12:50:36.5703516UTC（北京时间20:50:36）自然结束；退出0，result存在、
+wait_expired=true、snapshots=0、terminal_observed=false；error及launcher-error不存在。
+最新原字节liveness为active=false，不能再用历史READY发送。B恢复未续期C窗口。
+[终止状态、现有原始输出及摘要](../artifacts/audit/novonet-single-relay-20261111/candidate-875d3307/C-relay-observer-v2-20261111T122035Z/README.md)
+已回传：含最终result、liveness、退出/stdout/stderr及read-anomaly首末记录，没有relay快照。
+C未重开观察器、重启／换包／发对象或重试，D不操作。A本轮拨号前失败，零快照不算中继通过。
+
 ## 2026-11-11 C：v2观察器运行中，使用最新liveness而非旧READY
 
 已按c92d2172启动一次v2：helper PID6592，原875节点PID31296，READY为

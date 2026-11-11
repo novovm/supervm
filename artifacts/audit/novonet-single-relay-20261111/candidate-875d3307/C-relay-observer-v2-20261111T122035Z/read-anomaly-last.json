@@ -1,8 +1,8 @@
 {
-  "utc": "2026-11-11T12:29:49.0156905Z",
+  "utc": "2026-11-11T12:48:08.2839319Z",
   "reason": "missing_novonet",
-  "bytes": 1257356,
-  "sha256": "82e81edfec1976b991753a6931683926627127494780895a260a8ba218b6a22e",
+  "bytes": 1501789,
+  "sha256": "eda4cedf30b07eae441ba0c2c7f3c31b0073ec660770c5c8e2d9f475cc5f4d0e",
   "top_level_keys": [
     "archive_projection_blocks",
     "archive_work",
