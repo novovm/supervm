@@ -6,7 +6,8 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$Source,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$NodeSha256,
     [Parameter(Mandatory)][ValidatePattern('^novonet-observation-[a-f0-9]{8}-[0-9]{8}$')][string]$WorkName,
-    [Parameter(Mandatory)][string]$EvidenceRoot
+    [Parameter(Mandatory)][string]$EvidenceRoot,
+    [ValidateRange(1800,7200)][int]$MaximumWaitSeconds=1800
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -34,15 +35,16 @@ catch {
 $prior=@($baseline.native_network_probe.transport.relay_circuits|ForEach-Object {CircuitKey $_})
 $oldNonces=@($baseline.novonet.diagnostic_relay.events|Where-Object {$null -ne $_.probe}|ForEach-Object {ProbeKey $_})
 function Save-Liveness([bool]$Active) {
-    [ordered]@{host=$HostId;observer_version=2;observer_pid=$PID;node_pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');active=$Active;snapshots=$saved}|ConvertTo-Json|Set-Content "$out/liveness.json" -Encoding utf8
+    [ordered]@{host=$HostId;observer_version=3;observer_pid=$PID;node_pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');elapsed_seconds=$clock.Elapsed.TotalSeconds;maximum_wait_seconds=$MaximumWaitSeconds;active=$Active;snapshots=$saved}|ConvertTo-Json|Set-Content "$out/liveness.json" -Encoding utf8
 }
+$clock=[Diagnostics.Stopwatch]::StartNew()
 $saved=0
 Save-Liveness $true
-[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";observer_version=2;observer_pid=$PID;source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=1800}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
+[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";observer_version=3;observer_pid=$PID;source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=$MaximumWaitSeconds}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
 Write-Output "${HostId}_RELAY_OBSERVER_ARMED: $out; leave this bounded collector running"
-$clock=[Diagnostics.Stopwatch]::StartNew();$saved=0;$terminalAt=$null;$previous=$null
+$saved=0;$terminalAt=$null;$previous=$null
 try {
-    while($clock.Elapsed.TotalSeconds -lt 1800 -and $saved -lt 64){
+    while($clock.Elapsed.TotalSeconds -lt $MaximumWaitSeconds -and $saved -lt 64){
         $p=Read-Progress
         Save-Liveness $true
         $circuits=@($p.native_network_probe.transport.relay_circuits|Where-Object {(CircuitKey $_) -notin $prior})
@@ -62,6 +64,6 @@ try {
         # reservation; subsecond sampling could exhaust capture before its end.
         Start-Sleep -Milliseconds 1000
     }
-    [ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=$saved;terminal_observed=($null -ne $terminalAt);wait_expired=($clock.Elapsed.TotalSeconds -ge 1800);capture_limit_reached=($saved -ge 64);node_mutated=$false;business_receipt=$false}|ConvertTo-Json|Set-Content "$out/result.json" -Encoding utf8
+    [ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=$saved;maximum_wait_seconds=$MaximumWaitSeconds;terminal_observed=($null -ne $terminalAt);wait_expired=($clock.Elapsed.TotalSeconds -ge $MaximumWaitSeconds);capture_limit_reached=($saved -ge 64);node_mutated=$false;business_receipt=$false}|ConvertTo-Json|Set-Content "$out/result.json" -Encoding utf8
 }catch{[ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=$saved;error=$_.Exception.Message}|ConvertTo-Json|Set-Content "$out/error.json" -Encoding utf8;throw}
 finally{Save-Liveness $false}

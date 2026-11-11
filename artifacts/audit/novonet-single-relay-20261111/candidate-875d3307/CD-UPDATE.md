@@ -7,6 +7,42 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 23:24 Beijing: bounded diagnostic standby, no node changes
+
+D's actual heartbeat23:19:26 was read by A at23:21:38, only52 seconds before
+the original observer deadline23:22:30. Its v2 sender guard rejected the late
+window; A did not invoke prepare/send. No object/session/DONE exists for this
+window. C recovery and35ms authenticated health remain passed; do not redo direct
+tests. Receipt5f1d564b preserves D's active sample, not continued liveness.
+
+The original Watch-Relay now supports `-MaximumWaitSeconds 7200` (v3), defaults
+still1800. It uses its original monotonic timer, same64 changed snapshots,
+1-second sampling,4MiB read bound and terminal+3-second exit. Only diagnostic
+idle standby increases; no production network/object/session/authorization TTL,
+forwarding budget, program, key, database or node is changed. READY and heartbeat
+carry the actual wait budget; heartbeats also carry monotonic elapsed seconds.
+The original A sender checks both identities, current heartbeat<=600 seconds,
+no terminal receipt, and at least120 seconds remaining by BOTH elapsed clocks.
+v2 keeps its prior25-minute freshness gate. Late readiness is rejected, not
+extended on paper.20 readiness tests and13 reader tests passed locally.
+
+**C/D now:** sync this handoff. Preserve old observer evidence. D confirms its
+expired13168 observer/wrapper terminal result; C verifies observer21548 by PID,
+creation time and exact Watch-Relay command. If C's old observer is still active,
+end ONLY that confirmed observer, record the termination, never stop node3228.
+Do not overlap observers. Start ONE hidden independent administratorPS7 original
+Watch-Relay with the unchanged875 parameters and `-MaximumWaitSeconds 7200`,
+adjacent original reader, and a fresh EvidenceRoot. D node36464 stays untouched.
+
+Immediately return real v3 ready.json, current liveness.json, process creation
+identity, terminal-file presence and launch/old-observer exit evidence under
+`C-relay-standby-v3-20261111` / `D-relay-standby-v3-20261111` here. Do not wait
+for collector completion to publish READY. If a node is gone or unhealthy,
+return that failure instead of restarting/recovering it in this observer step.
+After A dispatch, return existing snapshots and terminal outputs, no new capture
+or resend. A will use the same original one-shot A->C->D sender and require
+actual C forwarding plus matched A/D object/session/DONE; no fallback direct test.
+
 ### CURRENT A 2026-11-11 23:14 Beijing: C recovery authenticated; relay pending D refresh
 
 A read C84024d10 recovery and crash receipt. The19 public raw result/observer
