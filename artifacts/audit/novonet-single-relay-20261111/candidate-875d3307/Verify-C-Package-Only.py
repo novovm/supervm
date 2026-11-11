@@ -94,7 +94,7 @@ def run():
         result["error"] = str(error)
     finally:
         result.update(ended_utc=utc(), exit_code=code)
-        with REPORT.open("x", encoding="utf-8") as stream:
+        with REPORT.open("x", encoding="utf-8", newline="\n") as stream:
             json.dump(result, stream, indent=2, ensure_ascii=False)
             stream.write("\n")
     print(result.get("status", "C_PACKAGE_VERIFICATION_FAILED"))

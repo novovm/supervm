@@ -15,11 +15,17 @@
   CI或运行库资格复测；未读取、复制或修改数据库与身份材料。
 
 [原始公开结果](C-package-receipt-public.json)，SHA256
-`f33ca1cd58b7b13346dc7158b319f31a51b9dc952b26279aea0132fee8dbc6a8`。
+`09fd66d7621731ea0052292265d3c44c191713856a180e0ea44b612986957ac1`。
 [只读核验脚本](Verify-C-Package-Only.py)，SHA256
-`d15e82c2c2047fb295c94fdd87aa9ddc677b3f9a6633494fa57dff35c6edf6d7`。
+`89f2938a9d4e596d9a1d1e57a019b0b0527198468744560aab8f1ab1a57968fb`。
 脚本拒绝覆盖已有回执；本轮执行一次，不含更新、运行包内程序或采集入口。
 
 用户确认由其手动复制同一ZIP到D，再由D Codex本地核验。C没有可用的D文件通道，
 未操作D，也不代签D的READY。A须等D独立回执后再判断两机准备齐全；此处不触发
 任何后续切换。用户当前限定仅核验，不能从包内后续更新计划推导现在启动更新或采集。
+
+公开JSON仅规范化为LF换行，内容与原结果完全一致，未重跑核验。
+[原始结果及当次脚本](C-verification-original.zip)保留原字节；其中原始JSON的SHA256
+为`f33ca1cd58b7b13346dc7158b319f31a51b9dc952b26279aea0132fee8dbc6a8`，
+当次脚本SHA256为`d15e82c2c2047fb295c94fdd87aa9ddc677b3f9a6633494fa57dff35c6edf6d7`。
+当前脚本仅将未来报告写入固定为LF，仍拒绝覆盖现有报告，本轮没有再次执行。
