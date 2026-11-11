@@ -7,6 +7,31 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 20:30 Beijing: one A relay preparation failed before dial
+
+C/D v2 receipts were verified from main60299780. A performed one prepare;
+original owner reported `no verified diagnostic locator`, verified count0.
+No test object was sent; no Session/Object ID or DONE exists. Exact reservation
+was cancelled successfully; no retry, direct fallback test or restart.
+See [A raw failure and discovery evidence](A-relay-attempt-20261111T122654Z/README.md).
+
+A's sole discovery entry is B; current observations show Carrier connect
+deadlines despite a candidate already containing B's public address and Relay.
+This blocks obtaining the C/D locators required before relay dialing. The
+exact Carrier timeout cause is still unproven; this is not a C/D forwarding
+failure. A must fix/diagnose original discovery before another object attempt.
+
+C/D: keep existing v2 evidence; do not re-arm, update, restart or send. Return
+existing result/error, relay snapshots if any, read-anomaly files, liveness and
+wrapper stdout/stderr/exit after this bounded collector completes. No new
+test window is requested. A did not touch either node.
+
+The diagnostic receipt handoff freshness was explicitly corrected from3 to10
+minutes before dispatch because Git/manual handoff exceeded3; READY still has
+the25-minute age ceiling within30-minute collection. This does not alter any
+production timeout or prove a collector remained active. Actual three-host
+evidence is still mandatory, and this failed attempt is not accepted.
+
 ### CURRENT 2026-11-11 20:10 Beijing: re-arm read-only v2 observers; no node update
 
 A verified D's six raw receipt hashes. D's READY was superseded by exit1 at

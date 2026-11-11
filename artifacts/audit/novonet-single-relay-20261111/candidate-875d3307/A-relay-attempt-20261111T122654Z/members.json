@@ -1,0 +1,92 @@
+[
+  {
+    "file": "stdout.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "stderr.log",
+    "bytes": 307,
+    "sha256": "5cb0911c3826ec6fb7fd1dd748299d4219ffb7cc331015a56c739f7a05f33bf7"
+  },
+  {
+    "file": "exit.json",
+    "bytes": 87,
+    "sha256": "4cd9fa0ddf9b6cbb53d7b8c8840ddc2c6e62f0ff3579933ac2a735bdcd7b827e"
+  },
+  {
+    "file": "after-failure-public.json",
+    "bytes": 424931,
+    "sha256": "35b10a05736ffa8203812adfbbef284174ee97f9c45819cab2cb5a736f8700cf"
+  },
+  {
+    "file": "discovery-after-failure-public.json",
+    "bytes": 29326,
+    "sha256": "c498d414fe14ce964fb71fb98f62d2c8e80c010b92c903cb559ca475a58c247d"
+  },
+  {
+    "file": "discovery-input-public.json",
+    "bytes": 642,
+    "sha256": "1866e8a92a03a37e5fe20786dd876f815066a7e82aa35109072b157ad07feaac"
+  },
+  {
+    "file": "sender/arm.json",
+    "bytes": 1956,
+    "sha256": "2d932d3111aa166b844b8260b85d28bf58f3cf3968db8d99ca26ac0cb9a0aa9a"
+  },
+  {
+    "file": "sender/arm.nvprobe",
+    "bytes": 409,
+    "sha256": "fb975f06eec2a09e873415a9f890c5ecea8022a2a17cce5d1225443ada84eee1"
+  },
+  {
+    "file": "sender/arm.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "sender/before.json",
+    "bytes": 451804,
+    "sha256": "4eb1da7f81af33990d4b5c00586cbcac8044bdabfdbd9b7c7180218fe5d1e0d0"
+  },
+  {
+    "file": "sender/C-ready.json",
+    "bytes": 352,
+    "sha256": "8929c403f55e3f591612c33e8442794d335a490a6162e8f173e12a101f230bbb"
+  },
+  {
+    "file": "sender/cancel-result.json",
+    "bytes": 117,
+    "sha256": "97f6678774bc7a76d0bbcf1cc93a1fc9271b8b88a6b8b1f8943ce0345d02afc3"
+  },
+  {
+    "file": "sender/cancel.json",
+    "bytes": 1956,
+    "sha256": "0a78ee8772d6cbd29ca595c9a37845c786cec7492f2f4417a8419666faae4576"
+  },
+  {
+    "file": "sender/cancel.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "sender/D-ready.json",
+    "bytes": 353,
+    "sha256": "9efa0e2c3e941e51cbb1d85220f657d542825373e316ef7550ed1b392aefd2b7"
+  },
+  {
+    "file": "sender/error.json",
+    "bytes": 265,
+    "sha256": "0481a5b2c6c6e4cb11a73d7985f489220c1a5af08736dba76be9cd255b56ee18"
+  },
+  {
+    "file": "sender/setup-01.json",
+    "bytes": 440907,
+    "sha256": "994e5d4b4a274e1a3257497198977a0692e47e02dcada01876f267f1c850ef26"
+  },
+  {
+    "file": "sender/setup-05.json",
+    "bytes": 440907,
+    "sha256": "5b28f296d409b6b107dcb36c415dc6bc43ee91bfdb968615095de7bf690141ff"
+  }
+]
