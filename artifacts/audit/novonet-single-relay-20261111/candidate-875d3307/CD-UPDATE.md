@@ -7,6 +7,52 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 23:08 Beijing: authorized C875 crash evidence + same-owner recovery
+
+User explicitly authorized completing C crash evidence and recovering current875
+with existing, then A->C->D once. This supersedes the prior observation-only hold.
+No new program ZIP, old8fed launch, database initialization or Full run is needed.
+
+C Codex: sync this main handoff. In administrator PowerShell7, run ONCE from
+the repository (replace only the local repository prefix and fresh EvidenceRoot):
+
+```powershell
+& .\scripts\windows\Resume-Novonet875C.ps1 -EvidenceRoot 'D:\WEB3_AI\SUPERVM\target\c-875-current-recovery-20261111'
+```
+
+Use a fresh directory if that name already exists; do not overwrite it. The helper
+pins the installed v2 ExistingOwner, package, task action and LocalService owner;
+reads the matching Application1000 event, task result and exit; requires the
+reported875 PID31296 / c0000005 run; checks no executing database/port owner using
+the original kernel process barrier. It retains the crash logs in a uniquely
+named sibling under the exact875 work directory, recreates the empty original
+logs directory with the same ACL, and starts the SAME original existing task once.
+It does not alter task/config/key/database/cache/firewall or program. A mismatch
+stops before restart. A failed restart is NOT retried or rolled back automatically.
+
+Return actual exit code, crash-public.json, before-public.json, result-public.json
+or error-public.json and helper hashes. Keep crash-event-local.xml, task XML and
+all original logs locally; no database, credentials or dump uploads. If available,
+retain existing WER/dump paths locally for root-cause follow-up, without exporting
+their contents. Recovery success is NOT a claim to have fixed the access violation.
+
+On C_875_RECOVERED_READY_FOR_A_QUERY, immediately start ONE original v2 Watch-Relay
+in a hidden independent administrator PowerShell7 with a new EvidenceRoot, after
+confirming prior C observerPID1700 is exited. Return real READY/current liveness
+and launch identity immediately, not at window completion. Use the unchanged875
+parameters below. Publish recovery and observer receipts under a fresh
+`C-current875-recovery-20261111` directory here. Do not send an object from C.
+
+D: keep the current22:52 observer; refresh its actual liveness and terminal-file
+presence only. Do not restart the node or observer. If it expires, return that
+fact and evidence; no blind repeated window. A will query recovered C, check both
+actual observers, and start its sender only when they are ready (no preliminary
+A30-minute countdown). Never dispatch with stale READY or a stopped C node.
+
+Local helper checks:22 passed (task/action/authority/exit counterexamples, same
+directory log preservation + ACL and single restart/no forbidden mutation).
+These are helper checks, not C recovery, crash resolution or relay acceptance.
+
 ### CURRENT C 2026-11-11 22:57 Beijing: NOT READY; confirm operability before observation
 
 User updated coordination: first confirm C can operate immediately, then open
