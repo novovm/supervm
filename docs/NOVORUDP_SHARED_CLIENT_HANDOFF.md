@@ -1,5 +1,16 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-11 C：v2一次RecoverCrashed成功，C_875_EXISTING_READY_FOR_A_QUERY
+
+已按9bba5135使用新工具目录／证据目录执行一次v2，原更新器退出0，stderr空。
+875新PID31296、实际LocalService，以START=existing打开C原chain-state；原custody及
+进度保持，实际AOEM哈希不变，监听192.168.71.125:41052／42052。执行失败0、恢复false。
+任务／事件／exit三方c0000374经v2原校验通过，没有先启动旧8fed、初始化、换钥或重传ZIP。
+详见[C成功回传和原始公开结果](../artifacts/audit/novonet-single-relay-20261111/candidate-875d3307/C-UPDATE-V2.md)。
+请A进行外部认证Status及原状态根核对，再决定D；C不代签外部健康或放行D。
+D未动、采集未开、未发对象。旧8fed崩溃根因仍开放，真实中继未签收。
+下节v1分支不支持／失败记录保留，已由本轮v2实际existing成功覆盖部署状态。
+
 ## 2026-11-11 C：cc9f核对取得旧8fed c0000374，原分支不合格即停止
 
 系统管理员确认完成，C一次快照为活动节点0、目标UDP端口0；旧8fed任务Ready/

@@ -1,0 +1,160 @@
+{
+  "host": "validator-C",
+  "status": "C_875_EXISTING_READY_FOR_A_QUERY",
+  "handoff": "9bba5135",
+  "program_source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "tool_version": 2,
+  "tool_archive_bytes": 19929,
+  "tool_archive_sha256": "10cbc7d6688aaddcf048e15651e98247ad7c6330e85fed434782e299b1d16dd9",
+  "updater_sha256": "f7c185500abd955089c92b8bd0edefb3cf20a20df65bfbfe53c1c9c0bcd55cb2",
+  "command": "Update-Windows.ps1 -HostId C -PackageRoot <verified fixed package> -EvidenceRoot <fresh evidence> -RecoverCrashed",
+  "switches": [
+    "RecoverCrashed"
+  ],
+  "started_utc": "2026-11-11T11:32:04.4545561Z",
+  "finished_utc": "2026-11-11T11:32:26.5177732Z",
+  "updater_exit_code": 0,
+  "updater_invocations": 1,
+  "error_json_present": false,
+  "rollback_requested": false,
+  "original_result": {
+    "host_id": "C",
+    "prior_owner_interrupted": false,
+    "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+    "update_completed": true,
+    "existing_recovery_opened": true,
+    "observation_loss_recovery": false,
+    "previous_state_available": true,
+    "start": "existing",
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+    "pid": 31296,
+    "custody_unchanged": true,
+    "progress_state_unchanged": true,
+    "authenticated_state_root_external_check_required": true,
+    "recovery_observer_available": true,
+    "new_object_sent": false,
+    "root_cause_resolved": false,
+    "initialize_executed": false,
+    "business_receipt": false
+  },
+  "after_public": {
+    "host_id": "C",
+    "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+    "time": "2026-11-11T11:32:25.5590116Z",
+    "pid": 31296,
+    "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-875d3307-windows-x86_64\\bin\\novovm-node.exe",
+    "node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+    "sid": "S-1-5-19",
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+    "start": "existing",
+    "initialize_executed": false,
+    "keys_generated": false,
+    "custody_unchanged": true,
+    "aoem_module": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-875d3307-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+    "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+    "old_task": "Ready",
+    "new_task": "NOVOVM-C-875d3307-Existing-20261111",
+    "listeners": [
+      {
+        "LocalAddress": "192.168.71.125",
+        "LocalPort": 42052,
+        "OwningProcess": 31296
+      },
+      {
+        "LocalAddress": "192.168.71.125",
+        "LocalPort": 41052,
+        "OwningProcess": 31296
+      }
+    ],
+    "entry": "original_native_execution_tick",
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false,
+    "probe_enabled": true,
+    "udp_recovery_event_names_count": 22,
+    "relay_observation_available": true,
+    "new_command_file_present": false,
+    "collector_started": false,
+    "authenticated_status_by_A_pending": true
+  },
+  "stderr_bytes": 0,
+  "old_8fed_started_first": false,
+  "original_program_zip_retransmitted": false,
+  "D_touched": false,
+  "collector_started": false,
+  "new_object_sent": false,
+  "A_authenticated_status_pending": true,
+  "real_relay_accepted": false,
+  "old_c0000374_root_cause_resolved": false,
+  "archive": "C-v2-update-public-original.zip",
+  "archive_sha256": "e6c983b10e7654ed348cc983a4b59253dec9deab25bee86fa48e423649a235c5",
+  "entries": [
+    {
+      "name": "result.json",
+      "bytes": 675,
+      "sha256": "b0a9792aeea4a5421284d93be149429c0949e868668194113ac28b8259636e2d"
+    },
+    {
+      "name": "old-exit.json",
+      "bytes": 485,
+      "sha256": "0c82c53fb9640d598d4e55e1ab89ba5ed1f8a4657850e357934c126feb3178d0"
+    },
+    {
+      "name": "firewall.json",
+      "bytes": 303,
+      "sha256": "bd27f4daba996b33187837f1a55589a8fb0a319f5dff16030ca6df5e2e60c08e"
+    },
+    {
+      "name": "crash-recovery-preflight.json",
+      "bytes": 815,
+      "sha256": "6a744207cbcf4dd816ef3c781a5da4ccf3c784de7b7b1ee517344860776a5286"
+    },
+    {
+      "name": "controller-exit.json",
+      "bytes": 301,
+      "sha256": "aaeb7a327950e0754fc31e838f0d22b4ac115b3c5863acc232a4ae3f6271bb97"
+    },
+    {
+      "name": "after-public.json",
+      "bytes": 1514,
+      "sha256": "b520dc65218f087614919e35048c8bfb70e100a1179a3d5f7532def9bb89458d"
+    },
+    {
+      "name": "update.stdout.log",
+      "bytes": 108,
+      "sha256": "7d66df8cfc9aa65bc485d4e2e083420837038c305853074c2cafe4fb4234e414"
+    },
+    {
+      "name": "update.stderr.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "invoked-once.json",
+      "bytes": 334,
+      "sha256": "bb997163752a8e47a357147cfbcaeaa7112a9278b0e299b5def22d50b85feb49"
+    },
+    {
+      "name": "launch-public.json",
+      "bytes": 304,
+      "sha256": "8fbb70fc889914ad7340257602ca337fcd5b9124db61d7fb377abafb2a07610f"
+    },
+    {
+      "name": "Run-C-875-V2-Once.ps1",
+      "bytes": 4428,
+      "sha256": "a345bf210f7ac647b8052fea8c12b6e20475c633841358c278a95eeb251a8fb2"
+    }
+  ],
+  "private_material_excluded": [
+    "before.json",
+    "full after.json",
+    "full progress",
+    "run/network configs",
+    "custody materials",
+    "database",
+    "journal"
+  ],
+  "local_original_evidence": "D:\\WEB3_AI\\SUPERVM\\target\\c-875-v2-recovery-20261111T113132Z\\C-update"
+}
