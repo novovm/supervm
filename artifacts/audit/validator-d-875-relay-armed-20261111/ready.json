@@ -1,0 +1,9 @@
+{
+  "status": "D_RELAY_OBSERVER_ARMED",
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+  "pid": 36464,
+  "utc": "2026-11-11T11:59:46.9577810Z",
+  "read_only": true,
+  "maximum_wait_seconds": 1800
+}

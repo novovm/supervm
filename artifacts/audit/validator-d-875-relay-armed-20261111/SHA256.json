@@ -1,0 +1,12 @@
+[
+  {
+    "file": "ready.json",
+    "bytes": 301,
+    "sha256": "801981e03305fdc6ceeede3f8dd61b7950dda1400767872094d6a83d67d66b47"
+  },
+  {
+    "file": "launch.json",
+    "bytes": 294,
+    "sha256": "6fdcb42e4acc08ae657e915d4406ca5f3eaed7e6802b99080f2651f1e840b187"
+  }
+]
