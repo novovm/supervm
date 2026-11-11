@@ -1,5 +1,21 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT 2026-11-11 11:13: object sent once, D returns existing capture
+
+A pulled D `0ce2733e` and sent one original-owner object while the collector
+was armed. A PID13996 obtained **native_udp sender DONE** to D at
+192.168.71.59:41053, object
+`a89c1dac10c0405ca4d153bb03b03279d6339cd4d465b7aa81352b1902dcafd4`,
+session `d748367f3ba5e381bc8468467db43fb0`.
+[Original sender evidence and pending dual-end match](../../novonet-8fed-a-d-object-20261111/README.md).
+
+**D only returns the existing collector output** from its recorded
+`target/d-8fed-receiver-20261111` directory: result/error, receiver-*.json,
+collector-exit.json, stdout/stderr. Do not restart capture, resend, update or
+restart any node. A will match the exact IDs and original transport/acceptance
+events. Sender DONE alone is not receiver integrity acceptance or Business Receipt.
+This replaces the earlier arm/start instructions; they must not be repeated.
+
 ## CURRENT 2026-11-11 11:04: A restored, D arms receiver ONLY
 
 A's elevated check confirmed its current 8fed task had stopped, result267014.

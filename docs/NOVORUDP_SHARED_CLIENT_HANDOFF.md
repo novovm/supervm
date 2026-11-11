@@ -2172,6 +2172,17 @@ owner。11:03:58恢复PID13996、41051/42051，独立认证查询33ms且原root�
 后台开启30分钟有界只读观察并回传D_RECEIVER_ARMED，A再通过原owner只发一次对象。
 本步未发送对象、不重跑Full、不更新D/C；窗口超时未发送记未执行而非网络失败。
 
+### 37.10 2026-11-11 A原节点一次发送取得native_udp DONE，待D收件回传
+
+已拉取D `0ce2733e`，其原节点19756/观察器21680在11:10:37开启有界采集。
+A于11:13:33通过现版原owner13996只调用一次固定ctl，直连192.168.71.59:41053，
+获得probe_object_done及实际transport delivered/ACK记录；无重发、备用路径或新socket。
+Object `a89c1dac10c0405ca4d153bb03b03279d6339cd4d465b7aa81352b1902dcafd4`，
+Session `d748367f3ba5e381bc8468467db43fb0`。
+[原始命令、发送前后诊断、退出记录及待匹配状态](../artifacts/audit/novonet-8fed-a-d-object-20261111/README.md)。
+D只需回传现有采集输出，不重启观察或节点、不重发。接收完整性/有效期尚待双端核对，
+不能把发送端DONE签收为业务Receipt、四机网络/共识完成；无新Full或TPS结论。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

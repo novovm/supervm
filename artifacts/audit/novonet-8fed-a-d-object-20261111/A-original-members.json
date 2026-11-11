@@ -1,0 +1,52 @@
+[
+  {
+    "name": "command-raw.nvprobe",
+    "bytes": 377,
+    "sha256": "2b1196d1a9a28d90b64e66df3a1cc496fb07ce1a13dfb1e9527635d19cf56eda"
+  },
+  {
+    "name": "command.json",
+    "bytes": 1602,
+    "sha256": "623cecee690e4a1a087043a11ed137249720bd609cceec56f7a2d720fe7fb963"
+  },
+  {
+    "name": "command.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "name": "receiver-ready.json",
+    "bytes": 177,
+    "sha256": "1291b741091dbb58ea7da8bfd2037804254b3c2cf6a4fcc345bd15cc11512f28"
+  },
+  {
+    "name": "sender-before.json",
+    "bytes": 690623,
+    "sha256": "f1775372307a6c11ea53a494200c41f333813bcead7c28aebaa05cc05698bcdf"
+  },
+  {
+    "name": "sender-result.json",
+    "bytes": 764684,
+    "sha256": "d4b6c908498cccc4ec05ee592267c89db861a81c6160f188fa2ce68aa91e9f9e"
+  },
+  {
+    "name": "A-D-send-exit-20261111.json",
+    "bytes": 126,
+    "sha256": "2878e4e5bbebbf99b5f209d4141ee4e81c69f6f22e2e0f4b6025e17d06b3f0fb"
+  },
+  {
+    "name": "A-D-send-20261111.log",
+    "bytes": 176,
+    "sha256": "f09641e0915e8a77bd8b5a9827ddb96d16d392b2dfac4b4978fa6a9e5617079a"
+  },
+  {
+    "name": "Send-A-D-8fed.ps1",
+    "bytes": 4534,
+    "sha256": "7b359c1002257609ee341d4442efbb8931791bdb582bf88ae0ae578ae40b6685"
+  },
+  {
+    "name": "Run-A-D-8fed-20261111.ps1",
+    "bytes": 716,
+    "sha256": "8351876529991ba376e0f2a0cdc2a302ee0db61243d5b95cfec58c75d3508d4e"
+  }
+]
