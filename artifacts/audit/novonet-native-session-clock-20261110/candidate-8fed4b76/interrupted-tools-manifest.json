@@ -1,0 +1,32 @@
+{
+  "program_source": "8fed4b76f518935b30fcfb13930ccd3d7aae7381",
+  "node_program_changed": false,
+  "original_receipt": "ce2637ea",
+  "archive": "windows-interrupted-recovery-tools-v2.zip",
+  "bytes": 18565,
+  "sha256": "0354764a6cc3432a6ed09b2108a00e6fc16cfafc698d52b98debe51e00e63fc9",
+  "files": [
+    {
+      "path": "Update-Windows.ps1",
+      "bytes": 33383,
+      "sha256": "f1b3ecaa65167ef3145341882ffca792e543a0ed86a6abbe538b56be2059d254"
+    },
+    {
+      "path": "Test-Update-Windows.ps1",
+      "bytes": 22932,
+      "sha256": "8ed8d30c18f9697a3c3511c3a0ab5cca156a8a08644b13816b84df0a2c582edd"
+    },
+    {
+      "path": "NovonetExistingProcess.ps1",
+      "bytes": 6045,
+      "sha256": "4d6f1b1dc79251034493c0d55fbda942da5515cee95b756293801e3177b415be"
+    }
+  ],
+  "tests": {
+    "source": "passed",
+    "actual_fixed_package": "passed",
+    "process_barrier": "passed",
+    "live_D_execution": "not_executed"
+  },
+  "scope": "Original updater interrupted-task entry; no program, identity, database or network changes on A/B/C/D"
+}

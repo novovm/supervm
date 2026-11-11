@@ -1,5 +1,61 @@
 # C/D: fixed 8fed session-clock existing update
 
+## CURRENT 2026-11-11: D proceeds with NEW 8fed using interrupted recovery
+
+A pulled `ce2637ea`. D's old task is terminated (267014/0x41306), with no
+node/listener and valid original progress. Its exit cause remains unknown; this
+is neither a clean drain nor proof of C0000005. **Do not repair or restart 1ef
+first. Start the approved 8fed program with the existing database.**
+
+The original Windows updater now has `-RecoverInterrupted`. It checks the exact
+terminated-task result, LocalService, no restart/triggers, no active node/ports,
+valid progress/timeline, fixed package/runtime, original database and custody.
+It rechecks process/port absence immediately before startup. It does not clear
+LOCK, initialize, adjust clocks or classify the interruption as a clean exit.
+If new recovery fails, it stops only the new candidate and leaves evidence;
+it does not automatically restart the unexplained old owner.
+
+Only the updater changed. Program **8fed4b76**, its Full qualification and the
+150,603,521-byte Windows package are unchanged. **No program recopy or new Full.**
+The small tool archive is committed beside this file:
+`windows-interrupted-recovery-tools-v2.zip`, **18,565 bytes**, SHA256
+`0354764a6cc3432a6ed09b2108a00e6fc16cfafc698d52b98debe51e00e63fc9`.
+See `interrupted-tools-manifest.json` for all three member hashes. The old tool
+archive remains historical; do not use its missing interrupted entry.
+
+D Codex: sync main, then run in administrator PowerShell 7 from repository root:
+
+```powershell
+$audit=Join-Path (Get-Location) 'artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76'
+$zip=Join-Path $audit 'windows-interrupted-recovery-tools-v2.zip'
+if((Get-FileHash -LiteralPath $zip).Hash.ToLowerInvariant() -cne '0354764a6cc3432a6ed09b2108a00e6fc16cfafc698d52b98debe51e00e63fc9'){throw 'Wrong tools archive'}
+$run=Join-Path (Get-Location) ('target/d-8fed-interrupted-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
+if(Test-Path -LiteralPath $run){throw 'Use a fresh output path'}
+$tools=Join-Path $run 'tools'
+Expand-Archive -LiteralPath $zip -DestinationPath $tools
+$manifest=Get-Content -LiteralPath (Join-Path $audit 'interrupted-tools-manifest.json') -Raw|ConvertFrom-Json
+foreach($file in $manifest.files){if((Get-FileHash -LiteralPath (Join-Path $tools $file.path)).Hash.ToLowerInvariant() -cne $file.sha256){throw 'Wrong tool member'}}
+$package='D:\WEB3_AI\SUPERVM\target\d-8fed-preparation-20261110\package\novonet-observation-8fed4b76-windows-x86_64'
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File "$tools\Test-Update-Windows.ps1" -PackageRoot $package
+if($LASTEXITCODE -ne 0){throw 'Updater tests failed'}
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File "$tools\Update-Windows.ps1" -HostId D -PackageRoot $package -EvidenceRoot (Join-Path $run 'evidence') -RecoverInterrupted
+$updateExit=$LASTEXITCODE
+# Return the real exit code even on failure; do not retry or run initialization.
+Write-Output "D_UPDATE_EXIT=$updateExit"
+```
+
+Return `D_8FED_EXISTING_READY_FOR_A_QUERY` only on successful result, with exit
+code, result.json, after.json, old-exit.json and stopped-owner-preflight.json.
+Keep before.json/config/custody private; publish public projections only. On
+failure return error and remaining process state. A then performs authenticated
+A-to-D Status before object delivery. C/A/B need no operation for this change.
+
+Local verification: full original updater gates, actual returned D receipt,
+11 interrupted-state cases, 6 actual mode-guard cases, fixed 77-member package
+through generated updater, and 13 process-barrier cases passed. Logs are the
+three `interrupted-tools-*-tests.log` files. This is not D runtime acceptance.
+This section supersedes all older waiting/live-only instructions below.
+
 ## D actual preflight returned: update not started (2026-11-11)
 
 D ran the fixed updater tests successfully, but its original 1ef owner is no

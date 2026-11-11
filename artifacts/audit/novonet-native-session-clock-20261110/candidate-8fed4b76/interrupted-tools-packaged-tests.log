@@ -1,0 +1,12 @@
+PASS 7 deployment gates: syntax, new-only evidence, duplicate preservation, real path, bad package, host scope, forbidden actions
+PASS actual fixed Windows package through the same deployment gate
+PASS 13 firewall cases: renamed association accepted; 10 semantic changes, wrong association and wrong class rejected
+PASS 12 crashed-owner gates: exact crash accepted; live task, authority, restart, trigger, result, application, path, exception, pid and timeline counterexamples rejected
+PASS 10 clean-stop gates: proven normal stop accepted; active, authority, restart, trigger, failure, live process/port and timeline counterexamples rejected
+PASS 11 interrupted-owner gates: exact terminated task accepted; 9 unsafe states and clean-shutdown misclassification rejected
+PASS 6 actual mode-guard cases: interrupted alone accepted; conflicting recovery/rollback modes rejected
+PASS 7 original-scope gates: exact current scope accepted; port/address expansion and wrong direction rejected
+PASS 4 actual source adaptations: A/C/D old-version mappings and missing 082 optional field
+PASS 3 rollback-readiness gates: fresh logs accepted; existing task or log rejected before process stop
+PASS 8 observation-loss scope gates; exact C bytes required; other hosts, lifecycle modes and changed evidence rejected
+PASS 17 recovered-state gates; genesis null head allowed; absent prior state never certified unchanged

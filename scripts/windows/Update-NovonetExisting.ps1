@@ -9,6 +9,7 @@ param(
     [switch]$ResumePrepared,
     [switch]$RecoverCrashed,
     [switch]$ResumeStopped,
+    [switch]$RecoverInterrupted,
     [switch]$RecoverMissingProgress
 )
 $ErrorActionPreference='Stop'
@@ -98,8 +99,10 @@ function Assert-CrashedOwnerEvidence($Evidence,[string]$ExpectedPath) {
     if($Evidence.application -cne 'novovm-node.exe' -or $Evidence.application_path -cne $ExpectedPath -or $Evidence.exception_code -cne 'c0000005' -or $Evidence.fault_pid -le 0){throw 'Matching original application crash not proven'}
     if($Evidence.created_utc -lt $Evidence.last_run_utc.AddSeconds(-5) -or $Evidence.created_utc -gt $Evidence.event_utc -or $Evidence.event_utc -lt $Evidence.last_run_utc -or $Evidence.event_utc -gt [DateTime]::UtcNow.AddSeconds(5)){throw 'Original crash timeline differs'}
 }
-function Assert-StoppedOwnerEvidence($Evidence) {
-    if($Evidence.task_state -cne 'Ready' -or $Evidence.task_sid -cne 'S-1-5-19' -or $Evidence.restart_count -ne 0 -or $Evidence.trigger_count -ne 0 -or $Evidence.task_exit_code -ne 0 -or $Evidence.executing_nodes -ne 0 -or $Evidence.bound_ports -ne 0){throw 'Clean stopped owner not proven'}
+function Assert-StoppedOwnerEvidence($Evidence,[bool]$Interrupted=$false) {
+    # SCHED_S_TASK_TERMINATED is not proof of a clean node drain or a crash cause.
+    $expectedResult=if($Interrupted){267014}else{0}
+    if($Evidence.task_state -cne 'Ready' -or $Evidence.task_sid -cne 'S-1-5-19' -or $Evidence.restart_count -ne 0 -or $Evidence.trigger_count -ne 0 -or $Evidence.task_exit_code -ne $expectedResult -or $Evidence.executing_nodes -ne 0 -or $Evidence.bound_ports -ne 0){throw 'Stopped owner lifecycle not proven'}
     if($Evidence.last_run_utc -le [DateTime]'2026-11-01' -or $Evidence.last_run_utc -gt [DateTime]::UtcNow.AddSeconds(5) -or $Evidence.progress_utc -lt $Evidence.last_run_utc.AddSeconds(-5) -or $Evidence.progress_utc -gt [DateTime]::UtcNow.AddSeconds(5)){throw 'Stopped owner timeline differs'}
 }
 function Assert-MissingProgressRecovery([string]$Id,[bool]$Stopped,[bool]$Crashed,[bool]$Prepared,[string]$OldLogs) {
@@ -179,7 +182,8 @@ if($Owner) {
 }
 $principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
 if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator PowerShell required'}
-if($RecoverCrashed -and $ResumeStopped){throw 'Choose the proven crash or clean-stop path, not both'}
+if(@($RecoverCrashed,$ResumeStopped,$RecoverInterrupted|Where-Object {$_}).Count -gt 1){throw 'Choose one old-owner recovery path'}
+if($RecoverInterrupted -and ($RecoverMissingProgress -or $ResumePrepared -or $Rollback)){throw 'Interrupted recovery requires original progress and a fresh update'}
 if($RecoverMissingProgress -and ($HostId -cne 'C' -or !$ResumeStopped -or $RecoverCrashed -or $ResumePrepared -or $Rollback)){throw 'Invalid C observation-loss recovery mode'}
 $helper=Join-Path $PSScriptRoot 'NovonetExistingProcess.ps1'
 $helperText=(Get-Content -LiteralPath $helper -Raw).Replace("`r`n","`n")
@@ -217,10 +221,11 @@ try {
     $task=Get-ScheduledTask -TaskName $oldTask
     $taskSid=if($task.Principal.UserId.StartsWith('S-1-')){$task.Principal.UserId}else{([Security.Principal.NTAccount]::new($task.Principal.UserId)).Translate([Security.Principal.SecurityIdentifier]).Value}
     $expectedPorts=switch($HostId){'A'{@(41051,42051)} 'C'{@(41052,42052)} 'D'{@(41053,42053)}}
-    if($ResumeStopped) {
+    if($ResumeStopped -or $RecoverInterrupted) {
         $info=Get-ScheduledTaskInfo -TaskName $oldTask
         $proof=[pscustomobject]@{task_state=$task.State.ToString();task_sid=$taskSid;restart_count=[int]$task.Settings.RestartCount;trigger_count=@($task.Triggers|Where-Object {$null -ne $_}).Count;task_exit_code=[uint32]$info.LastTaskResult;executing_nodes=$nodes.Count;bound_ports=@(Get-NetUDPEndpoint|Where-Object {$_.LocalPort -in $expectedPorts}).Count;last_run_utc=$info.LastRunTime.ToUniversalTime();progress_utc=(Get-Item -LiteralPath $oldProgressPath).LastWriteTimeUtc}
-        Assert-StoppedOwnerEvidence $proof
+        Assert-StoppedOwnerEvidence $proof ([bool]$RecoverInterrupted)
+        $proof|Add-Member -NotePropertyMembers @{interrupted_recovery=[bool]$RecoverInterrupted;clean_shutdown_proven=(!$RecoverInterrupted);exit_cause_known=(!$RecoverInterrupted)}
         Wait-NovonetNodeExit
         Write-NewJson "$out/stopped-owner-preflight.json" $proof
     } elseif($RecoverCrashed) {
@@ -247,10 +252,10 @@ try {
         Write-NewJson "$out/observation-loss.json" ([ordered]@{host_id='C';progress_sha256=(Get-FileHash -LiteralPath $oldProgressPath).Hash;progress_bytes=813127;stdout_empty=$true;exit_missing=$true;previous_state_available=$false;clean_node_shutdown_proven=$false;scope='existing recovery verification; not state continuity certification'})
     }else{$progress=Get-Content -LiteralPath $oldProgressPath -Raw|ConvertFrom-Json}
     $progressAge=((Get-Date)-(Get-Item -LiteralPath $oldProgressPath).LastWriteTime).TotalSeconds
-    if(!$RecoverMissingProgress -and ($null -eq $progress -or $progress.chain_id -ne 91129655606029 -or $progress.execution_failures -ne 0 -or (!$RecoverCrashed -and !$ResumeStopped -and $progressAge -gt 30))){throw 'Original progress not live and healthy'}
+    if(!$RecoverMissingProgress -and ($null -eq $progress -or $progress.chain_id -ne 91129655606029 -or $progress.execution_failures -ne 0 -or (!$RecoverCrashed -and !$ResumeStopped -and !$RecoverInterrupted -and $progressAge -gt 30))){throw 'Original progress not live and healthy'}
     $keys=Get-CustodyHashes $config $network
     $profiles=@(Get-NetFirewallProfile|Select-Object Name,Enabled)
-    Write-NewJson "$out/before.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');pid=$(if($null -ne $original){$original.ProcessId}else{$null});exe=$oldExe;node_sha256=$oldNodePin;sid='S-1-5-19';database=$config.database;custody_sha256=$keys;config=$config;network=$network;progress=$progress;progress_age_seconds=$progressAge;prior_owner_crashed=[bool]$RecoverCrashed;prior_owner_cleanly_stopped=($ResumeStopped -and !$RecoverMissingProgress);observation_loss_recovery=[bool]$RecoverMissingProgress;crash=$crash;firewall_profiles=$profiles})
+    Write-NewJson "$out/before.json" ([ordered]@{host_id=$HostId;prior_owner_interrupted=[bool]$RecoverInterrupted;time=(Get-Date).ToUniversalTime().ToString('o');pid=$(if($null -ne $original){$original.ProcessId}else{$null});exe=$oldExe;node_sha256=$oldNodePin;sid='S-1-5-19';database=$config.database;custody_sha256=$keys;config=$config;network=$network;progress=$progress;progress_age_seconds=$progressAge;prior_owner_crashed=[bool]$RecoverCrashed;prior_owner_cleanly_stopped=($ResumeStopped -and !$RecoverMissingProgress);observation_loss_recovery=[bool]$RecoverMissingProgress;crash=$crash;firewall_profiles=$profiles})
     if((Test-Path -LiteralPath $work) -and !$ResumePrepared){throw 'Prepared work exists; inspect before explicit resume'}
     if(Test-Path -LiteralPath $release){Assert-Package $release}else{Copy-Item -LiteralPath $PackageRoot -Destination $release -Recurse;Assert-Package $release}
     foreach($item in @((Get-Item -LiteralPath $release))+@(Get-ChildItem -LiteralPath $release -Recurse -Force)){Set-OwnerAcl $item.FullName}
@@ -298,12 +303,13 @@ try {
     Write-NewJson "$out/firewall.json" ([ordered]@{old_rule=$rule.Name;new_rule=$newRule;old_preserved=$true;filters_copied_exactly=$true;program=$newExe;profiles_unchanged=$true})
     if(Get-ScheduledTask -TaskName $newTask -ErrorAction SilentlyContinue){throw 'New task already exists'}
     Assert-RollbackReady (Join-Path $work 'rollback-logs') ([bool](Get-ScheduledTask -TaskName $rollbackTask -ErrorAction SilentlyContinue))
-    if($RecoverCrashed -or $ResumeStopped) {
+    if($RecoverCrashed -or $ResumeStopped -or $RecoverInterrupted) {
         if((Get-ScheduledTask -TaskName $oldTask).State -ne 'Ready'){throw 'Old task became active; preserve state'}
         Wait-NovonetNodeExit
+        if(@(Get-NetUDPEndpoint|Where-Object {$_.LocalPort -in $expectedPorts}).Count){throw 'Original ports acquired a new owner'}
     }else{Stop-NovonetExactProcess -ProcessId $original.ProcessId -ExpectedPath $oldExe -ExpectedSha256 $oldNodePin}
     $stopped=$true
-    Write-NewJson "$out/old-exit.json" ([ordered]@{pid=$(if($null -ne $original){$original.ProcessId}elseif($null -ne $crash){$crash.fault_pid}else{$null});exe=$oldExe;process_handle_waited=$true;no_executing_node=$true;terminated_by_updater=(!$RecoverCrashed -and !$ResumeStopped);prior_owner_cleanly_stopped=($ResumeStopped -and !$RecoverMissingProgress);observation_loss_recovery=[bool]$RecoverMissingProgress;scope='authorized original-database recovery; not a new graceful-drain qualification';time=(Get-Date).ToUniversalTime().ToString('o')})
+    Write-NewJson "$out/old-exit.json" ([ordered]@{pid=$(if($null -ne $original){$original.ProcessId}elseif($null -ne $crash){$crash.fault_pid}else{$null});exe=$oldExe;prior_owner_interrupted=[bool]$RecoverInterrupted;process_handle_waited=$true;no_executing_node=$true;terminated_by_updater=(!$RecoverCrashed -and !$ResumeStopped -and !$RecoverInterrupted);prior_owner_cleanly_stopped=($ResumeStopped -and !$RecoverMissingProgress);observation_loss_recovery=[bool]$RecoverMissingProgress;scope='authorized original-database recovery; not a new graceful-drain qualification';time=(Get-Date).ToUniversalTime().ToString('o')})
     Start-ExistingTask $newTask
     for($i=0;$i -lt 120 -and !(Test-Path -LiteralPath "$work/logs/progress.json");$i++){Start-Sleep -Milliseconds 500}
     if(!(Test-Path -LiteralPath "$work/logs/progress.json")){throw 'No new original-owner progress'}
@@ -319,16 +325,16 @@ try {
     foreach($path in $keys.Keys){if($keys[$path] -cne $afterKeys[$path]){throw 'Custody changed'}}
     $modules=@((Get-Process -Id $new[0].ProcessId).Modules|Where-Object ModuleName -EQ 'aoem_ffi.dll')
     if($modules.Count -ne 1 -or $modules[0].FileName -ine $config.library -or (Get-FileHash -LiteralPath $modules[0].FileName).Hash.ToLowerInvariant() -cne $corePin){throw 'Actually loaded AOEM differs'}
-    Write-NewJson "$out/after.json" ([ordered]@{host_id=$HostId;time=(Get-Date).ToUniversalTime().ToString('o');source=$source;pid=$new[0].ProcessId;exe=$newExe;node_sha256=$nodePin;sid='S-1-5-19';database=$config.database;start='existing';initialize_executed=$false;keys_generated=$false;custody_unchanged=$true;aoem_module=$modules[0].FileName;aoem_sha256=$corePin;old_task=(Get-ScheduledTask -TaskName $oldTask).State.ToString();new_task=$newTask;prior_owner_crashed=[bool]$RecoverCrashed;terminated_process_observations=$newExecution.exited;progress=$current;listeners=@(Get-NetUDPEndpoint|Where-Object OwningProcess -EQ $new[0].ProcessId|Select-Object LocalAddress,LocalPort,OwningProcess);new_command_file_present=(Test-Path -LiteralPath $network.probe_control_file)})
-    Write-NewJson "$out/result.json" ([ordered]@{host_id=$HostId;source=$source;update_completed=(!$RecoverMissingProgress);existing_recovery_opened=$true;observation_loss_recovery=[bool]$RecoverMissingProgress;previous_state_available=(!$RecoverMissingProgress);start='existing';database=$config.database;pid=$new[0].ProcessId;custody_unchanged=$true;progress_state_unchanged=$(if($RecoverMissingProgress){$null}else{$true});authenticated_state_root_external_check_required=$true;recovery_observer_available=$true;new_object_sent=$false;root_cause_resolved=$false;initialize_executed=$false;business_receipt=$false})
+    Write-NewJson "$out/after.json" ([ordered]@{host_id=$HostId;prior_owner_interrupted=[bool]$RecoverInterrupted;time=(Get-Date).ToUniversalTime().ToString('o');source=$source;pid=$new[0].ProcessId;exe=$newExe;node_sha256=$nodePin;sid='S-1-5-19';database=$config.database;start='existing';initialize_executed=$false;keys_generated=$false;custody_unchanged=$true;aoem_module=$modules[0].FileName;aoem_sha256=$corePin;old_task=(Get-ScheduledTask -TaskName $oldTask).State.ToString();new_task=$newTask;prior_owner_crashed=[bool]$RecoverCrashed;terminated_process_observations=$newExecution.exited;progress=$current;listeners=@(Get-NetUDPEndpoint|Where-Object OwningProcess -EQ $new[0].ProcessId|Select-Object LocalAddress,LocalPort,OwningProcess);new_command_file_present=(Test-Path -LiteralPath $network.probe_control_file)})
+    Write-NewJson "$out/result.json" ([ordered]@{host_id=$HostId;prior_owner_interrupted=[bool]$RecoverInterrupted;source=$source;update_completed=(!$RecoverMissingProgress);existing_recovery_opened=$true;observation_loss_recovery=[bool]$RecoverMissingProgress;previous_state_available=(!$RecoverMissingProgress);start='existing';database=$config.database;pid=$new[0].ProcessId;custody_unchanged=$true;progress_state_unchanged=$(if($RecoverMissingProgress){$null}else{$true});authenticated_state_root_external_check_required=$true;recovery_observer_available=$true;new_object_sent=$false;root_cause_resolved=$false;initialize_executed=$false;business_receipt=$false})
     if($RecoverMissingProgress){Write-Output 'C_EXISTING_RECOVERY_READY_FOR_A_QUERY; previous state continuity NOT certified'}else{Write-Output "PASS $HostId 3fa11f94 existing update; external authenticated Status and physical relay evidence remain required"}
 } catch {
     $problem=$_.ToString()
-    Write-NewJson "$out/error.json" ([ordered]@{error=$problem;old_node_stopped=($stopped -and !$RecoverCrashed -and !$ResumeStopped);existing_start_attempted=$stopped;prior_owner_crashed=[bool]$RecoverCrashed;prior_owner_cleanly_stopped=($ResumeStopped -and !$RecoverMissingProgress);observation_loss_recovery=[bool]$RecoverMissingProgress;time=(Get-Date).ToUniversalTime().ToString('o')})
+    Write-NewJson "$out/error.json" ([ordered]@{error=$problem;prior_owner_interrupted=[bool]$RecoverInterrupted;old_node_stopped=($stopped -and !$RecoverCrashed -and !$ResumeStopped -and !$RecoverInterrupted);existing_start_attempted=$stopped;prior_owner_crashed=[bool]$RecoverCrashed;prior_owner_cleanly_stopped=($ResumeStopped -and !$RecoverMissingProgress);observation_loss_recovery=[bool]$RecoverMissingProgress;time=(Get-Date).ToUniversalTime().ToString('o')})
     if($stopped) {
-        if($RecoverMissingProgress) {
-            # With no trustworthy old projection, do not loop through old/new
-            # programs on the same database. Stop only this exact candidate.
+        if($RecoverMissingProgress -or $RecoverInterrupted) {
+            # A lost projection or unexplained task termination is not a healthy
+            # rollback target. Stop this candidate; do not loop through old/new.
             # Cancel the one-shot owner too: a delayed task must not start a node
             # after the controller has reported recovery failure.
             $candidateTask=Get-ScheduledTask -TaskName $newTask -ErrorAction SilentlyContinue
@@ -336,7 +342,7 @@ try {
             $remaining=@((Get-NovonetNodeExecutionState).active)
             if($remaining.Count -gt 1){throw 'Unknown concurrent processes; no recovery action taken'}
             if($remaining.Count -eq 1){Stop-NovonetExactProcess -ProcessId $remaining[0].ProcessId -ExpectedPath $newExe -ExpectedSha256 $nodePin}else{Wait-NovonetNodeExit}
-            Write-NewJson "$out/recovery-stopped.json" ([ordered]@{host_id='C';start='existing';candidate_stopped=$true;automatic_rollback_started=$false;database_preserved=$true;reason='recovery qualification failed; preserve original owner evidence'})
+            Write-NewJson "$out/recovery-stopped.json" ([ordered]@{host_id=$HostId;start='existing';candidate_stopped=$true;automatic_rollback_started=$false;database_preserved=$true;reason='recovery qualification failed; preserve original owner evidence'})
             throw $problem
         }
         Assert-RollbackReady (Join-Path $work 'rollback-logs') ([bool](Get-ScheduledTask -TaskName $rollbackTask -ErrorAction SilentlyContinue))

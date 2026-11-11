@@ -2136,6 +2136,18 @@ Application1000/PID24376一致；管理员采集无现存进程/监听、无读�
 owner，不盲抄C崩溃标志；回传后A认证查询，再做实际对象。查询不等于DONE/共识，
 旧C访问冲突根因不由新版恢复通过自动销账。未另触发Full。
 
+### 37.7 2026-11-11 D中断退出不阻挡直接启动新程序
+
+已下拉D `ce2637ea`：旧1ef任务Ready/result267014，无进程和41053/42053监听，
+旧progress有效、exit.json缺失。不是8fed启动失败，不把原因未明的退出写成正常排空。
+原Windows更新器新增显式`RecoverInterrupted`，仅接受该任务终止状态及原有身份、
+无重启/触发器、空闲进程/端口、有效时间线和原库/钥/固定包检查；再由8fed existing
+真正验证恢复。失败精确停止新实例，不自动回到原因未明的旧owner。
+原更新器全部回归、D真实回执、11项中断反例、6项实际参数保护、固定77成员包及
+13项进程屏障检查通过。只更新工具，8fed程序与原Full资格不变；小ZIP随Git交付，
+不重新传150MB包、不另触发Full。D按[CD-UPDATE首节](../artifacts/audit/novonet-native-session-clock-20261110/candidate-8fed4b76/CD-UPDATE.md)
+直接执行新版恢复并回传，A再认证查询。C/A/B本步骤不动；D尚未启动成功，不称DONE。
+
 ## 2026-10-17 Android v27 跟进（共享runtime未改）
 
 SUPERVM b6cc81f9保持；NOVOCHAT d5e547b/v27仅修原Android网络owner对完全相同LinkProperties

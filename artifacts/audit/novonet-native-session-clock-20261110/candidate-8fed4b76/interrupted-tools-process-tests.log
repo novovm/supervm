@@ -1,0 +1,2 @@
+PASS 5 isolated node-exit barrier cases
+PASS 8 process-state cases including actual live and terminated Windows processes; no node was stopped

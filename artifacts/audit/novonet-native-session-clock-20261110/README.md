@@ -1,5 +1,22 @@
 # Native first-handshake session clock — 2026-11-10
 
+## 2026-11-11: D terminated-owner recovery entry released
+
+Pulled D receipt `ce2637ea`: package/tests passed, but old 1ef task result is
+267014, no node/listener, valid progress and no exit.json. Update never started.
+Do not repair the old executable first. The original updater now handles this
+as explicit **RecoverInterrupted**, not a clean stop or a proven crash. New 8fed
+still opens the original database; package/runtime/custody, process exclusion
+and recovered-state checks remain. A failed interrupted recovery stops the new
+candidate without automatically starting the unexplained old owner.
+
+Original and generated updater tests, real D evidence guard, actual fixed package
+and process-barrier regression passed. The 18,565-byte tools ZIP and local logs
+are committed beside the [direct D instruction](candidate-8fed4b76/CD-UPDATE.md).
+No node binary change, new Full, package recopy, A/B/C operation or D startup
+performed by A in this step. D must return the actual new-start result before
+A-to-D query or object acceptance can be claimed.
+
 ## 2026-11-11 10:32: C update/query passed; D released
 
 C's `2db1fead` receipt confirms new 8fed PID7816 / LocalService existing recovery,

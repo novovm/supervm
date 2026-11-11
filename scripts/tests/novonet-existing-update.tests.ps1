@@ -182,6 +182,44 @@ foreach($case in @{task_state='Running';task_sid='S-1-5-18';restart_count=1;trig
 }
 Write-Output 'PASS 10 clean-stop gates: proven normal stop accepted; active, authority, restart, trigger, failure, live process/port and timeline counterexamples rejected'
 
+$interrupted=New-StoppedFixture
+$interrupted.task_exit_code=267014
+Assert-StoppedOwnerEvidence $interrupted $true
+foreach($case in @{task_state='Running';task_sid='S-1-5-18';restart_count=1;trigger_count=1;task_exit_code=0;executing_nodes=1;bound_ports=1;last_run_utc=[DateTime]::UtcNow.AddMinutes(1);progress_utc=[DateTime]::UtcNow.AddHours(-26)}.GetEnumerator()) {
+    $fixture=$interrupted.PSObject.Copy();$fixture.($case.Key)=$case.Value;$rejected=$false
+    try{Assert-StoppedOwnerEvidence $fixture $true}catch{$rejected=$true}
+    if(!$rejected){throw "Invalid interrupted owner accepted: $($case.Key)"}
+}
+$rejected=$false
+try{Assert-StoppedOwnerEvidence $interrupted}catch{$rejected=$true}
+if(!$rejected){throw 'Interrupted task must not qualify as a clean shutdown'}
+# Exercise the actual controller branch against the returned D record, without
+# calling the updater or touching a task/database. Absence must be checked live again.
+$receipt=Join-Path $PSScriptRoot '../../artifacts/audit/validator-d-8fed-preflight-stopped-20261111/preflight-public.json'
+if(Test-Path -LiteralPath $receipt) {
+    $actual=Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json
+    $actual|Add-Member -NotePropertyMembers @{executing_nodes=@($actual.active_nodes).Count;bound_ports=@($actual.listeners).Count}
+    $actual.last_run_utc=[DateTime]$actual.last_run_utc;$actual.progress_utc=[DateTime]$actual.progress_utc
+    Assert-StoppedOwnerEvidence $actual $true
+    Write-Output 'PASS actual D interrupted receipt; not a live D startup qualification'
+}
+Write-Output 'PASS 11 interrupted-owner gates: exact terminated task accepted; 9 unsafe states and clean-shutdown misclassification rejected'
+
+$modeGuards=@($ast.EndBlock.Statements|Where-Object {
+    $_ -is [Management.Automation.Language.IfStatementAst] -and
+    ($_.Extent.Text -match "throw 'Choose one old-owner recovery path'" -or $_.Extent.Text -match "throw 'Interrupted recovery requires original progress and a fresh update'")
+})
+if($modeGuards.Count -ne 2){throw 'Actual recovery mode guards missing'}
+$RecoverInterrupted=$true
+foreach($mode in @('none','RecoverCrashed','ResumeStopped','RecoverMissingProgress','ResumePrepared','Rollback')) {
+    $RecoverCrashed=$false;$ResumeStopped=$false;$RecoverMissingProgress=$false;$ResumePrepared=$false;$Rollback=$false
+    if($mode -ne 'none'){Set-Variable -Name $mode -Value $true}
+    $rejected=$false
+    try{foreach($guard in $modeGuards){. ([scriptblock]::Create($guard.Extent.Text))}}catch{$rejected=$true}
+    if($rejected -ne ($mode -ne 'none')){throw "Recovery mode guard differs: $mode"}
+}
+Write-Output 'PASS 6 actual mode-guard cases: interrupted alone accepted; conflicting recovery/rollback modes rejected'
+
 $portFixture=[pscustomobject]@{Protocol='UDP';LocalPort=@('41051','42051');RemotePort='Any'}
 $addressFixture=[pscustomobject]@{LocalAddress='192.168.71.74';RemoteAddress=@('192.168.71.0/255.255.255.0','47.103.59.206')}
 $ruleFixture=[pscustomobject]@{Enabled='True';Action='Allow';Direction='Inbound'}
