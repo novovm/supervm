@@ -10,6 +10,7 @@ param(
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+. "$PSScriptRoot/Read-RelayProgress.ps1"
 $short=$Source.Substring(0,8)
 if(!$WorkName.StartsWith("novonet-observation-$short-")){throw 'Work/source mismatch'}
 $exe="C:\ProgramData\NOVOVM\releases\novonet-observation-$short-windows-x86_64\bin\novovm-node.exe"
@@ -20,27 +21,30 @@ $nodes=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'"|Where-Ob
 if($nodes.Count -ne 1 -or (Invoke-CimMethod $nodes[0] -MethodName GetOwnerSid).Sid -cne 'S-1-5-19'){throw 'Original LocalService owner not confirmed'}
 if((Get-FileHash -LiteralPath $exe).Hash.ToLowerInvariant() -cne $NodeSha256){throw 'Candidate program differs'}
 function Read-Progress {
-    $item=Get-Item -LiteralPath $file
-    if($item.Length -gt 4MB -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Invalid observation file'}
-    $bytes=[IO.File]::ReadAllBytes($file)
-    if($bytes.Length -gt 4MB){throw 'Observation exceeds bound'}
-    $p=[Text.Encoding]::UTF8.GetString($bytes)|ConvertFrom-Json
-    if($p.chain_id -ne 91129655606029 -or !$p.novonet.diagnostic_relay.enabled){throw 'Wrong or disabled diagnostic owner'}
-    if(([DateTime]::UtcNow-$item.LastWriteTimeUtc).TotalSeconds -gt 15){throw 'Stale progress'}
-    return $p
+    Read-RelayProgress -Path $file -EvidenceRoot $out
 }
 function CircuitKey($Circuit){[Convert]::ToHexString([byte[]]$Circuit.route.circuit).ToLowerInvariant()}
 function ProbeKey($Event){[Convert]::ToHexString([byte[]]$Event.probe.nonce).ToLowerInvariant()}
-$baseline=Read-Progress
+New-Item -ItemType Directory -Path $out|Out-Null
+try {$baseline=Read-Progress}
+catch {
+    [ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=0;error=$_.Exception.Message}|ConvertTo-Json|Set-Content "$out/error.json" -Encoding utf8
+    throw
+}
 $prior=@($baseline.native_network_probe.transport.relay_circuits|ForEach-Object {CircuitKey $_})
 $oldNonces=@($baseline.novonet.diagnostic_relay.events|Where-Object {$null -ne $_.probe}|ForEach-Object {ProbeKey $_})
-New-Item -ItemType Directory -Path $out|Out-Null
-[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=1800}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
+function Save-Liveness([bool]$Active) {
+    [ordered]@{host=$HostId;observer_version=2;observer_pid=$PID;node_pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');active=$Active;snapshots=$saved}|ConvertTo-Json|Set-Content "$out/liveness.json" -Encoding utf8
+}
+$saved=0
+Save-Liveness $true
+[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";observer_version=2;observer_pid=$PID;source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=1800}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
 Write-Output "${HostId}_RELAY_OBSERVER_ARMED: $out; leave this bounded collector running"
-$clock=[Diagnostics.Stopwatch]::StartNew();$saved=0;$errors=0;$terminalAt=$null;$previous=$null
+$clock=[Diagnostics.Stopwatch]::StartNew();$saved=0;$terminalAt=$null;$previous=$null
 try {
     while($clock.Elapsed.TotalSeconds -lt 1800 -and $saved -lt 64){
-        try{$p=Read-Progress;$errors=0}catch{$errors++;if($errors -ge 3){throw};Start-Sleep -Milliseconds 500;continue}
+        $p=Read-Progress
+        Save-Liveness $true
         $circuits=@($p.native_network_probe.transport.relay_circuits|Where-Object {(CircuitKey $_) -notin $prior})
         if($circuits.Count){
             $data=[ordered]@{host=$HostId;source=$Source;pid=$nodes[0].ProcessId;chain_id=$p.chain_id;current_height=$p.current_height;execution_failures=$p.execution_failures;diagnostic_relay=$p.novonet.diagnostic_relay;relay_circuits=$circuits;transport=$p.native_network_probe.transport;business_receipt=$false}
@@ -60,3 +64,4 @@ try {
     }
     [ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=$saved;terminal_observed=($null -ne $terminalAt);wait_expired=($clock.Elapsed.TotalSeconds -ge 1800);capture_limit_reached=($saved -ge 64);node_mutated=$false;business_receipt=$false}|ConvertTo-Json|Set-Content "$out/result.json" -Encoding utf8
 }catch{[ordered]@{host=$HostId;utc=[DateTime]::UtcNow.ToString('o');snapshots=$saved;error=$_.Exception.Message}|ConvertTo-Json|Set-Content "$out/error.json" -Encoding utf8;throw}
+finally{Save-Liveness $false}

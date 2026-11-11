@@ -7,6 +7,50 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 20:10 Beijing: re-arm read-only v2 observers; no node update
+
+A verified D's six raw receipt hashes. D's READY was superseded by exit1 at
+20:02:36, with zero snapshots. **No A relay object was sent.** C's original
+collector may still be running; do not launch a second overlapping collector.
+
+The original progress writer checks its reporting deadline before and after
+`product.poll`. Crossing the deadline inside poll can publish a valid Status
+without the optional `novonet` observation. This is a source-proven omission
+window, **not a proven attribution of D's individual read**: those bytes were
+not retained. The running program is unchanged; writer correction remains a
+separate source issue, not declared repaired by this collector change.
+
+`../Watch-Relay.ps1` now uses adjacent `../Read-RelayProgress.ps1`. Synchronize
+both files, not just Watch. Within the existing15-second observation freshness
+bound it waits for a complete report; it never synthesizes diagnostic fields
+or treats omission as success. Persistent omission, stale data, wrong chain,
+execution failure, disabled diagnostics and missing transport remain failures.
+First/latest rejected-read metadata (hash, size, top-level keys, reason) are
+bounded; no arbitrary raw report or secret-bearing configuration is exported.
+Local reader regression:13 checks passed. No binary, node, production deadline,
+authentication, route budget or protocol change; no new Full or package needed.
+
+**C/D action once:** inspect the exact previous observer PID and creation time
+from its launch receipt. If still running that exact Watch helper, stop only
+that observer (not the node or unrelated PowerShell); preserve its existing
+files and record the deliberate stop. D's exited collector must not be stopped
+again. Start v2 with the same fixed875 parameters below in a fresh EvidenceRoot,
+as one hidden independent administrator PowerShell7 helper. Do not restart,
+update, initialize, send objects or modify any node state.
+
+Immediately publish raw `ready.json` **and current `liveness.json`**, launch PID,
+script/helper hashes, stdout/stderr available so far, and explicit exit/result/
+error absence or their actual files. `observer_version=2` is mandatory. Leave
+the30-minute collector running. Terminal liveness is false. If it exits, report
+that promptly; READY alone is not readiness. Use -text Git attributes or a ZIP
+to preserve evidence bytes. A requires both matching active liveness receipts
+sampled within3 minutes and no subsequent terminal report before one A→C→D send.
+
+After the send, return result/error, all relay snapshots, first/latest read
+anomalies, final liveness and wrapper exit logs. Gaps are reported, not hidden;
+missing relay/receiver evidence cannot become a pass. Existing direct tests
+are not repeated. Detailed failure record: OBSERVER-V2.md.
+
 ### CURRENT 2026-11-11 20:02 Beijing: D observer failed; A must hold send
 
 D launched the original observer once after main4f44244e. It emitted READY at
