@@ -7,6 +7,17 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-11 20:02 Beijing: D observer failed; A must hold send
+
+D launched the original observer once after main4f44244e. It emitted READY at
+19:59:46, then exited1 at20:02:36 with zero snapshots: Watch-Relay.ps1 line28
+reported missing `novonet` property in the read progress object. D is **not
+currently armed**. No rerun, restart, package change or object send was performed.
+The failed progress bytes were not retained, so the underlying cause is unknown.
+See [D raw READY and subsequent failure](../../validator-d-875-relay-armed-20261111/README.md).
+Do not treat the historical ready.json as a currently active window or send
+A->C->D until the observation failure is resolved and both windows are active.
+
 ### CURRENT 2026-11-11 19:53 Beijing: D authenticated health passed; arm C/D observers now
 
 A verified all11 D original evidence files from mainb6958aea. New875 PID36464,
