@@ -21,8 +21,17 @@ The new Fullmax bundle was built from AOEM main using its official build script 
 - 2026-11-12 23:50:07 UTC: preflight passed. Old task result `3221225477` (`0xC0000005`), no C node or ports, original database present.
 - 23:50:09 UTC: one new `existing` task start requested.
 - 23:52:46 and 23:54:24 UTC: new task `Running`, node PID `15612`, original node executable hash unchanged, **loaded module** `aoem_ffi.dll` hash `5743f587…a01c0d52`.
-- C binds `192.168.71.125:41052` and `:42052` with that PID. New progress reports chain ID `91129655606029`, height `1`, head `null`, execution failures `0`, recovery incomplete `false`. Old progress height/head were also `1`/`null`.
+- C binds `192.168.71.125:41052` and `:42052` with that PID. New progress reports chain ID `91129655606029`, height `1`, head `null`, execution failures `0`, and `recovery_in_progress=false`. Old progress height/head were also `1`/`null`.
 - No owner error, node exit, or node stderr at those observations. The old crash evidence and old task are retained.
+
+At 23:58:39 UTC, C started one bounded **read-only** health observer, PID
+`3972`, against node PID `15612` with a 7,200-second maximum. Its first sample
+confirmed the new DLL, two bound ports, chain ID/height and zero execution
+failures. Local evidence is under
+`D:\WEB3_AI\SUPERVM\target\c-aoem-node-test-20261113\watch-20261113-01`.
+`Watch-C-Aoem966.ps1` is included for audit; this is an ongoing observation,
+not a completed two-hour pass. A separate authenticated query and relay load
+still require coordination.
 
 The source commit `fd5cfb31` (included in `9662470d`) repairs several AOEM FFI return buffers by preserving their allocation layout before `aoem_free`. This is a plausible memory-safety contributor. **The old crash dump does not identify an AOEM frame as the proven cause.** Startup and a few minutes of health do not prove the new DLL fixes the historical crash; identical external load and a bounded observation period are still needed.
 

@@ -1,6 +1,23 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13: AOEM version comparison before any new runtime update
+## CURRENT 2026-11-13: C AOEM-only existing recovery under observation
+
+C used the unchanged a254 node executable, original database, protected
+identity and network config with the newly built AOEM `9662470d` Fullmax
+Windows runtime. The separate LocalService task loaded the new DLL and opened
+the original database with `existing`; PID15612 bound41052/42052 and progress
+matched the old height/head at the first two observations. The previous a254
+task and its crash evidence remain intact. This **does not yet establish the
+cause of the prior crash** or qualify A/B/D for an AOEM update. See
+[C controlled runtime comparison and initial evidence](C-source-investigation-20261112/C-AOEM966-controlled-20261113/README.md).
+
+A should query the current C process through the existing authenticated path,
+then coordinate a bounded relevant workload. C should retain crash and health
+evidence without automatic restart. The four-host version inventory below is
+still required to make later synchronized decisions; its historical status
+describes the state before this C-only experiment.
+
+## PRIOR 2026-11-13: AOEM version comparison before any new runtime update
 
 AOEM GitHub `main@9662470d` now contains the previously missing
 `aoem_compute_result_take_v1` and the FFI ownership correction. C built and

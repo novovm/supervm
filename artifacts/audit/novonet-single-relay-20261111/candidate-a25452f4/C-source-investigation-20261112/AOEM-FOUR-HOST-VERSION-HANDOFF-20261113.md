@@ -3,6 +3,12 @@
 Status: **read-only four-host comparison requested; four fresh host reports not yet collected.**
 Do not use this document as authorization to replace a node runtime or to send a relay object.
 
+Update 2026-11-13: C subsequently started a separate, isolated `existing`
+node task with the unchanged a254 executable and AOEM `9662470d`; see
+[the initial C-only result](C-AOEM966-controlled-20261113/README.md). References
+below to C being down or the new AOEM not being installed are historical
+pre-experiment observations. A/B/D have not been changed by C's experiment.
+
 ## Source reconciliation on C
 
 AOEM GitHub `main@9662470d` now contains the previously missing
