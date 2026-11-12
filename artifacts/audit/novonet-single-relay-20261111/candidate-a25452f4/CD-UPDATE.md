@@ -1,5 +1,22 @@
 # a25452f4: approved existing updates, then real double relay
 
+## CURRENT 2026-11-13: AOEM version comparison before any new runtime update
+
+AOEM GitHub `main@9662470d` now contains the previously missing
+`aoem_compute_result_take_v1` and the FFI ownership correction. C built and
+component-checked its Windows Fullmax core, then produced a separate Windows
+bundle candidate. **No host has installed this candidate. C node is still down;
+the crash root cause remains open.** The older pinned-source ZIP is comparison
+evidence only.
+
+[Four-host coordinated read-only version instructions, exact hashes and
+Windows/Linux collectors](C-source-investigation-20261112/AOEM-FOUR-HOST-VERSION-HANDOFF-20261113.md)
+are the current action. A should pick one common capture window for A/B/C/D
+and collect actual loaded-module and installed-manifest reports. B's Linux SO
+hash is not expected to equal the Windows DLL hash, but source, ABI and release
+identity must align. Do not update, restart or send a relay object merely to
+complete this version inventory.
+
 ## C owns source diagnosis — 2026-11-12 23:00 Beijing
 
 The user assigned C to investigate locally, without waiting for A's diagnosis.
