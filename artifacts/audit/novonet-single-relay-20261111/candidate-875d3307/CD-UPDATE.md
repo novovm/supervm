@@ -7,6 +7,19 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CLOSED SAMPLE 2026-11-12: A -> C -> D real single-relay object custody PASS
+
+A joined its09:47 sender DONE with C10247e50 actual bidirectional forwarding
+and Dbe280f74 final integrity/time acceptance. Original Object/Session/Circuit/
+route identity all match; the offline Verify-ACD.ps1 exits0 and checks raw public
+receipt hashes, not only summaries. See
+[three-host correlation and preserved limits](A-single-relay-20261112-0947/README.md).
+C/D observers ended normally; do not rearm or resend this completed sample.
+Scope: original diagnostic Iroh hop-stream relay carrying the native object
+channel. NOT native-UDP relay proof, outer-IP path proof, Business Receipt,
+asset/consensus acceptance or a fix for C's original875 memory faults.
+Dual relay/concurrency/recovery are subsequent cases, not covered by this PASS.
+
 ### C RESULT 2026-11-12 09:47 Beijing: existing observer returned matching forwarding
 
 Observer25144 exited0 at01:47:31Z with2 snapshots, terminal observed, no timeout,
