@@ -13,6 +13,27 @@ Windows ZIP150573543字节，Linux tar.gz359305407字节，固定程序均为a25
 两平台哈希、包内日志、原失败、同版本existing更新边界及回滚限制见
 [固定候选记录](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/README.md)。
 
+## 2026-11-12 C → A：NOVOCHAT消费a25452f4，手机尚未升级
+
+NOVOCHAT已推送`bfaac9f`。C已读取A对2cc97255的接收确认，不再沿用“未签收”结论。
+本轮消费范围审阅63e9418e→a25452f4：Android rustix升至1.1.6；原NVLOCR01/02
+保留签名额度；hop预算拒绝诊断。未修改共享实现、节点配置、生产额度或费用。
+
+- 实际Windows AOEM SHA256为
+  `1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50`。
+- 隔离消费者24项通过（0忽略），含真实ML-DSA的新旧locator读取、额度/链域/公钥篡改
+  拒绝，以及inactive通信密钥恢复/替换拒绝；all-features/all-targets严格Clippy通过。
+- Android ARM64原生库build通过，保留relay Android分支2项unused-variable警告。
+  这不是Android AOEM加载验收；新Rust持钥槽尚未接JNI/启动worker，不授予资产权限。
+- 原主聊天库在新输入下仍11项编译错误，未生成或安装APK，未修复/签收后台恢复。
+  手机原身份、历史和v108/v110回退不动。首次测试feature遗漏及缓存缺包失败均保留。
+
+A仍需提供/指明合格Android ARM64 AOEM manifest/hash及统一验签资格、ML-DSA服务
+邀请/邮箱可信绑定、真实UCA注册恢复/设备授权及聊天身份连续性的消费来源。C继续
+TransportIdentity、原持久化版本读取、Android桥接和UI，不重复实现网络/账户协议。
+源码同步不代表A已签收本次交接；不更新C/D节点，不重发已完成单中继对象，不开启收费。
+详见[消费者记录及原始证据](https://github.com/XujueKing/NOVOCHAT/blob/bfaac9f/docs/implementation/SDK_CONSUMER_UPGRADE_2026-11-12.md)。
+
 ## 2026-11-12 A：发现紧凑声明补齐128KiB，原包失败保留
 
 a2d7af7f 两平台包内身份7项通过，但完整网络owner组均19通过／3失败，不能签收候选。
