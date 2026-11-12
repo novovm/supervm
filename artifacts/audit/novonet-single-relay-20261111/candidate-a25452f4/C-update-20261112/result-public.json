@@ -1,0 +1,28 @@
+{
+  "result": {
+    "host_id": "C",
+    "prior_owner_interrupted": false,
+    "source": "a25452f4c49be37cd984e650f2079642e6c273b3",
+    "update_completed": true,
+    "existing_recovery_opened": true,
+    "observation_loss_recovery": false,
+    "previous_state_available": true,
+    "start": "existing",
+    "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+    "pid": 27928,
+    "custody_unchanged": true,
+    "progress_state_unchanged": true,
+    "authenticated_state_root_external_check_required": true,
+    "recovery_observer_available": true,
+    "new_object_sent": false,
+    "root_cause_resolved": false,
+    "initialize_executed": false,
+    "business_receipt": false
+  },
+  "utc": "2026-11-12T08:34:21.8400995Z",
+  "observer_started": false,
+  "exit_code": 0,
+  "external_authenticated_query_required": true,
+  "status": "C_A254_EXISTING_READY_FOR_A_QUERY",
+  "D_operated": false
+}

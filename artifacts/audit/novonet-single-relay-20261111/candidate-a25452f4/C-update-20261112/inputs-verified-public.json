@@ -1,0 +1,27 @@
+{
+  "source": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "program_zip": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\candidates\\novonet-observation-a25452f4-20261112\\novonet-observation-a25452f4-windows-x86_64.zip",
+  "program_zip_sha256": "fa198636fa33021ea542850e56f1df17140a5174bfb93fca1ade47f599f14978",
+  "tools_zip_sha256": "a64f3cb94418f97e1f20ba074b47c45e4caf3798b8110ee31c1326340cbc757e",
+  "release_manifest_members_verified": 77,
+  "tools_verified": [
+    {
+      "name": "Update-Windows.ps1",
+      "bytes": 34990,
+      "sha256": "b07831e80ee3ed6f49f79b872873969989d85f9b357c44692495fb814db424cf"
+    },
+    {
+      "name": "Test-Update-Windows.ps1",
+      "bytes": 26780,
+      "sha256": "23ff558f7618f25f5da727f577629a2af1d0b7bbec89f32823a80132227d36c7"
+    },
+    {
+      "name": "NovonetExistingProcess.ps1",
+      "bytes": 6045,
+      "sha256": "4d6f1b1dc79251034493c0d55fbda942da5515cee95b756293801e3177b415be"
+    }
+  ],
+  "package_root": "D:\\WEB3_AI\\SUPERVM\\target\\c-a254-existing-update-20261112T083103Z\\package\\novonet-observation-a25452f4-windows-x86_64",
+  "tools_root": "D:\\WEB3_AI\\SUPERVM\\target\\c-a254-existing-update-20261112T083103Z\\tools",
+  "node_updated": false
+}

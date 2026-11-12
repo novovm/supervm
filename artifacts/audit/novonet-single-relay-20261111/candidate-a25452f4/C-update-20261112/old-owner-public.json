@@ -1,0 +1,22 @@
+{
+  "progress_sha256": "516ff2959a8fe81bd9a372a2929ac531c0e82a3f99432949a0d175361f0cbbbd",
+  "ports": [],
+  "utc": "2026-11-12T08:33:54.9546963Z",
+  "old_node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+  "execution": {
+    "active": [],
+    "exited": []
+  },
+  "task": "NOVOVM-C-875d3307-Existing-20261111",
+  "lifecycle": {
+    "task_state": "Ready",
+    "task_sid": "S-1-5-19",
+    "restart_count": 0,
+    "trigger_count": 0,
+    "task_exit_code": 3221225477,
+    "last_run_utc": "2026-11-12T01:37:32Z",
+    "executing_nodes": 0,
+    "bound_ports": 0,
+    "progress_utc": "2026-11-12T02:01:44.844954Z"
+  }
+}

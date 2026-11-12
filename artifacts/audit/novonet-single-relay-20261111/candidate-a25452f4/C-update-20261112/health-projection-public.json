@@ -1,0 +1,32 @@
+{
+  "utc": "2026-11-12T08:34:20.8500367Z",
+  "old_task_state": "Ready",
+  "new_task_name": "NOVOVM-C-a25452f4-Existing-20261112",
+  "prior_owner_crashed": true,
+  "current_height": 1,
+  "head": null,
+  "execution_failures": 0,
+  "recovery_in_progress": false,
+  "node_pid": 27928,
+  "observed_process": [
+    {
+      "ProcessId": 27928,
+      "Name": "novovm-node.exe",
+      "CreationDate": "2026-11-12T16:34:19.343445+08:00"
+    }
+  ],
+  "observed_listeners": [
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 42052,
+      "OwningProcess": 27928
+    },
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 41052,
+      "OwningProcess": 27928
+    }
+  ],
+  "observed_utc": "2026-11-12T08:36:18.8684938Z",
+  "external_query_completed_by_C": false
+}

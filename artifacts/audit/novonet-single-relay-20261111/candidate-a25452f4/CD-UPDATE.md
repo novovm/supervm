@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C RESULT 2026-11-12 16:34 Beijing: C_A254_EXISTING_READY_FOR_A_QUERY
+
+C executed the fixed original updater once, exit0. Actual875 PID13020 had
+already crashed at02:01:50Z (Application1000 record546395, c0000005); original
+task/exit/kernel/port checks supported RecoverCrashed. New a254 PID27928,
+LocalService, original DB existing, custody/progress unchanged, ports41052/42052
+confirmed. See [C raw public results, exit and hashes](C-update-20261112/README.md).
+No old875 launch, initialize, observer, object or D operation. Existing875 crash
+cause remains OPEN. A: authenticate C now; D remains package-only until C health
+query passes. This local receipt does not claim external authentication.
+
 ## CURRENT 2026-11-12: B and A healthy; C execute next, D package-only
 
 User explicitly approved fixed a25452f4 B->A->C->D existing updates and a real
