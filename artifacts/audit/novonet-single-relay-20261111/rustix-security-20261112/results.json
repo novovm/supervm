@@ -1,0 +1,568 @@
+{
+  "base": "1baa6dbcb9159b53abab3980b7a034bc9ea6c12b",
+  "source_hashes": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "e5989aba61df7396552a500fb0fd93c2194de1b185ec9ad1ba0c3ec02e20fbcd"
+    },
+    {
+      "path": "crates/novovm-network/Cargo.toml",
+      "sha256": "606cdd3e34a55f983aeb30285fd8c395ed1d1bc65b8f4e27a69b86f5bc72d02b"
+    }
+  ],
+  "advisory": "RUSTSEC-2026-0486",
+  "rustix": "1.1.6",
+  "runtime_lock_changed": false,
+  "checks": [
+    {
+      "log": "windows-regression-0.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "product_service_file::tests::",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 7,
+      "utc": "2026-11-12T03:32:06.9614528Z"
+    },
+    {
+      "log": "windows-regression-1.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "relay::hop::tests",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 3,
+      "utc": "2026-11-12T03:32:07.7229994Z"
+    },
+    {
+      "log": "windows-regression-2.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-storage-budget",
+        "--lib",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 12,
+      "utc": "2026-11-12T03:32:18.6597974Z"
+    },
+    {
+      "log": "windows-regression-3.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:32:19.4300553Z"
+    },
+    {
+      "log": "windows-regression-4.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-storage-budget",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:32:21.7140191Z"
+    },
+    {
+      "log": "windows-regression-5.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-node",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:32:22.5839862Z"
+    },
+    {
+      "log": "windows-regression-6.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovmctl",
+        "--bin",
+        "novovmctl",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:32:23.2104441Z"
+    },
+    {
+      "log": "linux-regression-0.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "product_service_file::tests::",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 7,
+      "utc": "2026-11-12T03:34:08.700689Z"
+    },
+    {
+      "log": "linux-regression-1.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "relay::hop::tests",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 3,
+      "utc": "2026-11-12T03:34:09.628143Z"
+    },
+    {
+      "log": "linux-regression-2.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-storage-budget",
+        "--lib",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 10,
+      "utc": "2026-11-12T03:34:36.7683879Z"
+    },
+    {
+      "log": "linux-regression-3.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:34:59.7992022Z"
+    },
+    {
+      "log": "linux-regression-4.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-storage-budget",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:35:01.0357718Z"
+    },
+    {
+      "log": "linux-regression-5.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-node",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:35:02.4192856Z"
+    },
+    {
+      "log": "linux-regression-6.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovmctl",
+        "--bin",
+        "novovmctl",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T03:35:03.4382613Z"
+    },
+    {
+      "log": "windows-security-proxy-0.log",
+      "arguments": [
+        "audit",
+        "--json"
+      ],
+      "exit_code": 0,
+      "utc": "2026-11-12T03:33:14.1893173Z"
+    },
+    {
+      "log": "windows-security-proxy-1.log",
+      "arguments": [
+        "audit",
+        "--file",
+        "runtime/Cargo.lock",
+        "--json"
+      ],
+      "exit_code": 0,
+      "utc": "2026-11-12T03:33:19.8324806Z"
+    },
+    {
+      "log": "windows-security-proxy-2.log",
+      "arguments": [
+        "deny",
+        "check",
+        "advisories",
+        "bans",
+        "licenses",
+        "sources"
+      ],
+      "exit_code": 0,
+      "utc": "2026-11-12T03:33:26.773584Z"
+    },
+    {
+      "log": "windows-security-proxy-3.log",
+      "arguments": [
+        "deny",
+        "--manifest-path",
+        "runtime/Cargo.toml",
+        "check",
+        "advisories",
+        "bans",
+        "licenses",
+        "sources"
+      ],
+      "exit_code": 0,
+      "utc": "2026-11-12T03:33:29.4368793Z"
+    }
+  ],
+  "raw_files": [
+    {
+      "name": "linux-regression-0.log",
+      "bytes": 1791,
+      "sha256": "61936e41c0847c11e3fa3651f761e6b3e23241e248604996bc74d0919ba47dad"
+    },
+    {
+      "name": "linux-regression-0.log.result.json",
+      "bytes": 303,
+      "sha256": "71eac049073a09f9a4dc48936b89304ccf2a92b4f9e502ec2db0a75f4274a77f"
+    },
+    {
+      "name": "linux-regression-1.log",
+      "bytes": 1082,
+      "sha256": "82eac3468f865c88d9f431a624580450bbcfdb9063e8666bbe74236abd02042a"
+    },
+    {
+      "name": "linux-regression-1.log.result.json",
+      "bytes": 291,
+      "sha256": "b5550a9526c011cb6aad94d65e965b6f5cade0b6fe3a3e52c6a879e06ea278ba"
+    },
+    {
+      "name": "linux-regression-2.log",
+      "bytes": 2001,
+      "sha256": "d8f75d3f26a09fbacef9e801fbad89f05b013e48c769624564d63a337c4e146a"
+    },
+    {
+      "name": "linux-regression-2.log.result.json",
+      "bytes": 233,
+      "sha256": "ed36ec0b2d4d479990ede0345c5f6894f3146b1b4b0aa8c19cecef9867f25e81"
+    },
+    {
+      "name": "linux-regression-3.log",
+      "bytes": 697,
+      "sha256": "824e80e0e8b8b8226ae6a6cbb3e4e53461d80e86eaa2db113db17248bdf48b07"
+    },
+    {
+      "name": "linux-regression-3.log.result.json",
+      "bytes": 266,
+      "sha256": "0abf836dbc8dcdc4781c95a120fa5ea65b709af7e678414942f7b57612f55310"
+    },
+    {
+      "name": "linux-regression-4.log",
+      "bytes": 1026,
+      "sha256": "7fb931937f458117345419a85fb807a00e7f899c52f6dbca311cf3d7f30395dd"
+    },
+    {
+      "name": "linux-regression-4.log.result.json",
+      "bytes": 233,
+      "sha256": "5e28e8384da69d983595a7c7802cf2e9d4e1477d4f68b5d4719a8fd6cbdb78dc"
+    },
+    {
+      "name": "linux-regression-5.log",
+      "bytes": 555,
+      "sha256": "00630c25b46117cad49999545f6f8639c410b71bcc6c796fbfce8b4cd38a7b66"
+    },
+    {
+      "name": "linux-regression-5.log.result.json",
+      "bytes": 263,
+      "sha256": "00ebf4f24a894af3381b5ddbdd5018aadc0cfd25e1636eb72dc927e8b38c9f0b"
+    },
+    {
+      "name": "linux-regression-6.log",
+      "bytes": 555,
+      "sha256": "8e4f1b56858451e620e5741f1b96f20109667a2ca6e70d06b368352511107468"
+    },
+    {
+      "name": "linux-regression-6.log.result.json",
+      "bytes": 223,
+      "sha256": "b7da0399e8fa1c4ebdb962ddc2005b63af72c60a618949d4d328694c4d4c96cb"
+    },
+    {
+      "name": "windows-regression-0.log",
+      "bytes": 1521,
+      "sha256": "f648a72b9c3d3a63d191daa54725526cd42356446ad43e8229d41da26665dbd8"
+    },
+    {
+      "name": "windows-regression-0.log.result.json",
+      "bytes": 321,
+      "sha256": "920b40eb030fdbce5b9aed22a45685061013a4673e26da3decc45167cad5ff89"
+    },
+    {
+      "name": "windows-regression-1.log",
+      "bytes": 1114,
+      "sha256": "e2d6f98364d1fc785ba0e27fb3f6f876d03938274484f44d8cc545a5545a7848"
+    },
+    {
+      "name": "windows-regression-1.log.result.json",
+      "bytes": 309,
+      "sha256": "189e69c9bb8bb1404442790ec1b1822f39ee62846c4de90e51fd746caa8c325c"
+    },
+    {
+      "name": "windows-regression-2.log",
+      "bytes": 2029,
+      "sha256": "abc3f6c8b62d950794e83d23551f3f4a8e19b4270526700cf876084296390963"
+    },
+    {
+      "name": "windows-regression-2.log.result.json",
+      "bytes": 248,
+      "sha256": "cec5c4bfdf52884f682062c47b79a9cd71d4f5ad54997d5b149550d506e09f56"
+    },
+    {
+      "name": "windows-regression-3.log",
+      "bytes": 553,
+      "sha256": "8b0abaf429014c36ccaee797c72077be0d7b652b42970f994055b650580bb0c9"
+    },
+    {
+      "name": "windows-regression-3.log.result.json",
+      "bytes": 284,
+      "sha256": "70c3b59111a720f97bf6c503d86883426997c6a948c4ae89737c858d9c55f911"
+    },
+    {
+      "name": "windows-regression-4.log",
+      "bytes": 996,
+      "sha256": "0a625ed2603b479de41cb5317dc186e0c0e38db20c482642205c5540ae258da4"
+    },
+    {
+      "name": "windows-regression-4.log.result.json",
+      "bytes": 249,
+      "sha256": "c69c517f5dc0ac19bab1cdce61115e5651f7efcfafe02f507d17629107cd56b9"
+    },
+    {
+      "name": "windows-regression-5.log",
+      "bytes": 553,
+      "sha256": "3aaae0ac81f28aca3d0af93b69abb7a66766147b867ba4c5da96bed93e1a6d1a"
+    },
+    {
+      "name": "windows-regression-5.log.result.json",
+      "bytes": 281,
+      "sha256": "c6b57a5bfd278238fd35e75c0586ec7cc3b26e647a3fe65c17444ffeb6c096ad"
+    },
+    {
+      "name": "windows-regression-6.log",
+      "bytes": 553,
+      "sha256": "d75974caa01d028b73b3de785f99388d3ce29a95be72056f1fe6a971a8f78213"
+    },
+    {
+      "name": "windows-regression-6.log.result.json",
+      "bytes": 239,
+      "sha256": "67ab8ea7f7347fb6f2b813d2b218bd7adf7fc4d0b80f2d6dd6b41157179f554b"
+    },
+    {
+      "name": "windows-security-0.log",
+      "bytes": 251,
+      "sha256": "e0697cda7b76e256c3078662637bd0ecd142885794221eb6a7cd48e6ec9c0009"
+    },
+    {
+      "name": "windows-security-0.log.result.json",
+      "bytes": 118,
+      "sha256": "821beceed28666aad2bc64679a1a56c21934845fd7dab3abf7c00f81d195f5ab"
+    },
+    {
+      "name": "windows-security-proxy-0.log",
+      "bytes": 7996,
+      "sha256": "b773eace01485f3a5aa201be37d15f8d8815593384ad35f939972482e287e5eb"
+    },
+    {
+      "name": "windows-security-proxy-0.log.result.json",
+      "bytes": 118,
+      "sha256": "5f03a99b99e0d7463481c0c19df29796514ca82219b8dc00382401a4aed6290e"
+    },
+    {
+      "name": "windows-security-proxy-1.log",
+      "bytes": 4100,
+      "sha256": "bae42ee2156a18a5ec52bbeb2f48446dba6b7013ef5d8c7a1dade80b3745224f"
+    },
+    {
+      "name": "windows-security-proxy-1.log.result.json",
+      "bytes": 160,
+      "sha256": "b72d00580923e4dd69044212b1ebb7d2bc1c6a1d21b3af11a01a3fa45b4edc3d"
+    },
+    {
+      "name": "windows-security-proxy-2.log",
+      "bytes": 163310,
+      "sha256": "1c4611be73c12f139aca708d300a39036526c1e633886aa66189b6ead05e81d6"
+    },
+    {
+      "name": "windows-security-proxy-2.log.result.json",
+      "bytes": 181,
+      "sha256": "9d09e0682358cee9f80e3bb2d1daa8a54bf98cdde35567d8aa1c5cde33ab505e"
+    },
+    {
+      "name": "windows-security-proxy-3.log",
+      "bytes": 34332,
+      "sha256": "40b3cb6fdafa848f18bb6214979f9e89eebde5af41a2b40520f1386c5bdc91bb"
+    },
+    {
+      "name": "windows-security-proxy-3.log.result.json",
+      "bytes": 232,
+      "sha256": "1e199d89aa366aba8beffa5c9fa36e0b26e0c58178ebad7af84ebf326f4ad09e"
+    },
+    {
+      "name": "Validate-Rustix.ps1",
+      "bytes": 2320,
+      "sha256": "7b0691718a66a80a67d0563c23d7554159f7ae6814ff384daef2b1caa7ab3a3b"
+    },
+    {
+      "name": "Export-Rustix.ps1",
+      "bytes": 2158,
+      "sha256": "77b49cd0233e6a5396a1e77051fda7ea6ca5c154aaf25f93f441abe711325f56"
+    },
+    {
+      "name": "security-fixed-0.log",
+      "bytes": 10734,
+      "sha256": "d0367bcc43d60385b0682530d28e4069d771687ddd056bb9faafbfb9337978a4"
+    },
+    {
+      "name": "security-fixed-0.log.result.json",
+      "bytes": 118,
+      "sha256": "88e927cdabe03552efba66a7b1f6751a7412c23920167e65e84c05985c8abbf8"
+    },
+    {
+      "name": "security-fixed-1.log",
+      "bytes": 4100,
+      "sha256": "bae42ee2156a18a5ec52bbeb2f48446dba6b7013ef5d8c7a1dade80b3745224f"
+    },
+    {
+      "name": "security-fixed-1.log.result.json",
+      "bytes": 160,
+      "sha256": "444823c761c94b3d421ae606a8bf554c7ed341497bf6ce04cae1077e4ede73b4"
+    },
+    {
+      "name": "security-fixed-2.log",
+      "bytes": 167184,
+      "sha256": "4f27f8ed82e6ab0ddc56fa28e8b9ed3b947a7e2cb3649b3889801930e9f53c90"
+    },
+    {
+      "name": "security-fixed-2.log.result.json",
+      "bytes": 181,
+      "sha256": "776e13c42f962fda1b2c236bd2b09b3b60600886c0de05aa3471ee73711c4ae0"
+    }
+  ],
+  "archive_sha256": "5036f1494c0920cc719e8ddb849bfcf4d47e428b0db0b268376d5c68f7be19c3",
+  "deployed": false,
+  "full_ci_qualified": false,
+  "real_double_relay_qualified": false
+}

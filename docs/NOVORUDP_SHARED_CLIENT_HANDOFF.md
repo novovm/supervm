@@ -1,5 +1,18 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 A：双中继候选本地安全门禁发现并修正 rustix
+
+1baa6dbc 的两平台原打包器构建成功，但本地 Cargo Deny 因
+RUSTSEC-2026-0486 拒绝 rustix 1.1.4，因此没有为该版本派发 Full 或更新节点。
+最小修正只将 network 的 Android 文件锁依赖最低版本提升到1.1.6，并由 Cargo
+更新根锁文件对应条目；runtime 不含该依赖，锁文件不变。无网络协议或预算再调整。
+Windows22项、Linux20项文件恢复／共享中继预算／存储配额测试通过；两平台
+network/storage-budget/node/ctl 严格 Clippy 通过。根与runtime Audit/Deny四项通过，
+原有警告及既有忽略规则原样保留，没有新增豁免。原拒绝和一次安全库抓取失败均保留。
+这不是C的875崩溃归因，也不是Android实机、固定新包、Full或双中继公网验收。
+继续用修正后的固定源码制作候选；A/B/C/D不更新、不重发已完成单中继对象。
+详见[安全增量与原始记录](../artifacts/audit/novonet-single-relay-20261111/rustix-security-20261112/README.md)。
+
 ## 2026-11-12 A：双中继原 owner 与128KiB共享额度候选，本地验证通过
 
 A→C→D 单中继实网已在 a7e19fc8 按三端原始证据闭合；不重发或重开旧窗口。

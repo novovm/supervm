@@ -1,5 +1,15 @@
 # Single-relay real-object qualification
 
+## CURRENT 2026-11-12: local candidate security blocker repaired before Full
+
+Both original packager builds of1baa6dbc completed, but that source was NOT
+qualified: root Cargo Deny rejected rustix1.1.4 (RUSTSEC-2026-0486). No Full
+was dispatched and no node was updated. The minimal1.1.6 dependency patch and
+Windows22/Linux20 local regressions are recorded in
+[the security increment](rustix-security-20261112/README.md).
+Build/qualify the corrected fixed source, not the superseded1baa packages.
+The128KiB candidate authorization does not automatically authorize deployment.
+
 ## CURRENT 2026-11-12: completed single relay; extend the same owner for two relays
 
 The real A -> C -> D sample is closed at a7e19fc8. See

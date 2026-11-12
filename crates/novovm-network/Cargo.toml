@@ -55,7 +55,7 @@ sysinfo = { version = "=0.38.4", default-features = false, features = ["system"]
 [target.'cfg(target_os = "android")'.dependencies]
 # std::fs::File::try_lock is unsupported on Android in the pinned toolchain.
 # Safe nonblocking flock; the network crate remains unsafe-free.
-rustix = { version = "1.1", features = ["fs"] }
+rustix = { version = "1.1.6", features = ["fs"] }
 
 [dev-dependencies]
 novovm-consensus = { path = "../novovm-consensus", features = ["test-vectors"] }
