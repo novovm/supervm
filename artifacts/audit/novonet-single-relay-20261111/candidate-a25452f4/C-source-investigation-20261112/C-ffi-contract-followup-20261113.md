@@ -4,7 +4,7 @@ Status: **C node NOT READY; no corrected runtime deployed; no double-relay send.
 This follow-up distinguishes an independently confirmed AOEM FFI allocation
 contract defect from the still-unexplained C node crash. It does not change the
 existing C node, its database, identity, keys, or observer.
-A read-only check on 2026-11-13 found no local `novovm_node.exe` process or C
+A corrected read-only check on 2026-11-13 found no local `novovm-node.exe` process or C
 UDP listeners on 41052/42052; no recovery was attempted.
 
 ## Original failure and bounded reproduction
