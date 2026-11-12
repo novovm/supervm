@@ -1,0 +1,12 @@
+[
+  {
+    "file": "liveness.json",
+    "bytes": 244,
+    "sha256": "e55a69b3773fa54dfe1e532fbf36209fc5a27692bcbc9f8548401ae28c19b127"
+  },
+  {
+    "file": "presence.json",
+    "bytes": 371,
+    "sha256": "e3ebfff2bac91ef069c391c1da2113d357c241f5d6443f0e1e615f7f7a9c3144"
+  }
+]

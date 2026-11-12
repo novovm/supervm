@@ -1,0 +1,13 @@
+{
+  "sample_utc": "2026-11-12T01:42:39.1953224Z",
+  "host_id": "D",
+  "observer_pid": 18808,
+  "process_present": true,
+  "process_created_utc": "2026-11-12T00:41:15.5245172Z",
+  "creation_identity_matches_launch": true,
+  "result_present": false,
+  "error_present": false,
+  "exit_present": false,
+  "observer_restarted": false,
+  "node_restarted": false
+}
