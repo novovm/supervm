@@ -1,0 +1,9 @@
+{
+  "host": "C",
+  "utc": "2026-11-12T00:41:23.3191207Z",
+  "error": "Original C node3228 owner/path not confirmed; do not restart",
+  "node_mutated": false,
+  "retry_performed": false,
+  "D_touched": false,
+  "object_sent": false
+}

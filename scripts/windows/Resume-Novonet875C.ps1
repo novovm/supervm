@@ -1,7 +1,10 @@
 #Requires -Version 7.0
 #Requires -RunAsAdministrator
 # Same installed owner/task, same database; preserve the failed run before restart.
-param([Parameter(Mandatory)][string]$EvidenceRoot)
+param(
+    [Parameter(Mandatory)][string]$EvidenceRoot,
+    [ValidateSet(31296,3228)][int]$ExpectedCrashedPid=31296
+)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $work='C:\ProgramData\NOVOVM\selfrun\91129655606029\C\novonet-observation-875d3307-20261111'
@@ -19,8 +22,10 @@ function Assert-C875Task($Task,$Info,[string]$OwnerPath) {
     if($Task.TaskName -cne 'NOVOVM-C-875d3307-Existing-20261111' -or $Task.State.ToString() -cne 'Ready' -or $sid -cne 'S-1-5-19' -or [int]$Task.Settings.RestartCount -ne 0 -or @($Task.Triggers|Where-Object {$null -ne $_}).Count -ne 0 -or [long]$Info.LastTaskResult -ne 3221225477){throw 'Current C875 crashed task identity differs'}
     if($actions.Count -ne 1 -or $actions[0].Execute -ine 'C:\Program Files\PowerShell\7\pwsh.exe' -or $actions[0].Arguments -cne $expected){throw 'Current task is not the fixed existing owner'}
 }
-function Assert-C875Exit($Exit,$Crash) {
-    if($Exit.start -cne 'existing' -or ([long]$Exit.exit_code -band 4294967295L) -ne 3221225477 -or $Crash.exception_code -cne 'c0000005' -or $Crash.fault_pid -ne 31296){throw 'C875 task/event/exit do not match the reported run'}
+function Assert-C875Exit($Exit,$Crash,[int]$ExpectedPid=31296) {
+    # Only the two inspected original875 failures; not a general retry loop.
+    $record=switch($ExpectedPid){31296{546255} 3228{546354} default{throw 'Uninspected C875 failure'}}
+    if($Exit.start -cne 'existing' -or ([long]$Exit.exit_code -band 4294967295L) -ne 3221225477 -or $Crash.exception_code -cne 'c0000005' -or $Crash.fault_pid -ne $ExpectedPid -or $Crash.record_id -ne $record){throw 'C875 task/event/exit do not match the reported run'}
     $when=([DateTime]$Exit.time).ToUniversalTime()
     if($when -lt $Crash.event_utc.AddSeconds(-5) -or $when -gt [DateTime]::UtcNow.AddSeconds(5)){throw 'C875 exit/event timeline differs'}
 }
@@ -86,7 +91,7 @@ try {
     $match.event.ToXml()|Set-Content -LiteralPath "$out/crash-event-local.xml" -Encoding utf8
     $exit=Get-Content -Raw -LiteralPath "$logs/exit.json"|ConvertFrom-Json
     Assert-CrashedOwnerEvidence $crash $exe $exit
-    Assert-C875Exit $exit $crash
+    Assert-C875Exit $exit $crash $ExpectedCrashedPid
     $fields=@{}
     foreach($field in ([xml]$match.event.ToXml()).SelectNodes("/*[local-name()='Event']/*[local-name()='EventData']/*[local-name()='Data']")){$fields[$field.GetAttribute('Name')]=[string]$field.InnerText}
     Write-NewJson "$out/crash-public.json" ([ordered]@{host='C';source=$source;crash=$crash;exit=$exit;fault_module=$fields['ModuleName'];fault_module_version=$fields['ModuleVersion'];fault_offset=$fields['FaultingOffset'];root_cause_known=$false})

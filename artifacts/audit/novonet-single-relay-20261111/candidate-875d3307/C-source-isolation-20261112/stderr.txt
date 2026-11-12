@@ -1,0 +1,23 @@
+     Locking 24 packages to latest compatible versions
+      Adding serde_json v1.0.149 (available: v1.0.154)
+      Adding sha2 v0.10.9 (available: v0.11.1)
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling zmij v1.0.23
+   Compiling serde_core v1.0.229
+   Compiling equivalent v1.0.3
+   Compiling serde_json v1.0.149
+   Compiling hashbrown v0.17.1
+   Compiling memchr v2.8.3
+   Compiling cfg-if v1.0.5
+   Compiling cpufeatures v0.2.17
+   Compiling itoa v1.0.18
+   Compiling generic-array v0.14.7
+   Compiling indexmap v2.14.2
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling c-profile-source-isolation v0.0.0 (D:\WEB3_AI\SUPERVM\target\c-crash-analysis-20261112T004637Z\profile-source-isolation-1)
+    Finished `release` profile [optimized + debuginfo] target(s) in 5.70s
+     Running `build\release\c-profile-source-isolation.exe`

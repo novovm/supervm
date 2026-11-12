@@ -1,0 +1,15 @@
+{
+  "debugger": "Existing LLVM LLDB21.1.7",
+  "debugger_path": "C:\\Program Files\\LLVM\\bin\\lldb.exe",
+  "isolation": "batch --no-lldbinit, two existing dumps only",
+  "dependency": "Official Python3.10.11 embeddable amd64, local-only dependency required by installed liblldb.dll",
+  "download": "https://www.python.org/ftp/python/3.10.11/python-3.10.11-embed-amd64.zip",
+  "package_sha256": "608619f8619075629c9c69f361352a0da6ed7e62f83a0e19c63e0ea32eb7629d",
+  "official_md5_match": true,
+  "dll_authenticode_status": "Valid",
+  "dll_signer": "Python Software Foundation",
+  "global_path_changed": false,
+  "system_install_performed": false,
+  "debugger_dependency_uploaded": false,
+  "initial_command_error": "image list -v unsupported; raw failure logs retained locally; corrected image list -u -f final analyses exit0"
+}

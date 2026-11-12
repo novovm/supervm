@@ -1,0 +1,202 @@
+[
+  {
+    "lookup_rva": "0x65f59d",
+    "symbols": [
+      {
+        "function": "indexmap::inner::Core$LT$K$C$V$GT$::insert_full::h19d67ba05d090cc3",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x1e47a32",
+    "symbols": [
+      {
+        "function": "core::ptr::mut_ptr::impl$0::add",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\ptr\\mod.rs",
+        "line": 547
+      },
+      {
+        "function": "alloc::vec::Vec::append_elements",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\vec\\mod.rs",
+        "line": 2821
+      },
+      {
+        "function": "alloc::vec::spec_extend::impl$4::spec_extend",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\vec\\spec_extend.rs",
+        "line": 56
+      },
+      {
+        "function": "alloc::vec::Vec::extend_from_slice",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\vec\\mod.rs",
+        "line": 3436
+      },
+      {
+        "function": "alloc::string::String::push_str",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\string.rs",
+        "line": 1102
+      },
+      {
+        "function": "alloc::string::impl$63::write_str",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\string.rs",
+        "line": 3347
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x1e4b0f8",
+    "symbols": [
+      {
+        "function": "core::fmt::num::impl$16::fmt",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\num.rs",
+        "line": 49
+      },
+      {
+        "function": "core::fmt::num::_$LT$impl$u20$core..fmt..LowerHex$u20$for$u20$u8$GT$::fmt::h322edefa0e040264",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\num.rs",
+        "line": 49
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x1e4d280",
+    "symbols": [
+      {
+        "function": "core::fmt::Formatter::new",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\rt.rs",
+        "line": 152
+      },
+      {
+        "function": "core::fmt::write::h4be08ff5a77b1b98",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\mod.rs",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x1e47d3e",
+    "symbols": [
+      {
+        "function": "core::fmt::Write::write_fmt::impl$1::spec_write_fmt",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\mod.rs",
+        "line": 236
+      },
+      {
+        "function": "core::fmt::Write::write_fmt",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\mod.rs",
+        "line": 241
+      },
+      {
+        "function": "alloc::fmt::format::format_inner::h7f131e86b74247ab",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\fmt.rs",
+        "line": 649
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x964909",
+    "symbols": [
+      {
+        "function": "_$LT$alloc..string..String$u20$as$u20$core..iter..traits..collect..FromIterator$LT$alloc..string..String$GT$$GT$::from_iter::hc55d16bd1e051d86",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x9f1ef3",
+    "symbols": [
+      {
+        "function": "core::ops::function::impls::_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$::call_mut::h734c4ecedfb29625",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0xb752b1",
+    "symbols": [
+      {
+        "function": "_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$::from_iter::ha314b3c2dd4d8308",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x7618ae",
+    "symbols": [
+      {
+        "function": "novovm_node::native_pipeline::profile::elapsed::hc615faeebf7186c0",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x777fb8",
+    "symbols": [
+      {
+        "function": "novovm_node::native_pipeline::service::rpc::RpcLifecycle::status::h9b605aaaa58c2edd",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x17d5e4",
+    "symbols": [
+      {
+        "function": "novovm_node::native_pipeline::service::rpc::observe_tick::hfe47e471214fef95",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x8ad15",
+    "symbols": [
+      {
+        "function": "novovm_node::run_native_execution_tick_node_mode_v1::h71911803219ee92f",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x1d8d56",
+    "symbols": [
+      {
+        "function": "std::sys::backtrace::__rust_begin_short_backtrace::hcc4844f95d989b4a",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x1da0f4",
+    "symbols": [
+      {
+        "function": "_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::hd69493c34947a1e4",
+        "file": "",
+        "line": 0
+      }
+    ]
+  },
+  {
+    "lookup_rva": "0x1e34e87",
+    "symbols": [
+      {
+        "function": "alloc::boxed::impl$31::call_once",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\boxed.rs",
+        "line": 2206
+      },
+      {
+        "function": "std::sys::thread::windows::impl$0::new::thread_start",
+        "file": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\std\\src\\sys\\thread\\windows.rs",
+        "line": 58
+      }
+    ]
+  }
+]

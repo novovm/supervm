@@ -1,0 +1,34 @@
+{
+  "host": "C",
+  "utc": "2026-11-12T00:41:23.2331683Z",
+  "old_pid": 21548,
+  "old_created_utc": "2026-11-11T15:11:26.9806523Z",
+  "process_present": false,
+  "termination_requested": false,
+  "node_stopped": false,
+  "original_exit": {
+    "host": "C",
+    "pid": 21548,
+    "exit_code": 0,
+    "finished_utc": "2026-11-11T15:41:28.2571298Z"
+  },
+  "original_result": {
+    "host": "C",
+    "utc": "2026-11-11T15:41:28.2256688Z",
+    "snapshots": 0,
+    "terminal_observed": false,
+    "wait_expired": true,
+    "capture_limit_reached": false,
+    "node_mutated": false,
+    "business_receipt": false
+  },
+  "original_final_liveness": {
+    "host": "C",
+    "observer_version": 2,
+    "observer_pid": 21548,
+    "node_pid": 3228,
+    "utc": "2026-11-11T15:41:28.2274714Z",
+    "active": false,
+    "snapshots": 0
+  }
+}

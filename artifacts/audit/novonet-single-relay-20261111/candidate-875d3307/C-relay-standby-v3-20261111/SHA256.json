@@ -1,0 +1,87 @@
+[
+  {
+    "file": ".gitattributes",
+    "bytes": 29,
+    "sha256": "730a35ae3d558080083c3103d9ac8100c3f6561678092abe341701dfa331eb1d"
+  },
+  {
+    "file": "current-basic-readonly.json",
+    "bytes": 203,
+    "sha256": "a579ec2a88196e530fd81805390d21b557fa2f9f7fe39ad978da3204f434e1b3"
+  },
+  {
+    "file": "handoff.json",
+    "bytes": 649,
+    "sha256": "ecd649573f1caf6be4e37fb637467969e4efb567d4e221dca8869ac1d16b9075"
+  },
+  {
+    "file": "invoked-once.json",
+    "bytes": 258,
+    "sha256": "94c85f27dde4542050695b2cef1a294d2d98a8e4736b37a1aead5ae27bf0d71e"
+  },
+  {
+    "file": "Launch-C-V3-Once.ps1",
+    "bytes": 5920,
+    "sha256": "e64760ea46b43cf5aae4d464d5c899f7b615179d334140bbdd4c005b61995b77"
+  },
+  {
+    "file": "launch-public.json",
+    "bytes": 159,
+    "sha256": "38b0e1b82e13287d052eeac65bc71e1b4882626ed9b01e1de7af16c6f1093c82"
+  },
+  {
+    "file": "launcher-error.json",
+    "bytes": 240,
+    "sha256": "5e5939ba89e8dbf19917976246c5f464a6124201f701544b6600cec7a9d915b9"
+  },
+  {
+    "file": "old-observer-check.json",
+    "bytes": 854,
+    "sha256": "7741c63b8a5b5cf39d1b57183cba27c88eb374a3b368ba74fefd05703829edd4"
+  },
+  {
+    "file": "previous-v2/liveness.json",
+    "bytes": 175,
+    "sha256": "187a227401ac0cc36a5b83e984d95ca2e7c12ec587f4c87db523966416ae92ea"
+  },
+  {
+    "file": "previous-v2/observer-exit.json",
+    "bytes": 106,
+    "sha256": "1cd8faaf9b81efc2a5b02b0ab1d798cf2ddfb062a3d178e2c3063bda7c541013"
+  },
+  {
+    "file": "previous-v2/observer-started.json",
+    "bytes": 583,
+    "sha256": "22d1e713583f2cc3a4d27d39720af7e9e2345a84a7d35d6db4664ab8f73ed118"
+  },
+  {
+    "file": "previous-v2/observer.stderr.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "previous-v2/observer.stdout.log",
+    "bytes": 137,
+    "sha256": "0cb2256334e4453cdb520cc524665f124260b50cc5651e3a5919bc60ee697e60"
+  },
+  {
+    "file": "previous-v2/read-anomaly-first.json",
+    "bytes": 1702,
+    "sha256": "bc82ee04690cc2b178448ec7003bcf45011d8fb06ae4db5f57f1c0b2b2705c71"
+  },
+  {
+    "file": "previous-v2/read-anomaly-last.json",
+    "bytes": 1702,
+    "sha256": "21cbb835434bd7f563023c258e7de94a6a10948d602d5d3f77de0a181dd29e04"
+  },
+  {
+    "file": "previous-v2/result.json",
+    "bytes": 229,
+    "sha256": "4ee98e29484a8b19b5691773062ab1dd22613b84c45f87496613817414209d72"
+  },
+  {
+    "file": "README.md",
+    "bytes": 1770,
+    "sha256": "eaa04860b8722f40212d435c56224f78ff6796e26a2276a3ef91505d3a490ec2"
+  }
+]

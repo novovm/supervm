@@ -7,6 +7,99 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C READY 2026-11-12 09:37 Beijing: recovered875 + current v3 observer
+
+Actual recovery exit0, node13020 / LocalService, same875/AOEM, original database
+existing, identity/config unchanged. Observer25144 READY01:37:34Z,
+heartbeat01:37:56Z active, no error/result/exit at01:37:57Z. Nominal bound until
+03:37:34Z (11:37 Beijing), terminal/capture limits still apply. See
+[raw C recovery and READY/liveness](C-relay-resumed-20261112/README.md).
+A should authenticate recovered C and refresh D's current heartbeat/terminal
+state, then use the original one-shot sender only with both guards satisfied.
+No object sent by C, no D action, no crash-fix claim; no repeated pair tests.
+
+### CURRENT 2026-11-12: user prioritizes C/D integration; crash remains OPEN
+
+User explicitly requests resuming C/D integration rather than waiting for an
+unreproduced memory-corruption cause. C will run ONE existing-owner recovery
+with `Resume-Novonet875C.ps1 -ExpectedCrashedPid 3228 -EvidenceRoot <fresh>`.
+The helper additionally matches inspected Application1000 record546354; it
+does not accept arbitrary new crashes or restart automatically. Same875 binary,
+original identity/database/configuration; no initialization or package change.
+Upon success C starts ONE original bounded v3 observer (7200s) and immediately
+publishes recovery, actual READY/liveness and terminal presence.
+
+A: authenticate recovered C, ask D to refresh its actual v3 observer18808
+heartbeat/terminal status (its published00:41Z sample is stale, nominal window
+ends02:41Z). If expired, coordinate one fresh original bounded observer on D;
+do not assume a stale READY authorizes sending. Once BOTH current identities,
+fresh heartbeat and remaining-window guards pass, use the original one-shot
+A->C->D sender. C does not send or duplicate A's object. Record C forwarding
+and matching A/D Object/Session/DONE separately from Business Receipt.
+
+Recovery/relay success does NOT close the two875 memory faults. If recovery or
+observation fails, preserve the actual result and stop without automatic retry.
+No source fix has been established; continued crash investigation remains C's.
+
+### CURRENT 2026-11-12: C takes source investigation and justified fix ownership
+
+The user explicitly asked C to investigate and fix this crash directly instead
+of handing the diagnosis back to A. This supersedes the investigation ownership
+in the historical entries below. C owns original-dump correlation, bounded local
+source reproduction, and a minimal fix once a causal defect is established.
+A should avoid overlapping edits to this crash path and review/integrate C's
+findings rather than independently patching the same code.
+
+The matching PDB and two original dumps are already available on C. Invalid
+frame/String state is evidence of the fault, not proof that hex formatting is
+the corrupting operation. Current source is not fixed or qualified. Local
+isolation tests do not certify the complete node or exclude earlier FFI damage.
+C remains NOT READY for relay delivery; this ownership update does not start a
+node/observer, resend an object, replace keys/database, or authorize D changes.
+Raw dumps, stack memory and private materials remain local.
+
+C's [first source isolation result](C-source-isolation-20261112/README.md)
+completed with exit0:80000 write attempts,501 snapshots,1014272 hash fields
+checked. It did not reproduce the crash and is not full-node qualification or
+a fix. Original875 fault evidence remains open; no runtime was restarted.
+
+### C PDB FOLLOW-UP 2026-11-12: original symbols verified; pre-fault state inconsistent
+
+C verified supplied original PDB size17281024, SHA256b46bc1763c06c7370733763391d56e083b2e52cc8dcd370a377be2f7928dac38,
+GUID/age matching both dumps and875. Original-RVA symbolization confirms
+indexmap::Core::insert_full for PID31296, whose captured frame relation differs
+from the normal prologue, and String/fmt/Status for PID3228, whose writer consumes
+an implausible length before the runtime copy. See
+[PDB correlation and precise limits](C-pdb-analysis-20261112/README.md).
+These observations do not identify the earlier corrupting operation or prove a
+shared root cause. A owns native source investigation; C retained raw memory and
+symbols locally. No node restart, replacement package, observer or object send.
+
+### C FOLLOW-UP 2026-11-12: original crash dumps analyzed, exact875 PDB needed
+
+C recovered the two existing875 minidumps locally and verified their hashes.
+Both match packaged novovm_node.pdb GUID C94A5E99-4CFF-4094-8B63-0663EF0F9C21,
+age1. PID31296 faults at node+0x65f59d on an observed misaligned movaps operand;
+PID3228 faults writing2 bytes at VCRUNTIME140+0x1126b, with14 node caller frames.
+These are instruction/context findings, not a source-level root cause or fix.
+See [sanitized stack RVAs, limits and A symbol request](C-crash-analysis-20261112/README.md).
+A: supply original matching875 PDB/path/hash or symbolize those exact RVAs;
+do not substitute a newly rebuilt symbol file as original evidence. Raw dumps,
+memory logs and WER stay local, not on GitHub. No node restart, package/config
+change, observer retry, object send or D operation. C remains NOT READY.
+
+### C RECEIPT 2026-11-12 08:41 Beijing: v3 NOT READY; node preflight failed
+
+C synced c0a1dfb2 and passed20 readiness +13 reader checks. Old21548 was already
+absent, with original exit0/wait_expired/zero snapshots preserved; no process was
+terminated. Single approved transition stopped before Watch invocation because
+original node3228 owner/path was not confirmed. No new READY/liveness exists.
+See [C v3 failure and old terminal originals](C-relay-standby-v3-20261111/README.md).
+No node restart, package change, object send, D operation or automatic retry.
+A must not send on this receipt or old C READY; separately coordinate recovery
+before a new observer window. The historical23:24 instruction was executed at
+the actual next-morning time above, not backdated.
+
 ### CURRENT 2026-11-11 23:24 Beijing: bounded diagnostic standby, no node changes
 
 D's actual heartbeat23:19:26 was read by A at23:21:38, only52 seconds before

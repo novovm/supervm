@@ -30,9 +30,16 @@ foreach($change in @('running','oldtask','system','restart','trigger','initializ
     }
     Reject {Assert-C875Task $task $i 'C:\fixed\ExistingOwner.ps1'}
 }
-$crash=[pscustomobject]@{exception_code='c0000005';fault_pid=31296;event_utc=[DateTime]::UtcNow.AddMinutes(-5)}
+$crash=[pscustomobject]@{exception_code='c0000005';fault_pid=31296;record_id=546255;event_utc=[DateTime]::UtcNow.AddMinutes(-5)}
 $exit=[pscustomobject]@{start='existing';exit_code=-1073741819;time=$crash.event_utc.AddSeconds(2).ToString('o')}
 Assert-C875Exit $exit $crash;$script:checks++
+$second=$crash.PSObject.Copy();$second.fault_pid=3228;$second.record_id=546354
+Assert-C875Exit $exit $second 3228;$script:checks++
+Reject {Assert-C875Exit $exit $second 31296}
+Reject {Assert-C875Exit $exit $crash 3228}
+Reject {Assert-C875Exit $exit $second 123}
+$wrongRecord=$second.PSObject.Copy();$wrongRecord.record_id=546255
+Reject {Assert-C875Exit $exit $wrongRecord 3228}
 foreach($change in @('start','code','exception','pid','earlier','future')){
     $c=$crash.PSObject.Copy();$e=$exit.PSObject.Copy()
     switch($change){'start'{$e.start='initialize'} 'code'{$e.exit_code=0} 'exception'{$c.exception_code='c0000374'} 'pid'{$c.fault_pid=123} 'earlier'{$e.time=$c.event_utc.AddSeconds(-6).ToString('o')} 'future'{$e.time=[DateTime]::UtcNow.AddMinutes(10).ToString('o')}}
