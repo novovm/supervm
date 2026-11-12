@@ -1,0 +1,14 @@
+{
+  "host": "C",
+  "started_utc": "2026-11-12T00:47:13.8416422Z",
+  "finished_utc": "2026-11-12T00:47:14.3091994Z",
+  "read_only": true,
+  "node_restarted": false,
+  "configuration_changed": false,
+  "D_touched": false,
+  "report_count": 30,
+  "dump_count": 5,
+  "errors_count": 0,
+  "raw_reports_local_only": true,
+  "dumps_not_uploaded": true
+}

@@ -1,0 +1,138 @@
+[
+  {
+    "pid": 31296,
+    "exception_thread_id": 6228,
+    "exception_code": "0xc0000005",
+    "instruction_module": "novovm-node.exe",
+    "instruction_rva": "0x65f59d",
+    "access_kind": "read",
+    "node_pdb": {
+      "pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+      "pdb_age": 1,
+      "pdb_name": "novovm_node.pdb"
+    },
+    "aoem_module_present": true,
+    "root_cause_confirmed": false,
+    "frames": [
+      {
+        "index": 0,
+        "module": "novovm-node.exe",
+        "rva": "0x65f59d"
+      }
+    ],
+    "unwind_source": "LLDB21.1.7 original minidump, matching875 executable; PDB absent",
+    "absolute_addresses_and_memory_omitted": true,
+    "fault_instruction": "movaps xmm6, [rbp+0x20]",
+    "observed_operand_alignment_mod16": 8,
+    "interpretation": "Observed operand is misaligned for movaps. Consistent with an alignment fault; cause of misalignment not established.",
+    "unwind_limit": "Only fault frame recovered; no complete caller chain claimed."
+  },
+  {
+    "pid": 3228,
+    "exception_thread_id": 2960,
+    "exception_code": "0xc0000005",
+    "instruction_module": "VCRUNTIME140.dll",
+    "instruction_rva": "0x1126b",
+    "access_kind": "write",
+    "node_pdb": {
+      "pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+      "pdb_age": 1,
+      "pdb_name": "novovm_node.pdb"
+    },
+    "aoem_module_present": true,
+    "root_cause_confirmed": false,
+    "frames": [
+      {
+        "index": 0,
+        "module": "VCRUNTIME140.dll",
+        "rva": "0x1126b"
+      },
+      {
+        "index": 1,
+        "module": "novovm-node.exe",
+        "rva": "0x1e47a33"
+      },
+      {
+        "index": 2,
+        "module": "novovm-node.exe",
+        "rva": "0x1e4b0f9"
+      },
+      {
+        "index": 3,
+        "module": "novovm-node.exe",
+        "rva": "0x1e4d281"
+      },
+      {
+        "index": 4,
+        "module": "novovm-node.exe",
+        "rva": "0x1e47d3f"
+      },
+      {
+        "index": 5,
+        "module": "novovm-node.exe",
+        "rva": "0x96490a"
+      },
+      {
+        "index": 6,
+        "module": "novovm-node.exe",
+        "rva": "0x9f1ef4"
+      },
+      {
+        "index": 7,
+        "module": "novovm-node.exe",
+        "rva": "0xb752b2"
+      },
+      {
+        "index": 8,
+        "module": "novovm-node.exe",
+        "rva": "0x7618af"
+      },
+      {
+        "index": 9,
+        "module": "novovm-node.exe",
+        "rva": "0x777fb9"
+      },
+      {
+        "index": 10,
+        "module": "novovm-node.exe",
+        "rva": "0x17d5e5"
+      },
+      {
+        "index": 11,
+        "module": "novovm-node.exe",
+        "rva": "0x8ad16"
+      },
+      {
+        "index": 12,
+        "module": "novovm-node.exe",
+        "rva": "0x1d8d57"
+      },
+      {
+        "index": 13,
+        "module": "novovm-node.exe",
+        "rva": "0x1da0f5"
+      },
+      {
+        "index": 14,
+        "module": "novovm-node.exe",
+        "rva": "0x1e34e88"
+      },
+      {
+        "index": 15,
+        "module": "kernel32.dll",
+        "rva": "0x2dda7"
+      },
+      {
+        "index": 16,
+        "module": "ntdll.dll",
+        "rva": "0xc9c5c"
+      }
+    ],
+    "unwind_source": "LLDB21.1.7 original minidump, matching875 executable; PDB absent",
+    "absolute_addresses_and_memory_omitted": true,
+    "fault_instruction": "mov word ptr [rax], cx",
+    "access_bytes": 2,
+    "interpretation": "Exception records a write violation at the destination used by the instruction. Faulting runtime module does not prove a bad runtime installation.",
+    "export_symbol_caveat": "Nearest exported symbol shown by LLDB is not used as the actual routine name."
+  }
+]

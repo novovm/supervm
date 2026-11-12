@@ -7,6 +7,19 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C FOLLOW-UP 2026-11-12: original crash dumps analyzed, exact875 PDB needed
+
+C recovered the two existing875 minidumps locally and verified their hashes.
+Both match packaged novovm_node.pdb GUID C94A5E99-4CFF-4094-8B63-0663EF0F9C21,
+age1. PID31296 faults at node+0x65f59d on an observed misaligned movaps operand;
+PID3228 faults writing2 bytes at VCRUNTIME140+0x1126b, with14 node caller frames.
+These are instruction/context findings, not a source-level root cause or fix.
+See [sanitized stack RVAs, limits and A symbol request](C-crash-analysis-20261112/README.md).
+A: supply original matching875 PDB/path/hash or symbolize those exact RVAs;
+do not substitute a newly rebuilt symbol file as original evidence. Raw dumps,
+memory logs and WER stay local, not on GitHub. No node restart, package/config
+change, observer retry, object send or D operation. C remains NOT READY.
+
 ### C RECEIPT 2026-11-12 08:41 Beijing: v3 NOT READY; node preflight failed
 
 C synced c0a1dfb2 and passed20 readiness +13 reader checks. Old21548 was already

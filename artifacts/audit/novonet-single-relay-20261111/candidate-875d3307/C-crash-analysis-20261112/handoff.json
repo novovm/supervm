@@ -1,0 +1,17 @@
+{
+  "host": "C",
+  "status": "CRASH_DUMPS_ANALYZED_MATCHING_PDB_REQUIRED",
+  "utc": "2026-11-12T00:54:53.0091681Z",
+  "node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+  "pdb_file": "novovm_node.pdb",
+  "pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+  "pdb_age": 1,
+  "symbolized_source_lines": false,
+  "root_cause_confirmed": false,
+  "node_restarted": false,
+  "observer_started": false,
+  "D_touched": false,
+  "dump_uploaded": false,
+  "original_memory_uploaded": false,
+  "program_changed": false
+}

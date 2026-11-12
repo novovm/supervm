@@ -1,0 +1,18 @@
+[
+  {
+    "bytes": 6208032,
+    "sha256": "c5d2e37a640a654a0b501dc49229fdb01c05a77e4ec399f5dec7e218ee496495",
+    "uploaded": false,
+    "file": "novovm-node.exe.31296.dmp",
+    "copy_verified": true,
+    "modified_utc": "2026-11-11T13:27:58.1512257Z"
+  },
+  {
+    "bytes": 6159844,
+    "sha256": "95dbb8a63e8d6281c07a9019a28d4baadbf0ae61ff40117cac1da2fe31264ee0",
+    "uploaded": false,
+    "file": "novovm-node.exe.3228.dmp",
+    "copy_verified": true,
+    "modified_utc": "2026-11-11T20:13:40.2363053Z"
+  }
+]
