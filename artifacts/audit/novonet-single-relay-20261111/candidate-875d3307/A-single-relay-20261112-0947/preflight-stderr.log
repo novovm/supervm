@@ -1,0 +1,5 @@
+Exception: D:\WorksArea\SUPERVM\target\relay-constraint-20261111\Send-A-C-D.ps1:26
+Line |
+  26 |  … h $command){throw 'Command slot occupied; inspect original evidence,  …
+     |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Command slot occupied; inspect original evidence, no overwrite
