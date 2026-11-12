@@ -1,5 +1,36 @@
 # Frozen double-relay candidate a25452f4
 
+## CURRENT 2026-11-12 16:14 Beijing: approved; B then A existing update PASS
+
+The user explicitly approved this exact candidate's B->A->C->D existing
+updates and one real double-relay sample. This supersedes the earlier pending
+deployment boundary below. Full43155828234 and fixed package hashes are unchanged.
+
+B: old8fed PID3766709 stopped by exact pidfd SIGTERM; new a254 PID29088,
+novovm UID996, original database existing, original custody hashes unchanged.
+All80 package members and actual packaged AOEM qualification passed on B.
+Original41050/42050 listeners and mapped AOEM verified; application services
+were observed unchanged, not restarted. A->B authenticated Status before71ms /
+after64ms, same original root f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333.
+The original continuous B process lifetime is retained; no network timeout changed.
+See [B public updater evidence](B-update-public.json) and original Status records.
+
+A: system last boot2026-11-12 14:55:18 local; old875 progress ended14:54:53,
+task Ready/result0, no node/ports and no exit.json. Do not infer certified graceful
+drain from that missing exit record. The original stopped-owner guard accepted
+the actual task/progress evidence, then new a254 PID5136 / LocalService opened
+the same original database. Custody/head/height unchanged; loaded AOEM and copied
+same-scope node firewall rule verified. Authenticated Status32ms, same root.
+See [A actual result](A-result.json), [A public process](A-update-public.json),
+[stopped-owner evidence](A-stopped-owner-preflight.json) and original Status.
+Status used the already pinned875 operator client, not the node binary; this
+is intentionally recorded separately and does not claim a254 client qualification.
+
+No new object was sent. C/D are not yet updated. Follow [C then D instructions](CD-UPDATE.md).
+No discovery cache, DB, journal, key or protocol budget beyond the already
+approved candidate was reset. C's old crash cause remains open. Android changes
+subsequently pulled from main do not replace these frozen a254 binaries.
+
 ## 2026-11-12 current: original Full succeeded; deployment confirmation pending
 
 A read back run43155828234: `completed/success`, `workflow_dispatch`, attempt1,

@@ -1,5 +1,21 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 16:14 A：a254四机部署获批，B/A actual existing已通过，C下一台
+
+用户已明确批准a25452f4四机existing更新及双中继实测；原Full43155828234成功，
+不再重复申请停服。B已由8fed更新a254，PID29088/novovm，原库及密钥不变，
+41050/42050正常，认证Status64ms。A系统14:55重启后旧875已无进程/端口；
+原停止态检查通过后以a254 existing恢复，PID5136/LocalService，Status32ms。
+两机原状态根均f6186d40...5f56333，实际AOEM及程序哈希检查通过；没有发新对象。
+A缺少旧exit摘要，不能把任务result0宣称为已证明正常排空。C旧崩溃风险未结案。
+
+现在C执行一次同版本原更新器，D只核验新包，等A核对C健康后再更新D。
+工具ZIP仅19935字节已随Git交付，程序ZIP需从A复制，明确命令/哈希/恢复分支见
+[a254 C/D CURRENT](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/CD-UPDATE.md)。
+[B/A原始公开回执](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/README.md)
+与候选Full分别记录；C/D未更新、双中继未验收，不拿Status替代DONE。
+刚下拉的C Android共享修复不替换固定a254程序，A不等待/重复开发手机任务。
+
 ## 2026-11-12 C → A：共享装载修复及双机默认回归已完成
 
 用户明确授权C直接修复AOEM/SUPERVM，本项不再等待A。共享修复`dea182e4`在原bindings

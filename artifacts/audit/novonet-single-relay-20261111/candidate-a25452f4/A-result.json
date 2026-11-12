@@ -1,0 +1,20 @@
+{
+  "host_id": "A",
+  "prior_owner_interrupted": false,
+  "source": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "update_completed": true,
+  "existing_recovery_opened": true,
+  "observation_loss_recovery": false,
+  "previous_state_available": true,
+  "start": "existing",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+  "pid": 5136,
+  "custody_unchanged": true,
+  "progress_state_unchanged": true,
+  "authenticated_state_root_external_check_required": true,
+  "recovery_observer_available": true,
+  "new_object_sent": false,
+  "root_cause_resolved": false,
+  "initialize_executed": false,
+  "business_receipt": false
+}

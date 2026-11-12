@@ -1,0 +1,87 @@
+# a25452f4: approved existing updates, then real double relay
+
+## CURRENT 2026-11-12: B and A healthy; C execute next, D package-only
+
+User explicitly approved fixed a25452f4 B->A->C->D existing updates and a real
+double-relay object. Full43155828234 succeeded on the exact program SHA.
+B and A actual original-state recovery and external authenticated Status passed;
+see README and raw public receipts. Do not wait for Android/mobile work.
+
+**C now:** synchronize main without overwriting other work; verify the fixed
+program ZIP and this small tools ZIP, inspect actual875 owner, then run the
+original updater once with the evidence-supported mode. Do not start the old
+program merely to stop it again. No initializer, rekey, DB/cache/journal reset.
+No observer or object send yet. D may copy/verify only until A validates C.
+
+## Fixed inputs
+
+- Program source: a25452f4c49be37cd984e650f2079642e6c273b3.
+- Windows ZIP: novonet-observation-a25452f4-windows-x86_64.zip;
+  150573543 bytes; SHA256
+  fa198636fa33021ea542850e56f1df17140a5174bfb93fca1ade47f599f14978.
+- A copy source:
+  C:\Users\leadb\AppData\Local\NOVOVM\candidate-observation-a25452f4-20261112\.
+- Original C/D receiving directory: E:\区块链四机通讯\.
+- Tools in this Git directory: existing-update-tools-a25452f4-v1.zip;
+  19935 bytes; SHA256
+  a64f3cb94418f97e1f20ba074b47c45e4caf3798b8110ee31c1326340cbc757e.
+- Per-tool pins: update-tools-manifest.json. Generated from the original updater
+  by Prepare-Windows.ps1; original guard/package tests passed (windows-updater-tests.log).
+  Program not rebuilt or changed by this deployment-tool handoff.
+
+Extract to new, distinct program/tools directories, never over a running release.
+Check archive entries remain inside the destination and match manifest hashes.
+The original updater rechecks all77 release members and source/pins before stop.
+Do not use tools pinned to875,8fed,1ef or3fa against this program ZIP.
+
+## Actual875 preflight and execution
+
+Use administrator PowerShell7. C/D current expected old owner:
+
+- Task NOVOVM-C-875d3307-Existing-20261111 (D substitutes D).
+- LocalService SID S-1-5-19; no other active node or unknown DB/port owner.
+- Old node C:\ProgramData\NOVOVM\releases\novonet-observation-875d3307-windows-x86_64\bin\novovm-node.exe;
+  SHA9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7.
+- Original work C:\ProgramData\NOVOVM\selfrun\91129655606029\C\novonet-observation-875d3307-20261111;
+  DB sibling chain-state; D substitutes D. Keep its actual run/network/custody/cache.
+- Check task result, kernel process state, old progress/exit/Application1000,
+  protected-material locations, original ports41052/42052 (D41053/42053).
+
+Call the extracted original Update-Windows.ps1:
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -ExecutionPolicy RemoteSigned -File '<new-tools>\Update-Windows.ps1' -HostId C -PackageRoot '<extracted>\novonet-observation-a25452f4-windows-x86_64' -EvidenceRoot '<fresh-evidence-directory>'
+```
+
+Choose ONLY the original matching lifecycle mode, based on live evidence:
+running exact875 => no recovery switch; Ready/result0/no active process or ports
+with original progress => -ResumeStopped; original task-termination evidence
+267014 => -RecoverInterrupted; exact supported crash evidence => -RecoverCrashed
+(heap c0000374 also requires matching original exit record). Original guards
+must accept the evidence. Do not guess a flag, use RecoverMissingProgress for
+unrelated data, or weaken validation. Unknown state => return evidence and stop.
+Run once; failure => preserve error/recovery-stop evidence, do not loop/reinitialize.
+
+## Return immediately after C finishes
+
+Return C_A254_EXISTING_READY_FOR_A_QUERY only if updater exited0 and result
+confirms same-db existing, source a254, custody/progress unchanged. Publish
+result.json, public after projection (no private config/custody material),
+old-exit / matching stopped/crash preflight, firewall summary, actual exit code,
+source/program/AOEM/tool hashes and task/listener state. Put C receipt under
+C-update-20261112 in this directory and push main. Do not publish before.json
+wholesale: it contains full local configuration and protected-material metadata.
+
+A then queries C with original authenticated Status; only after PASS does D use
+the same procedure with HostId D, returning D_A254_EXISTING_READY_FOR_A_QUERY.
+Any node/task/path discrepancy is a real blocker to report, not permission to
+run an old initialize task or force the database open.
+
+## Double-relay phase
+
+After all four actual versions/health are verified, use the original bounded
+double-relay command and existing observation owners. Record ordered two-hop
+path, relay forwarding, Object ID, Session ID and sender/final recipient DONE.
+New NVLOCR02 signed128KiB declarations require coherent readers; no signed
+sequence rollback/cache wipe. No replay of accepted direct/single-relay samples.
+Object custody is not Business Receipt, NOV transfer, quorum finality or TPS.
