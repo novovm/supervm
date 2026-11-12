@@ -1,0 +1,96 @@
+# Frozen double-relay candidate a25452f4
+
+Program source: `a25452f4c49be37cd984e650f2079642e6c273b3`.
+This is the approved bounded128KiB/min CANDIDATE, not deployment permission.
+No A/B/C/D process, database, identity, key or observer was changed in this work.
+The accepted A->C->D single-relay sample was not repeated.
+
+## Qualification
+
+| Original local gate | Windows | Linux |
+| --- | ---: | ---: |
+| Actual packaged identity/NAT/reconnect and negative cases |7/7|7/7|
+| Source-matched network owner with packaged AOEM |22/22|22/22|
+| Actual packaged native node recovery |6/6|6/6|
+| Actual packaged node/client UCA recovery |1/1|1/1|
+| Original startup owner with packaged AOEM |1/1|1/1|
+| Actual packaged single-relay arm/send/cancel encoding |3/3|3/3|
+| Actual packaged double-relay arm/send/cancel encoding |3/3|3/3|
+
+The CLI checks create local command files only: no live object was sent.
+Owner IO tests are local component tests; packaged recovery uses isolated local
+state. Neither is four-machine or public-network acceptance. All listed tests
+actually ran; explicit ignored process tests were selected and executed.
+Original source tests and strict Clippy are recorded in the linked increments.
+
+Both packages were built by the original packager from clean exact source.
+Independent verification checks every release-manifest member (Windows77,
+Linux80), actual Node/Client/ctl hashes, SCM existing contract, actual AOEM
+qualification, inherited AOEM checksums and EVERY archive file (Windows80,
+Linux83 including supporting manifests). ZIP entries and tar content/member
+sets match the qualified directories, not merely the archive filenames.
+
+| Archive | Bytes | SHA256 |
+| --- | ---: | --- |
+| `novonet-observation-a25452f4-windows-x86_64.zip` |150573543|`fa198636fa33021ea542850e56f1df17140a5174bfb93fca1ade47f599f14978`|
+| `novonet-observation-a25452f4-linux-x86_64.tar.gz` |359305407|`b6878606cfdd192ee32eaacf42bffd48895dce30021de63bef8a7c3f53c8fc34`|
+
+Archives on A: `C:\Users\leadb\AppData\Local\NOVOVM\candidate-observation-a25452f4-20261112\`.
+Node, Client, ctl, AOEM, manifests and every member hash are in
+[candidate-manifest.json](candidate-manifest.json).
+Original package logs and wrapper provenance are in
+[package-evidence.zip](package-evidence.zip), with
+[an independent evidence manifest](package-evidence-manifest.json).
+
+## Retained failures and compatibility
+
+- 1baa6dbc packages were stopped by the local rustix security gate; the
+  [minimal patched dependency and safety results](../rustix-security-20261112/README.md)
+  are retained. No advisory exemption was added.
+- a2d7af7f packages failed the original owner gate19/3 on each platform.
+  [The original failure and signed locator correction](../locator-profile-20261112/README.md)
+  remain distinct from this new candidate's22/22 results.
+- The actual shared allowance and signed declaration are131072 bytes/min.
+  Existing signed64KiB NVLOCR01 records retain their bytes and validation;
+  new128KiB records use explicit NVLOCR02. Old readers reject V2, so do not
+  treat mixed-version discovery failure as successful candidate deployment.
+- Double-relay diagnostic commands are441 bytes with bounded ordered path and
+  distinct tags; old377/409 byte command semantics remain. Normal business
+  remains NovoRUDP first, qualified Iroh backup. No increased session count,
+  timeout, message lifetime, signature permission or quorum.
+- The existing C875 heap-crash report is NOT explained or closed by these fixes.
+
+## One Full, not repeated cloud debugging
+
+After BOTH complete local qualifications and independent archive checks, one
+Full was requested: [43155828234](https://github.com/novovm/supervm/actions/runs/43155828234).
+Verified head SHA is exactly the program source above, event=workflow_dispatch,
+run_attempt=1. At2026-11-12T04:35:59Z it is in_progress, conclusion=null.
+The request uses profile=full; the workflow/source-equivalence request record
+is [full-request.json](full-request.json). No rerun or cancellation was issued.
+The preceding successful push43152954604 is lightweight synchronization only.
+
+`full_ci_qualified=false` in the frozen manifest is intentional until the actual
+mandatory Full results succeed. No new source changes are hidden in a docs receipt.
+
+## Next operation boundary
+
+Once mandatory Full results are known, report them against this same SHA.
+Any required failure stops candidate acceptance; fix the actual cause locally.
+The latest user permission is128KiB candidate validation only. Obtain this
+candidate's deployment approval before updating any live node.
+
+For an approved update, reuse the existing updater and existing original state,
+checking exact artifact hash, process ownership, database/identity and current
+health first; do not invoke old initialize tasks. Sequence B->A->C->D with
+per-node checks, and bring all intended double-relay participants onto the
+coherent candidate before discovery/path acceptance. Retain the previous
+program/config for a meaningful recovery, stop the exact new instance before
+old-program existing recovery, and never run two processes on the same DB.
+New compact records may require coherent peer recovery; do not clear signed
+cache/sequence history simply to force an old reader to accept them.
+
+After approval and successful update, send one unique object on the original
+two-relay path. Correlate actual path, both relays' forwarding, endpoint identity,
+Object ID, Session ID and sender/final-recipient DONE. Transport ACK and local
+DONE are not Business Receipt, asset finality, TPS or production acceptance.

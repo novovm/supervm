@@ -1,0 +1,237 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "sha256": "4a4846a195df7b71fe19f283b57663d28ea037cf63f3e3e691fb3286b67625bb",
+  "public_evidence_only": true,
+  "files": [
+    {
+      "name": "build-windows.log",
+      "bytes": 7451,
+      "sha256": "7a6b8461793bf95f7f9a7bfa8cccb95089b30b2308fdca446aadb3cf26d3c60b"
+    },
+    {
+      "name": "build-linux.log",
+      "bytes": 7185,
+      "sha256": "4908c83ba4cf739b4529639af102079f8e2c6977f27592aef56b24b0fd10884a"
+    },
+    {
+      "name": "verified-windows.json",
+      "bytes": 6124,
+      "sha256": "0a7586ab1d205a7dd86279bbeed2d98d4e202c0360a5daf9f05f3e361311183a"
+    },
+    {
+      "name": "verified-linux.json",
+      "bytes": 5806,
+      "sha256": "cc45ed288d08444b6666477acd7f6f047a75feeb95871cd7eec1bf569a727d77"
+    },
+    {
+      "name": "owner-qualification-windows.json",
+      "bytes": 1618,
+      "sha256": "f327d57d9173eefd7c7ef594599eb175536e5dd688a8f015839657f511888de4"
+    },
+    {
+      "name": "owner-qualification-linux.json",
+      "bytes": 1565,
+      "sha256": "ccadda9e5c12e188dbd25923c041d422ea412444a161e08beb10b3a5319c18a7"
+    },
+    {
+      "name": "owner-test-build-windows.log",
+      "bytes": 553,
+      "sha256": "ec4e5d68ee0344f86f008141dcb8969973b7bcb33839b9eab8a1390cc2a3e585"
+    },
+    {
+      "name": "owner-test-build-linux.log",
+      "bytes": 995,
+      "sha256": "1e7cd56e2f6e3bbb6f58e74c8dbbdf71ff6916a4d24114520009accbbdcb6ca1"
+    },
+    {
+      "name": "packaged-native-identity-windows.log",
+      "bytes": 2694,
+      "sha256": "a158d0986c8ddaa594077174fc6033f3544e78802cecd9e10a3f70a33fddc92c"
+    },
+    {
+      "name": "owner-with-packaged-aoem-windows.log",
+      "bytes": 6518,
+      "sha256": "6ff0ab85fc3a7989056f0ef6f2c5ea31b27fefc4b3d9a230f3b2d08538e808ca"
+    },
+    {
+      "name": "packaged-node-recovery-windows.log",
+      "bytes": 1835,
+      "sha256": "a2fada67ce90888ed972226a054e6643075141c859c19ccaba1a61a91fdac72a"
+    },
+    {
+      "name": "packaged-uca-recovery-windows.log",
+      "bytes": 424,
+      "sha256": "02f76f0b81c7b75563869cfac3d9cf54be06ecf8281afb8211fad354c597f00f"
+    },
+    {
+      "name": "packaged-runtime-startup-windows.log",
+      "bytes": 434,
+      "sha256": "02e8cc1e45dcbeae530151540a349acd923d3b8785643198fe476b071e6b371b"
+    },
+    {
+      "name": "relay-commands-windows/result.json",
+      "bytes": 817,
+      "sha256": "368b89d3519f3fcef0824bcadbb9de9012be3f8ca58c31124ef08a93f2507800"
+    },
+    {
+      "name": "relay-commands-windows/arm.json",
+      "bytes": 2313,
+      "sha256": "4be28b285d07697ab2f92b9692010e56341dade7027f6dc83995e8fea2d83987"
+    },
+    {
+      "name": "relay-commands-windows/send.json",
+      "bytes": 2314,
+      "sha256": "a859c0c85fc4d578bd262051bd0ecac0a75ce6c4377e66bd6fed12063a746a65"
+    },
+    {
+      "name": "relay-commands-windows/cancel.json",
+      "bytes": 2316,
+      "sha256": "93f8f043ee56d81c35c6fe479b13628da80a5da5342365a8460a596205c64009"
+    },
+    {
+      "name": "relay-commands-windows/arm.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-windows/send.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-windows/cancel.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "double-relay-commands-windows/result.json",
+      "bytes": 817,
+      "sha256": "9c48f782ca5110b03c47bf21ae6922d5767e2e6ecdb6e33c558a3a02f2276b1f"
+    },
+    {
+      "name": "double-relay-commands-windows/arm.json",
+      "bytes": 2720,
+      "sha256": "1fb883cd0b775ef05cde3e37af5c962d1022fd51deeaeaf20c9b0e21499f8335"
+    },
+    {
+      "name": "double-relay-commands-windows/send.json",
+      "bytes": 2721,
+      "sha256": "0c30a649cec06cc8eb46cfeb29bbc5a691651ed8c9d4f1a0b8c5627852be7a43"
+    },
+    {
+      "name": "double-relay-commands-windows/cancel.json",
+      "bytes": 2723,
+      "sha256": "bc9809f7723ee82469d83d777adf875842ec6cc61757903eadef465cd7152290"
+    },
+    {
+      "name": "double-relay-commands-windows/arm.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "double-relay-commands-windows/send.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "double-relay-commands-windows/cancel.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "packaged-native-identity-linux.log",
+      "bytes": 2658,
+      "sha256": "5c33802a4ba86ce4e0c877001f7375fad952a64ba4a86cc3f3589fe563c64cbe"
+    },
+    {
+      "name": "owner-with-packaged-aoem-linux.log",
+      "bytes": 6497,
+      "sha256": "8eb55df57bd8e94382a09e9615c3a384c1d97587797852be83ce4a29c50690ae"
+    },
+    {
+      "name": "packaged-node-recovery-linux.log",
+      "bytes": 1824,
+      "sha256": "46cb059ceb99cf398da5acbfa5d96b7822fd92306e189821abaf359d6f77b60a"
+    },
+    {
+      "name": "packaged-uca-recovery-linux.log",
+      "bytes": 420,
+      "sha256": "41ff41d53938b9e007b6730ae21fc33bf9ab27be2524695750941ec2624bedb5"
+    },
+    {
+      "name": "packaged-runtime-startup-linux.log",
+      "bytes": 427,
+      "sha256": "32bd40bd7721b4eb94bd6e93f33bf2496c7e19c245a6a12ad21f182b444fb845"
+    },
+    {
+      "name": "relay-commands-linux/result.json",
+      "bytes": 788,
+      "sha256": "0aaee3a7968d93ffe54cb54a2f4440989b627417929e72f93ccb75814565de1a"
+    },
+    {
+      "name": "relay-commands-linux/arm.json",
+      "bytes": 2313,
+      "sha256": "2fd7dafc247582ab494d5f51e215d76b9aac9b12683df4412795f4b18118adfb"
+    },
+    {
+      "name": "relay-commands-linux/send.json",
+      "bytes": 2314,
+      "sha256": "4738a310b137c0758ec18b610a0b22afc2c9c029231478b942e731249cdc04f0"
+    },
+    {
+      "name": "relay-commands-linux/cancel.json",
+      "bytes": 2316,
+      "sha256": "24b2e0d9c4cb99253e053106ab864dd83cdc1fab4ebe02ce010e815700c5b283"
+    },
+    {
+      "name": "relay-commands-linux/arm.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-linux/send.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "relay-commands-linux/cancel.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "double-relay-commands-linux/result.json",
+      "bytes": 788,
+      "sha256": "139e7eb7263c43c020da5fd2196241ab73cdf1b39322029009cc2e86022cf87d"
+    },
+    {
+      "name": "double-relay-commands-linux/arm.json",
+      "bytes": 2720,
+      "sha256": "c378c45994678849bff9db869e0a580ff5e57d962375fcbcf8239c22a6400c9f"
+    },
+    {
+      "name": "double-relay-commands-linux/send.json",
+      "bytes": 2721,
+      "sha256": "24e91ba113e93e16dcb3c0a860390516dda7010ab66956a89f0d8c509ed503e0"
+    },
+    {
+      "name": "double-relay-commands-linux/cancel.json",
+      "bytes": 2723,
+      "sha256": "e7a74b48fa5d0717fef879d494fd5339facc207431ba5075f5cec3f438e88890"
+    },
+    {
+      "name": "double-relay-commands-linux/arm.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "double-relay-commands-linux/send.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "double-relay-commands-linux/cancel.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

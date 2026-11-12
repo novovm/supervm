@@ -1,5 +1,14 @@
 # Single-relay real-object qualification
 
+## CURRENT 2026-11-12: a25452f4 packages qualified locally; one Full running
+
+[Both fixed archives and exact local results](candidate-a25452f4/README.md)
+are complete: per platform identity7, owner22, packaged native recovery6,
+UCA recovery1 and startup1 passed. All archive members/hashes were verified.
+One Full43155828234 was then requested against EXACT a25452f4, attempt1;
+04:35:59UTC status is in_progress, not success. The128KiB approval remains
+candidate-only; no live updates or real double-relay object were performed.
+
 ## CURRENT 2026-11-12: native discovery projection correction locally verified
 
 The a2d7af7f package owner gate failed19/3 on BOTH platforms: the signed128KiB

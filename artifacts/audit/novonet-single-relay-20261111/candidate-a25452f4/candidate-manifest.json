@@ -1,0 +1,936 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "recorded_utc": "2026-11-12T04:35:17.0186546Z",
+  "packages": [
+    {
+      "platform": "windows",
+      "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+      "source_equivalence": null,
+      "archive": "novonet-observation-a25452f4-windows-x86_64.zip",
+      "archive_bytes": 150573543,
+      "archive_sha256": "fa198636fa33021ea542850e56f1df17140a5174bfb93fca1ade47f599f14978",
+      "manifest_sha256": "8e3042fcc99ab86ffd5193c864c879f7569164a4270e2767240357de21e60b9f",
+      "manifest_members": 77,
+      "total_files": 80,
+      "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+      "client_sha256": "185e68c8b7beb94292834dd6fa8530d282bb181d4722cfecce080e75f9c582db",
+      "ctl_sha256": "db38ea6247a3be359f4165276feac39fb3a62990ea7e0b628ef37827e946b281",
+      "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+      "aoem_manifest_sha256": "07d61c1cab0ab57844d0cf18c5f32609161ed65b6a9fcb3c044929cd19bc24b1",
+      "inherited_aoem_checksum": {
+        "sha256": "cac4db2bdced355ed2e2473fbc092095c0bef1f791fa6654dd00691310d39d30",
+        "path": "aoem/windows/CHECKSUMS.sha256",
+        "entries_verified": 26
+      },
+      "package_identity_tests": 7,
+      "qualification": [
+        {
+          "scope": "source-matched owner component IO with packaged AOEM, not packaged node process",
+          "passed": 22,
+          "log": "owner-with-packaged-aoem-windows.log",
+          "exit": 0,
+          "name": "owner-with-packaged-aoem"
+        },
+        {
+          "scope": "actual packaged node process, native protocol and original isolated database recovery",
+          "passed": 6,
+          "log": "packaged-node-recovery-windows.log",
+          "exit": 0,
+          "name": "packaged-node-recovery"
+        },
+        {
+          "scope": "actual packaged node and adjacent client, isolated UCA recovery",
+          "passed": 1,
+          "log": "packaged-uca-recovery-windows.log",
+          "exit": 0,
+          "name": "packaged-uca-recovery"
+        },
+        {
+          "scope": "original startup owner with packaged AOEM, isolated state",
+          "passed": 1,
+          "log": "packaged-runtime-startup-windows.log",
+          "exit": 0,
+          "name": "packaged-runtime-startup"
+        }
+      ],
+      "members": [
+        {
+          "name": "CHECKSUMS.sha256",
+          "bytes": 8095,
+          "sha256": "b5bd54017a25768e29f0435dfe26f5eeca5b979fba3efe9c9dbbb7a299216356"
+        },
+        {
+          "name": "README.md",
+          "bytes": 3267,
+          "sha256": "d043b2628b1572681b3fd417eeba3353db093c84261a14676f805de70cbcbd32"
+        },
+        {
+          "name": "release-manifest.json",
+          "bytes": 21100,
+          "sha256": "8e3042fcc99ab86ffd5193c864c879f7569164a4270e2767240357de21e60b9f"
+        },
+        {
+          "name": "aoem/aoem-sdk-manifest.json",
+          "bytes": 11320,
+          "sha256": "c993599eb7bd2a8f3f648a5ac4c0bba07ffdd49f31113c153ffaba943319da7f"
+        },
+        {
+          "name": "aoem/INSTALL-INFO.txt",
+          "bytes": 3789,
+          "sha256": "28a1b0a6e37eeb6def3c3b18815a5ae00b30c13ede09c1b01dfe05328e4bddc2"
+        },
+        {
+          "name": "aoem/README.md",
+          "bytes": 8936,
+          "sha256": "771908a94737502ed31c109cdd7e4717fdf2bebb9b994e6988d42484801c7f33"
+        },
+        {
+          "name": "aoem/RELEASE-NOTES.md",
+          "bytes": 10279,
+          "sha256": "a37c37c991674be388589d1a3035000d4bc810bf7270d1b6c3c28472aff7cf42"
+        },
+        {
+          "name": "aoem/RUNTIME-BASELINE.md",
+          "bytes": 20786,
+          "sha256": "dec148a97b0ebd58ff34cc9bd1a0121354fab6cc3ad4168ebce1136fa223ff47"
+        },
+        {
+          "name": "aoem/config/aoem-runtime-profile.json",
+          "bytes": 245,
+          "sha256": "c7aa38f47430e01376be25da268e556aaacb7ea81821418e54d8fa160b5fdd42"
+        },
+        {
+          "name": "aoem/manifest/aoem-manifest.json",
+          "bytes": 10805,
+          "sha256": "07d61c1cab0ab57844d0cf18c5f32609161ed65b6a9fcb3c044929cd19bc24b1"
+        },
+        {
+          "name": "aoem/windows/ai-sgm-infer-wire-v1-capability.json",
+          "bytes": 3203,
+          "sha256": "70f18cb078fadbf4fbb4b2fe38792baa50ac0f043f3636f046884cdc691ee8da"
+        },
+        {
+          "name": "aoem/windows/CHECKSUMS.sha256",
+          "bytes": 2575,
+          "sha256": "cac4db2bdced355ed2e2473fbc092095c0bef1f791fa6654dd00691310d39d30"
+        },
+        {
+          "name": "aoem/windows/manifest.json",
+          "bytes": 8654,
+          "sha256": "a03374ec3ba957ba30b622d93a619b0caafb5c2a0c5ec73e9ef2ba0487c56c8f"
+        },
+        {
+          "name": "aoem/windows/config/aoem-runtime-profile.json",
+          "bytes": 3423,
+          "sha256": "4963b711edc56785b3caecf75f8bf45cf51b374032ef0553dc8f8d4876425883"
+        },
+        {
+          "name": "aoem/windows/core/bin/aoem_ffi.dll",
+          "bytes": 48345088,
+          "sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_crypto_hsm.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_crypto_kms.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_crypto_mldsa.dll",
+          "bytes": 25576960,
+          "sha256": "23687ae780eaf7954ac50835d1354c50b217c3936e19be69985c92aa55e8a213"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_hsm.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_kms.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_mldsa.dll",
+          "bytes": 25576960,
+          "sha256": "23687ae780eaf7954ac50835d1354c50b217c3936e19be69985c92aa55e8a213"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_persist_rocksdb.dll",
+          "bytes": 28496896,
+          "sha256": "3ea939e444e15f4e3bd2c1fd8afd13b81b378978b51e6b72fbfefd3139408cb9"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_persist.dll",
+          "bytes": 28496896,
+          "sha256": "3ea939e444e15f4e3bd2c1fd8afd13b81b378978b51e6b72fbfefd3139408cb9"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_runtime_wasm_wasmtime.dll",
+          "bytes": 22777856,
+          "sha256": "ee71cea00aea820d0c4080866050062a2cdbf7e76dd35bd1f8d62f89e96b02e5"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_wasm.dll",
+          "bytes": 22777856,
+          "sha256": "ee71cea00aea820d0c4080866050062a2cdbf7e76dd35bd1f8d62f89e96b02e5"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_zkvm_executor.dll",
+          "bytes": 26457600,
+          "sha256": "50d972dfc88343aea5321e412bf7a3d4fb1723733d3b151d1d8f0613f7056eef"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_ffi_zkvm.dll",
+          "bytes": 26457600,
+          "sha256": "50d972dfc88343aea5321e412bf7a3d4fb1723733d3b151d1d8f0613f7056eef"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_hsm_plugin.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/core/plugins/aoem_kms_plugin.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/include/aoem.h",
+          "bytes": 156421,
+          "sha256": "4c6ae29baf7efc0c8cc1cf3abd0abb78a585a135cb2de47f8ab3fbfdaec969ca"
+        },
+        {
+          "name": "aoem/windows/kms-hsm-plugin/aoem_ffi_crypto_hsm.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/kms-hsm-plugin/aoem_ffi_crypto_kms.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/kms-hsm-plugin/aoem_ffi_hsm.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/kms-hsm-plugin/aoem_ffi_kms.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/kms-hsm-plugin/aoem_hsm_plugin.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/kms-hsm-plugin/aoem_kms_plugin.dll",
+          "bytes": 132096,
+          "sha256": "1f88484e3c9af2fa80f0c9dac6fed6642f7e9e669435023d219309fc50b3ebf4"
+        },
+        {
+          "name": "aoem/windows/kms-hsm-plugin/manifest.json",
+          "bytes": 327,
+          "sha256": "c797f00725fa49825eb201ae4715943d47f71f7fd5b8222f2899494fc1b4736e"
+        },
+        {
+          "name": "bin/novovm-native-client.exe",
+          "bytes": 7293440,
+          "sha256": "185e68c8b7beb94292834dd6fa8530d282bb181d4722cfecce080e75f9c582db"
+        },
+        {
+          "name": "bin/novovm-node.exe",
+          "bytes": 48457216,
+          "sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d"
+        },
+        {
+          "name": "bin/novovm-product-evidence.exe",
+          "bytes": 6383616,
+          "sha256": "e770c9f0c0089c368ff12fa7ead8431b8ede714130767a5c1ceb501ff600b372"
+        },
+        {
+          "name": "bin/novovm-product-nat.exe",
+          "bytes": 6786048,
+          "sha256": "b494370795e6c39a30d307f375307e5d7cda46e551c10417f060078b5ebd416c"
+        },
+        {
+          "name": "bin/novovm-product-node-overlay.exe",
+          "bytes": 6473216,
+          "sha256": "f27818cabd30a3d9c87913d6f9ec693b5d93945b6e12db2229a9f1de35f98df3"
+        },
+        {
+          "name": "bin/novovm-product-peer.exe",
+          "bytes": 8092160,
+          "sha256": "88ca1e70f8f4229540e291e247a3c7b481e8a44f7434ae5dd1c732d1bde789f8"
+        },
+        {
+          "name": "bin/novovm-product-relay.exe",
+          "bytes": 9417728,
+          "sha256": "d397ce3e24be07d1e46961b9cd475ebec9c48e0324464cf44248a0c8e8cbb3e5"
+        },
+        {
+          "name": "bin/novovm-rendezvous-service.exe",
+          "bytes": 17832448,
+          "sha256": "689222908c309325d1f3ec89f89be7035a2f07ef29cbc38c560ae54dbf9e88c9"
+        },
+        {
+          "name": "bin/novovmctl.exe",
+          "bytes": 26676736,
+          "sha256": "db38ea6247a3be359f4165276feac39fb3a62990ea7e0b628ef37827e946b281"
+        },
+        {
+          "name": "bin/supervm-relay.exe",
+          "bytes": 16336896,
+          "sha256": "bee62903a599db8385f4f9ab635e7b082f0a426c0eb2c2e8b2d9be018d4ac2fe"
+        },
+        {
+          "name": "config/mailbox-native.json.example",
+          "bytes": 155,
+          "sha256": "11bb49e9ed7c6b7abc199af87e51fb2824ea50e01137440a930b3e5ac955caaf"
+        },
+        {
+          "name": "config/mailbox-node.json.example",
+          "bytes": 569,
+          "sha256": "bf3315be3780034d41af8b38caf9cfd67df2165f290eff33934c2111fa1d07a2"
+        },
+        {
+          "name": "config/mailbox-tls.json.example",
+          "bytes": 147,
+          "sha256": "b6f0bffe870fa3cfbbb77432d623c96494a531bcb563987f65b704650e6fc8e8"
+        },
+        {
+          "name": "config/native-nat.json.example",
+          "bytes": 752,
+          "sha256": "b6d9103bc2a30aefa9c34eee19ca56e59ca447a0161cf12f90dc185e1656d973"
+        },
+        {
+          "name": "config/native-node.json.example",
+          "bytes": 584,
+          "sha256": "413505d21b489ece0683c83ec96670cf36939d3c22a4b281dcd2ec2c2d07e548"
+        },
+        {
+          "name": "config/novovm-node.env.example",
+          "bytes": 1225,
+          "sha256": "0650722ede6bc76d3ffab99aa86cfa16527bad25a994c4c145f917f867931801"
+        },
+        {
+          "name": "config/NOVOVMNativeNode.json.example",
+          "bytes": 139,
+          "sha256": "4aaeb481702110b716f385fcd968b4260bdffd6e3a7acd8188026a1c54776b2d"
+        },
+        {
+          "name": "config/peer-receiver.json.example",
+          "bytes": 739,
+          "sha256": "37f73756bc75b2fbeaf726209caae39758d75af40a7e7a78dc30bd52bcbbe306"
+        },
+        {
+          "name": "config/peer-sender.json.example",
+          "bytes": 795,
+          "sha256": "b53fb5ef36b81391b3461b92e76e739d3de9de2055f3d6561867020c0916d093"
+        },
+        {
+          "name": "config/relay.json.example",
+          "bytes": 1312,
+          "sha256": "7f1fd6f73832b3c9887e7760a729ce8040c8e8304203029cde22b5c35c4ef278"
+        },
+        {
+          "name": "config/unified-node.json.example",
+          "bytes": 243,
+          "sha256": "75df1ffbdca484281e84b3ba9edf67bcd0c23398bda8cbfc264770aba90a40a3"
+        },
+        {
+          "name": "docs/NOVONET_TRANSPORT_POLICY_V1.md",
+          "bytes": 71559,
+          "sha256": "c2c061407a5cc0ac5d36b2a39f1dd2b91ed155d5a513cc4efd8221bd61e36731"
+        },
+        {
+          "name": "docs/NOVOVM_DELIVERY_ALIGNMENT.md",
+          "bytes": 313037,
+          "sha256": "de81a3ce09bc580df6db82fdfaae06db75a6dcff8ca49934b1bc79e59b262c4b"
+        },
+        {
+          "name": "docs/NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
+          "bytes": 17365,
+          "sha256": "5f275476767c1bf3eb76eba731f7d3199fff4810f92c5759fcb30833a65e035c"
+        },
+        {
+          "name": "docs/NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
+          "bytes": 18635,
+          "sha256": "0f582dc7bdc52101c182fc491f4f121e21cb47a99554d7478b263509f90e0ffd"
+        },
+        {
+          "name": "docs/NOVOVM_MULTI_HOST_NUAS_HANDOFF.md",
+          "bytes": 56270,
+          "sha256": "ee84d486a502a68babeaef7aa18f003d1fe66722af0bc8f5362b15b8b950283a"
+        },
+        {
+          "name": "docs/NOVOVM_NATIVE_OPERATOR_CLIENT.md",
+          "bytes": 5815,
+          "sha256": "b960b47783e6814efdb28d7fae1951517aac57fbdd4ac9733c13ed3eb1e3a5b2"
+        },
+        {
+          "name": "docs/NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md",
+          "bytes": 12372,
+          "sha256": "c3cb610ab76ce0fadfb2ac59b6f23893c8c750351d26cc3f9ee4796295d9fc05"
+        },
+        {
+          "name": "docs/NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md",
+          "bytes": 6648,
+          "sha256": "48caf98f0ea53e905d63abdea3a7eebb216376d3c5a4b4e7c65b290d2cec5da2"
+        },
+        {
+          "name": "docs/NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md",
+          "bytes": 13268,
+          "sha256": "48bf4727df68671e29aee24aef4b45dc7e4537069129189164b7146dcc9c3fe5"
+        },
+        {
+          "name": "docs/NOVOVM_PURPOSE_IDENTITY_PREPARATION.md",
+          "bytes": 10147,
+          "sha256": "cf4d5b18e8c29717283b4b6b26b752c4e5ae429deb8c95a7dcd7cbc843679b81"
+        },
+        {
+          "name": "docs/novovm-product-evidence-v1.md",
+          "bytes": 4552,
+          "sha256": "161bf0e6f0960f7ad4682ab9c0e9d161e27689d85439dac2d9e8ebd7ee655986"
+        },
+        {
+          "name": "docs/novovm-product-nat-runtime-v1.md",
+          "bytes": 11101,
+          "sha256": "cf466d814ba1d92af84271a178d2d17b8620b6522d9f2e3b1121703dcc166ecc"
+        },
+        {
+          "name": "docs/novovm-product-node-overlay-v1.md",
+          "bytes": 3611,
+          "sha256": "62aa94404d72b596f7ec5e6a46dcbbbef14a89f10b7e78d9fce30d369fe72884"
+        },
+        {
+          "name": "docs/novovm-product-peer-runtime-v1.md",
+          "bytes": 3720,
+          "sha256": "d92c5539665dc4dadb95573393495d4d393321d3b5860ec04cf78c3911b7c9e7"
+        },
+        {
+          "name": "docs/novovm-product-relay-client-v1.md",
+          "bytes": 4920,
+          "sha256": "05986b5c9cb2edc36426e0588e594148557e9cb218afd11c60a6d132ef1b1eb1"
+        },
+        {
+          "name": "docs/novovm-product-relay-daemon-v1.md",
+          "bytes": 10224,
+          "sha256": "0b388fa44692fda90a26200ba8c8146f0e9798e46becc99197c3e7d8e8f5196d"
+        },
+        {
+          "name": "reports/native-identity-runtime-qualification.json",
+          "bytes": 996,
+          "sha256": "23af2ca52423fc6309973450b6d926a8a40addb3028c840bb46f9c79660a0cb5"
+        },
+        {
+          "name": "reports/native-node-service-contract.json",
+          "bytes": 226,
+          "sha256": "e27fdb9992adfd0cb51313902ef0c911dc5ad7e77a479f2127a0b601d77d4ea6"
+        },
+        {
+          "name": "resources/scripts/windows/install-novovm-relay.ps1",
+          "bytes": 5786,
+          "sha256": "0c460ffac432e934110e8ed342c75d7e6dbcc4d8374babe4663e2f13504aa12c"
+        },
+        {
+          "name": "resources/scripts/windows/install-novovm-rendezvous.ps1",
+          "bytes": 9684,
+          "sha256": "1339d9c0c436879ebb541dfe697ff03524a160577941f6ca30d22283b3b2e168"
+        },
+        {
+          "name": "resources/scripts/windows/NovovmRelayFirewall.psm1",
+          "bytes": 4456,
+          "sha256": "2ce918b7e34185c4748fa55e51ba3f30dc163fe01d63bb5c7792e752561105e8"
+        },
+        {
+          "name": "resources/scripts/windows/rendezvous-user-install.ps1",
+          "bytes": 8582,
+          "sha256": "a491313ce0282b53888ef5eb7e428e257512707db7e7d754d090e61bc2965593"
+        }
+      ],
+      "deployed": false
+    },
+    {
+      "platform": "linux",
+      "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+      "source_equivalence": null,
+      "archive": "novonet-observation-a25452f4-linux-x86_64.tar.gz",
+      "archive_bytes": 359305407,
+      "archive_sha256": "b6878606cfdd192ee32eaacf42bffd48895dce30021de63bef8a7c3f53c8fc34",
+      "manifest_sha256": "2879b0b1a5408fd2e8bbea9f8ae773cb19329d2b12f5d60581f457582fba2334",
+      "manifest_members": 80,
+      "total_files": 83,
+      "node_sha256": "89854a24d4259b912fdbb8c6f8e21ea48af6c74c0c89da8f3cdc648c1845a769",
+      "client_sha256": "66339342e4bec99a6b7df1adf5765dd99970a0abf933a4415b58e1026618837b",
+      "ctl_sha256": "1d15adb3d7bb2ca0fae2c158964599599de67dadb0b7b8e89865aa4e0d5138c9",
+      "aoem_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+      "aoem_manifest_sha256": "0ccb0a626c06de4eb92f04192062dad3e9df655816525c4a46ceb1930c6726e2",
+      "inherited_aoem_checksum": {
+        "sha256": "94ae7322b1eeedcd9c358d97bbafab389b722378e53a796a393782f14fb71734",
+        "path": "aoem/linux/CHECKSUMS.sha256",
+        "entries_verified": 25
+      },
+      "package_identity_tests": 7,
+      "qualification": [
+        {
+          "name": "owner-with-packaged-aoem",
+          "passed": 22,
+          "log": "owner-with-packaged-aoem-linux.log",
+          "exit": 0,
+          "scope": "source-matched owner component IO with packaged AOEM, not packaged node process"
+        },
+        {
+          "name": "packaged-node-recovery",
+          "passed": 6,
+          "log": "packaged-node-recovery-linux.log",
+          "exit": 0,
+          "scope": "actual packaged node process, native protocol and original isolated database recovery"
+        },
+        {
+          "name": "packaged-uca-recovery",
+          "passed": 1,
+          "log": "packaged-uca-recovery-linux.log",
+          "exit": 0,
+          "scope": "actual packaged node and adjacent client, isolated UCA recovery"
+        },
+        {
+          "name": "packaged-runtime-startup",
+          "passed": 1,
+          "log": "packaged-runtime-startup-linux.log",
+          "exit": 0,
+          "scope": "original startup owner with packaged AOEM, isolated state"
+        }
+      ],
+      "members": [
+        {
+          "name": "CHECKSUMS.sha256",
+          "bytes": 8326,
+          "sha256": "f3cd9383f3a87cc212ab9a073906960735928c343193d1e0d97acdd434698640"
+        },
+        {
+          "name": "README.md",
+          "bytes": 8549,
+          "sha256": "3b8b82728fffb07994a0ef94c3f71286c3870ea93e56cab604191c65ab7a250d"
+        },
+        {
+          "name": "release-manifest.json",
+          "bytes": 20999,
+          "sha256": "2879b0b1a5408fd2e8bbea9f8ae773cb19329d2b12f5d60581f457582fba2334"
+        },
+        {
+          "name": "aoem/aoem-sdk-manifest.json",
+          "bytes": 10795,
+          "sha256": "36a8a4d076ac2f1b9d4dc995b2146613079c4eb5dee6a74b19d47a05c29f5f04"
+        },
+        {
+          "name": "aoem/INSTALL-INFO.txt",
+          "bytes": 3789,
+          "sha256": "28a1b0a6e37eeb6def3c3b18815a5ae00b30c13ede09c1b01dfe05328e4bddc2"
+        },
+        {
+          "name": "aoem/README.md",
+          "bytes": 8936,
+          "sha256": "771908a94737502ed31c109cdd7e4717fdf2bebb9b994e6988d42484801c7f33"
+        },
+        {
+          "name": "aoem/RELEASE-NOTES.md",
+          "bytes": 10279,
+          "sha256": "a37c37c991674be388589d1a3035000d4bc810bf7270d1b6c3c28472aff7cf42"
+        },
+        {
+          "name": "aoem/RUNTIME-BASELINE.md",
+          "bytes": 20786,
+          "sha256": "dec148a97b0ebd58ff34cc9bd1a0121354fab6cc3ad4168ebce1136fa223ff47"
+        },
+        {
+          "name": "aoem/config/aoem-runtime-profile.json",
+          "bytes": 245,
+          "sha256": "c7aa38f47430e01376be25da268e556aaacb7ea81821418e54d8fa160b5fdd42"
+        },
+        {
+          "name": "aoem/linux/ai-sgm-infer-wire-v1-capability.json",
+          "bytes": 624,
+          "sha256": "e94637087f65f2ad4989c912effc1f37d23362a3ba22cecfc83da17c8b1e4c58"
+        },
+        {
+          "name": "aoem/linux/CHECKSUMS.sha256",
+          "bytes": 2522,
+          "sha256": "94ae7322b1eeedcd9c358d97bbafab389b722378e53a796a393782f14fb71734"
+        },
+        {
+          "name": "aoem/linux/manifest.json",
+          "bytes": 4413,
+          "sha256": "f66ac7e4fe684785e8909f17673fc6d7e1ea022089847377fee3d2699794da25"
+        },
+        {
+          "name": "aoem/linux/config/aoem-runtime-profile.json",
+          "bytes": 245,
+          "sha256": "c7aa38f47430e01376be25da268e556aaacb7ea81821418e54d8fa160b5fdd42"
+        },
+        {
+          "name": "aoem/linux/core/bin/libaoem_ffi.so",
+          "bytes": 160288664,
+          "sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_crypto_hsm.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_crypto_kms.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_crypto_mldsa.so",
+          "bytes": 25551824,
+          "sha256": "a7db42f7b3fe30c81034f82b66c38018ef3e70b8edc5266a21d2d3cb4fd88a2c"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_hsm.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_kms.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_mldsa.so",
+          "bytes": 25551824,
+          "sha256": "a7db42f7b3fe30c81034f82b66c38018ef3e70b8edc5266a21d2d3cb4fd88a2c"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_persist_rocksdb.so",
+          "bytes": 31253152,
+          "sha256": "de2ab2631c8446148b9eb2b5e48477a05a7900a82ece4a71e80e4a48f7506956"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_persist.so",
+          "bytes": 31253152,
+          "sha256": "de2ab2631c8446148b9eb2b5e48477a05a7900a82ece4a71e80e4a48f7506956"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_runtime_wasm_wasmtime.so",
+          "bytes": 22686872,
+          "sha256": "e05b34d43ce2a7b85ac384b58b118ea92acf7115ed59a357db74f7c22fa54ade"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_wasm.so",
+          "bytes": 22686872,
+          "sha256": "e05b34d43ce2a7b85ac384b58b118ea92acf7115ed59a357db74f7c22fa54ade"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_zkvm_executor.so",
+          "bytes": 132710544,
+          "sha256": "8c9a5de8b6fa4fd0a39e3850d7c3f613555f2e4534ee579fbdceb397072871b0"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_ffi_zkvm.so",
+          "bytes": 132710544,
+          "sha256": "8c9a5de8b6fa4fd0a39e3850d7c3f613555f2e4534ee579fbdceb397072871b0"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_hsm_plugin.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/core/plugins/libaoem_kms_plugin.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/include/aoem.h",
+          "bytes": 156421,
+          "sha256": "4c6ae29baf7efc0c8cc1cf3abd0abb78a585a135cb2de47f8ab3fbfdaec969ca"
+        },
+        {
+          "name": "aoem/linux/kms-hsm-plugin/libaoem_ffi_crypto_hsm.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/kms-hsm-plugin/libaoem_ffi_crypto_kms.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/kms-hsm-plugin/libaoem_ffi_hsm.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/kms-hsm-plugin/libaoem_ffi_kms.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/kms-hsm-plugin/libaoem_hsm_plugin.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/linux/kms-hsm-plugin/libaoem_kms_plugin.so",
+          "bytes": 417944,
+          "sha256": "88e4da13da934fa50129f2e16e4852b3de7982af75fb71745762a79b41556e4c"
+        },
+        {
+          "name": "aoem/manifest/aoem-manifest.json",
+          "bytes": 9949,
+          "sha256": "0ccb0a626c06de4eb92f04192062dad3e9df655816525c4a46ceb1930c6726e2"
+        },
+        {
+          "name": "bin/novovm-native-client",
+          "bytes": 8644024,
+          "sha256": "66339342e4bec99a6b7df1adf5765dd99970a0abf933a4415b58e1026618837b"
+        },
+        {
+          "name": "bin/novovm-node",
+          "bytes": 60210712,
+          "sha256": "89854a24d4259b912fdbb8c6f8e21ea48af6c74c0c89da8f3cdc648c1845a769"
+        },
+        {
+          "name": "bin/novovm-product-evidence",
+          "bytes": 7614904,
+          "sha256": "ba3a1163db33bf7b4b518ec29c27af5230efecc7ee8f9b628e877ded5c8f7af9"
+        },
+        {
+          "name": "bin/novovm-product-nat",
+          "bytes": 8026000,
+          "sha256": "610e7204ed703394dd452bc8b234f8a3473caec18cb0c3b3162efa69ef4d2e56"
+        },
+        {
+          "name": "bin/novovm-product-node-overlay",
+          "bytes": 7760424,
+          "sha256": "fd232346cc82af35f49558ac7f5d08a5d80eae395bad888094546b4f4be48370"
+        },
+        {
+          "name": "bin/novovm-product-peer",
+          "bytes": 12184928,
+          "sha256": "601f069f305388fae7c29bb179ae530b9aa4cc387ad12841268321d338037109"
+        },
+        {
+          "name": "bin/novovm-product-relay",
+          "bytes": 13590704,
+          "sha256": "cc0d09df90a801c9840588ce45f74d415467d6fe407475826c948c2dc928f4f1"
+        },
+        {
+          "name": "bin/novovm-rendezvous-service",
+          "bytes": 27434248,
+          "sha256": "bf0479c80ecac8ea1892932708a5e008097f1305d22d7d5242c88bfe9aa2313d"
+        },
+        {
+          "name": "bin/novovmctl",
+          "bytes": 30169176,
+          "sha256": "1d15adb3d7bb2ca0fae2c158964599599de67dadb0b7b8e89865aa4e0d5138c9"
+        },
+        {
+          "name": "bin/supervm-relay",
+          "bytes": 26246600,
+          "sha256": "986fcefbb341cccef4f70d9dfc2b98d59bba8edbd6ed1d70f99aca29d2ef1ae6"
+        },
+        {
+          "name": "compatibility/novovm-product-relay.service",
+          "bytes": 503,
+          "sha256": "a5424e7c86c35d97905b7f7567ab5505584608c5075ded81bdd83f1c0e750c60"
+        },
+        {
+          "name": "config/mailbox-native.json.example",
+          "bytes": 155,
+          "sha256": "11bb49e9ed7c6b7abc199af87e51fb2824ea50e01137440a930b3e5ac955caaf"
+        },
+        {
+          "name": "config/mailbox-node.json.example",
+          "bytes": 502,
+          "sha256": "acc09d53a3fb83f5daa6c3e927d414eec25c727bfc8778febbbda3c4d29ae6a7"
+        },
+        {
+          "name": "config/mailbox-tls.json.example",
+          "bytes": 147,
+          "sha256": "b6f0bffe870fa3cfbbb77432d623c96494a531bcb563987f65b704650e6fc8e8"
+        },
+        {
+          "name": "config/native-nat.json.example",
+          "bytes": 678,
+          "sha256": "2f8503c29367917d3cae0b7eaf9e9d6c4edbb4cb6601f71e52a81e46d9df6590"
+        },
+        {
+          "name": "config/native-node.json.example",
+          "bytes": 493,
+          "sha256": "91a5c0cd99accc6e9892553a04eba987324f8dfe260fa0d5666e5c7dd5990f42"
+        },
+        {
+          "name": "config/novovm-node.env.example",
+          "bytes": 972,
+          "sha256": "acbd56fe3f650d288409cd8d34391524299195bc320e72231a1899f68360df59"
+        },
+        {
+          "name": "config/peer-receiver.json.example",
+          "bytes": 665,
+          "sha256": "cb6c1da676f5c5750c491bba7c158788a964506e246af512ccb5a5b6bdf29893"
+        },
+        {
+          "name": "config/peer-sender.json.example",
+          "bytes": 704,
+          "sha256": "bf2c87f1f752558ee5408bd7c01f027b195de541946870a5b543d2f044f6933c"
+        },
+        {
+          "name": "config/relay.json.example",
+          "bytes": 1209,
+          "sha256": "abc91ec71a5d0be1cd151a457df8d93233f2910a8c2022c5e6728654bda44d75"
+        },
+        {
+          "name": "config/unified-node.json.example",
+          "bytes": 203,
+          "sha256": "db0da4d72e483e4501759a7ff63ab9760131357b191e02f0f96c2025bca8ac93"
+        },
+        {
+          "name": "docs/NOVONET_TRANSPORT_POLICY_V1.md",
+          "bytes": 71559,
+          "sha256": "c2c061407a5cc0ac5d36b2a39f1dd2b91ed155d5a513cc4efd8221bd61e36731"
+        },
+        {
+          "name": "docs/NOVOVM_DELIVERY_ALIGNMENT.md",
+          "bytes": 313037,
+          "sha256": "de81a3ce09bc580df6db82fdfaae06db75a6dcff8ca49934b1bc79e59b262c4b"
+        },
+        {
+          "name": "docs/NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
+          "bytes": 17365,
+          "sha256": "5f275476767c1bf3eb76eba731f7d3199fff4810f92c5759fcb30833a65e035c"
+        },
+        {
+          "name": "docs/NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
+          "bytes": 18635,
+          "sha256": "0f582dc7bdc52101c182fc491f4f121e21cb47a99554d7478b263509f90e0ffd"
+        },
+        {
+          "name": "docs/NOVOVM_MULTI_HOST_NUAS_HANDOFF.md",
+          "bytes": 56270,
+          "sha256": "ee84d486a502a68babeaef7aa18f003d1fe66722af0bc8f5362b15b8b950283a"
+        },
+        {
+          "name": "docs/NOVOVM_NATIVE_OPERATOR_CLIENT.md",
+          "bytes": 5815,
+          "sha256": "b960b47783e6814efdb28d7fae1951517aac57fbdd4ac9733c13ed3eb1e3a5b2"
+        },
+        {
+          "name": "docs/NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md",
+          "bytes": 12372,
+          "sha256": "c3cb610ab76ce0fadfb2ac59b6f23893c8c750351d26cc3f9ee4796295d9fc05"
+        },
+        {
+          "name": "docs/NOVOVM_PRODUCT_OVERLAY_MESH_PEER_ERROR_DOMAIN_V1.md",
+          "bytes": 6648,
+          "sha256": "48caf98f0ea53e905d63abdea3a7eebb216376d3c5a4b4e7c65b290d2cec5da2"
+        },
+        {
+          "name": "docs/NOVOVM_PRODUCT_RELAY_ADMISSION_RESOURCE_BOUNDS_V1.md",
+          "bytes": 13268,
+          "sha256": "48bf4727df68671e29aee24aef4b45dc7e4537069129189164b7146dcc9c3fe5"
+        },
+        {
+          "name": "docs/NOVOVM_PURPOSE_IDENTITY_PREPARATION.md",
+          "bytes": 10147,
+          "sha256": "cf4d5b18e8c29717283b4b6b26b752c4e5ae429deb8c95a7dcd7cbc843679b81"
+        },
+        {
+          "name": "docs/novovm-product-evidence-v1.md",
+          "bytes": 4552,
+          "sha256": "161bf0e6f0960f7ad4682ab9c0e9d161e27689d85439dac2d9e8ebd7ee655986"
+        },
+        {
+          "name": "docs/novovm-product-nat-runtime-v1.md",
+          "bytes": 11101,
+          "sha256": "cf466d814ba1d92af84271a178d2d17b8620b6522d9f2e3b1121703dcc166ecc"
+        },
+        {
+          "name": "docs/novovm-product-node-overlay-v1.md",
+          "bytes": 3611,
+          "sha256": "62aa94404d72b596f7ec5e6a46dcbbbef14a89f10b7e78d9fce30d369fe72884"
+        },
+        {
+          "name": "docs/novovm-product-peer-runtime-v1.md",
+          "bytes": 3720,
+          "sha256": "d92c5539665dc4dadb95573393495d4d393321d3b5860ec04cf78c3911b7c9e7"
+        },
+        {
+          "name": "docs/novovm-product-relay-client-v1.md",
+          "bytes": 4920,
+          "sha256": "05986b5c9cb2edc36426e0588e594148557e9cb218afd11c60a6d132ef1b1eb1"
+        },
+        {
+          "name": "docs/novovm-product-relay-daemon-v1.md",
+          "bytes": 10224,
+          "sha256": "0b388fa44692fda90a26200ba8c8146f0e9798e46becc99197c3e7d8e8f5196d"
+        },
+        {
+          "name": "reports/native-identity-runtime-qualification.json",
+          "bytes": 985,
+          "sha256": "3d71c2d4ce4c1895d71e27d5ea4ccd3d37b15f84dd490d02cc6b67b76ef8551c"
+        },
+        {
+          "name": "resources/config/relay/nginx-location.conf",
+          "bytes": 672,
+          "sha256": "5d282f7e63bcb2dd3b672af38428c71017c5effd0dea40864ebf3d07621df950"
+        },
+        {
+          "name": "resources/config/relay/relay.example.json",
+          "bytes": 815,
+          "sha256": "1a09441a5881328fdae4bf04d813b7daf8c0b2a99b475c470f3919c7b2624545"
+        },
+        {
+          "name": "resources/config/relay/supervm-relay.service",
+          "bytes": 700,
+          "sha256": "fa17650eec4a666c83e6605d046d18075a10d2f183b3b40d50f4cdec41019c56"
+        },
+        {
+          "name": "resources/config/rendezvous-linux/novonet-mailbox.service",
+          "bytes": 983,
+          "sha256": "0b1951636b6640e9da77c8f4e23a54470ace88e9224855e6d24a3605bdf8b1d8"
+        },
+        {
+          "name": "resources/config/rendezvous-linux/README.md",
+          "bytes": 3467,
+          "sha256": "bd13e3363860b4f95775b21b7f1bcb4f251d71f2a5dce37e8f94f9caa09f9a4a"
+        },
+        {
+          "name": "resources/scripts/linux/install-owned-mailbox.sh",
+          "bytes": 3740,
+          "sha256": "b24484c38c22199eeb8f26eb671ce50a7a1af313fd3baf2481ef12f11e60389a"
+        },
+        {
+          "name": "systemd/novonet-mailbox.service",
+          "bytes": 983,
+          "sha256": "0b1951636b6640e9da77c8f4e23a54470ace88e9224855e6d24a3605bdf8b1d8"
+        },
+        {
+          "name": "systemd/novovm-node.service",
+          "bytes": 599,
+          "sha256": "c5a0941777b2dc375d9254558fc99aceee9a0cf518d5964f49b33584998d4a56"
+        },
+        {
+          "name": "systemd/supervm-relay.service",
+          "bytes": 545,
+          "sha256": "28d466f97c13df6e82e5d5e512071a12f851dc3dbc67a272bc126daf3809325c"
+        }
+      ],
+      "deployed": false
+    }
+  ],
+  "both_platforms_qualified": true,
+  "full_ci_qualified": false,
+  "deployed": false,
+  "real_relay_accepted": false,
+  "scope": "Actual fixed packages and local original-owner gates; independent archive member and AOEM checksum checks. Not cloud or real-machine acceptance."
+}
