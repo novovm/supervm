@@ -1,0 +1,23 @@
+{
+  "status": "C_A254_PACKAGE_VERIFIED_ONLY",
+  "host": "C",
+  "verified_utc": "2026-11-12T16:27:23.650041+08:00",
+  "source_zip": "E:\\区块链四机通讯\\novonet-observation-a25452f4-windows-x86_64.zip",
+  "local_zip": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\candidates\\novonet-observation-a25452f4-20261112\\novonet-observation-a25452f4-windows-x86_64.zip",
+  "bytes": 150573543,
+  "sha256": "fa198636fa33021ea542850e56f1df17140a5174bfb93fca1ade47f599f14978",
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "manifest_sha256": "8e3042fcc99ab86ffd5193c864c879f7569164a4270e2767240357de21e60b9f",
+  "release_members_verified": 77,
+  "checksum_entries_verified": 77,
+  "total_archive_files": 80,
+  "inherited_checksum_file_pin_verified": true,
+  "zip_paths_safe": true,
+  "initial_coverage_assertion_note": "Initial checker incorrectly assumed only the top checksum was excluded. Checked actual set: release manifest and inherited checksum are also excluded; both independently pinned. No content hash failure.",
+  "package_extracted": false,
+  "package_executed": false,
+  "node_updated": false,
+  "node_restarted": false,
+  "observer_started": false,
+  "D_operated": false
+}
