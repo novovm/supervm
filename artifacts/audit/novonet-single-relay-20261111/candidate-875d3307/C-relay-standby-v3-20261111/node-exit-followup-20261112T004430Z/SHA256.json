@@ -1,0 +1,17 @@
+[
+  {
+    "file": "public.json",
+    "sha256": "10a72e6241dbc7b53fd1e276ea40842ce5257032a5236a2efab07011b52e9d3c",
+    "bytes": 1503
+  },
+  {
+    "file": "Read-Why.ps1",
+    "sha256": "2600f309828ffe824fc465eacc3fde725200be662443b50a95565a8337f034ae",
+    "bytes": 1639
+  },
+  {
+    "file": "README.md",
+    "sha256": "4499a8bf14a16ad534a6ebf98ef9fd8ecbf33a441a73891cc7080c46c1ce99ec",
+    "bytes": 1603
+  }
+]

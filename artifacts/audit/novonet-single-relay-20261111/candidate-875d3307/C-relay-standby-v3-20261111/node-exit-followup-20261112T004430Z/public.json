@@ -1,0 +1,48 @@
+{
+  "host": "C",
+  "utc": "2026-11-12T00:44:30.8849095Z",
+  "read_only": true,
+  "last_boot_utc": "2026-11-11T09:32:25.5000000Z",
+  "task": {
+    "state": "Ready",
+    "last_run_utc": "2026-11-11T15:11:25.0000000Z",
+    "result": 3221225477
+  },
+  "exit": {
+    "exit_code": -1073741819,
+    "start": "existing",
+    "time": "2026-11-11T20:13:40.3053839Z"
+  },
+  "crashes": [
+    {
+      "utc": "2026-11-11T20:13:36.6095982Z",
+      "record": 546354,
+      "app": "novovm-node.exe",
+      "module": "VCRUNTIME140.dll",
+      "exception": "c0000005",
+      "offset": "000000000001126b",
+      "pid_raw": "0xc9c",
+      "path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-875d3307-windows-x86_64\\bin\\novovm-node.exe"
+    },
+    {
+      "utc": "2026-11-11T13:27:53.4454568Z",
+      "record": 546255,
+      "app": "novovm-node.exe",
+      "module": "novovm-node.exe",
+      "exception": "c0000005",
+      "offset": "000000000065f59d",
+      "pid_raw": "0x7a40",
+      "path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-875d3307-windows-x86_64\\bin\\novovm-node.exe"
+    },
+    {
+      "utc": "2026-11-11T05:40:46.4447530Z",
+      "record": 546046,
+      "app": "novovm-node.exe",
+      "module": "ntdll.dll",
+      "exception": "c0000374",
+      "offset": "0000000000118095",
+      "pid_raw": "0x1e88",
+      "path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-8fed4b76-windows-x86_64\\bin\\novovm-node.exe"
+    }
+  ]
+}
