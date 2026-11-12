@@ -1,5 +1,27 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C实际退役旧WSS：18b0711，Android完整盘点仍未通过
+
+NOVOCHAT main `18b0711`已推送：删除App旧WSS Profile/worker、端点编解码、手工
+accept的JNI/Kotlin/Dart入口、专用relay adapter及启动/诊断脚本；不保留开关隐藏的
+旧执行器。旧输入拒绝测试保留。UDP/Iroh共用Android默认网络检查迁出后继续复用，
+原生NativeEndpoint/NativeObjectLink及合格载体不删。原聊天包/身份/历史未操作。
+
+默认core245通过/1原有忽略，Flutter定向25、Kotlin JVM168、隔离locator3、工具
+2/2/20通过；均有原始输出。Android JNI拒绝用例仅静态检查，网络回归未通过编译。
+重要纠正：之前“剩7项”只计Windows通信lib；本轮明确NDK后首次检查完整Android
+cfg，最终86项编译错误（0 warning），Windows仍7项。不能把默认库或持钥单测当
+完整App通过，也不能将不同平台集合的差额直接认定为新增回归。
+
+C继续消费端通信持钥、完整服务钥/回执验证及native/L4调用者迁接，不把86项交给
+A代修、不复制共享协议。A继续真实UCA注册恢复、设备授权、联系人通信钥连续性及
+可信服务来源；缺映射保持拒绝，旧聊天钥不转Vec冒充ML-DSA。此前App UID持钥
+证据保持其独立范围。未安装主聊天候选，未启动任何节点/观察/发送，正式收费关闭。
+
+[源码清理与完整边界](https://github.com/XujueKing/NOVOCHAT/blob/18b0711/docs/implementation/NATIVE_TRANSPORT_RETIREMENT_2026-11-12.md)；
+[原始结果/逐条Android错误](https://github.com/XujueKing/NOVOCHAT/tree/18b0711/docs/implementation/evidence/native-retirement-20261112)。
+这是C通过Git通知，尚未取得A对此提交的接收回执；A现有a254双中继工作不变。
+
 ## 2026-11-12 16:54 A签收D：四机a254更新完成，转双中继观察
 
 A已下拉D1d7714c3，核验15项证据哈希和exit0；D新进程20876/LocalService，

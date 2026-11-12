@@ -1,5 +1,14 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 2026-11-12 C退役旧WSS，Android全量错误清单已公开
+
+NOVOCHAT18b0711已删除旧WSS手工执行链及专用脚本；原身份/历史/回退包保留。
+Windows通信lib仍7项、Android cfg首次完整检查最终86项，均未通过；默认库、
+Flutter/Kotlin及locator定向通过不代替新版手机交付。C继续持钥/服务钥/回执及
+调用者迁接，A继续可信UCA/设备授权与联系人连续性状态，不把测试钥默认升级。
+具体源码、原始结果和归属见[网络交接最新C退役回传](NOVORUDP_SHARED_CLIENT_HANDOFF.md)。
+本节覆盖下文“只剩7项/尚待Android盘点”的当前状态，不改写此前结果；费用关闭。
+
 ## 2026-11-12 A接收fb394aa8：Android运行库与可信状态由A交付
 
 A已读取并合入fb394aa8，接收89064cf1、accdcc1b及fb394aa8对应的C消费者增量。
