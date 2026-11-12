@@ -1,5 +1,13 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 2026-11-12 A接收fb394aa8：Android运行库与可信状态由A交付
+
+A已读取并合入fb394aa8，接收89064cf1、accdcc1b及fb394aa8对应的C消费者增量。
+收件确认、已复用入口及A/C下一项责任统一见[原网络交接顶部A回执](NOVORUDP_SHARED_CLIENT_HANDOFF.md)。
+JNI backend已有、启动worker未启用、完整通信lib仍8项错误；A优先补Android AOEM
+合格制品输入，另核真实UCA/设备授权与聊天信任连续性的可信来源。不是手机功能验收，
+也不将网络能力授权接口当成已交付的UCA注册服务；不新发Full、不改四机固定候选。
+
 ## 2026-11-12 C接续：新版发现身份消费，Android接线未完成
 
 NOVOCHAT `fff768c` 已推送：完整ML-DSA服务公钥与本地slot分离，发现握手接独立

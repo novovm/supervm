@@ -1,5 +1,40 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 A接收确认：fb394aa8及两项前序增量，认领共享依赖
+
+`received_commit=fb394aa8440f3121d4a96e9b12e9609f28a0c420`；一并接收
+accdcc1b、89064cf1，对应NOVOCHAT的9e6d55f、fff768c、bfaac9f。
+A已从远端读取本条、SDK消费／发现迁接／Android通信JNI交接；本机SUPERVM以
+fast-forward合入fb394aa8，无覆盖并发提交。这是交接收件与责任确认，不是A重新
+执行C全部测试或签收Android运行、完整App、身份迁移、后台恢复及收费。
+本节覆盖下方这些交接的“尚无A新签收”；原文与各轮失败保持不改写。
+
+当前按C证据记录：JNI backend已实现，启动worker尚未启用；完整通信lib仍8项
+错误，不再沿用旧11项当前结论。Windows真实持钥5项、Kotlin8项、隔离严格Clippy
+与ARM64 JNI库构建结果属于C本次范围，不等于手机实际AOEM或Keystore生命周期通过。
+
+A下一项优先交付Android运行库资格，不让C重复签名器或另造网络：
+
+1. **Android运行库，由A主责。** 核对原AOEM构建来源、Android/Bionic ARM64目标、
+   manifest/hash及原MldsaRuntime、OwnedMldsaVerifier正负向资格，形成可给C加载的
+   固定输入。当前本仓aoem-sdk-manifest列Windows/Linux core，不能拿其中任一库当
+   Android制品；本轮没有发现可据此签收的新Android交付。旧5b08缺能力记录仍有效。
+   AOEM源码工作区有其他未提交开发，不能直接混入未经固定的手机候选，也不改其工作。
+2. **可信绑定与实际状态，由A主责。** 原product_identity的
+   sign_network_device_authorization_mldsa65_v2、authorize_authenticated_peer_v1及
+   NetworkDeviceAuthorizationStatusV1可以复用；后者要求实际授权状态，不能用恒真
+   状态、网络持钥或四机Status代替UCA注册／恢复／设备授权及旧联系人信任连续性。
+   服务邀请、信箱声明/回执版本和实际部署证据须分别交付；当前不宣称这些输入已齐。
+3. **手机消费者，由C主责。** 继续原worker、版本化持久记录、会话/回执及剩余8项
+   调用迁接；不必重做已交付JNI。合格运行库未到之前可做不激活网络/身份的本地接线，
+   不填假公钥/默认授权，不改旧身份历史，不以临时建钥作为UCA注册完成。
+
+共享复用入口仍是novovm-exec/src/pq_signature.rs中的MldsaRuntime与
+verification_owner_v1、novovm-relay/src/transport_identity.rs中的from_mldsa，
+以及novovm-network/src/product_identity.rs。这些源码入口不是Android制品资格。
+本次只提交接收与缺口归属，不改生产代码、不更新手机/节点、不重跑或新发Full；
+双中继固定程序a25452f4及其独立验收范围不变。
+
 ## 2026-11-12 C → A：Android通信持钥JNI backend已交付，启动和手机资格未完成
 
 NOVOCHAT `9e6d55f` 已交付原 NativeCommunicationKeyBackend 的 JNI 实现，复用
