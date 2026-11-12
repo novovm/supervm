@@ -1,0 +1,28 @@
+     Locking 29 packages to latest compatible versions
+      Adding serde_json v1.0.149 (available: v1.0.154)
+      Adding sha2 v0.10.9 (available: v0.11.1)
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.229
+   Compiling zmij v1.0.23
+   Compiling hashbrown v0.17.1
+   Compiling equivalent v1.0.3
+   Compiling serde_json v1.0.149
+   Compiling anyhow v1.0.104
+   Compiling memchr v2.8.3
+   Compiling cpufeatures v0.2.17
+   Compiling cfg-if v1.0.5
+   Compiling windows-link v0.2.1
+   Compiling itoa v1.0.18
+   Compiling zeroize v1.9.1
+   Compiling libloading v0.8.9
+   Compiling generic-array v0.14.7
+   Compiling indexmap v2.14.2
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling aoem-bindings v0.1.0 (D:\WEB3_AI\SUPERVM\crates\aoem-bindings)
+   Compiling c-ffi-profile-isolation v0.0.0 (D:\WEB3_AI\SUPERVM\target\c-a254-crash-source-20261112T145135Z\ffi-profile-isolation)
+    Finished `release` profile [optimized + debuginfo] target(s) in 7.66s
+     Running `build\release\c-ffi-profile-isolation.exe`

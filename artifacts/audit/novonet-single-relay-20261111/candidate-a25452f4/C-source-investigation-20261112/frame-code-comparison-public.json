@@ -1,0 +1,473 @@
+[
+  {
+    "frame": 1,
+    "a254_rva": "0x1e4cc93",
+    "function_start": "0x1e4cc60",
+    "function_bytes": 97,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "a0639a93e72bcfd00e2f5e381dca97dc6a83127d79117bc17bec7af28d2fc9a1",
+    "875_matches": [
+      "0x1e47a00"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x1e47a32",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\ptr\\mod.rs",
+            "FunctionName": "core::ptr::mut_ptr::impl$0::add",
+            "Line": 547,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\vec\\mod.rs",
+            "FunctionName": "alloc::vec::Vec::append_elements",
+            "Line": 2821,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\vec\\spec_extend.rs",
+            "FunctionName": "alloc::vec::spec_extend::impl$4::spec_extend",
+            "Line": 56,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\vec\\mod.rs",
+            "FunctionName": "alloc::vec::Vec::extend_from_slice",
+            "Line": 3436,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\string.rs",
+            "FunctionName": "alloc::string::String::push_str",
+            "Line": 1102,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\string.rs",
+            "FunctionName": "alloc::string::impl$63::write_str",
+            "Line": 3347,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 2,
+    "a254_rva": "0x1e50359",
+    "function_start": "0x1e502f0",
+    "function_bytes": 112,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "803581dffda2e99389f0d76bee6b4314315677de23a50db1ab7c1e0b29a206ce",
+    "875_matches": [
+      "0x1e4b090",
+      "0x1e4b100"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB"
+  },
+  {
+    "frame": 3,
+    "a254_rva": "0x1e524e1",
+    "function_start": "0x1e52380",
+    "function_bytes": 440,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "7648eaab726d7a86eb38e29d27a823e703353f9296b0dd5aec89862804759a6e",
+    "875_matches": [
+      "0x1e4d120"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x1e4d280",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\rt.rs",
+            "FunctionName": "core::fmt::Formatter::new",
+            "Line": 152,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\mod.rs",
+            "FunctionName": "core::fmt::write::h4be08ff5a77b1b98",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 4,
+    "a254_rva": "0x1e4cf9f",
+    "function_start": "0x1e4ce70",
+    "function_bytes": 399,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "5331dedc7f3867ea5849529fd91b630cbbebcff1750763fe2edff1d123103feb",
+    "875_matches": [
+      "0x1e47c10"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x1e47d3e",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\mod.rs",
+            "FunctionName": "core::fmt::Write::write_fmt::impl$1::spec_write_fmt",
+            "Line": 236,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\core\\src\\fmt\\mod.rs",
+            "FunctionName": "core::fmt::Write::write_fmt",
+            "Line": 241,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\fmt.rs",
+            "FunctionName": "alloc::fmt::format::format_inner::h7f131e86b74247ab",
+            "Line": 649,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 5,
+    "a254_rva": "0x98bc1a",
+    "function_start": "0x98bb30",
+    "function_bytes": 396,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "b18a84101aa6d949b1cc4faf26c6f58da4ea0d78a7042379d3d12aa6fd4da130",
+    "875_matches": [
+      "0x964820",
+      "0x15aaa40"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB"
+  },
+  {
+    "frame": 6,
+    "a254_rva": "0xa167c4",
+    "function_start": "0xa15c10",
+    "function_bytes": 3826,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "91f4bee95c0c4c1c9f92a0e6750ce854f66d95846aedda9c6d9c4fdb63f43fc4",
+    "875_matches": [
+      "0x9f1340"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x9f1ef3",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "",
+            "FunctionName": "core::ops::function::impls::_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$::call_mut::h734c4ecedfb29625",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 7,
+    "a254_rva": "0xc1ff32",
+    "function_start": "0xc1fe30",
+    "function_bytes": 361,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "07850f37a2f5690dbed4d1455db2fd58c571283752030e37970e74f8ede2fc04",
+    "875_matches": [
+      "0xb700b0",
+      "0xb75180",
+      "0xb77590"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB"
+  },
+  {
+    "frame": 8,
+    "a254_rva": "0x7614af",
+    "function_start": "0x75c4a0",
+    "function_bytes": 28271,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "9f2a657b27301f5973ee6415050128d1e3a4cdf25ad4c364f567c625872e915b",
+    "875_matches": [
+      "0x75c8a0"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x7618ae",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "",
+            "FunctionName": "novovm_node::native_pipeline::profile::elapsed::hc615faeebf7186c0",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 9,
+    "a254_rva": "0x777bb9",
+    "function_start": "0x772120",
+    "function_bytes": 34009,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "8227c12a6e651bd3600df0a2616095bc67e837b66c56a3772b20e16a8ca0a708",
+    "875_matches": [
+      "0x772520"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x777fb8",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "",
+            "FunctionName": "novovm_node::native_pipeline::service::rpc::RpcLifecycle::status::h9b605aaaa58c2edd",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 10,
+    "a254_rva": "0x17d5e5",
+    "function_start": "0x17d590",
+    "function_bytes": 258,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "3a4a7e850053fee93b0fe2355f55835cc7834e12cbd069dbfc05948414e74e9d",
+    "875_matches": [
+      "0x17d590"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x17d5e4",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "",
+            "FunctionName": "novovm_node::native_pipeline::service::rpc::observe_tick::hfe47e471214fef95",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 11,
+    "a254_rva": "0x8ad16",
+    "function_start": "0x89910",
+    "function_bytes": 21818,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "7dc9186d5a675f8e71ab1a210514991b005e26bc041d8140860fcc97779b6455",
+    "875_matches": [
+      "0x89910"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x8ad15",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "",
+            "FunctionName": "novovm_node::run_native_execution_tick_node_mode_v1::h71911803219ee92f",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 12,
+    "a254_rva": "0x1d8d57",
+    "function_start": "0x1d8d40",
+    "function_bytes": 29,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "d87ea0ea1e68174029d67a4f31e544135b01664af36642034ca124da7f1a9c70",
+    "875_matches": [
+      "0x1d8d40"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x1d8d56",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "",
+            "FunctionName": "std::sys::backtrace::__rust_begin_short_backtrace::hcc4844f95d989b4a",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 13,
+    "a254_rva": "0x1da0f5",
+    "function_start": "0x1da0b0",
+    "function_bytes": 255,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "244add0f0b3252ba6a4794207520dd9b37233882e4efeb373f135aaf31f783d2",
+    "875_matches": [
+      "0x1da0b0"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x1da0f4",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "",
+            "FunctionName": "_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$::fmt::hd69493c34947a1e4",
+            "Line": 0,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "frame": 14,
+    "a254_rva": "0x1e3a0e8",
+    "function_start": "0x1e39ec0",
+    "function_bytes": 594,
+    "disassembly_covers_all": true,
+    "normalized_sha256": "a63bebaf79defeca4538e8718ba46cd5276cf4f118edc096cdc147f96d9e39ac",
+    "875_matches": [
+      "0x1e34c60"
+    ],
+    "interpretation": "cross-binary code comparison, NOT matching a254 PDB",
+    "875_symbolizer_exit": 0,
+    "875_symbol": [
+      {
+        "Address": "0x1e34e87",
+        "ModuleName": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\pdb-analysis\\novovm-node.exe",
+        "Symbol": [
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\alloc\\src\\boxed.rs",
+            "FunctionName": "alloc::boxed::impl$31::call_once",
+            "Line": 2206,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          },
+          {
+            "Column": 0,
+            "Discriminator": 0,
+            "FileName": "/rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\\std\\src\\sys\\thread\\windows.rs",
+            "FunctionName": "std::sys::thread::windows::impl$0::new::thread_start",
+            "Line": 58,
+            "StartAddress": "",
+            "StartFileName": "",
+            "StartLine": 0
+          }
+        ]
+      }
+    ]
+  }
+]

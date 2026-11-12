@@ -1,0 +1,24 @@
+{
+  "exit_code": 0,
+  "node_changed": false,
+  "end_utc": "2026-11-12T14:51:52.8844916Z",
+  "start_utc": "2026-11-12T14:51:52.7064549Z",
+  "dumps": [
+    {
+      "bytes": 6221616,
+      "modified_utc": "2026-11-12T09:51:01.2858623Z",
+      "sha256": "a409ecdadddc248fb6aaf5cc9ca6a1b5abe5b7406255b8dbd024b4cacebb487f",
+      "exists": true,
+      "pid": 27928,
+      "copied_local_only": true
+    },
+    {
+      "bytes": 6207260,
+      "modified_utc": "2026-11-12T02:01:53.3475149Z",
+      "sha256": "32a264e2a8ea23334760db4b047802bd8b8ba6836d2faead170b91c12e74ea50",
+      "exists": true,
+      "pid": 13020,
+      "copied_local_only": true
+    }
+  ]
+}

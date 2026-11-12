@@ -1,5 +1,12 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C owns source diagnosis — 2026-11-12 23:00 Beijing
+
+The user assigned C to investigate locally, without waiting for A's diagnosis.
+[New original-dump comparison and pinned-AOEM/profile isolation](C-source-investigation-20261112/README.md)
+are complete. The isolation passed but did not reproduce or fix the crash.
+C remains NOT READY; no restart, observer or object was launched.
+
 ## C BLOCKER 2026-11-12 22:46 Beijing: NOT ARMED; a254 node already crashed
 
 C's one observation launcher stopped before Watch invocation: no active node

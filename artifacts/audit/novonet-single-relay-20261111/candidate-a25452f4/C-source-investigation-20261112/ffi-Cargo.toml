@@ -1,0 +1,14 @@
+[package]
+name="c-ffi-profile-isolation"
+version="0.0.0"
+edition="2021"
+[workspace]
+[dependencies]
+serde_json={version="=1.0.149",features=["preserve_order","raw_value"]}
+sha2="=0.10.9"
+indexmap="=2.14.2"
+zeroize="1"
+aoem-bindings={path="D:/WEB3_AI/SUPERVM/crates/aoem-bindings"}
+[profile.release]
+debug=2
+overflow-checks=true

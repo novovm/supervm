@@ -1,0 +1,18 @@
+[
+  {
+    "pid": 13020,
+    "instruction_captured_in_dump": true,
+    "instruction_bytes": "0f2875200f287d30440f2845404881c4",
+    "rbp_minus_rsp": 128,
+    "rbp_plus_32_mod16": 0,
+    "operand_16_bytes_present": true
+  },
+  {
+    "pid": 27928,
+    "instruction_captured_in_dump": true,
+    "instruction_bytes": "668908c3908b0a440fb74204440fb64a",
+    "rbp_minus_rsp": 40,
+    "rbp_plus_32_mod16": 0,
+    "operand_16_bytes_present": true
+  }
+]

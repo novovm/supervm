@@ -1,0 +1,11 @@
+{
+  "start_utc": "2026-11-12T14:59:52.287180+00:00",
+  "end_utc": "2026-11-12T15:00:03.019932+00:00",
+  "exit_code": 0,
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "profile_sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+  "node_started": false,
+  "existing_keys_accessed": false,
+  "database_opened": false,
+  "root_cause_confirmed": false
+}

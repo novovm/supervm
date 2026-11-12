@@ -1,0 +1,87 @@
+[
+  {
+    "sha256": "f06202a408fef9b9ea69bb6b1cb8160dbb0378c5bb67a444d510d231813824c8",
+    "file": ".gitattributes",
+    "bytes": 30
+  },
+  {
+    "sha256": "772ee445c9fc48983944e23b2e87c2b272c59446a4898335dee07bf3fc450d23",
+    "file": "capture-consistency-public.json",
+    "bytes": 460
+  },
+  {
+    "sha256": "f528fccfadb393d1bcc5238c9789584e224af05358ddb9e20fbcfc3fd0c23cc6",
+    "file": "check-capture.py",
+    "bytes": 1314
+  },
+  {
+    "sha256": "339b499be22c043ee822b16212d9071aee29c5243351c45910578327ba818e90",
+    "file": "compare-frames.py",
+    "bytes": 2658
+  },
+  {
+    "sha256": "ca8786aaa3bfe7378e8c6dc976b35836692ae028ac5313e641965b1f248a8597",
+    "file": "Copy-C-Dumps.ps1",
+    "bytes": 1231
+  },
+  {
+    "sha256": "d449c8f190a1163c50f7ab17d86b3e14335a7c00240142d3da22e4fccdee7d99",
+    "file": "copy-public.json",
+    "bytes": 677
+  },
+  {
+    "sha256": "218f995a3efaed909b94d4d98949af5437d58757da4cb7c4640b6a44a7cacfdf",
+    "file": "ffi-Cargo.lock",
+    "bytes": 6513
+  },
+  {
+    "sha256": "ac25d1898c7b90dc57db77749f16e854de045df359fd07f054a52014f052cbf9",
+    "file": "ffi-Cargo.toml",
+    "bytes": 341
+  },
+  {
+    "sha256": "af100d3984ff335ecfc9657f4fcca7b2e771c8165306d5d10375e5378c232f31",
+    "file": "ffi-execution-public.json",
+    "bytes": 424
+  },
+  {
+    "sha256": "ebc03d5bc022d4c916dc3911cdaea295605dfe99b06046204de19f19e936866c",
+    "file": "ffi-profile-stress.rs",
+    "bytes": 4809
+  },
+  {
+    "sha256": "1061743b932974a460d2aa1dd7708e9dda9b4c079adc59f7550ee44df6ba6b0b",
+    "file": "ffi-stderr.txt",
+    "bytes": 1133
+  },
+  {
+    "sha256": "437137d38f07dab381b2bb36d5df5c2d547f9f38c2f656ef3580f8f69106facc",
+    "file": "ffi-stdout.txt",
+    "bytes": 384
+  },
+  {
+    "sha256": "5698b962bf5db4575f76b46aab5ff57227fb97fa5317c8c05efd58756eee0d6a",
+    "file": "frame-code-comparison-public.json",
+    "bytes": 15700
+  },
+  {
+    "sha256": "0374e4b0ac6cf58c326a2d97f1dca00a542f2db5fe743c236403ee28aa2277ed",
+    "file": "read-context.py",
+    "bytes": 802
+  },
+  {
+    "sha256": "62136328e4de10255bedd7844683ce4ffae6117fc11da8761e1a26ce84d5fdec",
+    "file": "README.md",
+    "bytes": 6741
+  },
+  {
+    "sha256": "df786ff157d736dae832f223d88184e14e900bbfcb217b6ea24b8d90c9412003",
+    "file": "run-ffi-isolation.py",
+    "bytes": 4276
+  },
+  {
+    "sha256": "a787aee5d2f10865dbaa54f2117466b4e890199f8d756be3349917eb5b7dbff8",
+    "file": "summarize_dump.py",
+    "bytes": 2353
+  }
+]
