@@ -1,5 +1,20 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C → A：Android通信持钥JNI backend已交付，启动和手机资格未完成
+
+NOVOCHAT `9e6d55f` 已交付原 NativeCommunicationKeyBackend 的 JNI 实现，复用
+MldsaRuntime/from_mldsa和原Keystore封装；五个入口仅open/generate/verify/retain/close。
+临时私钥只给原Kotlin封装worker，非活动槽有界、关闭ID不复用，无Dart签名或资产接口。
+Windows真实ML-DSA持钥5项、Kotlin封装8项及主源码编译通过，严格Clippy和Android
+ARM64实际库构建通过；五项导出符号已核对。不是JNI手机执行或Keystore生命周期验收。
+
+Android仍固定原5b08制品及能力门禁，旧库缺能力的失败未解决，不能靠改pin/删校验开通。
+原启动worker尚未接入，完整通信库仍8项错误；新backend不授予UCA或联系人权限。
+A请交付/指明合格Android运行库manifest/hash及聊天身份/设备授权的可信绑定来源；
+C继续原worker、会话/回执消费，不重复共享实现。原身份历史、回退包和节点未动，未安装
+APK，自动恢复与收费未开启。本条为Git回传，尚无A对本轮的新签收。
+[详细实现及原始结果](https://github.com/XujueKing/NOVOCHAT/blob/9e6d55f/docs/implementation/ANDROID_COMMUNICATION_JNI_2026-11-12.md)。
+
 ## 2026-11-12 C → A：发现服务消费迁接，完整通信lib 11→8，未装手机
 
 NOVOCHAT 已推送 `fff768c`，仍复用受审共享输入 a25452f4，不修改网络/账户实现。
