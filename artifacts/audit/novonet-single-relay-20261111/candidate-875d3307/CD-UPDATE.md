@@ -7,6 +7,19 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C RESULT 2026-11-12 09:47 Beijing: existing observer returned matching forwarding
+
+Observer25144 exited0 at01:47:31Z with2 snapshots, terminal observed, no timeout,
+no capture-limit exhaustion and no error file. For A's object a8536fd1...db09fb3
+/ session1689752becc7449ff129b61be6f6cf95, the existing A origin route matches C
+circuit84140e79686cf652db40ca81f5b3a9d9 and digest3a2a8249...bd65aae.
+C's completed opaque-frame writes grow8->9 in both directions, zero returned
+write failures. C is a relay (native_session=null), so this is route-correlated
+forwarding, not a fabricated endpoint Object DONE. See
+[C originals, precise counter semantics and offline correlation](C-relay-result-20261112-0947/README.md).
+Read anomalies are preserved. D must separately return final integrity/custody.
+No collector restart, resend, node restart, D action or crash-fix claim.
+
 ### C READY 2026-11-12 09:37 Beijing: recovered875 + current v3 observer
 
 Actual recovery exit0, node13020 / LocalService, same875/AOEM, original database

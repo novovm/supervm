@@ -1,0 +1,18 @@
+{
+  "host": "C",
+  "copied_utc": "2026-11-12T01:51:34.8276388Z",
+  "source_root": "D:\\WEB3_AI\\SUPERVM\\target\\c-relay-resume-20261112T013643Z",
+  "error_present": false,
+  "launcher_error_present": false,
+  "result_present": true,
+  "exit_present": true,
+  "snapshots": [
+    "relay-00.json",
+    "relay-01.json"
+  ],
+  "observer_process_present": false,
+  "collector_started": false,
+  "object_sent": false,
+  "node_restarted": false,
+  "D_operated": false
+}

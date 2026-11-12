@@ -1,0 +1,96 @@
+{
+  "status": "C_MATCHED_RELAY_FORWARDING_RECORDED",
+  "object_id": "a8536fd1dbd85b4ffa4d3ff8ff7ac4220c2e00d0fa95b62347fdf2ad1db09fb3",
+  "session_id": "1689752becc7449ff129b61be6f6cf95",
+  "circuit_id": "84140e79686cf652db40ca81f5b3a9d9",
+  "route_digest": "3a2a824925a227cb51f840213f5afaf85e064304d0e7c25297c058a6abd65aae",
+  "correlation": "A object/session events -> A authenticated origin circuit -> same C circuit/digest/origin/path",
+  "c_direct_object_session_receipt": false,
+  "c_native_session": null,
+  "a_events": [
+    {
+      "event": "relay_probe_admitted",
+      "wall_ms": 1794448043327
+    },
+    {
+      "event": "relay_probe_object_done",
+      "wall_ms": 1794448043349
+    }
+  ],
+  "samples": [
+    {
+      "file": "observer\\relay-00.json",
+      "utc": "2026-11-12T01:47:21.4195358Z",
+      "authenticated_us": 586315592,
+      "downstream_ready_us": 586379706,
+      "last_progress_us": 586959931,
+      "forwarded": [
+        {
+          "packets": 8,
+          "bytes": 8592
+        },
+        {
+          "packets": 8,
+          "bytes": 8656
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": null
+    },
+    {
+      "file": "observer\\relay-01.json",
+      "utc": "2026-11-12T01:47:27.0188318Z",
+      "authenticated_us": 586315592,
+      "downstream_ready_us": 586379706,
+      "last_progress_us": 592301169,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": 592301169
+    }
+  ],
+  "forwarding_delta": [
+    {
+      "packets": 1,
+      "bytes": 788
+    },
+    {
+      "packets": 1,
+      "bytes": 388
+    }
+  ],
+  "direction_0": "origin towards target",
+  "direction_1": "target towards origin",
+  "counter_scope": "completed local opaque-frame writes including handshake/feedback; not object count or physical bytes",
+  "observation_exit_code": 0,
+  "result": {
+    "host": "C",
+    "utc": "2026-11-12T01:47:31.1762709Z",
+    "snapshots": 2,
+    "maximum_wait_seconds": 7200,
+    "terminal_observed": true,
+    "wait_expired": false,
+    "capture_limit_reached": false,
+    "node_mutated": false,
+    "business_receipt": false
+  },
+  "D_final_integrity_verified_by_this_report": false,
+  "business_receipt": false,
+  "native_udp_relay_proven": false,
+  "outer_ip_route_proven": false,
+  "crash_root_cause_resolved": false
+}

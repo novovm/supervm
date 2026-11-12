@@ -1,0 +1,13 @@
+{
+  "reader_sha256": "ccc8f9592a9fb12d68531dc2ace804efb544b9921e4f43c51147f2de57cbcd44",
+  "created_utc": "2026-11-12T01:37:34.1498042Z",
+  "node_pid": 13020,
+  "object_sent": false,
+  "watch_sha256": "d0dce2979cb51c39edf545637d276a80d56b921bfd194130842b3a475df966d9",
+  "hidden": true,
+  "host": "C",
+  "observer_version": 3,
+  "D_touched": false,
+  "pid": 25144,
+  "maximum_wait_seconds": 7200
+}
