@@ -1,0 +1,33 @@
+# Validator-C AOEM 966 controlled existing recovery — initial report
+
+Status: **running, cause not proven**. This is an AOEM-only C candidate experiment, not a four-host rollout or crash-root signoff. No A/B/D process was changed.
+
+## Why this comparison is useful
+
+The old a254 C task was `Ready` after `0xC0000005`; there was no node process or UDP listener. The original database, protected identity files, network config, node executable, and old AOEM hashes matched the previous record. The old task was left untouched. A new LocalService task uses the same a254 `novovm-node.exe`, the same `chain-state` with `START=existing`, the same network config and protected keys. Its config changes the AOEM library path; its environment points to the new AOEM Fullmax core, plugins, profile and manifest. It did not initialize, replace keys, or clear the database.
+
+| Item | Before | Current C candidate |
+| --- | --- | --- |
+| Node SHA256 | `1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d` | same |
+| AOEM core SHA256 | `1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50` | `5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52` |
+| AOEM source | a254 package: pinned overlay | GitHub AOEM main `9662470d` Fullmax Windows build |
+| Database | original C `chain-state` | same original path, `existing` |
+| Task | `NOVOVM-C-a25452f4-Existing-20261112` (not changed) | `NOVOVM-C-a254-AOEM966-Existing-20261113` (LocalService) |
+
+The new Fullmax bundle was built from AOEM main using its official build script in an isolated directory. Its 28 checksums, ZIP CRC, ABI, required exports and focused AOEM/runtime harness checks passed before staging. The AOEM ZIP SHA256 is `7dadc5239503d969b44eb59d6d06ef8544e072b944d80d1f5549ef420497c8d2`; it is an AOEM component bundle, not a whole node release.
+
+## Observed C startup
+
+- 2026-11-12 23:50:07 UTC: preflight passed. Old task result `3221225477` (`0xC0000005`), no C node or ports, original database present.
+- 23:50:09 UTC: one new `existing` task start requested.
+- 23:52:46 and 23:54:24 UTC: new task `Running`, node PID `15612`, original node executable hash unchanged, **loaded module** `aoem_ffi.dll` hash `5743f587…a01c0d52`.
+- C binds `192.168.71.125:41052` and `:42052` with that PID. New progress reports chain ID `91129655606029`, height `1`, head `null`, execution failures `0`, recovery incomplete `false`. Old progress height/head were also `1`/`null`.
+- No owner error, node exit, or node stderr at those observations. The old crash evidence and old task are retained.
+
+The source commit `fd5cfb31` (included in `9662470d`) repairs several AOEM FFI return buffers by preserving their allocation layout before `aoem_free`. This is a plausible memory-safety contributor. **The old crash dump does not identify an AOEM frame as the proven cause.** Startup and a few minutes of health do not prove the new DLL fixes the historical crash; identical external load and a bounded observation period are still needed.
+
+## Coordination with validator-A
+
+Please first perform one authenticated query against this current C process and record the exact PID, session, path and result. If that passes, coordinate the original relay workload separately; do not claim a four-host AOEM upgrade from this C-only experiment. If C crashes, preserve the new dump, task result and progress without auto-restarting or overwriting the old a254 failure.
+
+The one-shot deployment and read-only inspection scripts are included here for audit. Their hardcoded C paths and hashes deliberately reject a changed or already-running state. Private keys, protected files, raw database and dumps are **not** included in Git.
