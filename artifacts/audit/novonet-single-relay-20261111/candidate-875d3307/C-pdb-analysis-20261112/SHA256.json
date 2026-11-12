@@ -1,0 +1,22 @@
+[
+  {
+    "file": ".gitattributes",
+    "sha256": "730a35ae3d558080083c3103d9ac8100c3f6561678092abe341701dfa331eb1d",
+    "bytes": 29
+  },
+  {
+    "file": "findings-public.json",
+    "sha256": "9545148284e16601264a799de59614ebad70080dda099fac147fe93989a79022",
+    "bytes": 1353
+  },
+  {
+    "file": "README.md",
+    "sha256": "ce975f3278901bb930e09accb4bed7032946e026d29b2584f901b61b20bf0c49",
+    "bytes": 4086
+  },
+  {
+    "file": "symbols-public.json",
+    "sha256": "26598b93524f0b9f654b9dce0443ce8c0a30a8299d5dd6cbf9e33c256f5820db",
+    "bytes": 5836
+  }
+]

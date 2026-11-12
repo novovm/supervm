@@ -1,0 +1,29 @@
+{
+  "pdb_size": 17281024,
+  "pdb_sha256": "b46bc1763c06c7370733763391d56e083b2e52cc8dcd370a377be2f7928dac38",
+  "guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+  "age": 1,
+  "node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+  "pid31296": {
+    "fault_operand_alignment_mod16": 8,
+    "function": "indexmap::inner::Core::insert_full",
+    "fault_rbp_minus_rsp": -24,
+    "runtime_function_start_rva": "0x65f280",
+    "fault_rva": "0x65f59d",
+    "runtime_function_end_rva": "0x65f69a",
+    "prolog_rbp_minus_rsp": 128,
+    "interpretation": "Fault context violates normal prolog frame relation; cannot reduce cause to initial stack alignment alone."
+  },
+  "pid3228": {
+    "copy_count": 2,
+    "descriptor_length_decimal": 504045167760,
+    "destination_region_access": "---",
+    "buffer_plus_length_matches_fault": true,
+    "interpretation": "Descriptor consumed by String writer already has implausible length; origin of invalid descriptor not established.",
+    "writer": "String::write_str / push_str / Vec::append_elements"
+  },
+  "root_cause_confirmed": false,
+  "node_modified": false,
+  "raw_memory_uploaded": false,
+  "debugger_note": "LLDB explicit PDB add rejected; exact PDB parsed and applied to original RVAs via llvm-symbolizer. No claim of fully symbolized LLDB locals."
+}

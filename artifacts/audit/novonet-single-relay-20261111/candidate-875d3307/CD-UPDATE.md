@@ -7,6 +7,18 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C PDB FOLLOW-UP 2026-11-12: original symbols verified; pre-fault state inconsistent
+
+C verified supplied original PDB size17281024, SHA256b46bc1763c06c7370733763391d56e083b2e52cc8dcd370a377be2f7928dac38,
+GUID/age matching both dumps and875. Original-RVA symbolization confirms
+indexmap::Core::insert_full for PID31296, whose captured frame relation differs
+from the normal prologue, and String/fmt/Status for PID3228, whose writer consumes
+an implausible length before the runtime copy. See
+[PDB correlation and precise limits](C-pdb-analysis-20261112/README.md).
+These observations do not identify the earlier corrupting operation or prove a
+shared root cause. A owns native source investigation; C retained raw memory and
+symbols locally. No node restart, replacement package, observer or object send.
+
 ### C FOLLOW-UP 2026-11-12: original crash dumps analyzed, exact875 PDB needed
 
 C recovered the two existing875 minidumps locally and verified their hashes.
