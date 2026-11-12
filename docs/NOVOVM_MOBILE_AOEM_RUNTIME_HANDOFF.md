@@ -1,5 +1,66 @@
 # Android / iPhone AOEM 上游制品交接
 
+## 2026-11-12 CURRENT：Android 构建与手机验证转交 C，A 回双中继主线
+
+用户明确要求复用 C 已有 AOEM、NDK 和手机环境。**C 负责固定输入构建、原 JNI／
+验签／Keystore 实测；A 负责共享实现与接口缺陷，不再并行维护手机开发线。**
+不等待 A 完成 Android 编译，也不让 C 重写共享签名或网络。A 的 r2 已进入 Rust
+编译，因本次移交主动结束；没有生成可签收的新 Android SO，不能计为编译通过或
+源代码编译失败。r1 的 Windows tar 中文路径失败及 r2 日志保留在 A 本地 target。
+旧 5b08 库缺少当前统一批量验签能力的拒绝仍有效；下方双手机通过仅属旧接口历史。
+
+### C 现在执行（无需等 A 的 Android 构建）
+
+1. 同步本条所在 SUPERVM main，复用 `scripts/build-aoem-android-runtime.ps1`。
+   NOVOCHAT 继续由 C 开发；本条不修改其源码或开启收费。
+2. 核对本机 AOEM 包含提交 `4c57372ad0cc12123df5ca9e163a130039bfb599`。
+   脚本用 Git 导出固定提交到新目录，不覆盖 C 的 AOEM 工作区；不把 C 的未提交
+   改动当作固定输入。如缺提交，通过原私有 AOEM 远端取得，不另造源码替代。
+3. 取得 A 的小型私有输入包（不是新的 APK／SO，也不含密钥）：
+   `C:\Users\leadb\AppData\Local\NOVOVM\android-runtime-handoff-20261112\android-aoem-fixed-inputs-v1.zip`。
+   **1,252,757 字节**，SHA256
+   `f7d2069493669a10c257c13eaedb55c4843b8a451fd41fae268e1d0e0f477970`。
+   复制到 C 原接收目录后核验。若 C 已有以下两个完全同哈希输入，可直接复用，
+   不必复制。包内仅 `source-overlay.tar.gz` 和 `Cargo.lock`；属于 AOEM 私有源码
+   输入，不提交到公共 SUPERVM/NOVOCHAT 仓库。
+4. 两项输入分别核验 SHA256：overlay
+   `8ee88c113611cbdcfacce949ae06b49f9870bb8cdd570a8eddeb8343505ab4fb`；lock
+   `46625b6be8ad25c323fbba6e23263fe9f9f1b649805303ebdb89a7fe7f7abbec`。
+   来源复用既有 Windows/Linux native65 固定快照；不是仅凭 base commit 即包含
+   全部补丁。不得以 C 当前不同的 lock／源码替换。
+5. 使用已有 Rust 1.94.0、NDK28.2.13676358/API24、ARM64 target、GLSLC。
+   在 SUPERVM 根目录运行（路径按 C 实际位置填写，OutputRoot 必须是新目录）：
+
+```powershell
+& ./scripts/build-aoem-android-runtime.ps1 `
+  -AoemRepository 'D:\WEB3_AI\AOEM' `
+  -SourceOverlay 'E:\区块链四机通讯\android-aoem-fixed-inputs-v1\source-overlay.tar.gz' `
+  -QualifiedLock 'E:\区块链四机通讯\android-aoem-fixed-inputs-v1\Cargo.lock' `
+  -NdkRoot 'D:\Android\Sdk\ndk\28.2.13676358' `
+  -OutputRoot 'D:\WEB3_AI\SUPERVM\target\android-aoem-C-20261112-v1'
+```
+
+脚本复用原 `--locked --release -p aoem-ffi --no-default-features --features mldsa`
+移动合同，保留原实现、许可与权限检查，不是 desktop fullmax 或主节点包。
+其末端封包与 ELF 检查尚未在 A 完整跑到，C 须按实际结果报告，不能称脚本全程已验收。
+
+### C 回传与验收边界
+
+- 先回传构建退出码／日志、candidate-manifest、库/header 哈希、ELF 架构、依赖
+  与原出口。失败回传首因，不关闭必需检查；若属共享源码缺陷，交 A 修原实现。
+- 构建通过后复用 C 原 `pq_preflight`，独立 pin 新库 SHA256，保留已知向量、
+  篡改、错哈希、缺库、参数等拒绝；确认原统一语义验签实际执行，不用标量旧结果顶替。
+- 再沿原 `MldsaRuntime`、`verification_owner_v1`、`from_mldsa` 和 C 已有 JNI／
+  Store／identity worker 验证。JNI 的旧运行库 pin 只能绑定实际已核验新库，不能删检查。
+- 临时 adb shell 签验与 App UID 下 Keystore enroll／重启／同钥恢复分开；旧身份
+  连续性、真实 UCA／设备授权仍需原可信输入，不填恒真状态，不以新临时钥冒充注册。
+- 完成后在原网络交接追加 C 回执、NOVOCHAT 提交与公开结果，不上传私钥、完整库、
+  私有 AOEM 补丁或用户数据。构建通过不自动更新正式 SDK manifest／安装聊天包。
+
+A 已做的检查和失败边界见
+[运行库输入记录](../artifacts/audit/android-mldsa-runtime-20261112/README.md)。
+Android 任务**不是四机双中继部署前置**；固定四机程序仍为 a25452f4。
+
 日期2026-10-24；SUPERVM/经济侧唯一维护共享接口，Mac可作为同源码构建执行端。
 用户确认有Mac与Xcode Cloud；尚未取得该执行端的构建记录或制品。
 本文件记录构建起点、后续候选实机结果及资格边界。**Android 候选已在双手机隔离签验通过；正式 SDK 发布、App 持久持钥和可信资产执行尚未交付。** iPhone 制品仍未交付。下方原始缺口描述保留为构建前记录，以最新结果为准。

@@ -1,5 +1,20 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 A → C：Android 构建执行权交回 C；A 回双中继
+
+按用户最新决定，C 复用已有 AOEM/NDK/手机执行 Android 运行库构建与 JNI、验签、
+Keystore 实测；A 提供固定来源与脚本，继续承担共享接口缺陷。A 不继续并行开发
+NOVOCHAT；本轮未改手机源码或安装 App。C 不必等待 A 的未完成 Android 编译。
+固定输入小包位置、SHA256、执行命令和回传内容统一见
+[Android 交接 CURRENT](NOVOVM_MOBILE_AOEM_RUNTIME_HANDOFF.md)。私有输入包需要取得
+或确认 C 已有同哈希输入；Git 推送仅是交接发布，不冒称 C 已收包、执行或签收。
+
+双中继候选 `a25452f4c49be37cd984e650f2079642e6c273b3` 的原 Full
+[43155828234](https://github.com/novovm/supervm/actions/runs/43155828234)
+已只读核对为 `completed/success`、`workflow_dispatch`、attempt=1；未触发重跑。
+本条和 Android 构建脚本不产生新的四机程序资格，不表示已经部署128KiB候选或
+完成双中继实网 DONE。下一步由 A 确认该固定版本部署范围并继续四机主线。
+
 ## 2026-11-12 C接收5de4083d：原identity worker本地入口已接，自动启动未启用
 
 C已fast-forward并读取A对fb394aa8/accdcc1b/89064cf1的正式回执，不再称这些轮次未签收。
