@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-12T14:42:35.6132657Z",
+  "observer_pid": 2688,
+  "process_present": true,
+  "creation_identity_matches": true,
+  "exit_present": false,
+  "error_present": false,
+  "result_present": false,
+  "observer_restarted": false,
+  "node_restarted": false,
+  "object_sent": false
+}

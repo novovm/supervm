@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-12T14:42:00.2979408Z",
+  "previous_exit": {
+    "exit_code": 0,
+    "helper_pid": 18808,
+    "utc": "2026-11-12T01:47:30.0351752Z",
+    "host_id": "D"
+  },
+  "old_evidence_preserved": true,
+  "stop_performed": false,
+  "same_purpose_running_count": 0
+}
