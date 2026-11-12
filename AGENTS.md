@@ -1,5 +1,14 @@
 # Agent Highest Law
 
+## 2026-11-13 C客户端进度：完整服务钥与只读验证器已接线
+
+C已推送NOVOCHAT c5e7b7d，复用SUPERVM213d8de3只读验证器构造；完整服务公钥、
+profile/book验证器和slot索引分离，认证后迁移节点配置缓存容量，未改聊天数据库。
+实际AOEM组件20、Flutter26、Kotlin168通过，隔离Clippy通过；完整Android仍46项
+编译错误（原85），未构建/安装主APK。C继续邮箱/L4、回执及原生调用者，不交给A
+逐项代修。必要共享源码可由C核对后修补；不操作四机节点、手机身份历史或正式收费。
+具体边界与公开证据见docs/NOVORUDP_SHARED_CLIENT_HANDOFF.md顶部本轮交接。
+
 ## 2026-11-12 最新：NOVOCHAT客户端集中在C推进
 
 用户明确C独立连续完成NOVOCHAT SDK迁接、Android持钥/编译和双机验证，不逐项

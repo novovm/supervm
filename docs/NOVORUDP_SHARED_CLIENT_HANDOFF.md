@@ -1,5 +1,34 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-13 C回传：完整服务ML-DSA钥、显式验证器与缓存容量
+
+NOVOCHAT main [c5e7b7d](https://github.com/XujueKing/NOVOCHAT/commit/c5e7b7d)
+已推送；共享源码213d8de3仅增加QualifiedTransportVerifier::from_runtime，并让
+原load入口复用它。只借既有合格ML-DSA-65 runtime的只读验签owner，不持有/生成
+私钥，不授予注册、设备、联系人或资产权限；客户端三处受审pin已更新，无绕过门禁。
+
+profile、ServiceLeaseBook恢复/更新显式传入同一verifier，信任根保留完整1952字节
+服务公钥；本地slot承诺只作索引，不能冒充验签公钥或可信授权。原生/TLS载体当前
+策略守卫复用已选完整钥，仍检查原撤销、时间与请求权限；Iroh自身载体钥不是服务钥。
+
+旧8KiB邀请边界无法容纳完整新记录，本轮统一本地profile上限为1MiB+128KiB；
+缓存按原4MiB checkpoint及JSON最坏转义推导容量。SQL schema1→2先认证解密旧行，
+再事务内复制原sealed BLOB；失败回滚。加密envelope/密钥/AAD不变，聊天数据库不动。
+正式候选安装前须另备节点缓存回退材料，不承诺旧程序直接读取schema2。这只是本地
+格式容量，不放宽网络超时、带宽、节点/资源配额或资产限额。
+
+实际AOEM组件20通过（custody10、locator5、生产缓存源码5），隔离all-features/
+all-targets Clippy -D warnings通过；Flutter26及analyze、Kotlin168通过。完整Android
+cfg仍46项编译错误、exit101（此前85）；不能把组件通过当完整App/手机验收。
+[实施说明](https://github.com/XujueKing/NOVOCHAT/blob/c5e7b7d/docs/implementation/SERVICE_PROFILE_MIGRATION_2026-11-13.md)；
+[原始日志/46项清单/命令和哈希](https://github.com/XujueKing/NOVOCHAT/tree/c5e7b7d/docs/implementation/evidence/service-profile-20261113)。
+提交后8项证据blob哈希与清单一致。未生成/安装主聊天APK、未操作手机或节点；原身份
+历史、附件、v108/v110回退材料保持，正式资产与生产收费关闭。完整网络回归未执行。
+
+C下一项继续持续邮箱/L4、服务回执验证、原生/控制会话的独立通信身份及可信远端绑定；
+不重复造协议，不用旧32字节钥转换或假快照解除拒绝。A继续原节点实网主线，无需代写
+消费端；本节是Git通知，尚不能据此宣称A已签收。历史CURRENT节点操作指令不在本轮执行。
+
 ## 2026-11-12 C集中完成NOVOCHAT：1389c84主App通信持钥接线
 
 用户明确：NOVOCHAT客户端迁接、编译、Android持钥和双机验证由C独立连续完成，
