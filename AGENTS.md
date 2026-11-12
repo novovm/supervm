@@ -1,5 +1,14 @@
 # Agent Highest Law
 
+## 2026-11-12 最新：NOVOCHAT客户端集中在C推进
+
+用户明确C独立连续完成NOVOCHAT SDK迁接、Android持钥/编译和双机验证，不逐项
+拆给A。必要共享接口可由C核对本地SUPERVM/AOEM后修补，通过Git协调，避免并行
+编辑；优先复用，不复制协议或伪造可信状态。A继续节点实网，不重复开发Android。
+本轮NOVOCHAT1389c84为主App通信持钥源码接线，Android整库仍85项错误、无新主
+聊天APK。客户端进度不替四机/资产验收，不改变其他会话节点调查/更新的授权范围。
+详见docs/NOVORUDP_SHARED_CLIENT_HANDOFF.md顶部客户端交接。
+
 ## 2026-11-10 最新：普通同步轻量检查，固定候选集中完整CI
 
 用户明确要求不再每次上传GitHub就全量CI并等待一小时，并批准推进分流修改。

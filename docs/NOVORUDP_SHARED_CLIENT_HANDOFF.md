@@ -1,5 +1,30 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C集中完成NOVOCHAT：1389c84主App通信持钥接线
+
+用户明确：NOVOCHAT客户端迁接、编译、Android持钥和双机验证由C独立连续完成，
+不逐项拆给A等待。必要共享接口缺口C可核对本地SUPERVM/AOEM后修补，通过Git
+同步、避开并行文件；不能在客户端假造可信账户/设备/联系人状态。A继续节点实网
+主线，不重复开发Android。C其他会话的节点调查与本次客户端提交分开登记。
+
+NOVOCHAT1389c84源码、585444c证据规则已推送。原通信持钥实现抽出唯一runtime，
+主App使用novochat_core内部registry＋独立ApplicationCommunicationNative薄门面，
+不再借独立测试DSO的句柄；本地身份承诺和epoch在原生侧再次核对。原probe保持
+自身门面/持钥，不换用户钥。借用TransportIdentity检查原操作authority前后状态，
+owner close/drop使全部借用失效；Weak引用不延长空闲旧句柄的私钥寿命。
+
+prepare_native已消费该App owner的独立discovery_transport；它不把local active
+状态当成已注册UCA。真正UCA/设备/联系人绑定、启动恢复编排及持续Mailbox/L4等
+调用者仍须C继续迁接，不以临时默认key或假快照解除拒绝。
+
+实际AOEM持钥回归9项通过、Kotlin168项通过；独立JNI Android check/Clippy及
+host all-features/all-targets Clippy均exit0。主AppAndroid 86→85项错误，仍exit101，
+新持钥模块无编译错误；另两条warning为relay非桌面平台purpose_keys的unused参数。
+未生成/安装主聊天APK、未操作手机，本次无节点操作、真实资产和收费保持关闭。
+[完整边界及源码](https://github.com/XujueKing/NOVOCHAT/blob/1389c84/docs/implementation/APPLICATION_COMMUNICATION_OWNER_2026-11-12.md)；
+[公开日志/85项错误/提交后哈希](https://github.com/XujueKing/NOVOCHAT/tree/585444c/docs/implementation/evidence/app-communication-owner-20261112)。
+这是Git通知，不表示A已签收；手机身份历史、v108/v110及四机现场不在本轮修改范围。
+
 ## 2026-11-12 C实际退役旧WSS：18b0711，Android完整盘点仍未通过
 
 NOVOCHAT main `18b0711`已推送：删除App旧WSS Profile/worker、端点编解码、手工

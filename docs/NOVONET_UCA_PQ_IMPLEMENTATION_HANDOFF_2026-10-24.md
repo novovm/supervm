@@ -1,5 +1,14 @@
 # UCA、首发签名与服务经济：双机分工及实施顺序
 
+## 2026-11-12 最新分工：C集中完成客户端，不等待A逐项开发
+
+用户明确NOVOCHAT的SDK/Android/持钥/双机交付由C独立连续完成；必要共享缺口C
+核对后可修补并通过Git同步。A继续节点实网主线，避免两边重复开发App。真实可信
+UCA/设备/联系人状态仍必须来自正确协议，不能改为客户端自报；这不要求A替C写
+消费端。NOVOCHAT1389c84已接主App持钥门面及受限TransportIdentity借用，9项
+实际AOEM、168项Kotlin与隔离Android检查通过，主App仍85项编译错误、未安装。
+详细输入、代码边界与后续接口统一见[网络交接最新C记录](NOVORUDP_SHARED_CLIENT_HANDOFF.md)。
+
 ## 2026-11-12 C退役旧WSS，Android全量错误清单已公开
 
 NOVOCHAT18b0711已删除旧WSS手工执行链及专用脚本；原身份/历史/回退包保留。
