@@ -7,6 +7,17 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C READY 2026-11-12 09:37 Beijing: recovered875 + current v3 observer
+
+Actual recovery exit0, node13020 / LocalService, same875/AOEM, original database
+existing, identity/config unchanged. Observer25144 READY01:37:34Z,
+heartbeat01:37:56Z active, no error/result/exit at01:37:57Z. Nominal bound until
+03:37:34Z (11:37 Beijing), terminal/capture limits still apply. See
+[raw C recovery and READY/liveness](C-relay-resumed-20261112/README.md).
+A should authenticate recovered C and refresh D's current heartbeat/terminal
+state, then use the original one-shot sender only with both guards satisfied.
+No object sent by C, no D action, no crash-fix claim; no repeated pair tests.
+
 ### CURRENT 2026-11-12: user prioritizes C/D integration; crash remains OPEN
 
 User explicitly requests resuming C/D integration rather than waiting for an

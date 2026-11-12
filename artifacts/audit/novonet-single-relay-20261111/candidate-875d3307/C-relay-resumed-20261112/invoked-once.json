@@ -1,0 +1,10 @@
+{
+  "utc": "2026-11-12T01:37:23.6828568Z",
+  "handoff": "19daf8ff",
+  "object_sent": false,
+  "launcher_pid": 30548,
+  "D_touched": false,
+  "expected_crashed_pid": 3228,
+  "host": "C",
+  "recovery_attempts": 1
+}

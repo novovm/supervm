@@ -1,0 +1,30 @@
+{
+  "host": "C",
+  "source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "crash": {
+    "event_id": 1000,
+    "record_id": 546354,
+    "event_utc": "2026-11-11T20:13:36.6095982Z",
+    "application": "novovm-node.exe",
+    "application_path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-875d3307-windows-x86_64\\bin\\novovm-node.exe",
+    "exception_code": "c0000005",
+    "fault_pid": 3228,
+    "created_utc": "2026-11-11T15:11:26.0712967Z",
+    "report_id": "6da4e42d-87e5-4d61-88ab-d219b0b7fed7",
+    "task_sid": "S-1-5-19",
+    "trigger_count": 0,
+    "last_run_utc": "2026-11-11T15:11:25Z",
+    "task_exit_code": 3221225477,
+    "task_state": "Ready",
+    "restart_count": 0
+  },
+  "exit": {
+    "exit_code": -1073741819,
+    "start": "existing",
+    "time": "2026-11-11T20:13:40.3053839Z"
+  },
+  "fault_module": "VCRUNTIME140.dll",
+  "fault_module_version": "14.50.35719.0",
+  "fault_offset": "000000000001126b",
+  "root_cause_known": false
+}

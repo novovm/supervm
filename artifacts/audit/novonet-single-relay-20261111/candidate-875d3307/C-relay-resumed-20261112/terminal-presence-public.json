@@ -1,0 +1,28 @@
+{
+  "object_sent_by_C": false,
+  "D_touched": false,
+  "files": {
+    "launcher-error.json": false,
+    "observer/result.json": false,
+    "observer-exit.json": false,
+    "observer/error.json": false
+  },
+  "utc": "2026-11-12T01:37:57.1498872Z",
+  "processes": [
+    {
+      "ProcessId": 30548,
+      "Name": "pwsh.exe",
+      "CreationDate": "2026-11-12T09:37:23.210212+08:00"
+    },
+    {
+      "ProcessId": 13020,
+      "Name": "novovm-node.exe",
+      "CreationDate": "2026-11-12T09:37:33.185521+08:00"
+    },
+    {
+      "ProcessId": 25144,
+      "Name": "pwsh.exe",
+      "CreationDate": "2026-11-12T09:37:34.149804+08:00"
+    }
+  ]
+}
