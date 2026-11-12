@@ -1,0 +1,14 @@
+{
+  "host": "C",
+  "status": "AUTHENTICATED_STATUS_PASS",
+  "client_source": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+  "client_sha256": "2dfd2a1e1c704634f985053ca984f4496a1cfcb28c12113551c4747c0881446c",
+  "chain_id": 91129655606029,
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "height": 0,
+  "current_height": 1,
+  "elapsed_ms": 36,
+  "utc": "2026-11-12T01:40:50.0781403Z",
+  "object_sent": false,
+  "relay_acceptance": false
+}
