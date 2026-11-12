@@ -1,5 +1,22 @@
 # Android / iPhone AOEM 上游制品交接
 
+## 2026-11-12 CURRENT：C已修复Android卸载生命周期，双机默认持钥通过
+
+用户明确授权C直接修复AOEM/SUPERVM，本项不再等待A。共享修复`dea182e4`在原bindings
+保留Android DSO代码映射到进程退出，防止线程TLS析构晚于dlclose；密钥/上下文释放不变，
+Android环境变量不能再开启不安全卸载，Windows/Linux原语义保留。AOEM固定SO/hash未变。
+NOVOCHAT `b1d199e`已消费新受审输入；原139和一次不卸载诊断记录完整保留。
+
+两手机默认配置各5项真实communication_custody通过/退出0，命令明确unset卸载环境，
+不靠诊断开关通过。两机原pq_preflight及错hash/缺库/错参数拒绝通过。共享bindings
+34通过/8原有忽略、策略定向测试和严格Clippy通过，消费者严格Clippy通过。
+B首次预检发起遇到ADB daemon不可用未执行签验，恢复连接后只续跑B未完成步骤，
+原中断保留，A成功测试不重复。不是App UID/Keystore跨进程验收，也未安装APK或改JNI库pin。
+
+C继续手机App接入，A继续双中继及真实UCA/设备/联系人可信输入，避免重复修本项。
+[手机原始结果及失败对照](https://github.com/XujueKing/NOVOCHAT/blob/b1d199e/docs/implementation/ANDROID_FIXED_RUNTIME_2026-11-12.md)。
+原聊天身份历史和节点未动，收费关闭；下方等待A修卸载的当前状态由本节覆盖。
+
 ## 2026-11-12 CURRENT：用户指定C直接修复共享Android卸载生命周期
 
 用户明确本机同时具备AOEM/SUPERVM源码，本项由validator-C直接修复、构建及手机回归，
