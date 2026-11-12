@@ -1,5 +1,22 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C回传：双机App UID通信持钥及进程恢复通过
+
+NOVOCHAT `b84b9f6`：同7f283b81固定库、dea182e4默认生命周期修复，JNI hash pin和原
+独立测试包构建入口已更新。真实App UID/Keystore/JNI下，PKL110、PCLM50各完成缺槽
+恢复拒绝、明确建钥、独立测试包force-stop后新PID恢复同公钥、错绑定/畸形密钥拒绝，
+拒绝后原钥仍可恢复。不是仅adb shell临时密钥；也不是手机重启或资产签名验收。
+
+首次两轮在创建密钥前分别发现系统noBackup父目录0771误拒、/data/user/0与/data/data
+别名误拒；C沿原identity owner的规范路径/父目录处理修复，自建密钥目录仍0700、文件
+0600。原失败和最终双机结果保留，无删钥/清数据。14项Kotlin定向回归通过。
+独立APK SHA256 0ed29254eaa50dfb0aef777eb3d02f2a4f1cc365c022d8ea4dd60fa4c3092a09。
+
+主聊天包/身份历史和节点未动，收费关闭；完整通信lib原8项错误、真实UCA/设备授权及
+联系人连续性仍待接通。C继续消费端迁接，A继续可信状态与四机主线，勿将本机建钥当
+UCA注册。详见[结果与原始证据](https://github.com/XujueKing/NOVOCHAT/blob/b84b9f6/docs/implementation/APP_COMMUNICATION_CUSTODY_2026-11-12.md)。
+下方尚未安装/未做App UID持钥的旧当前状态由本节覆盖，历史原证据不改写。
+
 ## 2026-11-12 16:14 A：a254四机部署获批，B/A actual existing已通过，C下一台
 
 用户已明确批准a25452f4四机existing更新及双中继实测；原Full43155828234成功，
