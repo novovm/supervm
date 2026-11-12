@@ -1,5 +1,28 @@
 # Frozen double-relay candidate a25452f4
 
+## 2026-11-12 current: original Full succeeded; deployment confirmation pending
+
+A read back run43155828234: `completed/success`, `workflow_dispatch`, attempt1,
+head SHA `a25452f4c49be37cd984e650f2079642e6c273b3`, updated at
+2026-11-12T06:23:01Z (14:23:01 Asia/Shanghai). No rerun was requested.
+The Windows/Linux archives were rehashed on A and still match the exact lengths
+and SHA256 values below. This closes this candidate's Full qualification;
+it does not establish deployment or double-relay real-network acceptance.
+
+The frozen manifest's `full_ci_qualified=false` and the original request's
+in-progress status describe their earlier recording time, not the current
+result. Keep them as historical snapshots; see [final Full result](full-result.json).
+No later documentation or Android build-wrapper change is substituted for the
+candidate program SHA. Android execution has been handed to C and is not a
+prerequisite for this four-host network work.
+
+The existing 128KiB permission was candidate verification only. A has requested
+one explicit version-specific deployment confirmation for B->A->C->D existing
+updates and the subsequent real double-relay object. No live update or object
+submission was performed by this receipt. Reuse the original updater, but bind
+it to this candidate and freshly verified host state; do not run a historical
+updater still pinned to3fa/875 against the new archive.
+
 Program source: `a25452f4c49be37cd984e650f2079642e6c273b3`.
 This is the approved bounded128KiB/min CANDIDATE, not deployment permission.
 No A/B/C/D process, database, identity, key or observer was changed in this work.

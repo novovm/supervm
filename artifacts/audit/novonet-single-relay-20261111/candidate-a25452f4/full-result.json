@@ -1,0 +1,15 @@
+{
+  "run_id": 43155828234,
+  "url": "https://github.com/novovm/supervm/actions/runs/43155828234",
+  "head_sha": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "event": "workflow_dispatch",
+  "attempt": 1,
+  "status": "completed",
+  "conclusion": "success",
+  "run_updated_at": "2026-11-12T06:23:01Z",
+  "verification": "Read-only gh run view; exact frozen program SHA and original Full run",
+  "archives_rehashed_match": true,
+  "rerun_requested": false,
+  "deployed_by_this_receipt": false,
+  "double_relay_real_network_accepted": false
+}
