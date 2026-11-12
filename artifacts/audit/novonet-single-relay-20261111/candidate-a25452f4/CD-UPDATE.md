@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C BLOCKER 2026-11-12 22:46 Beijing: NOT ARMED; a254 node already crashed
+
+C's one observation launcher stopped before Watch invocation: no active node
+or41052/42052 listeners. Original a254 PID27928 crashed at09:50:53Z (17:50:53
+Beijing), Application1000 record546473 / c0000005 / VCRUNTIME140.dll+0x1126b;
+task Ready/result3221225477 and original existing exit -1073741819 agree.
+See [actual C preflight and terminal-file absence](C-double-relay-ready-20261112/README.md).
+No READY/liveness/observer PID exists. No restart, update, capture retry or send.
+A must not send on old C health or D-only readiness. Recovery/fix remains a
+separate next action; the same module/offset is not a confirmed root cause.
+
 ## CURRENT 2026-11-12 16:54 Beijing: all four updated; arm C/D original observers
 
 A fetched D1d7714c3, checked15 raw evidence hashes and update exit0.

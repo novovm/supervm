@@ -1,0 +1,25 @@
+{
+  "host": "C",
+  "utc": "2026-11-12T14:47:13.1488605Z",
+  "status": "C_RELAY_OBSERVER_NOT_ARMED",
+  "files": {
+    "observer-exit.json": false,
+    "observer-started.json": false,
+    "observer/liveness.json": false,
+    "observer.stdout.log": false,
+    "observer/result.json": false,
+    "observer/error.json": false,
+    "observer.stderr.log": false,
+    "launcher-exit.json": false,
+    "observer/ready.json": false
+  },
+  "observer_started": false,
+  "launcher_pid": 19216,
+  "launcher_process_present": false,
+  "launcher_exit_code": null,
+  "launcher_exit_code_note": "Numeric exit not retained by launch handle; do not infer from parent launch result",
+  "node_restarted": false,
+  "package_changed": false,
+  "object_sent": false,
+  "D_operated": false
+}

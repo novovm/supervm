@@ -1,0 +1,47 @@
+[
+  {
+    "path": ".gitattributes",
+    "bytes": 29,
+    "sha256": "730a35ae3d558080083c3103d9ac8100c3f6561678092abe341701dfa331eb1d"
+  },
+  {
+    "path": "invoked-once.json",
+    "bytes": 221,
+    "sha256": "36c7c0b370d1e451814613bd77085fafefbcb2f7cf4ce2f216f3bad38d9869a5"
+  },
+  {
+    "path": "launch-public.json",
+    "bytes": 152,
+    "sha256": "b18f270928d9099bb07e5664225eaf6ccd702bc2801831699a70a7a2957dd80a"
+  },
+  {
+    "path": "launcher-error-public.json",
+    "bytes": 292,
+    "sha256": "57a6491e6e51b8bbf3e928560af611f4d8d4f386fe323984bb8d44c717fb2ebb"
+  },
+  {
+    "path": "node-before-public.json",
+    "bytes": 918,
+    "sha256": "c701c8035b85205e0225e15979fd8628738851a3f413f147ba4f9ca5d1e02564"
+  },
+  {
+    "path": "old-observer-check.json",
+    "bytes": 113,
+    "sha256": "894fb0c290770eb4be392e0c84277956267f4c974c246b08c06fa28ca67947a9"
+  },
+  {
+    "path": "presence-public.json",
+    "bytes": 791,
+    "sha256": "263c95dfdbacddb544bc5c6900ff06bead5a5b17c4969b79b4943fed86001e08"
+  },
+  {
+    "path": "README.md",
+    "bytes": 2081,
+    "sha256": "b77179435f4797ac069ec6e0a8501b1caabef57f082c4f9089f15fc841ddb3e4"
+  },
+  {
+    "path": "Run-C-Once.ps1",
+    "bytes": 5017,
+    "sha256": "10ea0a4d2631113408ef5f7bd5838ea690244c6fdd750801a1475e719e41ee50"
+  }
+]

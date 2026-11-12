@@ -1,0 +1,10 @@
+{
+  "maximum_wait_seconds": 7200,
+  "launcher_pid": 19216,
+  "handoff": "16b78764",
+  "host": "C",
+  "node_mutated": false,
+  "D_operated": false,
+  "object_sent": false,
+  "utc": "2026-11-12T14:45:58.6717845Z"
+}

@@ -1,0 +1,29 @@
+{
+  "ports": [],
+  "utc": "2026-11-12T14:46:01.4000688Z",
+  "original_exit": {
+    "exit_code": -1073741819,
+    "start": "existing",
+    "time": "2026-11-12T09:51:01.5360641Z"
+  },
+  "last_run_utc": "2026-11-12T08:34:17.0000000Z",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "crashes": [
+    {
+      "record_id": 546473,
+      "utc": "2026-11-12T09:50:53.8356461Z",
+      "app": "novovm-node.exe",
+      "path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-a25452f4-windows-x86_64\\bin\\novovm-node.exe",
+      "pid_raw": "0x6d18",
+      "created_raw": "0x1dd72809c3a5f54",
+      "module": "VCRUNTIME140.dll",
+      "exception": "c0000005",
+      "offset": "000000000001126b"
+    }
+  ],
+  "task_result": 3221225477,
+  "nodes": [],
+  "task_state": "Ready",
+  "task_name": "NOVOVM-C-a25452f4-Existing-20261112",
+  "node_mutated": false
+}

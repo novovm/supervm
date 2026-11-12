@@ -1,0 +1,10 @@
+{
+  "host": "C",
+  "node_mutated": false,
+  "D_operated": false,
+  "status": "C_RELAY_OBSERVER_NOT_ARMED",
+  "object_sent": false,
+  "retry_performed": false,
+  "error": "Current a254 LocalService node not confirmed; no restart or observer",
+  "utc": "2026-11-12T14:46:01.4673075Z"
+}
