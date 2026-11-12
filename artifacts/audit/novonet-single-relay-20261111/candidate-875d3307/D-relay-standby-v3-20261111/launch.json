@@ -1,0 +1,10 @@
+{
+  "helper_pid": 18808,
+  "utc": "2026-11-12T00:41:15.5369488Z",
+  "created_utc": "2026-11-12T00:41:15.5245172Z",
+  "command": "-NoProfile -File D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Watch-Relay.ps1 -HostId D -Source 875d3307a1fc2ca34b45464ac3bf51a03619adc2 -NodeSha256 9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7 -WorkName novonet-observation-875d3307-20261111 -MaximumWaitSeconds 7200 -EvidenceRoot D:\\WEB3_AI\\SUPERVM\\target\\d-relay-standby-v3-20261111/evidence",
+  "script_sha256": "03262a60ae3306ee439e7a0ac3851d8a8a29020275c7c59e7aa0057b36326036",
+  "reader_sha256": "12f7ba022d4d5d8debabed8fa7e59ab8616bfc2e9f664953e7f38f04fa581125",
+  "host_id": "D",
+  "wrapper_pid": 21680
+}
