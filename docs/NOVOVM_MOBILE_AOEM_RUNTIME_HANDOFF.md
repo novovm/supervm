@@ -1,5 +1,25 @@
 # Android / iPhone AOEM 上游制品交接
 
+## 2026-11-12 CURRENT C回传：固定构建成功，默认持钥SIGSEGV交A修共享生命周期
+
+C已执行723b4a45，NOVOCHAT公开回执`86ae1ff`。原ZIP及两项输入hash通过；原脚本
+Rust1.94/NDK28.2/API24/release-mldsa退出0。新SO8252616字节，SHA256
+`7f283b8152eb30b8873e75be4b764905d37db5c1afaec88238b30146f264bfca`；header
+`4c6ae29baf7efc0c8cc1cf3abd0abb78a585a135cb2de47f8ab3fbfdaec969ca`。
+AArch64 DYN、libdl/libm/libc及原出口核对通过。固定私有输入/库不上传，原构建日志在C target。
+
+mobile-A原pq_preflight 65/4退出0（算法16负例、共享花费18负例、缺状态拒绝），错hash/
+缺库/错参数退出1；但原communication_custody首项线程退出SIGSEGV/139。独立对照
+AOEM_FFI_UNLOAD_DLL=0同库同程序5项通过/0；这只是诊断，不替代默认失败。
+崩溃顶部未知地址，后接pthread_key_clean_all/pthread_exit；共享bindings默认非Windows
+卸载库。A请在原AoemDyn/统一owner核对动态库卸载与TLS析构生命周期，修原实现并回归；
+C没有改默认Drop或以环境开关签收。不能把该线索写成已经完全归因。
+
+两机在线但B尚未测试；已停止APK/Keystore后续，新库未写JNI pin，聊天包/身份历史未动。
+[原始命令、退出码、限定本进程崩溃及对照](https://github.com/XujueKing/NOVOCHAT/blob/86ae1ff/docs/implementation/ANDROID_FIXED_RUNTIME_2026-11-12.md)。
+默认资格仍未通过，App UID持钥/手机生命周期/正式收费均未完成。下方输入构建指令保留，
+不用重传相同ZIP，也不重建相同运行库；待共享生命周期修复后C续验。
+
 ## 2026-11-12 CURRENT：Android 构建与手机验证转交 C，A 回双中继主线
 
 用户明确要求复用 C 已有 AOEM、NDK 和手机环境。**C 负责固定输入构建、原 JNI／

@@ -1,5 +1,14 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C → A：Android构建完成，默认线程退出139，需共享生命周期修复
+
+NOVOCHAT `86ae1ff`：按723b4a45固定输入构建成功，新Android SO SHA256
+7f283b8152eb30b8873e75be4b764905d37db5c1afaec88238b30146f264bfca。
+mobile-A原预检/负例通过，原持钥测试首线程退出SIGSEGV/139；仅不卸载库的独立诊断
+对照5项通过，不计默认资格。A继续原AoemDyn/统一owner卸载与TLS析构调查修复，C未改
+共享实现或重做密码库。B未测试，JNI pin/手机原包身份历史未动，无APK/Keystore验收。
+详见[Android CURRENT与公开证据](NOVOVM_MOBILE_AOEM_RUNTIME_HANDOFF.md)。
+
 ## 2026-11-12 A → C：Android 构建执行权交回 C；A 回双中继
 
 按用户最新决定，C 复用已有 AOEM/NDK/手机执行 Android 运行库构建与 JNI、验签、
