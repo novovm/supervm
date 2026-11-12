@@ -1,0 +1,52 @@
+[
+  {
+    "file": "liveness.json",
+    "bytes": 245,
+    "sha256": "9f34a344d481144cf3f6834116a8ee674f3357a49205c5aea55582b04ed35ac3"
+  },
+  {
+    "file": "read-anomaly-first.json",
+    "bytes": 1702,
+    "sha256": "fcfda218aafcfcce5bdc22441dd9e99b0743f120f056a28527be148be61a6df0"
+  },
+  {
+    "file": "read-anomaly-last.json",
+    "bytes": 1702,
+    "sha256": "d3db8ce0810dfdd51b693a689bc3dbe4bea5dcb011f717f23eb6af2882ad04c4"
+  },
+  {
+    "file": "ready.json",
+    "bytes": 353,
+    "sha256": "7a76ad1af918e0897b8ce08487dbb59a0e76cd1b7a772d162f850bb6a6b7a3ee"
+  },
+  {
+    "file": "relay-00.json",
+    "bytes": 792592,
+    "sha256": "b8b24046cfd85b9540bd9d71f0e8e836ff61b844925522cca912dd949ed00825"
+  },
+  {
+    "file": "relay-01.json",
+    "bytes": 769047,
+    "sha256": "ab521a714e389a006e9aa1492c95b2bc94348b67167cdda4e70ee5b80ad51e82"
+  },
+  {
+    "file": "result.json",
+    "bytes": 262,
+    "sha256": "aa48e22974718c1b7abf2a62269f41793828ddc19c4632ba76b2ae2e34f2a5b9"
+  },
+  {
+    "file": "collector-exit.json",
+    "bytes": 109,
+    "sha256": "2792cc4cec9eb63fd88cf0b2a62cfe48df24a0def5b3fd0fe8b34e6aa35306f8"
+  },
+  {
+    "file": "collector.stdout",
+    "bytes": 126,
+    "sha256": "f9172b9605aec2a2b7dcf461fc73a2caf0a7d745a7d87235cbe8e375e3209722"
+  },
+  {
+    "file": "collector.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]
