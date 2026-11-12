@@ -130,6 +130,17 @@ pub fn load_transport_identity(
 
 #[derive(Clone)]
 pub struct QualifiedTransportVerifier(OwnedMldsaVerifier);
+impl QualifiedTransportVerifier {
+    /// Reuse an already qualified runtime without loading another library or
+    /// retaining any signing key. Trust and authorization remain with callers.
+    pub fn from_runtime(runtime: &MldsaRuntime) -> Result<Self> {
+        ensure!(
+            runtime.parameters() == AoemMldsaParameterSet::MlDsa65,
+            "transport requires ML-DSA-65"
+        );
+        Ok(Self(runtime.verification_owner_v1()?))
+    }
+}
 impl TransportVerifier for QualifiedTransportVerifier {
     fn verify(
         &self,
@@ -149,9 +160,7 @@ impl TransportVerifier for QualifiedTransportVerifier {
 }
 
 pub fn load_transport_verifier(library: &Path, sha256: &str) -> Result<QualifiedTransportVerifier> {
-    Ok(QualifiedTransportVerifier(
-        load_runtime(library, sha256)?.verification_owner_v1()?,
-    ))
+    QualifiedTransportVerifier::from_runtime(&load_runtime(library, sha256)?)
 }
 
 #[cfg(test)]
