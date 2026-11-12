@@ -8,6 +8,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Hash-File([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }

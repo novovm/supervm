@@ -28,6 +28,27 @@ that `9662470d` is on main; it has not been deployed to C or qualified across
 hosts. C's old a254 node remains down. The exact root of C's 875/a254 crashes
 is not established by these component tests.
 
+After A pushed `9662470d`, C fast-forwarded AOEM main. The committed FFI source
+file SHA256 `934937edf7d83a4e3b51042c2a7f65dd798f17a49e0a6555c7be62a14c29117a`
+is byte-identical to C's corrected pinned FFI source file. This resolves the
+specific missing-export source gap on main; the broader source and build inputs
+also changed in A's commit. C built `aoem-ffi` with the old Fullmax feature set
+using Rust 1.94.0 and `--locked`: **PASS**, Windows core DLL SHA256
+`5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52`.
+The new DLL exports `aoem_compute_result_take_v1`, `aoem_execute_ops_wire_v1`,
+`aoem_state_read_v1` and `aoem_free`; ABI 1 and `execute_ops_v2` probe passed.
+It passed 1,024 varied-size state-read/free cycles and the original SUPERVM
+owner-isolation workload: 1,024 positive and 1,024 negative semantic verifier
+calls, 32 private contexts, 501 snapshots and 80,000 writer attempts. The
+first harness invocation omitted its opt-in profile variable and exited before
+AOEM work; the corrected invocation passed. Raw build/probe logs remain local.
+These are component checks, not complete node, sidecar or cross-host acceptance.
+
+AOEM `9662470d` lock SHA256:
+`04b9fca68787b399576de7b5bdc43cdf6c63180df4bd5331656391adbb784f66`;
+public header SHA256:
+`d983cf69b0f64e9a40e45d2e9c30dd1cd2cc99d1e8ddb33ed5ffeefcb2b4cd38`.
+
 ## One coordinated read-only capture for A/B/C/D
 
 A coordinates a single Beijing-time comparison window and distributes this
