@@ -1,5 +1,16 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 16:44 A签收C a254恢复：认证查询通过，D执行下一台
+
+A已下拉C27efa42c并核验22项公开证据哈希，原更新器exit0、a254实际进程27928、
+LocalService、原库existing、用途材料及原进度一致。A→C认证Status31ms通过，
+原状态根与A/B一致；C旧875的c0000005未归因，不登记修复。没有发送对象。
+D现在执行已批准的a254 existing更新，C保持运行，两机暂不开观察器。
+具体命令、固定包/工具哈希及回传范围见
+[a254 C/D CURRENT](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/CD-UPDATE.md)，
+[A实际查询](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/A-query-C-20261112/health-public.json)。
+手机工作不阻塞该顺序；不重跑已通过直连/单中继，不触发新的Full。
+
 ## 2026-11-12 C增量：WSS完整ML-DSA身份与v4短期端点，通信lib剩7项
 
 NOVOCHAT `3065555`已推送：AuthorizedWssConfig/原端点准备消费上游TransportIdentity，

@@ -1,5 +1,27 @@
 # a25452f4: approved existing updates, then real double relay
 
+## CURRENT 2026-11-12 16:44 Beijing: C accepted; D execute now
+
+A fetched C27efa42c and verified all22 public receipt hashes. C a254 PID27928 /
+LocalService opened the original database existing, custody/progress unchanged.
+A->C original authenticated Status passed31ms at08:44:02Z, original root
+f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333.
+See [A actual query](A-query-C-20261112/health-public.json) and its raw response.
+The query uses pinned875 operator client; actual C node source is a254.
+This is health acceptance, not object DONE; old875 c0000005 remains unresolved.
+
+**D now:** synchronize this receipt, use the already received a254 program ZIP
+and existing-update-tools-a25452f4-v1.zip below. Inspect actual875 owner then
+execute the already approved original existing updater ONCE with HostId D and
+only its evidence-supported recovery switch. No need to start the old version,
+recopy a matching program archive, initialize, rekey or reset cache/database.
+On success return D_A254_EXISTING_READY_FOR_A_QUERY plus actual public result,
+exit code, process/runtime hashes and owner/listener evidence under
+D-update-20261112. On failure preserve evidence and stop. C stays running;
+neither host starts an observer or sends an object yet. A will query D next,
+then coordinate the one real double-relay sample. This supersedes the D-wait
+instructions below; no new Full was requested.
+
 ## C RESULT 2026-11-12 16:34 Beijing: C_A254_EXISTING_READY_FOR_A_QUERY
 
 C executed the fixed original updater once, exit0. Actual875 PID13020 had

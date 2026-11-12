@@ -1,5 +1,15 @@
 # Frozen double-relay candidate a25452f4
 
+## CURRENT 2026-11-12 16:44 Beijing: C existing and external query PASS; D next
+
+A verified C27efa42c's22 receipt hashes and actual updater exit0. C new a254
+PID27928 / LocalService, original database existing, custody and progress
+unchanged. A->C authenticated Status31ms, same original state root; original
+response and query exit are in [A-query-C-20261112](A-query-C-20261112/health-public.json).
+C's prior875 c0000005 record remains an unresolved failure, not explained by
+successful upgrade. D is released for its approved same-version existing update
+under CD-UPDATE.md CURRENT. No object sent, no double-relay result yet.
+
 ## CURRENT 2026-11-12 16:14 Beijing: approved; B then A existing update PASS
 
 The user explicitly approved this exact candidate's B->A->C->D existing
