@@ -1,0 +1,29 @@
+{
+  "host": "D",
+  "object": "a8536fd1dbd85b4ffa4d3ff8ff7ac4220c2e00d0fa95b62347fdf2ad1db09fb3",
+  "session": "1689752becc7449ff129b61be6f6cf95",
+  "event": "relay_probe_received_integrity_verified",
+  "wall_ms": 1794448043907,
+  "nonce": "d1c39f293b21ef04831b065ee7e6c34f2e79f600b4b07961a7a05faa7235e3fa",
+  "peer_time_interval": [
+    1794448043316,
+    1794448043352
+  ],
+  "issued_at_ms": 1794448043090,
+  "expires_at_ms": 1794448053090,
+  "route_digest": "3a2a824925a227cb51f840213f5afaf85e064304d0e7c25297c058a6abd65aae",
+  "circuit": "84140e79686cf652db40ca81f5b3a9d9",
+  "role": "target",
+  "origin": "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3",
+  "path": [
+    "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2",
+    "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946"
+  ],
+  "authenticated_us": 50214011913,
+  "failed_writes": [
+    0,
+    0
+  ],
+  "business_receipt": false,
+  "source_snapshot": "relay-01.json"
+}
