@@ -1,0 +1,30 @@
+{
+  "host_id": "D",
+  "time": "2026-11-12T08:49:56.2282699Z",
+  "source": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "pid": 20876,
+  "exe": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-a25452f4-windows-x86_64\\bin\\novovm-node.exe",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "sid": "S-1-5-19",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\chain-state",
+  "start": "existing",
+  "initialize_executed": false,
+  "keys_generated": false,
+  "custody_unchanged": true,
+  "aoem_module": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-a25452f4-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "new_task": "NOVOVM-D-a25452f4-Existing-20261112",
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 42053,
+      "OwningProcess": 20876
+    },
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 41053,
+      "OwningProcess": 20876
+    }
+  ],
+  "new_command_file_present": false
+}

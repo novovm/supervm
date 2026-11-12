@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+## CURRENT D 2026-11-12 16:49 Beijing: D updated; A query pending
+
+`D_A254_EXISTING_READY_FOR_A_QUERY`: original fixed updater called once, exit0.
+Actual old875 PID36464 was healthy/Running, so no recovery switch was used.
+New a254 PID20876 / LocalService opened original DB existing, custody/progress
+unchanged, correct actual node/AOEM hashes and41053/42053 listener ownership.
+See [D public original result/exit and projections](D-update-20261112/README.md).
+No initialization, observer, object send or C operation. Do not repeat D update;
+A now performs authenticated Status/root verification. Both observers remain
+unstarted pending coordination; this local receipt is not double-relay delivery.
+
 ## CURRENT 2026-11-12 16:44 Beijing: C accepted; D execute now
 
 A fetched C27efa42c and verified all22 public receipt hashes. C a254 PID27928 /

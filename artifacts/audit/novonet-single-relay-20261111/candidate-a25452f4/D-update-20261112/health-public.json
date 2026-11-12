@@ -1,0 +1,9 @@
+{
+  "chain_id": 91129655606029,
+  "current_height": 1,
+  "head": null,
+  "execution_failures": 0,
+  "recovery_in_progress": false,
+  "projection_error": null,
+  "entry": "original_native_execution_tick"
+}

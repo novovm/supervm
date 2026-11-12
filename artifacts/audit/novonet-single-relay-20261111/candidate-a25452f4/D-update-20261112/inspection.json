@@ -1,0 +1,48 @@
+{
+  "host_id": "D",
+  "time": "2026-11-12T08:49:14.3235020Z",
+  "selected_mode": "running",
+  "lifecycle": {
+    "task_state": "Running",
+    "task_sid": "S-1-5-19",
+    "restart_count": 0,
+    "trigger_count": 0,
+    "task_exit_code": 267009,
+    "executing_nodes": 1,
+    "bound_ports": 2,
+    "last_run_utc": "2026-11-11T11:50:25Z",
+    "progress_utc": "2026-11-12T08:49:12.8982578Z"
+  },
+  "active": [
+    {
+      "path": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-875d3307-windows-x86_64\\bin\\novovm-node.exe",
+      "sid": "S-1-5-19",
+      "pid": 36464,
+      "created": "2026-11-11T19:50:26.530204+08:00"
+    }
+  ],
+  "exited": [],
+  "ports": [
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 42053,
+      "OwningProcess": 36464
+    },
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 41053,
+      "OwningProcess": 36464
+    }
+  ],
+  "progress": {
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false,
+    "projection_error": null
+  },
+  "exit_record": null,
+  "crash_events": [],
+  "old_node_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7"
+}

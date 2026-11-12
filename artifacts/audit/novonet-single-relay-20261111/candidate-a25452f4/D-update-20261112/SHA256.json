@@ -1,0 +1,77 @@
+[
+  {
+    "file": "after-public.json",
+    "bytes": 1126,
+    "sha256": "8c8119c6831527575ff145bf9a18153d60463e777628d2e912811c5e991155a9"
+  },
+  {
+    "file": "firewall.json",
+    "bytes": 303,
+    "sha256": "6dfecef7ef2938314743f0652c1ee5662ffd73796cdfdea2c31eb97bdb36cfee"
+  },
+  {
+    "file": "health-public.json",
+    "bytes": 214,
+    "sha256": "96f8547c874c1ce7ea41456f6f13c18cfe1fbb443e7d68666a7338bc9cc34c2f"
+  },
+  {
+    "file": "inputs-verified.json",
+    "bytes": 1105,
+    "sha256": "daad1f1f22fbac1990e06ba0262e9f2358fc5e07a5f8121fad86e510a6779a97"
+  },
+  {
+    "file": "inspection.json",
+    "bytes": 1257,
+    "sha256": "a3b12fc253091fa04d76ff58e570b7d9fde7efcb285838f9c9aa66a348373141"
+  },
+  {
+    "file": "invoked-once.json",
+    "bytes": 139,
+    "sha256": "29429a29dd29d8fb4307ab08f7bed708111a7a742f026330c134a9dc1053ab9d"
+  },
+  {
+    "file": "old-exit.json",
+    "bytes": 485,
+    "sha256": "37099b071c005bd46c4521f9f5d941297c9fac54e6fdadd296cc683ce6d8f2b1"
+  },
+  {
+    "file": "result-public.json",
+    "bytes": 179,
+    "sha256": "c06fc8f927ef9c04bd64045b135821293cfcbec73b3dbdf94d3267522a5343c0"
+  },
+  {
+    "file": "result.json",
+    "bytes": 675,
+    "sha256": "57d6752b137f12b707486e9250bd6d4965fd346d7ac20972952a337fd005e48a"
+  },
+  {
+    "file": "tests-exit.json",
+    "bytes": 24,
+    "sha256": "75876e0e3f497cad271143ba85bd4f36569cd81195509043f860dab14265b716"
+  },
+  {
+    "file": "tests.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "tests.stdout",
+    "bytes": 1521,
+    "sha256": "05a5ca100408dc6525bb1bdfb09c9fd158a88ace089f01b5339009ae9062eead"
+  },
+  {
+    "file": "update-exit.json",
+    "bytes": 103,
+    "sha256": "534207c5dc8f65d9984e4709ddb4217d0af429d280e2e4e7fa7359a530fa3bb9"
+  },
+  {
+    "file": "update.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "update.stdout",
+    "bytes": 108,
+    "sha256": "ce93595404431cb2d51be33373c4631abb6d3c7c8940cfa30e22231606617faa"
+  }
+]
