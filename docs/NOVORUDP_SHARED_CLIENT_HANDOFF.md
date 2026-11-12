@@ -1,5 +1,20 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C增量：WSS完整ML-DSA身份与v4短期端点，通信lib剩7项
+
+NOVOCHAT `3065555`已推送：AuthorizedWssConfig/原端点准备消费上游TransportIdentity，
+不再现场生成Ed传输钥。完整1952字节公钥纳入原联系人签名/AEAD正文，WSS短期声明
+独立NCEPLS04/v4域，旧v3不能继承新语义；外层4096字节、30秒、权限和持久高水位不变。
+原聊天身份/历史不重写，这不等于全通信协议已抗量子或真实UCA绑定完成。
+
+core元数据定向1项、隔离消费者4项通过（重复包含该元数据项，不相加计5），严格Clippy
+通过；原真实ML-DSA公钥经相同数据类型完整保留。完整通信lib错误8→7/退出101。
+WSS网络/签名编解码整链及旧测试调用者尚未迁接执行，不能将局部检查记为通过。
+剩余两处peer-id、四处bound-session及StoreReceipt verifier，C继续消费，不用假钥/恒真
+状态消除错误。A仍需真实UCA/设备授权、旧联系人连续性和可信邮箱服务来源。
+本轮无手机/节点操作、无新APK、收费关闭，先前App UID持钥通过仍保持其原范围。
+[详细修改与原始结果](https://github.com/XujueKing/NOVOCHAT/blob/3065555/docs/implementation/WSS_NATIVE_IDENTITY_2026-11-12.md)。
+
 ## 2026-11-12 C回传：双机App UID通信持钥及进程恢复通过
 
 NOVOCHAT `b84b9f6`：同7f283b81固定库、dea182e4默认生命周期修复，JNI hash pin和原
