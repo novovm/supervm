@@ -7,6 +7,23 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-12: C takes source investigation and justified fix ownership
+
+The user explicitly asked C to investigate and fix this crash directly instead
+of handing the diagnosis back to A. This supersedes the investigation ownership
+in the historical entries below. C owns original-dump correlation, bounded local
+source reproduction, and a minimal fix once a causal defect is established.
+A should avoid overlapping edits to this crash path and review/integrate C's
+findings rather than independently patching the same code.
+
+The matching PDB and two original dumps are already available on C. Invalid
+frame/String state is evidence of the fault, not proof that hex formatting is
+the corrupting operation. Current source is not fixed or qualified. Local
+isolation tests do not certify the complete node or exclude earlier FFI damage.
+C remains NOT READY for relay delivery; this ownership update does not start a
+node/observer, resend an object, replace keys/database, or authorize D changes.
+Raw dumps, stack memory and private materials remain local.
+
 ### C PDB FOLLOW-UP 2026-11-12: original symbols verified; pre-fault state inconsistent
 
 C verified supplied original PDB size17281024, SHA256b46bc1763c06c7370733763391d56e083b2e52cc8dcd370a377be2f7928dac38,
