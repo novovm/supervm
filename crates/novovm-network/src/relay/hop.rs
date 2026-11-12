@@ -485,11 +485,17 @@ impl HeldSend {
         let Some(budget) = budget else {
             return Ok(None);
         };
-        let token = budget
+        let mut owner = budget
             .lock()
-            .map_err(|_| anyhow::anyhow!("relay budget poisoned"))?
-            .reserve_send(bytes, Instant::now())?
-            .context("relay byte budget unavailable")?;
+            .map_err(|_| anyhow::anyhow!("relay budget poisoned"))?;
+        let now = Instant::now();
+        let token = owner.reserve_send(bytes, now)?.with_context(|| {
+            format!(
+                "relay byte budget unavailable: requested={bytes} usage={:?}",
+                owner.usage(now)
+            )
+        })?;
+        drop(owner);
         Ok(Some(Self {
             budget: budget.clone(),
             token: Some(token),

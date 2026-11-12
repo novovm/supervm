@@ -36,7 +36,7 @@ const LIMITS: DecodeLimits = DecodeLimits {
 #[derive(Clone)]
 pub(super) struct Request {
     probe: NetworkProbe,
-    via: Hash,
+    via: Vec<Hash>,
     deadline: Instant,
     started: bool,
     ready: bool,
@@ -61,7 +61,7 @@ impl State {
     pub fn observation(&self) -> serde_json::Value {
         serde_json::json!({"enabled":self.enabled(), "active":self.busy,"verified_locator_count":self.verified_locators,
             "reservation":self.request.as_ref().map(|r| serde_json::json!({
-                "nonce":r.probe.nonce,"via":r.via,"recipient":r.probe.recipient,
+                "nonce":r.probe.nonce,"via":r.via.first(),"relays":r.via,"recipient":r.probe.recipient,
                 "started":r.started,"ready":r.ready,"send_requested":r.sent,
                 "cancelled":r.cancelled})),"events":self.events,"evicted":self.evicted})
     }
@@ -69,7 +69,7 @@ impl State {
         let (probe, via) = match &command {
             ProbeCommand::RelayArm(p, v)
             | ProbeCommand::RelaySend(p, v)
-            | ProbeCommand::RelayCancel(p, v) => (p, *v),
+            | ProbeCommand::RelayCancel(p, v) => (p, v),
             _ => anyhow::bail!("not a constrained relay diagnostic"),
         };
         probe.validate()?;
@@ -80,8 +80,12 @@ impl State {
         ensure!(
             probe.sender == *local
                 && peers.contains(&probe.recipient)
-                && peers.contains(&via)
-                && via != probe.recipient,
+                && (1..=2).contains(&via.len())
+                && via.iter().enumerate().all(|(i, id)| peers.contains(id)
+                    && *id != *local
+                    && *id != probe.recipient
+                    && *id != [0; 32]
+                    && !via[..i].contains(id)),
             "diagnostic identity or route differs"
         );
         if matches!(command, ProbeCommand::RelayArm(..)) {
@@ -93,7 +97,7 @@ impl State {
             self.remember(probe, now)?;
             self.request = Some(Request {
                 probe: probe.clone(),
-                via,
+                via: via.clone(),
                 deadline: now + LEASE,
                 started: false,
                 ready: false,
@@ -107,7 +111,7 @@ impl State {
                 r.probe.nonce == probe.nonce
                     && r.probe.sender == probe.sender
                     && r.probe.recipient == probe.recipient
-                    && r.via == via,
+                    && &r.via == via,
                 "relay reservation differs"
             );
             if matches!(command, ProbeCommand::RelayCancel(..)) {
@@ -257,10 +261,14 @@ pub(super) async fn outgoing(
             .context("diagnostic disabled")?
             .1;
         let mut path = Vec::new();
-        for id in [request.via, request.probe.recipient] {
+        for id in request
+            .via
+            .iter()
+            .chain(std::iter::once(&request.probe.recipient))
+        {
             let peer = ids
                 .iter()
-                .position(|v| *v == id)
+                .position(|v| v == id)
                 .context("unknown diagnostic peer")?;
             let candidate = candidates
                 .get(peer)
@@ -283,7 +291,7 @@ pub(super) async fn outgoing(
             None,
             None,
             Some(&request.probe),
-            serde_json::json!({"via":request.via,"first_address":path[0].route}),
+            serde_json::json!({"via":request.via.first(),"relays":request.via,"first_address":path[0].route}),
         );
         let mut hop = tokio::time::timeout(Duration::from_secs(24), async {
             HopStream::connect(
@@ -299,7 +307,11 @@ pub(super) async fn outgoing(
             hop.observe(observer.clone(), &identity);
         }
         let proof = hop
-            .authenticate_native(&identity, &path[1].key, true)
+            .authenticate_native(
+                &identity,
+                &path.last().context("missing diagnostic target")?.key,
+                true,
+            )
             .await?;
         let (endpoint, pump) = NativeCarrierPump::attach_relayed_v1(
             &mut hop,

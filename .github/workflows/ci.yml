@@ -557,6 +557,9 @@ jobs:
             native_pipeline::service::network::tests::retained_tick_reactor_reauthenticates_after_peer_owner_restart_without_reopening_native_owner \
             native_pipeline::service::network::tests::retained_tick_reactor_uses_backup_only_when_requested_and_delivers_original_binary_messages \
             native_pipeline::service::network::tests::retained_tick_reactor_rejects_wrong_chain_selection_before_native_handoff \
+            native_pipeline::service::network::tests::diagnostic::constrained_relay_probe_real_hop_done_does_not_replace_business_routes \
+            native_pipeline::service::network::tests::diagnostic::constrained_double_relay_probe_real_hop_done_does_not_replace_business_routes \
+            native_pipeline::service::network::diagnostic::tests::double_relay_commands_bind_order_and_reject_loops_truncation_and_route_changes \
             native_pipeline::consensus::native::tests::carrier_tests::original_native_channel_consumes_authenticated_iroh_carrier \
             native_pipeline::consensus::native::tests::carrier_tests::original_udp_channel_adopts_real_iroh_fallback_without_losing_client_ingress
           do
@@ -569,6 +572,10 @@ jobs:
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport --lib carrier_feedback_tests -- --test-threads=1
           "${native_tests[@]}" carrier_tests -- --test-threads=1
           "${native_tests[@]}" retained_tick_reactor_ -- --test-threads=1
+          "${native_tests[@]}" service::network::diagnostic -- --test-threads=1
+          "${native_tests[@]}" service::network::tests::diagnostic -- --test-threads=1
+          grep -Fxq 'relay::hop::tests::hop_budget_is_shared_and_exhaustion_never_means_delivery: test' "$RUNNER_TEMP/novonet-network-tests.txt"
+          cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport --lib relay::hop::tests -- --test-threads=1
           cargo check --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-node --features iroh-transport --bin novovm-node
 
       - name: Native locator authenticity and temporal metadata regressions

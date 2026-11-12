@@ -1,6 +1,96 @@
 # Single-relay real-object qualification
 
-## CURRENT:875d3307 fixed packages and all local owner gates passed
+## CURRENT 2026-11-12: completed single relay; extend the same owner for two relays
+
+The real A -> C -> D sample is closed at a7e19fc8. See
+[the raw three-host correlation](candidate-875d3307/A-single-relay-20261112-0947/README.md).
+Do not repeat that direct/single-relay sample or open another C/D observer yet.
+
+The next case is a single fixed object through two ordered intermediate peers.
+Existing HopRoute/HopStream already allow three path identities (two relays and
+the final recipient). The missing part is the original diagnostic owner, whose
+local command and incoming guard were single-relay-only. This change extends
+those same owners; it does not introduce a router, network daemon, wire protocol,
+socket, queue or receipt. Normal business route priority remains NovoRUDP first.
+
+`novovmctl native-network-probe prepare --via <relay1> --via <relay2>` emits one
+bounded441-byte local command. Existing377-byte direct and409-byte single-relay
+formats and tags are unchanged. New tags6/7/8 mean double arm/send/cancel; old
+programs reject them. Send/cancel must match the original ordered reservation.
+No empty/duplicate/unknown/local/recipient relay is accepted; at most two relays.
+The original lease, message validity, connection limits and identity/domain
+checks remain. The shared byte allowance change is separately authorized below.
+End-to-end authentication binds the LAST path identity (target),
+not a hardcoded first-relay successor. Intermediate peers still cannot claim
+endpoint Object DONE or Business Receipt.
+
+Local validation is complete. Initial Windows negative evidence is preserved:
+command/state tests passed5/5, but the new four-peer case failed before readiness
+with `diagnostic route must contain one known relay and one known target`.
+The existing single-relay case passed. The incoming guard now accepts exactly
+two or three known path identities, retaining its authenticated origin/path
+checks and original per-owner occupancy. This was an incomplete diagnostic
+extension, not an observed failure of the running four-machine network.
+
+After fixing that guard, Windows and Linux both reached native authentication
+and recipient time-reference readiness, then failed before probe delivery.
+Linux's bounded owner error identifies the exact cause: requested1157 bytes,
+limit65536, used64605, remaining931, received/admitted32881, sent31724,
+reserved0, uncertain0, receive_dropped0, send_deferred1. This is exhausted real
+rolling traffic allowance, not leaked outstanding reservations or a QUIC timeout.
+The old64KiB failure is retained; it is not reclassified as passing.
+
+User explicitly approved128KiB/min for CANDIDATE validation on2026-11-12. The
+original shared NativeWireBudget now uses131072, and this node's signed locator
+advertises the same allowance from the same constant. The generic Iroh endpoint
+default (including other application consumers) is not changed. No per-hop or
+per-command fresh quota, unbounded traffic or accounting reset is introduced.
+Original quota-exhaustion/cancellation/incorrect-reservation checks stay active.
+The new error only formats existing usage counters when reservation fails.
+Windows's first128KiB single/double component cases both pass; final validation
+also checks the signed allowance, unchanged four-session declaration, and the
+original owner/clock/replay cases. Windows and Linux each pass18 targeted tests
+plus5 existing UDP/carrier/reactor compatibility tests (23/platform, no ignored
+tests), and strict Clippy for network/node/ctl with `-D warnings`.
+See [exact counts, source/library hashes and raw archive manifest](double-relay-local-20261112/results.json)
+and [original logs and runners](double-relay-local-20261112/local-evidence.zip).
+The18 are5 diagnostic command/state,2 actual local single/double IO,1 original
+file ingress,5 actual AOEM owner/time/cancel/concurrency,2 CLI,3 hop rejection and
+shared accounting tests. The5 compatibility cases cover original NativeChannel,
+UDP ingress during fallback, owner restart/reauthentication, wrong-chain rejection
+and requested-only backup delivery. These are local tests, NOT physical hosts.
+
+The existing Full component-IO step now enumerates the single/double and command
+test names before running their original filters, plus the original hop budget
+regressions. No new trigger, skip, weaker assertion or automatic deployment was
+introduced. Local CI scope tests pass27/27 and workflow YAML parses. Ordinary
+source push remains lightweight; this is not a Full result.
+
+Validation evidence retains intermediate failures rather than counting retries
+as extra successes. One intermediate Linux wrapper exited1 with
+`--nocapture: command not found` after its Cargo checks, because its script was
+edited while running. The final immutable runner was executed separately; that
+wrapper failure is not a network failure and is not counted as a passing run.
+The initial WSL PowerShell attempt also did not execute tests (pwsh unavailable).
+Windows final-source diagnostic/compatibility checks run the exact test binary
+produced by the final Cargo node build, recording its SHA256 before/after; they
+do not replace its build or strict Clippy. Component signing fixtures and real
+AOEM owner regressions remain distinct, and all included owner tests execute
+with `--include-ignored` plus the actual library/manifest.
+
+Candidate/deployment: NOT produced or updated by this change yet. Old875 cannot
+receive a two-relay diagnostic route; upgrade every participating owner to a
+qualified candidate before attempting it. Reuse original existing-state update,
+protected command file and bounded observers. On real machines correlate the
+same object/session at both endpoints and the same circuit/route digest with
+actual two-way completed forwarding at EACH intermediate. Candidate selection,
+sender DONE alone or this local four-peer test cannot satisfy that gate. The
+planned four-machine order must be checked against current authenticated
+locators; no unverified address or remembered observer READY is a send permit.
+C's original875 memory faults remain open and are not modified or explained by
+this diagnostic extension. No new real object, restart or package update here.
+
+## Historical preparation:875d3307 fixed packages and local owner gates
 
 Windows/Linux each passed7 packaged identity/NAT,20 original-owner,6 packaged
 node recovery,1 NUAS recovery and1 runtime startup/reopen. Actual packaged

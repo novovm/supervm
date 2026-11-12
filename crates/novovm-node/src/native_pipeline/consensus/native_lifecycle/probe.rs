@@ -17,19 +17,20 @@ fn wall_ms() -> u64 {
 }
 pub const COMMAND_BYTES: usize = 9 + super::super::transport::probe::WIRE_BYTES;
 pub const RELAY_COMMAND_BYTES: usize = COMMAND_BYTES + 32;
+pub const DOUBLE_RELAY_COMMAND_BYTES: usize = RELAY_COMMAND_BYTES + 32;
 
 #[derive(Clone, Debug)]
 pub enum ProbeCommand {
     Start(NetworkProbe),
     Cancel(NetworkProbe),
     /// Local diagnostic reservation only; never installs a business peer route.
-    RelayArm(NetworkProbe, Hash),
-    RelaySend(NetworkProbe, Hash),
-    RelayCancel(NetworkProbe, Hash),
+    RelayArm(NetworkProbe, Vec<Hash>),
+    RelaySend(NetworkProbe, Vec<Hash>),
+    RelayCancel(NetworkProbe, Vec<Hash>),
 }
 impl ProbeCommand {
     pub fn encode(&self) -> Result<Vec<u8>> {
-        let (tag, probe) = match self {
+        let (mut tag, probe) = match self {
             Self::Start(p) => (1, p),
             Self::Cancel(p) => (2, p),
             Self::RelayArm(p, _) => (3, p),
@@ -43,28 +44,44 @@ impl ProbeCommand {
             message_bytes: 512,
         };
         let wire = super::super::transport::encode(&Message::NetworkProbe(probe.clone()), codec)?;
+        if let Self::RelayArm(_, via) | Self::RelaySend(_, via) | Self::RelayCancel(_, via) = self {
+            ensure!(
+                (1..=2).contains(&via.len())
+                    && via.iter().enumerate().all(|(i, peer)| *peer != [0; 32]
+                        && *peer != probe.sender
+                        && *peer != probe.recipient
+                        && !via[..i].contains(peer)),
+                "invalid diagnostic relay path"
+            );
+            // Tags3..5 retain the original single-hop bytes. Tags6..8 bind
+            // exactly two ordered relays; old nodes reject rather than truncate.
+            if via.len() == 2 {
+                tag += 3;
+            }
+        }
         let mut out = COMMAND_MAGIC.to_vec();
         out.push(tag);
         out.extend_from_slice(&wire[11..]);
         if let Self::RelayArm(_, via) | Self::RelaySend(_, via) | Self::RelayCancel(_, via) = self {
-            ensure!(
-                *via != [0; 32] && *via != probe.sender && *via != probe.recipient,
-                "invalid diagnostic relay"
-            );
-            out.extend_from_slice(via);
+            for peer in via {
+                out.extend_from_slice(peer);
+            }
         }
         Ok(out)
     }
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         ensure!(
-            matches!(bytes.len(), COMMAND_BYTES | RELAY_COMMAND_BYTES)
-                && &bytes[..8] == COMMAND_MAGIC,
+            matches!(
+                bytes.len(),
+                COMMAND_BYTES | RELAY_COMMAND_BYTES | DOUBLE_RELAY_COMMAND_BYTES
+            ) && &bytes[..8] == COMMAND_MAGIC,
             "invalid bounded probe command"
         );
         let mut wire = b"NVHOSTN1\0\x01\x15".to_vec();
         ensure!(
             (bytes[8] <= 2 && bytes.len() == COMMAND_BYTES)
-                || ((3..=5).contains(&bytes[8]) && bytes.len() == RELAY_COMMAND_BYTES),
+                || ((3..=5).contains(&bytes[8]) && bytes.len() == RELAY_COMMAND_BYTES)
+                || ((6..=8).contains(&bytes[8]) && bytes.len() == DOUBLE_RELAY_COMMAND_BYTES),
             "probe command kind/size mismatch"
         );
         wire.extend_from_slice(&bytes[9..COMMAND_BYTES]);
@@ -80,15 +97,21 @@ impl ProbeCommand {
         match bytes[8] {
             1 => Ok(Self::Start(probe)),
             2 => Ok(Self::Cancel(probe)),
-            3..=5 => {
-                let via: Hash = bytes[COMMAND_BYTES..].try_into()?;
+            3..=8 => {
+                let via: Vec<Hash> = bytes[COMMAND_BYTES..]
+                    .chunks_exact(32)
+                    .map(|chunk| chunk.try_into().expect("exact hash chunk"))
+                    .collect();
                 ensure!(
-                    via != [0; 32] && via != probe.sender && via != probe.recipient,
+                    via.iter().enumerate().all(|(i, peer)| *peer != [0; 32]
+                        && *peer != probe.sender
+                        && *peer != probe.recipient
+                        && !via[..i].contains(peer)),
                     "invalid diagnostic relay"
                 );
                 Ok(match bytes[8] {
-                    3 => Self::RelayArm(probe, via),
-                    4 => Self::RelaySend(probe, via),
+                    3 | 6 => Self::RelayArm(probe, via),
+                    4 | 7 => Self::RelaySend(probe, via),
                     _ => Self::RelayCancel(probe, via),
                 })
             }

@@ -52,6 +52,7 @@ const SELECTOR: &[u8; 8] = b"NVCHAIN1";
 const SELECT_STREAM: u64 = u64::from_be_bytes(*b"NVCHAIN1");
 const OBJECT_ENTRY: &[u8; 8] = b"NVNETOB1";
 const DISCOVERY_ENTRY: &[u8; 8] = b"NVNETDS1";
+const RELAY_BYTES_PER_MINUTE: u64 = 128 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -623,8 +624,13 @@ async fn serve<'a>(
     let routes = Arc::new(Mutex::new(vec![None; keys.len()]));
     // SAME advertised IrohServiceEndpointV1 allowance, shared across circuits,
     // not multiplied by peers, directions, retries or intermediate hops.
+    // 2026-11-12: approved 128KiB/min candidate; two-relay authenticated time
+    // coordination exhausted the previous 64KiB before the fixed probe send.
     let hop_budget = Arc::new(Mutex::new(
-        novovm_network::novorudp::wire_budget::NativeWireBudget::new(65536, Instant::now())?,
+        novovm_network::novorudp::wire_budget::NativeWireBudget::new(
+            RELAY_BYTES_PER_MINUTE,
+            Instant::now(),
+        )?,
     ));
     let mut attempts = vec![0usize; keys.len()];
     let record_kind = novovm_network::discovery_control::native_locator_id_v1(pins);
@@ -679,10 +685,12 @@ async fn serve<'a>(
                     instance,
                     address: scope.address()?,
                 };
+                let mut endpoint = route.endpoint()?;
+                endpoint.max_bytes_per_minute = RELAY_BYTES_PER_MINUTE;
                 let record = sign_relay_record_v1(
                     identity,
                     &record_kind,
-                    vec![route.endpoint()?],
+                    vec![endpoint],
                     wall,
                     wall.checked_add(120_000)
                         .context("locator clock overflow")?,

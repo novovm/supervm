@@ -79,6 +79,12 @@ fn hop_budget_is_shared_and_exhaustion_never_means_delivery() -> Result<()> {
             && usage.uncertain_send_bytes == 100
             && usage.reserved_send_bytes == 0
     );
+    let failure = HeldSend::reserve(Some(&budget), 401)
+        .err()
+        .context("over-budget send accepted")?;
+    ensure!(failure.to_string().contains("requested=401"));
+    ensure!(failure.to_string().contains("limit: 2400"));
+    ensure!(budget.lock().unwrap().usage(Instant::now()).used == 2100);
     Ok(())
 }
 

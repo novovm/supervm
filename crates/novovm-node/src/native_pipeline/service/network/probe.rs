@@ -2,7 +2,7 @@
 //! bounded read future; no socket, server, node task or network retry owner.
 use super::*;
 use crate::native_pipeline::consensus::native_lifecycle::probe::{
-    ProbeCommand, COMMAND_BYTES, RELAY_COMMAND_BYTES,
+    ProbeCommand, COMMAND_BYTES, DOUBLE_RELAY_COMMAND_BYTES, RELAY_COMMAND_BYTES,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
@@ -42,14 +42,18 @@ impl Control {
                 let metadata = tokio::fs::symlink_metadata(&path).await?;
                 ensure!(
                     metadata.file_type().is_file()
-                        && [COMMAND_BYTES as u64, RELAY_COMMAND_BYTES as u64]
-                            .contains(&metadata.len()),
+                        && [
+                            COMMAND_BYTES as u64,
+                            RELAY_COMMAND_BYTES as u64,
+                            DOUBLE_RELAY_COMMAND_BYTES as u64
+                        ]
+                        .contains(&metadata.len()),
                     "probe command must be one bounded regular file"
                 );
-                let mut bytes = Vec::with_capacity(RELAY_COMMAND_BYTES + 1);
+                let mut bytes = Vec::with_capacity(DOUBLE_RELAY_COMMAND_BYTES + 1);
                 tokio::fs::File::open(path)
                     .await?
-                    .take((RELAY_COMMAND_BYTES + 1) as u64)
+                    .take((DOUBLE_RELAY_COMMAND_BYTES + 1) as u64)
                     .read_to_end(&mut bytes)
                     .await?;
                 ensure!(
@@ -153,7 +157,10 @@ mod tests {
             )
             .await??;
             ensure!(matches!(cancel, ProbeCommand::Cancel(_)));
-            std::fs::write(&path, ProbeCommand::RelayArm(probe, [4; 32]).encode()?)?;
+            std::fs::write(
+                &path,
+                ProbeCommand::RelayArm(probe.clone(), vec![[4; 32]]).encode()?,
+            )?;
             let relay = tokio::time::timeout(
                 Duration::from_secs(3),
                 poll_fn(|cx| {
@@ -163,13 +170,29 @@ mod tests {
                 }),
             )
             .await??;
-            ensure!(matches!(relay, ProbeCommand::RelayArm(_, via) if via == [4; 32]));
+            ensure!(matches!(relay, ProbeCommand::RelayArm(_, via) if via == vec![[4; 32]]));
+            std::fs::write(
+                &path,
+                ProbeCommand::RelayArm(probe, vec![[4; 32], [5; 32]]).encode()?,
+            )?;
+            let double = tokio::time::timeout(
+                Duration::from_secs(3),
+                poll_fn(|cx| {
+                    control
+                        .poll(cx, now + Duration::from_secs(4))
+                        .map_or(Poll::Pending, Poll::Ready)
+                }),
+            )
+            .await??;
+            ensure!(
+                matches!(double, ProbeCommand::RelayArm(_, via) if via == vec![[4; 32], [5; 32]])
+            );
             std::fs::write(&path, b"arbitrary input")?;
             let invalid = tokio::time::timeout(
                 Duration::from_secs(3),
                 poll_fn(|cx| {
                     control
-                        .poll(cx, now + Duration::from_secs(4))
+                        .poll(cx, now + Duration::from_secs(5))
                         .map_or(Poll::Pending, Poll::Ready)
                 }),
             )

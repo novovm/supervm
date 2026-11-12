@@ -5,7 +5,19 @@ use crate::native_pipeline::consensus::{
 
 #[test]
 fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> Result<()> {
-    let mut peers = Pair::configured(false, true, 3)?;
+    run_constrained_relay(1)
+}
+
+#[test]
+fn constrained_double_relay_probe_real_hop_done_does_not_replace_business_routes() -> Result<()> {
+    run_constrained_relay(2)
+}
+
+fn run_constrained_relay(relay_count: usize) -> Result<()> {
+    let count = relay_count + 2;
+    let target = count - 1;
+    let target_peer = target - 1;
+    let mut peers = Pair::configured(false, true, count)?;
     let mut configs = peers
         .drivers
         .iter()
@@ -27,11 +39,12 @@ fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> R
             .map(|(_, p)| p.clone())
             .collect();
     }
-    let observers = (0..3)
+    let observers = (0..count)
         .map(|_| Arc::new(NativeTransferDiagnosticsV1::new()))
         .collect::<Vec<_>>();
     peers.restart_drivers(configs, Some(&observers))?;
-    let ids = [[1; 32], [2; 32], [3; 32]];
+    let ids = (1..=count).map(|i| [i as u8; 32]).collect::<Vec<_>>();
+    let relays = ids[1..target].to_vec();
     for (side, driver) in peers.drivers.iter().enumerate() {
         driver.diagnostic.lock().unwrap().identities = Some((
             ids[side],
@@ -47,17 +60,17 @@ fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> R
     }
     // Establish the original business connection first. The diagnostic must
     // coexist with it, not silently promote a forced route for all traffic.
-    peers.drivers[0].views.lock().unwrap()[1].fallback = true;
-    peers.drivers[2].views.lock().unwrap()[0].fallback = true;
+    peers.drivers[0].views.lock().unwrap()[target_peer].fallback = true;
+    peers.drivers[target].views.lock().unwrap()[0].fallback = true;
     let ready_by = Instant::now() + Duration::from_secs(30);
     loop {
         peers.pump()?;
         if peers
             .drivers
             .iter()
-            .all(|d| d.observation()["diagnostic_relay"]["verified_locator_count"] == 2)
-            && peers.channels[0].session_id(1).is_some()
-            && peers.channels[0].session_id(1) == peers.channels[2].session_id(0)
+            .all(|d| d.observation()["diagnostic_relay"]["verified_locator_count"] == count - 1)
+            && peers.channels[0].session_id(target_peer).is_some()
+            && peers.channels[0].session_id(target_peer) == peers.channels[target].session_id(0)
         {
             break;
         }
@@ -69,19 +82,25 @@ fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> R
     let before = peers
         .channels
         .iter()
-        .map(|c| (0..2).map(|p| c.session_id(p)).collect::<Vec<_>>())
+        .map(|c| (0..count - 1).map(|p| c.session_id(p)).collect::<Vec<_>>())
         .collect::<Vec<_>>();
+    for config in &peers.drivers {
+        let record = read_document::<PeerSignedRelayRecordV1>(&config.config.public_record_file)?;
+        assert_eq!(record.endpoints.len(), 1);
+        assert_eq!(record.endpoints[0].max_bytes_per_minute, 128 * 1024);
+        assert_eq!(record.endpoints[0].max_sessions, 4);
+    }
     let now = Instant::now();
     let wall = wall_ms()?;
     let mut probe = NetworkProbe {
         nonce: [9; 32],
         sender: ids[0],
-        recipient: ids[2],
+        recipient: ids[target],
         issued_at_ms: wall,
         expires_at_ms: wall + 10000,
     };
     peers.drivers[0].diagnostic.lock().unwrap().command(
-        ProbeCommand::RelayArm(probe.clone(), ids[1]),
+        ProbeCommand::RelayArm(probe.clone(), relays.clone()),
         wall,
         now,
     )?;
@@ -102,7 +121,7 @@ fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> R
     probe.issued_at_ms = wall_ms()?;
     probe.expires_at_ms = probe.issued_at_ms + 10000;
     peers.drivers[0].diagnostic.lock().unwrap().command(
-        ProbeCommand::RelaySend(probe.clone(), ids[1]),
+        ProbeCommand::RelaySend(probe.clone(), relays.clone()),
         probe.issued_at_ms,
         Instant::now(),
     )?;
@@ -119,7 +138,10 @@ fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> R
         peers.pump()?;
         if let (Some(sent), Some(received)) = (
             event(&peers.drivers[0], "relay_probe_object_done"),
-            event(&peers.drivers[2], "relay_probe_received_integrity_verified"),
+            event(
+                &peers.drivers[target],
+                "relay_probe_received_integrity_verified",
+            ),
         ) {
             break (sent, received);
         }
@@ -127,7 +149,7 @@ fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> R
             Instant::now() < complete_by,
             "diagnostic missing dual-end result: A={} D={}",
             peers.drivers[0].observation(),
-            peers.drivers[2].observation()
+            peers.drivers[target].observation()
         );
     };
     assert_eq!(sent["session"], received["session"]);
@@ -139,45 +161,57 @@ fn constrained_relay_probe_real_hop_done_does_not_replace_business_routes() -> R
         }
         assert_eq!(
             peers.drivers[side].observation()["installed_bound_peer_routes"],
-            usize::from(side != 1)
+            usize::from(side == 0 || side == target)
         );
     }
     assert_eq!(peers.replaced_sends, 0);
     hop::complete_objects(
         &mut peers,
         0,
-        2,
+        target,
         201,
         Instant::now() + Duration::from_secs(10),
     )?;
-    let relay = observers[1].snapshot().context("relay evidence missing")?;
-    let circuit = relay
-        .relay_circuits
-        .iter()
-        .find(|r| r.route.role == "relay")
-        .context("actual relay circuit missing")?;
-    assert_eq!(
-        circuit.route.path,
-        vec![peers.identities[1].peer_id(), peers.identities[2].peer_id()]
-    );
-    assert!(circuit.downstream_ready_us.is_some());
-    assert!(circuit
-        .forwarded
-        .iter()
-        .all(|direction| direction.packets > 0 && direction.bytes > 0));
-    for side in [0, 2] {
-        let evidence = observers[side]
+    for relay_index in 1..target {
+        let relay = observers[relay_index]
             .snapshot()
-            .context("endpoint evidence missing")?;
-        let endpoint = evidence
+            .context("relay evidence missing")?;
+        let circuit = relay
             .relay_circuits
             .iter()
-            .find(|c| c.route.route_digest == circuit.route.route_digest)
-            .context("route digest mismatch")?;
+            .find(|r| r.route.role == "relay")
+            .context("actual relay circuit missing")?;
         assert_eq!(
-            serde_json::to_value(endpoint.native_session)?,
-            sent["session"]
+            circuit.route.path,
+            peers.identities[1..]
+                .iter()
+                .map(|id| id.peer_id())
+                .collect::<Vec<_>>()
         );
+        assert!(circuit.downstream_ready_us.is_some());
+        assert!(circuit
+            .forwarded
+            .iter()
+            .all(|direction| direction.packets > 0 && direction.bytes > 0));
+        assert_eq!(circuit.route.cursor, relay_index - 1);
+        assert_eq!(
+            circuit.route.local_peer,
+            peers.identities[relay_index].peer_id()
+        );
+        for side in [0, target] {
+            let evidence = observers[side]
+                .snapshot()
+                .context("endpoint evidence missing")?;
+            let endpoint = evidence
+                .relay_circuits
+                .iter()
+                .find(|c| c.route.route_digest == circuit.route.route_digest)
+                .context("route digest mismatch")?;
+            assert_eq!(
+                serde_json::to_value(endpoint.native_session)?,
+                sent["session"]
+            );
+        }
     }
     peers.close()?;
     Ok(())

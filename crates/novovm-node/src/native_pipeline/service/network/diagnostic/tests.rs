@@ -105,12 +105,98 @@ fn probe() -> NetworkProbe {
     }
 }
 #[test]
+fn double_relay_commands_bind_order_and_reject_loops_truncation_and_route_changes() -> Result<()> {
+    use crate::native_pipeline::consensus::native_lifecycle::probe::{
+        COMMAND_BYTES, DOUBLE_RELAY_COMMAND_BYTES,
+    };
+    let p = probe();
+    let via = vec![[2; 32], [4; 32]];
+    for (tag, command) in [
+        (6, ProbeCommand::RelayArm(p.clone(), via.clone())),
+        (7, ProbeCommand::RelaySend(p.clone(), via.clone())),
+        (8, ProbeCommand::RelayCancel(p.clone(), via.clone())),
+    ] {
+        let wire = command.encode()?;
+        assert_eq!(wire.len(), DOUBLE_RELAY_COMMAND_BYTES);
+        assert_eq!(wire[8], tag);
+        assert_eq!(ProbeCommand::decode(&wire)?.encode()?, wire);
+        for length in 0..wire.len() {
+            assert!(ProbeCommand::decode(&wire[..length]).is_err());
+        }
+        let mut invalid = wire.clone();
+        invalid.push(0);
+        assert!(ProbeCommand::decode(&invalid).is_err());
+        invalid = wire.clone();
+        invalid[8] -= 3;
+        assert!(ProbeCommand::decode(&invalid).is_err());
+        invalid = wire;
+        invalid[COMMAND_BYTES + 32..].fill(2);
+        assert!(ProbeCommand::decode(&invalid).is_err());
+    }
+    for invalid in [
+        vec![],
+        vec![[2; 32], [4; 32], [5; 32]],
+        vec![[2; 32], [2; 32]],
+        vec![p.sender, [2; 32]],
+        vec![[2; 32], p.recipient],
+        vec![[0; 32], [2; 32]],
+    ] {
+        assert!(ProbeCommand::RelayArm(p.clone(), invalid).encode().is_err());
+    }
+    let now = Instant::now();
+    let mut state = State {
+        identities: Some((p.sender, vec![[2; 32], [3; 32], [4; 32]])),
+        ..Default::default()
+    };
+    assert!(state
+        .command(
+            ProbeCommand::RelayArm(p.clone(), vec![[2; 32], [5; 32]]),
+            100,
+            now
+        )
+        .is_err());
+    assert!(state
+        .command(
+            ProbeCommand::RelayArm(p.clone(), vec![[2; 32], [2; 32]]),
+            100,
+            now
+        )
+        .is_err());
+    state.command(ProbeCommand::RelayArm(p.clone(), via.clone()), 100, now)?;
+    state.request.as_mut().unwrap().ready = true;
+    let reversed = vec![[4; 32], [2; 32]];
+    assert!(state
+        .command(
+            ProbeCommand::RelaySend(p.clone(), reversed.clone()),
+            100,
+            now
+        )
+        .is_err());
+    assert!(state
+        .command(ProbeCommand::RelayCancel(p.clone(), reversed), 100, now)
+        .is_err());
+    assert!(state
+        .command(
+            ProbeCommand::RelaySend(p.clone(), via.clone()),
+            100,
+            now + LEASE
+        )
+        .is_err());
+    state.command(ProbeCommand::RelaySend(p.clone(), via.clone()), 100, now)?;
+    assert!(state
+        .command(ProbeCommand::RelaySend(p.clone(), via.clone()), 100, now)
+        .is_err());
+    state.command(ProbeCommand::RelayCancel(p, via), 100, now)?;
+    assert!(state.request.unwrap().cancelled);
+    Ok(())
+}
+#[test]
 fn relay_diagnostic_commands_are_bounded_and_do_not_authorize_business() -> Result<()> {
     let p = probe();
     for command in [
-        ProbeCommand::RelayArm(p.clone(), [2; 32]),
-        ProbeCommand::RelaySend(p.clone(), [2; 32]),
-        ProbeCommand::RelayCancel(p.clone(), [2; 32]),
+        ProbeCommand::RelayArm(p.clone(), vec![[2; 32]]),
+        ProbeCommand::RelaySend(p.clone(), vec![[2; 32]]),
+        ProbeCommand::RelayCancel(p.clone(), vec![[2; 32]]),
     ] {
         let wire = command.encode()?;
         assert_eq!(
@@ -127,38 +213,42 @@ fn relay_diagnostic_commands_are_bounded_and_do_not_authorize_business() -> Resu
         let mut wrong = wire.clone();
         wrong[8] = 1;
         assert!(ProbeCommand::decode(&wrong).is_err());
-        assert!(ProbeCommand::RelayArm(p.clone(), p.sender)
+        assert!(ProbeCommand::RelayArm(p.clone(), vec![p.sender])
             .encode()
             .is_err());
     }
     let now = Instant::now();
     let mut state = State::default();
     assert!(state
-        .command(ProbeCommand::RelayArm(p.clone(), [2; 32]), 100, now)
+        .command(ProbeCommand::RelayArm(p.clone(), vec![[2; 32]]), 100, now)
         .is_err());
     state.identities = Some(([1; 32], vec![[2; 32], [3; 32]]));
     assert!(state
-        .command(ProbeCommand::RelayArm(p.clone(), [4; 32]), 100, now)
+        .command(ProbeCommand::RelayArm(p.clone(), vec![[4; 32]]), 100, now)
         .is_err());
     assert!(state
-        .command(ProbeCommand::RelayArm(p.clone(), [2; 32]), 10101, now)
+        .command(ProbeCommand::RelayArm(p.clone(), vec![[2; 32]]), 10101, now)
         .is_err());
-    state.command(ProbeCommand::RelayArm(p.clone(), [2; 32]), 100, now)?;
+    state.command(ProbeCommand::RelayArm(p.clone(), vec![[2; 32]]), 100, now)?;
     assert!(state
-        .command(ProbeCommand::RelayArm(p.clone(), [2; 32]), 100, now)
+        .command(ProbeCommand::RelayArm(p.clone(), vec![[2; 32]]), 100, now)
         .is_err());
     assert!(state
-        .command(ProbeCommand::RelaySend(p.clone(), [2; 32]), 100, now)
+        .command(ProbeCommand::RelaySend(p.clone(), vec![[2; 32]]), 100, now)
         .is_err());
     state.request.as_mut().unwrap().ready = true;
-    state.command(ProbeCommand::RelaySend(p.clone(), [2; 32]), 100, now)?;
+    state.command(ProbeCommand::RelaySend(p.clone(), vec![[2; 32]]), 100, now)?;
     assert!(state
-        .command(ProbeCommand::RelaySend(p.clone(), [2; 32]), 100, now)
+        .command(ProbeCommand::RelaySend(p.clone(), vec![[2; 32]]), 100, now)
         .is_err());
-    state.command(ProbeCommand::RelayCancel(p.clone(), [2; 32]), 100, now)?;
+    state.command(
+        ProbeCommand::RelayCancel(p.clone(), vec![[2; 32]]),
+        100,
+        now,
+    )?;
     assert!(state.request.as_ref().unwrap().cancelled);
     assert!(state
-        .command(ProbeCommand::RelaySend(p, [2; 32]), 100, now)
+        .command(ProbeCommand::RelaySend(p, vec![[2; 32]]), 100, now)
         .is_err());
     assert_ne!(
         context((1, [2; 32], [3; 32])),
@@ -183,13 +273,13 @@ fn relay_diagnostic_history_cancel_expiry_and_occupancy_are_bounded() -> Result<
     assert!(shared
         .lock()
         .unwrap()
-        .command(ProbeCommand::RelayArm(probe(), [2; 32]), 100, now)
+        .command(ProbeCommand::RelayArm(probe(), vec![[2; 32]]), 100, now)
         .is_err());
     drop(guard);
     shared
         .lock()
         .unwrap()
-        .command(ProbeCommand::RelayArm(probe(), [2; 32]), 100, now)?;
+        .command(ProbeCommand::RelayArm(probe(), vec![[2; 32]]), 100, now)?;
     assert!(take_request(&shared).is_some());
     assert!(take_request(&shared).is_none());
     for _ in 0..HISTORY + 5 {
@@ -200,7 +290,11 @@ fn relay_diagnostic_history_cancel_expiry_and_occupancy_are_bounded() -> Result<
     let mut state = shared.lock().unwrap();
     state.request.as_mut().unwrap().ready = true;
     assert!(state
-        .command(ProbeCommand::RelaySend(probe(), [2; 32]), 100, now + LEASE)
+        .command(
+            ProbeCommand::RelaySend(probe(), vec![[2; 32]]),
+            100,
+            now + LEASE
+        )
         .is_err());
     for i in 1..HISTORY {
         let mut p = probe();

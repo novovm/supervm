@@ -2,7 +2,9 @@
 use crate::{error::CtlError, output};
 use clap::{Args, Subcommand};
 use novovm_node::native_pipeline::consensus::{
-    native_lifecycle::probe::{ProbeCommand, COMMAND_BYTES, RELAY_COMMAND_BYTES},
+    native_lifecycle::probe::{
+        ProbeCommand, COMMAND_BYTES, DOUBLE_RELAY_COMMAND_BYTES, RELAY_COMMAND_BYTES,
+    },
     transport::{probe::MAX_LIFETIME_MS, NetworkProbe},
 };
 use sha2::{Digest, Sha256};
@@ -27,9 +29,9 @@ pub enum Command {
         recipient: String,
         #[arg(long)]
         nonce: Option<String>,
-        /// Arm a bounded diagnostic session through this validator; sends no object.
-        #[arg(long)]
-        via: Option<String>,
+        /// One or two ordered relay validators; repeat --via. Sends no object.
+        #[arg(long, action = clap::ArgAction::Append)]
+        via: Vec<String>,
         #[arg(long)]
         output: PathBuf,
     },
@@ -67,16 +69,21 @@ fn read(path: &Path) -> Result<ProbeCommand, CtlError> {
         std::fs::symlink_metadata(path).map_err(|e| CtlError::FileReadFailed(e.to_string()))?;
     if !meta.is_file()
         || meta.file_type().is_symlink()
-        || ![COMMAND_BYTES as u64, RELAY_COMMAND_BYTES as u64].contains(&meta.len())
+        || ![
+            COMMAND_BYTES as u64,
+            RELAY_COMMAND_BYTES as u64,
+            DOUBLE_RELAY_COMMAND_BYTES as u64,
+        ]
+        .contains(&meta.len())
     {
         return Err(CtlError::InvalidArgument(
             "not a bounded probe command file".into(),
         ));
     }
-    let mut bytes = Vec::with_capacity(RELAY_COMMAND_BYTES + 1);
+    let mut bytes = Vec::with_capacity(DOUBLE_RELAY_COMMAND_BYTES + 1);
     std::fs::File::open(path)
         .and_then(|file| {
-            file.take((RELAY_COMMAND_BYTES + 1) as u64)
+            file.take((DOUBLE_RELAY_COMMAND_BYTES + 1) as u64)
                 .read_to_end(&mut bytes)
         })
         .map_err(|e| CtlError::FileReadFailed(e.to_string()))?;
@@ -150,9 +157,18 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
                     expires_at_ms: expires,
                 };
                 (
-                    match via {
-                        Some(via) => ProbeCommand::RelayArm(probe, hash(&via)?),
-                        None => ProbeCommand::Start(probe),
+                    if via.is_empty() {
+                        ProbeCommand::Start(probe)
+                    } else {
+                        if via.len() > 2 {
+                            return Err(CtlError::InvalidArgument(
+                                "at most two diagnostic relays".into(),
+                            ));
+                        }
+                        ProbeCommand::RelayArm(
+                            probe,
+                            via.iter().map(|id| hash(id)).collect::<Result<_, _>>()?,
+                        )
                     },
                     output,
                 )
@@ -196,7 +212,8 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
             "native-network-probe",
             &serde_json::json!({
                 "scope":"local_binary_command_only","path":path,"bytes":command.encode().map_err(|e| CtlError::InvalidArgument(e.to_string()))?.len(),
-                "relay":match &command { ProbeCommand::RelayArm(_, via) | ProbeCommand::RelaySend(_, via) | ProbeCommand::RelayCancel(_, via) => Some(via), _ => None },
+                "relay":match &command { ProbeCommand::RelayArm(_, via) | ProbeCommand::RelaySend(_, via) | ProbeCommand::RelayCancel(_, via) => via.first(), _ => None },
+                "relays":match &command { ProbeCommand::RelayArm(_, via) | ProbeCommand::RelaySend(_, via) | ProbeCommand::RelayCancel(_, via) => Some(via), _ => None },
                 "nonce":probe.nonce,"sender_validator_id":probe.sender,"recipient_validator_id":probe.recipient,
                 "issued_at_ms":probe.issued_at_ms,"expires_at_ms":probe.expires_at_ms,
                 "sent":false,"object_done":false,"business_receipt":false,"node_started":false
@@ -212,6 +229,60 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn repeated_via_cli_preserves_order_and_rejects_excess_relays() -> Result<(), CtlError> {
+        let root = std::env::temp_dir().join(format!(
+            "novovm-double-probe-cli-{}-{}",
+            std::process::id(),
+            output::now_unix_ms()
+        ));
+        std::fs::create_dir(&root).map_err(|e| CtlError::FileWriteFailed(e.to_string()))?;
+        let path = root.join("ordered.nvprobe");
+        let sender = "01".repeat(32);
+        let recipient = "04".repeat(32);
+        let first = "02".repeat(32);
+        let second = "03".repeat(32);
+        let path_arg = path.to_str().unwrap();
+        let cli = crate::cli::Cli::try_parse_from([
+            "novovmctl",
+            "native-network-probe",
+            "prepare",
+            "--sender",
+            &sender,
+            "--recipient",
+            &recipient,
+            "--via",
+            &first,
+            "--via",
+            &second,
+            "--output",
+            path_arg,
+        ])
+        .unwrap();
+        let crate::cli::TopCommand::NativeNetworkProbe(args) = cli.command else {
+            panic!("wrong CLI command");
+        };
+        run(args)?;
+        assert!(
+            matches!(read(&path)?, ProbeCommand::RelayArm(_, via) if via == vec![[2; 32], [3; 32]])
+        );
+        let before = std::fs::read(&path).unwrap();
+        assert!(run(NativeNetworkProbeArgs {
+            command: Command::Prepare {
+                sender,
+                recipient,
+                nonce: None,
+                via: vec![first, second, "05".repeat(32)],
+                output: path.clone(),
+            },
+        })
+        .is_err());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        Ok(())
+    }
+
     #[test]
     fn local_probe_publish_refuses_other_files_and_reuses_only_valid_commands(
     ) -> Result<(), CtlError> {
@@ -234,9 +305,12 @@ mod tests {
         publish(&path, &ProbeCommand::Cancel(probe.clone()))?;
         assert!(matches!(read(&path)?, ProbeCommand::Cancel(_)));
         for command in [
-            ProbeCommand::RelayArm(probe.clone(), [4; 32]),
-            ProbeCommand::RelaySend(probe.clone(), [4; 32]),
-            ProbeCommand::RelayCancel(probe, [4; 32]),
+            ProbeCommand::RelayArm(probe.clone(), vec![[4; 32]]),
+            ProbeCommand::RelaySend(probe.clone(), vec![[4; 32]]),
+            ProbeCommand::RelayCancel(probe.clone(), vec![[4; 32]]),
+            ProbeCommand::RelayArm(probe.clone(), vec![[4; 32], [5; 32]]),
+            ProbeCommand::RelaySend(probe.clone(), vec![[4; 32], [5; 32]]),
+            ProbeCommand::RelayCancel(probe, vec![[4; 32], [5; 32]]),
         ] {
             let expected = command.encode().unwrap();
             publish(&path, &command)?;

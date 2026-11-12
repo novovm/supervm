@@ -122,14 +122,14 @@ pub(super) async fn incoming(
     .await??;
     let _diagnostic_occupancy = if hop.route().context() == diagnostic::context(pins) {
         ensure!(
-            hop.route().path().len() == 2
+            (2..=3).contains(&hop.route().path().len())
                 && keys.iter().any(|k| k.as_slice() == hop.route().origin())
                 && hop
                     .route()
                     .path()
                     .iter()
                     .all(|k| k.as_slice() == identity.public_key() || keys.contains(k)),
-            "diagnostic route must contain one known relay and one known target"
+            "diagnostic route must contain one or two known relays and one known target"
         );
         Some(diagnostic::Occupancy::acquire(&ingress.diagnostic)?)
     } else {
