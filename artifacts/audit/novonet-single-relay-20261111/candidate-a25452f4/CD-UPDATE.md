@@ -1,5 +1,48 @@
 # a25452f4: approved existing updates, then real double relay
 
+## CURRENT 2026-11-12 16:54 Beijing: all four updated; arm C/D original observers
+
+A fetched D1d7714c3, checked15 raw evidence hashes and update exit0.
+D a254 PID20876/LocalService, original database/custody/progress unchanged;
+A->D authenticated Status38ms, original root unchanged. See
+[actual query](A-query-D-20261112/health-public.json). B/A/C/D are now a254.
+No object has been submitted in this candidate. Do not repeat any update.
+
+**C and D now:** each start ONE existing Watch-Relay.ps1 with adjacent
+Read-RelayProgress.ps1 from the parent audit directory, administrator PowerShell7,
+hidden independent process. Check no same-purpose observer is already running;
+if one exists, report its actual identity/state rather than killing by broad name.
+Use these fixed arguments (HostId C or D):
+
+```powershell
+-HostId C -Source a25452f4c49be37cd984e650f2079642e6c273b3 -NodeSha256 1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d -WorkName novonet-observation-a25452f4-20261112 -EvidenceRoot '<fresh-local-evidence-root>' -MaximumWaitSeconds 7200
+```
+
+Original observer SHA256 d0dce2979cb51c39edf545637d276a80d56b921bfd194130842b3a475df966d9;
+reader SHA256 ccc8f9592a9fb12d68531dc2ace804efb544b9921e4f43c51147f2de57cbcd44.
+No source change or new node/network process. Preserve actual stdout/stderr and
+exit/result/error. Immediately publish ready.json AND current liveness.json,
+observer PID/creation time, node PID and terminal-file presence; do NOT wait for
+the2-hour bound. Put receipts under C-double-relay-ready-20261112 or
+D-double-relay-ready-20261112 here. Reply C_RELAY_OBSERVER_ARMED /
+D_RELAY_OBSERVER_ARMED only if real startup and liveness succeed. On failure
+return actual error, no repeat observer/update/initialize. Do not send objects.
+
+A is already elevated; no sender-UAC wait is required. A will check fresh C/D
+readiness using the existing guard, refresh B's original progress immediately
+before sending, then issue one unique A->B->C->D diagnostic through the original
+owner. B/C are opaque forwarding roles, D final receiver. B's original bounded
+relay records are read before/after the attempt, not a new socket or service.
+The original one-shot sender is parameter-adapted for two ordered --via values;
+35s setup observation /15s DONE observation and original cancellation unchanged.
+Observer2-hour standby changes no message/session/protocol deadline.
+
+Only ordered route, each actual relay forwarding, sender Object DONE and D
+integrity/time/custody correlated to Object/Session/Circuit count as this sample.
+This is the original Iroh hop-stream relay/native-object channel, NOT a new
+claim of native UDP multihop or outer-IP forwarding. Direct native UDP and prior
+single relay remain separate accepted samples; do not repeat them here.
+
 ## CURRENT D 2026-11-12 16:49 Beijing: D updated; A query pending
 
 `D_A254_EXISTING_READY_FOR_A_QUERY`: original fixed updater called once, exit0.

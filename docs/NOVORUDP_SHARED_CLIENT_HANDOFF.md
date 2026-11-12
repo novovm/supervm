@@ -1,5 +1,16 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 16:54 A签收D：四机a254更新完成，转双中继观察
+
+A已下拉D1d7714c3，核验15项证据哈希和exit0；D新进程20876/LocalService，
+原库existing、用途材料/进度保持。A→D认证Status38ms、原状态根一致。
+B/A/C/D均已完成a254更新与外部健康查询；这不是双中继DONE通过。
+现在C/D各启动一次原Watch-Relay观察器，立即回实际READY及心跳，不等窗口结束；
+A已处于提权环境，复用原发送者按A→B→C→D单次取证。B、C转发与D完整接管独立核对。
+具体参数和原脚本哈希见
+[a254 CURRENT](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/CD-UPDATE.md)。
+不重跑直连/单中继，不换包/重启，不新增Full，不把Iroh逐跳交付写成原生UDP多跳。
+
 ## 2026-11-12 C方向纠正：继续NovoRUDP原生，不扩展旧WSS分支
 
 用户指出主线早已确定为NovoRUDP。C复核app_native_io的NativeEndpoint/NativeObjectLink

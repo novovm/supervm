@@ -1,5 +1,17 @@
 # Frozen double-relay candidate a25452f4
 
+## CURRENT 2026-11-12 16:54 Beijing: D accepted; four-node update complete
+
+A verified D1d7714c3's15 evidence hashes, actual updater exit0 and a254
+PID20876/LocalService. A->D authenticated Status38ms passed with the original
+state root; [raw response and query exit](A-query-D-20261112/health-public.json).
+Thus B/A/C/D have completed fixed a254 existing updates and external health
+queries. This is not double-relay acceptance. Original observer readiness/reader
+tests passed20/13; live B read-only original progress snapshot shows PID29088,
+three verified locators and zero execution failures. A likewise has3 locators.
+C/D are requested to arm existing bounded observers, then A sends one object.
+No new Full, direct/single-relay repetition, key/cache/DB reset or business transfer.
+
 ## CURRENT 2026-11-12 16:44 Beijing: C existing and external query PASS; D next
 
 A verified C27efa42c's22 receipt hashes and actual updater exit0. C new a254
