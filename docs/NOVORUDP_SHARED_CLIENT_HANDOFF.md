@@ -19,7 +19,8 @@ A代修、不复制共享协议。A继续真实UCA注册恢复、设备授权、
 证据保持其独立范围。未安装主聊天候选，未启动任何节点/观察/发送，正式收费关闭。
 
 [源码清理与完整边界](https://github.com/XujueKing/NOVOCHAT/blob/18b0711/docs/implementation/NATIVE_TRANSPORT_RETIREMENT_2026-11-12.md)；
-[原始结果/逐条Android错误](https://github.com/XujueKing/NOVOCHAT/tree/18b0711/docs/implementation/evidence/native-retirement-20261112)。
+[原始结果/逐条Android错误](https://github.com/XujueKing/NOVOCHAT/tree/216b9a7/docs/implementation/evidence/native-retirement-20261112)。
+派生JSON的LF字节哈希另在NOVOCHAT216b9a7纠正，九项提交后哈希复核一致；原stdout不变。
 这是C通过Git通知，尚未取得A对此提交的接收回执；A现有a254双中继工作不变。
 
 ## 2026-11-12 16:54 A签收D：四机a254更新完成，转双中继观察
