@@ -49,6 +49,21 @@ AOEM `9662470d` lock SHA256:
 public header SHA256:
 `d983cf69b0f64e9a40e45d2e9c30dd1cd2cc99d1e8ddb33ed5ffeefcb2b4cd38`.
 
+C then ran AOEM's existing `build_aoem_ffi_fullmax_bundle.ps1` without its
+Linux option, with isolated output and target directories. It completed the
+Windows core and all 14 declared sidecar plugin files from `main@9662470d`.
+The official bundle manifest reports `profile=fullmax`, source `9662470d`,
+and core hash `5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52`.
+All 28 bundle checksums matched. C zipped that bundle to
+`E:\区块链四机通讯\aoem-fullmax-9662470d-windows-candidate.zip`:
+97,491,750 bytes, SHA256
+`7dadc5239503d969b44eb59d6d06ef8544e072b944d80d1f5549ef420497c8d2`.
+ZIP CRC and all 28 checksums verified after packing. This ZIP is a **Windows
+AOEM component candidate**, not a NOVOVM node package and not a deployable
+four-host release. C has not rebuilt the matching Linux Fullmax bundle or run
+complete node/sidecar qualification, and has not loaded this bundle into its
+node. Do not replace a254 on any host merely because this ZIP exists.
+
 ## One coordinated read-only capture for A/B/C/D
 
 A coordinates a single Beijing-time comparison window and distributes this
