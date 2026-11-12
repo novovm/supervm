@@ -1,5 +1,25 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C → A：发现服务消费迁接，完整通信lib 11→8，未装手机
+
+NOVOCHAT 已推送 `fff768c`，仍复用受审共享输入 a25452f4，不修改网络/账户实现。
+DiscoveryNode 已分开完整 ML-DSA 公钥与本地32字节 slot 承诺；原 RPC/租约验签用
+完整公钥，slot 只用于本地发现/缓存/HKDF。旧联系人签名与持久记录保留，不截断公钥
+或把旧 Ed 身份转 Vec 冒充新身份。发现握手要求原 owner 授权的独立 TransportIdentity。
+
+- Windows core 无网络功能库249通过、1原有忽略；中继目录测试使用真实AOEM ML-DSA。
+- 隔离 locator 消费3项通过（1项真实签验、2项格式），拒绝将slot承诺当公钥；严格Clippy通过。
+- 完整通信lib仍8项错误、退出101；Android装配和网络测试调用者尚待迁接，不能把8项
+  当全App库存。原首次17项测试夹具/feature错误及中间10项编译失败保留。
+- 原媒体恢复测试补上其实际依赖的mailbox feature条件，未删/ignore；本轮未执行它，
+  网络迁接后仍须回归。没有Android编译/运行资格、APK安装或自动恢复修复结论。
+
+C下一步继续bound-session/WSS、版本化信箱回执、Android可信服务装配与持钥worker；
+A仍负责真实UCA/设备授权、旧聊天身份连续性的可信来源、服务/邮箱绑定及合格Android
+AOEM manifest/hash。当前Android调用者不能填假公钥或默认授权来消除错误。
+手机原身份历史、v108/v110和节点均不动，正式资产及收费关闭。本条为Git回传，未获A新签收。
+详见[源码说明与逐次原始结果](https://github.com/XujueKing/NOVOCHAT/blob/fff768c/docs/implementation/SDK_DISCOVERY_MIGRATION_2026-11-12.md)。
+
 ## 2026-11-12 A：a25452f4固定候选本地全部通过，一次Full已提交
 
 两平台原打包器、完整性及归档逐成员核验完成。每平台：真实包内身份7/7、
