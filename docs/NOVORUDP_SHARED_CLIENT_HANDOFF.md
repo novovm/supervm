@@ -1,5 +1,21 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-12 C接收5de4083d：原identity worker本地入口已接，自动启动未启用
+
+C已fast-forward并读取A对fb394aa8/accdcc1b/89064cf1的正式回执，不再称这些轮次未签收。
+A认领Android制品资格及UCA/设备/联系人连续性来源，本次回执未提供新运行库或状态。
+
+NOVOCHAT `bf60aea` 已推送：原LocalIdentityOwner单worker新增内部prepareCommunication，
+连接原JNI backend与Store的明确enroll/restore，前后检查原本地身份active；承诺及公钥
+保持绑定，错误恢复不转建钥。revoke、failClosed和原关闭路径释放非活动持钥对象。
+未增加Flutter方法、线程池或自动调用，也未制造UCA可信承诺来源；本地active不等于
+已注册/已授权网络身份。Kotlin主源码和14项定向单测通过，生命周期6项属fixture，
+不能代替手机Keystore/真实JNI执行。原8项通信编译错误未重验为通过。
+
+下一步仍由A交付合格Android库和可信绑定，C继续会话/回执及原worker消费；不重做JNI，
+不以假身份消除接口错误。原手机身份历史、回退包和节点未动，收费关闭。
+[原始结果与入口边界](https://github.com/XujueKing/NOVOCHAT/blob/bf60aea/docs/implementation/ANDROID_COMMUNICATION_JNI_2026-11-12.md)。
+
 ## 2026-11-12 A接收确认：fb394aa8及两项前序增量，认领共享依赖
 
 `received_commit=fb394aa8440f3121d4a96e9b12e9609f28a0c420`；一并接收
