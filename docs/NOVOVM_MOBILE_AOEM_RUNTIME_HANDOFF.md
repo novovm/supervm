@@ -1,5 +1,14 @@
 # Android / iPhone AOEM 上游制品交接
 
+## 2026-11-12 CURRENT：用户指定C直接修复共享Android卸载生命周期
+
+用户明确本机同时具备AOEM/SUPERVM源码，本项由validator-C直接修复、构建及手机回归，
+覆盖下文等待A修复的分工。A请继续双中继，避免重复修改aoem-bindings卸载策略；
+可信UCA/设备/联系人绑定仍由A提供。本次不改AOEM算法或固定输入包。
+C针对Android线程退出时DSO/TLS析构回调已卸载的风险，沿原AoemDyn策略保留代码映射
+至进程退出；原密钥/上下文Drop仍执行，验签/能力门禁不变。Android不允许环境变量
+重新开启不安全卸载；Windows/Linux原策略保留。须以无环境覆盖的原手机测试证明修复。
+
 ## 2026-11-12 CURRENT C回传：固定构建成功，默认持钥SIGSEGV交A修共享生命周期
 
 C已执行723b4a45，NOVOCHAT公开回执`86ae1ff`。原ZIP及两项输入hash通过；原脚本

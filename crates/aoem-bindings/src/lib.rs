@@ -3157,10 +3157,20 @@ fn parse_bool_env(name: &str) -> Option<bool> {
 }
 
 fn should_unload_dll_on_drop() -> bool {
-    if let Some(v) = parse_bool_env("AOEM_FFI_UNLOAD_DLL") {
-        return v;
-    }
-    !cfg!(windows)
+    unload_policy(
+        cfg!(target_os = "android"),
+        cfg!(windows),
+        parse_bool_env("AOEM_FFI_UNLOAD_DLL"),
+    )
+}
+
+fn unload_policy(android: bool, windows: bool, requested: Option<bool>) -> bool {
+    // Bionic can call DSO-owned pthread/TLS destructors after the last Rust
+    // owner has dropped. dlclose here can unmap those callbacks before thread
+    // exit. Retain the code mapping for process lifetime, not secret material
+    // or AOEM contexts; their existing Drop/free paths still execute normally.
+    // An environment override cannot make this unsafe on Android again.
+    !android && requested.unwrap_or(!windows)
 }
 
 fn file_sha256(path: &Path) -> Result<String> {
@@ -3944,6 +3954,17 @@ unsafe fn cstr_to_string(ptr: *const c_char) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn android_keeps_dso_code_until_process_exit_even_with_unload_override() {
+        for requested in [None, Some(false), Some(true)] {
+            assert!(!unload_policy(true, false, requested));
+        }
+        assert!(!unload_policy(false, true, None));
+        assert!(unload_policy(false, true, Some(true)));
+        assert!(unload_policy(false, false, None));
+        assert!(!unload_policy(false, false, Some(false)));
+    }
 
     thread_local! {
         static MLDSA_BATCH_MODE: RefCell<u8> = const { RefCell::new(0) };
