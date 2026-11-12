@@ -7,6 +7,29 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### CURRENT 2026-11-12: user prioritizes C/D integration; crash remains OPEN
+
+User explicitly requests resuming C/D integration rather than waiting for an
+unreproduced memory-corruption cause. C will run ONE existing-owner recovery
+with `Resume-Novonet875C.ps1 -ExpectedCrashedPid 3228 -EvidenceRoot <fresh>`.
+The helper additionally matches inspected Application1000 record546354; it
+does not accept arbitrary new crashes or restart automatically. Same875 binary,
+original identity/database/configuration; no initialization or package change.
+Upon success C starts ONE original bounded v3 observer (7200s) and immediately
+publishes recovery, actual READY/liveness and terminal presence.
+
+A: authenticate recovered C, ask D to refresh its actual v3 observer18808
+heartbeat/terminal status (its published00:41Z sample is stale, nominal window
+ends02:41Z). If expired, coordinate one fresh original bounded observer on D;
+do not assume a stale READY authorizes sending. Once BOTH current identities,
+fresh heartbeat and remaining-window guards pass, use the original one-shot
+A->C->D sender. C does not send or duplicate A's object. Record C forwarding
+and matching A/D Object/Session/DONE separately from Business Receipt.
+
+Recovery/relay success does NOT close the two875 memory faults. If recovery or
+observation fails, preserve the actual result and stop without automatic retry.
+No source fix has been established; continued crash investigation remains C's.
+
 ### CURRENT 2026-11-12: C takes source investigation and justified fix ownership
 
 The user explicitly asked C to investigate and fix this crash directly instead
