@@ -52,7 +52,8 @@ const SELECTOR: &[u8; 8] = b"NVCHAIN1";
 const SELECT_STREAM: u64 = u64::from_be_bytes(*b"NVCHAIN1");
 const OBJECT_ENTRY: &[u8; 8] = b"NVNETOB1";
 const DISCOVERY_ENTRY: &[u8; 8] = b"NVNETDS1";
-const RELAY_BYTES_PER_MINUTE: u64 = 128 * 1024;
+const RELAY_BYTES_PER_MINUTE: u64 =
+    novovm_network::discovery_control::NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

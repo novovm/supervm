@@ -1,5 +1,16 @@
 # Single-relay real-object qualification
 
+## CURRENT 2026-11-12: native discovery projection correction locally verified
+
+The a2d7af7f package owner gate failed19/3 on BOTH platforms: the signed128KiB
+allowance was reconstructed as64KiB by the original compact locator codec.
+Those archives are not qualified. The original owner now preserves signed
+64KiB/V1 and128KiB/V2 profiles, with unchanged exact-field and signature checks.
+Windows/Linux codec2/2 and original owner22/22 each pass; affected strict Clippy
+and27 CI-scope tests pass. See [the complete old/new evidence](locator-profile-20261112/README.md).
+Rebuild and qualify the corrected fixed source before one candidate Full.
+No Full dispatched, no node updated and no real double-relay result claimed.
+
 ## CURRENT 2026-11-12: local candidate security blocker repaired before Full
 
 Both original packager builds of1baa6dbc completed, but that source was NOT

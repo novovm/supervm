@@ -560,6 +560,9 @@ jobs:
             native_pipeline::service::network::tests::diagnostic::constrained_relay_probe_real_hop_done_does_not_replace_business_routes \
             native_pipeline::service::network::tests::diagnostic::constrained_double_relay_probe_real_hop_done_does_not_replace_business_routes \
             native_pipeline::service::network::diagnostic::tests::double_relay_commands_bind_order_and_reject_loops_truncation_and_route_changes \
+            native_pipeline::service::network::tests::all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates \
+            native_pipeline::service::network::tests::cold_private_only_checkpoint_keeps_authenticated_seed_as_dial_hint \
+            native_pipeline::service::network::tests::native_owner_discovers_peers_through_shared_rpc_then_delivers_original_objects \
             native_pipeline::consensus::native::tests::carrier_tests::original_native_channel_consumes_authenticated_iroh_carrier \
             native_pipeline::consensus::native::tests::carrier_tests::original_udp_channel_adopts_real_iroh_fallback_without_losing_client_ingress
           do
@@ -574,6 +577,9 @@ jobs:
           "${native_tests[@]}" retained_tick_reactor_ -- --test-threads=1
           "${native_tests[@]}" service::network::diagnostic -- --test-threads=1
           "${native_tests[@]}" service::network::tests::diagnostic -- --test-threads=1
+          "${native_tests[@]}" native_pipeline::service::network::tests::all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates -- --exact --test-threads=1
+          "${native_tests[@]}" native_pipeline::service::network::tests::cold_private_only_checkpoint_keeps_authenticated_seed_as_dial_hint -- --exact --test-threads=1
+          "${native_tests[@]}" native_pipeline::service::network::tests::native_owner_discovers_peers_through_shared_rpc_then_delivers_original_objects -- --exact --test-threads=1
           grep -Fxq 'relay::hop::tests::hop_budget_is_shared_and_exhaustion_never_means_delivery: test' "$RUNNER_TEMP/novonet-network-tests.txt"
           cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport --lib relay::hop::tests -- --test-threads=1
           cargo check --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-node --features iroh-transport --bin novovm-node
@@ -585,6 +591,9 @@ jobs:
           network_tests=(cargo test --manifest-path "${{ needs.detect.outputs.rust_manifest }}" --locked -p novovm-network --features iroh-transport,tls-transport,mailbox-seal)
           # Enumeration must prove that the filters execute the original tests.
           "${network_tests[@]}" --lib -- --list > "$RUNNER_TEMP/native-locator-unit-tests.txt"
+          grep -Fxq 'discovery_control::node_locator::tests::binary_locator_preserves_original_signature_and_rejects_remote_domain_key_tamper_and_expiry: test' "$RUNNER_TEMP/native-locator-unit-tests.txt"
+          grep -Fxq 'discovery_control::node_locator::tests::compact_profiles_preserve_signed_allowances_and_reject_profile_substitution: test' "$RUNNER_TEMP/native-locator-unit-tests.txt"
+          "${network_tests[@]}" --lib discovery_control::node_locator::tests:: -- --test-threads=1
           grep -Fxq 'product_directory::tests::relay_time_boundaries_follow_authenticity_checks: test' "$RUNNER_TEMP/native-locator-unit-tests.txt"
           grep -Fxq 'product_service_lease::native_endpoint::tests::native_metadata_time_does_not_install_or_override_security: test' "$RUNNER_TEMP/native-locator-unit-tests.txt"
           "${network_tests[@]}" --lib product_directory::tests::relay_time_boundaries_follow_authenticity_checks -- --exact --test-threads=1

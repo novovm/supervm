@@ -1,0 +1,216 @@
+{
+  "base": "a2d7af7fb867936ca7e062fa32e91ea43e871345",
+  "source_hashes": [
+    {
+      "path": "crates/novovm-network/src/discovery_control.rs",
+      "sha256": "4d7f2bfb2d840402476906730bf5b68bb74ca08e92cc3d9656173da746142ca1"
+    },
+    {
+      "path": "crates/novovm-network/src/discovery_control/node_locator.rs",
+      "sha256": "575ae8a1ba27d2be2ca709959c29ab6ad0258c6c2de1893d3f89c94bea83bae2"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/network.rs",
+      "sha256": "065d6e2ad4a381e504a6c0bbd8f8798479bf1de5aa280b6dee923a04b5c9e8af"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "sha256": "b9c8df478a0264141a5440af93b5c47dbeb51532130e709b5d0c94ab489f3c03"
+    }
+  ],
+  "prior_qualification": {
+    "reason": "native locator projection would change signed fields",
+    "source": "a2d7af7fb867936ca7e062fa32e91ea43e871345",
+    "gate": "owner-with-packaged-aoem",
+    "linux": {
+      "failed": 3,
+      "passed": 19
+    },
+    "windows": {
+      "failed": 3,
+      "passed": 19
+    }
+  },
+  "checks": [
+    {
+      "platform": "windows",
+      "phase": "codec",
+      "log": "windows-codec-v2-0.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "discovery_control::node_locator::tests::",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 2,
+      "utc": "2026-11-12T03:56:10.1165489Z"
+    },
+    {
+      "platform": "windows",
+      "phase": "owner",
+      "log": "windows-owner-v2-0.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-node",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "native_pipeline::service::network::",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 22,
+      "utc": "2026-11-12T04:07:38.4043717Z"
+    },
+    {
+      "platform": "windows",
+      "phase": "clippy",
+      "log": "windows-clippy-v2-0.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T04:03:20.904933Z"
+    },
+    {
+      "platform": "windows",
+      "phase": "clippy",
+      "log": "windows-clippy-v2-1.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-node",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T04:04:08.255501Z"
+    },
+    {
+      "platform": "linux",
+      "phase": "codec",
+      "log": "linux-codec-v2-0.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "discovery_control::node_locator::tests::",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 2,
+      "utc": "2026-11-12T03:55:19.3692168Z"
+    },
+    {
+      "platform": "linux",
+      "phase": "owner",
+      "log": "linux-owner-v2-0.log",
+      "arguments": [
+        "test",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-node",
+        "--lib",
+        "--features",
+        "iroh-transport",
+        "native_pipeline::service::network::",
+        "--",
+        "--test-threads=1",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "passed": 22,
+      "utc": "2026-11-12T04:04:28.6665945Z"
+    },
+    {
+      "platform": "linux",
+      "phase": "clippy",
+      "log": "linux-clippy-v2-0.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-network",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T04:00:20.7290216Z"
+    },
+    {
+      "platform": "linux",
+      "phase": "clippy",
+      "log": "linux-clippy-v2-1.log",
+      "arguments": [
+        "clippy",
+        "--release",
+        "--locked",
+        "-p",
+        "novovm-node",
+        "--lib",
+        "--tests",
+        "--features",
+        "iroh-transport",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "passed": null,
+      "utc": "2026-11-12T04:01:10.0012657Z"
+    }
+  ],
+  "archive_sha256": "c793695181980c8063fd864cf47ad26b4e3288f564aa7c246359b1f01d978b61",
+  "full_dispatched": false,
+  "deployed": false,
+  "real_double_relay_accepted": false
+}
