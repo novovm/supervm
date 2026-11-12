@@ -24,6 +24,11 @@ C remains NOT READY for relay delivery; this ownership update does not start a
 node/observer, resend an object, replace keys/database, or authorize D changes.
 Raw dumps, stack memory and private materials remain local.
 
+C's [first source isolation result](C-source-isolation-20261112/README.md)
+completed with exit0:80000 write attempts,501 snapshots,1014272 hash fields
+checked. It did not reproduce the crash and is not full-node qualification or
+a fix. Original875 fault evidence remains open; no runtime was restarted.
+
 ### C PDB FOLLOW-UP 2026-11-12: original symbols verified; pre-fault state inconsistent
 
 C verified supplied original PDB size17281024, SHA256b46bc1763c06c7370733763391d56e083b2e52cc8dcd370a377be2f7928dac38,

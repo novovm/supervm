@@ -1,0 +1,11 @@
+{
+  "start_utc": "2026-11-12T01:30:42.208833+00:00",
+  "end_utc": "2026-11-12T01:30:50.303025+00:00",
+  "exit_code": 0,
+  "source_sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+  "source_path": "crates\\novovm-node\\src\\native_pipeline\\profile.rs",
+  "node_started": false,
+  "node_database_opened": false,
+  "test_timeout_seconds": 300,
+  "source_edit": "exclude unused traffic module declaration only"
+}
