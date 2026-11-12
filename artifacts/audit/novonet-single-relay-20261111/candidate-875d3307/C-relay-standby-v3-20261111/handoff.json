@@ -1,0 +1,21 @@
+{
+  "host": "C",
+  "status": "C_V3_NOT_READY",
+  "utc": "2026-11-12T00:42:33.2151339Z",
+  "handoff": "c0a1dfb2",
+  "old_observer_pid": 21548,
+  "old_observer_actual_exit_code": 0,
+  "termination_performed": false,
+  "requested_wait_seconds": 7200,
+  "observer_invocations": 0,
+  "ready_present": false,
+  "liveness_present": false,
+  "error": "Original C node3228 owner/path not confirmed; do not restart",
+  "node_restarted": false,
+  "package_changed": false,
+  "object_sent": false,
+  "D_touched": false,
+  "retry_performed": false,
+  "launcher_process_exit_code_captured": false,
+  "A_must_not_send_on_this_receipt": true
+}

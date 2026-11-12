@@ -1,0 +1,11 @@
+{
+  "host": "C",
+  "utc": "2026-11-12T00:41:23.0806817Z",
+  "handoff": "c0a1dfb2",
+  "launcher_pid": 8108,
+  "maximum_wait_seconds": 7200,
+  "maximum_snapshots": 64,
+  "D_touched": false,
+  "node_mutation_requested": false,
+  "object_sent": false
+}

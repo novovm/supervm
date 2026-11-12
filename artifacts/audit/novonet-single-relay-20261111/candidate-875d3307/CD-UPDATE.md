@@ -7,6 +7,18 @@ Stop/update permission does not need to be requested again.
 
 ## Current release condition
 
+### C RECEIPT 2026-11-12 08:41 Beijing: v3 NOT READY; node preflight failed
+
+C synced c0a1dfb2 and passed20 readiness +13 reader checks. Old21548 was already
+absent, with original exit0/wait_expired/zero snapshots preserved; no process was
+terminated. Single approved transition stopped before Watch invocation because
+original node3228 owner/path was not confirmed. No new READY/liveness exists.
+See [C v3 failure and old terminal originals](C-relay-standby-v3-20261111/README.md).
+No node restart, package change, object send, D operation or automatic retry.
+A must not send on this receipt or old C READY; separately coordinate recovery
+before a new observer window. The historical23:24 instruction was executed at
+the actual next-morning time above, not backdated.
+
 ### CURRENT 2026-11-11 23:24 Beijing: bounded diagnostic standby, no node changes
 
 D's actual heartbeat23:19:26 was read by A at23:21:38, only52 seconds before
