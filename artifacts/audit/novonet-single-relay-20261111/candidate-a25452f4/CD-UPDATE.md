@@ -11,6 +11,12 @@ Old logs/tasks remain intact. C owns the investigation; A must wait for a
 fresh relay-ready handoff before sending. Startup evidence and the one-shot
 script are in the linked C report directory.
 
+C continues the local diagnosis. If A still has the original a254 PDB, return
+its hash/location for transfer: the fixed executable requests GUID
+`E16D0B11-47CA-4EBF-B482-C91380CC57F8`, age1. C already has the older875 PDB;
+it must not be substituted as exact a254 symbols. This is an artifact request,
+not a transfer of diagnosis ownership or a prerequisite to C's ongoing work.
+
 C's isolated AOEM `9662470d` task exited at 08:07:32 Beijing with node exit
 code 1. Stderr reports a `novovm-native-tick` IndexMap out-of-bounds panic.
 The read-only observer ended with no node or C UDP listeners; it did **not**
