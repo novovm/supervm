@@ -1,0 +1,8 @@
+{
+  "positive_actual_loader_event": true,
+  "negative_without_pageheap": true,
+  "old_failure_preserved": true,
+  "old_node_started": false,
+  "ntdll_pdb_http": 404,
+  "verification": "actual Windows loader pageheap flags 0x3 plus deliberate fault control; no dependence on !gflag symbol types"
+}

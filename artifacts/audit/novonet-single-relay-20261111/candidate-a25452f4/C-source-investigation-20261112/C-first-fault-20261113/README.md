@@ -55,3 +55,17 @@ resource/time bound and fix validation. No product code change is asserted.
 Sources: [Microsoft PageHeap](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/gflags-and-pageheap),
 [image-specific GFlags](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/gflags-overview),
 [SDK debugger tools](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/debugger-download-tools).
+
+## Attempt01 / corrected v2 preflight
+
+The LocalService clean control exited0. The owner then failed closed because
+`!gflag` needs NTDLL type symbols that are unavailable (Microsoft symbol server
+returned404 for the actual GUID). No node was started. Both temporary IFEO keys
+were removed; original failures and this tool failure are preserved.
+
+The actual Windows loader already emitted `page heap enabled with flags 0x3`.
+V2 checks that runtime event instead of the symbol-dependent display, plus the
+mandatory deliberate-overrun control. The check passed against the actual enabled
+control log and correctly failed against the earlier non-PageHeap log. This is
+not accepting mere registry configuration as proof of instrumentation. V2 uses
+new evidence/task names and still requires a new OS UAC; node diagnosis pending.

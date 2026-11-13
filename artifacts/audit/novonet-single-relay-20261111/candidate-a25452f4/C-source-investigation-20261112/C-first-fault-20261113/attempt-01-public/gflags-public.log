@@ -1,0 +1,8 @@
+path: SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options
+    c-pageheap-control.exe: page heap enabled
+path: SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options
+    novovm-node.exe: page heap enabled
+path: SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options
+    c-pageheap-control.exe: page heap disabled
+path: SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options
+    novovm-node.exe: page heap disabled
