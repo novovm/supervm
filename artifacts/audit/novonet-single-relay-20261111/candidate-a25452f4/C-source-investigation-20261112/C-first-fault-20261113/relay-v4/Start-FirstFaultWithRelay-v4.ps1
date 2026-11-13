@@ -148,7 +148,12 @@ try{
  if(Test-Path (Join-Path $work 'node-debugger.json')){
   $d=Get-Content (Join-Path $work 'node-debugger.json') -Raw|ConvertFrom-Json
   $p=Get-Process -Id $d.pid -ErrorAction SilentlyContinue
-  if($p -and $p.Path -ceq $d.path -and $p.StartTime.ToUniversalTime().ToString('o') -ceq $d.created_utc){Stop-Process -Id $p.Id -Force}
+  if($p){
+   if([IO.Path]::GetFullPath($p.Path) -ine [IO.Path]::GetFullPath($d.path) -or $p.StartTime.ToUniversalTime().Ticks -ne ([DateTime]$d.created_utc).ToUniversalTime().Ticks){throw 'Owned debugger identity mismatch; preserve without terminating'}
+   Stop-Process -Id $p.Id -Force
+   if(!$p.WaitForExit(20000)){throw 'Owned debugger exit not confirmed'}
+   Save 'debugger-stopped-public.json' @{utc=[DateTime]::UtcNow.ToString('o');pid=$p.Id;actual_debugger_exit=$p.ExitCode;reason='diagnostic_error';node_success_not_inferred=$true}
+  }
  }
  exit 1
 }finally{

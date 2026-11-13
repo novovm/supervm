@@ -1,0 +1,22 @@
+{
+  "scope": "Actual publisher scheduling/assignment statements extracted from a254 and current node source, with deterministic crossing clock and minimal owner stubs. Not full node or network acceptance.",
+  "cases_per_source": 4,
+  "results": [
+    {
+      "source": "original_a254",
+      "compile_exit": 0,
+      "test_exit": 101,
+      "source_sha256": "2032c0d20d5f309a8a3a7aeca89dd4fde911d99bda2a8b75898f8f6bb59fd0ae",
+      "log": "\nrunning 4 tests\ntest disabled_network_is_not_fabricated ... ok\ntest due_tick_contains_actual_network_observation ... ok\ntest crossing_deadline_never_emits_partial_network_status ... FAILED\ntest early_tick_does_not_observe_or_emit ... ok\n\nfailures:\n\nfailures:\n    crossing_deadline_never_emits_partial_network_status\n\ntest result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nthread 'crossing_deadline_never_emits_partial_network_status' (12592) panicked at D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\progress-gate-regression-02\\original_a254.rs:36:2:\ndeadline crossed during poll published missing novonet\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"
+    },
+    {
+      "source": "fixed_source",
+      "compile_exit": 0,
+      "test_exit": 0,
+      "source_sha256": "0c874e9c876b5e0c4cfdb873aa7104e422f35ce33e4a8285ce9e825019e071c4",
+      "log": "\nrunning 4 tests\ntest crossing_deadline_never_emits_partial_network_status ... ok\ntest disabled_network_is_not_fabricated ... ok\ntest due_tick_contains_actual_network_observation ... ok\ntest early_tick_does_not_observe_or_emit ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    }
+  ],
+  "node_started": false,
+  "crash_root_cause_fixed": false
+}

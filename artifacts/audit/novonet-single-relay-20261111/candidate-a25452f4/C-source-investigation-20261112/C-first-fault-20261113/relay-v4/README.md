@@ -115,3 +115,9 @@ missing-field rejection and15-second wait remain unchanged.
 
 **C remains NOT READY. A must not send an object.** All previous failure and
 startup records remain; the original two-hour window did not pass.
+
+## Verified source/tool fixes, not deployed
+
+[Publisher time-boundary fix and cleanup DateTime fix](known-fixes/README.md)
+passed deterministic regressions, full node check and strict Clippy. The native
+AV still requires local analysis; these changes do not reopen double relay.

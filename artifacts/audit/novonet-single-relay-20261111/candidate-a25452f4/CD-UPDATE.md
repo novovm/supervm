@@ -1,6 +1,22 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 17:08 Beijing: C captured AV; original observer also failed
+## CURRENT 2026-11-13 17:25 Beijing: two fixes verified; native AV still open
+
+C fixed the actual snapshot publisher's two-clock-check boundary: one latched
+decision now controls network observation and progress emission. The original
+reader is unchanged. Original-source regression fails on a254 and passes4/4
+after the fix; full node check with iroh-transport, strict Clippy and rustfmt
+all exited0. V4 debugger-cleanup DateTime comparison is also corrected and
+5cases passed; original failed source retained. No new program was installed.
+
+Original Watch-Relay failed16:59; the same bounded diagnostic later captured
+the17:08first-chance AV in ntdll unwinding/heap stack capture. Full dump remains
+private on C. This is not yet the first corrupting write or a proven common
+cause with prior String faults. C continues independent source/dump diagnosis.
+Node/debugger are absent; **C NOT READY, A must not send. No automatic rerun.**
+[Verified fix scope and checks](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/known-fixes/README.md).
+
+## PRIOR 2026-11-13 17:08 Beijing: C captured AV; original observer also failed
 
 Original Watch-Relay exited1 at16:59:18 after missing `novonet` for the unchanged
 15-second bound. Coordinator exited1; a DateTime/string identity comparison

@@ -1,0 +1,24 @@
+{
+  "collected_utc": "2026-11-13T09:25:36.140314+00:00",
+  "node_check": {
+    "command": "cargo check -p novovm-node --bin novovm-node --features iroh-transport --offline --locked --target-dir D:/WEB3_AI/SUPERVM/target -j 2",
+    "exit_code": 0,
+    "finished": "dev profile,7m41s"
+  },
+  "node_clippy": {
+    "command": "cargo clippy -p novovm-node --bin novovm-node --features iroh-transport --offline --locked --target-dir D:/WEB3_AI/SUPERVM/target -j 2 -- -D warnings",
+    "exit_code": 0,
+    "finished": "dev profile,37.85s"
+  },
+  "rustfmt_check_exit": 0,
+  "publisher_regression": {
+    "old_exit": 101,
+    "fixed_exit": 0,
+    "cases": 4,
+    "scope": "actual extracted scheduling/assignment statements with deterministic clock; not a full running node"
+  },
+  "creation_time_cases": 5,
+  "production_package_created": false,
+  "node_deployed_or_restarted": false,
+  "native_AV_root_cause_fixed": false
+}

@@ -1,0 +1,28 @@
+{
+  "launcher_AST": "PASS",
+  "utc": "2026-11-13T09:21:50.9672117Z",
+  "node_launched": false,
+  "cases": [
+    {
+      "pass": true,
+      "name": "old_ISO_text_comparison_reproduces_false"
+    },
+    {
+      "pass": true,
+      "name": "JSON_DateTime_matches_same_creation"
+    },
+    {
+      "pass": true,
+      "name": "ISO_string_matches_same_creation"
+    },
+    {
+      "pass": true,
+      "name": "offset_time_matches_same_instant"
+    },
+    {
+      "pass": true,
+      "name": "reused_PID_different_creation_rejected"
+    }
+  ],
+  "processes_stopped": false
+}

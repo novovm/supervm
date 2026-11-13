@@ -42606,10 +42606,12 @@ fn run_native_execution_tick_node_mode_v1(
                 }
             }
         }
+        // Latch once before polling: crossing the reporting boundary during
+        // product.poll must not publish a status without its NOVONET snapshot.
+        let progress_report_due =
+            last_progress_report_at.elapsed() >= Duration::from_millis(progress_report_interval_ms);
         #[cfg(feature = "iroh-transport")]
-        let novonet_observation = if last_progress_report_at.elapsed()
-            >= Duration::from_millis(progress_report_interval_ms)
-        {
+        let novonet_observation = if progress_report_due {
             udp_drive
                 .as_ref()
                 .and_then(|drive| drive.novonet.as_ref())
@@ -42628,9 +42630,7 @@ fn run_native_execution_tick_node_mode_v1(
                 return Err(error.context(format!("original tick stopped; drain={drain:?}")));
             }
             ticks = ticks.saturating_add(1);
-            if last_progress_report_at.elapsed()
-                >= Duration::from_millis(progress_report_interval_ms)
-            {
+            if progress_report_due {
                 use novovm_node::native_pipeline::service::rpc::{observe_tick, TickStage};
                 let mut status = observe_tick(TickStage::Status, || product.status());
                 #[cfg(feature = "iroh-transport")]
