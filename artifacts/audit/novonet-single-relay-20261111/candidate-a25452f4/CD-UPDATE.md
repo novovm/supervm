@@ -12,8 +12,10 @@ cause of the prior crash** or qualify A/B/D for an AOEM update. See
 [C controlled runtime comparison and initial evidence](C-source-investigation-20261112/C-AOEM966-controlled-20261113/README.md).
 
 A should query the current C process through the existing authenticated path,
-then coordinate a bounded relevant workload. C should retain crash and health
-evidence without automatic restart. The four-host version inventory below is
+then coordinate a bounded relevant workload. The user has confirmed that
+historical crash-root attribution is not a prerequisite for C's continued
+test-network use if it stays healthy; see the linked C report. C should retain
+crash and health evidence without automatic restart. The four-host version inventory below is
 still required to make later synchronized decisions; its historical status
 describes the state before this C-only experiment.
 

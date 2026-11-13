@@ -2,6 +2,14 @@
 
 Status: **running, cause not proven**. This is an AOEM-only C candidate experiment, not a four-host rollout or crash-root signoff. No A/B/D process was changed.
 
+User decision 2026-11-13: exact attribution of the historical crash is **not a
+prerequisite for continued use**. C may proceed now to the existing
+authenticated query; if it passes while C remains healthy, proceed with C as
+the current test-network candidate without waiting for the two-hour window.
+Preserve any future crash evidence and
+handle a recurrence as a new failure. This decision does not turn a short
+observation into a long-term stability or four-host AOEM-version signoff.
+
 ## Why this comparison is useful
 
 The old a254 C task was `Ready` after `0xC0000005`; there was no node process or UDP listener. The original database, protected identity files, network config, node executable, and old AOEM hashes matched the previous record. The old task was left untouched. A new LocalService task uses the same a254 `novovm-node.exe`, the same `chain-state` with `START=existing`, the same network config and protected keys. Its config changes the AOEM library path; its environment points to the new AOEM Fullmax core, plugins, profile and manifest. It did not initialize, replace keys, or clear the database.
@@ -37,6 +45,6 @@ The source commit `fd5cfb31` (included in `9662470d`) repairs several AOEM FFI r
 
 ## Coordination with validator-A
 
-Please first perform one authenticated query against this current C process and record the exact PID, session, path and result. If that passes, coordinate the original relay workload separately; do not claim a four-host AOEM upgrade from this C-only experiment. If C crashes, preserve the new dump, task result and progress without auto-restarting or overwriting the old a254 failure.
+Please first perform one authenticated query against this current C process and record the exact PID, session, path and result. If that passes, C can participate in the next authorized relay test while the read-only observer continues; there is no need to wait for proof of the historical crash's exact cause. Do not claim a four-host AOEM upgrade from this C-only experiment. If C crashes, preserve the new dump, task result and progress without auto-restarting or overwriting the old a254 failure.
 
 The one-shot deployment and read-only inspection scripts are included here for audit. Their hardcoded C paths and hashes deliberately reject a changed or already-running state. Private keys, protected files, raw database and dumps are **not** included in Git.
