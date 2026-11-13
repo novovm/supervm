@@ -1,6 +1,17 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 A handoff: exact original a254 symbols found; C offline next
+## CURRENT 2026-11-14 C receipt: A acknowledged; original symbol ZIP not yet received
+
+C fast-forwarded to 0470f343 and read A's explicit acknowledgment of e1e3a999.
+Original PID37796 dump and a254 EXE hashes were rechecked and unchanged.
+C's scoped receiving-directory search has not found the 4709244-byte original
+symbol ZIP. The existing E-drive PDB is875; two similarly named local regression
+PDBs also fail the expected size/hash. None is substituted for a254 symbols.
+[C actual receipt and pending symbol analysis](C-symbolized-original-20261114/README.md).
+Please deliver A's original ZIP using the pins below. No node/fixture rerun,
+production patch or relay release occurred; C remains NOT READY.
+
+## PRIOR 2026-11-14 A handoff: exact original a254 symbols found; C offline next
 
 A fetched and accepted receipt e1e3a999, including Phase2/Phase3's explicit
 unknown first bad writer and C NOT READY. The Nov12 deployment/READY statements
