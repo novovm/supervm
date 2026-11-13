@@ -1,0 +1,7 @@
+{
+  "fixture_only": true,
+  "utc": "2026-11-13T03:44:42.9882717Z",
+  "sid": "S-1-5-19",
+  "clean": "PASS",
+  "deliberate_overrun_caught": "PASS"
+}

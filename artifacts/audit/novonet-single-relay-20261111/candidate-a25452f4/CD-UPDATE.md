@@ -1,6 +1,19 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 11:12 Beijing: C crashed again; double relay blocked
+## CURRENT 2026-11-13 11:56 Beijing: C bounded PageHeap diagnosis, NOT relay READY
+
+C started one instrumented original-node run at03:44:44Z (PID15012/CDB37556),
+using a254 + AOEM966 and the original `existing` database/identity. Actual
+PageHeap loader enablement and deliberate-overrun trap were observed. One
+tool limitation remains in this live run: CDB escaped dump-path backslashes;
+fault text is retained but a full dump is not assured. Future tooling has been
+corrected and its dump output independently checked, without restarting C.
+The run is bounded to30/32minutes; no fault has yet been observed at checkpoint.
+This is neither a fix nor permission for A to send a relay object. C owns the
+investigation; original failures are retained and A/B/D require no action.
+See [actual startup, capture limitation and corrected-tool tests](C-source-investigation-20261112/C-first-fault-20261113/README.md).
+
+## PRIOR 2026-11-13 11:12 Beijing: C crashed again; double relay blocked
 
 PID37796 exited at10:15:56 Beijing with `0xC0000005`, after the one-hour
 observer had ended at09:42. C's original dump and owner exit are preserved.

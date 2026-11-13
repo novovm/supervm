@@ -1,0 +1,13 @@
+{
+  "full_pageheap": true,
+  "initial_ifeo_absent": true,
+  "utc": "2026-11-13T03:44:38.4649362Z",
+  "node_runtime_ms": 1800000,
+  "memory_bound_bytes": 6442450944,
+  "database": "existing",
+  "original_owner_exited": true,
+  "hard_debugger_bound_seconds": 1920,
+  "minimum_disk_free_bytes": 10737418240,
+  "no_relay_ready": true,
+  "protected_identity_verified": true
+}

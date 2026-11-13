@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-13T03:55:12.940298+00:00",
+  "fixture": "VirtualAlloc PAGE_NOACCESS isolated write",
+  "dump_bytes": 12013510,
+  "dump_sha256": "d2b50d93d657252f3a1ed2c710b48d9daa0bbb48ce7f13319ab428984aebe239",
+  "signature": "MDMP",
+  "full_memory_flag": true,
+  "node_test": false,
+  "pageheap_test": false,
+  "product_fix": false,
+  "raw_dump_uploaded": false
+}

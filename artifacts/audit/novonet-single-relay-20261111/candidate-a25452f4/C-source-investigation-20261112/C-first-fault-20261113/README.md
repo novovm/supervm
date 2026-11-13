@@ -69,3 +69,35 @@ mandatory deliberate-overrun control. The check passed against the actual enable
 control log and correctly failed against the earlier non-PageHeap log. This is
 not accepting mere registry configuration as proof of instrumentation. V2 uses
 new evidence/task names and still requires a new OS UAC; node diagnosis pending.
+
+## Attempt02 actual diagnostic / dump-tool correction (11:56 Beijing)
+
+Following the user's second UAC confirmation, the clean control and actual
+PageHeap one-byte-overrun trap passed under LocalService. The original node
+started once at03:44:44Z: PID15012, CDB37556, same a254 executable/AOEM966 and
+original database with `existing`. Windows emitted the full PageHeap enabled
+event. The temporary per-image IFEO keys were removed after launch; instrumentation
+remains active in this already-created process. Actual startup records are in
+`attempt-02-public`. This is **diagnostic only, not relay READY**.
+
+An additional inspection found that the control's CDB event-command escaped
+backslashes in its dump path. The deliberate fault/context/stack were captured,
+but **the control dump was not written**. V2 checked the fault marker but omitted
+a dump-file check. The same limitation applies to the active node handler:
+first-fault text remains enabled, full-dump output is not assured. The original
+`controls-public.json` is preserved as the script produced it, not retroactively
+relabelled as end-to-end dump qualification. No node restart was made to hide this.
+
+The future owner v3 normalizes CDB command paths to forward slashes, rejects
+unsafe path characters, and requires an actual MDMP header/full-memory flag
+before qualifying capture. The original v1/v2 scripts and their failures remain.
+The isolated PAGE_NOACCESS-write control actually produced a12,013,510-byte full
+dump; seven local checks include missing/truncated/bad-header/non-full dump
+rejection and AST parsing. These test the **diagnostic tool**, not the node or
+PageHeap root cause. V3 has not been used to launch another node.
+
+The current single run retains its30-minute node/32-minute debugger limits.
+Final result must be appended after it exits. No new object, relay observer,
+runtime replacement, DB reinitialization or A/B/D action occurred. Raw dumps,
+logs and original configuration remain private on C; only reviewed summaries
+and diagnostic source are published. `root_cause_fixed=false` remains in effect.

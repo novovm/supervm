@@ -1,0 +1,21 @@
+{
+  "diagnostic_only": true,
+  "utc": "2026-11-13T03:44:46.8744733Z",
+  "debugger": {
+    "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\sdk\\extracted\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
+    "created_utc": "2026-11-13T03:44:44.0366325Z",
+    "pid": 37556,
+    "max_seconds": 1920
+  },
+  "relay_ready": false,
+  "temporary_ifeo_removed": true,
+  "nodes": [
+    {
+      "ProcessId": 15012,
+      "ParentProcessId": 37556,
+      "CreationDate": "2026-11-13T11:44:44.272073+08:00",
+      "ExecutablePath": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-a25452f4-windows-x86_64\\bin\\novovm-node.exe"
+    }
+  ],
+  "pageheap_confirmed": true
+}

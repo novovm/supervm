@@ -1,0 +1,35 @@
+{
+  "utc": "2026-11-13T03:55:37.9247532Z",
+  "checks": [
+    {
+      "pass": true,
+      "name": "actual_full_memory_dump"
+    },
+    {
+      "pass": true,
+      "name": "missing"
+    },
+    {
+      "pass": true,
+      "name": "truncated"
+    },
+    {
+      "pass": true,
+      "name": "invalid_signature"
+    },
+    {
+      "pass": true,
+      "name": "missing_full_memory"
+    },
+    {
+      "pass": true,
+      "name": "both_fault_commands_normalized"
+    },
+    {
+      "pass": true,
+      "name": "ast_parse"
+    }
+  ],
+  "product_fixed": false,
+  "node_started": false
+}
