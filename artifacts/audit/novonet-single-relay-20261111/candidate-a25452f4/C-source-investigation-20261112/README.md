@@ -1,6 +1,10 @@
 # C owns the a254 crash investigation — 2026-11-12
 
-Status: **NOT READY; root cause not established; no product fix deployed.**
+Status at the time of the investigation: **NOT READY; root cause not established;
+no product fix deployed.** C later started a separate AOEM `9662470d`
+candidate against the same a254 node and original `existing` database. See
+[the newer controlled comparison](C-AOEM966-controlled-20261113/README.md).
+Its initial health does not prove the old crash was caused by the AOEM DLL.
 The user explicitly assigned C to investigate its full local source. This is
 C's work, not a request for A to diagnose the crash. Git is coordination and
 evidence delivery only. Existing node/database/custody were not changed; no
