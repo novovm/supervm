@@ -1,0 +1,20 @@
+--- 875-pad
+
++++ fixture-pad
+
+@@ -84,12 +84,12 @@
+
+ 0119: 660f6ec0 movd
+ 011d: 410fb74702 movzx
+ 0122: 660f6ec8 movd
+-0126: 660f6f1500009800 movdqa
++0126: 660f6f1500000000 movdqa
+ 012e: 660f64c2 pcmpgtb
+ 0132: 660f60c0 punpcklbw
+ 0136: f20f70c0d4 pshuflw
+ 013b: 660f70c0d4 pshufd
+-0140: 660f6f1d00006f00 movdqa
++0140: 660f6f1d00000000 movdqa
+ 0148: 660fdbc3 pand
+ 014c: 660f64ca pcmpgtb
+ 0150: 660f60c9 punpcklbw

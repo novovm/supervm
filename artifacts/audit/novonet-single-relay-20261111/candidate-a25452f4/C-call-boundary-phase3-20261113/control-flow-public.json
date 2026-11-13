@@ -1,0 +1,26 @@
+[
+  {
+    "function": "format_write",
+    "internal_control_flow_offsets_equal": true
+  },
+  {
+    "function": "pad_integral",
+    "internal_control_flow_offsets_equal": true
+  },
+  {
+    "function": "write_prefix",
+    "internal_control_flow_offsets_equal": true
+  },
+  {
+    "function": "string_writer",
+    "internal_control_flow_offsets_equal": true
+  },
+  {
+    "function": "byte_hex",
+    "internal_control_flow_offsets_equal": true
+  },
+  {
+    "function": "format_inner",
+    "internal_control_flow_offsets_equal": true
+  }
+]

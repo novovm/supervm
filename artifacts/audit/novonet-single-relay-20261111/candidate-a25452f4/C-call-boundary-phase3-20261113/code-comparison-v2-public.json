@@ -1,0 +1,2192 @@
+{
+  "normalization": "Only PC-relative call/jump immediates and RIP disp32 are zeroed. Compare resolved control targets separately. Initial decoder-size mismatch retained in fixture-pad-diff.txt; v2 corrects RIP disp32 masking.",
+  "functions": {
+    "format_write": {
+      "875": {
+        "start_rva": "0x1e4d120",
+        "end_rva": "0x1e4d2d8",
+        "bytes": 440,
+        "normalized_sha256": "7648eaab726d7a86eb38e29d27a823e703353f9296b0dd5aec89862804759a6e",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 21,
+        "frame_register_offset_byte": 69,
+        "unwind_codes_hex": "01150a45150310820c300b700a6009c007d005e003f00150",
+        "refs": [
+          {
+            "offset": "0x22",
+            "kind": "jne",
+            "target_rva": "0x1e4d29e",
+            "internal_offset": "0x17e"
+          },
+          {
+            "offset": "0x2f",
+            "kind": "je",
+            "target_rva": "0x1e4d2c1",
+            "internal_offset": "0x1a1"
+          },
+          {
+            "offset": "0x3f",
+            "kind": "jmp",
+            "target_rva": "0x1e4d17f",
+            "internal_offset": "0x5f"
+          },
+          {
+            "offset": "0x59",
+            "kind": "je",
+            "target_rva": "0x1e4d2c1",
+            "internal_offset": "0x1a1"
+          },
+          {
+            "offset": "0x6a",
+            "kind": "js",
+            "target_rva": "0x1e4d1b0",
+            "internal_offset": "0x90"
+          },
+          {
+            "offset": "0x7a",
+            "kind": "jne",
+            "target_rva": "0x1e4d2c5",
+            "internal_offset": "0x1a5"
+          },
+          {
+            "offset": "0x83",
+            "kind": "jmp",
+            "target_rva": "0x1e4d170",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0x92",
+            "kind": "je",
+            "target_rva": "0x1e4d1d1",
+            "internal_offset": "0xb1"
+          },
+          {
+            "offset": "0x9b",
+            "kind": "jne",
+            "target_rva": "0x1e4d1f9",
+            "internal_offset": "0xd9"
+          },
+          {
+            "offset": "0xac",
+            "kind": "jmp",
+            "target_rva": "0x1e4d269",
+            "internal_offset": "0x149"
+          },
+          {
+            "offset": "0xc7",
+            "kind": "jne",
+            "target_rva": "0x1e4d2c5",
+            "internal_offset": "0x1a5"
+          },
+          {
+            "offset": "0xd4",
+            "kind": "jmp",
+            "target_rva": "0x1e4d170",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0xe0",
+            "kind": "je",
+            "target_rva": "0x1e4d20e",
+            "internal_offset": "0xee"
+          },
+          {
+            "offset": "0xf0",
+            "kind": "jne",
+            "target_rva": "0x1e4d226",
+            "internal_offset": "0x106"
+          },
+          {
+            "offset": "0xf6",
+            "kind": "je",
+            "target_rva": "0x1e4d232",
+            "internal_offset": "0x112"
+          },
+          {
+            "offset": "0x102",
+            "kind": "jne",
+            "target_rva": "0x1e4d239",
+            "internal_offset": "0x119"
+          },
+          {
+            "offset": "0x104",
+            "kind": "jmp",
+            "target_rva": "0x1e4d241",
+            "internal_offset": "0x121"
+          },
+          {
+            "offset": "0x110",
+            "kind": "jne",
+            "target_rva": "0x1e4d218",
+            "internal_offset": "0xf8"
+          },
+          {
+            "offset": "0x117",
+            "kind": "je",
+            "target_rva": "0x1e4d241",
+            "internal_offset": "0x121"
+          },
+          {
+            "offset": "0x123",
+            "kind": "jne",
+            "target_rva": "0x1e4d28d",
+            "internal_offset": "0x16d"
+          },
+          {
+            "offset": "0x127",
+            "kind": "je",
+            "target_rva": "0x1e4d256",
+            "internal_offset": "0x136"
+          },
+          {
+            "offset": "0x163",
+            "kind": "jne",
+            "target_rva": "0x1e4d2c5",
+            "internal_offset": "0x1a5"
+          },
+          {
+            "offset": "0x168",
+            "kind": "jmp",
+            "target_rva": "0x1e4d170",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0x17a",
+            "kind": "jne",
+            "target_rva": "0x1e4d249",
+            "internal_offset": "0x129"
+          },
+          {
+            "offset": "0x17c",
+            "kind": "jmp",
+            "target_rva": "0x1e4d256",
+            "internal_offset": "0x136"
+          },
+          {
+            "offset": "0x1a3",
+            "kind": "jmp",
+            "target_rva": "0x1e4d2c7",
+            "internal_offset": "0x1a7"
+          }
+        ]
+      },
+      "a254": {
+        "start_rva": "0x1e52380",
+        "end_rva": "0x1e52538",
+        "bytes": 440,
+        "normalized_sha256": "7648eaab726d7a86eb38e29d27a823e703353f9296b0dd5aec89862804759a6e",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 21,
+        "frame_register_offset_byte": 69,
+        "unwind_codes_hex": "01150a45150310820c300b700a6009c007d005e003f00150",
+        "refs": [
+          {
+            "offset": "0x22",
+            "kind": "jne",
+            "target_rva": "0x1e524fe",
+            "internal_offset": "0x17e"
+          },
+          {
+            "offset": "0x2f",
+            "kind": "je",
+            "target_rva": "0x1e52521",
+            "internal_offset": "0x1a1"
+          },
+          {
+            "offset": "0x3f",
+            "kind": "jmp",
+            "target_rva": "0x1e523df",
+            "internal_offset": "0x5f"
+          },
+          {
+            "offset": "0x59",
+            "kind": "je",
+            "target_rva": "0x1e52521",
+            "internal_offset": "0x1a1"
+          },
+          {
+            "offset": "0x6a",
+            "kind": "js",
+            "target_rva": "0x1e52410",
+            "internal_offset": "0x90"
+          },
+          {
+            "offset": "0x7a",
+            "kind": "jne",
+            "target_rva": "0x1e52525",
+            "internal_offset": "0x1a5"
+          },
+          {
+            "offset": "0x83",
+            "kind": "jmp",
+            "target_rva": "0x1e523d0",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0x92",
+            "kind": "je",
+            "target_rva": "0x1e52431",
+            "internal_offset": "0xb1"
+          },
+          {
+            "offset": "0x9b",
+            "kind": "jne",
+            "target_rva": "0x1e52459",
+            "internal_offset": "0xd9"
+          },
+          {
+            "offset": "0xac",
+            "kind": "jmp",
+            "target_rva": "0x1e524c9",
+            "internal_offset": "0x149"
+          },
+          {
+            "offset": "0xc7",
+            "kind": "jne",
+            "target_rva": "0x1e52525",
+            "internal_offset": "0x1a5"
+          },
+          {
+            "offset": "0xd4",
+            "kind": "jmp",
+            "target_rva": "0x1e523d0",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0xe0",
+            "kind": "je",
+            "target_rva": "0x1e5246e",
+            "internal_offset": "0xee"
+          },
+          {
+            "offset": "0xf0",
+            "kind": "jne",
+            "target_rva": "0x1e52486",
+            "internal_offset": "0x106"
+          },
+          {
+            "offset": "0xf6",
+            "kind": "je",
+            "target_rva": "0x1e52492",
+            "internal_offset": "0x112"
+          },
+          {
+            "offset": "0x102",
+            "kind": "jne",
+            "target_rva": "0x1e52499",
+            "internal_offset": "0x119"
+          },
+          {
+            "offset": "0x104",
+            "kind": "jmp",
+            "target_rva": "0x1e524a1",
+            "internal_offset": "0x121"
+          },
+          {
+            "offset": "0x110",
+            "kind": "jne",
+            "target_rva": "0x1e52478",
+            "internal_offset": "0xf8"
+          },
+          {
+            "offset": "0x117",
+            "kind": "je",
+            "target_rva": "0x1e524a1",
+            "internal_offset": "0x121"
+          },
+          {
+            "offset": "0x123",
+            "kind": "jne",
+            "target_rva": "0x1e524ed",
+            "internal_offset": "0x16d"
+          },
+          {
+            "offset": "0x127",
+            "kind": "je",
+            "target_rva": "0x1e524b6",
+            "internal_offset": "0x136"
+          },
+          {
+            "offset": "0x163",
+            "kind": "jne",
+            "target_rva": "0x1e52525",
+            "internal_offset": "0x1a5"
+          },
+          {
+            "offset": "0x168",
+            "kind": "jmp",
+            "target_rva": "0x1e523d0",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0x17a",
+            "kind": "jne",
+            "target_rva": "0x1e524a9",
+            "internal_offset": "0x129"
+          },
+          {
+            "offset": "0x17c",
+            "kind": "jmp",
+            "target_rva": "0x1e524b6",
+            "internal_offset": "0x136"
+          },
+          {
+            "offset": "0x1a3",
+            "kind": "jmp",
+            "target_rva": "0x1e52527",
+            "internal_offset": "0x1a7"
+          }
+        ]
+      },
+      "normalized_code_equal": true,
+      "unwind_codes_equal": true,
+      "fixture_matches": [
+        {
+          "start_rva": "0x12690",
+          "end_rva": "0x12848",
+          "bytes": 440,
+          "normalized_sha256": "7648eaab726d7a86eb38e29d27a823e703353f9296b0dd5aec89862804759a6e",
+          "unwind_version_flags": 1,
+          "prolog_bytes": 21,
+          "frame_register_offset_byte": 69,
+          "unwind_codes_hex": "01150a45150310820c300b700a6009c007d005e003f00150",
+          "refs": [
+            {
+              "offset": "0x22",
+              "kind": "jne",
+              "target_rva": "0x1280e",
+              "internal_offset": "0x17e"
+            },
+            {
+              "offset": "0x2f",
+              "kind": "je",
+              "target_rva": "0x12831",
+              "internal_offset": "0x1a1"
+            },
+            {
+              "offset": "0x3f",
+              "kind": "jmp",
+              "target_rva": "0x126ef",
+              "internal_offset": "0x5f"
+            },
+            {
+              "offset": "0x59",
+              "kind": "je",
+              "target_rva": "0x12831",
+              "internal_offset": "0x1a1"
+            },
+            {
+              "offset": "0x6a",
+              "kind": "js",
+              "target_rva": "0x12720",
+              "internal_offset": "0x90"
+            },
+            {
+              "offset": "0x7a",
+              "kind": "jne",
+              "target_rva": "0x12835",
+              "internal_offset": "0x1a5"
+            },
+            {
+              "offset": "0x83",
+              "kind": "jmp",
+              "target_rva": "0x126e0",
+              "internal_offset": "0x50"
+            },
+            {
+              "offset": "0x92",
+              "kind": "je",
+              "target_rva": "0x12741",
+              "internal_offset": "0xb1"
+            },
+            {
+              "offset": "0x9b",
+              "kind": "jne",
+              "target_rva": "0x12769",
+              "internal_offset": "0xd9"
+            },
+            {
+              "offset": "0xac",
+              "kind": "jmp",
+              "target_rva": "0x127d9",
+              "internal_offset": "0x149"
+            },
+            {
+              "offset": "0xc7",
+              "kind": "jne",
+              "target_rva": "0x12835",
+              "internal_offset": "0x1a5"
+            },
+            {
+              "offset": "0xd4",
+              "kind": "jmp",
+              "target_rva": "0x126e0",
+              "internal_offset": "0x50"
+            },
+            {
+              "offset": "0xe0",
+              "kind": "je",
+              "target_rva": "0x1277e",
+              "internal_offset": "0xee"
+            },
+            {
+              "offset": "0xf0",
+              "kind": "jne",
+              "target_rva": "0x12796",
+              "internal_offset": "0x106"
+            },
+            {
+              "offset": "0xf6",
+              "kind": "je",
+              "target_rva": "0x127a2",
+              "internal_offset": "0x112"
+            },
+            {
+              "offset": "0x102",
+              "kind": "jne",
+              "target_rva": "0x127a9",
+              "internal_offset": "0x119"
+            },
+            {
+              "offset": "0x104",
+              "kind": "jmp",
+              "target_rva": "0x127b1",
+              "internal_offset": "0x121"
+            },
+            {
+              "offset": "0x110",
+              "kind": "jne",
+              "target_rva": "0x12788",
+              "internal_offset": "0xf8"
+            },
+            {
+              "offset": "0x117",
+              "kind": "je",
+              "target_rva": "0x127b1",
+              "internal_offset": "0x121"
+            },
+            {
+              "offset": "0x123",
+              "kind": "jne",
+              "target_rva": "0x127fd",
+              "internal_offset": "0x16d"
+            },
+            {
+              "offset": "0x127",
+              "kind": "je",
+              "target_rva": "0x127c6",
+              "internal_offset": "0x136"
+            },
+            {
+              "offset": "0x163",
+              "kind": "jne",
+              "target_rva": "0x12835",
+              "internal_offset": "0x1a5"
+            },
+            {
+              "offset": "0x168",
+              "kind": "jmp",
+              "target_rva": "0x126e0",
+              "internal_offset": "0x50"
+            },
+            {
+              "offset": "0x17a",
+              "kind": "jne",
+              "target_rva": "0x127b9",
+              "internal_offset": "0x129"
+            },
+            {
+              "offset": "0x17c",
+              "kind": "jmp",
+              "target_rva": "0x127c6",
+              "internal_offset": "0x136"
+            },
+            {
+              "offset": "0x1a3",
+              "kind": "jmp",
+              "target_rva": "0x12837",
+              "internal_offset": "0x1a7"
+            }
+          ]
+        }
+      ],
+      "all_fixture_normalized_matches": true,
+      "all_fixture_unwind_matches": true
+    },
+    "pad_integral": {
+      "875": {
+        "start_rva": "0x1e4dca0",
+        "end_rva": "0x1e4e19a",
+        "bytes": 1274,
+        "normalized_sha256": "c7634740af707fac11d2f6df75114be5acfc7f8cc1ee59a66496b701917a5169",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 21,
+        "frame_register_offset_byte": 85,
+        "unwind_codes_hex": "01150a55150310a20c300b700a6009c007d005e003f00150",
+        "refs": [
+          {
+            "offset": "0x24",
+            "kind": "je",
+            "target_rva": "0x1e4dd1e",
+            "internal_offset": "0x7e"
+          },
+          {
+            "offset": "0x56",
+            "kind": "je",
+            "target_rva": "0x1e4dd3d",
+            "internal_offset": "0x9d"
+          },
+          {
+            "offset": "0x5c",
+            "kind": "jae",
+            "target_rva": "0x1e4dd98",
+            "internal_offset": "0xf8"
+          },
+          {
+            "offset": "0x65",
+            "kind": "je",
+            "target_rva": "0x1e4dda8",
+            "internal_offset": "0x108"
+          },
+          {
+            "offset": "0x6f",
+            "kind": "jae",
+            "target_rva": "0x1e4ddaf",
+            "internal_offset": "0x10f"
+          },
+          {
+            "offset": "0x79",
+            "kind": "jmp",
+            "target_rva": "0x1e4dfed",
+            "internal_offset": "0x34d"
+          },
+          {
+            "offset": "0x9b",
+            "kind": "jne",
+            "target_rva": "0x1e4dcf8",
+            "internal_offset": "0x58"
+          },
+          {
+            "offset": "0xa8",
+            "kind": "jb",
+            "target_rva": "0x1e4e013",
+            "internal_offset": "0x373"
+          },
+          {
+            "offset": "0xc7",
+            "kind": "call",
+            "target_rva": "0x1e4dc40",
+            "internal_offset": null
+          },
+          {
+            "offset": "0xd1",
+            "kind": "jne",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0xfe",
+            "kind": "call",
+            "target_rva": "0x1e55db0",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x103",
+            "kind": "jmp",
+            "target_rva": "0x1e4e002",
+            "internal_offset": "0x362"
+          },
+          {
+            "offset": "0x10a",
+            "kind": "jmp",
+            "target_rva": "0x1e4e002",
+            "internal_offset": "0x362"
+          },
+          {
+            "offset": "0x126",
+            "kind": "rip",
+            "target_rva": "0x27cea90",
+            "first16_hex": "bfbf0000000000000000000000000000"
+          },
+          {
+            "offset": "0x140",
+            "kind": "rip",
+            "target_rva": "0x25446e0",
+            "first16_hex": "01000000000000000100000000000000"
+          },
+          {
+            "offset": "0x166",
+            "kind": "je",
+            "target_rva": "0x1e4dfd9",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x1b5",
+            "kind": "je",
+            "target_rva": "0x1e4dfd9",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x204",
+            "kind": "je",
+            "target_rva": "0x1e4dfd9",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x253",
+            "kind": "je",
+            "target_rva": "0x1e4dfd9",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x2a2",
+            "kind": "je",
+            "target_rva": "0x1e4dfd9",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x2f1",
+            "kind": "je",
+            "target_rva": "0x1e4dfd9",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x34b",
+            "kind": "jmp",
+            "target_rva": "0x1e4dffd",
+            "internal_offset": "0x35d"
+          },
+          {
+            "offset": "0x360",
+            "kind": "jne",
+            "target_rva": "0x1e4dfed",
+            "internal_offset": "0x34d"
+          },
+          {
+            "offset": "0x36d",
+            "kind": "jae",
+            "target_rva": "0x1e4dd4e",
+            "internal_offset": "0xae"
+          },
+          {
+            "offset": "0x37d",
+            "kind": "jne",
+            "target_rva": "0x1e4e04a",
+            "internal_offset": "0x3aa"
+          },
+          {
+            "offset": "0x38c",
+            "kind": "rip",
+            "target_rva": "0x27d7c88",
+            "first16_hex": "576467ffbb6367ff5b6467ffbb6367ff"
+          },
+          {
+            "offset": "0x3a5",
+            "kind": "jmp",
+            "target_rva": "0x1e4e0e8",
+            "internal_offset": "0x448"
+          },
+          {
+            "offset": "0x3dc",
+            "kind": "call",
+            "target_rva": "0x1e4dc40",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x3e6",
+            "kind": "jne",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x404",
+            "kind": "je",
+            "target_rva": "0x1e4e0ba",
+            "internal_offset": "0x41a"
+          },
+          {
+            "offset": "0x413",
+            "kind": "je",
+            "target_rva": "0x1e4e0a0",
+            "internal_offset": "0x400"
+          },
+          {
+            "offset": "0x415",
+            "kind": "jmp",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x429",
+            "kind": "jne",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x43a",
+            "kind": "jmp",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x441",
+            "kind": "jmp",
+            "target_rva": "0x1e4e0e8",
+            "internal_offset": "0x448"
+          },
+          {
+            "offset": "0x463",
+            "kind": "je",
+            "target_rva": "0x1e4e117",
+            "internal_offset": "0x477"
+          },
+          {
+            "offset": "0x470",
+            "kind": "je",
+            "target_rva": "0x1e4e100",
+            "internal_offset": "0x460"
+          },
+          {
+            "offset": "0x475",
+            "kind": "jmp",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x489",
+            "kind": "call",
+            "target_rva": "0x1e4dc40",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x493",
+            "kind": "jne",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x4a6",
+            "kind": "jne",
+            "target_rva": "0x1e4e186",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x4c8",
+            "kind": "je",
+            "target_rva": "0x1e4e17b",
+            "internal_offset": "0x4db"
+          },
+          {
+            "offset": "0x4d7",
+            "kind": "je",
+            "target_rva": "0x1e4e160",
+            "internal_offset": "0x4c0"
+          },
+          {
+            "offset": "0x4d9",
+            "kind": "jmp",
+            "target_rva": "0x1e4e17e",
+            "internal_offset": "0x4de"
+          }
+        ]
+      },
+      "a254": {
+        "start_rva": "0x1e52f00",
+        "end_rva": "0x1e533fa",
+        "bytes": 1274,
+        "normalized_sha256": "c7634740af707fac11d2f6df75114be5acfc7f8cc1ee59a66496b701917a5169",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 21,
+        "frame_register_offset_byte": 85,
+        "unwind_codes_hex": "01150a55150310a20c300b700a6009c007d005e003f00150",
+        "refs": [
+          {
+            "offset": "0x24",
+            "kind": "je",
+            "target_rva": "0x1e52f7e",
+            "internal_offset": "0x7e"
+          },
+          {
+            "offset": "0x56",
+            "kind": "je",
+            "target_rva": "0x1e52f9d",
+            "internal_offset": "0x9d"
+          },
+          {
+            "offset": "0x5c",
+            "kind": "jae",
+            "target_rva": "0x1e52ff8",
+            "internal_offset": "0xf8"
+          },
+          {
+            "offset": "0x65",
+            "kind": "je",
+            "target_rva": "0x1e53008",
+            "internal_offset": "0x108"
+          },
+          {
+            "offset": "0x6f",
+            "kind": "jae",
+            "target_rva": "0x1e5300f",
+            "internal_offset": "0x10f"
+          },
+          {
+            "offset": "0x79",
+            "kind": "jmp",
+            "target_rva": "0x1e5324d",
+            "internal_offset": "0x34d"
+          },
+          {
+            "offset": "0x9b",
+            "kind": "jne",
+            "target_rva": "0x1e52f58",
+            "internal_offset": "0x58"
+          },
+          {
+            "offset": "0xa8",
+            "kind": "jb",
+            "target_rva": "0x1e53273",
+            "internal_offset": "0x373"
+          },
+          {
+            "offset": "0xc7",
+            "kind": "call",
+            "target_rva": "0x1e52ea0",
+            "internal_offset": null
+          },
+          {
+            "offset": "0xd1",
+            "kind": "jne",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0xfe",
+            "kind": "call",
+            "target_rva": "0x1e5b010",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x103",
+            "kind": "jmp",
+            "target_rva": "0x1e53262",
+            "internal_offset": "0x362"
+          },
+          {
+            "offset": "0x10a",
+            "kind": "jmp",
+            "target_rva": "0x1e53262",
+            "internal_offset": "0x362"
+          },
+          {
+            "offset": "0x126",
+            "kind": "rip",
+            "target_rva": "0x27d3a90",
+            "first16_hex": "bfbf0000000000000000000000000000"
+          },
+          {
+            "offset": "0x140",
+            "kind": "rip",
+            "target_rva": "0x254a250",
+            "first16_hex": "01000000000000000100000000000000"
+          },
+          {
+            "offset": "0x166",
+            "kind": "je",
+            "target_rva": "0x1e53239",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x1b5",
+            "kind": "je",
+            "target_rva": "0x1e53239",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x204",
+            "kind": "je",
+            "target_rva": "0x1e53239",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x253",
+            "kind": "je",
+            "target_rva": "0x1e53239",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x2a2",
+            "kind": "je",
+            "target_rva": "0x1e53239",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x2f1",
+            "kind": "je",
+            "target_rva": "0x1e53239",
+            "internal_offset": "0x339"
+          },
+          {
+            "offset": "0x34b",
+            "kind": "jmp",
+            "target_rva": "0x1e5325d",
+            "internal_offset": "0x35d"
+          },
+          {
+            "offset": "0x360",
+            "kind": "jne",
+            "target_rva": "0x1e5324d",
+            "internal_offset": "0x34d"
+          },
+          {
+            "offset": "0x36d",
+            "kind": "jae",
+            "target_rva": "0x1e52fae",
+            "internal_offset": "0xae"
+          },
+          {
+            "offset": "0x37d",
+            "kind": "jne",
+            "target_rva": "0x1e532aa",
+            "internal_offset": "0x3aa"
+          },
+          {
+            "offset": "0x38c",
+            "kind": "rip",
+            "target_rva": "0x27dcc88",
+            "first16_hex": "b76667ff1b6667ffbb6667ff1b6667ff"
+          },
+          {
+            "offset": "0x3a5",
+            "kind": "jmp",
+            "target_rva": "0x1e53348",
+            "internal_offset": "0x448"
+          },
+          {
+            "offset": "0x3dc",
+            "kind": "call",
+            "target_rva": "0x1e52ea0",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x3e6",
+            "kind": "jne",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x404",
+            "kind": "je",
+            "target_rva": "0x1e5331a",
+            "internal_offset": "0x41a"
+          },
+          {
+            "offset": "0x413",
+            "kind": "je",
+            "target_rva": "0x1e53300",
+            "internal_offset": "0x400"
+          },
+          {
+            "offset": "0x415",
+            "kind": "jmp",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x429",
+            "kind": "jne",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x43a",
+            "kind": "jmp",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x441",
+            "kind": "jmp",
+            "target_rva": "0x1e53348",
+            "internal_offset": "0x448"
+          },
+          {
+            "offset": "0x463",
+            "kind": "je",
+            "target_rva": "0x1e53377",
+            "internal_offset": "0x477"
+          },
+          {
+            "offset": "0x470",
+            "kind": "je",
+            "target_rva": "0x1e53360",
+            "internal_offset": "0x460"
+          },
+          {
+            "offset": "0x475",
+            "kind": "jmp",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x489",
+            "kind": "call",
+            "target_rva": "0x1e52ea0",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x493",
+            "kind": "jne",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x4a6",
+            "kind": "jne",
+            "target_rva": "0x1e533e6",
+            "internal_offset": "0x4e6"
+          },
+          {
+            "offset": "0x4c8",
+            "kind": "je",
+            "target_rva": "0x1e533db",
+            "internal_offset": "0x4db"
+          },
+          {
+            "offset": "0x4d7",
+            "kind": "je",
+            "target_rva": "0x1e533c0",
+            "internal_offset": "0x4c0"
+          },
+          {
+            "offset": "0x4d9",
+            "kind": "jmp",
+            "target_rva": "0x1e533de",
+            "internal_offset": "0x4de"
+          }
+        ]
+      },
+      "normalized_code_equal": true,
+      "unwind_codes_equal": true,
+      "fixture_matches": [
+        {
+          "start_rva": "0x12be0",
+          "bytes": 1274,
+          "end_rva": "0x130da",
+          "normalized_sha256": "c7634740af707fac11d2f6df75114be5acfc7f8cc1ee59a66496b701917a5169",
+          "unwind_codes_hex": "01150a55150310a20c300b700a6009c007d005e003f00150",
+          "refs": [
+            {
+              "offset": "0x24",
+              "kind": "je",
+              "target_rva": "0x12c5e",
+              "internal_offset": "0x7e"
+            },
+            {
+              "offset": "0x56",
+              "kind": "je",
+              "target_rva": "0x12c7d",
+              "internal_offset": "0x9d"
+            },
+            {
+              "offset": "0x5c",
+              "kind": "jae",
+              "target_rva": "0x12cd8",
+              "internal_offset": "0xf8"
+            },
+            {
+              "offset": "0x65",
+              "kind": "je",
+              "target_rva": "0x12ce8",
+              "internal_offset": "0x108"
+            },
+            {
+              "offset": "0x6f",
+              "kind": "jae",
+              "target_rva": "0x12cef",
+              "internal_offset": "0x10f"
+            },
+            {
+              "offset": "0x79",
+              "kind": "jmp",
+              "target_rva": "0x12f2d",
+              "internal_offset": "0x34d"
+            },
+            {
+              "offset": "0x9b",
+              "kind": "jne",
+              "target_rva": "0x12c38",
+              "internal_offset": "0x58"
+            },
+            {
+              "offset": "0xa8",
+              "kind": "jb",
+              "target_rva": "0x12f53",
+              "internal_offset": "0x373"
+            },
+            {
+              "offset": "0xc7",
+              "kind": "call",
+              "target_rva": "0x12b80",
+              "internal_offset": null
+            },
+            {
+              "offset": "0xd1",
+              "kind": "jne",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0xfe",
+              "kind": "call",
+              "target_rva": "0x13b00",
+              "internal_offset": null
+            },
+            {
+              "offset": "0x103",
+              "kind": "jmp",
+              "target_rva": "0x12f42",
+              "internal_offset": "0x362"
+            },
+            {
+              "offset": "0x10a",
+              "kind": "jmp",
+              "target_rva": "0x12f42",
+              "internal_offset": "0x362"
+            },
+            {
+              "offset": "0x126",
+              "kind": "rip",
+              "target_rva": "0x1b600",
+              "first16_hex": "bfbf0000000000000000000000000000"
+            },
+            {
+              "offset": "0x140",
+              "kind": "rip",
+              "target_rva": "0x1b610",
+              "first16_hex": "01000000000000000100000000000000"
+            },
+            {
+              "offset": "0x166",
+              "kind": "je",
+              "target_rva": "0x12f19",
+              "internal_offset": "0x339"
+            },
+            {
+              "offset": "0x1b5",
+              "kind": "je",
+              "target_rva": "0x12f19",
+              "internal_offset": "0x339"
+            },
+            {
+              "offset": "0x204",
+              "kind": "je",
+              "target_rva": "0x12f19",
+              "internal_offset": "0x339"
+            },
+            {
+              "offset": "0x253",
+              "kind": "je",
+              "target_rva": "0x12f19",
+              "internal_offset": "0x339"
+            },
+            {
+              "offset": "0x2a2",
+              "kind": "je",
+              "target_rva": "0x12f19",
+              "internal_offset": "0x339"
+            },
+            {
+              "offset": "0x2f1",
+              "kind": "je",
+              "target_rva": "0x12f19",
+              "internal_offset": "0x339"
+            },
+            {
+              "offset": "0x34b",
+              "kind": "jmp",
+              "target_rva": "0x12f3d",
+              "internal_offset": "0x35d"
+            },
+            {
+              "offset": "0x360",
+              "kind": "jne",
+              "target_rva": "0x12f2d",
+              "internal_offset": "0x34d"
+            },
+            {
+              "offset": "0x36d",
+              "kind": "jae",
+              "target_rva": "0x12c8e",
+              "internal_offset": "0xae"
+            },
+            {
+              "offset": "0x37d",
+              "kind": "jne",
+              "target_rva": "0x12f8a",
+              "internal_offset": "0x3aa"
+            },
+            {
+              "offset": "0x38c",
+              "kind": "rip",
+              "target_rva": "0x1c948",
+              "first16_hex": "d766ffff3b66ffffdb66ffff3b66ffff"
+            },
+            {
+              "offset": "0x3a5",
+              "kind": "jmp",
+              "target_rva": "0x13028",
+              "internal_offset": "0x448"
+            },
+            {
+              "offset": "0x3dc",
+              "kind": "call",
+              "target_rva": "0x12b80",
+              "internal_offset": null
+            },
+            {
+              "offset": "0x3e6",
+              "kind": "jne",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0x404",
+              "kind": "je",
+              "target_rva": "0x12ffa",
+              "internal_offset": "0x41a"
+            },
+            {
+              "offset": "0x413",
+              "kind": "je",
+              "target_rva": "0x12fe0",
+              "internal_offset": "0x400"
+            },
+            {
+              "offset": "0x415",
+              "kind": "jmp",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0x429",
+              "kind": "jne",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0x43a",
+              "kind": "jmp",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0x441",
+              "kind": "jmp",
+              "target_rva": "0x13028",
+              "internal_offset": "0x448"
+            },
+            {
+              "offset": "0x463",
+              "kind": "je",
+              "target_rva": "0x13057",
+              "internal_offset": "0x477"
+            },
+            {
+              "offset": "0x470",
+              "kind": "je",
+              "target_rva": "0x13040",
+              "internal_offset": "0x460"
+            },
+            {
+              "offset": "0x475",
+              "kind": "jmp",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0x489",
+              "kind": "call",
+              "target_rva": "0x12b80",
+              "internal_offset": null
+            },
+            {
+              "offset": "0x493",
+              "kind": "jne",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0x4a6",
+              "kind": "jne",
+              "target_rva": "0x130c6",
+              "internal_offset": "0x4e6"
+            },
+            {
+              "offset": "0x4c8",
+              "kind": "je",
+              "target_rva": "0x130bb",
+              "internal_offset": "0x4db"
+            },
+            {
+              "offset": "0x4d7",
+              "kind": "je",
+              "target_rva": "0x130a0",
+              "internal_offset": "0x4c0"
+            },
+            {
+              "offset": "0x4d9",
+              "kind": "jmp",
+              "target_rva": "0x130be",
+              "internal_offset": "0x4de"
+            }
+          ]
+        }
+      ],
+      "all_fixture_normalized_matches": true,
+      "all_fixture_unwind_matches": true
+    },
+    "write_prefix": {
+      "875": {
+        "start_rva": "0x1e4dc40",
+        "end_rva": "0x1e4dc9f",
+        "bytes": 95,
+        "normalized_sha256": "79d2610513cdcbf5854142e92cfaa0f19bad65714291548ffcb8f55688210aa3",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 15,
+        "frame_register_offset_byte": 37,
+        "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+        "refs": [
+          {
+            "offset": "0x20",
+            "kind": "je",
+            "target_rva": "0x1e4dc76",
+            "internal_offset": "0x36"
+          },
+          {
+            "offset": "0x34",
+            "kind": "jne",
+            "target_rva": "0x1e4dc94",
+            "internal_offset": "0x54"
+          },
+          {
+            "offset": "0x39",
+            "kind": "je",
+            "target_rva": "0x1e4dc92",
+            "internal_offset": "0x52"
+          }
+        ]
+      },
+      "a254": {
+        "start_rva": "0x1e52ea0",
+        "end_rva": "0x1e52eff",
+        "bytes": 95,
+        "normalized_sha256": "79d2610513cdcbf5854142e92cfaa0f19bad65714291548ffcb8f55688210aa3",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 15,
+        "frame_register_offset_byte": 37,
+        "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+        "refs": [
+          {
+            "offset": "0x20",
+            "kind": "je",
+            "target_rva": "0x1e52ed6",
+            "internal_offset": "0x36"
+          },
+          {
+            "offset": "0x34",
+            "kind": "jne",
+            "target_rva": "0x1e52ef4",
+            "internal_offset": "0x54"
+          },
+          {
+            "offset": "0x39",
+            "kind": "je",
+            "target_rva": "0x1e52ef2",
+            "internal_offset": "0x52"
+          }
+        ]
+      },
+      "normalized_code_equal": true,
+      "unwind_codes_equal": true,
+      "fixture_matches": [
+        {
+          "start_rva": "0x12b80",
+          "end_rva": "0x12bdf",
+          "bytes": 95,
+          "normalized_sha256": "79d2610513cdcbf5854142e92cfaa0f19bad65714291548ffcb8f55688210aa3",
+          "unwind_version_flags": 1,
+          "prolog_bytes": 15,
+          "frame_register_offset_byte": 37,
+          "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+          "refs": [
+            {
+              "offset": "0x20",
+              "kind": "je",
+              "target_rva": "0x12bb6",
+              "internal_offset": "0x36"
+            },
+            {
+              "offset": "0x34",
+              "kind": "jne",
+              "target_rva": "0x12bd4",
+              "internal_offset": "0x54"
+            },
+            {
+              "offset": "0x39",
+              "kind": "je",
+              "target_rva": "0x12bd2",
+              "internal_offset": "0x52"
+            }
+          ]
+        }
+      ],
+      "all_fixture_normalized_matches": true,
+      "all_fixture_unwind_matches": true
+    },
+    "string_writer": {
+      "875": {
+        "start_rva": "0x1e47a00",
+        "end_rva": "0x1e47a61",
+        "bytes": 97,
+        "normalized_sha256": "a0639a93e72bcfd00e2f5e381dca97dc6a83127d79117bc17bec7af28d2fc9a1",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 15,
+        "frame_register_offset_byte": 37,
+        "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+        "refs": [
+          {
+            "offset": "0x22",
+            "kind": "ja",
+            "target_rva": "0x1e47a47",
+            "internal_offset": "0x47"
+          },
+          {
+            "offset": "0x2e",
+            "kind": "call",
+            "target_rva": "0x23a9557",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x53",
+            "kind": "call",
+            "target_rva": "0x242cd40",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x5f",
+            "kind": "jmp",
+            "target_rva": "0x1e47a24",
+            "internal_offset": "0x24"
+          }
+        ]
+      },
+      "a254": {
+        "start_rva": "0x1e4cc60",
+        "end_rva": "0x1e4ccc1",
+        "bytes": 97,
+        "normalized_sha256": "a0639a93e72bcfd00e2f5e381dca97dc6a83127d79117bc17bec7af28d2fc9a1",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 15,
+        "frame_register_offset_byte": 37,
+        "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+        "refs": [
+          {
+            "offset": "0x22",
+            "kind": "ja",
+            "target_rva": "0x1e4cca7",
+            "internal_offset": "0x47"
+          },
+          {
+            "offset": "0x2e",
+            "kind": "call",
+            "target_rva": "0x23ae7c7",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x53",
+            "kind": "call",
+            "target_rva": "0x24334a0",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x5f",
+            "kind": "jmp",
+            "target_rva": "0x1e4cc84",
+            "internal_offset": "0x24"
+          }
+        ]
+      },
+      "normalized_code_equal": true,
+      "unwind_codes_equal": true,
+      "fixture_matches": [
+        {
+          "start_rva": "0x11000",
+          "end_rva": "0x11061",
+          "bytes": 97,
+          "normalized_sha256": "a0639a93e72bcfd00e2f5e381dca97dc6a83127d79117bc17bec7af28d2fc9a1",
+          "unwind_version_flags": 1,
+          "prolog_bytes": 15,
+          "frame_register_offset_byte": 37,
+          "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+          "refs": [
+            {
+              "offset": "0x22",
+              "kind": "ja",
+              "target_rva": "0x11047",
+              "internal_offset": "0x47"
+            },
+            {
+              "offset": "0x2e",
+              "kind": "call",
+              "target_rva": "0x161cb",
+              "internal_offset": null
+            },
+            {
+              "offset": "0x53",
+              "kind": "call",
+              "target_rva": "0x17090",
+              "internal_offset": null
+            },
+            {
+              "offset": "0x5f",
+              "kind": "jmp",
+              "target_rva": "0x11024",
+              "internal_offset": "0x24"
+            }
+          ]
+        }
+      ],
+      "all_fixture_normalized_matches": true,
+      "all_fixture_unwind_matches": true
+    },
+    "byte_hex": {
+      "875": {
+        "start_rva": "0x1e4b090",
+        "end_rva": "0x1e4b100",
+        "bytes": 112,
+        "normalized_sha256": "803581dffda2e99389f0d76bee6b4314315677de23a50db1ab7c1e0b29a206ce",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 10,
+        "frame_register_offset_byte": 69,
+        "unwind_codes_hex": "010a03450a0305720150",
+        "refs": [
+          {
+            "offset": "0xf",
+            "kind": "rip",
+            "target_rva": "0x27cf172",
+            "first16_hex": "30313233343536373839616263646566"
+          },
+          {
+            "offset": "0x3f",
+            "kind": "ja",
+            "target_rva": "0x1e4b0b0",
+            "internal_offset": "0x20"
+          },
+          {
+            "offset": "0x52",
+            "kind": "rip",
+            "target_rva": "0x27cf182",
+            "first16_hex": "30783031323334353637383941424344"
+          },
+          {
+            "offset": "0x64",
+            "kind": "call",
+            "target_rva": "0x1e4dca0",
+            "internal_offset": null
+          }
+        ]
+      },
+      "a254": {
+        "start_rva": "0x1e502f0",
+        "end_rva": "0x1e50360",
+        "bytes": 112,
+        "normalized_sha256": "803581dffda2e99389f0d76bee6b4314315677de23a50db1ab7c1e0b29a206ce",
+        "unwind_version_flags": 1,
+        "prolog_bytes": 10,
+        "frame_register_offset_byte": 69,
+        "unwind_codes_hex": "010a03450a0305720150",
+        "refs": [
+          {
+            "offset": "0xf",
+            "kind": "rip",
+            "target_rva": "0x27d4172",
+            "first16_hex": "30313233343536373839616263646566"
+          },
+          {
+            "offset": "0x3f",
+            "kind": "ja",
+            "target_rva": "0x1e50310",
+            "internal_offset": "0x20"
+          },
+          {
+            "offset": "0x52",
+            "kind": "rip",
+            "target_rva": "0x27d4182",
+            "first16_hex": "30783031323334353637383941424344"
+          },
+          {
+            "offset": "0x64",
+            "kind": "call",
+            "target_rva": "0x1e52f00",
+            "internal_offset": null
+          }
+        ]
+      },
+      "normalized_code_equal": true,
+      "unwind_codes_equal": true,
+      "fixture_matches": [
+        {
+          "start_rva": "0x124b0",
+          "end_rva": "0x12520",
+          "bytes": 112,
+          "normalized_sha256": "803581dffda2e99389f0d76bee6b4314315677de23a50db1ab7c1e0b29a206ce",
+          "unwind_version_flags": 1,
+          "prolog_bytes": 10,
+          "frame_register_offset_byte": 69,
+          "unwind_codes_hex": "010a03450a0305720150",
+          "refs": [
+            {
+              "offset": "0xf",
+              "kind": "rip",
+              "target_rva": "0x1bc20",
+              "first16_hex": "30313233343536373839616263646566"
+            },
+            {
+              "offset": "0x3f",
+              "kind": "ja",
+              "target_rva": "0x124d0",
+              "internal_offset": "0x20"
+            },
+            {
+              "offset": "0x52",
+              "kind": "rip",
+              "target_rva": "0x1bc30",
+              "first16_hex": "30783031323334353637383941424344"
+            },
+            {
+              "offset": "0x64",
+              "kind": "call",
+              "target_rva": "0x12be0",
+              "internal_offset": null
+            }
+          ]
+        },
+        {
+          "start_rva": "0x12520",
+          "end_rva": "0x12590",
+          "bytes": 112,
+          "normalized_sha256": "803581dffda2e99389f0d76bee6b4314315677de23a50db1ab7c1e0b29a206ce",
+          "unwind_version_flags": 1,
+          "prolog_bytes": 10,
+          "frame_register_offset_byte": 69,
+          "unwind_codes_hex": "010a03450a0305720150",
+          "refs": [
+            {
+              "offset": "0xf",
+              "kind": "rip",
+              "target_rva": "0x1bc32",
+              "first16_hex": "30313233343536373839414243444546"
+            },
+            {
+              "offset": "0x3f",
+              "kind": "ja",
+              "target_rva": "0x12540",
+              "internal_offset": "0x20"
+            },
+            {
+              "offset": "0x52",
+              "kind": "rip",
+              "target_rva": "0x1bc30",
+              "first16_hex": "30783031323334353637383941424344"
+            },
+            {
+              "offset": "0x64",
+              "kind": "call",
+              "target_rva": "0x12be0",
+              "internal_offset": null
+            }
+          ]
+        }
+      ],
+      "all_fixture_normalized_matches": true,
+      "all_fixture_unwind_matches": true
+    },
+    "format_inner": {
+      "875": {
+        "start_rva": "0x1e47c10",
+        "end_rva": "0x1e47d9f",
+        "bytes": 399,
+        "normalized_sha256": "5331dedc7f3867ea5849529fd91b630cbbebcff1750763fe2edff1d123103feb",
+        "unwind_version_flags": 25,
+        "prolog_bytes": 17,
+        "frame_register_offset_byte": 85,
+        "unwind_codes_hex": "1911085511030ca208300770066005e003f00150",
+        "refs": [
+          {
+            "offset": "0x26",
+            "kind": "jne",
+            "target_rva": "0x1e47cd7",
+            "internal_offset": "0xc7"
+          },
+          {
+            "offset": "0x31",
+            "kind": "je",
+            "target_rva": "0x1e47d11",
+            "internal_offset": "0x101"
+          },
+          {
+            "offset": "0x3f",
+            "kind": "jmp",
+            "target_rva": "0x1e47c70",
+            "internal_offset": "0x60"
+          },
+          {
+            "offset": "0x5e",
+            "kind": "je",
+            "target_rva": "0x1e47cdf",
+            "internal_offset": "0xcf"
+          },
+          {
+            "offset": "0x65",
+            "kind": "jns",
+            "target_rva": "0x1e47c60",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0x6d",
+            "kind": "jno",
+            "target_rva": "0x1e47c8e",
+            "internal_offset": "0x7e"
+          },
+          {
+            "offset": "0x7c",
+            "kind": "jmp",
+            "target_rva": "0x1e47c69",
+            "internal_offset": "0x59"
+          },
+          {
+            "offset": "0xc5",
+            "kind": "jmp",
+            "target_rva": "0x1e47c69",
+            "internal_offset": "0x59"
+          },
+          {
+            "offset": "0xcd",
+            "kind": "jmp",
+            "target_rva": "0x1e47ced",
+            "internal_offset": "0xdd"
+          },
+          {
+            "offset": "0xd8",
+            "kind": "je",
+            "target_rva": "0x1e47d62",
+            "internal_offset": "0x152"
+          },
+          {
+            "offset": "0xe0",
+            "kind": "je",
+            "target_rva": "0x1e47d11",
+            "internal_offset": "0x101"
+          },
+          {
+            "offset": "0xe2",
+            "kind": "call",
+            "target_rva": "0x181810",
+            "internal_offset": null
+          },
+          {
+            "offset": "0xf5",
+            "kind": "call",
+            "target_rva": "0x1db3c0",
+            "internal_offset": null
+          },
+          {
+            "offset": "0xfd",
+            "kind": "jne",
+            "target_rva": "0x1e47d19",
+            "internal_offset": "0x109"
+          },
+          {
+            "offset": "0xff",
+            "kind": "jmp",
+            "target_rva": "0x1e47d6a",
+            "internal_offset": "0x15a"
+          },
+          {
+            "offset": "0x119",
+            "kind": "rip",
+            "target_rva": "0x27ce610",
+            "first16_hex": "70c6e341010000001800000000000000"
+          },
+          {
+            "offset": "0x12a",
+            "kind": "call",
+            "target_rva": "0x1e4d120",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x131",
+            "kind": "jne",
+            "target_rva": "0x1e47d75",
+            "internal_offset": "0x165"
+          },
+          {
+            "offset": "0x155",
+            "kind": "jns",
+            "target_rva": "0x1e47ced",
+            "internal_offset": "0xdd"
+          },
+          {
+            "offset": "0x160",
+            "kind": "call",
+            "target_rva": "0x242cbfc",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x165",
+            "kind": "rip",
+            "target_rva": "0x27ce6e0",
+            "first16_hex": "96e67c42010000004800000000000000"
+          },
+          {
+            "offset": "0x171",
+            "kind": "rip",
+            "target_rva": "0x27ce640",
+            "first16_hex": "6120666f726d617474696e6720747261"
+          },
+          {
+            "offset": "0x178",
+            "kind": "rip",
+            "target_rva": "0x27ce5a0",
+            "first16_hex": "00000000000000000000000000000000"
+          },
+          {
+            "offset": "0x188",
+            "kind": "call",
+            "target_rva": "0x242d000",
+            "internal_offset": null
+          }
+        ]
+      },
+      "a254": {
+        "start_rva": "0x1e4ce70",
+        "end_rva": "0x1e4cfff",
+        "bytes": 399,
+        "normalized_sha256": "5331dedc7f3867ea5849529fd91b630cbbebcff1750763fe2edff1d123103feb",
+        "unwind_version_flags": 25,
+        "prolog_bytes": 17,
+        "frame_register_offset_byte": 85,
+        "unwind_codes_hex": "1911085511030ca208300770066005e003f00150",
+        "refs": [
+          {
+            "offset": "0x26",
+            "kind": "jne",
+            "target_rva": "0x1e4cf37",
+            "internal_offset": "0xc7"
+          },
+          {
+            "offset": "0x31",
+            "kind": "je",
+            "target_rva": "0x1e4cf71",
+            "internal_offset": "0x101"
+          },
+          {
+            "offset": "0x3f",
+            "kind": "jmp",
+            "target_rva": "0x1e4ced0",
+            "internal_offset": "0x60"
+          },
+          {
+            "offset": "0x5e",
+            "kind": "je",
+            "target_rva": "0x1e4cf3f",
+            "internal_offset": "0xcf"
+          },
+          {
+            "offset": "0x65",
+            "kind": "jns",
+            "target_rva": "0x1e4cec0",
+            "internal_offset": "0x50"
+          },
+          {
+            "offset": "0x6d",
+            "kind": "jno",
+            "target_rva": "0x1e4ceee",
+            "internal_offset": "0x7e"
+          },
+          {
+            "offset": "0x7c",
+            "kind": "jmp",
+            "target_rva": "0x1e4cec9",
+            "internal_offset": "0x59"
+          },
+          {
+            "offset": "0xc5",
+            "kind": "jmp",
+            "target_rva": "0x1e4cec9",
+            "internal_offset": "0x59"
+          },
+          {
+            "offset": "0xcd",
+            "kind": "jmp",
+            "target_rva": "0x1e4cf4d",
+            "internal_offset": "0xdd"
+          },
+          {
+            "offset": "0xd8",
+            "kind": "je",
+            "target_rva": "0x1e4cfc2",
+            "internal_offset": "0x152"
+          },
+          {
+            "offset": "0xe0",
+            "kind": "je",
+            "target_rva": "0x1e4cf71",
+            "internal_offset": "0x101"
+          },
+          {
+            "offset": "0xe2",
+            "kind": "call",
+            "target_rva": "0x181810",
+            "internal_offset": null
+          },
+          {
+            "offset": "0xf5",
+            "kind": "call",
+            "target_rva": "0x1db3c0",
+            "internal_offset": null
+          },
+          {
+            "offset": "0xfd",
+            "kind": "jne",
+            "target_rva": "0x1e4cf79",
+            "internal_offset": "0x109"
+          },
+          {
+            "offset": "0xff",
+            "kind": "jmp",
+            "target_rva": "0x1e4cfca",
+            "internal_offset": "0x15a"
+          },
+          {
+            "offset": "0x119",
+            "kind": "rip",
+            "target_rva": "0x27d3610",
+            "first16_hex": "d018e441010000001800000000000000"
+          },
+          {
+            "offset": "0x12a",
+            "kind": "call",
+            "target_rva": "0x1e52380",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x131",
+            "kind": "jne",
+            "target_rva": "0x1e4cfd5",
+            "internal_offset": "0x165"
+          },
+          {
+            "offset": "0x155",
+            "kind": "jns",
+            "target_rva": "0x1e4cf4d",
+            "internal_offset": "0xdd"
+          },
+          {
+            "offset": "0x160",
+            "kind": "call",
+            "target_rva": "0x243335c",
+            "internal_offset": null
+          },
+          {
+            "offset": "0x165",
+            "kind": "rip",
+            "target_rva": "0x27d36e0",
+            "first16_hex": "96367d42010000004800000000000000"
+          },
+          {
+            "offset": "0x171",
+            "kind": "rip",
+            "target_rva": "0x27d3640",
+            "first16_hex": "6120666f726d617474696e6720747261"
+          },
+          {
+            "offset": "0x178",
+            "kind": "rip",
+            "target_rva": "0x27d35a0",
+            "first16_hex": "00000000000000000000000000000000"
+          },
+          {
+            "offset": "0x188",
+            "kind": "call",
+            "target_rva": "0x2433760",
+            "internal_offset": null
+          }
+        ]
+      },
+      "normalized_code_equal": true,
+      "unwind_codes_equal": true,
+      "fixture_matches": [
+        {
+          "start_rva": "0x11070",
+          "end_rva": "0x111ff",
+          "bytes": 399,
+          "normalized_sha256": "5331dedc7f3867ea5849529fd91b630cbbebcff1750763fe2edff1d123103feb",
+          "unwind_version_flags": 25,
+          "prolog_bytes": 17,
+          "frame_register_offset_byte": 85,
+          "unwind_codes_hex": "1911085511030ca208300770066005e003f00150",
+          "refs": [
+            {
+              "offset": "0x26",
+              "kind": "jne",
+              "target_rva": "0x11137",
+              "internal_offset": "0xc7"
+            },
+            {
+              "offset": "0x31",
+              "kind": "je",
+              "target_rva": "0x11171",
+              "internal_offset": "0x101"
+            },
+            {
+              "offset": "0x3f",
+              "kind": "jmp",
+              "target_rva": "0x110d0",
+              "internal_offset": "0x60"
+            },
+            {
+              "offset": "0x5e",
+              "kind": "je",
+              "target_rva": "0x1113f",
+              "internal_offset": "0xcf"
+            },
+            {
+              "offset": "0x65",
+              "kind": "jns",
+              "target_rva": "0x110c0",
+              "internal_offset": "0x50"
+            },
+            {
+              "offset": "0x6d",
+              "kind": "jno",
+              "target_rva": "0x110ee",
+              "internal_offset": "0x7e"
+            },
+            {
+              "offset": "0x7c",
+              "kind": "jmp",
+              "target_rva": "0x110c9",
+              "internal_offset": "0x59"
+            },
+            {
+              "offset": "0xc5",
+              "kind": "jmp",
+              "target_rva": "0x110c9",
+              "internal_offset": "0x59"
+            },
+            {
+              "offset": "0xcd",
+              "kind": "jmp",
+              "target_rva": "0x1114d",
+              "internal_offset": "0xdd"
+            },
+            {
+              "offset": "0xd8",
+              "kind": "je",
+              "target_rva": "0x111c2",
+              "internal_offset": "0x152"
+            },
+            {
+              "offset": "0xe0",
+              "kind": "je",
+              "target_rva": "0x11171",
+              "internal_offset": "0x101"
+            },
+            {
+              "offset": "0xe2",
+              "kind": "call",
+              "target_rva": "0x16b0",
+              "internal_offset": null
+            },
+            {
+              "offset": "0xf5",
+              "kind": "call",
+              "target_rva": "0x1680",
+              "internal_offset": null
+            },
+            {
+              "offset": "0xfd",
+              "kind": "jne",
+              "target_rva": "0x11179",
+              "internal_offset": "0x109"
+            },
+            {
+              "offset": "0xff",
+              "kind": "jmp",
+              "target_rva": "0x111ca",
+              "internal_offset": "0x15a"
+            },
+            {
+              "offset": "0x119",
+              "kind": "rip",
+              "target_rva": "0x1b498",
+              "first16_hex": "e08c0040010000001800000000000000"
+            },
+            {
+              "offset": "0x12a",
+              "kind": "call",
+              "target_rva": "0x12690",
+              "internal_offset": null
+            },
+            {
+              "offset": "0x131",
+              "kind": "jne",
+              "target_rva": "0x111d5",
+              "internal_offset": "0x165"
+            },
+            {
+              "offset": "0x155",
+              "kind": "jns",
+              "target_rva": "0x1114d",
+              "internal_offset": "0xdd"
+            },
+            {
+              "offset": "0x160",
+              "kind": "call",
+              "target_rva": "0x16fb2",
+              "internal_offset": null
+            },
+            {
+              "offset": "0x165",
+              "kind": "rip",
+              "target_rva": "0x1b568",
+              "first16_hex": "1eb50140010000004800000000000000"
+            },
+            {
+              "offset": "0x171",
+              "kind": "rip",
+              "target_rva": "0x1b4c8",
+              "first16_hex": "6120666f726d617474696e6720747261"
+            },
+            {
+              "offset": "0x178",
+              "kind": "rip",
+              "target_rva": "0x1b470",
+              "first16_hex": "00000000000000000000000000000000"
+            },
+            {
+              "offset": "0x188",
+              "kind": "call",
+              "target_rva": "0x17290",
+              "internal_offset": null
+            }
+          ]
+        }
+      ],
+      "all_fixture_normalized_matches": true,
+      "all_fixture_unwind_matches": true
+    }
+  }
+}

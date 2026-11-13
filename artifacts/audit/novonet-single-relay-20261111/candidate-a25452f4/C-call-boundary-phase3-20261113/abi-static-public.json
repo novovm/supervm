@@ -1,0 +1,650 @@
+[
+  {
+    "image": "875",
+    "function": "format_write",
+    "rva": "0x1e4d120",
+    "prolog_length": 21,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push r13",
+      "+7 push r12",
+      "+9 push rsi",
+      "+a push rdi",
+      "+b push rbx",
+      "+c sub rsp, 0x48",
+      "+10 lea rbp, [rsp + 0x40]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "r13",
+      "r12",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x40; .ALLOCSTACK 0x48; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R12; .PUSHREG R13; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "875",
+    "function": "pad_integral",
+    "rva": "0x1e4dca0",
+    "prolog_length": 21,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push r13",
+      "+7 push r12",
+      "+9 push rsi",
+      "+a push rdi",
+      "+b push rbx",
+      "+c sub rsp, 0x58",
+      "+10 lea rbp, [rsp + 0x50]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "r13",
+      "r12",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x50; .ALLOCSTACK 0x58; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R12; .PUSHREG R13; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "875",
+    "function": "write_prefix",
+    "rva": "0x1e4dc40",
+    "prolog_length": 15,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r14",
+      "+3 push rsi",
+      "+4 push rdi",
+      "+5 push rbx",
+      "+6 sub rsp, 0x20",
+      "+a lea rbp, [rsp + 0x20]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x20; .ALLOCSTACK 0x20; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG RBP"
+  },
+  {
+    "image": "875",
+    "function": "string_writer",
+    "rva": "0x1e47a00",
+    "prolog_length": 15,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r14",
+      "+3 push rsi",
+      "+4 push rdi",
+      "+5 push rbx",
+      "+6 sub rsp, 0x20",
+      "+a lea rbp, [rsp + 0x20]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x20; .ALLOCSTACK 0x20; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG RBP"
+  },
+  {
+    "image": "875",
+    "function": "byte_hex",
+    "rva": "0x1e4b090",
+    "prolog_length": 10,
+    "prolog": [
+      "+0 push rbp",
+      "+1 sub rsp, 0x40",
+      "+5 lea rbp, [rsp + 0x40]"
+    ],
+    "pushed_registers": [
+      "rbp"
+    ],
+    "pop_sequences": [
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x40; .ALLOCSTACK 0x40; .PUSHREG RBP"
+  },
+  {
+    "image": "875",
+    "function": "format_inner",
+    "rva": "0x1e47c10",
+    "prolog_length": 17,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push rsi",
+      "+6 push rdi",
+      "+7 push rbx",
+      "+8 sub rsp, 0x58",
+      "+c lea rbp, [rsp + 0x50]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x50; .ALLOCSTACK 0x58; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "a254",
+    "function": "format_write",
+    "rva": "0x1e52380",
+    "prolog_length": 21,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push r13",
+      "+7 push r12",
+      "+9 push rsi",
+      "+a push rdi",
+      "+b push rbx",
+      "+c sub rsp, 0x48",
+      "+10 lea rbp, [rsp + 0x40]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "r13",
+      "r12",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x40; .ALLOCSTACK 0x48; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R12; .PUSHREG R13; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "a254",
+    "function": "pad_integral",
+    "rva": "0x1e52f00",
+    "prolog_length": 21,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push r13",
+      "+7 push r12",
+      "+9 push rsi",
+      "+a push rdi",
+      "+b push rbx",
+      "+c sub rsp, 0x58",
+      "+10 lea rbp, [rsp + 0x50]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "r13",
+      "r12",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x50; .ALLOCSTACK 0x58; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R12; .PUSHREG R13; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "a254",
+    "function": "write_prefix",
+    "rva": "0x1e52ea0",
+    "prolog_length": 15,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r14",
+      "+3 push rsi",
+      "+4 push rdi",
+      "+5 push rbx",
+      "+6 sub rsp, 0x20",
+      "+a lea rbp, [rsp + 0x20]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x20; .ALLOCSTACK 0x20; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG RBP"
+  },
+  {
+    "image": "a254",
+    "function": "string_writer",
+    "rva": "0x1e4cc60",
+    "prolog_length": 15,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r14",
+      "+3 push rsi",
+      "+4 push rdi",
+      "+5 push rbx",
+      "+6 sub rsp, 0x20",
+      "+a lea rbp, [rsp + 0x20]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x20; .ALLOCSTACK 0x20; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG RBP"
+  },
+  {
+    "image": "a254",
+    "function": "byte_hex",
+    "rva": "0x1e502f0",
+    "prolog_length": 10,
+    "prolog": [
+      "+0 push rbp",
+      "+1 sub rsp, 0x40",
+      "+5 lea rbp, [rsp + 0x40]"
+    ],
+    "pushed_registers": [
+      "rbp"
+    ],
+    "pop_sequences": [
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x40; .ALLOCSTACK 0x40; .PUSHREG RBP"
+  },
+  {
+    "image": "a254",
+    "function": "format_inner",
+    "rva": "0x1e4ce70",
+    "prolog_length": 17,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push rsi",
+      "+6 push rdi",
+      "+7 push rbx",
+      "+8 sub rsp, 0x58",
+      "+c lea rbp, [rsp + 0x50]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x50; .ALLOCSTACK 0x58; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "fixture",
+    "function": "format_write",
+    "rva": "0x12690",
+    "prolog_length": 21,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push r13",
+      "+7 push r12",
+      "+9 push rsi",
+      "+a push rdi",
+      "+b push rbx",
+      "+c sub rsp, 0x48",
+      "+10 lea rbp, [rsp + 0x40]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "r13",
+      "r12",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x40; .ALLOCSTACK 0x48; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R12; .PUSHREG R13; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "fixture",
+    "function": "pad_integral",
+    "rva": "0x12be0",
+    "prolog_length": 21,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push r13",
+      "+7 push r12",
+      "+9 push rsi",
+      "+a push rdi",
+      "+b push rbx",
+      "+c sub rsp, 0x58",
+      "+10 lea rbp, [rsp + 0x50]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "r13",
+      "r12",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r12",
+      "r13",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x50; .ALLOCSTACK 0x58; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R12; .PUSHREG R13; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  },
+  {
+    "image": "fixture",
+    "function": "write_prefix",
+    "rva": "0x12b80",
+    "prolog_length": 15,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r14",
+      "+3 push rsi",
+      "+4 push rdi",
+      "+5 push rbx",
+      "+6 sub rsp, 0x20",
+      "+a lea rbp, [rsp + 0x20]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp",
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x20; .ALLOCSTACK 0x20; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG RBP"
+  },
+  {
+    "image": "fixture",
+    "function": "string_writer",
+    "rva": "0x11000",
+    "prolog_length": 15,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r14",
+      "+3 push rsi",
+      "+4 push rdi",
+      "+5 push rbx",
+      "+6 sub rsp, 0x20",
+      "+a lea rbp, [rsp + 0x20]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x20; .ALLOCSTACK 0x20; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG RBP"
+  },
+  {
+    "image": "fixture",
+    "function": "byte_hex",
+    "rva": "0x124b0",
+    "prolog_length": 10,
+    "prolog": [
+      "+0 push rbp",
+      "+1 sub rsp, 0x40",
+      "+5 lea rbp, [rsp + 0x40]"
+    ],
+    "pushed_registers": [
+      "rbp"
+    ],
+    "pop_sequences": [
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x40; .ALLOCSTACK 0x40; .PUSHREG RBP"
+  },
+  {
+    "image": "fixture",
+    "function": "format_inner",
+    "rva": "0x11070",
+    "prolog_length": 17,
+    "prolog": [
+      "+0 push rbp",
+      "+1 push r15",
+      "+3 push r14",
+      "+5 push rsi",
+      "+6 push rdi",
+      "+7 push rbx",
+      "+8 sub rsp, 0x58",
+      "+c lea rbp, [rsp + 0x50]"
+    ],
+    "pushed_registers": [
+      "rbp",
+      "r15",
+      "r14",
+      "rsi",
+      "rdi",
+      "rbx"
+    ],
+    "pop_sequences": [
+      "rbx",
+      "rdi",
+      "rsi",
+      "r14",
+      "r15",
+      "rbp"
+    ],
+    "nonvolatile_simd_written": [],
+    "unwind_actions": ".SETFRAME RBP, 0x50; .ALLOCSTACK 0x58; .PUSHREG RBX; .PUSHREG RDI; .PUSHREG RSI; .PUSHREG R14; .PUSHREG R15; .PUSHREG RBP"
+  }
+]

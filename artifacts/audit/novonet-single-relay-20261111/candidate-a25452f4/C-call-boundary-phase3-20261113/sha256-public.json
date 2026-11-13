@@ -1,0 +1,102 @@
+[
+  {
+    "file": "abi-checks-public.json",
+    "bytes": 12297,
+    "sha256": "de4e9b464d43ce57e23e0d0a15ecf7ffd9671101834892d8cf5fb60f09a0cce9"
+  },
+  {
+    "file": "abi-static-public.json",
+    "bytes": 13194,
+    "sha256": "886a9adb155bfdebd41c0dff30c8521df5201ab3a089df069d8a7bd155cd0ed5"
+  },
+  {
+    "file": "boundary-check-command-record.txt",
+    "bytes": 1626,
+    "sha256": "3a47c1b1dab326c14ab224dc386764c0192d5f6dc81ca3560672851eb8b64d8f"
+  },
+  {
+    "file": "boundary-debugger-exit.json",
+    "bytes": 78,
+    "sha256": "1c85b70123f6c684a24c16e701126e46583a91d954b643f1f80d1ce43a897879"
+  },
+  {
+    "file": "boundary-observed-public.txt",
+    "bytes": 12036,
+    "sha256": "3bfa0efac49291c0a14a0c0bf79a68d6784cf3419c9e96180cd9f2e1c9dd3aa7"
+  },
+  {
+    "file": "boundary-results-public.json",
+    "bytes": 7600,
+    "sha256": "649875d91197b1ef91ac787a9d0ccd9cadc8f814dffc10a4a8789181a4a0bb3a"
+  },
+  {
+    "file": "boundary_fixture.rs",
+    "bytes": 787,
+    "sha256": "579e73767968056878ae9bbbd6f4d8b008fed324a8fce3250c4b515172bf5cca"
+  },
+  {
+    "file": "build-public.json",
+    "bytes": 477,
+    "sha256": "82478f0b5390feff4b9de0f5571497621a6fd9728a121b43cf1a376de1e6588f"
+  },
+  {
+    "file": "build2-public.json",
+    "bytes": 517,
+    "sha256": "da96173f4a0d78927c81c59c022f44e4ec726ad74a27bb7cd1b58e258619ae9c"
+  },
+  {
+    "file": "code-comparison-assembly.txt",
+    "bytes": 71416,
+    "sha256": "1891c87b364c29282119d796ded20e9236de1d1c380001098a60c8fbf175a5ac"
+  },
+  {
+    "file": "code-comparison-v2-public.json",
+    "bytes": 62045,
+    "sha256": "aba413f66cbe69779807ba49c3de016df4e7e563af24c26b32b41cf4e69fb1d2"
+  },
+  {
+    "file": "control-flow-public.json",
+    "bytes": 534,
+    "sha256": "b07067dea804ba6befe73f017f8276a34be090cfe5c84c7481282cb069624fba"
+  },
+  {
+    "file": "fixture-pad-assembly.txt",
+    "bytes": 17771,
+    "sha256": "2d607295f4455aa1fc8cf58edcbfebe6daadc0de99b965a8de3a98c879689def"
+  },
+  {
+    "file": "fixture-pad-diff.txt",
+    "bytes": 413,
+    "sha256": "37e6c8b0e135abebf96fd4c9a42c0fd5056a2c69cb240a0f6f535eedd51bad77"
+  },
+  {
+    "file": "images-public.json",
+    "bytes": 366,
+    "sha256": "1adafb5c11870a656a1e605956ab3d60d4d8c6e6dac9f645b8d699217b77ef89"
+  },
+  {
+    "file": "local-log-hashes.json",
+    "bytes": 436,
+    "sha256": "f3dcd91881ae96faccaafce04440c812f798a46255e4fbb3bdbfaacefa21d606"
+  },
+  {
+    "file": "pdb-search-public.json",
+    "bytes": 416,
+    "sha256": "88a867b37037a2c695162afff266ef71e6f3ebababc595c996fe66ecee563938"
+  },
+  {
+    "file": "README.md",
+    "bytes": 8803,
+    "sha256": "9e2866a761c815b2210371278d426b69c994552e87da8b0877d06beb9f62ee88"
+  },
+  {
+    "file": "toolchain.txt",
+    "bytes": 194,
+    "sha256": "e8b20add2bc8286eed0085fbff1207c7d4bed09b98c2dae58cff89dff7d43a99"
+  },
+  {
+    "file": "unwind-descriptions-public.txt",
+    "bytes": 9265,
+    "sha256": "8be92296522c9eef7752f5a5713b23899f96f4575e119342e03047c5458b9ded"
+  }
+]

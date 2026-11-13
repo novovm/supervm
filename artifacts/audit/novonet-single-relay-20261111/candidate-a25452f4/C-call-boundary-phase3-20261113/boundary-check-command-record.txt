@@ -1,0 +1,16 @@
+Command record only; substitute matching fixture symbol directory and verify RVAs before reuse.
+.sympath <MATCHING_FIXTURE_DIRECTORY>
+.reload
+r @$t0=0
+bp boundary_fixture!phase3_begin "r @$t0=1; r @$t5=@rcx; .printf \"CASE value=%x\n\", @rcx; gc"
+bp boundary_fixture!phase3_end ".printf \"END value=%x length=%x\n\", @$t5, @rcx; r @$t0=0; gc"
+bp boundary_fixture+0x12690 ".if (@$t0) { r @$t1=@rcx; .printf \"FMT_BEGIN receiver=%p rsp=%p\n\", @rcx,@rsp; }; gc"
+bp boundary_fixture+0x127ed ".if (@$t0) { r @$t2=@rdx; .printf \"FMT_CALL fmt=%p receiver=%p expected=%p rsp=%p\n\", @rdx,poi(@rdx),@$t1,@rsp; }; gc"
+bp boundary_fixture+0x12be0 ".if (@$t0) { r @$t3=poi(@rsp+0x28); r @$t4=poi(@rsp+0x30); .printf \"PAD_ENTRY fmt=%p receiver=%p text=%p len=%x rsp=%p\n\", @rcx,poi(@rcx),@$t3,@$t4,@rsp; }; gc"
+bp boundary_fixture+0x12ca7 ".if (@$t0) { .printf \"PREFIX_BEFORE rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; r xmm6,xmm7,xmm8,xmm9,xmm10,xmm11,xmm12,xmm13,xmm14,xmm15; }; gc"
+bp boundary_fixture+0x12cac ".if (@$t0) { .printf \"PREFIX_AFTER rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; r xmm6,xmm7,xmm8,xmm9,xmm10,xmm11,xmm12,xmm13,xmm14,xmm15; }; gc"
+bp boundary_fixture+0x12cc5 ".if (@$t0) { .printf \"TAIL_READY receiver=%p text=%p len=%x rsp=%p\n\", @rcx,@rdx,@r8,@rsp; }; gc"
+bp boundary_fixture+0x11000 ".if (@$t0) { .printf \"WRITER_ENTRY receiver=%p text=%p len=%x rsp=%p\n\", @rcx,@rdx,@r8,@rsp; }; gc"
+sxe -c ".echo FIXTURE_AV; .exr -1; r; kv; q" av
+sxe -c ".echo FIXTURE_EXIT; .lastevent; q" epr
+g

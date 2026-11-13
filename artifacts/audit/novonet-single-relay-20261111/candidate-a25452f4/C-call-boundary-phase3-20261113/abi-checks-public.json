@@ -1,0 +1,493 @@
+{
+  "records": [
+    {
+      "image": "875",
+      "function": "format_write",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x48",
+      "frame_offset": "0x40",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "875",
+      "function": "pad_integral",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x58",
+      "frame_offset": "0x50",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "875",
+      "function": "write_prefix",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x20",
+      "frame_offset": "0x20",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "875",
+      "function": "string_writer",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x20",
+      "frame_offset": "0x20",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "875",
+      "function": "byte_hex",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp"
+      ],
+      "fixed_allocation": "0x40",
+      "frame_offset": "0x40",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "875",
+      "function": "format_inner",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x58",
+      "frame_offset": "0x50",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "a254",
+      "function": "format_write",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x48",
+      "frame_offset": "0x40",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "a254",
+      "function": "pad_integral",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x58",
+      "frame_offset": "0x50",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "a254",
+      "function": "write_prefix",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x20",
+      "frame_offset": "0x20",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "a254",
+      "function": "string_writer",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x20",
+      "frame_offset": "0x20",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "a254",
+      "function": "byte_hex",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp"
+      ],
+      "fixed_allocation": "0x40",
+      "frame_offset": "0x40",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "a254",
+      "function": "format_inner",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x58",
+      "frame_offset": "0x50",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "fixture",
+      "function": "format_write",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x48",
+      "frame_offset": "0x40",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "fixture",
+      "function": "pad_integral",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x58",
+      "frame_offset": "0x50",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "fixture",
+      "function": "write_prefix",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x20",
+      "frame_offset": "0x20",
+      "pop_sequence_count": 2
+    },
+    {
+      "image": "fixture",
+      "function": "string_writer",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x20",
+      "frame_offset": "0x20",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "fixture",
+      "function": "byte_hex",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp"
+      ],
+      "fixed_allocation": "0x40",
+      "frame_offset": "0x40",
+      "pop_sequence_count": 1
+    },
+    {
+      "image": "fixture",
+      "function": "format_inner",
+      "checks": {
+        "pushes_match_unwind": true,
+        "allocation_matches_unwind": true,
+        "frame_matches_unwind": true,
+        "all_pop_sequences_restore_reverse_push_order": true,
+        "body_stack_16_aligned": true,
+        "at_least_32_byte_shadow_space": true
+      },
+      "saved_gpr": [
+        "rbp",
+        "r15",
+        "r14",
+        "rsi",
+        "rdi",
+        "rbx"
+      ],
+      "fixed_allocation": "0x58",
+      "frame_offset": "0x50",
+      "pop_sequence_count": 1
+    }
+  ],
+  "resolved_edges": [
+    {
+      "image": "875",
+      "source": "format_inner",
+      "offset": "0x12a",
+      "target": "format_write",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "875",
+      "source": "byte_hex",
+      "offset": "0x64",
+      "target": "pad_integral",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "875",
+      "source": "pad_integral",
+      "offset": "0xc7",
+      "target": "write_prefix",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "875",
+      "source": "String vtable+0x18",
+      "target": "string_writer",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "a254",
+      "source": "format_inner",
+      "offset": "0x12a",
+      "target": "format_write",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "a254",
+      "source": "byte_hex",
+      "offset": "0x64",
+      "target": "pad_integral",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "a254",
+      "source": "pad_integral",
+      "offset": "0xc7",
+      "target": "write_prefix",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "a254",
+      "source": "String vtable+0x18",
+      "target": "string_writer",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "fixture",
+      "source": "format_inner",
+      "offset": "0x12a",
+      "target": "format_write",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "fixture",
+      "source": "byte_hex",
+      "offset": "0x64",
+      "target": "pad_integral",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "fixture",
+      "source": "pad_integral",
+      "offset": "0xc7",
+      "target": "write_prefix",
+      "resolved_target_matches": true
+    },
+    {
+      "image": "fixture",
+      "source": "String vtable+0x18",
+      "target": "string_writer",
+      "resolved_target_matches": true
+    }
+  ],
+  "scope": "Static prolog/core unwind and epilog patterns only; no claim that runtime register values obeyed them in the original crash."
+}

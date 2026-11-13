@@ -1,0 +1,14 @@
+{
+  "875": {
+    "sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+    "bytes": 48431104
+  },
+  "a254": {
+    "sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+    "bytes": 48457216
+  },
+  "fixture": {
+    "sha256": "00377e723db7a9cc060e7e9f528c5011048d9da8a4f1a2a5bc72fcfb2069616b",
+    "bytes": 131584
+  }
+}

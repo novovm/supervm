@@ -1,0 +1,279 @@
+{
+  "cases": [
+    {
+      "value": "0xb9",
+      "checks": {
+        "receiver_preserved": true,
+        "formatter_preserved": true,
+        "text_preserved": true,
+        "length_preserved": true,
+        "entry_rsp_alignment": true,
+        "tail_body_alignment": true,
+        "helper_gpr_preserved": true,
+        "helper_xmm_preserved": true
+      },
+      "boundary_values": {
+        "FMT_BEGIN": {
+          "receiver": "0x48c18ff690",
+          "rsp": "0x48c18ff658"
+        },
+        "FMT_CALL": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "expected": "0x48c18ff690",
+          "rsp": "0x48c18ff5d0"
+        },
+        "PAD_ENTRY": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        },
+        "TAIL_READY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff4e0"
+        },
+        "WRITER_ENTRY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        }
+      }
+    },
+    {
+      "value": "0x56",
+      "checks": {
+        "receiver_preserved": true,
+        "formatter_preserved": true,
+        "text_preserved": true,
+        "length_preserved": true,
+        "entry_rsp_alignment": true,
+        "tail_body_alignment": true,
+        "helper_gpr_preserved": true,
+        "helper_xmm_preserved": true
+      },
+      "boundary_values": {
+        "FMT_BEGIN": {
+          "receiver": "0x48c18ff690",
+          "rsp": "0x48c18ff658"
+        },
+        "FMT_CALL": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "expected": "0x48c18ff690",
+          "rsp": "0x48c18ff5d0"
+        },
+        "PAD_ENTRY": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        },
+        "TAIL_READY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff4e0"
+        },
+        "WRITER_ENTRY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        }
+      }
+    },
+    {
+      "value": "0x10",
+      "checks": {
+        "receiver_preserved": true,
+        "formatter_preserved": true,
+        "text_preserved": true,
+        "length_preserved": true,
+        "entry_rsp_alignment": true,
+        "tail_body_alignment": true,
+        "helper_gpr_preserved": true,
+        "helper_xmm_preserved": true
+      },
+      "boundary_values": {
+        "FMT_BEGIN": {
+          "receiver": "0x48c18ff690",
+          "rsp": "0x48c18ff658"
+        },
+        "FMT_CALL": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "expected": "0x48c18ff690",
+          "rsp": "0x48c18ff5d0"
+        },
+        "PAD_ENTRY": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        },
+        "TAIL_READY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff4e0"
+        },
+        "WRITER_ENTRY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        }
+      }
+    },
+    {
+      "value": "0x7f",
+      "checks": {
+        "receiver_preserved": true,
+        "formatter_preserved": true,
+        "text_preserved": true,
+        "length_preserved": true,
+        "entry_rsp_alignment": true,
+        "tail_body_alignment": true,
+        "helper_gpr_preserved": true,
+        "helper_xmm_preserved": true
+      },
+      "boundary_values": {
+        "FMT_BEGIN": {
+          "receiver": "0x48c18ff690",
+          "rsp": "0x48c18ff658"
+        },
+        "FMT_CALL": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "expected": "0x48c18ff690",
+          "rsp": "0x48c18ff5d0"
+        },
+        "PAD_ENTRY": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        },
+        "TAIL_READY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff4e0"
+        },
+        "WRITER_ENTRY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        }
+      }
+    },
+    {
+      "value": "0x80",
+      "checks": {
+        "receiver_preserved": true,
+        "formatter_preserved": true,
+        "text_preserved": true,
+        "length_preserved": true,
+        "entry_rsp_alignment": true,
+        "tail_body_alignment": true,
+        "helper_gpr_preserved": true,
+        "helper_xmm_preserved": true
+      },
+      "boundary_values": {
+        "FMT_BEGIN": {
+          "receiver": "0x48c18ff690",
+          "rsp": "0x48c18ff658"
+        },
+        "FMT_CALL": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "expected": "0x48c18ff690",
+          "rsp": "0x48c18ff5d0"
+        },
+        "PAD_ENTRY": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        },
+        "TAIL_READY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff4e0"
+        },
+        "WRITER_ENTRY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        }
+      }
+    },
+    {
+      "value": "0xff",
+      "checks": {
+        "receiver_preserved": true,
+        "formatter_preserved": true,
+        "text_preserved": true,
+        "length_preserved": true,
+        "entry_rsp_alignment": true,
+        "tail_body_alignment": true,
+        "helper_gpr_preserved": true,
+        "helper_xmm_preserved": true
+      },
+      "boundary_values": {
+        "FMT_BEGIN": {
+          "receiver": "0x48c18ff690",
+          "rsp": "0x48c18ff658"
+        },
+        "FMT_CALL": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "expected": "0x48c18ff690",
+          "rsp": "0x48c18ff5d0"
+        },
+        "PAD_ENTRY": {
+          "fmt": "0x48c18ff600",
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        },
+        "TAIL_READY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff4e0"
+        },
+        "WRITER_ENTRY": {
+          "receiver": "0x48c18ff690",
+          "text": "0x48c18ff5be",
+          "len": "0x2",
+          "rsp": "0x48c18ff578"
+        }
+      }
+    }
+  ],
+  "mismatch_count": 0,
+  "first_bad_boundary": null,
+  "target_exit": 0,
+  "debugger_exit": 0,
+  "root_cause_reproduced": false,
+  "limitations": [
+    "standalone six two-digit inputs; no full node stack/concurrency/AOEM",
+    "six function bodies match modulo PC-relative relocations; not complete binary match",
+    "live breakpoint values do not reconstruct original crash history",
+    "XMM values not seeded; only observed before/after helper equality"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "required_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+  "required_age": 1,
+  "receiver_pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+  "receiver_pdb_age": 1,
+  "other_local_guid": "04567E74-E1ED-4222-8251-304097279D56",
+  "other_local_age": 6,
+  "exact_match_obtained": false,
+  "scope": "Known local node PDBs and Git handoff. No access to A original build filesystem. No replacement node PDB built."
+}

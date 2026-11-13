@@ -1,0 +1,20 @@
+{
+  "exit_code": 0,
+  "command": [
+    "rustup",
+    "run",
+    "1.94.0-x86_64-pc-windows-msvc",
+    "rustc",
+    "target\\c-call-boundary-phase3-20261113\\boundary_fixture.rs",
+    "--edition=2021",
+    "-C",
+    "opt-level=3",
+    "-C",
+    "debuginfo=2",
+    "-C",
+    "overflow-checks=yes",
+    "-o",
+    "target\\c-call-boundary-phase3-20261113\\boundary_fixture.exe"
+  ],
+  "correction": "initial forbid unsafe_code rejected no_mangle marker exports; original failure retained; no unsafe runtime block added"
+}

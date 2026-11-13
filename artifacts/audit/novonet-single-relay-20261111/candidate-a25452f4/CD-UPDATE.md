@@ -1,6 +1,19 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 22:48 Beijing: offline object/parameter comparison; C NOT READY
+## CURRENT 2026-11-13 23:09 Beijing: Phase3 isolated boundary check; C NOT READY
+
+C compared six original875/a254 function bodies, relocation-normalized bytes,
+internal branches and core unwind encodings; they agree. A standalone fixture
+matched those bodies and passed six live breakpoint cases (48 checks), including
+Formatter/receiver/text consistency and observed helper nonvolatile registers.
+No original failure reproduced; first bad boundary remains unknown. No evidence
+supports a production fix or relay release. No node/DB/TTD operation occurred.
+
+Exact a254 PDB E16D0B11-47CA-4EBF-B482-C91380CC57F8 age1 is still needed from the
+original build directory; C's known local symbols do not match. A must not send.
+[Phase3 code/ABI comparison, actual fixture values and limits](C-call-boundary-phase3-20261113/README.md).
+
+## PRIOR 2026-11-13 22:48 Beijing: offline object/parameter comparison; C NOT READY
 
 C traced PID3228 to a valid local empty String and Formatter, while the observed
 writer receiver points into saved-register slots. PID37796 similarly retains a

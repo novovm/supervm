@@ -1,0 +1,17 @@
+[
+  {
+    "file": "boundary-check-private.log",
+    "bytes": 19230,
+    "sha256": "c874910f817b7cf8ac5ee732d43194ca44f84608d5bd5e4e1f44eff2993605fd"
+  },
+  {
+    "file": "build-private.log",
+    "bytes": 856,
+    "sha256": "370afa1d353d0e1afc40be0d40733d0cb69a39955a54cbf1c182fdf21f8a2ee1"
+  },
+  {
+    "file": "build2-private.log",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]
