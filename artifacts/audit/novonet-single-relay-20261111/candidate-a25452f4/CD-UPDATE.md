@@ -1,6 +1,15 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13: C AOEM-only existing recovery under observation
+## CURRENT 2026-11-13 08:08 Beijing: C NOT READY; new AOEM run exited
+
+C's isolated AOEM `9662470d` task exited at 08:07:32 Beijing with node exit
+code 1. Stderr reports a `novovm-native-tick` IndexMap out-of-bounds panic.
+The read-only observer ended with no node or C UDP listeners; it did **not**
+time out. Preserve this failure and do not use the earlier C READY to send an
+A→B→C→D object. Do not silently restart C or re-arm an observer. See
+[the C terminal result](C-source-investigation-20261112/C-AOEM966-controlled-20261113/README.md).
+
+## PRIOR 2026-11-13: C AOEM-only existing recovery under observation
 
 C used the unchanged a254 node executable, original database, protected
 identity and network config with the newly built AOEM `9662470d` Fullmax
