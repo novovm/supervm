@@ -1,0 +1,18 @@
+{
+  "checks": {
+    "original_database_required": true,
+    "existing_only": true,
+    "node_runtime_bound": true,
+    "hard_debugger_bound": true,
+    "memory_bound": true,
+    "controls_before_node": true,
+    "private_dump": true,
+    "prior_exit_required": true,
+    "existing_ifeo_rejected": true,
+    "no_automatic_retry": true,
+    "remove_own_flags_finally": true,
+    "new_task_only": true,
+    "no_relay_ready": true
+  },
+  "scope": "script contract checks only; live pageheap controls pending"
+}
