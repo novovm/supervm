@@ -1,6 +1,20 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 16:24 Beijing: C PageHeap run ended; fault unresolved
+## CURRENT 2026-11-13 16:45 Beijing: original-workflow crash capture prepared
+
+C prepared a single corrected PageHeap capture with the original unmodified
+Watch-Relay/reader and7200-second observation. The node's bounded122minutes
+covers startup/window plus shutdown margin; debugger124minutes. The old progress
+file is archived and hash-verified before its original path is reused.21local
+preparation checks passed; live LocalService controls/full-dump capture and
+Windows UAC remain pending. Original a254/AOEM966, DB existing and identities
+are retained. No new node or observer has yet started at this checkpoint.
+
+**Diagnostic only: C NOT relay READY. A must not send an object.** No A/B/D
+operation is requested. C owns reproduction/source diagnosis, with no automatic
+retry. [Exact scripts, bounds and live gates](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/README.md).
+
+## PRIOR 2026-11-13 16:24 Beijing: C PageHeap run ended; fault unresolved
 
 Scope correction from the user's original scenario: **C has already crashed
 repeatedly**, and observation attempts have repeatedly failed. The30-minute

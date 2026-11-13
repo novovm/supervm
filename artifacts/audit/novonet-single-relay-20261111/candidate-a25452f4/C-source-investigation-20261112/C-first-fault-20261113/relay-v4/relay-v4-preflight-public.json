@@ -1,0 +1,94 @@
+{
+  "node_started": false,
+  "root_cause_fixed": false,
+  "registry_changed": false,
+  "utc": "2026-11-13T08:43:33.8883824Z",
+  "checks": [
+    {
+      "name": "AST FirstFaultWithRelayOwner-v4.ps1",
+      "pass": true
+    },
+    {
+      "name": "AST Start-FirstFaultWithRelay-v4.ps1",
+      "pass": true
+    },
+    {
+      "name": "node122minutes",
+      "pass": true
+    },
+    {
+      "name": "debugger124minutes",
+      "pass": true
+    },
+    {
+      "name": "original_progress_path",
+      "pass": true
+    },
+    {
+      "name": "existing_only",
+      "pass": true
+    },
+    {
+      "name": "correct_dump_paths",
+      "pass": true
+    },
+    {
+      "name": "dump_completion_check",
+      "pass": true
+    },
+    {
+      "name": "dump_header_and_full_flag",
+      "pass": true
+    },
+    {
+      "name": "memory_disk_bound",
+      "pass": true
+    },
+    {
+      "name": "original_observer_two_hours",
+      "pass": true
+    },
+    {
+      "name": "archive_before_node_start",
+      "pass": true
+    },
+    {
+      "name": "fresh_progress_gate",
+      "pass": true
+    },
+    {
+      "name": "observer_pid_identity",
+      "pass": true
+    },
+    {
+      "name": "bounded_observer_stop",
+      "pass": true
+    },
+    {
+      "name": "diagnostic_not_relay_ready",
+      "pass": true
+    },
+    {
+      "name": "both_ifeo_rejected",
+      "pass": true
+    },
+    {
+      "name": "old_diagnostic_untouched",
+      "pass": true
+    },
+    {
+      "name": "original_watch_sha",
+      "pass": true
+    },
+    {
+      "name": "original_reader_sha",
+      "pass": true
+    },
+    {
+      "name": "actual_full_memory_dump_validation",
+      "pass": true
+    }
+  ],
+  "live_pageheap_controls_pending": true,
+  "observer_started": false
+}

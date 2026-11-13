@@ -172,3 +172,9 @@ a software memory-safety error or an execution-timing trigger remain hypotheses;
 none is selected as root cause. A/D not crashing does not clear shared code.
 C remains the source-diagnosis owner. Next capture must use the corrected
 full-dump gate; the current authorization was not used for another launch.
+
+## Follow-up prepared after scenario comparison
+
+[One-shot v4 capture using the original observer and a full two-hour window](relay-v4/README.md)
+is prepared and locally checked. It still requires Windows UAC and fresh live
+PageHeap/dump controls; it has not launched at this checkpoint. C remains NOT READY.
