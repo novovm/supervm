@@ -1,0 +1,11 @@
+{
+  "collected_utc": "2026-11-13T08:23:18.9203696Z",
+  "node_processes": [],
+  "debugger_processes": [],
+  "c_listener_endpoints": [],
+  "node_ifeo_present": false,
+  "control_ifeo_present": false,
+  "root_cause_fixed": false,
+  "relay_ready": false,
+  "read_only": true
+}

@@ -1,0 +1,35 @@
+{
+  "pid": 37796,
+  "scope": "Only code bytes actually present in original minidump; absent bytes are not verified",
+  "code_checks": [
+    {
+      "function": "string_write_str",
+      "rva": "0x1e4cc60",
+      "length": 97,
+      "captured_in_dump": false,
+      "matches_fixed_executable": null
+    },
+    {
+      "function": "lower_hex",
+      "rva": "0x1e502f0",
+      "length": 112,
+      "captured_in_dump": false,
+      "matches_fixed_executable": null
+    },
+    {
+      "function": "format_write",
+      "rva": "0x1e52459",
+      "length": 128,
+      "captured_in_dump": false,
+      "matches_fixed_executable": null
+    },
+    {
+      "function": "pad_integral",
+      "rva": "0x1e52f00",
+      "length": 247,
+      "captured_in_dump": false,
+      "matches_fixed_executable": null
+    }
+  ],
+  "root_cause_fixed": false
+}

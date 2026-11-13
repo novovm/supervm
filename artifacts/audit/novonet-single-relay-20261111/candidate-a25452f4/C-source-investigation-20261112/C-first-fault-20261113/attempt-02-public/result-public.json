@@ -1,0 +1,8 @@
+{
+  "relay_ready": false,
+  "utc": "2026-11-13T04:14:52.6133722Z",
+  "start": "existing",
+  "status": "TARGET_EXIT",
+  "root_cause_fixed": false,
+  "no_retry": true
+}

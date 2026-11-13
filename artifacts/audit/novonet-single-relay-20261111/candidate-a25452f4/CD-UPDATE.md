@@ -1,6 +1,25 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 11:56 Beijing: C bounded PageHeap diagnosis, NOT relay READY
+## CURRENT 2026-11-13 16:24 Beijing: C PageHeap run ended; fault unresolved
+
+The single C diagnostic node PID15012 exited at12:14:52.197 Beijing after
+about30minutes8seconds. The original CDB process-exit event confirms **target
+exit0**, separately from debugger/coordinator exit0. No first AV/verifier stop
+was recorded after diagnostic readiness. Classification: bounded non-reproduction,
+**not a fix**. The known v2 dump-path limitation and corrected isolated v3 dump
+test are preserved. Four exact-source FFI descriptor layouts match; this does
+not establish memory safety or the reason A/D have not reproduced the fault.
+
+Owner end checks confirm protected identity/network files unchanged and original
+DB `existing`. Fresh read-only collection confirms no node/debugger/listeners
+and no residual PageHeap IFEO keys. Raw logs/dumps/config remain private;
+original failures remain intact. **C is NOT READY. A must not send a double-relay
+object. No observer or node has been restarted.** C retains source diagnosis;
+no A/B/D action is requested by this result.
+
+[Original public terminal evidence, actual exit event, limits and remaining gaps](C-source-investigation-20261112/C-first-fault-20261113/README.md).
+
+## PRIOR 2026-11-13 11:56 Beijing: C bounded PageHeap diagnosis, NOT relay READY
 
 C started one instrumented original-node run at03:44:44Z (PID15012/CDB37556),
 using a254 + AOEM966 and the original `existing` database/identity. Actual

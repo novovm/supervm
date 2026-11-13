@@ -1,0 +1,11 @@
+{
+  "host_revision": "a25452f4",
+  "runtime_revision": "9662470d",
+  "scope": "Four actual FFI descriptors only; size/alignment/field offsets on this Windows x86_64 compiler. Does not prove pointer lifetimes or runtime memory safety.",
+  "compiler": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "compile_exit": 0,
+  "test_exit": 0,
+  "output": "AoemCreateOptionsV1 size=16 align=4 fields=4\nAoemOpV2 size=64 align=8 fields=10\nAoemExecV2Result size=24 align=8 fields=4\nAoemMldsaVerifyItemV1 size=56 align=8 fields=7\n",
+  "source_sha256": "19c0cfcc8d0240e61b121f418389166bef1b74cadc9f2ba8f9befb02874ac1ee",
+  "root_cause_fixed": false
+}
