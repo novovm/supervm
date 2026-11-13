@@ -1,0 +1,13 @@
+{
+  "utc": "2026-11-13T00:00:44.4037907Z",
+  "elapsed_seconds": 124.8,
+  "node_alive": true,
+  "task_state": "Running",
+  "task_result": 267009,
+  "port_count": 2,
+  "chain_id": 91129655606029,
+  "height": 1,
+  "head": null,
+  "execution_failures": 0,
+  "recovery_in_progress": false
+}

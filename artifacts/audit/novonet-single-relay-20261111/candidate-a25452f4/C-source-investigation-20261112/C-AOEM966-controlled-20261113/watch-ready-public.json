@@ -1,0 +1,11 @@
+{
+  "status": "C_AOEM966_OBSERVATION_RUNNING",
+  "host": "C",
+  "utc": "2026-11-12T23:58:39.5630472Z",
+  "observer_pid": 3972,
+  "node_pid": 15612,
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "loaded_aoem_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "maximum_wait_seconds": 7200,
+  "read_only": true
+}
