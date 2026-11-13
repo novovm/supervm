@@ -1,6 +1,20 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 17:44 Beijing: known fixes pushed; native AV remains unresolved
+## CURRENT 2026-11-13 18:36 Beijing: C traces pointer mismatch; no native fix claimed
+
+C independently confirmed exception/thread contexts and extended the captured
+unwind-code comparison. Saved argument pointers differ from the crash-time
+RSI; the first writer is still unknown. Official instruction-history tools
+were built and a separate faulty-pointer fixture was checked. Recording UAC
+returned cancelled: no trace, node restart or observer launch. A corrected
+aligned-fixture entry is prepared but has not run.
+The initial unaligned fixture failed as Rust abort and is preserved; the
+separate aligned fixture passes its direct clean/AV controls, not TTD yet.
+
+**C NOT READY; A must not send.** Original DB/identity/failures remain.
+[Pointer evidence, tool provenance and exact limitations](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/pointer-followup/README.md).
+
+## PRIOR 2026-11-13 17:44 Beijing: known fixes pushed; native AV remains unresolved
 
 1f4bd204 contains the snapshot deadline-latch fix and diagnostic DateTime
 cleanup correction, with full node check/strict Clippy and scoped regressions.

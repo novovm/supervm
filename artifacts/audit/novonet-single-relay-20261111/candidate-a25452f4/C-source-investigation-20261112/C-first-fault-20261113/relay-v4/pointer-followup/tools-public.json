@@ -1,0 +1,75 @@
+{
+  "recording_verified": false,
+  "recorder_version": "1.11.611.0",
+  "sample_build_exit": 0,
+  "fixture_build_exit": 0,
+  "node_started": false,
+  "official_sample_commit": "0fbbe53481ca11f41548c24df771595e8fba8ad7",
+  "sample_url": "https://github.com/microsoft/WinDbg-Samples/tree/master/TTD/ReplayApi/TraceDebugger",
+  "replay_verified": false,
+  "recorder_signature": "Valid",
+  "utc": "2026-11-13T10:34:43.7615560Z",
+  "files": [
+    {
+      "sha256": "b0b9f7f9a9ff526f81f491311af931eb69e2a8b0affdca49e864195eca6f89ce",
+      "bytes": 7203028,
+      "path": "TTD.msixbundle"
+    },
+    {
+      "sha256": "c7c8118e7085f0cae3aa47dd53b94abfca1b4f4a49b3aa85869698cd25798ca1",
+      "bytes": 2990965,
+      "path": "TTD-x64.msix"
+    },
+    {
+      "sha256": "652868a0f5b20430c4fe9da3ef004c946af90264c5ca0e61f482a1ac48ae201b",
+      "bytes": 104248,
+      "path": "x64\\TTD.exe"
+    },
+    {
+      "sha256": "b9c4e12cb5062cc649552c80fc02338a9363ad9cf2bd37da89d76c864f7c987d",
+      "bytes": 1169208,
+      "path": "x64\\TTDReplay.dll"
+    },
+    {
+      "sha256": "2b515518d4a91108580a61099e17c3a3ee159687dbc0a9247807e4096209b3b7",
+      "bytes": 3491680,
+      "path": "x64\\TTDReplayCPU.dll"
+    },
+    {
+      "sha256": "c906b99c02926ce089e1ed1bd54f1a0abf83458ddce4cf9bbc62403d7aa240bd",
+      "bytes": 75561,
+      "path": "api-0.9.5.nupkg"
+    },
+    {
+      "sha256": "0c5051995f59327c78bca0dc2d71032efae29407829089f12b755633a159bfc4",
+      "bytes": 313856,
+      "path": "samples\\TTD\\ReplayApi\\TraceDebugger\\out\\x64-Release\\TraceDebugger.exe"
+    },
+    {
+      "sha256": "8dc31fa0a54d98296ba7036d13127f555138e2c7190f35f1983c1bd069be1ca7",
+      "bytes": 153600,
+      "path": "ttd-pointer-control.exe"
+    },
+    {
+      "sha256": "e7c938b386e5026a84cd9ef4ebf3c509ff1ca76fdae2e834a4e3fafedadfa116",
+      "bytes": 2413,
+      "path": "Run-IsolatedTtdControl.ps1"
+    },
+    {
+      "path": "ttd-pointer-control-aligned.rs",
+      "bytes": 1548,
+      "sha256": "6331d139f1c3be2deddbb8b500fb527fabb751cc49dd4c1fc73659542640a649"
+    },
+    {
+      "path": "ttd-pointer-control-aligned.exe",
+      "bytes": 153600,
+      "sha256": "9c7848f47daced72a3202ce9970b3931ba3f89318d707f0926a9b0498bf3c595"
+    },
+    {
+      "path": "Run-IsolatedTtdControl-v2.ps1",
+      "bytes": 2429,
+      "sha256": "186302271351c61a0524c747ba5639479d88b0ab35b5fd41a7bf4708b5dcd6d3"
+    }
+  ],
+  "recording_uac": "cancelled"
+}

@@ -1,0 +1,23 @@
+{
+  "utc": "2026-11-13T10:36:05.285290+00:00",
+  "scope": "corrected isolated control, without TTD; not node reproduction",
+  "compile_exit": 0,
+  "cases": [
+    {
+      "mode": "clean",
+      "exit_code_unsigned": 0,
+      "expected_exit": 0,
+      "stdout": "CONTROL_SLOT=0x7ff672805180 WRITER=0x7ff6727e2b00 CONSUMER=0x7ff6727e2b50\nCONTROL_CLEAN_OK\n",
+      "stderr": "",
+      "passed": true
+    },
+    {
+      "mode": "bad",
+      "exit_code_unsigned": 3221225477,
+      "expected_exit": 3221225477,
+      "stdout": "CONTROL_SLOT=0x7ff672805180 WRITER=0x7ff6727e2b00 CONSUMER=0x7ff6727e2b50\n",
+      "stderr": "",
+      "passed": true
+    }
+  ]
+}

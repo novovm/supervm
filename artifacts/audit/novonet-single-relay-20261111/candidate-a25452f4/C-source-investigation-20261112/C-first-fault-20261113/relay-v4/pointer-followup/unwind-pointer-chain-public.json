@@ -1,0 +1,100 @@
+{
+  "module_names": [
+    "advapi32.dll",
+    "amsi.dll",
+    "aoem_ffi.dll",
+    "bcrypt.dll",
+    "bcryptprimitives.dll",
+    "clbcatq.dll",
+    "combase.dll",
+    "crypt32.dll",
+    "cryptbase.dll",
+    "dhcpcsvc.dll",
+    "dhcpcsvc6.dll",
+    "dnsapi.dll",
+    "dpapi.dll",
+    "dsparse.dll",
+    "fastprox.dll",
+    "gdi32.dll",
+    "gdi32full.dll",
+    "imm32.dll",
+    "iphlpapi.dll",
+    "kernel.appcore.dll",
+    "kernel32.dll",
+    "kernelbase.dll",
+    "mpoav.dll",
+    "msvcp140.dll",
+    "msvcp_win.dll",
+    "msvcrt.dll",
+    "mswsock.dll",
+    "novovm-node.exe",
+    "nsi.dll",
+    "ntdll.dll",
+    "ole32.dll",
+    "oleaut32.dll",
+    "profapi.dll",
+    "rpcrt4.dll",
+    "sechost.dll",
+    "shlwapi.dll",
+    "ucrtbase.dll",
+    "user32.dll",
+    "userenv.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "verifier.dll",
+    "version.dll",
+    "wbemcomn.dll",
+    "wbemprox.dll",
+    "wbemsvc.dll",
+    "win32u.dll",
+    "winmm.dll",
+    "winnsi.dll",
+    "ws2_32.dll"
+  ],
+  "unwind_code_matches": [
+    {
+      "rva": "0x1fe10",
+      "length": 1956,
+      "captured": true,
+      "matches_disk": true
+    },
+    {
+      "rva": "0x1f440",
+      "length": 544,
+      "captured": true,
+      "matches_disk": true
+    }
+  ],
+  "selected_pointer_fields": {
+    "fault_argument_slot": {
+      "address": "0x6975aec1a8",
+      "value": "0x6975aec7d8"
+    },
+    "caller_argument_slot": {
+      "address": "0x6975aec268",
+      "value": "0x6975aec7d8"
+    },
+    "retained_group_low": {
+      "address": "0x6975aec7d8",
+      "value": "0x6975aec7a0"
+    },
+    "retained_group_high": {
+      "address": "0x6975aec7e0",
+      "value": "0x6975aec7a8"
+    },
+    "retained_group_context_pointers": {
+      "address": "0x6975aec7e8",
+      "value": "0x0"
+    },
+    "actual_rsi_field_0": {
+      "address": "0x6975aec780",
+      "value": "0x0"
+    },
+    "actual_rsi_context_pointers": {
+      "address": "0x6975aec790",
+      "value": "0x1"
+    }
+  },
+  "scope": "Crash-time values only; neither historical values nor first writer proven",
+  "first_corrupting_write_identified": false
+}

@@ -1,0 +1,18 @@
+{
+  "exception_thread": 15852,
+  "exception_context": {
+    "rax": "0x1",
+    "rsp": "0x6975aec0c0",
+    "rbp": "0x6975aec780",
+    "rsi": "0x6975aec780",
+    "rip": "0x7ffce316ff3f"
+  },
+  "thread_context": {
+    "rax": "0x1",
+    "rsp": "0x6975aec0c0",
+    "rbp": "0x6975aec780",
+    "rsi": "0x6975aec780",
+    "rip": "0x7ffce316ff3f"
+  },
+  "contexts_match": true
+}

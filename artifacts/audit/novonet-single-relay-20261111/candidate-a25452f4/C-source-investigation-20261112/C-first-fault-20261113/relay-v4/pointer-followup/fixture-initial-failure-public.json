@@ -1,0 +1,22 @@
+{
+  "utc": "2026-11-13T10:35:15.929101+00:00",
+  "scope": "isolated fixture validation only",
+  "cases": [
+    {
+      "mode": "clean",
+      "exit_code_unsigned": 0,
+      "expected_exit": 0,
+      "stdout": "CONTROL_SLOT=0x7ff6ecfb5180 WRITER=0x7ff6ecf92b00 CONSUMER=0x7ff6ecf92b50\nCONTROL_CLEAN_OK\n",
+      "stderr": "",
+      "passed": true
+    },
+    {
+      "mode": "bad",
+      "exit_code_unsigned": 3221226505,
+      "expected_exit": 3221225477,
+      "stdout": "CONTROL_SLOT=0x7ff6ecfb5180 WRITER=0x7ff6ecf92b00 CONSUMER=0x7ff6ecf92b50\n",
+      "stderr": "\nthread 'main' (35996) panicked at target/c-first-fault-20261113/ttd-tools/ttd-pointer-control.rs:20:7:\nunsafe precondition(s) violated: ptr::write_volatile requires that the pointer argument is aligned\n\nThis indicates a bug in the program. This Undefined Behavior check is optional, and cannot be relied on for safety.\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\nthread caused non-unwinding panic. aborting.\n",
+      "passed": false
+    }
+  ]
+}
