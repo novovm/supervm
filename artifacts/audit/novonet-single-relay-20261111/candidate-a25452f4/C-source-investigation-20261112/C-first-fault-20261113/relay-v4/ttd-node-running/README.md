@@ -1,4 +1,6 @@
-# C original node: bounded instruction recording is running
+# C original node: bounded instruction recording start (historical)
+
+Final outcome: [recording ended with injected recorder AV; native root cause remains open](../ttd-node-ended/README.md). Do not treat this historical start as current readiness.
 
 Actual start: 2026-11-13 11:19:58Z (19:19:58 Beijing). Node PID39992,
 LocalService SID S-1-5-19, a254 executable and AOEM966 hashes match the pinned
@@ -44,3 +46,15 @@ replay its guest registers/instructions and reverse watch the relevant pointer
 writes. If it is absent or outside the retained range, report unresolved; do not
 turn a negative bounded run into a stability signoff or automatically restart.
 Double-relay remains blocked. Git notification is not A acknowledgment.
+
+## Finalized-trace reader
+
+Inspect-FinishedRecording.py refuses a live or unfinalized ring: it requires the
+specific node kernel-handle exit, recorder normal exit, no remaining node and
+unchanged original identity/configuration. It validates pinned offline readers,
+trace PID, retained lifetime and exception count; selected fault PCs must agree
+with replayed guest RIP. Exception operands alone are not treated as proof.
+Any write origin still requires further reverse-watch analysis; the reader never
+marks a root cause fixed, starts a process under test, or retries a node.
+The source uses fixed local paths for this one captured process, not a generic
+run command. Microsoft sample terms are in LICENSE-Microsoft.txt.

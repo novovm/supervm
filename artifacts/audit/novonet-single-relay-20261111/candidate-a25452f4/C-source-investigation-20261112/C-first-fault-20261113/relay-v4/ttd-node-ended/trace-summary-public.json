@@ -1,0 +1,35 @@
+{
+  "utc": "2026-11-13T12:48:39.891478+00:00",
+  "node": {
+    "pid": 39992,
+    "kernel_handle_exit": true,
+    "relay_ready": false,
+    "forced": false,
+    "reason": "natural_exit",
+    "root_cause_fixed": false,
+    "exit_code": -1073741819,
+    "exit_hex": "0xc0000005",
+    "utc": "2026-11-13T12:48:17.6523272Z"
+  },
+  "owner": {
+    "relay_ready": false,
+    "root_cause_fixed": false,
+    "exit_code": 0,
+    "utc": "2026-11-13T12:48:17.6590483Z"
+  },
+  "recorder": {
+    "utc": "2026-11-13T12:48:18.8945899Z",
+    "exit_code": 0,
+    "not_node_exit_code": true
+  },
+  "trace_sha256": "e978ef1e47913a04003962280382f08bde40fd2af8b4a233a1d2faf61a7dbea8",
+  "trace_bytes": 2147483648,
+  "retained_lifetime": "1DD62F6:0-1EC7E2D:0",
+  "ring_tail_only": true,
+  "exception_count": 0,
+  "exceptions": [],
+  "fault_count": 0,
+  "first_writer_identified": false,
+  "root_cause_fixed": false,
+  "relay_ready": false
+}

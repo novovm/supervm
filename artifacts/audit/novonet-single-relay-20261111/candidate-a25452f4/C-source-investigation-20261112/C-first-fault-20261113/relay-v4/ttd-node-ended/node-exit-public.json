@@ -1,0 +1,11 @@
+{
+  "pid": 39992,
+  "kernel_handle_exit": true,
+  "relay_ready": false,
+  "forced": false,
+  "reason": "natural_exit",
+  "root_cause_fixed": false,
+  "exit_code": -1073741819,
+  "exit_hex": "0xc0000005",
+  "utc": "2026-11-13T12:48:17.6523272Z"
+}

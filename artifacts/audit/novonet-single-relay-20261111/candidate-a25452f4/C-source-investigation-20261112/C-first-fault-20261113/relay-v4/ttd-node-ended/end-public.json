@@ -1,0 +1,9 @@
+{
+  "identity_network_config_unchanged": true,
+  "task_state": "Ready",
+  "root_cause_fixed": false,
+  "relay_ready": false,
+  "task_exit": 0,
+  "nodes": [],
+  "utc": "2026-11-13T12:48:19.6771188Z"
+}

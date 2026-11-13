@@ -1,0 +1,9 @@
+{
+  "utc": "2026-11-13T12:54:03.6119699Z",
+  "node_pid": 39992,
+  "files": [],
+  "root_cause_fixed": false,
+  "relay_ready": false,
+  "exit_code": 1,
+  "error": "Unexpected source time; preserve"
+}

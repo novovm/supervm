@@ -1,0 +1,21 @@
+{
+  "utc": "2026-11-13T12:55:05.2699150Z",
+  "node_pid": 39992,
+  "files": [
+    {
+      "bytes": 7159231,
+      "present": true,
+      "name": "novovm-node.exe.39992.dmp",
+      "sha256": "a2c1aa0c63bb70f2b5f157136c67caf80b04dc54f46e3e01df7d3e19df18b1c4"
+    },
+    {
+      "bytes": 52666,
+      "present": true,
+      "name": "Report.wer",
+      "sha256": "84a56f4e8da876c90d95e6ec36c8f372a03f9146b636679f5926e381a7a80b86"
+    }
+  ],
+  "root_cause_fixed": false,
+  "relay_ready": false,
+  "exit_code": 0
+}

@@ -1,0 +1,20 @@
+{
+  "events": [
+    {
+      "record_id": 546717,
+      "event_id": 1001,
+      "utc": "2026-11-13T12:48:17.2489403Z"
+    },
+    {
+      "record_id": 546716,
+      "event_id": 1000,
+      "utc": "2026-11-13T12:48:13.1807730Z"
+    }
+  ],
+  "report_id": "fe5181e1-7c74-4701-8aaf-1844607281a3",
+  "module": "TTDRecordCPU.dll",
+  "version": "1.11.611.0",
+  "rva": "0xdeec8",
+  "code": "0xc0000005",
+  "pid": 39992
+}

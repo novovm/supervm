@@ -1,6 +1,17 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 19:24 Beijing: C node TTD recording active; no relay
+## CURRENT 2026-11-13 20:57 Beijing: C recording ended; injected recorder AV, NOT READY
+
+C PID39992 exited0xc0000005 at20:48:17, not forced. Owner/recorder/coordinator
+exited0 separately. WER and actual dump locate the fault in injected
+TTDRecordCPU.dll+0xdeec8: RAX8, read0xc6. Finalized2GiB guest ring opens but has
+zero guest exception events; the recorder pointer slot is absent from captured
+memory. This is not proof that the original NOVOVM failure was reproduced or
+fixed; first writer remains unknown. Original DB/identity preserved, no restart.
+**C NOT READY; A must not send.** No double relay and no automatic diagnostic rerun.
+[Actual exits, fault-location checks, recording limits and preserved failures](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/ttd-node-ended/README.md).
+
+## PRIOR 2026-11-13 19:24 Beijing: C node TTD recording active; no relay
 
 PID39992 is running under original LocalService, a254/AOEM966 and existing DB.
 Administrator attach was verified before its suspended main thread resumed at
