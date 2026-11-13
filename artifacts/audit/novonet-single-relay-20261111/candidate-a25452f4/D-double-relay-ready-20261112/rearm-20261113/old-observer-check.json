@@ -1,0 +1,36 @@
+{
+  "utc": "2026-11-13T00:20:09.0713024Z",
+  "previous_original_identity_present": false,
+  "previous_launch": {
+    "created_utc": "2026-11-12T14:42:00.3256783Z",
+    "host_id": "D",
+    "script_raw_sha256": "03262a60ae3306ee439e7a0ac3851d8a8a29020275c7c59e7aa0057b36326036",
+    "utc": "2026-11-12T14:42:00.3390463Z",
+    "reader_normalized_lf_sha256": "ccc8f9592a9fb12d68531dc2ace804efb544b9921e4f43c51147f2de57cbcd44",
+    "wrapper_pid": 14184,
+    "script_normalized_lf_sha256": "d0dce2979cb51c39edf545637d276a80d56b921bfd194130842b3a475df966d9",
+    "reader_raw_sha256": "12f7ba022d4d5d8debabed8fa7e59ab8616bfc2e9f664953e7f38f04fa581125",
+    "command": "-NoProfile -File D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Watch-Relay.ps1 -HostId D -Source a25452f4c49be37cd984e650f2079642e6c273b3 -NodeSha256 1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d -WorkName novonet-observation-a25452f4-20261112 -MaximumWaitSeconds 7200 -EvidenceRoot D:\\WEB3_AI\\SUPERVM\\target\\d-a254-double-observer-20261112/evidence",
+    "helper_pid": 2688
+  },
+  "same_purpose_running_count": 0,
+  "old_evidence_preserved": true,
+  "previous_result": {
+    "host": "D",
+    "utc": "2026-11-12T16:42:02.8850185Z",
+    "snapshots": 0,
+    "maximum_wait_seconds": 7200,
+    "terminal_observed": false,
+    "wait_expired": true,
+    "capture_limit_reached": false,
+    "node_mutated": false,
+    "business_receipt": false
+  },
+  "previous_exit": {
+    "host_id": "D",
+    "helper_pid": 2688,
+    "utc": "2026-11-12T16:42:02.9229586Z",
+    "exit_code": 0
+  },
+  "stop_performed": false
+}
