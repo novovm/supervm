@@ -1,0 +1,98 @@
+{
+  "node": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-a25452f4-windows-x86_64\\bin\\novovm-node.exe",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "runtime_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "runtime_root": "C:\\ProgramData\\NOVOVM\\releases\\aoem-9662470d-c-20261113\\aoem",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "original_config": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\a254-aoem966-backtrace-20261113\\run.json",
+  "progress": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-a25452f4-20261112\\logs\\progress.json",
+  "inputs": [
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-ttd-node-20261113\\NodeOwnerAttach.ps1",
+      "sha256": "5038622f2141521d53c39b0dab18ce959393da8036311c92f1ddf721ca9ae84f",
+      "bytes": 8826
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-ttd-node-20261113\\Start-TtdNodeAttachOnce.ps1",
+      "sha256": "64a6c651c6e7a02a65a53b7ec2139d04fd41443ece54e6f367fe5311f8c977a7",
+      "bytes": 15362
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-ttd-node-20261113\\KernelProcessIdentity.ps1",
+      "sha256": "0f7fa70cc928a92252801e4a93385e8e237a856066a25c8e3c4141ca7bb0ce52",
+      "bytes": 1622
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-ttd-node-20261113\\attach-control-03\\replay-public.json",
+      "sha256": "fc0f5276085977e5241bc1136426d9289e7df3733fd60dae24263efede670b41",
+      "bytes": 1094
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-ttd-node-20261113\\attach-control-03\\result-public.json",
+      "sha256": "ddcb5bc87838a85019e1ca4678c6d359a82c331f72f01341678c4814a20f94dd",
+      "bytes": 355
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-ttd-node-20261113\\attach-control-03\\complete-public.json",
+      "sha256": "2e1ef735a39c7133539b7a9e4ffdc9d89425d71ea312594361ddbd0fe8ab5ab4",
+      "bytes": 122
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Watch-Relay.ps1",
+      "sha256": "d0dce2979cb51c39edf545637d276a80d56b921bfd194130842b3a475df966d9",
+      "bytes": 5476
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Read-RelayProgress.ps1",
+      "sha256": "ccc8f9592a9fb12d68531dc2ace804efb544b9921e4f43c51147f2de57cbcd44",
+      "bytes": 3371
+    }
+  ],
+  "recorder_files": [
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTD.exe",
+      "sha256": "652868a0f5b20430c4fe9da3ef004c946af90264c5ca0e61f482a1ac48ae201b",
+      "bytes": 104248
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDInject.exe",
+      "sha256": "0e479eadb5dce6f7d80f1cfb28b0bafe4f425f38de5ba19dc5f1c5a8c5e59e7f",
+      "bytes": 300856
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDLiveRecorder.dll",
+      "sha256": "fd4e49468c6b6857979c5fd85d206679ea9e72af9853e8f4f25f8aae5c94c727",
+      "bytes": 59192
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDLoader.dll",
+      "sha256": "f93acd12f2273f8089f9d6609dc7a61769d16e6d1f0f81e19f4ec7ebbebfdab6",
+      "bytes": 51000
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDRecord.dll",
+      "sha256": "108e2805e26be901b9d466e99feee7adce44f7b41d145c03e58e1e60bd5c8f2b",
+      "bytes": 853816
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDRecordCPU.dll",
+      "sha256": "4db67187cd5c6b72b3db9bf6943e868a40452d1c84dbb2e09fc33ba67f4a1aaf",
+      "bytes": 1517368
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDRecordUI.dll",
+      "sha256": "fcb0cdbdd50331d6e5d9c5c7bf3cce4de194cdf886ec580cbaa51ffb5e97b7a4",
+      "bytes": 67424
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDReplay.dll",
+      "sha256": "b9c4e12cb5062cc649552c80fc02338a9363ad9cf2bd37da89d76c864f7c987d",
+      "bytes": 1169208
+    },
+    {
+      "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\ttd-tools\\x64\\TTDReplayCPU.dll",
+      "sha256": "2b515518d4a91108580a61099e17c3a3ee159687dbc0a9247807e4096209b3b7",
+      "bytes": 3491680
+    }
+  ]
+}

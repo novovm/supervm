@@ -1,0 +1,7 @@
+{
+  "utc": "2026-11-13T11:05:08.8779618Z",
+  "relay_ready": false,
+  "no_retry": true,
+  "root_cause_fixed": false,
+  "error": "LocalService control not completed; node not approved"
+}

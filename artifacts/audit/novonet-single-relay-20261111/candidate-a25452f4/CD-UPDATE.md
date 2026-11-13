@@ -1,6 +1,18 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 18:53 Beijing: isolated reverse-write tracing verified
+## CURRENT 2026-11-13 19:19 Beijing: LocalService attach/reverse-write control passed
+
+LocalService recorder rejected recording with 0x80070005; original node was not
+started. C is validating elevated **attach** to an isolated LocalService child,
+without changing node privileges. Two control harness failures (suspended-child
+identity read and cleanup signed exit code) are preserved. V3 cleaned the exact
+residual fixture, recorded both LocalService controls and reverse-replayed the
+first bad writer; actual guest exits 0/c0000005, coordinator 0. A bounded original
+node attach entry is prepared, not yet run. No native AV fix is claimed.
+**C NOT READY; A must not send.** No double relay or node retry has occurred.
+[Original results and corrected control sources](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/ttd-node-preflight/README.md).
+
+## PRIOR 2026-11-13 18:53 Beijing: isolated reverse-write tracing verified
 
 Fresh user UAC succeeded; both bounded isolated controls were recorded. Clean
 exit 0, bad-pointer exit 0xc0000005, coordinator exit 0. Offline replay traced

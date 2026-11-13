@@ -1,0 +1,9 @@
+{
+  "utc": "2026-11-13T11:05:08.7902046Z",
+  "guest_exit_code": null,
+  "mode": "clean",
+  "elapsed_seconds": 0.0081632,
+  "trace_exists": false,
+  "exit_code": -2147024891,
+  "reason": "recorder_exit"
+}

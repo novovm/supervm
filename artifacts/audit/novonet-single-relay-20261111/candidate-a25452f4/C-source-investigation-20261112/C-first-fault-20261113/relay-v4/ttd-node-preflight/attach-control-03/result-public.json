@@ -1,0 +1,17 @@
+{
+  "utc": "2026-11-13T11:14:07.1732375Z",
+  "results": [
+    {
+      "recorder_exit": 0,
+      "mode": "clean",
+      "exit_code": 0
+    },
+    {
+      "recorder_exit": 0,
+      "mode": "bad",
+      "exit_code": -1073741819
+    }
+  ],
+  "node_started": false,
+  "recording_mode": "administrator attach to suspended LocalService child"
+}

@@ -1,0 +1,16 @@
+{
+  "relay_ready": false,
+  "max_trace_mb": 2048,
+  "runtime_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "identity_preserved": true,
+  "node_run_seconds": 7200,
+  "owner_hard_seconds": 7320,
+  "utc": "2026-11-13T11:05:07.8469348Z",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "start": "existing",
+  "A_must_not_send": true,
+  "node_absent_before": true,
+  "pageheap_enabled": false,
+  "ring_tail_only": true,
+  "task_limit_minutes": 130
+}

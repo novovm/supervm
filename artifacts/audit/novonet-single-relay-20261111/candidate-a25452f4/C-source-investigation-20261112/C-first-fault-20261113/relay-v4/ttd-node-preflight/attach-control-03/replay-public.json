@@ -1,0 +1,31 @@
+{
+  "utc": "2026-11-13T11:14:07.568667+00:00",
+  "scope": "Isolated intentionally faulty fixture, not the NOVOVM node",
+  "reverse_write_control_verified": true,
+  "node_root_cause_fixed": false,
+  "node_started": false,
+  "bad_writer_rva": "0x2b37",
+  "fault_consumer_rva": "0x2bb4",
+  "slot_rva": "0x25180",
+  "cases": [
+    {
+      "mode": "clean",
+      "trace_bytes": 25165824,
+      "trace_sha256": "66666d2e855621a635bfb9b3623cacff5f4148bda8e420fa8cb948060d9f6c6b",
+      "pointer_after": "0x29002b508e0",
+      "pointer_before": "0x0",
+      "pointer_after_replay": "0x29002b508e0",
+      "passed": true
+    },
+    {
+      "mode": "bad",
+      "trace_bytes": 20971520,
+      "trace_sha256": "5e8720d3c42bf577e4a335fa9557f6313e08a42a1aefb67c959db17603997f22",
+      "pointer_after": "0xb8",
+      "pointer_before": "0x2678523bd90",
+      "pointer_after_replay": "0xb8",
+      "passed": true
+    }
+  ],
+  "limitation": "TTD exception Parameters reported read/0xa0, while replayed guest write instruction and RAX identify 0xb8; do not use Parameters alone as guest fault operand proof."
+}

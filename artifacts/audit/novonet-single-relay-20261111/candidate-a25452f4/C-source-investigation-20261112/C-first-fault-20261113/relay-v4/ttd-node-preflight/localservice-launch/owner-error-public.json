@@ -1,0 +1,7 @@
+{
+  "relay_ready": false,
+  "error": "LocalService recording control failed; node not started",
+  "utc": "2026-11-13T11:05:08.8014824Z",
+  "node_started": false,
+  "root_cause_fixed": false
+}
