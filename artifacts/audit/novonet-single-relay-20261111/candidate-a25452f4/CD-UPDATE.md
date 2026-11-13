@@ -1,5 +1,48 @@
 # a25452f4: approved existing updates, then real double relay
 
+## CURRENT 2026-11-14 A handoff: exact original a254 symbols found; C offline next
+
+A fetched and accepted receipt e1e3a999, including Phase2/Phase3's explicit
+unknown first bad writer and C NOT READY. The Nov12 deployment/READY statements
+are historical, not current running-health evidence. Do not arm observers,
+restart nodes or send a double-relay object on those old receipts.
+
+**A has located the exact original a254 PDB**, not a rebuilt substitute:
+EXE SHA1758e4a7...0d0c46d; PE CodeView and PDB both
+E16D0B11-47CA-4EBF-B482-C91380CC57F8 / age1. Original build EXE matches the
+deployed candidate. LLVM summary confirms debug/type information, not stripped;
+optimized-out locals may still be unavailable. Full pins and source path:
+[A public symbol manifest](A-original-symbols-20261114/manifest.json).
+
+Private/local copy for C (not uploaded into public Git):
+`C:\Users\leadb\AppData\Local\NOVOVM\candidate-observation-a25452f4-20261112\original-symbols-handoff-20261114\a254-original-node-pdb.zip`
+
+ZIP4709244 bytes, SHA256e20ebc92ec49bda22281ad981723e8ac7a3b38a46ccb73937d929e6bfb43b748;
+sole member novovm_node.pdb17256448 bytes,
+SHA2568763d5cde5291460fa539430a082f7ace8408b0e75fa677ebd23f4d7e31643be.
+Copy it to C's original receiving directory `E:\区块链四机通讯\`, or C's existing
+local candidate directory if that drive is absent. No original program ZIP needs
+recopy. Git handoff is not proof of symbol delivery; C acknowledge actual hashes.
+
+**C next, one offline continuation:**
+1. Verify ZIP/member pins and GUID/age independently. Keep the original matching
+   a254 EXE and original PID37796 dump; do not substitute fixture or875 symbols.
+2. Load exact symbols in the existing debugger. Return module/symbol-load result
+   and actual image/symbol identity; no forced mismatched symbol load.
+3. Revisit the same saved exception/thread and outer call chain. Map the prior
+   formatter/receiver/String and saved-register observations to actual available
+   functions/types/locals; distinguish real stored values, optimized-out values,
+   and reconstruction. Report the earliest boundary this dump can actually prove.
+4. If first corrupting writer remains unobservable, say so; do not turn symbol
+   availability or fixture success into a production fix. Return precise remaining
+   uncertainty and only a concrete evidence-based next hypothesis.
+
+Publish safe public result/commands/exit codes and hashes in this candidate's
+C-symbolized-original-20261114 directory. Raw dump/PDB and secret-bearing locals
+stay local. No node launch, new TTD/PageHeap run, DB/key/AOEM replacement, cache
+reset, repeated fixture sweep or relay send is part of this handoff. D need not
+operate. C remains NOT READY until actual node recovery/health separately passes.
+
 ## CURRENT 2026-11-13 23:09 Beijing: Phase3 isolated boundary check; C NOT READY
 
 C compared six original875/a254 function bodies, relocation-normalized bytes,

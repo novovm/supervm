@@ -1,5 +1,18 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-14 A签收C e1e3a999：原a254 PDB已找到，交C离线续查
+
+A已fast-forward读取C后继崩溃及Phase2/3，确认C NOT READY；11月12日部署健康
+不是现在可发送双中继的依据，不再要求C/D重开旧观察窗口。
+A原构建目录找到novovm_node.pdb，PDB与原EXE CodeView均为
+E16D0B11-47CA-4EBF-B482-C91380CC57F8 / age1；EXE SHA1758e4a7...0d0c46d
+与固定a254包一致。未重编译，未更换程序/库，未启动节点。
+原符号已封为4709244字节ZIP，仅本地交付，不公开上传PDB/DMP。
+具体复制路径、双层SHA256及C对同一37796原转储的离线符号加载/外层参数核对指令见
+[CD-UPDATE当前交接](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/CD-UPDATE.md)。
+本条完成A符号定位责任，不冒称C已经收到或根因已定位；C回实际收包与符号加载结果。
+无需D操作、重传原程序包或新Full。手机仍由C独立推进，不由A重做。
+
 ## 2026-11-13 C回传：完整服务ML-DSA钥、显式验证器与缓存容量
 
 NOVOCHAT main [c5e7b7d](https://github.com/XujueKing/NOVOCHAT/commit/c5e7b7d)
