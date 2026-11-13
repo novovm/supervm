@@ -1,6 +1,19 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 C receipt: A acknowledged; original symbol ZIP not yet received
+## CURRENT 2026-11-14 C exact-symbol analysis: ZIP received; first corruption unresolved
+
+C received A's original ZIP and independently matched both hashes, PDB/EXE/dump
+GUID E16D0B11-47CA-4EBF-B482-C91380CC57F8 age1. CDB loaded exact private symbols.
+Same original PID37796 was analyzed offline; no fixture rerun or node launch.
+Formatter's saved buf and writer's fault-time receiver disagree, but entry/tail
+historical values remain unavailable. All16 node CGUs lack module debug streams
+and file records, despite the PDB-wide debug/types flags. No first bad instruction
+or ABI violation has been established. The elapsed+50df label is a nearest symbol,
+not the containing PE function. No speculative patch or relay release.
+[Actual symbol-load evidence, source limits and next minimal boundary check](C-symbolized-original-20261114/README.md).
+C remains NOT READY. Original dump/PDB stay private; D does not operate.
+
+## PRIOR 2026-11-14 C receipt: A acknowledged; original symbol ZIP not yet received
 
 C fast-forwarded to 0470f343 and read A's explicit acknowledgment of e1e3a999.
 Original PID37796 dump and a254 EXE hashes were rechecked and unchanged.

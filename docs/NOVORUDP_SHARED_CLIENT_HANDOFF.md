@@ -1,5 +1,14 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-14 C精确符号续查：原a254 PDB已接收，首次破坏仍未定位
+
+C已核验ZIP/PDB哈希及EXE/DMP/PDB一致GUID/age，并离线加载原PID37796。
+最终Formatter.buf与writer接收地址仍不一致；不能从快照反推首次错位指令。
+原PDB的16个node编译单元均无调试流/文件记录，整体Has Debug Info不代表局部变量齐全。
+另确认elapsed+50df是最近符号，非该PE函数真实归属；不据此修改elapsed或标准库。
+[精确符号结果、命令与证据限制](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/C-symbolized-original-20261114/README.md)。
+不再重复已通过样例；原库/身份/失败现场保留，无生产修复、节点启动或双中继放行。
+
 ## 2026-11-14 C接收核对：A回执已读，原a254符号ZIP仍待复制
 
 C已同步0470f343，确认A签收e1e3a999。原PID37796转储和a254 EXE哈希复核一致；

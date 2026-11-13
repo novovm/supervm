@@ -1,0 +1,51 @@
+{
+  "checked_at": "2026-11-14T04:40:32+08:00",
+  "A_handoff": "0470f343dd16cf97051141307dc103d6b2715a70",
+  "received": true,
+  "files": {
+    "archive": {
+      "name": "a254-original-node-pdb.zip",
+      "bytes": 4709244,
+      "sha256": "e20ebc92ec49bda22281ad981723e8ac7a3b38a46ccb73937d929e6bfb43b748"
+    },
+    "pdb": {
+      "name": "novovm_node.pdb",
+      "bytes": 17256448,
+      "sha256": "8763d5cde5291460fa539430a082f7ace8408b0e75fa677ebd23f4d7e31643be"
+    },
+    "exe": {
+      "name": "novovm-node.exe",
+      "bytes": 48457216,
+      "sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d"
+    },
+    "dump": {
+      "name": "novovm-node.exe.37796.dmp",
+      "bytes": 6203358,
+      "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0"
+    }
+  },
+  "pdb_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+  "pdb_age": 1,
+  "pdb_load": "private symbols & lines, not source indexed",
+  "node_cgu_count": 16,
+  "node_cgu_debug_streams_all_absent": true,
+  "debugger_exit_codes": {
+    "symbolized": 0,
+    "outer": 0,
+    "boundaries": 0
+  },
+  "query_limitations": [
+    "dv emitted no locals or error87 depending on frame",
+    "dt could not find requested String/Formatter types",
+    "ub from return-address-minus-one failed; decoded from PE function start instead",
+    "initial frame numbers10/11 parsed as hexadecimal; outer.cmd uses0n decimal explicitly",
+    "ln @rip after.frame retained exception context; explicit addresses used in boundaries.cmd"
+  ],
+  "first_corrupting_instruction_found": false,
+  "node_started": false,
+  "fixture_rerun": false,
+  "production_code_modified": false,
+  "relay_ready": false,
+  "dump_node_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+  "dump_node_age": 1
+}

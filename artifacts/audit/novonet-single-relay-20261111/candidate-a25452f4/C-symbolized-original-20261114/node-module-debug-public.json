@@ -1,0 +1,66 @@
+[
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.00.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.01.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.02.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.03.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.04.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.05.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.06.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.07.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.08.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.09.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.10.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.11.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.12.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.13.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.14.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  },
+  {
+    "module": "novovm_node.novovm_node.93e4257fb68707da-cgu.15.rcgu.o",
+    "debug": "debug stream: 65535, # files: 0, has ec info: false"
+  }
+]

@@ -1,0 +1,48 @@
+=== RUNTIME_FUNCTION 0x75c4a0 .. 0x76330f ===
+00761469 4c01c0                   add rax, r8
+0076146c 4869c9b8000000           imul rcx, rcx, 0xb8
+00761473 4c01c1                   add rcx, r8
+00761476 4869d2b8000000           imul rdx, rdx, 0xb8
+0076147d 4c01c2                   add rdx, r8
+00761480 488985f0000000           mov qword ptr [rbp + 0xf0], rax
+00761487 48898df8000000           mov qword ptr [rbp + 0xf8], rcx
+0076148e 4c898500010000           mov qword ptr [rbp + 0x100], r8
+00761495 48899508010000           mov qword ptr [rbp + 0x108], rdx
+0076149c 488d8d90000000           lea rcx, [rbp + 0x90]
+007614a3 488d95f0000000           lea rdx, [rbp + 0xf0]
+007614aa e881e94b00               call 0xc1fe30
+007614af c685ae02000001           mov byte ptr [rbp + 0x2ae], 1
+007614b6 488d8d50020000           lea rcx, [rbp + 0x250]
+007614bd 488d9590000000           lea rdx, [rbp + 0x90]
+=== RUNTIME_FUNCTION 0xa15c10 .. 0xa16b02 ===
+00a1655e 48c7450804000000         mov qword ptr [rbp + 8], 4
+00a16566 f6475001                 test byte ptr [rdi + 0x50], 1
+00a1656a 48899db0000000           mov qword ptr [rbp + 0xb0], rbx
+00a16571 743f                     je 0xa165b2
+00a16573 0f104751                 movups xmm0, xmmword ptr [rdi + 0x51]
+00a16577 0f104f61                 movups xmm1, xmmword ptr [rdi + 0x61]
+00a1657b 0f298d10010000           movaps xmmword ptr [rbp + 0x110], xmm1
+00a16582 0f298500010000           movaps xmmword ptr [rbp + 0x100], xmm0
+00a16589 4c8d8520010000           lea r8, [rbp + 0x120]
+00a16590 488d4d68                 lea rcx, [rbp + 0x68]
+00a16594 488d9500010000           lea rdx, [rbp + 0x100]
+00a1659b e89055f7ff               call 0x98bb30
+00a165a0 4c897560                 mov qword ptr [rbp + 0x60], r14
+00a165a4 488d8db0000000           lea rcx, [rbp + 0xb0]
+00a165ab e820cb93ff               call 0x3530d0
+=== RUNTIME_FUNCTION 0x98bb30 .. 0x98bcbc ===
+0098bbe3 4939fe                   cmp r14, rdi
+0098bbe6 0f84a6000000             je 0x98bc92
+0098bbec 4a8d0433                 lea rax, [rbx + r14]
+0098bbf0 488945d0                 mov qword ptr [rbp - 0x30], rax
+0098bbf4 488d45d0                 lea rax, [rbp - 0x30]
+0098bbf8 488945c0                 mov qword ptr [rbp - 0x40], rax
+0098bbfc 488d050d0b82ff           lea rax, [rip - 0x7df4f3]
+0098bc03 488945c8                 mov qword ptr [rbp - 0x38], rax
+0098bc07 488d4de0                 lea rcx, [rbp - 0x20]
+0098bc0b 488d156959b801           lea rdx, [rip + 0x1b85969]
+0098bc12 4d89e0                   mov r8, r12
+0098bc15 e856124c01               call 0x1e4ce70
+0098bc1a 488b45e8                 mov rax, qword ptr [rbp - 0x18]
+0098bc1e 488945f8                 mov qword ptr [rbp - 8], rax
+0098bc22 4c8b6df0                 mov r13, qword ptr [rbp - 0x10]

@@ -1,0 +1,45 @@
+.symfix <SUPERVM>\target\c-original-dmp-review-20261113\symbols
+.sympath+ <SUPERVM>\target\c-symbolized-original-20261114
+.exepath <SUPERVM>\target\c-a254-existing-update-20261112T083103Z\package\novonet-observation-a25452f4-windows-x86_64\bin;C:\Windows\System32
+.reload
+.ecxr
+lmv m novovm_node
+!analyze -v
+.exr -1
+.ecxr
+r
+kv
+.echo === FRAME 1 ===
+.frame /r 1
+dv /t /v
+.echo === FRAME 2 ===
+.frame /r 2
+dv /t /v
+.echo === FRAME 3 ===
+.frame /r 3
+dv /t /v
+.echo === FRAME 4 ===
+.frame /r 4
+dv /t /v
+.echo === FRAME 5 ===
+.frame /r 5
+dv /t /v
+.echo === FRAME 6 ===
+.frame /r 6
+dv /t /v
+.echo === FRAME 7 ===
+.frame /r 7
+dv /t /v
+.echo === FRAME 8 ===
+.frame /r 8
+dv /t /v
+.echo === FRAME 9 ===
+.frame /r 9
+dv /t /v
+.echo === FRAME 10 ===
+.frame /r 10
+dv /t /v
+.echo === FRAME 11 ===
+.frame /r 11
+dv /t /v
+q

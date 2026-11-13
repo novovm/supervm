@@ -1,0 +1,115 @@
+Offline CDB excerpts; raw logs remain private. kn omits uninterpreted Args-to-Child. Frame registers are unwound views, not historical entry samples.
+
+0:001> !lmi novovm_node
+Loaded Module Info: [novovm_node]
+         Module: novovm-node
+   Base Address: 00007ff709a40000
+     Image Name: novovm-node.exe
+   Machine Type: 34404 (X64)
+     Time Stamp: 6af53cfd Thu Nov 12 12:13:49 2026
+           Size: 2e42000
+       CheckSum: 0
+Characteristics: 22
+Debug Data Dirs: Type  Size     VA  Pointer
+             CODEVIEW    28, 27fb814, 27fa614 RSDS - GUID: {E16D0B11-47CA-4EBF-B482-C91380CC57F8}
+               Age: 1, Pdb: novovm_node.pdb
+           VC_FEATURE    14, 27fb83c, 27fa63c [Data not mapped]
+                 POGO   418, 27fb850, 27fa650 [Data not mapped]
+     Image Type: FILE     - Image read successfully from debugger.
+                 novovm-node.exe
+    Symbol Type: PDB      - Symbols loaded successfully from symbol search path.
+                 <SUPERVM>\target\c-symbolized-original-20261114\novovm_node.pdb
+       Compiler: C - front end [19.50 bld 35723] - back end [19.50 bld 35723]
+    Load Report: private symbols & lines, not source indexed
+                 <SUPERVM>\target\c-symbolized-original-20261114\novovm_node.pdb
+
+0:001> kn
+  *** Stack trace for last set context - .thread/.cxr resets it
+ # Child-SP          RetAddr               Call Site
+00 0000000e`7e2ee398 00007ff7`0b88cc93     VCRUNTIME140!memcpy_avx_ermsb_Intel+0x68
+01 (Inline Function) --------`--------     novovm_node!alloc::vec::Vec::append_elements+0x1e
+02 (Inline Function) --------`--------     novovm_node!alloc::vec::spec_extend::impl$4::spec_extend+0x1e
+03 (Inline Function) --------`--------     novovm_node!alloc::vec::Vec::extend_from_slice+0x1e
+04 (Inline Function) --------`--------     novovm_node!alloc::string::String::push_str+0x1e
+05 0000000e`7e2ee3a0 00007ff7`0b890359     novovm_node!alloc::string::impl$63::write_str+0x33
+06 0000000e`7e2ee3f0 00007ff7`0b8924e1     novovm_node!core::fmt::num::impl$16::fmt+0x69
+07 0000000e`7e2ee440 00007ff7`0b88cf9f     novovm_node!core::fmt::write+0x161
+08 (Inline Function) --------`--------     novovm_node!core::fmt::Write::write_fmt::impl$1::spec_write_fmt+0x16
+09 (Inline Function) --------`--------     novovm_node!core::fmt::Write::write_fmt+0x16
+0a 0000000e`7e2ee4d0 00007ff7`0a3cbc1a     novovm_node!alloc::fmt::format::format_inner+0x12f
+0b 0000000e`7e2ee560 00007ff7`0a4565a0     novovm_node!ZN112_$LT$alloc..string..String$u20$as$u20$core..iter..traits..collect..FromIterator$LT$alloc..string..String$GT$$GT$9from_iter17h773a38bc89164ff9E+0xea
+0c 0000000e`7e2ee650 00007ff7`0a65ff32     novovm_node!ZN4core3ops8function5impls79_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$8call_mut17h734c4ecedfb29625E+0x990
+0d 0000000e`7e2ee8a0 00007ff7`0a1a14af     novovm_node!ZN111_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$9from_iter17ha314b3c2dd4d8308E+0x102
+0e 0000000e`7e2ee960 00007ff7`0a1b7bb9     novovm_node!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0x50df
+0f 0000000e`7e2eed80 00007ff7`09bbd5e5     novovm_node!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x5a99
+10 0000000e`7e2ef250 00007ff7`09acad16     novovm_node!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+11 0000000e`7e2ef360 00007ff7`09c18d57     novovm_node!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+12 0000000e`7e2ff9e0 00007ff7`09c1a0f5     novovm_node!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+13 0000000e`7e2ffa30 00007ff7`0b87a0e8     novovm_node!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+14 0000000e`7e2ffae0 00007ffc`e175dda7     novovm_node!std::sys::thread::windows::impl$0::new::thread_start+0x228
+15 0000000e`7e2ffb90 00007ffc`e3219c5c     kernel32!BaseThreadInitThunk+0x17
+16 0000000e`7e2ffbc0 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
+
+0:001> .exr -1
+ExceptionAddress: 00007ffcb1d41268 (VCRUNTIME140!memcpy_avx_ermsb_Intel+0x0000000000000068)
+   ExceptionCode: c0000005 (Access violation)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 0000000000000000
+   Parameter[1]: ffffffffffffffff
+Attempt to read from address ffffffffffffffff
+
+0:001> r
+Last set context:
+rax=00000204496a0000 rbx=0000000000000000 rcx=00000204496a0000
+rdx=8000000000000005 rsi=0000000000000002 rdi=0000000e7e2ee648
+rip=00007ffcb1d41268 rsp=0000000e7e2ee398 rbp=0000000e7e2ee3c0
+ r8=0000000000000002  r9=00007ffcb1d41268 r10=00007ffcb1d30000
+r11=000000000000002a r12=00007ff70bf51580 r13=00000000000000c3
+r14=00007ff70b88cc60 r15=00007ff70bf51582
+iopl=0         nv up ei pl nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010202
+VCRUNTIME140!memcpy_avx_ermsb_Intel+0x68:
+00007ffc`b1d41268 0fb70a          movzx   ecx,word ptr [rdx] ds:80000000`00000005=????
+
+0:001> dt novovm_node!alloc::string::String 0000000e7e2ee500
+Symbol novovm_node!alloc::string::String not found.
+
+0:001> dt novovm_node!core::fmt::Formatter 0000000e7e2ee470
+Symbol novovm_node!core::fmt::Formatter not found.
+
+0:001> .fnent 00007ff70a1a14ae
+Debugger function entry 00000214`16991ae0 for:
+(00007ff7`0a19c3d0)   novovm_node!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0x50de   |  (00007ff7`0a1a5fc0)   novovm_node!ZN11novovm_node15native_pipeline7service3rpc11IdleBackoff12should_sleep17h6f12013cc775ffddE
+
+BeginAddress      = 00000000`0075c4a0
+EndAddress        = 00000000`0076330f
+UnwindInfoAddress = 00000000`02955500
+
+Unwind info at 00007ff7`0c395500, 24 bytes
+  version 1, flags 3, prolog 1b, codes b
+  frame reg 5 (rbp), frame offs 80h
+  handler routine: novovm_node!_CxxFrameHandler3 (00007ff7`0bdee7cd), data 2956064
+  00: offs 1b, unwind op 3, op info 0	UWOP_SET_FPREG.
+  01: offs 13, unwind op 1, op info 0	UWOP_ALLOC_LARGE FrameOffset: 3d8.
+  03: offs c, unwind op 0, op info 3	UWOP_PUSH_NONVOL reg: rbx.
+  04: offs b, unwind op 0, op info 7	UWOP_PUSH_NONVOL reg: rdi.
+  05: offs a, unwind op 0, op info 6	UWOP_PUSH_NONVOL reg: rsi.
+  06: offs 9, unwind op 0, op info c	UWOP_PUSH_NONVOL reg: r12.
+  07: offs 7, unwind op 0, op info d	UWOP_PUSH_NONVOL reg: r13.
+  08: offs 5, unwind op 0, op info e	UWOP_PUSH_NONVOL reg: r14.
+  09: offs 3, unwind op 0, op info f	UWOP_PUSH_NONVOL reg: r15.
+  0a: offs 1, unwind op 0, op info 5	UWOP_PUSH_NONVOL reg: rbp.
+
+0:001> dq 0000000e7e2ee470 L4
+0000000e`7e2ee470  0000000e`7e2ee500 00007ff7`0c213610
+0000000e`7e2ee480  00000002`69000020 00007ff7`0bf5157b
+
+0:001> dq 0000000e7e2ee500 L3
+0000000e`7e2ee500  00000000`00000000 00000000`00000001
+0000000e`7e2ee510  00000000`00000000
+
+0:001> dq 0000000e7e2ee638 L5
+0000000e`7e2ee638  80000000`00000005 0000000e`7e2ee6d0
+0000000e`7e2ee648  00007ff7`0a4565a0 00000204`496a0000
+0000000e`7e2ee658  00000000`00000000

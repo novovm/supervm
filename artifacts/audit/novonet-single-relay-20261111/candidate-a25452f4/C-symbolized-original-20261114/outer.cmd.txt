@@ -1,0 +1,42 @@
+.symfix <SUPERVM>\target\c-original-dmp-review-20261113\symbols
+.sympath+ <SUPERVM>\target\c-symbolized-original-20261114
+.exepath <SUPERVM>\target\c-a254-existing-update-20261112T083103Z\package\novonet-observation-a25452f4-windows-x86_64\bin;C:\Windows\System32
+.reload
+.reload /f novovm-node.exe
+.ecxr
+lmv m novovm_node
+!lmi novovm_node
+kn
+dt novovm_node!*Formatter*
+dt novovm_node!*String*
+.echo === OUTER DECIMAL 10 ===
+.frame /r 0n10
+dv /t /v
+ln @rip
+.echo === OUTER DECIMAL 11 ===
+.frame /r 0n11
+dv /t /v
+ln @rip
+.echo === OUTER DECIMAL 12 ===
+.frame /r 0n12
+dv /t /v
+ln @rip
+.echo === OUTER DECIMAL 13 ===
+.frame /r 0n13
+dv /t /v
+ln @rip
+.echo === OUTER DECIMAL 14 ===
+.frame /r 0n14
+dv /t /v
+ln @rip
+.echo === OUTER DECIMAL 15 ===
+.frame /r 0n15
+dv /t /v
+ln @rip
+.ecxr
+uf 00007ff70b88cc60
+uf 00007ff70b892f00
+dq 0000000e7e2ee470 L4
+dq 0000000e7e2ee500 L3
+dq 0000000e7e2ee638 L5
+q
