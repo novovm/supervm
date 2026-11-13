@@ -1,0 +1,218 @@
+{
+  "original_source_commit": "a25452f4",
+  "new_diagnostic_build_only": true,
+  "node_executed": false,
+  "pdb_guid": "634436A3-4966-41FA-9FF4-31FA3FC98D5C",
+  "pdb_age": 1,
+  "artifacts": [
+    {
+      "file": "novovm-node.exe",
+      "bytes": 48677888,
+      "sha256": "4c354ca4e8d2d512d283b6934d583caa89455c14e250e0894c828f9f33dd473c"
+    },
+    {
+      "file": "novovm_node.pdb",
+      "bytes": 222294016,
+      "sha256": "5fdcd4c1bf560b5605b07f82a4dee6e3cce6dd18e4bea421dea1a86bb38322fb"
+    }
+  ],
+  "node_compilation_units": [
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.00.rcgu.o",
+      "debug_stream": 30,
+      "source_files": 219
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.01.rcgu.o",
+      "debug_stream": 29,
+      "source_files": 52
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.02.rcgu.o",
+      "debug_stream": 27,
+      "source_files": 84
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.03.rcgu.o",
+      "debug_stream": 28,
+      "source_files": 35
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.04.rcgu.o",
+      "debug_stream": 26,
+      "source_files": 6
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.05.rcgu.o",
+      "debug_stream": 25,
+      "source_files": 88
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.06.rcgu.o",
+      "debug_stream": 22,
+      "source_files": 51
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.07.rcgu.o",
+      "debug_stream": 18,
+      "source_files": 65
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.08.rcgu.o",
+      "debug_stream": 23,
+      "source_files": 92
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.09.rcgu.o",
+      "debug_stream": 17,
+      "source_files": 71
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.10.rcgu.o",
+      "debug_stream": 21,
+      "source_files": 64
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.11.rcgu.o",
+      "debug_stream": 16,
+      "source_files": 90
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.12.rcgu.o",
+      "debug_stream": 19,
+      "source_files": 94
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.13.rcgu.o",
+      "debug_stream": 24,
+      "source_files": 82
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.14.rcgu.o",
+      "debug_stream": 14,
+      "source_files": 106
+    },
+    {
+      "module": "novovm_node.novovm_node.86a5468651145a10-cgu.15.rcgu.o",
+      "debug_stream": 20,
+      "source_files": 130
+    },
+    {
+      "module": "novovm_node.3vlm826osivmut3ve2al8h79k.rcgu.o",
+      "debug_stream": 13,
+      "source_files": 0
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.06.rcgu.o",
+      "debug_stream": 39,
+      "source_files": 243
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.02.rcgu.o",
+      "debug_stream": 45,
+      "source_files": 204
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.08.rcgu.o",
+      "debug_stream": 40,
+      "source_files": 304
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.03.rcgu.o",
+      "debug_stream": 42,
+      "source_files": 379
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.10.rcgu.o",
+      "debug_stream": 36,
+      "source_files": 298
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.09.rcgu.o",
+      "debug_stream": 37,
+      "source_files": 386
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.12.rcgu.o",
+      "debug_stream": 34,
+      "source_files": 326
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.14.rcgu.o",
+      "debug_stream": 33,
+      "source_files": 396
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.07.rcgu.o",
+      "debug_stream": 38,
+      "source_files": 272
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.04.rcgu.o",
+      "debug_stream": 43,
+      "source_files": 218
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.15.rcgu.o",
+      "debug_stream": 31,
+      "source_files": 355
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.13.rcgu.o",
+      "debug_stream": 32,
+      "source_files": 224
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.05.rcgu.o",
+      "debug_stream": 41,
+      "source_files": 307
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.00.rcgu.o",
+      "debug_stream": 188,
+      "source_files": 129
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.11.rcgu.o",
+      "debug_stream": 35,
+      "source_files": 312
+    },
+    {
+      "module": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.01.rcgu.o",
+      "debug_stream": 66,
+      "source_files": 64
+    }
+  ],
+  "node_effective_flags": {
+    "scope": "actual node library compiler process",
+    "opt_level": [
+      "3"
+    ],
+    "overflow_checks": [
+      "on"
+    ],
+    "debuginfo": [
+      "2"
+    ],
+    "iroh_feature_present": true,
+    "strip_debuginfo_present": false
+  },
+  "exe_codeview": [
+    {
+      "guid": "634436A3-4966-41FA-9FF4-31FA3FC98D5C",
+      "age": 1
+    }
+  ],
+  "source_checksums_in_pdb": [
+    {
+      "file": "crates/novovm-node/src/native_pipeline/profile.rs",
+      "sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+      "pdb_checksum_match": true
+    },
+    {
+      "file": "crates/novovm-node/src/native_pipeline/profile/traffic.rs",
+      "sha256": "ec15e20af995c0490b58cea33ee0ada30196870e791cdddee3c5fce7695a760d",
+      "pdb_checksum_match": true
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "debugger_exit_code": 0,
+  "target_exit_code": 0,
+  "branch_counts": {
+    "tail": 48,
+    "padded_call": 16
+  },
+  "capture_build_sha256": "90744c0024636ea45038bfd6b4c2b581d4fbf4c1af69bcebe702eac54f354729",
+  "calls": 64,
+  "records": 576,
+  "checks": 1638,
+  "failures": [],
+  "original_failure_reproduced": false,
+  "first_original_corruption_found": false,
+  "scope": "one original a254 profile snapshot with test-only records, under debugger; not deployed node execution"
+}

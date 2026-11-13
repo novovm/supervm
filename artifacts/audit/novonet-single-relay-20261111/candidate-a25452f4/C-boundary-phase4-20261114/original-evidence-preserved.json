@@ -1,0 +1,17 @@
+[
+  {
+    "artifact": "original-a254-exe",
+    "sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+    "unchanged": true
+  },
+  {
+    "artifact": "original-pid37796-dump",
+    "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0",
+    "unchanged": true
+  },
+  {
+    "artifact": "original-a254-pdb",
+    "sha256": "8763d5cde5291460fa539430a082f7ace8408b0e75fa677ebd23f4d7e31643be",
+    "unchanged": true
+  }
+]

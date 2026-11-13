@@ -1,0 +1,19 @@
+.sympath <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+.reload /f c-profile-boundary.exe
+r @$t0=0
+r @$t1=0
+r @$t2=0
+x c_profile_boundary!phase4_window*
+bp c_profile_boundary!phase4_window_begin ".if (@$t0==0) { r @$t0=1; r @$t1=@$tid; .printf \"WINDOW_BEGIN tid=%x window=%x\n\", @$tid,@rcx; } .else { .printf \"WINDOW_END tid=%x calls=%x\n\", @$tid,@$t2; r @$t0=0; }; gc"
+bp c_profile_boundary+0x24fe0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t2=@$t2+1; r @$t3=@rcx; .printf \"REC stage=FMT_BEGIN tid=%x seq=%x rsp=%p receiver=%p cap=%p buffer=%p len=%p\n\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rcx+8),poi(@rcx+0x10); } }; gc"
+bp c_profile_boundary+0x2513d ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=FMT_CALL tid=%x seq=%x rsp=%p formatter=%p receiver=%p\n\", @$tid,@$t2,@rsp,@rdx,poi(@rdx); .if ((poi(@rdx)!=@$t3)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+bp c_profile_boundary+0x257f0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t4=poi(@rsp+0x28); r @$t5=poi(@rsp+0x30); .printf \"REC stage=PAD_ENTRY tid=%x seq=%x rsp=%p formatter=%p receiver=%p text=%p len=%p\n\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rsp+0x28),poi(@rsp+0x30); .if ((poi(@rcx)!=@$t3)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+bp c_profile_boundary+0x258b7 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_BEFORE tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; } }; gc"
+bp c_profile_boundary+0x258bc ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_AFTER tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; } }; gc"
+bp c_profile_boundary+0x258d5 ".if (@$t0) { .if (@$tid==@$t1) { r @$t6=@rsp; .printf \"REC stage=TAIL_READY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if ((@rcx!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rax!=c_profile_boundary+0x236b0)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+bp c_profile_boundary+0x258e5 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=TAIL_JUMP tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if ((@rcx!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rax!=c_profile_boundary+0x236b0) or (@rsp!=@$t6+0x98)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+bp c_profile_boundary+0x236b0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t7=@rsp; .printf \"REC stage=WRITER_ENTRY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if ((@rcx!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rsp!=@$t6+0x98)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+bp c_profile_boundary+0x236de ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=COPY_CALL tid=%x seq=%x rsp=%p receiver=%p dest=%p text=%p len=%p buffer=%p oldlen=%p\n\", @$tid,@$t2,@rsp,@rdi,@rcx,@rdx,@r8,poi(@rdi+8),poi(@rdi+0x10); .if ((@rdi!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rcx!=poi(@rdi+8)+poi(@rdi+0x10)) or (@rsp!=@$t7-0x48)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+sxe -c ".echo PHASE4_AV; .exr -1; r; kv; q" av
+sxe -c ".echo PHASE4_EXIT; .lastevent; q" epr
+g

@@ -1,0 +1,28 @@
+{
+  "kind": "isolated_original_profile_snapshot",
+  "production_node_executed": false,
+  "artifacts": [
+    {
+      "file": "c-profile-boundary.exe",
+      "bytes": 241664,
+      "sha256": "90744c0024636ea45038bfd6b4c2b581d4fbf4c1af69bcebe702eac54f354729"
+    },
+    {
+      "file": "c_profile_boundary.pdb",
+      "bytes": 2404352,
+      "sha256": "d6911641e687890824172b70046050fdf4961fd14d017e5d850b2058a107e717"
+    }
+  ],
+  "exe_pdb_codeview_match": [
+    {
+      "guid": "92AD5B6D-3AF2-4BD4-A2D8-ED6FE5FC19AB",
+      "age": 1
+    }
+  ],
+  "build_exit_code": 0,
+  "debugger": "CDB 10.0.26100.9457 AMD64",
+  "capture3_pid": 38308,
+  "capture3_thread": 27568,
+  "capture3_exit_time_local": "2026-11-14T05:15:04.937+08:00",
+  "first_failure_reproduced": false
+}

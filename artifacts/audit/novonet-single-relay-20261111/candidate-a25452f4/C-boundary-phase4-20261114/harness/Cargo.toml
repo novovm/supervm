@@ -1,0 +1,17 @@
+[package]
+name="c-profile-boundary"
+version="0.0.0"
+edition="2021"
+[workspace]
+[dependencies]
+serde_json={version="=1.0.149",features=["preserve_order","raw_value"]}
+sha2="=0.10.9"
+indexmap="=2.14.2"
+serde={version="=1.0.228",features=["derive"]}
+novovm-network={path="../source/crates/novovm-network",features=["iroh-transport"]}
+[patch.crates-io]
+netdev={path="../source/vendor/netdev"}
+simple-dns={path="../source/vendor/simple-dns"}
+[profile.release]
+strip="none"
+overflow-checks=true

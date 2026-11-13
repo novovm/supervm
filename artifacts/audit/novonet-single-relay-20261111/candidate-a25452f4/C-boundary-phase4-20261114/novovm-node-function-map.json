@@ -1,0 +1,67 @@
+{
+  "image": "novovm-node.exe",
+  "sha256": "4c354ca4e8d2d512d283b6934d583caa89455c14e250e0894c828f9f33dd473c",
+  "functions": {
+    "format_write": [
+      {
+        "rva": "0x1e76060",
+        "bytes": 440,
+        "normalized_sha256": "7648eaab726d7a86eb38e29d27a823e703353f9296b0dd5aec89862804759a6e",
+        "unwind_codes_hex": "01150a45150310820c300b700a6009c007d005e003f00150",
+        "unwind_matches_original": true
+      }
+    ],
+    "pad_integral": [
+      {
+        "rva": "0x1e76be0",
+        "bytes": 1274,
+        "normalized_sha256": "c7634740af707fac11d2f6df75114be5acfc7f8cc1ee59a66496b701917a5169",
+        "unwind_codes_hex": "01150a55150310a20c300b700a6009c007d005e003f00150",
+        "unwind_matches_original": true
+      }
+    ],
+    "write_prefix": [
+      {
+        "rva": "0x1e76b80",
+        "bytes": 95,
+        "normalized_sha256": "79d2610513cdcbf5854142e92cfaa0f19bad65714291548ffcb8f55688210aa3",
+        "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+        "unwind_matches_original": true
+      }
+    ],
+    "string_writer": [
+      {
+        "rva": "0x1e70940",
+        "bytes": 97,
+        "normalized_sha256": "a0639a93e72bcfd00e2f5e381dca97dc6a83127d79117bc17bec7af28d2fc9a1",
+        "unwind_codes_hex": "010f07250f030a3206300570046003e00150",
+        "unwind_matches_original": true
+      }
+    ],
+    "byte_hex": [
+      {
+        "rva": "0x1e73fd0",
+        "bytes": 112,
+        "normalized_sha256": "803581dffda2e99389f0d76bee6b4314315677de23a50db1ab7c1e0b29a206ce",
+        "unwind_codes_hex": "010a03450a0305720150",
+        "unwind_matches_original": true
+      },
+      {
+        "rva": "0x1e74040",
+        "bytes": 112,
+        "normalized_sha256": "803581dffda2e99389f0d76bee6b4314315677de23a50db1ab7c1e0b29a206ce",
+        "unwind_codes_hex": "010a03450a0305720150",
+        "unwind_matches_original": true
+      }
+    ],
+    "format_inner": [
+      {
+        "rva": "0x1e70b50",
+        "bytes": 399,
+        "normalized_sha256": "5331dedc7f3867ea5849529fd91b630cbbebcff1750763fe2edff1d123103feb",
+        "unwind_codes_hex": "1911085511030ca208300770066005e003f00150",
+        "unwind_matches_original": true
+      }
+    ]
+  }
+}

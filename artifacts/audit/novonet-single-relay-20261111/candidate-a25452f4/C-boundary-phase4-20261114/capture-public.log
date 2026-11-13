@@ -1,0 +1,103 @@
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.015 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.26100.9457 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+CommandLine: <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release\c-profile-boundary.exe
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*
+Symbol search path is: srv*
+Executable search path is:
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+ModLoad: 00007ff6`19660000 00007ff6`1969e000   c_profile_boundary.exe
+ModLoad: 00007ffc`e3150000 00007ffc`e33bc000   ntdll.dll
+ModLoad: 00007ffc`e1730000 00007ffc`e17fb000   C:\WINDOWS\System32\KERNEL32.DLL
+ModLoad: 00007ffc`e02f0000 00007ffc`e06f9000   C:\WINDOWS\System32\KERNELBASE.dll
+ModLoad: 00007ffc`dc570000 00007ffc`dc60f000   C:\WINDOWS\SYSTEM32\apphelp.dll
+ModLoad: 00007ffc`e0870000 00007ffc`e091c000   C:\WINDOWS\System32\bcryptprimitives.dll
+ModLoad: 00007ffc`e0930000 00007ffc`e0a7c000   C:\WINDOWS\System32\ucrtbase.dll
+ModLoad: 00007ffc`b1d30000 00007ffc`b1d4e000   C:\WINDOWS\SYSTEM32\VCRUNTIME140.dll
+(66ac.760c): Break instruction exception - code 80000003 (first chance)
+ntdll!LdrpDoDebuggerBreak+0x35:
+00007ffc`e3275245 cc              int     3
+0:000> .sympath <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+Symbol search path is: <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+Expanded Symbol search path is: d:\web3_ai\supervm\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+0:000> .reload /f c-profile-boundary.exe
+
+"c-profile-boundary.exe" was not found in the image list.
+Debugger will attempt to load "c-profile-boundary.exe" at given base 00000000`00000000.
+
+Please provide the full image name, including the extension (i.e. kernel32.dll)
+for more reliable results.Base address and size overrides can be given as
+.reload <image.ext>=<base>,<size>.
+Unable to add module at 00000000`00000000
+0:000> r @$t0=0
+0:000> r @$t1=0
+0:000> r @$t2=0
+0:000> bp c_profile_boundary!phase4_window_begin "r @$t0=1; r @$t1=@$tid; .printf \"WINDOW_BEGIN tid=%x window=%x\n\", @$tid,@rcx; gc"
+*** WARNING: Unable to verify checksum for c_profile_boundary.exe
+0:000> bp c_profile_boundary!phase4_window_end ".printf \"WINDOW_END tid=%x calls=%x\n\", @$tid,@$t2; r @$t0=0; gc"
+breakpoint 0 redefined
+0:000> bp c_profile_boundary+0x24fe0 ".if (@$t0 && @$tid==@$t1) { r @$t2=@$t2+1; r @$t3=@rcx; .printf \"REC stage=FMT_BEGIN tid=%x seq=%x rsp=%p receiver=%p cap=%p buffer=%p len=%p\n\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rcx+8),poi(@rcx+0x10); }; gc"
+0:000> bp c_profile_boundary+0x2513d ".if (@$t0 && @$tid==@$t1) { .printf \"REC stage=FMT_CALL tid=%x seq=%x rsp=%p formatter=%p receiver=%p\n\", @$tid,@$t2,@rsp,@rdx,poi(@rdx); .if (poi(@rdx)!=@$t3) { .echo PHASE4_MISMATCH; r; kv; q; }; }; gc"
+0:000> bp c_profile_boundary+0x257f0 ".if (@$t0 && @$tid==@$t1) { r @$t4=poi(@rsp+0x28); r @$t5=poi(@rsp+0x30); .printf \"REC stage=PAD_ENTRY tid=%x seq=%x rsp=%p formatter=%p receiver=%p text=%p len=%p\n\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rsp+0x28),poi(@rsp+0x30); .if (poi(@rcx)!=@$t3) { .echo PHASE4_MISMATCH; r; kv; q; }; }; gc"
+0:000> bp c_profile_boundary+0x258b7 ".if (@$t0 && @$tid==@$t1) { .printf \"REC stage=PREFIX_BEFORE tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; }; gc"
+0:000> bp c_profile_boundary+0x258bc ".if (@$t0 && @$tid==@$t1) { .printf \"REC stage=PREFIX_AFTER tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; }; gc"
+0:000> bp c_profile_boundary+0x258d5 ".if (@$t0 && @$tid==@$t1) { r @$t6=@rsp; .printf \"REC stage=TAIL_READY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if (@rcx!=@$t3 || @rdx!=@$t4 || @r8!=@$t5 || @rax!=c_profile_boundary+0x236b0) { .echo PHASE4_MISMATCH; r; kv; q; }; }; gc"
+0:000> bp c_profile_boundary+0x258e5 ".if (@$t0 && @$tid==@$t1) { .printf \"REC stage=TAIL_JUMP tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if (@rcx!=@$t3 || @rdx!=@$t4 || @r8!=@$t5 || @rax!=c_profile_boundary+0x236b0 || @rsp!=@$t6+0x98) { .echo PHASE4_MISMATCH; r; kv; q; }; }; gc"
+0:000> bp c_profile_boundary+0x236b0 ".if (@$t0 && @$tid==@$t1) { r @$t7=@rsp; .printf \"REC stage=WRITER_ENTRY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if (@rcx!=@$t3 || @rdx!=@$t4 || @r8!=@$t5 || @rsp!=@$t6+0x98) { .echo PHASE4_MISMATCH; r; kv; q; }; }; gc"
+0:000> bp c_profile_boundary+0x236de ".if (@$t0 && @$tid==@$t1) { .printf \"REC stage=COPY_CALL tid=%x seq=%x rsp=%p receiver=%p dest=%p text=%p len=%p buffer=%p oldlen=%p\n\", @$tid,@$t2,@rsp,@rdi,@rcx,@rdx,@r8,poi(@rdi+8),poi(@rdi+0x10); .if (@rdi!=@$t3 || @rdx!=@$t4 || @r8!=@$t5 || @rcx!=poi(@rdi+8)+poi(@rdi+0x10) || @rsp!=@$t7-0x48) { .echo PHASE4_MISMATCH; r; kv; q; }; }; gc"
+0:000> sxe -c ".echo PHASE4_AV; .exr -1; r; kv; q" av
+0:000> sxe -c ".echo PHASE4_EXIT; .lastevent; q" epr
+0:000> g
+WINDOW_END tid=760c calls=0 Numeric expression missing from '& @$tid==@$t1) { r @$t2=@$t2+1; r @$t3=@rcx; .printf "REC stage=FMT_BEGIN tid=%x seq=%x rsp=%p receiver=%p cap=%p buffer=%p len=%p ", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rcx+8),poi(@rcx+0x10); }; gc'
+c_profile_boundary!core::fmt::write:
+00007ff6`19684fe0 55              push    rbp
+0:000> NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

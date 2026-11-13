@@ -1,0 +1,27 @@
+[
+  {
+    "path": "crates/novovm-node/src/native_pipeline/profile.rs",
+    "sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+    "matches_original_commit": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/profile/traffic.rs",
+    "sha256": "ec15e20af995c0490b58cea33ee0ada30196870e791cdddee3c5fce7695a760d",
+    "matches_original_commit": true
+  },
+  {
+    "path": "crates/novovm-node/src/bin/novovm-node.rs",
+    "sha256": "2032c0d20d5f309a8a3a7aeca89dd4fde911d99bda2a8b75898f8f6bb59fd0ae",
+    "matches_original_commit": true
+  },
+  {
+    "path": "Cargo.toml",
+    "sha256": "d7021c4bac11b09cd97a59dc1c1267b8d8aba6dda0a8c037e046bc2ea184a7bd",
+    "matches_original_commit": true
+  },
+  {
+    "path": "Cargo.lock",
+    "sha256": "e5989aba61df7396552a500fb0fd93c2194de1b185ec9ad1ba0c3ec02e20fbcd",
+    "matches_original_commit": true
+  }
+]

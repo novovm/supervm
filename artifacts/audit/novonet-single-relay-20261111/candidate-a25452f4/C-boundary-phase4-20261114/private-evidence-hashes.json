@@ -1,0 +1,77 @@
+[
+  {
+    "file": "capture-private.log",
+    "bytes": 9138,
+    "sha256": "652819cbdfe051fa23cd0cd3a2200ee6690fb6223a3258bd9fb4fdb6179f448a"
+  },
+  {
+    "file": "capture2-private.log",
+    "bytes": 20939,
+    "sha256": "9e261062273b784884d781194da57f694e0492e833249f64f0af163d47fe6f9b"
+  },
+  {
+    "file": "capture3-private.log",
+    "bytes": 112864,
+    "sha256": "e67f4197119853319ac7023c12e67b79a9c1ea5e2da20726256718d2a831ff60"
+  },
+  {
+    "file": "capture-exit.json",
+    "bytes": 59,
+    "sha256": "e0be10aa484f0f406d88db9589dcd046dfc2bc1801d316e2ff63558802ccd5c3"
+  },
+  {
+    "file": "capture2-exit.json",
+    "bytes": 59,
+    "sha256": "e0be10aa484f0f406d88db9589dcd046dfc2bc1801d316e2ff63558802ccd5c3"
+  },
+  {
+    "file": "capture3-exit.json",
+    "bytes": 50,
+    "sha256": "c5271fb9b64c387dda5641ec33037136bfb4871f89770e9612fb65ab37cc4f66"
+  },
+  {
+    "file": "capture.cdb",
+    "bytes": 3187,
+    "sha256": "19254e0a8d7b20acbf31ed1ec563629a328ac2f9b06477e8adec3e1b1f3ded6e"
+  },
+  {
+    "file": "capture2.cdb",
+    "bytes": 3310,
+    "sha256": "312ee6059c4b66e3860007aaafb4c9f77c23ae90ba0cc7419366d9eed51bcc70"
+  },
+  {
+    "file": "capture3.cdb",
+    "bytes": 3657,
+    "sha256": "2eceef3d868bef734bdaa48927ae9f1f9b0318ed8c34e6fc26b0c3f169000eca"
+  },
+  {
+    "file": "build.log",
+    "bytes": 13800,
+    "sha256": "245eecfb2f42a7c2e07ff357030d8821ca2f6ae3241b1f455a13cf338cae77fe"
+  },
+  {
+    "file": "build2.log",
+    "bytes": 796,
+    "sha256": "73cc63433aa13ed6dad9e35f1588eeb31b87574ebbd12e4ed56909f389aaf15f"
+  },
+  {
+    "file": "harness-build.log",
+    "bytes": 4114,
+    "sha256": "aa8a5a3033c4336bd3a089c3bc5335d540cdbe4a804fe805e0b86bafce244e9e"
+  },
+  {
+    "file": "harness-build2.log",
+    "bytes": 17428,
+    "sha256": "a6a7b5a860dac7ea50882866721b285d520cdec8e7587822b9525c681e5a2efa"
+  },
+  {
+    "file": "harness-build3.log",
+    "bytes": 9725,
+    "sha256": "6f676a3950a79d45b6cdedaa1091268286948b0a64c52a2d79f6eead104fdfea"
+  },
+  {
+    "file": "harness-lock-resolution.log",
+    "bytes": 122,
+    "sha256": "77018f90d974e2c6f3664facc800ad7653c451f1afcb8620a3c53880e63897f5"
+  }
+]

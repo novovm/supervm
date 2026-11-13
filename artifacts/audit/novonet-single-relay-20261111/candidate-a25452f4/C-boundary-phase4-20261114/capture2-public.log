@@ -1,0 +1,162 @@
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.016 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.26100.9457 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+CommandLine: <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release\c-profile-boundary.exe
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*
+Symbol search path is: srv*
+Executable search path is:
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+ModLoad: 00007ff6`19660000 00007ff6`1969e000   c_profile_boundary.exe
+ModLoad: 00007ffc`e3150000 00007ffc`e33bc000   ntdll.dll
+ModLoad: 00007ffc`e1730000 00007ffc`e17fb000   C:\WINDOWS\System32\KERNEL32.DLL
+ModLoad: 00007ffc`e02f0000 00007ffc`e06f9000   C:\WINDOWS\System32\KERNELBASE.dll
+ModLoad: 00007ffc`e0870000 00007ffc`e091c000   C:\WINDOWS\System32\bcryptprimitives.dll
+ModLoad: 00007ffc`e0930000 00007ffc`e0a7c000   C:\WINDOWS\System32\ucrtbase.dll
+ModLoad: 00007ffc`b1d30000 00007ffc`b1d4e000   C:\WINDOWS\SYSTEM32\VCRUNTIME140.dll
+(4a90.3c48): Break instruction exception - code 80000003 (first chance)
+ntdll!LdrpDoDebuggerBreak+0x35:
+00007ffc`e3275245 cc              int     3
+0:000> .sympath <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+Symbol search path is: <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+Expanded Symbol search path is: d:\web3_ai\supervm\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+0:000> .reload /f c-profile-boundary.exe
+
+"c-profile-boundary.exe" was not found in the image list.
+Debugger will attempt to load "c-profile-boundary.exe" at given base 00000000`00000000.
+
+Please provide the full image name, including the extension (i.e. kernel32.dll)
+for more reliable results.Base address and size overrides can be given as
+.reload <image.ext>=<base>,<size>.
+Unable to add module at 00000000`00000000
+0:000> r @$t0=0
+0:000> r @$t1=0
+0:000> r @$t2=0
+0:000> x c_profile_boundary!phase4_window*
+*** WARNING: Unable to verify checksum for c_profile_boundary.exe
+00007ff6`1966c650 c_profile_boundary!phase4_window_begin (phase4_window_begin)
+00007ff6`1966c650 c_profile_boundary!phase4_window_end (phase4_window_end)
+0:000> bp c_profile_boundary!phase4_window_begin ".if (@$t0==0) { r @$t0=1; r @$t1=@$tid; .printf \"WINDOW_BEGIN tid=%x window=%x\n\", @$tid,@rcx; } .else { .printf \"WINDOW_END tid=%x calls=%x\n\", @$tid,@$t2; r @$t0=0; }; gc"
+0:000> bp c_profile_boundary+0x24fe0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t2=@$t2+1; r @$t3=@rcx; .printf \"REC stage=FMT_BEGIN tid=%x seq=%x rsp=%p receiver=%p cap=%p buffer=%p len=%p\n\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rcx+8),poi(@rcx+0x10); } }; gc"
+0:000> bp c_profile_boundary+0x2513d ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=FMT_CALL tid=%x seq=%x rsp=%p formatter=%p receiver=%p\n\", @$tid,@$t2,@rsp,@rdx,poi(@rdx); .if ((poi(@rdx)!=@$t3)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+0:000> bp c_profile_boundary+0x257f0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t4=poi(@rsp+0x28); r @$t5=poi(@rsp+0x30); .printf \"REC stage=PAD_ENTRY tid=%x seq=%x rsp=%p formatter=%p receiver=%p text=%p len=%p\n\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rsp+0x28),poi(@rsp+0x30); .if ((poi(@rcx)!=@$t3)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+0:000> bp c_profile_boundary+0x258b7 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_BEFORE tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; } }; gc"
+0:000> bp c_profile_boundary+0x258bc ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_AFTER tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\n\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; } }; gc"
+0:000> bp c_profile_boundary+0x258d5 ".if (@$t0) { .if (@$tid==@$t1) { r @$t6=@rsp; .printf \"REC stage=TAIL_READY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if ((@rcx!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rax!=c_profile_boundary+0x236b0)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+0:000> bp c_profile_boundary+0x258e5 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=TAIL_JUMP tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if ((@rcx!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rax!=c_profile_boundary+0x236b0) or (@rsp!=@$t6+0x98)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+0:000> bp c_profile_boundary+0x236b0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t7=@rsp; .printf \"REC stage=WRITER_ENTRY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\n\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .if ((@rcx!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rsp!=@$t6+0x98)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+0:000> bp c_profile_boundary+0x236de ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=COPY_CALL tid=%x seq=%x rsp=%p receiver=%p dest=%p text=%p len=%p buffer=%p oldlen=%p\n\", @$tid,@$t2,@rsp,@rdi,@rcx,@rdx,@r8,poi(@rdi+8),poi(@rdi+0x10); .if ((@rdi!=@$t3) or (@rdx!=@$t4) or (@r8!=@$t5) or (@rcx!=poi(@rdi+8)+poi(@rdi+0x10)) or (@rsp!=@$t7-0x48)) { .echo PHASE4_MISMATCH; r; kv; q; }; } }; gc"
+0:000> sxe -c ".echo PHASE4_AV; .exr -1; r; kv; q" av
+0:000> sxe -c ".echo PHASE4_EXIT; .lastevent; q" epr
+0:000> g
+WINDOW_BEGIN tid=3c48 window=1 REC stage=FMT_BEGIN tid=3c48 seq=1 rsp=0000009dbedef068 receiver=0000009dbedef0a0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000 REC stage=FMT_CALL tid=3c48 seq=1 rsp=0000009dbedeefe0 formatter=0000009dbedef010 receiver=0000009dbedef0a0 REC stage=PAD_ENTRY tid=3c48 seq=1 rsp=0000009dbedeef88 formatter=0000009dbedef010 receiver=0000009dbedef0a0 text=0000009dbedeefcf len=0000000000000001 REC stage=WRITER_ENTRY tid=3c48 seq=1 rsp=0000009dbedeeee8 receiver=0000009dbedef0a0 text=0000009dbedeefcf len=0000000000000001 rax=0000000000000000 r9=000002376a940070 rbp=0000009dbedeef40 PHASE4_MISMATCH
+rax=0000000000000000 rbx=0000009dbedef0a0 rcx=0000009dbedef0a0
+rdx=0000009dbedeefcf rsi=0000000000000001 rdi=00007ff619690d18
+rip=00007ff6196836b0 rsp=0000009dbedeeee8 rbp=0000009dbedeef40
+ r8=0000000000000001  r9=000002376a940070 r10=0000000000000001
+r11=0000000000000001 r12=0000000000000002 r13=0000000000000000
+r14=0000009dbedef010 r15=0000000000000001
+iopl=0         nv up ei pl zr na po nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00000246
+c_profile_boundary!alloc::string::impl$63::write_str:
+00007ff6`196836b0 55              push    rbp
+Child-SP          RetAddr               : Args to Child                                                           : Call Site
+0000009d`bedeeee8 00007ff6`19685c17     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : c_profile_boundary!alloc::string::impl$63::write_str
+0000009d`bedeeef0 00007ff6`19684d89     : 00000000`00000005 00000000`00000003 00000237`6a957230 00000237`6a940000 : c_profile_boundary!core::fmt::Formatter::pad_integral+0x427
+0000009d`bedeef90 00007ff6`19685141     : 00000000`00000004 00000000`00000001 00000237`6a940000 00007ffc`e31a5591 : c_profile_boundary!core::fmt::num::impl$16::fmt+0x69
+0000009d`bedeefe0 00007ff6`1968384f     : 00000237`6a957460 0000009d`bedef270 00000000`00000000 00007ffc`e3181cfb : c_profile_boundary!core::fmt::write+0x161
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::fmt::Write::write_fmt::impl$1::spec_write_fmt+0x16 (Inline Function @ 00007ff6`1968384f)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::fmt::Write::write_fmt+0x16 (Inline Function @ 00007ff6`1968384f)
+0000009d`bedef070 00007ff6`1966146e     : 00000237`6a940000 00000237`50000163 00000237`6a940000 00000237`6a940000 : c_profile_boundary!alloc::fmt::format::format_inner+0x12f
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!alloc::fmt::format::closure$0+0x14 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!enum2$<core::option::Option<ref$<str$> > >::map_or_else+0x14 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!alloc::fmt::format+0x14 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!c_profile_boundary::profile::hash::closure$0::closure$0+0x23 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::ops::function::impls::impl$4::call_once+0x23 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!enum2$<core::option::Option<ref$<u8> > >::map+0x23 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::iter::adapters::map::impl$2::next+0x23 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!alloc::string::impl$10::from_iter+0x23 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::iter::traits::iterator::Iterator::collect+0x23 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!c_profile_boundary::profile::hash::closure$0+0x23 (Inline Function @ 00007ff6`1966146e)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!enum2$<core::option::Option<array$<u8,32> > >::map_or+0x44 (Inline Function @ 00007ff6`1966146e)
+0000009d`bedef100 00007ff6`1966b0f4     : 00000000`00000000 00000000`40000060 00000000`00000000 00000000`00000050 : c_profile_boundary!c_profile_boundary::profile::hash+0x6e
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!c_profile_boundary::profile::snapshot::closure$4::closure$0+0x5e8 (Inline Function @ 00007ff6`1966b0f4)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::iter::adapters::map::map_fold::closure$0+0x5e8 (Inline Function @ 00007ff6`1966b0f4)
+0000009d`bedef1f0 00007ff6`1966ee72     : 0000009d`bedef6f0 00000000`00000000 00007ff6`1969a020 00000237`6a94e630 : c_profile_boundary!core::ops::function::impls::impl$3::call_mut<tuple$<tuple$<>,ref$<c_profile_boundary::profile::CriticalRecord> >,core::iter::adapters::map::map_fold::closure_env$0<ref$<c_profile_boundary::profile::CriticalRecord>,enum2$<serde_json::value::Value>,tuple$<>,c_profile_boundary::profile::snapshot::closure$4::closure_env$0,core::iter::traits::iterator::Iterator::for_each::call::closure_env$0<enum2$<serde_json::value::Value>,alloc::vec::impl$21::extend_trusted::closure_env$0<enum2$<serde_json::value::Value>,alloc::alloc::Global,core::iter::adapters::map::Map<alloc::collections::vec_deque::iter::Iter<c_profile_boundary::profile::CriticalRecord>,c_profile_boundary::profile::snapshot::closure$4::closure_env$0> > > > >+0x614
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::slice::iter::impl$171::fold+0x2b (Inline Function @ 00007ff6`1966ee72)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!alloc::collections::vec_deque::iter::impl$4::fold+0x2b (Inline Function @ 00007ff6`1966ee72)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::iter::adapters::map::impl$2::fold+0x43 (Inline Function @ 00007ff6`1966ee72)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::iter::traits::iterator::Iterator::for_each+0x43 (Inline Function @ 00007ff6`1966ee72)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!alloc::vec::Vec<enum2$<serde_json::value::Value>,alloc::alloc::Global>::extend_trusted+0x43 (Inline Function @ 00007ff6`1966ee72)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!alloc::vec::spec_extend::impl$1::spec_extend+0x43 (Inline Function @ 00007ff6`1966ee72)
+0000009d`bedef420 00007ff6`19665001     : 00000000`000002e0 00000000`0000002f 00000237`6a940000 00007ffc`e31a5591 : c_profile_boundary!alloc::vec::spec_from_iter_nested::impl$1::from_iter<enum2$<serde_json::value::Value>,core::iter::adapters::map::Map<alloc::collections::vec_deque::iter::Iter<c_profile_boundary::profile::CriticalRecord>,c_profile_boundary::profile::snapshot::closure$4::closure_env$0> >+0x102
+0000009d`bedef4e0 00007ff6`1966bca7     : 00000000`00000000 00000000`ffffffff 00007ff6`19677174 00000237`6a94ad70 : c_profile_boundary!c_profile_boundary::profile::snapshot+0x3a71
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::hint::black_box (Inline Function @ 00007ff6`1966bca7)
+0000009d`bedef890 00007ff6`1966dd36     : 00007ff6`1968e034 0000009d`bedefad0 ffffffff`fffffffe 00007ffc`e03d6d7f : c_profile_boundary!c_profile_boundary::main+0xb7
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::ops::function::FnOnce::call_once+0x2 (Inline Function @ 00007ff6`1966dd36)
+0000009d`bedefa90 00007ff6`1966d15c     : 00000000`00006000 0000009d`bede5000 00000000`000a0008 00007ff6`1968e034 : c_profile_boundary!std::sys::backtrace::__rust_begin_short_backtrace<void (*)(),tuple$<> >+0x6
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!std::rt::lang_start::closure$0+0x5 (Inline Function @ 00007ff6`1966d15c)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!core::ops::function::FnOnce::call_once+0x5 (Inline Function @ 00007ff6`1966d15c)
+0000009d`bedefac0 00007ff6`19675ecf     : 00000237`6a952c30 00007ff6`1968c0d0 0000009d`bedefbb0 00000000`00000000 : c_profile_boundary!core::ops::function::FnOnce::call_once<std::rt::lang_start::closure_env$0<tuple$<> >,tuple$<> >+0xc
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!std::rt::lang_start_internal::closure$0+0x95 (Inline Function @ 00007ff6`19675ecf)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!std::panicking::catch_unwind::do_call+0x95 (Inline Function @ 00007ff6`19675ecf)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!std::panicking::catch_unwind+0x95 (Inline Function @ 00007ff6`19675ecf)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!std::panic::catch_unwind+0x95 (Inline Function @ 00007ff6`19675ecf)
+0000009d`bedefaf0 00007ff6`1966c68c     : 00007ff6`1968b308 00007ff6`19688815 00000000`00000007 00000000`00000000 : c_profile_boundary!std::rt::lang_start_internal+0xaf
+0000009d`bedefb80 00007ff6`19688550     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : c_profile_boundary!main+0x2c
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : c_profile_boundary!invoke_main+0x22 (Inline Function @ 00007ff6`19688550)
+0000009d`bedefbc0 00007ffc`e175dda7     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : c_profile_boundary!__scrt_common_main_seh+0x10c
+0000009d`bedefc00 00007ffc`e3219c5c     : 00000000`00000000 00000000`00000000 000004f0`fffffb30 000004d0`fffffb30 : KERNEL32!BaseThreadInitThunk+0x17
+0000009d`bedefc30 00000000`00000000     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : ntdll!RtlUserThreadStart+0x2c
+                                      ^ Syntax error in ' .echo PHASE4_MISMATCH; r; kv; q; '
+c_profile_boundary!alloc::string::impl$63::write_str:
+00007ff6`196836b0 55              push    rbp
+0:000> NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

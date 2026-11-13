@@ -1,0 +1,14 @@
+{
+  "scope": "actual node library compiler process",
+  "opt_level": [
+    "3"
+  ],
+  "overflow_checks": [
+    "on"
+  ],
+  "debuginfo": [
+    "2"
+  ],
+  "iroh_feature_present": true,
+  "strip_debuginfo_present": false
+}

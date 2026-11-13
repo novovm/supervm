@@ -1,6 +1,19 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 C exact-symbol analysis: ZIP received; first corruption unresolved
+## CURRENT 2026-11-14 C Phase4: diagnostic build and live boundaries; original fault unresolved
+
+C built an independent optimized a254 node with full node-library/bin debug streams;
+EXE/PDB identity and original-source checksums verified. This new node was NOT run.
+One isolated original profile snapshot produced64 format calls /576 boundary records:
+48 tail calls and16 normal zero-padding calls; debugger and target both exited0.
+1,638 offline comparisons passed. Preparation/capture failures are preserved.
+No original failure or first parameter corruption was captured. No production patch,
+original DB/identity access, node restart or double-relay release. C remains NOT READY.
+[Phase4 actual evidence, failures and narrow next experiment](C-boundary-phase4-20261114/README.md).
+Do not substitute the new PDB for the original DMP or re-arm old relay windows.
+This Git return is not A acknowledgment. D does not operate.
+
+## PRIOR 2026-11-14 C exact-symbol analysis: ZIP received; first corruption unresolved
 
 C received A's original ZIP and independently matched both hashes, PDB/EXE/dump
 GUID E16D0B11-47CA-4EBF-B482-C91380CC57F8 age1. CDB loaded exact private symbols.

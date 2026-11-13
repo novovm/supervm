@@ -1,0 +1,689 @@
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.016 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.26100.9457 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+CommandLine: <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release\c-profile-boundary.exe
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*
+Symbol search path is: srv*
+Executable search path is:
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+ModLoad: 00007ff6`19660000 00007ff6`1969e000   c_profile_boundary.exe
+ModLoad: 00007ffc`e3150000 00007ffc`e33bc000   ntdll.dll
+ModLoad: 00007ffc`e1730000 00007ffc`e17fb000   C:\WINDOWS\System32\KERNEL32.DLL
+ModLoad: 00007ffc`e02f0000 00007ffc`e06f9000   C:\WINDOWS\System32\KERNELBASE.dll
+ModLoad: 00007ffc`e0870000 00007ffc`e091c000   C:\WINDOWS\System32\bcryptprimitives.dll
+ModLoad: 00007ffc`e0930000 00007ffc`e0a7c000   C:\WINDOWS\System32\ucrtbase.dll
+ModLoad: 00007ffc`b1d30000 00007ffc`b1d4e000   C:\WINDOWS\SYSTEM32\VCRUNTIME140.dll
+(95a4.6bb0): Break instruction exception - code 80000003 (first chance)
+ntdll!LdrpDoDebuggerBreak+0x35:
+00007ffc`e3275245 cc              int     3
+0:000> .sympath <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+Symbol search path is: <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+Expanded Symbol search path is: d:\web3_ai\supervm\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+0:000> .reload /f c-profile-boundary.exe
+
+"c-profile-boundary.exe" was not found in the image list.
+Debugger will attempt to load "c-profile-boundary.exe" at given base 00000000`00000000.
+
+Please provide the full image name, including the extension (i.e. kernel32.dll)
+for more reliable results.Base address and size overrides can be given as
+.reload <image.ext>=<base>,<size>.
+Unable to add module at 00000000`00000000
+0:000> r @$t0=0
+0:000> r @$t1=0
+0:000> r @$t2=0
+0:000> x c_profile_boundary!phase4_window*
+*** WARNING: Unable to verify checksum for c_profile_boundary.exe
+00007ff6`1966c650 c_profile_boundary!phase4_window_begin (phase4_window_begin)
+00007ff6`1966c650 c_profile_boundary!phase4_window_end (phase4_window_end)
+0:000> bp c_profile_boundary!phase4_window_begin ".if (@$t0==0) { r @$t0=1; r @$t1=@$tid; .printf \"WINDOW_BEGIN tid=%x window=%x\", @$tid,@rcx; .echo; } .else { .printf \"WINDOW_END tid=%x calls=%x\", @$tid,@$t2; .echo; r @$t0=0; }; gc"
+0:000> bp c_profile_boundary+0x24fe0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t2=@$t2+1; r @$t3=@rcx; .printf \"REC stage=FMT_BEGIN tid=%x seq=%x rsp=%p receiver=%p cap=%p buffer=%p len=%p\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rcx+8),poi(@rcx+0x10); .echo; } }; gc"
+0:000> bp c_profile_boundary+0x2513d ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=FMT_CALL tid=%x seq=%x rsp=%p formatter=%p receiver=%p\", @$tid,@$t2,@rsp,@rdx,poi(@rdx); .echo; } }; gc"
+0:000> bp c_profile_boundary+0x257f0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t4=poi(@rsp+0x28); r @$t5=poi(@rsp+0x30); .printf \"REC stage=PAD_ENTRY tid=%x seq=%x rsp=%p formatter=%p receiver=%p text=%p len=%p\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rsp+0x28),poi(@rsp+0x30); .echo; } }; gc"
+0:000> bp c_profile_boundary+0x258b7 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_BEFORE tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x258bc ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_AFTER tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x25bcc ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_PREFIX_BEFORE tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x25bd1 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_PREFIX_AFTER tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x258d5 ".if (@$t0) { .if (@$tid==@$t1) { r @$t6=@rsp+0x98; .printf \"REC stage=TAIL_READY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x258e5 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=TAIL_JUMP tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x25c14 ".if (@$t0) { .if (@$tid==@$t1) { r @$t6=@rsp-8; .printf \"REC stage=PAD_CALL tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p target=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp,poi(@rdi+0x18); .echo; } }; gc"
+0:000> bp c_profile_boundary+0x25c17 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_RETURN tid=%x seq=%x rsp=%p result=%p\", @$tid,@$t2,@rsp,@al; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x236b0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t7=@rsp; .printf \"REC stage=WRITER_ENTRY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo; } }; gc"
+0:000> bp c_profile_boundary+0x236de ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=COPY_CALL tid=%x seq=%x rsp=%p receiver=%p dest=%p text=%p len=%p buffer=%p oldlen=%p\", @$tid,@$t2,@rsp,@rdi,@rcx,@rdx,@r8,poi(@rdi+8),poi(@rdi+0x10); .echo; } }; gc"
+0:000> sxe -c ".echo PHASE4_AV; .exr -1; r; kv; q" av
+0:000> sxe -c ".echo PHASE4_EXIT; .lastevent; q" epr
+0:000> g
+WINDOW_BEGIN tid=6bb0 window=1
+REC stage=FMT_BEGIN tid=6bb0 seq=1 rsp=0000006d3b6fec18 receiver=0000006d3b6fec50 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=1 rsp=0000006d3b6feb90 formatter=0000006d3b6febc0 receiver=0000006d3b6fec50
+REC stage=PAD_ENTRY tid=6bb0 seq=1 rsp=0000006d3b6feb38 formatter=0000006d3b6febc0 receiver=0000006d3b6fec50 text=0000006d3b6feb7f len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=1 rsp=0000006d3b6feaa0 rbx=0000006d3b6fec50 rbp=0000006d3b6feaf0 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6febc0 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=1 rsp=0000006d3b6feaa0 rbx=0000006d3b6fec50 rbp=0000006d3b6feaf0 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6febc0 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=1 rsp=0000006d3b6feaa0 receiver=0000006d3b6fec50 text=0000006d3b6feb7f len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6feaf0 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=1 rsp=0000006d3b6fea98 receiver=0000006d3b6fec50 text=0000006d3b6feb7f len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6feaf0
+REC stage=COPY_CALL tid=6bb0 seq=1 rsp=0000006d3b6fea50 receiver=0000006d3b6fec50 dest=00000217d74572c1 text=0000006d3b6feb7f len=0000000000000001 buffer=00000217d74572c0 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=1 rsp=0000006d3b6feaa0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=2 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=2 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=2 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=2 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=2 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=2 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=2 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=2 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=2 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=3 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=3 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=3 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=3 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=3 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=3 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=3 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=3 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=3 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=4 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=4 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=4 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=4 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=4 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=4 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=4 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=4 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=4 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=5 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=5 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=5 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=5 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=5 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=5 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=5 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=5 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=5 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=6 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=6 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=6 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=6 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=6 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=6 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=6 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=6 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=6 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=7 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=7 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=7 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=7 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=7 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=7 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=7 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=7 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=7 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=8 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=8 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=8 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=8 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=8 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=8 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=8 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=8 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=8 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=9 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=9 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=9 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=9 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=9 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=9 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=9 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=9 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457301 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457300 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=9 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=a rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=a rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=a rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=a rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=a rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=a rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=a rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=a rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457391 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457390 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=a rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=b rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=b rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=b rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=b rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=b rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=b rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=b rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=b rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457391 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457390 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=b rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=c rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=c rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=c rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=c rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=c rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=c rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=c rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=c rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457391 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457390 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=c rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=d rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=d rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=d rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=d rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=d rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=d rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=d rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=d rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457391 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457390 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=d rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=e rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=e rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=e rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=e rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=e rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=e rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=e rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=e rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457391 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457390 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=e rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=f rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=f rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=f rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=f rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=f rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=f rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=f rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=f rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457391 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457390 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=f rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=10 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=10 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=10 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001
+REC stage=PAD_PREFIX_BEFORE tid=6bb0 seq=10 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_PREFIX_AFTER tid=6bb0 seq=10 rsp=0000006d3b6fe9f0 rbx=0000006d3b6feba0 rbp=0000006d3b6fea40 rdi=00007ff619690d18 rsi=0000000000000001 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PAD_CALL tid=6bb0 seq=10 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40 target=00007ff6196836b0
+REC stage=WRITER_ENTRY tid=6bb0 seq=10 rsp=0000006d3b6fe9e8 receiver=0000006d3b6feba0 text=0000006d3b6feacf len=0000000000000001 rax=0000000000000000 r9=00000217d7440070 rbp=0000006d3b6fea40
+REC stage=COPY_CALL tid=6bb0 seq=10 rsp=0000006d3b6fe9a0 receiver=0000006d3b6feba0 dest=00000217d7457391 text=0000006d3b6feacf len=0000000000000001 buffer=00000217d7457390 oldlen=0000000000000001
+REC stage=PAD_RETURN tid=6bb0 seq=10 rsp=0000006d3b6fe9f0 result=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=11 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=11 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=11 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=11 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=11 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=11 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=11 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=11 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=11 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457390 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457390 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=12 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=12 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=12 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=12 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=12 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=12 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=12 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=12 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=12 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=13 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=13 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=13 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=13 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=13 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=13 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=13 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=13 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=13 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=14 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=14 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=14 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=14 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=14 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=14 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=14 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=14 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=14 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=15 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=15 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=15 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=15 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=15 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=15 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=15 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=15 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=15 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=16 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=16 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=16 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=16 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=16 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=16 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=16 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=16 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=16 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=17 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=17 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=17 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=17 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=17 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=17 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=17 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=17 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=17 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=18 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=18 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=18 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=18 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=18 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=18 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=18 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=18 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=18 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=19 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=19 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=19 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=19 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=19 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=19 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=19 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=19 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=19 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=1a rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=1a rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=1a rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=1a rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=1a rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=1a rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=1a rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=1a rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=1a rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=1b rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=1b rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=1b rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=1b rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=1b rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=1b rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=1b rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=1b rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=1b rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=1c rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=1c rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=1c rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=1c rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=1c rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=1c rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=1c rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=1c rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=1c rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=1d rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=1d rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=1d rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=1d rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=1d rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=1d rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=1d rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=1d rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=1d rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=1e rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=1e rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=1e rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=1e rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=1e rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=1e rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=1e rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=1e rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=1e rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=1f rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=1f rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=1f rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=1f rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=1f rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=1f rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=1f rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=1f rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=1f rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=20 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=20 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=20 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=20 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=20 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=20 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=20 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=20 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=20 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457340 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457340 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=21 rsp=0000006d3b6fec18 receiver=0000006d3b6fec50 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=21 rsp=0000006d3b6feb90 formatter=0000006d3b6febc0 receiver=0000006d3b6fec50
+REC stage=PAD_ENTRY tid=6bb0 seq=21 rsp=0000006d3b6feb38 formatter=0000006d3b6febc0 receiver=0000006d3b6fec50 text=0000006d3b6feb7e len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=21 rsp=0000006d3b6feaa0 rbx=00007ff619690d18 rbp=0000006d3b6feaf0 rdi=0000006d3b6fec50 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6febc0 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=21 rsp=0000006d3b6feaa0 rbx=00007ff619690d18 rbp=0000006d3b6feaf0 rdi=0000006d3b6fec50 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6febc0 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=21 rsp=0000006d3b6feaa0 receiver=0000006d3b6fec50 text=0000006d3b6feb7e len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6feaf0
+REC stage=TAIL_JUMP tid=6bb0 seq=21 rsp=0000006d3b6feb38 receiver=0000006d3b6fec50 text=0000006d3b6feb7e len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6feb80
+REC stage=WRITER_ENTRY tid=6bb0 seq=21 rsp=0000006d3b6feb38 receiver=0000006d3b6fec50 text=0000006d3b6feb7e len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6feb80
+REC stage=COPY_CALL tid=6bb0 seq=21 rsp=0000006d3b6feaf0 receiver=0000006d3b6fec50 dest=00000217d7457300 text=0000006d3b6feb7e len=0000000000000002 buffer=00000217d7457300 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=22 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=22 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=22 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=22 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=22 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=22 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=22 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=22 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=22 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=23 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=23 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=23 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=23 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=23 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=23 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=23 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=23 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=23 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=24 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=24 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=24 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=24 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=24 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=24 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=24 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=24 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=24 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=25 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=25 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=25 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=25 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=25 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=25 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=25 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=25 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=25 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=26 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=26 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=26 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=26 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=26 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=26 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=26 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=26 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=26 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=27 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=27 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=27 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=27 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=27 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=27 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=27 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=27 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=27 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=28 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=28 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=28 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=28 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=28 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=28 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=28 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=28 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=28 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=29 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=29 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=29 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=29 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=29 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=29 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=29 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=29 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=29 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=2a rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=2a rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=2a rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=2a rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=2a rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=2a rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=2a rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=2a rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=2a rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=2b rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=2b rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=2b rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=2b rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=2b rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=2b rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=2b rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=2b rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=2b rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=2c rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=2c rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=2c rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=2c rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=2c rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=2c rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=2c rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=2c rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=2c rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=2d rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=2d rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=2d rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=2d rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=2d rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=2d rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=2d rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=2d rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=2d rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=2e rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=2e rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=2e rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=2e rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=2e rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=2e rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=2e rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=2e rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=2e rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=2f rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=2f rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=2f rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=2f rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=2f rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=2f rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=2f rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=2f rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=2f rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=30 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=30 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=30 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=30 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=30 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=30 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=30 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=30 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=30 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=31 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=31 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=31 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=31 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=31 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=31 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=31 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=31 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=31 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=32 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=32 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=32 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=32 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=32 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=32 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=32 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=32 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=32 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=33 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=33 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=33 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=33 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=33 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=33 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=33 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=33 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=33 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=34 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=34 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=34 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=34 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=34 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=34 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=34 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=34 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=34 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=35 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=35 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=35 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=35 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=35 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=35 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=35 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=35 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=35 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=36 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=36 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=36 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=36 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=36 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=36 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=36 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=36 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=36 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=37 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=37 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=37 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=37 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=37 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=37 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=37 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=37 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=37 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=38 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=38 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=38 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=38 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=38 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=38 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=38 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=38 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=38 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=39 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=39 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=39 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=39 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=39 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=39 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=39 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=39 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=39 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=3a rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=3a rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=3a rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=3a rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=3a rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=3a rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=3a rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=3a rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=3a rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=3b rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=3b rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=3b rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=3b rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=3b rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=3b rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=3b rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=3b rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=3b rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=3c rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=3c rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=3c rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=3c rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=3c rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=3c rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=3c rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=3c rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=3c rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=3d rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=3d rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=3d rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=3d rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=3d rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=3d rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=3d rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=3d rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=3d rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=3e rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=3e rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=3e rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=3e rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=3e rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=3e rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=3e rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=3e rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=3e rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=3f rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=3f rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=3f rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=3f rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=3f rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=3f rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=3f rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=3f rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=3f rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+REC stage=FMT_BEGIN tid=6bb0 seq=40 rsp=0000006d3b6feb68 receiver=0000006d3b6feba0 cap=0000000000000000 buffer=0000000000000001 len=0000000000000000
+REC stage=FMT_CALL tid=6bb0 seq=40 rsp=0000006d3b6feae0 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0
+REC stage=PAD_ENTRY tid=6bb0 seq=40 rsp=0000006d3b6fea88 formatter=0000006d3b6feb10 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002
+REC stage=PREFIX_BEFORE tid=6bb0 seq=40 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=PREFIX_AFTER tid=6bb0 seq=40 rsp=0000006d3b6fe9f0 rbx=00007ff619690d18 rbp=0000006d3b6fea40 rdi=0000006d3b6feba0 rsi=0000000000000002 r12=0000000000000002 r13=0000000000000002 r14=0000006d3b6feb10 r15=0000000000000000
+REC stage=TAIL_READY tid=6bb0 seq=40 rsp=0000006d3b6fe9f0 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fea40
+REC stage=TAIL_JUMP tid=6bb0 seq=40 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=WRITER_ENTRY tid=6bb0 seq=40 rsp=0000006d3b6fea88 receiver=0000006d3b6feba0 text=0000006d3b6feace len=0000000000000002 rax=00007ff6196836b0 r9=0000000000000000 rbp=0000006d3b6fead0
+REC stage=COPY_CALL tid=6bb0 seq=40 rsp=0000006d3b6fea40 receiver=0000006d3b6feba0 dest=00000217d7457890 text=0000006d3b6feace len=0000000000000002 buffer=00000217d7457890 oldlen=0000000000000000
+WINDOW_END tid=6bb0 calls=40
+PHASE4_SNAPSHOT_PASS events=1 hash_bytes=64 original_failure_reproduced=false
+ModLoad: 00007ffc`df080000 00007ffc`df09b000   C:\WINDOWS\SYSTEM32\kernel.appcore.dll
+ModLoad: 00007ffc`e1af0000 00007ffc`e1b99000   C:\WINDOWS\System32\msvcrt.dll
+PHASE4_EXIT
+Last event: 95a4.6bb0: Exit process 0:95a4, code 0
+  debugger time: Sat Nov 14 05:15:04.937 2026 (UTC + 8:00)
+quit:
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'
