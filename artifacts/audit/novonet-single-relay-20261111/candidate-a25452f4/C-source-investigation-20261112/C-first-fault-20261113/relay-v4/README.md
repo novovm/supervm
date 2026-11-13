@@ -80,3 +80,38 @@ This remains **C_FAULT_DIAGNOSTIC_RUNNING, relay_ready=false, A_must_not_send=tr
 No network-acceptance READY is being published. Raw original READY, progress,
 stdout/stderr, config and dumps stay private. Terminal/fault records follow only
 after actual events; a clean run still cannot close the repeatedly observed crash.
+
+## Actual early failure and first-chance capture (17:08 Beijing)
+
+This did **not** complete the7200-second window. The original observer exited1
+at16:59:18, after about433seconds: complete JSON snapshots lacked `novonet`
+for its original15-second observation bound. First/last anomaly metadata and
+final liveness are preserved without exporting arbitrary snapshot contents.
+
+The coordinator exited1 at16:59:21. Its owned-debugger stop guard compared an
+ISO string directly to the DateTime produced by PowerShell ConvertFrom-Json;
+that comparison is false and the guard silently skipped termination. This is a
+new diagnostic-cleanup defect, not evidence of an original node crash cause.
+A separate exact-identity stop helper was prepared, but its UAC was cancelled;
+it did not run. No node was restarted or retry performed.
+
+The same bounded instrumented node then encountered a first-chance `c0000005`
+by17:08:53. CDB captured a **277,824,196-byte full-memory dump**, validated its
+MDMP/full-memory flag and quit. The original debugger exit is0; normal target
+exit was not observed, so node exit remains unknown. Current node/debugger
+processes were absent at collection. The first fault is a write to0xb9 at
+ntdll+0x1ff3f while unwinding allocation stack traces through verifier/heap
+reallocation. This is **not yet proof of the first corrupting writer** or a
+demonstrated common cause with the earlier String-copy faults. C continues
+local dump/source analysis. Dumps/raw logs/config stay private.
+
+Separately, the publisher contains two elapsed-time checks around product.poll:
+the first can skip network observation and the second emit an incomplete status
+after crossing the interval. A single latched decision fixes that control flow.
+An actual-source scheduling regression reproduces the missing field against
+a254 (1of4tests fails), while the changed source passes4of4. Full node check is
+in progress; no program replacement/deployment is claimed. The original reader's
+missing-field rejection and15-second wait remain unchanged.
+
+**C remains NOT READY. A must not send an object.** All previous failure and
+startup records remain; the original two-hour window did not pass.

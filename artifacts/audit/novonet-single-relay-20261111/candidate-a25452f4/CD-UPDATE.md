@@ -1,6 +1,22 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 16:56 Beijing: C original-observer fault diagnostic RUNNING
+## CURRENT 2026-11-13 17:08 Beijing: C captured AV; original observer also failed
+
+Original Watch-Relay exited1 at16:59:18 after missing `novonet` for the unchanged
+15-second bound. Coordinator exited1; a DateTime/string identity comparison
+defect skipped debugger cleanup. Separate stop UAC was cancelled, not executed.
+The same instrumented node subsequently hit a first-chance write AV in ntdll
+stack unwinding / heap stack-capture. CDB captured and verified a277,824,196-byte
+full-memory dump by17:08:53, then quit; debugger exit0 is not node success.
+Node normal exit is unknown. No new node was launched. The two-hour window failed.
+
+C owns analysis. The snapshot publisher's duplicate-time-check defect has a
+source-level fix and deterministic regression (old fails, fixed4/4); full node
+check pending. That fix is not declared the cause/fix of the native memory crash.
+Raw dump/log/config remain private. **relay_ready=false; A must not send.**
+[Exact original errors, chronology, dump hash and limits](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/README.md).
+
+## PRIOR 2026-11-13 16:56 Beijing: C original-observer fault diagnostic RUNNING
 
 The reissued Windows UAC was actually accepted. LocalService clean/overrun
 controls and a13,244,674-byte full-memory dump passed. Original a254/AOEM966

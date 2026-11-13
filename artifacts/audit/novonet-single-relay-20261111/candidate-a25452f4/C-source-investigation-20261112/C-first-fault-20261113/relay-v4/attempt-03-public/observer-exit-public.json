@@ -1,0 +1,9 @@
+{
+  "reason": "observer_natural_exit",
+  "utc": "2026-11-13T08:59:21.7108716Z",
+  "terminated_by_coordinator": false,
+  "relay_ready": false,
+  "exit_code": 1,
+  "pid": 37152,
+  "diagnostic_only": true
+}
