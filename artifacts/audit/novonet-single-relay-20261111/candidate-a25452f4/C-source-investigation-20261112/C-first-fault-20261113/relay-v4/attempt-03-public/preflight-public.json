@@ -1,0 +1,15 @@
+{
+  "debugger_hard_seconds": 7440,
+  "observer_wait_seconds": 7200,
+  "previous_owner_exited": true,
+  "node_run_ms": 7320000,
+  "protected_identity_verified": true,
+  "utc": "2026-11-13T08:51:49.2395280Z",
+  "A_B_D_operated": false,
+  "minimum_disk_free_bytes": 10737418240,
+  "task_max_minutes": 128,
+  "relay_ready": false,
+  "memory_bound_bytes": 6442450944,
+  "original_observer_unmodified": true,
+  "start": "existing"
+}

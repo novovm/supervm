@@ -1,6 +1,21 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 16:45 Beijing: original-workflow crash capture prepared
+## CURRENT 2026-11-13 16:56 Beijing: C original-observer fault diagnostic RUNNING
+
+The reissued Windows UAC was actually accepted. LocalService clean/overrun
+controls and a13,244,674-byte full-memory dump passed. Original a254/AOEM966
+node PID17748 started16:52:00 under CDB12524, original unmodified Watch-Relay
+PID37152 at16:52:04, same fresh original progress path. Prior progress was
+archived byte-for-byte with hash verification; original DB existing/identity
+retained. The original7200-second observation is active, expected through18:52,
+with node/CDB bounds18:54/18:56. No fault or terminal result is claimed yet.
+
+**Fault reproduction only: relay_ready=false, A_must_not_send=true.** Do not
+send a double-relay object or treat the private original observer READY as a
+service acceptance. C owns diagnosis; A/B/D are not operated. The first cancelled
+UAC and all earlier failures remain. [Actual controls/startup and sampled liveness](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/README.md).
+
+## PRIOR 2026-11-13 16:45 Beijing: original-workflow crash capture prepared
 
 C prepared a single corrected PageHeap capture with the original unmodified
 Watch-Relay/reader and7200-second observation. The node's bounded122minutes

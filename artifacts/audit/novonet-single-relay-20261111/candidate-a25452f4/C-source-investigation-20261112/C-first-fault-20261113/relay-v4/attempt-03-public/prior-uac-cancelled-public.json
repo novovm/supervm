@@ -1,0 +1,5 @@
+{
+  "utc": "2026-11-13T08:48:47.7991138Z",
+  "error": "This command cannot be run due to the error: An error occurred trying to start process 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' with working directory 'D:\\WEB3_AI\\SUPERVM'. 操作已被用户取消。",
+  "node_execution_not_claimed": true
+}

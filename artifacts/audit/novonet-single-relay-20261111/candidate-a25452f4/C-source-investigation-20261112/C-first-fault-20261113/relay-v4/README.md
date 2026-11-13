@@ -57,3 +57,26 @@ this preparation record; UAC or a successful launcher is not node health.
 An exception follows the original call chain; a clean two-hour run still does
 not establish a fix. The known original crashes and earlier capture limitations
 remain preserved. No production timeout or network policy is changed.
+
+## Actual start,2026-11-13 16:52 Beijing
+
+The first OS request was cancelled before any diagnostic root/task was created;
+its original cancellation is retained. After the user's explicit reissue, the
+second request was actually accepted at08:51:45Z. No further UAC is pending.
+LocalService clean/overrun controls passed, with a **13,244,674-byte full-memory
+dump actually written and validated**. Original prior progress was archived
+locally:1,498,305bytes, hash in the public archive receipt.
+
+Original a254 node PID17748 began at08:52:00.306579Z under CDB12524. Original
+unmodified observer PID37152 began at08:52:04.863253Z and confirmed it reads
+that same node's fresh original progress path. Actual diagnostic readiness was
+recorded at08:52:06Z. The public liveness sample confirms the read loop active;
+no error/result/fault is asserted at this startup checkpoint. Temporary IFEO
+settings have already been removed after instrumentation was verified.
+
+Observer's two-hour window is expected to end around18:52 Beijing; node bound
+around18:54, CDB hard bound around18:56. These are limits, not completion facts.
+This remains **C_FAULT_DIAGNOSTIC_RUNNING, relay_ready=false, A_must_not_send=true**.
+No network-acceptance READY is being published. Raw original READY, progress,
+stdout/stderr, config and dumps stay private. Terminal/fault records follow only
+after actual events; a clean run still cannot close the repeatedly observed crash.

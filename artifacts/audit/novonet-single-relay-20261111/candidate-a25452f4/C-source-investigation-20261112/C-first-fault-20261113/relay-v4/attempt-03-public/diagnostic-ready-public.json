@@ -1,0 +1,21 @@
+{
+  "status": "C_FAULT_DIAGNOSTIC_RUNNING",
+  "original_progress_path_used": true,
+  "relay_ready": false,
+  "original_observer_verified": true,
+  "full_dump_control_verified": true,
+  "node_creation_utc": "2026-11-13T08:52:00.3065790Z",
+  "utc": "2026-11-13T08:52:06.0302266Z",
+  "debugger": {
+    "pid": 12524,
+    "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-first-fault-20261113\\sdk\\extracted\\Windows Kits\\10\\Debuggers\\x64\\cdb.exe",
+    "created_utc": "2026-11-13T08:52:00.0792165Z",
+    "max_seconds": 7440
+  },
+  "observer_creation_utc": "2026-11-13T08:52:04.8632530Z",
+  "observer_pid": 37152,
+  "temporary_ifeo_removed": true,
+  "A_must_not_send": true,
+  "node_pid": 17748,
+  "observer_window_seconds": 7200
+}
