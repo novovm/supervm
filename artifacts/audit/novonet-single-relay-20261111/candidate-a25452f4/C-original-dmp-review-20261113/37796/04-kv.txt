@@ -1,0 +1,20 @@
+0:001> kv
+  *** Stack trace for last set context - .thread/.cxr resets it
+Child-SP          RetAddr               : Args to Child                                                           : Call Site
+0000000e`7e2ee398 00007ff7`0b88cc93     : [untyped stack words redacted] : VCRUNTIME140!memcpy_avx_ermsb_Intel+0x68
+0000000e`7e2ee3a0 00007ff7`0b890359     : [untyped stack words redacted] : novovm_node+0x1e4cc93
+0000000e`7e2ee3f0 00007ff7`0b8924e1     : [untyped stack words redacted] : novovm_node+0x1e50359
+0000000e`7e2ee440 00007ff7`0b88cf9f     : [untyped stack words redacted] : novovm_node+0x1e524e1
+0000000e`7e2ee4d0 00007ff7`0a3cbc1a     : [untyped stack words redacted] : novovm_node+0x1e4cf9f
+0000000e`7e2ee560 00007ff7`0a4565a0     : [untyped stack words redacted] : novovm_node+0x98bc1a
+0000000e`7e2ee650 00007ff7`0a65ff32     : [untyped stack words redacted] : novovm_node+0xa165a0
+0000000e`7e2ee8a0 00007ff7`0a1a14af     : [untyped stack words redacted] : novovm_node+0xc1ff32
+0000000e`7e2ee960 00007ff7`0a1b7bb9     : [untyped stack words redacted] : novovm_node+0x7614af
+0000000e`7e2eed80 00007ff7`09bbd5e5     : [untyped stack words redacted] : novovm_node+0x777bb9
+0000000e`7e2ef250 00007ff7`09acad16     : [untyped stack words redacted] : novovm_node+0x17d5e5
+0000000e`7e2ef360 00007ff7`09c18d57     : [untyped stack words redacted] : novovm_node+0x8ad16
+0000000e`7e2ff9e0 00007ff7`09c1a0f5     : [untyped stack words redacted] : novovm_node+0x1d8d57
+0000000e`7e2ffa30 00007ff7`0b87a0e8     : [untyped stack words redacted] : novovm_node+0x1da0f5
+0000000e`7e2ffae0 00007ffc`e175dda7     : [untyped stack words redacted] : novovm_node+0x1e3a0e8
+0000000e`7e2ffb90 00007ffc`e3219c5c     : [untyped stack words redacted] : kernel32!BaseThreadInitThunk+0x17
+0000000e`7e2ffbc0 00000000`00000000     : [untyped stack words redacted] : ntdll!RtlUserThreadStart+0x2c

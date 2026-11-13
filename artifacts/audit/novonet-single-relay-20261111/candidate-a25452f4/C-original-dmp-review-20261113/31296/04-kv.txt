@@ -1,0 +1,4 @@
+0:001> kv
+  *** Stack trace for last set context - .thread/.cxr resets it
+Child-SP          RetAddr               : Args to Child                                                           : Call Site
+000000e8`3f7ee180 00000000`00000000     : [untyped stack words redacted] : novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+0x31d

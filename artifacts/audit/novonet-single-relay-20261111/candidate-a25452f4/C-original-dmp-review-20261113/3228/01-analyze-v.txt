@@ -1,0 +1,147 @@
+0:001> !analyze -v
+*******************************************************************************
+*                                                                             *
+*                        Exception Analysis                                   *
+*                                                                             *
+*******************************************************************************
+
+*** WARNING: Unable to verify checksum for novovm-node.exe
+
+KEY_VALUES_STRING: 1
+
+    Key  : AV.Fault
+    Value: Write
+
+    Key  : Analysis.CPU.mSec
+    Value: 593
+
+    Key  : Analysis.Elapsed.mSec
+    Value: 19433
+
+    Key  : Analysis.IO.Other.Mb
+    Value: 27
+
+    Key  : Analysis.IO.Read.Mb
+    Value: 0
+
+    Key  : Analysis.IO.Write.Mb
+    Value: 52
+
+    Key  : Analysis.Init.CPU.mSec
+    Value: 359
+
+    Key  : Analysis.Init.Elapsed.mSec
+    Value: 13857
+
+    Key  : Analysis.Memory.CommitPeak.Mb
+    Value: 175
+
+    Key  : Failure.Bucket
+    Value: INVALID_POINTER_WRITE_c0000005_VCRUNTIME140.dll!memcpy_avx_ermsb_Intel
+
+    Key  : Failure.Hash
+    Value: {b6a2fbd1-1859-64dd-c4e4-8a5b67d18eaf}
+
+    Key  : Timeline.OS.Boot.DeltaSec
+    Value: 38475
+
+    Key  : Timeline.Process.Start.DeltaSec
+    Value: 18134
+
+    Key  : WER.OS.Branch
+    Value: ge_release
+
+    Key  : WER.OS.Version
+    Value: 10.0.26100.1
+
+
+FILE_IN_CAB:  novovm-node.exe.3228.dmp
+
+NTGLOBALFLAG:  0
+
+APPLICATION_VERIFIER_FLAGS:  0
+
+CONTEXT:  (.ecxr)
+rax=000000eab6ddc900 rbx=000000755b6ee490 rcx=0000000000003962
+rdx=000000755b6ee2fe rsi=0000000000000002 rdi=000000755b6ee358
+rip=00007ffcb1d4126b rsp=000000755b6ee268 rbp=000000755b6ee290
+ r8=0000000000000002  r9=00007ffcb1d41268 r10=00007ffcb1d30000
+r11=0000000000000028 r12=00007ff7805fb828 r13=00000000000000c3
+r14=00007ff77ff37a00 r15=00007ff7805fb82a
+iopl=0         nv up ei pl nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010202
+VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b:
+00007ffc`b1d4126b 668908          mov     word ptr [rax],cx ds:000000ea`b6ddc900=????
+Resetting default scope
+
+EXCEPTION_RECORD:  (.exr -1)
+ExceptionAddress: 00007ffcb1d4126b (VCRUNTIME140!memcpy_avx_ermsb_Intel+0x000000000000006b)
+   ExceptionCode: c0000005 (Access violation)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 0000000000000001
+   Parameter[1]: 000000eab6ddc900
+Attempt to write to address 000000eab6ddc900
+
+PROCESS_NAME:  novovm-node.exe
+
+WRITE_ADDRESS:  000000eab6ddc900
+
+ERROR_CODE: (NTSTATUS) 0xc0000005 - 0x%p            0x%p                    %s
+
+EXCEPTION_CODE_STR:  c0000005
+
+EXCEPTION_PARAMETER1:  0000000000000001
+
+EXCEPTION_PARAMETER2:  000000eab6ddc900
+
+STACK_TEXT:
+00000075`5b6ee268 00007ff7`7ff37a33     : [untyped stack words redacted] : VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b
+00000075`5b6ee270 00007ff7`7ff3b0f9     : [untyped stack words redacted] : novovm_node!alloc::string::impl$63::write_str+0x33
+00000075`5b6ee2c0 00007ff7`7ff3d281     : [untyped stack words redacted] : novovm_node!core::fmt::num::impl$16::fmt+0x69
+00000075`5b6ee310 00007ff7`7ff37d3f     : [untyped stack words redacted] : novovm_node!core::fmt::write+0x161
+00000075`5b6ee3a0 00007ff7`7ea5490a     : [untyped stack words redacted] : novovm_node!alloc::fmt::format::format_inner+0x12f
+00000075`5b6ee430 00007ff7`7eae1ef4     : [untyped stack words redacted] : novovm_node!ZN112_$LT$alloc..string..String$u20$as$u20$core..iter..traits..collect..FromIterator$LT$alloc..string..String$GT$$GT$9from_iter17h773a38bc89164ff9E+0xea
+00000075`5b6ee520 00007ff7`7ec652b2     : [untyped stack words redacted] : novovm_node!ZN4core3ops8function5impls79_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$8call_mut17h734c4ecedfb29625E+0xbb4
+00000075`5b6ee770 00007ff7`7e8518af     : [untyped stack words redacted] : novovm_node!ZN111_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$9from_iter17ha314b3c2dd4d8308E+0x132
+00000075`5b6ee830 00007ff7`7e867fb9     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0x50df
+00000075`5b6eec50 00007ff7`7e26d5e5     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x5a99
+00000075`5b6ef120 00007ff7`7e17ad16     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+00000075`5b6ef230 00007ff7`7e2c8d57     : [untyped stack words redacted] : novovm_node!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+00000075`5b6ff8b0 00007ff7`7e2ca0f5     : [untyped stack words redacted] : novovm_node!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+00000075`5b6ff900 00007ff7`7ff24e88     : [untyped stack words redacted] : novovm_node!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+00000075`5b6ff9b0 00007ffc`e175dda7     : [untyped stack words redacted] : novovm_node!std::sys::thread::windows::impl$0::new::thread_start+0x228
+00000075`5b6ffa60 00007ffc`e3219c5c     : [untyped stack words redacted] : kernel32!BaseThreadInitThunk+0x17
+00000075`5b6ffa90 00000000`00000000     : [untyped stack words redacted] : ntdll!RtlUserThreadStart+0x2c
+
+
+STACK_COMMAND:  ~1s; .ecxr ; kb
+
+FAULTING_SOURCE_LINE:  <MSVC_BUILD_SOURCE>\src\vctools\crt\vcruntime\src\string\amd64\Intel\memcpy_avx_ermsb_aligned.asm
+
+FAULTING_SOURCE_FILE:  <MSVC_BUILD_SOURCE>\src\vctools\crt\vcruntime\src\string\amd64\Intel\memcpy_avx_ermsb_aligned.asm
+
+FAULTING_SOURCE_LINE_NUMBER:  81
+
+SYMBOL_NAME:  VCRUNTIME140!memcpy_avx_ermsb_Intel+6b
+
+MODULE_NAME: VCRUNTIME140
+
+IMAGE_NAME:  VCRUNTIME140.dll
+
+FAILURE_BUCKET_ID:  INVALID_POINTER_WRITE_c0000005_VCRUNTIME140.dll!memcpy_avx_ermsb_Intel
+
+OS_VERSION:  10.0.26100.1
+
+BUILDLAB_STR:  ge_release
+
+OSPLATFORM_TYPE:  x64
+
+OSNAME:  Windows 10
+
+IMAGE_VERSION:  14.50.35719.0
+
+FAILURE_ID_HASH:  {b6a2fbd1-1859-64dd-c4e4-8a5b67d18eaf}
+
+Followup:     MachineOwner
+---------

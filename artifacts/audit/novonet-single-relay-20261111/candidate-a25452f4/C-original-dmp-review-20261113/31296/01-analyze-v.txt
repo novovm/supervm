@@ -1,0 +1,122 @@
+0:001> !analyze -v
+*******************************************************************************
+*                                                                             *
+*                        Exception Analysis                                   *
+*                                                                             *
+*******************************************************************************
+
+
+KEY_VALUES_STRING: 1
+
+    Key  : AV.Fault
+    Value: Read
+
+    Key  : Analysis.CPU.mSec
+    Value: 609
+
+    Key  : Analysis.Elapsed.mSec
+    Value: 1104
+
+    Key  : Analysis.IO.Other.Mb
+    Value: 0
+
+    Key  : Analysis.IO.Read.Mb
+    Value: 0
+
+    Key  : Analysis.IO.Write.Mb
+    Value: 0
+
+    Key  : Analysis.Init.CPU.mSec
+    Value: 171
+
+    Key  : Analysis.Init.Elapsed.mSec
+    Value: 6188
+
+    Key  : Analysis.Memory.CommitPeak.Mb
+    Value: 171
+
+    Key  : Failure.Bucket
+    Value: INVALID_POINTER_READ_c0000005_novovm-node.exe!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E
+
+    Key  : Failure.Hash
+    Value: {c0a60e98-4a66-3b7e-1ce1-794b4ee34e5c}
+
+    Key  : Timeline.OS.Boot.DeltaSec
+    Value: 14133
+
+    Key  : Timeline.Process.Start.DeltaSec
+    Value: 6934
+
+    Key  : WER.OS.Branch
+    Value: ge_release
+
+    Key  : WER.OS.Version
+    Value: 10.0.26100.1
+
+
+FILE_IN_CAB:  novovm-node.exe.31296.dmp
+
+NTGLOBALFLAG:  0
+
+APPLICATION_VERIFIER_FLAGS:  0
+
+CONTEXT:  (.ecxr)
+rax=000000e83f7ee320 rbx=0000000000000000 rcx=00000000000001a0
+rdx=803767c268eb0fdc rsi=0000000000000004 rdi=000000e83f7ee490
+rip=00007ff77e74f59d rsp=000000e83f7ee180 rbp=000000e83f7ee168
+ r8=000000e83f7ee370  r9=000000e83f7ee3d0 r10=0000000000000040
+r11=000000000000000f r12=000001f6a7dbe730 r13=0000000000000060
+r14=000000e83f7ee320 r15=000001f6a7d43e80
+iopl=0         nv up ei pl nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010200
+novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+0x31d:
+00007ff7`7e74f59d 0f287520        movaps  xmm6,xmmword ptr [rbp+20h] ss:000000e8`3f7ee188=000001f6a1f41a400000000000000000
+Resetting default scope
+
+EXCEPTION_RECORD:  (.exr -1)
+ExceptionAddress: 00007ff77e74f59d (novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+0x000000000000031d)
+   ExceptionCode: c0000005 (Access violation)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 0000000000000000
+   Parameter[1]: ffffffffffffffff
+Attempt to read from address ffffffffffffffff
+
+PROCESS_NAME:  novovm-node.exe
+
+READ_ADDRESS:  ffffffffffffffff
+
+ERROR_CODE: (NTSTATUS) 0xc0000005 - 0x%p            0x%p                    %s
+
+EXCEPTION_CODE_STR:  c0000005
+
+EXCEPTION_PARAMETER1:  0000000000000000
+
+EXCEPTION_PARAMETER2:  ffffffffffffffff
+
+STACK_TEXT:
+000000e8`3f7ee180 00000000`00000000     : [untyped stack words redacted] : novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+0x31d
+
+
+STACK_COMMAND:  ~1s; .ecxr ; kb
+
+SYMBOL_NAME:  novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+31d
+
+MODULE_NAME: novovm_node
+
+IMAGE_NAME:  novovm-node.exe
+
+FAILURE_BUCKET_ID:  INVALID_POINTER_READ_c0000005_novovm-node.exe!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E
+
+OS_VERSION:  10.0.26100.1
+
+BUILDLAB_STR:  ge_release
+
+OSPLATFORM_TYPE:  x64
+
+OSNAME:  Windows 10
+
+FAILURE_ID_HASH:  {c0a60e98-4a66-3b7e-1ce1-794b4ee34e5c}
+
+Followup:     MachineOwner
+---------

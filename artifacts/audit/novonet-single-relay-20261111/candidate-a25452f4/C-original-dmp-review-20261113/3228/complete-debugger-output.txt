@@ -1,0 +1,392 @@
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.016 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.26100.9457 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+
+Loading Dump File [<SUPERVM>\target\c-crash-analysis-20261112T004637Z\dumps-local\novovm-node.exe.3228.dmp]
+User Mini Dump File: Only registers, stack and portions of memory are available
+
+Symbol search path is: srv*
+Executable search path is:
+Windows 10 Version 26300 MP (32 procs) Free x64
+Product: WinNt, suite: SingleUserTS Personal
+Edition build lab: 26100.1.amd64fre.ge_release.240331-1435
+Debug session time: Thu Nov 12 04:13:40.000 2026 (UTC + 8:00)
+System Uptime: 0 days 10:41:15.503
+Process Uptime: 0 days 5:02:14.000
+.................................................
+This dump file has an exception of interest stored in it.
+The stored exception information can be accessed via .ecxr.
+(c9c.b90): Access violation - code c0000005 (first/second chance not available)
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+For analysis of this file, run !analyze -v
+ntdll!NtWaitForMultipleObjects+0x14:
+00007ffc`e32b6f34 c3              ret
+0:001> .symfix <SUPERVM>\target\c-original-dmp-review-20261113\symbols
+0:001> .sympath+ <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+Symbol search path is: srv*;<SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+Expanded Symbol search path is: SRV*<SUPERVM>\target\c-original-dmp-review-20261113\symbols*https://msdl.microsoft.com/download/symbols;<SUPERVM>\target\c-crash-analysis-20261112t004637z\pdb-analysis
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*
+OK                                             <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+0:001> .exepath <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis;C:\Windows\System32
+Executable image search path is: <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis;C:\Windows\System32
+Expanded Executable image search path is: <SUPERVM>\target\c-crash-analysis-20261112t004637z\pdb-analysis;c:\windows\system32
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+OK                                             C:\Windows\System32
+0:001> .reload
+.................................................
+0:001> .echo ==== ANALYZE ====
+==== ANALYZE ====
+0:001> !analyze -v
+*******************************************************************************
+*                                                                             *
+*                        Exception Analysis                                   *
+*                                                                             *
+*******************************************************************************
+
+*** WARNING: Unable to verify checksum for novovm-node.exe
+
+KEY_VALUES_STRING: 1
+
+    Key  : AV.Fault
+    Value: Write
+
+    Key  : Analysis.CPU.mSec
+    Value: 593
+
+    Key  : Analysis.Elapsed.mSec
+    Value: 19433
+
+    Key  : Analysis.IO.Other.Mb
+    Value: 27
+
+    Key  : Analysis.IO.Read.Mb
+    Value: 0
+
+    Key  : Analysis.IO.Write.Mb
+    Value: 52
+
+    Key  : Analysis.Init.CPU.mSec
+    Value: 359
+
+    Key  : Analysis.Init.Elapsed.mSec
+    Value: 13857
+
+    Key  : Analysis.Memory.CommitPeak.Mb
+    Value: 175
+
+    Key  : Failure.Bucket
+    Value: INVALID_POINTER_WRITE_c0000005_VCRUNTIME140.dll!memcpy_avx_ermsb_Intel
+
+    Key  : Failure.Hash
+    Value: {b6a2fbd1-1859-64dd-c4e4-8a5b67d18eaf}
+
+    Key  : Timeline.OS.Boot.DeltaSec
+    Value: 38475
+
+    Key  : Timeline.Process.Start.DeltaSec
+    Value: 18134
+
+    Key  : WER.OS.Branch
+    Value: ge_release
+
+    Key  : WER.OS.Version
+    Value: 10.0.26100.1
+
+
+FILE_IN_CAB:  novovm-node.exe.3228.dmp
+
+NTGLOBALFLAG:  0
+
+APPLICATION_VERIFIER_FLAGS:  0
+
+CONTEXT:  (.ecxr)
+rax=000000eab6ddc900 rbx=000000755b6ee490 rcx=0000000000003962
+rdx=000000755b6ee2fe rsi=0000000000000002 rdi=000000755b6ee358
+rip=00007ffcb1d4126b rsp=000000755b6ee268 rbp=000000755b6ee290
+ r8=0000000000000002  r9=00007ffcb1d41268 r10=00007ffcb1d30000
+r11=0000000000000028 r12=00007ff7805fb828 r13=00000000000000c3
+r14=00007ff77ff37a00 r15=00007ff7805fb82a
+iopl=0         nv up ei pl nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010202
+VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b:
+00007ffc`b1d4126b 668908          mov     word ptr [rax],cx ds:000000ea`b6ddc900=????
+Resetting default scope
+
+EXCEPTION_RECORD:  (.exr -1)
+ExceptionAddress: 00007ffcb1d4126b (VCRUNTIME140!memcpy_avx_ermsb_Intel+0x000000000000006b)
+   ExceptionCode: c0000005 (Access violation)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 0000000000000001
+   Parameter[1]: 000000eab6ddc900
+Attempt to write to address 000000eab6ddc900
+
+PROCESS_NAME:  novovm-node.exe
+
+WRITE_ADDRESS:  000000eab6ddc900
+
+ERROR_CODE: (NTSTATUS) 0xc0000005 - 0x%p            0x%p                    %s
+
+EXCEPTION_CODE_STR:  c0000005
+
+EXCEPTION_PARAMETER1:  0000000000000001
+
+EXCEPTION_PARAMETER2:  000000eab6ddc900
+
+STACK_TEXT:
+00000075`5b6ee268 00007ff7`7ff37a33     : [untyped stack words redacted] : VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b
+00000075`5b6ee270 00007ff7`7ff3b0f9     : [untyped stack words redacted] : novovm_node!alloc::string::impl$63::write_str+0x33
+00000075`5b6ee2c0 00007ff7`7ff3d281     : [untyped stack words redacted] : novovm_node!core::fmt::num::impl$16::fmt+0x69
+00000075`5b6ee310 00007ff7`7ff37d3f     : [untyped stack words redacted] : novovm_node!core::fmt::write+0x161
+00000075`5b6ee3a0 00007ff7`7ea5490a     : [untyped stack words redacted] : novovm_node!alloc::fmt::format::format_inner+0x12f
+00000075`5b6ee430 00007ff7`7eae1ef4     : [untyped stack words redacted] : novovm_node!ZN112_$LT$alloc..string..String$u20$as$u20$core..iter..traits..collect..FromIterator$LT$alloc..string..String$GT$$GT$9from_iter17h773a38bc89164ff9E+0xea
+00000075`5b6ee520 00007ff7`7ec652b2     : [untyped stack words redacted] : novovm_node!ZN4core3ops8function5impls79_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$8call_mut17h734c4ecedfb29625E+0xbb4
+00000075`5b6ee770 00007ff7`7e8518af     : [untyped stack words redacted] : novovm_node!ZN111_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$9from_iter17ha314b3c2dd4d8308E+0x132
+00000075`5b6ee830 00007ff7`7e867fb9     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0x50df
+00000075`5b6eec50 00007ff7`7e26d5e5     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x5a99
+00000075`5b6ef120 00007ff7`7e17ad16     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+00000075`5b6ef230 00007ff7`7e2c8d57     : [untyped stack words redacted] : novovm_node!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+00000075`5b6ff8b0 00007ff7`7e2ca0f5     : [untyped stack words redacted] : novovm_node!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+00000075`5b6ff900 00007ff7`7ff24e88     : [untyped stack words redacted] : novovm_node!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+00000075`5b6ff9b0 00007ffc`e175dda7     : [untyped stack words redacted] : novovm_node!std::sys::thread::windows::impl$0::new::thread_start+0x228
+00000075`5b6ffa60 00007ffc`e3219c5c     : [untyped stack words redacted] : kernel32!BaseThreadInitThunk+0x17
+00000075`5b6ffa90 00000000`00000000     : [untyped stack words redacted] : ntdll!RtlUserThreadStart+0x2c
+
+
+STACK_COMMAND:  ~1s; .ecxr ; kb
+
+FAULTING_SOURCE_LINE:  <MSVC_BUILD_SOURCE>\src\vctools\crt\vcruntime\src\string\amd64\Intel\memcpy_avx_ermsb_aligned.asm
+
+FAULTING_SOURCE_FILE:  <MSVC_BUILD_SOURCE>\src\vctools\crt\vcruntime\src\string\amd64\Intel\memcpy_avx_ermsb_aligned.asm
+
+FAULTING_SOURCE_LINE_NUMBER:  81
+
+SYMBOL_NAME:  VCRUNTIME140!memcpy_avx_ermsb_Intel+6b
+
+MODULE_NAME: VCRUNTIME140
+
+IMAGE_NAME:  VCRUNTIME140.dll
+
+FAILURE_BUCKET_ID:  INVALID_POINTER_WRITE_c0000005_VCRUNTIME140.dll!memcpy_avx_ermsb_Intel
+
+OS_VERSION:  10.0.26100.1
+
+BUILDLAB_STR:  ge_release
+
+OSPLATFORM_TYPE:  x64
+
+OSNAME:  Windows 10
+
+IMAGE_VERSION:  14.50.35719.0
+
+FAILURE_ID_HASH:  {b6a2fbd1-1859-64dd-c4e4-8a5b67d18eaf}
+
+Followup:     MachineOwner
+---------
+
+0:001> .echo ==== EXCEPTION ====
+==== EXCEPTION ====
+0:001> .exr -1
+ExceptionAddress: 00007ffcb1d4126b (VCRUNTIME140!memcpy_avx_ermsb_Intel+0x000000000000006b)
+   ExceptionCode: c0000005 (Access violation)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 0000000000000001
+   Parameter[1]: 000000eab6ddc900
+Attempt to write to address 000000eab6ddc900
+0:001> .echo ==== CONTEXT ====
+==== CONTEXT ====
+0:001> .ecxr
+rax=000000eab6ddc900 rbx=000000755b6ee490 rcx=0000000000003962
+rdx=000000755b6ee2fe rsi=0000000000000002 rdi=000000755b6ee358
+rip=00007ffcb1d4126b rsp=000000755b6ee268 rbp=000000755b6ee290
+ r8=0000000000000002  r9=00007ffcb1d41268 r10=00007ffcb1d30000
+r11=0000000000000028 r12=00007ff7805fb828 r13=00000000000000c3
+r14=00007ff77ff37a00 r15=00007ff7805fb82a
+iopl=0         nv up ei pl nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010202
+VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b:
+00007ffc`b1d4126b 668908          mov     word ptr [rax],cx ds:000000ea`b6ddc900=????
+0:001> r
+Last set context:
+rax=000000eab6ddc900 rbx=000000755b6ee490 rcx=0000000000003962
+rdx=000000755b6ee2fe rsi=0000000000000002 rdi=000000755b6ee358
+rip=00007ffcb1d4126b rsp=000000755b6ee268 rbp=000000755b6ee290
+ r8=0000000000000002  r9=00007ffcb1d41268 r10=00007ffcb1d30000
+r11=0000000000000028 r12=00007ff7805fb828 r13=00000000000000c3
+r14=00007ff77ff37a00 r15=00007ff7805fb82a
+iopl=0         nv up ei pl nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010202
+VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b:
+00007ffc`b1d4126b 668908          mov     word ptr [rax],cx ds:000000ea`b6ddc900=????
+0:001> .echo ==== STACK ====
+==== STACK ====
+0:001> kv
+  *** Stack trace for last set context - .thread/.cxr resets it
+Child-SP          RetAddr               : Args to Child                                                           : Call Site
+00000075`5b6ee268 00007ff7`7ff37a33     : [untyped stack words redacted] : VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::vec::Vec::append_elements+0x1e (Inline Function @ 00007ff7`7ff37a33)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::vec::spec_extend::impl$4::spec_extend+0x1e (Inline Function @ 00007ff7`7ff37a33)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::vec::Vec::extend_from_slice+0x1e (Inline Function @ 00007ff7`7ff37a33)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::string::String::push_str+0x1e (Inline Function @ 00007ff7`7ff37a33)
+00000075`5b6ee270 00007ff7`7ff3b0f9     : [untyped stack words redacted] : novovm_node!alloc::string::impl$63::write_str+0x33
+00000075`5b6ee2c0 00007ff7`7ff3d281     : [untyped stack words redacted] : novovm_node!core::fmt::num::impl$16::fmt+0x69
+00000075`5b6ee310 00007ff7`7ff37d3f     : [untyped stack words redacted] : novovm_node!core::fmt::write+0x161
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!core::fmt::Write::write_fmt::impl$1::spec_write_fmt+0x16 (Inline Function @ 00007ff7`7ff37d3f)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!core::fmt::Write::write_fmt+0x16 (Inline Function @ 00007ff7`7ff37d3f)
+00000075`5b6ee3a0 00007ff7`7ea5490a     : [untyped stack words redacted] : novovm_node!alloc::fmt::format::format_inner+0x12f
+00000075`5b6ee430 00007ff7`7eae1ef4     : [untyped stack words redacted] : novovm_node!ZN112_$LT$alloc..string..String$u20$as$u20$core..iter..traits..collect..FromIterator$LT$alloc..string..String$GT$$GT$9from_iter17h773a38bc89164ff9E+0xea
+00000075`5b6ee520 00007ff7`7ec652b2     : [untyped stack words redacted] : novovm_node!ZN4core3ops8function5impls79_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$8call_mut17h734c4ecedfb29625E+0xbb4
+00000075`5b6ee770 00007ff7`7e8518af     : [untyped stack words redacted] : novovm_node!ZN111_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$9from_iter17ha314b3c2dd4d8308E+0x132
+00000075`5b6ee830 00007ff7`7e867fb9     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0x50df
+00000075`5b6eec50 00007ff7`7e26d5e5     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x5a99
+00000075`5b6ef120 00007ff7`7e17ad16     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+00000075`5b6ef230 00007ff7`7e2c8d57     : [untyped stack words redacted] : novovm_node!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+00000075`5b6ff8b0 00007ff7`7e2ca0f5     : [untyped stack words redacted] : novovm_node!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+00000075`5b6ff900 00007ff7`7ff24e88     : [untyped stack words redacted] : novovm_node!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+00000075`5b6ff9b0 00007ffc`e175dda7     : [untyped stack words redacted] : novovm_node!std::sys::thread::windows::impl$0::new::thread_start+0x228
+00000075`5b6ffa60 00007ffc`e3219c5c     : [untyped stack words redacted] : kernel32!BaseThreadInitThunk+0x17
+00000075`5b6ffa90 00000000`00000000     : [untyped stack words redacted] : ntdll!RtlUserThreadStart+0x2c
+0:001> .echo ==== MODULES ====
+==== MODULES ====
+0:001> lm t n
+start             end                 module name
+00007ff7`7e0f0000 00007ff7`80f2c000   novovm_node novovm-node.exe Wed Nov 11 13:15:21 2026 (6AF3F9E9)
+00007ffb`fd0c0000 00007ffb`ffee6000   aoem_ffi aoem_ffi.dll Tue Nov  3 08:49:29 2026 (6AE92F99)
+00007ffc`b0130000 00007ffc`b01b8000   msvcp140 msvcp140.dll A3A3015D (This is a reproducible build file hash, not a timestamp)
+00007ffc`b1d30000 00007ffc`b1d4e000   VCRUNTIME140 VCRUNTIME140.dll 4260DF93 (This is a reproducible build file hash, not a timestamp)
+00007ffc`b7fa0000 00007ffc`b7fab000   VCRUNTIME140_1 VCRUNTIME140_1.dll 8F841555 (This is a reproducible build file hash, not a timestamp)
+00007ffc`c90f0000 00007ffc`c9195000   MpOAV    MpOAV.dll    A5E12CE7 (This is a reproducible build file hash, not a timestamp)
+00007ffc`c91a0000 00007ffc`c91bd000   amsi     amsi.dll     DCA22A33 (This is a reproducible build file hash, not a timestamp)
+00007ffc`cafd0000 00007ffc`cafe5000   wbemsvc  wbemsvc.dll  DBDF9F46 (This is a reproducible build file hash, not a timestamp)
+00007ffc`cb010000 00007ffc`cb105000   fastprox fastprox.dll 687965B5 (This is a reproducible build file hash, not a timestamp)
+00007ffc`cca60000 00007ffc`ccae6000   wbemcomn wbemcomn.dll 7E7B8EF8 (This is a reproducible build file hash, not a timestamp)
+00007ffc`ccaf0000 00007ffc`ccb02000   wbemprox wbemprox.dll F6975398 (This is a reproducible build file hash, not a timestamp)
+00007ffc`d5410000 00007ffc`d5446000   winmm    winmm.dll    4CA1616E (This is a reproducible build file hash, not a timestamp)
+00007ffc`d8400000 00007ffc`d8425000   dhcpcsvc dhcpcsvc.dll BA6982B5 (This is a reproducible build file hash, not a timestamp)
+00007ffc`d8430000 00007ffc`d844e000   dhcpcsvc6 dhcpcsvc6.DLL 84D753F0 (This is a reproducible build file hash, not a timestamp)
+00007ffc`da4a0000 00007ffc`da4ae000   winnsi   winnsi.dll   57723540 (This is a reproducible build file hash, not a timestamp)
+00007ffc`dda60000 00007ffc`dda6b000   version  version.dll  879CD5A0 (This is a reproducible build file hash, not a timestamp)
+00007ffc`de990000 00007ffc`de9c3000   IPHLPAPI IPHLPAPI.DLL D62039F0 (This is a reproducible build file hash, not a timestamp)
+00007ffc`dea80000 00007ffc`debcc000   dnsapi   dnsapi.dll   2DDE6FB6 (This is a reproducible build file hash, not a timestamp)
+00007ffc`df080000 00007ffc`df09b000   kernel_appcore kernel.appcore.dll F83A9E5C (This is a reproducible build file hash, not a timestamp)
+00007ffc`df430000 00007ffc`df43d000   dsparse  dsparse.dll  E14AC9FC (This is a reproducible build file hash, not a timestamp)
+00007ffc`df670000 00007ffc`df6db000   mswsock  mswsock.dll  E0427DDA (This is a reproducible build file hash, not a timestamp)
+00007ffc`df710000 00007ffc`df744000   userenv  userenv.dll  BB5F97EB (This is a reproducible build file hash, not a timestamp)
+00007ffc`df980000 00007ffc`df98c000   CRYPTBASE CRYPTBASE.DLL 95B538FC (This is a reproducible build file hash, not a timestamp)
+00007ffc`dffe0000 00007ffc`dffea000   dpapi    dpapi.dll    EAA3CE6F (This is a reproducible build file hash, not a timestamp)
+00007ffc`e01d0000 00007ffc`e01fa000   bcrypt   bcrypt.dll   CAAB9645 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e0200000 00007ffc`e0229000   profapi  profapi.dll  4C473F31 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e02f0000 00007ffc`e06f9000   KERNELBASE KERNELBASE.dll A3FF6954 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e0700000 00007ffc`e07a3000   msvcp_win msvcp_win.dll EC24E540 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e0840000 00007ffc`e0867000   win32u   win32u.dll   85CB38FD (This is a reproducible build file hash, not a timestamp)
+00007ffc`e0870000 00007ffc`e091c000   bcryptprimitives bcryptprimitives.dll F34B429E (This is a reproducible build file hash, not a timestamp)
+00007ffc`e0930000 00007ffc`e0a7c000   ucrtbase ucrtbase.dll 3F426C5B (This is a reproducible build file hash, not a timestamp)
+00007ffc`e0b50000 00007ffc`e0c79000   gdi32full gdi32full.dll 2FECA2FA (This is a reproducible build file hash, not a timestamp)
+00007ffc`e0c80000 00007ffc`e0dfe000   crypt32  crypt32.dll  DAA36F26 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1210000 00007ffc`e15b5000   combase  combase.dll  BB9366F0 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e15c0000 00007ffc`e1628000   shlwapi  shlwapi.dll  72000BE5 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1730000 00007ffc`e17fb000   kernel32 kernel32.dll 28B50DC0 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1800000 00007ffc`e1918000   rpcrt4   rpcrt4.dll   D52D053B (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1920000 00007ffc`e194b000   gdi32    gdi32.dll    5CD2417B (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1960000 00007ffc`e1a0f000   clbcatq  clbcatq.dll  C39EBDDC (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1a20000 00007ffc`e1a51000   imm32    imm32.dll    C2C39F16 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1af0000 00007ffc`e1b99000   msvcrt   msvcrt.dll   715E0874 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e1ba0000 00007ffc`e1c7a000   oleaut32 oleaut32.dll 49EF1C31 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e2180000 00007ffc`e223c000   advapi32 advapi32.dll 04AF21CE (This is a reproducible build file hash, not a timestamp)
+00007ffc`e2250000 00007ffc`e23e9000   ole32    ole32.dll    5AA21A0F (This is a reproducible build file hash, not a timestamp)
+00007ffc`e23f0000 00007ffc`e23fa000   nsi      nsi.dll      9DDFC948 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e2400000 00007ffc`e25de000   user32   user32.dll   1BFB6B85 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e2db0000 00007ffc`e2e58000   sechost  sechost.dll  02163173 (This is a reproducible build file hash, not a timestamp)
+00007ffc`e2f70000 00007ffc`e2ff0000   ws2_32   ws2_32.dll   6707829B (This is a reproducible build file hash, not a timestamp)
+00007ffc`e3150000 00007ffc`e33bc000   ntdll    ntdll.dll    A2B84216 (This is a reproducible build file hash, not a timestamp)
+0:001> lmvm novovm_node
+start             end                 module name
+00007ff7`7e0f0000 00007ff7`80f2c000   novovm_node C (private pdb symbols)  <SUPERVM>\target\c-crash-analysis-20261112t004637z\pdb-analysis\novovm_node.pdb
+    Loaded symbol image file: novovm-node.exe
+    Mapped memory image file: <SUPERVM>\target\c-crash-analysis-20261112t004637z\pdb-analysis\novovm-node.exe
+    Image path: <NODE_ROOT>\releases\novonet-observation-875d3307-windows-x86_64\bin\novovm-node.exe
+    Image name: novovm-node.exe
+    Timestamp:        Wed Nov 11 13:15:21 2026 (6AF3F9E9)
+    CheckSum:         00000000
+    ImageSize:        02E3C000
+    Translations:     0000.04b0 0000.04e4 0409.04b0 0409.04e4
+    Information from resource tables:
+0:001> .echo ==== INSTRUCTION ====
+==== INSTRUCTION ====
+0:001> u @rip-20 @rip+20
+VCRUNTIME140!memcpy_avx_ermsb_Intel+0x4b:
+00007ffc`b1d4124b 4488500e        mov     byte ptr [rax+0Eh],r10b
+00007ffc`b1d4124f c3              ret
+00007ffc`b1d41250 4c8b02          mov     r8,qword ptr [rdx]
+00007ffc`b1d41253 0fb74a08        movzx   ecx,word ptr [rdx+8]
+00007ffc`b1d41257 440fb64a0a      movzx   r9d,byte ptr [rdx+0Ah]
+00007ffc`b1d4125c 4c8900          mov     qword ptr [rax],r8
+00007ffc`b1d4125f 66894808        mov     word ptr [rax+8],cx
+00007ffc`b1d41263 4488480a        mov     byte ptr [rax+0Ah],r9b
+00007ffc`b1d41267 c3              ret
+00007ffc`b1d41268 0fb70a          movzx   ecx,word ptr [rdx]
+00007ffc`b1d4126b 668908          mov     word ptr [rax],cx
+00007ffc`b1d4126e c3              ret
+00007ffc`b1d4126f 90              nop
+00007ffc`b1d41270 8b0a            mov     ecx,dword ptr [rdx]
+00007ffc`b1d41272 440fb74204      movzx   r8d,word ptr [rdx+4]
+00007ffc`b1d41277 440fb64a06      movzx   r9d,byte ptr [rdx+6]
+00007ffc`b1d4127c 8908            mov     dword ptr [rax],ecx
+00007ffc`b1d4127e 6644894004      mov     word ptr [rax+4],r8w
+00007ffc`b1d41283 44884806        mov     byte ptr [rax+6],r9b
+00007ffc`b1d41287 c3              ret
+00007ffc`b1d41288 4c8b02          mov     r8,qword ptr [rdx]
+00007ffc`b1d4128b 8b4a08          mov     ecx,dword ptr [rdx+8]
+0:001> ln @rip
+(00007ffc`b1d41200)   VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b   |  (00007ffc`b1d41620)   VCRUNTIME140!type_info::`scalar deleting destructor'
+0:001> q
+quit:
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

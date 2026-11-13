@@ -1,0 +1,8 @@
+0:001> .exr -1
+ExceptionAddress: 00007ffcb1d4126b (VCRUNTIME140!memcpy_avx_ermsb_Intel+0x000000000000006b)
+   ExceptionCode: c0000005 (Access violation)
+  ExceptionFlags: 00000000
+NumberParameters: 2
+   Parameter[0]: 0000000000000001
+   Parameter[1]: 000000eab6ddc900
+Attempt to write to address 000000eab6ddc900

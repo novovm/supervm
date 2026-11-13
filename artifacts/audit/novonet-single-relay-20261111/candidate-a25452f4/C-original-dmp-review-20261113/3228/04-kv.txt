@@ -1,0 +1,26 @@
+0:001> kv
+  *** Stack trace for last set context - .thread/.cxr resets it
+Child-SP          RetAddr               : Args to Child                                                           : Call Site
+00000075`5b6ee268 00007ff7`7ff37a33     : [untyped stack words redacted] : VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::vec::Vec::append_elements+0x1e (Inline Function @ 00007ff7`7ff37a33)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::vec::spec_extend::impl$4::spec_extend+0x1e (Inline Function @ 00007ff7`7ff37a33)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::vec::Vec::extend_from_slice+0x1e (Inline Function @ 00007ff7`7ff37a33)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!alloc::string::String::push_str+0x1e (Inline Function @ 00007ff7`7ff37a33)
+00000075`5b6ee270 00007ff7`7ff3b0f9     : [untyped stack words redacted] : novovm_node!alloc::string::impl$63::write_str+0x33
+00000075`5b6ee2c0 00007ff7`7ff3d281     : [untyped stack words redacted] : novovm_node!core::fmt::num::impl$16::fmt+0x69
+00000075`5b6ee310 00007ff7`7ff37d3f     : [untyped stack words redacted] : novovm_node!core::fmt::write+0x161
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!core::fmt::Write::write_fmt::impl$1::spec_write_fmt+0x16 (Inline Function @ 00007ff7`7ff37d3f)
+(Inline Function) --------`--------     : [untyped stack words redacted] : novovm_node!core::fmt::Write::write_fmt+0x16 (Inline Function @ 00007ff7`7ff37d3f)
+00000075`5b6ee3a0 00007ff7`7ea5490a     : [untyped stack words redacted] : novovm_node!alloc::fmt::format::format_inner+0x12f
+00000075`5b6ee430 00007ff7`7eae1ef4     : [untyped stack words redacted] : novovm_node!ZN112_$LT$alloc..string..String$u20$as$u20$core..iter..traits..collect..FromIterator$LT$alloc..string..String$GT$$GT$9from_iter17h773a38bc89164ff9E+0xea
+00000075`5b6ee520 00007ff7`7ec652b2     : [untyped stack words redacted] : novovm_node!ZN4core3ops8function5impls79_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$8call_mut17h734c4ecedfb29625E+0xbb4
+00000075`5b6ee770 00007ff7`7e8518af     : [untyped stack words redacted] : novovm_node!ZN111_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$9from_iter17ha314b3c2dd4d8308E+0x132
+00000075`5b6ee830 00007ff7`7e867fb9     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0x50df
+00000075`5b6eec50 00007ff7`7e26d5e5     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x5a99
+00000075`5b6ef120 00007ff7`7e17ad16     : [untyped stack words redacted] : novovm_node!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+00000075`5b6ef230 00007ff7`7e2c8d57     : [untyped stack words redacted] : novovm_node!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+00000075`5b6ff8b0 00007ff7`7e2ca0f5     : [untyped stack words redacted] : novovm_node!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+00000075`5b6ff900 00007ff7`7ff24e88     : [untyped stack words redacted] : novovm_node!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+00000075`5b6ff9b0 00007ffc`e175dda7     : [untyped stack words redacted] : novovm_node!std::sys::thread::windows::impl$0::new::thread_start+0x228
+00000075`5b6ffa60 00007ffc`e3219c5c     : [untyped stack words redacted] : kernel32!BaseThreadInitThunk+0x17
+00000075`5b6ffa90 00000000`00000000     : [untyped stack words redacted] : ntdll!RtlUserThreadStart+0x2c

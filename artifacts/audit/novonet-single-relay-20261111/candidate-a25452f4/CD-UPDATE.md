@@ -1,6 +1,17 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 20:57 Beijing: C recording ended; injected recorder AV, NOT READY
+## CURRENT 2026-11-13 21:14 Beijing: original DMP review only; C NOT READY
+
+C ran Windows Debugger/CDB offline on three original pre-TTD MiniDumps. Exact875
+PDB loaded for31296/3228: misaligned MOVAPS restore in indexmap, and a two-byte
+String writer using an invalid descriptor.37796 has a254 image-correct address
+stack but no exact PDB. Original operands differ from TTD's0xc6. First corrupting
+writer and FFI/UAF/ABI attribution remain unproven. No production code change,
+node/DB operation, recording or relay. **A must not send.** Complete requested
+analyze/exr/context/kv outputs, redaction notes and historical C/D hash comparison
+are in [C original DMP review](C-original-dmp-review-20261113/README.md).
+
+## PRIOR 2026-11-13 20:57 Beijing: C recording ended; injected recorder AV, NOT READY
 
 C PID39992 exited0xc0000005 at20:48:17, not forced. Owner/recorder/coordinator
 exited0 separately. WER and actual dump locate the fault in injected

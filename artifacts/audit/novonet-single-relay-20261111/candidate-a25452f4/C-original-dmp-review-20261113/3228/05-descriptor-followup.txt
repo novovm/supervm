@@ -1,0 +1,612 @@
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.015 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 30
+
+Microsoft (R) Windows Debugger Version 10.0.26100.9457 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+
+Loading Dump File [<SUPERVM>\target\c-crash-analysis-20261112T004637Z\dumps-local\novovm-node.exe.3228.dmp]
+User Mini Dump File: Only registers, stack and portions of memory are available
+
+Symbol search path is: srv*
+Executable search path is:
+Windows 10 Version 26300 MP (32 procs) Free x64
+Product: WinNt, suite: SingleUserTS Personal
+Edition build lab: 26100.1.amd64fre.ge_release.240331-1435
+Debug session time: Thu Nov 12 04:13:40.000 2026 (UTC + 8:00)
+System Uptime: 0 days 10:41:15.503
+Process Uptime: 0 days 5:02:14.000
+.................................................
+This dump file has an exception of interest stored in it.
+The stored exception information can be accessed via .ecxr.
+(c9c.b90): Access violation - code c0000005 (first/second chance not available)
+
++------------------------------------------------------------------------+
+| This target supports Hardware-enforced Stack Protection. A HW based    |
+| "Shadow Stack" may be available to assist in debugging and analysis.   |
+| See aka.ms/userhsp for more info.                                      |
+|                                                                        |
+| dps @ssp                                                               |
+|                                                                        |
++------------------------------------------------------------------------+
+
+For analysis of this file, run !analyze -v
+ntdll!NtWaitForMultipleObjects+0x14:
+00007ffc`e32b6f34 c3              ret
+0:001> .symfix <SUPERVM>\target\c-original-dmp-review-20261113\symbols
+0:001> .sympath+ <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+Symbol search path is: srv*;<SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+Expanded Symbol search path is: SRV*<SUPERVM>\target\c-original-dmp-review-20261113\symbols*https://msdl.microsoft.com/download/symbols;<SUPERVM>\target\c-crash-analysis-20261112t004637z\pdb-analysis
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+Deferred                                       srv*
+OK                                             <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+0:001> .exepath <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis;C:\Windows\System32
+Executable image search path is: <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis;C:\Windows\System32
+Expanded Executable image search path is: <SUPERVM>\target\c-crash-analysis-20261112t004637z\pdb-analysis;c:\windows\system32
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             <SUPERVM>\target\c-crash-analysis-20261112T004637Z\pdb-analysis
+OK                                             C:\Windows\System32
+0:001> .reload
+.................................................
+0:001> .ecxr
+rax=000000eab6ddc900 rbx=000000755b6ee490 rcx=0000000000003962
+rdx=000000755b6ee2fe rsi=0000000000000002 rdi=000000755b6ee358
+rip=00007ffcb1d4126b rsp=000000755b6ee268 rbp=000000755b6ee290
+ r8=0000000000000002  r9=00007ffcb1d41268 r10=00007ffcb1d30000
+r11=0000000000000028 r12=00007ff7805fb828 r13=00000000000000c3
+r14=00007ff77ff37a00 r15=00007ff7805fb82a
+iopl=0         nv up ei pl nz na pe nc
+cs=0033  ss=002b  ds=002b  es=002b  fs=0053  gs=002b             efl=00010202
+VCRUNTIME140!memcpy_avx_ermsb_Intel+0x6b:
+00007ffc`b1d4126b 668908          mov     word ptr [rax],cx ds:000000ea`b6ddc900=????
+0:001> u 00007ff77ff37a00 L28
+*** WARNING: Unable to verify checksum for novovm-node.exe
+novovm_node!alloc::string::impl$63::write_str:
+00007ff7`7ff37a00 55              push    rbp
+00007ff7`7ff37a01 4156            push    r14
+00007ff7`7ff37a03 56              push    rsi
+00007ff7`7ff37a04 57              push    rdi
+00007ff7`7ff37a05 53              push    rbx
+00007ff7`7ff37a06 4883ec20        sub     rsp,20h
+00007ff7`7ff37a0a 488d6c2420      lea     rbp,[rsp+20h]
+00007ff7`7ff37a0f 4c89c6          mov     rsi,r8
+00007ff7`7ff37a12 4889cf          mov     rdi,rcx
+00007ff7`7ff37a15 488b01          mov     rax,qword ptr [rcx]
+00007ff7`7ff37a18 488b5910        mov     rbx,qword ptr [rcx+10h]
+00007ff7`7ff37a1c 4829d8          sub     rax,rbx
+00007ff7`7ff37a1f 4939c0          cmp     r8,rax
+00007ff7`7ff37a22 7723            ja      novovm_node!alloc::string::impl$63::write_str+0x47 (00007ff7`7ff37a47)
+00007ff7`7ff37a24 488b4f08        mov     rcx,qword ptr [rdi+8]
+00007ff7`7ff37a28 4801d9          add     rcx,rbx
+00007ff7`7ff37a2b 4989f0          mov     r8,rsi
+00007ff7`7ff37a2e e8241b5600      call    novovm_node!memcpy (00007ff7`80499557)
+00007ff7`7ff37a33 4801f3          add     rbx,rsi
+00007ff7`7ff37a36 48895f10        mov     qword ptr [rdi+10h],rbx
+00007ff7`7ff37a3a 31c0            xor     eax,eax
+00007ff7`7ff37a3c 4883c420        add     rsp,20h
+00007ff7`7ff37a40 5b              pop     rbx
+00007ff7`7ff37a41 5f              pop     rdi
+00007ff7`7ff37a42 5e              pop     rsi
+00007ff7`7ff37a43 415e            pop     r14
+00007ff7`7ff37a45 5d              pop     rbp
+00007ff7`7ff37a46 c3              ret
+00007ff7`7ff37a47 4889f9          mov     rcx,rdi
+00007ff7`7ff37a4a 4989d6          mov     r14,rdx
+00007ff7`7ff37a4d 4889da          mov     rdx,rbx
+00007ff7`7ff37a50 4989f0          mov     r8,rsi
+00007ff7`7ff37a53 e8e8525e00      call    novovm_node!alloc::raw_vec::impl$4::reserve::do_reserve_and_handle<alloc::alloc::Global> (00007ff7`8051cd40)
+00007ff7`7ff37a58 4c89f2          mov     rdx,r14
+00007ff7`7ff37a5b 488b5f10        mov     rbx,qword ptr [rdi+10h]
+00007ff7`7ff37a5f ebc3            jmp     novovm_node!alloc::string::impl$63::write_str+0x24 (00007ff7`7ff37a24)
+00007ff7`7ff37a61 cc              int     3
+00007ff7`7ff37a62 cc              int     3
+00007ff7`7ff37a63 cc              int     3
+00007ff7`7ff37a64 cc              int     3
+0:001> dq 000000755b6ee358 L3
+00000075`5b6ee358  00007ff7`805fb823 00000075`5b6ee470
+00000075`5b6ee368  00000075`5b6ee490
+0:001> !address 000000eab6ddc900
+
+
+Building memory map: 000000007ffe0000
+Building memory map: 000000755a1ac138
+Building memory map: 000000755a2a5000
+Building memory map: 000000755a2a6000
+Building memory map: 000000755a2ae000
+Building memory map: 000000755a2e2000
+Building memory map: 000000755a352000
+Building memory map: 000000755a4ffc68
+Building memory map: 000000755b6ecd18
+Building memory map: 000000755b8ff518
+Building memory map: 000000755baf9a78
+Building memory map: 000000755bcfe568
+Building memory map: 000000755befdb58
+Building memory map: 000000755c0ff678
+Building memory map: 000000755c2f9e18
+Building memory map: 000000755c3ff918
+Building memory map: 000000755c4ffcb8
+Building memory map: 000000755c5ff678
+Building memory map: 000000755c6ff568
+Building memory map: 000000755c7ffaf8
+Building memory map: 000000755cffe258
+Building memory map: 000000755d1ff7b8
+Building memory map: 000000755d3f99c8
+Building memory map: 000000755d5ff838
+Building memory map: 000000755d7f9b68
+Building memory map: 000000755d9ff338
+Building memory map: 0000023f74ee2850
+Building memory map: 0000023f74ee8ec0
+Building memory map: 0000023f74ee9518
+Building memory map: 0000023f74ee97a0
+Building memory map: 0000023f74ee9a20
+Building memory map: 0000023f74f1ef60
+Building memory map: 0000023f74f24020
+Building memory map: 0000023f74f262b0
+Building memory map: 0000023f74f33850
+Building memory map: 0000023f74f33890
+Building memory map: 0000023f74f338b0
+Building memory map: 0000023f74f33910
+Building memory map: 0000023f74f33bd0
+Building memory map: 0000023f74f33d30
+Building memory map: 0000023f74f34160
+Building memory map: 0000023f74f4a360
+Building memory map: 0000023f74f77c70
+Building memory map: 0000023f74f78960
+Building memory map: 0000023f74f8a090
+Building memory map: 0000023f74f8b670
+Building memory map: 0000023f74fb7170
+Building memory map: 0000023f74fb87d0
+Building memory map: 0000023f74fbefd0
+Building memory map: 0000023f74fd7520
+Building memory map: 0000023f74fd7540
+Building memory map: 0000023f74fd7560
+Building memory map: 0000023f74fd7600
+Building memory map: 0000023f74fd7620
+Building memory map: 0000023f74fd7660
+Building memory map: 0000023f74fd76c0
+Building memory map: 0000023f74fd7720
+Building memory map: 0000023f74fd77e0
+Building memory map: 0000023f74fd7880
+Building memory map: 0000023f74fd7920
+Building memory map: 0000023f74fd7940
+Building memory map: 0000023f74fd7960
+Building memory map: 0000023f74fd7980
+Building memory map: 0000023f74fd7a40
+Building memory map: 0000023f74fd7b40
+Building memory map: 0000023f74fd7bc0
+Building memory map: 0000023f74fd7be0
+Building memory map: 0000023f74fd7c60
+Building memory map: 0000023f74fd7dc0
+Building memory map: 0000023f75620090
+Building memory map: 0000023f756d2cf0
+Building memory map: 0000023f756d3700
+Building memory map: 0000023f756d39e0
+Building memory map: 0000023f756e0970
+Building memory map: 0000023f756e0a10
+Building memory map: 0000023f756e2fe0
+Building memory map: 0000023f75717a20
+Building memory map: 0000023f7571c390
+Building memory map: 0000023f7595eb60
+Building memory map: 0000023f7595ebe0
+Building memory map: 0000023f7595ecc0
+Building memory map: 0000023f7595ece0
+Building memory map: 0000023f7595ed20
+Building memory map: 0000023f7595ed60
+Building memory map: 0000023f7595ed80
+Building memory map: 0000023f7595ee40
+Building memory map: 0000023f7595ee60
+Building memory map: 0000023f7595ee80
+Building memory map: 0000023f7595eea0
+Building memory map: 0000023f7595ef20
+Building memory map: 0000023f7595f000
+Building memory map: 0000023f7595f020
+Building memory map: 0000023f7595f0c0
+Building memory map: 0000023f7595f100
+Building memory map: 0000023f7595f160
+Building memory map: 0000023f7595f180
+Building memory map: 0000023f7595f1a0
+Building memory map: 0000023f7595f1c0
+Building memory map: 0000023f7595f1e0
+Building memory map: 0000023f7595f220
+Building memory map: 0000023f7595f2a0
+Building memory map: 0000023f7595f2c0
+Building memory map: 0000023f759603d0
+Building memory map: 0000023f75978840
+Building memory map: 0000023f7597e2e0
+Building memory map: 0000023f7597fcd0
+Building memory map: 0000023f75a06680
+Building memory map: 0000023f75a3dd50
+Building memory map: 0000023f75a4d460
+Building memory map: 0000023f75a4eb70
+Building memory map: 0000023f75a4ebb0
+Building memory map: 0000023f75a4ebf0
+Building memory map: 0000023f75a4ec10
+Building memory map: 0000023f75a4ec30
+Building memory map: 0000023f75a4ecd0
+Building memory map: 0000023f75a4ecf0
+Building memory map: 0000023f75a4ed10
+Building memory map: 0000023f75a4ed50
+Building memory map: 0000023f75a4ed90
+Building memory map: 0000023f75a4ee30
+Building memory map: 0000023f75a4ef50
+Building memory map: 0000023f75a4f010
+Building memory map: 0000023f75a4f030
+Building memory map: 0000023f75a4f090
+Building memory map: 0000023f75a4f150
+Building memory map: 0000023f75a4f190
+Building memory map: 0000023f75a4f1b0
+Building memory map: 0000023f75a530f0
+Building memory map: 0000023f75a555c0
+Building memory map: 0000023f75a55730
+Building memory map: 0000023f75a55a10
+Building memory map: 0000023f75a55cf0
+Building memory map: 0000023f75a55fd0
+Building memory map: 0000023f75a56140
+Building memory map: 0000023f75a562b0
+Building memory map: 0000023f75a56870
+Building memory map: 0000023f75a56cc0
+Building memory map: 0000023f75a56e30
+Building memory map: 0000023f75a56fa0
+Building memory map: 0000023f75a57110
+Building memory map: 0000023f75a57280
+Building memory map: 0000023f75a5ca60
+Building memory map: 0000023f75a5ccb0
+Building memory map: 0000023f75a5cd50
+Building memory map: 0000023f75a5ce90
+Building memory map: 0000023f75a5d930
+Building memory map: 0000023f75a5db10
+Building memory map: 0000023f75a5dbb0
+Building memory map: 0000023f75a5dc50
+Building memory map: 0000023f75a5dcf0
+Building memory map: 0000023f75a5ded0
+Building memory map: 0000023f75a5e5b0
+Building memory map: 0000023f75a5e650
+Building memory map: 0000023f75a5e790
+Building memory map: 0000023f75a5e830
+Building memory map: 0000023f75a5e8d0
+Building memory map: 0000023f75a5eab0
+Building memory map: 0000023f75a67000
+Building memory map: 0000023f75a9ba40
+Building memory map: 0000023f75ad0480
+Building memory map: 0000023f75ad1fb0
+Building memory map: 0000023f75b0ba90
+Building memory map: 0000023f75b0c590
+Building memory map: 0000023f75b0c6f0
+Building memory map: 0000023f75b0c850
+Building memory map: 0000023f75b16f50
+Building memory map: 0000023f75b18660
+Building memory map: 0000023f75b19d70
+Building memory map: 0000023f75b1b480
+Building memory map: 0000023f75b1cb90
+Building memory map: 0000023f75b1e2a0
+Building memory map: 0000023f75b1f9b0
+Building memory map: 0000023f75b210c0
+Building memory map: 0000023f75b227d0
+Building memory map: 0000023f75b255f0
+Building memory map: 0000023f76bc1f80
+Building memory map: 0000023f76bf6d50
+Building memory map: 0000023f76c2b790
+Building memory map: 0000023f76c601d0
+Building memory map: 0000023f76c94c10
+Building memory map: 0000023f76ce50b0
+Building memory map: 0000023f76ce50d0
+Building memory map: 0000023f76ce50f0
+Building memory map: 0000023f76ce5110
+Building memory map: 0000023f76ce5130
+Building memory map: 0000023f76ce5150
+Building memory map: 0000023f76d86cc0
+Building memory map: 0000023f76d86e40
+Building memory map: 0000023f76d86f20
+Building memory map: 0000023f76d86f60
+Building memory map: 0000023f76d86f80
+Building memory map: 0000023f76d87040
+Building memory map: 0000023f76d871e0
+Building memory map: 0000023f76d87220
+Building memory map: 0000023f76d87280
+Building memory map: 0000023f76d872a0
+Building memory map: 0000023f76d87300
+Building memory map: 0000023f76d87340
+Building memory map: 0000023f76d87e20
+Building memory map: 0000023f76dbc860
+Building memory map: 0000023f76e23f50
+Building memory map: 0000023f76e930b0
+Building memory map: 0000023f76e93170
+Building memory map: 0000023f76e931d0
+Building memory map: 0000023f76e93210
+Building memory map: 0000023f76e93230
+Building memory map: 0000023f76e93250
+Building memory map: 0000023f76e9fdc0
+Building memory map: 0000023f76e9fe40
+Building memory map: 0000023f76e9fe60
+Building memory map: 0000023f76e9fec0
+Building memory map: 0000023f76e9ff00
+Building memory map: 0000023f76e9ff80
+Building memory map: 0000023f76f25330
+Building memory map: 0000023f76f253b0
+Building memory map: 0000023f76f253d0
+Building memory map: 0000023f76f253f0
+Building memory map: 0000023f76f25430
+Building memory map: 0000023f76f25450
+Building memory map: 0000023f76f27650
+Building memory map: 0000023f76f33d90
+Building memory map: 0000023f76f34050
+Building memory map: 0000023f76f345d0
+Building memory map: 0000023f76f34730
+Building memory map: 0000023f76f34e10
+Building memory map: 0000023f76f35230
+Building memory map: 0000023f76f36df0
+Building memory map: 0000023f76f36e10
+Building memory map: 0000023f76f36e70
+Building memory map: 0000023f76f36e90
+Building memory map: 0000023f76f36ed0
+Building memory map: 0000023f76f36f30
+Building memory map: 0000023f77f50090
+Building memory map: 0000023f77f84ad0
+Building memory map: 0000023f77fb9910
+Building memory map: 0000023f77fee350
+Building memory map: 0000023f780af600
+Building memory map: 0000023f780af680
+Building memory map: 0000023f780af6a0
+Building memory map: 0000023f780af6c0
+Building memory map: 0000023f780af700
+Building memory map: 0000023f780af720
+Building memory map: 0000023f780af740
+Building memory map: 0000023f780af780
+Building memory map: 0000023f780af7a0
+Building memory map: 0000023f780af7c0
+Building memory map: 0000023f780af7e0
+Building memory map: 0000023f780af820
+Building memory map: 0000023f780af840
+Building memory map: 0000023f780af8a0
+Building memory map: 0000023f780af8c0
+Building memory map: 0000023f780af920
+Building memory map: 0000023f780af940
+Building memory map: 0000023f780af960
+Building memory map: 0000023f780af980
+Building memory map: 0000023f780ce050
+Building memory map: 0000023f780d69c0
+Building memory map: 0000023f780d69e0
+Building memory map: 0000023f780d6a00
+Building memory map: 0000023f780d6a20
+Building memory map: 0000023f780d6a80
+Building memory map: 0000023f780d6aa0
+Building memory map: 0000023f780d6b00
+Building memory map: 0000023f780d6b60
+Building memory map: 0000023f780d6ba0
+Building memory map: 0000023f780d6bc0
+Building memory map: 0000023f780d6be0
+Building memory map: 0000023f780d6c20
+Building memory map: 0000023f780d6ca0
+Building memory map: 0000023f780d6cc0
+Building memory map: 0000023f780d6ce0
+Building memory map: 0000023f780d7720
+Building memory map: 0000023f780d7780
+Building memory map: 0000023f780d77c0
+Building memory map: 0000023f780d78c0
+Building memory map: 0000023f781d59a0
+Building memory map: 0000023f783145f0
+Building memory map: 0000023f784a1e90
+Building memory map: 0000023f784a1eb0
+Building memory map: 0000023f784a1ed0
+Building memory map: 0000023f784a1ef0
+Building memory map: 0000023f784a1f50
+Building memory map: 0000023f784a1f70
+Building memory map: 0000023f784a1f90
+Building memory map: 0000023f784a1fd0
+Building memory map: 0000023f78689ba0
+Building memory map: 00007ff780d8e000
+Building memory map: 00007ffbffd83000
+Building memory map: 00007ffcb01ae000
+Building memory map: 00007ffcb1d411eb
+Building memory map: 00007ffcb1d49000
+Building memory map: 00007ffcb7fa7000
+Building memory map: 00007ffcc915a000
+Building memory map: 00007ffcc9164000
+Building memory map: 00007ffcc91b6000
+Building memory map: 00007ffcc91b9000
+Building memory map: 00007ffcc91bd298
+Building memory map: 00007ffccafdf000
+Building memory map: 00007ffccafe2000
+Building memory map: 00007ffccafe5298
+Building memory map: 00007ffccb0f8000
+Building memory map: 00007ffccb102000
+Building memory map: 00007ffccb105298
+Building memory map: 00007ffcccad5000
+Building memory map: 00007ffcccae3000
+Building memory map: 00007ffcccae6298
+Building memory map: 00007ffcccafd000
+Building memory map: 00007ffcccaff000
+Building memory map: 00007ffcccb02298
+Building memory map: 00007ffcd5439000
+Building memory map: 00007ffcd543e000
+Building memory map: 00007ffcd5446298
+Building memory map: 00007ffcd8420000
+Building memory map: 00007ffcd8422000
+Building memory map: 00007ffcd8425298
+Building memory map: 00007ffcd8441000
+Building memory map: 00007ffcd8443000
+Building memory map: 00007ffcd844e298
+Building memory map: 00007ffcda4a9000
+Building memory map: 00007ffcda4ab000
+Building memory map: 00007ffcda4ae298
+Building memory map: 00007ffcdda67000
+Building memory map: 00007ffcdda6b298
+Building memory map: 00007ffcde9bd000
+Building memory map: 00007ffcde9c0000
+Building memory map: 00007ffcde9c3298
+Building memory map: 00007ffcdebab000
+Building memory map: 00007ffcdebb8000
+Building memory map: 00007ffcdebcc298
+Building memory map: 00007ffcdf096000
+Building memory map: 00007ffcdf098000
+Building memory map: 00007ffcdf09b298
+Building memory map: 00007ffcdf439000
+Building memory map: 00007ffcdf43d298
+Building memory map: 00007ffcdf6d3000
+Building memory map: 00007ffcdf6d8000
+Building memory map: 00007ffcdf6db298
+Building memory map: 00007ffcdf73a000
+Building memory map: 00007ffcdf73d000
+Building memory map: 00007ffcdf744298
+Building memory map: 00007ffcdf987000
+Building memory map: 00007ffcdf989000
+Building memory map: 00007ffcdffe5000
+Building memory map: 00007ffcdffe7000
+Building memory map: 00007ffce01f4000
+Building memory map: 00007ffce01f7000
+Building memory map: 00007ffce01fa298
+Building memory map: 00007ffce0223000
+Building memory map: 00007ffce0226000
+Building memory map: 00007ffce0229298
+Building memory map: 00007ffce069d000
+Building memory map: 00007ffce06bc000
+Building memory map: 00007ffce06f9298
+Building memory map: 00007ffce078f000
+Building memory map: 00007ffce07a0000
+Building memory map: 00007ffce07a3298
+Building memory map: 00007ffce085f000
+Building memory map: 00007ffce0913000
+Building memory map: 00007ffce091c298
+Building memory map: 00007ffce0a68000
+Building memory map: 00007ffce0a79000
+Building memory map: 00007ffce0a7c298
+Building memory map: 00007ffce0c58000
+Building memory map: 00007ffce0c64000
+Building memory map: 00007ffce0c79298
+Building memory map: 00007ffce0de4000
+Building memory map: 00007ffce0df9000
+Building memory map: 00007ffce0dfe298
+Building memory map: 00007ffce1562000
+Building memory map: 00007ffce1593000
+Building memory map: 00007ffce15b5298
+Building memory map: 00007ffce161f000
+Building memory map: 00007ffce1625000
+Building memory map: 00007ffce1628298
+Building memory map: 00007ffce17f1000
+Building memory map: 00007ffce17f8000
+Building memory map: 00007ffce17fb298
+Building memory map: 00007ffce1903000
+Building memory map: 00007ffce190f000
+Building memory map: 00007ffce1918298
+Building memory map: 00007ffce1945000
+Building memory map: 00007ffce1947000
+Building memory map: 00007ffce194b298
+Building memory map: 00007ffce19ff000
+Building memory map: 00007ffce1a0a000
+Building memory map: 00007ffce1a0f298
+Building memory map: 00007ffce1a47000
+Building memory map: 00007ffce1a4a000
+Building memory map: 00007ffce1a51298
+Building memory map: 00007ffce1b8d000
+Building memory map: 00007ffce1b99298
+Building memory map: 00007ffce1c69000
+Building memory map: 00007ffce1c75000
+Building memory map: 00007ffce1c7a298
+Building memory map: 00007ffce222e000
+Building memory map: 00007ffce2238000
+Building memory map: 00007ffce223c298
+Building memory map: 00007ffce235c000
+Building memory map: 00007ffce236d000
+Building memory map: 00007ffce23e9298
+Building memory map: 00007ffce23f6000
+Building memory map: 00007ffce24e7000
+Building memory map: 00007ffce24f3000
+Building memory map: 00007ffce25de298
+Building memory map: 00007ffce2e4b000
+Building memory map: 00007ffce2e53000
+Building memory map: 00007ffce2e58298
+Building memory map: 00007ffce2fd4000
+Building memory map: 00007ffce2fda000
+Building memory map: 00007ffce2ff0298
+Building memory map: 00007ffce32b63e4
+Building memory map: 00007ffce32b6eb4
+Building memory map: 00007ffce32b9fd4
+Building memory map: 00007ffce3321000
+Building memory map: 00007ffce333c000
+Building memory map: 00007ffce33bc298
+
+Mapping file section regions...
+Mapping module regions...
+Mapping PEB regions...
+Mapping TEB and stack regions...
+Mapping heap regions...
+Mapping page heap regions...
+Mapping other regions...
+Mapping stack trace database regions...
+Mapping activation context regions...
+
+Usage:                  <unknown>
+Base Address:           00000075`5da00000
+End Address:            0000023f`74e20000
+Region Size:            000001ca`17420000 (   1.789 TB)
+State:                  <info not present at the target>
+Protect:                <info not present at the target>
+Type:                   <info not present at the target>
+Allocation Base:        <info not present at the target>
+Allocation Protect:     <info not present at the target>
+
+
+Content source: 0 (invalid), length: 154be105f50
+0:001> lmvm VCRUNTIME140
+start             end                 module name
+00007ffc`b1d30000 00007ffc`b1d4e000   VCRUNTIME140   (private pdb symbols)  <SUPERVM>\target\c-original-dmp-review-20261113\symbols\vcruntime140.amd64.pdb\724C8CA145D5E1813863A893D4FED39E1\vcruntime140.amd64.pdb
+    Loaded symbol image file: VCRUNTIME140.dll
+    Mapped memory image file: c:\windows\system32\VCRUNTIME140.dll
+    Image path: C:\Windows\System32\VCRUNTIME140.dll
+    Image name: VCRUNTIME140.dll
+    Image was built with /Brepro flag.
+    Timestamp:        4260DF93 (This is a reproducible build file hash, not a timestamp)
+    CheckSum:         0002900D
+    ImageSize:        0001E000
+    File version:     14.50.35719.0
+    Product version:  14.50.35719.0
+    File flags:       0 (Mask 3F)
+    File OS:          4 Unknown Win32
+    File type:        2.0 Dll
+    File date:        00000000.00000000
+    Translations:     0409.04b0
+    Information from resource tables:
+        CompanyName:      Microsoft Corporation
+        ProductName:      Microsoft? Visual Studio?
+        InternalName:     vcruntime140.dll
+        OriginalFilename: vcruntime140.dll
+        ProductVersion:   14.50.35719.0
+        FileVersion:      14.50.35719.0
+        FileDescription:  Microsoft? C Runtime Library
+        LegalCopyright:   ? Microsoft Corporation. All rights reserved.
+0:001> q
+quit:
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from '<SUPERVM>\target\c-first-fault-20261113\sdk\extracted\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

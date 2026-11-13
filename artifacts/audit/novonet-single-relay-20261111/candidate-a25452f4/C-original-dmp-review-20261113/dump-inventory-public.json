@@ -1,0 +1,95 @@
+[
+  {
+    "pid": 31296,
+    "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\dumps-local\\novovm-node.exe.31296.dmp",
+    "bytes": 6208032,
+    "sha256": "c5d2e37a640a654a0b501dc49229fdb01c05a77e4ec399f5dec7e218ee496495",
+    "dump_utc": "2026-11-11T13:27:58+00:00",
+    "flags": "0x200121",
+    "full_memory": false,
+    "memory_streams": [
+      3,
+      4,
+      13,
+      5,
+      6,
+      7,
+      15,
+      21,
+      22,
+      24,
+      0
+    ],
+    "node": {
+      "base": "0x7ff77e0f0000",
+      "size": 48480256,
+      "timestamp": 1794374121,
+      "pdb_guid": "c94a5e99-4cff-4094-8b63-0663ef0f9c21",
+      "pdb_age": 1
+    },
+    "ttd_loaded": false,
+    "verifier_loaded": false
+  },
+  {
+    "pid": 3228,
+    "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-crash-analysis-20261112T004637Z\\dumps-local\\novovm-node.exe.3228.dmp",
+    "bytes": 6159844,
+    "sha256": "95dbb8a63e8d6281c07a9019a28d4baadbf0ae61ff40117cac1da2fe31264ee0",
+    "dump_utc": "2026-11-11T20:13:40+00:00",
+    "flags": "0x200121",
+    "full_memory": false,
+    "memory_streams": [
+      3,
+      4,
+      13,
+      5,
+      6,
+      7,
+      15,
+      21,
+      22,
+      24,
+      0
+    ],
+    "node": {
+      "base": "0x7ff77e0f0000",
+      "size": 48480256,
+      "timestamp": 1794374121,
+      "pdb_guid": "c94a5e99-4cff-4094-8b63-0663ef0f9c21",
+      "pdb_age": 1
+    },
+    "ttd_loaded": false,
+    "verifier_loaded": false
+  },
+  {
+    "pid": 37796,
+    "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-aoem-node-test-20261113\\backtrace-exit-37796-01\\dump-local\\novovm-node.exe.37796.dmp",
+    "bytes": 6203358,
+    "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0",
+    "dump_utc": "2026-11-13T02:15:56+00:00",
+    "flags": "0x200121",
+    "full_memory": false,
+    "memory_streams": [
+      3,
+      4,
+      13,
+      5,
+      6,
+      7,
+      15,
+      21,
+      22,
+      24,
+      0
+    ],
+    "node": {
+      "base": "0x7ff709a40000",
+      "size": 48504832,
+      "timestamp": 1794456829,
+      "pdb_guid": "e16d0b11-47ca-4ebf-b482-c91380cc57f8",
+      "pdb_age": 1
+    },
+    "ttd_loaded": false,
+    "verifier_loaded": false
+  }
+]

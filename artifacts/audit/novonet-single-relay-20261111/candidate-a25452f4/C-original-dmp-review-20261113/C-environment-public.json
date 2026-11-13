@@ -1,0 +1,45 @@
+{
+  "utc": "2026-11-13T13:07:52.4664887Z",
+  "cpu": [
+    {
+      "Name": "Intel(R) Core(TM) i9-14900HX",
+      "Manufacturer": "GenuineIntel",
+      "NumberOfCores": 24,
+      "NumberOfLogicalProcessors": 32
+    }
+  ],
+  "memory": [
+    {
+      "Manufacturer": "Samsung",
+      "Speed": 5600,
+      "ConfiguredClockSpeed": 5600,
+      "SMBIOSMemoryType": 34,
+      "Capacity": 17179869184
+    },
+    {
+      "Manufacturer": "Micron Technology",
+      "Speed": 5600,
+      "ConfiguredClockSpeed": 5600,
+      "SMBIOSMemoryType": 34,
+      "Capacity": 17179869184
+    }
+  ],
+  "bios": [
+    {
+      "Manufacturer": "LENOVO",
+      "SMBIOSBIOSVersion": "N0CN22WW",
+      "ReleaseDate": "2024-04-19T08:00:00+08:00"
+    }
+  ],
+  "os": [
+    {
+      "Caption": "Microsoft Windows 11 家庭版 中文版",
+      "Version": "10.0.26300",
+      "BuildNumber": "26300"
+    }
+  ],
+  "xmp": "Not established by standard CIM data",
+  "cpu_microcode": "Not collected",
+  "vcruntime": "14.50.35719.0",
+  "vcruntime_sha256": "184146852727A9DB4EEA06178716BEC3CDBB1015C911F6B0F915B184AD7775B2"
+}

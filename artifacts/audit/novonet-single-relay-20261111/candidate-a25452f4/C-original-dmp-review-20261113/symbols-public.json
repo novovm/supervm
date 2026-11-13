@@ -1,0 +1,12 @@
+{
+  "pdb_sha256": "b46bc1763c06c7370733763391d56e083b2e52cc8dcd370a377be2f7928dac38",
+  "pdb_bytes": 17281024,
+  "pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+  "age": 1,
+  "exe_sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+  "cdb_loaded_private_symbols_for": [
+    31296,
+    3228
+  ],
+  "a254_matching_pdb_available": false
+}
