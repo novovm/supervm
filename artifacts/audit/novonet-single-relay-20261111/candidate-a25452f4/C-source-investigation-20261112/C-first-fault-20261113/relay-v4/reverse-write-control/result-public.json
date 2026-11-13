@@ -1,0 +1,23 @@
+{
+  "start_utc": "2026-11-13T10:50:22.7569452Z",
+  "node_started": false,
+  "end_utc": "2026-11-13T10:50:23.7812711Z",
+  "recording_control_completed": true,
+  "results": [
+    {
+      "trace_exists": true,
+      "mode": "clean",
+      "exit_code": 0,
+      "recorder_pid": 35188,
+      "utc": "2026-11-13T10:50:23.5287345Z"
+    },
+    {
+      "trace_exists": true,
+      "mode": "bad",
+      "exit_code": -1073741819,
+      "recorder_pid": 3064,
+      "utc": "2026-11-13T10:50:23.7807102Z"
+    }
+  ],
+  "replay_verified": false
+}

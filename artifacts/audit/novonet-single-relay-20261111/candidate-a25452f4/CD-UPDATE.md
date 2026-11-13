@@ -1,6 +1,17 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 18:36 Beijing: C traces pointer mismatch; no native fix claimed
+## CURRENT 2026-11-13 18:53 Beijing: isolated reverse-write tracing verified
+
+Fresh user UAC succeeded; both bounded isolated controls were recorded. Clean
+exit 0, bad-pointer exit 0xc0000005, coordinator exit 0. Offline replay traced
+fixture consumer RVA 0x2bb4 back to writer RVA 0x2b37 and verified the slot's
+valid-pointer -> 0xb8 change. This is a diagnostic-tool control, not the node
+reproduction/fix. Raw traces stay local; no node/DB/identity operation occurred.
+
+**C NOT READY; A must not send.** First node corrupting writer is still unknown.
+[Actual recording, reverse-write proof and tool limitations](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/reverse-write-control/README.md).
+
+## PRIOR 2026-11-13 18:36 Beijing: C traces pointer mismatch; no native fix claimed
 
 C independently confirmed exception/thread contexts and extended the captured
 unwind-code comparison. Saved argument pointers differ from the crash-time
