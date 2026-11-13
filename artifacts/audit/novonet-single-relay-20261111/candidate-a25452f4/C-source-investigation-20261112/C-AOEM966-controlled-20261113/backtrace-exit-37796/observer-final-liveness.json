@@ -1,0 +1,24 @@
+{
+  "utc": "2026-11-13T01:41:52.6053232Z",
+  "nodes": [
+    {
+      "ProcessId": 37796,
+      "CreationDate": "2026-11-13T08:41:01.729985+08:00",
+      "ExecutablePath": "C:\\ProgramData\\NOVOVM\\releases\\novonet-observation-a25452f4-windows-x86_64\\bin\\novovm-node.exe"
+    }
+  ],
+  "task": "Running",
+  "task_result": 267009,
+  "elapsed_seconds": 3597.0173826,
+  "ports": [
+    {
+      "LocalPort": 42052,
+      "OwningProcess": 37796
+    },
+    {
+      "LocalPort": 41052,
+      "OwningProcess": 37796
+    }
+  ],
+  "stderr_bytes": 0
+}

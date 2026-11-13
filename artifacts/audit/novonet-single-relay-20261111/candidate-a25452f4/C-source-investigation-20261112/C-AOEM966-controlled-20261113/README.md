@@ -2,6 +2,13 @@
 
 Status: **FAILED / C NOT READY**. This is an AOEM-only C candidate experiment, not a four-host rollout or crash-root signoff. No A/B/D process was changed.
 
+## Latest: backtrace run also crashed, 2026-11-13 10:15 Beijing
+
+PID37796 crashed after the one-hour observer ended. The replacement AOEM run
+is **not fixed**, C is down and double relay remains blocked. See
+[the new native crash and comparison](backtrace-exit-37796/README.md).
+This supersedes earlier liveness/use-now notes below; no new restart occurred.
+
 ## Terminal result, 2026-11-13
 
 The new C node exited at **00:07:32 UTC** (08:07:32 Beijing), about 17 minutes

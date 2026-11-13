@@ -1,0 +1,24 @@
+{
+  "start_utc": "2026-11-13T03:11:51.1429201Z",
+  "nodes": [],
+  "events": [
+    {
+      "exception": "c0000005",
+      "record": 546615,
+      "utc": "2026-11-13T02:15:52.8016780Z",
+      "module": "VCRUNTIME140.dll",
+      "offset": "0000000000011268",
+      "application": "novovm-node.exe",
+      "pid": "0x93a4"
+    }
+  ],
+  "task_state": "not collected by this unprivileged supplement",
+  "end_utc": "2026-11-13T03:11:52.4607188Z",
+  "parser_regression": "PASS",
+  "ports": [],
+  "read_only": true,
+  "script_exit": 0,
+  "node_restarted": false,
+  "host": "C",
+  "original_logs_recopied": false
+}

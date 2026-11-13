@@ -1,0 +1,128 @@
+{
+  "pid": 37796,
+  "exception": {
+    "pid": 37796,
+    "exception_thread_id": 31876,
+    "exception_code": "0xc0000005",
+    "instruction_module": "VCRUNTIME140.dll",
+    "instruction_rva": "0x11268",
+    "access_kind": "read",
+    "fault_address": "0xffffffffffffffff",
+    "node_pdb": {
+      "pdb_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+      "pdb_age": 1,
+      "pdb_name": "novovm_node.pdb"
+    },
+    "aoem_module_present": true,
+    "root_cause_confirmed": false
+  },
+  "fault_operand_rdx": "0x8000000000000005",
+  "fault_instruction": "movzwl (%rdx), %ecx",
+  "copy_bytes": 2,
+  "node_frames": [
+    {
+      "frame": 1,
+      "rva": "0x1e4cc93",
+      "prior_rva": "0x1e4cc93",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 2,
+      "rva": "0x1e50359",
+      "prior_rva": "0x1e50359",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 3,
+      "rva": "0x1e524e1",
+      "prior_rva": "0x1e524e1",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 4,
+      "rva": "0x1e4cf9f",
+      "prior_rva": "0x1e4cf9f",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 5,
+      "rva": "0x98bc1a",
+      "prior_rva": "0x98bc1a",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 6,
+      "rva": "0xa165a0",
+      "prior_rva": "0xa167c4",
+      "same_rva": false,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 7,
+      "rva": "0xc1ff32",
+      "prior_rva": "0xc1ff32",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 8,
+      "rva": "0x7614af",
+      "prior_rva": "0x7614af",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 9,
+      "rva": "0x777bb9",
+      "prior_rva": "0x777bb9",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 10,
+      "rva": "0x17d5e5",
+      "prior_rva": "0x17d5e5",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 11,
+      "rva": "0x8ad16",
+      "prior_rva": "0x8ad16",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 12,
+      "rva": "0x1d8d57",
+      "prior_rva": "0x1d8d57",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 13,
+      "rva": "0x1da0f5",
+      "prior_rva": "0x1da0f5",
+      "same_rva": true,
+      "same_runtime_function": true
+    },
+    {
+      "frame": 14,
+      "rva": "0x1e3a0e8",
+      "prior_rva": "0x1e3a0e8",
+      "same_rva": true,
+      "same_runtime_function": true
+    }
+  ],
+  "prior_pid": 27928,
+  "matching_rvas": 13,
+  "all_same_runtime_functions": true,
+  "exact_a254_pdb_available": false,
+  "interpretation": "13/14 identical node RVAs; frame 6 differs within the same runtime function. Source names use prior normalized code comparison with 875 PDB, not exact a254 symbols. Windows reports an all-ones fault address for the noncanonical read; rdx is the actual operand.",
+  "root_cause_confirmed": false
+}

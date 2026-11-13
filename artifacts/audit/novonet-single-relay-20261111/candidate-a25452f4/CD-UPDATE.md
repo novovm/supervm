@@ -1,6 +1,21 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 08:08 Beijing: C NOT READY; new AOEM run exited
+## CURRENT 2026-11-13 11:12 Beijing: C crashed again; double relay blocked
+
+PID37796 exited at10:15:56 Beijing with `0xC0000005`, after the one-hour
+observer had ended at09:42. C's original dump and owner exit are preserved.
+13/14 node return RVAs match the earlier PID27928 crash; the remaining frame
+is in the same function. The repeated status/profile/hex/String-copy path
+identifies the failure site, not its origin. New AOEM966 did not eliminate it.
+The 180-second original-profile isolation passed without reproducing it;
+**this is not a fix**. C remains down; no restart or relay observer was launched.
+
+[Original exit, dump hash, stack comparison, collection limitation and current
+read-only process/listener result](C-source-investigation-20261112/C-AOEM966-controlled-20261113/backtrace-exit-37796/README.md).
+A must not send against the old C READY. C owns the continued source diagnosis.
+No A/B/D action requested. Original DB, identity and earlier evidence preserved.
+
+## PRIOR 2026-11-13 08:08 Beijing: C NOT READY; new AOEM run exited
 
 Update 08:41 Beijing: the user explicitly authorized C to investigate/fix
 locally and, if needed, run one controlled recovery with backtrace. C started

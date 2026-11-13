@@ -1,0 +1,37 @@
+{
+  "files": [
+    {
+      "name": "node.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw_uploaded": false
+    },
+    {
+      "name": "node.stdout",
+      "bytes": 133,
+      "sha256": "0982ff53dc0718d8acc2bed1d808a99d641eb46131af75f919279fefd29d29ff",
+      "raw_uploaded": false
+    },
+    {
+      "name": "exit.json",
+      "bytes": 100,
+      "sha256": "b7c167015df5fb6a74594a6c3f34620c8cb4ec117377e753ae6377680c58b5bc",
+      "raw_uploaded": true
+    },
+    {
+      "name": "owner.json",
+      "bytes": 355,
+      "sha256": "34f4950d399441500231fcd41d916230655b5878f35031051a33426f97b97cf0",
+      "raw_uploaded": false
+    },
+    {
+      "name": "dump-local/novovm-node.exe.37796.dmp",
+      "bytes": 6203358,
+      "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0",
+      "raw_uploaded": false
+    }
+  ],
+  "collector_exit": 1,
+  "copy_hash_check": "collector compares source/destination before reaching later XML event parse failure",
+  "raw_dump_uploaded": false
+}

@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "worker_results": [
+    [
+      3306,
+      40607744
+    ],
+    [
+      3310,
+      40640512
+    ]
+  ],
+  "elapsed_ms": 180051,
+  "scope": "original bounded profile source with populated buffers and JSON roundtrip; no AOEM, node, network, database or original identities",
+  "root_cause_reproduced": false,
+  "exit_code": 0,
+  "compiler": "rustc 1.94.0 (4a4ef493e3a1488c6e321570238084b38948f6db)",
+  "profile_sha256": "8fd3d7ef912c90e09e750710127903a8d61f5df2ab0549ee3eebdd25a3f86e7e"
+}
