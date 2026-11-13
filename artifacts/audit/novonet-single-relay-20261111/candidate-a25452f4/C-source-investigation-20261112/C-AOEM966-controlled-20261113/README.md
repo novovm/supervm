@@ -98,4 +98,3 @@ Read-only Application Error event comparison also found four fatal exceptions
 in three other applications over the last three days. Raw non-node records
 stay local. This alone proves neither a common cause nor hardware failure;
 no BIOS, antivirus, route, clock or OS configuration was changed.
-
