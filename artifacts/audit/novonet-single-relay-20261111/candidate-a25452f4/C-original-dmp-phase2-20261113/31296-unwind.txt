@@ -1,0 +1,25 @@
+0:001> .fnent 00007ff77e74f59d
+Debugger function entry 000001db`8554c100 for:
+(00007ff7`7e74f280)   novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+0x31d   |  (00007ff7`7e74f720)   novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$12get_index_of17h60eb64bb5a7af6c5E
+
+BeginAddress      = 00000000`0065f280
+EndAddress        = 00000000`0065f69a
+UnwindInfoAddress = 00000000`029157b8
+
+Unwind info at 00007ff7`80a057b8, 30 bytes
+  version 1, flags 3, prolog 2b, codes 11
+  frame reg 5 (rbp), frame offs 80h
+  handler routine: novovm_node!_CxxFrameHandler3 (00007ff7`8049955d), data 291580c
+  00: offs 2b, unwind op 8, op info 6	UWOP_SAVE_XMM128 FrameOffset: a0 reg: xmm6.
+  02: offs 26, unwind op 8, op info 7	UWOP_SAVE_XMM128 FrameOffset: b0 reg: xmm7.
+  04: offs 21, unwind op 8, op info 8	UWOP_SAVE_XMM128 FrameOffset: c0 reg: xmm8.
+  06: offs 1b, unwind op 3, op info 0	UWOP_SET_FPREG.
+  07: offs 13, unwind op 1, op info 0	UWOP_ALLOC_LARGE FrameOffset: d8.
+  09: offs c, unwind op 0, op info 3	UWOP_PUSH_NONVOL reg: rbx.
+  0a: offs b, unwind op 0, op info 7	UWOP_PUSH_NONVOL reg: rdi.
+  0b: offs a, unwind op 0, op info 6	UWOP_PUSH_NONVOL reg: rsi.
+  0c: offs 9, unwind op 0, op info c	UWOP_PUSH_NONVOL reg: r12.
+  0d: offs 7, unwind op 0, op info d	UWOP_PUSH_NONVOL reg: r13.
+  0e: offs 5, unwind op 0, op info e	UWOP_PUSH_NONVOL reg: r14.
+  0f: offs 3, unwind op 0, op info f	UWOP_PUSH_NONVOL reg: r15.
+  10: offs 1, unwind op 0, op info 5	UWOP_PUSH_NONVOL reg: rbp.

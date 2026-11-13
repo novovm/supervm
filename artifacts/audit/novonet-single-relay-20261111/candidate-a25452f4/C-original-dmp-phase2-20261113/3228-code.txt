@@ -1,0 +1,405 @@
+Offline CDB disassembly. Private raw logs remain local. No execution trace implied.
+=== NUM_FMT ===
+0:001> uf 00007ff77ff3b0f8
+novovm_node!core::fmt::num::impl$16::fmt:
+00007ff7`7ff3b090 55              push    rbp
+00007ff7`7ff3b091 4883ec40        sub     rsp,40h
+00007ff7`7ff3b095 488d6c2440      lea     rbp,[rsp+40h]
+00007ff7`7ff3b09a 0fb609          movzx   ecx,byte ptr [rcx]
+00007ff7`7ff3b09d 31c0            xor     eax,eax
+00007ff7`7ff3b09f 4c8d05cc409800  lea     r8,[novovm_node!ZN4core7unicode12unicode_data11white_space14WHITESPACE_MAP17h2a3dd5a284adf242E+0x682 (00007ff7`808bf172)]
+00007ff7`7ff3b0a6 662e0f1f840000000000 nop word ptr cs:[rax+rax]
+
+novovm_node!core::fmt::num::impl$16::fmt+0x20:
+00007ff7`7ff3b0b0 440fb6c9        movzx   r9d,cl
+00007ff7`7ff3b0b4 c0e904          shr     cl,4
+00007ff7`7ff3b0b7 4589ca          mov     r10d,r9d
+00007ff7`7ff3b0ba 4183e20f        and     r10d,0Fh
+00007ff7`7ff3b0be 470fb61402      movzx   r10d,byte ptr [r10+r8]
+00007ff7`7ff3b0c3 44885405ff      mov     byte ptr [rbp+rax-1],r10b
+00007ff7`7ff3b0c8 48ffc8          dec     rax
+00007ff7`7ff3b0cb 4180f90f        cmp     r9b,0Fh
+00007ff7`7ff3b0cf 77df            ja      novovm_node!core::fmt::num::impl$16::fmt+0x20 (00007ff7`7ff3b0b0)
+
+novovm_node!core::fmt::num::impl$16::fmt+0x41:
+00007ff7`7ff3b0d1 488d0c28        lea     rcx,[rax+rbp]
+00007ff7`7ff3b0d5 48f7d8          neg     rax
+00007ff7`7ff3b0d8 4889442428      mov     qword ptr [rsp+28h],rax
+00007ff7`7ff3b0dd 48894c2420      mov     qword ptr [rsp+20h],rcx
+00007ff7`7ff3b0e2 4c8d0599409800  lea     r8,[novovm_node!ZN4core7unicode12unicode_data11white_space14WHITESPACE_MAP17h2a3dd5a284adf242E+0x692 (00007ff7`808bf182)]
+00007ff7`7ff3b0e9 41b902000000    mov     r9d,2
+00007ff7`7ff3b0ef 4889d1          mov     rcx,rdx
+00007ff7`7ff3b0f2 b201            mov     dl,1
+00007ff7`7ff3b0f4 e8a72b0000      call    novovm_node!core::fmt::Formatter::pad_integral (00007ff7`7ff3dca0)
+00007ff7`7ff3b0f9 90              nop
+00007ff7`7ff3b0fa 4883c440        add     rsp,40h
+00007ff7`7ff3b0fe 5d              pop     rbp
+00007ff7`7ff3b0ff c3              ret
+
+=== FMT_WRITE ===
+0:001> uf 00007ff77ff3d280
+Flow analysis was incomplete, some code may be missing
+novovm_node!core::fmt::write:
+00007ff7`7ff3d120 55              push    rbp
+00007ff7`7ff3d121 4157            push    r15
+00007ff7`7ff3d123 4156            push    r14
+00007ff7`7ff3d125 4155            push    r13
+00007ff7`7ff3d127 4154            push    r12
+00007ff7`7ff3d129 56              push    rsi
+00007ff7`7ff3d12a 57              push    rdi
+00007ff7`7ff3d12b 53              push    rbx
+00007ff7`7ff3d12c 4883ec48        sub     rsp,48h
+00007ff7`7ff3d130 488d6c2440      lea     rbp,[rsp+40h]
+00007ff7`7ff3d135 4c89ce          mov     rsi,r9
+00007ff7`7ff3d138 4d89c4          mov     r12,r8
+00007ff7`7ff3d13b 4889cf          mov     rdi,rcx
+00007ff7`7ff3d13e 40f6c601        test    sil,1
+00007ff7`7ff3d142 0f8556010000    jne     novovm_node!core::fmt::write+0x17e (00007ff7`7ff3d29e)
+
+novovm_node!core::fmt::write+0x28:
+00007ff7`7ff3d148 410fb60424      movzx   eax,byte ptr [r12]
+00007ff7`7ff3d14d 84c0            test    al,al
+00007ff7`7ff3d14f 0f846c010000    je      novovm_node!core::fmt::write+0x1a1 (00007ff7`7ff3d2c1)
+
+novovm_node!core::fmt::write+0x35:
+00007ff7`7ff3d155 488955e8        mov     qword ptr [rbp-18h],rdx
+00007ff7`7ff3d159 4c8b7218        mov     r14,qword ptr [rdx+18h]
+00007ff7`7ff3d15d 31db            xor     ebx,ebx
+00007ff7`7ff3d15f eb1e            jmp     novovm_node!core::fmt::write+0x5f (00007ff7`7ff3d17f)
+
+novovm_node!core::fmt::write+0x50:
+00007ff7`7ff3d170 410fb607        movzx   eax,byte ptr [r15]
+00007ff7`7ff3d174 4d89fc          mov     r12,r15
+00007ff7`7ff3d177 84c0            test    al,al
+00007ff7`7ff3d179 0f8442010000    je      novovm_node!core::fmt::write+0x1a1 (00007ff7`7ff3d2c1)
+
+novovm_node!core::fmt::write+0x5f:
+00007ff7`7ff3d17f 4d8d7c2401      lea     r15,[r12+1]
+00007ff7`7ff3d184 440fb6e8        movzx   r13d,al
+00007ff7`7ff3d188 84c0            test    al,al
+00007ff7`7ff3d18a 7824            js      novovm_node!core::fmt::write+0x90 (00007ff7`7ff3d1b0)
+
+novovm_node!core::fmt::write+0x6c:
+00007ff7`7ff3d18c 4889f9          mov     rcx,rdi
+00007ff7`7ff3d18f 4c89fa          mov     rdx,r15
+00007ff7`7ff3d192 4d89e8          mov     r8,r13
+00007ff7`7ff3d195 41ffd6          call    r14
+00007ff7`7ff3d198 84c0            test    al,al
+00007ff7`7ff3d19a 0f8525010000    jne     novovm_node!core::fmt::write+0x1a5 (00007ff7`7ff3d2c5)
+
+novovm_node!core::fmt::write+0x80:
+00007ff7`7ff3d1a0 4d01ef          add     r15,r13
+00007ff7`7ff3d1a3 ebcb            jmp     novovm_node!core::fmt::write+0x50 (00007ff7`7ff3d170)
+
+novovm_node!core::fmt::write+0x90:
+00007ff7`7ff3d1b0 3c80            cmp     al,80h
+00007ff7`7ff3d1b2 741d            je      novovm_node!core::fmt::write+0xb1 (00007ff7`7ff3d1d1)
+
+novovm_node!core::fmt::write+0x94:
+00007ff7`7ff3d1b4 4181fdc0000000  cmp     r13d,0C0h
+00007ff7`7ff3d1bb 753c            jne     novovm_node!core::fmt::write+0xd9 (00007ff7`7ff3d1f9)
+
+novovm_node!core::fmt::write+0x9d:
+00007ff7`7ff3d1bd 4889d8          mov     rax,rbx
+00007ff7`7ff3d1c0 48c1e004        shl     rax,4
+00007ff7`7ff3d1c4 48c7450020000060 mov     qword ptr [rbp],60000020h
+00007ff7`7ff3d1cc e998000000      jmp     novovm_node!core::fmt::write+0x149 (00007ff7`7ff3d269)
+
+novovm_node!core::fmt::write+0xb1:
+00007ff7`7ff3d1d1 450fb77c2401    movzx   r15d,word ptr [r12+1]
+00007ff7`7ff3d1d7 498d542403      lea     rdx,[r12+3]
+00007ff7`7ff3d1dc 4889f9          mov     rcx,rdi
+00007ff7`7ff3d1df 4d89f8          mov     r8,r15
+00007ff7`7ff3d1e2 41ffd6          call    r14
+00007ff7`7ff3d1e5 84c0            test    al,al
+00007ff7`7ff3d1e7 0f85d8000000    jne     novovm_node!core::fmt::write+0x1a5 (00007ff7`7ff3d2c5)
+
+novovm_node!core::fmt::write+0xcd:
+00007ff7`7ff3d1ed 4d01e7          add     r15,r12
+00007ff7`7ff3d1f0 4983c703        add     r15,3
+00007ff7`7ff3d1f4 e977ffffff      jmp     novovm_node!core::fmt::write+0x50 (00007ff7`7ff3d170)
+
+novovm_node!core::fmt::write+0xd9:
+00007ff7`7ff3d1f9 b920000060      mov     ecx,60000020h
+00007ff7`7ff3d1fe a801            test    al,1
+00007ff7`7ff3d200 740c            je      novovm_node!core::fmt::write+0xee (00007ff7`7ff3d20e)
+
+novovm_node!core::fmt::write+0xe2:
+00007ff7`7ff3d202 418b4c2401      mov     ecx,dword ptr [r12+1]
+00007ff7`7ff3d207 4983c405        add     r12,5
+00007ff7`7ff3d20b 4d89e7          mov     r15,r12
+
+novovm_node!core::fmt::write+0xee:
+00007ff7`7ff3d20e a802            test    al,2
+00007ff7`7ff3d210 7514            jne     novovm_node!core::fmt::write+0x106 (00007ff7`7ff3d226)
+
+novovm_node!core::fmt::write+0xf2:
+00007ff7`7ff3d212 31d2            xor     edx,edx
+00007ff7`7ff3d214 a804            test    al,4
+00007ff7`7ff3d216 741a            je      novovm_node!core::fmt::write+0x112 (00007ff7`7ff3d232)
+
+novovm_node!core::fmt::write+0xf8:
+00007ff7`7ff3d218 450fb707        movzx   r8d,word ptr [r15]
+00007ff7`7ff3d21c 4983c702        add     r15,2
+00007ff7`7ff3d220 a808            test    al,8
+00007ff7`7ff3d222 7515            jne     novovm_node!core::fmt::write+0x119 (00007ff7`7ff3d239)
+
+novovm_node!core::fmt::write+0x104:
+00007ff7`7ff3d224 eb1b            jmp     novovm_node!core::fmt::write+0x121 (00007ff7`7ff3d241)
+
+novovm_node!core::fmt::write+0x106:
+00007ff7`7ff3d226 410fb717        movzx   edx,word ptr [r15]
+00007ff7`7ff3d22a 4983c702        add     r15,2
+00007ff7`7ff3d22e a804            test    al,4
+00007ff7`7ff3d230 75e6            jne     novovm_node!core::fmt::write+0xf8 (00007ff7`7ff3d218)
+
+novovm_node!core::fmt::write+0x112:
+00007ff7`7ff3d232 4531c0          xor     r8d,r8d
+00007ff7`7ff3d235 a808            test    al,8
+00007ff7`7ff3d237 7408            je      novovm_node!core::fmt::write+0x121 (00007ff7`7ff3d241)
+
+novovm_node!core::fmt::write+0x119:
+00007ff7`7ff3d239 410fb71f        movzx   ebx,word ptr [r15]
+00007ff7`7ff3d23d 4983c702        add     r15,2
+
+novovm_node!core::fmt::write+0x121:
+00007ff7`7ff3d241 a810            test    al,10h
+00007ff7`7ff3d243 7548            jne     novovm_node!core::fmt::write+0x16d (00007ff7`7ff3d28d)
+
+novovm_node!core::fmt::write+0x125:
+00007ff7`7ff3d245 a820            test    al,20h
+00007ff7`7ff3d247 740d            je      novovm_node!core::fmt::write+0x136 (00007ff7`7ff3d256)
+
+novovm_node!core::fmt::write+0x129:
+00007ff7`7ff3d249 410fb7c0        movzx   eax,r8w
+00007ff7`7ff3d24d c1e004          shl     eax,4
+00007ff7`7ff3d250 440fb7440608    movzx   r8d,word ptr [rsi+rax+8]
+
+novovm_node!core::fmt::write+0x136:
+00007ff7`7ff3d256 4889d8          mov     rax,rbx
+00007ff7`7ff3d259 48c1e004        shl     rax,4
+00007ff7`7ff3d25d 894d00          mov     dword ptr [rbp],ecx
+00007ff7`7ff3d260 66895504        mov     word ptr [rbp+4],dx
+00007ff7`7ff3d264 6644894506      mov     word ptr [rbp+6],r8w
+
+novovm_node!core::fmt::write+0x149:
+00007ff7`7ff3d269 48897df0        mov     qword ptr [rbp-10h],rdi
+00007ff7`7ff3d26d 488b4de8        mov     rcx,qword ptr [rbp-18h]
+00007ff7`7ff3d271 48894df8        mov     qword ptr [rbp-8],rcx
+00007ff7`7ff3d275 488b0c06        mov     rcx,qword ptr [rsi+rax]
+00007ff7`7ff3d279 488d55f0        lea     rdx,[rbp-10h]
+00007ff7`7ff3d27d ff540608        call    qword ptr [rsi+rax+8]
+00007ff7`7ff3d281 84c0            test    al,al
+00007ff7`7ff3d283 7540            jne     novovm_node!core::fmt::write+0x1a5 (00007ff7`7ff3d2c5)
+
+novovm_node!core::fmt::write+0x165:
+00007ff7`7ff3d285 48ffc3          inc     rbx
+00007ff7`7ff3d288 e9e3feffff      jmp     novovm_node!core::fmt::write+0x50 (00007ff7`7ff3d170)
+
+novovm_node!core::fmt::write+0x16d:
+00007ff7`7ff3d28d 0fb7d2          movzx   edx,dx
+00007ff7`7ff3d290 c1e204          shl     edx,4
+00007ff7`7ff3d293 0fb7541608      movzx   edx,word ptr [rsi+rdx+8]
+00007ff7`7ff3d298 a820            test    al,20h
+00007ff7`7ff3d29a 75ad            jne     novovm_node!core::fmt::write+0x129 (00007ff7`7ff3d249)
+
+novovm_node!core::fmt::write+0x17c:
+00007ff7`7ff3d29c ebb8            jmp     novovm_node!core::fmt::write+0x136 (00007ff7`7ff3d256)
+
+novovm_node!core::fmt::write+0x17e:
+00007ff7`7ff3d29e 48d1ee          shr     rsi,1
+00007ff7`7ff3d2a1 488b4218        mov     rax,qword ptr [rdx+18h]
+00007ff7`7ff3d2a5 4889f9          mov     rcx,rdi
+00007ff7`7ff3d2a8 4c89e2          mov     rdx,r12
+00007ff7`7ff3d2ab 4989f0          mov     r8,rsi
+00007ff7`7ff3d2ae 4883c448        add     rsp,48h
+00007ff7`7ff3d2b2 5b              pop     rbx
+00007ff7`7ff3d2b3 5f              pop     rdi
+00007ff7`7ff3d2b4 5e              pop     rsi
+00007ff7`7ff3d2b5 415c            pop     r12
+00007ff7`7ff3d2b7 415d            pop     r13
+00007ff7`7ff3d2b9 415e            pop     r14
+00007ff7`7ff3d2bb 415f            pop     r15
+00007ff7`7ff3d2bd 5d              pop     rbp
+00007ff7`7ff3d2be 48ffe0          jmp     rax
+
+novovm_node!core::fmt::write+0x1a1:
+00007ff7`7ff3d2c1 31c0            xor     eax,eax
+00007ff7`7ff3d2c3 eb02            jmp     novovm_node!core::fmt::write+0x1a7 (00007ff7`7ff3d2c7)
+
+novovm_node!core::fmt::write+0x1a5:
+00007ff7`7ff3d2c5 b001            mov     al,1
+
+novovm_node!core::fmt::write+0x1a7:
+00007ff7`7ff3d2c7 4883c448        add     rsp,48h
+00007ff7`7ff3d2cb 5b              pop     rbx
+00007ff7`7ff3d2cc 5f              pop     rdi
+00007ff7`7ff3d2cd 5e              pop     rsi
+00007ff7`7ff3d2ce 415c            pop     r12
+00007ff7`7ff3d2d0 415d            pop     r13
+00007ff7`7ff3d2d2 415e            pop     r14
+00007ff7`7ff3d2d4 415f            pop     r15
+00007ff7`7ff3d2d6 5d              pop     rbp
+00007ff7`7ff3d2d7 c3              ret
+
+=== FORMAT_INNER ===
+0:001> uf 00007ff77ff37d3e
+novovm_node!alloc::fmt::format::format_inner:
+00007ff7`7ff37c10 55              push    rbp
+00007ff7`7ff37c11 4157            push    r15
+00007ff7`7ff37c13 4156            push    r14
+00007ff7`7ff37c15 56              push    rsi
+00007ff7`7ff37c16 57              push    rdi
+00007ff7`7ff37c17 53              push    rbx
+00007ff7`7ff37c18 4883ec58        sub     rsp,58h
+00007ff7`7ff37c1c 488d6c2450      lea     rbp,[rsp+50h]
+00007ff7`7ff37c21 48c74500feffffff mov     qword ptr [rbp],0FFFFFFFFFFFFFFFEh
+00007ff7`7ff37c29 4c89c7          mov     rdi,r8
+00007ff7`7ff37c2c 4889d3          mov     rbx,rdx
+00007ff7`7ff37c2f 4889ce          mov     rsi,rcx
+00007ff7`7ff37c32 40f6c701        test    dil,1
+00007ff7`7ff37c36 0f859b000000    jne     novovm_node!alloc::fmt::format::format_inner+0xc7 (00007ff7`7ff37cd7)
+
+novovm_node!alloc::fmt::format::format_inner+0x2c:
+00007ff7`7ff37c3c 0fb613          movzx   edx,byte ptr [rbx]
+00007ff7`7ff37c3f 84d2            test    dl,dl
+00007ff7`7ff37c41 0f84ca000000    je      novovm_node!alloc::fmt::format::format_inner+0x101 (00007ff7`7ff37d11)
+
+novovm_node!alloc::fmt::format::format_inner+0x37:
+00007ff7`7ff37c47 31c0            xor     eax,eax
+00007ff7`7ff37c49 4889d9          mov     rcx,rbx
+00007ff7`7ff37c4c 4531f6          xor     r14d,r14d
+00007ff7`7ff37c4f eb1f            jmp     novovm_node!alloc::fmt::format::format_inner+0x60 (00007ff7`7ff37c70)
+
+novovm_node!alloc::fmt::format::format_inner+0x50:
+00007ff7`7ff37c60 0fb6d2          movzx   edx,dl
+00007ff7`7ff37c63 4901d6          add     r14,rdx
+00007ff7`7ff37c66 4801d1          add     rcx,rdx
+
+novovm_node!alloc::fmt::format::format_inner+0x59:
+00007ff7`7ff37c69 0fb611          movzx   edx,byte ptr [rcx]
+00007ff7`7ff37c6c 84d2            test    dl,dl
+00007ff7`7ff37c6e 746f            je      novovm_node!alloc::fmt::format::format_inner+0xcf (00007ff7`7ff37cdf)
+
+novovm_node!alloc::fmt::format::format_inner+0x60:
+00007ff7`7ff37c70 48ffc1          inc     rcx
+00007ff7`7ff37c73 84d2            test    dl,dl
+00007ff7`7ff37c75 79e9            jns     novovm_node!alloc::fmt::format::format_inner+0x50 (00007ff7`7ff37c60)
+
+novovm_node!alloc::fmt::format::format_inner+0x67:
+00007ff7`7ff37c77 4189d0          mov     r8d,edx
+00007ff7`7ff37c7a 41f6d8          neg     r8b
+00007ff7`7ff37c7d 710f            jno     novovm_node!alloc::fmt::format::format_inner+0x7e (00007ff7`7ff37c8e)
+
+novovm_node!alloc::fmt::format::format_inner+0x6f:
+00007ff7`7ff37c7f 0fb711          movzx   edx,word ptr [rcx]
+00007ff7`7ff37c82 4901d6          add     r14,rdx
+00007ff7`7ff37c85 4801d1          add     rcx,rdx
+00007ff7`7ff37c88 4883c102        add     rcx,2
+00007ff7`7ff37c8c ebdb            jmp     novovm_node!alloc::fmt::format::format_inner+0x59 (00007ff7`7ff37c69)
+
+novovm_node!alloc::fmt::format::format_inner+0x7e:
+00007ff7`7ff37c8e 4d85f6          test    r14,r14
+00007ff7`7ff37c91 410f94c0        sete    r8b
+00007ff7`7ff37c95 4408c0          or      al,r8b
+00007ff7`7ff37c98 4189d0          mov     r8d,edx
+00007ff7`7ff37c9b 41c0e007        shl     r8b,7
+00007ff7`7ff37c9f 4189d1          mov     r9d,edx
+00007ff7`7ff37ca2 41c0e105        shl     r9b,5
+00007ff7`7ff37ca6 4180e140        and     r9b,40h
+00007ff7`7ff37caa 4508c1          or      r9b,r8b
+00007ff7`7ff37cad 41c0e905        shr     r9b,5
+00007ff7`7ff37cb1 450fb6c1        movzx   r8d,r9b
+00007ff7`7ff37cb5 4189d1          mov     r9d,edx
+00007ff7`7ff37cb8 41d0e9          shr     r9b,1
+00007ff7`7ff37cbb 4180e102        and     r9b,2
+00007ff7`7ff37cbf 450fb6c9        movzx   r9d,r9b
+00007ff7`7ff37cc3 c0ea02          shr     dl,2
+00007ff7`7ff37cc6 80e202          and     dl,2
+00007ff7`7ff37cc9 0fb6d2          movzx   edx,dl
+00007ff7`7ff37ccc 4c01c9          add     rcx,r9
+00007ff7`7ff37ccf 4801d1          add     rcx,rdx
+00007ff7`7ff37cd2 4c01c1          add     rcx,r8
+00007ff7`7ff37cd5 eb92            jmp     novovm_node!alloc::fmt::format::format_inner+0x59 (00007ff7`7ff37c69)
+
+novovm_node!alloc::fmt::format::format_inner+0xc7:
+00007ff7`7ff37cd7 4989fe          mov     r14,rdi
+00007ff7`7ff37cda 49d1ee          shr     r14,1
+00007ff7`7ff37cdd eb0e            jmp     novovm_node!alloc::fmt::format::format_inner+0xdd (00007ff7`7ff37ced)
+
+novovm_node!alloc::fmt::format::format_inner+0xcf:
+00007ff7`7ff37cdf 4983fe10        cmp     r14,10h
+00007ff7`7ff37ce3 0f92c1          setb    cl
+00007ff7`7ff37ce6 84c8            test    al,cl
+00007ff7`7ff37ce8 7478            je      novovm_node!alloc::fmt::format::format_inner+0x152 (00007ff7`7ff37d62)
+
+novovm_node!alloc::fmt::format::format_inner+0xda:
+00007ff7`7ff37cea 4531f6          xor     r14d,r14d
+
+novovm_node!alloc::fmt::format::format_inner+0xdd:
+00007ff7`7ff37ced 4d85f6          test    r14,r14
+00007ff7`7ff37cf0 741f            je      novovm_node!alloc::fmt::format::format_inner+0x101 (00007ff7`7ff37d11)
+
+novovm_node!alloc::fmt::format::format_inner+0xe2:
+00007ff7`7ff37cf2 e8199b33fe      call    novovm_node!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2 (00007ff7`7e271810)
+00007ff7`7ff37cf7 41bf01000000    mov     r15d,1
+00007ff7`7ff37cfd ba01000000      mov     edx,1
+00007ff7`7ff37d02 4c89f1          mov     rcx,r14
+00007ff7`7ff37d05 e8b63639fe      call    novovm_node!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc (00007ff7`7e2cb3c0)
+00007ff7`7ff37d0a 4885c0          test    rax,rax
+00007ff7`7ff37d0d 750a            jne     novovm_node!alloc::fmt::format::format_inner+0x109 (00007ff7`7ff37d19)
+
+novovm_node!alloc::fmt::format::format_inner+0xff:
+00007ff7`7ff37d0f eb59            jmp     novovm_node!alloc::fmt::format::format_inner+0x15a (00007ff7`7ff37d6a)
+
+novovm_node!alloc::fmt::format::format_inner+0x101:
+00007ff7`7ff37d11 b801000000      mov     eax,1
+00007ff7`7ff37d16 4531f6          xor     r14d,r14d
+
+novovm_node!alloc::fmt::format::format_inner+0x109:
+00007ff7`7ff37d19 4c8975e0        mov     qword ptr [rbp-20h],r14
+00007ff7`7ff37d1d 488945e8        mov     qword ptr [rbp-18h],rax
+00007ff7`7ff37d21 48c745f000000000 mov     qword ptr [rbp-10h],0
+00007ff7`7ff37d29 488d15e0689800  lea     rdx,[novovm_node!_xmm+0x52f0 (00007ff7`808be610)]
+00007ff7`7ff37d30 488d4de0        lea     rcx,[rbp-20h]
+00007ff7`7ff37d34 4989d8          mov     r8,rbx
+00007ff7`7ff37d37 4989f9          mov     r9,rdi
+00007ff7`7ff37d3a e8e1530000      call    novovm_node!core::fmt::write (00007ff7`7ff3d120)
+00007ff7`7ff37d3f 84c0            test    al,al
+00007ff7`7ff37d41 7532            jne     novovm_node!alloc::fmt::format::format_inner+0x165 (00007ff7`7ff37d75)
+
+novovm_node!alloc::fmt::format::format_inner+0x133:
+00007ff7`7ff37d43 488b45f0        mov     rax,qword ptr [rbp-10h]
+00007ff7`7ff37d47 48894610        mov     qword ptr [rsi+10h],rax
+00007ff7`7ff37d4b 0f1045e0        movups  xmm0,xmmword ptr [rbp-20h]
+00007ff7`7ff37d4f 0f1106          movups  xmmword ptr [rsi],xmm0
+00007ff7`7ff37d52 4889f0          mov     rax,rsi
+00007ff7`7ff37d55 4883c458        add     rsp,58h
+00007ff7`7ff37d59 5b              pop     rbx
+00007ff7`7ff37d5a 5f              pop     rdi
+00007ff7`7ff37d5b 5e              pop     rsi
+00007ff7`7ff37d5c 415e            pop     r14
+00007ff7`7ff37d5e 415f            pop     r15
+00007ff7`7ff37d60 5d              pop     rbp
+00007ff7`7ff37d61 c3              ret
+
+novovm_node!alloc::fmt::format::format_inner+0x152:
+00007ff7`7ff37d62 4d01f6          add     r14,r14
+00007ff7`7ff37d65 7986            jns     novovm_node!alloc::fmt::format::format_inner+0xdd (00007ff7`7ff37ced)
+
+novovm_node!alloc::fmt::format::format_inner+0x157:
+00007ff7`7ff37d67 4531ff          xor     r15d,r15d
+
+novovm_node!alloc::fmt::format::format_inner+0x15a:
+00007ff7`7ff37d6a 4c89f9          mov     rcx,r15
+00007ff7`7ff37d6d 4c89f2          mov     rdx,r14
+00007ff7`7ff37d70 e8874e5e00      call    novovm_node!alloc::raw_vec::handle_error (00007ff7`8051cbfc)
+
+novovm_node!alloc::fmt::format::format_inner+0x165:
+00007ff7`7ff37d75 488d0564699800  lea     rax,[novovm_node!_xmm+0x53c0 (00007ff7`808be6e0)]
+00007ff7`7ff37d7c 4889442420      mov     qword ptr [rsp+20h],rax
+00007ff7`7ff37d81 488d0db8689800  lea     rcx,[novovm_node!_xmm+0x5320 (00007ff7`808be640)]
+00007ff7`7ff37d88 4c8d0d11689800  lea     r9,[novovm_node!_xmm+0x5280 (00007ff7`808be5a0)]
+00007ff7`7ff37d8f 4c8d45ff        lea     r8,[rbp-1]
+00007ff7`7ff37d93 ba56000000      mov     edx,56h
+00007ff7`7ff37d98 e863525e00      call    novovm_node!core::result::unwrap_failed (00007ff7`8051d000)

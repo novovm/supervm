@@ -1,0 +1,399 @@
+Offline CDB disassembly. Private raw logs remain local. No execution trace implied.
+=== PAD ===
+0:001> uf 00007ff70b892f00
+*** WARNING: Unable to verify checksum for novovm-node.exe
+Flow analysis was incomplete, some code may be missing
+novovm_node+0x1e52f00:
+00007ff7`0b892f00 55              push    rbp
+00007ff7`0b892f01 4157            push    r15
+00007ff7`0b892f03 4156            push    r14
+00007ff7`0b892f05 4155            push    r13
+00007ff7`0b892f07 4154            push    r12
+00007ff7`0b892f09 56              push    rsi
+00007ff7`0b892f0a 57              push    rdi
+00007ff7`0b892f0b 53              push    rbx
+00007ff7`0b892f0c 4883ec58        sub     rsp,58h
+00007ff7`0b892f10 488d6c2450      lea     rbp,[rsp+50h]
+00007ff7`0b892f15 4d89cc          mov     r12,r9
+00007ff7`0b892f18 4d89c7          mov     r15,r8
+00007ff7`0b892f1b 4989ce          mov     r14,rcx
+00007ff7`0b892f1e 488b7578        mov     rsi,qword ptr [rbp+78h]
+00007ff7`0b892f22 84d2            test    dl,dl
+00007ff7`0b892f24 7458            je      novovm_node+0x1e52f7e (00007ff7`0b892f7e)
+
+novovm_node+0x1e52f26:
+00007ff7`0b892f26 418b7e10        mov     edi,dword ptr [r14+10h]
+00007ff7`0b892f2a 89fb            mov     ebx,edi
+00007ff7`0b892f2c 81e300002000    and     ebx,200000h
+00007ff7`0b892f32 b800001100      mov     eax,110000h
+00007ff7`0b892f37 b92b000000      mov     ecx,2Bh
+00007ff7`0b892f3c 0f44c8          cmove   ecx,eax
+00007ff7`0b892f3f 894d04          mov     dword ptr [rbp+4],ecx
+00007ff7`0b892f42 c1eb15          shr     ebx,15h
+00007ff7`0b892f45 4801f3          add     rbx,rsi
+00007ff7`0b892f48 488b4570        mov     rax,qword ptr [rbp+70h]
+00007ff7`0b892f4c 488945f0        mov     qword ptr [rbp-10h],rax
+00007ff7`0b892f50 f7c700008000    test    edi,800000h
+00007ff7`0b892f56 7445            je      novovm_node+0x1e52f9d (00007ff7`0b892f9d)
+
+novovm_node+0x1e52f58:
+00007ff7`0b892f58 4983fc20        cmp     r12,20h
+00007ff7`0b892f5c 0f8396000000    jae     novovm_node+0x1e52ff8 (00007ff7`0b892ff8)
+
+novovm_node+0x1e52f62:
+00007ff7`0b892f62 4d85e4          test    r12,r12
+00007ff7`0b892f65 0f849d000000    je      novovm_node+0x1e53008 (00007ff7`0b893008)
+
+novovm_node+0x1e52f6b:
+00007ff7`0b892f6b 4983fc04        cmp     r12,4
+00007ff7`0b892f6f 0f839a000000    jae     novovm_node+0x1e5300f (00007ff7`0b89300f)
+
+novovm_node+0x1e52f75:
+00007ff7`0b892f75 31c9            xor     ecx,ecx
+00007ff7`0b892f77 31c0            xor     eax,eax
+00007ff7`0b892f79 e9cf020000      jmp     novovm_node+0x1e5324d (00007ff7`0b89324d)
+
+novovm_node+0x1e52f7e:
+00007ff7`0b892f7e 488d5e01        lea     rbx,[rsi+1]
+00007ff7`0b892f82 418b7e10        mov     edi,dword ptr [r14+10h]
+00007ff7`0b892f86 c745042d000000  mov     dword ptr [rbp+4],2Dh
+00007ff7`0b892f8d 488b4570        mov     rax,qword ptr [rbp+70h]
+00007ff7`0b892f91 488945f0        mov     qword ptr [rbp-10h],rax
+00007ff7`0b892f95 f7c700008000    test    edi,800000h
+00007ff7`0b892f9b 75bb            jne     novovm_node+0x1e52f58 (00007ff7`0b892f58)
+
+novovm_node+0x1e52f9d:
+00007ff7`0b892f9d 4531ff          xor     r15d,r15d
+00007ff7`0b892fa0 450fb76e14      movzx   r13d,word ptr [r14+14h]
+00007ff7`0b892fa5 4c39eb          cmp     rbx,r13
+00007ff7`0b892fa8 0f82c5020000    jb      novovm_node+0x1e53273 (00007ff7`0b893273)
+
+novovm_node+0x1e52fae:
+00007ff7`0b892fae 498b3e          mov     rdi,qword ptr [r14]
+00007ff7`0b892fb1 498b5e08        mov     rbx,qword ptr [r14+8]
+00007ff7`0b892fb5 4c89642420      mov     qword ptr [rsp+20h],r12
+00007ff7`0b892fba 4889f9          mov     rcx,rdi
+00007ff7`0b892fbd 4889da          mov     rdx,rbx
+00007ff7`0b892fc0 448b4504        mov     r8d,dword ptr [rbp+4]
+00007ff7`0b892fc4 4d89f9          mov     r9,r15
+00007ff7`0b892fc7 e8d4feffff      call    novovm_node+0x1e52ea0 (00007ff7`0b892ea0)
+00007ff7`0b892fcc 41b701          mov     r15b,1
+00007ff7`0b892fcf 84c0            test    al,al
+00007ff7`0b892fd1 0f850f040000    jne     novovm_node+0x1e533e6 (00007ff7`0b8933e6)
+
+novovm_node+0x1e52fd7:
+00007ff7`0b892fd7 488b4318        mov     rax,qword ptr [rbx+18h]
+00007ff7`0b892fdb 4889f9          mov     rcx,rdi
+00007ff7`0b892fde 488b55f0        mov     rdx,qword ptr [rbp-10h]
+00007ff7`0b892fe2 4989f0          mov     r8,rsi
+00007ff7`0b892fe5 4883c458        add     rsp,58h
+00007ff7`0b892fe9 5b              pop     rbx
+00007ff7`0b892fea 5f              pop     rdi
+00007ff7`0b892feb 5e              pop     rsi
+00007ff7`0b892fec 415c            pop     r12
+00007ff7`0b892fee 415d            pop     r13
+00007ff7`0b892ff0 415e            pop     r14
+00007ff7`0b892ff2 415f            pop     r15
+00007ff7`0b892ff4 5d              pop     rbp
+00007ff7`0b892ff5 48ffe0          jmp     rax
+
+novovm_node+0x1e52ff8:
+00007ff7`0b892ff8 4c89f9          mov     rcx,r15
+00007ff7`0b892ffb 4c89e2          mov     rdx,r12
+00007ff7`0b892ffe e80d800000      call    novovm_node+0x1e5b010 (00007ff7`0b89b010)
+00007ff7`0b893003 e95a020000      jmp     novovm_node+0x1e53262 (00007ff7`0b893262)
+
+novovm_node+0x1e53008:
+00007ff7`0b893008 31c0            xor     eax,eax
+00007ff7`0b89300a e953020000      jmp     novovm_node+0x1e53262 (00007ff7`0b893262)
+
+novovm_node+0x1e5300f:
+00007ff7`0b89300f 4489e1          mov     ecx,r12d
+00007ff7`0b893012 83e11c          and     ecx,1Ch
+00007ff7`0b893015 410fb707        movzx   eax,word ptr [r15]
+00007ff7`0b893019 660f6ec0        movd    xmm0,eax
+00007ff7`0b89301d 410fb74702      movzx   eax,word ptr [r15+2]
+00007ff7`0b893022 660f6ec8        movd    xmm1,eax
+00007ff7`0b893026 660f6f15620a9800 movdqa  xmm2,xmmword ptr [novovm_node!<nearest-export-label-removed> (00007ff7`0c213a90)]
+00007ff7`0b89302e 660f64c2        pcmpgtb xmm0,xmm2
+00007ff7`0b893032 660f60c0        punpcklbw xmm0,xmm0
+00007ff7`0b893036 f20f70c0d4      pshuflw xmm0,xmm0,0D4h
+00007ff7`0b89303b 660f70c0d4      pshufd  xmm0,xmm0,0D4h
+00007ff7`0b893040 660f6f1d08726f00 movdqa  xmm3,xmmword ptr [novovm_node!<nearest-export-label-removed> (00007ff7`0bf8a250)]
+00007ff7`0b893048 660fdbc3        pand    xmm0,xmm3
+00007ff7`0b89304c 660f64ca        pcmpgtb xmm1,xmm2
+00007ff7`0b893050 660f60c9        punpcklbw xmm1,xmm1
+00007ff7`0b893054 f20f70c9d4      pshuflw xmm1,xmm1,0D4h
+00007ff7`0b893059 660f70c9d4      pshufd  xmm1,xmm1,0D4h
+00007ff7`0b89305e 660fdbcb        pand    xmm1,xmm3
+00007ff7`0b893062 4883f904        cmp     rcx,4
+00007ff7`0b893066 0f84cd010000    je      novovm_node+0x1e53239 (00007ff7`0b893239)
+
+novovm_node+0x1e5306c:
+00007ff7`0b89306c 410fb74704      movzx   eax,word ptr [r15+4]
+00007ff7`0b893071 660f6ee0        movd    xmm4,eax
+00007ff7`0b893075 410fb74706      movzx   eax,word ptr [r15+6]
+00007ff7`0b89307a 660f6ee8        movd    xmm5,eax
+00007ff7`0b89307e 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`0b893082 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`0b893086 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`0b89308b 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`0b893090 660fdbe3        pand    xmm4,xmm3
+00007ff7`0b893094 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`0b893098 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`0b89309c f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`0b8930a1 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`0b8930a6 660fdbeb        pand    xmm5,xmm3
+00007ff7`0b8930aa 660fd4c4        paddq   xmm0,xmm4
+00007ff7`0b8930ae 660fd4cd        paddq   xmm1,xmm5
+00007ff7`0b8930b2 83f908          cmp     ecx,8
+00007ff7`0b8930b5 0f847e010000    je      novovm_node+0x1e53239 (00007ff7`0b893239)
+
+novovm_node+0x1e530bb:
+00007ff7`0b8930bb 410fb74708      movzx   eax,word ptr [r15+8]
+00007ff7`0b8930c0 660f6ee0        movd    xmm4,eax
+00007ff7`0b8930c4 410fb7470a      movzx   eax,word ptr [r15+0Ah]
+00007ff7`0b8930c9 660f6ee8        movd    xmm5,eax
+00007ff7`0b8930cd 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`0b8930d1 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`0b8930d5 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`0b8930da 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`0b8930df 660fdbe3        pand    xmm4,xmm3
+00007ff7`0b8930e3 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`0b8930e7 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`0b8930eb f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`0b8930f0 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`0b8930f5 660fdbeb        pand    xmm5,xmm3
+00007ff7`0b8930f9 660fd4c4        paddq   xmm0,xmm4
+00007ff7`0b8930fd 660fd4cd        paddq   xmm1,xmm5
+00007ff7`0b893101 83f90c          cmp     ecx,0Ch
+00007ff7`0b893104 0f842f010000    je      novovm_node+0x1e53239 (00007ff7`0b893239)
+
+novovm_node+0x1e5310a:
+00007ff7`0b89310a 410fb7470c      movzx   eax,word ptr [r15+0Ch]
+00007ff7`0b89310f 660f6ee0        movd    xmm4,eax
+00007ff7`0b893113 410fb7470e      movzx   eax,word ptr [r15+0Eh]
+00007ff7`0b893118 660f6ee8        movd    xmm5,eax
+00007ff7`0b89311c 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`0b893120 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`0b893124 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`0b893129 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`0b89312e 660fdbe3        pand    xmm4,xmm3
+00007ff7`0b893132 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`0b893136 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`0b89313a f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`0b89313f 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`0b893144 660fdbeb        pand    xmm5,xmm3
+00007ff7`0b893148 660fd4c4        paddq   xmm0,xmm4
+00007ff7`0b89314c 660fd4cd        paddq   xmm1,xmm5
+00007ff7`0b893150 83f910          cmp     ecx,10h
+00007ff7`0b893153 0f84e0000000    je      novovm_node+0x1e53239 (00007ff7`0b893239)
+
+novovm_node+0x1e53159:
+00007ff7`0b893159 410fb74710      movzx   eax,word ptr [r15+10h]
+00007ff7`0b89315e 660f6ee0        movd    xmm4,eax
+00007ff7`0b893162 410fb74712      movzx   eax,word ptr [r15+12h]
+00007ff7`0b893167 660f6ee8        movd    xmm5,eax
+00007ff7`0b89316b 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`0b89316f 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`0b893173 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`0b893178 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`0b89317d 660fdbe3        pand    xmm4,xmm3
+00007ff7`0b893181 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`0b893185 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`0b893189 f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`0b89318e 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`0b893193 660fdbeb        pand    xmm5,xmm3
+00007ff7`0b893197 660fd4c4        paddq   xmm0,xmm4
+00007ff7`0b89319b 660fd4cd        paddq   xmm1,xmm5
+00007ff7`0b89319f 83f914          cmp     ecx,14h
+00007ff7`0b8931a2 0f8491000000    je      novovm_node+0x1e53239 (00007ff7`0b893239)
+
+novovm_node+0x1e531a8:
+00007ff7`0b8931a8 410fb74714      movzx   eax,word ptr [r15+14h]
+00007ff7`0b8931ad 660f6ee0        movd    xmm4,eax
+00007ff7`0b8931b1 410fb74716      movzx   eax,word ptr [r15+16h]
+00007ff7`0b8931b6 660f6ee8        movd    xmm5,eax
+00007ff7`0b8931ba 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`0b8931be 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`0b8931c2 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`0b8931c7 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`0b8931cc 660fdbe3        pand    xmm4,xmm3
+00007ff7`0b8931d0 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`0b8931d4 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`0b8931d8 f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`0b8931dd 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`0b8931e2 660fdbeb        pand    xmm5,xmm3
+00007ff7`0b8931e6 660fd4c4        paddq   xmm0,xmm4
+00007ff7`0b8931ea 660fd4cd        paddq   xmm1,xmm5
+00007ff7`0b8931ee 83f918          cmp     ecx,18h
+00007ff7`0b8931f1 7446            je      novovm_node+0x1e53239 (00007ff7`0b893239)
+
+novovm_node+0x1e531f3:
+00007ff7`0b8931f3 410fb74718      movzx   eax,word ptr [r15+18h]
+00007ff7`0b8931f8 660f6ee0        movd    xmm4,eax
+00007ff7`0b8931fc 410fb7471a      movzx   eax,word ptr [r15+1Ah]
+00007ff7`0b893201 660f6ee8        movd    xmm5,eax
+00007ff7`0b893205 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`0b893209 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`0b89320d f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`0b893212 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`0b893217 660fdbe3        pand    xmm4,xmm3
+00007ff7`0b89321b 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`0b89321f 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`0b893223 f20f70d5d4      pshuflw xmm2,xmm5,0D4h
+00007ff7`0b893228 660f70d2d4      pshufd  xmm2,xmm2,0D4h
+00007ff7`0b89322d 660fdbd3        pand    xmm2,xmm3
+00007ff7`0b893231 660fd4c4        paddq   xmm0,xmm4
+00007ff7`0b893235 660fd4ca        paddq   xmm1,xmm2
+
+novovm_node+0x1e53239:
+00007ff7`0b893239 660fd4c1        paddq   xmm0,xmm1
+00007ff7`0b89323d 660f70c8ee      pshufd  xmm1,xmm0,0EEh
+00007ff7`0b893242 660fd4c8        paddq   xmm1,xmm0
+00007ff7`0b893246 66480f7ec8      movq    rax,xmm1
+00007ff7`0b89324b eb10            jmp     novovm_node+0x1e5325d (00007ff7`0b89325d)
+
+novovm_node+0x1e5324d:
+00007ff7`0b89324d 31d2            xor     edx,edx
+00007ff7`0b89324f 41803c0fc0      cmp     byte ptr [r15+rcx],0C0h
+00007ff7`0b893254 0f9dc2          setge   dl
+00007ff7`0b893257 4801d0          add     rax,rdx
+00007ff7`0b89325a 48ffc1          inc     rcx
+
+novovm_node+0x1e5325d:
+00007ff7`0b89325d 4939cc          cmp     r12,rcx
+00007ff7`0b893260 75eb            jne     novovm_node+0x1e5324d (00007ff7`0b89324d)
+
+novovm_node+0x1e53262:
+00007ff7`0b893262 4801c3          add     rbx,rax
+00007ff7`0b893265 450fb76e14      movzx   r13d,word ptr [r14+14h]
+00007ff7`0b89326a 4c39eb          cmp     rbx,r13
+00007ff7`0b89326d 0f833bfdffff    jae     novovm_node+0x1e52fae (00007ff7`0b892fae)
+
+novovm_node+0x1e53273:
+00007ff7`0b893273 f7c700000001    test    edi,1000000h
+00007ff7`0b893279 488975e8        mov     qword ptr [rbp-18h],rsi
+00007ff7`0b89327d 752b            jne     novovm_node+0x1e532aa (00007ff7`0b8932aa)
+
+novovm_node+0x1e5327f:
+00007ff7`0b89327f 4489ea          mov     edx,r13d
+00007ff7`0b893282 29da            sub     edx,ebx
+00007ff7`0b893284 89f8            mov     eax,edi
+00007ff7`0b893286 c1e81d          shr     eax,1Dh
+00007ff7`0b893289 83e003          and     eax,3
+00007ff7`0b89328c 488d0df5999800  lea     rcx,[novovm_node!<nearest-export-label-removed> (00007ff7`0c21cc88)]
+00007ff7`0b893293 48630481        movsxd  rax,dword ptr [rcx+rax*4]
+00007ff7`0b893297 4801c8          add     rax,rcx
+00007ff7`0b89329a 48895dd8        mov     qword ptr [rbp-28h],rbx
+00007ff7`0b89329e 8955f8          mov     dword ptr [rbp-8],edx
+00007ff7`0b8932a1 ffe0            jmp     rax
+
+novovm_node+0x1e532aa:
+00007ff7`0b8932aa 4889de          mov     rsi,rbx
+00007ff7`0b8932ad 498b4610        mov     rax,qword ptr [r14+10h]
+00007ff7`0b8932b1 488945f8        mov     qword ptr [rbp-8],rax
+00007ff7`0b8932b5 250000e09f      and     eax,9FE00000h
+00007ff7`0b8932ba 0d30000020      or      eax,20000030h
+00007ff7`0b8932bf 41894610        mov     dword ptr [r14+10h],eax
+00007ff7`0b8932c3 498b1e          mov     rbx,qword ptr [r14]
+00007ff7`0b8932c6 498b7e08        mov     rdi,qword ptr [r14+8]
+00007ff7`0b8932ca 4c89642420      mov     qword ptr [rsp+20h],r12
+00007ff7`0b8932cf 4889d9          mov     rcx,rbx
+00007ff7`0b8932d2 4889fa          mov     rdx,rdi
+00007ff7`0b8932d5 448b4504        mov     r8d,dword ptr [rbp+4]
+00007ff7`0b8932d9 4d89f9          mov     r9,r15
+00007ff7`0b8932dc e8bffbffff      call    novovm_node+0x1e52ea0 (00007ff7`0b892ea0)
+00007ff7`0b8932e1 41b701          mov     r15b,1
+00007ff7`0b8932e4 84c0            test    al,al
+00007ff7`0b8932e6 0f85fa000000    jne     novovm_node+0x1e533e6 (00007ff7`0b8933e6)
+
+novovm_node+0x1e532ec:
+00007ff7`0b8932ec 4129f5          sub     r13d,esi
+00007ff7`0b8932ef 41ffc5          inc     r13d
+00007ff7`0b8932f2 488b75e8        mov     rsi,qword ptr [rbp-18h]
+00007ff7`0b8932f6 662e0f1f840000000000 nop word ptr cs:[rax+rax]
+
+novovm_node+0x1e53300:
+00007ff7`0b893300 6641ffcd        dec     r13w
+00007ff7`0b893304 7414            je      novovm_node+0x1e5331a (00007ff7`0b89331a)
+
+novovm_node+0x1e53306:
+00007ff7`0b893306 4889d9          mov     rcx,rbx
+00007ff7`0b893309 ba30000000      mov     edx,30h
+00007ff7`0b89330e ff5720          call    qword ptr [rdi+20h]
+00007ff7`0b893311 84c0            test    al,al
+00007ff7`0b893313 74eb            je      novovm_node+0x1e53300 (00007ff7`0b893300)
+
+novovm_node+0x1e53315:
+00007ff7`0b893315 e9cc000000      jmp     novovm_node+0x1e533e6 (00007ff7`0b8933e6)
+
+novovm_node+0x1e5331a:
+00007ff7`0b89331a 4889d9          mov     rcx,rbx
+00007ff7`0b89331d 488b55f0        mov     rdx,qword ptr [rbp-10h]
+00007ff7`0b893321 4989f0          mov     r8,rsi
+00007ff7`0b893324 ff5718          call    qword ptr [rdi+18h]
+00007ff7`0b893327 84c0            test    al,al
+00007ff7`0b893329 0f85b7000000    jne     novovm_node+0x1e533e6 (00007ff7`0b8933e6)
+
+novovm_node+0x1e5332f:
+00007ff7`0b89332f 488b45f8        mov     rax,qword ptr [rbp-8]
+00007ff7`0b893333 49894610        mov     qword ptr [r14+10h],rax
+00007ff7`0b893337 4531ff          xor     r15d,r15d
+00007ff7`0b89333a e9a7000000      jmp     novovm_node+0x1e533e6 (00007ff7`0b8933e6)
+
+novovm_node+0x1e533e6:
+00007ff7`0b8933e6 4489f8          mov     eax,r15d
+00007ff7`0b8933e9 4883c458        add     rsp,58h
+00007ff7`0b8933ed 5b              pop     rbx
+00007ff7`0b8933ee 5f              pop     rdi
+00007ff7`0b8933ef 5e              pop     rsi
+00007ff7`0b8933f0 415c            pop     r12
+00007ff7`0b8933f2 415d            pop     r13
+00007ff7`0b8933f4 415e            pop     r14
+00007ff7`0b8933f6 415f            pop     r15
+00007ff7`0b8933f8 5d              pop     rbp
+00007ff7`0b8933f9 c3              ret
+
+=== THUNK ===
+0:001> u 00007ff70bdee7c7 L4
+novovm_node!<nearest-export-label-removed>:
+00007ff7`0bdee7c7 ff25cb5b0b00    jmp     qword ptr [novovm_node!<nearest-export-label-removed> (00007ff7`0bea4398)]
+00007ff7`0bdee7cd ff25bd5b0b00    jmp     qword ptr [novovm_node!<nearest-export-label-removed> (00007ff7`0bea4390)]
+00007ff7`0bdee7d3 ff25a75b0b00    jmp     qword ptr [novovm_node!<nearest-export-label-removed> (00007ff7`0bea4380)]
+00007ff7`0bdee7d9 ff25915b0b00    jmp     qword ptr [novovm_node!<nearest-export-label-removed> (00007ff7`0bea4370)]
+
+=== MEMCPY_ENTRY ===
+0:001> u 00007ffcb1d41200 00007ffcb1d41270
+VCRUNTIME140!memcpy_avx_ermsb_Intel:
+00007ffc`b1d41200 488bc1          mov     rax,rcx
+00007ffc`b1d41203 4c8d15f6edfeff  lea     r10,[VCRUNTIME140!__ImageBase (00007ffc`b1d30000)]
+00007ffc`b1d4120a 4983f80f        cmp     r8,0Fh
+00007ffc`b1d4120e 0f870c010000    ja      VCRUNTIME140!memcpy_avx_ermsb_Intel+0x120 (00007ffc`b1d41320)
+00007ffc`b1d41214 666666660f1f840000000000 nop word ptr [rax+rax]
+00007ffc`b1d41220 478b8c8270b10100 mov     r9d,dword ptr [r10+r8*4+1B170h]
+00007ffc`b1d41228 4d03ca          add     r9,r10
+00007ffc`b1d4122b 41ffe1          jmp     r9
+00007ffc`b1d4122e c3              ret
+00007ffc`b1d4122f 90              nop
+00007ffc`b1d41230 4c8b02          mov     r8,qword ptr [rdx]
+00007ffc`b1d41233 8b4a08          mov     ecx,dword ptr [rdx+8]
+00007ffc`b1d41236 440fb74a0c      movzx   r9d,word ptr [rdx+0Ch]
+00007ffc`b1d4123b 440fb6520e      movzx   r10d,byte ptr [rdx+0Eh]
+00007ffc`b1d41240 4c8900          mov     qword ptr [rax],r8
+00007ffc`b1d41243 894808          mov     dword ptr [rax+8],ecx
+00007ffc`b1d41246 664489480c      mov     word ptr [rax+0Ch],r9w
+00007ffc`b1d4124b 4488500e        mov     byte ptr [rax+0Eh],r10b
+00007ffc`b1d4124f c3              ret
+00007ffc`b1d41250 4c8b02          mov     r8,qword ptr [rdx]
+00007ffc`b1d41253 0fb74a08        movzx   ecx,word ptr [rdx+8]
+00007ffc`b1d41257 440fb64a0a      movzx   r9d,byte ptr [rdx+0Ah]
+00007ffc`b1d4125c 4c8900          mov     qword ptr [rax],r8
+00007ffc`b1d4125f 66894808        mov     word ptr [rax+8],cx
+00007ffc`b1d41263 4488480a        mov     byte ptr [rax+0Ah],r9b
+00007ffc`b1d41267 c3              ret
+00007ffc`b1d41268 0fb70a          movzx   ecx,word ptr [rdx]
+00007ffc`b1d4126b 668908          mov     word ptr [rax],cx
+00007ffc`b1d4126e c3              ret
+00007ffc`b1d4126f 90              nop
+00007ffc`b1d41270 8b0a            mov     ecx,dword ptr [rdx]

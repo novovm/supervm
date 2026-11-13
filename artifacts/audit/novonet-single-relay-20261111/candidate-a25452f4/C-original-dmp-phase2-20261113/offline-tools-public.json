@@ -1,0 +1,27 @@
+{
+  "node_started": false,
+  "production_changed": false,
+  "ttd_used": false,
+  "database_accessed": false,
+  "offline_tool_results": {
+    "31296-frame-exit.json": {
+      "exit_code": 0
+    },
+    "3228-owner-exit.json": {
+      "exit_code": 0
+    },
+    "37796-pad-exit.json": {
+      "exit_code": 0
+    },
+    "37796-params-exit.json": {
+      "exit_code": 0,
+      "elapsed_seconds": 4.576
+    },
+    "31296-unwind-exit.json": {
+      "exit_code": 0
+    }
+  },
+  "command_failures_preserved": [
+    "Initial !fnent command unavailable; session exit 0 was not command success. Correct .fnent executed offline in a separate recorded session."
+  ]
+}

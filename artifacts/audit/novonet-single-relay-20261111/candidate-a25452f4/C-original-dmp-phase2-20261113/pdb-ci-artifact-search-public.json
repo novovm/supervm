@@ -1,0 +1,32 @@
+{
+  "run_id": 43155828234,
+  "http_status": 200,
+  "total_count": 4,
+  "artifacts": [
+    {
+      "id": 13920028853,
+      "name": "supervm-native-pipeline-dual-node-gate",
+      "size_in_bytes": 51537,
+      "expired": false
+    },
+    {
+      "id": 13919903984,
+      "name": "supervm-mainline-status",
+      "size_in_bytes": 1864,
+      "expired": false
+    },
+    {
+      "id": 13916834990,
+      "name": "fresh-ingress-related-evidence",
+      "size_in_bytes": 100874,
+      "expired": false
+    },
+    {
+      "id": 13916014347,
+      "name": "native-process-recovery",
+      "size_in_bytes": 350598,
+      "expired": false
+    }
+  ],
+  "scope": "Artifact metadata only. No artifact download or CI execution. No PDB-labelled artifact in returned list; contents not asserted."
+}

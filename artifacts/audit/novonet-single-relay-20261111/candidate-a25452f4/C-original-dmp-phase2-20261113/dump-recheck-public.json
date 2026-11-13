@@ -1,0 +1,17 @@
+[
+  {
+    "name": "novovm-node.exe.31296.dmp",
+    "bytes": 6208032,
+    "sha256": "c5d2e37a640a654a0b501dc49229fdb01c05a77e4ec399f5dec7e218ee496495"
+  },
+  {
+    "name": "novovm-node.exe.3228.dmp",
+    "bytes": 6159844,
+    "sha256": "95dbb8a63e8d6281c07a9019a28d4baadbf0ae61ff40117cac1da2fe31264ee0"
+  },
+  {
+    "name": "novovm-node.exe.37796.dmp",
+    "bytes": 6203358,
+    "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0"
+  }
+]

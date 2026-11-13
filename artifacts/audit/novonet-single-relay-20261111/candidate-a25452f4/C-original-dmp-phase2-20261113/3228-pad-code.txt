@@ -1,0 +1,373 @@
+Offline CDB disassembly. Private raw logs remain local. No execution trace implied.
+=== PAD_INTEGRAL ===
+0:001> uf 00007ff77ff3dca0
+*** WARNING: Unable to verify checksum for novovm-node.exe
+Flow analysis was incomplete, some code may be missing
+novovm_node!core::fmt::Formatter::pad_integral:
+00007ff7`7ff3dca0 55              push    rbp
+00007ff7`7ff3dca1 4157            push    r15
+00007ff7`7ff3dca3 4156            push    r14
+00007ff7`7ff3dca5 4155            push    r13
+00007ff7`7ff3dca7 4154            push    r12
+00007ff7`7ff3dca9 56              push    rsi
+00007ff7`7ff3dcaa 57              push    rdi
+00007ff7`7ff3dcab 53              push    rbx
+00007ff7`7ff3dcac 4883ec58        sub     rsp,58h
+00007ff7`7ff3dcb0 488d6c2450      lea     rbp,[rsp+50h]
+00007ff7`7ff3dcb5 4d89cc          mov     r12,r9
+00007ff7`7ff3dcb8 4d89c7          mov     r15,r8
+00007ff7`7ff3dcbb 4989ce          mov     r14,rcx
+00007ff7`7ff3dcbe 488b7578        mov     rsi,qword ptr [rbp+78h]
+00007ff7`7ff3dcc2 84d2            test    dl,dl
+00007ff7`7ff3dcc4 7458            je      novovm_node!core::fmt::Formatter::pad_integral+0x7e (00007ff7`7ff3dd1e)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x26:
+00007ff7`7ff3dcc6 418b7e10        mov     edi,dword ptr [r14+10h]
+00007ff7`7ff3dcca 89fb            mov     ebx,edi
+00007ff7`7ff3dccc 81e300002000    and     ebx,200000h
+00007ff7`7ff3dcd2 b800001100      mov     eax,110000h
+00007ff7`7ff3dcd7 b92b000000      mov     ecx,2Bh
+00007ff7`7ff3dcdc 0f44c8          cmove   ecx,eax
+00007ff7`7ff3dcdf 894d04          mov     dword ptr [rbp+4],ecx
+00007ff7`7ff3dce2 c1eb15          shr     ebx,15h
+00007ff7`7ff3dce5 4801f3          add     rbx,rsi
+00007ff7`7ff3dce8 488b4570        mov     rax,qword ptr [rbp+70h]
+00007ff7`7ff3dcec 488945f0        mov     qword ptr [rbp-10h],rax
+00007ff7`7ff3dcf0 f7c700008000    test    edi,800000h
+00007ff7`7ff3dcf6 7445            je      novovm_node!core::fmt::Formatter::pad_integral+0x9d (00007ff7`7ff3dd3d)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x58:
+00007ff7`7ff3dcf8 4983fc20        cmp     r12,20h
+00007ff7`7ff3dcfc 0f8396000000    jae     novovm_node!core::fmt::Formatter::pad_integral+0xf8 (00007ff7`7ff3dd98)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x62:
+00007ff7`7ff3dd02 4d85e4          test    r12,r12
+00007ff7`7ff3dd05 0f849d000000    je      novovm_node!core::fmt::Formatter::pad_integral+0x108 (00007ff7`7ff3dda8)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x6b:
+00007ff7`7ff3dd0b 4983fc04        cmp     r12,4
+00007ff7`7ff3dd0f 0f839a000000    jae     novovm_node!core::fmt::Formatter::pad_integral+0x10f (00007ff7`7ff3ddaf)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x75:
+00007ff7`7ff3dd15 31c9            xor     ecx,ecx
+00007ff7`7ff3dd17 31c0            xor     eax,eax
+00007ff7`7ff3dd19 e9cf020000      jmp     novovm_node!core::fmt::Formatter::pad_integral+0x34d (00007ff7`7ff3dfed)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x7e:
+00007ff7`7ff3dd1e 488d5e01        lea     rbx,[rsi+1]
+00007ff7`7ff3dd22 418b7e10        mov     edi,dword ptr [r14+10h]
+00007ff7`7ff3dd26 c745042d000000  mov     dword ptr [rbp+4],2Dh
+00007ff7`7ff3dd2d 488b4570        mov     rax,qword ptr [rbp+70h]
+00007ff7`7ff3dd31 488945f0        mov     qword ptr [rbp-10h],rax
+00007ff7`7ff3dd35 f7c700008000    test    edi,800000h
+00007ff7`7ff3dd3b 75bb            jne     novovm_node!core::fmt::Formatter::pad_integral+0x58 (00007ff7`7ff3dcf8)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x9d:
+00007ff7`7ff3dd3d 4531ff          xor     r15d,r15d
+00007ff7`7ff3dd40 450fb76e14      movzx   r13d,word ptr [r14+14h]
+00007ff7`7ff3dd45 4c39eb          cmp     rbx,r13
+00007ff7`7ff3dd48 0f82c5020000    jb      novovm_node!core::fmt::Formatter::pad_integral+0x373 (00007ff7`7ff3e013)
+
+novovm_node!core::fmt::Formatter::pad_integral+0xae:
+00007ff7`7ff3dd4e 498b3e          mov     rdi,qword ptr [r14]
+00007ff7`7ff3dd51 498b5e08        mov     rbx,qword ptr [r14+8]
+00007ff7`7ff3dd55 4c89642420      mov     qword ptr [rsp+20h],r12
+00007ff7`7ff3dd5a 4889f9          mov     rcx,rdi
+00007ff7`7ff3dd5d 4889da          mov     rdx,rbx
+00007ff7`7ff3dd60 448b4504        mov     r8d,dword ptr [rbp+4]
+00007ff7`7ff3dd64 4d89f9          mov     r9,r15
+00007ff7`7ff3dd67 e8d4feffff      call    novovm_node!core::fmt::impl$12::pad_integral::write_prefix (00007ff7`7ff3dc40)
+00007ff7`7ff3dd6c 41b701          mov     r15b,1
+00007ff7`7ff3dd6f 84c0            test    al,al
+00007ff7`7ff3dd71 0f850f040000    jne     novovm_node!core::fmt::Formatter::pad_integral+0x4e6 (00007ff7`7ff3e186)
+
+novovm_node!core::fmt::Formatter::pad_integral+0xd7:
+00007ff7`7ff3dd77 488b4318        mov     rax,qword ptr [rbx+18h]
+00007ff7`7ff3dd7b 4889f9          mov     rcx,rdi
+00007ff7`7ff3dd7e 488b55f0        mov     rdx,qword ptr [rbp-10h]
+00007ff7`7ff3dd82 4989f0          mov     r8,rsi
+00007ff7`7ff3dd85 4883c458        add     rsp,58h
+00007ff7`7ff3dd89 5b              pop     rbx
+00007ff7`7ff3dd8a 5f              pop     rdi
+00007ff7`7ff3dd8b 5e              pop     rsi
+00007ff7`7ff3dd8c 415c            pop     r12
+00007ff7`7ff3dd8e 415d            pop     r13
+00007ff7`7ff3dd90 415e            pop     r14
+00007ff7`7ff3dd92 415f            pop     r15
+00007ff7`7ff3dd94 5d              pop     rbp
+00007ff7`7ff3dd95 48ffe0          jmp     rax
+
+novovm_node!core::fmt::Formatter::pad_integral+0xf8:
+00007ff7`7ff3dd98 4c89f9          mov     rcx,r15
+00007ff7`7ff3dd9b 4c89e2          mov     rdx,r12
+00007ff7`7ff3dd9e e80d800000      call    novovm_node!core::str::count::do_count_chars (00007ff7`7ff45db0)
+00007ff7`7ff3dda3 e95a020000      jmp     novovm_node!core::fmt::Formatter::pad_integral+0x362 (00007ff7`7ff3e002)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x108:
+00007ff7`7ff3dda8 31c0            xor     eax,eax
+00007ff7`7ff3ddaa e953020000      jmp     novovm_node!core::fmt::Formatter::pad_integral+0x362 (00007ff7`7ff3e002)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x10f:
+00007ff7`7ff3ddaf 4489e1          mov     ecx,r12d
+00007ff7`7ff3ddb2 83e11c          and     ecx,1Ch
+00007ff7`7ff3ddb5 410fb707        movzx   eax,word ptr [r15]
+00007ff7`7ff3ddb9 660f6ec0        movd    xmm0,eax
+00007ff7`7ff3ddbd 410fb74702      movzx   eax,word ptr [r15+2]
+00007ff7`7ff3ddc2 660f6ec8        movd    xmm1,eax
+00007ff7`7ff3ddc6 660f6f15c20c9800 movdqa  xmm2,xmmword ptr [novovm_node!_xmm (00007ff7`808bea90)]
+00007ff7`7ff3ddce 660f64c2        pcmpgtb xmm0,xmm2
+00007ff7`7ff3ddd2 660f60c0        punpcklbw xmm0,xmm0
+00007ff7`7ff3ddd6 f20f70c0d4      pshuflw xmm0,xmm0,0D4h
+00007ff7`7ff3dddb 660f70c0d4      pshufd  xmm0,xmm0,0D4h
+00007ff7`7ff3dde0 660f6f1df8686f00 movdqa  xmm3,xmmword ptr [novovm_node!_xmm (00007ff7`806346e0)]
+00007ff7`7ff3dde8 660fdbc3        pand    xmm0,xmm3
+00007ff7`7ff3ddec 660f64ca        pcmpgtb xmm1,xmm2
+00007ff7`7ff3ddf0 660f60c9        punpcklbw xmm1,xmm1
+00007ff7`7ff3ddf4 f20f70c9d4      pshuflw xmm1,xmm1,0D4h
+00007ff7`7ff3ddf9 660f70c9d4      pshufd  xmm1,xmm1,0D4h
+00007ff7`7ff3ddfe 660fdbcb        pand    xmm1,xmm3
+00007ff7`7ff3de02 4883f904        cmp     rcx,4
+00007ff7`7ff3de06 0f84cd010000    je      novovm_node!core::fmt::Formatter::pad_integral+0x339 (00007ff7`7ff3dfd9)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x16c:
+00007ff7`7ff3de0c 410fb74704      movzx   eax,word ptr [r15+4]
+00007ff7`7ff3de11 660f6ee0        movd    xmm4,eax
+00007ff7`7ff3de15 410fb74706      movzx   eax,word ptr [r15+6]
+00007ff7`7ff3de1a 660f6ee8        movd    xmm5,eax
+00007ff7`7ff3de1e 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`7ff3de22 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`7ff3de26 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`7ff3de2b 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`7ff3de30 660fdbe3        pand    xmm4,xmm3
+00007ff7`7ff3de34 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`7ff3de38 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`7ff3de3c f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`7ff3de41 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`7ff3de46 660fdbeb        pand    xmm5,xmm3
+00007ff7`7ff3de4a 660fd4c4        paddq   xmm0,xmm4
+00007ff7`7ff3de4e 660fd4cd        paddq   xmm1,xmm5
+00007ff7`7ff3de52 83f908          cmp     ecx,8
+00007ff7`7ff3de55 0f847e010000    je      novovm_node!core::fmt::Formatter::pad_integral+0x339 (00007ff7`7ff3dfd9)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x1bb:
+00007ff7`7ff3de5b 410fb74708      movzx   eax,word ptr [r15+8]
+00007ff7`7ff3de60 660f6ee0        movd    xmm4,eax
+00007ff7`7ff3de64 410fb7470a      movzx   eax,word ptr [r15+0Ah]
+00007ff7`7ff3de69 660f6ee8        movd    xmm5,eax
+00007ff7`7ff3de6d 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`7ff3de71 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`7ff3de75 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`7ff3de7a 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`7ff3de7f 660fdbe3        pand    xmm4,xmm3
+00007ff7`7ff3de83 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`7ff3de87 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`7ff3de8b f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`7ff3de90 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`7ff3de95 660fdbeb        pand    xmm5,xmm3
+00007ff7`7ff3de99 660fd4c4        paddq   xmm0,xmm4
+00007ff7`7ff3de9d 660fd4cd        paddq   xmm1,xmm5
+00007ff7`7ff3dea1 83f90c          cmp     ecx,0Ch
+00007ff7`7ff3dea4 0f842f010000    je      novovm_node!core::fmt::Formatter::pad_integral+0x339 (00007ff7`7ff3dfd9)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x20a:
+00007ff7`7ff3deaa 410fb7470c      movzx   eax,word ptr [r15+0Ch]
+00007ff7`7ff3deaf 660f6ee0        movd    xmm4,eax
+00007ff7`7ff3deb3 410fb7470e      movzx   eax,word ptr [r15+0Eh]
+00007ff7`7ff3deb8 660f6ee8        movd    xmm5,eax
+00007ff7`7ff3debc 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`7ff3dec0 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`7ff3dec4 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`7ff3dec9 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`7ff3dece 660fdbe3        pand    xmm4,xmm3
+00007ff7`7ff3ded2 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`7ff3ded6 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`7ff3deda f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`7ff3dedf 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`7ff3dee4 660fdbeb        pand    xmm5,xmm3
+00007ff7`7ff3dee8 660fd4c4        paddq   xmm0,xmm4
+00007ff7`7ff3deec 660fd4cd        paddq   xmm1,xmm5
+00007ff7`7ff3def0 83f910          cmp     ecx,10h
+00007ff7`7ff3def3 0f84e0000000    je      novovm_node!core::fmt::Formatter::pad_integral+0x339 (00007ff7`7ff3dfd9)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x259:
+00007ff7`7ff3def9 410fb74710      movzx   eax,word ptr [r15+10h]
+00007ff7`7ff3defe 660f6ee0        movd    xmm4,eax
+00007ff7`7ff3df02 410fb74712      movzx   eax,word ptr [r15+12h]
+00007ff7`7ff3df07 660f6ee8        movd    xmm5,eax
+00007ff7`7ff3df0b 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`7ff3df0f 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`7ff3df13 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`7ff3df18 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`7ff3df1d 660fdbe3        pand    xmm4,xmm3
+00007ff7`7ff3df21 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`7ff3df25 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`7ff3df29 f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`7ff3df2e 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`7ff3df33 660fdbeb        pand    xmm5,xmm3
+00007ff7`7ff3df37 660fd4c4        paddq   xmm0,xmm4
+00007ff7`7ff3df3b 660fd4cd        paddq   xmm1,xmm5
+00007ff7`7ff3df3f 83f914          cmp     ecx,14h
+00007ff7`7ff3df42 0f8491000000    je      novovm_node!core::fmt::Formatter::pad_integral+0x339 (00007ff7`7ff3dfd9)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x2a8:
+00007ff7`7ff3df48 410fb74714      movzx   eax,word ptr [r15+14h]
+00007ff7`7ff3df4d 660f6ee0        movd    xmm4,eax
+00007ff7`7ff3df51 410fb74716      movzx   eax,word ptr [r15+16h]
+00007ff7`7ff3df56 660f6ee8        movd    xmm5,eax
+00007ff7`7ff3df5a 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`7ff3df5e 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`7ff3df62 f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`7ff3df67 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`7ff3df6c 660fdbe3        pand    xmm4,xmm3
+00007ff7`7ff3df70 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`7ff3df74 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`7ff3df78 f20f70edd4      pshuflw xmm5,xmm5,0D4h
+00007ff7`7ff3df7d 660f70edd4      pshufd  xmm5,xmm5,0D4h
+00007ff7`7ff3df82 660fdbeb        pand    xmm5,xmm3
+00007ff7`7ff3df86 660fd4c4        paddq   xmm0,xmm4
+00007ff7`7ff3df8a 660fd4cd        paddq   xmm1,xmm5
+00007ff7`7ff3df8e 83f918          cmp     ecx,18h
+00007ff7`7ff3df91 7446            je      novovm_node!core::fmt::Formatter::pad_integral+0x339 (00007ff7`7ff3dfd9)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x2f3:
+00007ff7`7ff3df93 410fb74718      movzx   eax,word ptr [r15+18h]
+00007ff7`7ff3df98 660f6ee0        movd    xmm4,eax
+00007ff7`7ff3df9c 410fb7471a      movzx   eax,word ptr [r15+1Ah]
+00007ff7`7ff3dfa1 660f6ee8        movd    xmm5,eax
+00007ff7`7ff3dfa5 660f64e2        pcmpgtb xmm4,xmm2
+00007ff7`7ff3dfa9 660f60e4        punpcklbw xmm4,xmm4
+00007ff7`7ff3dfad f20f70e4d4      pshuflw xmm4,xmm4,0D4h
+00007ff7`7ff3dfb2 660f70e4d4      pshufd  xmm4,xmm4,0D4h
+00007ff7`7ff3dfb7 660fdbe3        pand    xmm4,xmm3
+00007ff7`7ff3dfbb 660f64ea        pcmpgtb xmm5,xmm2
+00007ff7`7ff3dfbf 660f60ed        punpcklbw xmm5,xmm5
+00007ff7`7ff3dfc3 f20f70d5d4      pshuflw xmm2,xmm5,0D4h
+00007ff7`7ff3dfc8 660f70d2d4      pshufd  xmm2,xmm2,0D4h
+00007ff7`7ff3dfcd 660fdbd3        pand    xmm2,xmm3
+00007ff7`7ff3dfd1 660fd4c4        paddq   xmm0,xmm4
+00007ff7`7ff3dfd5 660fd4ca        paddq   xmm1,xmm2
+
+novovm_node!core::fmt::Formatter::pad_integral+0x339:
+00007ff7`7ff3dfd9 660fd4c1        paddq   xmm0,xmm1
+00007ff7`7ff3dfdd 660f70c8ee      pshufd  xmm1,xmm0,0EEh
+00007ff7`7ff3dfe2 660fd4c8        paddq   xmm1,xmm0
+00007ff7`7ff3dfe6 66480f7ec8      movq    rax,xmm1
+00007ff7`7ff3dfeb eb10            jmp     novovm_node!core::fmt::Formatter::pad_integral+0x35d (00007ff7`7ff3dffd)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x34d:
+00007ff7`7ff3dfed 31d2            xor     edx,edx
+00007ff7`7ff3dfef 41803c0fc0      cmp     byte ptr [r15+rcx],0C0h
+00007ff7`7ff3dff4 0f9dc2          setge   dl
+00007ff7`7ff3dff7 4801d0          add     rax,rdx
+00007ff7`7ff3dffa 48ffc1          inc     rcx
+
+novovm_node!core::fmt::Formatter::pad_integral+0x35d:
+00007ff7`7ff3dffd 4939cc          cmp     r12,rcx
+00007ff7`7ff3e000 75eb            jne     novovm_node!core::fmt::Formatter::pad_integral+0x34d (00007ff7`7ff3dfed)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x362:
+00007ff7`7ff3e002 4801c3          add     rbx,rax
+00007ff7`7ff3e005 450fb76e14      movzx   r13d,word ptr [r14+14h]
+00007ff7`7ff3e00a 4c39eb          cmp     rbx,r13
+00007ff7`7ff3e00d 0f833bfdffff    jae     novovm_node!core::fmt::Formatter::pad_integral+0xae (00007ff7`7ff3dd4e)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x373:
+00007ff7`7ff3e013 f7c700000001    test    edi,1000000h
+00007ff7`7ff3e019 488975e8        mov     qword ptr [rbp-18h],rsi
+00007ff7`7ff3e01d 752b            jne     novovm_node!core::fmt::Formatter::pad_integral+0x3aa (00007ff7`7ff3e04a)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x37f:
+00007ff7`7ff3e01f 4489ea          mov     edx,r13d
+00007ff7`7ff3e022 29da            sub     edx,ebx
+00007ff7`7ff3e024 89f8            mov     eax,edi
+00007ff7`7ff3e026 c1e81d          shr     eax,1Dh
+00007ff7`7ff3e029 83e003          and     eax,3
+00007ff7`7ff3e02c 488d0d559c9800  lea     rcx,[novovm_node!ZN4core3num7flt2dec8strategy5grisu12CACHED_POW1017hb602f494fb230f44E+0x53d8 (00007ff7`808c7c88)]
+00007ff7`7ff3e033 48630481        movsxd  rax,dword ptr [rcx+rax*4]
+00007ff7`7ff3e037 4801c8          add     rax,rcx
+00007ff7`7ff3e03a 48895dd8        mov     qword ptr [rbp-28h],rbx
+00007ff7`7ff3e03e 8955f8          mov     dword ptr [rbp-8],edx
+00007ff7`7ff3e041 ffe0            jmp     rax
+
+novovm_node!core::fmt::Formatter::pad_integral+0x3aa:
+00007ff7`7ff3e04a 4889de          mov     rsi,rbx
+00007ff7`7ff3e04d 498b4610        mov     rax,qword ptr [r14+10h]
+00007ff7`7ff3e051 488945f8        mov     qword ptr [rbp-8],rax
+00007ff7`7ff3e055 250000e09f      and     eax,9FE00000h
+00007ff7`7ff3e05a 0d30000020      or      eax,20000030h
+00007ff7`7ff3e05f 41894610        mov     dword ptr [r14+10h],eax
+00007ff7`7ff3e063 498b1e          mov     rbx,qword ptr [r14]
+00007ff7`7ff3e066 498b7e08        mov     rdi,qword ptr [r14+8]
+00007ff7`7ff3e06a 4c89642420      mov     qword ptr [rsp+20h],r12
+00007ff7`7ff3e06f 4889d9          mov     rcx,rbx
+00007ff7`7ff3e072 4889fa          mov     rdx,rdi
+00007ff7`7ff3e075 448b4504        mov     r8d,dword ptr [rbp+4]
+00007ff7`7ff3e079 4d89f9          mov     r9,r15
+00007ff7`7ff3e07c e8bffbffff      call    novovm_node!core::fmt::impl$12::pad_integral::write_prefix (00007ff7`7ff3dc40)
+00007ff7`7ff3e081 41b701          mov     r15b,1
+00007ff7`7ff3e084 84c0            test    al,al
+00007ff7`7ff3e086 0f85fa000000    jne     novovm_node!core::fmt::Formatter::pad_integral+0x4e6 (00007ff7`7ff3e186)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x3ec:
+00007ff7`7ff3e08c 4129f5          sub     r13d,esi
+00007ff7`7ff3e08f 41ffc5          inc     r13d
+00007ff7`7ff3e092 488b75e8        mov     rsi,qword ptr [rbp-18h]
+00007ff7`7ff3e096 662e0f1f840000000000 nop word ptr cs:[rax+rax]
+
+novovm_node!core::fmt::Formatter::pad_integral+0x400:
+00007ff7`7ff3e0a0 6641ffcd        dec     r13w
+00007ff7`7ff3e0a4 7414            je      novovm_node!core::fmt::Formatter::pad_integral+0x41a (00007ff7`7ff3e0ba)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x406:
+00007ff7`7ff3e0a6 4889d9          mov     rcx,rbx
+00007ff7`7ff3e0a9 ba30000000      mov     edx,30h
+00007ff7`7ff3e0ae ff5720          call    qword ptr [rdi+20h]
+00007ff7`7ff3e0b1 84c0            test    al,al
+00007ff7`7ff3e0b3 74eb            je      novovm_node!core::fmt::Formatter::pad_integral+0x400 (00007ff7`7ff3e0a0)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x415:
+00007ff7`7ff3e0b5 e9cc000000      jmp     novovm_node!core::fmt::Formatter::pad_integral+0x4e6 (00007ff7`7ff3e186)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x41a:
+00007ff7`7ff3e0ba 4889d9          mov     rcx,rbx
+00007ff7`7ff3e0bd 488b55f0        mov     rdx,qword ptr [rbp-10h]
+00007ff7`7ff3e0c1 4989f0          mov     r8,rsi
+00007ff7`7ff3e0c4 ff5718          call    qword ptr [rdi+18h]
+00007ff7`7ff3e0c7 84c0            test    al,al
+00007ff7`7ff3e0c9 0f85b7000000    jne     novovm_node!core::fmt::Formatter::pad_integral+0x4e6 (00007ff7`7ff3e186)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x42f:
+00007ff7`7ff3e0cf 488b45f8        mov     rax,qword ptr [rbp-8]
+00007ff7`7ff3e0d3 49894610        mov     qword ptr [r14+10h],rax
+00007ff7`7ff3e0d7 4531ff          xor     r15d,r15d
+00007ff7`7ff3e0da e9a7000000      jmp     novovm_node!core::fmt::Formatter::pad_integral+0x4e6 (00007ff7`7ff3e186)
+
+novovm_node!core::fmt::Formatter::pad_integral+0x4e6:
+00007ff7`7ff3e186 4489f8          mov     eax,r15d
+00007ff7`7ff3e189 4883c458        add     rsp,58h
+00007ff7`7ff3e18d 5b              pop     rbx
+00007ff7`7ff3e18e 5f              pop     rdi
+00007ff7`7ff3e18f 5e              pop     rsi
+00007ff7`7ff3e190 415c            pop     r12
+00007ff7`7ff3e192 415d            pop     r13
+00007ff7`7ff3e194 415e            pop     r14
+00007ff7`7ff3e196 415f            pop     r15
+00007ff7`7ff3e198 5d              pop     rbp
+00007ff7`7ff3e199 c3              ret
+
+=== NUM_RETURN_BEFORE ===
+0:001> u 00007ff77ff3b0d1 00007ff77ff3b0ff
+novovm_node!core::slice::index::impl$4::get_unchecked [inlined in novovm_node!core::fmt::num::impl$16::fmt+0x41]:
+00007ff7`7ff3b0d1 488d0c28        lea     rcx,[rax+rbp]
+00007ff7`7ff3b0d5 48f7d8          neg     rax
+00007ff7`7ff3b0d8 4889442428      mov     qword ptr [rsp+28h],rax
+00007ff7`7ff3b0dd 48894c2420      mov     qword ptr [rsp+20h],rcx
+00007ff7`7ff3b0e2 4c8d0599409800  lea     r8,[novovm_node!ZN4core7unicode12unicode_data11white_space14WHITESPACE_MAP17h2a3dd5a284adf242E+0x692 (00007ff7`808bf182)]
+00007ff7`7ff3b0e9 41b902000000    mov     r9d,2
+00007ff7`7ff3b0ef 4889d1          mov     rcx,rdx
+00007ff7`7ff3b0f2 b201            mov     dl,1
+00007ff7`7ff3b0f4 e8a72b0000      call    novovm_node!core::fmt::Formatter::pad_integral (00007ff7`7ff3dca0)
+00007ff7`7ff3b0f9 90              nop
+00007ff7`7ff3b0fa 4883c440        add     rsp,40h
+00007ff7`7ff3b0fe 5d              pop     rbp
+00007ff7`7ff3b0ff c3              ret

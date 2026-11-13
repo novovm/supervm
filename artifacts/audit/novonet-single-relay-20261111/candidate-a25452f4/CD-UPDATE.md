@@ -1,6 +1,21 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 21:14 Beijing: original DMP review only; C NOT READY
+## CURRENT 2026-11-13 22:48 Beijing: offline object/parameter comparison; C NOT READY
+
+C traced PID3228 to a valid local empty String and Formatter, while the observed
+writer receiver points into saved-register slots. PID37796 similarly retains a
+local String/text pointer but uses another receiver and invalid memcpy source.
+31296 has an inconsistent restore-frame base. These are final-state facts, not
+proof of the first corrupting writer or a common FFI/UAF/ABI cause. No production
+patch, node/DB operation, TTD or relay. **A must not send.**
+
+A coordination item: locate the original a254 PDB with GUID
+E16D0B11-47CA-4EBF-B482-C91380CC57F8, age1 (EXE SHA2561758e4a7...). C checked its
+available node PDBs and the original Full-run artifact metadata; none established
+the exact match. Do not rebuild a replacement. C independently completed the
+available offline analysis; see [phase2 evidence](C-original-dmp-phase2-20261113/README.md).
+
+## PRIOR 2026-11-13 21:14 Beijing: original DMP review only; C NOT READY
 
 C ran Windows Debugger/CDB offline on three original pre-TTD MiniDumps. Exact875
 PDB loaded for31296/3228: misaligned MOVAPS restore in indexmap, and a two-byte
