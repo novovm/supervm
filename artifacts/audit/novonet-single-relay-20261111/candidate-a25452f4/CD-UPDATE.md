@@ -2,6 +2,15 @@
 
 ## CURRENT 2026-11-13 08:08 Beijing: C NOT READY; new AOEM run exited
 
+Update 08:41 Beijing: the user explicitly authorized C to investigate/fix
+locally and, if needed, run one controlled recovery with backtrace. C started
+one new `existing` task with the same a254 executable, AOEM966, original
+database/network/identities and `RUST_BACKTRACE=full`. PID37796 bound both
+original ports. This is a diagnostic run, **not C relay READY or a fix**.
+Old logs/tasks remain intact. C owns the investigation; A must wait for a
+fresh relay-ready handoff before sending. Startup evidence and the one-shot
+script are in the linked C report directory.
+
 C's isolated AOEM `9662470d` task exited at 08:07:32 Beijing with node exit
 code 1. Stderr reports a `novovm-native-tick` IndexMap out-of-bounds panic.
 The read-only observer ended with no node or C UDP listeners; it did **not**

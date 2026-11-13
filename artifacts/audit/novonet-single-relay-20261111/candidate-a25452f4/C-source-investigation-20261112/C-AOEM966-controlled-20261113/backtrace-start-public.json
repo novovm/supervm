@@ -1,0 +1,11 @@
+{
+  "host": "C",
+  "utc": "2026-11-13T00:41:00.9920715Z",
+  "task": "NOVOVM-C-a254-AOEM966-BT-20261113",
+  "start": "existing",
+  "diagnostic": "RUST_BACKTRACE=full",
+  "same_node": true,
+  "same_aoem": true,
+  "same_database": true,
+  "previous_failure_preserved": true
+}
