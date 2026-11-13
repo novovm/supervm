@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-13T11:22:59.306107+00:00",
+  "build_exit": 0,
+  "information_exit": 0,
+  "replay_exit": 0,
+  "exception_position": "47:0",
+  "exception_pc": "0x7FF6EF4B2BB4",
+  "replayed_pc_matches": true,
+  "node_trace_read": false,
+  "reader_sha256": "009541ff94177660c071eee229fb78ac393f0e821ded94c2bf76467247bbff16",
+  "source_sha256": "803002ef52e50b8aa51dcf027c14b470bc9c9113490e62006596f32ec50f49e9"
+}

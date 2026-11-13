@@ -1,6 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 19:19 Beijing: LocalService attach/reverse-write control passed
+## CURRENT 2026-11-13 19:24 Beijing: C node TTD recording active; no relay
+
+PID39992 is running under original LocalService, a254/AOEM966 and existing DB.
+Administrator attach was verified before its suspended main thread resumed at
+19:19:58. One two-hour/2GiB ring recording is active; original observer33848
+failed19:22:41 with missing_novonet and is not restarted. No node AV outcome or
+first bad writer yet. **C NOT READY; A must not send**, despite the archived
+observer-ready label. Retained trace is private and bounded-tail only.
+[Actual start/observer evidence and replay preparation](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/ttd-node-running/README.md).
+
+## PRIOR 2026-11-13 19:19 Beijing: LocalService attach/reverse-write control passed
 
 LocalService recorder rejected recording with 0x80070005; original node was not
 started. C is validating elevated **attach** to an isolated LocalService child,

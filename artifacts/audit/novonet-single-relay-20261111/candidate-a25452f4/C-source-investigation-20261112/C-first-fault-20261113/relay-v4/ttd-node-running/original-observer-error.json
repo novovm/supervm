@@ -1,0 +1,6 @@
+{
+  "host": "C",
+  "utc": "2026-11-13T11:22:41.9795989Z",
+  "snapshots": 0,
+  "error": "No complete diagnostic snapshot within observation bound: missing_novonet"
+}

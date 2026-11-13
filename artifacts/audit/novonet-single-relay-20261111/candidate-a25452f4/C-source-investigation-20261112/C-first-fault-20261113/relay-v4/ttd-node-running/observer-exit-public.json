@@ -1,0 +1,8 @@
+{
+  "exit_code": 1,
+  "pid": 33848,
+  "relay_ready": false,
+  "forced": false,
+  "reason": "natural_observer_exit",
+  "utc": "2026-11-13T11:22:44.4783576Z"
+}
