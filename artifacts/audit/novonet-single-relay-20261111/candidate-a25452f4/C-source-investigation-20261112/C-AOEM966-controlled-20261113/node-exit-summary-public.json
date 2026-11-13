@@ -1,0 +1,13 @@
+{
+  "host": "C",
+  "utc": "2026-11-13T00:12:26.5323156Z",
+  "stderr_sha256": "809bd7dccf8aeb7cf2f83860a3c9a6217a3b378fa2e2133989fed912a7d83885",
+  "stderr_bytes": 337,
+  "exit": {
+    "utc": "2026-11-13T00:07:32.0763161Z",
+    "exit_code": 1,
+    "start": "existing"
+  },
+  "events": [],
+  "read_only": true
+}

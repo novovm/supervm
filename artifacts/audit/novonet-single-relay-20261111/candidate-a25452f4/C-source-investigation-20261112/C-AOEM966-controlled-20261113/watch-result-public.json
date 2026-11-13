@@ -1,0 +1,23 @@
+{
+  "host": "C",
+  "utc": "2026-11-13T00:07:55.3711090Z",
+  "status": "FAILED",
+  "failure": "health_invariant_failed",
+  "elapsed_seconds": 555.8,
+  "samples": 19,
+  "last": {
+    "utc": "2026-11-13T00:07:55.3697186Z",
+    "elapsed_seconds": 555.8,
+    "node_alive": false,
+    "task_state": "Ready",
+    "task_result": 1,
+    "port_count": 0,
+    "chain_id": 91129655606029,
+    "height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  },
+  "root_cause_proven": false,
+  "node_mutated": false
+}

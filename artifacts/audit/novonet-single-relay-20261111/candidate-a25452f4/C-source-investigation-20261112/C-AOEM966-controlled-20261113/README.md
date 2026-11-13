@@ -1,6 +1,31 @@
 # Validator-C AOEM 966 controlled existing recovery — initial report
 
-Status: **running, cause not proven**. This is an AOEM-only C candidate experiment, not a four-host rollout or crash-root signoff. No A/B/D process was changed.
+Status: **FAILED / C NOT READY**. This is an AOEM-only C candidate experiment, not a four-host rollout or crash-root signoff. No A/B/D process was changed.
+
+## Terminal result, 2026-11-13
+
+The new C node exited at **00:07:32 UTC** (08:07:32 Beijing), about 17 minutes
+after its first start. The bounded observer stopped at 00:07:55 UTC after
+555.8 seconds of observation, with `node_alive=false`, task `Ready`, both UDP
+ports absent and task result `1`. The LocalService owner recorded node exit
+code `1`; there was no Application 1000/1001 crash event for this new run.
+The original 337-byte stderr is retained privately, SHA256
+`809bd7dccf8aeb7cf2f83860a3c9a6217a3b378fa2e2133989fed912a7d83885`.
+It reports:
+
+```text
+thread 'novovm-native-tick' panicked at indexmap-2.14.2/src/inner.rs:46:27:
+index out of bounds: the len is 0 but the index is 113779862448
+Error: original native tick panicked
+```
+
+New AOEM `9662470d` was actually loaded before this panic, and the unchanged
+a254 node had opened the original database. Thus the new AOEM bundle did
+**not** eliminate the C failure in this run. This panic does not by itself
+identify whether prior native memory damage, an IndexMap usage defect, AOEM
+FFI or another component caused the invalid index. No replacement task was
+started, no relay observer was armed and no object was sent. A must not use
+the earlier `watch-ready-public.json` as current relay readiness.
 
 User decision 2026-11-13: exact attribution of the historical crash is **not a
 prerequisite for continued use**. C may proceed now to the existing
