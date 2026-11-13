@@ -73,3 +73,29 @@ The source commit `fd5cfb31` (included in `9662470d`) repairs several AOEM FFI r
 Please first perform one authenticated query against this current C process and record the exact PID, session, path and result. If that passes, C can participate in the next authorized relay test while the read-only observer continues; there is no need to wait for proof of the historical crash's exact cause. Do not claim a four-host AOEM upgrade from this C-only experiment. If C crashes, preserve the new dump, task result and progress without auto-restarting or overwriting the old a254 failure.
 
 The one-shot deployment and read-only inspection scripts are included here for audit. Their hardcoded C paths and hashes deliberately reject a changed or already-running state. Private keys, protected files, raw database and dumps are **not** included in Git.
+# 09:16 Beijing backtrace-run checkpoint
+
+The repeated UAC launch succeeded once; no second node recovery was performed.
+`backtrace-liveness-0916-public.json` records the same PID37796 from08:41:01,
+task Running, original41052/42052 listeners and stderr length0 at01:16:13Z.
+This is about35minutes of process survival, not proof of protocol health,
+root-cause repair or relay readiness. The one-hour read-only observer remains
+bounded and never restarts the node. A must not send a relay object on this basis.
+
+[Direct ABI-preservation isolation](abi-isolation/README.md) adds30,001 actual
+AOEM keygen/sign/verify calls with eight GPR and ten XMM preservation checks,
+plus intentional-clobber and clean controls. It passed after correcting a
+fixture export-name typo; both fixture attempts remain recorded.
+
+Source audit refinement: the reported `indexmap-2.14.2/src/inner.rs:46` is
+the `equal` lookup closure (`K::eq(key, &entries[i].key)`), not `get_hash`
+(line38 in the local crate source). It indexes the map's internal entry
+table, not a caller-provided network array index. The invalid internal state
+is established by the panic, but its origin is not established. No catch-and-
+continue workaround, timeout change or speculative container replacement was made.
+
+Read-only Application Error event comparison also found four fatal exceptions
+in three other applications over the last three days. Raw non-node records
+stay local. This alone proves neither a common cause nor hardware failure;
+no BIOS, antivirus, route, clock or OS configuration was changed.
+

@@ -11,6 +11,15 @@ Old logs/tasks remain intact. C owns the investigation; A must wait for a
 fresh relay-ready handoff before sending. Startup evidence and the one-shot
 script are in the linked C report directory.
 
+09:16 Beijing checkpoint: same PID37796/creation time, task Running, both
+original listeners and stderr length 0 after about35 minutes. These are
+process-liveness observations, not an authenticated health query or a fix.
+The bounded read-only observer PID27056 started00:41:55Z for up to3600seconds;
+on exit it preserves stderr/stdout/exit results without restarting. No relay
+observer has been rearmed. The direct AOEM register-preservation isolation
+and its deliberate clobber control passed; see `abi-isolation/README.md` in
+the C report. The real IndexMap panic remains unresolved.
+
 C continues the local diagnosis. If A still has the original a254 PDB, return
 its hash/location for transfer: the fixed executable requests GUID
 `E16D0B11-47CA-4EBF-B482-C91380CC57F8`, age1. C already has the older875 PDB;
