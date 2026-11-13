@@ -1,8 +1,13 @@
-# C first-fault diagnosis — prepared, not a crash fix
+# C first-fault diagnosis — repeated crashes, root cause unresolved
 
 C owns this source investigation. The user authorized bounded controlled
 diagnostics after PID37796 crashed. Original a254 program, AOEM966, original
 database/identity/network and old failures are retained. A/B/D are not operated.
+
+**Scope correction:** C's crashes and failed observation workflow have already
+occurred repeatedly. Only the short PageHeap run did not capture another fault;
+it did not cover the77/95-minute prior crash latencies or run the original
+Watch-Relay loop. See the [original scenario/time comparison](SCENARIO-COMPARISON.md).
 
 ## Method and bounds
 

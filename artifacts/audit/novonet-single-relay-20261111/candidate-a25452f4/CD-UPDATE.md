@@ -2,6 +2,12 @@
 
 ## CURRENT 2026-11-13 16:24 Beijing: C PageHeap run ended; fault unresolved
 
+Scope correction from the user's original scenario: **C has already crashed
+repeatedly**, and observation attempts have repeatedly failed. The30-minute
+diagnostic did not cover the observed77/95-minute crash latencies and did not
+run the original Watch-Relay loop. Do not interpret its non-reproduction as
+clearing that workflow. [Exact chronology and next diagnostic target](C-source-investigation-20261112/C-first-fault-20261113/SCENARIO-COMPARISON.md).
+
 The single C diagnostic node PID15012 exited at12:14:52.197 Beijing after
 about30minutes8seconds. The original CDB process-exit event confirms **target
 exit0**, separately from debugger/coordinator exit0. No first AV/verifier stop
