@@ -121,3 +121,9 @@ startup records remain; the original two-hour window did not pass.
 [Publisher time-boundary fix and cleanup DateTime fix](known-fixes/README.md)
 passed deterministic regressions, full node check and strict Clippy. The native
 AV still requires local analysis; these changes do not reopen double relay.
+
+## Offline follow-up completed
+
+[Captured code/metadata comparison, bounded stack-capture isolation and fresh end state](offline-review/README.md)
+are recorded. They narrow the investigation but do not identify the first bad
+writer or close the native AV. No new node/observer was started.

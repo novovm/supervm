@@ -1,0 +1,11 @@
+[package]
+name = "c-stackcapture-profile"
+version = "0.0.0"
+edition = "2021"
+[workspace]
+[dependencies]
+serde_json = { version = "=1.0.149", features = ["preserve_order", "raw_value"] }
+sha2 = "=0.10.9"
+indexmap = "=2.14.2"
+[profile.release]
+debug = 2

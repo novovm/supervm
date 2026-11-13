@@ -1,0 +1,44 @@
+{
+  "scope": "Read-only comparison of selected captured code/unwind metadata and fault-operand field; no arbitrary heap contents exported.",
+  "checks": [
+    {
+      "module": "ntdll.dll",
+      "rva": "0x1ff1b",
+      "bytes": 60,
+      "captured": true,
+      "matches_disk": true
+    },
+    {
+      "module": "novovm-node.exe",
+      "rva": "0x2432780",
+      "bytes": 128,
+      "captured": true,
+      "matches_disk": true
+    },
+    {
+      "module": "novovm-node.exe",
+      "rva": "0x2c9b4fc",
+      "bytes": 16,
+      "captured": true,
+      "matches_disk": true
+    }
+  ],
+  "node_allocator_frame": {
+    "begin": "0x2432750",
+    "end": "0x24327bc",
+    "unwind_rva": "0x2c9b4fc",
+    "unwind_info": "010c05550c0307920370026001500000"
+  },
+  "ntdll_fault_frame": {
+    "begin": "0x1fe10",
+    "end": "0x205b4",
+    "unwind_rva": "0x1aaed4",
+    "unwind_info": "0921070021e21df01be019c017701660"
+  },
+  "node_unwind_metadata_at_fault": "0x2c9b4fc",
+  "fault_operand_field": {
+    "address": "0x6975aec790",
+    "value": "0x1"
+  },
+  "root_cause_fixed": false
+}

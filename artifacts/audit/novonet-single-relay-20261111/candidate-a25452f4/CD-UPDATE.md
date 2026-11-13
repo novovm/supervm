@@ -1,6 +1,23 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-13 17:25 Beijing: two fixes verified; native AV still open
+## CURRENT 2026-11-13 17:44 Beijing: known fixes pushed; native AV remains unresolved
+
+1f4bd204 contains the snapshot deadline-latch fix and diagnostic DateTime
+cleanup correction, with full node check/strict Clippy and scoped regressions.
+No candidate was installed. First-chance full dump remains private on C;
+selected captured instructions/unwind metadata match disk, but the first bad
+parameter/register writer is not identified. A bounded independent30-second
+stack-capture experiment completed26,114,540captures without that AV; it is
+not exact a254/PageHeap reproduction and does not clear the native fault.
+
+Fresh read-only end state confirms no node/debugger/listeners or residual
+PageHeap flags. Stop UAC cancelled and was never executed; no further prompt
+or stop is needed for the captured process. Node normal exit code remains
+unknown (debugger quit after capture), not replaced by debugger0. **C NOT READY;
+A must not send.** C continues local native diagnosis, without automatic rerun.
+[Offline evidence and limitations](C-source-investigation-20261112/C-first-fault-20261113/relay-v4/offline-review/README.md).
+
+## PRIOR 2026-11-13 17:25 Beijing: two fixes verified; native AV still open
 
 C fixed the actual snapshot publisher's two-clock-check boundary: one latched
 decision now controls network observation and progress emission. The original

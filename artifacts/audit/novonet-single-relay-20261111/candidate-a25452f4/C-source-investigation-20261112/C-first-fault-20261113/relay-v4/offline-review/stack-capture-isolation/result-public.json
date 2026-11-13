@@ -1,0 +1,27 @@
+{
+  "utc": "2026-11-13T09:37:57.559455+00:00",
+  "scope": "Isolated actual profile/JSON source with a bounded global-System-allocator stack-capture hook; no AOEM, PageHeap registry, node, DB or original identities. Does not duplicate exact node binary/stack.",
+  "runs": [
+    {
+      "mode": "clean",
+      "debugger_exit": 0,
+      "first_AV": false,
+      "target_exit0": true,
+      "stack_capture_line": "STACK_CAPTURE calls=0 empty=0 enabled=false",
+      "dump_created": false,
+      "log_sha256": "01c6bc61413a8a3e51bfb55f8b8cf1f5358d8f2c05ed2abfd7331592c0f485c7"
+    },
+    {
+      "mode": "trace",
+      "debugger_exit": 0,
+      "first_AV": false,
+      "target_exit0": true,
+      "stack_capture_line": "STACK_CAPTURE calls=26114540 empty=0 enabled=true",
+      "dump_created": false,
+      "log_sha256": "cf22e07b1f25ed9d59bcf335815adc709a7abf07fb5a89ac1153e54553a3f37c"
+    }
+  ],
+  "node_started": false,
+  "registry_changed": false,
+  "native_crash_fixed": false
+}
