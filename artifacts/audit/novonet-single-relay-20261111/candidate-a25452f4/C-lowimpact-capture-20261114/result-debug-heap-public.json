@@ -1,0 +1,719 @@
+{
+  "utc": "2026-11-14T05:53:23.867912+00:00",
+  "runs": [
+    {
+      "run": "qualification-0-baseline",
+      "variant": "baseline",
+      "exit": {
+        "utc": "2026-11-14T05:50:31.973007+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 49.014999999984866
+      },
+      "nodes": [
+        {
+          "instrumented": false,
+          "elapsed_ns": 45001630700,
+          "ticks": 25445,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45001295500,
+          "ticks": 25501,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000876500,
+          "ticks": 25836,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000028800,
+          "ticks": 25375,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 970347300,
+        "p95": 1676287100,
+        "p99": 1676287100
+      },
+      "sampled_poll_ns": {
+        "n": 1020,
+        "p50": 15500,
+        "p95": 43700,
+        "p99": 81500
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999991800,
+        "p95": 10000898900,
+        "p99": 10000898900
+      },
+      "mean_loops_per_second": 567.526802115452,
+      "probe_event_counts": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "object_done_per_second": 0.7110853429584719,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.20084757908058534,
+      "peak_rss_bytes_by_node": [
+        96985088,
+        95928320,
+        95141888,
+        96940032
+      ],
+      "context_switch_deltas_by_node": [
+        99171,
+        102094,
+        103498,
+        99935
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "run": "qualification-1-instrumented",
+      "variant": "instrumented",
+      "exit": {
+        "utc": "2026-11-14T05:51:24.530652+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 52.187999999994645
+      },
+      "nodes": [
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001313500,
+          "ticks": 25945,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001040200,
+          "ticks": 25476,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001312500,
+          "ticks": 26186,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000123800,
+          "ticks": 25966,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 893051000,
+        "p95": 1341134100,
+        "p99": 1341134100
+      },
+      "sampled_poll_ns": {
+        "n": 1033,
+        "p50": 14200,
+        "p95": 42500,
+        "p99": 92500
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999974500,
+        "p95": 10005881000,
+        "p99": 10005881000
+      },
+      "mean_loops_per_second": 575.3934370382705,
+      "probe_event_counts": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_object_done": 32,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "object_done_per_second": 0.711090355173744,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [
+        {
+          "bytes": 8388680,
+          "sha256": "3eef280c91c84ce42922e0072728abe8ceb8f1764d9c03957eb9494cc2ef4139",
+          "os_thread_id": 9060,
+          "total": 745758,
+          "retained": 65536,
+          "overwritten": 680222,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "fd7b1125b627b3dd388e79dd80939ca63c56520d07d5a612155eaa618983f095",
+          "os_thread_id": 41096,
+          "total": 744051,
+          "retained": 65536,
+          "overwritten": 678515,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "193c16a1211cd70d36eef8626eb3a0232c7c44979aa8e4933bb8287412b3e809",
+          "os_thread_id": 6900,
+          "total": 747833,
+          "retained": 65536,
+          "overwritten": 682297,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "f919d691f50f00af4cf7f3d195a42a4d573aa913829b6b4eb8af549e227e95a3",
+          "os_thread_id": 25288,
+          "total": 744860,
+          "retained": 65536,
+          "overwritten": 679324,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        }
+      ],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.176668000582144,
+      "peak_rss_bytes_by_node": [
+        105517056,
+        105480192,
+        105521152,
+        105476096
+      ],
+      "context_switch_deltas_by_node": [
+        106571,
+        104862,
+        105998,
+        106682
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "run": "qualification-2-instrumented",
+      "variant": "instrumented",
+      "exit": {
+        "utc": "2026-11-14T05:52:17.640763+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 52.953000000008615
+      },
+      "nodes": [
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000991300,
+          "ticks": 26089,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000205300,
+          "ticks": 25348,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001255000,
+          "ticks": 25674,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000291400,
+          "ticks": 25938,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 958363300,
+        "p95": 1522167100,
+        "p99": 1522167100
+      },
+      "sampled_poll_ns": {
+        "n": 1028,
+        "p50": 14800,
+        "p95": 40200,
+        "p99": 102400
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999867500,
+        "p95": 10001219500,
+        "p99": 10001219500
+      },
+      "mean_loops_per_second": 572.4856983169955,
+      "probe_event_counts": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "object_done_per_second": 0.7110912795654254,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [
+        {
+          "bytes": 8388680,
+          "sha256": "be47b7e0279b04170e7ade1147f7bf8bc63dfcbd0dee901c24e15b3b7843abf8",
+          "os_thread_id": 42240,
+          "total": 744089,
+          "retained": 65536,
+          "overwritten": 678553,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "23f47ef8868db0c60257fbb227829c21efc3d588dbe7e50dae7f07cd233411ce",
+          "os_thread_id": 41776,
+          "total": 736673,
+          "retained": 65536,
+          "overwritten": 671137,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "fa2148f35e3c500b72dddd4595a05f2a8238fde6d2c09397d10bc3411313c7bf",
+          "os_thread_id": 24024,
+          "total": 742085,
+          "retained": 65536,
+          "overwritten": 676549,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "9e6c86fb40f236a5e35b9b5271420f655d90d45734a715fee7be612afeb67270",
+          "os_thread_id": 28368,
+          "total": 742445,
+          "retained": 65536,
+          "overwritten": 676909,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        }
+      ],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.17808788512353127,
+      "peak_rss_bytes_by_node": [
+        104407040,
+        104316928,
+        105324544,
+        104378368
+      ],
+      "context_switch_deltas_by_node": [
+        112640,
+        106569,
+        107273,
+        112118
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "run": "qualification-3-baseline",
+      "variant": "baseline",
+      "exit": {
+        "utc": "2026-11-14T05:53:07.371352+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 49.594000000011874
+      },
+      "nodes": [
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000956200,
+          "ticks": 25986,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000276700,
+          "ticks": 24933,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45001448100,
+          "ticks": 24846,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000737800,
+          "ticks": 26130,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 961515500,
+        "p95": 2338603600,
+        "p99": 2338603600
+      },
+      "sampled_poll_ns": {
+        "n": 1017,
+        "p50": 14800,
+        "p95": 41400,
+        "p99": 87800
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999895100,
+        "p95": 10001121600,
+        "p99": 10001121600
+      },
+      "mean_loops_per_second": 566.0725922300446,
+      "probe_event_counts": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 28,
+        "probe_received_integrity_verified": 28,
+        "probe_rejected_time_untrusted_or_outside_validity": 4
+      },
+      "object_done_per_second": 0.7110882282919248,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.190096707461766,
+      "peak_rss_bytes_by_node": [
+        94867456,
+        97058816,
+        95879168,
+        96903168
+      ],
+      "context_switch_deltas_by_node": [
+        106958,
+        105430,
+        105734,
+        108310
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    }
+  ],
+  "median_run_ratios": {
+    "query_ns_p95": 0.713170398387184,
+    "sampled_poll_ns_p95": 0.9717978848413631,
+    "loop_throughput": 1.0125968142546635
+  },
+  "qualification_rejection_reasons": [
+    "CDB created processes without -hd; debug heap may change allocation timing"
+  ],
+  "low_interference_qualification_passed": false,
+  "root_cause_found": false,
+  "production_fix": false,
+  "limitations": [
+    "ABBA has two runs per variant, not a statistical guarantee",
+    "loopback fresh test chain; original packets and scheduling unavailable",
+    "source probes do not capture std Formatter/Writer entry registers",
+    "only pre-registered owner threads have TLS rings; lost counters cover observed unregistered events",
+    "no scheduler trace; sampled process context switches are not event-order proof",
+    "overwrites deliberately retain only latest events; no deterministic replay"
+  ],
+  "debugger_disable_debug_heap": false
+}

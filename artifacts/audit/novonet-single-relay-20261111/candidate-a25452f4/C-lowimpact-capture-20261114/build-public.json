@@ -1,0 +1,41 @@
+{
+  "source": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "baseline_is_original_deployed_binary": false,
+  "variants": [
+    {
+      "variant": "baseline",
+      "exe_sha256": "3b18ad8939cf6a67f615587c29394354b67c9b2c896d3cd933591e4cd3c9039c",
+      "exe_bytes": 24396800,
+      "pdb_sha256": "7f5db9f409137895d1e03f9f563bc7a5af8c512ddc83ee01be37e41b6a1e3bf6",
+      "pdb_bytes": 190484480,
+      "pdb_guid": "86ad432d-3c48-4885-9d81-b9390b9260db",
+      "pdb_age": 1,
+      "pdb_matches_exe": true,
+      "build_exit": {
+        "exit_code": 0,
+        "utc": "2026-11-14T05:45:45.3002010Z",
+        "variant": "baseline"
+      }
+    },
+    {
+      "variant": "instrumented",
+      "exe_sha256": "f073044ca7faacb308c7d818d759cd4193ec3364497d5872715b93d6c2f4ce28",
+      "exe_bytes": 24364544,
+      "pdb_sha256": "ac4642316c7f183460303e3905341bf3b59f181b0b158792b105c57dbb1c5c96",
+      "pdb_bytes": 189960192,
+      "pdb_guid": "2083c22a-dbb8-4d52-a8bd-c00828911450",
+      "pdb_age": 1,
+      "pdb_matches_exe": true,
+      "build_exit": {
+        "exit_code": 0,
+        "utc": "2026-11-14T05:49:13.5894460Z",
+        "variant": "instrumented"
+      }
+    }
+  ],
+  "rust": "1.94.0",
+  "target": "x86_64-pc-windows-msvc",
+  "common_flags": "--locked --offline --release --config profile.release.package.novovm-node.debug=2 --config profile.release.package.novovm-network.debug=2 -- -C debuginfo=2 -C strip=none",
+  "feature_difference": "iroh-transport / iroh-transport,lowtrace",
+  "runtime_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52"
+}

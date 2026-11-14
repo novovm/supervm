@@ -1,0 +1,730 @@
+{
+  "utc": "2026-11-14T06:01:11.786423+00:00",
+  "runs": [
+    {
+      "run": "qualification-0-baseline",
+      "variant": "baseline",
+      "exit": {
+        "utc": "2026-11-14T05:54:10.055000+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 45.89000000001397
+      },
+      "nodes": [
+        {
+          "instrumented": false,
+          "elapsed_ns": 45001515800,
+          "ticks": 28507,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000160300,
+          "ticks": 28536,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000886400,
+          "ticks": 28527,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000751600,
+          "ticks": 28508,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 8872100,
+        "p95": 21003700,
+        "p99": 21003700
+      },
+      "sampled_poll_ns": {
+        "n": 1140,
+        "p50": 13400,
+        "p95": 31000,
+        "p99": 55600
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999880600,
+        "p95": 10000745700,
+        "p99": 10000745700
+      },
+      "mean_loops_per_second": 633.7550005124349,
+      "probe_event_counts": {
+        "probe_pending_time_boundary": 29,
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "object_done_per_second": 0.7110871585352243,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.06426023077372443,
+      "peak_rss_bytes_by_node": [
+        90636288,
+        91291648,
+        90988544,
+        90062848
+      ],
+      "context_switch_deltas_by_node": [
+        124072,
+        125525,
+        123410,
+        122981
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "run": "qualification-1-instrumented",
+      "variant": "instrumented",
+      "exit": {
+        "utc": "2026-11-14T05:54:59.183819+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 48.953000000008615
+      },
+      "nodes": [
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001118700,
+          "ticks": 28649,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001785400,
+          "ticks": 28638,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000453500,
+          "ticks": 28651,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001103400,
+          "ticks": 28651,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 10849200,
+        "p95": 22003200,
+        "p99": 22003200
+      },
+      "sampled_poll_ns": {
+        "n": 1144,
+        "p50": 14100,
+        "p95": 33200,
+        "p99": 72800
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999911900,
+        "p95": 10001167400,
+        "p99": 10001167400
+      },
+      "mean_loops_per_second": 636.5897798849336,
+      "probe_event_counts": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "object_done_per_second": 0.711082898502067,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [
+        {
+          "bytes": 8388680,
+          "sha256": "478a6caab5802e439e74f033b9e87d9cb71b5b6127180cacd56b21b2ba133297",
+          "os_thread_id": 40984,
+          "total": 785304,
+          "retained": 65536,
+          "overwritten": 719768,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "3c62bf6f9d0969eaad675372df8d5711a8c96ef5f5b5190eb6a5b7981e96531a",
+          "os_thread_id": 31228,
+          "total": 778210,
+          "retained": 65536,
+          "overwritten": 712674,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "4c0929cb45ba72b188a8761a27fe12536f2e653d17395ab741e3f054a3d656a2",
+          "os_thread_id": 21512,
+          "total": 782067,
+          "retained": 65536,
+          "overwritten": 716531,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "20553c0f21f25988849e7467d664a94656357644b9a40343ed86f8c11dfa11ae",
+          "os_thread_id": 28536,
+          "total": 780615,
+          "retained": 65536,
+          "overwritten": 715079,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        }
+      ],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.05938306884449862,
+      "peak_rss_bytes_by_node": [
+        99102720,
+        99418112,
+        98918400,
+        99328000
+      ],
+      "context_switch_deltas_by_node": [
+        122334,
+        123735,
+        122558,
+        124082
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "run": "qualification-2-instrumented",
+      "variant": "instrumented",
+      "exit": {
+        "utc": "2026-11-14T05:55:48.730737+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 49.405999999988126
+      },
+      "nodes": [
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000812900,
+          "ticks": 28555,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000696400,
+          "ticks": 28541,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45000404700,
+          "ticks": 28542,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": true,
+          "elapsed_ns": 45001220900,
+          "ticks": 28549,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 10988900,
+        "p95": 22376600,
+        "p99": 22376600
+      },
+      "sampled_poll_ns": {
+        "n": 1140,
+        "p50": 13600,
+        "p95": 34300,
+        "p99": 78700
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999792100,
+        "p95": 10000668300,
+        "p99": 10000668300
+      },
+      "mean_loops_per_second": 634.3611737090148,
+      "probe_event_counts": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "object_done_per_second": 0.7110918183999759,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [
+        {
+          "bytes": 8388680,
+          "sha256": "df14a450ac89629efca5da35ab420519b467fde775314b18b898e75b6b00518d",
+          "os_thread_id": 4592,
+          "total": 784278,
+          "retained": 65536,
+          "overwritten": 718742,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "bf92973baf2aa741cfe346c3b3aa517619e08f6e01ac8c2cb293c3c4dc274e45",
+          "os_thread_id": 41160,
+          "total": 780139,
+          "retained": 65536,
+          "overwritten": 714603,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "53934c5f1685042c50e4f777e5ca54cace7fb87bb714a55c4fa31a0c1d039a25",
+          "os_thread_id": 37100,
+          "total": 778682,
+          "retained": 65536,
+          "overwritten": 713146,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        },
+        {
+          "bytes": 8388680,
+          "sha256": "d7ff93c8e773e0449a11b93bea8e798aea27ae4f5286e66eeb2d04aedcbfc1de",
+          "os_thread_id": 42940,
+          "total": 780259,
+          "retained": 65536,
+          "overwritten": 714723,
+          "reentrant_lost": 0,
+          "unregistered_lost_process_total": 0,
+          "retained_event_counts": {
+            "11": 32768,
+            "10": 32767,
+            "7": 1
+          },
+          "retained_string_descriptor_anomalies": 0,
+          "retained_creation_and_drop_generations": 0,
+          "drop_without_retained_creation": 0,
+          "capture_sequence_valid": true
+        }
+      ],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.06880158983894712,
+      "peak_rss_bytes_by_node": [
+        98705408,
+        99422208,
+        99590144,
+        99278848
+      ],
+      "context_switch_deltas_by_node": [
+        122784,
+        125189,
+        124582,
+        124556
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    },
+    {
+      "run": "qualification-3-baseline",
+      "variant": "baseline",
+      "exit": {
+        "utc": "2026-11-14T05:56:34.645366+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 45.76500000001397
+      },
+      "nodes": [
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000197100,
+          "ticks": 28564,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000695200,
+          "ticks": 28543,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45000838100,
+          "ticks": 28543,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        },
+        {
+          "instrumented": false,
+          "elapsed_ns": 45001302400,
+          "ticks": 28555,
+          "probe_commands_accepted": 8,
+          "probe_commands_rejected": 0
+        }
+      ],
+      "query_ns": {
+        "n": 16,
+        "p50": 7531400,
+        "p95": 16652800,
+        "p99": 16652800
+      },
+      "sampled_poll_ns": {
+        "n": 1140,
+        "p50": 13900,
+        "p95": 34600,
+        "p99": 73600
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999657400,
+        "p95": 10001128300,
+        "p99": 10001128300
+      },
+      "mean_loops_per_second": 634.4615329475016,
+      "probe_event_counts": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 30,
+        "probe_received_integrity_verified": 30,
+        "probe_rejected_time_untrusted_or_outside_validity": 2
+      },
+      "object_done_per_second": 0.7110905305709552,
+      "observations": [
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "connection_failures": 0,
+          "peer_discovery_rpc": true,
+          "native_delivery": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [],
+      "resource_window_seconds": [
+        10,
+        45
+      ],
+      "mean_cpu_cores": 0.06932959082564542,
+      "peak_rss_bytes_by_node": [
+        90308608,
+        90632192,
+        91471872,
+        90918912
+      ],
+      "context_switch_deltas_by_node": [
+        127046,
+        126389,
+        125406,
+        124779
+      ],
+      "peak_thread_counts_by_node": [
+        32,
+        32,
+        32,
+        32
+      ]
+    }
+  ],
+  "median_run_ratios": {
+    "query_ns_p95": 1.1785428810431133,
+    "sampled_poll_ns_p95": 1.0289634146341464,
+    "query_ns_p50": 1.3313073429451032,
+    "query_ns_p99": 1.1785428810431133,
+    "loop_throughput": 1.0021561145607776
+  },
+  "qualification_rejection_reasons": [
+    "additional P50 review: query median regression >=20%; not accepted as generally low impact"
+  ],
+  "low_interference_qualification_passed": false,
+  "root_cause_found": false,
+  "production_fix": false,
+  "limitations": [
+    "ABBA has two runs per variant, not a statistical guarantee",
+    "loopback fresh test chain; original packets and scheduling unavailable",
+    "source probes do not capture std Formatter/Writer entry registers",
+    "only pre-registered owner threads have TLS rings; lost counters cover observed unregistered events",
+    "no scheduler trace; sampled process context switches are not event-order proof",
+    "overwrites deliberately retain only latest events; no deterministic replay"
+  ],
+  "debugger_disable_debug_heap": true,
+  "p95_only_gate_passed": true,
+  "lifecycle_events_retained_at_end": false,
+  "failure_evidence_ready": false,
+  "evidence_gaps": [
+    "retained suffix is dominated by formatting; no retained lifecycle history in this run",
+    "std Formatter/Writer entry registers not instrumented",
+    "actual Carrier activity and sustained original 2048-record eviction not exercised",
+    "original packet history, scheduler interleaving, production progress-file publication and multi-hour conditions not reproduced"
+  ]
+}

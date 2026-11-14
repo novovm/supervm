@@ -1,0 +1,29 @@
+{
+  "utc": "2026-11-14T06:02:54.635169+00:00",
+  "ast_json_and_links": "passed",
+  "record_module_matches_build": true,
+  "ordered_patch_chain_checked": [
+    "crates/novovm-network/Cargo.toml",
+    "crates/novovm-network/src/transport.rs",
+    "crates/novovm-network/src/novorudp/fragments.rs",
+    "crates/novovm-node/src/native_pipeline/consensus/native.rs",
+    "crates/novovm-node/src/native_pipeline/profile.rs",
+    "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/probe.rs"
+  ],
+  "original_capture_script_sha256": "6919916d648cd758fee281510ea08680f2a1f4604c844efc3a2f2230373a9890",
+  "collector_check_exit": 0,
+  "collector_check": "zero allocations after priming; 65543 events; retained65536 overwrite7; separate threads; unregistered counter",
+  "collector_log_sha256": "507868372f9b2bee755a7986f22beb90c0da06a5b4a22fca76e7f088c149f46d",
+  "remaining_recorded_debugger_processes": [],
+  "file_hashes": {
+    "analyze.py": "e50d2a2c55402240fd074844745c2d25ba6a772f3e732b89eb4e94921af3b61f",
+    "compare.py": "8f6eefe090002d39793b4bcab3822cc1840b9a99b52777f6894d68225ce01a7e",
+    "harness-body.rs": "8b0e78da77096ee171620ceb282deec786a7be2100b80e39b8221a9b40011fc2",
+    "lowtrace.rs": "88ae1e3d1cd5d536fb79935ef3752c63107e0fc5ad7bc0a08f4cfccc63462416",
+    "manifest.py": "c40103efcba400c60a22d1e90c72235adae7579e99e82fe43bbf8e6f58ccebed",
+    "prepare.py": "5b36555a53e862c24aa28632b0658416a9a30315a971b18b8d4a54f8790354c6",
+    "recorder_check.rs": "74719681d1583207508875ea2f3359e7164bc4c5b8fa4717001597c383ddb1a0"
+  },
+  "generated_harness_sha256": "df352ff9eba7d147f07582b50cfe4209316a5df3c876027341468e67142a56f2",
+  "final_cargo_sha256": "e1c104b9368a480f3ae6b66ce78e32be56925dcc354cd93e69ee794092899adc"
+}
