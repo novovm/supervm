@@ -1,0 +1,18 @@
+{
+  "qualified": true,
+  "dump_name": "novovm-wer-probe-C-20261114.exe.38868.dmp",
+  "bytes": 11070930,
+  "sha256": "d1932bda9e48870e0d89f0b38d460ba412b555ddf249ef5a55e353d7cf54afb0",
+  "flags": "0x221826",
+  "memory64_ranges": 57,
+  "thread_count": 2,
+  "all_listed_contexts_in_file": true,
+  "expected_threads_present": true,
+  "heap_pattern_bytes_verified": 65536,
+  "probe_code_bytes_verified": 32,
+  "probe_code_page_captured": true,
+  "stable_two_hashes": true,
+  "exception_code": "0xc0000005",
+  "method": "LocalService isolated probe; intentional unhandled RaiseException; no debugger or dump writer",
+  "novovm_failure_captured": false
+}
