@@ -1,6 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14：同次RBP动态采集尚未就绪，不重跑旧隔离样例
+## CURRENT 2026-11-15：C已实现并验证同次调用采集，仍未获得原故障首次错位
+
+C独立完成MASM调用前后RBP/RSP记录、线程/调用实例/递归关联、SEH独立标记与二进制
+校验器。阳性对照确实定位到测试callee的xor rbp指令，不能当作NOVOVM故障。
+新建私有堆真实RtlReAllocateHeap测试：批次均值P50单线程+33.30%、四线程+17.35%；
+仍不具备原故障低干扰资格，未接原节点。原故障的内部cookie fast-fail也可能不返回，
+不能靠外层post-call记录定位首次写入。已保留并修正本工具首轮导出空记录问题。
+详情及原始公开输出见[C-rbp-call-capture-20261115](C-rbp-call-capture-20261115/README.md)。
+生产代码/原库/身份/Full Dump未动，不重启节点、不恢复双中继，无猜测性修复。
+
+## PRIOR 2026-11-14：同次RBP动态采集尚未就绪，不重跑旧隔离样例
 
 已核对原四进程harness：它是重新编译的插桩EXE、fresh loopback配置，不能等同原a254；
 其161秒查询的断点方法已有不合格证据，本轮没有重跑。活动调用采集须按线程创建标识、

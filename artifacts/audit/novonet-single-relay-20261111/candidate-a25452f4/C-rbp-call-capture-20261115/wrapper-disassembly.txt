@@ -1,0 +1,59 @@
+
+target/c-rbp-call-capture-20261115-lifecycle2/capture.obj:	file format coff-x86-64
+
+Disassembly of section .text$mn:
+
+0000000000000000 <CallCapture>:
+       0: 55                           	pushq	%rbp
+       1: 48 83 ec 40                  	subq	$0x40, %rsp
+       5: 48 89 4c 24 20               	movq	%rcx, 0x20(%rsp)
+       a: 48 89 29                     	movq	%rbp, (%rcx)
+       d: 48 8d 44 24 48               	leaq	0x48(%rsp), %rax
+      12: 48 89 41 08                  	movq	%rax, 0x8(%rcx)
+      16: 48 8b 44 24 48               	movq	0x48(%rsp), %rax
+      1b: 48 89 41 10                  	movq	%rax, 0x10(%rcx)
+      1f: 48 89 69 18                  	movq	%rbp, 0x18(%rcx)
+      23: 48 89 61 20                  	movq	%rsp, 0x20(%rcx)
+      27: 48 c7 41 40 01 00 00 00      	movq	$0x1, 0x40(%rcx)
+      2f: 48 89 51 48                  	movq	%rdx, 0x48(%rcx)
+      33: 48 8b c2                     	movq	%rdx, %rax
+      36: 4d 8b d0                     	movq	%r8, %r10
+      39: 49 8b 0a                     	movq	(%r10), %rcx
+      3c: 49 8b 52 08                  	movq	0x8(%r10), %rdx
+      40: 4d 8b 42 10                  	movq	0x10(%r10), %r8
+      44: 4d 8b 4a 18                  	movq	0x18(%r10), %r9
+      48: ff d0                        	callq	*%rax
+
+000000000000004a <CaptureReturn>:
+      4a: 4c 8b 54 24 20               	movq	0x20(%rsp), %r10
+      4f: 49 89 6a 28                  	movq	%rbp, 0x28(%r10)
+      53: 49 89 62 30                  	movq	%rsp, 0x30(%r10)
+      57: 4c 8d 1d 00 00 00 00         	leaq	(%rip), %r11            # 0x5e <CaptureReturn+0x14>
+      5e: 4d 89 5a 38                  	movq	%r11, 0x38(%r10)
+      62: 49 c7 42 40 02 00 00 00      	movq	$0x2, 0x40(%r10)
+      6a: 48 83 c4 40                  	addq	$0x40, %rsp
+      6e: 5d                           	popq	%rbp
+      6f: c3                           	retq
+
+0000000000000070 <LegalUse>:
+      70: 55                           	pushq	%rbp
+      71: 48 89 29                     	movq	%rbp, (%rcx)
+      74: 48 c7 c5 78 56 34 12         	movq	$0x12345678, %rbp       # imm = 0x12345678
+      7b: 48 89 69 08                  	movq	%rbp, 0x8(%rcx)
+      7f: 48 8b 04 24                  	movq	(%rsp), %rax
+      83: 48 89 41 10                  	movq	%rax, 0x10(%rcx)
+      87: b8 01 00 00 00               	movl	$0x1, %eax
+      8c: 5d                           	popq	%rbp
+      8d: c3                           	retq
+
+000000000000008e <BadUse>:
+      8e: 48 89 29                     	movq	%rbp, (%rcx)
+      91: 48 8d 05 00 00 00 00         	leaq	(%rip), %rax            # 0x98 <BadUse+0xa>
+      98: 48 89 41 18                  	movq	%rax, 0x18(%rcx)
+
+000000000000009c <BadWrite>:
+      9c: 48 81 f5 00 40 00 00         	xorq	$0x4000, %rbp           # imm = 0x4000
+      a3: 48 89 69 08                  	movq	%rbp, 0x8(%rcx)
+      a7: 48 89 69 10                  	movq	%rbp, 0x10(%rcx)
+      ab: b8 01 00 00 00               	movl	$0x1, %eax
+      b0: c3                           	retq

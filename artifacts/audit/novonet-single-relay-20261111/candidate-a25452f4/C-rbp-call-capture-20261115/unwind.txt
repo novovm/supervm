@@ -1,0 +1,42 @@
+
+File: target/c-rbp-call-capture-20261115-lifecycle2/capture.obj
+Format: COFF-x86-64
+Arch: x86_64
+AddressSize: 64bit
+UnwindInformation [
+  RuntimeFunction {
+    StartAddress: CallCapture (0x0)
+    EndAddress: CallCapture +0x70 (0x4)
+    UnwindInfoAddress: $xdatasym (0x8)
+    UnwindInfo {
+      Version: 1
+      Flags [ (0x0)
+      ]
+      PrologSize: 5
+      FrameRegister: -
+      FrameOffset: -
+      UnwindCodeCount: 2
+      UnwindCodes [
+        0x05: ALLOC_SMALL size=64
+        0x01: PUSH_NONVOL reg=RBP
+      ]
+    }
+  }
+  RuntimeFunction {
+    StartAddress: LegalUse (0xC)
+    EndAddress: LegalUse +0x1E (0x10)
+    UnwindInfoAddress: $xdatasym +0x8 (0x14)
+    UnwindInfo {
+      Version: 1
+      Flags [ (0x0)
+      ]
+      PrologSize: 1
+      FrameRegister: -
+      FrameOffset: -
+      UnwindCodeCount: 1
+      UnwindCodes [
+        0x01: PUSH_NONVOL reg=RBP
+      ]
+    }
+  }
+]

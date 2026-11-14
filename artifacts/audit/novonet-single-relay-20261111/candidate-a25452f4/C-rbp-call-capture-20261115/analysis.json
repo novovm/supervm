@@ -1,0 +1,115 @@
+{
+  "schema": 1,
+  "original_fault_reproduced": false,
+  "first_original_rbp_corruption_found": false,
+  "controlled_fixture": {
+    "instruction_rva": "0x33ac",
+    "bytes": "4881f500400000",
+    "instruction": "xor rbp, 0x4000",
+    "scope": "deliberate isolated ABI violation only",
+    "matched_call_records": 4,
+    "unwind_context_gap": true,
+    "negative_checker_cases_rejected": [
+      "changed_rsp",
+      "reused_sequence",
+      "mixed_thread",
+      "unwind_as_return"
+    ]
+  },
+  "concurrent_lifecycle": {
+    "threads": 4,
+    "records": 2800,
+    "reused_stack_addresses_with_distinct_sequences": 2772
+  },
+  "actual_system_heap": {
+    "single_thread_last_batch_checked": 4096,
+    "concurrent_last_batch_checked": 16384,
+    "rbp_return_mismatches": 0,
+    "scope": "new private heap; not NOVOVM traffic or original invocation"
+  },
+  "single_thread": {
+    "baseline": {
+      "batches": 60,
+      "batch_average_ns_per_operation_p50": 42.96875,
+      "batch_average_ns_per_operation_p95": 50.0732421875,
+      "batch_average_ns_per_operation_p99": 50.8544921875,
+      "total_operations": 245760,
+      "aggregate_operations_per_second": 23711479.4589275,
+      "process_cpu_seconds": 0.015625
+    },
+    "capture": {
+      "batches": 60,
+      "batch_average_ns_per_operation_p50": 57.275390625,
+      "batch_average_ns_per_operation_p95": 68.212890625,
+      "batch_average_ns_per_operation_p99": 69.1650390625,
+      "total_operations": 245760,
+      "aggregate_operations_per_second": 17045478.19030511,
+      "process_cpu_seconds": 0.015625
+    },
+    "delta": {
+      "p50_percent": 33.29545454545455,
+      "p50_absolute_ns": 14.306640625,
+      "p95_percent": 36.226231106777185,
+      "p95_absolute_ns": 18.1396484375,
+      "p99_percent": 36.00576092174747,
+      "p99_absolute_ns": 18.310546875
+    },
+    "statistics_scope": "Percentiles of batch averages, NOT individual-call tail latencies; no production timing qualification"
+  },
+  "shared_heap_four_threads": {
+    "baseline": {
+      "batches": 120,
+      "batch_average_ns_per_operation_p50": 253.4027099609375,
+      "batch_average_ns_per_operation_p95": 278.662109375,
+      "batch_average_ns_per_operation_p99": 281.35986328125,
+      "total_operations": 1966080,
+      "aggregate_operations_per_second": 3987467.7729986,
+      "process_cpu_seconds": 1.859375
+    },
+    "capture": {
+      "batches": 120,
+      "batch_average_ns_per_operation_p50": 297.357177734375,
+      "batch_average_ns_per_operation_p95": 320.99609375,
+      "batch_average_ns_per_operation_p99": 356.73828125,
+      "total_operations": 1966080,
+      "aggregate_operations_per_second": 3333645.8852428077,
+      "process_cpu_seconds": 2.21875
+    },
+    "delta": {
+      "p50_percent": 17.34569759739868,
+      "p50_absolute_ns": 43.9544677734375,
+      "p95_percent": 15.191869633783073,
+      "p95_absolute_ns": 42.333984375,
+      "p99_percent": 26.79075014100394,
+      "p99_absolute_ns": 75.37841796875
+    },
+    "statistics_scope": "Percentiles of batch averages, NOT individual-call tail latencies; no production timing qualification"
+  },
+  "limits": [
+    "RSP destruction may prevent post-call collection",
+    "Unknown nonlocal restoration has no complete history",
+    "Violation returning normally is bracketed to a call, not its first instruction",
+    "Original internal cookie fast-fail may occur before wrapper return",
+    "Wrapper adds a frame and restores saved RBP after recording; isolated diagnostic only",
+    "No hooking or patching of original EXE, DLL or processes"
+  ],
+  "input_hashes": {
+    "c-rbp-call-capture-20261115-lifecycle2\\execution.json": "663d36d57c7688a9de164201b7b011351968ae121a009e665bad7358007d2882",
+    "c-rbp-call-capture-20261115-lifecycle2\\fixture-records.bin": "7bef4a6d5ae51cceb0e80ef54571cfa8093ff0cef04542edee6c2924c92b44bb",
+    "c-rbp-call-capture-20261115-lifecycle2\\fixture.json": "19e4c4c580e61c6bc8078e42a9bfe542dab4147a725e40a16421797350b24829",
+    "c-rbp-call-capture-20261115-lifecycle2\\thread-0.bin": "c5fbfd2b744df80e6e6fb50913869d58a92f8f5a40526a67aaed82f07099d222",
+    "c-rbp-call-capture-20261115-lifecycle2\\thread-1.bin": "b89ae0fecb44315b026d557ef970200f3144a95f744485fa74929762d1337039",
+    "c-rbp-call-capture-20261115-lifecycle2\\thread-2.bin": "fd0fbc1fe93ee65b3671ddce27484ee9287821ea49a791a74721280e07292e7b",
+    "c-rbp-call-capture-20261115-lifecycle2\\thread-3.bin": "dc2fc1b24e1776f772b1e9e257bb01b9c9a497e80734ca1f4c049735ab34ff22",
+    "c-rbp-call-capture-20261115-single2\\batches.csv": "11e99e6d98e47bbaefbcc4c78352a3ec1c5ebc6d0d4fdfdc3f8c65142848b9b7",
+    "c-rbp-call-capture-20261115-single2\\execution.json": "a10a1cc7eb94e9132fcb8bdd57f6f32b9e3e1f96e267436a7f1339de40fcff25",
+    "c-rbp-call-capture-20261115-single2\\heap-last-batch.bin": "c5e86d2d58c68b607a49c92b6e3faf21c68d72e53d900daaa0427330df608560",
+    "c-rbp-call-capture-20261115-concurrent2\\analysis.json": "3e43a1048170ab58b906cca39e851b3bb3404cdca15e32b406554eb33d715121",
+    "c-rbp-call-capture-20261115-concurrent2\\concurrent-thread-0.bin": "ee75983317d514305cd6bb720bb8e6fc6a681cc2c50e18bc6f0ac33b453cf4bc",
+    "c-rbp-call-capture-20261115-concurrent2\\concurrent-thread-1.bin": "9844742328ad96195f26992136581db2c5a81d847b5b9ebaeb1d4a8c10aa337d",
+    "c-rbp-call-capture-20261115-concurrent2\\concurrent-thread-2.bin": "49a066c38ecfa98a3925e5b0af409b717b04d7829aa2715d91f766072feedd29",
+    "c-rbp-call-capture-20261115-concurrent2\\concurrent-thread-3.bin": "f49d6ee10f373be3e5ee0a24c335e22733cb70459bd776568dd0229348e2006b",
+    "c-rbp-call-capture-20261115-concurrent2\\concurrent.csv": "ac41ba43552529313a34d6e58e0da44e9fc432cee975f0dcc6d799381df37b6b",
+    "c-rbp-call-capture-20261115-concurrent2\\execution.json": "5f5b52092366a3cfdbec4d837f9b674312d6513dd7fb2a90a9c3600272ef4825"
+  }
+}

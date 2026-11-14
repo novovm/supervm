@@ -1,0 +1,16 @@
+{
+  "first_runs": {
+    "run1": {
+      "actual_exit": 0,
+      "heap_last_batch_records": 0
+    },
+    "concurrent1": {
+      "actual_exit": 0,
+      "heap_last_batch_records_each_thread": 0
+    }
+  },
+  "failure": "Last baseline batch cleared the retained capture buffer before export; do not treat empty files as complete coverage",
+  "correction": "Export last captured batch outside timing, before baseline reset; rerun affected performance collection into new dirs",
+  "lifecycle_fixture_review": "Moved restoration witness before contiguous pop/ret epilogue; final lifecycle validation uses new build; not a production fix",
+  "original_evidence_overwritten": false
+}

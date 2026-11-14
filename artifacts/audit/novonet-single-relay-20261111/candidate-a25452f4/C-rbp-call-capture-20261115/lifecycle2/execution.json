@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "start_utc": "2026-11-14T19:08:55.0584333Z",
+  "end_utc": "2026-11-14T19:08:55.1388630Z",
+  "pid": 35132,
+  "build_exit": 0,
+  "exit_code": 0,
+  "timed_out": false,
+  "mode": "Lifecycle",
+  "scope": "New standalone caller/callee and private heap only; no NOVOVM process or original data",
+  "files": [
+    {
+      "sha256": "d5bd99c9450311cf1f4ba02ee70f46de9bbe295d0626c7799aa396658cd1ef15",
+      "name": "qualify.exe",
+      "bytes": 518656
+    },
+    {
+      "sha256": "122e5a2a132f63128ac3cda338cc1e1559b499bd65f57cd99492640e64650618",
+      "name": "qualify.pdb",
+      "bytes": 6295552
+    },
+    {
+      "sha256": "fd3fa8025aea238fbfbc147b7f53c355c5ae3bc89375e941f20390fa2e6a09da",
+      "name": "Run-Qualification.ps1",
+      "bytes": 2926
+    },
+    {
+      "sha256": "6b053990bb914dd051e8ad6f234bcacf1435e6855e6255feb05210f169eed190",
+      "name": "qualify.c",
+      "bytes": 12661
+    },
+    {
+      "sha256": "76ea4ab65cf3b2d7e3b93e9022632527d8f4b1c8896d9b562934b44471181fe2",
+      "name": "capture.asm",
+      "bytes": 1786
+    },
+    {
+      "sha256": "a0f81bf5c610c0ff0a550adc020a58446f214790c748057bb575042e972e6a34",
+      "name": "ntdll.dll",
+      "bytes": 2575008
+    }
+  ]
+}

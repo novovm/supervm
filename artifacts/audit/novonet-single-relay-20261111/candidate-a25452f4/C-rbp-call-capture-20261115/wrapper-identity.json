@@ -1,0 +1,21 @@
+{
+  "same_wrapper_in_all_three_runs": true,
+  "scope": "COFF CallCapture bytes, excludes relocations/fixture code and does not assert whole EXE equivalence",
+  "runs": [
+    {
+      "run": "c-rbp-call-capture-20261115-single2",
+      "wrapper_bytes": 112,
+      "wrapper_object_code_sha256": "e1602e6a95bb1478914a329c32cf714925d1d77f6c18cbea50ff0cda8264931d"
+    },
+    {
+      "run": "c-rbp-call-capture-20261115-concurrent2",
+      "wrapper_bytes": 112,
+      "wrapper_object_code_sha256": "e1602e6a95bb1478914a329c32cf714925d1d77f6c18cbea50ff0cda8264931d"
+    },
+    {
+      "run": "c-rbp-call-capture-20261115-lifecycle2",
+      "wrapper_bytes": 112,
+      "wrapper_object_code_sha256": "e1602e6a95bb1478914a329c32cf714925d1d77f6c18cbea50ff0cda8264931d"
+    }
+  ]
+}
