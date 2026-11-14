@@ -2,6 +2,11 @@
 Never opens original state/keys. No replay claim, artificial callee, TTD or rebuild.
 OFF/ON/OFF phases occur within the same process lifecycle; no automatic retry.
 """
+raise SystemExit(
+    "RETIRED: sustained CDB callbacks failed the interference gate and the "
+    "NtContinue stop guard conflicted with shutdown. No target will be started."
+)
+
 import csv, ctypes, hashlib, io, json, os, pathlib, re, shutil, socket
 import statistics, struct, subprocess, sys, time
 from ctypes import wintypes as W

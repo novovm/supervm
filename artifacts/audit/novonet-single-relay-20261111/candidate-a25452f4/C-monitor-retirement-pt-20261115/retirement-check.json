@@ -1,0 +1,26 @@
+{
+  "collectedUtc": "2026-11-14T20:05:30.021084+00:00",
+  "entries": [
+    {
+      "path": "scripts/diagnostics/rbp-original-instruction-run.py",
+      "sha256": "0212c081b4a9406f7c9f3bfb5178d885aed4c2bb2588cbcd0739a35c747a5083",
+      "syntax": "passed",
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "RETIRED: high-frequency CDB capture is not qualified for natural-fault replay. Preserve the archived run; do not restart it or the original node.\n"
+    },
+    {
+      "path": "scripts/diagnostics/rbp-sustained-isolated-run.py",
+      "sha256": "cfac992555b4416e41b1a7ff0e4fc2b0e43da4c5bd618a345bf5b88f9af231cd",
+      "syntax": "passed",
+      "exitCode": 1,
+      "stdout": "",
+      "stderr": "RETIRED: sustained CDB callbacks failed the interference gate and the NtContinue stop guard conflicted with shutdown. No target will be started.\n"
+    }
+  ],
+  "archivedExecutedScript": {
+    "path": "target\\c-original-rbp-sustained-20261115-run1\\executed-script.py",
+    "sha256": "eb1e96658d28ce4ca9b88120e9c302bb24680449e235ae676efdb2a965020920"
+  },
+  "productionTestsRun": false
+}

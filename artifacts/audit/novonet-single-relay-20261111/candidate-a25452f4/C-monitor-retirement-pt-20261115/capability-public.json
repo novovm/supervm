@@ -1,0 +1,46 @@
+{
+  "collectedUtc": "2026-11-14T20:03:33.3139992Z",
+  "cpu": {
+    "Name": "Intel(R) Core(TM) i9-14900HX",
+    "Manufacturer": "GenuineIntel",
+    "NumberOfCores": 24,
+    "NumberOfLogicalProcessors": 32
+  },
+  "os": {
+    "Caption": "Microsoft Windows 11 家庭版 中文版",
+    "Version": "10.0.26300",
+    "BuildNumber": "26300"
+  },
+  "hypervisorPresent": true,
+  "cpuidAvailable": true,
+  "cpuidLeaf7Subleaf0": [
+    "EAX=00000002",
+    "EBX=239c27a9",
+    "ECX=184007a4",
+    "EDX=bc18c410"
+  ],
+  "processorTraceAdvertised": true,
+  "cpuidLeaf14Subleaf0": [
+    "EAX=00000001",
+    "EBX=0000005f",
+    "ECX=00000007",
+    "EDX=00000000"
+  ],
+  "files": [
+    {
+      "path": "C:\\Windows\\System32\\wpr.exe",
+      "bytes": 401408,
+      "version": "10.0.26100.9818 (WinBuild.160101.0800)",
+      "sha256": "0c294498215b5c607305c2021d1ebf9bacf8621db841dc6e3118b80d601d2a7a"
+    },
+    {
+      "path": "C:\\Windows\\System32\\drivers\\ipt.sys",
+      "bytes": 114064,
+      "version": "10.0.26100.9818 (WinBuild.160101.0800)",
+      "sha256": "d748e14c0dd8c9c3da19649bc433c2a6af3273980e30ead2c2a7f80d5d9c440d"
+    }
+  ],
+  "nodeAndDebuggerProcesses": [],
+  "traceStarted": false,
+  "nodeStarted": false
+}

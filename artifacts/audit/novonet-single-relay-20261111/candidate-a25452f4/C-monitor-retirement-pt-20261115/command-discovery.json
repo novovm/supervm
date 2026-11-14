@@ -1,0 +1,34 @@
+[
+  {
+    "name": "wpr",
+    "commandPaths": [
+      "C:\\Windows\\system32\\wpr.exe"
+    ]
+  },
+  {
+    "name": "wpa",
+    "commandPaths": []
+  },
+  {
+    "name": "xperf",
+    "commandPaths": []
+  },
+  {
+    "name": "vtune",
+    "commandPaths": []
+  },
+  {
+    "name": "amplxe-cl",
+    "commandPaths": []
+  },
+  {
+    "name": "ptxed",
+    "commandPaths": []
+  },
+  {
+    "name": "ptdump",
+    "commandPaths": [
+      "D:\\Anaconda3\\Scripts\\ptdump.exe"
+    ]
+  }
+]

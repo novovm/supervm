@@ -1,0 +1,67 @@
+[
+  {
+    "name": "C-PT-parser-only.wprp",
+    "bytes": 1349,
+    "sha256": "d270007efa293d3949267a30abbc04d1080eac676c2b7ce1774b6073b03b353e"
+  },
+  {
+    "name": "capability-public.json",
+    "bytes": 1259,
+    "sha256": "9dee5fdd2970fd13dbc6c8a5c6a096fc15cf4ca2e950d18d837dbe766d2d368f"
+  },
+  {
+    "name": "command-discovery.json",
+    "bytes": 501,
+    "sha256": "3c02d458d8630ae6a5814b2378ad40c2f7c1e2cfbbc5395b115ce462c8f022e5"
+  },
+  {
+    "name": "NTCONTINUE-AUDIT.md",
+    "bytes": 3090,
+    "sha256": "90084c20b394ba1f6ab3c173bd6f8a6ed3b34aaf6a2d302bccd36ce2362db48a"
+  },
+  {
+    "name": "profiledetails-output.txt",
+    "bytes": 411,
+    "sha256": "57f9b405bcc18dcd377f4bb87d4dd63844c3f7461c2a086cffcbad488889fa83"
+  },
+  {
+    "name": "read-only-command-exits.json",
+    "bytes": 85,
+    "sha256": "ae6159c0412401e75de7b816048939107bc644ec6a88ce33fc3d9a5481281137"
+  },
+  {
+    "name": "README.md",
+    "bytes": 6963,
+    "sha256": "314afd041eecc3f4fd757654be0be6089c3c150bfb41d8b64830270d66e158a6"
+  },
+  {
+    "name": "result.json",
+    "bytes": 462,
+    "sha256": "9f9b8587d4035b9a0a0e02d51c02ec2f7920f2dda852e01e5b2c891ded132a76"
+  },
+  {
+    "name": "retirement-check.json",
+    "bytes": 1126,
+    "sha256": "47cd9301289c1314a128c833eccd335bd5a44c400f81065f0345288ce6973c1f"
+  },
+  {
+    "name": "system-code-verified.txt",
+    "bytes": 1858,
+    "sha256": "3e51725642673bed09bff950cee4dd9858c213383923db1f7b94beccf43ede0e"
+  },
+  {
+    "name": "wpr-pmcsources.txt",
+    "bytes": 1376,
+    "sha256": "3bc147788fb64c0c41dd649c6952da542334ab5c6027968928f4ec218d53c7df"
+  },
+  {
+    "name": "wpr-profiles.txt",
+    "bytes": 1761,
+    "sha256": "bdb58b6786baa46dc89902e17946d1a6a2467704fc2efabd77670d34b9417aaf"
+  },
+  {
+    "name": "wpr-status-after.txt",
+    "bytes": 162,
+    "sha256": "a77ba39043544bbf814bea3cb05b5ac87b89a8b56894548ab6ed3a07cf4b9ca3"
+  }
+]

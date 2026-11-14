@@ -3,6 +3,11 @@ No production database, identity, service, registry, or binary is modified.
 Uses stock CDB hardware execution breakpoints; no recorder/sample program.
 Not an exhaustive instruction trace and not a promise of low interference.
 """
+raise SystemExit(
+    "RETIRED: high-frequency CDB capture is not qualified for natural-fault replay. "
+    "Preserve the archived run; do not restart it or the original node."
+)
+
 import csv, hashlib, io, json, os, pathlib, socket, struct, subprocess, sys, time
 from datetime import datetime, timezone
 

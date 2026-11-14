@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "purpose": "parse_only_no_start",
+  "profile": "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-schema-feasibility-20261115-200233\\C-PT-parser-only.wprp",
+  "profileSha256": "d270007efa293d3949267a30abbc04d1080eac676c2b7ce1774b6073b03b353e",
+  "startUtc": "2026-11-14T20:02:33.5791078Z",
+  "endUtc": "2026-11-14T20:02:33.6787769Z",
+  "profileDetailsExitCode": 0,
+  "statusExitCode": 0,
+  "traceStarted": false,
+  "nodeStarted": false
+}

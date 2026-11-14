@@ -1,0 +1,23 @@
+Last Branch Record tracing supported with stacksize 32.
+Maximum selectable profile sources: 9.
+
+Id  Name                             Interval  Min      Max
+--------------------------------------------------------------
+  0 Timer                               10000  1221    1000000
+  2 TotalIssues                         65536  4096 2147483647
+  6 BranchInstructions                  65536  4096 2147483647
+ 10 CacheMisses                         65536  4096 2147483647
+ 11 BranchMispredictions                65536  4096 2147483647
+ 19 TotalCycles                         65536  4096 2147483647
+ 25 UnhaltedCoreCycles                  65536  4096 2147483647
+ 26 InstructionRetired                  65536  4096 2147483647
+ 27 UnhaltedReferenceCycles             65536  4096 2147483647
+ 28 LLCReference                        65536  4096 2147483647
+ 29 LLCMisses                           65536  4096 2147483647
+ 30 BranchInstructionRetired            65536  4096 2147483647
+ 31 BranchMispredictsRetired            65536  4096 2147483647
+ 32 LbrInserts                          65536  4096 2147483647
+ 33 InstructionsRetiredFixed            65536  4096 2147483647
+ 34 UnhaltedCoreCyclesFixed             65536  4096 2147483647
+ 35 UnhaltedReferenceCyclesFixed        65536  4096 2147483647
+ 36 TimerFixed                          10000  1221    1000000

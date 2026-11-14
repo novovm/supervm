@@ -1,0 +1,18 @@
+
+Microsoft Windows Performance Recorder Version 10.0.26100 (CoreSystem)
+Copyright (c) 2024 Microsoft Corporation. All rights reserved.
+
+Profile			: C_PT_Parser.Light.Memory
+
+
+Collector Name		: WPR_initiated_WprApp_WPR System Collector
+Buffer Size (KB)	: 64
+Number of Buffers	: 64
+Providers
+System Keywords
+	CSwitch
+	Loader
+	ProcessThread
+	SampledProfile
+Processor Trace Events
+	SampledProfile

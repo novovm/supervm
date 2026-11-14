@@ -1,0 +1,33 @@
+OFFLINE STATIC SYSTEM-CODE EXCERPT - VERIFIED INSTRUCTION BOUNDARIES
+Source: existing PID34452 full dump; NOT the monitored PID29764 stop context.
+No live attach, target launch, database access, or memory-content dump was performed.
+CDB exit: 0
+Commands:
+.reload /f ntdll.dll
+u 00007ffce3288f03 L1
+u 00007ffce3288f42 L7
+u 00007ffce3289029 L4
+u ntdll!LdrInitializeThunk L9
+q
+Selected system instruction output:
+00007ffc`e3288f03 488d1dd6000000  lea     rbx,[ntdll!DbgUiRemoteBreakin (00007ffc`e3288fe0)]
+00007ffc`e3288f42 4889442448      mov     qword ptr [rsp+48h],rax
+00007ffc`e3288f47 488bce          mov     rcx,rsi
+00007ffc`e3288f4a 4c89742440      mov     qword ptr [rsp+40h],r14
+00007ffc`e3288f4f 48895c2438      mov     qword ptr [rsp+38h],rbx
+00007ffc`e3288f54 48c744242800400000 mov   qword ptr [rsp+28h],4000h
+00007ffc`e3288f5d 4c89742420      mov     qword ptr [rsp+20h],r14
+00007ffc`e3288f62 e859befaff      call    ntdll!RtlpCreateUserThreadEx (00007ffc`e3234dc0)
+00007ffc`e3289029 e8b2dafeff      call    ntdll!DbgBreakPoint (00007ffc`e3276ae0)
+00007ffc`e328902e eb00            jmp     ntdll!DbgUiRemoteBreakin+0x50 (00007ffc`e3289030)
+00007ffc`e3289030 33c9            xor     ecx,ecx
+00007ffc`e3289032 e8690cf9ff      call    ntdll!RtlExitUserThread (00007ffc`e3219ca0)
+00007ffc`e322ff50 4053            push    rbx
+00007ffc`e322ff52 4883ec20        sub     rsp,20h
+00007ffc`e322ff56 488bd9          mov     rbx,rcx
+00007ffc`e322ff59 e81a000000      call    ntdll!LdrpInitialize (00007ffc`e322ff78)
+00007ffc`e322ff5e b201            mov     dl,1
+00007ffc`e322ff60 488bcb          mov     rcx,rbx
+00007ffc`e322ff63 e8c86c0800      call    ntdll!NtContinue (00007ffc`e32b6c30)
+00007ffc`e322ff68 8bc8            mov     ecx,eax
+00007ffc`e322ff6a e821d4f3ff      call    ntdll!RtlRaiseStatus (00007ffc`e316d390)
