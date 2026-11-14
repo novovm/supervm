@@ -1,0 +1,39 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "exe_pdb": {
+    "c-joint-network-capture.exe": {
+      "bytes": 13050368,
+      "sha256": "271405511e72b78e4026f31506139818e4eba5317e69b3e5ac40df609d2caf73"
+    },
+    "c_joint_network_capture.pdb": {
+      "bytes": 176009216,
+      "sha256": "bc4ac18c05bb19883ea6eeff34e3a17a9553aebbb3b9d5d73cc1504daf1f78bc"
+    }
+  },
+  "pdb_guid": "8c8cc894-306a-474d-a35a-a9bbb9f80058",
+  "pdb_age": 1,
+  "pdb_matches_exe": true,
+  "pdb_stream_count": 595,
+  "rust_toolchain": "1.94.0",
+  "target": "x86_64-pc-windows-msvc",
+  "build_exits": [
+    {
+      "exit_code": 101,
+      "utc": "2026-11-14T02:46:11.683638+00:00"
+    },
+    {
+      "exit_code": 101,
+      "utc": "2026-11-14T02:50:42.771370+00:00"
+    },
+    {
+      "exit_code": 0,
+      "utc": "2026-11-14T02:51:39.979569+00:00"
+    }
+  ],
+  "build_failures": [
+    "network forbid(unsafe_code) rejected no_mangle marker; removed attribute, kept forbid",
+    "new diagnostic binary missing serde_json imports; added imports"
+  ],
+  "build_flags": "--locked --offline --release --target x86_64-pc-windows-msvc --config profile.release.package.novovm-node.debug=2 --config profile.release.package.novovm-network.debug=2 -p novovm-node --bin c-joint-network-capture --features iroh-transport -- -C debuginfo=2 -C strip=none",
+  "new_diagnostic_binary_not_original": true
+}

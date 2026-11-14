@@ -1,0 +1,40 @@
+{
+  "verified_utc": "2026-11-14T03:01:30.475626+00:00",
+  "python_ast": "passed",
+  "json_parse": "passed",
+  "readme_local_links": "passed",
+  "ordered_source_hook_hash_chain": "passed",
+  "new_rust_source_text_matches_built_copy": true,
+  "public_scripts": [
+    {
+      "name": "build_manifest.py",
+      "sha256": "8aa24e1f90fc42f1ee464698233abd68719efa890d3905f71beae036042bd8aa",
+      "bytes": 3439
+    },
+    {
+      "name": "c-joint-network-capture.rs",
+      "sha256": "c7340ac961eddb53f1d44ff769ee3e963f9ac205a393346f4cce8ee164a83ef7",
+      "bytes": 7632
+    },
+    {
+      "name": "capture.py",
+      "sha256": "d89f6f5e61edc5c076a121c44fe52fc21f073eb8d96d4fdbde06a22eda172aea",
+      "bytes": 9479
+    },
+    {
+      "name": "diagnostic_capture.rs",
+      "sha256": "17a9ac8f4913c6e2012807def65a88667a276b3166031c17128d839212a3de9e",
+      "bytes": 2618
+    },
+    {
+      "name": "prepare.py",
+      "sha256": "29cc639bf7158f4e936425e99e6ecc0ff5049598ba742a5983cdd45d6af87973",
+      "bytes": 3098
+    },
+    {
+      "name": "summarize.py",
+      "sha256": "43ffca1f61778f6afb6c20e3d62537b4081850b374e3cc457ff42b1efd1b06f1",
+      "bytes": 7415
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "diagnostic_only": true,
+  "changes": [
+    {
+      "path": "crates/novovm-network/src/lib.rs",
+      "before_sha256": "467480fdac1144c58ecc0088038a94ad81d9617ca86efb8bea82daffdbb9ae6c",
+      "after_sha256": "39eb27b5fc7fc85fc40f3d5e89799f23f29f30dd10db952a133c8676c7cf6dd8"
+    },
+    {
+      "path": "crates/novovm-network/src/transport.rs",
+      "before_sha256": "c53c8f26be2ec70441ba36c9c170e2923244e6486a421758e34b207265142bda",
+      "after_sha256": "c6f8144cdb1371e734acc2a7c87d16327c4c77b80e3d97c96baf33759f7a052e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native.rs",
+      "before_sha256": "40874bfd0fc4bf6127ef13da52db4f430f1e7c5501b026841adc297fa0709cd8",
+      "after_sha256": "5fc60eb746a95900ec05b058ecf457af469cc6faa111191fb54d93550d3cdc07"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/fragments.rs",
+      "before_sha256": "e73e0c77dd3445afe42bc94d60ad1a2aabf6cdc44f334f1ab2bc4f0636ba7ddd",
+      "after_sha256": "f45ecb831fe7c2183b3881e82d3f98b26e4997a0e315f61834ce5210e0a5a9ab"
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/fragments.rs",
+      "before_sha256": "f45ecb831fe7c2183b3881e82d3f98b26e4997a0e315f61834ce5210e0a5a9ab",
+      "after_sha256": "f1dc70b506e47929d4280b42ac169c2c8ee44d70b4347690714b4efcd6c95aa3"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/profile.rs",
+      "before_sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+      "after_sha256": "a28eaa41ba281673f052ace4250313d5d6e99495c1ba38e5d0906c4d67652e6b"
+    }
+  ]
+}

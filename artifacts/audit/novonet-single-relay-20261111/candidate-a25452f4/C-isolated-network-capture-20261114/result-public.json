@@ -1,0 +1,217 @@
+{
+  "generated_utc": "2026-11-14T02:59:08.975385+00:00",
+  "start": {
+    "utc": "2026-11-14T02:52:53.130128+00:00",
+    "binary_sha256": "271405511e72b78e4026f31506139818e4eba5317e69b3e5ac40df609d2caf73",
+    "runtime_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+    "maximum_seconds": 1500,
+    "original_fault_replay": false
+  },
+  "gate": {
+    "debugger_exit_code": 0,
+    "gate_marker_reached": true,
+    "full_memory_flag": true,
+    "dump_bytes": 33047048,
+    "dump_sha256": "1f660569a7fde2e3b3edcc1b9c37edc21fd97a1d6eb39d2a72302634e0770deb",
+    "hash_markers_resolved": true,
+    "gate_is_node_failure": false
+  },
+  "exit": {
+    "end_utc": "2026-11-14T02:55:59.532253+00:00",
+    "elapsed_seconds": 182.15599999998813,
+    "debugger_exit_code": 0,
+    "peer_exit_codes": [
+      0,
+      0,
+      0
+    ],
+    "bound_or_peer_failure": null,
+    "root_cause_fixed": false
+  },
+  "boundaries": {
+    "log_bytes": 21835827,
+    "log_sha256": "c8511a76edf75338180b843b05f448b4a1657cc8ecbac38c0858f66cc63ca815",
+    "rows": 139776,
+    "stage_counts": {
+      "FMT_BEGIN": 23296,
+      "FMT_CALL": 23296,
+      "PAD_ENTRY": 23296,
+      "TAIL_JUMP": 21173,
+      "WRITER_ENTRY": 23296,
+      "COPY_CALL": 23296,
+      "PAD_CALL": 2123
+    },
+    "complete_tail_groups": 21173,
+    "complete_call_groups": 2123,
+    "other_or_partial_groups": 0,
+    "receiver_mismatch_complete_groups": 0,
+    "text_or_length_mismatch_complete_groups": 0,
+    "guard_or_exception_stops": 0,
+    "query_events": [
+      {
+        "tid": "26d0",
+        "query": "1",
+        "event": "QUERY_BEGIN"
+      },
+      {
+        "tid": "26d0",
+        "query": "1",
+        "calls": "5b00",
+        "event": "QUERY_END"
+      }
+    ],
+    "target_exit_events": [
+      "Last event: 6114.5150: Exit process 0:6114, code 0"
+    ],
+    "debugger_error_lines": []
+  },
+  "traces": [
+    {
+      "name": "trace-0-private.bin",
+      "bytes": 737466,
+      "sha256": "15a9b77e08e450fcf4c355b7b5e85ec426f30e973b4911aee26abc284227ade2",
+      "records": 1572,
+      "event_counts": {
+        "1": 1272,
+        "2": 110,
+        "3": 110,
+        "4": 77,
+        "5": 1,
+        "6": 1,
+        "7": 1
+      },
+      "logical_thread_count": 1,
+      "last_elapsed_ns": 179951642800,
+      "observed_live_at_end": 0,
+      "observations": {},
+      "queries": {
+        "1": {
+          "begin_ns": 9930333800,
+          "end_ns": 171029761500
+        }
+      },
+      "phase_event_counts": {
+        "before_first_query": {
+          "1": 813,
+          "2": 55,
+          "3": 55,
+          "4": 35,
+          "5": 1
+        },
+        "during_query": {
+          "6": 1
+        },
+        "after_query": {
+          "1": 459,
+          "2": 55,
+          "4": 42,
+          "3": 55,
+          "7": 1
+        }
+      },
+      "unique_sent_ids": 43,
+      "unique_received_ids": 60
+    },
+    {
+      "name": "trace-1-private.bin",
+      "bytes": 2460731,
+      "sha256": "64bcd669d8af7dfb6a40ce956c5e1ec8e33155efc8c305d93072eddabe72f6bf",
+      "records": 6030,
+      "event_counts": {
+        "2": 956,
+        "1": 3890,
+        "4": 227,
+        "3": 956,
+        "7": 1
+      },
+      "logical_thread_count": 1,
+      "last_elapsed_ns": 182017656600,
+      "observed_live_at_end": 0,
+      "observations": {},
+      "queries": {},
+      "phase_event_counts": {
+        "before_first_query": {
+          "2": 956,
+          "1": 3890,
+          "4": 227,
+          "3": 956,
+          "7": 1
+        }
+      },
+      "unique_sent_ids": 239,
+      "unique_received_ids": 182
+    },
+    {
+      "name": "trace-2-private.bin",
+      "bytes": 3114340,
+      "sha256": "09d5d870ddc31e7c5a8d8dc09d8d52de5f1740497c7480adb6bdf054d5fc9768",
+      "records": 7380,
+      "event_counts": {
+        "1": 5242,
+        "2": 953,
+        "4": 231,
+        "3": 953,
+        "7": 1
+      },
+      "logical_thread_count": 1,
+      "last_elapsed_ns": 182012982300,
+      "observed_live_at_end": 0,
+      "observations": {},
+      "queries": {},
+      "phase_event_counts": {
+        "before_first_query": {
+          "1": 5242,
+          "2": 953,
+          "4": 231,
+          "3": 953,
+          "7": 1
+        }
+      },
+      "unique_sent_ids": 236,
+      "unique_received_ids": 185
+    },
+    {
+      "name": "trace-3-private.bin",
+      "bytes": 2745394,
+      "sha256": "b7b97f9c076413905d36335955439740a310a56194642504c98f8b227984a202",
+      "records": 6621,
+      "event_counts": {
+        "1": 4482,
+        "2": 957,
+        "4": 224,
+        "3": 957,
+        "7": 1
+      },
+      "logical_thread_count": 1,
+      "last_elapsed_ns": 182012863000,
+      "observed_live_at_end": 0,
+      "observations": {},
+      "queries": {},
+      "phase_event_counts": {
+        "before_first_query": {
+          "1": 4482,
+          "2": 957,
+          "4": 224,
+          "3": 957,
+          "7": 1
+        }
+      },
+      "unique_sent_ids": 240,
+      "unique_received_ids": 180
+    }
+  ],
+  "cross_process_observed_sent_and_received_ids": 520,
+  "failure_dump_exists": false,
+  "original_fault_reproduced": false,
+  "first_corrupting_instruction_found": false,
+  "production_code_fixed": false,
+  "double_relay_resumed": false,
+  "limitations": [
+    "fresh loopback test identities and databases; current user, not LocalService",
+    "diagnostic hooks and debugger stops perturb scheduling",
+    "logical trace thread labels are not Windows debugger thread ids",
+    "observed Arc creation/drop is not complete allocation/reference history",
+    "no original packet sequence, NOVONET discovery or real relay workload",
+    "normal records cannot prove original safety or reconstruct past failure"
+  ]
+}
