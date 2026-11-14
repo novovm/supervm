@@ -1,0 +1,902 @@
+{
+  "scope": "Fixed original Git source blobs and line anchors; not runtime or ABI proof",
+  "revisions": {
+    "875": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+    "a254": "a25452f4c49be37cd984e650f2079642e6c273b3"
+  },
+  "collector_sha256": "7784f93e9817a18e3088dcbc28cf60734c88340a0a0f09d6c768dc0b1463f8dd",
+  "files": [
+    {
+      "path": "crates/novovm-node/src/native_pipeline/profile.rs",
+      "versions": {
+        "875": {
+          "git_blob": "92c5cdd727cd7431a4d4327854ec4dfe24309b2a",
+          "sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+          "bytes": 23280,
+          "anchors": {
+            "const CRITICAL_EVENTS:": [
+              {
+                "line": 13,
+                "text": "const CRITICAL_EVENTS: usize = 2048;"
+              }
+            ],
+            "struct CriticalRecord": [
+              {
+                "line": 51,
+                "text": "struct CriticalRecord {"
+              }
+            ],
+            "struct CriticalBuffer": [
+              {
+                "line": 64,
+                "text": "struct CriticalBuffer {"
+              }
+            ],
+            "fn push(": [
+              {
+                "line": 79,
+                "text": "fn push(&mut self, mut record: CriticalRecord) {"
+              }
+            ],
+            "fn push_latest(": [
+              {
+                "line": 89,
+                "text": "fn push_latest(&mut self, record: CriticalRecord) {"
+              }
+            ],
+            "static DELIVERY:": [
+              {
+                "line": 109,
+                "text": "static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());"
+              }
+            ],
+            "fn delivery_event(": [
+              {
+                "line": 180,
+                "text": "pub(crate) fn delivery_event("
+              }
+            ],
+            "fn hash(": [
+              {
+                "line": 276,
+                "text": "fn hash(value: Option<[u8; 32]>) -> Value {"
+              }
+            ],
+            "fn snapshot(": [
+              {
+                "line": 536,
+                "text": "pub(crate) fn snapshot() -> Value {"
+              }
+            ],
+            "DELIVERY.try_lock().ok().map": [
+              {
+                "line": 586,
+                "text": "DELIVERY.try_lock().ok().map(|buffer| json!({"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "92c5cdd727cd7431a4d4327854ec4dfe24309b2a",
+          "sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+          "bytes": 23280,
+          "anchors": {
+            "const CRITICAL_EVENTS:": [
+              {
+                "line": 13,
+                "text": "const CRITICAL_EVENTS: usize = 2048;"
+              }
+            ],
+            "struct CriticalRecord": [
+              {
+                "line": 51,
+                "text": "struct CriticalRecord {"
+              }
+            ],
+            "struct CriticalBuffer": [
+              {
+                "line": 64,
+                "text": "struct CriticalBuffer {"
+              }
+            ],
+            "fn push(": [
+              {
+                "line": 79,
+                "text": "fn push(&mut self, mut record: CriticalRecord) {"
+              }
+            ],
+            "fn push_latest(": [
+              {
+                "line": 89,
+                "text": "fn push_latest(&mut self, record: CriticalRecord) {"
+              }
+            ],
+            "static DELIVERY:": [
+              {
+                "line": 109,
+                "text": "static DELIVERY: std::sync::Mutex<CriticalBuffer> = std::sync::Mutex::new(CriticalBuffer::new());"
+              }
+            ],
+            "fn delivery_event(": [
+              {
+                "line": 180,
+                "text": "pub(crate) fn delivery_event("
+              }
+            ],
+            "fn hash(": [
+              {
+                "line": 276,
+                "text": "fn hash(value: Option<[u8; 32]>) -> Value {"
+              }
+            ],
+            "fn snapshot(": [
+              {
+                "line": 536,
+                "text": "pub(crate) fn snapshot() -> Value {"
+              }
+            ],
+            "DELIVERY.try_lock().ok().map": [
+              {
+                "line": 586,
+                "text": "DELIVERY.try_lock().ok().map(|buffer| json!({"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/diagnostics.rs",
+      "versions": {
+        "875": {
+          "git_blob": "ff917b79bc2ec4b753a547d43668471557ce1010",
+          "sha256": "dffc29ed694899a6d871bff715afba8a8007759acaae6363c4b9d2e7feb81f32",
+          "bytes": 50266,
+          "anchors": {
+            "pub struct NativeTransferEvidenceV1": [
+              {
+                "line": 365,
+                "text": "pub struct NativeTransferEvidenceV1 {"
+              }
+            ],
+            "struct State": [
+              {
+                "line": 602,
+                "text": "struct State {"
+              }
+            ],
+            "impl State": [
+              {
+                "line": 612,
+                "text": "impl State {"
+              }
+            ],
+            "fn expire(": [
+              {
+                "line": 613,
+                "text": "fn expire(&mut self, at: u64) {"
+              }
+            ],
+            "fn record(": [
+              {
+                "line": 81,
+                "text": "pub(crate) fn record(&mut self, bytes: usize) {"
+              },
+              {
+                "line": 131,
+                "text": "fn record(&mut self, event: Traffic, stream: u64, kind: usize, bytes: usize) {"
+              },
+              {
+                "line": 325,
+                "text": "pub fn record(&mut self, reason: NativeRejectReasonV1) {"
+              },
+              {
+                "line": 622,
+                "text": "fn record(&mut self, tag: [u8; 32], at: u64) -> Option<&mut NativeTransferEvidenceV1> {"
+              }
+            ],
+            "fn snapshot_transfer(": [
+              {
+                "line": 1048,
+                "text": "pub fn snapshot_transfer(&self, tag: [u8; 32]) -> Option<NativeTransferEvidenceV1> {"
+              }
+            ],
+            "fn snapshot_at(": [
+              {
+                "line": 1076,
+                "text": "fn snapshot_at(&self, now: Instant) -> Option<NativeEvidenceSnapshotV1> {"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "ff917b79bc2ec4b753a547d43668471557ce1010",
+          "sha256": "dffc29ed694899a6d871bff715afba8a8007759acaae6363c4b9d2e7feb81f32",
+          "bytes": 50266,
+          "anchors": {
+            "pub struct NativeTransferEvidenceV1": [
+              {
+                "line": 365,
+                "text": "pub struct NativeTransferEvidenceV1 {"
+              }
+            ],
+            "struct State": [
+              {
+                "line": 602,
+                "text": "struct State {"
+              }
+            ],
+            "impl State": [
+              {
+                "line": 612,
+                "text": "impl State {"
+              }
+            ],
+            "fn expire(": [
+              {
+                "line": 613,
+                "text": "fn expire(&mut self, at: u64) {"
+              }
+            ],
+            "fn record(": [
+              {
+                "line": 81,
+                "text": "pub(crate) fn record(&mut self, bytes: usize) {"
+              },
+              {
+                "line": 131,
+                "text": "fn record(&mut self, event: Traffic, stream: u64, kind: usize, bytes: usize) {"
+              },
+              {
+                "line": 325,
+                "text": "pub fn record(&mut self, reason: NativeRejectReasonV1) {"
+              },
+              {
+                "line": 622,
+                "text": "fn record(&mut self, tag: [u8; 32], at: u64) -> Option<&mut NativeTransferEvidenceV1> {"
+              }
+            ],
+            "fn snapshot_transfer(": [
+              {
+                "line": 1048,
+                "text": "pub fn snapshot_transfer(&self, tag: [u8; 32]) -> Option<NativeTransferEvidenceV1> {"
+              }
+            ],
+            "fn snapshot_at(": [
+              {
+                "line": 1076,
+                "text": "fn snapshot_at(&self, now: Instant) -> Option<NativeEvidenceSnapshotV1> {"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/fragments.rs",
+      "versions": {
+        "875": {
+          "git_blob": "c7d5d9d21a69ac3f8cc822f2fa3bce9af40dd50e",
+          "sha256": "e73e0c77dd3445afe42bc94d60ad1a2aabf6cdc44f334f1ab2bc4f0636ba7ddd",
+          "bytes": 23344,
+          "anchors": {
+            "pub struct OutgoingMessage": [
+              {
+                "line": 62,
+                "text": "pub struct OutgoingMessage {"
+              }
+            ],
+            "pub fn frame(": [
+              {
+                "line": 113,
+                "text": "pub fn frame(&self, index: usize) -> Result<Vec<u8>> {"
+              }
+            ],
+            "struct Entry": [
+              {
+                "line": 158,
+                "text": "struct Entry {"
+              }
+            ],
+            "pub struct CompletedMessage": [
+              {
+                "line": 170,
+                "text": "pub struct CompletedMessage {"
+              }
+            ],
+            "pub struct Reassembler": [
+              {
+                "line": 176,
+                "text": "pub struct Reassembler {"
+              }
+            ],
+            "fn remember_completion(": [
+              {
+                "line": 316,
+                "text": "fn remember_completion(&mut self, key: Key, length: usize, now: Instant) {"
+              }
+            ],
+            "pub fn expire(": [
+              {
+                "line": 515,
+                "text": "pub fn expire(&mut self, now: Instant) -> usize {"
+              }
+            ],
+            "fn poll_complete_observed(": [
+              {
+                "line": 571,
+                "text": "pub(crate) fn poll_complete_observed("
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "c7d5d9d21a69ac3f8cc822f2fa3bce9af40dd50e",
+          "sha256": "e73e0c77dd3445afe42bc94d60ad1a2aabf6cdc44f334f1ab2bc4f0636ba7ddd",
+          "bytes": 23344,
+          "anchors": {
+            "pub struct OutgoingMessage": [
+              {
+                "line": 62,
+                "text": "pub struct OutgoingMessage {"
+              }
+            ],
+            "pub fn frame(": [
+              {
+                "line": 113,
+                "text": "pub fn frame(&self, index: usize) -> Result<Vec<u8>> {"
+              }
+            ],
+            "struct Entry": [
+              {
+                "line": 158,
+                "text": "struct Entry {"
+              }
+            ],
+            "pub struct CompletedMessage": [
+              {
+                "line": 170,
+                "text": "pub struct CompletedMessage {"
+              }
+            ],
+            "pub struct Reassembler": [
+              {
+                "line": 176,
+                "text": "pub struct Reassembler {"
+              }
+            ],
+            "fn remember_completion(": [
+              {
+                "line": 316,
+                "text": "fn remember_completion(&mut self, key: Key, length: usize, now: Instant) {"
+              }
+            ],
+            "pub fn expire(": [
+              {
+                "line": 515,
+                "text": "pub fn expire(&mut self, now: Instant) -> usize {"
+              }
+            ],
+            "fn poll_complete_observed(": [
+              {
+                "line": 571,
+                "text": "pub(crate) fn poll_complete_observed("
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/object_link.rs",
+      "versions": {
+        "875": {
+          "git_blob": "f5bd9ccb8bb2e5a41732e2f5567a260cffc96ea1",
+          "sha256": "b99c448af14ed1bf9a1fbd5c3a28b23c075ab4f44e38e3166eefb91b6f3022a9",
+          "bytes": 51403,
+          "anchors": {
+            "pub fn try_send_until(": [
+              {
+                "line": 551,
+                "text": "pub fn try_send_until("
+              }
+            ],
+            "pub fn cancel_send(": [
+              {
+                "line": 621,
+                "text": "pub fn cancel_send(&mut self, peer: usize, stream: u64, body: &Arc<OutgoingMessage>) -> bool {"
+              }
+            ],
+            "fn process_poll(": [
+              {
+                "line": 701,
+                "text": "fn process_poll("
+              }
+            ],
+            "impl Drop for NativeObjectLink": [
+              {
+                "line": 1274,
+                "text": "impl Drop for NativeObjectLink {"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "f5bd9ccb8bb2e5a41732e2f5567a260cffc96ea1",
+          "sha256": "b99c448af14ed1bf9a1fbd5c3a28b23c075ab4f44e38e3166eefb91b6f3022a9",
+          "bytes": 51403,
+          "anchors": {
+            "pub fn try_send_until(": [
+              {
+                "line": 551,
+                "text": "pub fn try_send_until("
+              }
+            ],
+            "pub fn cancel_send(": [
+              {
+                "line": 621,
+                "text": "pub fn cancel_send(&mut self, peer: usize, stream: u64, body: &Arc<OutgoingMessage>) -> bool {"
+              }
+            ],
+            "fn process_poll(": [
+              {
+                "line": 701,
+                "text": "fn process_poll("
+              }
+            ],
+            "impl Drop for NativeObjectLink": [
+              {
+                "line": 1274,
+                "text": "impl Drop for NativeObjectLink {"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-network/src/novorudp/object_sender.rs",
+      "versions": {
+        "875": {
+          "git_blob": "b0cc8329dd9114a6971d3a97f5aadbbb65cb5f13",
+          "sha256": "ac7156aaf6cb4241e10f67e66cb721f33ebdff7d4f0f715b16ab1905273b869b",
+          "bytes": 30523,
+          "anchors": {
+            "pub struct NativeObjectSender": [
+              {
+                "line": 56,
+                "text": "pub struct NativeObjectSender {"
+              }
+            ],
+            "pub fn into_body(": [
+              {
+                "line": 196,
+                "text": "pub fn into_body(self) -> Arc<OutgoingMessage> {"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "b0cc8329dd9114a6971d3a97f5aadbbb65cb5f13",
+          "sha256": "ac7156aaf6cb4241e10f67e66cb721f33ebdff7d4f0f715b16ab1905273b869b",
+          "bytes": 30523,
+          "anchors": {
+            "pub struct NativeObjectSender": [
+              {
+                "line": 56,
+                "text": "pub struct NativeObjectSender {"
+              }
+            ],
+            "pub fn into_body(": [
+              {
+                "line": 196,
+                "text": "pub fn into_body(self) -> Arc<OutgoingMessage> {"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native.rs",
+      "versions": {
+        "875": {
+          "git_blob": "3b0e9d2fe73db8370db9e62ea849caf483f3bd94",
+          "sha256": "40874bfd0fc4bf6127ef13da52db4f430f1e7c5501b026841adc297fa0709cd8",
+          "bytes": 38102,
+          "anchors": {
+            "pub struct PreparedMessage": [
+              {
+                "line": 100,
+                "text": "pub struct PreparedMessage {"
+              }
+            ],
+            "fn prepare_kind(": [
+              {
+                "line": 541,
+                "text": "fn prepare_kind("
+              }
+            ],
+            "fn receive_stream(": [
+              {
+                "line": 792,
+                "text": "fn receive_stream("
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "3b0e9d2fe73db8370db9e62ea849caf483f3bd94",
+          "sha256": "40874bfd0fc4bf6127ef13da52db4f430f1e7c5501b026841adc297fa0709cd8",
+          "bytes": 38102,
+          "anchors": {
+            "pub struct PreparedMessage": [
+              {
+                "line": 100,
+                "text": "pub struct PreparedMessage {"
+              }
+            ],
+            "fn prepare_kind(": [
+              {
+                "line": 541,
+                "text": "fn prepare_kind("
+              }
+            ],
+            "fn receive_stream(": [
+              {
+                "line": 792,
+                "text": "fn receive_stream("
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs",
+      "versions": {
+        "875": {
+          "git_blob": "b3b44dc0db0d5f930ce428e4c22f70bb0ad33640",
+          "sha256": "e92ebf9e934aad2f52fa262e5bc83c87321186a45604f2d9837a9e38a6379014",
+          "bytes": 43106,
+          "anchors": {
+            "fn accept_io_report(": [
+              {
+                "line": 449,
+                "text": "fn accept_io_report("
+              }
+            ],
+            "fn poll_inner(": [
+              {
+                "line": 719,
+                "text": "fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {"
+              }
+            ],
+            "\"received\",": [
+              {
+                "line": 802,
+                "text": "\"received\","
+              }
+            ],
+            "message: Arc::new(message.message)": [
+              {
+                "line": 751,
+                "text": "message: Arc::new(message.message),"
+              },
+              {
+                "line": 810,
+                "text": "message: Arc::new(message.message),"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "b3b44dc0db0d5f930ce428e4c22f70bb0ad33640",
+          "sha256": "e92ebf9e934aad2f52fa262e5bc83c87321186a45604f2d9837a9e38a6379014",
+          "bytes": 43106,
+          "anchors": {
+            "fn accept_io_report(": [
+              {
+                "line": 449,
+                "text": "fn accept_io_report("
+              }
+            ],
+            "fn poll_inner(": [
+              {
+                "line": 719,
+                "text": "fn poll_inner(&mut self, pipeline: &CandidatePipeline, now: Instant) -> Result<()> {"
+              }
+            ],
+            "\"received\",": [
+              {
+                "line": 802,
+                "text": "\"received\","
+              }
+            ],
+            "message: Arc::new(message.message)": [
+              {
+                "line": 751,
+                "text": "message: Arc::new(message.message),"
+              },
+              {
+                "line": 810,
+                "text": "message: Arc::new(message.message),"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/probe.rs",
+      "versions": {
+        "875": {
+          "git_blob": "5219848fd04e23735755154b10941f2aa3846086",
+          "sha256": "a6ebe567a623f7eda566903b89a56f97b72284cc87b9beadb1f3f2d3454d3c4a",
+          "bytes": 19114,
+          "anchors": {
+            "pub fn network_probe_observation(": [
+              {
+                "line": 506,
+                "text": "pub fn network_probe_observation(&self) -> Option<serde_json::Value> {"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "270d4dbc3c13578d5b37022de4b2158a43f1d4e8",
+          "sha256": "0f8f3dfa5f030c31ab3bf5ed41bec0f55b82737d7c4bc8719034a6e4394bdd4e",
+          "bytes": 20242,
+          "anchors": {
+            "pub fn network_probe_observation(": [
+              {
+                "line": 529,
+                "text": "pub fn network_probe_observation(&self) -> Option<serde_json::Value> {"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": false
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "versions": {
+        "875": {
+          "git_blob": "c8367b3e93844c72e96a3790bc4f614b7fbe1582",
+          "sha256": "47615e1436723349e5cc5747f2ea7d907c3202a5af154a9652d4988bbee8d335",
+          "bytes": 103791,
+          "anchors": {
+            "pub fn status(": [
+              {
+                "line": 1326,
+                "text": "pub fn status(&self) -> Value {"
+              }
+            ],
+            "status[\"stage_profile\"] =": [
+              {
+                "line": 1374,
+                "text": "status[\"stage_profile\"] = crate::native_pipeline::profile::snapshot();"
+              }
+            ],
+            "core.network_probe_observation()": [
+              {
+                "line": 1375,
+                "text": "if let Some(probe) = core.network_probe_observation() {"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "c8367b3e93844c72e96a3790bc4f614b7fbe1582",
+          "sha256": "47615e1436723349e5cc5747f2ea7d907c3202a5af154a9652d4988bbee8d335",
+          "bytes": 103791,
+          "anchors": {
+            "pub fn status(": [
+              {
+                "line": 1326,
+                "text": "pub fn status(&self) -> Value {"
+              }
+            ],
+            "status[\"stage_profile\"] =": [
+              {
+                "line": 1374,
+                "text": "status[\"stage_profile\"] = crate::native_pipeline::profile::snapshot();"
+              }
+            ],
+            "core.network_probe_observation()": [
+              {
+                "line": 1375,
+                "text": "if let Some(probe) = core.network_probe_observation() {"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-node/src/bin/novovm-node.rs",
+      "versions": {
+        "875": {
+          "git_blob": "86ce69d9d7559a738a7ea62ec53881bf773f95c2",
+          "sha256": "2032c0d20d5f309a8a3a7aeca89dd4fde911d99bda2a8b75898f8f6bb59fd0ae",
+          "bytes": 1904305,
+          "anchors": {
+            "network.step(&mut product.node.controller": [
+              {
+                "line": 42601,
+                "text": "if let Err(error) = network.step(&mut product.node.controller, Instant::now()) {"
+              }
+            ],
+            "product.poll(Instant::now())": [
+              {
+                "line": 42625,
+                "text": "if let Err(error) = product.poll(Instant::now()) {"
+              }
+            ],
+            "observe_tick(TickStage::Status, || product.status())": [
+              {
+                "line": 42635,
+                "text": "let mut status = observe_tick(TickStage::Status, || product.status());"
+              }
+            ],
+            "observe_tick(TickStage::Encode, || serde_json::to_vec_pretty(&status))": [
+              {
+                "line": 42645,
+                "text": "observe_tick(TickStage::Encode, || serde_json::to_vec_pretty(&status))?;"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "86ce69d9d7559a738a7ea62ec53881bf773f95c2",
+          "sha256": "2032c0d20d5f309a8a3a7aeca89dd4fde911d99bda2a8b75898f8f6bb59fd0ae",
+          "bytes": 1904305,
+          "anchors": {
+            "network.step(&mut product.node.controller": [
+              {
+                "line": 42601,
+                "text": "if let Err(error) = network.step(&mut product.node.controller, Instant::now()) {"
+              }
+            ],
+            "product.poll(Instant::now())": [
+              {
+                "line": 42625,
+                "text": "if let Err(error) = product.poll(Instant::now()) {"
+              }
+            ],
+            "observe_tick(TickStage::Status, || product.status())": [
+              {
+                "line": 42635,
+                "text": "let mut status = observe_tick(TickStage::Status, || product.status());"
+              }
+            ],
+            "observe_tick(TickStage::Encode, || serde_json::to_vec_pretty(&status))": [
+              {
+                "line": 42645,
+                "text": "observe_tick(TickStage::Encode, || serde_json::to_vec_pretty(&status))?;"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-network/src/transport.rs",
+      "versions": {
+        "875": {
+          "git_blob": "402eb85c53692c390185aa86280b746a35f9ccb2",
+          "sha256": "c53c8f26be2ec70441ba36c9c170e2923244e6486a421758e34b207265142bda",
+          "bytes": 1019526,
+          "anchors": {
+            "#![forbid(unsafe_code)]": [
+              {
+                "line": 1,
+                "text": "#![forbid(unsafe_code)]"
+              }
+            ],
+            "type UdpDrainQueueV1": [
+              {
+                "line": 9607,
+                "text": "type UdpDrainQueueV1 = Arc<Mutex<VecDeque<(Vec<u8>, SocketAddr)>>>;"
+              }
+            ],
+            "fn receive_packet_v1(": [
+              {
+                "line": 11279,
+                "text": "fn receive_packet_v1(&self) -> std::io::Result<Option<(Vec<u8>, SocketAddr)>> {"
+              }
+            ],
+            "scratch[..n].to_vec()": [
+              {
+                "line": 11322,
+                "text": "let packet = scratch[..n].to_vec();"
+              },
+              {
+                "line": 11376,
+                "text": "let packet = scratch[..n].to_vec();"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "402eb85c53692c390185aa86280b746a35f9ccb2",
+          "sha256": "c53c8f26be2ec70441ba36c9c170e2923244e6486a421758e34b207265142bda",
+          "bytes": 1019526,
+          "anchors": {
+            "#![forbid(unsafe_code)]": [
+              {
+                "line": 1,
+                "text": "#![forbid(unsafe_code)]"
+              }
+            ],
+            "type UdpDrainQueueV1": [
+              {
+                "line": 9607,
+                "text": "type UdpDrainQueueV1 = Arc<Mutex<VecDeque<(Vec<u8>, SocketAddr)>>>;"
+              }
+            ],
+            "fn receive_packet_v1(": [
+              {
+                "line": 11279,
+                "text": "fn receive_packet_v1(&self) -> std::io::Result<Option<(Vec<u8>, SocketAddr)>> {"
+              }
+            ],
+            "scratch[..n].to_vec()": [
+              {
+                "line": 11322,
+                "text": "let packet = scratch[..n].to_vec();"
+              },
+              {
+                "line": 11376,
+                "text": "let packet = scratch[..n].to_vec();"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    },
+    {
+      "path": "crates/novovm-network/src/transport/native_ingress.rs",
+      "versions": {
+        "875": {
+          "git_blob": "d072b2d769593a12ea970bf36c730a6cbe2ed299",
+          "sha256": "ad90410998068782a0f7803c63a9f95a2b4ad0cbe903fb62e7f524b5d5ddcb01",
+          "bytes": 12928,
+          "anchors": {
+            "pub fn poll(&mut self": [
+              {
+                "line": 241,
+                "text": "pub fn poll(&mut self, wall_ms: u64, now: Instant, quantum: usize) -> Result<NativeUdpPollV1> {"
+              }
+            ]
+          }
+        },
+        "a254": {
+          "git_blob": "d072b2d769593a12ea970bf36c730a6cbe2ed299",
+          "sha256": "ad90410998068782a0f7803c63a9f95a2b4ad0cbe903fb62e7f524b5d5ddcb01",
+          "bytes": 12928,
+          "anchors": {
+            "pub fn poll(&mut self": [
+              {
+                "line": 241,
+                "text": "pub fn poll(&mut self, wall_ms: u64, now: Instant, quantum: usize) -> Result<NativeUdpPollV1> {"
+              }
+            ]
+          }
+        }
+      },
+      "source_identical": true
+    }
+  ]
+}

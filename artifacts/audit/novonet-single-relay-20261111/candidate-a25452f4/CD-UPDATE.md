@@ -1,6 +1,26 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 C Phase6: real retained load and original thread evidence; unresolved
+## CURRENT 2026-11-14 C ownership audit: eviction hypothesis unsupported; stop repeating normal fixtures
+
+C independently audited the original 875/a254 source. The 2048-entry delivery
+ring stores copied identifiers/scalars, not borrowed network payloads. Eviction
+and JSON traversal share its Mutex. The separate 256-entry transport evidence
+container clones owned metadata under its own lock; it is not a payload pool.
+Actual send ownership uses Arc; receive completion moves owned chunks. The
+original tick executes network/poll/status sequentially; profile snapshot precedes
+the transport evidence snapshot inside status. No concrete dangling-reference,
+out-of-bounds write or race was established in these reviewed paths.
+11 of12 selected original source files are byte-identical; this does NOT equate
+the binaries, AOEM versions or runtime histories. No new runtime test was run.
+[Ownership paths, original-source hashes, DMP correlation and stop condition](C-object-lifetime-audit-20261114/README.md).
+First corrupting instruction remains UNKNOWN. Stop extending passing full-ring
+fixtures as evidence for this hypothesis; the previous ordinary owner-loop test
+proposal below is superseded by the evidence prerequisites in the new report.
+No speculative repair, deployed-node restart, original DB/identity access or
+double-relay release. C remains NOT READY. Git notification is not A acknowledgment;
+A/D are not asked to diagnose, run tests or operate nodes for this return.
+
+## PRIOR 2026-11-14 C Phase6: real retained load and original thread evidence; unresolved
 
 C independently read PID37796's original logs and dump without opening the original
 database/identity or restarting the deployed node. Last complete progress showed
