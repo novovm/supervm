@@ -1,0 +1,2010 @@
+{
+  "no_disk_image_fallback": true,
+  "dumps": [
+    {
+      "pid": 13020,
+      "sha256": "32a264e2a8ea23334760db4b047802bd8b8ba6836d2faead170b91c12e74ea50",
+      "dump_utc": "2026-11-12T02:01:53.0000000Z",
+      "part_of_prior_five": true,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6143717,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 18664,
+      "exception_context_bytes": 1232,
+      "fault_module": "novovm-node.exe",
+      "fault_rva": "0x65f59d",
+      "access_kind": "read",
+      "exception_target_address": "0xffffffffffffffff",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 11916,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 17432
+        },
+        {
+          "thread_id": 18664,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 77736
+        },
+        {
+          "thread_id": 14976,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1976
+        },
+        {
+          "thread_id": 30264,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26312
+        },
+        {
+          "thread_id": 12832,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7192
+        },
+        {
+          "thread_id": 8904,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 9128
+        },
+        {
+          "thread_id": 10804,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2584
+        },
+        {
+          "thread_id": 22608,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 24760
+        },
+        {
+          "thread_id": 6896,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2104
+        },
+        {
+          "thread_id": 3424,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2136
+        },
+        {
+          "thread_id": 11964,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1240
+        },
+        {
+          "thread_id": 3500,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1560
+        },
+        {
+          "thread_id": 22852,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2264
+        },
+        {
+          "thread_id": 28964,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 6232
+        },
+        {
+          "thread_id": 15416,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3144
+        },
+        {
+          "thread_id": 3432,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26088
+        },
+        {
+          "thread_id": 12272,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3240
+        },
+        {
+          "thread_id": 13668,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25544
+        },
+        {
+          "thread_id": 6096,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2648
+        },
+        {
+          "thread_id": 16280,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1240
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48480256,
+          "pe_timestamp": "0x6af3f9e9",
+          "pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48390144,
+          "pe_timestamp": "0x6ae92f99",
+          "pdb_guid": "65866A3B-2D8F-4360-9A13-9A879A3483B6",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [],
+      "function_table_stream": {
+        "descriptors": 39,
+        "parsed_bytes": 7204,
+        "stream_bytes": 7356,
+        "trailing_zero_bytes": 152,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 23024,
+      "sha256": "e8fefb26fb05cd7b90c566decc95d8cdca447ec5ad6016a6ed8e64b73ba4ab3f",
+      "dump_utc": "2026-11-08T16:51:57.0000000Z",
+      "part_of_prior_five": false,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6168805,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 26028,
+      "exception_context_bytes": 1232,
+      "fault_module": "novovm-node.exe",
+      "fault_rva": "0x11e6f9d",
+      "access_kind": "read",
+      "exception_target_address": "0xffffffffffffffff",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 8400,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 16264
+        },
+        {
+          "thread_id": 26028,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 78184
+        },
+        {
+          "thread_id": 47028,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3432
+        },
+        {
+          "thread_id": 16840,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26408
+        },
+        {
+          "thread_id": 47236,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7992
+        },
+        {
+          "thread_id": 34208,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 9464
+        },
+        {
+          "thread_id": 16116,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1928
+        },
+        {
+          "thread_id": 26868,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26360
+        },
+        {
+          "thread_id": 27972,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1624
+        },
+        {
+          "thread_id": 9644,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1992
+        },
+        {
+          "thread_id": 30760,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2696
+        },
+        {
+          "thread_id": 45036,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1384
+        },
+        {
+          "thread_id": 29356,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1656
+        },
+        {
+          "thread_id": 46336,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7272
+        },
+        {
+          "thread_id": 36564,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2792
+        },
+        {
+          "thread_id": 45144,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25944
+        },
+        {
+          "thread_id": 4588,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2840
+        },
+        {
+          "thread_id": 42104,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 24888
+        },
+        {
+          "thread_id": 12628,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3256
+        },
+        {
+          "thread_id": 47796,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2008
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48463872,
+          "pe_timestamp": "0x6aefab2c",
+          "pdb_guid": "DC95A5D9-A9A3-409C-8E36-186B2E2BBF12",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48390144,
+          "pe_timestamp": "0x6ae92f99",
+          "pdb_guid": "65866A3B-2D8F-4360-9A13-9A879A3483B6",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [],
+      "function_table_stream": {
+        "descriptors": 40,
+        "parsed_bytes": 7384,
+        "stream_bytes": 7544,
+        "trailing_zero_bytes": 160,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 24376,
+      "sha256": "ffd90840c4e0c5a2b611ab8582cad323cd6fa2a57550b81eda8d4cca03dd9948",
+      "dump_utc": "2026-11-10T04:25:30.0000000Z",
+      "part_of_prior_five": false,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6193513,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 13232,
+      "exception_context_bytes": 1232,
+      "fault_module": "novovm-node.exe",
+      "fault_rva": "0xc1067d",
+      "access_kind": "read",
+      "exception_target_address": "0xffffffffffffffff",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 6992,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 17080
+        },
+        {
+          "thread_id": 13232,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 79528
+        },
+        {
+          "thread_id": 8856,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3608
+        },
+        {
+          "thread_id": 26124,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26552
+        },
+        {
+          "thread_id": 10204,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7704
+        },
+        {
+          "thread_id": 25232,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 9320
+        },
+        {
+          "thread_id": 31524,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1928
+        },
+        {
+          "thread_id": 20332,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 24760
+        },
+        {
+          "thread_id": 26648,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2584
+        },
+        {
+          "thread_id": 25472,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1880
+        },
+        {
+          "thread_id": 11608,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2728
+        },
+        {
+          "thread_id": 10980,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1080
+        },
+        {
+          "thread_id": 25784,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1128
+        },
+        {
+          "thread_id": 3756,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 6744
+        },
+        {
+          "thread_id": 27844,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2184
+        },
+        {
+          "thread_id": 16144,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25976
+        },
+        {
+          "thread_id": 10828,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3464
+        },
+        {
+          "thread_id": 5524,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26488
+        },
+        {
+          "thread_id": 12872,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2424
+        },
+        {
+          "thread_id": 24628,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1336
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48521216,
+          "pe_timestamp": "0x6af252cd",
+          "pdb_guid": "A1B26BCC-F710-4C7E-AF29-209CFEA7B8EA",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48390144,
+          "pe_timestamp": "0x6ae92f99",
+          "pdb_guid": "65866A3B-2D8F-4360-9A13-9A879A3483B6",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [],
+      "function_table_stream": {
+        "descriptors": 40,
+        "parsed_bytes": 7384,
+        "stream_bytes": 7544,
+        "trailing_zero_bytes": 160,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 27928,
+      "sha256": "a409ecdadddc248fb6aaf5cc9ca6a1b5abe5b7406255b8dbd024b4cacebb487f",
+      "dump_utc": "2026-11-12T09:51:01.0000000Z",
+      "part_of_prior_five": true,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6157657,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 38488,
+      "exception_context_bytes": 1232,
+      "fault_module": "VCRUNTIME140.dll",
+      "fault_rva": "0x1126b",
+      "access_kind": "write",
+      "exception_target_address": "0x18",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 31064,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 17704
+        },
+        {
+          "thread_id": 38488,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 78056
+        },
+        {
+          "thread_id": 36544,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1784
+        },
+        {
+          "thread_id": 27720,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25656
+        },
+        {
+          "thread_id": 27308,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7192
+        },
+        {
+          "thread_id": 13476,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 8632
+        },
+        {
+          "thread_id": 13404,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2472
+        },
+        {
+          "thread_id": 15136,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25720
+        },
+        {
+          "thread_id": 8944,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1656
+        },
+        {
+          "thread_id": 23024,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 904
+        },
+        {
+          "thread_id": 32332,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2280
+        },
+        {
+          "thread_id": 39120,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2024
+        },
+        {
+          "thread_id": 37788,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2200
+        },
+        {
+          "thread_id": 34972,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 6296
+        },
+        {
+          "thread_id": 33916,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1992
+        },
+        {
+          "thread_id": 22852,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25816
+        },
+        {
+          "thread_id": 28544,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3064
+        },
+        {
+          "thread_id": 35692,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 24648
+        },
+        {
+          "thread_id": 37612,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2616
+        },
+        {
+          "thread_id": 27804,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 600
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48504832,
+          "pe_timestamp": "0x6af53cfd",
+          "pdb_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+          "pdb_age": 1
+        },
+        {
+          "module": "VCRUNTIME140.dll",
+          "image_bytes": 122880,
+          "pe_timestamp": "0x4260df93",
+          "pdb_guid": "724C8CA1-45D5-E181-3863-A893D4FED39E",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48390144,
+          "pe_timestamp": "0x6ae92f99",
+          "pdb_guid": "65866A3B-2D8F-4360-9A13-9A879A3483B6",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [],
+      "function_table_stream": {
+        "descriptors": 40,
+        "parsed_bytes": 7384,
+        "stream_bytes": 7544,
+        "trailing_zero_bytes": 160,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 31296,
+      "sha256": "c5d2e37a640a654a0b501dc49229fdb01c05a77e4ec399f5dec7e218ee496495",
+      "dump_utc": "2026-11-11T13:27:58.0000000Z",
+      "part_of_prior_five": true,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6144329,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 6228,
+      "exception_context_bytes": 1232,
+      "fault_module": "novovm-node.exe",
+      "fault_rva": "0x65f59d",
+      "access_kind": "read",
+      "exception_target_address": "0xffffffffffffffff",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 19340,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 16888
+        },
+        {
+          "thread_id": 6228,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 73344
+        },
+        {
+          "thread_id": 3964,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3656
+        },
+        {
+          "thread_id": 23560,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 24792
+        },
+        {
+          "thread_id": 31668,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 8392
+        },
+        {
+          "thread_id": 7900,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7864
+        },
+        {
+          "thread_id": 15460,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2056
+        },
+        {
+          "thread_id": 8536,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26472
+        },
+        {
+          "thread_id": 25268,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 936
+        },
+        {
+          "thread_id": 28404,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1336
+        },
+        {
+          "thread_id": 21008,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1928
+        },
+        {
+          "thread_id": 31560,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1192
+        },
+        {
+          "thread_id": 31076,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1176
+        },
+        {
+          "thread_id": 4632,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7384
+        },
+        {
+          "thread_id": 29068,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2920
+        },
+        {
+          "thread_id": 29400,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25624
+        },
+        {
+          "thread_id": 2112,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2760
+        },
+        {
+          "thread_id": 3612,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25992
+        },
+        {
+          "thread_id": 4184,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2408
+        },
+        {
+          "thread_id": 9788,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 632
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48480256,
+          "pe_timestamp": "0x6af3f9e9",
+          "pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48390144,
+          "pe_timestamp": "0x6ae92f99",
+          "pdb_guid": "65866A3B-2D8F-4360-9A13-9A879A3483B6",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [
+        {
+          "label": "fault_movaps_code",
+          "va": "0x7ff77e74f59d",
+          "bytes": 16,
+          "captured_bytes": 16,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0x7ff77e74f000",
+              "bytes": 4096,
+              "captured_bytes": 256,
+              "complete": false,
+              "missing_ranges": [
+                {
+                  "start": "0x7ff77e74f000",
+                  "end_exclusive": "0x7ff77e74f51d"
+                },
+                {
+                  "start": "0x7ff77e74f61d",
+                  "end_exclusive": "0x7ff77e750000"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "fault_stack_operand",
+          "va": "0xe83f7ee188",
+          "bytes": 16,
+          "captured_bytes": 16,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0xe83f7ee000",
+              "bytes": 4096,
+              "captured_bytes": 3712,
+              "complete": false,
+              "missing_ranges": [
+                {
+                  "start": "0xe83f7ee000",
+                  "end_exclusive": "0xe83f7ee180"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "function_table_stream": {
+        "descriptors": 40,
+        "parsed_bytes": 7384,
+        "stream_bytes": 7544,
+        "trailing_zero_bytes": 160,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 3228,
+      "sha256": "95dbb8a63e8d6281c07a9019a28d4baadbf0ae61ff40117cac1da2fe31264ee0",
+      "dump_utc": "2026-11-11T20:13:40.0000000Z",
+      "part_of_prior_five": true,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6096301,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 2960,
+      "exception_context_bytes": 1232,
+      "fault_module": "VCRUNTIME140.dll",
+      "fault_rva": "0x1126b",
+      "access_kind": "write",
+      "exception_target_address": "0xeab6ddc900",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 4536,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 16072
+        },
+        {
+          "thread_id": 2960,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 78568
+        },
+        {
+          "thread_id": 14580,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2792
+        },
+        {
+          "thread_id": 12424,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25992
+        },
+        {
+          "thread_id": 10696,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 6808
+        },
+        {
+          "thread_id": 23440,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 9384
+        },
+        {
+          "thread_id": 24388,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2440
+        },
+        {
+          "thread_id": 29156,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25064
+        },
+        {
+          "thread_id": 19068,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1768
+        },
+        {
+          "thread_id": 26848,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 840
+        },
+        {
+          "thread_id": 29196,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2440
+        },
+        {
+          "thread_id": 7896,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2712
+        },
+        {
+          "thread_id": 31516,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1288
+        },
+        {
+          "thread_id": 21008,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7592
+        },
+        {
+          "thread_id": 9284,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2120
+        },
+        {
+          "thread_id": 20260,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26168
+        },
+        {
+          "thread_id": 8080,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1992
+        },
+        {
+          "thread_id": 15492,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25752
+        },
+        {
+          "thread_id": 22080,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3272
+        },
+        {
+          "thread_id": 18964,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 920
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48480256,
+          "pe_timestamp": "0x6af3f9e9",
+          "pdb_guid": "C94A5E99-4CFF-4094-8B63-0663EF0F9C21",
+          "pdb_age": 1
+        },
+        {
+          "module": "VCRUNTIME140.dll",
+          "image_bytes": 122880,
+          "pe_timestamp": "0x4260df93",
+          "pdb_guid": "724C8CA1-45D5-E181-3863-A893D4FED39E",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48390144,
+          "pe_timestamp": "0x6ae92f99",
+          "pdb_guid": "65866A3B-2D8F-4360-9A13-9A879A3483B6",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [
+        {
+          "label": "local_string",
+          "va": "0x755b6ee3d0",
+          "bytes": 24,
+          "captured_bytes": 24,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0x755b6ee000",
+              "bytes": 4096,
+              "captured_bytes": 4096,
+              "complete": true,
+              "missing_ranges": []
+            }
+          ]
+        },
+        {
+          "label": "formatter_header",
+          "va": "0x755b6ee340",
+          "bytes": 16,
+          "captured_bytes": 16,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0x755b6ee000",
+              "bytes": 4096,
+              "captured_bytes": 4096,
+              "complete": true,
+              "missing_ranges": []
+            }
+          ]
+        },
+        {
+          "label": "writer_receiver",
+          "va": "0x755b6ee358",
+          "bytes": 24,
+          "captured_bytes": 24,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0x755b6ee000",
+              "bytes": 4096,
+              "captured_bytes": 4096,
+              "complete": true,
+              "missing_ranges": []
+            }
+          ]
+        },
+        {
+          "label": "writer_code",
+          "va": "0x7ff77ff37a00",
+          "bytes": 32,
+          "captured_bytes": 0,
+          "complete": false,
+          "missing_ranges": [
+            {
+              "start": "0x7ff77ff37a00",
+              "end_exclusive": "0x7ff77ff37a20"
+            }
+          ],
+          "containing_4k_pages": [
+            {
+              "va": "0x7ff77ff37000",
+              "bytes": 4096,
+              "captured_bytes": 0,
+              "complete": false,
+              "missing_ranges": [
+                {
+                  "start": "0x7ff77ff37000",
+                  "end_exclusive": "0x7ff77ff38000"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "function_table_stream": {
+        "descriptors": 39,
+        "parsed_bytes": 7204,
+        "stream_bytes": 7356,
+        "trailing_zero_bytes": 152,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 37796,
+      "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0",
+      "dump_utc": "2026-11-13T02:15:56.0000000Z",
+      "part_of_prior_five": true,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6139917,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 31876,
+      "exception_context_bytes": 1232,
+      "fault_module": "VCRUNTIME140.dll",
+      "fault_rva": "0x11268",
+      "access_kind": "read",
+      "exception_target_address": "0xffffffffffffffff",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 9412,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 17896
+        },
+        {
+          "thread_id": 31876,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 78248
+        },
+        {
+          "thread_id": 35636,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1784
+        },
+        {
+          "thread_id": 31864,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 24776
+        },
+        {
+          "thread_id": 30408,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 8376
+        },
+        {
+          "thread_id": 28116,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 10328
+        },
+        {
+          "thread_id": 29040,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1736
+        },
+        {
+          "thread_id": 26144,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25144
+        },
+        {
+          "thread_id": 25000,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2232
+        },
+        {
+          "thread_id": 29216,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2712
+        },
+        {
+          "thread_id": 34112,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1528
+        },
+        {
+          "thread_id": 11812,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1832
+        },
+        {
+          "thread_id": 14636,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1240
+        },
+        {
+          "thread_id": 40448,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 7640
+        },
+        {
+          "thread_id": 38416,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1800
+        },
+        {
+          "thread_id": 32144,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25080
+        },
+        {
+          "thread_id": 20336,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2728
+        },
+        {
+          "thread_id": 18492,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 24856
+        },
+        {
+          "thread_id": 15496,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2088
+        },
+        {
+          "thread_id": 34108,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1432
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48504832,
+          "pe_timestamp": "0x6af53cfd",
+          "pdb_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+          "pdb_age": 1
+        },
+        {
+          "module": "VCRUNTIME140.dll",
+          "image_bytes": 122880,
+          "pe_timestamp": "0x4260df93",
+          "pdb_guid": "724C8CA1-45D5-E181-3863-A893D4FED39E",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48730112,
+          "pe_timestamp": "0x6af64a2c",
+          "pdb_guid": "FC7644B2-491F-4673-AD9D-2C3478E3FC4D",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [
+        {
+          "label": "local_string",
+          "va": "0xe7e2ee500",
+          "bytes": 24,
+          "captured_bytes": 24,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0xe7e2ee000",
+              "bytes": 4096,
+              "captured_bytes": 4096,
+              "complete": true,
+              "missing_ranges": []
+            }
+          ]
+        },
+        {
+          "label": "formatter_header",
+          "va": "0xe7e2ee470",
+          "bytes": 16,
+          "captured_bytes": 16,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0xe7e2ee000",
+              "bytes": 4096,
+              "captured_bytes": 4096,
+              "complete": true,
+              "missing_ranges": []
+            }
+          ]
+        },
+        {
+          "label": "writer_receiver",
+          "va": "0xe7e2ee648",
+          "bytes": 24,
+          "captured_bytes": 24,
+          "complete": true,
+          "missing_ranges": [],
+          "containing_4k_pages": [
+            {
+              "va": "0xe7e2ee000",
+              "bytes": 4096,
+              "captured_bytes": 4096,
+              "complete": true,
+              "missing_ranges": []
+            }
+          ]
+        },
+        {
+          "label": "writer_code",
+          "va": "0x7ff70b88cc60",
+          "bytes": 97,
+          "captured_bytes": 0,
+          "complete": false,
+          "missing_ranges": [
+            {
+              "start": "0x7ff70b88cc60",
+              "end_exclusive": "0x7ff70b88ccc1"
+            }
+          ],
+          "containing_4k_pages": [
+            {
+              "va": "0x7ff70b88c000",
+              "bytes": 4096,
+              "captured_bytes": 0,
+              "complete": false,
+              "missing_ranges": [
+                {
+                  "start": "0x7ff70b88c000",
+                  "end_exclusive": "0x7ff70b88d000"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "pad_integral_code",
+          "va": "0x7ff70b892f00",
+          "bytes": 247,
+          "captured_bytes": 0,
+          "complete": false,
+          "missing_ranges": [
+            {
+              "start": "0x7ff70b892f00",
+              "end_exclusive": "0x7ff70b892ff7"
+            }
+          ],
+          "containing_4k_pages": [
+            {
+              "va": "0x7ff70b892000",
+              "bytes": 4096,
+              "captured_bytes": 0,
+              "complete": false,
+              "missing_ranges": [
+                {
+                  "start": "0x7ff70b892000",
+                  "end_exclusive": "0x7ff70b893000"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "delivery_record",
+          "va": "0x2044cc156e0",
+          "bytes": 184,
+          "captured_bytes": 0,
+          "complete": false,
+          "missing_ranges": [
+            {
+              "start": "0x2044cc156e0",
+              "end_exclusive": "0x2044cc15798"
+            }
+          ],
+          "containing_4k_pages": [
+            {
+              "va": "0x2044cc15000",
+              "bytes": 4096,
+              "captured_bytes": 0,
+              "complete": false,
+              "missing_ranges": [
+                {
+                  "start": "0x2044cc15000",
+                  "end_exclusive": "0x2044cc16000"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "function_table_stream": {
+        "descriptors": 39,
+        "parsed_bytes": 7204,
+        "stream_bytes": 7356,
+        "trailing_zero_bytes": 152,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 39992,
+      "sha256": "a2c1aa0c63bb70f2b5f157136c67caf80b04dc54f46e3e01df7d3e19df18b1c4",
+      "dump_utc": "2026-11-13T12:48:17.0000000Z",
+      "part_of_prior_five": false,
+      "known_ttd_recorder_run": true,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 7093605,
+      "exception_code": "0xc0000005",
+      "exception_thread_id": 21792,
+      "exception_context_bytes": 1232,
+      "fault_module": "TTDRecordCPU.dll",
+      "fault_rva": "0xdeec8",
+      "access_kind": "read",
+      "exception_target_address": "0xc6",
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 24968,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 16632
+        },
+        {
+          "thread_id": 24684,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 4152
+        },
+        {
+          "thread_id": 21792,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 409600
+        },
+        {
+          "thread_id": 17748,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2328
+        },
+        {
+          "thread_id": 25508,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26088
+        },
+        {
+          "thread_id": 21496,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 8376
+        },
+        {
+          "thread_id": 35392,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 9880
+        },
+        {
+          "thread_id": 14288,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3576
+        },
+        {
+          "thread_id": 35928,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26104
+        },
+        {
+          "thread_id": 26456,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 920
+        },
+        {
+          "thread_id": 4864,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1864
+        },
+        {
+          "thread_id": 34236,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2040
+        },
+        {
+          "thread_id": 18124,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1560
+        },
+        {
+          "thread_id": 18036,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2248
+        },
+        {
+          "thread_id": 12396,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 6888
+        },
+        {
+          "thread_id": 17648,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3048
+        },
+        {
+          "thread_id": 8632,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25352
+        },
+        {
+          "thread_id": 40608,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2184
+        },
+        {
+          "thread_id": 39948,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25016
+        },
+        {
+          "thread_id": 13236,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2520
+        },
+        {
+          "thread_id": 29384,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 408
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 48504832,
+          "pe_timestamp": "0x6af53cfd",
+          "pdb_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+          "pdb_age": 1
+        },
+        {
+          "module": "TTDRecordCPU.dll",
+          "image_bytes": 1871872,
+          "pe_timestamp": "0x1525e252",
+          "pdb_guid": "71DA386D-D8B0-E8A5-8F51-430FFD569F46",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48730112,
+          "pe_timestamp": "0x6af64a2c",
+          "pdb_guid": "FC7644B2-491F-4673-AD9D-2C3478E3FC4D",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [],
+      "function_table_stream": {
+        "descriptors": 39,
+        "parsed_bytes": 7200,
+        "stream_bytes": 7356,
+        "trailing_zero_bytes": 156,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    },
+    {
+      "pid": 7816,
+      "sha256": "f147b93a9d03a7663d6a107eee677197ba3a728623c86f2a30677c59e2c9e0e5",
+      "dump_utc": "2026-11-11T05:40:51.0000000Z",
+      "part_of_prior_five": false,
+      "known_ttd_recorder_run": false,
+      "full_memory_flag": false,
+      "captured_memory_union_bytes": 6177465,
+      "exception_code": "0xc0000374",
+      "exception_thread_id": 14964,
+      "exception_context_bytes": 1232,
+      "fault_module": "ntdll.dll",
+      "fault_rva": "0x118095",
+      "access_kind": null,
+      "exception_target_address": null,
+      "fault_code_16_bytes": {
+        "bytes": 16,
+        "captured_bytes": 16,
+        "complete": true,
+        "missing_ranges": []
+      },
+      "threads": [
+        {
+          "thread_id": 1944,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 17400
+        },
+        {
+          "thread_id": 14964,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 77592
+        },
+        {
+          "thread_id": 29468,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1672
+        },
+        {
+          "thread_id": 27784,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26408
+        },
+        {
+          "thread_id": 24088,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 6920
+        },
+        {
+          "thread_id": 29756,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 8520
+        },
+        {
+          "thread_id": 29692,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3512
+        },
+        {
+          "thread_id": 1964,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25944
+        },
+        {
+          "thread_id": 25452,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2488
+        },
+        {
+          "thread_id": 9524,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1192
+        },
+        {
+          "thread_id": 33624,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2536
+        },
+        {
+          "thread_id": 9360,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2776
+        },
+        {
+          "thread_id": 20976,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1560
+        },
+        {
+          "thread_id": 33476,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 8120
+        },
+        {
+          "thread_id": 33416,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 3480
+        },
+        {
+          "thread_id": 33124,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 25720
+        },
+        {
+          "thread_id": 31388,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 2072
+        },
+        {
+          "thread_id": 25072,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 26216
+        },
+        {
+          "thread_id": 32324,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 1800
+        },
+        {
+          "thread_id": 32516,
+          "context_bytes": 1663,
+          "context_in_file": true,
+          "context_flags": "0x10005f",
+          "stack_bytes": 712
+        }
+      ],
+      "modules": [
+        {
+          "module": "novovm-node.exe",
+          "image_bytes": 47734784,
+          "pe_timestamp": "0x6af2c9d3",
+          "pdb_guid": "F56E2BFA-577D-408C-B94E-59FF19083840",
+          "pdb_age": 1
+        },
+        {
+          "module": "ntdll.dll",
+          "image_bytes": 2523136,
+          "pe_timestamp": "0x5fd39a05",
+          "pdb_guid": "C031D45B-0DA1-8A6E-74D0-6ED6AB2DD9E1",
+          "pdb_age": 1
+        },
+        {
+          "module": "aoem_ffi.dll",
+          "image_bytes": 48390144,
+          "pe_timestamp": "0x6ae92f99",
+          "pdb_guid": "65866A3B-2D8F-4360-9A13-9A879A3483B6",
+          "pdb_age": 1
+        }
+      ],
+      "same_failure_probes": [],
+      "function_table_stream": {
+        "descriptors": 40,
+        "parsed_bytes": 7384,
+        "stream_bytes": 7544,
+        "trailing_zero_bytes": 160,
+        "aoem_overlaps": [],
+        "limit": "Only entries actually captured; not a complete proof of live runtime registration"
+      }
+    }
+  ],
+  "first_corrupting_instruction_found": false
+}

@@ -1,0 +1,512 @@
+{
+  "start_utc": "2026-11-14T07:29:08.3914097Z",
+  "admin": true,
+  "localservice_sid": "S-1-5-19",
+  "read_only_sources": true,
+  "acl_changed": false,
+  "node_started": false,
+  "original_database_accessed": false,
+  "roots": [
+    {
+      "label": "LocalService-CrashDumps",
+      "path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps",
+      "exists": true,
+      "acl": {
+        "owner": "NT AUTHORITY\\LOCAL SERVICE",
+        "sddl": "O:LSG:LSD:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;LS)"
+      },
+      "completed": true,
+      "error": null
+    },
+    {
+      "label": "LocalService-WER-Archive",
+      "path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\Microsoft\\Windows\\WER\\ReportArchive",
+      "exists": false,
+      "acl": null,
+      "completed": true,
+      "error": null
+    },
+    {
+      "label": "LocalService-WER-Queue",
+      "path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\Microsoft\\Windows\\WER\\ReportQueue",
+      "exists": false,
+      "acl": null,
+      "completed": true,
+      "error": null
+    },
+    {
+      "label": "System-WER-Archive",
+      "path": "C:\\ProgramData\\Microsoft\\Windows\\WER\\ReportArchive",
+      "exists": true,
+      "acl": {
+        "owner": "NT AUTHORITY\\SYSTEM",
+        "sddl": "O:SYG:SYD:P(A;OICI;0x13019f;;;SU)(A;OICI;0x13019f;;;AU)(A;OICI;0x13019f;;;LS)(A;OICI;0x13019f;;;NS)(A;OICI;0x13019f;;;WR)(A;OICI;FA;;;BA)(A;OICI;0x13019f;;;AC)(A;OICI;0x13019f;;;S-1-15-2-2)"
+      },
+      "completed": true,
+      "error": null
+    },
+    {
+      "label": "System-WER-Queue",
+      "path": "C:\\ProgramData\\Microsoft\\Windows\\WER\\ReportQueue",
+      "exists": true,
+      "acl": {
+        "owner": "NT AUTHORITY\\SYSTEM",
+        "sddl": "O:SYG:SYD:P(A;OICI;0x13019f;;;SU)(A;OICI;0x13019f;;;AU)(A;OICI;0x13019f;;;LS)(A;OICI;0x13019f;;;NS)(A;OICI;0x13019f;;;WR)(A;OICI;FA;;;BA)(A;OICI;0x13019f;;;AC)(A;OICI;0x13019f;;;S-1-15-2-2)"
+      },
+      "completed": true,
+      "error": null
+    }
+  ],
+  "files": [
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.13020.dmp",
+      "bytes": 6207260,
+      "creation_utc": "2026-11-12T02:01:53.1816608Z",
+      "last_write_utc": "2026-11-12T02:01:53.3475149Z",
+      "sha256": "32a264e2a8ea23334760db4b047802bd8b8ba6836d2faead170b91c12e74ea50",
+      "private_copy": "files-private/0001-novovm-node.exe.13020.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-12T02:01:53.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 18664,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.23024.dmp",
+      "bytes": 6232564,
+      "creation_utc": "2026-11-08T16:51:57.2632381Z",
+      "last_write_utc": "2026-11-08T16:51:57.4717558Z",
+      "sha256": "e8fefb26fb05cd7b90c566decc95d8cdca447ec5ad6016a6ed8e64b73ba4ab3f",
+      "private_copy": "files-private/0002-novovm-node.exe.23024.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-08T16:51:57.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 26028,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.24376.dmp",
+      "bytes": 6257312,
+      "creation_utc": "2026-11-10T04:25:30.4529458Z",
+      "last_write_utc": "2026-11-10T04:25:30.5949612Z",
+      "sha256": "ffd90840c4e0c5a2b611ab8582cad323cd6fa2a57550b81eda8d4cca03dd9948",
+      "private_copy": "files-private/0003-novovm-node.exe.24376.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-10T04:25:30.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 13232,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.27928.dmp",
+      "bytes": 6221616,
+      "creation_utc": "2026-11-12T09:51:01.1694645Z",
+      "last_write_utc": "2026-11-12T09:51:01.2858623Z",
+      "sha256": "a409ecdadddc248fb6aaf5cc9ca6a1b5abe5b7406255b8dbd024b4cacebb487f",
+      "private_copy": "files-private/0004-novovm-node.exe.27928.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-12T09:51:01.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 38488,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.31296.dmp",
+      "bytes": 6208032,
+      "creation_utc": "2026-11-11T13:27:58.0199773Z",
+      "last_write_utc": "2026-11-11T13:27:58.1512257Z",
+      "sha256": "c5d2e37a640a654a0b501dc49229fdb01c05a77e4ec399f5dec7e218ee496495",
+      "private_copy": "files-private/0005-novovm-node.exe.31296.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-11T13:27:58.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 6228,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.3228.dmp",
+      "bytes": 6159844,
+      "creation_utc": "2026-11-11T20:13:40.1821857Z",
+      "last_write_utc": "2026-11-11T20:13:40.2363053Z",
+      "sha256": "95dbb8a63e8d6281c07a9019a28d4baadbf0ae61ff40117cac1da2fe31264ee0",
+      "private_copy": "files-private/0006-novovm-node.exe.3228.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-11T20:13:40.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 2960,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.37796.dmp",
+      "bytes": 6203358,
+      "creation_utc": "2026-11-13T02:15:55.8313930Z",
+      "last_write_utc": "2026-11-13T02:15:56.0489727Z",
+      "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0",
+      "private_copy": "files-private/0007-novovm-node.exe.37796.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-13T02:15:56.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 31876,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.39992.dmp",
+      "bytes": 7159231,
+      "creation_utc": "2026-11-13T12:48:17.2489145Z",
+      "last_write_utc": "2026-11-13T12:48:17.3794070Z",
+      "sha256": "a2c1aa0c63bb70f2b5f157136c67caf80b04dc54f46e3e01df7d3e19df18b1c4",
+      "private_copy": "files-private/0008-novovm-node.exe.39992.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-13T12:48:17.0000000Z",
+        "thread_count": 21,
+        "exception": {
+          "thread_id": 21792,
+          "code": "0xc0000005"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "LocalService-CrashDumps",
+      "relative_path": "novovm-node.exe.7816.dmp",
+      "bytes": 6241392,
+      "creation_utc": "2026-11-11T05:40:51.5254497Z",
+      "last_write_utc": "2026-11-11T05:40:51.5869870Z",
+      "sha256": "f147b93a9d03a7663d6a107eee677197ba3a728623c86f2a30677c59e2c9e0e5",
+      "private_copy": "files-private/0009-novovm-node.exe.7816.dmp",
+      "source_stable": true,
+      "dump": {
+        "flags": "0x200121",
+        "full_memory_flag": false,
+        "timestamp_utc": "2026-11-11T05:40:51.0000000Z",
+        "thread_count": 20,
+        "exception": {
+          "thread_id": 14964,
+          "code": "0xc0000374"
+        },
+        "memory64_count": 0,
+        "memory64_bytes": 0,
+        "stream_types": [
+          3,
+          4,
+          13,
+          5,
+          6,
+          7,
+          15,
+          21,
+          22,
+          24,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_18b5b7f36d9129a0da3565a79220145b8e416b70_982c169b_3e494c89-43f7-493d-815c-009cf743ccb0\\Report.wer",
+      "bytes": 52436,
+      "creation_utc": "2026-11-12T02:01:53.1707966Z",
+      "last_write_utc": "2026-11-12T02:01:53.1741711Z",
+      "sha256": "91a869e78ab3e7a78af77b77403e23dc78731b4b5fc1551eae860098d4c0b87e",
+      "private_copy": "files-private/0010-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_18b5b7f36d9129a0da3565a79220145b8e416b70_982c169b_bf39437b-5e78-4abc-9653-688c87de4710\\Report.wer",
+      "bytes": 52534,
+      "creation_utc": "2026-11-11T13:27:58.0132224Z",
+      "last_write_utc": "2026-11-11T13:27:58.0158622Z",
+      "sha256": "6f99e76bc5792c2657a676e10533c0c420a8aae5a69b12aac4cdbe66c00922c3",
+      "private_copy": "files-private/0011-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_46d2b0354762579677ae601155277a725e64cf2a_8827700b_2d6ba74b-3af4-4ba0-bbe4-5f4342d7ddf7\\Report.wer",
+      "bytes": 52700,
+      "creation_utc": "2026-11-11T05:40:51.5191910Z",
+      "last_write_utc": "2026-11-11T05:40:51.5221276Z",
+      "sha256": "98e52ef29fcb805db0098e276e83c2a5210aa0fcf5aaf8ea08e320789a270684",
+      "private_copy": "files-private/0012-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_48b550148966423e6b3e6d79f65453f7dea83b_ee4dd26e_34dad58a-c02d-4beb-94ad-f56fa1eb2b62\\Report.wer",
+      "bytes": 52588,
+      "creation_utc": "2026-11-10T04:25:30.4462812Z",
+      "last_write_utc": "2026-11-10T04:25:30.4492823Z",
+      "sha256": "bdd0581e4551da0a82e6aaff89a7f6a8e499fa7ba2bc09bffde4df6a5e57da51",
+      "private_copy": "files-private/0013-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_6b7bbe7a58d9ecea8ea9c5ec25617610631d575f_55f1ec8c_edb8a473-6fc1-4e08-a304-e7ccaac5f345\\Report.wer",
+      "bytes": 52466,
+      "creation_utc": "2026-11-13T02:15:55.8260361Z",
+      "last_write_utc": "2026-11-13T02:15:55.8283926Z",
+      "sha256": "0d5c59adb586eb5d46afac1864c66f6fc37a5bee488987d2109c0f8c1aa43b1c",
+      "private_copy": "files-private/0014-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_7cde37e173b32d1bdfe2ef14e0ce9a2047f5cbee_982c169b_4f6b5093-ebe3-4437-a084-5c51b5114072\\Report.wer",
+      "bytes": 52448,
+      "creation_utc": "2026-11-11T20:13:40.1771571Z",
+      "last_write_utc": "2026-11-11T20:13:40.1789099Z",
+      "sha256": "743e447f799572ef097bf8974b31ea65dbba39e7b5e8eadca515ac0c9d7675ae",
+      "private_copy": "files-private/0015-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_e880c3d9fb9ec8d27cc0671e822f95191c741b8_55f1ec8c_dda8bfb2-5130-4cd7-815a-fe39253c7509\\Report.wer",
+      "bytes": 52666,
+      "creation_utc": "2026-11-13T12:48:17.2440750Z",
+      "last_write_utc": "2026-11-13T12:48:17.2459213Z",
+      "sha256": "84a56f4e8da876c90d95e6ec36c8f372a03f9146b636679f5926e381a7a80b86",
+      "private_copy": "files-private/0016-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    },
+    {
+      "root": "System-WER-Archive",
+      "relative_path": "AppCrash_novovm-node.exe_eb68401ef8370f88f86fab7c7183c47a8b41e53_55f1ec8c_24640c65-0df8-438b-8880-c09b04be3a37\\Report.wer",
+      "bytes": 52548,
+      "creation_utc": "2026-11-12T09:51:01.1649066Z",
+      "last_write_utc": "2026-11-12T09:51:01.1670774Z",
+      "sha256": "8c5a406c678109972f9e1af11d28ecaddd3b9743b5e5f98f261cb3d2e2c3299a",
+      "private_copy": "files-private/0017-Report.wer",
+      "source_stable": true,
+      "dump": null,
+      "error": null
+    }
+  ],
+  "errors": [],
+  "exit_code": 0,
+  "end_utc": "2026-11-14T07:29:09.3908228Z"
+}

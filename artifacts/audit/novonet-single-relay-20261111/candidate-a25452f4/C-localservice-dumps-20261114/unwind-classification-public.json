@@ -1,0 +1,170 @@
+[
+  {
+    "image": "875-node",
+    "name": "writer_copy_target",
+    "start_rva": "0x23a9557",
+    "end_rva": "0x23a955d",
+    "body_sha256": "8a18c532849abc062d1995f4dd279ef3760023fb6988c2a04a741c558331a8fc",
+    "static_pdata_overlaps": [],
+    "rsp_writes": [],
+    "direct_calls": [],
+    "nonvolatile_gpr_writes": [],
+    "xmm6_to15_alias_writes": [],
+    "classification": "leaf_or_tail_thunk_no_frame_in_this_range",
+    "normal_return_abi_bug_proven": false,
+    "unwind_requirement": "No local frame unwind needed for this range; tail target judged separately",
+    "original_crash_caused_by_this_range": null
+  },
+  {
+    "image": "a254-node",
+    "name": "writer_copy_target",
+    "start_rva": "0x23ae7c7",
+    "end_rva": "0x23ae7cd",
+    "body_sha256": "231b446348a511c50ecefeb187d8e596bf11135c77677e12afc44ecf83b11781",
+    "static_pdata_overlaps": [],
+    "rsp_writes": [],
+    "direct_calls": [],
+    "nonvolatile_gpr_writes": [],
+    "xmm6_to15_alias_writes": [],
+    "classification": "leaf_or_tail_thunk_no_frame_in_this_range",
+    "normal_return_abi_bug_proven": false,
+    "unwind_requirement": "No local frame unwind needed for this range; tail target judged separately",
+    "original_crash_caused_by_this_range": null
+  },
+  {
+    "image": "875-packaged-aoem",
+    "name": "aoem_free",
+    "start_rva": "0x12ff60",
+    "end_rva": "0x12ff7e",
+    "body_sha256": "1ee86c66acef8e7e0b6580d889ce590b056b58e2fa6feae1c5271e043657ba3a",
+    "static_pdata_overlaps": [],
+    "rsp_writes": [
+      {
+        "rva": "0x12ff72",
+        "instruction": "ret "
+      }
+    ],
+    "direct_calls": [],
+    "nonvolatile_gpr_writes": [],
+    "xmm6_to15_alias_writes": [],
+    "classification": "leaf_or_tail_thunk_no_frame_in_this_range",
+    "normal_return_abi_bug_proven": false,
+    "unwind_requirement": "No local frame unwind needed for this range; tail target judged separately",
+    "original_crash_caused_by_this_range": null
+  },
+  {
+    "image": "AOEM966",
+    "name": "aoem_free",
+    "start_rva": "0x130290",
+    "end_rva": "0x1302ae",
+    "body_sha256": "c9a4f8da537dbb0894093edcc4810e9f5783874687c341a3d35673971b07191c",
+    "static_pdata_overlaps": [],
+    "rsp_writes": [
+      {
+        "rva": "0x1302a2",
+        "instruction": "ret "
+      }
+    ],
+    "direct_calls": [],
+    "nonvolatile_gpr_writes": [],
+    "xmm6_to15_alias_writes": [],
+    "classification": "leaf_or_tail_thunk_no_frame_in_this_range",
+    "normal_return_abi_bug_proven": false,
+    "unwind_requirement": "No local frame unwind needed for this range; tail target judged separately",
+    "original_crash_caused_by_this_range": null
+  },
+  {
+    "image": "875-packaged-aoem",
+    "name": "source-correlated-SysV-Keccak-candidate",
+    "start_rva": "0x6e7158",
+    "end_rva": "0x6e7b23",
+    "body_sha256": "9f74081425c77f701ce309dfc22fc4db4f6fd6485e99a2bcbc8686abe039eab6",
+    "static_pdata_overlaps": [],
+    "rsp_writes": [
+      {
+        "rva": "0x6e715b",
+        "instruction": "and rsp, 0xffffffffffffffe0"
+      },
+      {
+        "rva": "0x6e715f",
+        "instruction": "sub rsp, 0x300"
+      },
+      {
+        "rva": "0x6e7b1f",
+        "instruction": "mov rsp, r11"
+      },
+      {
+        "rva": "0x6e7b22",
+        "instruction": "ret "
+      }
+    ],
+    "direct_calls": [],
+    "nonvolatile_gpr_writes": [
+      "rsi"
+    ],
+    "xmm6_to15_alias_writes": [
+      "xmm15",
+      "ymm10",
+      "ymm11",
+      "ymm12",
+      "ymm13",
+      "ymm14",
+      "ymm15",
+      "ymm6",
+      "ymm7",
+      "ymm8",
+      "ymm9"
+    ],
+    "classification": "stack_changing_SysV_body_not_Windows_leaf",
+    "normal_return_abi_bug_proven": false,
+    "unwind_requirement": "Needs supported unwind coverage for Windows exception traversal; static pdata absent, runtime coverage not demonstrated",
+    "original_crash_caused_by_this_range": null
+  },
+  {
+    "image": "AOEM966",
+    "name": "source-correlated-SysV-Keccak-candidate",
+    "start_rva": "0x6ee998",
+    "end_rva": "0x6ef363",
+    "body_sha256": "9f74081425c77f701ce309dfc22fc4db4f6fd6485e99a2bcbc8686abe039eab6",
+    "static_pdata_overlaps": [],
+    "rsp_writes": [
+      {
+        "rva": "0x6ee99b",
+        "instruction": "and rsp, 0xffffffffffffffe0"
+      },
+      {
+        "rva": "0x6ee99f",
+        "instruction": "sub rsp, 0x300"
+      },
+      {
+        "rva": "0x6ef35f",
+        "instruction": "mov rsp, r11"
+      },
+      {
+        "rva": "0x6ef362",
+        "instruction": "ret "
+      }
+    ],
+    "direct_calls": [],
+    "nonvolatile_gpr_writes": [
+      "rsi"
+    ],
+    "xmm6_to15_alias_writes": [
+      "xmm15",
+      "ymm10",
+      "ymm11",
+      "ymm12",
+      "ymm13",
+      "ymm14",
+      "ymm15",
+      "ymm6",
+      "ymm7",
+      "ymm8",
+      "ymm9"
+    ],
+    "classification": "stack_changing_SysV_body_not_Windows_leaf",
+    "normal_return_abi_bug_proven": false,
+    "unwind_requirement": "Needs supported unwind coverage for Windows exception traversal; static pdata absent, runtime coverage not demonstrated",
+    "original_crash_caused_by_this_range": null
+  }
+]

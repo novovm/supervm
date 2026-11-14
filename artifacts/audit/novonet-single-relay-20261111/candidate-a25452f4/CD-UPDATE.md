@@ -1,6 +1,19 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14：冻结逐调用插桩，C独立静态审计原始二进制，根因仍未定位
+## CURRENT 2026-11-14：C已读取LocalService原转储，9份仍为MiniDump，无完整堆/根因修复
+
+C通过管理员PowerShell7一次只读取得LocalService原目录及System WER清单，退出0；
+未改ACL/服务权限，17个文件原件及私有副本哈希一致，原大小/创建及修改时间保持。
+9份DMP包括既有5份同SHA、3份更早的不同构建原件及1份已知TTD录制器故障；
+全部为MiniDump。PID37796目标记录184B和Writer/pad_integral代码97B/247B仍缺失，
+对应三个4KiB页均未采入；不能拿其他转储补齐同次历史。
+既有6个缺pdata范围已分类：4个叶/尾跳桩无需本地帧展开，2个SysV主体改变RSP；
+后者静态展开缺口仍待核实动态支持，正常返回ABI错误及崩溃因果均未证明。
+已准备独立WER完整转储方案，未配置/运行。首次破坏指令未找到，无生产修复，
+不启动原节点、不访问原库/身份、不恢复双中继。Git同步不等待A。
+详见[C原始转储取证、内存覆盖及准备方案](C-localservice-dumps-20261114/README.md)。
+
+## PRIOR 2026-11-14：冻结逐调用插桩，C独立静态审计原始二进制，根因仍未定位
 
 按用户指令停止优化 fcb63e7d/de8df5ca 采集器，不再修改标准库或重复正常样例。
 C只读核验原875/a254、两份包内AOEM及AOEM966，延伸Writer外部调用并核对
