@@ -1,0 +1,411 @@
+{
+  "scope": "Existing raw bytes only; no new capture or node launch",
+  "fragments": [
+    {
+      "fragment": "020730-3074711919015",
+      "bytes": 192,
+      "sha256": "e80d956c909264992a3e4159ad4739fb90c664fd07f62be7ebffb92436ee354e",
+      "sequence": [
+        {
+          "offset": 0,
+          "bytes": "02820282028202820282028202820282",
+          "type": "psb"
+        },
+        {
+          "offset": 16,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 20,
+          "bytes": "0223",
+          "type": "psbend"
+        },
+        {
+          "offset": 32,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 48,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 64,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 80,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 96,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 112,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 128,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 144,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 160,
+          "bytes": "02033700",
+          "type": "cbr"
+        },
+        {
+          "offset": 176,
+          "bytes": "02033700",
+          "type": "cbr"
+        }
+      ],
+      "packetBytes": 62,
+      "zeroPaddingBytes": 130,
+      "unexplainedNonzeroBytes": 0
+    },
+    {
+      "fragment": "020731-3074712146979",
+      "bytes": 512,
+      "sha256": "81abccacf7a233155b3ed2327e26f27e56f93e852e3e012fbcef85e70bf771d1",
+      "sequence": [
+        {
+          "offset": 0,
+          "bytes": "02820282028202820282028202820282",
+          "type": "psb"
+        },
+        {
+          "offset": 16,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 20,
+          "bytes": "0223",
+          "type": "psbend"
+        },
+        {
+          "offset": 32,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 48,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 64,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 80,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 96,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 112,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 128,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 144,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 160,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 176,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 192,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 208,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 224,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 240,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 256,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 272,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 276,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 288,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 304,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 320,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 336,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 352,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 368,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 384,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 400,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 416,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 420,
+          "bytes": "02032e00",
+          "type": "cbr"
+        },
+        {
+          "offset": 432,
+          "bytes": "02032e00",
+          "type": "cbr"
+        },
+        {
+          "offset": 448,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 464,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 480,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 496,
+          "bytes": "02033400",
+          "type": "cbr"
+        }
+      ],
+      "packetBytes": 150,
+      "zeroPaddingBytes": 362,
+      "unexplainedNonzeroBytes": 0
+    },
+    {
+      "fragment": "340666",
+      "bytes": 384,
+      "sha256": "c284d93cbe0f046ec571d2a5de422e44d53826cdbc8b526949171619816ae0c4",
+      "sequence": [
+        {
+          "offset": 0,
+          "bytes": "02820282028202820282028202820282",
+          "type": "psb"
+        },
+        {
+          "offset": 16,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 20,
+          "bytes": "0223",
+          "type": "psbend"
+        },
+        {
+          "offset": 32,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 48,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 64,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 80,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 96,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 112,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 128,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 144,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 160,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 176,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 192,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 208,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 224,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 240,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 256,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 272,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 288,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 304,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 320,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 336,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 352,
+          "bytes": "02030800",
+          "type": "cbr"
+        },
+        {
+          "offset": 356,
+          "bytes": "02033400",
+          "type": "cbr"
+        },
+        {
+          "offset": 368,
+          "bytes": "02033400",
+          "type": "cbr"
+        }
+      ],
+      "packetBytes": 114,
+      "zeroPaddingBytes": 270,
+      "unexplainedNonzeroBytes": 0
+    }
+  ],
+  "allBytesExplainedAsControlPacketsOrZeroPadding": true,
+  "tracedTargetEndUtc": "2026-11-14T22:56:57.2274808Z",
+  "wprStopStartUtc": "2026-11-14T22:56:57.3702182Z",
+  "wprStopEndUtc": "2026-11-14T22:57:19.9773222Z",
+  "wprStopExit": 0,
+  "conclusion": "No hidden TIP/TNT bytes left unparsed in these three fragments. Controller requests stop after target exit; cannot attribute missing fault path to a controller stop before the exception. Hardware trace enable/filter/reset state was not captured, so underlying loss mechanism remains unproved."
+}
