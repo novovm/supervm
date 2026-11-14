@@ -1,0 +1,72 @@
+{
+  "scope": "Existing evidence field provenance audit; no capture",
+  "matrix": [
+    {
+      "field": "TraceEn",
+      "status": "missing",
+      "basis": "No contemporaneous IA32_RTIT_CTL register snapshot"
+    },
+    {
+      "field": "ContextEn / FilterEn / TriggerEn",
+      "status": "missing",
+      "basis": "No IA32_RTIT_STATUS snapshot; control packets do not determine all enable states"
+    },
+    {
+      "field": "CPU / last switch-out",
+      "status": "present",
+      "basis": "CPU 9, QPC 3074711522469, +7.1 us after handler QPC; missing matching PT, not missing CSwitch"
+    },
+    {
+      "field": "ToPA output position",
+      "status": "missing",
+      "basis": "Event writePosition is a payload buffer offset, not authenticated IA32_RTIT_OUTPUT_MASK_PTRS / OUTPUT_BASE or ToPA table state"
+    },
+    {
+      "field": "PT Error / Stopped",
+      "status": "missing",
+      "basis": "No contemporaneous STATUS; no OVF in selected tail is not proof of no hardware error"
+    },
+    {
+      "field": "ETW stop ordering",
+      "status": "present",
+      "basis": "Controller requested stop after target exit; stop exit 0 and ETW loss counters zero do not certify hardware-tail drain"
+    },
+    {
+      "field": "User-mode dump",
+      "status": "present",
+      "basis": "Exception and thread contexts captured; these streams are not per-CPU PT MSR snapshots"
+    }
+  ],
+  "dumpStreams": [
+    0,
+    3,
+    4,
+    6,
+    7,
+    9,
+    13,
+    15,
+    16,
+    17,
+    21,
+    22
+  ],
+  "sources": [
+    {
+      "name": "filecs01-owner-public.json",
+      "sha256": "c2328d900d93dd4c533d9b7bfa5123ced5380b72d83ed73fe0451caf10060653"
+    },
+    {
+      "name": "qualification-analysis-public.json",
+      "sha256": "12513a441b0f6f898ead209e972b10cc1eb9ae860ed36873c4a3bd436278da50"
+    },
+    {
+      "name": "controller-result.json",
+      "sha256": "67c69d5d1d48dbb7b61e005e41878d8ea3239e058292013e6e9a79cda27146b2"
+    }
+  ],
+  "missingLayerIdentified": false,
+  "fixEstablished": false,
+  "newCaptureStarted": false,
+  "originalNodeStarted": false
+}
