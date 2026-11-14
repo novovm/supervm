@@ -1,0 +1,10 @@
+{
+  "exit_code": 0,
+  "passed": true,
+  "markers": [
+    "NESTED_INCLUDE_OK",
+    "NESTED_RETURN_OK",
+    "BYTE_GUARD_OK"
+  ],
+  "log_sha256": "97d11431bcf56ee76ae3d03ee2f1f2895ebcd68e452e533f1f0410536cd61a48"
+}

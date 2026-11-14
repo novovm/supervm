@@ -1,0 +1,16 @@
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)
+00007ffc`e31a9dfc 488d6c24b0      lea     rbp,[rsp-50h]
+00007ffc`e31aa05b e860050000      call    ntdll!RtlpReAllocateHeap (00007ffc`e31aa5c0)

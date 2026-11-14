@@ -50,27 +50,39 @@ for i in range(4):
 # All other threads' hits are counted and capped, not silently ignored as free.
 def script(name,lines):
     (out/(name+'.cmd')).write_text('\n'.join(lines)+'\n',encoding='ascii')
-def use(name):return '$><'+(out/(name+'.cmd')).as_posix()
-def hit_guard(body):return 'r @$t19 = @$t19 + 1; .if (@$t19 > 1000) { .echo HIT_LIMIT_STOP; q } .else { '+body+' }'
+def use(name):return '$$><'+(out/(name+'.cmd')).as_posix()+';'
+def hit_guard(body):return 'r @$t19 = @$t19 + 1; .if (@$t19 > 0n1000) { .echo HIT_LIMIT_STOP; q } .else { '+body+' }'
 def hw(slot,rva,condition,name):
     condition='('+condition.replace(' && ',') & (')+')'
     return f'ba{slot} e 1 ntdll+{rva:x} "'+hit_guard(f'.if ({condition}) {{ {use(name)} }} .else {{ gc }}')+'"'
 def event(name):return f'.printf "EVENT {name} group=%x tid=%x rip=%p rsp=%p rbp=%p\\n", @$t10, @$tid, @rip, @rsp, @rbp'
 dump=f'.dump /ma {out}/captured-private.dmp; q'
-script('arm',[f'ba0 e 1 novovm_node+84eed4 "{use("outer")}"','g'])
+script('arm',['ba0 e 1 novovm_node+84eed4 "'+hit_guard('.if (@rdx != 0) { '+use('outer')+' } .else { gc }')+'"','g'])
 script('outer',['bc 0','r @$t10 = @$t10 + 1','r @$t0 = @$tid','r @$t1 = @rsp','r @$t11 = 0',event('OUTER_CALL'),
     'bp10 ntdll!RtlUnwindEx ".echo CONTEXT_GAP_UNWIND; q"',
     'bp11 ntdll!RtlRestoreContext ".echo CONTEXT_GAP_RESTORE; q"',
     'bp12 ntdll!NtContinue ".echo CONTEXT_GAP_CONTINUE; q"',
-    'bp13 novovm_node+84eed9 ".echo OUTER_RETURN_WITHOUT_COMPLETED_GROUP; q"',
+    'bp13 novovm_node+84eed9 ".if ((@$tid == @$t0) & (@rsp == @$t1)) { .echo OUTER_RETURN_WITHOUT_COMPLETED_GROUP; q } .else { gc }"',
     hw(1,0x59dfc,'@$tid == @$t0 && @rsp < @$t1 && poi(@rsp+38) == ntdll+5bddd','lea_before'),'g'])
 script('lea_before',['bc 1','r @$t4 = @rsp','r @$t5 = @rbp','r @$t12 = poi(@rsp+38)',event('LEA_BEFORE'),'.printf "HEAP_RETURN %p\\n", @$t12','u @rip L1',hw(2,0x59e01,'@$tid == @$t0 && @rsp == @$t4 && poi(@rsp+38) == @$t12','lea_after'),'g'])
 script('lea_after',['bc 2',event('LEA_AFTER'),'.if (@rbp != (@$t4 - 50)) { .echo LEA_MISMATCH; '+dump+' }',hw(0,0x5a05b,'@$tid == @$t0 && @rsp == (@$t4 - 150)','child_before'),hw(1,0x5a060,'@$tid == @$t0 && @rsp == (@$t4 - 150)','child_after'),hw(3,0x5a108,'@$tid == @$t0 && @rsp == (@$t4 - 150)','check'),'g'])
 script('child_before',['.if (@$t7 != 0) { .echo CONTEXT_GAP_NESTED_CHILD; q }','r @$t11 = @$t11 + 1','r @$t6 = @rbp','r @$t7 = 1',event('CHILD_BEFORE'),'.printf "CHILD_SEQUENCE %x\\n", @$t11','u @rip L1','g'])
 script('child_after',['.if (@$t7 != 1) { .echo CONTEXT_GAP_CHILD_WITHOUT_ENTRY; q }',event('CHILD_AFTER'),'.printf "CHILD_SEQUENCE %x\\n", @$t11','.if (@rbp != @$t6) { .echo CHILD_INTERVAL_MISMATCH; '+dump+' }','r @$t7 = 0','g'])
-script('check',[event('COOKIE_PRECHECK'),'.if (@rbp != (@rsp + 100)) { .echo PRECHECK_MISMATCH; kv; '+dump+' }','bc *','r @$t7 = 0','.if (@$t10 < 8) { '+use('arm')+' } .else { .echo CAPTURE_GROUP_LIMIT; g }'])
+script('check',[event('COOKIE_PRECHECK'),'.if (@$t7 != 0) { .echo CONTEXT_GAP_UNFINISHED_CHILD; q }','.if (@rbp != (@rsp + 100)) { .echo PRECHECK_MISMATCH; kv; '+dump+' }','bc *','r @$t7 = 0','.if (@$t10 < 8) { '+use('arm')+' } .else { .echo CAPTURE_GROUP_LIMIT; g }'])
 script('init',['n 16','.sympath '+str(repo/'target/c-symbolized-original-20261114')+';'+str(repo/'target/c-first-fault-20261113/symbols'),'.reload /f ntdll.dll','.if ((dwo(ntdll+59dfc) != 246c8d48) | (by(ntdll+59e00) != b0) | (dwo(ntdll+5a108) != 304d8b48)) { .echo CODE_MISMATCH_STOP; q }','r @$t10 = 0','r @$t19 = 0','r @$t7 = 0',f'sxe -c ".echo FIRST_CHANCE_AV_CONTROLLED_STOP; {dump}" av',f'sxe -c ".echo FIRST_CHANCE_FAST_FAIL_CAPTURE; {dump}" 0xc0000409','sxe -c ".echo CONTEXT_GAP_CPP_EXCEPTION; q" eh',use('arm')])
 save('preflight-public.json',dict(utc=stamp(),node_sha256=sha(exe),aoem_sha256=sha(dll),ntdll_sha256=sha(nt),loopback_only=True,original_database_accessed=False,original_identity_accessed=False,original_node_started=False,run_ms=60000,maximum_wall_seconds=110,group_limit=8,all_hardware_hit_limit=1000,limitations=['eight selected invocations only','outer source has no exact source PDB','no original packet replay','fresh loopback genesis','hardware debug exceptions perturb execution','no full instruction trace','abnormal unwind of tracked frame may leave an unmatched group']))
+# Validate the exact nested include form OFFLINE before launching any node.
+# This does not execute an invented callee or mutate the dump.
+script('syntax-include',['.echo NESTED_INCLUDE_OK'])
+script('syntax-preflight',['n 16','r @$t19 = 0',hit_guard('.if ((1 == 1) & (2 > 1)) { '+use('syntax-include')+' .echo NESTED_RETURN_OK } .else { .echo BAD_CONDITION }'),'.if ((dwo(ntdll+59dfc) != 246c8d48) | (by(ntdll+59e00) != b0) | (dwo(ntdll+5a108) != 304d8b48)) { .echo BAD_BYTES } .else { .echo BYTE_GUARD_OK }','q'])
+old_dump=repo/'target/c-wer-natural-full-20261114T122549Z/novovm-node.exe.34452.dmp'
+with open(out/'syntax-console-private.txt','wb') as f:
+    syntax=subprocess.run([str(cdb),'-z',str(old_dump),'-cf',str(out/'syntax-preflight.cmd'),'-logo',str(out/'syntax-private.log')],stdout=f,stderr=subprocess.STDOUT,timeout=30,creationflags=subprocess.CREATE_NO_WINDOW)
+syntax_log=(out/'syntax-private.log').read_text(errors='replace')
+markers=['NESTED_INCLUDE_OK','NESTED_RETURN_OK','BYTE_GUARD_OK']
+syntax_ok=syntax.returncode==0 and all('\n'+s+'\n' in syntax_log for s in markers) and not any(s in syntax_log for s in ['Numeric expression missing','Command file execution failed','Syntax error'])
+save('syntax-public.json',dict(exit_code=syntax.returncode,passed=syntax_ok,markers=markers,log_sha256=sha(out/'syntax-private.log')))
+assert syntax_ok,'offline nested callback syntax failed; no node launched'
 procs=[];handles=[];start=time.monotonic();history=[];stop_reason='completed_or_wall_limit'
 try:
     for s in sockets:s.close()

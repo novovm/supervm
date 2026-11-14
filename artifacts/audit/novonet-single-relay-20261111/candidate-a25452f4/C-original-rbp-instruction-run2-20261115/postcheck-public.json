@@ -1,0 +1,9 @@
+{
+  "checked_utc": "2026-11-14T19:37:31.6161901Z",
+  "remaining_node_or_cdb_processes": [],
+  "captured_private_dump_present": false,
+  "executed_launcher_sha256": "3f590f8c62d893c392f7fb3b75f59b4b8fef7a1e33664554bddbaf28e3c0114c",
+  "source_matches_executed_launcher": true,
+  "instruction_lines": 16,
+  "original_database_or_identity_read_for_this_check": false
+}

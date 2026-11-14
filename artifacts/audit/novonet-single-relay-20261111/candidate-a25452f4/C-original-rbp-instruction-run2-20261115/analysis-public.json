@@ -1,0 +1,281 @@
+{
+  "schema": 1,
+  "groups": 8,
+  "events": 48,
+  "all_observed_groups_valid": true,
+  "comparisons": [
+    {
+      "group": 1,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee930"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee780"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee680",
+        "rbp": "0x4db2ee780"
+      }
+    },
+    {
+      "group": 2,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee930"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee780"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee680",
+        "rbp": "0x4db2ee780"
+      }
+    },
+    {
+      "group": 3,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee930"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee780"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee680",
+        "rbp": "0x4db2ee780"
+      }
+    },
+    {
+      "group": 4,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee930"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee7d0",
+        "rbp": "0x4db2ee780"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee680",
+        "rbp": "0x4db2ee780"
+      }
+    },
+    {
+      "group": 5,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee5e0",
+        "rbp": "0x4db2ee740"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee5e0",
+        "rbp": "0x4db2ee590"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee490",
+        "rbp": "0x4db2ee590"
+      }
+    },
+    {
+      "group": 6,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee510",
+        "rbp": "0x4db2ee670"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee510",
+        "rbp": "0x4db2ee4c0"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee3c0",
+        "rbp": "0x4db2ee4c0"
+      }
+    },
+    {
+      "group": 7,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee510",
+        "rbp": "0x4db2ee670"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee510",
+        "rbp": "0x4db2ee4c0"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee3c0",
+        "rbp": "0x4db2ee4c0"
+      }
+    },
+    {
+      "group": 8,
+      "tid": "0x6e54",
+      "tests": {
+        "same_instruction_rsp": true,
+        "lea_result_correct": true,
+        "post_rip_is_next_instruction": true,
+        "local_allocation_0x150": true,
+        "child_registers_preserved": true,
+        "child_return_is_call_plus_5": true,
+        "cookie_frame_correct": true,
+        "same_parent_stack": true,
+        "heap_return_matches": true,
+        "covered_rvas_match": true
+      },
+      "lea_before": {
+        "rsp": "0x4db2ee510",
+        "rbp": "0x4db2ee670"
+      },
+      "lea_after": {
+        "rsp": "0x4db2ee510",
+        "rbp": "0x4db2ee4c0"
+      },
+      "cookie_precheck": {
+        "rsp": "0x4db2ee3c0",
+        "rbp": "0x4db2ee4c0"
+      }
+    }
+  ],
+  "observed_wrong_rbp": false,
+  "first_original_corruption_instruction_found": false,
+  "original_fault_reproduced": false,
+  "capture_stopped_at_group_limit": true,
+  "command_errors": [],
+  "exception_or_gap_markers": [],
+  "original_heap_instruction": {
+    "rva": "0x59dfc",
+    "bytes": "488d6c24b0",
+    "instruction": "lea rbp,[rsp-0x50]",
+    "kind": "legal frame establishment"
+  },
+  "debugger_and_three_peer_exits": [
+    {
+      "index": 1,
+      "pid": 4824,
+      "exit_code": 0,
+      "controlled_stop": false
+    },
+    {
+      "index": 2,
+      "pid": 31132,
+      "exit_code": 0,
+      "controlled_stop": false
+    },
+    {
+      "index": 3,
+      "pid": 42752,
+      "exit_code": 0,
+      "controlled_stop": false
+    },
+    {
+      "index": 0,
+      "pid": 32096,
+      "exit_code": 0,
+      "controlled_stop": false
+    }
+  ],
+  "debuggee_exit_code_separately_collected": false,
+  "wall_seconds": 63.11000000004424,
+  "log_sha256": "595b39834b365e57972a1a6216fc5df3453cdb4c1559397f120a55609599d787",
+  "limits": [
+    "8 selected active calls only",
+    "not all child RBP instructions covered",
+    "fresh loopback state, not original packet replay",
+    "unknown context restoration not fully covered",
+    "no direct per-hit pause timing or non-debugged control; not low-interference qualified",
+    "CDB exit code is not separately retained OS debuggee exit code"
+  ]
+}
