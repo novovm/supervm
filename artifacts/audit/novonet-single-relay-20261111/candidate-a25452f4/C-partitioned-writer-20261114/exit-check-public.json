@@ -1,0 +1,68 @@
+{
+  "utc": "2026-11-14T06:45:12.396602+00:00",
+  "runs": [
+    {
+      "run": "qualification-0-baseline",
+      "recorded_pids": [
+        26868,
+        34380,
+        36028,
+        37000,
+        37620,
+        37852,
+        42400,
+        43044
+      ],
+      "currently_existing_pids": [],
+      "exception_dump_files": []
+    },
+    {
+      "run": "qualification-1-instrumented",
+      "recorded_pids": [
+        2160,
+        8512,
+        14908,
+        26640,
+        31764,
+        33772,
+        42840,
+        43924
+      ],
+      "currently_existing_pids": [],
+      "exception_dump_files": []
+    },
+    {
+      "run": "qualification-2-instrumented",
+      "recorded_pids": [
+        9880,
+        25468,
+        29616,
+        38464,
+        38560,
+        40264,
+        41680,
+        43548
+      ],
+      "currently_existing_pids": [],
+      "exception_dump_files": []
+    },
+    {
+      "run": "qualification-3-baseline",
+      "recorded_pids": [
+        28240,
+        31336,
+        31688,
+        37308,
+        38844,
+        41788,
+        42524,
+        43648
+      ],
+      "currently_existing_pids": [
+        31688
+      ],
+      "exception_dump_files": []
+    }
+  ],
+  "no_process_mutation": true
+}

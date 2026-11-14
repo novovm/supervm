@@ -1,0 +1,253 @@
+{
+  "source": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "rust": "1.94.0",
+  "variants": [
+    {
+      "variant": "baseline",
+      "exe_sha256": "cd7d3ed7e0f8c192c7c670e41818484f34be5b3db1868d68252b678ef8c5358b",
+      "pdb_sha256": "cea624a5519cf1bc3da02816494a9a203322d2d4ee2c1369bafc4569064fac0d",
+      "exe_bytes": 24399360,
+      "pdb_bytes": 190582784,
+      "guid": "c70163ca-d926-449b-9334-cf620d807f3d",
+      "age": 1,
+      "pdb_matches_exe": true,
+      "build": {
+        "variant": "baseline",
+        "exit": 0,
+        "seconds": 353.9392764568329,
+        "command": [
+          "cargo",
+          "+1.94.0",
+          "rustc",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target",
+          "x86_64-pc-windows-msvc",
+          "--config",
+          "profile.release.package.novovm-node.debug=2",
+          "--config",
+          "profile.release.package.novovm-network.debug=2",
+          "-p",
+          "novovm-node",
+          "--bin",
+          "c-lowimpact-capture",
+          "--features",
+          "iroh-transport",
+          "--",
+          "-C",
+          "debuginfo=2",
+          "-C",
+          "strip=none"
+        ],
+        "diagnostic_std_override": false,
+        "c-lowimpact-capture.exe": {
+          "bytes": 24399360,
+          "sha256": "cd7d3ed7e0f8c192c7c670e41818484f34be5b3db1868d68252b678ef8c5358b"
+        },
+        "c_lowimpact_capture.pdb": {
+          "bytes": 190582784,
+          "sha256": "cea624a5519cf1bc3da02816494a9a203322d2d4ee2c1369bafc4569064fac0d"
+        }
+      }
+    },
+    {
+      "variant": "instrumented",
+      "exe_sha256": "a5aa290bac958e64c220dc25e0bc4b34f821e219a005d10f0b1113459750b992",
+      "pdb_sha256": "e593070f53009e5d8c05260f3440e7d86c89e05a5e19f1f98c3a8baa290afe85",
+      "exe_bytes": 24934400,
+      "pdb_bytes": 177713152,
+      "guid": "17487979-9b8b-4d4f-957c-1c97bc46dc68",
+      "age": 1,
+      "pdb_matches_exe": true,
+      "build": {
+        "variant": "instrumented",
+        "exit": 0,
+        "seconds": 347.33440804481506,
+        "command": [
+          "cargo",
+          "+1.94.0",
+          "rustc",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target",
+          "x86_64-pc-windows-msvc",
+          "--config",
+          "profile.release.package.novovm-node.debug=2",
+          "--config",
+          "profile.release.package.novovm-network.debug=2",
+          "-p",
+          "novovm-node",
+          "--bin",
+          "c-lowimpact-capture",
+          "-Z",
+          "build-std=std,panic_abort",
+          "--features",
+          "iroh-transport,lowtrace",
+          "--",
+          "-C",
+          "debuginfo=2",
+          "-C",
+          "strip=none"
+        ],
+        "diagnostic_std_override": true,
+        "c-lowimpact-capture.exe": {
+          "bytes": 24934400,
+          "sha256": "a5aa290bac958e64c220dc25e0bc4b34f821e219a005d10f0b1113459750b992"
+        },
+        "c_lowimpact_capture.pdb": {
+          "bytes": 177713152,
+          "sha256": "e593070f53009e5d8c05260f3440e7d86c89e05a5e19f1f98c3a8baa290afe85"
+        }
+      }
+    }
+  ],
+  "installed_std_checks": [
+    {
+      "path": "alloc/src/fmt.rs",
+      "installed_unchanged": true,
+      "installed_sha256": "1c4e8c95da13bb474845fb1e122f7cd3147db94b5225c56b93a922f7da9a6119",
+      "diagnostic_sha256": "f650ce00f20f2c393372f4d48504032cadf4577661bb4df7bdfe88b458653f54"
+    },
+    {
+      "path": "alloc/src/string.rs",
+      "installed_unchanged": true,
+      "installed_sha256": "4436d55804bbac0c1691a251042ff82e30b5eab0d4d0bebc20b016b60a0c07a7",
+      "diagnostic_sha256": "c45de24d7db2b44257373f7b3d7657518f67115ffa8898453ab215650141ca51"
+    },
+    {
+      "path": "core/src/fmt/mod.rs",
+      "installed_unchanged": true,
+      "installed_sha256": "ff56f0d7f3ce245b6171f2b742bfa07e1a7596158e43a9917a0340c7e9eb8a27",
+      "diagnostic_sha256": "bebd2d861a35c48e747fc200cbcf1a648f3f89e43211864e811a06dbb4f9786d"
+    }
+  ],
+  "local_failed_attempts": [
+    {
+      "directory": "instrumented-edition-failed",
+      "build": {
+        "variant": "instrumented",
+        "exit": 101,
+        "seconds": 127.83607172966003,
+        "command": [
+          "cargo",
+          "+1.94.0",
+          "rustc",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target",
+          "x86_64-pc-windows-msvc",
+          "--config",
+          "profile.release.package.novovm-node.debug=2",
+          "--config",
+          "profile.release.package.novovm-network.debug=2",
+          "-p",
+          "novovm-node",
+          "--bin",
+          "c-lowimpact-capture",
+          "-Z",
+          "build-std=std,panic_abort",
+          "--features",
+          "iroh-transport,lowtrace",
+          "--",
+          "-C",
+          "debuginfo=2",
+          "-C",
+          "strip=none"
+        ],
+        "diagnostic_std_override": true
+      },
+      "log_sha256": "4c88e46a5d0d98660fc1ce8fd0d19e7e5604a520db10bdb780de436fbbda8242"
+    },
+    {
+      "directory": "instrumented-link-failed",
+      "build": {
+        "variant": "instrumented",
+        "exit": 101,
+        "seconds": 64.51559042930603,
+        "command": [
+          "cargo",
+          "+1.94.0",
+          "rustc",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target",
+          "x86_64-pc-windows-msvc",
+          "--config",
+          "profile.release.package.novovm-node.debug=2",
+          "--config",
+          "profile.release.package.novovm-network.debug=2",
+          "-p",
+          "novovm-node",
+          "--bin",
+          "c-lowimpact-capture",
+          "-Z",
+          "build-std=std,panic_abort",
+          "--features",
+          "iroh-transport,lowtrace",
+          "--",
+          "-C",
+          "debuginfo=2",
+          "-C",
+          "strip=none"
+        ],
+        "diagnostic_std_override": true
+      },
+      "log_sha256": "a7f24210dd80a0dd5276502971fb0b7b3d9c5edca3dab495a785e7183545226b"
+    },
+    {
+      "directory": "instrumented-setup-failed",
+      "build": {
+        "not_started": "setup not yet ready; no compiler executed"
+      },
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "directory": "instrumented-stale-std-failed",
+      "build": {
+        "variant": "instrumented",
+        "exit": 101,
+        "seconds": 5.583287715911865,
+        "command": [
+          "cargo",
+          "+1.94.0",
+          "rustc",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target",
+          "x86_64-pc-windows-msvc",
+          "--config",
+          "profile.release.package.novovm-node.debug=2",
+          "--config",
+          "profile.release.package.novovm-network.debug=2",
+          "-p",
+          "novovm-node",
+          "--bin",
+          "c-lowimpact-capture",
+          "-Z",
+          "build-std=std,panic_abort",
+          "--features",
+          "iroh-transport,lowtrace",
+          "--",
+          "-C",
+          "debuginfo=2",
+          "-C",
+          "strip=none"
+        ],
+        "diagnostic_std_override": true
+      },
+      "log_sha256": "92e371cb2738258ff80d926c58b00755032c62265a96df5c4307905b1b50204a"
+    }
+  ],
+  "runtime_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "warning": "Custom std changes ABI-observation code generation; this is not the original executable or an original-register trace",
+  "cargo_source_override_reference": "https://github.com/rust-lang/cargo/blob/rust-1.94.0/src/cargo/core/compiler/standard_lib.rs#L208-L211",
+  "cargo_encoded_rustflags": [
+    "-C",
+    "metadata=c_partition_callback_v2"
+  ]
+}

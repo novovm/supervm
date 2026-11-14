@@ -1,0 +1,1028 @@
+{
+  "runs": [
+    {
+      "run": "qualification-0-baseline",
+      "variant": "baseline",
+      "exit": {
+        "utc": "2026-11-14T06:41:31.149822+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 46.015999999974156
+      },
+      "query_ns": {
+        "n": 16,
+        "p50": 6565000,
+        "p95": 16554300,
+        "p99": 16554300
+      },
+      "poll_ns": {
+        "n": 1152,
+        "p50": 13700,
+        "p95": 34800,
+        "p99": 88800
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999889500,
+        "p95": 10004687400,
+        "p99": 10004687400
+      },
+      "loops_per_second": 640.7765777550205,
+      "mean_cpu_cores": 0.06533061594202899,
+      "peak_rss_bytes": [
+        90738688,
+        90611712,
+        90611712,
+        90820608
+      ],
+      "context_switch_deltas": [
+        114699,
+        115015,
+        116605,
+        115656
+      ],
+      "mean_system_cpu_percent": 4.2725,
+      "probe_events": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_object_done": 32,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "network": [
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": []
+    },
+    {
+      "run": "qualification-1-instrumented",
+      "variant": "instrumented",
+      "exit": {
+        "utc": "2026-11-14T06:42:17.992444+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 46.5
+      },
+      "query_ns": {
+        "n": 16,
+        "p50": 8472300,
+        "p95": 18742600,
+        "p99": 18742600
+      },
+      "poll_ns": {
+        "n": 1152,
+        "p50": 14000,
+        "p95": 35600,
+        "p99": 70400
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 9999853300,
+        "p95": 10000486700,
+        "p99": 10000486700
+      },
+      "loops_per_second": 640.7192812114238,
+      "mean_cpu_cores": 0.06284120277607409,
+      "peak_rss_bytes": [
+        94679040,
+        94552064,
+        95023104,
+        94531584
+      ],
+      "context_switch_deltas": [
+        115922,
+        113683,
+        116197,
+        116500
+      ],
+      "mean_system_cpu_percent": 4.325925925925926,
+      "probe_events": {
+        "probe_pending_time_boundary": 30,
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_received_integrity_verified": 30,
+        "probe_rejected_time_untrusted_or_outside_validity": 2
+      },
+      "network": [
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [
+        {
+          "bytes": 1537592,
+          "sha256": "68a9c98b69a9e488fed0d1994136329796fe0a9c4498be5c8a40596e725e3837",
+          "os_thread_id": 35600,
+          "total_written": 9608,
+          "target_calls": 267200,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 607,
+              "retained": 607,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 248,
+                "4": 111,
+                "3": 248
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6264,
+              "retained": 6264,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 266156,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1044,
+                "102": 1044,
+                "103": 1044,
+                "104": 1044,
+                "105": 1044,
+                "106": 1044
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 2737,
+              "retained": 2737,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 2688,
+                "22": 24,
+                "20": 8,
+                "21": 8,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1044,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 248,
+          "drops_without_retained_creation": 0
+        },
+        {
+          "bytes": 1351032,
+          "sha256": "bd094fdc37c273cec4c1080de6b5d6e078dde1357a78fb32eb28480c8d23d4cf",
+          "os_thread_id": 29792,
+          "total_written": 8442,
+          "target_calls": 268160,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 610,
+              "retained": 610,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 250,
+                "4": 110,
+                "3": 250
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6288,
+              "retained": 6288,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 267112,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1048,
+                "102": 1048,
+                "103": 1048,
+                "104": 1048,
+                "105": 1048,
+                "106": 1048
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 1544,
+              "retained": 1544,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 1496,
+                "22": 24,
+                "20": 8,
+                "21": 7,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1048,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 250,
+          "drops_without_retained_creation": 0
+        },
+        {
+          "bytes": 1644632,
+          "sha256": "492f296cea2190392766598a99435379ecf902fabac4687b1e4fd9e774c9f55c",
+          "os_thread_id": 34640,
+          "total_written": 10277,
+          "target_calls": 270080,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 611,
+              "retained": 611,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 251,
+                "3": 251,
+                "4": 109
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6330,
+              "retained": 6330,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 269025,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1055,
+                "102": 1055,
+                "103": 1055,
+                "104": 1055,
+                "105": 1055,
+                "106": 1055
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 3336,
+              "retained": 3336,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 3288,
+                "22": 24,
+                "20": 8,
+                "21": 7,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1055,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 251,
+          "drops_without_retained_creation": 0
+        },
+        {
+          "bytes": 1439512,
+          "sha256": "ea08106d4f3a777828bcee2b19fc9fa26433ec1f4a034ad521d563d6433fb561",
+          "os_thread_id": 39904,
+          "total_written": 8995,
+          "target_calls": 267008,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 601,
+              "retained": 601,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 245,
+                "4": 111,
+                "3": 245
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6258,
+              "retained": 6258,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 265965,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1043,
+                "102": 1043,
+                "103": 1043,
+                "104": 1043,
+                "105": 1043,
+                "106": 1043
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 2136,
+              "retained": 2136,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 2087,
+                "22": 24,
+                "21": 8,
+                "20": 8,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1043,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 245,
+          "drops_without_retained_creation": 0
+        }
+      ]
+    },
+    {
+      "run": "qualification-2-instrumented",
+      "variant": "instrumented",
+      "exit": {
+        "utc": "2026-11-14T06:43:04.667176+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 46.5
+      },
+      "query_ns": {
+        "n": 16,
+        "p50": 13048800,
+        "p95": 21675700,
+        "p99": 21675700
+      },
+      "poll_ns": {
+        "n": 1152,
+        "p50": 14300,
+        "p95": 40300,
+        "p99": 74600
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 10000114900,
+        "p95": 10005049600,
+        "p99": 10005049600
+      },
+      "loops_per_second": 640.8682825611968,
+      "mean_cpu_cores": 0.06547865463949114,
+      "peak_rss_bytes": [
+        94556160,
+        94642176,
+        94531584,
+        94728192
+      ],
+      "context_switch_deltas": [
+        113997,
+        113996,
+        113642,
+        112986
+      ],
+      "mean_system_cpu_percent": 4.674074074074074,
+      "probe_events": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "network": [
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": [
+        {
+          "bytes": 1357752,
+          "sha256": "9b7fbf6d5bf4a8119885de84c9fd34e78f71b402683f784cf5656ff1f8aea935",
+          "os_thread_id": 14876,
+          "total_written": 8484,
+          "target_calls": 269376,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 613,
+              "retained": 613,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 251,
+                "4": 111,
+                "3": 251
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6318,
+              "retained": 6318,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 268323,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1053,
+                "102": 1053,
+                "103": 1053,
+                "104": 1053,
+                "105": 1053,
+                "106": 1053
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 1553,
+              "retained": 1553,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 1505,
+                "22": 24,
+                "20": 8,
+                "21": 7,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1053,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 251,
+          "drops_without_retained_creation": 0
+        },
+        {
+          "bytes": 1644952,
+          "sha256": "63c8bd1e2ba7b1f5c0f6bb254e3d1bc8f7306977423fecbfb8ba861eb9dc9730",
+          "os_thread_id": 36868,
+          "total_written": 10279,
+          "target_calls": 269888,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 612,
+              "retained": 612,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 251,
+                "4": 110,
+                "3": 251
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6330,
+              "retained": 6330,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 268833,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1055,
+                "102": 1055,
+                "103": 1055,
+                "104": 1055,
+                "105": 1055,
+                "106": 1055
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 3337,
+              "retained": 3337,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 3289,
+                "22": 24,
+                "20": 8,
+                "21": 7,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1055,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 251,
+          "drops_without_retained_creation": 0
+        },
+        {
+          "bytes": 1444472,
+          "sha256": "4b45c6859972ed115c9952c18d01dab611327bf3492822d1a93177d97fd61a17",
+          "os_thread_id": 42368,
+          "total_written": 9026,
+          "target_calls": 267712,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 609,
+              "retained": 609,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 249,
+                "4": 111,
+                "3": 249
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6276,
+              "retained": 6276,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 266666,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1046,
+                "102": 1046,
+                "103": 1046,
+                "104": 1046,
+                "105": 1046,
+                "106": 1046
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 2141,
+              "retained": 2141,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 2093,
+                "22": 24,
+                "21": 7,
+                "20": 8,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1046,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 249,
+          "drops_without_retained_creation": 0
+        },
+        {
+          "bytes": 1536792,
+          "sha256": "e7f6fec68d4ff510a25b3dd9f968c548dfe554160a699262dce8bbf14d5b9b16",
+          "os_thread_id": 28156,
+          "total_written": 9603,
+          "target_calls": 266944,
+          "online_receiver_mismatches": 0,
+          "channels": [
+            {
+              "channel": "A",
+              "capacity": 4096,
+              "writes": 606,
+              "retained": 606,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "2": 247,
+                "4": 112,
+                "3": 247
+              }
+            },
+            {
+              "channel": "B",
+              "capacity": 8192,
+              "writes": 6258,
+              "retained": 6258,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 265901,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "101": 1043,
+                "102": 1043,
+                "103": 1043,
+                "104": 1043,
+                "105": 1043,
+                "106": 1043
+              }
+            },
+            {
+              "channel": "C",
+              "capacity": 8192,
+              "writes": 2739,
+              "retained": 2739,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {
+                "1": 2690,
+                "22": 24,
+                "20": 8,
+                "21": 8,
+                "5": 4,
+                "6": 4,
+                "7": 1
+              }
+            },
+            {
+              "channel": "D",
+              "capacity": 1024,
+              "writes": 0,
+              "retained": 0,
+              "overwritten": 0,
+              "sampled_or_intentionally_dropped": 0,
+              "reentrant_failed": 0,
+              "unregistered_failed_process_total": 0,
+              "kinds": {}
+            }
+          ],
+          "complete_sampled_source_groups": 1043,
+          "incomplete_retained_groups": 0,
+          "receiver_mismatches_in_complete_groups": 0,
+          "text_mismatches_at_pad_writer_in_complete_groups": 0,
+          "creation_and_drop_pairs": 247,
+          "drops_without_retained_creation": 0
+        }
+      ]
+    },
+    {
+      "run": "qualification-3-baseline",
+      "variant": "baseline",
+      "exit": {
+        "utc": "2026-11-14T06:43:50.307946+00:00",
+        "debugger_exits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "reason": null,
+        "elapsed_seconds": 45.469000000011874
+      },
+      "query_ns": {
+        "n": 16,
+        "p50": 7196200,
+        "p95": 15797500,
+        "p99": 15797500
+      },
+      "poll_ns": {
+        "n": 1152,
+        "p50": 13400,
+        "p95": 37300,
+        "p99": 80000
+      },
+      "query_interval_ns": {
+        "n": 12,
+        "p50": 10000032900,
+        "p95": 10003123700,
+        "p99": 10003123700
+      },
+      "loops_per_second": 640.8815003449602,
+      "mean_cpu_cores": 0.06306612318840579,
+      "peak_rss_bytes": [
+        90558464,
+        90800128,
+        90386432,
+        91000832
+      ],
+      "context_switch_deltas": [
+        111631,
+        111128,
+        111033,
+        111768
+      ],
+      "mean_system_cpu_percent": 4.096202531645569,
+      "probe_events": {
+        "probe_owned": 32,
+        "probe_admitted": 32,
+        "probe_object_done": 32,
+        "probe_pending_time_boundary": 29,
+        "probe_received_integrity_verified": 29,
+        "probe_rejected_time_untrusted_or_outside_validity": 3
+      },
+      "network": [
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        },
+        {
+          "installed_bound_peer_routes": 0,
+          "peer_discovery_rpc": true,
+          "delivery_counters": {
+            "capacity": 2048,
+            "evicted": 0
+          }
+        }
+      ],
+      "rings": []
+    }
+  ],
+  "median_run_ratios": {
+    "query_ns_p50": 1.5638970438624538,
+    "query_ns_p95": 1.2493369766133569,
+    "query_ns_p99": 1.2493369766133569,
+    "poll_ns_p95": 1.0527045769764216,
+    "loops_per_second": 0.9999449819506739
+  },
+  "gate_rejection_reasons": [
+    "query_ns_p50 >=10% regression",
+    "query_ns_p95 >=10% regression",
+    "query_ns_p99 >=10% regression"
+  ],
+  "short_timing_gate_passed": false,
+  "long_failure_capture_qualified": false,
+  "original_fault_reproduced": false,
+  "first_corrupting_instruction_found": false,
+  "production_fix": false,
+  "evidence_gaps": [
+    "source-level entry hooks are not original machine-entry registers or pre-tailcall RSP",
+    "standard-library rebuild and injected calls change original code layout and scheduling",
+    "whole-call sampling 1/256 omits history; online comparison is not historical machine execution",
+    "only prewarmed owner thread records; not full refcount/free/reuse coverage",
+    "normal-stop ring decoder, no validated atomic exception-dump extraction",
+    "original packet order/multi-hour schedule/progress-file publication/active Carrier not reproduced",
+    "no lock-wait or scheduler trace; context-switch counts only"
+  ]
+}
