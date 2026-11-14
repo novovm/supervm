@@ -1,6 +1,18 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14：C分区与实际Writer入口已接入，时序资格拒绝，双中继仍暂停
+## CURRENT 2026-11-14：冻结逐调用插桩，C独立静态审计原始二进制，根因仍未定位
+
+按用户指令停止优化 fcb63e7d/de8df5ca 采集器，不再修改标准库或重复正常样例。
+C只读核验原875/a254、两份包内AOEM及AOEM966，延伸Writer外部调用并核对
+Windows→SysV汇编调用边界；所查调用者具有GPR/XMM保存恢复，未发现可归因的漏保存。
+汇编候选缺静态.pdata覆盖，保留为异常回溯限制，不等于原崩溃根因。
+五份原始崩溃归档均为MiniDump；PageHeap/自检完整转储不能拼成原现场。
+当前无node专用WER完整转储设置；LocalService原转储目录读取拒绝，未声称全盘无其他文件。
+本轮无运行负载、无原节点/原库/身份访问、无配置或生产代码修改，不重启或恢复双中继。
+完整审计范围、未覆盖项、只读输出和原生转储评估见
+[C原始二进制审计](C-original-static-audit-20261114/README.md)。Git只同步，不等待A签收。
+
+## PRIOR 2026-11-14：C分区与实际Writer入口已接入，时序资格拒绝，双中继仍暂停
 
 基于fcb63e7d，C独立导出a254和Rust标准库副本，完成A/B/C/D独立事件通道、
 真实String::write_str源码入口与pad_integral关联、匹配PDB和静态机器码核验。

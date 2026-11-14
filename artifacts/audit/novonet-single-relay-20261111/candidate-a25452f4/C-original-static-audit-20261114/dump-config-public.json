@@ -1,0 +1,51 @@
+{
+    "start_utc":  "2026-11-14T07:06:36.4793266Z",
+    "read_only":  true,
+    "registry":  [
+                     {
+                         "key":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps",
+                         "exists":  true,
+                         "values":  {
+
+                                    },
+                         "query_succeeded":  true
+                     },
+                     {
+                         "key":  "HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\novovm-node.exe",
+                         "exists":  false,
+                         "query_succeeded":  true
+                     },
+                     {
+                         "key":  "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug",
+                         "exists":  true,
+                         "values":  {
+                                        "Debugger":  "\"C:\\WINDOWS\\system32\\vsjitdebugger.exe\" -p %ld -e %ld -j 0x%p"
+                                    },
+                         "query_succeeded":  true
+                     },
+                     {
+                         "key":  "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\novovm-node.exe",
+                         "exists":  false,
+                         "query_succeeded":  true
+                     }
+                 ],
+    "dump_directories":  [
+                             {
+                                 "directory":  "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps",
+                                 "listing_succeeded":  false,
+                                 "error":  "Access is denied"
+                             },
+                             {
+                                 "directory":  "C:\\Users\\leadb\\AppData\\Local\\CrashDumps",
+                                 "listing_succeeded":  true,
+                                 "files":  [
+
+                                           ]
+                             }
+                         ],
+    "end_utc":  "2026-11-14T07:06:36.6740429Z",
+    "original_node_started":  false,
+    "registry_changed":  false,
+    "original_database_accessed":  false,
+    "all_queries_succeeded":  false
+}

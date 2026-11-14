@@ -1,0 +1,5921 @@
+[
+  {
+    "label": "SUPERVM875",
+    "commit": "875d3307a1fc2ca34b45464ac3bf51a03619adc2",
+    "files_scanned": 1150,
+    "lexical_only": true,
+    "dependency_registry_and_generated_code_included": false,
+    "files": [
+      {
+        "file": "crates/aoem-bindings/examples/ffi_consistency_digest.rs",
+        "blob": "86ab6c4375072b36c33de63c58f3494fb2548deb",
+        "locations": {
+          "unsafe": [
+            163
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/ffi_install_probe.rs",
+        "blob": "aa95e7c845645c57a597edf972ca76eddbb398f1",
+        "locations": {
+          "unsafe": [
+            91
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/ffi_perf_smoke.rs",
+        "blob": "dfa71f48a0859d3a323a4b84676b1a93b56e0657",
+        "locations": {
+          "unsafe": [
+            156
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/ffi_perf_worldline.rs",
+        "blob": "efc1a9384d868916cd2c19c9e7d103b77de2151e",
+        "locations": {
+          "unsafe": [
+            237,
+            353
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/groth16_prove_batch_smoke.rs",
+        "blob": "3364f1d0f7ad65ee235608280852471021bce55e",
+        "locations": {
+          "unsafe": [
+            133
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/mldsa_verify_batch_perf.rs",
+        "blob": "b35d1b7621b52388c04122551987ad165127769c",
+        "locations": {
+          "unsafe": [
+            9,
+            10,
+            11,
+            12,
+            19,
+            28,
+            35,
+            124
+          ],
+          "extern": [
+            9,
+            10,
+            11,
+            12,
+            19,
+            28,
+            35
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/portable_fixed_proof_probe.rs",
+        "blob": "6af7c2b2c203638d7988c7106ca5f8775567f3b3",
+        "locations": {
+          "unsafe": [
+            99,
+            138
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/proof_engine_host_smoke.rs",
+        "blob": "dbcd6decb9ff69ec56ccd9c0c5501ada251486cc",
+        "locations": {
+          "unsafe": [
+            166
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/lib.rs",
+        "blob": "50011bedb074b225b62239b0cab7752ca91a745d",
+        "locations": {
+          "unsafe": [
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            33,
+            35,
+            36,
+            47,
+            48,
+            49,
+            50,
+            51,
+            53,
+            54,
+            70,
+            72,
+            74,
+            76,
+            77,
+            87,
+            98,
+            100,
+            102,
+            103,
+            115,
+            117,
+            119,
+            120,
+            122,
+            124,
+            126,
+            128,
+            130,
+            132,
+            134,
+            145,
+            163,
+            415,
+            420,
+            425,
+            426,
+            428,
+            429,
+            435,
+            460,
+            461,
+            468,
+            475,
+            476,
+            478,
+            480,
+            481,
+            482,
+            483,
+            494,
+            508,
+            510,
+            511,
+            516,
+            518,
+            519,
+            643,
+            670,
+            686,
+            743,
+            755,
+            757,
+            789,
+            809,
+            820,
+            831,
+            1157,
+            1273,
+            1277,
+            1282,
+            1306,
+            1308,
+            1329,
+            1331,
+            1334,
+            1417,
+            1629,
+            1641,
+            1654,
+            1671,
+            1678,
+            1689,
+            1700,
+            1728,
+            1762,
+            1796,
+            1870,
+            1874,
+            1884,
+            1898,
+            1906,
+            1909,
+            1910,
+            1985,
+            2029,
+            2071,
+            2104,
+            2151,
+            2200,
+            2239,
+            2283,
+            2328,
+            2380,
+            2418,
+            2452,
+            2488,
+            2515,
+            2540,
+            2563,
+            2589,
+            2614,
+            2651,
+            2817,
+            3460,
+            3470,
+            3484,
+            3494,
+            3538,
+            3554,
+            3578,
+            3587,
+            3607,
+            3616,
+            3655,
+            3670,
+            3689,
+            3696,
+            3716,
+            3725,
+            3745,
+            3754,
+            3775,
+            3790,
+            3800,
+            3816,
+            3831,
+            3851,
+            3853,
+            3867,
+            3882,
+            3892,
+            3907,
+            3909,
+            3921,
+            3937,
+            3953,
+            3955,
+            3959,
+            3969,
+            3986,
+            4052,
+            4054,
+            4063,
+            4071,
+            4076,
+            4082,
+            4200
+          ],
+          "extern": [
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            33,
+            35,
+            36,
+            47,
+            48,
+            49,
+            50,
+            51,
+            53,
+            54,
+            70,
+            72,
+            74,
+            76,
+            77,
+            87,
+            98,
+            100,
+            102,
+            103,
+            115,
+            117,
+            119,
+            120,
+            122,
+            124,
+            126,
+            128,
+            130,
+            132,
+            134,
+            145,
+            163,
+            415,
+            420,
+            425,
+            426,
+            428,
+            429,
+            435,
+            460,
+            461,
+            468,
+            475,
+            476,
+            478,
+            480,
+            481,
+            482,
+            483,
+            494,
+            508,
+            510,
+            511,
+            516,
+            518,
+            519,
+            1870,
+            3953,
+            3959,
+            4052,
+            4063
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/portable_receipt.rs",
+        "blob": "fd1c5f78c70eebd6ce480684c9586bd61cfcdf8a",
+        "locations": {
+          "unsafe": [
+            6,
+            16,
+            54,
+            67,
+            89
+          ],
+          "extern": [
+            6,
+            16
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/compute.rs",
+        "blob": "dd197d751cca6ce995e3fbcad55a20629bf5b6fc",
+        "locations": {
+          "unsafe": [
+            239,
+            360,
+            367,
+            420,
+            423,
+            431,
+            432,
+            456
+          ],
+          "extern": [
+            360,
+            420,
+            431,
+            456
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/compute_tests.rs",
+        "blob": "21f8a2651ebc787ec32df2845615fbc017858da2",
+        "locations": {
+          "unsafe": [
+            29,
+            74,
+            101
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/library.rs",
+        "blob": "88ce3275193cea393d88dc368ea5ef69c1c42275",
+        "locations": {
+          "unsafe": [
+            45,
+            50,
+            62,
+            66,
+            84,
+            94,
+            101,
+            120,
+            131,
+            144,
+            148,
+            161
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/receipt.rs",
+        "blob": "df4ec673943debbe17fa872716cf1e84a1c45ded",
+        "locations": {
+          "unsafe": [
+            21,
+            30,
+            31,
+            125,
+            128,
+            184,
+            187,
+            254,
+            278,
+            301,
+            325
+          ],
+          "extern": [
+            21,
+            30,
+            31
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/receipt/tests.rs",
+        "blob": "dc4a4b4055136b1fd64d00e6005f674d492cd183",
+        "locations": {
+          "unsafe": [
+            41,
+            45,
+            53,
+            65,
+            66,
+            67,
+            70,
+            80,
+            88,
+            98,
+            101,
+            102,
+            114,
+            123
+          ],
+          "extern": [
+            41,
+            45,
+            53,
+            88,
+            114
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/storage.rs",
+        "blob": "e405bcdb58ada8f4671b496dc1c1cd063ce016ac",
+        "locations": {
+          "unsafe": [
+            292,
+            293,
+            294,
+            295,
+            296,
+            298,
+            299,
+            325,
+            326,
+            338,
+            342,
+            351,
+            376,
+            391,
+            395,
+            407,
+            422,
+            432
+          ],
+          "extern": [
+            292,
+            293,
+            294,
+            295,
+            296,
+            298,
+            299
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/storage/tests.rs",
+        "blob": "931005c989f691a1e15a9ddbedbeec69f9a52084",
+        "locations": {
+          "unsafe": [
+            319,
+            331,
+            335,
+            345,
+            349
+          ],
+          "extern": [
+            319,
+            345
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-adapter-sample-plugin/src/lib.rs",
+        "blob": "5d778eb8e8e44cb628f40a02fd70bd5e835ef41f",
+        "locations": {
+          "unsafe": [
+            77,
+            156,
+            265,
+            282,
+            298
+          ],
+          "extern": [
+            140,
+            145,
+            156
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/examples/uca_semantic_entry_compare.rs",
+        "blob": "5cc5eb62a66ce1d413f648d2aa77a4642eedb6a7",
+        "locations": {
+          "unsafe": [
+            40
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/lib.rs",
+        "blob": "a1cfacd99a795cb9e0eadc90e30aa99aa1bb5974",
+        "locations": {
+          "unsafe": [
+            2087,
+            2238,
+            2244
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/pq_signature_semantic.rs",
+        "blob": "4cb20c12da55a34a7226003f15ea9db982115c52",
+        "locations": {
+          "unsafe": [
+            40
+          ],
+          "manual_send_sync": [
+            40
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/semantic_compute.rs",
+        "blob": "0b0333ca8760f6f289011c1b6d523e976f079db1",
+        "locations": {
+          "unsafe": [
+            262,
+            385,
+            443,
+            450,
+            478,
+            500,
+            545,
+            578
+          ],
+          "extern": [
+            385,
+            443,
+            450,
+            478
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/semantic_graph_v3.rs",
+        "blob": "41559ece124ed3e805a5e122397ec6624f03549a",
+        "locations": {
+          "unsafe": [
+            290,
+            555,
+            589,
+            593,
+            597,
+            614,
+            635,
+            655,
+            675,
+            685,
+            691,
+            697,
+            704,
+            714,
+            724,
+            728,
+            1019,
+            1063
+          ],
+          "extern": [
+            675,
+            685,
+            691,
+            697,
+            704,
+            714
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/tests/uca_spend_runtime.rs",
+        "blob": "3d0d6535bbb06dc7dabf926d6bf7244a9ab4cbdc",
+        "locations": {
+          "unsafe": [
+            63
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-network/src/eth_rlpx.rs",
+        "blob": "08df076cd97b5475274c563929cda1e8f5da1044",
+        "locations": {
+          "unsafe": [
+            5294
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-network/src/product_service_file.rs",
+        "blob": "7aa3a8450f82b025b71100a5df9e240e93e21997",
+        "locations": {
+          "unsafe": [
+            306
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/main.rs",
+        "blob": "e603d04cd976699d22f1bc1efadd2774c67b3c63",
+        "locations": {
+          "unsafe": [
+            654,
+            655,
+            656,
+            664,
+            1971,
+            2145,
+            2148,
+            6530,
+            6531,
+            6532,
+            6533,
+            6534,
+            6535,
+            6556,
+            6731,
+            6844,
+            6864,
+            6866,
+            6874,
+            6884,
+            6890,
+            6903,
+            6919,
+            6949,
+            6957,
+            6962,
+            6963
+          ],
+          "extern": [
+            654,
+            655,
+            656,
+            664,
+            6530,
+            6531,
+            6532,
+            6533,
+            6534,
+            6535,
+            6556
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/mainline_query.rs",
+        "blob": "ac3f6ccca94e66eaf2eef823ae4a80f27065fb59",
+        "locations": {
+          "unsafe": [
+            15479,
+            15566,
+            15571,
+            15650,
+            15655
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/native_block_seal_newview_tests.rs",
+        "blob": "fda38131df9920a55bfb5017b49d214f6e036300",
+        "locations": {
+          "unsafe": [
+            183
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/native_service.rs",
+        "blob": "c9b5b923942fccfa00c7552198bbfbf093e0ba9f",
+        "locations": {
+          "unsafe": [
+            360
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/tx_ingress.rs",
+        "blob": "02f6729c178534214637574b0628bb606b7c95d6",
+        "locations": {
+          "unsafe": [
+            15809
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/unified_account_surface.rs",
+        "blob": "b2eefd02534bf414f00aa302159df6aae2f84029",
+        "locations": {
+          "unsafe": [
+            3246,
+            3268,
+            3281,
+            9180,
+            9266,
+            9336,
+            9448,
+            9566,
+            9583,
+            9590
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-prover/tests/pq_signature_runtime.rs",
+        "blob": "22c98ca669e21a3a99237aa2874f4e5d4e6d9cf7",
+        "locations": {
+          "unsafe": [
+            9,
+            23
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/linux_custody.rs",
+        "blob": "d9efa6725f51deb02f138d9e5db6ef1ca07ed2fe",
+        "locations": {
+          "unsafe": [
+            68,
+            92
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/linux_owner_files.rs",
+        "blob": "b29d6db2850cd4040ac55de5aeebe7dc12291e46",
+        "locations": {
+          "unsafe": [
+            32,
+            41
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/linux_rendezvous.rs",
+        "blob": "e31fa9e12bb61000f6c13ff2dc99326af96b8074",
+        "locations": {
+          "unsafe": [
+            17
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/rendezvous_self_owned_owner.rs",
+        "blob": "81948c8663077bbd63b911bc1bb60ad6283804cc",
+        "locations": {
+          "unsafe": [
+            1166
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/windows_custody.rs",
+        "blob": "6781fd8079bbeecdb1f3060eb7d9b3cd6a560823",
+        "locations": {
+          "unsafe": [
+            50,
+            76
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-storage-budget/src/lib.rs",
+        "blob": "a489fc56e0af7364a96e69eea6f3b4380b8a0e64",
+        "locations": {
+          "unsafe": [
+            50,
+            55,
+            57,
+            81,
+            201,
+            205,
+            214,
+            260,
+            310,
+            436,
+            492,
+            506
+          ],
+          "extern": [
+            50,
+            55,
+            57
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-storage-budget/vendor/test_quota.h",
+        "blob": "c17e15adca19233249fa43791037b4ec6bd47441",
+        "locations": {
+          "extern": [
+            37,
+            266
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/cpu_clock.rs",
+        "blob": "24e15bc9d097b60087df09144e968c4c950c1061",
+        "locations": {
+          "unsafe": [
+            89,
+            100,
+            104
+          ],
+          "extern": [
+            75
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/lib.rs",
+        "blob": "bf20fd841fdee7b28abd967d4e9aadc67f6be5aa",
+        "locations": {
+          "unsafe": [
+            79,
+            96,
+            107,
+            128
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/poll_timer.rs",
+        "blob": "817c7af5615d2e31c3e5133f49f86833fa1e6a38",
+        "locations": {
+          "unsafe": [
+            20,
+            34
+          ],
+          "extern": [
+            6
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/segmented.rs",
+        "blob": "6f6045442780dd24cc5809e8fb8ae78204d3133a",
+        "locations": {
+          "unsafe": [
+            146,
+            158
+          ],
+          "extern": [
+            134
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovmctl/src/commands/lifecycle/unified.rs",
+        "blob": "c889b9a5e958b8c34726f24902d766b1d17db8eb",
+        "locations": {
+          "unsafe": [
+            430
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/plugins/evm/plugin/src/lib.rs",
+        "blob": "38926c7a8bd26e4d13db40dfa52f0cb2a93c3e28",
+        "locations": {
+          "unsafe": [
+            3061,
+            3628,
+            4025,
+            4082,
+            4157,
+            4182,
+            4203,
+            4224,
+            4245,
+            4267,
+            4288,
+            4309,
+            4330,
+            4351,
+            4371,
+            4392,
+            4413,
+            4435,
+            4489,
+            4675,
+            4715,
+            4818,
+            4834,
+            4851,
+            4869,
+            4887,
+            4910,
+            4922,
+            4943,
+            5361,
+            5378,
+            5413,
+            5439,
+            5451,
+            5463,
+            5483,
+            5493,
+            5508,
+            5518,
+            5533,
+            5544,
+            5561,
+            5571,
+            5586,
+            5596,
+            5611,
+            5621,
+            5636,
+            5646,
+            5661,
+            5671,
+            5687,
+            5697,
+            5712,
+            5722,
+            5751,
+            5794,
+            5836,
+            6133,
+            6146,
+            6192,
+            6210,
+            6230
+          ],
+          "extern": [
+            4007,
+            4012,
+            4025,
+            4082,
+            4157,
+            4182,
+            4203,
+            4224,
+            4245,
+            4267,
+            4288,
+            4309,
+            4330,
+            4351,
+            4371,
+            4392,
+            4413,
+            4435,
+            4489
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/iroh/tests/patchbay.rs",
+        "blob": "a003a50e10d79615c1a268f3b4b4426bb11ab4c9",
+        "locations": {
+          "unsafe": [
+            58
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/android/api.rs",
+        "blob": "5351f663e10e20b8f963edc7d056846abd5f4cdd",
+        "locations": {
+          "unsafe": [
+            73,
+            75,
+            303,
+            420
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/android/mod.rs",
+        "blob": "8b76a716681a22b21e8c4fa167384189cdbee41a",
+        "locations": {
+          "unsafe": [
+            14,
+            15,
+            29,
+            35,
+            37,
+            43,
+            44
+          ],
+          "extern": [
+            14,
+            15,
+            35,
+            37,
+            43,
+            44
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/flags.rs",
+        "blob": "e90c8175bcfdf79a4a38e637fcc2c131824bd713",
+        "locations": {
+          "unsafe": [
+            32,
+            37,
+            43,
+            47,
+            55,
+            56,
+            63,
+            73
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/ipv6_addr_flags.rs",
+        "blob": "a2e6852e19af16992017439686b34637a164c2c6",
+        "locations": {
+          "unsafe": [
+            21
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/mtu.rs",
+        "blob": "420b2f6b2c9974226ce40fd408cd8b46e85d592c",
+        "locations": {
+          "unsafe": [
+            3
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/route/mod.rs",
+        "blob": "f8eae4ae4bc88cc891dc14d0cb701bc74d68e73a",
+        "locations": {
+          "unsafe": [
+            49,
+            63,
+            78,
+            93,
+            107,
+            169,
+            195,
+            247,
+            269,
+            280,
+            283,
+            284,
+            330,
+            343,
+            350,
+            364,
+            395,
+            440
+          ],
+          "extern": [
+            49
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/types.rs",
+        "blob": "fc32a49712202605fdfc5cb4ac141ad4a73695bd",
+        "locations": {
+          "unsafe": [
+            5
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/flags.rs",
+        "blob": "196ac842f78a09f133e16f4d0a46d4b5e54d0f37",
+        "locations": {
+          "unsafe": [
+            16,
+            21,
+            27,
+            31,
+            39,
+            40,
+            45
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/ipv6_addr_flags.rs",
+        "blob": "f462a725ec96501402a40d61f30052a0e454f39a",
+        "locations": {
+          "unsafe": [
+            13
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/mtu.rs",
+        "blob": "420b2f6b2c9974226ce40fd408cd8b46e85d592c",
+        "locations": {
+          "unsafe": [
+            3
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/route.rs",
+        "blob": "c9565582e70589be57a49ff37238eda000259fc7",
+        "locations": {
+          "unsafe": [
+            126,
+            140,
+            155,
+            170,
+            184,
+            246,
+            271,
+            306,
+            334,
+            347,
+            351,
+            352,
+            399,
+            412,
+            419,
+            435,
+            469,
+            514
+          ],
+          "extern": [
+            126
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/types.rs",
+        "blob": "d4b098575a15ec2e2220d9b45d7fc8be6b8bd29d",
+        "locations": {
+          "unsafe": [
+            7,
+            55,
+            63,
+            69,
+            73,
+            83,
+            84,
+            91
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/ios/dns.rs",
+        "blob": "850389a9f9fd732993455f859a38b2944a410dd9",
+        "locations": {
+          "unsafe": [
+            15,
+            21,
+            30,
+            57,
+            58,
+            66,
+            67,
+            71,
+            80,
+            82
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/ios/network.rs",
+        "blob": "5af330fe3fdcc4b0752c954aad081aa4e23f8854",
+        "locations": {
+          "unsafe": [
+            85,
+            124,
+            175,
+            180,
+            185,
+            190,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            219,
+            224,
+            227,
+            229,
+            243,
+            274,
+            311
+          ],
+          "extern": [
+            85,
+            124
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/ios/sc.rs",
+        "blob": "f498bd28640f39b26a895f0136ba27191fe1b388",
+        "locations": {
+          "unsafe": [
+            57,
+            67,
+            145,
+            151
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/linux/mtu.rs",
+        "blob": "4d6326e8304fa7ca3967a3c273d87055d9ee2792",
+        "locations": {
+          "unsafe": [
+            9,
+            18,
+            26,
+            30,
+            39,
+            46,
+            50,
+            53
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/macos/sc.rs",
+        "blob": "ee39e9cd43dc2c0b64d9f8a59ef860dffb1f2d09",
+        "locations": {
+          "unsafe": [
+            54
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/macos/wifi.rs",
+        "blob": "292e5e0a258c1718388e920841cdd309a06a9161",
+        "locations": {
+          "unsafe": [
+            16,
+            19,
+            21
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/interface.rs",
+        "blob": "f95e757fd26cc19aba287f9aced52fe81d39116a",
+        "locations": {
+          "unsafe": [
+            31,
+            32,
+            36,
+            39,
+            42,
+            48,
+            51,
+            54,
+            73,
+            183,
+            240
+          ],
+          "extern": [
+            31,
+            32
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/link_speed.rs",
+        "blob": "2d0bfbf8325cffac07a914828738a278a76ec443",
+        "locations": {
+          "unsafe": [
+            35,
+            38,
+            43,
+            44
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/sockaddr.rs",
+        "blob": "52d0641351191dd1ad5ba5cad83a99fadb02e70a",
+        "locations": {
+          "unsafe": [
+            14,
+            18,
+            23,
+            31,
+            185,
+            193,
+            202,
+            225,
+            234,
+            251,
+            253,
+            254,
+            269,
+            270,
+            284,
+            306,
+            375,
+            380,
+            382,
+            387,
+            403,
+            409,
+            434,
+            454,
+            466,
+            471,
+            473,
+            478,
+            495,
+            499,
+            517,
+            530
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/types.rs",
+        "blob": "f9f743eea53d707095a779ea4ace66606506bad3",
+        "locations": {
+          "unsafe": [
+            8
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/flags.rs",
+        "blob": "25edaedfbd1b0cbcb6d55c42548640059acc3a69",
+        "locations": {
+          "unsafe": [
+            35,
+            38
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/interface.rs",
+        "blob": "5cf4bbd24cd879b2bad92aef17e74085fca7806d",
+        "locations": {
+          "unsafe": [
+            57,
+            64,
+            70,
+            72,
+            82,
+            84,
+            85,
+            94,
+            95,
+            110,
+            118,
+            122,
+            124,
+            125,
+            138,
+            189,
+            191,
+            194,
+            211,
+            222,
+            239,
+            245,
+            284,
+            300,
+            301,
+            330,
+            331,
+            356,
+            357,
+            368,
+            369,
+            382,
+            415,
+            418,
+            422,
+            426,
+            440,
+            443,
+            445
+          ],
+          "extern": [
+            110,
+            125
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/macros.rs",
+        "blob": "c05fe670f57836dd721c39fe0d61f8b972007429",
+        "locations": {
+          "unsafe": [
+            3,
+            10
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/state.rs",
+        "blob": "a224a77c397c837bb8ddd2afa3e0ee138995e961",
+        "locations": {
+          "unsafe": [
+            15,
+            26,
+            40,
+            41
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/stats.rs",
+        "blob": "d9c83ca3905f861bb150d673276a4ed336c35afd",
+        "locations": {
+          "unsafe": [
+            8,
+            11
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/stats/counters.rs",
+        "blob": "6a512ae8a869c0b8d1574b5015bb6ddc69b1647b",
+        "locations": {
+          "unsafe": [
+            34,
+            101,
+            110,
+            137,
+            150,
+            153
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/web30-core/src/privacy.rs",
+        "blob": "575b27a9fd3f60ab5210e085a7300a3877a4c76c",
+        "locations": {
+          "unsafe": [
+            42,
+            67,
+            98
+          ]
+        },
+        "assembly_file": false
+      }
+    ]
+  },
+  {
+    "label": "SUPERVMa254",
+    "commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+    "files_scanned": 1150,
+    "lexical_only": true,
+    "dependency_registry_and_generated_code_included": false,
+    "files": [
+      {
+        "file": "crates/aoem-bindings/examples/ffi_consistency_digest.rs",
+        "blob": "86ab6c4375072b36c33de63c58f3494fb2548deb",
+        "locations": {
+          "unsafe": [
+            163
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/ffi_install_probe.rs",
+        "blob": "aa95e7c845645c57a597edf972ca76eddbb398f1",
+        "locations": {
+          "unsafe": [
+            91
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/ffi_perf_smoke.rs",
+        "blob": "dfa71f48a0859d3a323a4b84676b1a93b56e0657",
+        "locations": {
+          "unsafe": [
+            156
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/ffi_perf_worldline.rs",
+        "blob": "efc1a9384d868916cd2c19c9e7d103b77de2151e",
+        "locations": {
+          "unsafe": [
+            237,
+            353
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/groth16_prove_batch_smoke.rs",
+        "blob": "3364f1d0f7ad65ee235608280852471021bce55e",
+        "locations": {
+          "unsafe": [
+            133
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/mldsa_verify_batch_perf.rs",
+        "blob": "b35d1b7621b52388c04122551987ad165127769c",
+        "locations": {
+          "unsafe": [
+            9,
+            10,
+            11,
+            12,
+            19,
+            28,
+            35,
+            124
+          ],
+          "extern": [
+            9,
+            10,
+            11,
+            12,
+            19,
+            28,
+            35
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/portable_fixed_proof_probe.rs",
+        "blob": "6af7c2b2c203638d7988c7106ca5f8775567f3b3",
+        "locations": {
+          "unsafe": [
+            99,
+            138
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/examples/proof_engine_host_smoke.rs",
+        "blob": "dbcd6decb9ff69ec56ccd9c0c5501ada251486cc",
+        "locations": {
+          "unsafe": [
+            166
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/lib.rs",
+        "blob": "50011bedb074b225b62239b0cab7752ca91a745d",
+        "locations": {
+          "unsafe": [
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            33,
+            35,
+            36,
+            47,
+            48,
+            49,
+            50,
+            51,
+            53,
+            54,
+            70,
+            72,
+            74,
+            76,
+            77,
+            87,
+            98,
+            100,
+            102,
+            103,
+            115,
+            117,
+            119,
+            120,
+            122,
+            124,
+            126,
+            128,
+            130,
+            132,
+            134,
+            145,
+            163,
+            415,
+            420,
+            425,
+            426,
+            428,
+            429,
+            435,
+            460,
+            461,
+            468,
+            475,
+            476,
+            478,
+            480,
+            481,
+            482,
+            483,
+            494,
+            508,
+            510,
+            511,
+            516,
+            518,
+            519,
+            643,
+            670,
+            686,
+            743,
+            755,
+            757,
+            789,
+            809,
+            820,
+            831,
+            1157,
+            1273,
+            1277,
+            1282,
+            1306,
+            1308,
+            1329,
+            1331,
+            1334,
+            1417,
+            1629,
+            1641,
+            1654,
+            1671,
+            1678,
+            1689,
+            1700,
+            1728,
+            1762,
+            1796,
+            1870,
+            1874,
+            1884,
+            1898,
+            1906,
+            1909,
+            1910,
+            1985,
+            2029,
+            2071,
+            2104,
+            2151,
+            2200,
+            2239,
+            2283,
+            2328,
+            2380,
+            2418,
+            2452,
+            2488,
+            2515,
+            2540,
+            2563,
+            2589,
+            2614,
+            2651,
+            2817,
+            3460,
+            3470,
+            3484,
+            3494,
+            3538,
+            3554,
+            3578,
+            3587,
+            3607,
+            3616,
+            3655,
+            3670,
+            3689,
+            3696,
+            3716,
+            3725,
+            3745,
+            3754,
+            3775,
+            3790,
+            3800,
+            3816,
+            3831,
+            3851,
+            3853,
+            3867,
+            3882,
+            3892,
+            3907,
+            3909,
+            3921,
+            3937,
+            3953,
+            3955,
+            3959,
+            3969,
+            3986,
+            4052,
+            4054,
+            4063,
+            4071,
+            4076,
+            4082,
+            4200
+          ],
+          "extern": [
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31,
+            33,
+            35,
+            36,
+            47,
+            48,
+            49,
+            50,
+            51,
+            53,
+            54,
+            70,
+            72,
+            74,
+            76,
+            77,
+            87,
+            98,
+            100,
+            102,
+            103,
+            115,
+            117,
+            119,
+            120,
+            122,
+            124,
+            126,
+            128,
+            130,
+            132,
+            134,
+            145,
+            163,
+            415,
+            420,
+            425,
+            426,
+            428,
+            429,
+            435,
+            460,
+            461,
+            468,
+            475,
+            476,
+            478,
+            480,
+            481,
+            482,
+            483,
+            494,
+            508,
+            510,
+            511,
+            516,
+            518,
+            519,
+            1870,
+            3953,
+            3959,
+            4052,
+            4063
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/portable_receipt.rs",
+        "blob": "fd1c5f78c70eebd6ce480684c9586bd61cfcdf8a",
+        "locations": {
+          "unsafe": [
+            6,
+            16,
+            54,
+            67,
+            89
+          ],
+          "extern": [
+            6,
+            16
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/compute.rs",
+        "blob": "dd197d751cca6ce995e3fbcad55a20629bf5b6fc",
+        "locations": {
+          "unsafe": [
+            239,
+            360,
+            367,
+            420,
+            423,
+            431,
+            432,
+            456
+          ],
+          "extern": [
+            360,
+            420,
+            431,
+            456
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/compute_tests.rs",
+        "blob": "21f8a2651ebc787ec32df2845615fbc017858da2",
+        "locations": {
+          "unsafe": [
+            29,
+            74,
+            101
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/library.rs",
+        "blob": "88ce3275193cea393d88dc368ea5ef69c1c42275",
+        "locations": {
+          "unsafe": [
+            45,
+            50,
+            62,
+            66,
+            84,
+            94,
+            101,
+            120,
+            131,
+            144,
+            148,
+            161
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/receipt.rs",
+        "blob": "df4ec673943debbe17fa872716cf1e84a1c45ded",
+        "locations": {
+          "unsafe": [
+            21,
+            30,
+            31,
+            125,
+            128,
+            184,
+            187,
+            254,
+            278,
+            301,
+            325
+          ],
+          "extern": [
+            21,
+            30,
+            31
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/receipt/tests.rs",
+        "blob": "dc4a4b4055136b1fd64d00e6005f674d492cd183",
+        "locations": {
+          "unsafe": [
+            41,
+            45,
+            53,
+            65,
+            66,
+            67,
+            70,
+            80,
+            88,
+            98,
+            101,
+            102,
+            114,
+            123
+          ],
+          "extern": [
+            41,
+            45,
+            53,
+            88,
+            114
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/storage.rs",
+        "blob": "e405bcdb58ada8f4671b496dc1c1cd063ce016ac",
+        "locations": {
+          "unsafe": [
+            292,
+            293,
+            294,
+            295,
+            296,
+            298,
+            299,
+            325,
+            326,
+            338,
+            342,
+            351,
+            376,
+            391,
+            395,
+            407,
+            422,
+            432
+          ],
+          "extern": [
+            292,
+            293,
+            294,
+            295,
+            296,
+            298,
+            299
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/aoem-bindings/src/resident/storage/tests.rs",
+        "blob": "931005c989f691a1e15a9ddbedbeec69f9a52084",
+        "locations": {
+          "unsafe": [
+            319,
+            331,
+            335,
+            345,
+            349
+          ],
+          "extern": [
+            319,
+            345
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-adapter-sample-plugin/src/lib.rs",
+        "blob": "5d778eb8e8e44cb628f40a02fd70bd5e835ef41f",
+        "locations": {
+          "unsafe": [
+            77,
+            156,
+            265,
+            282,
+            298
+          ],
+          "extern": [
+            140,
+            145,
+            156
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/examples/uca_semantic_entry_compare.rs",
+        "blob": "5cc5eb62a66ce1d413f648d2aa77a4642eedb6a7",
+        "locations": {
+          "unsafe": [
+            40
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/lib.rs",
+        "blob": "a1cfacd99a795cb9e0eadc90e30aa99aa1bb5974",
+        "locations": {
+          "unsafe": [
+            2087,
+            2238,
+            2244
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/pq_signature_semantic.rs",
+        "blob": "4cb20c12da55a34a7226003f15ea9db982115c52",
+        "locations": {
+          "unsafe": [
+            40
+          ],
+          "manual_send_sync": [
+            40
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/semantic_compute.rs",
+        "blob": "0b0333ca8760f6f289011c1b6d523e976f079db1",
+        "locations": {
+          "unsafe": [
+            262,
+            385,
+            443,
+            450,
+            478,
+            500,
+            545,
+            578
+          ],
+          "extern": [
+            385,
+            443,
+            450,
+            478
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/src/semantic_graph_v3.rs",
+        "blob": "41559ece124ed3e805a5e122397ec6624f03549a",
+        "locations": {
+          "unsafe": [
+            290,
+            555,
+            589,
+            593,
+            597,
+            614,
+            635,
+            655,
+            675,
+            685,
+            691,
+            697,
+            704,
+            714,
+            724,
+            728,
+            1019,
+            1063
+          ],
+          "extern": [
+            675,
+            685,
+            691,
+            697,
+            704,
+            714
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-exec/tests/uca_spend_runtime.rs",
+        "blob": "3d0d6535bbb06dc7dabf926d6bf7244a9ab4cbdc",
+        "locations": {
+          "unsafe": [
+            63
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-network/src/eth_rlpx.rs",
+        "blob": "08df076cd97b5475274c563929cda1e8f5da1044",
+        "locations": {
+          "unsafe": [
+            5294
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-network/src/product_service_file.rs",
+        "blob": "7aa3a8450f82b025b71100a5df9e240e93e21997",
+        "locations": {
+          "unsafe": [
+            306
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/main.rs",
+        "blob": "e603d04cd976699d22f1bc1efadd2774c67b3c63",
+        "locations": {
+          "unsafe": [
+            654,
+            655,
+            656,
+            664,
+            1971,
+            2145,
+            2148,
+            6530,
+            6531,
+            6532,
+            6533,
+            6534,
+            6535,
+            6556,
+            6731,
+            6844,
+            6864,
+            6866,
+            6874,
+            6884,
+            6890,
+            6903,
+            6919,
+            6949,
+            6957,
+            6962,
+            6963
+          ],
+          "extern": [
+            654,
+            655,
+            656,
+            664,
+            6530,
+            6531,
+            6532,
+            6533,
+            6534,
+            6535,
+            6556
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/mainline_query.rs",
+        "blob": "ac3f6ccca94e66eaf2eef823ae4a80f27065fb59",
+        "locations": {
+          "unsafe": [
+            15479,
+            15566,
+            15571,
+            15650,
+            15655
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/native_block_seal_newview_tests.rs",
+        "blob": "fda38131df9920a55bfb5017b49d214f6e036300",
+        "locations": {
+          "unsafe": [
+            183
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/native_service.rs",
+        "blob": "c9b5b923942fccfa00c7552198bbfbf093e0ba9f",
+        "locations": {
+          "unsafe": [
+            360
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/tx_ingress.rs",
+        "blob": "02f6729c178534214637574b0628bb606b7c95d6",
+        "locations": {
+          "unsafe": [
+            15809
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-node/src/unified_account_surface.rs",
+        "blob": "b2eefd02534bf414f00aa302159df6aae2f84029",
+        "locations": {
+          "unsafe": [
+            3246,
+            3268,
+            3281,
+            9180,
+            9266,
+            9336,
+            9448,
+            9566,
+            9583,
+            9590
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-prover/tests/pq_signature_runtime.rs",
+        "blob": "22c98ca669e21a3a99237aa2874f4e5d4e6d9cf7",
+        "locations": {
+          "unsafe": [
+            9,
+            23
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/linux_custody.rs",
+        "blob": "d9efa6725f51deb02f138d9e5db6ef1ca07ed2fe",
+        "locations": {
+          "unsafe": [
+            68,
+            92
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/linux_owner_files.rs",
+        "blob": "b29d6db2850cd4040ac55de5aeebe7dc12291e46",
+        "locations": {
+          "unsafe": [
+            32,
+            41
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/linux_rendezvous.rs",
+        "blob": "e31fa9e12bb61000f6c13ff2dc99326af96b8074",
+        "locations": {
+          "unsafe": [
+            17
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/rendezvous_self_owned_owner.rs",
+        "blob": "81948c8663077bbd63b911bc1bb60ad6283804cc",
+        "locations": {
+          "unsafe": [
+            1166
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-relay/src/windows_custody.rs",
+        "blob": "6781fd8079bbeecdb1f3060eb7d9b3cd6a560823",
+        "locations": {
+          "unsafe": [
+            50,
+            76
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-storage-budget/src/lib.rs",
+        "blob": "a489fc56e0af7364a96e69eea6f3b4380b8a0e64",
+        "locations": {
+          "unsafe": [
+            50,
+            55,
+            57,
+            81,
+            201,
+            205,
+            214,
+            260,
+            310,
+            436,
+            492,
+            506
+          ],
+          "extern": [
+            50,
+            55,
+            57
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-storage-budget/vendor/test_quota.h",
+        "blob": "c17e15adca19233249fa43791037b4ec6bd47441",
+        "locations": {
+          "extern": [
+            37,
+            266
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/cpu_clock.rs",
+        "blob": "24e15bc9d097b60087df09144e968c4c950c1061",
+        "locations": {
+          "unsafe": [
+            89,
+            100,
+            104
+          ],
+          "extern": [
+            75
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/lib.rs",
+        "blob": "bf20fd841fdee7b28abd967d4e9aadc67f6be5aa",
+        "locations": {
+          "unsafe": [
+            79,
+            96,
+            107,
+            128
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/poll_timer.rs",
+        "blob": "817c7af5615d2e31c3e5133f49f86833fa1e6a38",
+        "locations": {
+          "unsafe": [
+            20,
+            34
+          ],
+          "extern": [
+            6
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovm-udp-batch/src/segmented.rs",
+        "blob": "6f6045442780dd24cc5809e8fb8ae78204d3133a",
+        "locations": {
+          "unsafe": [
+            146,
+            158
+          ],
+          "extern": [
+            134
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/novovmctl/src/commands/lifecycle/unified.rs",
+        "blob": "c889b9a5e958b8c34726f24902d766b1d17db8eb",
+        "locations": {
+          "unsafe": [
+            430
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/plugins/evm/plugin/src/lib.rs",
+        "blob": "38926c7a8bd26e4d13db40dfa52f0cb2a93c3e28",
+        "locations": {
+          "unsafe": [
+            3061,
+            3628,
+            4025,
+            4082,
+            4157,
+            4182,
+            4203,
+            4224,
+            4245,
+            4267,
+            4288,
+            4309,
+            4330,
+            4351,
+            4371,
+            4392,
+            4413,
+            4435,
+            4489,
+            4675,
+            4715,
+            4818,
+            4834,
+            4851,
+            4869,
+            4887,
+            4910,
+            4922,
+            4943,
+            5361,
+            5378,
+            5413,
+            5439,
+            5451,
+            5463,
+            5483,
+            5493,
+            5508,
+            5518,
+            5533,
+            5544,
+            5561,
+            5571,
+            5586,
+            5596,
+            5611,
+            5621,
+            5636,
+            5646,
+            5661,
+            5671,
+            5687,
+            5697,
+            5712,
+            5722,
+            5751,
+            5794,
+            5836,
+            6133,
+            6146,
+            6192,
+            6210,
+            6230
+          ],
+          "extern": [
+            4007,
+            4012,
+            4025,
+            4082,
+            4157,
+            4182,
+            4203,
+            4224,
+            4245,
+            4267,
+            4288,
+            4309,
+            4330,
+            4351,
+            4371,
+            4392,
+            4413,
+            4435,
+            4489
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/iroh/tests/patchbay.rs",
+        "blob": "a003a50e10d79615c1a268f3b4b4426bb11ab4c9",
+        "locations": {
+          "unsafe": [
+            58
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/android/api.rs",
+        "blob": "5351f663e10e20b8f963edc7d056846abd5f4cdd",
+        "locations": {
+          "unsafe": [
+            73,
+            75,
+            303,
+            420
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/android/mod.rs",
+        "blob": "8b76a716681a22b21e8c4fa167384189cdbee41a",
+        "locations": {
+          "unsafe": [
+            14,
+            15,
+            29,
+            35,
+            37,
+            43,
+            44
+          ],
+          "extern": [
+            14,
+            15,
+            35,
+            37,
+            43,
+            44
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/flags.rs",
+        "blob": "e90c8175bcfdf79a4a38e637fcc2c131824bd713",
+        "locations": {
+          "unsafe": [
+            32,
+            37,
+            43,
+            47,
+            55,
+            56,
+            63,
+            73
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/ipv6_addr_flags.rs",
+        "blob": "a2e6852e19af16992017439686b34637a164c2c6",
+        "locations": {
+          "unsafe": [
+            21
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/mtu.rs",
+        "blob": "420b2f6b2c9974226ce40fd408cd8b46e85d592c",
+        "locations": {
+          "unsafe": [
+            3
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/route/mod.rs",
+        "blob": "f8eae4ae4bc88cc891dc14d0cb701bc74d68e73a",
+        "locations": {
+          "unsafe": [
+            49,
+            63,
+            78,
+            93,
+            107,
+            169,
+            195,
+            247,
+            269,
+            280,
+            283,
+            284,
+            330,
+            343,
+            350,
+            364,
+            395,
+            440
+          ],
+          "extern": [
+            49
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/bsd/types.rs",
+        "blob": "fc32a49712202605fdfc5cb4ac141ad4a73695bd",
+        "locations": {
+          "unsafe": [
+            5
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/flags.rs",
+        "blob": "196ac842f78a09f133e16f4d0a46d4b5e54d0f37",
+        "locations": {
+          "unsafe": [
+            16,
+            21,
+            27,
+            31,
+            39,
+            40,
+            45
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/ipv6_addr_flags.rs",
+        "blob": "f462a725ec96501402a40d61f30052a0e454f39a",
+        "locations": {
+          "unsafe": [
+            13
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/mtu.rs",
+        "blob": "420b2f6b2c9974226ce40fd408cd8b46e85d592c",
+        "locations": {
+          "unsafe": [
+            3
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/route.rs",
+        "blob": "c9565582e70589be57a49ff37238eda000259fc7",
+        "locations": {
+          "unsafe": [
+            126,
+            140,
+            155,
+            170,
+            184,
+            246,
+            271,
+            306,
+            334,
+            347,
+            351,
+            352,
+            399,
+            412,
+            419,
+            435,
+            469,
+            514
+          ],
+          "extern": [
+            126
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/darwin/types.rs",
+        "blob": "d4b098575a15ec2e2220d9b45d7fc8be6b8bd29d",
+        "locations": {
+          "unsafe": [
+            7,
+            55,
+            63,
+            69,
+            73,
+            83,
+            84,
+            91
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/ios/dns.rs",
+        "blob": "850389a9f9fd732993455f859a38b2944a410dd9",
+        "locations": {
+          "unsafe": [
+            15,
+            21,
+            30,
+            57,
+            58,
+            66,
+            67,
+            71,
+            80,
+            82
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/ios/network.rs",
+        "blob": "5af330fe3fdcc4b0752c954aad081aa4e23f8854",
+        "locations": {
+          "unsafe": [
+            85,
+            124,
+            175,
+            180,
+            185,
+            190,
+            199,
+            200,
+            201,
+            202,
+            203,
+            204,
+            219,
+            224,
+            227,
+            229,
+            243,
+            274,
+            311
+          ],
+          "extern": [
+            85,
+            124
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/ios/sc.rs",
+        "blob": "f498bd28640f39b26a895f0136ba27191fe1b388",
+        "locations": {
+          "unsafe": [
+            57,
+            67,
+            145,
+            151
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/linux/mtu.rs",
+        "blob": "4d6326e8304fa7ca3967a3c273d87055d9ee2792",
+        "locations": {
+          "unsafe": [
+            9,
+            18,
+            26,
+            30,
+            39,
+            46,
+            50,
+            53
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/macos/sc.rs",
+        "blob": "ee39e9cd43dc2c0b64d9f8a59ef860dffb1f2d09",
+        "locations": {
+          "unsafe": [
+            54
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/macos/wifi.rs",
+        "blob": "292e5e0a258c1718388e920841cdd309a06a9161",
+        "locations": {
+          "unsafe": [
+            16,
+            19,
+            21
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/interface.rs",
+        "blob": "f95e757fd26cc19aba287f9aced52fe81d39116a",
+        "locations": {
+          "unsafe": [
+            31,
+            32,
+            36,
+            39,
+            42,
+            48,
+            51,
+            54,
+            73,
+            183,
+            240
+          ],
+          "extern": [
+            31,
+            32
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/link_speed.rs",
+        "blob": "2d0bfbf8325cffac07a914828738a278a76ec443",
+        "locations": {
+          "unsafe": [
+            35,
+            38,
+            43,
+            44
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/sockaddr.rs",
+        "blob": "52d0641351191dd1ad5ba5cad83a99fadb02e70a",
+        "locations": {
+          "unsafe": [
+            14,
+            18,
+            23,
+            31,
+            185,
+            193,
+            202,
+            225,
+            234,
+            251,
+            253,
+            254,
+            269,
+            270,
+            284,
+            306,
+            375,
+            380,
+            382,
+            387,
+            403,
+            409,
+            434,
+            454,
+            466,
+            471,
+            473,
+            478,
+            495,
+            499,
+            517,
+            530
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/unix/types.rs",
+        "blob": "f9f743eea53d707095a779ea4ace66606506bad3",
+        "locations": {
+          "unsafe": [
+            8
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/flags.rs",
+        "blob": "25edaedfbd1b0cbcb6d55c42548640059acc3a69",
+        "locations": {
+          "unsafe": [
+            35,
+            38
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/interface.rs",
+        "blob": "5cf4bbd24cd879b2bad92aef17e74085fca7806d",
+        "locations": {
+          "unsafe": [
+            57,
+            64,
+            70,
+            72,
+            82,
+            84,
+            85,
+            94,
+            95,
+            110,
+            118,
+            122,
+            124,
+            125,
+            138,
+            189,
+            191,
+            194,
+            211,
+            222,
+            239,
+            245,
+            284,
+            300,
+            301,
+            330,
+            331,
+            356,
+            357,
+            368,
+            369,
+            382,
+            415,
+            418,
+            422,
+            426,
+            440,
+            443,
+            445
+          ],
+          "extern": [
+            110,
+            125
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/macros.rs",
+        "blob": "c05fe670f57836dd721c39fe0d61f8b972007429",
+        "locations": {
+          "unsafe": [
+            3,
+            10
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/state.rs",
+        "blob": "a224a77c397c837bb8ddd2afa3e0ee138995e961",
+        "locations": {
+          "unsafe": [
+            15,
+            26,
+            40,
+            41
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/os/windows/stats.rs",
+        "blob": "d9c83ca3905f861bb150d673276a4ed336c35afd",
+        "locations": {
+          "unsafe": [
+            8,
+            11
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/netdev/src/stats/counters.rs",
+        "blob": "6a512ae8a869c0b8d1574b5015bb6ddc69b1647b",
+        "locations": {
+          "unsafe": [
+            34,
+            101,
+            110,
+            137,
+            150,
+            153
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "vendor/web30-core/src/privacy.rs",
+        "blob": "575b27a9fd3f60ab5210e085a7300a3877a4c76c",
+        "locations": {
+          "unsafe": [
+            42,
+            67,
+            98
+          ]
+        },
+        "assembly_file": false
+      }
+    ]
+  },
+  {
+    "label": "AOEM966-source",
+    "commit": "9662470daa39b01f832705654e330830b8cd1bfa",
+    "files_scanned": 697,
+    "lexical_only": true,
+    "dependency_registry_and_generated_code_included": false,
+    "files": [
+      {
+        "file": "crates/adapter/aoem-adapter-ai/src/lib.rs",
+        "blob": "ad5eb99c28b58bd5b949e2d2d24219ca3c583903",
+        "locations": {
+          "unsafe": [
+            73,
+            107,
+            120,
+            148
+          ],
+          "extern": [
+            18,
+            23,
+            28,
+            59,
+            116
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/native/tests/compile_probe.rs",
+        "blob": "988a4c43be38d77506babf703e88e0549006062c",
+        "locations": {
+          "unsafe": [
+            35,
+            42
+          ],
+          "extern": [
+            5
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/src/mldsa_gpu_boundary.rs",
+        "blob": "ff32560a416b6d278106d90966bd97ff24a69419",
+        "locations": {
+          "unsafe": [
+            263,
+            275,
+            358,
+            370,
+            449,
+            454,
+            477,
+            483
+          ],
+          "extern": [
+            263,
+            358,
+            449,
+            477
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/src/mldsa_sys.rs",
+        "blob": "f4589667a69f3db7e19a158496e48240143d6197",
+        "locations": {
+          "extern": [
+            5
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/src/quantum_resistant.rs",
+        "blob": "48d19badfc158052f2e39f97f4fea5c7cf96d015",
+        "locations": {
+          "unsafe": [
+            70,
+            149,
+            194
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/mldsa_native.h",
+        "blob": "a38a2c4154d3d5785228f0cf6d427b298bd5a546",
+        "locations": {
+          "extern": [
+            194
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/mldsa_native_asm.S",
+        "blob": "61d4186a5fee551f38ddb121d49617c23ba3f32d",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/aarch64/src/keccak_f1600_x1_scalar_aarch64_asm.S",
+        "blob": "2b8e426f1f6d3afe334a2885d59ac52fb71799e3",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/aarch64/src/keccak_f1600_x1_v84a_aarch64_asm.S",
+        "blob": "b9c3ce57f3a49ee21c761febd6f75eb5088259c2",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/aarch64/src/keccak_f1600_x2_v84a_aarch64_asm.S",
+        "blob": "2815a5aac52fe52e1cc79c192ba60cc1f62744a6",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/aarch64/src/keccak_f1600_x4_v8a_scalar_hybrid_aarch64_asm.S",
+        "blob": "07af46a2076a50713609bfb1480fa3b8a7e5f1e5",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/aarch64/src/keccak_f1600_x4_v8a_v84a_scalar_hybrid_aarch64_asm.S",
+        "blob": "e7fd82adced33e942fcc348948c63a5e3622aca4",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/armv81m/src/keccak_f1600_x4_mve.S",
+        "blob": "3ed4e7eb25cbdbf8a726650e72272ca7cb752143",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/armv81m/src/keccak_f1600_x4_state_extract_bytes_mve.S",
+        "blob": "42ec0af44e90c53e6ff35ea59ee16608873349e0",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/armv81m/src/keccak_f1600_x4_state_xor_bytes_mve.S",
+        "blob": "531b5056456dcfdea5ead2e1128633e7ea0f81f4",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/fips202/native/x86_64/src/keccak_f1600_x4_avx2_asm.S",
+        "blob": "d8f9a6cd07e17eede1bb36484dfd5821b9e518e5",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_intt_aarch64_asm.S",
+        "blob": "f3a113426efaae33bca30cc13224246f50ca54da",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_ntt_aarch64_asm.S",
+        "blob": "fbd9d39f44947659a3218cd93d9addda9c15219b",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_pointwise_montgomery_aarch64_asm.S",
+        "blob": "6c97b6c6170cecbaa661a4c2760e7f0d10d5c186",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_poly_caddq_aarch64_asm.S",
+        "blob": "50efea15e12d7d0bca019dbb8bb0d39cce204379",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_poly_chknorm_aarch64_asm.S",
+        "blob": "5fcbb4e16512f41ae7b2d2186f761d8cc651d29f",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_poly_decompose_32_aarch64_asm.S",
+        "blob": "df6443bc3a99e1f46554cbda764f1e89c234f501",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_poly_decompose_88_aarch64_asm.S",
+        "blob": "06fa66f600ae6f35a62fb1d1cb683a599ecb526b",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_poly_use_hint_32_aarch64_asm.S",
+        "blob": "db14380908d0d826f36faac2a7b1ea9b85b54c1b",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_poly_use_hint_88_aarch64_asm.S",
+        "blob": "f5853b3526b00b83f6afb72d24dea82a30753abc",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_polyvecl_pointwise_acc_montgomery_l4_aarch64_asm.S",
+        "blob": "398bcf243e43bda4aff5512c79b48cffe29c8f5e",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_polyvecl_pointwise_acc_montgomery_l5_aarch64_asm.S",
+        "blob": "7f66b63e1d7e446e913e6452a2c173b9e8661567",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_polyvecl_pointwise_acc_montgomery_l7_aarch64_asm.S",
+        "blob": "37fcfaad05a5e046f5f6c9c13a993e3e7aaf7065",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_polyz_unpack_17_aarch64_asm.S",
+        "blob": "d94c921177ffec2d5069990f0e99161321d53827",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_polyz_unpack_19_aarch64_asm.S",
+        "blob": "02a27df728ba60ddba8c647428fa1d6c42cdface",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_rej_uniform_aarch64_asm.S",
+        "blob": "4533e401f1ca3434a4af58994a45a9fbe50c9c2f",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_rej_uniform_eta2_aarch64_asm.S",
+        "blob": "8773890cc1cffe91606c59baad4f841410ee433c",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/aarch64/src/mldsa_rej_uniform_eta4_aarch64_asm.S",
+        "blob": "dbf076c8a49228322379888937ce56af861cf9aa",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_intt_avx2_asm.S",
+        "blob": "51b2cab35e36836b3ba5c11ffb9d839acba88e08",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_ntt_avx2_asm.S",
+        "blob": "db49b1b5eaa17c8dd4d8da38b096f66c9e4cfc86",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_nttunpack_avx2_asm.S",
+        "blob": "d0c3978fd50660d6eee0631b67afb7b3a3e31ce6",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_pointwise_acc_l4_avx2_asm.S",
+        "blob": "d853040f1f53fd845ddc28baf043455b627060f7",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_pointwise_acc_l5_avx2_asm.S",
+        "blob": "27c789e61026e5e80087982207a181ae5ca0da31",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_pointwise_acc_l7_avx2_asm.S",
+        "blob": "a21c3112455a71c7e76217690346c6550fbc8698",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_pointwise_avx2_asm.S",
+        "blob": "fc1702aab50d53c0134deb19cceed5d036ee50fb",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_poly_caddq_avx2_asm.S",
+        "blob": "937c0d25190dd44564b87502af91dfd9a683f1ef",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_poly_chknorm_avx2_asm.S",
+        "blob": "ea5ee8f36c7802dda6773d0ad33da779beb617fd",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_poly_decompose_32_avx2_asm.S",
+        "blob": "da8418a522d4c603b5d79017fe3fa488099c9bc0",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_poly_decompose_88_avx2_asm.S",
+        "blob": "fd5d4c8f8ded1799552124da0089ed77ace99ce3",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_poly_use_hint_32_avx2_asm.S",
+        "blob": "bffe0f01080a464caad1ceb980943e87506594fa",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_poly_use_hint_88_avx2_asm.S",
+        "blob": "c9813818f20a2a06cf5aeef184d39e2ac6316d80",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_polyz_unpack_17_avx2_asm.S",
+        "blob": "bf40ea220ddec6702db8fc0a8ccbdcf2fc2876de",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_polyz_unpack_19_avx2_asm.S",
+        "blob": "caa2497e7ea95f6ae2434083959aa3d211f6e561",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_rej_uniform_avx2_asm.S",
+        "blob": "ac1f599f0867830e8ee418927fe51cf8fb115373",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_rej_uniform_eta2_avx2_asm.S",
+        "blob": "38e66a995d65ace07edf33a6a05ec9a7f2cb3fa1",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/adapter/aoem-adapter-crypto/vendor/mldsa-native/mldsa/src/native/x86_64/src/mldsa_rej_uniform_eta4_avx2_asm.S",
+        "blob": "8348e70ac51b78660f58af31c53d38179d882c77",
+        "locations": {},
+        "assembly_file": true
+      },
+      {
+        "file": "crates/ai/aoem-apfl-model-runtime/src/final_package.rs",
+        "blob": "3732f496540ce99f79eedc027ea8a3e33f26efca",
+        "locations": {
+          "unsafe": [
+            229,
+            1443,
+            1451
+          ],
+          "extern": [
+            213
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ai/aoem-apfl-model-runtime/src/hybrid_causal_package.rs",
+        "blob": "098939f8ccd3231464d609e34047da109b9e8f9b",
+        "locations": {
+          "unsafe": [
+            203,
+            862
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/ash_backend.rs",
+        "blob": "33fa3a3059777fe34f5e5eabc96fda26d1dab3ab",
+        "locations": {
+          "unsafe": [
+            43,
+            477,
+            1218,
+            1227,
+            1236,
+            1280,
+            1286,
+            1297,
+            1303,
+            1317,
+            1353,
+            1381,
+            1387,
+            1399,
+            1410,
+            1448,
+            1455,
+            1476,
+            1559,
+            1587,
+            1598,
+            1963,
+            2011,
+            2068,
+            2090,
+            2167,
+            2171,
+            2224,
+            2251,
+            2257,
+            2273,
+            2282,
+            2289,
+            2356,
+            2374,
+            2377,
+            2394,
+            2411,
+            2426,
+            2428,
+            2431,
+            3023,
+            3033,
+            3108,
+            3147,
+            3162,
+            3173,
+            3181,
+            3196,
+            3217,
+            3307,
+            3316,
+            3324,
+            3344,
+            3353,
+            3357,
+            3389,
+            3403,
+            3413,
+            3432,
+            3441,
+            3443,
+            3539,
+            3560,
+            3562,
+            3573,
+            3580,
+            3585,
+            3591,
+            3663,
+            3684,
+            3686,
+            3696,
+            3699,
+            3704,
+            3710,
+            3754,
+            3770,
+            3782,
+            3801,
+            3814,
+            3830,
+            3885,
+            3919,
+            3964,
+            3973,
+            3975,
+            3992,
+            4010,
+            4029,
+            4067,
+            4109,
+            4139,
+            4164,
+            4184,
+            4204,
+            4224,
+            4773,
+            4795,
+            4830,
+            4835,
+            4872,
+            4894,
+            4929,
+            4947,
+            4963,
+            4973,
+            4996,
+            5025,
+            5035,
+            5058,
+            5091,
+            5101,
+            5120,
+            5142,
+            5209,
+            5220,
+            5253,
+            5362,
+            5558,
+            5567,
+            5583,
+            5589,
+            5608,
+            5727,
+            5736,
+            5747,
+            5758,
+            5777,
+            5837,
+            5858,
+            5984,
+            5991,
+            5998,
+            6002,
+            6003,
+            6004,
+            6008,
+            6009,
+            6023
+          ],
+          "extern": [
+            5984,
+            5991,
+            5998,
+            6004,
+            6009
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/bf16_cooperative.rs",
+        "blob": "8b39bb33ab1b2556963aa854a07798c43988f03c",
+        "locations": {
+          "unsafe": [
+            26,
+            27,
+            48,
+            49,
+            66,
+            89,
+            92
+          ],
+          "extern": [
+            89
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/pipeline/persistent_executor.rs",
+        "blob": "f744f59cbb69e7991ea9ac1db1cfb00b3aa7cdd7",
+        "locations": {
+          "unsafe": [
+            1273,
+            1312,
+            1328,
+            1345,
+            1360,
+            1370,
+            1439,
+            1446,
+            1456,
+            1490,
+            1495,
+            1517,
+            1548,
+            1606,
+            1682,
+            1721,
+            1736,
+            1753,
+            1767,
+            1777,
+            1845,
+            1852,
+            1861,
+            1903,
+            1908,
+            1930,
+            1946,
+            1951,
+            1972,
+            1999,
+            2085,
+            2124,
+            2139,
+            2156,
+            2170,
+            2180,
+            2248,
+            2255,
+            2264,
+            2342,
+            2347,
+            2368,
+            2400,
+            2405,
+            2426,
+            2442,
+            2447,
+            2468,
+            2491,
+            3684,
+            3695,
+            3728,
+            3732,
+            3747,
+            3759,
+            3788,
+            3808,
+            3829,
+            3834,
+            3841,
+            3858,
+            3864,
+            3871,
+            3938,
+            3951,
+            3963,
+            4611
+          ],
+          "extern": [
+            4601
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/backend/aoem-backend-gpu/aoem-gpu-device/src/spirv_backend.rs",
+        "blob": "6bb6a76c2b23b279a887b14bd9de4fb897df3328",
+        "locations": {
+          "unsafe": [
+            1435,
+            1458,
+            1459,
+            1468,
+            1486,
+            1500,
+            1517,
+            1547,
+            1548,
+            1549,
+            1550,
+            1553,
+            1557,
+            1561,
+            1565,
+            1583,
+            1585,
+            1596,
+            1619,
+            1636,
+            1682,
+            1683,
+            1684,
+            1685,
+            1686,
+            1687,
+            1688,
+            1689,
+            1692,
+            1696,
+            1700,
+            1704,
+            1708,
+            1712,
+            1716,
+            1720,
+            1756,
+            1758,
+            1769,
+            1792
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/backend/aoem-backend-gpu/aoem-gpu-kernels/build.rs",
+        "blob": "2fa0301bda1361a9c50f388d22963bebb62d8de2",
+        "locations": {
+          "unsafe": [
+            24,
+            3935
+          ],
+          "extern": [
+            24
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/backend/aoem-backend-gpu/aoem-gpu-kernels/src/mldsa_ntt.rs",
+        "blob": "8eb8974259a49845675576ea82794e958a6899f3",
+        "locations": {
+          "unsafe": [
+            105
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-concurrency/src/numa_affinity.rs",
+        "blob": "0bc5d7d65a573f867c1054ea8505a54e3ddb63f2",
+        "locations": {
+          "unsafe": [
+            8,
+            194,
+            229
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-cycle-counter/src/lib.rs",
+        "blob": "6dcb5a5382f41981c8743e9fba0a34cb8c791cf7",
+        "locations": {
+          "unsafe": [
+            5,
+            28,
+            35
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-engine/examples/aoem_kernel_baseline.rs",
+        "blob": "d2a4904a3470154b2885530af49b3d8addef44b1",
+        "locations": {
+          "unsafe": [
+            32,
+            78,
+            464
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-engine/src/exec_ops_pool.rs",
+        "blob": "54081e5ebe254997790658166205abb72d773620",
+        "locations": {
+          "unsafe": [
+            18,
+            40
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-engine/src/ingress.rs",
+        "blob": "fab86eeaabcb2f1f3a5215395432af64819bc2b4",
+        "locations": {
+          "unsafe": [
+            662
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-engine/src/lib.rs",
+        "blob": "ec41670b845dce89d763ea12231f335e59900893",
+        "locations": {
+          "unsafe": [
+            78
+          ],
+          "allocator": [
+            80
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-engine/src/semantic_executor.rs",
+        "blob": "69bce822ddf81f6468babc237c114e5cb620eeaa",
+        "locations": {
+          "unsafe": [
+            501,
+            1954
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-optimizations/examples/aoem_phase4_1_cross_shard_2pc.rs",
+        "blob": "f6281e1abff4374bceeebb1bb15a7575b13ff0b1",
+        "locations": {
+          "unsafe": [
+            325
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-state-kv/src/lib.rs",
+        "blob": "e91fecef7be35bfed5c81ebb48ed083b5652604a",
+        "locations": {
+          "unsafe": [
+            4992
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/core/aoem-thread-pinning/src/lib.rs",
+        "blob": "d096584894775ed33fa35e754f2d268c19ab5d46",
+        "locations": {
+          "unsafe": [
+            12,
+            28,
+            51,
+            81
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/examples/hosted_kernel_production_perf.rs",
+        "blob": "389b156c577d1f712477332d838f47fea6e99aa7",
+        "locations": {
+          "unsafe": [
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            66,
+            68,
+            70,
+            71,
+            73,
+            74,
+            100,
+            209,
+            211,
+            215,
+            218,
+            222,
+            249,
+            257,
+            265,
+            636,
+            665,
+            676,
+            680,
+            693,
+            703,
+            716,
+            726,
+            756,
+            766,
+            866,
+            876,
+            989,
+            1002,
+            1006,
+            1007,
+            1130,
+            1135,
+            1137,
+            1149,
+            1159,
+            1168,
+            1178,
+            1182,
+            1184,
+            1191,
+            1201,
+            1206,
+            1224
+          ],
+          "extern": [
+            57,
+            58,
+            59,
+            60,
+            61,
+            62,
+            63,
+            64,
+            66,
+            68,
+            70,
+            71,
+            73,
+            74
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/include/aoem.h",
+        "blob": "175ea17f066849fbf39a573cc47263b1ee3cb6af",
+        "locations": {
+          "extern": [
+            22
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/ai_causal_sequence_session_export_tests.rs",
+        "blob": "f85875861495051430042d17509cba61f7364737",
+        "locations": {
+          "unsafe": [
+            1632
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/ai_causal_sequence_training.rs",
+        "blob": "dbeeb478f0b2a780d9d03f9d4c3af69f23493c44",
+        "locations": {
+          "unsafe": [
+            1092,
+            1101,
+            1108,
+            1118,
+            1126,
+            1135,
+            1142,
+            1172,
+            1180,
+            1189,
+            1196,
+            1206,
+            1214,
+            1223,
+            1230,
+            1260,
+            1268,
+            1277,
+            1284,
+            1294,
+            1302,
+            1311,
+            1318,
+            1348,
+            1356,
+            1365,
+            1372,
+            1382,
+            1390,
+            1399,
+            1406,
+            1436,
+            1444,
+            1453,
+            1460,
+            1470,
+            1478,
+            1487,
+            1494,
+            1524,
+            1532,
+            1541,
+            1548,
+            1558,
+            1566,
+            1575,
+            1582,
+            1612,
+            1620,
+            1629,
+            1636,
+            1646,
+            1654,
+            1663,
+            1670,
+            1700,
+            1708,
+            1717,
+            1724,
+            1734,
+            1742,
+            1751,
+            1758,
+            1788,
+            1796,
+            1805,
+            1812,
+            1822,
+            1830,
+            1839,
+            1846,
+            1876,
+            2171,
+            2188,
+            2210,
+            2227,
+            2254,
+            2278,
+            2306,
+            2340,
+            2357,
+            2385,
+            2423,
+            2440,
+            2468,
+            2498,
+            2526,
+            2563,
+            2591,
+            2629,
+            2649,
+            2675,
+            2695,
+            2711,
+            2727,
+            2743,
+            2759,
+            2775,
+            2804
+          ],
+          "extern": [
+            1084,
+            1092,
+            1126,
+            1180,
+            1214,
+            1268,
+            1302,
+            1356,
+            1390,
+            1444,
+            1478,
+            1532,
+            1566,
+            1620,
+            1654,
+            1708,
+            1742,
+            1796,
+            1830
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/ai_checked_integer_resources_tests.rs",
+        "blob": "fb3b6fa929b83f2ceaf7a32c0e72c2b850732715",
+        "locations": {
+          "unsafe": [
+            25,
+            63,
+            67,
+            78,
+            242,
+            325,
+            341,
+            366,
+            386,
+            392,
+            397,
+            399,
+            450,
+            455,
+            457,
+            512,
+            526,
+            893,
+            926,
+            994
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/ai_sgm_model_session.rs",
+        "blob": "5da887333a1906ddc113a3b21b4629ae0b0b7e23",
+        "locations": {
+          "unsafe": [
+            4548,
+            4550,
+            4556,
+            4558,
+            4564,
+            4581,
+            4598,
+            4606,
+            4636,
+            8083,
+            8085,
+            8320
+          ],
+          "extern": [
+            4548,
+            4550,
+            4556,
+            4558,
+            4564,
+            4598
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/ai_sgm_state_training.rs",
+        "blob": "ad611290b404b1d808f9a8832178efcb02cf84a9",
+        "locations": {
+          "unsafe": [
+            690,
+            708,
+            709,
+            710,
+            718,
+            726,
+            734,
+            742,
+            750,
+            915,
+            925,
+            928,
+            934,
+            939,
+            949,
+            952,
+            962,
+            965,
+            975,
+            987,
+            1007,
+            1014,
+            1085,
+            1105,
+            1127,
+            1140,
+            1162,
+            1193,
+            1220,
+            1238,
+            1259,
+            1272,
+            1292,
+            1321,
+            1334,
+            1356,
+            1398,
+            1411,
+            1437,
+            1495,
+            1519,
+            1546,
+            1678,
+            1707,
+            1708,
+            1727,
+            1775,
+            1809,
+            1859,
+            2029,
+            2063,
+            2092,
+            2149,
+            2157,
+            2190,
+            2275,
+            2283,
+            2307,
+            2316,
+            2329,
+            2346,
+            2355,
+            2372,
+            2379,
+            2398,
+            2412,
+            2464,
+            2471,
+            2490,
+            2496,
+            2512,
+            2571,
+            2576,
+            2597,
+            2605,
+            2626,
+            2633,
+            2650,
+            2700,
+            2730,
+            2738,
+            2752,
+            2761,
+            2775,
+            2803,
+            2809,
+            2815,
+            2845,
+            2847,
+            2854,
+            2871,
+            3024,
+            3062,
+            3073,
+            3090,
+            3101,
+            3118,
+            3134,
+            3138,
+            3161,
+            3190,
+            3195,
+            3218,
+            3237,
+            3270,
+            3277,
+            3294,
+            3553,
+            3571,
+            3592,
+            3601,
+            3692,
+            3719,
+            3728,
+            3797,
+            3825,
+            3834,
+            3949,
+            3957,
+            3979,
+            3997,
+            4006,
+            4100,
+            4117,
+            4128,
+            4151,
+            4175,
+            4207,
+            4220,
+            4243,
+            4266,
+            4279,
+            4298,
+            4319,
+            4358,
+            4377,
+            4438,
+            4461,
+            4502,
+            4517,
+            4542,
+            4584,
+            4602,
+            4629,
+            4678,
+            4696,
+            4726,
+            4788,
+            4806,
+            4838,
+            4916,
+            4933,
+            4952,
+            4961,
+            4970,
+            4979,
+            5003,
+            5017,
+            5033,
+            5047,
+            5061,
+            5077,
+            5092,
+            5107,
+            5122,
+            5137,
+            5163,
+            5215,
+            5230,
+            5259,
+            5319,
+            5334,
+            5365,
+            5440,
+            5501,
+            5535,
+            5611,
+            5621,
+            5655,
+            5731,
+            5741,
+            5777,
+            5871,
+            5881,
+            5914,
+            5997,
+            6005,
+            6022,
+            6030,
+            6067,
+            6136,
+            6161,
+            6193,
+            6227,
+            6256,
+            6297,
+            6324,
+            6349,
+            6383,
+            6399,
+            6417,
+            6450,
+            6539,
+            6573,
+            6586,
+            6628,
+            6671,
+            6765,
+            6786,
+            6828,
+            6847,
+            6917,
+            7383,
+            7394,
+            7660,
+            7754,
+            7769,
+            7940,
+            7954,
+            7988,
+            8025,
+            8094,
+            8180,
+            8207,
+            8236,
+            8254,
+            8315,
+            8346,
+            8362,
+            8462,
+            8544,
+            8567,
+            8658,
+            8687,
+            8713,
+            8772,
+            8799,
+            8820,
+            8838,
+            8870,
+            8942,
+            9092,
+            9182,
+            9223,
+            9251,
+            9340,
+            9350,
+            9372,
+            9389,
+            9403,
+            9425,
+            9436,
+            9460,
+            9524,
+            9537,
+            9560,
+            9578,
+            9614,
+            9632,
+            9720,
+            9733,
+            9803,
+            9816,
+            9835,
+            9852,
+            9897,
+            9910,
+            9924,
+            9942,
+            9973,
+            9984,
+            10007,
+            10018,
+            10096,
+            10113,
+            10130,
+            10150,
+            10180,
+            10201,
+            10230,
+            10247,
+            10401,
+            10434,
+            10443,
+            10463,
+            10477,
+            10500,
+            10521,
+            10536,
+            10555,
+            10596,
+            10616,
+            10632,
+            10659,
+            10676,
+            10693,
+            10722,
+            10760,
+            10798,
+            10827,
+            10879,
+            10904,
+            10921,
+            10938,
+            10959,
+            11010,
+            11037,
+            11061,
+            11140,
+            11180,
+            11200,
+            11216,
+            11233,
+            11249,
+            11266,
+            11285,
+            11305,
+            11327,
+            11352,
+            11375,
+            11397,
+            11428,
+            11468,
+            11507,
+            11619,
+            11668,
+            11688,
+            11745,
+            11766,
+            11787,
+            11900,
+            11936,
+            11983,
+            11995,
+            12007,
+            12030,
+            12041,
+            12051,
+            12080,
+            12108,
+            12124,
+            12169,
+            12192,
+            12201,
+            12210,
+            12222,
+            12279,
+            12303,
+            12336,
+            12363,
+            12376,
+            12399,
+            12434,
+            12503,
+            12522,
+            12537,
+            12562,
+            12578,
+            12591,
+            12616,
+            12641
+          ],
+          "extern": [
+            979,
+            987,
+            1085,
+            1140,
+            1206,
+            1220,
+            1272,
+            1334,
+            1411,
+            1482,
+            1495,
+            1678,
+            1775,
+            2029,
+            2149,
+            2196,
+            2221,
+            2248,
+            2275,
+            2307,
+            2346,
+            2379,
+            2471,
+            2730,
+            2752,
+            2775,
+            3062,
+            3090,
+            3118,
+            3571,
+            3692,
+            3797,
+            3880,
+            3905,
+            3923,
+            3949,
+            3997,
+            4025,
+            4050,
+            4075,
+            4100,
+            4151,
+            4220,
+            4266,
+            4298,
+            4358,
+            4396,
+            4415,
+            4438,
+            4517,
+            4602,
+            4696,
+            4806,
+            5003,
+            5047,
+            5092,
+            5137,
+            5230,
+            5334,
+            5501,
+            5621,
+            5741,
+            5881,
+            6005,
+            6030,
+            6136,
+            6227,
+            6324,
+            6383,
+            6417,
+            6539,
+            6628,
+            6765,
+            6828,
+            6866,
+            6917,
+            7383,
+            7394,
+            7660
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/classic_privacy_wire/tests.rs",
+        "blob": "ac404b8fe0075a55cf60a4e5184e829e0a1ac8e2",
+        "locations": {
+          "unsafe": [
+            93,
+            97,
+            100
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/forward_program_v1.rs",
+        "blob": "298d04fd608a39a0f8abe4624357ec42981050e0",
+        "locations": {
+          "unsafe": [
+            591,
+            600,
+            608,
+            619,
+            635,
+            641,
+            657,
+            710,
+            720,
+            730,
+            2213,
+            2225,
+            2288,
+            2307,
+            2332,
+            2342,
+            2354,
+            2367,
+            3582,
+            3592,
+            5045,
+            5069,
+            5079,
+            5087,
+            5109,
+            5136,
+            5281,
+            5291,
+            5293,
+            5298,
+            5305,
+            5326,
+            5336,
+            5338,
+            5356,
+            5380,
+            5404,
+            5414,
+            5416,
+            5436,
+            5460,
+            5478,
+            5485,
+            5532,
+            5543,
+            5545,
+            5588,
+            5634,
+            5645,
+            5665,
+            5675,
+            5690,
+            5757,
+            5770,
+            5772,
+            5792,
+            5796,
+            5797,
+            5817,
+            5832,
+            5848,
+            5905,
+            5914,
+            5919,
+            5952,
+            5964,
+            5971,
+            5999,
+            6006,
+            6046,
+            6057,
+            6059,
+            6122,
+            6141,
+            6152,
+            6206,
+            6217,
+            6219,
+            6289,
+            6308,
+            6322,
+            6345,
+            6354,
+            6365,
+            6383,
+            6440,
+            6452,
+            6456,
+            6503,
+            6514,
+            6516,
+            6531,
+            6579,
+            6587,
+            6605,
+            6620,
+            6622,
+            6821,
+            6870,
+            6885,
+            6887,
+            6932,
+            7024,
+            7036,
+            7038,
+            7073,
+            7104,
+            7116,
+            7118,
+            7153,
+            7186,
+            7198,
+            7200,
+            7258,
+            7291,
+            7303,
+            7305,
+            7363,
+            7396,
+            7408,
+            7410,
+            7468,
+            7479,
+            7497,
+            7499,
+            7723,
+            7742,
+            7753,
+            7756,
+            7769,
+            7792,
+            7815,
+            7824,
+            7835,
+            7853,
+            10377,
+            10431,
+            10508,
+            10664,
+            10776,
+            10892,
+            10905,
+            10912,
+            10918,
+            10922,
+            10934,
+            10939,
+            10949,
+            10963,
+            10972,
+            10998,
+            11029,
+            12400,
+            13070,
+            13080,
+            13089,
+            13121,
+            13697,
+            13711,
+            13746,
+            13799,
+            13816,
+            13825,
+            13837,
+            13845,
+            13849,
+            13856,
+            13863,
+            13911,
+            13960,
+            13993,
+            14031,
+            14041,
+            14067,
+            14077,
+            14098,
+            14105,
+            14114,
+            14124,
+            14128,
+            14135,
+            14142,
+            14149,
+            14157,
+            14168,
+            14172,
+            14179,
+            14188,
+            14195,
+            14203,
+            14215,
+            14216,
+            14219,
+            14232,
+            14240,
+            14258,
+            14269,
+            14273,
+            14280,
+            14319,
+            14494,
+            14536,
+            15587,
+            15646,
+            15662,
+            15713,
+            15731,
+            15766,
+            15795,
+            15826,
+            15844,
+            15888,
+            15923,
+            15973,
+            15979,
+            15990,
+            16034,
+            16069,
+            16088,
+            16113,
+            16120,
+            16126,
+            16136,
+            16146,
+            16163,
+            16173,
+            16188,
+            16205,
+            16255,
+            16299,
+            16355,
+            16396,
+            16434,
+            16472,
+            16513,
+            16555,
+            16583,
+            16618,
+            16659,
+            16709,
+            16727,
+            16733,
+            16743,
+            16779,
+            16796,
+            16882,
+            16950,
+            17010,
+            17049,
+            17071,
+            17077,
+            17088,
+            17131,
+            17151
+          ],
+          "extern": [
+            591,
+            600,
+            608,
+            619,
+            635,
+            641,
+            657,
+            710,
+            720,
+            730,
+            5281,
+            5326,
+            5404,
+            5478,
+            5532,
+            5757,
+            5964,
+            5999,
+            6046,
+            6206,
+            6440,
+            6503,
+            6579,
+            7024,
+            7104,
+            7186,
+            7291,
+            7396,
+            10934,
+            10949,
+            10963,
+            13697,
+            13711,
+            13837,
+            13856,
+            14031,
+            14067,
+            14098,
+            14114,
+            14142,
+            14157,
+            14188,
+            14203,
+            14232,
+            14258
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/lib.rs",
+        "blob": "33e959c7ba5ab81334a52468fea950e336698d5c",
+        "locations": {
+          "unsafe": [
+            363,
+            375,
+            401,
+            413,
+            435,
+            451,
+            453,
+            457,
+            461,
+            465,
+            479,
+            486,
+            491,
+            594,
+            595,
+            596,
+            597,
+            599,
+            601,
+            602,
+            603,
+            604,
+            605,
+            607,
+            608,
+            609,
+            610,
+            611,
+            622,
+            624,
+            902,
+            904,
+            923,
+            924,
+            925,
+            933,
+            983,
+            984,
+            997,
+            998,
+            1468,
+            1474,
+            1502,
+            1524,
+            1543,
+            1551,
+            1554,
+            1559,
+            2454,
+            2471,
+            2552,
+            2632,
+            2679,
+            2735,
+            2780,
+            2834,
+            2879,
+            3042,
+            3093,
+            3161,
+            3262,
+            3292,
+            3300,
+            3301,
+            3303,
+            3304,
+            3305,
+            3306,
+            3307,
+            3308,
+            3309,
+            3342,
+            3350,
+            3354,
+            3395,
+            3428,
+            3436,
+            3437,
+            3439,
+            3440,
+            3441,
+            3442,
+            3443,
+            3444,
+            3445,
+            3478,
+            3486,
+            3490,
+            3529,
+            3561,
+            3569,
+            3570,
+            3571,
+            3572,
+            3576,
+            3588,
+            3592,
+            3595,
+            3600,
+            3608,
+            3612,
+            3667,
+            3675,
+            3676,
+            3677,
+            3679,
+            3681,
+            3682,
+            3684,
+            3713,
+            3721,
+            3725,
+            3767,
+            3775,
+            3776,
+            3777,
+            3788,
+            3821,
+            3829,
+            3830,
+            3831,
+            3842,
+            13756,
+            13922,
+            13937,
+            13944,
+            13949,
+            13956,
+            13960,
+            13973,
+            14002,
+            14004,
+            14008,
+            14036,
+            14079,
+            14202,
+            14853,
+            14875,
+            14897,
+            14937,
+            14957,
+            14975,
+            14976,
+            14988,
+            15002,
+            15037,
+            15053,
+            15063,
+            15064,
+            15087,
+            15113,
+            15132,
+            15158,
+            15177,
+            15195,
+            15204,
+            15205,
+            15206,
+            15220,
+            15233,
+            15257,
+            15274,
+            15280,
+            15281,
+            15282,
+            15285,
+            15298,
+            15322,
+            15332,
+            15341,
+            15351,
+            15434,
+            15435,
+            15436,
+            15586,
+            15609,
+            15861,
+            15875,
+            15878,
+            15889,
+            15903,
+            15906,
+            15917,
+            15931,
+            15934,
+            15945,
+            15961,
+            15965,
+            15966,
+            15967,
+            15972,
+            15984,
+            15994,
+            16002,
+            16061,
+            16447,
+            16461,
+            16477,
+            16481,
+            16482,
+            16483,
+            16488,
+            16499,
+            16514,
+            16519,
+            16520,
+            16542,
+            16556,
+            16595,
+            16621,
+            16632,
+            16643,
+            16644,
+            16657,
+            16726,
+            16742,
+            16746,
+            16747,
+            16757,
+            16771,
+            16781,
+            16792,
+            16813,
+            16833,
+            16853,
+            16864,
+            16940,
+            16961,
+            16973,
+            17111,
+            17131,
+            17137,
+            17138,
+            17139,
+            17142,
+            17162,
+            17185,
+            17193,
+            17194,
+            17196,
+            17238,
+            17312,
+            18364,
+            18384,
+            18400,
+            18463,
+            18480,
+            18486,
+            18487,
+            18497,
+            18517,
+            18526,
+            18533,
+            18634,
+            18648,
+            18656,
+            18679,
+            18725,
+            18746,
+            18755,
+            18777,
+            19014,
+            19029,
+            19036,
+            19064,
+            19073,
+            19080,
+            19163,
+            19176,
+            19182,
+            19198,
+            19229,
+            19243,
+            19251,
+            19277,
+            19441,
+            19445,
+            19456,
+            19461,
+            19506,
+            19517,
+            19531,
+            19547,
+            19555,
+            19561,
+            19590,
+            19604,
+            19620,
+            19654,
+            19682,
+            19694,
+            19705,
+            19721,
+            19729,
+            19734,
+            19748,
+            19759,
+            19771,
+            19784,
+            20040,
+            20070,
+            20081,
+            20097,
+            20110,
+            20164,
+            20175,
+            20193,
+            20201,
+            20209,
+            20223,
+            20237,
+            20280,
+            20299,
+            20318,
+            20326,
+            20327,
+            20347,
+            20358,
+            20376,
+            20384,
+            20392,
+            20422,
+            20432,
+            20439,
+            20455,
+            20461,
+            20470,
+            20490,
+            20502,
+            20532,
+            20595,
+            20617,
+            20639,
+            20703,
+            20738,
+            20761,
+            20781,
+            20957,
+            20985,
+            21424,
+            21452,
+            21794,
+            21820,
+            22156,
+            26171,
+            27106,
+            27601,
+            28900,
+            28905,
+            28910,
+            28915,
+            29200,
+            29209,
+            29213,
+            29225,
+            29245,
+            29262,
+            29278,
+            29282,
+            29298,
+            29317,
+            29326,
+            29353,
+            29379,
+            29392,
+            29402,
+            29411,
+            29418,
+            29445,
+            29456,
+            29463,
+            29477,
+            29483,
+            29500,
+            29504,
+            29514,
+            29518
+          ],
+          "extern": [
+            363,
+            401,
+            594,
+            595,
+            596,
+            597,
+            599,
+            601,
+            602,
+            603,
+            604,
+            605,
+            607,
+            608,
+            609,
+            610,
+            611,
+            622,
+            624,
+            904,
+            923,
+            924,
+            925,
+            933,
+            2552,
+            2632,
+            2679,
+            2735,
+            2780,
+            2834,
+            2879,
+            3042,
+            3093,
+            3161,
+            13374,
+            13380,
+            13386,
+            13400,
+            13751,
+            13922,
+            14025,
+            14848,
+            14863,
+            14885,
+            14907,
+            14988,
+            15037,
+            15087,
+            15132,
+            15177,
+            15257,
+            15322,
+            15861,
+            15889,
+            15917,
+            15945,
+            15984,
+            16461,
+            16499,
+            16533,
+            16542,
+            16595,
+            16726,
+            16771,
+            16833,
+            16940,
+            17111,
+            17162,
+            18384,
+            18463,
+            18517,
+            18634,
+            18746,
+            19014,
+            19064,
+            19163,
+            19229,
+            19420,
+            19431,
+            19441,
+            19456,
+            19506,
+            19694,
+            20070,
+            20164,
+            20318,
+            20347,
+            20422,
+            29200,
+            29262,
+            29392,
+            29445,
+            29500,
+            29514
+          ],
+          "manual_send_sync": [
+            902,
+            983,
+            984,
+            997,
+            998
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/product_tests.rs",
+        "blob": "6107bec5c58d4223e95bdc809af721dcc3025aea",
+        "locations": {
+          "unsafe": [
+            13,
+            19,
+            377,
+            379,
+            383,
+            399,
+            409,
+            412,
+            449,
+            457,
+            897,
+            906,
+            918,
+            931,
+            951,
+            962,
+            968,
+            981,
+            984,
+            1018,
+            1031,
+            1035,
+            1079,
+            1108,
+            1125,
+            1137,
+            1162,
+            1178,
+            1180,
+            1193,
+            1208,
+            1238,
+            1254,
+            1268,
+            1284,
+            1306,
+            1314,
+            1387,
+            1400,
+            1585,
+            1596,
+            1611,
+            1633,
+            1725,
+            1734,
+            1739,
+            1767,
+            1780,
+            1793,
+            1820,
+            1848,
+            1860,
+            1870,
+            1884,
+            1893,
+            1914,
+            1921,
+            1930,
+            1983,
+            2046,
+            2057,
+            2062,
+            2066,
+            2077,
+            2078,
+            2082,
+            2116,
+            2133,
+            2222,
+            2240,
+            2245,
+            2560,
+            2621
+          ],
+          "extern": [
+            13,
+            1387,
+            2066,
+            2560
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/resident_proof_security_tests.rs",
+        "blob": "01dd2e8d53c68350aa10dfbe1607f3ff346fd0e9",
+        "locations": {
+          "unsafe": [
+            65,
+            67,
+            72
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/semantic_graph_v2.rs",
+        "blob": "04cb9b479b488053e47b60df6d692bc1d6edfe59",
+        "locations": {
+          "unsafe": [
+            231,
+            301,
+            349,
+            354,
+            361,
+            363,
+            365,
+            367,
+            368,
+            374,
+            430,
+            431,
+            558,
+            559,
+            993,
+            1057,
+            1191,
+            1440,
+            1626,
+            1731,
+            1815,
+            1822,
+            1883,
+            1898,
+            1899,
+            1904,
+            1911,
+            1933,
+            1948,
+            1949,
+            1954,
+            1961,
+            1979,
+            1988,
+            2008,
+            2034,
+            2046,
+            2047,
+            2075,
+            2079,
+            2089,
+            2093,
+            2162,
+            2163,
+            2168,
+            2169,
+            2174,
+            2175,
+            2179,
+            2183,
+            2184,
+            2185,
+            2188,
+            2194,
+            2198,
+            2203,
+            2205,
+            2206,
+            2212,
+            2217,
+            2218,
+            2235,
+            2240,
+            2241,
+            2242,
+            2243,
+            2256,
+            2262,
+            2263,
+            2270,
+            2278,
+            2283,
+            2284,
+            2297,
+            2305,
+            2310,
+            2311,
+            2334,
+            2339,
+            2340,
+            2465,
+            2470,
+            2477,
+            2485,
+            2493,
+            2500,
+            2506,
+            2512,
+            2519,
+            2529,
+            2540,
+            2556,
+            2560,
+            2569,
+            2582,
+            2604,
+            2618,
+            2651,
+            2720,
+            2736
+          ],
+          "extern": [
+            349,
+            354,
+            361,
+            363,
+            365,
+            367,
+            368,
+            374,
+            1883,
+            1933,
+            1979,
+            2008,
+            2034,
+            2075,
+            2089,
+            2162,
+            2168,
+            2174,
+            2183,
+            2188,
+            2198,
+            2212,
+            2235,
+            2256,
+            2270,
+            2278,
+            2297,
+            2305,
+            2334
+          ],
+          "manual_send_sync": [
+            430,
+            431,
+            558,
+            559
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/storage_provider_wire.rs",
+        "blob": "01224df3b6212d8a31b7c810c8462c03abffebeb",
+        "locations": {
+          "unsafe": [
+            527,
+            537,
+            555,
+            563,
+            574,
+            585,
+            590,
+            593,
+            718,
+            724,
+            735,
+            737,
+            748,
+            758,
+            764,
+            768,
+            818,
+            824,
+            829,
+            840,
+            844,
+            849,
+            854,
+            858,
+            863,
+            870,
+            875,
+            879
+          ],
+          "extern": [
+            555
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/ffi/aoem-ffi/src/zkvm_portable.rs",
+        "blob": "52d4106b1caa7e1bd227913e05eba7f60a285b65",
+        "locations": {
+          "unsafe": [
+            4,
+            14,
+            25,
+            29,
+            45,
+            65,
+            67,
+            68,
+            86,
+            89,
+            95,
+            133,
+            135,
+            148,
+            151
+          ],
+          "extern": [
+            4,
+            14,
+            35,
+            116
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/optional/aoem-kms-hsm-plugin/src/lib.rs",
+        "blob": "7c374cd1d84ff9deb0dc278a76f2f8ce3f9dd563",
+        "locations": {
+          "unsafe": [
+            22,
+            52,
+            54,
+            126
+          ],
+          "extern": [
+            72,
+            77,
+            99,
+            121
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/storage-backend/examples/rocksdb_fsync_comparison.rs",
+        "blob": "b599018c81c109ca05d09556c93922d4cfbfd5aa",
+        "locations": {
+          "unsafe": [
+            22
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/storage-backend/src/rocksdb_impl.rs",
+        "blob": "7a9fc0885e7d3fb3cadea93e546ccaca6ed4a59f",
+        "locations": {
+          "unsafe": [
+            178,
+            858
+          ]
+        },
+        "assembly_file": false
+      },
+      {
+        "file": "crates/tests/aoem-test-alloc/src/lib.rs",
+        "blob": "a436faca36b74ee71671551e42240bb94d3912d1",
+        "locations": {
+          "unsafe": [
+            5,
+            70,
+            71,
+            80,
+            84
+          ],
+          "allocator": [
+            9,
+            70
+          ]
+        },
+        "assembly_file": false
+      }
+    ]
+  }
+]

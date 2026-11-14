@@ -1,0 +1,195 @@
+{
+  "normalization": "Only relative branch/call immediate and RIP displacement; target behavior not proven by equality",
+  "comparisons": [
+    {
+      "left": "875-node",
+      "right": "a254-node",
+      "left_function": "writer",
+      "right_function": "writer",
+      "left_rva": "0x1e47a00",
+      "right_rva": "0x1e4cc60",
+      "left_normalized_sha256": "a0639a93e72bcfd00e2f5e381dca97dc6a83127d79117bc17bec7af28d2fc9a1",
+      "right_normalized_sha256": "a0639a93e72bcfd00e2f5e381dca97dc6a83127d79117bc17bec7af28d2fc9a1",
+      "normalized_bytes_equal": true,
+      "unwind_header_slots_equal": true
+    },
+    {
+      "left": "875-node",
+      "right": "a254-node",
+      "left_function": "direct-depth1-242cd40",
+      "right_function": "direct-depth1-24334a0",
+      "left_rva": "0x242cd40",
+      "right_rva": "0x24334a0",
+      "left_normalized_sha256": "5174d2efa24ddf92016873acf7393ec7d2bac56e44832efb4b72fea2a98faa2d",
+      "right_normalized_sha256": "5174d2efa24ddf92016873acf7393ec7d2bac56e44832efb4b72fea2a98faa2d",
+      "normalized_bytes_equal": true,
+      "unwind_header_slots_equal": true
+    },
+    {
+      "left": "875-node",
+      "right": "a254-node",
+      "left_function": "direct-depth2-242ccb0",
+      "right_function": "direct-depth2-2433410",
+      "left_rva": "0x242ccb0",
+      "right_rva": "0x2433410",
+      "left_normalized_sha256": "c16f68433a592e64422505e95f971439c3cad0f0cff0e4b033e221a3e3483041",
+      "right_normalized_sha256": "c16f68433a592e64422505e95f971439c3cad0f0cff0e4b033e221a3e3483041",
+      "normalized_bytes_equal": true,
+      "unwind_header_slots_equal": true
+    },
+    {
+      "left": "875-node",
+      "right": "a254-node",
+      "left_function": "direct-depth2-242cbfc",
+      "right_function": "direct-depth2-243335c",
+      "left_rva": "0x242cbfc",
+      "right_rva": "0x243335c",
+      "left_normalized_sha256": "9131301242e87729fbfe11a8747cce79a4acc3d47deae578d02a7615ea214f67",
+      "right_normalized_sha256": "9131301242e87729fbfe11a8747cce79a4acc3d47deae578d02a7615ea214f67",
+      "normalized_bytes_equal": true,
+      "unwind_header_slots_equal": true
+    },
+    {
+      "left": "875-packaged-aoem",
+      "right": "AOEM966",
+      "left_function": "aoem_execute_ops_wire_v1",
+      "right_function": "aoem_execute_ops_wire_v1",
+      "left_rva": "0x12c650",
+      "right_rva": "0x12c8f0",
+      "left_normalized_sha256": "5bf92e8526d8779dcc2d2b195bd593f406c7a27879d045308dec025859abc39b",
+      "right_normalized_sha256": "5bf92e8526d8779dcc2d2b195bd593f406c7a27879d045308dec025859abc39b",
+      "normalized_bytes_equal": true,
+      "unwind_header_slots_equal": true
+    },
+    {
+      "left": "875-packaged-aoem",
+      "right": "AOEM966",
+      "left_function": "aoem_compute_result_take_v1",
+      "right_function": "aoem_compute_result_take_v1",
+      "left_rva": "0x122da0",
+      "right_rva": "0x122f90",
+      "left_normalized_sha256": "c769ec4c75d39c4311e03def5c378786fa9603cf01726c80216c853c00e39dc4",
+      "right_normalized_sha256": "c769ec4c75d39c4311e03def5c378786fa9603cf01726c80216c853c00e39dc4",
+      "normalized_bytes_equal": true,
+      "unwind_header_slots_equal": true
+    },
+    {
+      "left": "875-packaged-aoem",
+      "right": "AOEM966",
+      "left_function": "aoem_destroy",
+      "right_function": "aoem_destroy",
+      "left_rva": "0x1235a0",
+      "right_rva": "0x123790",
+      "left_normalized_sha256": "ad40532163fe452d798c537b7873e92b2af27a07d28a7b2c2f012c07e82cab02",
+      "right_normalized_sha256": "ad40532163fe452d798c537b7873e92b2af27a07d28a7b2c2f012c07e82cab02",
+      "normalized_bytes_equal": true,
+      "unwind_header_slots_equal": true
+    }
+  ],
+  "sysv_callers": [
+    {
+      "image": "875-packaged-aoem",
+      "caller_rva": "0x6d2a00",
+      "normalized_sha256": "aa64361eb159975549b32e33cd30a4713919a0e32b7b44e93e555fafe14b98d4",
+      "pushes": [
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbp",
+        "rbx"
+      ],
+      "pops": [
+        "rbx",
+        "rbp",
+        "rdi",
+        "rsi",
+        "r12",
+        "r13",
+        "r14",
+        "r15"
+      ],
+      "push_pop_reverse": true,
+      "xmm_stores": {
+        "xmm15": "0x130",
+        "xmm14": "0x120",
+        "xmm13": "0x110",
+        "xmm12": "0x100",
+        "xmm11": "0xf0",
+        "xmm10": "0xe0",
+        "xmm9": "0xd0",
+        "xmm8": "0xc0",
+        "xmm7": "0xb0",
+        "xmm6": "0xa0"
+      },
+      "xmm_loads": {
+        "xmm6": "0xa0",
+        "xmm7": "0xb0",
+        "xmm8": "0xc0",
+        "xmm9": "0xd0",
+        "xmm10": "0xe0",
+        "xmm11": "0xf0",
+        "xmm12": "0x100",
+        "xmm13": "0x110",
+        "xmm14": "0x120",
+        "xmm15": "0x130"
+      },
+      "xmm6_to_15_matching_slots": true,
+      "scope": "Observed prologue/normal-return instructions; not a proof against intervening corruption or all paths in dependencies"
+    },
+    {
+      "image": "AOEM966",
+      "caller_rva": "0x6da240",
+      "normalized_sha256": "aa64361eb159975549b32e33cd30a4713919a0e32b7b44e93e555fafe14b98d4",
+      "pushes": [
+        "r15",
+        "r14",
+        "r13",
+        "r12",
+        "rsi",
+        "rdi",
+        "rbp",
+        "rbx"
+      ],
+      "pops": [
+        "rbx",
+        "rbp",
+        "rdi",
+        "rsi",
+        "r12",
+        "r13",
+        "r14",
+        "r15"
+      ],
+      "push_pop_reverse": true,
+      "xmm_stores": {
+        "xmm15": "0x130",
+        "xmm14": "0x120",
+        "xmm13": "0x110",
+        "xmm12": "0x100",
+        "xmm11": "0xf0",
+        "xmm10": "0xe0",
+        "xmm9": "0xd0",
+        "xmm8": "0xc0",
+        "xmm7": "0xb0",
+        "xmm6": "0xa0"
+      },
+      "xmm_loads": {
+        "xmm6": "0xa0",
+        "xmm7": "0xb0",
+        "xmm8": "0xc0",
+        "xmm9": "0xd0",
+        "xmm10": "0xe0",
+        "xmm11": "0xf0",
+        "xmm12": "0x100",
+        "xmm13": "0x110",
+        "xmm14": "0x120",
+        "xmm15": "0x130"
+      },
+      "xmm6_to_15_matching_slots": true,
+      "scope": "Observed prologue/normal-return instructions; not a proof against intervening corruption or all paths in dependencies"
+    }
+  ]
+}

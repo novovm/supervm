@@ -1,0 +1,12 @@
+{
+  "original_inventory_exit_code": 0,
+  "sysv_static_scan_exit_code": 0,
+  "frontier_comparison_exit_code": 0,
+  "dump_config_outer_command_exit_code": 1,
+  "dump_config_script_incomplete_query_exit_requested": 2,
+  "dump_config_complete": false,
+  "failure": "LocalService CrashDumps listing denied; output retained",
+  "new_runtime_workloads": 0,
+  "production_modified": false,
+  "first_corrupting_instruction_found": false
+}
