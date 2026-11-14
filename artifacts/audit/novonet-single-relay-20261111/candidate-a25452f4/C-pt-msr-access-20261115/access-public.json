@@ -1,0 +1,17 @@
+{
+  "checkedUtc": "2026-11-14T23:23:20.2431769Z",
+  "logicalProcessors": 32,
+  "hypervisorPresent": true,
+  "query": "NtQuerySystemInformation(SystemKernelDebuggerInformation=35)",
+  "ntstatus": 0,
+  "returnedBytes": 2,
+  "kernelDebuggerEnabled": 0,
+  "kernelDebuggerNotPresent": 1,
+  "kdnicRunning": true,
+  "msrSnapshotObtained": false,
+  "topaSnapshotObtained": false,
+  "kernelConfigurationChanged": false,
+  "newDriverLoaded": false,
+  "captureStarted": false,
+  "originalNodeStarted": false
+}
