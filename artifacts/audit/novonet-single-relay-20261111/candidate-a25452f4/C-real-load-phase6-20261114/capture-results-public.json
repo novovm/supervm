@@ -1,0 +1,23 @@
+{
+  "boundary_records": 2304,
+  "capture_sequences": 384,
+  "complete_groups": 384,
+  "complete_branches": {
+    "tail": 344,
+    "padded": 40
+  },
+  "partial_groups_not_passed": 0,
+  "comparisons": 6149,
+  "failures": [],
+  "observed_format_inner_entries": 131072,
+  "input_expected_hash_byte_formats": 131072,
+  "target_exit_code": 0,
+  "debugger_exit_code": 0,
+  "timeout": false,
+  "maximum_seconds": 300,
+  "start_utc": "2026-11-14T01:08:06.989200+00:00",
+  "end_utc": "2026-11-14T01:10:51.414976+00:00",
+  "first_original_corruption_found": false,
+  "original_fault_reproduced": false,
+  "coverage": "selected records only in one full wrapped delivery snapshot; not all 131072 calls have boundary capture; debugger changes timing; old heap history and exact fault window not recreated"
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "file": "original-threads-private.log",
+    "bytes": 38176,
+    "sha256": "aa0a8d819bac7e2689ebdb39b4fecbd094fd528f4273cd3b3f39333c353d29c7",
+    "content_not_published": true
+  },
+  {
+    "file": "record-context-private.log",
+    "bytes": 14033,
+    "sha256": "aeb1bfa62f995e75995f39f3709de5a6367bf2d5065a6799283094e467c89400",
+    "content_not_published": true
+  },
+  {
+    "file": "record-explicit-private.log",
+    "bytes": 7519,
+    "sha256": "4b39bc3a35cd02b92aec0a9ba4f69c5f25d9fe5d0603f8a437b19341f7a70e41",
+    "content_not_published": true
+  },
+  {
+    "file": "copied-record-private.log",
+    "bytes": 7081,
+    "sha256": "f20c4cfeaeea3acb7360ec728ae70183ff7d13b76eb3fd2f1b8a080da8a42991",
+    "content_not_published": true
+  },
+  {
+    "file": "capture1-private.log",
+    "bytes": 13721,
+    "sha256": "60a6a44a24712b306aa567b71e058ccd49e69ac9b43a69c29a6ca1fbdb49b42e",
+    "content_not_published": true
+  },
+  {
+    "file": "capture2-private.log",
+    "bytes": 433164,
+    "sha256": "3bac42334d2c4846cd6e3f92cec897ac83c56221324bb78ab68fc64e04355470",
+    "content_not_published": true
+  },
+  {
+    "file": "retained-input-private.json",
+    "bytes": 588722,
+    "sha256": "e85d4c642f1e4d1bff5ea3cd095b3bf158ab60695bde0423154b00bdba8326ef",
+    "content_not_published": true
+  },
+  {
+    "file": "pdb-modules-private.txt",
+    "bytes": 485256,
+    "sha256": "4ff5b7361822689a5176e4e484a6d9c309c3027d8d84e63379a86bde9def6fa8",
+    "content_not_published": true
+  },
+  {
+    "file": "build-private.log",
+    "bytes": 2952,
+    "sha256": "9c69937a4fd6a808298ab99cd2e10fba0114efab12ea6bf2fb53e588b16a9578",
+    "content_not_published": true
+  },
+  {
+    "file": "novovm-node.exe.37796.dmp",
+    "bytes": 6203358,
+    "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0",
+    "content_not_published": true
+  }
+]

@@ -1,0 +1,52 @@
+{
+  "start_utc": "2026-11-14T00:55:59.3599529Z",
+  "read_only_source": true,
+  "node_started": false,
+  "database_accessed": false,
+  "identity_accessed": false,
+  "files": [
+    {
+      "stable_during_read": true,
+      "sha256": "bcc9224832ef8debec14e4c678e202c716553884360d92b32f4a116e686ff686",
+      "bytes": 1511456,
+      "exists": true,
+      "last_write_utc": "2026-11-13T02:15:47.4746352Z",
+      "name": "progress.json"
+    },
+    {
+      "stable_during_read": true,
+      "sha256": "0982ff53dc0718d8acc2bed1d808a99d641eb46131af75f919279fefd29d29ff",
+      "bytes": 133,
+      "exists": true,
+      "last_write_utc": "2026-11-13T02:15:56.3112942Z",
+      "name": "node.stdout"
+    },
+    {
+      "stable_during_read": true,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "exists": true,
+      "last_write_utc": "2026-11-13T00:41:01.7269616Z",
+      "name": "node.stderr"
+    },
+    {
+      "stable_during_read": true,
+      "sha256": "34f4950d399441500231fcd41d916230655b5878f35031051a33426f97b97cf0",
+      "bytes": 355,
+      "exists": true,
+      "last_write_utc": "2026-11-13T00:41:01.7175940Z",
+      "name": "owner.json"
+    },
+    {
+      "stable_during_read": true,
+      "sha256": "b7c167015df5fb6a74594a6c3f34620c8cb4ec117377e753ae6377680c58b5bc",
+      "bytes": 100,
+      "exists": true,
+      "last_write_utc": "2026-11-13T02:15:56.3350112Z",
+      "name": "exit.json"
+    }
+  ],
+  "error": null,
+  "end_utc": "2026-11-14T00:55:59.4314207Z",
+  "exit_code": 0
+}

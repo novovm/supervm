@@ -1,0 +1,168 @@
+{
+  "source": "PID37796 last completed original progress, not exact fault snapshot",
+  "progress_sha256": "bcc9224832ef8debec14e4c678e202c716553884360d92b32f4a116e686ff686",
+  "progress_last_write_utc": "2026-11-13T02:15:47.4746352Z",
+  "wer_exception_utc": "2026-11-13T02:15:52.801678Z",
+  "dump_utc": "2026-11-13T02:15:56Z",
+  "state": {
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "round": 294,
+    "pending": 0,
+    "pending_bytes": 0,
+    "rpc_indexed_height": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "execution_failures": 0,
+    "warm_projection_blocks": 0,
+    "archive_projection_blocks": 0,
+    "native_pending_deliveries": 0,
+    "native_rejected_messages": 558,
+    "native_expired_sends": 0,
+    "ticks": 7007103,
+    "entry": "original_native_execution_tick",
+    "recovery_in_progress": false,
+    "requested_bodies": 0,
+    "served_bodies": 0
+  },
+  "profile_flags": {
+    "critical_path": false,
+    "control_work": false,
+    "asset_ingress": false,
+    "integer_resource": false
+  },
+  "stage_enabled": false,
+  "signature_work": {
+    "strict_verified_rows": 0,
+    "reused_rows": 0,
+    "uca_batch_calls": 0,
+    "asset_prepared_at_startup": true,
+    "asset_startup_us": 37756,
+    "scope": "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"
+  },
+  "archive_work": {
+    "reads_started": 0,
+    "verified_material_reused": 0,
+    "scope": "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"
+  },
+  "successor": {
+    "authentication_started": 0,
+    "execution_started": 0,
+    "completed_before_parent": 0,
+    "promoted": 0,
+    "discarded": 0,
+    "early_body_enqueued_peer_obligations": 0,
+    "early_body_enqueued_bytes": 0,
+    "scope": "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"
+  },
+  "delivery": {
+    "enabled": true,
+    "capacity": 2048,
+    "evicted": 213510,
+    "contended_events": 0,
+    "records": 2048,
+    "event_counts": {
+      "realtime_owned": 693,
+      "admitted": 695,
+      "delivered": 645,
+      "received": 15
+    },
+    "first_seq": 213510,
+    "last_seq": 215557,
+    "first_wall_unix_us": 1794536093346748,
+    "last_wall_unix_us": 1794536147348928,
+    "interval_us": 54002180,
+    "inferred_slice_lengths_last_progress": [
+      1530,
+      518
+    ]
+  },
+  "transport": {
+    "contended_observations": 0,
+    "elapsed_us": 5685592806,
+    "omitted_records": 0,
+    "evicted_records": 1907,
+    "expired_records": 9739,
+    "send_polls": {
+      "active_calls": 2800415,
+      "offered_budget": 179226560,
+      "reported_data_writes": 74103,
+      "jobs_visited": 5259490,
+      "jobs_unvisited": 0,
+      "budget_exhausted": 0,
+      "deferred_yield": 0,
+      "visit_cap": 0,
+      "one_pass_end": 2800415
+    },
+    "receive_totals": {
+      "accepted_data": 7596,
+      "accepted_repair": 7,
+      "duplicate_data": 0,
+      "duplicate_repair": 659,
+      "history_data": 66486,
+      "history_repair": 12383
+    },
+    "rejection_names": [
+      "wire_budget",
+      "oversize",
+      "handshake",
+      "unknown_source",
+      "no_session",
+      "secure_route",
+      "secure_nonce",
+      "secure_replay_pre_auth",
+      "secure_authentication",
+      "wire_or_frame",
+      "stream_denied",
+      "open_other",
+      "unknown_stream",
+      "ack_short",
+      "object_ack",
+      "object_fragment"
+    ],
+    "rejections": {
+      "counts": [
+        0,
+        0,
+        1,
+        0,
+        137,
+        8,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "object_records": 245,
+    "relay_circuits": 0
+  },
+  "probe_control": {
+    "enabled": true,
+    "accepted_commands": 0,
+    "rejected_commands": 0,
+    "last": null,
+    "scope": "local commands; never business or transport completion"
+  },
+  "relay": {
+    "enabled": true,
+    "active": false,
+    "verified_locator_count": 3,
+    "evicted": 0,
+    "events": 0
+  },
+  "network": {
+    "fallback": "iroh",
+    "installed_bound_peer_routes": 0,
+    "connection_failures": 79,
+    "global_auto_discovery": false,
+    "native_multihop_accepted": false
+  },
+  "raw_peer_and_fragment_records_not_published": true
+}

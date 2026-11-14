@@ -1,6 +1,23 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 C Phase5: original status context; C investigates independently
+## CURRENT 2026-11-14 C Phase6: real retained load and original thread evidence; unresolved
+
+C independently read PID37796's original logs and dump without opening the original
+database/identity or restarting the deployed node. Last complete progress showed
+zero executed business batches but a full 2048-entry delivery ring with 213510
+evictions. The fault's saved iterator has 1340+708 entries; the earlier completed
+progress implies1530+518. Missing heap pages prevent identifying the exact record.
+Background owners waited in WER-time stacks; this is not a pre-fault scheduling trace.
+One new isolated original-status scenario restored the retained window and wrap
+shape using the original recorder.384 selected complete boundary groups agreed;
+target/debugger exits0. Failed first capture is retained. Old heap history, actual
+network timing and the last missing interval are NOT reproduced. No first corrupting
+instruction found, no speculative fix, no node recovery or double-relay release.
+[Phase6 original context, new evidence and limits](C-real-load-phase6-20261114/README.md).
+C continues independently; A receives Git results, not an investigation assignment.
+A/D do not rerun or operate nodes for this report. C remains NOT READY.
+
+## PRIOR 2026-11-14 C Phase5: original status context; C investigates independently
 
 C independently traced periodic JSON progress, historical JSON-RPC, native binary
 Status and observer file reads. The native authenticated Status does not invoke

@@ -1,0 +1,16 @@
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+CDB Range error: explicit breakpoint number separated from bp; no boundary capture in capture1.
+PHASE6_RING {"len":2048,"first_slice":1530,"second_slice":518,"evicted":213510,"next_seq":215558,"replayed_record_contents":true,"replayed_old_heap_history":false}
+OWNER name=Some("novovm-native-tick") rust_thread=ThreadId(2) stack_bytes=16777216 test_only=true
+PHASE6_STATUS_PASS retained_records=2048 fields_compared=12288 encoded_bytes=784059 original_failure_reproduced=false
+PHASE6_DRAIN_PASS
+PHASE6_EXIT
+Last event: 4f38.6938: Exit process 0:4f38, code 0

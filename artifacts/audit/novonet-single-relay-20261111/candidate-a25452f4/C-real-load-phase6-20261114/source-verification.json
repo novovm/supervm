@@ -1,0 +1,47 @@
+{
+  "commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "files": [
+    {
+      "file": "Cargo.lock",
+      "matches_original": true,
+      "sha256": "e5989aba61df7396552a500fb0fd93c2194de1b185ec9ad1ba0c3ec02e20fbcd"
+    },
+    {
+      "file": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "matches_original": true,
+      "sha256": "47615e1436723349e5cc5747f2ea7d907c3202a5af154a9652d4988bbee8d335"
+    },
+    {
+      "file": "crates/novovm-node/src/native_pipeline/service.rs",
+      "matches_original": true,
+      "sha256": "71a35817644de867f00a7c7b496d490c9a035370e920dee1b02dec1bb815ff6f"
+    },
+    {
+      "file": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle.rs",
+      "matches_original": true,
+      "sha256": "e92ebf9e934aad2f52fa262e5bc83c87321186a45604f2d9837a9e38a6379014"
+    },
+    {
+      "file": "crates/novovm-node/src/native_pipeline/pipeline/compute.rs",
+      "matches_original": true,
+      "sha256": "5046fabf0491f36762beb0b60af273f55c4b44e27c269c8a5f5b27fbf0059459"
+    },
+    {
+      "file": "crates/novovm-node/src/native_pipeline/persistence/io.rs",
+      "matches_original": true,
+      "sha256": "7e0facc98a6e011322ee392eb062edd1b01ee1bc2ca87b551af26a4fd551414f"
+    },
+    {
+      "file": "crates/novovm-node/src/native_service.rs",
+      "matches_original": true,
+      "sha256": "7de13ce19944ce6e5bf241a810d2625a7c42ca305881eab68dc8a939d4cd18e9"
+    },
+    {
+      "file": "crates/novovm-node/src/native_pipeline/profile.rs",
+      "original_is_unmodified_prefix": true,
+      "diagnostic_suffix_only": true,
+      "original_sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+      "diagnostic_sha256": "5b52a6f2f9effd899cdcb2bfe8c09853a87495a8170d0aea33b47de8c884b8c4"
+    }
+  ]
+}

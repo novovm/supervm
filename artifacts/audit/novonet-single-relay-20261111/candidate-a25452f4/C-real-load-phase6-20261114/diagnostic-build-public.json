@@ -1,0 +1,187 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "pdb_guid": "A9096A2D-2BA2-4B00-A7BC-FC852D9629D2",
+  "pdb_age": 1,
+  "new_diagnostic_build_only": true,
+  "original_deployed_exe_pdb_not_replaced": true,
+  "artifacts": [
+    {
+      "name": "c-phase6-status.exe",
+      "bytes": 12928512,
+      "sha256": "8daa5a96e1b79b98c1e7985aca4ae7c961a42be33677b3947c0301104f41f3de"
+    },
+    {
+      "name": "c_phase6_status.pdb",
+      "bytes": 128929792,
+      "sha256": "99f51380c2eb0326b4a983d895bb8924c900ec78ac03effa95bd4d3f087ebd60"
+    },
+    {
+      "name": "aoem_ffi.dll",
+      "bytes": 48689152,
+      "sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52"
+    }
+  ],
+  "compilation_units": [
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.00.rcgu.o",
+      "debug_stream": 22,
+      "source_files": 6
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.01.rcgu.o",
+      "debug_stream": 29,
+      "source_files": 23
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.02.rcgu.o",
+      "debug_stream": 27,
+      "source_files": 21
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.03.rcgu.o",
+      "debug_stream": 20,
+      "source_files": 75
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.04.rcgu.o",
+      "debug_stream": 19,
+      "source_files": 38
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.05.rcgu.o",
+      "debug_stream": 30,
+      "source_files": 7
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.06.rcgu.o",
+      "debug_stream": 23,
+      "source_files": 18
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.07.rcgu.o",
+      "debug_stream": 21,
+      "source_files": 32
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.08.rcgu.o",
+      "debug_stream": 24,
+      "source_files": 51
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.09.rcgu.o",
+      "debug_stream": 28,
+      "source_files": 62
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.10.rcgu.o",
+      "debug_stream": 17,
+      "source_files": 14
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.11.rcgu.o",
+      "debug_stream": 16,
+      "source_files": 42
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.12.rcgu.o",
+      "debug_stream": 14,
+      "source_files": 23
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.13.rcgu.o",
+      "debug_stream": 25,
+      "source_files": 73
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.14.rcgu.o",
+      "debug_stream": 26,
+      "source_files": 68
+    },
+    {
+      "name": "c_phase6_status.c_phase6_status.7d972f6d01214395-cgu.15.rcgu.o",
+      "debug_stream": 13,
+      "source_files": 72
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.03.rcgu.o",
+      "debug_stream": 43,
+      "source_files": 363
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.09.rcgu.o",
+      "debug_stream": 39,
+      "source_files": 313
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.15.rcgu.o",
+      "debug_stream": 36,
+      "source_files": 338
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.07.rcgu.o",
+      "debug_stream": 38,
+      "source_files": 274
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.11.rcgu.o",
+      "debug_stream": 32,
+      "source_files": 382
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.06.rcgu.o",
+      "debug_stream": 37,
+      "source_files": 219
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.02.rcgu.o",
+      "debug_stream": 42,
+      "source_files": 205
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.08.rcgu.o",
+      "debug_stream": 34,
+      "source_files": 313
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.10.rcgu.o",
+      "debug_stream": 35,
+      "source_files": 346
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.12.rcgu.o",
+      "debug_stream": 33,
+      "source_files": 325
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.00.rcgu.o",
+      "debug_stream": 85,
+      "source_files": 129
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.04.rcgu.o",
+      "debug_stream": 82,
+      "source_files": 228
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.05.rcgu.o",
+      "debug_stream": 40,
+      "source_files": 308
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.14.rcgu.o",
+      "debug_stream": 31,
+      "source_files": 295
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.13.rcgu.o",
+      "debug_stream": 41,
+      "source_files": 380
+    },
+    {
+      "name": "novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.01.rcgu.o",
+      "debug_stream": 207,
+      "source_files": 64
+    }
+  ],
+  "build_exit_code": 0
+}

@@ -1,0 +1,17 @@
+{
+  "debugger_pid": 39392,
+  "start_utc": "2026-11-14T01:08:06.989200+00:00",
+  "image_sha256": "8daa5a96e1b79b98c1e7985aca4ae7c961a42be33677b3947c0301104f41f3de",
+  "script_sha256": "3ee46c352a7589506572b66df374ba30f9fc75c7c6300ddcbe683b197e0d3105",
+  "maximum_seconds": 300,
+  "windows_one_based_format_ordinals": [
+    [
+      38593,
+      38784
+    ],
+    [
+      97857,
+      98048
+    ]
+  ]
+}

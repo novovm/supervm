@@ -1,0 +1,26 @@
+.sympath D:\WEB3_AI\SUPERVM\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+.reload /f c-phase6-status.exe
+r @$t0=0
+r @$t1=0
+r @$t2=0
+r @$t3=0
+bp0 c_phase6_status!phase6_begin "r @$t0=1; r @$t1=@$tid; .printf \"WINDOW_BEGIN tid=%x query=%x owner=%p\",@$tid,@rcx,@rdx; .echo; ~; gc"
+bp1 c_phase6_status!phase6_end ".printf \"WINDOW_END tid=%x query=%x owner=%p calls=%x\",@$tid,@rcx,@rdx,@$t2; .echo; r @$t0=0; gc"
+bp2 c_phase6_status+0x58aca0 ".if (@$t0) { .if (@$tid==@$t1) { r @$t2=@$t2+1; .if (@$t2==0x96c1) { be 3; be 4; be 5; be 6; be 7; be 8; be 9; .printf \"SELECT_BEGIN ordinal=%x\",@$t2; .echo; }; .if (@$t2==0x9781) { bd 3; bd 4; bd 5; bd 6; bd 7; bd 8; bd 9; .printf \"SELECT_END ordinal=%x\",@$t2; .echo; }; .if (@$t2==0x17e41) { be 3; be 4; be 5; be 6; be 7; be 8; be 9; .printf \"SELECT_BEGIN ordinal=%x\",@$t2; .echo; }; .if (@$t2==0x17f01) { bd 3; bd 4; bd 5; bd 6; bd 7; bd 8; bd 9; .printf \"SELECT_END ordinal=%x\",@$t2; .echo; }; .if (@$t2==1) { .echo ORIGINAL_RETAINED_STATUS_STACK; kv; };  } }; gc"
+bp3 c_phase6_status+0x58eb60 ".if (@$t0) { .if (@$tid==@$t1) { r @$t3=@$t3+1; .printf \"REC stage=FMT_BEGIN tid=%x ordinal=%x seq=%x rsp=%p receiver=%p cap=%p buffer=%p len=%p\",@$tid,@$t2,@$t3,@rsp,@rcx,poi(@rcx),poi(@rcx+8),poi(@rcx+0x10); .echo;  } }; gc"
+bp4 c_phase6_status+0x58ecbd ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=FMT_CALL tid=%x ordinal=%x seq=%x rsp=%p formatter=%p receiver=%p\",@$tid,@$t2,@$t3,@rsp,@rdx,poi(@rdx); .echo;  } }; gc"
+bp5 c_phase6_status+0x58f420 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_ENTRY tid=%x ordinal=%x seq=%x rsp=%p formatter=%p receiver=%p text=%p len=%p\",@$tid,@$t2,@$t3,@rsp,@rcx,poi(@rcx),poi(@rsp+0x28),poi(@rsp+0x30); .echo;  } }; gc"
+bp6 c_phase6_status+0x58f515 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=TAIL_JUMP tid=%x ordinal=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\",@$tid,@$t2,@$t3,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo;  } }; gc"
+bp7 c_phase6_status+0x58aa90 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=WRITER_ENTRY tid=%x ordinal=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\",@$tid,@$t2,@$t3,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo;  } }; gc"
+bp8 c_phase6_status+0x58aabe ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=COPY_CALL tid=%x ordinal=%x seq=%x rsp=%p receiver=%p dest=%p text=%p len=%p buffer=%p oldlen=%p\",@$tid,@$t2,@$t3,@rsp,@rdi,@rcx,@rdx,@r8,poi(@rdi+8),poi(@rdi+0x10); .echo;  } }; gc"
+bp9 c_phase6_status+0x58f844 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_CALL tid=%x ordinal=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p target=%p\",@$tid,@$t2,@$t3,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp,poi(@rdi+0x18); .echo;  } }; gc"
+bd 3
+bd 4
+bd 5
+bd 6
+bd 7
+bd 8
+bd 9
+sxe -c ".echo PHASE6_AV; .exr -1; r; kv; q" av
+sxe -c ".echo PHASE6_EXIT; .lastevent; q" epr
+g

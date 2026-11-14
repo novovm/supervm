@@ -1,0 +1,82 @@
+{
+  "source_dump_pid": 37796,
+  "fault_thread_hex": "7c84",
+  "fault_thread_name": "novovm-native-tick",
+  "dump_thread_count": 20,
+  "context_limit": "non-fault stacks were captured during WER handling; waiting then does not prove waiting before exception",
+  "threads": [
+    {
+      "tid_hex": "24c4",
+      "name": "main",
+      "observed_state": "join/wait for native tick"
+    },
+    {
+      "tid_hex": "76c8",
+      "name": "novovm-candidate-pipeline",
+      "observed_state": "mpmc recv / Thread::park"
+    },
+    {
+      "tid_hex": "6dd4",
+      "name": "novovm-candidate-io",
+      "observed_state": "mpmc recv / Thread::park"
+    },
+    {
+      "tid_hex": "9e00",
+      "name": "novovm-compute-owner",
+      "observed_state": "run_owner / mpmc recv / Thread::park"
+    },
+    {
+      "tid_hex": [
+        "7c78",
+        "6620",
+        "7d90",
+        "483c"
+      ],
+      "name": "aoem-semantic-graph-v2-0",
+      "observed_state": "WaitOnAddress"
+    },
+    {
+      "tid_hex": "3c88",
+      "name": "tokio-rt-worker",
+      "observed_state": "blocking pool / wait_timeout"
+    },
+    {
+      "tid_hex": "853c",
+      "name": "unnamed socket helper",
+      "observed_state": "NtRemoveIoCompletion"
+    }
+  ],
+  "unresolved_aoem_frames": "nearest-export labels with large offsets are not verified function attribution",
+  "cpu_time_metadata": "!runaway returned zero CPU and implausible 6413-day elapsed; not used as load evidence",
+  "iterator": {
+    "snapshot_function_rva": "0x75c4a0",
+    "snapshot_return_rva": "0x7614af",
+    "record_stride_bytes": 184,
+    "stack_slot": "0x0000000e7e2eead0",
+    "slice1": [
+      "0x2044cc02d50",
+      "0x2044cc3f070"
+    ],
+    "slice2": [
+      "0x2044cbe3070",
+      "0x2044cc02d50"
+    ],
+    "slice_lengths": [
+      1340,
+      708
+    ],
+    "record_address_from_unwound_frame_c": "0x2044cc156e0",
+    "record_index_in_first_slice": 414,
+    "record_heap_bytes_present": false,
+    "copied_hash_matches_last_progress_peer_count": 681,
+    "copied_hash_matches_last_progress_fragment_count": 0,
+    "copied_hash_byte_offset": 19,
+    "unique_record_identified": false
+  },
+  "not_proven": [
+    "exact failing record seq/event",
+    "complete pre-fault thread scheduling",
+    "first parameter corruption instruction",
+    "whether all three historical crashes share root cause"
+  ]
+}
