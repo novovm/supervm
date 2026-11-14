@@ -1,0 +1,15 @@
+{
+  "root_cause_resolved": false,
+  "no_restart": true,
+  "pid": 34452,
+  "dumps": [
+    {
+      "sha256": "7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa",
+      "flags": "0x221826",
+      "name": "novovm-node.exe.34452.dmp",
+      "full_memory_flag": true,
+      "path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\NOVOVM-Full-C-20261114T074716Z\\novovm-node.exe.34452.dmp",
+      "bytes": 233403217
+    }
+  ]
+}

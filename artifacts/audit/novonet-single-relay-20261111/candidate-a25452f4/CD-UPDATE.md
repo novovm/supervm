@@ -1,6 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 16:07：C一次existing自然故障取证运行已开始，禁止联调发送
+## CURRENT 2026-11-14 17:13：C自然崩溃，WER生成233MB新Full Dump，未重启
+
+PID34452原库existing单次运行约66分钟后退出，实际码-1073740791/c0000409，
+任务结果3221226505。资源保护未触发，不是人为异常；未重启、未放行双中继。
+新DMP为233,403,217字节，flags0x221826含FullMemory，SHA两次稳定：
+7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa。
+原件留LocalService受保护目录，进一步复制/离线覆盖核验正在等待Windows UAC。
+本次提交尚未分析新异常参数，不能把c0000409名称当作根因；首次破坏指令仍未找到。
+详见[C本次自然故障终态与原始公开记录](C-wer-natural-20261114/README.md)。
+
+## PRIOR 2026-11-14 16:07：C一次existing自然故障取证运行已开始，禁止联调发送
 
 用户批准C原库单次运行，原a254/AOEM966实际加载哈希和原身份匹配，PID34452。
 LocalService下existing启动，原日志/失败现场保留；首次进度height1、恢复完成、失败0。

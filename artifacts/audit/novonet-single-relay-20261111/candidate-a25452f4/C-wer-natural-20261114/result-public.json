@@ -1,0 +1,13 @@
+{
+  "private_work": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-WER-Natural-C-20261114T080720Z",
+  "resource_limit_stop": false,
+  "dumps_found": 1,
+  "task": "NOVOVM-C-WER-Natural-20261114T080720Z",
+  "double_relay_started": false,
+  "node_pid": 34452,
+  "node_exit_code": -1073740791,
+  "root_cause_resolved": false,
+  "utc": "2026-11-14T09:13:54.0758897Z",
+  "node_started_once": true,
+  "status": "NODE_EXITED"
+}

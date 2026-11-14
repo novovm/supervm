@@ -1,0 +1,23 @@
+{
+  "dump_files": [
+    {
+      "Name": "novovm-node.exe.34452.dmp",
+      "Length": 233403217
+    }
+  ],
+  "node_pid": 34452,
+  "loaded_aoem_verified": true,
+  "progress": {
+    "head": null,
+    "recovery_in_progress": false,
+    "execution_failures": 0,
+    "current_height": 1,
+    "chain_id": 91129655606029
+  },
+  "progress_read_error": null,
+  "stderr_bytes": 0,
+  "utc": "2026-11-14T09:13:51.6300688Z",
+  "elapsed_seconds": 3988.9304988,
+  "alive": false,
+  "free_disk_bytes": 20383055872
+}
