@@ -1,0 +1,12 @@
+{
+  "start_utc": "2026-11-14T12:25:53.218244Z",
+  "node_started": false,
+  "source_acl_changed": false,
+  "source_modified": false,
+  "exit_code": 0,
+  "dump_sha256": "7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa",
+  "dump_bytes": 233403217,
+  "creation_utc": "2026-11-14T09:13:46.6890866Z",
+  "last_write_utc": "2026-11-14T09:13:46.9533184Z",
+  "end_utc": "2026-11-14T12:25:54.4197381Z"
+}

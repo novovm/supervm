@@ -1,0 +1,32 @@
+{
+  "cdb_analysis_exit_code": 0,
+  "first_corrupting_instruction_found": false,
+  "script_sha256": "1b7e13f4e4e5778555cf19dc4093521c461892d8413fb6a65c10bda77595c106",
+  "cookie_analysis_exit_code": 0,
+  "node_restarted": false,
+  "private_logs": [
+    {
+      "sha256": "86e19df0254ccdaa75e2f0baca1e6250d676213c8c6bb6b7762e476054e255af",
+      "bytes": 65668,
+      "name": "analyze.log"
+    },
+    {
+      "sha256": "d53cb05af03150d0dfcf43483365717f87342b0e76021db1fec31b0823388a1e",
+      "bytes": 19383,
+      "name": "cookie.log"
+    },
+    {
+      "sha256": "d7178f8e097d6fd6a13bc4a6d4b4273a78568bad7bb7d1ef06cf6d69f2fa73f8",
+      "bytes": 48346,
+      "name": "frame.log"
+    }
+  ],
+  "pid": 34452,
+  "frame_analysis_exit_code": 0,
+  "double_relay_resumed": false,
+  "production_code_changed": false,
+  "offline_parser_exit_code": 0,
+  "receiver_ack_from_a_confirmed": false,
+  "initial_cookie_symbol_query_failed": true,
+  "corrected_symbol_and_direct_memory_parser_agree": true
+}

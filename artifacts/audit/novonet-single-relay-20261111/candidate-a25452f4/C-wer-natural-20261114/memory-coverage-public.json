@@ -1,0 +1,73 @@
+{
+  "pid": 34452,
+  "bytes": 233403217,
+  "sha256": "7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa",
+  "flags": "0x221826",
+  "memory64_ranges": 407,
+  "thread_count": 20,
+  "all_listed_contexts_present": true,
+  "fault_thread_id": 30596,
+  "exception_code": "0xc0000409",
+  "fast_fail_subcode": 2,
+  "rip": "0x7ffce31aa114",
+  "rsp": "0x7739fede80",
+  "rbp": "0x7739fee220",
+  "expected_rbp_from_prologue": "0x7739fedf80",
+  "rbp_deviation": "0x2a0",
+  "correct_slot_cookie_matches": true,
+  "actual_rbp_slot_cookie_matches": false,
+  "actual_rbp_slot_xor_matches_exception_rcx": true,
+  "prologue_and_check_bytes_from_dump_verified": true,
+  "coverage": [
+    {
+      "label": "ntdll_prologue_and_epilogue",
+      "address": "0x7ffce31a9000",
+      "bytes": 8192,
+      "captured": true
+    },
+    {
+      "label": "ntdll_cookie_check",
+      "address": "0x7ffce32ba000",
+      "bytes": 4096,
+      "captured": true
+    },
+    {
+      "label": "node_allocation_caller",
+      "address": "0x7ff7d3484000",
+      "bytes": 4096,
+      "captured": true
+    },
+    {
+      "label": "fault_stack_and_caller_frames",
+      "address": "0x7739fede80",
+      "bytes": 6144,
+      "captured": true
+    },
+    {
+      "label": "old_allocation_candidate",
+      "address": "0x1db44a79200",
+      "bytes": 728,
+      "captured": true
+    },
+    {
+      "label": "returned_allocation_candidate",
+      "address": "0x1db472d4ce0",
+      "bytes": 728,
+      "captured": true
+    }
+  ],
+  "modules": [
+    {
+      "module": "node",
+      "pdb_guid": "e16d0b11-47ca-4ebf-b482-c91380cc57f8",
+      "pdb_age": 1
+    },
+    {
+      "module": "aoem",
+      "pdb_guid": "fc7644b2-491f-4673-ad9d-2c3478e3fc4d",
+      "pdb_age": 1
+    }
+  ],
+  "first_corrupting_instruction_found": false,
+  "production_fix_applied": false
+}

@@ -1,5 +1,66 @@
 # C：一次 WER 自然故障运行已崩溃，取得新 Full Dump
 
+## 更新：受保护复制与同次故障离线核验完成
+
+前一次复制提权返回取消，未执行。用户要求重新弹窗后，新入口于 UTC
+`2026-11-14T12:25:53.2182440Z` 至 `12:25:54.4197381Z` 执行成功，退出码 **0**。
+原件与副本 SHA256 一致，源文件前后稳定；源 ACL 未修改。新私有目录仅限当前用户、
+SYSTEM 和 Administrators。DMP、完整调试器日志、原进度和事件 XML 均只留本机。
+
+**这次得到新的直接故障证据，但未找到首次破坏指令，未修复。**
+
+- CDB `!analyze -v`、`.exr -1`、`.ecxr` 确认异常 `0xC0000409`，参数 0 为 **2**，
+  即 `FAST_FAIL_STACK_COOKIE_CHECK_FAILURE`；故障线程 **30596 / 0x7784**。
+- 异常上下文位于 `ntdll!RtlpReAllocateHeapInternal+0x324`，RIP `0x7ffce31aa114`，
+  是安全检查调用之后的返回位置，不是首次破坏发生的位置。
+- 原始 Memory64 包含 **407** 段；全部 **20** 个列出线程都有上下文。
+  本次核验的故障栈/上游帧、ntdll 序言/检查代码页、节点分配调用者代码页，及旧/返回
+  分配候选地址各 728 字节均在文件中。仅证明这些指定范围可读，不泛称所有对象历史齐全。
+- node/AOEM 的 RSDS GUID+age 与原 a254/AOEM966 一致；node 精确 PDB 缺少自身编译
+  单元源码调试流的既有限制仍在。最近符号名及大偏移不当作精确源码归属。
+
+### 同一次故障中：正确位置的 cookie 仍匹配，RBP 使用位置偏移 0x2A0
+
+原转储代码字节直接确认函数序言为 `lea rbp,[rsp-0x50]`、`sub rsp,0x150`，
+因此序言完成后应有 **RBP=RSP+0x100**，保护槽在 **RSP+0x130**。
+返回检查为 `mov rcx,[rbp+0x30]; xor rcx,rsp; call _security_check_cookie`。
+
+| 同一异常上下文/内存比较 | 结果 |
+|---|---|
+| RSP | `0x7739fede80` |
+| 实际 RBP | `0x7739fee220` |
+| 按序言及当前 RSP 推导的 RBP | `0x7739fedf80` |
+| 实际 RBP 与预期之差 | `+0x2A0` |
+| `[RSP+0x130] XOR RSP` 与该模块 cookie | 相等 |
+| `[实际 RBP+0x30] XOR RSP` 与 cookie | 不相等 |
+| 后一个计算值与异常上下文 RCX | 相等 |
+
+这是从同一完整转储独立解析获得的比较，未拼接旧 DMP；公开结果不输出 cookie 值或任意堆内容。
+函数 unwind 链记录了 `0x150` 栈分配及七个非易失寄存器 push，与序言相符。
+**不能把本次简单解释成正确 cookie 槽已被覆盖；存在明确的帧基址关系异常。**
+但最终上下文没有历史执行流，尚不能证明 RBP 在哪条指令改变、哪个被调用函数违反约定，
+也不能据 ntdll 检出失败就归因 Windows、AOEM、Rust 或硬件。
+
+### 调用链范围和下一处调查位置
+
+调试器展开路径包含 `observe_tick` → `RpcLifecycle::status` → 中间收集/插入路径 →
+`RawVecInner::finish_grow` → `RtlReAllocateHeap` → `RtlpReAllocateHeapInternal` 的返回检查。
+中间若干项只有最近符号及大偏移，不能据此认定具体业务函数或对象。
+这次实际被检测的是分配路径的帧异常，**不是已捕获 Formatter→writer 的首次参数错位**，
+也不能宣称与三个历史 PID 同根。
+
+下一项应利用本次完整栈和代码继续核对该堆扩容调用内的 RBP 保存/恢复、被调用者及返回位置，
+找出有证据的破坏来源；不再重复普通格式化样例。当前不具备最小生产修复的证据。
+没有启动/重启节点，没有改原库、身份、程序或诊断配置；双中继保持暂停。
+Git 用于共享结果，不等待 A 审批；推送不等于 A 已签收。
+
+复核材料：`collection-public.json`、`memory-coverage-public.json`、`analysis-public.json`。
+`Inspect-NaturalDump.py <本地原DMP> <输出JSON>` 只读核验固定 SHA256；不输出原始内存。
+完整 CDB 命令及日志在本机受保护目录，所有离线 CDB 执行退出码均为 0。
+第一次 cookie 查询误用了双下划线符号名，CDB 报无法解析；后续按实际单下划线符号
+重新读取，并由直接 Memory64 解析独立核验。该查询错误保留在原日志，不以进程退出 0
+掩盖；公开比较采用后续成功读取结果。
+
 ## 终态：2026-11-14 17:13 北京时间
 
 同一 PID34452 约运行 66 分钟后自然异常退出，owner 记录 UTC `09:13:47.4432268Z`，
@@ -11,8 +72,7 @@ WER 生成 `novovm-node.exe.34452.dmp`，**233,403,217 字节**，flags **0x2218
 两次读取 SHA256 稳定：`7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa`。
 原始文件只在 LocalService 私有目录，未上传。**目标堆/代码/线程逐项覆盖仍待离线核验**，
 不能只凭 FullMemory 标记宣称全部所需证据齐全。
-已发起仅复制这份原件和对应日志的管理员只读入口；本次提交时复制仍等待 Windows UAC，
-未把“发起”写成“复制或分析完成”。
+最初终态提交时复制仍等待 Windows UAC；后续复制和分析结果以上方更新为准。
 
 终态见 `node-exit.json`、`task-result.json`、`terminal-liveness.json`、`result-public.json`、
 `dump-inventory-public.json`。根因未解决，C 已退出，双中继仍暂停。
