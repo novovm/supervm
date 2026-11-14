@@ -1,0 +1,17 @@
+{
+  "utc": "2026-11-14T23:27:41.7343433Z",
+  "windowsBuild": "26300",
+  "VirtualizationBasedSecurityStatus": 2,
+  "SecurityServicesConfigured": [
+    2
+  ],
+  "SecurityServicesRunning": [
+    2
+  ],
+  "referenceSourceSha256": "284D0458EABEB12FEA11CBC79ABE8032F24F4470BF0AC264B7F76747DC857A44",
+  "referenceUrl": "https://raw.githubusercontent.com/intelpt/WindowsIntelPT/master/WindowsPtDriver/IntelPt.cpp",
+  "driverLoaded": false,
+  "bootChanged": false,
+  "nodeStarted": false,
+  "stateSnapshotValidated": false
+}
