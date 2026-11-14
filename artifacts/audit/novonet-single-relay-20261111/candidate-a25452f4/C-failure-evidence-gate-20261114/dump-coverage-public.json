@@ -1,0 +1,216 @@
+{
+  "scope": "Read-only original-file hash and captured memory coverage; no memory contents exported, no disk image fallback, no historical-entry claim",
+  "checked_utc": "2026-11-14T02:10:08.046835+00:00",
+  "dumps": [
+    {
+      "pid": 31296,
+      "sha256": "c5d2e37a640a654a0b501dc49229fdb01c05a77e4ec399f5dec7e218ee496495",
+      "bytes": 6208032,
+      "dump_utc": "2026-11-11T13:27:58+00:00",
+      "flags": "0x200121",
+      "full_memory_flag": false,
+      "stream_types": [
+        0,
+        3,
+        4,
+        5,
+        6,
+        7,
+        13,
+        15,
+        21,
+        22,
+        24
+      ],
+      "thread_count": 20,
+      "exception_thread_id": 6228,
+      "exception_code": "0xc0000005",
+      "exception_context_bytes": 1232,
+      "captured_virtual_bytes_union": 6144329,
+      "probes": [
+        {
+          "label": "fault_movaps_code",
+          "va": "0x7ff77e74f59d",
+          "bytes": 16,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "fault_stack_operand",
+          "va": "0xe83f7ee188",
+          "bytes": 16,
+          "captured_in_this_dump": true
+        }
+      ]
+    },
+    {
+      "pid": 3228,
+      "sha256": "95dbb8a63e8d6281c07a9019a28d4baadbf0ae61ff40117cac1da2fe31264ee0",
+      "bytes": 6159844,
+      "dump_utc": "2026-11-11T20:13:40+00:00",
+      "flags": "0x200121",
+      "full_memory_flag": false,
+      "stream_types": [
+        0,
+        3,
+        4,
+        5,
+        6,
+        7,
+        13,
+        15,
+        21,
+        22,
+        24
+      ],
+      "thread_count": 20,
+      "exception_thread_id": 2960,
+      "exception_code": "0xc0000005",
+      "exception_context_bytes": 1232,
+      "captured_virtual_bytes_union": 6096301,
+      "probes": [
+        {
+          "label": "local_string",
+          "va": "0x755b6ee3d0",
+          "bytes": 24,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "formatter_header",
+          "va": "0x755b6ee340",
+          "bytes": 16,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "writer_receiver",
+          "va": "0x755b6ee358",
+          "bytes": 24,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "writer_code",
+          "va": "0x7ff77ff37a00",
+          "bytes": 32,
+          "captured_in_this_dump": false
+        }
+      ]
+    },
+    {
+      "pid": 37796,
+      "sha256": "3acb7ec2450d6132334a1700764c3f50704f6cf4f98f2f9e08e6143c4c7c7ca0",
+      "bytes": 6203358,
+      "dump_utc": "2026-11-13T02:15:56+00:00",
+      "flags": "0x200121",
+      "full_memory_flag": false,
+      "stream_types": [
+        0,
+        3,
+        4,
+        5,
+        6,
+        7,
+        13,
+        15,
+        21,
+        22,
+        24
+      ],
+      "thread_count": 20,
+      "exception_thread_id": 31876,
+      "exception_code": "0xc0000005",
+      "exception_context_bytes": 1232,
+      "captured_virtual_bytes_union": 6139917,
+      "probes": [
+        {
+          "label": "local_string",
+          "va": "0xe7e2ee500",
+          "bytes": 24,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "formatter_header",
+          "va": "0xe7e2ee470",
+          "bytes": 16,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "writer_receiver",
+          "va": "0xe7e2ee648",
+          "bytes": 24,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "writer_code",
+          "va": "0x7ff70b88cc60",
+          "bytes": 97,
+          "captured_in_this_dump": false
+        },
+        {
+          "label": "pad_integral_code",
+          "va": "0x7ff70b892f00",
+          "bytes": 247,
+          "captured_in_this_dump": false
+        },
+        {
+          "label": "delivery_record",
+          "va": "0x2044cc156e0",
+          "bytes": 184,
+          "captured_in_this_dump": false
+        }
+      ]
+    },
+    {
+      "pid": 17748,
+      "sha256": "47bf25ba51f9d8245d995c8621437eaf08bc4dce19ed54acefea77ce452a6510",
+      "bytes": 277824196,
+      "dump_utc": "2026-11-13T09:08:52+00:00",
+      "flags": "0x661826",
+      "full_memory_flag": true,
+      "stream_types": [
+        0,
+        3,
+        4,
+        6,
+        7,
+        9,
+        12,
+        13,
+        15,
+        16,
+        17,
+        19,
+        21,
+        22,
+        24
+      ],
+      "thread_count": 20,
+      "exception_thread_id": 15852,
+      "exception_code": "0xc0000005",
+      "exception_context_bytes": 1232,
+      "captured_virtual_bytes_union": 276344832,
+      "probes": [
+        {
+          "label": "ntdll_fault_code",
+          "va": "0x7ffce316ff3f",
+          "bytes": 16,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "fault_operand_field",
+          "va": "0x6975aec790",
+          "bytes": 8,
+          "captured_in_this_dump": true
+        },
+        {
+          "label": "caller_argument_group",
+          "va": "0x6975aec7d8",
+          "bytes": 24,
+          "captured_in_this_dump": true
+        }
+      ]
+    }
+  ],
+  "root_cause_fixed": false,
+  "node_started": false,
+  "original_database_accessed": false,
+  "exit_code": 0
+}

@@ -1,6 +1,21 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 C ownership audit: eviction hypothesis unsupported; stop repeating normal fixtures
+## CURRENT 2026-11-14 C failure-evidence gate: historical execution cannot be reconstructed from available material
+
+C rehashed three original MiniDumps and the separate17:08 PageHeap full dump,
+then checked captured-memory ranges without disk-image fallback. PID37796 retains
+the selected final String/Formatter/writer stack slices, but not the complete
+selected writer/pad code or target record. The PageHeap full dump is a different
+failure and cannot fill this gap. Exact875/a254 EXE/PDB and AOEM966 are available;
+the selected original archive lacks same-failure input and call-boundary history.
+[Actual coverage, historical-material checks, preserved collection error and limits](C-failure-evidence-gate-20261114/README.md).
+No new workload was run: this is insufficient evidence for deterministic original
+replay, not a new negative reproduction result. First corruption remains UNKNOWN.
+No production fix, original DB/identity access, node restart or relay release.
+Do not substitute passing fixtures or another full dump for execution history.
+C remains NOT READY; Git notification is not A acknowledgment. A/D do not operate.
+
+## PRIOR 2026-11-14 C ownership audit: eviction hypothesis unsupported; stop repeating normal fixtures
 
 C independently audited the original 875/a254 source. The 2048-entry delivery
 ring stores copied identifiers/scalars, not borrowed network payloads. Eviction

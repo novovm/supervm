@@ -1,0 +1,19 @@
+{
+  "exit_code": 1,
+  "cause": "Collector initially selected source-archive DLL instead of the runtime explicitly selected by the preserved launch script",
+  "files": [
+    {
+      "role": "source archive DLL",
+      "bytes": 44705792,
+      "sha256": "31306037d7e764bd93e493ff61d4c69952ed1ffc18c2663b5d2c806d815e8947"
+    },
+    {
+      "role": "prior isolation runtime DLL",
+      "bytes": 48689152,
+      "sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52"
+    }
+  ],
+  "expected_runtime_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "previous_test_used_wrong_dll": false,
+  "basis": "collect-boundaries-v2.py lines44/49 explicitly select the runtime path; neither file was loaded or executed in this turn"
+}

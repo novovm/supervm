@@ -1,0 +1,90 @@
+{
+  "scope": "Historical build availability and selected PID37796 archive only; not a whole-disk absence claim or a failed replay attempt",
+  "artifacts": [
+    {
+      "role": "875 original EXE",
+      "bytes": 48431104,
+      "sha256": "9174f29bad4bf1feb9acfbd5d2b5ed36bb47ff2a2cd1519d7742a2e1b944dee7",
+      "matches_prior_evidence": true
+    },
+    {
+      "role": "875 original PDB",
+      "bytes": 17281024,
+      "sha256": "b46bc1763c06c7370733763391d56e083b2e52cc8dcd370a377be2f7928dac38",
+      "matches_prior_evidence": true
+    },
+    {
+      "role": "a254 original EXE",
+      "bytes": 48457216,
+      "sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+      "matches_prior_evidence": true
+    },
+    {
+      "role": "a254 original PDB",
+      "bytes": 17256448,
+      "sha256": "8763d5cde5291460fa539430a082f7ace8408b0e75fa677ebd23f4d7e31643be",
+      "matches_prior_evidence": true
+    },
+    {
+      "role": "AOEM966 matching archived owner hash",
+      "bytes": 48689152,
+      "sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+      "matches_prior_evidence": true
+    }
+  ],
+  "selected_archive_files": [
+    {
+      "name": "collection-public.json",
+      "bytes": 1596,
+      "sha256": "fca8e1325b1e00675d41680823fc7b60065880e6e27d4919a3246870fadb0510"
+    },
+    {
+      "name": "exit.json",
+      "bytes": 100,
+      "sha256": "b7c167015df5fb6a74594a6c3f34620c8cb4ec117377e753ae6377680c58b5bc"
+    },
+    {
+      "name": "node.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "node.stdout",
+      "bytes": 133,
+      "sha256": "0982ff53dc0718d8acc2bed1d808a99d641eb46131af75f919279fefd29d29ff"
+    },
+    {
+      "name": "owner.json",
+      "bytes": 355,
+      "sha256": "34f4950d399441500231fcd41d916230655b5878f35031051a33426f97b97cf0"
+    },
+    {
+      "name": "progress.json",
+      "bytes": 1511456,
+      "sha256": "bcc9224832ef8debec14e4c678e202c716553884360d92b32f4a116e686ff686"
+    }
+  ],
+  "delivery_record_fields": [
+    "elapsed_ns",
+    "event",
+    "fragment",
+    "height",
+    "peer",
+    "purposes",
+    "seq",
+    "wall_unix_us"
+  ],
+  "last_completed_delivery_records": 2048,
+  "last_completed_delivery_evicted": 213510,
+  "timestamps_from_preserved_collection": {
+    "progress_last_write_utc": "2026-11-13T02:15:47.4746352Z",
+    "wer_exception_utc": "2026-11-13T02:15:52.801678Z",
+    "dump_utc": "2026-11-13T02:15:56Z"
+  },
+  "same_failure_call_boundary_history_available": false,
+  "replayable_network_payload_and_order_available_in_selected_archive": false,
+  "selected_historical_artifacts_available": true,
+  "deterministic_original_failure_replay_ready": false,
+  "new_workload_executed": false,
+  "exit_code": 0
+}
