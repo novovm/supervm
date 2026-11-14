@@ -1,6 +1,15 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14：C核对RBP报告来源和保存槽，首次改变指令仍未定位
+## CURRENT 2026-11-14：同次RBP动态采集尚未就绪，不重跑旧隔离样例
+
+已核对原四进程harness：它是重新编译的插桩EXE、fresh loopback配置，不能等同原a254；
+其161秒查询的断点方法已有不合格证据，本轮没有重跑。活动调用采集须按线程创建标识、
+activation及call序号关联；合法子函数改用RBP不能误判为破坏。异常展开/非局部恢复未覆盖
+时必须标记context_gap。现有工具尚未证明能在保留原时序条件下取得首次改变指令。
+本轮只完成[采集可行性和覆盖约束](C-rbp-context-20261114/CAPTURE-READINESS.md)，未取新动态
+记录、未启动原节点或隔离负载、未改代码/库/身份。双中继暂停，C独立负责，不等待A审批。
+
+## PRIOR 2026-11-14：C核对RBP报告来源和保存槽，首次改变指令仍未定位
 
 C直接解析PID34452同次Full Dump：异常流RBP与ntdll失败报告上下文一致，报告入口保存的
 检查参数也对应错误槽，不是仅由WinDbg kv展开得到。准确地说，这是RtlCaptureContext加
