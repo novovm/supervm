@@ -1,0 +1,452 @@
+{
+  "scope": "Same-run raw PT owner vs raw target CSwitch, offline only.",
+  "run": "run-filecs01",
+  "targetPid": 22116,
+  "targetTid": 32528,
+  "faultQpc": 3074711522398,
+  "qpcFrequency": 10000000,
+  "targetCSwitchCount": 11650,
+  "exactPtAssociationCounts": {
+    "incoming": 11382
+  },
+  "targetPtCount": 20733,
+  "targetPtOptionsCounts": {
+    "0x3000001": 20733
+  },
+  "nearestSwitchBeforeFault": {
+    "qpc": 3074711503759,
+    "cpu": 9,
+    "secondsRelativeToFault": -0.0018639,
+    "targetIsOutgoing": false,
+    "targetIsIncoming": true,
+    "exactPt": [
+      {
+        "qpc": 3074711503759,
+        "cpu": 9,
+        "options": "0x3000001",
+        "bufferBytes": 176,
+        "writePosition": 176,
+        "headerIndex": 339374,
+        "payloadIsTargetPid": true,
+        "payloadIsTargetTid": true,
+        "secondsRelativeToFault": -0.0018639,
+        "deltaTicksFromCSwitch": 0,
+        "exactQpcAndCpu": true,
+        "payloadTidMatchesOutgoing": false,
+        "payloadTidMatchesIncoming": true
+      }
+    ],
+    "nearestPtHints": [
+      {
+        "qpc": 3074711503759,
+        "cpu": 9,
+        "options": "0x3000001",
+        "bufferBytes": 176,
+        "writePosition": 176,
+        "headerIndex": 339374,
+        "payloadIsTargetPid": true,
+        "payloadIsTargetTid": true,
+        "secondsRelativeToFault": -0.0018639,
+        "deltaTicksFromCSwitch": 0,
+        "exactQpcAndCpu": true,
+        "payloadTidMatchesOutgoing": false,
+        "payloadTidMatchesIncoming": true
+      },
+      {
+        "qpc": 3074711502360,
+        "cpu": 9,
+        "options": "0x3000001",
+        "bufferBytes": 176,
+        "writePosition": 176,
+        "headerIndex": 339373,
+        "payloadIsTargetPid": false,
+        "payloadIsTargetTid": false,
+        "secondsRelativeToFault": -0.0020038,
+        "deltaTicksFromCSwitch": -1399,
+        "exactQpcAndCpu": false,
+        "payloadTidMatchesOutgoing": false,
+        "payloadTidMatchesIncoming": false
+      }
+    ]
+  },
+  "nearestSwitchAfterFault": {
+    "qpc": 3074711522469,
+    "cpu": 9,
+    "secondsRelativeToFault": 7.1e-06,
+    "targetIsOutgoing": true,
+    "targetIsIncoming": false,
+    "exactPt": [],
+    "nearestPtHints": [
+      {
+        "qpc": 3074711525217,
+        "cpu": 9,
+        "options": "0x3000001",
+        "bufferBytes": 176,
+        "writePosition": 176,
+        "headerIndex": 339405,
+        "payloadIsTargetPid": false,
+        "payloadIsTargetTid": false,
+        "secondsRelativeToFault": 0.0002819,
+        "deltaTicksFromCSwitch": 2748,
+        "exactQpcAndCpu": false,
+        "payloadTidMatchesOutgoing": false,
+        "payloadTidMatchesIncoming": false
+      },
+      {
+        "qpc": 3074711525377,
+        "cpu": 9,
+        "options": "0x3000001",
+        "bufferBytes": 32,
+        "writePosition": 32,
+        "headerIndex": 339407,
+        "payloadIsTargetPid": false,
+        "payloadIsTargetTid": false,
+        "secondsRelativeToFault": 0.0002979,
+        "deltaTicksFromCSwitch": 2908,
+        "exactQpcAndCpu": false,
+        "payloadTidMatchesOutgoing": false,
+        "payloadTidMatchesIncoming": false
+      }
+    ]
+  },
+  "targetCSwitchWithin10ms": [
+    {
+      "qpc": 3074711485888,
+      "cpu": 9,
+      "secondsRelativeToFault": -0.003651,
+      "targetIsOutgoing": true,
+      "targetIsIncoming": false,
+      "exactPt": [
+        {
+          "qpc": 3074711485888,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 4096,
+          "writePosition": 864,
+          "headerIndex": 339357,
+          "payloadIsTargetPid": false,
+          "payloadIsTargetTid": false,
+          "secondsRelativeToFault": -0.003651,
+          "deltaTicksFromCSwitch": 0,
+          "exactQpcAndCpu": true,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": true
+        }
+      ],
+      "nearestPtHints": [
+        {
+          "qpc": 3074711485888,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 4096,
+          "writePosition": 864,
+          "headerIndex": 339357,
+          "payloadIsTargetPid": false,
+          "payloadIsTargetTid": false,
+          "secondsRelativeToFault": -0.003651,
+          "deltaTicksFromCSwitch": 0,
+          "exactQpcAndCpu": true,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": true
+        },
+        {
+          "qpc": 3074711486171,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 160,
+          "writePosition": 160,
+          "headerIndex": 339359,
+          "payloadIsTargetPid": false,
+          "payloadIsTargetTid": false,
+          "secondsRelativeToFault": -0.0036227,
+          "deltaTicksFromCSwitch": 283,
+          "exactQpcAndCpu": false,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": false
+        }
+      ]
+    },
+    {
+      "qpc": 3074711485918,
+      "cpu": 1,
+      "secondsRelativeToFault": -0.003648,
+      "targetIsOutgoing": false,
+      "targetIsIncoming": true,
+      "exactPt": [
+        {
+          "qpc": 3074711485918,
+          "cpu": 1,
+          "options": "0x3000001",
+          "bufferBytes": 32,
+          "writePosition": 32,
+          "headerIndex": 339358,
+          "payloadIsTargetPid": true,
+          "payloadIsTargetTid": true,
+          "secondsRelativeToFault": -0.003648,
+          "deltaTicksFromCSwitch": 0,
+          "exactQpcAndCpu": true,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": true
+        }
+      ],
+      "nearestPtHints": [
+        {
+          "qpc": 3074711485918,
+          "cpu": 1,
+          "options": "0x3000001",
+          "bufferBytes": 32,
+          "writePosition": 32,
+          "headerIndex": 339358,
+          "payloadIsTargetPid": true,
+          "payloadIsTargetTid": true,
+          "secondsRelativeToFault": -0.003648,
+          "deltaTicksFromCSwitch": 0,
+          "exactQpcAndCpu": true,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": true
+        },
+        {
+          "qpc": 3074711485768,
+          "cpu": 1,
+          "options": "0x3000001",
+          "bufferBytes": 144,
+          "writePosition": 144,
+          "headerIndex": 339353,
+          "payloadIsTargetPid": false,
+          "payloadIsTargetTid": false,
+          "secondsRelativeToFault": -0.003663,
+          "deltaTicksFromCSwitch": -150,
+          "exactQpcAndCpu": false,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": false
+        }
+      ]
+    },
+    {
+      "qpc": 3074711503214,
+      "cpu": 1,
+      "secondsRelativeToFault": -0.0019184,
+      "targetIsOutgoing": true,
+      "targetIsIncoming": false,
+      "exactPt": [],
+      "nearestPtHints": [
+        {
+          "qpc": 3074711500830,
+          "cpu": 1,
+          "options": "0x3000001",
+          "bufferBytes": 4096,
+          "writePosition": 592,
+          "headerIndex": 339366,
+          "payloadIsTargetPid": true,
+          "payloadIsTargetTid": true,
+          "secondsRelativeToFault": -0.0021568,
+          "deltaTicksFromCSwitch": -2384,
+          "exactQpcAndCpu": false,
+          "payloadTidMatchesOutgoing": true,
+          "payloadTidMatchesIncoming": false
+        },
+        {
+          "qpc": 3074711491363,
+          "cpu": 1,
+          "options": "0x3000001",
+          "bufferBytes": 4096,
+          "writePosition": 1520,
+          "headerIndex": 339365,
+          "payloadIsTargetPid": true,
+          "payloadIsTargetTid": true,
+          "secondsRelativeToFault": -0.0031035,
+          "deltaTicksFromCSwitch": -11851,
+          "exactQpcAndCpu": false,
+          "payloadTidMatchesOutgoing": true,
+          "payloadTidMatchesIncoming": false
+        }
+      ]
+    },
+    {
+      "qpc": 3074711503759,
+      "cpu": 9,
+      "secondsRelativeToFault": -0.0018639,
+      "targetIsOutgoing": false,
+      "targetIsIncoming": true,
+      "exactPt": [
+        {
+          "qpc": 3074711503759,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 176,
+          "writePosition": 176,
+          "headerIndex": 339374,
+          "payloadIsTargetPid": true,
+          "payloadIsTargetTid": true,
+          "secondsRelativeToFault": -0.0018639,
+          "deltaTicksFromCSwitch": 0,
+          "exactQpcAndCpu": true,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": true
+        }
+      ],
+      "nearestPtHints": [
+        {
+          "qpc": 3074711503759,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 176,
+          "writePosition": 176,
+          "headerIndex": 339374,
+          "payloadIsTargetPid": true,
+          "payloadIsTargetTid": true,
+          "secondsRelativeToFault": -0.0018639,
+          "deltaTicksFromCSwitch": 0,
+          "exactQpcAndCpu": true,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": true
+        },
+        {
+          "qpc": 3074711502360,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 176,
+          "writePosition": 176,
+          "headerIndex": 339373,
+          "payloadIsTargetPid": false,
+          "payloadIsTargetTid": false,
+          "secondsRelativeToFault": -0.0020038,
+          "deltaTicksFromCSwitch": -1399,
+          "exactQpcAndCpu": false,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": false
+        }
+      ]
+    },
+    {
+      "qpc": 3074711522469,
+      "cpu": 9,
+      "secondsRelativeToFault": 7.1e-06,
+      "targetIsOutgoing": true,
+      "targetIsIncoming": false,
+      "exactPt": [],
+      "nearestPtHints": [
+        {
+          "qpc": 3074711525217,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 176,
+          "writePosition": 176,
+          "headerIndex": 339405,
+          "payloadIsTargetPid": false,
+          "payloadIsTargetTid": false,
+          "secondsRelativeToFault": 0.0002819,
+          "deltaTicksFromCSwitch": 2748,
+          "exactQpcAndCpu": false,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": false
+        },
+        {
+          "qpc": 3074711525377,
+          "cpu": 9,
+          "options": "0x3000001",
+          "bufferBytes": 32,
+          "writePosition": 32,
+          "headerIndex": 339407,
+          "payloadIsTargetPid": false,
+          "payloadIsTargetTid": false,
+          "secondsRelativeToFault": 0.0002979,
+          "deltaTicksFromCSwitch": 2908,
+          "exactQpcAndCpu": false,
+          "payloadTidMatchesOutgoing": false,
+          "payloadTidMatchesIncoming": false
+        }
+      ]
+    }
+  ],
+  "targetPtWithin5ms": [
+    {
+      "qpc": 3074711482312,
+      "cpu": 9,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 864,
+      "headerIndex": 339348,
+      "payloadIsTargetPid": true,
+      "payloadIsTargetTid": true,
+      "secondsRelativeToFault": -0.0040086
+    },
+    {
+      "qpc": 3074711485918,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 32,
+      "writePosition": 32,
+      "headerIndex": 339358,
+      "payloadIsTargetPid": true,
+      "payloadIsTargetTid": true,
+      "secondsRelativeToFault": -0.003648
+    },
+    {
+      "qpc": 3074711491363,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 1520,
+      "headerIndex": 339365,
+      "payloadIsTargetPid": true,
+      "payloadIsTargetTid": true,
+      "secondsRelativeToFault": -0.0031035
+    },
+    {
+      "qpc": 3074711500830,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 592,
+      "headerIndex": 339366,
+      "payloadIsTargetPid": true,
+      "payloadIsTargetTid": true,
+      "secondsRelativeToFault": -0.0021568
+    },
+    {
+      "qpc": 3074711503759,
+      "cpu": 9,
+      "options": "0x3000001",
+      "bufferBytes": 176,
+      "writePosition": 176,
+      "headerIndex": 339374,
+      "payloadIsTargetPid": true,
+      "payloadIsTargetTid": true,
+      "secondsRelativeToFault": -0.0018639
+    },
+    {
+      "qpc": 3074711507699,
+      "cpu": 9,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 2192,
+      "headerIndex": 339375,
+      "payloadIsTargetPid": true,
+      "payloadIsTargetTid": true,
+      "secondsRelativeToFault": -0.0014699
+    },
+    {
+      "qpc": 3074711517340,
+      "cpu": 9,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 112,
+      "headerIndex": 339392,
+      "payloadIsTargetPid": true,
+      "payloadIsTargetTid": true,
+      "secondsRelativeToFault": -0.0005058
+    }
+  ],
+  "associationRule": "Exact means equal raw QPC and CPU only. NearestPtHints are temporal candidates, not proof of event identity or outgoing/incoming capture semantics.",
+  "privacy": "Unrelated process and thread IDs are replaced by target/outgoing/incoming equality booleans.",
+  "limits": [
+    "PT payload owner must be checked against code decoded from its own same-run mapping.",
+    "An ETW switch crossing exception QPC is not proof the exception instruction is in PT.",
+    "Full retained instruction history is not established by envelope timestamps or zero loss counters."
+  ],
+  "sourceHashes": {
+    "targetResult": "dec55b60e0aa1add4841293a3ae45cb44cd7bffb46628477d6efd143e24617be",
+    "rawPtHeaders": "e28cd594fe8f7ec4a761bad92ae2dddd925149310a3e36d5f8644b73d427c4a9"
+  }
+}

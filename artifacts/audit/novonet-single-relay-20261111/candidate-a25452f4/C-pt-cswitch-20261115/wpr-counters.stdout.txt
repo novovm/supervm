@@ -1,0 +1,26 @@
+
+Microsoft Windows Performance Recorder Version 10.0.26100 (CoreSystem)
+Copyright (c) 2024 Microsoft Corporation. All rights reserved.
+
+WPR recording is in progress...
+
+Time since start	: 00:00:15
+Dropped event		: 0
+Logging mode		: File
+Temp Folder	: D:\WEB3_AI\SUPERVM\target\c-pt-live-qualification-20261115\run-filecs01\wpr-temp\
+
+Actively recording collectors: 
+
+Collector Name		: WPR_initiated_C_PT_CS_20261114T225626_WPR System Collector
+Buffer Size (KB)	: 64
+Events Lost		: 0
+Number of Buffers	: 64
+Providers
+System Keywords
+	CSwitch
+	Loader
+	ProcessThread
+	SampledProfile
+Processor Trace Events
+	CSwitch
+	SampledProfile

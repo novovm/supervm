@@ -1,0 +1,17 @@
+[
+  {
+    "relativePath": "qualification.etl",
+    "bytes": 367263744,
+    "sha256": "07d9abb211fc7a39ccd84acf85256b32a15b74b8dde15882a987afe904f9443c"
+  },
+  {
+    "relativePath": "traced-target/qualification-full.dmp",
+    "bytes": 25512463,
+    "sha256": "9597da0611bcf3bd0cfe14427fa6e5b77b66715b64879566e502b244bcfc81c4"
+  },
+  {
+    "relativePath": "baseline-target/qualification-full.dmp",
+    "bytes": 25508319,
+    "sha256": "bbba4c9aa45b852a8bfe26f077f69368591605daeb77a77c98f1a5383982cbd9"
+  }
+]

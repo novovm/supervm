@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-14T22:59:55.5436574Z",
+  "targetProcesses": [],
+  "originalNodeStarted": false,
+  "originalDatabaseAccessed": false,
+  "originalIdentityAccessed": false,
+  "originalLongRunStarted": false,
+  "doubleRelayResumed": false,
+  "firstRbpCorruptionCaptured": false,
+  "wprStatusExit": 0,
+  "wprStatus": "\nMicrosoft Windows Performance Recorder Version 10.0.26100 (CoreSystem)\nCopyright (c) 2024 Microsoft Corporation. All rights reserved.\n\nWPR is not recording"
+}

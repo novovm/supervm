@@ -1,0 +1,533 @@
+{
+  "scope": "Read-only same-run export analysis; qualification program, not NOVOVM.",
+  "run": "run-filecs01",
+  "targetPid": 22116,
+  "targetTid": 32528,
+  "qpcFrequency": 10000000,
+  "workStartQpc": 3074561515482,
+  "faultQpc": 3074711522398,
+  "timestampDerivation": "Raw xperf QPC anchor + same-XML relative wall-clock 100ns fields, ignoring inconsistent rendered offset suffix; independently checked exact raw QPC+IP. PT timestamps are raw internal QPC; deltas / qpcFrequency. No absolute UTC inference from XML.",
+  "xmlRenderedOffsetSuffixCounts": {
+    "+07:59": 14912,
+    "+08:00": 1
+  },
+  "firstXperfRawQpc": 3074558341497,
+  "traceHeaders": [
+    {
+      "NumberOfProcessors": "32",
+      "EventsLost": "0",
+      "BuffersLost": "0",
+      "PerfFreq": "10000000",
+      "LogFileMode": "0x10001",
+      "BuffersWritten": "2802",
+      "BufferSize": "131072"
+    }
+  ],
+  "lastDroppedTimes": [],
+  "reliableMarkers": [
+    {
+      "kind": "FirstReliableEventTimeStamp",
+      "value": "0"
+    },
+    {
+      "kind": "FirstReliableCSwitchEventTimeStamp",
+      "value": "None"
+    }
+  ],
+  "sourceHashes": {
+    "traced-target\\result.json": "dec55b60e0aa1add4841293a3ae45cb44cd7bffb46628477d6efd143e24617be",
+    "decode\\events-private.csv": "dff9c5e18e7841bfc8202909e5b323c2d11926d0736dba2cb67cde0229a44ef4",
+    "tracerpt-private.xml": "ec0a723992784365e284465d8f8fd9f895007c796e57ad02e063307f063ebaa8",
+    "decode\\selected-private\\private\\ipt-headers-private.json": "e28cd594fe8f7ec4a761bad92ae2dddd925149310a3e36d5f8644b73d427c4a9"
+  },
+  "processLifecycle": [
+    {
+      "qpc": 3074561321121,
+      "cpu": 8,
+      "secondsAfterWorkStart": -0.0194361,
+      "secondsBeforeFault": 15.0201277,
+      "kind": "P-Start",
+      "pid": 22116
+    },
+    {
+      "qpc": 3074712269496,
+      "cpu": 9,
+      "secondsAfterWorkStart": 15.0754014,
+      "secondsBeforeFault": -0.0747098,
+      "kind": "P-End",
+      "pid": 22116,
+      "exitStatus": "0xe0424354"
+    },
+    {
+      "qpc": 3074748450353,
+      "cpu": 9,
+      "secondsAfterWorkStart": 18.6934871,
+      "secondsBeforeFault": -3.6927955,
+      "kind": "P-Zombie",
+      "pid": 22116,
+      "exitStatus": "0xe0424354"
+    }
+  ],
+  "targetThreadLifecycle": [
+    {
+      "qpc": 3074561513610,
+      "cpu": 2,
+      "secondsAfterWorkStart": -0.0001872,
+      "secondsBeforeFault": 15.0008788,
+      "kind": "T-Start",
+      "tid": 32528,
+      "processPidResolved": true
+    },
+    {
+      "qpc": 3074712255822,
+      "cpu": 4,
+      "secondsAfterWorkStart": 15.074034,
+      "secondsBeforeFault": -0.0733424,
+      "kind": "T-End",
+      "tid": 32528,
+      "processPidResolved": true
+    }
+  ],
+  "faultIpMapping": [
+    {
+      "basename": "KernelBase.dll",
+      "base": 140724069662720,
+      "end": 140724073893888,
+      "kind": "I-Start",
+      "qpc": 3074561364630
+    },
+    {
+      "basename": "KernelBase.dll",
+      "base": 140724069662720,
+      "end": 140724073893888,
+      "kind": "I-End",
+      "qpc": 3074712268822
+    }
+  ],
+  "targetPt": {
+    "count": 20733,
+    "first": {
+      "qpc": 3074561514364,
+      "cpu": 0,
+      "secondsAfterWorkStart": -0.0001118,
+      "secondsBeforeFault": 15.0008034,
+      "bufferBytes": 272,
+      "writePosition": 272
+    },
+    "last": {
+      "qpc": 3074712255604,
+      "cpu": 4,
+      "secondsAfterWorkStart": 15.0740122,
+      "secondsBeforeFault": -0.0733206,
+      "bufferBytes": 384,
+      "writePosition": 384
+    },
+    "cpus": [
+      0,
+      1,
+      2,
+      4,
+      6,
+      8,
+      9,
+      10,
+      12,
+      14,
+      16,
+      24,
+      25,
+      26,
+      28,
+      29
+    ],
+    "countWithinWorkToFault": 20728,
+    "firstWithin": {
+      "qpc": 3074561515793,
+      "cpu": 4,
+      "secondsAfterWorkStart": 3.11e-05,
+      "secondsBeforeFault": 15.0006605,
+      "bufferBytes": 4096,
+      "writePosition": 1424
+    },
+    "lastWithin": {
+      "qpc": 3074711517340,
+      "cpu": 9,
+      "secondsAfterWorkStart": 15.0001858,
+      "secondsBeforeFault": 0.0005058,
+      "bufferBytes": 4096,
+      "writePosition": 112
+    },
+    "largestBetweenEnvelopeGaps": [
+      {
+        "beginQpc": 3074654227638,
+        "endQpc": 3074654245336,
+        "seconds": 0.0017698
+      },
+      {
+        "beginQpc": 3074646858076,
+        "endQpc": 3074646874341,
+        "seconds": 0.0016265
+      },
+      {
+        "beginQpc": 3074638899843,
+        "endQpc": 3074638915412,
+        "seconds": 0.0015569
+      },
+      {
+        "beginQpc": 3074694534904,
+        "endQpc": 3074694549721,
+        "seconds": 0.0014817
+      },
+      {
+        "beginQpc": 3074641764239,
+        "endQpc": 3074641779030,
+        "seconds": 0.0014791
+      },
+      {
+        "beginQpc": 3074568832552,
+        "endQpc": 3074568847317,
+        "seconds": 0.0014765
+      },
+      {
+        "beginQpc": 3074564530650,
+        "endQpc": 3074564544902,
+        "seconds": 0.0014252
+      },
+      {
+        "beginQpc": 3074562560915,
+        "endQpc": 3074562574834,
+        "seconds": 0.0013919
+      },
+      {
+        "beginQpc": 3074626812715,
+        "endQpc": 3074626826064,
+        "seconds": 0.0013349
+      },
+      {
+        "beginQpc": 3074628908102,
+        "endQpc": 3074628921201,
+        "seconds": 0.0013099
+      }
+    ],
+    "gapMeaning": "Between retained event timestamps only; not continuous instruction coverage."
+  },
+  "targetRawSamples": {
+    "count": 14913,
+    "first": {
+      "qpc": 3074561519766,
+      "cpu": 12,
+      "secondsAfterWorkStart": 0.0004284,
+      "secondsBeforeFault": 15.0002632,
+      "ip": "0x7ff616bb13a0",
+      "exactXperfMatch": true,
+      "xperfResolvedTidMatches": true
+    },
+    "last": {
+      "qpc": 3074711517340,
+      "cpu": 9,
+      "secondsAfterWorkStart": 15.0001858,
+      "secondsBeforeFault": 0.0005058,
+      "ip": "0x7ff616bb13ad",
+      "exactXperfMatch": true,
+      "xperfResolvedTidMatches": true
+    },
+    "cpus": [
+      0,
+      1,
+      2,
+      4,
+      6,
+      8,
+      9,
+      10,
+      12,
+      14,
+      24,
+      28,
+      29
+    ],
+    "countWithinWorkToFault": 14913,
+    "firstWithin": {
+      "qpc": 3074561519766,
+      "cpu": 12,
+      "secondsAfterWorkStart": 0.0004284,
+      "secondsBeforeFault": 15.0002632,
+      "ip": "0x7ff616bb13a0",
+      "exactXperfMatch": true,
+      "xperfResolvedTidMatches": true
+    },
+    "lastWithin": {
+      "qpc": 3074711517340,
+      "cpu": 9,
+      "secondsAfterWorkStart": 15.0001858,
+      "secondsBeforeFault": 0.0005058,
+      "ip": "0x7ff616bb13ad",
+      "exactXperfMatch": true,
+      "xperfResolvedTidMatches": true
+    },
+    "largestBetweenEnvelopeGaps": [
+      {
+        "beginQpc": 3074590793761,
+        "endQpc": 3074590844359,
+        "seconds": 0.0050598
+      },
+      {
+        "beginQpc": 3074621420719,
+        "endQpc": 3074621455116,
+        "seconds": 0.0034397
+      },
+      {
+        "beginQpc": 3074641514472,
+        "endQpc": 3074641546639,
+        "seconds": 0.0032167
+      },
+      {
+        "beginQpc": 3074702089883,
+        "endQpc": 3074702121010,
+        "seconds": 0.0031127
+      },
+      {
+        "beginQpc": 3074614909144,
+        "endQpc": 3074614939270,
+        "seconds": 0.0030126
+      },
+      {
+        "beginQpc": 3074696350652,
+        "endQpc": 3074696380662,
+        "seconds": 0.003001
+      },
+      {
+        "beginQpc": 3074654227638,
+        "endQpc": 3074654257559,
+        "seconds": 0.0029921
+      },
+      {
+        "beginQpc": 3074696978058,
+        "endQpc": 3074697007855,
+        "seconds": 0.0029797
+      },
+      {
+        "beginQpc": 3074612089761,
+        "endQpc": 3074612118969,
+        "seconds": 0.0029208
+      },
+      {
+        "beginQpc": 3074643836719,
+        "endQpc": 3074643865393,
+        "seconds": 0.0028674
+      }
+    ],
+    "gapMeaning": "Between retained event timestamps only; not continuous instruction coverage."
+  },
+  "rawSampleExactMatchFailures": [],
+  "targetCSwitch": {
+    "count": 11650,
+    "first": {
+      "qpc": 3074561514364,
+      "cpu": 0,
+      "secondsAfterWorkStart": -0.0001118,
+      "secondsBeforeFault": 15.0008034,
+      "direction": "in"
+    },
+    "last": {
+      "qpc": 3074712256088,
+      "cpu": 4,
+      "secondsAfterWorkStart": 15.0740606,
+      "secondsBeforeFault": -0.073369,
+      "direction": "out"
+    },
+    "cpus": [
+      0,
+      1,
+      2,
+      4,
+      6,
+      8,
+      9,
+      10,
+      12,
+      14,
+      16,
+      24,
+      25,
+      26,
+      28,
+      29
+    ],
+    "countWithinWorkToFault": 11640,
+    "firstWithin": {
+      "qpc": 3074561515766,
+      "cpu": 6,
+      "secondsAfterWorkStart": 2.84e-05,
+      "secondsBeforeFault": 15.0006632,
+      "direction": "out"
+    },
+    "lastWithin": {
+      "qpc": 3074711503759,
+      "cpu": 9,
+      "secondsAfterWorkStart": 14.9988277,
+      "secondsBeforeFault": 0.0018639,
+      "direction": "in"
+    },
+    "largestBetweenEnvelopeGaps": [
+      {
+        "beginQpc": 3074681228625,
+        "endQpc": 3074682820475,
+        "seconds": 0.159185
+      },
+      {
+        "beginQpc": 3074702319342,
+        "endQpc": 3074703027113,
+        "seconds": 0.0707771
+      },
+      {
+        "beginQpc": 3074659753691,
+        "endQpc": 3074660398677,
+        "seconds": 0.0644986
+      },
+      {
+        "beginQpc": 3074583650652,
+        "endQpc": 3074584284610,
+        "seconds": 0.0633958
+      },
+      {
+        "beginQpc": 3074585574302,
+        "endQpc": 3074586184668,
+        "seconds": 0.0610366
+      },
+      {
+        "beginQpc": 3074584284679,
+        "endQpc": 3074584874566,
+        "seconds": 0.0589887
+      },
+      {
+        "beginQpc": 3074649275160,
+        "endQpc": 3074649840929,
+        "seconds": 0.0565769
+      },
+      {
+        "beginQpc": 3074692268648,
+        "endQpc": 3074692823159,
+        "seconds": 0.0554511
+      },
+      {
+        "beginQpc": 3074698994365,
+        "endQpc": 3074699541569,
+        "seconds": 0.0547204
+      },
+      {
+        "beginQpc": 3074579201497,
+        "endQpc": 3074579744315,
+        "seconds": 0.0542818
+      }
+    ],
+    "gapMeaning": "Between retained event timestamps only; not continuous instruction coverage."
+  },
+  "preFaultLastPt": {
+    "qpc": 3074711517340,
+    "cpu": 9,
+    "secondsAfterWorkStart": 15.0001858,
+    "secondsBeforeFault": 0.0005058,
+    "bufferBytes": 4096,
+    "writePosition": 112
+  },
+  "postFaultFirstPt": {
+    "qpc": 3074711919015,
+    "cpu": 10,
+    "secondsAfterWorkStart": 15.0403533,
+    "secondsBeforeFault": -0.0396617,
+    "bufferBytes": 192,
+    "writePosition": 192
+  },
+  "faultTailSeconds": 0.0005058,
+  "allCpuIdentitySearch": {
+    "totalRawPt": 356158,
+    "cpuCount": 25,
+    "exactTargetCount": 20733,
+    "pidOnlyCount": 20953,
+    "tidOnlyCount": 20733
+  },
+  "limits": [
+    "PT event envelopes and sample gaps do not measure complete instruction history.",
+    "A sample absent between two timestamps is not proof the whole interval was unobserved; packet decode is required.",
+    "Target CSwitch transitions show only retained scheduling boundaries; missing boundaries cannot be invented.",
+    "No original node, original database, or identity was used. No claim of original RBP violation.",
+    "Zero lost counters alone are insufficient; inspect retention metadata, sideband, decoder truncation and fault vicinity."
+  ],
+  "sourceReviewSha256": "bc49043b64c4ff21959c02eebb77af98522c8aae0109d8de86a1784b3f518d2d",
+  "targetModuleSummary": {
+    "eventCount": 34,
+    "mainAndFaultModuleRecords": [
+      {
+        "qpc": 3074561357663,
+        "cpu": 10,
+        "secondsAfterWorkStart": -0.0157819,
+        "secondsBeforeFault": 15.0164735,
+        "kind": "I-Start",
+        "base": 140694920036352,
+        "end": 140694920568832,
+        "basename": "PtQualification.exe"
+      },
+      {
+        "qpc": 3074561364630,
+        "cpu": 10,
+        "secondsAfterWorkStart": -0.0150852,
+        "secondsBeforeFault": 15.0157768,
+        "kind": "I-Start",
+        "base": 140724069662720,
+        "end": 140724073893888,
+        "basename": "KernelBase.dll"
+      },
+      {
+        "qpc": 3074712268550,
+        "cpu": 9,
+        "secondsAfterWorkStart": 15.0753068,
+        "secondsBeforeFault": -0.0746152,
+        "kind": "I-End",
+        "base": 140694920036352,
+        "end": 140694920568832,
+        "basename": "PtQualification.exe"
+      },
+      {
+        "qpc": 3074712268822,
+        "cpu": 9,
+        "secondsAfterWorkStart": 15.075334,
+        "secondsBeforeFault": -0.0746424,
+        "kind": "I-End",
+        "base": 140724069662720,
+        "end": 140724073893888,
+        "basename": "KernelBase.dll"
+      }
+    ]
+  },
+  "switchInCpuChangeCount": 3272,
+  "nearestSwitchBeforeFault": {
+    "qpc": 3074711503759,
+    "cpu": 9,
+    "direction": "in",
+    "secondsRelativeToFault": -0.0018639
+  },
+  "nearestSwitchAfterFault": {
+    "qpc": 3074711522469,
+    "cpu": 9,
+    "direction": "out",
+    "secondsRelativeToFault": 7.1e-06
+  },
+  "faultResidesBetweenSameCpuInOut": true,
+  "actualWprTriggers": {
+    "systemKeywords": [
+      "CSwitch",
+      "Loader",
+      "ProcessThread",
+      "SampledProfile"
+    ],
+    "processorTraceEvents": [
+      "CSwitch",
+      "SampledProfile"
+    ],
+    "source": "wpr-active.stdout.txt",
+    "sha256": "64f7dbb15fe20241f1a8df790185829b27f1e4580ada7b58d0bbe81cf23027fa"
+  },
+  "retainedEtlBytes": 367263744,
+  "publicationBoundary": "Qualification-only numeric evidence; no raw ETL/XML/DMP/PT bytes, no unrelated process identities. Event envelopes are not full instruction history."
+}

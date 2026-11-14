@@ -1,6 +1,18 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-15：C已实测File保留，线程/模块齐全，异常尾部控制流仍未通过
+## CURRENT 2026-11-15 07:07：C已实跑File＋CSwitch，故障后包仅控制信息，尾部资格仍失败
+
+用户重新要求弹窗后，C确认新UAC成功，仅执行已冻结资格程序一次，15秒基线＋15秒采集。
+WPR启停及导出退出0，ETL367263744字节，目标PID22116/TID32528真实退出0xE0424354
+（声明的资格异常，非NOVOVM原崩溃）。线程/模块齐全，20733目标PT、11650次CSwitch；
+精确关联均为切入线程，故障切出时无同QPC/CPU的原始PT。故障后三个目标包全部只有
+PSB/CBR/PSBEND、无TIP/FUP/TNT，实际0指令；检查的故障前片段仍未进入异常处理路径。
+短时吞吐差-3.16%不代表原节点资格；同次FullDump已核验，但无首次RBP错位历史。
+因此未放行a254＋AOEM966长跑，不补采、不重启原节点、不访问原库身份、不做修复，双中继暂停。
+本轮实际原始结果及离线证据见[C-pt-cswitch-20261115](C-pt-cswitch-20261115/README.md)。
+Git用于共享结果，不等待A签收；旧失败、取消和原始私有转储全部保留。
+
+## PRIOR 2026-11-15：C已实测File保留，线程/模块齐全，异常尾部控制流仍未通过
 
 C独立核验旧Memory ETL：29个非零LastDroppedTimes槽逐项匹配各CPU保留PT起点，
 全CPU重筛目标仍只有7条，排除仅为Unknown/PID解析漏关联。新File模式实际运行同一

@@ -1,0 +1,162 @@
+{
+  "kind": "qualification_only_not_novovm_root_cause",
+  "baseline": {
+    "pid": 27012,
+    "tid": 43320,
+    "batchCount": 15,
+    "wallSeconds": 15.0004281,
+    "iterations": 3805184000,
+    "iterationsPerWallSecond": 253671693.5431996,
+    "threadCpuSeconds": 14.71875,
+    "threadCpuSecondsPerWallSecond": 0.9812219959242363,
+    "nsThreadCpuPerIteration": 3.868078389901776,
+    "cyclesPerIteration": 9.367980204111023,
+    "batchRateMin": 247830235.21500337,
+    "batchRateMedian": 254368953.90213645,
+    "batchRateMax": 257405420.32411548,
+    "batchIterationsPerSecond": [
+      252268218.58907053,
+      257405420.32411548,
+      254368953.90213645,
+      256543997.91050637,
+      247830235.21500337,
+      251820241.71223548,
+      256138644.83061782,
+      254678430.69885224,
+      253736394.51513648,
+      250099809.2214881,
+      253176837.82787588,
+      254949537.3734234,
+      254573853.7358242,
+      252118727.9019089,
+      255373398.63764137
+    ]
+  },
+  "traced": {
+    "pid": 22116,
+    "tid": 32528,
+    "batchCount": 15,
+    "wallSeconds": 15.0006705,
+    "iterations": 3685056512,
+    "iterationsPerWallSecond": 245659453.15577728,
+    "threadCpuSeconds": 14.65625,
+    "threadCpuSecondsPerWallSecond": 0.9770396596605465,
+    "nsThreadCpuPerIteration": 3.97721173400556,
+    "cyclesPerIteration": 9.649350073793387,
+    "batchRateMin": 238956529.94768488,
+    "batchRateMedian": 246152748.3097782,
+    "batchRateMax": 249246053.30920035,
+    "batchIterationsPerSecond": [
+      246189492.28955328,
+      238956529.94768488,
+      242732964.61880443,
+      244337439.70584032,
+      246152748.3097782,
+      245244616.0392108,
+      248067390.451966,
+      248179760.8580359,
+      244756880.17110944,
+      249246053.30920035,
+      247719986.08834225,
+      245969720.602716,
+      247521823.5756515,
+      242038895.6888345,
+      247784207.25220317
+    ]
+  },
+  "comparison": {
+    "throughputChangePercent": -3.158507863258242,
+    "medianBatchThroughputChangePercent": -3.2300347453248057,
+    "threadCpuPerIterationChangePercent": 2.8213839819972053,
+    "cyclesPerIterationChangePercent": 3.0035275860093025
+  },
+  "dump": {
+    "bytes": 25512463,
+    "sha256": "9597da0611bcf3bd0cfe14427fa6e5b77b66715b64879566e502b244bcfc81c4",
+    "flags": "0x221822",
+    "fullMemory": true,
+    "threadInfo": true,
+    "fullMemoryInfo": true,
+    "streamTypes": [
+      0,
+      3,
+      4,
+      6,
+      7,
+      9,
+      13,
+      15,
+      16,
+      17,
+      21,
+      22
+    ],
+    "memory64RangeCount": 157,
+    "memory64Bytes": 25477120,
+    "threadCount": 6,
+    "threads": [
+      {
+        "tid": 41476,
+        "contextBytes": 1663,
+        "contextInFile": true
+      },
+      {
+        "tid": 3600,
+        "contextBytes": 1663,
+        "contextInFile": true
+      },
+      {
+        "tid": 35624,
+        "contextBytes": 1663,
+        "contextInFile": true
+      },
+      {
+        "tid": 42772,
+        "contextBytes": 1663,
+        "contextInFile": true
+      },
+      {
+        "tid": 38776,
+        "contextBytes": 1663,
+        "contextInFile": true
+      },
+      {
+        "tid": 32528,
+        "contextBytes": 1663,
+        "contextInFile": true
+      }
+    ],
+    "pid": 22116,
+    "exceptionTid": 32528,
+    "exceptionCode": "0xe0424354",
+    "exceptionAddress": "0x7ffce03b569a",
+    "exceptionRegisters": {
+      "rsp": "0xf2bacff6a0",
+      "rbp": "0x0",
+      "rip": "0x7ffce03b569a"
+    },
+    "jsonRegisterMatches": {
+      "rsp": true,
+      "rbp": true,
+      "rip": true
+    },
+    "exceptionRipModule": [
+      {
+        "name": "KERNELBASE.dll",
+        "base": "0x7ffce02f0000",
+        "bytes": 4231168
+      }
+    ],
+    "exceptionRipMemoryCovered": true,
+    "exceptionRspMemoryCovered": true
+  },
+  "limitations": [
+    "Sequential single baseline and traced runs; 15 one-second batches are not independent long-term samples.",
+    "No P95/P99 or production/NOVONET low-interference qualification is claimed.",
+    "Thread CPU only excludes system-wide trace overhead; clock/power/scheduler order may confound the difference.",
+    "Fault is declared qualification exception 0xE0424354 after measured work, not natural RBP corruption.",
+    "Dump ExceptionStream matches original filter CONTEXT. ThreadList contexts reflect dump time and are not substituted for exception context.",
+    "RBP=0 in this optimized qualification program is not a register-preservation violation.",
+    "This analysis does not decode PT or prove ETL thread association; main-task decoder must check it independently."
+  ]
+}

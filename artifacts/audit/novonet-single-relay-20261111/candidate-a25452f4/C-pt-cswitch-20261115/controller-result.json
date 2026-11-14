@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 2,
+  "mode": "File",
+  "rawEtwLimitBytes": 536870912,
+  "baselineAlsoUsesFaultMode": true,
+  "startUtc": "2026-11-14T22:56:26.3752026Z",
+  "instanceName": "C_PT_CS_20261114T225626",
+  "originalNodeStarted": false,
+  "productionChanged": false,
+  "traceStartSucceeded": true,
+  "traceStopSucceeded": true,
+  "actualPtDecoded": false,
+  "qualificationPassed": false,
+  "error": null,
+  "endUtc": "2026-11-14T22:57:20.1038291Z",
+  "commands": [
+    {
+      "tag": "wpr-before",
+      "executable": "C:\\Windows\\System32\\wpr.exe",
+      "arguments": [
+        "-status"
+      ],
+      "pid": 9696,
+      "processCreatedUtc": "2026-11-14T22:56:26.5491445Z",
+      "startUtc": "2026-11-14T22:56:26.5475986Z",
+      "endUtc": "2026-11-14T22:56:26.6174636Z",
+      "exitCode": 0,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 0.046875,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "baseline",
+      "executable": "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\qualification\\PtQualification.exe",
+      "arguments": [
+        "--fault",
+        "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\run-filecs01\\baseline-target"
+      ],
+      "pid": 27012,
+      "processCreatedUtc": "2026-11-14T22:56:26.6364470Z",
+      "startUtc": "2026-11-14T22:56:26.6359798Z",
+      "endUtc": "2026-11-14T22:56:41.7390603Z",
+      "exitCode": -532528300,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 14.796875,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "wpr-start",
+      "executable": "C:\\Windows\\System32\\wpr.exe",
+      "arguments": [
+        "-start",
+        "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\controller-file-cswitch\\C-PT-File.wprp!C_PT_CSwitch.Light",
+        "-filemode",
+        "-recordtempto",
+        "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\run-filecs01\\wpr-temp",
+        "-instancename",
+        "C_PT_CS_20261114T225626"
+      ],
+      "pid": 12776,
+      "processCreatedUtc": "2026-11-14T22:56:41.7413604Z",
+      "startUtc": "2026-11-14T22:56:41.7407881Z",
+      "endUtc": "2026-11-14T22:56:41.9627741Z",
+      "exitCode": 0,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 0.1875,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "wpr-active",
+      "executable": "C:\\Windows\\System32\\wpr.exe",
+      "arguments": [
+        "-status",
+        "collectors",
+        "-details",
+        "-instancename",
+        "C_PT_CS_20261114T225626"
+      ],
+      "pid": 41184,
+      "processCreatedUtc": "2026-11-14T22:56:41.9656928Z",
+      "startUtc": "2026-11-14T22:56:41.9651315Z",
+      "endUtc": "2026-11-14T22:56:42.1020412Z",
+      "exitCode": 0,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 0.109375,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "traced-fault",
+      "executable": "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\qualification\\PtQualification.exe",
+      "arguments": [
+        "--fault",
+        "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\run-filecs01\\traced-target"
+      ],
+      "pid": 22116,
+      "processCreatedUtc": "2026-11-14T22:56:42.1049758Z",
+      "startUtc": "2026-11-14T22:56:42.1043752Z",
+      "endUtc": "2026-11-14T22:56:57.2274808Z",
+      "exitCode": -532528300,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 14.71875,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "wpr-counters",
+      "executable": "C:\\Windows\\System32\\wpr.exe",
+      "arguments": [
+        "-status",
+        "collectors",
+        "-details",
+        "-instancename",
+        "C_PT_CS_20261114T225626"
+      ],
+      "pid": 21568,
+      "processCreatedUtc": "2026-11-14T22:56:57.2317654Z",
+      "startUtc": "2026-11-14T22:56:57.2312246Z",
+      "endUtc": "2026-11-14T22:56:57.3641634Z",
+      "exitCode": 0,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 0.109375,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "wpr-stop",
+      "executable": "C:\\Windows\\System32\\wpr.exe",
+      "arguments": [
+        "-stop",
+        "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\run-filecs01\\qualification.etl",
+        "-skipPdbGen",
+        "-instancename",
+        "C_PT_CS_20261114T225626"
+      ],
+      "pid": 43152,
+      "processCreatedUtc": "2026-11-14T22:56:57.3707012Z",
+      "startUtc": "2026-11-14T22:56:57.3702182Z",
+      "endUtc": "2026-11-14T22:57:19.9773222Z",
+      "exitCode": 0,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 16.03125,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "wpr-own-after",
+      "executable": "C:\\Windows\\System32\\wpr.exe",
+      "arguments": [
+        "-status",
+        "-instancename",
+        "C_PT_CS_20261114T225626"
+      ],
+      "pid": 44500,
+      "processCreatedUtc": "2026-11-14T22:57:19.9804527Z",
+      "startUtc": "2026-11-14T22:57:19.9799159Z",
+      "endUtc": "2026-11-14T22:57:20.0398972Z",
+      "exitCode": 0,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 0.03125,
+      "peakWorkingSetBytes": null
+    },
+    {
+      "tag": "wpr-after",
+      "executable": "C:\\Windows\\System32\\wpr.exe",
+      "arguments": [
+        "-status"
+      ],
+      "pid": 14968,
+      "processCreatedUtc": "2026-11-14T22:57:20.0426684Z",
+      "startUtc": "2026-11-14T22:57:20.0421495Z",
+      "endUtc": "2026-11-14T22:57:20.1027229Z",
+      "exitCode": 0,
+      "timedOut": false,
+      "resourceBound": false,
+      "commandError": null,
+      "cpuSeconds": 0.03125,
+      "peakWorkingSetBytes": null
+    }
+  ],
+  "qualificationProcessExitCode": -532528300,
+  "faultDumpPresent": true,
+  "faultContextPresent": true,
+  "ownTraceAbsent": true
+}

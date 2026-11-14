@@ -1,0 +1,9 @@
+{
+  "requestedUtc": "2026-11-14T22:56:23.3077322Z",
+  "scriptSha256": "5131a18739f48f3a29713f250645c93ce96fcfef7c2bf7df1cb06e4902efb1c4",
+  "evidenceRoot": "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\run-filecs01",
+  "previousAttempt": "launch-01 UAC cancelled before execution",
+  "status": "launched",
+  "helperPid": 15408,
+  "createdUtc": "2026-11-14T22:56:26.0202278Z"
+}
