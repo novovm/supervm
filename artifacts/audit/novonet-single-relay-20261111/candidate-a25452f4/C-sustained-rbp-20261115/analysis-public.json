@@ -1,0 +1,203 @@
+{
+  "log_sha256": "b8bc59d1f4d230318d5bf1796651c338e960b6bf738cac16bf636ed07dfbb1bf",
+  "complete_observed_groups": 2153,
+  "incomplete_groups": [
+    {
+      "group": 2154,
+      "events": [
+        "OUTER_CALL",
+        "LEA_BEFORE",
+        "LEA_AFTER",
+        "CHILD_BEFORE"
+      ]
+    }
+  ],
+  "observed_event_count": 12922,
+  "bad_observed_groups": [],
+  "malformed_events": [],
+  "command_errors": [],
+  "markers": [
+    "MONITOR_ON",
+    "CONTROLLER_ACTION debugger_q continue_gap"
+  ],
+  "monitor_counts": [],
+  "debuggee_samples_by_phase": {
+    "baseline_off": 20,
+    "monitor_on": 0,
+    "recovery_off": 0,
+    "sustained_on": 0
+  },
+  "largest_report_interval": {
+    "seconds": 7.0885413,
+    "from_phase": "baseline_off",
+    "to_phase": "baseline_off",
+    "from_elapsed": 54.75,
+    "to_elapsed": 61.84399999998277
+  },
+  "last_numeric_progress": {
+    "0": {
+      "elapsed": 119.38999999995576,
+      "utc": "2026-11-14T19:49:59.676554+00:00",
+      "index": 0,
+      "phase": "baseline_off",
+      "file_unix_ns": 1794685799518393000,
+      "ticks": 98511,
+      "novonet_present": true,
+      "probe_present": true,
+      "objects": 256,
+      "expired": 0,
+      "evicted": 84,
+      "send_active_calls": 17348,
+      "reported_data_writes": 1462,
+      "accepted_data": 280,
+      "history_data": 1100,
+      "execution_failures": 0,
+      "created_filetime": 134391592804599035,
+      "cpu_seconds": 29.796875
+    },
+    "1": {
+      "elapsed": 236.48399999999674,
+      "utc": "2026-11-14T19:51:56.765093+00:00",
+      "index": 1,
+      "phase": "monitor_on",
+      "file_unix_ns": 1794685916597639400,
+      "ticks": 501286,
+      "novonet_present": true,
+      "probe_present": true,
+      "objects": 253,
+      "expired": 170,
+      "evicted": 168,
+      "send_active_calls": 417107,
+      "reported_data_writes": 41214,
+      "accepted_data": 560,
+      "history_data": 2182,
+      "execution_failures": 0,
+      "created_filetime": 134391592802823722,
+      "cpu_seconds": 12.671875
+    },
+    "2": {
+      "elapsed": 236.48399999999674,
+      "utc": "2026-11-14T19:51:56.770306+00:00",
+      "index": 2,
+      "phase": "monitor_on",
+      "file_unix_ns": 1794685916566130500,
+      "ticks": 516433,
+      "novonet_present": true,
+      "probe_present": true,
+      "objects": 255,
+      "expired": 165,
+      "evicted": 177,
+      "send_active_calls": 432122,
+      "reported_data_writes": 41454,
+      "accepted_data": 563,
+      "history_data": 2181,
+      "execution_failures": 0,
+      "created_filetime": 134391592802880235,
+      "cpu_seconds": 12.84375
+    },
+    "3": {
+      "elapsed": 236.51499999995576,
+      "utc": "2026-11-14T19:51:56.791300+00:00",
+      "index": 3,
+      "phase": "monitor_on",
+      "file_unix_ns": 1794685916628584600,
+      "ticks": 505081,
+      "novonet_present": true,
+      "probe_present": true,
+      "objects": 254,
+      "expired": 171,
+      "evicted": 168,
+      "send_active_calls": 420637,
+      "reported_data_writes": 41244,
+      "accepted_data": 562,
+      "history_data": 2182,
+      "execution_failures": 0,
+      "created_filetime": 134391592802918899,
+      "cpu_seconds": 12.90625
+    }
+  },
+  "terminal": {
+    "utc": "2026-11-14T19:52:01.905559+00:00",
+    "wall_seconds": 241.625,
+    "reason": "runner_error",
+    "error": "RuntimeError: phase marker not observed: MONITOR_OFF",
+    "processes": [
+      {
+        "index": 1,
+        "pid": 4676,
+        "kind": "node",
+        "exit_code": 1
+      },
+      {
+        "index": 2,
+        "pid": 20336,
+        "kind": "node",
+        "exit_code": 1
+      },
+      {
+        "index": 3,
+        "pid": 39204,
+        "kind": "node",
+        "exit_code": 1
+      },
+      {
+        "index": 0,
+        "pid": 41168,
+        "kind": "debugger",
+        "exit_code": 0
+      }
+    ],
+    "node_os_exit_codes": {
+      "1": {
+        "unsigned": 1,
+        "hex": "0x00000001",
+        "signed": 1
+      },
+      "2": {
+        "unsigned": 1,
+        "hex": "0x00000001",
+        "signed": 1
+      },
+      "3": {
+        "unsigned": 1,
+        "hex": "0x00000001",
+        "signed": 1
+      },
+      "0": {
+        "unsigned": 3221226324,
+        "hex": "0xc0000354",
+        "signed": -1073740972
+      }
+    },
+    "phases": {
+      "baseline_off": {
+        "available": true,
+        "samples": 20,
+        "median_report_interval_seconds": 6.286354064941406,
+        "ticks_per_second": 831.4202761554532,
+        "cpu_seconds_per_wall": 0.24818751898991265,
+        "first_elapsed": 0.9059999999590218,
+        "last_elapsed": 119.38999999995576
+      },
+      "monitor_on": {
+        "available": false,
+        "samples": 0
+      },
+      "recovery_off": {
+        "available": false,
+        "samples": 0
+      }
+    },
+    "original_fault_fixed": false,
+    "original_state_accessed": false,
+    "double_relay_resumed": false
+  },
+  "first_original_corruption_instruction_found": false,
+  "limits": [
+    "Only selected caller histories; global check has no prior history for unselected calls",
+    "No per-instruction trace of inner callee; intact return does not prove every temporary RBP value",
+    "Report write interval includes query/scheduling/serialization, not individual query latency",
+    "Fresh loopback state and current user, not historical packet order or LocalService heap layout",
+    "OS exit code alone cannot identify an external terminator; controller actions are separately retained"
+  ]
+}

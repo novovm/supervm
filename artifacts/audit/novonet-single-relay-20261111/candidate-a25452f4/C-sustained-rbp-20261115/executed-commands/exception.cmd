@@ -1,0 +1,1 @@
+.echo EXCEPTION_CAPTURE; .printf "EXCEPTION code=%x chance=%x pid=%x tid=%x eventip=%p rip=%p rsp=%p rbp=%p\n", @$exr_code, @$exr_chance, @$tpid, @$tid, @$eventip, @rip, @rsp, @rbp; .exr -1; .lastevent; r; kv; .if (@$t17 == 0) { r @$t17=1; .dump /ma D:/WEB3_AI/SUPERVM/target/c-original-rbp-sustained-20261115-run1/exception-private.dmp; }; .echo EXCEPTION_CONTINUE_NOT_HANDLED; gn

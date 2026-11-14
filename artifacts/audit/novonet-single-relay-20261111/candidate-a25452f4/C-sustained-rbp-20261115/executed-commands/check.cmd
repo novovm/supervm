@@ -1,0 +1,3 @@
+r @$t18 = @$t18+1
+.if (@rbp != (@rsp+100)) { .echo RBP_MISMATCH; .printf "EVENT MISMATCH group=%x tid=%x rip=%p rsp=%p rbp=%p\n", @$t10, @$tid, @rip, @rsp, @rbp; kv; .dump /ma D:/WEB3_AI/SUPERVM/target/c-original-rbp-sustained-20261115-run1/mismatch-private.dmp; bc *; .echo MISMATCH_CAPTURED_CONTINUE_TO_NATIVE_CHECK; g }
+.if ((@$t0 != 0) & (@$tid == @$t0) & (@rsp == (@$t4-150))) { .printf "EVENT COOKIE_PRECHECK group=%x tid=%x rip=%p rsp=%p rbp=%p\n", @$t10, @$tid, @rip, @rsp, @rbp; .if (@$t7 != 0) { .echo CONTROLLER_ACTION debugger_q unfinished_child; q }; bc 0; bc 1; bc 2; r @$t0 = 0; $$><D:/WEB3_AI/SUPERVM/target/c-original-rbp-sustained-20261115-run1/arm.cmd; } .else { gc }

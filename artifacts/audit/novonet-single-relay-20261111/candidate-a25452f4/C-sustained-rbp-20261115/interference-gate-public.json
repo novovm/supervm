@@ -1,0 +1,19 @@
+{
+  "baseline": {
+    "available": true,
+    "samples": 20,
+    "median_report_interval_seconds": 6.286354064941406,
+    "ticks_per_second": 831.4202761554532,
+    "cpu_seconds_per_wall": 0.24818751898991265,
+    "first_elapsed": 0.9059999999590218,
+    "last_elapsed": 119.38999999995576
+  },
+  "monitor": {
+    "available": false,
+    "samples": 0
+  },
+  "exceeds_limit": true,
+  "limit": 0.25,
+  "not_query_latency": true,
+  "not_randomized": true
+}

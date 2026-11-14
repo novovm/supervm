@@ -1,0 +1,20 @@
+{
+  "utc": "2026-11-14T19:48:00.199400+00:00",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "aoem_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "ntdll_sha256": "a0f81bf5c610c0ff0a550adc020a58446f214790c748057bb575042e972e6a34",
+  "new_loopback_novonet": true,
+  "probe_commands_written": false,
+  "relay_forwarding": false,
+  "original_state_accessed": false,
+  "baseline_seconds": 120,
+  "monitor_gate_seconds": 120,
+  "recovery_off_seconds": 60,
+  "maximum_node_seconds": 4500,
+  "maximum_wall_seconds": 4560,
+  "interference_limit": 0.25,
+  "minimum_progress_samples": 10,
+  "hardware_hit_limit": 100000,
+  "log_limit_bytes": 536870912,
+  "stop_without_retry": true
+}

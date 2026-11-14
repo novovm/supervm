@@ -1,0 +1,11 @@
+{"utc": "2026-11-14T19:48:00.283846+00:00", "elapsed": 0.0, "kind": "launch", "index": 1, "pid": 4676, "debugger": false}
+{"utc": "2026-11-14T19:48:00.288463+00:00", "elapsed": 0.0, "kind": "launch", "index": 2, "pid": 20336, "debugger": false}
+{"utc": "2026-11-14T19:48:00.292820+00:00", "elapsed": 0.014999999955762178, "kind": "launch", "index": 3, "pid": 39204, "debugger": false}
+{"utc": "2026-11-14T19:48:00.298591+00:00", "elapsed": 0.014999999955762178, "kind": "launch", "index": 0, "pid": 41168, "debugger": true}
+{"utc": "2026-11-14T19:48:00.662992+00:00", "elapsed": 0.375, "kind": "debuggee_handle_retained", "pid": 29764}
+{"utc": "2026-11-14T19:50:00.682323+00:00", "elapsed": 120.40599999995902, "kind": "debugger_break_request", "next_command": "$$><D:/WEB3_AI/SUPERVM/target/c-original-rbp-sustained-20261115-run1/on.cmd;"}
+{"utc": "2026-11-14T19:50:00.796545+00:00", "elapsed": 120.51499999995576, "kind": "phase", "value": "monitor_on"}
+{"utc": "2026-11-14T19:52:00.872215+00:00", "elapsed": 240.59399999998277, "kind": "debugger_break_request", "next_command": "$$><D:/WEB3_AI/SUPERVM/target/c-original-rbp-sustained-20261115-run1/off.cmd;"}
+{"utc": "2026-11-14T19:52:01.054989+00:00", "elapsed": 240.76499999995576, "kind": "controller_taskkill", "index": 1, "pid": 4676, "reason": "runner_error"}
+{"utc": "2026-11-14T19:52:01.368126+00:00", "elapsed": 241.09399999998277, "kind": "controller_taskkill", "index": 2, "pid": 20336, "reason": "runner_error"}
+{"utc": "2026-11-14T19:52:01.637435+00:00", "elapsed": 241.35899999999674, "kind": "controller_taskkill", "index": 3, "pid": 39204, "reason": "runner_error"}
