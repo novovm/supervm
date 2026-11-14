@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bounded File retention comparison; identical PT buffer and triggers. Not continuous PT qualification. -->
+<WindowsPerformanceRecorder Version="1.0" Author="validator-C">
+  <Profiles>
+    <SystemCollector Id="CPTSystemCollector" Name="C PT feasibility">
+      <BufferSize Value="64" />
+      <Buffers Value="64" />
+      <MaximumFileSize Value="512" FileMode="Sequential" />
+    </SystemCollector>
+    <SystemProvider Id="CPTSystemProvider">
+      <Keywords>
+        <Keyword Value="ProcessThread" />
+        <Keyword Value="Loader" />
+        <Keyword Value="CSwitch" />
+        <Keyword Value="SampledProfile" />
+      </Keywords>
+    </SystemProvider>
+    <HardwareCounter Id="CPTHardwareCounter" Strict="true">
+      <ProcessorTrace>
+        <BufferSize Value="4" />
+        <CodeMode Value="User" />
+        <Events>
+          <Event Value="SampledProfile" />
+        </Events>
+      </ProcessorTrace>
+    </HardwareCounter>
+    <Profile Id="C_PT_File.Light.File" Name="C_PT_File" Description="Bounded native PT file retention qualification" LoggingMode="File" DetailLevel="Light">
+      <Collectors>
+        <SystemCollectorId Value="CPTSystemCollector">
+          <SystemProviderId Value="CPTSystemProvider" />
+          <HardwareCounterId Value="CPTHardwareCounter" />
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+
+  </Profiles>
+</WindowsPerformanceRecorder>

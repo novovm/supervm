@@ -1,0 +1,15 @@
+{
+  "utc": "2026-11-14T20:51:16.2399320Z",
+  "profileParseExit": 0,
+  "profileDetailsExit": 0,
+  "powerShellParseErrors": 0,
+  "priorPreparationFailure": "MaximumFileSize shared with Memory profile was rejected by WPR 0xc558200a before any capture; unused Memory profile removed",
+  "nativeEtwMaximumFileSizeMB": 512,
+  "nativeEtwFileMode": "Sequential",
+  "monitorPollMilliseconds": 250,
+  "resourceThresholdMiB": 512,
+  "minimumFreeGiB": 8,
+  "stopMergeMinimumFreeGiB": 2,
+  "profileSha256": "b626501b7d9650338bc047e954a240990df931746ba5684b98d0edbb28cd044d",
+  "scriptSha256": "8d55087d4c07c989dd8bf9cba4d4e91843d134f9af276782f341157d87789618"
+}

@@ -1,0 +1,656 @@
+{
+  "kind": "actual_file_mode_retained_fragment_decode",
+  "pid": 39352,
+  "tid": 45712,
+  "base": "0x7ff616bb0000",
+  "faultQpc": 2999561890055,
+  "sourceExeMatchesPriorExactPdbMapping": true,
+  "targetPtCount": 14931,
+  "selectedFragmentCount": 6,
+  "firstTargetPtQpc": 2999411892772,
+  "lastTargetPtQpc": 2999561886542,
+  "lastTargetBeforeFaultQpc": 2999561886542,
+  "firstTargetAfterFaultQpc": null,
+  "faultMinusLastBeforeSeconds": 0.0003513,
+  "firstAfterMinusFaultSeconds": null,
+  "sections": [
+    {
+      "module": "PtQualification.exe",
+      "section": ".text",
+      "base": "0x7ff616bb1000",
+      "bytes": 402480,
+      "mapped": true,
+      "sha256": "d5a16ef8eeec9fa4de15b0c63513740a5c9fcd5754493d18018fc0c1dfab3bdb"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": ".text",
+      "base": "0x7ffce3151000",
+      "bytes": 1505020,
+      "mapped": true,
+      "sha256": "b641293c16b34c09158102e13a73f5d9bf689f574bc9f95294b1d4f0df0cdaf6"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": "SCPCFG",
+      "base": "0x7ffce32c1000",
+      "bytes": 688,
+      "mapped": true,
+      "sha256": "967ee519ba1bacda4f8d370eefa8d83741c83de915b0484fc0c114c9d35405e9"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": "SCPCFGFP",
+      "base": "0x7ffce32c2000",
+      "bytes": 688,
+      "mapped": true,
+      "sha256": "3f0a26096984f24a13ae29b26f1f79659c118b4661c5830662bacf41bf9469fb"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": "SCPCFGNP",
+      "base": "0x7ffce32c3000",
+      "bytes": 688,
+      "mapped": true,
+      "sha256": "d34e6384deadab7a818e5d2472c64288a44669d23cb6deb2e78a5533160568c0"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": "SCPCFGES",
+      "base": "0x7ffce32c4000",
+      "bytes": 688,
+      "mapped": true,
+      "sha256": "ceff412a81b887f09a0b89faf765739a1f99c821b3ada49a7c4cf48dc1e2ffea"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": "RT",
+      "base": "0x7ffce32c5000",
+      "bytes": 444,
+      "mapped": true,
+      "sha256": "ef2b2d6a759e9ba4bd0127c2bef42cb50b6a0844f83ce730b677159d1483e312"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": "PAGE",
+      "base": "0x7ffce32c6000",
+      "bytes": 2353,
+      "mapped": true,
+      "sha256": "72db7e40cad8e36e8879b410d0ec107c3dcdeef6b6d36cedac8d644400e4af06"
+    },
+    {
+      "module": "ntdll.dll",
+      "section": "fothk",
+      "base": "0x7ffce32c7000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "b63af0ec7bdf053c78e25998e8fce97935433500d1be96f4352acd1c8b529876"
+    },
+    {
+      "module": "kernel32.dll",
+      "section": ".text",
+      "base": "0x7ffce1731000",
+      "bytes": 546771,
+      "mapped": true,
+      "sha256": "9373589dea9b683a0d3b1de8afca80355d65b0ce24222682232a7355c39600ec"
+    },
+    {
+      "module": "kernel32.dll",
+      "section": "fothk",
+      "base": "0x7ffce17b7000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "22d21e32cc4bca3c441508f6688bf03cdb9ba0422ca7013796db59a6ad229bca"
+    },
+    {
+      "module": "KERNELBASE.dll",
+      "section": ".text",
+      "base": "0x7ffce02f1000",
+      "bytes": 1746327,
+      "mapped": true,
+      "sha256": "620aa40d729f1c861d69785f3528b19144ee0a605e94b92b2752fb74ea44612e"
+    },
+    {
+      "module": "KERNELBASE.dll",
+      "section": "fothk",
+      "base": "0x7ffce049c000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "08da5fddfbe1e343bb5a110c04251a717c15f9413b7cc2fcb48d414496d11db1"
+    },
+    {
+      "module": "dbghelp.dll",
+      "section": ".text",
+      "base": "0x7ffcdce81000",
+      "bytes": 1709564,
+      "mapped": true,
+      "sha256": "b9eecbd06a51063d36539b5ddd3f3eccac6a83d373f2d98cd4c94c2ed385dd1e"
+    },
+    {
+      "module": "dbghelp.dll",
+      "section": "fothk",
+      "base": "0x7ffcdd023000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "bf0834fe876c58acbe15c61952b978041bcd49fc4c5f8dcc2463b87b5b43845a"
+    },
+    {
+      "module": "ucrtbase.dll",
+      "section": ".text",
+      "base": "0x7ffce0931000",
+      "bytes": 1007971,
+      "mapped": true,
+      "sha256": "e956c46d0a5a3a7852e29ff45ad7c074bc74bc2f09ff0012bab44e738631a66a"
+    },
+    {
+      "module": "ucrtbase.dll",
+      "section": "fothk",
+      "base": "0x7ffce0a28000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "715537b8d608ba550684d46ba252cd81c32c1206bac263efdebcad86354d8807"
+    },
+    {
+      "module": "combase.dll",
+      "section": ".text",
+      "base": "0x7ffce1211000",
+      "bytes": 2643228,
+      "mapped": true,
+      "sha256": "b7c7716fff83394c8ddadeb3a0bd94591c16fbe4e76736d2da6672639faf5d25"
+    },
+    {
+      "module": "combase.dll",
+      "section": ".proxy",
+      "base": "0x7ffce1497000",
+      "bytes": 20549,
+      "mapped": true,
+      "sha256": "6037737da2443c5f0c8ee2e431a56ceef8a0fe83f03fcee873dfe24420b64661"
+    },
+    {
+      "module": "combase.dll",
+      "section": "fothk",
+      "base": "0x7ffce149d000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "33617a34a1647e69e04328406dec7016926896f1041eadd80aadeaf8ee5a5ef3"
+    },
+    {
+      "module": "rpcrt4.dll",
+      "section": ".text",
+      "base": "0x7ffce1801000",
+      "bytes": 865462,
+      "mapped": true,
+      "sha256": "f1a1b7b51711ca9ff714f986604762758850cd9688a3176b276ceea513eb98cd"
+    },
+    {
+      "module": "rpcrt4.dll",
+      "section": ".ndr64",
+      "base": "0x7ffce18d5000",
+      "bytes": 26475,
+      "mapped": true,
+      "sha256": "27d4c85f7ef94e840216d5ed960220a40f5d8daa33eda4a762ab88c76d03711b"
+    },
+    {
+      "module": "rpcrt4.dll",
+      "section": "fothk",
+      "base": "0x7ffce18dc000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "e479ba636427ae629f7da72012ebd4a9b3590e4fece47bc42f300a56dfaa7f71"
+    },
+    {
+      "module": "oleaut32.dll",
+      "section": ".text",
+      "base": "0x7ffce1ba1000",
+      "bytes": 655902,
+      "mapped": true,
+      "sha256": "b2359afa175f9fe2f35238af3a4ae8e881f36761142444330c014cd1d5aa45bc"
+    },
+    {
+      "module": "oleaut32.dll",
+      "section": "fothk",
+      "base": "0x7ffce1c42000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "aa40d9041879a7ce5e6d5be4a365797689efd485754684dafe2ce2534fdea340"
+    },
+    {
+      "module": "msvcp_win.dll",
+      "section": ".text",
+      "base": "0x7ffce0701000",
+      "bytes": 331562,
+      "mapped": true,
+      "sha256": "3114d98c2d53fc4c5021f8a74ac2b8fe02ecb3c54debae017bc3435f455e3284"
+    },
+    {
+      "module": "msvcp_win.dll",
+      "section": "fothk",
+      "base": "0x7ffce0752000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "32933f874ad56bc87aa15d05a1d1ca07e937b01f97f697284e7eeb73e90f8b56"
+    },
+    {
+      "module": "dbgcore.dll",
+      "section": ".text",
+      "base": "0x7ffcb4d51000",
+      "bytes": 154636,
+      "mapped": true,
+      "sha256": "b9428e90829fff6c5606831c2daebfe2a35edaf9ccce5698ad8271f856078d8a"
+    },
+    {
+      "module": "dbgcore.dll",
+      "section": "fothk",
+      "base": "0x7ffcb4d77000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "009dbcd6c0ea5e9c5a380273877c091efbdb56d1d57b9e2e63ca640a2246b965"
+    },
+    {
+      "module": "bcryptPrimitives.dll",
+      "section": ".text",
+      "base": "0x7ffce0871000",
+      "bytes": 526545,
+      "mapped": true,
+      "sha256": "71f029e6e53f12808e20bc9e006918c31b8f844b671b29f480efeca520c29fc0"
+    },
+    {
+      "module": "bcryptPrimitives.dll",
+      "section": "fothk",
+      "base": "0x7ffce08f2000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "bedf3a673d9942bb0f97d5710c7d9f49d24cf85b8e6dbed8a785c3492a6ac76b"
+    },
+    {
+      "module": "advapi32.dll",
+      "section": ".text",
+      "base": "0x7ffce2181000",
+      "bytes": 469284,
+      "mapped": true,
+      "sha256": "1aef9f1406fbaaff58d1b390c2583fc3e65f72add953afed53fd64a9d77ffe13"
+    },
+    {
+      "module": "advapi32.dll",
+      "section": "fothk",
+      "base": "0x7ffce21f4000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "cc84baac796c9ef208f92833dea399c7ef0028084884d9e21bb12598663debf8"
+    },
+    {
+      "module": "msvcrt.dll",
+      "section": ".text",
+      "base": "0x7ffce1af1000",
+      "bytes": 509769,
+      "mapped": true,
+      "sha256": "52f782ab52e471071f65c3014730b02964b9f54f849b8dc5377ffb16978b34b3"
+    },
+    {
+      "module": "msvcrt.dll",
+      "section": "fothk",
+      "base": "0x7ffce1b6e000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "3786c5915ebc2c3e904d6e74b089f2036805c7443c2469cde1aad88bc17b4d23"
+    },
+    {
+      "module": "sechost.dll",
+      "section": ".text",
+      "base": "0x7ffce2db1000",
+      "bytes": 454028,
+      "mapped": true,
+      "sha256": "6f7994a83150b569f6e81e0272805d1b8419e69a09d786962a4d1a6739b4348e"
+    },
+    {
+      "module": "sechost.dll",
+      "section": "fothk",
+      "base": "0x7ffce2e20000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "4fcf5fc38b7de16c88b0aafe5723651bf4311f58bc8e45bdf912a72e5b783089"
+    },
+    {
+      "module": "version.dll",
+      "section": ".text",
+      "base": "0x7ffcdda61000",
+      "bytes": 10704,
+      "mapped": true,
+      "sha256": "47c406b68920ba992f29e3c8170e88770dd51c023f9bc9d4000d9bdb529365b2"
+    },
+    {
+      "module": "version.dll",
+      "section": "fothk",
+      "base": "0x7ffcdda64000",
+      "bytes": 4096,
+      "mapped": true,
+      "sha256": "d87e095b6faeb6bd183790e252c72b060682756050ed1ae6bff8910d842c67b0"
+    },
+    {
+      "module": "psapi.dll",
+      "section": ".text",
+      "base": "0x7ffce1201000",
+      "bytes": 1670,
+      "mapped": true,
+      "sha256": "747432fecc082658b4a9e4c6227ca831e6898f7753ac683f2dcfe84218ce763c"
+    }
+  ],
+  "fragments": [
+    {
+      "header": {
+        "index": 14925,
+        "qpc": 2999561837028,
+        "pid": 39352,
+        "tid": 45712,
+        "cpu": 8,
+        "options": "0x3000001",
+        "bufferBytes": 4096,
+        "writePosition": 4032,
+        "payloadBytes": 4128,
+        "secondsFromWorkStart": 14.995172,
+        "secondsFromFault": -0.0053027
+      },
+      "ptSha256": "e8d28abba48c0a21a41e17addd1e3194cb29d301033026c5bdc8af467915ca21",
+      "packetExit": 0,
+      "packetErrors": [],
+      "packetStderr": "",
+      "packetCounters": {
+        "psb": 2,
+        "ovf": 0,
+        "tsc": 0,
+        "cyc": 0
+      },
+      "instructionExit": 0,
+      "instructionErrors": [],
+      "instructionStderr": "",
+      "instructionOutputLines": 150376,
+      "functionEntryOccurrences": {
+        "BranchOdd": 3783,
+        "BranchEven": 3738
+      },
+      "firstInstructions": [
+        "00000000000000a7  00007ff616bb13c3 e8 68 fc ff ff                                call 0x7ff616bb1030",
+        "00000000000000a7  00007ff616bb1030 48 b8 b9 05 e5 1c 6d 47 58 bf                 mov rax, 0xbf58476d1ce505b9",
+        "00000000000000a7  00007ff616bb103a 48 0f af c1                                   imul rax, rcx",
+        "00000000000000a7  00007ff616bb103e c3                                            ret ",
+        "00000000000000a7  00007ff616bb13c8 eb 05                                         jmp 0x7ff616bb13cf",
+        "00000000000000a7  00007ff616bb13cf 48 8b c8                                      mov rcx, rax",
+        "00000000000000a7  00007ff616bb13d2 83 c3 ff                                      add ebx, 0xffffffff",
+        "00000000000000a7  00007ff616bb13d5 75 c9                                         jnz 0x7ff616bb13a0",
+        "00000000000000a7  00007ff616bb13a0 48 8b c1                                      mov rax, rcx",
+        "00000000000000a7  00007ff616bb13a3 48 c1 e8 0c                                   shr rax, 0xc",
+        "00000000000000a7  00007ff616bb13a7 48 33 c1                                      xor rax, rcx",
+        "00000000000000a7  00007ff616bb13aa 48 8b d0                                      mov rdx, rax",
+        "00000000000000a7  00007ff616bb13ad 48 c1 e2 19                                   shl rdx, 0x19",
+        "00000000000000a7  00007ff616bb13b1 48 33 d0                                      xor rdx, rax",
+        "00000000000000a7  00007ff616bb13b4 48 8b ca                                      mov rcx, rdx",
+        "00000000000000a7  00007ff616bb13b7 48 c1 e9 1b                                   shr rcx, 0x1b"
+      ]
+    },
+    {
+      "header": {
+        "index": 14926,
+        "qpc": 2999561846951,
+        "pid": 39352,
+        "tid": 45712,
+        "cpu": 8,
+        "options": "0x3000001",
+        "bufferBytes": 4096,
+        "writePosition": 176,
+        "payloadBytes": 4128,
+        "secondsFromWorkStart": 14.9961643,
+        "secondsFromFault": -0.0043104
+      },
+      "ptSha256": "273505d2cabae1da1f635a784829ad7dddb149c4570c2feb5e134f42e5523fa5",
+      "packetExit": 0,
+      "packetErrors": [],
+      "packetStderr": "",
+      "packetCounters": {
+        "psb": 2,
+        "ovf": 0,
+        "tsc": 0,
+        "cyc": 0
+      },
+      "instructionExit": 0,
+      "instructionErrors": [],
+      "instructionStderr": "",
+      "instructionOutputLines": 134260,
+      "functionEntryOccurrences": {
+        "BranchOdd": 3328,
+        "BranchEven": 3383
+      },
+      "firstInstructions": [
+        "0000000000000230  00007ff616bb1030 48 b8 b9 05 e5 1c 6d 47 58 bf                 mov rax, 0xbf58476d1ce505b9",
+        "0000000000000234  00007ff616bb103a 48 0f af c1                                   imul rax, rcx",
+        "0000000000000234  00007ff616bb103e c3                                            ret ",
+        "0000000000000234  00007ff616bb13c8 eb 05                                         jmp 0x7ff616bb13cf",
+        "0000000000000234  00007ff616bb13cf 48 8b c8                                      mov rcx, rax",
+        "0000000000000234  00007ff616bb13d2 83 c3 ff                                      add ebx, 0xffffffff",
+        "0000000000000234  00007ff616bb13d5 75 c9                                         jnz 0x7ff616bb13a0",
+        "0000000000000234  00007ff616bb13a0 48 8b c1                                      mov rax, rcx",
+        "0000000000000234  00007ff616bb13a3 48 c1 e8 0c                                   shr rax, 0xc",
+        "0000000000000234  00007ff616bb13a7 48 33 c1                                      xor rax, rcx",
+        "0000000000000234  00007ff616bb13aa 48 8b d0                                      mov rdx, rax",
+        "0000000000000234  00007ff616bb13ad 48 c1 e2 19                                   shl rdx, 0x19",
+        "0000000000000234  00007ff616bb13b1 48 33 d0                                      xor rdx, rax",
+        "0000000000000234  00007ff616bb13b4 48 8b ca                                      mov rcx, rdx",
+        "0000000000000234  00007ff616bb13b7 48 c1 e9 1b                                   shr rcx, 0x1b",
+        "0000000000000234  00007ff616bb13bb 48 33 ca                                      xor rcx, rdx"
+      ]
+    },
+    {
+      "header": {
+        "index": 14927,
+        "qpc": 2999561856778,
+        "pid": 39352,
+        "tid": 45712,
+        "cpu": 8,
+        "options": "0x3000001",
+        "bufferBytes": 4096,
+        "writePosition": 320,
+        "payloadBytes": 4128,
+        "secondsFromWorkStart": 14.997147,
+        "secondsFromFault": -0.0033277
+      },
+      "ptSha256": "3d85167ac1f19bad8a065d5a97ac75705dc2dd5f69f81c2a0e684206ceddc8ae",
+      "packetExit": 0,
+      "packetErrors": [],
+      "packetStderr": "",
+      "packetCounters": {
+        "psb": 2,
+        "ovf": 0,
+        "tsc": 0,
+        "cyc": 0
+      },
+      "instructionExit": 0,
+      "instructionErrors": [],
+      "instructionStderr": "",
+      "instructionOutputLines": 128398,
+      "functionEntryOccurrences": {
+        "BranchEven": 3207,
+        "BranchOdd": 3210,
+        "ExecuteChunk": 1
+      },
+      "firstInstructions": [
+        "00000000000002a7  00007ff616bb13b4 48 8b ca                                      mov rcx, rdx",
+        "00000000000002a7  00007ff616bb13b7 48 c1 e9 1b                                   shr rcx, 0x1b",
+        "00000000000002a7  00007ff616bb13bb 48 33 ca                                      xor rcx, rdx",
+        "00000000000002a7  00007ff616bb13be f6 c1 01                                      test cl, 0x1",
+        "00000000000002a7  00007ff616bb13c1 74 07                                         jz 0x7ff616bb13ca",
+        "00000000000002a7  00007ff616bb13ca e8 41 fc ff ff                                call 0x7ff616bb1010",
+        "00000000000002a7  00007ff616bb1010 48 8b c1                                      mov rax, rcx",
+        "00000000000002a7  00007ff616bb1013 48 ba 15 7c 4a 7f b9 79 37 9e                 mov rdx, 0x9e3779b97f4a7c15",
+        "00000000000002a7  00007ff616bb101d 48 0f af c2                                   imul rax, rdx",
+        "00000000000002a7  00007ff616bb1021 48 c1 e9 11                                   shr rcx, 0x11",
+        "00000000000002a7  00007ff616bb1025 48 33 c1                                      xor rax, rcx",
+        "00000000000002a7  00007ff616bb1028 c3                                            ret ",
+        "00000000000002a7  00007ff616bb13cf 48 8b c8                                      mov rcx, rax",
+        "00000000000002a7  00007ff616bb13d2 83 c3 ff                                      add ebx, 0xffffffff",
+        "00000000000002a7  00007ff616bb13d5 75 c9                                         jnz 0x7ff616bb13a0",
+        "00000000000002a7  00007ff616bb13a0 48 8b c1                                      mov rax, rcx"
+      ]
+    },
+    {
+      "header": {
+        "index": 14928,
+        "qpc": 2999561866766,
+        "pid": 39352,
+        "tid": 45712,
+        "cpu": 8,
+        "options": "0x3000001",
+        "bufferBytes": 4096,
+        "writePosition": 2880,
+        "payloadBytes": 4128,
+        "secondsFromWorkStart": 14.9981458,
+        "secondsFromFault": -0.0023289
+      },
+      "ptSha256": "c6420561afb6f2726fe08b3fb0a2a350ea8c8a0bc57b78dd1f67c2192fd05ff5",
+      "packetExit": 0,
+      "packetErrors": [],
+      "packetStderr": "",
+      "packetCounters": {
+        "psb": 2,
+        "ovf": 0,
+        "tsc": 0,
+        "cyc": 0
+      },
+      "instructionExit": 0,
+      "instructionErrors": [],
+      "instructionStderr": "",
+      "instructionOutputLines": 91437,
+      "functionEntryOccurrences": {
+        "BranchOdd": 2344,
+        "BranchEven": 2233
+      },
+      "firstInstructions": [
+        "0000000000000667  00007ff616bb13ad 48 c1 e2 19                                   shl rdx, 0x19",
+        "0000000000000667  00007ff616bb13b1 48 33 d0                                      xor rdx, rax",
+        "0000000000000667  00007ff616bb13b4 48 8b ca                                      mov rcx, rdx",
+        "0000000000000667  00007ff616bb13b7 48 c1 e9 1b                                   shr rcx, 0x1b",
+        "0000000000000667  00007ff616bb13bb 48 33 ca                                      xor rcx, rdx",
+        "0000000000000667  00007ff616bb13be f6 c1 01                                      test cl, 0x1",
+        "0000000000000667  00007ff616bb13c1 74 07                                         jz 0x7ff616bb13ca",
+        "0000000000000667  00007ff616bb13c3 e8 68 fc ff ff                                call 0x7ff616bb1030",
+        "0000000000000667  00007ff616bb1030 48 b8 b9 05 e5 1c 6d 47 58 bf                 mov rax, 0xbf58476d1ce505b9",
+        "0000000000000667  00007ff616bb103a 48 0f af c1                                   imul rax, rcx",
+        "0000000000000667  00007ff616bb103e c3                                            ret ",
+        "0000000000000667  00007ff616bb13c8 eb 05                                         jmp 0x7ff616bb13cf",
+        "0000000000000667  00007ff616bb13cf 48 8b c8                                      mov rcx, rax",
+        "0000000000000667  00007ff616bb13d2 83 c3 ff                                      add ebx, 0xffffffff",
+        "0000000000000667  00007ff616bb13d5 75 c9                                         jnz 0x7ff616bb13a0",
+        "0000000000000667  00007ff616bb13a0 48 8b c1                                      mov rax, rcx"
+      ]
+    },
+    {
+      "header": {
+        "index": 14929,
+        "qpc": 2999561876661,
+        "pid": 39352,
+        "tid": 45712,
+        "cpu": 8,
+        "options": "0x3000001",
+        "bufferBytes": 4096,
+        "writePosition": 2288,
+        "payloadBytes": 4128,
+        "secondsFromWorkStart": 14.9991353,
+        "secondsFromFault": -0.0013394
+      },
+      "ptSha256": "33e705b3bd7aa8a4e2d8cc10250b21edd2c06561fabec9f3b4279b143df35710",
+      "packetExit": 0,
+      "packetErrors": [],
+      "packetStderr": "",
+      "packetCounters": {
+        "psb": 1,
+        "ovf": 0,
+        "tsc": 0,
+        "cyc": 0
+      },
+      "instructionExit": 0,
+      "instructionErrors": [],
+      "instructionStderr": "",
+      "instructionOutputLines": 47439,
+      "functionEntryOccurrences": {
+        "BranchEven": 1195,
+        "BranchOdd": 1176
+      },
+      "firstInstructions": [
+        "0000000000000af7  00007ff616bb13ca e8 41 fc ff ff                                call 0x7ff616bb1010",
+        "0000000000000af7  00007ff616bb1010 48 8b c1                                      mov rax, rcx",
+        "0000000000000af7  00007ff616bb1013 48 ba 15 7c 4a 7f b9 79 37 9e                 mov rdx, 0x9e3779b97f4a7c15",
+        "0000000000000af7  00007ff616bb101d 48 0f af c2                                   imul rax, rdx",
+        "0000000000000af7  00007ff616bb1021 48 c1 e9 11                                   shr rcx, 0x11",
+        "0000000000000af7  00007ff616bb1025 48 33 c1                                      xor rax, rcx",
+        "0000000000000af7  00007ff616bb1028 c3                                            ret ",
+        "0000000000000af7  00007ff616bb13cf 48 8b c8                                      mov rcx, rax",
+        "0000000000000af7  00007ff616bb13d2 83 c3 ff                                      add ebx, 0xffffffff",
+        "0000000000000af7  00007ff616bb13d5 75 c9                                         jnz 0x7ff616bb13a0",
+        "0000000000000af7  00007ff616bb13a0 48 8b c1                                      mov rax, rcx",
+        "0000000000000af7  00007ff616bb13a3 48 c1 e8 0c                                   shr rax, 0xc",
+        "0000000000000af7  00007ff616bb13a7 48 33 c1                                      xor rax, rcx",
+        "0000000000000af7  00007ff616bb13aa 48 8b d0                                      mov rdx, rax",
+        "0000000000000af7  00007ff616bb13ad 48 c1 e2 19                                   shl rdx, 0x19",
+        "0000000000000af7  00007ff616bb13b1 48 33 d0                                      xor rdx, rax"
+      ]
+    },
+    {
+      "header": {
+        "index": 14930,
+        "qpc": 2999561886542,
+        "pid": 39352,
+        "tid": 45712,
+        "cpu": 8,
+        "options": "0x3000001",
+        "bufferBytes": 4096,
+        "writePosition": 4016,
+        "payloadBytes": 4128,
+        "secondsFromWorkStart": 15.0001234,
+        "secondsFromFault": -0.0003513
+      },
+      "ptSha256": "a335d0e02322d53d66a6668962bbfd5b056bbafc101a4d9d85a5cb4cb0a4a651",
+      "packetExit": 0,
+      "packetErrors": [],
+      "packetStderr": "",
+      "packetCounters": {
+        "psb": 2,
+        "ovf": 0,
+        "tsc": 0,
+        "cyc": 0
+      },
+      "instructionExit": 0,
+      "instructionErrors": [],
+      "instructionStderr": "",
+      "instructionOutputLines": 136293,
+      "functionEntryOccurrences": {
+        "BranchOdd": 3419,
+        "BranchEven": 3396
+      },
+      "firstInstructions": [
+        "00000000000001f8  00007ff616bb1028 c3                                            ret ",
+        "00000000000001fc  00007ff616bb13cf 48 8b c8                                      mov rcx, rax",
+        "00000000000001fc  00007ff616bb13d2 83 c3 ff                                      add ebx, 0xffffffff",
+        "00000000000001fc  00007ff616bb13d5 75 c9                                         jnz 0x7ff616bb13a0",
+        "00000000000001fc  00007ff616bb13a0 48 8b c1                                      mov rax, rcx",
+        "00000000000001fc  00007ff616bb13a3 48 c1 e8 0c                                   shr rax, 0xc",
+        "00000000000001fc  00007ff616bb13a7 48 33 c1                                      xor rax, rcx",
+        "00000000000001fc  00007ff616bb13aa 48 8b d0                                      mov rdx, rax",
+        "00000000000001fc  00007ff616bb13ad 48 c1 e2 19                                   shl rdx, 0x19",
+        "00000000000001fc  00007ff616bb13b1 48 33 d0                                      xor rdx, rax",
+        "00000000000001fc  00007ff616bb13b4 48 8b ca                                      mov rcx, rdx",
+        "00000000000001fc  00007ff616bb13b7 48 c1 e9 1b                                   shr rcx, 0x1b",
+        "00000000000001fc  00007ff616bb13bb 48 33 ca                                      xor rcx, rdx",
+        "00000000000001fc  00007ff616bb13be f6 c1 01                                      test cl, 0x1",
+        "00000000000001fc  00007ff616bb13c1 74 07                                         jz 0x7ff616bb13ca",
+        "00000000000001fc  00007ff616bb13c3 e8 68 fc ff ff                                call 0x7ff616bb1030"
+      ]
+    }
+  ],
+  "ptdumpSha256": "af7bbe84af3f0c1d19b774419412ff0e0a59de76450c6d3bd4aa8b35735a31d6",
+  "ptxedSha256": "34842e82b4255069e2443f64b157c835f6ce6fd822a96f58510eeb514c0362b4",
+  "limitations": [
+    "PT header QPC associates a record, not every instruction timestamp.",
+    "Fragments decode independently; no full-run continuity is implied.",
+    "File mode preserves emitted events, not necessarily all hardware instructions between triggers.",
+    "PT does not record per-instruction RBP values.",
+    "This target is a declared qualification process, not original NOVOVM root-cause evidence."
+  ]
+}

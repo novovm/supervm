@@ -1,6 +1,19 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-15：C原生PT已实际采集并解码，同次异常关联有证据，故障前窗口仍缺失
+## CURRENT 2026-11-15：C已实测File保留，线程/模块齐全，异常尾部控制流仍未通过
+
+C独立核验旧Memory ETL：29个非零LastDroppedTimes槽逐项匹配各CPU保留PT起点，
+全CPU重筛目标仍只有7条，排除仅为Unknown/PID解析漏关联。新File模式实际运行同一
+资格EXE，4KiB/PT与SampledProfile不变，fault/fault基线修正线程差异；WPR启停与解码
+退出均0，ETL178651136字节、同次FullDump25516559字节，目标退出为声明的0xE0424354。
+目标PT14931条，线程创建/退出、34条模块事件及10716条CSwitch保留，尾部间隔从7.742秒
+缩为351.3微秒；但末6段实际解码仍无RaiseException/handler路径。容量上界也证明
+这份ETL不可能包含完整15秒条件分支历史，不把旁带齐全当作连续指令记录。
+短时吞吐差-3.45%非原节点资格。新增原生CSwitch触发已准备，但第二次UAC取消、未运行。
+原节点/原库/身份/失败现场保留，未启动a254+AOEM966持续负载、无修复、双中继暂停。
+不等A签收；公开结果与取消原件见 [C-pt-retention-20261115](C-pt-retention-20261115/README.md)。
+
+## PRIOR 2026-11-15：C原生PT已实际采集并解码，同次异常关联有证据，故障前窗口仍缺失
 
 用户重新确认UAC后，C只运行新隔离资格进程：15秒基线与15秒PT，自定义资格异常明确标记。
 WPR start/stop均0，ETL约20.7MB、FullDump约25.5MB；目标PID28712/TID42560，原异常上下文

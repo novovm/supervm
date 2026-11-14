@@ -1,0 +1,120 @@
+{
+  "pid": 39352,
+  "tid": 45712,
+  "faultQpc": 2999561890055,
+  "workEndQpc": 2999561889820,
+  "exceptionRip": "0x00007ffce03b569a",
+  "selected": [
+    {
+      "index": 14925,
+      "qpc": 2999561837028,
+      "decodedInstructions": 150376,
+      "lastInstruction": "0x7ff616bb13ca",
+      "namedInstructionOccurrences": {
+        "Work_RaiseException_call": 0,
+        "RaiseException_entry": 0,
+        "exception_context_rip": 0,
+        "CaptureQualificationException_entry": 0,
+        "CaptureQualificationException_Wait_call": 0,
+        "KernelBase_WaitForSingleObject": 0,
+        "KernelBase_WaitForSingleObjectEx": 0,
+        "Kernel32_WaitForSingleObject": 0
+      },
+      "captureHandlerRangeInstructions": 0,
+      "raiseExceptionRangeInstructions": 0
+    },
+    {
+      "index": 14926,
+      "qpc": 2999561846951,
+      "decodedInstructions": 134260,
+      "lastInstruction": "0x7ff616bb13c8",
+      "namedInstructionOccurrences": {
+        "Work_RaiseException_call": 0,
+        "RaiseException_entry": 0,
+        "exception_context_rip": 0,
+        "CaptureQualificationException_entry": 0,
+        "CaptureQualificationException_Wait_call": 0,
+        "KernelBase_WaitForSingleObject": 0,
+        "KernelBase_WaitForSingleObjectEx": 0,
+        "Kernel32_WaitForSingleObject": 0
+      },
+      "captureHandlerRangeInstructions": 0,
+      "raiseExceptionRangeInstructions": 0
+    },
+    {
+      "index": 14927,
+      "qpc": 2999561856778,
+      "decodedInstructions": 128398,
+      "lastInstruction": "0x7ff616bb13ca",
+      "namedInstructionOccurrences": {
+        "Work_RaiseException_call": 0,
+        "RaiseException_entry": 0,
+        "exception_context_rip": 0,
+        "CaptureQualificationException_entry": 0,
+        "CaptureQualificationException_Wait_call": 0,
+        "KernelBase_WaitForSingleObject": 0,
+        "KernelBase_WaitForSingleObjectEx": 0,
+        "Kernel32_WaitForSingleObject": 0
+      },
+      "captureHandlerRangeInstructions": 0,
+      "raiseExceptionRangeInstructions": 0
+    },
+    {
+      "index": 14928,
+      "qpc": 2999561866766,
+      "decodedInstructions": 91437,
+      "lastInstruction": "0x7ff616bb13c3",
+      "namedInstructionOccurrences": {
+        "Work_RaiseException_call": 0,
+        "RaiseException_entry": 0,
+        "exception_context_rip": 0,
+        "CaptureQualificationException_entry": 0,
+        "CaptureQualificationException_Wait_call": 0,
+        "KernelBase_WaitForSingleObject": 0,
+        "KernelBase_WaitForSingleObjectEx": 0,
+        "Kernel32_WaitForSingleObject": 0
+      },
+      "captureHandlerRangeInstructions": 0,
+      "raiseExceptionRangeInstructions": 0
+    },
+    {
+      "index": 14929,
+      "qpc": 2999561876661,
+      "decodedInstructions": 47439,
+      "lastInstruction": "0x7ff616bb13c1",
+      "namedInstructionOccurrences": {
+        "Work_RaiseException_call": 0,
+        "RaiseException_entry": 0,
+        "exception_context_rip": 0,
+        "CaptureQualificationException_entry": 0,
+        "CaptureQualificationException_Wait_call": 0,
+        "KernelBase_WaitForSingleObject": 0,
+        "KernelBase_WaitForSingleObjectEx": 0,
+        "Kernel32_WaitForSingleObject": 0
+      },
+      "captureHandlerRangeInstructions": 0,
+      "raiseExceptionRangeInstructions": 0
+    },
+    {
+      "index": 14930,
+      "qpc": 2999561886542,
+      "decodedInstructions": 136293,
+      "lastInstruction": "0x7ff616bb13c3",
+      "namedInstructionOccurrences": {
+        "Work_RaiseException_call": 0,
+        "RaiseException_entry": 0,
+        "exception_context_rip": 0,
+        "CaptureQualificationException_entry": 0,
+        "CaptureQualificationException_Wait_call": 0,
+        "KernelBase_WaitForSingleObject": 0,
+        "KernelBase_WaitForSingleObjectEx": 0,
+        "Kernel32_WaitForSingleObject": 0
+      },
+      "captureHandlerRangeInstructions": 0,
+      "raiseExceptionRangeInstructions": 0
+    }
+  ],
+  "allSelectedInstructions": 688203,
+  "missingPath": "Final retained fragment ends in ExecuteChunk calling BranchOdd; no selected fragment reaches the caller RaiseException instruction, RaiseException, captured exception RIP, or handler/wait call.",
+  "qpcCaveat": "faultQpc is taken in CaptureQualificationException after copying exception context, not a hardware timestamp of the original raise instruction."
+}

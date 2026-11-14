@@ -1,0 +1,67 @@
+{
+  "status": "ENTIRE_15_SECOND_BRANCH_HISTORY_IMPOSSIBLE_IN_THIS_RETAINED_PT_DATA",
+  "scope": "run-file01 only; does not locate a specific missing instruction or infer original NOVOVM root cause",
+  "pid": 39352,
+  "tid": 45712,
+  "iterationsReported": 3590651904,
+  "completedCallsOf16384Iterations": 219156,
+  "sourceIterationCounter": "PtQualification.cpp increments by 16384 only after each completed ExecuteChunk call",
+  "exactExeSha256": "a1b90b9b100750732cc3e4aac5672ae3319bac1a64ca70dbb7fedb661a11c5de",
+  "conditionalBranchMachineCode": [
+    {
+      "rva": "0x13c1",
+      "bytes": "74 07",
+      "instruction": "jz 0x13ca",
+      "occurrencesPerCompletedIteration": 1
+    },
+    {
+      "rva": "0x13d5",
+      "bytes": "75 c9",
+      "instruction": "jnz 0x13a0",
+      "occurrencesPerCompletedIteration": 1
+    }
+  ],
+  "conservativeMinimumConditionalOutcomes": 3590651904,
+  "actualTwoJccOutcomes": 7181303808,
+  "targetPtRecords": 14931,
+  "targetRawBufferBytes": 60773704,
+  "targetGenerousMaximumOutcomeBits": 486189632,
+  "targetMaximumFractionOfConservativeMinimum": 0.13540427894399423,
+  "allSystemPtRecords": 38302,
+  "allSystemRawBufferBytes": 121386176,
+  "allSystemGenerousMaximumOutcomeBits": 971089408,
+  "allSystemMaximumFractionOfConservativeMinimum": 0.27044933175454927,
+  "proof": "Even granting every bit of every retained system-wide PT buffer to this target as a conditional-branch outcome, the bit count is below one outcome per measured loop iteration. Intel TNT represents one branch outcome per valid payload bit. Thus all the measured branch history cannot be present.",
+  "conservatism": [
+    "Uses one Jcc per iteration although exact machine code has two.",
+    "Counts packet headers, padding, other packet types, duplicates, and overlapped fragments as if all were useful outcome bits.",
+    "The system-wide bound grants every other process and thread PT byte to the target, avoiding dependence on header attribution.",
+    "Does not rely on the compressed ETL file size; sums decoded event raw-buffer sizes.",
+    "No all-fragment instruction decode or new target execution was performed."
+  ],
+  "limitations": [
+    "This is a bound on retained conditional-outcome representation, not a measured percentage of all instructions.",
+    "It does not prove that a particular short pre-fault interval could not be fully retained.",
+    "It does not reconstruct branch outcome values or RBP values.",
+    "It does not locate where omitted packets were overwritten or why a specific event is absent."
+  ],
+  "sources": [
+    {
+      "url": "https://cdrdv2-public.intel.com/789585/326019-sdm-vol-3c.pdf",
+      "section": "Intel SDM 326019-081US, 33.4.2.1, Table 33-16, printed page 33-40 / PDF page 272",
+      "rule": "N valid TNT payload bits apply to N conditional branches or compressed RETs"
+    },
+    {
+      "url": "https://github.com/intel/libipt/blob/7f8575ce9bf25e48cf03983c12859e1edb592008/libipt/src/pt_tnt_cache.c#L52",
+      "rule": "pt_tnt_cache_query consumes one bit by shifting the index right once"
+    },
+    {
+      "url": "https://github.com/intel/libipt/blob/7f8575ce9bf25e48cf03983c12859e1edb592008/libipt/src/pt_query_decoder.c#L426",
+      "rule": "pt_qry_cond_branch obtains one taken/not-taken result from that cache"
+    }
+  ],
+  "inputSha256": {
+    "result": "60e22012347bdf5130755292ef2f8501b3b4b5e2a5f9aa78f056340fac65926c",
+    "allHeaderMetadata": "a2dc8a3c94fe15deb0852d1013e71a04092784b66c5ea81c37a1ef07efc2e64e"
+  }
+}

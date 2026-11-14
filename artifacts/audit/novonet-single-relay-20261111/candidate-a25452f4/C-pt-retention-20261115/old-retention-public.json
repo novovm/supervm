@@ -1,0 +1,413 @@
+{
+  "scope": "Offline audit of already captured run-01. No trace or target run.",
+  "sourceHashes": {
+    "run-01\\qualification.etl": "6c13386e1f3f54fff723074b50b9255baa66690b24e4e5eaaff8bf80e3e3ba78",
+    "run-01\\decode\\tracerpt-private.xml": "434c16244cd4e5744d4d4da2983cc57f2319cd46ab37d792cf28aa5fca0a5669",
+    "run-01\\decode\\ipt-headers-private.json": "c280eba11b6338c27a1b603e5e46c5d6f84bbb649d4944eabfe205c7cf235d79",
+    "run-01\\traced-target\\result.json": "499ed7009f07e413172caa41c5b721c8bb6810985248ed241b18d60dcd7cb35e"
+  },
+  "timestampDerivation": "All deltas use raw internal PT QPC and target work/fault QPC; divide differences by qpcFrequency. No display-timezone conversion.",
+  "qpcFrequency": 10000000,
+  "workStartQpc": 2982108845092,
+  "faultQpc": 2982258850210,
+  "traceHeaders": [
+    {
+      "NumberOfProcessors": "32",
+      "EventsLost": "0",
+      "BuffersLost": "0",
+      "PerfFreq": "10000000",
+      "LogFileMode": "0x10001",
+      "BuffersWritten": "158",
+      "BufferSize": "131072"
+    }
+  ],
+  "lastDroppedTimes": {
+    "eventGuid": "{68fdd900-4a3e-11d1-84f4-0000f80464e3}",
+    "opcode": 82,
+    "renderedName": "LastDroppedTimes",
+    "observedIdenticalEventCount": 2,
+    "arrayLength": 32,
+    "nonzeroCount": 29,
+    "allNonzeroIndexesMatchSameCpuFirstPt": true,
+    "nonzeroBoundaryAfterFaultCount": 15,
+    "mapping": [
+      {
+        "metadataIndex": 0,
+        "cpu": 0,
+        "lastDroppedTimeQpc": 2982292845770,
+        "ptCount": 100,
+        "firstRetainedPtQpc": 2982292845770,
+        "lastRetainedPtQpc": 2982299107981,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.4000678,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 1,
+        "cpu": 1,
+        "lastDroppedTimeQpc": 2982181363516,
+        "ptCount": 7,
+        "firstRetainedPtQpc": 2982181363516,
+        "lastRetainedPtQpc": 2982181423496,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.2518424,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 2,
+        "cpu": 2,
+        "lastDroppedTimeQpc": 2982296136946,
+        "ptCount": 50,
+        "firstRetainedPtQpc": 2982296136946,
+        "lastRetainedPtQpc": 2982299116246,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.7291854,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 3,
+        "cpu": 3,
+        "lastDroppedTimeQpc": 0,
+        "ptCount": 3,
+        "firstRetainedPtQpc": 2982145893177,
+        "lastRetainedPtQpc": 2982181271219,
+        "nonzeroMetadataEqualsCpuFirstPt": null,
+        "firstPtSecondsAfterWorkStart": 3.7048085,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 4,
+        "cpu": 4,
+        "lastDroppedTimeQpc": 2982295409045,
+        "ptCount": 125,
+        "firstRetainedPtQpc": 2982295409045,
+        "lastRetainedPtQpc": 2982299166438,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.6563953,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 5,
+        "cpu": 5,
+        "lastDroppedTimeQpc": 0,
+        "ptCount": 2,
+        "firstRetainedPtQpc": 2982180973913,
+        "lastRetainedPtQpc": 2982180979621,
+        "nonzeroMetadataEqualsCpuFirstPt": null,
+        "firstPtSecondsAfterWorkStart": 7.2128821,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 6,
+        "cpu": 6,
+        "lastDroppedTimeQpc": 2982295557075,
+        "ptCount": 72,
+        "firstRetainedPtQpc": 2982295557075,
+        "lastRetainedPtQpc": 2982299061463,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.6711983,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 7,
+        "cpu": 7,
+        "lastDroppedTimeQpc": 0,
+        "ptCount": 1,
+        "firstRetainedPtQpc": 2982181272162,
+        "lastRetainedPtQpc": 2982181272162,
+        "nonzeroMetadataEqualsCpuFirstPt": null,
+        "firstPtSecondsAfterWorkStart": 7.242707,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 8,
+        "cpu": 8,
+        "lastDroppedTimeQpc": 2982296032842,
+        "ptCount": 149,
+        "firstRetainedPtQpc": 2982296032842,
+        "lastRetainedPtQpc": 2982299190310,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.718775,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 9,
+        "cpu": 9,
+        "lastDroppedTimeQpc": 2982181429198,
+        "ptCount": 1,
+        "firstRetainedPtQpc": 2982181429198,
+        "lastRetainedPtQpc": 2982181429198,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.2584106,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 10,
+        "cpu": 10,
+        "lastDroppedTimeQpc": 2982296232723,
+        "ptCount": 253,
+        "firstRetainedPtQpc": 2982296232723,
+        "lastRetainedPtQpc": 2982299183303,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.7387631,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 11,
+        "cpu": 11,
+        "lastDroppedTimeQpc": 2982287694680,
+        "ptCount": 14,
+        "firstRetainedPtQpc": 2982287694680,
+        "lastRetainedPtQpc": 2982287824582,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 17.8849588,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 12,
+        "cpu": 12,
+        "lastDroppedTimeQpc": 2982296117162,
+        "ptCount": 25,
+        "firstRetainedPtQpc": 2982296117162,
+        "lastRetainedPtQpc": 2982299193049,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.727207,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 13,
+        "cpu": 13,
+        "lastDroppedTimeQpc": 2982181168884,
+        "ptCount": 11,
+        "firstRetainedPtQpc": 2982181168884,
+        "lastRetainedPtQpc": 2982181342159,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.2323792,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 14,
+        "cpu": 14,
+        "lastDroppedTimeQpc": 2982294332692,
+        "ptCount": 38,
+        "firstRetainedPtQpc": 2982294332692,
+        "lastRetainedPtQpc": 2982299170287,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.54876,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 15,
+        "cpu": 15,
+        "lastDroppedTimeQpc": 2982181429074,
+        "ptCount": 1,
+        "firstRetainedPtQpc": 2982181429074,
+        "lastRetainedPtQpc": 2982181429074,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.2583982,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 16,
+        "cpu": 16,
+        "lastDroppedTimeQpc": 2982289173180,
+        "ptCount": 28,
+        "firstRetainedPtQpc": 2982289173180,
+        "lastRetainedPtQpc": 2982299159549,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.0328088,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 17,
+        "cpu": 17,
+        "lastDroppedTimeQpc": 2982182293771,
+        "ptCount": 4,
+        "firstRetainedPtQpc": 2982182293771,
+        "lastRetainedPtQpc": 2982182323744,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.3448679,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 18,
+        "cpu": 18,
+        "lastDroppedTimeQpc": 2982181825302,
+        "ptCount": 1,
+        "firstRetainedPtQpc": 2982181825302,
+        "lastRetainedPtQpc": 2982181825302,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.298021,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 19,
+        "cpu": 19,
+        "lastDroppedTimeQpc": 2982181439762,
+        "ptCount": 8,
+        "firstRetainedPtQpc": 2982181439762,
+        "lastRetainedPtQpc": 2982181773724,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.259467,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 20,
+        "cpu": 20,
+        "lastDroppedTimeQpc": 2982296208979,
+        "ptCount": 52,
+        "firstRetainedPtQpc": 2982296208979,
+        "lastRetainedPtQpc": 2982299080080,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.7363887,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 21,
+        "cpu": 21,
+        "lastDroppedTimeQpc": 2982289579067,
+        "ptCount": 23,
+        "firstRetainedPtQpc": 2982289579067,
+        "lastRetainedPtQpc": 2982299144052,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.0733975,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 22,
+        "cpu": 22,
+        "lastDroppedTimeQpc": 2982246111482,
+        "ptCount": 14,
+        "firstRetainedPtQpc": 2982246111482,
+        "lastRetainedPtQpc": 2982299058669,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 13.726639,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 23,
+        "cpu": 23,
+        "lastDroppedTimeQpc": 2982200339732,
+        "ptCount": 11,
+        "firstRetainedPtQpc": 2982200339732,
+        "lastRetainedPtQpc": 2982298713050,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 9.149464,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 24,
+        "cpu": 24,
+        "lastDroppedTimeQpc": 2982295057874,
+        "ptCount": 46,
+        "firstRetainedPtQpc": 2982295057874,
+        "lastRetainedPtQpc": 2982299105638,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.6212782,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 25,
+        "cpu": 25,
+        "lastDroppedTimeQpc": 2982192846524,
+        "ptCount": 14,
+        "firstRetainedPtQpc": 2982192846524,
+        "lastRetainedPtQpc": 2982298732952,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 8.4001432,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 26,
+        "cpu": 26,
+        "lastDroppedTimeQpc": 2982181402304,
+        "ptCount": 16,
+        "firstRetainedPtQpc": 2982181402304,
+        "lastRetainedPtQpc": 2982298720331,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.2557212,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 27,
+        "cpu": 27,
+        "lastDroppedTimeQpc": 2982181848048,
+        "ptCount": 1,
+        "firstRetainedPtQpc": 2982181848048,
+        "lastRetainedPtQpc": 2982181848048,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.3002956,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 28,
+        "cpu": 28,
+        "lastDroppedTimeQpc": 2982294683709,
+        "ptCount": 15,
+        "firstRetainedPtQpc": 2982294683709,
+        "lastRetainedPtQpc": 2982298904169,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.5838617,
+        "nonzeroMetadataAfterFault": true
+      },
+      {
+        "metadataIndex": 29,
+        "cpu": 29,
+        "lastDroppedTimeQpc": 2982186489263,
+        "ptCount": 13,
+        "firstRetainedPtQpc": 2982186489263,
+        "lastRetainedPtQpc": 2982298700299,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.7644171,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 30,
+        "cpu": 30,
+        "lastDroppedTimeQpc": 2982182309034,
+        "ptCount": 3,
+        "firstRetainedPtQpc": 2982182309034,
+        "lastRetainedPtQpc": 2982182329032,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 7.3463942,
+        "nonzeroMetadataAfterFault": false
+      },
+      {
+        "metadataIndex": 31,
+        "cpu": 31,
+        "lastDroppedTimeQpc": 2982290407896,
+        "ptCount": 1,
+        "firstRetainedPtQpc": 2982290407896,
+        "lastRetainedPtQpc": 2982290407896,
+        "nonzeroMetadataEqualsCpuFirstPt": true,
+        "firstPtSecondsAfterWorkStart": 18.1562804,
+        "nonzeroMetadataAfterFault": true
+      }
+    ],
+    "interpretationBoundary": "Recorded discarded-time metadata is direct evidence; indexed CPU correspondence is independently supported by 29 exact matches. It is not a complete target scheduling history or proof that every missing packet was caused by ring overwrite."
+  },
+  "allCpuTargetSearch": {
+    "rawRecordCount": 1102,
+    "cpuCount": 32,
+    "targetPid": 28712,
+    "targetTid": 42560,
+    "pidAndTidMatchCount": 7,
+    "pidOnlyMatchCount": 7,
+    "tidOnlyMatchCount": 7,
+    "matchingCpus": [
+      1
+    ],
+    "firstPtQpc": 2982181363516,
+    "lastPtQpc": 2982181423496,
+    "unobservedTailSeconds": 7.7426714,
+    "otherCpuTargetPayloadFound": false
+  },
+  "conclusions": [
+    "The target tail gap is not explained by only xperf Unknown/-1 PID association: raw payload identity was checked on all CPUs.",
+    "Lost Events/Buffers=0 does not mean complete retention; the same ETL contains nonzero LastDroppedTimes metadata.",
+    "Per-CPU retention begins at materially different times; some first-retained boundaries occur after the declared test exception.",
+    "Missing final target CPU residency and PT cannot be reconstructed from retained CSwitch/PT alone.",
+    "File mode with a bounded disk/time budget is a separately verifiable candidate, not a proven fix; same sampling/PT trigger can still leave gaps.",
+    "This is qualification evidence only, not an original NOVOVM failure or first RBP corruption capture."
+  ]
+}

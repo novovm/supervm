@@ -1,0 +1,10 @@
+{
+  "utc": "2026-11-14T21:01:39.5494938Z",
+  "qualificationProcesses": [],
+  "originalNodeStarted": false,
+  "firstRbpCorruptionCaptured": false,
+  "doubleRelayResumed": false,
+  "originalLongRunStarted": false,
+  "fileCsRunExists": false,
+  "fileCsLaunchStatus": "launch_failed"
+}

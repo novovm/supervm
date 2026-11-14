@@ -1,0 +1,7 @@
+{
+  "requestedUtc": "2026-11-14T20:56:16.4309327Z",
+  "scriptSha256": "5131a18739f48f3a29713f250645c93ce96fcfef7c2bf7df1cb06e4902efb1c4",
+  "evidenceRoot": "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\run-filecs01",
+  "status": "launch_failed",
+  "error": "This command cannot be run due to the error: An error occurred trying to start process 'C:\\Program Files\\WindowsApps\\OpenAI.CodexPrimaryRuntime.v26-1111-574-0_26.1111.574.0_x64__3k8sg7r9htsxt\\dependencies\\native\\powershell\\pwsh.exe' with working directory 'D:\\WEB3_AI\\SUPERVM'. 操作已被用户取消。"
+}
