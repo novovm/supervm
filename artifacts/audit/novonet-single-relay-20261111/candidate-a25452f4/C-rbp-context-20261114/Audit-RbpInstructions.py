@@ -18,7 +18,7 @@ from capstone import Cs, CS_ARCH_X86, CS_MODE_64
 helper = pathlib.Path(__file__).parents[1] / 'C-wer-natural-20261114/Inspect-NaturalDump.py'
 old = sys.argv
 try:
-    sys.argv = [str(helper), str(dump), str(private/'rbp12-code-precondition-public.json')]
+    sys.argv = [str(helper), str(dump), str(private/(output.stem+'-precondition.json'))]
     with contextlib.redirect_stdout(io.StringIO()):
         h = runpy.run_path(str(helper))
 finally:
@@ -27,7 +27,8 @@ read = h['read']
 decoder = Cs(CS_ARCH_X86, CS_MODE_64)
 decoder.detail = True
 logs = ['frame-private.log','rbp12-private.log','rbp12-slots-private.log',
-        'rbp12-callees-private.log','rbp12-last-private.log']
+        'rbp12-callees-private.log','rbp12-last-private.log',
+        'rbp-branch-aligned-private.log']
 groups = {}
 for name in logs:
     command = None

@@ -1,0 +1,39 @@
+{
+  "instruction_audit_exit_code": 0,
+  "script_hashes": [
+    {
+      "name": "Inspect-RbpContext.py",
+      "sha256": "984393fd6e4976f1071ae1a0a53b61bd4d4b30db82b2f94fd8aaf41c2f27da78"
+    },
+    {
+      "name": "Audit-RbpInstructions.py",
+      "sha256": "560bc1f824c549fb7c324cbeada94dd8218843a92c94c5c8c55382c03fffa8b0"
+    }
+  ],
+  "first_corrupting_instruction_found": false,
+  "private_log_hashes": [
+    {
+      "name": "rbp-branch-chain-private.log",
+      "sha256": "cf292e1305e1a415e021bf3de468780937faba5836faa6f587ecd002aafb7a83"
+    },
+    {
+      "name": "rbp-branch-aligned-private.log",
+      "sha256": "1abd11fb470d63b0368ab308c1313ea9607be75a4db9c2e3df7b110be47a5e5a"
+    },
+    {
+      "name": "rbp-stack-value-occurrences-private.json",
+      "sha256": "1b9ca577e6f600a0540aeed137c9237bb51bd0270f7dede64da13dace4294ed5"
+    }
+  ],
+  "unaligned_initial_decode_rejected": true,
+  "baseline_commit": "a7d659ac264cd378d01ec2bafac6b119f029fc3b",
+  "double_relay_resumed": false,
+  "production_code_changed": false,
+  "original_db_and_identity_accessed": false,
+  "node_started": false,
+  "offline_cdb_exit_codes": [
+    0,
+    0
+  ],
+  "context_parser_exit_code": 0
+}

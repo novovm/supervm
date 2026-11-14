@@ -11,6 +11,11 @@ C直接解析PID34452同次Full Dump：异常流RBP与ntdll失败报告上下文
 原库/身份/失败现场保留，双中继继续暂停。C独立推进，Git共享不等待A签收。
 见[C的RBP专项同次现场核验](C-rbp-context-20261114/README.md)。
 
+后续离线核对：入口RSP推算fee008、保存入口RBP为fee130，本帧应为fedf80、失败为fee220；
+0x2A0只是差值，不证明存在加法指令。最终堆签名FFEEFFEE、stack-tracking flags=0，
+按此值不选中先前列出的HpReAllocate/StackTrace候选分支，但无先前条件历史，不能全部排除。
+新比较已保留；没有找到首次改变指令，保持停止及不做猜测性修复的边界。
+
 ## PRIOR 2026-11-14：C完整转储复制/离线核验完成，帧基址偏移证据，未修复
 
 C的PID34452原始Full Dump已在用户确认UAC后复制至本机受保护目录，源/副本哈希一致，

@@ -100,5 +100,23 @@ result = {
     'historical_save_values_proven_unchanged':False,'first_RBP_change_instruction_found':False,
     'node_restarted':False,'production_fix_applied':False,
 }
+# Additional branch-state evidence. These are final snapshot values, not a trace.
+assert read(0x7ffce31a9e5b,7).hex() == '817910eeddeedd'
+assert read(0x7ffce31a5a70,8).hex() == '8b0572de1700a801'
+heap_signature = struct.unpack('<I', read(0x1db41410010,4))[0]
+tracking_flags = struct.unpack('<I', read(0x7ffce33238e8,4))[0]
+result['entry_baseline_inferred_not_recorded'] = {
+    'entry_rsp':hex(rsp+0x188), 'saved_entry_rbp':hex(q(rsp+0x180)),
+    'rsp_after_seven_pushes':hex(rsp+0x150),
+    'rbp_after_lea':hex(rsp+0x100),
+    'actual_rbp_minus_saved_entry_rbp':hex(rbp-q(rsp+0x180)),
+}
+result['branch_snapshot_not_history'] = {
+    'heap_signature':hex(heap_signature), 'stack_tracking_flags':hex(tracking_flags),
+    'segment_heap_signature_branch_condition':heap_signature==0xddeeddee,
+    'stack_logging_required_flag_bits_present':(tracking_flags & 3)==3,
+    'earlier_branch_values_known':False,
+    'candidate_paths_excluded_for_entire_run':False,
+}
 public.write_bytes((json.dumps(result,indent=2)+'\n').encode())
 print(json.dumps(result))

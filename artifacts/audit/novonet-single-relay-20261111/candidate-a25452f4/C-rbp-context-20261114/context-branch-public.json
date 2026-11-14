@@ -1,0 +1,66 @@
+{
+  "pid": 34452,
+  "dump_sha256": "7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa",
+  "fault_thread_id": 30596,
+  "exception_context_file_rva": "0x565a",
+  "exception_RIP": "0x7ffce31aa114",
+  "exception_RSP": "0x7739fede80",
+  "exception_RBP": "0x7739fee220",
+  "exception_equals_ntdll_report_registers": true,
+  "thread_list_RIP": "0x7ffce32b6f34",
+  "thread_list_RSP": "0x7739fedb38",
+  "thread_list_RBP": "0x4b8",
+  "context_origin": "RtlCaptureContext followed by report-frame RtlVirtualUnwind; not an unprocessed CPU trap",
+  "report_unwind_only_allocates_0x88_no_RBP_restore": true,
+  "saved_report_input_equals_actual_rbp_slot_xor_rsp": true,
+  "saved_report_input_differs_from_correct_cookie": true,
+  "expected_RBP": "0x7739fedf80",
+  "deviation": "0x2a0",
+  "correct_cookie_slot": "0x7739fedfb0",
+  "saved_caller_RBP_slot": "0x7739fee000",
+  "actual_cookie_read_slot": "0x7739fee250",
+  "saved_RBP_slots": [
+    {
+      "owner": "RtlpReAllocateHeapInternal",
+      "slot": "0x7739fee000",
+      "expected_from_caller": "0x7739fee130",
+      "value": "0x7739fee130",
+      "matches_caller_frame_calculation": true
+    },
+    {
+      "owner": "node_RVA_84ed90",
+      "slot": "0x7739fee1a0",
+      "expected_from_caller": "0x7739fee230",
+      "value": "0x7739fee230",
+      "matches_caller_frame_calculation": true
+    },
+    {
+      "owner": "node_RVA_84f050",
+      "slot": "0x7739fee2c0",
+      "expected_from_caller": "0x7739fee350",
+      "value": "0x7739fee350",
+      "matches_caller_frame_calculation": true
+    }
+  ],
+  "physical_return_addresses_checked": 5,
+  "private_context_sha256": "8b44eb69feef56c1468092c221aa85be9d2a14bc4a6fee16cd75d6de03fb9987",
+  "historical_save_values_proven_unchanged": false,
+  "first_RBP_change_instruction_found": false,
+  "node_restarted": false,
+  "production_fix_applied": false,
+  "entry_baseline_inferred_not_recorded": {
+    "entry_rsp": "0x7739fee008",
+    "saved_entry_rbp": "0x7739fee130",
+    "rsp_after_seven_pushes": "0x7739fedfd0",
+    "rbp_after_lea": "0x7739fedf80",
+    "actual_rbp_minus_saved_entry_rbp": "0xf0"
+  },
+  "branch_snapshot_not_history": {
+    "heap_signature": "0xffeeffee",
+    "stack_tracking_flags": "0x0",
+    "segment_heap_signature_branch_condition": false,
+    "stack_logging_required_flag_bits_present": false,
+    "earlier_branch_values_known": false,
+    "candidate_paths_excluded_for_entire_run": false
+  }
+}

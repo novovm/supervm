@@ -1,0 +1,77 @@
+{
+  "dump_sha256": "7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa",
+  "executed_path_reconstructed": false,
+  "scope": "Incremental aligned function checks; prior groups retained in instructions-public.json. Not an executed path.",
+  "groups": [
+    {
+      "command": "uf 00007ff7d191ed90",
+      "verified_instruction_count": 133,
+      "rbp_writes": [
+        {
+          "address": "0x7ff7d191eda1",
+          "instruction": "lea rbp, [rsp + 0x80]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        },
+        {
+          "address": "0x7ff7d191ee75",
+          "instruction": "pop rbp",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ff7d191ed9a",
+          "instruction": "sub rsp, 0xc0",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ff7d191ee65",
+          "instruction": "add rsp, 0xc0",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf 00007ff7d191f050",
+      "verified_instruction_count": 246,
+      "rbp_writes": [
+        {
+          "address": "0x7ff7d191f063",
+          "instruction": "lea rbp, [rsp + 0x80]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        },
+        {
+          "address": "0x7ff7d191f38c",
+          "instruction": "pop rbp",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ff7d191f05c",
+          "instruction": "sub rsp, 0xd8",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ff7d191f37a",
+          "instruction": "add rsp, 0xd8",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!memcpy",
+      "verified_instruction_count": 152,
+      "rbp_writes": [],
+      "rsp_changes": []
+    }
+  ]
+}
