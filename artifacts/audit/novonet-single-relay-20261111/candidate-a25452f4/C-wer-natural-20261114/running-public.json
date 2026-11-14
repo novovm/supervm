@@ -1,0 +1,11 @@
+{
+  "owner_sid": "S-1-5-19",
+  "created_utc": "2026-11-14T08:07:24.6484550Z",
+  "task": "NOVOVM-C-WER-Natural-20261114T080720Z",
+  "loaded_aoem_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "pid": 34452,
+  "utc": "2026-11-14T08:07:38.1648562Z",
+  "planned_latest_normal_exit_utc": "2026-11-14T14:07:24.6484550Z",
+  "start": "existing",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d"
+}

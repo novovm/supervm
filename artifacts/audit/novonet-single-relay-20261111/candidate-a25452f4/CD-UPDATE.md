@@ -1,6 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14：C的LocalService WER完整转储资格通过，节点专属规则已配置
+## CURRENT 2026-11-14 16:07：C一次existing自然故障取证运行已开始，禁止联调发送
+
+用户批准C原库单次运行，原a254/AOEM966实际加载哈希和原身份匹配，PID34452。
+LocalService下existing启动，原日志/失败现场保留；首次进度height1、恢复完成、失败0。
+WER Full Dump专属规则继续有效。最长6小时至北京时间22:07:24，异常不重启。
+首轮只因保守32GiB空间预检停止、未启动；修订为明确18GiB预算后才启动一次。
+本轮不发对象、不启中继观察器，A/B/D不得据此恢复双中继或发送测试对象。
+当前只是运行中的取证，不是修复或稳定性通过。详见
+[C单次自然故障运行](C-wer-natural-20261114/README.md)。
+
+## PRIOR 2026-11-14：C的LocalService WER完整转储资格通过，节点专属规则已配置
 
 按用户新授权，C独立核对a254/AOEM966异常处理与AeDebug/WER，未发现已知阻断项。
 唯一独立LocalService测试进程生成11,074,978字节Full Dump；65,536字节堆模式、

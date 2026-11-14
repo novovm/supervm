@@ -1,0 +1,18 @@
+{
+  "dump_files": [],
+  "node_pid": 34452,
+  "loaded_aoem_verified": true,
+  "progress": {
+    "head": null,
+    "recovery_in_progress": false,
+    "execution_failures": 0,
+    "current_height": 1,
+    "chain_id": 91129655606029
+  },
+  "progress_read_error": null,
+  "stderr_bytes": 0,
+  "utc": "2026-11-14T08:08:39.0451722Z",
+  "elapsed_seconds": 76.3456013,
+  "alive": true,
+  "free_disk_bytes": 20860682240
+}

@@ -1,0 +1,19 @@
+{
+  "dump_folder": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\NOVOVM-Full-C-20261114T074716Z",
+  "config_sha256": "5d6a0660b9c79b3c4ef1c92357456258fc5a8a4b653f755b4d07eaf960caf9ef",
+  "original_logs_preserved": true,
+  "no_probe_command": true,
+  "wer_dump_type": 2,
+  "maximum_run_seconds": 21600,
+  "disk_free_bytes": 20866244608,
+  "database_file_count": 27,
+  "database_inventory_sha256": "61690bb7d052bc8396879abc7c17cf66763382fa48910209b625a3e0c4f99197",
+  "database_existing": true,
+  "identity_matches_original": true,
+  "aoem_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "utc": "2026-11-14T08:07:22.4212968Z",
+  "new_owner_sha256": "eeeb5efce2e50169407602f810d456d250a273825a833fb3b8c86d0c392aaff0",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "dump_count": 2,
+  "original_owner_sha256": "33c2330d8422f875a4b23304c0444ab7fbbc9fac088d6e1d236fd6a35611026c"
+}
