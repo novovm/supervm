@@ -1,0 +1,10 @@
+{
+  "exe": {
+    "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\qualification\\PtQualification.exe",
+    "sha256": "a1b90b9b100750732cc3e4aac5672ae3319bac1a64ca70dbb7fedb661a11c5de"
+  },
+  "profile": {
+    "path": "D:\\WEB3_AI\\SUPERVM\\target\\c-pt-live-qualification-20261115\\controller\\C-PT.wprp",
+    "sha256": "d270007efa293d3949267a30abbc04d1080eac676c2b7ce1774b6073b03b353e"
+  }
+}

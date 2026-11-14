@@ -1,0 +1,50 @@
+{
+  "collectedUtc": "2026-11-14T20:13:41.2755496Z",
+  "downloadSource": "https://download.microsoft.com/download/46742ab5-6592-4968-a793-129e7f3bc55a/KIT_BUNDLE_WINDOWSSDK_MEDIACREATION/Installers/",
+  "extractionMode": "msiexec administrative image (/a) to target paths; no product install",
+  "files": [
+    {
+      "path": "layout\\Installers\\WPTx64 (DesktopEditions)-x64_en-us.msi",
+      "bytes": 84946944,
+      "sha256": "4e4cd0aa5d5060e21ee15952ea3113e24523640f75fa7f498788b9416fb75dc3",
+      "version": null,
+      "signatureStatus": "Valid",
+      "signer": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    },
+    {
+      "path": "layout\\Installers\\WPTx64 (OnecoreUAP)-x64_en-us.msi",
+      "bytes": 2695168,
+      "sha256": "1e1d912a2a633b246a5a2b78714dc060e3adae2f6589d125c1c9b507a36aa27f",
+      "version": null,
+      "signatureStatus": "Valid",
+      "signer": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    },
+    {
+      "path": "extracted-core\\Windows Kits\\10\\Windows Performance Toolkit\\xperf.exe",
+      "bytes": 461256,
+      "sha256": "a8a4bda9be21bf567874c5896fd5bfe7fb889604c7cc8ede7e36219fb7ed6653",
+      "version": "10.0.26100.9457 (WinBuild.160101.0800)",
+      "signatureStatus": "Valid",
+      "signer": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    },
+    {
+      "path": "extracted-core\\Windows Kits\\10\\Windows Performance Toolkit\\perfcore.dll",
+      "bytes": 334272,
+      "sha256": "e606f7ab0da2f732a364e40e9d2088f8cc3d679eae98aeb9c01382e4bd6f0be8",
+      "version": "10.0.26100.9457 (WinBuild.160101.0800)",
+      "signatureStatus": "Valid",
+      "signer": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    },
+    {
+      "path": "extracted\\Windows Kits\\10\\Windows Performance Toolkit\\wpa.exe",
+      "bytes": 237608,
+      "sha256": "3cfab105ee080ac3edc1fa22183c793033e6b64d5d6839e97e037ec3fbf23bd8",
+      "version": "11.7.395.48728",
+      "signatureStatus": "Valid",
+      "signer": "CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+    }
+  ],
+  "xperfHelpExitCode": 0,
+  "etlProcessed": false,
+  "rejectedAttempt": "One combined command requesting a second extraction to shared target plus git clone was rejected before execution: blocked by policy. No retry. Existing two separate extractions used via per-process PATH and working directory."
+}

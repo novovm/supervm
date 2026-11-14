@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Parser-only candidate. This task does not start a recording. -->
+<WindowsPerformanceRecorder Version="1.0" Author="validator-C">
+  <Profiles>
+    <SystemCollector Id="CPTSystemCollector" Name="C PT feasibility">
+      <BufferSize Value="64" />
+      <Buffers Value="64" />
+    </SystemCollector>
+    <SystemProvider Id="CPTSystemProvider">
+      <Keywords>
+        <Keyword Value="ProcessThread" />
+        <Keyword Value="Loader" />
+        <Keyword Value="CSwitch" />
+        <Keyword Value="SampledProfile" />
+      </Keywords>
+    </SystemProvider>
+    <HardwareCounter Id="CPTHardwareCounter" Strict="true">
+      <ProcessorTrace>
+        <BufferSize Value="4" />
+        <CodeMode Value="User" />
+        <Events>
+          <Event Value="SampledProfile" />
+        </Events>
+      </ProcessorTrace>
+    </HardwareCounter>
+    <Profile Id="C_PT_Parser.Light.Memory" Name="C_PT_Parser" Description="Parser-only Intel PT feasibility; not qualified for capture" LoggingMode="Memory" DetailLevel="Light">
+      <Collectors>
+        <SystemCollectorId Value="CPTSystemCollector">
+          <SystemProviderId Value="CPTSystemProvider" />
+          <HardwareCounterId Value="CPTHardwareCounter" />
+        </SystemCollectorId>
+      </Collectors>
+    </Profile>
+  </Profiles>
+</WindowsPerformanceRecorder>

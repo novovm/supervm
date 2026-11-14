@@ -1,6 +1,18 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-15：高频监控入口已停用，NtContinue关闭冲突已审计，原生PT配置解析通过
+## CURRENT 2026-11-15：C原生PT已实际采集并解码，同次异常关联有证据，故障前窗口仍缺失
+
+用户重新确认UAC后，C只运行新隔离资格进程：15秒基线与15秒PT，自定义资格异常明确标记。
+WPR start/stop均0，ETL约20.7MB、FullDump约25.5MB；目标PID28712/TID42560，原异常上下文
+与JSON吻合，实际退出0xE0424354（非NOVOVM自然故障）。微软WPT及官方libipt/XED已实际解码
+7个目标PT片段，可还原真实分支/调用/返回；同次dump目标.text与EXE一致，最终解码诊断无错。
+但最后目标PT距资格异常仍缺7.7426714秒，ETL生命周期旁带不全，Lost=0不能补足该缺口。
+短时吞吐差-3.89%仅为微负载粗测，不代表原节点低干扰通过；未启动a254/AOEM966长跑。
+原节点/原库/身份/旧现场保留，不重采、不猜测修复、不恢复双中继；C独立推进，不等待A签收。
+实际输出、工具固定提交、覆盖缺口及原始公开结果见
+[C-native-pt-qualification-20261115](C-native-pt-qualification-20261115/README.md)。
+
+## PRIOR 2026-11-15：高频监控入口已停用，NtContinue关闭冲突已审计，原生PT配置解析通过
 
 C独立核对上一轮：全线程NtContinue守卫在关闭命令清断点前仍有效，实际先q退出；
 旧Full Dump系统指令支持远程暂停线程初始化触发守卫的可行路径，但缺同次命中栈，

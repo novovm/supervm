@@ -1,0 +1,1523 @@
+{
+  "purpose": "read_only_same_run_coverage_not_root_cause",
+  "targetPid": 28712,
+  "targetTid": 42560,
+  "qpcFrequency": 10000000,
+  "workStartQpc": 2982108845092,
+  "faultQpc": 2982258850210,
+  "faultAfterWorkSeconds": 15.0005118,
+  "firstXperfRawQpc": 2982106503288,
+  "timestampConversion": {
+    "formula": "(rawQpc-workStartQpc)/qpcFrequency",
+    "xperfFormattedUnit": "microseconds",
+    "commentRelativeUnit": "nanoseconds",
+    "xmlWallClockNotUsed": true
+  },
+  "targetEventKinds": {
+    "CSwitch": {
+      "count": 7,
+      "firstQpc": 2982180972303,
+      "lastQpc": 2982189766167,
+      "firstAfterWorkSeconds": 7.2127211,
+      "lastAfterWorkSeconds": 8.0921075,
+      "cpus": [
+        1,
+        5,
+        26,
+        29
+      ]
+    },
+    "SampledProfile": {
+      "count": 0
+    },
+    "SampledProfileNmi": {
+      "count": 0
+    },
+    "T-DCEnd": {
+      "count": 0
+    },
+    "T-DCStart": {
+      "count": 0
+    },
+    "T-End": {
+      "count": 0
+    },
+    "T-GUI": {
+      "count": 0
+    },
+    "T-Start": {
+      "count": 0
+    }
+  },
+  "targetEvents": [
+    {
+      "kind": "CSwitch",
+      "rawQpc": 2982180972303,
+      "relativeNs": 7446901500,
+      "cpu": 5,
+      "formattedTimestampUs": 7446902,
+      "targetSwitchDirection": "in",
+      "targetProcessField": "Unknown (  -1)",
+      "switchCpuField": 5,
+      "oldState": "Standby",
+      "waitReason": "Executive",
+      "secondsAfterWorkStart": 7.2127211,
+      "secondsBeforeFault": 7.7877907
+    },
+    {
+      "kind": "CSwitch",
+      "rawQpc": 2982180972788,
+      "relativeNs": 7446950000,
+      "cpu": 5,
+      "formattedTimestampUs": 7446950,
+      "targetSwitchDirection": "out",
+      "targetProcessField": "Unknown (  -1)",
+      "switchCpuField": 5,
+      "oldState": "Ready",
+      "waitReason": "WrDispatchInt",
+      "secondsAfterWorkStart": 7.2127696,
+      "secondsBeforeFault": 7.7877422
+    },
+    {
+      "kind": "CSwitch",
+      "rawQpc": 2982181429788,
+      "relativeNs": 7492650000,
+      "cpu": 1,
+      "formattedTimestampUs": 7492650,
+      "targetSwitchDirection": "out",
+      "targetProcessField": "Unknown (  -1)",
+      "switchCpuField": 1,
+      "oldState": "Standby",
+      "waitReason": "WrDispatchInt",
+      "secondsAfterWorkStart": 7.2584696,
+      "secondsBeforeFault": 7.7420422
+    },
+    {
+      "kind": "CSwitch",
+      "rawQpc": 2982181535640,
+      "relativeNs": 7503235200,
+      "cpu": 26,
+      "formattedTimestampUs": 7503235,
+      "targetSwitchDirection": "in",
+      "targetProcessField": "Unknown (  -1)",
+      "switchCpuField": 26,
+      "oldState": "Running",
+      "waitReason": "Executive",
+      "secondsAfterWorkStart": 7.2690548,
+      "secondsBeforeFault": 7.731457
+    },
+    {
+      "kind": "CSwitch",
+      "rawQpc": 2982181540119,
+      "relativeNs": 7503683100,
+      "cpu": 26,
+      "formattedTimestampUs": 7503683,
+      "targetSwitchDirection": "out",
+      "targetProcessField": "Unknown (  -1)",
+      "switchCpuField": 26,
+      "oldState": "Standby",
+      "waitReason": "WrQuantumEnd",
+      "secondsAfterWorkStart": 7.2695027,
+      "secondsBeforeFault": 7.7310091
+    },
+    {
+      "kind": "CSwitch",
+      "rawQpc": 2982189764490,
+      "relativeNs": 8326120200,
+      "cpu": 29,
+      "formattedTimestampUs": 8326120,
+      "targetSwitchDirection": "in",
+      "targetProcessField": "Unknown (  -1)",
+      "switchCpuField": 29,
+      "oldState": "Waiting",
+      "waitReason": "WrResource",
+      "secondsAfterWorkStart": 8.0919398,
+      "secondsBeforeFault": 6.908572
+    },
+    {
+      "kind": "CSwitch",
+      "rawQpc": 2982189766167,
+      "relativeNs": 8326287900,
+      "cpu": 29,
+      "formattedTimestampUs": 8326288,
+      "targetSwitchDirection": "out",
+      "targetProcessField": "Unknown (  -1)",
+      "switchCpuField": 29,
+      "oldState": "Standby",
+      "waitReason": "WrQuantumEnd",
+      "secondsAfterWorkStart": 8.0921075,
+      "secondsBeforeFault": 6.9084043
+    }
+  ],
+  "targetPt": [
+    {
+      "qpc": 2982181363516,
+      "pid": 28712,
+      "tid": 42560,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 16,
+      "payloadBytes": 4128,
+      "psbCount": 2,
+      "secondsAfterWorkStart": 7.2518424,
+      "secondsBeforeFault": 7.7486694,
+      "xperfUnknownRecordsAtSameQpc": []
+    },
+    {
+      "qpc": 2982181373496,
+      "pid": 28712,
+      "tid": 42560,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 2560,
+      "payloadBytes": 4128,
+      "psbCount": 2,
+      "secondsAfterWorkStart": 7.2528404,
+      "secondsBeforeFault": 7.7476714,
+      "xperfUnknownRecordsAtSameQpc": []
+    },
+    {
+      "qpc": 2982181383508,
+      "pid": 28712,
+      "tid": 42560,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 80,
+      "payloadBytes": 4128,
+      "psbCount": 2,
+      "secondsAfterWorkStart": 7.2538416,
+      "secondsBeforeFault": 7.7466702,
+      "xperfUnknownRecordsAtSameQpc": []
+    },
+    {
+      "qpc": 2982181393502,
+      "pid": 28712,
+      "tid": 42560,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 3024,
+      "payloadBytes": 4128,
+      "psbCount": 2,
+      "secondsAfterWorkStart": 7.254841,
+      "secondsBeforeFault": 7.7456708,
+      "xperfUnknownRecordsAtSameQpc": []
+    },
+    {
+      "qpc": 2982181403511,
+      "pid": 28712,
+      "tid": 42560,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 1808,
+      "payloadBytes": 4128,
+      "psbCount": 2,
+      "secondsAfterWorkStart": 7.2558419,
+      "secondsBeforeFault": 7.7446699,
+      "xperfUnknownRecordsAtSameQpc": []
+    },
+    {
+      "qpc": 2982181413491,
+      "pid": 28712,
+      "tid": 42560,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 4032,
+      "payloadBytes": 4128,
+      "psbCount": 2,
+      "secondsAfterWorkStart": 7.2568399,
+      "secondsBeforeFault": 7.7436719,
+      "xperfUnknownRecordsAtSameQpc": []
+    },
+    {
+      "qpc": 2982181423496,
+      "pid": 28712,
+      "tid": 42560,
+      "cpu": 1,
+      "options": "0x3000001",
+      "bufferBytes": 4096,
+      "writePosition": 80,
+      "payloadBytes": 4128,
+      "psbCount": 2,
+      "secondsAfterWorkStart": 7.2578404,
+      "secondsBeforeFault": 7.7426714,
+      "xperfUnknownRecordsAtSameQpc": []
+    }
+  ],
+  "rawPayloadTargetSamples": [
+    {
+      "rawPayloadThreadId": 42560,
+      "instructionPointer": "0x7ff616bb13bb",
+      "rawQpc": 2982181373496,
+      "cpu": 1,
+      "secondsAfterWorkStart": 7.2528404,
+      "secondsBeforeFault": 7.7476714,
+      "xperfSameQpcEvent": {
+        "kind": "SampledProfile",
+        "rawQpc": 2982181373496,
+        "relativeNs": 7487020800,
+        "cpu": 1,
+        "formattedTimestampUs": 7487021,
+        "instructionPointer": "0x00007ff616bb13bb",
+        "resolvedThreadId": "-1"
+      }
+    },
+    {
+      "rawPayloadThreadId": 42560,
+      "instructionPointer": "0x7ff616bb1010",
+      "rawQpc": 2982181383508,
+      "cpu": 1,
+      "secondsAfterWorkStart": 7.2538416,
+      "secondsBeforeFault": 7.7466702,
+      "xperfSameQpcEvent": {
+        "kind": "SampledProfile",
+        "rawQpc": 2982181383508,
+        "relativeNs": 7488022000,
+        "cpu": 1,
+        "formattedTimestampUs": 7488022,
+        "instructionPointer": "0x00007ff616bb1010",
+        "resolvedThreadId": "-1"
+      }
+    },
+    {
+      "rawPayloadThreadId": 42560,
+      "instructionPointer": "0x7ff616bb13cf",
+      "rawQpc": 2982181393502,
+      "cpu": 1,
+      "secondsAfterWorkStart": 7.254841,
+      "secondsBeforeFault": 7.7456708,
+      "xperfSameQpcEvent": {
+        "kind": "SampledProfile",
+        "rawQpc": 2982181393502,
+        "relativeNs": 7489021400,
+        "cpu": 1,
+        "formattedTimestampUs": 7489021,
+        "instructionPointer": "0x00007ff616bb13cf",
+        "resolvedThreadId": "-1"
+      }
+    },
+    {
+      "rawPayloadThreadId": 42560,
+      "instructionPointer": "0x7ff616bb1030",
+      "rawQpc": 2982181403511,
+      "cpu": 1,
+      "secondsAfterWorkStart": 7.2558419,
+      "secondsBeforeFault": 7.7446699,
+      "xperfSameQpcEvent": {
+        "kind": "SampledProfile",
+        "rawQpc": 2982181403511,
+        "relativeNs": 7490022300,
+        "cpu": 1,
+        "formattedTimestampUs": 7490022,
+        "instructionPointer": "0x00007ff616bb1030",
+        "resolvedThreadId": "-1"
+      }
+    },
+    {
+      "rawPayloadThreadId": 42560,
+      "instructionPointer": "0x7ff616bb1010",
+      "rawQpc": 2982181413491,
+      "cpu": 1,
+      "secondsAfterWorkStart": 7.2568399,
+      "secondsBeforeFault": 7.7436719,
+      "xperfSameQpcEvent": {
+        "kind": "SampledProfile",
+        "rawQpc": 2982181413491,
+        "relativeNs": 7491020300,
+        "cpu": 1,
+        "formattedTimestampUs": 7491020,
+        "instructionPointer": "0x00007ff616bb1010",
+        "resolvedThreadId": "-1"
+      }
+    },
+    {
+      "rawPayloadThreadId": 42560,
+      "instructionPointer": "0x7ff616bb13ad",
+      "rawQpc": 2982181423496,
+      "cpu": 1,
+      "secondsAfterWorkStart": 7.2578404,
+      "secondsBeforeFault": 7.7426714,
+      "xperfSameQpcEvent": {
+        "kind": "SampledProfile",
+        "rawQpc": 2982181423496,
+        "relativeNs": 7492020800,
+        "cpu": 1,
+        "formattedTimestampUs": 7492021,
+        "instructionPointer": "0x00007ff616bb13ad",
+        "resolvedThreadId": "-1"
+      }
+    }
+  ],
+  "targetResolvedProcessImageEvents": [],
+  "sourceSha256": {
+    "xperfEvents": "2aa1429a27a626997da8d92fb67ef7f334bddf9950e19c82b6da08f183265c6e",
+    "tracerptXml": "434c16244cd4e5744d4d4da2983cc57f2319cd46ab37d792cf28aa5fca0a5669",
+    "iptHeaderSnapshot": "c280eba11b6338c27a1b603e5e46c5d6f84bbb649d4944eabfe205c7cf235d79"
+  },
+  "ptPacketCount": 7,
+  "ptFirstAfterWorkSeconds": 7.2518424,
+  "ptLastAfterWorkSeconds": 7.2578404,
+  "lastPtToFaultSeconds": 7.7426714,
+  "globalEventKinds": {
+    "SampledProfile": {
+      "count": 1257,
+      "firstQpc": 2982106727096,
+      "lastQpc": 2982299193049,
+      "firstAfterWorkSeconds": -0.2117996,
+      "lastAfterWorkSeconds": 19.0347957,
+      "cpus": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31
+      ]
+    },
+    "CSwitch": {
+      "count": 652,
+      "firstQpc": 2982145893212,
+      "lastQpc": 2982255824087,
+      "firstAfterWorkSeconds": 3.704812,
+      "lastAfterWorkSeconds": 14.6978995,
+      "cpus": [
+        1,
+        3,
+        5,
+        7,
+        9,
+        13,
+        15,
+        17,
+        18,
+        19,
+        22,
+        23,
+        25,
+        26,
+        27,
+        29,
+        30
+      ]
+    },
+    "T-Start": {
+      "count": 47,
+      "firstQpc": 2982181413811,
+      "lastQpc": 2982298936571,
+      "firstAfterWorkSeconds": 7.2568719,
+      "lastAfterWorkSeconds": 19.0091479,
+      "cpus": [
+        0,
+        2,
+        4,
+        6,
+        10,
+        12,
+        20,
+        22,
+        26
+      ]
+    },
+    "T-DCEnd": {
+      "count": 8290,
+      "firstQpc": 2982262353705,
+      "lastQpc": 2982264207478,
+      "firstAfterWorkSeconds": 15.3508613,
+      "lastAfterWorkSeconds": 15.5362386,
+      "cpus": [
+        4,
+        6,
+        8,
+        10,
+        12
+      ]
+    },
+    "P-Zombie": {
+      "count": 65,
+      "firstQpc": 2982262764568,
+      "lastQpc": 2982264205876,
+      "firstAfterWorkSeconds": 15.3919476,
+      "lastAfterWorkSeconds": 15.5360784,
+      "cpus": [
+        4,
+        6,
+        8,
+        10
+      ]
+    },
+    "T-End": {
+      "count": 41,
+      "firstQpc": 2982294125090,
+      "lastQpc": 2982299176606,
+      "firstAfterWorkSeconds": 18.5279998,
+      "lastAfterWorkSeconds": 19.0331514,
+      "cpus": [
+        0,
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        14,
+        20,
+        21
+      ]
+    }
+  },
+  "perCpuEventRanges": {
+    "0": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 139,
+        "firstQpc": 2982292860470,
+        "lastQpc": 2982299107981,
+        "firstAfterWorkSeconds": 18.4015378,
+        "lastAfterWorkSeconds": 19.0262889,
+        "cpus": [
+          0
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 106,
+        "firstQpc": 2982106503288,
+        "lastQpc": 2982299240306,
+        "firstAfterWorkSeconds": -0.2341804,
+        "lastAfterWorkSeconds": 19.0395214,
+        "cpus": [
+          0
+        ]
+      }
+    },
+    "1": {
+      "CSwitch": {
+        "count": 7,
+        "firstQpc": 2982181429788,
+        "lastQpc": 2982246207950,
+        "firstAfterWorkSeconds": 7.2584696,
+        "lastAfterWorkSeconds": 13.7362858,
+        "cpus": [
+          1
+        ]
+      },
+      "SampledProfile": {
+        "count": 7,
+        "firstQpc": 2982181373496,
+        "lastQpc": 2982233919030,
+        "firstAfterWorkSeconds": 7.2528404,
+        "lastAfterWorkSeconds": 12.5073938,
+        "cpus": [
+          1
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 7,
+        "firstQpc": 2982181363527,
+        "lastQpc": 2982181423500,
+        "firstAfterWorkSeconds": 7.2518435,
+        "lastAfterWorkSeconds": 7.2578408,
+        "cpus": [
+          1
+        ]
+      }
+    },
+    "2": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 69,
+        "firstQpc": 2982296146727,
+        "lastQpc": 2982299116246,
+        "firstAfterWorkSeconds": 18.7301635,
+        "lastAfterWorkSeconds": 19.0271154,
+        "cpus": [
+          2
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 50,
+        "firstQpc": 2982296136961,
+        "lastQpc": 2982299116255,
+        "firstAfterWorkSeconds": 18.7291869,
+        "lastAfterWorkSeconds": 19.0271163,
+        "cpus": [
+          2
+        ]
+      }
+    },
+    "3": {
+      "CSwitch": {
+        "count": 56,
+        "firstQpc": 2982145893212,
+        "lastQpc": 2982246208044,
+        "firstAfterWorkSeconds": 3.704812,
+        "lastAfterWorkSeconds": 13.7362952,
+        "cpus": [
+          3
+        ]
+      },
+      "SampledProfile": {
+        "count": 7,
+        "firstQpc": 2982106727096,
+        "lastQpc": 2982291226265,
+        "firstAfterWorkSeconds": -0.2117996,
+        "lastAfterWorkSeconds": 18.2381173,
+        "cpus": [
+          3
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 3,
+        "firstQpc": 2982145893186,
+        "lastQpc": 2982181271230,
+        "firstAfterWorkSeconds": 3.7048094,
+        "lastAfterWorkSeconds": 7.2426138,
+        "cpus": [
+          3
+        ]
+      }
+    },
+    "4": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 172,
+        "firstQpc": 2982295422169,
+        "lastQpc": 2982299166438,
+        "firstAfterWorkSeconds": 18.6577077,
+        "lastAfterWorkSeconds": 19.0321346,
+        "cpus": [
+          4
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 2213,
+        "firstQpc": 2982262405402,
+        "lastQpc": 2982299166446,
+        "firstAfterWorkSeconds": 15.356031,
+        "lastAfterWorkSeconds": 19.0321354,
+        "cpus": [
+          4
+        ]
+      }
+    },
+    "5": {
+      "CSwitch": {
+        "count": 15,
+        "firstQpc": 2982180972303,
+        "lastQpc": 2982241746487,
+        "firstAfterWorkSeconds": 7.2127211,
+        "lastAfterWorkSeconds": 13.2901395,
+        "cpus": [
+          5
+        ]
+      },
+      "SampledProfile": {
+        "count": 6,
+        "firstQpc": 2982106783594,
+        "lastQpc": 2982289084830,
+        "firstAfterWorkSeconds": -0.2061498,
+        "lastAfterWorkSeconds": 18.0239738,
+        "cpus": [
+          5
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 2,
+        "firstQpc": 2982180973930,
+        "lastQpc": 2982180979631,
+        "firstAfterWorkSeconds": 7.2128838,
+        "lastAfterWorkSeconds": 7.2134539,
+        "cpus": [
+          5
+        ]
+      }
+    },
+    "6": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 86,
+        "firstQpc": 2982295567195,
+        "lastQpc": 2982299160523,
+        "firstAfterWorkSeconds": 18.6722103,
+        "lastAfterWorkSeconds": 19.0315431,
+        "cpus": [
+          6
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 827,
+        "firstQpc": 2982262459336,
+        "lastQpc": 2982299061472,
+        "firstAfterWorkSeconds": 15.3614244,
+        "lastAfterWorkSeconds": 19.021638,
+        "cpus": [
+          6
+        ]
+      }
+    },
+    "7": {
+      "CSwitch": {
+        "count": 9,
+        "firstQpc": 2982180972318,
+        "lastQpc": 2982181272599,
+        "firstAfterWorkSeconds": 7.2127226,
+        "lastAfterWorkSeconds": 7.2427507,
+        "cpus": [
+          7
+        ]
+      },
+      "SampledProfile": {
+        "count": 7,
+        "firstQpc": 2982106785345,
+        "lastQpc": 2982291178011,
+        "firstAfterWorkSeconds": -0.2059747,
+        "lastAfterWorkSeconds": 18.2332919,
+        "cpus": [
+          7
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 1,
+        "firstQpc": 2982181272172,
+        "lastQpc": 2982181272172,
+        "firstAfterWorkSeconds": 7.242708,
+        "lastAfterWorkSeconds": 7.242708,
+        "cpus": [
+          7
+        ]
+      }
+    },
+    "8": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 161,
+        "firstQpc": 2982296042812,
+        "lastQpc": 2982299190310,
+        "firstAfterWorkSeconds": 18.719772,
+        "lastAfterWorkSeconds": 19.0345218,
+        "cpus": [
+          8
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 17554,
+        "firstQpc": 2982262365582,
+        "lastQpc": 2982299190317,
+        "firstAfterWorkSeconds": 15.352049,
+        "lastAfterWorkSeconds": 19.0345225,
+        "cpus": [
+          8
+        ]
+      }
+    },
+    "9": {
+      "CSwitch": {
+        "count": 3,
+        "firstQpc": 2982181429811,
+        "lastQpc": 2982186037074,
+        "firstAfterWorkSeconds": 7.2584719,
+        "lastAfterWorkSeconds": 7.7191982,
+        "cpus": [
+          9
+        ]
+      },
+      "SampledProfile": {
+        "count": 2,
+        "firstQpc": 2982243973795,
+        "lastQpc": 2982291256177,
+        "firstAfterWorkSeconds": 13.5128703,
+        "lastAfterWorkSeconds": 18.2411085,
+        "cpus": [
+          9
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 1,
+        "firstQpc": 2982181429214,
+        "lastQpc": 2982181429214,
+        "firstAfterWorkSeconds": 7.2584122,
+        "lastAfterWorkSeconds": 7.2584122,
+        "cpus": [
+          9
+        ]
+      }
+    },
+    "10": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 254,
+        "firstQpc": 2982296242739,
+        "lastQpc": 2982299183303,
+        "firstAfterWorkSeconds": 18.7397647,
+        "lastAfterWorkSeconds": 19.0338211,
+        "cpus": [
+          10
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 22518,
+        "firstQpc": 2982262353891,
+        "lastQpc": 2982299183311,
+        "firstAfterWorkSeconds": 15.3508799,
+        "lastAfterWorkSeconds": 19.0338219,
+        "cpus": [
+          10
+        ]
+      }
+    },
+    "11": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 14,
+        "firstQpc": 2982287704581,
+        "lastQpc": 2982292240851,
+        "firstAfterWorkSeconds": 17.8859489,
+        "lastAfterWorkSeconds": 18.3395759,
+        "cpus": [
+          11
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 14,
+        "firstQpc": 2982287694691,
+        "lastQpc": 2982287824587,
+        "firstAfterWorkSeconds": 17.8849599,
+        "lastAfterWorkSeconds": 17.8979495,
+        "cpus": [
+          11
+        ]
+      }
+    },
+    "12": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 27,
+        "firstQpc": 2982296139240,
+        "lastQpc": 2982299193049,
+        "firstAfterWorkSeconds": 18.7294148,
+        "lastAfterWorkSeconds": 19.0347957,
+        "cpus": [
+          12
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 393,
+        "firstQpc": 2982262474567,
+        "lastQpc": 2982299193053,
+        "firstAfterWorkSeconds": 15.3629475,
+        "lastAfterWorkSeconds": 19.0347961,
+        "cpus": [
+          12
+        ]
+      }
+    },
+    "13": {
+      "CSwitch": {
+        "count": 25,
+        "firstQpc": 2982181199577,
+        "lastQpc": 2982255824087,
+        "firstAfterWorkSeconds": 7.2354485,
+        "lastAfterWorkSeconds": 14.6978995,
+        "cpus": [
+          13
+        ]
+      },
+      "SampledProfile": {
+        "count": 11,
+        "firstQpc": 2982181178874,
+        "lastQpc": 2982279026184,
+        "firstAfterWorkSeconds": 7.2333782,
+        "lastAfterWorkSeconds": 17.0181092,
+        "cpus": [
+          13
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 11,
+        "firstQpc": 2982181168901,
+        "lastQpc": 2982181342169,
+        "firstAfterWorkSeconds": 7.2323809,
+        "lastAfterWorkSeconds": 7.2497077,
+        "cpus": [
+          13
+        ]
+      }
+    },
+    "14": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 38,
+        "firstQpc": 2982294342822,
+        "lastQpc": 2982299170287,
+        "firstAfterWorkSeconds": 18.549773,
+        "lastAfterWorkSeconds": 19.0325195,
+        "cpus": [
+          14
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 39,
+        "firstQpc": 2982294332710,
+        "lastQpc": 2982299245367,
+        "firstAfterWorkSeconds": 18.5487618,
+        "lastAfterWorkSeconds": 19.0400275,
+        "cpus": [
+          14
+        ]
+      }
+    },
+    "15": {
+      "CSwitch": {
+        "count": 3,
+        "firstQpc": 2982181429867,
+        "lastQpc": 2982186037109,
+        "firstAfterWorkSeconds": 7.2584775,
+        "lastAfterWorkSeconds": 7.7192017,
+        "cpus": [
+          15
+        ]
+      },
+      "SampledProfile": {
+        "count": 1,
+        "firstQpc": 2982271345924,
+        "lastQpc": 2982271345924,
+        "firstAfterWorkSeconds": 16.2500832,
+        "lastAfterWorkSeconds": 16.2500832,
+        "cpus": [
+          15
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 1,
+        "firstQpc": 2982181429089,
+        "lastQpc": 2982181429089,
+        "firstAfterWorkSeconds": 7.2583997,
+        "lastAfterWorkSeconds": 7.2583997,
+        "cpus": [
+          15
+        ]
+      }
+    },
+    "16": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 28,
+        "firstQpc": 2982289198720,
+        "lastQpc": 2982299159549,
+        "firstAfterWorkSeconds": 18.0353628,
+        "lastAfterWorkSeconds": 19.0314457,
+        "cpus": [
+          16
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 28,
+        "firstQpc": 2982289173196,
+        "lastQpc": 2982299159555,
+        "firstAfterWorkSeconds": 18.0328104,
+        "lastAfterWorkSeconds": 19.0314463,
+        "cpus": [
+          16
+        ]
+      }
+    },
+    "17": {
+      "CSwitch": {
+        "count": 9,
+        "firstQpc": 2982182297014,
+        "lastQpc": 2982182332250,
+        "firstAfterWorkSeconds": 7.3451922,
+        "lastAfterWorkSeconds": 7.3487158,
+        "cpus": [
+          17
+        ]
+      },
+      "SampledProfile": {
+        "count": 5,
+        "firstQpc": 2982182303764,
+        "lastQpc": 2982291786483,
+        "firstAfterWorkSeconds": 7.3458672,
+        "lastAfterWorkSeconds": 18.2941391,
+        "cpus": [
+          17
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 4,
+        "firstQpc": 2982182293784,
+        "lastQpc": 2982182323751,
+        "firstAfterWorkSeconds": 7.3448692,
+        "lastAfterWorkSeconds": 7.3478659,
+        "cpus": [
+          17
+        ]
+      }
+    },
+    "18": {
+      "CSwitch": {
+        "count": 1,
+        "firstQpc": 2982181825441,
+        "lastQpc": 2982181825441,
+        "firstAfterWorkSeconds": 7.2980349,
+        "lastAfterWorkSeconds": 7.2980349,
+        "cpus": [
+          18
+        ]
+      },
+      "SampledProfile": {
+        "count": 1,
+        "firstQpc": 2982289070091,
+        "lastQpc": 2982289070091,
+        "firstAfterWorkSeconds": 18.0224999,
+        "lastAfterWorkSeconds": 18.0224999,
+        "cpus": [
+          18
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 1,
+        "firstQpc": 2982181825320,
+        "lastQpc": 2982181825320,
+        "firstAfterWorkSeconds": 7.2980228,
+        "lastAfterWorkSeconds": 7.2980228,
+        "cpus": [
+          18
+        ]
+      }
+    },
+    "19": {
+      "CSwitch": {
+        "count": 235,
+        "firstQpc": 2982181441897,
+        "lastQpc": 2982189515370,
+        "firstAfterWorkSeconds": 7.2596805,
+        "lastAfterWorkSeconds": 8.0670278,
+        "cpus": [
+          19
+        ]
+      },
+      "SampledProfile": {
+        "count": 10,
+        "firstQpc": 2982181451399,
+        "lastQpc": 2982292852093,
+        "firstAfterWorkSeconds": 7.2606307,
+        "lastAfterWorkSeconds": 18.4007001,
+        "cpus": [
+          19
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 8,
+        "firstQpc": 2982181439780,
+        "lastQpc": 2982181773734,
+        "firstAfterWorkSeconds": 7.2594688,
+        "lastAfterWorkSeconds": 7.2928642,
+        "cpus": [
+          19
+        ]
+      }
+    },
+    "20": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 52,
+        "firstQpc": 2982296219130,
+        "lastQpc": 2982299080080,
+        "firstAfterWorkSeconds": 18.7374038,
+        "lastAfterWorkSeconds": 19.0234988,
+        "cpus": [
+          20
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 52,
+        "firstQpc": 2982296208999,
+        "lastQpc": 2982299080087,
+        "firstAfterWorkSeconds": 18.7363907,
+        "lastAfterWorkSeconds": 19.0234995,
+        "cpus": [
+          20
+        ]
+      }
+    },
+    "21": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 23,
+        "firstQpc": 2982291684064,
+        "lastQpc": 2982299144052,
+        "firstAfterWorkSeconds": 18.2838972,
+        "lastAfterWorkSeconds": 19.029896,
+        "cpus": [
+          21
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 23,
+        "firstQpc": 2982289579080,
+        "lastQpc": 2982299144063,
+        "firstAfterWorkSeconds": 18.0733988,
+        "lastAfterWorkSeconds": 19.0298971,
+        "cpus": [
+          21
+        ]
+      }
+    },
+    "22": {
+      "CSwitch": {
+        "count": 1,
+        "firstQpc": 2982246175165,
+        "lastQpc": 2982246175165,
+        "firstAfterWorkSeconds": 13.7330073,
+        "lastAfterWorkSeconds": 13.7330073,
+        "cpus": [
+          22
+        ]
+      },
+      "SampledProfile": {
+        "count": 14,
+        "firstQpc": 2982246121478,
+        "lastQpc": 2982299058669,
+        "firstAfterWorkSeconds": 13.7276386,
+        "lastAfterWorkSeconds": 19.0213577,
+        "cpus": [
+          22
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 14,
+        "firstQpc": 2982246111497,
+        "lastQpc": 2982299058675,
+        "firstAfterWorkSeconds": 13.7266405,
+        "lastAfterWorkSeconds": 19.0213583,
+        "cpus": [
+          22
+        ]
+      }
+    },
+    "23": {
+      "CSwitch": {
+        "count": 33,
+        "firstQpc": 2982200344262,
+        "lastQpc": 2982200414739,
+        "firstAfterWorkSeconds": 9.149917,
+        "lastAfterWorkSeconds": 9.1569647,
+        "cpus": [
+          23
+        ]
+      },
+      "SampledProfile": {
+        "count": 11,
+        "firstQpc": 2982200349623,
+        "lastQpc": 2982298713050,
+        "firstAfterWorkSeconds": 9.1504531,
+        "lastAfterWorkSeconds": 18.9867958,
+        "cpus": [
+          23
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 11,
+        "firstQpc": 2982200339745,
+        "lastQpc": 2982298713059,
+        "firstAfterWorkSeconds": 9.1494653,
+        "lastAfterWorkSeconds": 18.9867967,
+        "cpus": [
+          23
+        ]
+      }
+    },
+    "24": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 45,
+        "firstQpc": 2982295067842,
+        "lastQpc": 2982299105638,
+        "firstAfterWorkSeconds": 18.622275,
+        "lastAfterWorkSeconds": 19.0260546,
+        "cpus": [
+          24
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 46,
+        "firstQpc": 2982295057889,
+        "lastQpc": 2982299105645,
+        "firstAfterWorkSeconds": 18.6212797,
+        "lastAfterWorkSeconds": 19.0260553,
+        "cpus": [
+          24
+        ]
+      }
+    },
+    "25": {
+      "CSwitch": {
+        "count": 18,
+        "firstQpc": 2982192860340,
+        "lastQpc": 2982245825829,
+        "firstAfterWorkSeconds": 8.4015248,
+        "lastAfterWorkSeconds": 13.6980737,
+        "cpus": [
+          25
+        ]
+      },
+      "SampledProfile": {
+        "count": 16,
+        "firstQpc": 2982192856527,
+        "lastQpc": 2982298732952,
+        "firstAfterWorkSeconds": 8.4011435,
+        "lastAfterWorkSeconds": 18.988786,
+        "cpus": [
+          25
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 14,
+        "firstQpc": 2982192846539,
+        "lastQpc": 2982298732960,
+        "firstAfterWorkSeconds": 8.4001447,
+        "lastAfterWorkSeconds": 18.9887868,
+        "cpus": [
+          25
+        ]
+      }
+    },
+    "26": {
+      "CSwitch": {
+        "count": 118,
+        "firstQpc": 2982181405043,
+        "lastQpc": 2982187027610,
+        "firstAfterWorkSeconds": 7.2559951,
+        "lastAfterWorkSeconds": 7.8182518,
+        "cpus": [
+          26
+        ]
+      },
+      "SampledProfile": {
+        "count": 17,
+        "firstQpc": 2982181416654,
+        "lastQpc": 2982298720331,
+        "firstAfterWorkSeconds": 7.2571562,
+        "lastAfterWorkSeconds": 18.9875239,
+        "cpus": [
+          26
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 16,
+        "firstQpc": 2982181402329,
+        "lastQpc": 2982298720341,
+        "firstAfterWorkSeconds": 7.2557237,
+        "lastAfterWorkSeconds": 18.9875249,
+        "cpus": [
+          26
+        ]
+      }
+    },
+    "27": {
+      "CSwitch": {
+        "count": 21,
+        "firstQpc": 2982181848503,
+        "lastQpc": 2982182101946,
+        "firstAfterWorkSeconds": 7.3003411,
+        "lastAfterWorkSeconds": 7.3256854,
+        "cpus": [
+          27
+        ]
+      },
+      "SampledProfile": {
+        "count": 2,
+        "firstQpc": 2982216037323,
+        "lastQpc": 2982290067823,
+        "firstAfterWorkSeconds": 10.7192231,
+        "lastAfterWorkSeconds": 18.1222731,
+        "cpus": [
+          27
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 1,
+        "firstQpc": 2982181848065,
+        "lastQpc": 2982181848065,
+        "firstAfterWorkSeconds": 7.3002973,
+        "lastAfterWorkSeconds": 7.3002973,
+        "cpus": [
+          27
+        ]
+      }
+    },
+    "28": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 15,
+        "firstQpc": 2982294704409,
+        "lastQpc": 2982298946632,
+        "firstAfterWorkSeconds": 18.5859317,
+        "lastAfterWorkSeconds": 19.010154,
+        "cpus": [
+          28
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 15,
+        "firstQpc": 2982294683726,
+        "lastQpc": 2982298904178,
+        "firstAfterWorkSeconds": 18.5838634,
+        "lastAfterWorkSeconds": 19.0059086,
+        "cpus": [
+          28
+        ]
+      }
+    },
+    "29": {
+      "CSwitch": {
+        "count": 97,
+        "firstQpc": 2982186552394,
+        "lastQpc": 2982245654755,
+        "firstAfterWorkSeconds": 7.7707302,
+        "lastAfterWorkSeconds": 13.6809663,
+        "cpus": [
+          29
+        ]
+      },
+      "SampledProfile": {
+        "count": 13,
+        "firstQpc": 2982186499220,
+        "lastQpc": 2982298700299,
+        "firstAfterWorkSeconds": 7.7654128,
+        "lastAfterWorkSeconds": 18.9855207,
+        "cpus": [
+          29
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 13,
+        "firstQpc": 2982186489276,
+        "lastQpc": 2982298700307,
+        "firstAfterWorkSeconds": 7.7644184,
+        "lastAfterWorkSeconds": 18.9855215,
+        "cpus": [
+          29
+        ]
+      }
+    },
+    "30": {
+      "CSwitch": {
+        "count": 1,
+        "firstQpc": 2982182332401,
+        "lastQpc": 2982182332401,
+        "firstAfterWorkSeconds": 7.3487309,
+        "lastAfterWorkSeconds": 7.3487309,
+        "cpus": [
+          30
+        ]
+      },
+      "SampledProfile": {
+        "count": 3,
+        "firstQpc": 2982182319052,
+        "lastQpc": 2982234105270,
+        "firstAfterWorkSeconds": 7.347396,
+        "lastAfterWorkSeconds": 12.5260178,
+        "cpus": [
+          30
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 3,
+        "firstQpc": 2982182309049,
+        "lastQpc": 2982182329037,
+        "firstAfterWorkSeconds": 7.3463957,
+        "lastAfterWorkSeconds": 7.3483945,
+        "cpus": [
+          30
+        ]
+      }
+    },
+    "31": {
+      "CSwitch": {
+        "count": 0
+      },
+      "SampledProfile": {
+        "count": 1,
+        "firstQpc": 2982297819880,
+        "lastQpc": 2982297819880,
+        "firstAfterWorkSeconds": 18.8974788,
+        "lastAfterWorkSeconds": 18.8974788,
+        "cpus": [
+          31
+        ]
+      },
+      "SampledProfileNmi": {
+        "count": 0
+      },
+      "UnknownEvent/Classic": {
+        "count": 1,
+        "firstQpc": 2982290407918,
+        "lastQpc": 2982290407918,
+        "firstAfterWorkSeconds": 18.1562826,
+        "lastAfterWorkSeconds": 18.1562826,
+        "cpus": [
+          31
+        ]
+      }
+    }
+  },
+  "noClaim": [
+    "xperf targetEventKinds describes resolved CSV fields only; rawPayloadTargetSamples contains 6 raw ThreadId matches not resolved by xperf.",
+    "No reconstruction of scheduling outside retained CSwitch records.",
+    "No conclusion that missing target events were caused specifically by ring overwrite.",
+    "ETW counters zero do not prove continuous target PT or TID-to-process sideband retained.",
+    "PT raw decoding and per-packet loss status are the independent decoder task; this script only reviews event envelope timing."
+  ]
+}

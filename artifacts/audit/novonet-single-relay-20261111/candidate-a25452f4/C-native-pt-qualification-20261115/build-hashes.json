@@ -1,0 +1,22 @@
+[
+  {
+    "name": "PtQualification.cpp",
+    "bytes": 7873,
+    "sha256": "41cbce20236eecdeab06503e1e2ea93a9ead4b26b859cb8b3ee418b8d426957f"
+  },
+  {
+    "name": "PtQualification.exe",
+    "bytes": 509440,
+    "sha256": "a1b90b9b100750732cc3e4aac5672ae3319bac1a64ca70dbb7fedb661a11c5de"
+  },
+  {
+    "name": "PtQualification.pdb",
+    "bytes": 6262784,
+    "sha256": "2e620bd239adb808c66aacc14d450c2b1b7fc26f09fdee6c9e14e3196159f743"
+  },
+  {
+    "name": "build.cmd",
+    "bytes": 377,
+    "sha256": "a587ac23da6b0f3651e74c51858cc106e18a0af7c35cbb786f92a48efc2b67cd"
+  }
+]

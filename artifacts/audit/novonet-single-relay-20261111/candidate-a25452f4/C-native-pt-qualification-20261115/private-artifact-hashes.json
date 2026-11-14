@@ -1,0 +1,14 @@
+[
+  {
+    "privateRelativePath": "run-01\\qualification.etl",
+    "bytes": 20709376,
+    "sha256": "6c13386e1f3f54fff723074b50b9255baa66690b24e4e5eaaff8bf80e3e3ba78",
+    "published": false
+  },
+  {
+    "privateRelativePath": "run-01\\traced-target\\qualification-full.dmp",
+    "bytes": 25508367,
+    "sha256": "11bee06c8a4c08ae57c819148a89a06660e9c1ba56eaa07e6a53c157758582fd",
+    "published": false
+  }
+]

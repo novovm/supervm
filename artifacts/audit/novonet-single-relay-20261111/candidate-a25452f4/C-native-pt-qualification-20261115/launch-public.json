@@ -1,0 +1,8 @@
+{
+  "firstLaunch": "cancelled before execution",
+  "secondLaunch": "UAC accepted, helper PID42992",
+  "helperCreatedUtc": "2026-11-14T20:22:20.4492996Z",
+  "executedScriptSha256": "43892c37680f4b68854b3938fddc29ef4b4558c1ea0597c97c08b7c961e9638a",
+  "helperOsExitCodeRetained": false,
+  "targetAndWprExitCodesRetained": true
+}
