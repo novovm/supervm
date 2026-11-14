@@ -1,0 +1,49 @@
+{
+  "global": {
+    "exists": true,
+    "values": [],
+    "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps"
+  },
+  "node": {
+    "exists": false,
+    "values": [],
+    "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\novovm-node.exe"
+  },
+  "ae": {
+    "exists": true,
+    "values": [
+      {
+        "kind": "String",
+        "value": "\"C:\\WINDOWS\\system32\\vsjitdebugger.exe\" -p %ld -e %ld -j 0x%p",
+        "name": "Debugger"
+      },
+      {
+        "kind": "DWord",
+        "value": 0,
+        "name": "UserDebuggerHotKey"
+      }
+    ],
+    "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug"
+  },
+  "ae32": {
+    "exists": true,
+    "values": [
+      {
+        "kind": "String",
+        "value": "\"C:\\WINDOWS\\system32\\vsjitdebugger.exe\" -p %ld -e %ld -j 0x%p",
+        "name": "Debugger"
+      },
+      {
+        "kind": "DWord",
+        "value": 0,
+        "name": "UserDebuggerHotKey"
+      }
+    ],
+    "path": "HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows NT\\CurrentVersion\\AeDebug"
+  },
+  "ifeo": {
+    "exists": false,
+    "values": [],
+    "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options\\novovm-node.exe"
+  }
+}

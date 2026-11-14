@@ -1,0 +1,10 @@
+{
+  "retention_overwrites_oldest": true,
+  "path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\NOVOVM-Full-C-20261114T074716Z",
+  "acl": {
+    "owner": "BUILTIN\\Administrators",
+    "sddl": "O:BAG:<local-account-sid-redacted>D:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;LS)",
+    "acl_modified": false
+  },
+  "dump_count": 2
+}

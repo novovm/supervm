@@ -1,0 +1,174 @@
+{
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "imports": [
+    {
+      "dll": "kernel32.dll",
+      "name": "AddVectoredExceptionHandler",
+      "iat_rva": "0x2464900"
+    },
+    {
+      "dll": "kernel32.dll",
+      "name": "SetUnhandledExceptionFilter",
+      "iat_rva": "0x2464b58"
+    }
+  ],
+  "crt_machine_code": [
+    {
+      "name": "crt_install",
+      "rva": "0x23ac688",
+      "instructions": [
+        {
+          "rva": "0x23ac688",
+          "op": "lea rcx, [rip + 9]"
+        },
+        {
+          "rva": "0x23ac68f",
+          "op": "jmp qword ptr [rip + 0xb84c2]"
+        },
+        {
+          "rva": "0x23ac696",
+          "op": "int3 "
+        },
+        {
+          "rva": "0x23ac697",
+          "op": "int3 "
+        }
+      ]
+    },
+    {
+      "name": "crt_filter",
+      "rva": "0x23ac698",
+      "instructions": [
+        {
+          "rva": "0x23ac698",
+          "op": "mov qword ptr [rsp + 8], rbx"
+        },
+        {
+          "rva": "0x23ac69d",
+          "op": "push rdi"
+        },
+        {
+          "rva": "0x23ac69e",
+          "op": "sub rsp, 0x20"
+        },
+        {
+          "rva": "0x23ac6a2",
+          "op": "mov rbx, qword ptr [rcx]"
+        },
+        {
+          "rva": "0x23ac6a5",
+          "op": "mov rdi, rcx"
+        },
+        {
+          "rva": "0x23ac6a8",
+          "op": "cmp dword ptr [rbx], 0xe06d7363"
+        },
+        {
+          "rva": "0x23ac6ae",
+          "op": "jne 0x23ac6cc"
+        },
+        {
+          "rva": "0x23ac6b0",
+          "op": "cmp dword ptr [rbx + 0x18], 4"
+        },
+        {
+          "rva": "0x23ac6b4",
+          "op": "jne 0x23ac6cc"
+        },
+        {
+          "rva": "0x23ac6b6",
+          "op": "mov edx, dword ptr [rbx + 0x20]"
+        },
+        {
+          "rva": "0x23ac6b9",
+          "op": "lea eax, [rdx - 0x19930520]"
+        },
+        {
+          "rva": "0x23ac6bf",
+          "op": "cmp eax, 2"
+        },
+        {
+          "rva": "0x23ac6c2",
+          "op": "jbe 0x23ac6d9"
+        },
+        {
+          "rva": "0x23ac6c4",
+          "op": "cmp edx, 0x1994000"
+        },
+        {
+          "rva": "0x23ac6ca",
+          "op": "je 0x23ac6d9"
+        },
+        {
+          "rva": "0x23ac6cc",
+          "op": "mov rbx, qword ptr [rsp + 0x30]"
+        },
+        {
+          "rva": "0x23ac6d1",
+          "op": "xor eax, eax"
+        },
+        {
+          "rva": "0x23ac6d3",
+          "op": "add rsp, 0x20"
+        },
+        {
+          "rva": "0x23ac6d7",
+          "op": "pop rdi"
+        },
+        {
+          "rva": "0x23ac6d8",
+          "op": "ret "
+        },
+        {
+          "rva": "0x23ac6d9",
+          "op": "call 0x23ae82d"
+        },
+        {
+          "rva": "0x23ac6de",
+          "op": "mov qword ptr [rax], rbx"
+        },
+        {
+          "rva": "0x23ac6e1",
+          "op": "mov rbx, qword ptr [rdi + 8]"
+        },
+        {
+          "rva": "0x23ac6e5",
+          "op": "call 0x23ae833"
+        },
+        {
+          "rva": "0x23ac6ea",
+          "op": "mov qword ptr [rax], rbx"
+        },
+        {
+          "rva": "0x23ac6ed",
+          "op": "call 0x23ae893"
+        },
+        {
+          "rva": "0x23ac6f2",
+          "op": "int3 "
+        }
+      ]
+    }
+  ],
+  "source_scans": [
+    {
+      "revision": "a25452f4",
+      "exit_code": 0,
+      "matches": [
+        "a25452f4:vendor/iroh/tests/integration.rs:37:    std::panic::set_hook(Box::new(console_error_panic_hook::hook));",
+        "a25452f4:vendor/netdev/src/os/android/api.rs:99:    panic::set_hook(Box::new(silent_panic_hook));",
+        "a25452f4:vendor/netdev/src/os/android/api.rs:101:    panic::set_hook(previous_hook);"
+      ],
+      "stderr": ""
+    },
+    {
+      "revision": "9662470d",
+      "exit_code": 1,
+      "matches": [],
+      "stderr": ""
+    }
+  ],
+  "custom_crash_reporter_found_in_reviewed_source": false,
+  "limits": "Static imports/source do not prove absence of dynamic registration. Existing 9 OS WER dumps support applicability for observed crashes; isolated probe will qualify OS path, not prove a future node dump.",
+  "rust_handler_source": "rust 1.94.0 std/sys/pal/windows/stack_overflow.rs: returns EXCEPTION_CONTINUE_SEARCH; source observation, not full dynamic registration proof"
+}

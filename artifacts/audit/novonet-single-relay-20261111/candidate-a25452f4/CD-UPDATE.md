@@ -1,6 +1,17 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14：C已读取LocalService原转储，9份仍为MiniDump，无完整堆/根因修复
+## CURRENT 2026-11-14：C的LocalService WER完整转储资格通过，节点专属规则已配置
+
+按用户新授权，C独立核对a254/AOEM966异常处理与AeDebug/WER，未发现已知阻断项。
+唯一独立LocalService测试进程生成11,074,978字节Full Dump；65,536字节堆模式、
+代码页、两个线程上下文与SHA稳定性通过，管理员入口/验证器退出0。
+仅为novovm-node.exe新增DumpType=2、DumpCount=2及LocalService Profile私有目录，
+读回一致；全局WER、AeDebug、ACL不变。测试任务/测试key已清理，回滚入口已准备未执行。
+原节点未运行/重启，原库和身份未访问，生产代码不变。不是原始故障复现或根因修复，
+尚未取得下一次NOVOVM自然失败完整现场，双中继继续暂停。不等待A批准。
+公开资格、配置和边界见[C WER完整转储验收](C-wer-full-20261114/README.md)。
+
+## PRIOR 2026-11-14：C已读取LocalService原转储，9份仍为MiniDump，无完整堆/根因修复
 
 C通过管理员PowerShell7一次只读取得LocalService原目录及System WER清单，退出0；
 未改ACL/服务权限，17个文件原件及私有副本哈希一致，原大小/创建及修改时间保持。

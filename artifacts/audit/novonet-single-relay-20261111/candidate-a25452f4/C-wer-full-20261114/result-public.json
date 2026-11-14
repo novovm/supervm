@@ -1,0 +1,15 @@
+{
+  "start_utc": "2026-11-14T07:47:16.5248388Z",
+  "node_started": false,
+  "original_database_accessed": false,
+  "acl_changed": false,
+  "target_configured": true,
+  "qualified": true,
+  "error": null,
+  "exit_code": 0,
+  "probe_sha256": "7c333fac64aabea8cdb94698d4a5c7941cab9c9edf80ddeea1f112591e680d00",
+  "verifier_exit": 0,
+  "probe_key_removed": true,
+  "task_removed": true,
+  "end_utc": "2026-11-14T07:47:26.6973494Z"
+}

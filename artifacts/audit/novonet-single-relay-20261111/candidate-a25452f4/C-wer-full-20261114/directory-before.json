@@ -1,0 +1,10 @@
+{
+  "probe_root": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\WER-qualification-C-20261114T074716Z",
+  "acl": {
+    "owner": "NT AUTHORITY\\LOCAL SERVICE",
+    "sddl": "O:LSG:LSD:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;LS)",
+    "acl_modified": false
+  },
+  "free_bytes": 20876644352,
+  "parent": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps"
+}

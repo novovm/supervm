@@ -1,0 +1,21 @@
+{
+  "exists": true,
+  "values": [
+    {
+      "kind": "DWord",
+      "value": 2,
+      "name": "DumpCount"
+    },
+    {
+      "kind": "ExpandString",
+      "value": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\WER-qualification-C-20261114T074716Z\\dumps",
+      "name": "DumpFolder"
+    },
+    {
+      "kind": "DWord",
+      "value": 2,
+      "name": "DumpType"
+    }
+  ],
+  "path": "HKLM:\\SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps\\novovm-wer-probe-C-20261114.exe"
+}
