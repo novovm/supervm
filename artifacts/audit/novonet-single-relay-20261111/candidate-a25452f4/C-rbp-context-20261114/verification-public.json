@@ -1,0 +1,52 @@
+{
+  "baseline_commit": "efb3fbd574ab700e8a6d6c84f5c3de02f27b4db3",
+  "dump_sha256": "7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa",
+  "new_offline_cdb_exit_codes": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "hardware_breakpoints_set": false,
+  "double_relay_resumed": false,
+  "private_logs": [
+    {
+      "bytes": 97025,
+      "name": "rbp12-private.log",
+      "sha256": "7cd009d91c18eae0a77dc5f9e739eb30f53854c54f9d5cfb4fdd01d063d82291"
+    },
+    {
+      "bytes": 22937,
+      "name": "rbp12-slots-private.log",
+      "sha256": "77edfc5f1b682c2c71d563621ad9885859c029c466fd8250011ba16192bd2668"
+    },
+    {
+      "bytes": 50855,
+      "name": "rbp12-callees-private.log",
+      "sha256": "111d19254547b30ad4339dcaeb737cab57a0ab6e3f68c7bb5a1d5958d0003d58"
+    },
+    {
+      "bytes": 14443,
+      "name": "rbp12-last-private.log",
+      "sha256": "54cdafbb4d54b873ecd3eeffbb90271343d1cdacee1ff527c2b4e71a0f7db9bb"
+    }
+  ],
+  "node_restarted": false,
+  "production_code_modified": false,
+  "database_accessed": false,
+  "scripts": [
+    {
+      "name": "Inspect-RbpContext.py",
+      "sha256": "b63381f271212fa0f0ea2c32d45b1f1df61ccc4afad03a110a5877535c9b53d0"
+    },
+    {
+      "name": "Audit-RbpInstructions.py",
+      "sha256": "486bdf40ca93c83ab1aa69b81313db3828f2d6fb9f4f68facd21504b3e296ed1"
+    }
+  ],
+  "context_parser_exit_code": 0,
+  "a_acknowledgement_confirmed": false,
+  "first_corrupting_instruction_found": false,
+  "identity_accessed": false,
+  "instruction_audit_exit_code": 0
+}

@@ -1,0 +1,401 @@
+{
+  "dump_sha256": "7d910fa6713e399c6bb394f2201fec622771dbc8e0665894ce9b8c115c9231aa",
+  "executed_path_reconstructed": false,
+  "scope": "Only disassemblies named below; child paths may not have executed",
+  "groups": [
+    {
+      "command": "uf ntdll!RtlpReAllocateHeapInternal",
+      "verified_instruction_count": 505,
+      "rbp_writes": [
+        {
+          "address": "0x7ffce31a9dfc",
+          "instruction": "lea rbp, [rsp - 0x50]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        },
+        {
+          "address": "0x7ffce31aa125",
+          "instruction": "pop rbp",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce31a9e01",
+          "instruction": "sub rsp, 0x150",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31aa114",
+          "instruction": "add rsp, 0x150",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!_report_gsfailure",
+      "verified_instruction_count": 62,
+      "rbp_writes": [],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce32768b5",
+          "instruction": "sub rsp, 0x88",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce3276a1d",
+          "instruction": "add rsp, 0x88",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!RtlCaptureContext",
+      "verified_instruction_count": 33,
+      "rbp_writes": [],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce3276c00",
+          "instruction": "pushfq ",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce3276caa",
+          "instruction": "add rsp, 8",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!RtlReAllocateHeap",
+      "verified_instruction_count": 52,
+      "rbp_writes": [],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce31abda1",
+          "instruction": "sub rsp, 0x40",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31abdec",
+          "instruction": "add rsp, 0x40",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!RtlpReAllocateHeap",
+      "verified_instruction_count": 863,
+      "rbp_writes": [],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce31aa5dd",
+          "instruction": "sub rsp, 0x130",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31ab2cf",
+          "instruction": "add rsp, 0x130",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "u 00007ff7d3484880 L40",
+      "verified_instruction_count": 64,
+      "rbp_writes": [],
+      "rsp_changes": [
+        {
+          "address": "0x7ff7d3484885",
+          "instruction": "sub rsp, 0x28",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ff7d3484934",
+          "instruction": "add rsp, 0x28",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "u 00007ff7d191ed90 L20",
+      "verified_instruction_count": 32,
+      "rbp_writes": [
+        {
+          "address": "0x7ff7d191eda1",
+          "instruction": "lea rbp, [rsp + 0x80]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ff7d191ed9a",
+          "instruction": "sub rsp, 0xc0",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "u 00007ff7d191f050 L20",
+      "verified_instruction_count": 32,
+      "rbp_writes": [
+        {
+          "address": "0x7ff7d191f063",
+          "instruction": "lea rbp, [rsp + 0x80]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ff7d191f05c",
+          "instruction": "sub rsp, 0xd8",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "u 00007ff7d12ab3e0 L10",
+      "verified_instruction_count": 16,
+      "rbp_writes": [],
+      "rsp_changes": []
+    },
+    {
+      "command": "uf ntdll!RtlpHpReAllocateHeap",
+      "verified_instruction_count": 119,
+      "rbp_writes": [
+        {
+          "address": "0x7ffce31abbc4",
+          "instruction": "mov rbp, rcx",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        },
+        {
+          "address": "0x7ffce31abce6",
+          "instruction": "mov rbp, qword ptr [r11 + 0x18]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce31abbc0",
+          "instruction": "sub rsp, 0x60",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31abcf5",
+          "instruction": "mov rsp, r11",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "u 00007ff7d2efd290 L35",
+      "verified_instruction_count": 53,
+      "rbp_writes": [
+        {
+          "address": "0x7ff7d2efd29c",
+          "instruction": "lea rbp, [rsp + 0x20]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        },
+        {
+          "address": "0x7ff7d2efd2c9",
+          "instruction": "pop rbp",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ff7d2efd298",
+          "instruction": "sub rsp, 0x28",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ff7d2efd2be",
+          "instruction": "add rsp, 0x28",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ff7d2efd32d",
+          "instruction": "add rsp, 0x28",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!RtlpCallInterceptRoutine",
+      "verified_instruction_count": 168,
+      "rbp_writes": [],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce31dd486",
+          "instruction": "sub rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31dd519",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31dd5cf",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31dd604",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31dd680",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31dd6f7",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce31dd715",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!RtlpHpStackLoggingEnabled",
+      "verified_instruction_count": 25,
+      "rbp_writes": [],
+      "rsp_changes": []
+    },
+    {
+      "command": "uf ntdll!RtlpHpStackTraceRemoveStack",
+      "verified_instruction_count": 209,
+      "rbp_writes": [
+        {
+          "address": "0x7ffce31804c2",
+          "instruction": "xor ebp, ebp",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        },
+        {
+          "address": "0x7ffce318051d",
+          "instruction": "mov rbp, qword ptr [rsp + 0x50]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce31804bb",
+          "instruction": "sub rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce3180522",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce3230abb",
+          "instruction": "sub rsp, 0x20",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce3230b32",
+          "instruction": "add rsp, 0x20",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "uf ntdll!RtlpHpStackTraceAddStack",
+      "verified_instruction_count": 104,
+      "rbp_writes": [
+        {
+          "address": "0x7ffce321985d",
+          "instruction": "lea rbp, [rip + 0x10a07c]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        },
+        {
+          "address": "0x7ffce32198d1",
+          "instruction": "mov rbp, qword ptr [rsp + 0x48]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ffce3219850",
+          "instruction": "sub rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        },
+        {
+          "address": "0x7ffce32198db",
+          "instruction": "add rsp, 0x30",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    },
+    {
+      "command": "u 00007ff7d1ae5c10 L18",
+      "verified_instruction_count": 24,
+      "rbp_writes": [
+        {
+          "address": "0x7ff7d1ae5c23",
+          "instruction": "lea rbp, [rsp + 0x80]",
+          "writes_rbp": true,
+          "explicit_rsp_change": false
+        }
+      ],
+      "rsp_changes": [
+        {
+          "address": "0x7ff7d1ae5c1c",
+          "instruction": "sub rsp, 0x208",
+          "writes_rbp": false,
+          "explicit_rsp_change": true
+        }
+      ]
+    }
+  ]
+}
