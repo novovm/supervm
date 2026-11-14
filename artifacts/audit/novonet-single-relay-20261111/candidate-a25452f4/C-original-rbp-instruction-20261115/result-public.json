@@ -1,0 +1,31 @@
+{
+  "original_program_started": true,
+  "debuggee_pid": 43052,
+  "debugger_pid": 39288,
+  "debugger_exit_decimal": 2147942430,
+  "debugger_exit_hex": "0x8007001e",
+  "debugger_exit_is_not_node_crash_code": true,
+  "observed_node_instruction_rva": "0x84eed4",
+  "instruction_bytes": "e8a759b601",
+  "instruction": "call original RawVecInner::finish_grow",
+  "same_invocation_rbp_before_after_obtained": false,
+  "first_original_wrong_rbp_instruction_found": false,
+  "original_fault_reproduced": false,
+  "failure": [
+    "MASM condition used unsupported || syntax",
+    "backslashes in breakpoint callback command caused command-file lookup failure"
+  ],
+  "selected_instruction_hit": true,
+  "corrected_script_rerun": false,
+  "offline_syntax_check_exit": 0,
+  "offline_checks": [
+    "BYTE_GUARD_OK",
+    "COMBINED_CONDITION_OK",
+    "INCLUDE_PATH_OK"
+  ],
+  "remaining_novovm_or_cdb_processes": 0,
+  "original_database_or_identity_modified": false,
+  "relay_resumed": false,
+  "private_log_sha256": "c34c51d370dce31053dd922786c74fce2c72b28a9afe55117b0a483e26621fbc",
+  "source_sha256": "00cf16a183de2334c5950ec2085eaf5907be171ab23c6844839c5e42dcc01f15"
+}

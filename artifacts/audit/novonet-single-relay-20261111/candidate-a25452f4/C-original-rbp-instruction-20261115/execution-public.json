@@ -1,0 +1,49 @@
+{
+  "end_utc": "2026-11-14T19:25:00.653882+00:00",
+  "wall_seconds": 2.1880000000237487,
+  "processes": [
+    {
+      "index": 1,
+      "pid": 25236,
+      "exit_code": 1,
+      "controlled_stop": true
+    },
+    {
+      "index": 2,
+      "pid": 23000,
+      "exit_code": 1,
+      "controlled_stop": true
+    },
+    {
+      "index": 3,
+      "pid": 6600,
+      "exit_code": 1,
+      "controlled_stop": true
+    },
+    {
+      "index": 0,
+      "pid": 39288,
+      "exit_code": 2147942430,
+      "controlled_stop": false
+    }
+  ],
+  "progress_file_changes": [
+    [
+      1,
+      1794684299328203300,
+      6289
+    ],
+    [
+      2,
+      1794684299326695200,
+      6289
+    ],
+    [
+      3,
+      1794684299328203300,
+      6288
+    ]
+  ],
+  "original_fault_reproduced": "not_determined",
+  "root_cause_fixed": false
+}

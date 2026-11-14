@@ -1,0 +1,23 @@
+{
+  "utc": "2026-11-14T19:24:58.407568+00:00",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "aoem_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "ntdll_sha256": "a0f81bf5c610c0ff0a550adc020a58446f214790c748057bb575042e972e6a34",
+  "loopback_only": true,
+  "original_database_accessed": false,
+  "original_identity_accessed": false,
+  "original_node_started": false,
+  "run_ms": 60000,
+  "maximum_wall_seconds": 110,
+  "group_limit": 8,
+  "all_hardware_hit_limit": 1000,
+  "limitations": [
+    "eight selected invocations only",
+    "outer source has no exact source PDB",
+    "no original packet replay",
+    "fresh loopback genesis",
+    "hardware debug exceptions perturb execution",
+    "no full instruction trace",
+    "abnormal unwind of tracked frame may leave an unmatched group"
+  ]
+}

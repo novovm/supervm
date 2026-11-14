@@ -1,6 +1,15 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-15：C已实现并验证同次调用采集，仍未获得原故障首次错位
+## CURRENT 2026-11-15：原a254隔离运行命中真实分配位置，取证命令失败，未得RBP前后值
+
+C直接以原a254＋AOEM966、独立测试钥和新库启动四个loopback原程序，无人工样例。
+被调试节点命中RVA84eed4的原finish_grow调用，但CDB条件语法及回调文件加载失败，
+约2.19秒终止。CDB退出0x8007001e不等于节点自然崩溃；三个peer为受控停止，退出1。
+命令已修正并完成离线语法核对，未自动重跑；无遗留node/cdb。未取得RBP写前后记录，
+未定位首次错位，原库/身份/失败现场保持，不做修复、不恢复双中继。
+公开事实及实际失败命令见[C-original-rbp-instruction-20261115](C-original-rbp-instruction-20261115/README.md)。
+
+## PRIOR 2026-11-15：C已实现并验证同次调用采集，仍未获得原故障首次错位
 
 C独立完成MASM调用前后RBP/RSP记录、线程/调用实例/递归关联、SEH独立标记与二进制
 校验器。阳性对照确实定位到测试callee的xor rbp指令，不能当作NOVOVM故障。
