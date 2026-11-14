@@ -1,0 +1,25 @@
+fn policy() -> DirectNovFeePolicy {
+    DirectNovFeePolicy {
+        amount_fee_v3: None,
+        quote_ttl_ms: 15000,
+        policy_version: 1,
+        policy_source: "default".into(),
+        resolution_source: "runtime_state".into(),
+        reserve_share_bps: 7000,
+        fee_share_bps: 2000,
+        risk_buffer_share_bps: 1000,
+        min_reserve_bucket_nov: 0,
+        min_fee_bucket_nov: 0,
+        min_risk_buffer_nov: 1,
+        settlement_paused: false,
+        redeem_paused: false,
+        clearing_enabled: true,
+        clearing_daily_nov_hard_limit: 1_000_000,
+        clearing_require_healthy_risk_buffer: false,
+        clearing_constrained_max_slippage_bps: 500,
+        clearing_constrained_daily_usage_bps: 8000,
+        clearing_constrained_strategy: "daily_volume_only".into(),
+        mapped_asset_auto_heal_rollback_enabled: false,
+        mapped_asset_reorg_response_policy: "report_only".into(),
+    }
+}

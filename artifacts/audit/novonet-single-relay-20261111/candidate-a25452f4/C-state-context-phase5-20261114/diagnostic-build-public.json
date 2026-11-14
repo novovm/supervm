@@ -1,0 +1,224 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "new_diagnostic_exe_executed": true,
+  "production_node_executed": false,
+  "original_database_accessed": false,
+  "original_identity_accessed": false,
+  "new_test_only_database_and_purpose_keys": true,
+  "pdb_guid": "D48DE755-86BD-4779-8F1A-A880E15252EB",
+  "pdb_age": 1,
+  "artifacts": [
+    {
+      "file": "c-phase5-status.exe",
+      "bytes": 12916224,
+      "sha256": "92b0cef70db104d045d27ed95777a0b8bad52f8177e801c05d15429e0f071223"
+    },
+    {
+      "file": "c_phase5_status.pdb",
+      "bytes": 128847872,
+      "sha256": "ccdf74f18d88639aee3ad15fb55ae5116c58ce151092944d6cba10759b4fd7ff"
+    },
+    {
+      "file": "aoem_ffi.dll",
+      "bytes": 48689152,
+      "sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52"
+    }
+  ],
+  "compilation_units": [
+    {
+      "module": "0001 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.00.rcgu.o`: ",
+      "debug_stream": 30,
+      "source_files": 6
+    },
+    {
+      "module": "0002 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.01.rcgu.o`: ",
+      "debug_stream": 29,
+      "source_files": 23
+    },
+    {
+      "module": "0003 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.02.rcgu.o`: ",
+      "debug_stream": 27,
+      "source_files": 21
+    },
+    {
+      "module": "0004 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.03.rcgu.o`: ",
+      "debug_stream": 28,
+      "source_files": 71
+    },
+    {
+      "module": "0005 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.04.rcgu.o`: ",
+      "debug_stream": 25,
+      "source_files": 38
+    },
+    {
+      "module": "0006 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.05.rcgu.o`: ",
+      "debug_stream": 26,
+      "source_files": 7
+    },
+    {
+      "module": "0007 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.06.rcgu.o`: ",
+      "debug_stream": 24,
+      "source_files": 48
+    },
+    {
+      "module": "0008 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.07.rcgu.o`: ",
+      "debug_stream": 23,
+      "source_files": 18
+    },
+    {
+      "module": "0009 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.08.rcgu.o`: ",
+      "debug_stream": 20,
+      "source_files": 32
+    },
+    {
+      "module": "0010 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.09.rcgu.o`: ",
+      "debug_stream": 21,
+      "source_files": 52
+    },
+    {
+      "module": "0011 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.10.rcgu.o`: ",
+      "debug_stream": 22,
+      "source_files": 57
+    },
+    {
+      "module": "0012 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.11.rcgu.o`: ",
+      "debug_stream": 19,
+      "source_files": 14
+    },
+    {
+      "module": "0013 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.12.rcgu.o`: ",
+      "debug_stream": 18,
+      "source_files": 74
+    },
+    {
+      "module": "0014 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.13.rcgu.o`: ",
+      "debug_stream": 17,
+      "source_files": 75
+    },
+    {
+      "module": "0015 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.14.rcgu.o`: ",
+      "debug_stream": 14,
+      "source_files": 65
+    },
+    {
+      "module": "0016 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.c_phase5_status.c1b3eebb611f601a-cgu.15.rcgu.o`: ",
+      "debug_stream": 16,
+      "source_files": 31
+    },
+    {
+      "module": "0017 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.es6kvobo6ihebz5nbi57l3v76.rcgu.o`: ",
+      "debug_stream": 13,
+      "source_files": 0
+    },
+    {
+      "module": "0018 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.09.rcgu.o`: ",
+      "debug_stream": 37,
+      "source_files": 386
+    },
+    {
+      "module": "0019 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.14.rcgu.o`: ",
+      "debug_stream": 31,
+      "source_files": 328
+    },
+    {
+      "module": "0020 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.11.rcgu.o`: ",
+      "debug_stream": 39,
+      "source_files": 297
+    },
+    {
+      "module": "0021 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.08.rcgu.o`: ",
+      "debug_stream": 42,
+      "source_files": 304
+    },
+    {
+      "module": "0022 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.13.rcgu.o`: ",
+      "debug_stream": 35,
+      "source_files": 313
+    },
+    {
+      "module": "0023 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.06.rcgu.o`: ",
+      "debug_stream": 36,
+      "source_files": 243
+    },
+    {
+      "module": "0024 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.10.rcgu.o`: ",
+      "debug_stream": 34,
+      "source_files": 225
+    },
+    {
+      "module": "0025 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.12.rcgu.o`: ",
+      "debug_stream": 33,
+      "source_files": 354
+    },
+    {
+      "module": "0026 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.02.rcgu.o`: ",
+      "debug_stream": 41,
+      "source_files": 204
+    },
+    {
+      "module": "0027 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.00.rcgu.o`: ",
+      "debug_stream": 84,
+      "source_files": 129
+    },
+    {
+      "module": "0028 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.04.rcgu.o`: ",
+      "debug_stream": 58,
+      "source_files": 218
+    },
+    {
+      "module": "0029 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.05.rcgu.o`: ",
+      "debug_stream": 40,
+      "source_files": 307
+    },
+    {
+      "module": "0030 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.15.rcgu.o`: ",
+      "debug_stream": 32,
+      "source_files": 396
+    },
+    {
+      "module": "0031 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.07.rcgu.o`: ",
+      "debug_stream": 38,
+      "source_files": 272
+    },
+    {
+      "module": "0032 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.03.rcgu.o`: ",
+      "debug_stream": 43,
+      "source_files": 379
+    },
+    {
+      "module": "0033 | `novovm_node-68dab17da82c64ec.novovm_node.8d3bcdb947a50251-cgu.01.rcgu.o`: ",
+      "debug_stream": 198,
+      "source_files": 64
+    },
+    {
+      "module": "1368 | `<SUPERVM>\\target\\c-boundary-phase4-20261114\\build\\x86_64-pc-windows-msvc\\release\\deps\\c_phase5_status.exp`: ",
+      "debug_stream": 15,
+      "source_files": 0
+    }
+  ],
+  "markers_only_unsafe_lint_exception": "no_mangle export, no unsafe statements",
+  "diagnostic_command": [
+    "cargo",
+    "+1.94.0",
+    "rustc",
+    "--locked",
+    "--offline",
+    "--release",
+    "--target",
+    "x86_64-pc-windows-msvc",
+    "--config",
+    "profile.release.package.novovm-node.debug=2",
+    "-p",
+    "novovm-node",
+    "--bin",
+    "c-phase5-status",
+    "--features",
+    "iroh-transport",
+    "--",
+    "-C",
+    "debuginfo=2",
+    "-C",
+    "strip=none"
+  ],
+  "runtime_matches_original_37796_aoem966": true
+}

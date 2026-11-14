@@ -1,0 +1,68 @@
+[
+  {
+    "path": "Cargo.toml",
+    "a254_sha256": "d7021c4bac11b09cd97a59dc1c1267b8d8aba6dda0a8c037e046bc2ea184a7bd",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "Cargo.lock",
+    "a254_sha256": "e5989aba61df7396552a500fb0fd93c2194de1b185ec9ad1ba0c3ec02e20fbcd",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": false
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/profile.rs",
+    "a254_sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+    "a254_sha256": "47615e1436723349e5cc5747f2ea7d907c3202a5af154a9652d4988bbee8d335",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/service/rpc/native_query.rs",
+    "a254_sha256": "e5f4373f3cc27abf590426fb4fb6703ff01f48a7106f608e530baff05e7ca856",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/bin/novovm-node.rs",
+    "a254_sha256": "2032c0d20d5f309a8a3a7aeca89dd4fde911d99bda2a8b75898f8f6bb59fd0ae",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_service.rs",
+    "a254_sha256": "7de13ce19944ce6e5bf241a810d2625a7c42ca305881eab68dc8a939d4cd18e9",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/service.rs",
+    "a254_sha256": "71a35817644de867f00a7c7b496d490c9a035370e920dee1b02dec1bb815ff6f",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/pipeline/mod.rs",
+    "a254_sha256": "3e9e35102d64481600defe6162521cd067dfcc94f577e5bc6f66b9b12b298719",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/pipeline/compute.rs",
+    "a254_sha256": "5046fabf0491f36762beb0b60af273f55c4b44e27c269c8a5f5b27fbf0059459",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  },
+  {
+    "path": "crates/novovm-node/src/native_pipeline/persistence/io.rs",
+    "a254_sha256": "7e0facc98a6e011322ee392eb062edd1b01ee1bc2ca87b551af26a4fd551414f",
+    "diagnostic_source_equals_a254": true,
+    "source_875_equals_a254": true
+  }
+]

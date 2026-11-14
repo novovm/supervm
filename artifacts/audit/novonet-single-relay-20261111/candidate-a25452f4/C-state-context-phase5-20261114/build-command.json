@@ -1,0 +1,23 @@
+[
+  "cargo",
+  "+1.94.0",
+  "rustc",
+  "--locked",
+  "--offline",
+  "--release",
+  "--target",
+  "x86_64-pc-windows-msvc",
+  "--config",
+  "profile.release.package.novovm-node.debug=2",
+  "-p",
+  "novovm-node",
+  "--bin",
+  "c-phase5-status",
+  "--features",
+  "iroh-transport",
+  "--",
+  "-C",
+  "debuginfo=2",
+  "-C",
+  "strip=none"
+]

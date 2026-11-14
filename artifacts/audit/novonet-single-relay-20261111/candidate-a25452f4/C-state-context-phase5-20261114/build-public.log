@@ -1,0 +1,76 @@
+warning: <SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-node\Cargo.toml: file `<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling aoem-bindings v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\aoem-bindings)
+   Compiling novovm-protocol v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-protocol)
+   Compiling simple-dns v0.12.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\vendor\simple-dns)
+   Compiling netdev v0.45.1 (<SUPERVM>\target\c-state-context-phase5-20261114\source\vendor\netdev)
+   Compiling n0-dns-resolver v0.1.0
+   Compiling novovm-adapter-api v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-adapter-api)
+   Compiling iroh-dns v1.3.0
+   Compiling iroh v1.3.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\vendor\iroh)
+   Compiling novovm-storage-budget v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-storage-budget)
+   Compiling netwatch v0.19.3
+   Compiling novovm-exec v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-exec)
+   Compiling web30-core v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\vendor\web30-core)
+   Compiling novovm-adapter-evm-core v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\plugins\evm\core)
+   Compiling iroh-relay v1.3.0
+   Compiling novovm-udp-batch v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-udp-batch)
+   Compiling novovm-governance-observability v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-governance-observability)
+   Compiling novovm-adapter-novovm v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-adapter-novovm)
+   Compiling novovm-consensus v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-consensus)
+   Compiling novovm-adapter-evm-plugin v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\plugins\evm\plugin)
+   Compiling novovm-network v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-network)
+   Compiling novovm-relay v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-relay)
+   Compiling novovm-node v0.1.0 (<SUPERVM>\target\c-state-context-phase5-20261114\source\crates\novovm-node)
+error: declaration of a `no_mangle` function
+  --> crates\novovm-node\src\bin\c-phase5-status.rs:12:1
+   |
+12 | #[no_mangle]
+   | ^^^^^^^^^^^^
+   |
+   = note: the linker's behavior with multiple libraries exporting duplicate symbol names is undefined and Rust cannot provide guarantees when you manually override them
+note: the lint level is defined here
+  --> crates\novovm-node\src\bin\c-phase5-status.rs:1:11
+   |
+ 1 | #![forbid(unsafe_code)]
+   |           ^^^^^^^^^^^
+
+error: declaration of a `no_mangle` function
+  --> crates\novovm-node\src\bin\c-phase5-status.rs:15:1
+   |
+15 | #[no_mangle]
+   | ^^^^^^^^^^^^
+   |
+   = note: the linker's behavior with multiple libraries exporting duplicate symbol names is undefined and Rust cannot provide guarantees when you manually override them
+
+error: declaration of a `no_mangle` function
+  --> crates\novovm-node\src\bin\c-phase5-status.rs:18:1
+   |
+18 | #[no_mangle]
+   | ^^^^^^^^^^^^
+   |
+   = note: the linker's behavior with multiple libraries exporting duplicate symbol names is undefined and Rust cannot provide guarantees when you manually override them
+
+error[E0308]: mismatched types
+  --> crates\novovm-node\src\bin\c-phase5-status.rs:60:57
+   |
+60 |             novovm_node::c_phase5::record_test_delivery(0xc0+i);
+   |             ------------------------------------------- ^^^^^^ expected `u8`, found `usize`
+   |             |
+   |             arguments to this function are incorrect
+   |
+note: function defined here
+  --> crates\novovm-node\src\c_phase5.rs:2:8
+   |
+ 2 | pub fn record_test_delivery(n:u8) {
+   |        ^^^^^^^^^^^^^^^^^^^^
+help: you can convert a `usize` to a `u8` and panic if the converted value doesn't fit
+   |
+60 |             novovm_node::c_phase5::record_test_delivery((0xc0+i).try_into().unwrap());
+   |                                                         +      +++++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `novovm-node` (bin "c-phase5-status") due to 4 previous errors

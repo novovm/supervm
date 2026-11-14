@@ -1,0 +1,36 @@
+function RVA 13ee20..13ee89
+0013ee20: push r14
+0013ee22: push rsi
+0013ee23: push rdi
+0013ee24: push rbx
+0013ee25: sub rsp, 0x28
+0013ee29: mov rsi, r8
+0013ee2c: mov rdi, rcx
+0013ee2f: mov rax, qword ptr [rcx]
+0013ee32: mov rbx, qword ptr [rcx + 0x10]
+0013ee36: sub rax, rbx
+0013ee39: cmp r8, rax
+0013ee3c: ja 0x13ee60
+0013ee3e: mov rcx, qword ptr [rdi + 8]
+0013ee42: add rcx, rbx
+0013ee45: mov r8, rsi
+0013ee48: call 0x8f9771
+0013ee4d: add rbx, rsi
+0013ee50: mov qword ptr [rdi + 0x10], rbx
+0013ee54: xor eax, eax
+0013ee56: add rsp, 0x28
+0013ee5a: pop rbx
+0013ee5b: pop rdi
+0013ee5c: pop rsi
+0013ee5d: pop r14
+0013ee5f: ret
+0013ee60: mov qword ptr [rsp + 0x20], 1
+0013ee69: mov r9d, 1
+0013ee6f: mov rcx, rdi
+0013ee72: mov r14, rdx
+0013ee75: mov rdx, rbx
+0013ee78: mov r8, rsi
+0013ee7b: call 0x8fa2f0
+0013ee80: mov rdx, r14
+0013ee83: mov rbx, qword ptr [rdi + 0x10]
+0013ee87: jmp 0x13ee3e

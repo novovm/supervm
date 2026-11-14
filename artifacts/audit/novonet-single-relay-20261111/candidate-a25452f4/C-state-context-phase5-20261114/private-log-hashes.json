@@ -1,0 +1,27 @@
+[
+  {
+    "private_local_file": "build-private.log",
+    "bytes": 5007,
+    "sha256": "88398de94faf532d5bb1d3166f6ed7828d4c23e2557c4fd3331b73faa970b4bc"
+  },
+  {
+    "private_local_file": "build2-private.log",
+    "bytes": 753,
+    "sha256": "c23a06390618e24885b80b7e549838a1e1e622a60d05cfa335c909e0b2c1b9f7"
+  },
+  {
+    "private_local_file": "capture1-private.log",
+    "bytes": 800150,
+    "sha256": "cbbb0d50947c231d646bfcc2aff7fae7c204f8b0a2112c8f900e7e78210c67c7"
+  },
+  {
+    "private_local_file": "pdb-modules-private.txt",
+    "bytes": 485254,
+    "sha256": "1bff50040cc5b246a10da7f958f1e4a4b4f30b5a96ef002659809ded805a6392"
+  },
+  {
+    "private_local_file": "pdb-public-symbols-private.txt",
+    "bytes": 4290488,
+    "sha256": "98302dee8f166cb1c345ba338f4fd9d80a69e9311408fc3e7a9e166a94d0c062"
+  }
+]

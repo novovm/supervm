@@ -1,0 +1,132 @@
+[
+  {
+    "file": "alternate-writer-disassembly.txt",
+    "bytes": 887,
+    "sha256": "cdcbd3bfb6b68dfa427344927fde1b465e695e12b3171f5c791c33679dcfb9ce"
+  },
+  {
+    "file": "alternate-writer-symbol.txt",
+    "bytes": 256,
+    "sha256": "7778172996602b976d16ae8326f64bb45ef28f0f25b6de7a71873a28232cb8f4"
+  },
+  {
+    "file": "build-command.json",
+    "bytes": 337,
+    "sha256": "2b381527ff2d0cb9593c1bb0da49e16824df9a08484ad3b624abed956796426b"
+  },
+  {
+    "file": "build-exit.json",
+    "bytes": 19,
+    "sha256": "c6a0f3df1f62063c14d07bb0f7bd31dc9a4023dc7ed1a272d43165f0130fbdec"
+  },
+  {
+    "file": "build-public.log",
+    "bytes": 4827,
+    "sha256": "b0ee61fffd3ff37660f9b7348ac49853fcea2136158956c4e49a30575e59cb45"
+  },
+  {
+    "file": "build2-exit.json",
+    "bytes": 70,
+    "sha256": "2588e0406b91f796f8eedf10ad4ca65e12d1d4131a8ba82db2671c11fa8bfd43"
+  },
+  {
+    "file": "build2-public.log",
+    "bytes": 726,
+    "sha256": "17d91d6bd1f762e213a733772fdba77309ff1cad9d3209cacd95f9176ff461fc"
+  },
+  {
+    "file": "c-phase5-status-function-map.json",
+    "bytes": 2195,
+    "sha256": "65c26246da856d18eebe4a0aa70b932d690a37e2ff0edab600b9a66a7fe1c92d"
+  },
+  {
+    "file": "capture-records-public.json",
+    "bytes": 723934,
+    "sha256": "c837d59c272bf819a0504538c5e8c7551125d4691e44b0b034708b1489f101a8"
+  },
+  {
+    "file": "capture-results-public.json",
+    "bytes": 1131,
+    "sha256": "e206e041c09c5400e8c6bedd21d8c64347647345b8729faad337b3a70b7bb5d0"
+  },
+  {
+    "file": "capture1-exit.json",
+    "bytes": 176,
+    "sha256": "4c921672213c14ecf82bf9bb6dd343bf780ccec783fdbf352a03a57db09185ce"
+  },
+  {
+    "file": "capture1-public.log",
+    "bytes": 787069,
+    "sha256": "c8f132c4ded0143d8f4c48ee758e8164d3a0a67d170e0ae57f6ce12f310337f3"
+  },
+  {
+    "file": "capture1.cdb",
+    "bytes": 4025,
+    "sha256": "306feccfea7b1192c29c310d040c405d6fcb83fd802c8f141c89bcb36c0b8ff8"
+  },
+  {
+    "file": "check-boundaries.py",
+    "bytes": 5461,
+    "sha256": "d9588a452a55c5927270cb7a4acf5bb398a1a2ee07052e278c71b866bea54f4b"
+  },
+  {
+    "file": "collect-boundaries.py",
+    "bytes": 5721,
+    "sha256": "8de5291420a7a8558afec95f97434e81656da739db46d30c1d120485326b5f50"
+  },
+  {
+    "file": "coverage-gaps-public.json",
+    "bytes": 8932,
+    "sha256": "857b9f78ce9a559f8c3bef6353a91f77b5538efc617929e666326f125d271259"
+  },
+  {
+    "file": "diagnostic-build-public.json",
+    "bytes": 8508,
+    "sha256": "df9078312e34c77e4536abe97e8870611a48e48222dea16a9c479591480c89c5"
+  },
+  {
+    "file": "diagnostic-main.rs",
+    "bytes": 8378,
+    "sha256": "ad19ca647f6d48592e83afe8b929ec1179dc702c5c0f729169027c47b3dd308a"
+  },
+  {
+    "file": "diagnostic-module.rs",
+    "bytes": 277,
+    "sha256": "e9a4947d025a53d4e95342bb7bec4e32f2673afa24d42d97ef62d57f019f9b8c"
+  },
+  {
+    "file": "map-functions.py",
+    "bytes": 2294,
+    "sha256": "596598bfe22b8df4ce063fe6db785d4abae730c285119a1d837b46264921d1e1"
+  },
+  {
+    "file": "original-policy.rs",
+    "bytes": 935,
+    "sha256": "f678b0894dd1dd3424f0a05adaf8db5c6dfcc1229474562fc3c528b408e0a5ca"
+  },
+  {
+    "file": "private-log-hashes.json",
+    "bytes": 812,
+    "sha256": "9c2f08e70ab3a0ec31022f8e47a3af6edc7d9cbf4d7bfb9abec84055d3b4ff2e"
+  },
+  {
+    "file": "README.md",
+    "bytes": 12169,
+    "sha256": "2a59ef2660e070332c470c923b30ef5925f8e564e623925bb2424cf4576b6f55"
+  },
+  {
+    "file": "REPRODUCE.md",
+    "bytes": 2647,
+    "sha256": "8ed55aa502b2a1163be1a7f8a58f9abc1d6ac33d8a10fdaff94fba5209b57645"
+  },
+  {
+    "file": "source-verification.json",
+    "bytes": 2580,
+    "sha256": "19db687e6d114d32094384825dc4dadf7b5c57a5540a44709b28e9f9538f60f2"
+  },
+  {
+    "file": "thread-timeline-public.txt",
+    "bytes": 937,
+    "sha256": "4134ba4f55d59021f128308ce361bc73b5b0fccde0974c8ca4ef3644cafcfd4d"
+  }
+]

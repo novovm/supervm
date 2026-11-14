@@ -1,6 +1,22 @@
 # a25452f4: approved existing updates, then real double relay
 
-## CURRENT 2026-11-14 C Phase4: diagnostic build and live boundaries; original fault unresolved
+## CURRENT 2026-11-14 C Phase5: original status context; C investigates independently
+
+C independently traced periodic JSON progress, historical JSON-RPC, native binary
+Status and observer file reads. The native authenticated Status does not invoke
+the JSON profile snapshot; Watch-Relay reads the file, not an RPC trigger.
+One new isolated original RpcLifecycle/ResidentNode context ran with fresh local
+test state, loopback-only peers, matching AOEM966 and a concurrent recorder thread.
+448 complete formatter/writer groups agreed;33 other capture sequences were
+incomplete and are NOT counted as passed. Both process/debugger exited0 and drain
+completed. Original first corruption remains unknown, no production fix or relay
+release. No deployed node restart, original DB/identity access or TTD.
+[Phase5 context, evidence and coverage gaps](C-state-context-phase5-20261114/README.md).
+C does not need A to diagnose or approve local investigation; Git coordinates
+shared work only. No new A receipt was found after0470f343. A/D need not rerun
+this test or operate nodes. C remains NOT READY for double relay.
+
+## PRIOR 2026-11-14 C Phase4: diagnostic build and live boundaries; original fault unresolved
 
 C built an independent optimized a254 node with full node-library/bin debug streams;
 EXE/PDB identity and original-source checksums verified. This new node was NOT run.

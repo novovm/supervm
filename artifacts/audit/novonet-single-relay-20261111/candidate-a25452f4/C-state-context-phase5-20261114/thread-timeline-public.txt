@@ -1,0 +1,15 @@
+OWNER name=Some("novovm-native-tick") rust_thread=ThreadId(2) stack_bytes=16777216 test_only=true
+WINDOW_BEGIN tid=5778 query=1 owner=0000008549afa100
+PRODUCER_BOUNDARY tid=1aa0 stage=1 task=0 active=1
+PRODUCER_BOUNDARY tid=1aa0 stage=2 task=0 active=1
+PRODUCER completed=1 rust_thread=ThreadId(6)
+PRODUCER_BOUNDARY tid=1aa0 stage=1 task=1 active=1
+PRODUCER_BOUNDARY tid=1aa0 stage=2 task=1 active=1
+PRODUCER completed=2 rust_thread=ThreadId(6)
+PRODUCER_BOUNDARY tid=1aa0 stage=1 task=2 active=1
+PRODUCER_BOUNDARY tid=1aa0 stage=1 task=2 active=1
+PRODUCER_BOUNDARY tid=1aa0 stage=2 task=2 active=1
+PRODUCER completed=3 rust_thread=ThreadId(6)
+WINDOW_END tid=5778 query=1 owner=0000008549afa100 calls=1e1
+PHASE5_STATUS_PASS producer_before=0 producer_after=3 delivery_contended=0 events=7 encoded_bytes=13453 actual_original_status=true original_fault_reproduced=false
+PHASE5_DRAIN_PASS producer_completed=3 temporary_state_retained=true

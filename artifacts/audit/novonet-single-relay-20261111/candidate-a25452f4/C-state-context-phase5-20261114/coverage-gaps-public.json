@@ -1,0 +1,595 @@
+[
+  {
+    "capture_sequence": [
+      22392,
+      1
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      2
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      3
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PAD_PREFIX_BEFORE",
+      "PAD_PREFIX_AFTER",
+      "PAD_CALL",
+      "PAD_RETURN"
+    ],
+    "targets_rva": [
+      "-0x7ff7b1950000",
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      4
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      5
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      6
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      7
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      8
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      9
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PAD_PREFIX_BEFORE",
+      "PAD_PREFIX_AFTER",
+      "PAD_CALL",
+      "PAD_RETURN"
+    ],
+    "targets_rva": [
+      "-0x7ff7b1950000",
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      10
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      11
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      12
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      13
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      14
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      15
+    ],
+    "stages": [
+      "FMT_BEGIN"
+    ],
+    "targets_rva": []
+  },
+  {
+    "capture_sequence": [
+      22392,
+      16
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      17
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      18
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      19
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      20
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      21
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PAD_PREFIX_BEFORE",
+      "PAD_PREFIX_AFTER",
+      "PAD_CALL",
+      "PAD_RETURN"
+    ],
+    "targets_rva": [
+      "-0x7ff7b1950000",
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      22
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      23
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      24
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      25
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      26
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      27
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      28
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      29
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      30
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      31
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      32
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  },
+  {
+    "capture_sequence": [
+      22392,
+      33
+    ],
+    "stages": [
+      "FMT_BEGIN",
+      "FMT_CALL",
+      "PAD_ENTRY",
+      "PREFIX_BEFORE",
+      "PREFIX_AFTER",
+      "TAIL_READY",
+      "TAIL_JUMP"
+    ],
+    "targets_rva": [
+      "0x13ee20"
+    ]
+  }
+]

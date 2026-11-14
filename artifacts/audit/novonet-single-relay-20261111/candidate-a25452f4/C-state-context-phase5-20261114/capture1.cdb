@@ -1,0 +1,27 @@
+.sympath <SUPERVM>\target\c-boundary-phase4-20261114\build\x86_64-pc-windows-msvc\release
+.reload /f c-phase5-status.exe
+r @$t0=0
+r @$t1=0
+r @$t2=0
+r @$t10=0
+x c_phase5_status!phase5_*
+bp c_phase5_status!phase5_begin "r @$t0=1; r @$t1=@$tid; r @$t8=@rdx; r @$t9=@rcx; .printf \"WINDOW_BEGIN tid=%x query=%x owner=%p\", @$tid,@rcx,@rdx; .echo; ~; gc"
+bp c_phase5_status!phase5_end ".printf \"WINDOW_END tid=%x query=%x owner=%p calls=%x\", @$tid,@rcx,@rdx,@$t2; .echo; r @$t0=0; gc"
+bp c_phase5_status!phase5_producer ".printf \"PRODUCER_BOUNDARY tid=%x stage=%x task=%x active=%x\", @$tid,@rcx,@rdx,@$t0; .echo; gc"
+bp c_phase5_status+0x588f90 ".if (@$t0) { .if (@$tid==@$t1) { .if (@$t10==0) { r @$t10=1; .echo ORIGINAL_FORMAT_INNER_STACK; kv; } } }; gc"
+bp c_phase5_status+0x58ce50 ".if (@$t0) { .if (@$tid==@$t1) { r @$t2=@$t2+1; r @$t3=@rcx; .if (@$t2==1) { .echo ORIGINAL_STATUS_FIRST_FORMAT_STACK; kv; }; .printf \"REC stage=FMT_BEGIN tid=%x seq=%x rsp=%p receiver=%p cap=%p buffer=%p len=%p\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rcx+8),poi(@rcx+0x10); .echo; } }; gc"
+bp c_phase5_status+0x58cfad ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=FMT_CALL tid=%x seq=%x rsp=%p formatter=%p receiver=%p\", @$tid,@$t2,@rsp,@rdx,poi(@rdx); .echo; } }; gc"
+bp c_phase5_status+0x58d710 ".if (@$t0) { .if (@$tid==@$t1) { r @$t4=poi(@rsp+0x28); r @$t5=poi(@rsp+0x30); .printf \"REC stage=PAD_ENTRY tid=%x seq=%x rsp=%p formatter=%p receiver=%p text=%p len=%p\", @$tid,@$t2,@rsp,@rcx,poi(@rcx),poi(@rsp+0x28),poi(@rsp+0x30); .echo; } }; gc"
+bp c_phase5_status+0x58d7d7 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_BEFORE tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+bp c_phase5_status+0x58d7dc ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PREFIX_AFTER tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+bp c_phase5_status+0x58daec ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_PREFIX_BEFORE tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+bp c_phase5_status+0x58daf1 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_PREFIX_AFTER tid=%x seq=%x rsp=%p rbx=%p rbp=%p rdi=%p rsi=%p r12=%p r13=%p r14=%p r15=%p\", @$tid,@$t2,@rsp,@rbx,@rbp,@rdi,@rsi,@r12,@r13,@r14,@r15; .echo; } }; gc"
+bp c_phase5_status+0x58d7f5 ".if (@$t0) { .if (@$tid==@$t1) { r @$t6=@rsp+0x98; .printf \"REC stage=TAIL_READY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo; } }; gc"
+bp c_phase5_status+0x58d805 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=TAIL_JUMP tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo; } }; gc"
+bp c_phase5_status+0x58db34 ".if (@$t0) { .if (@$tid==@$t1) { r @$t6=@rsp-8; .printf \"REC stage=PAD_CALL tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p target=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp,poi(@rdi+0x18); .echo; } }; gc"
+bp c_phase5_status+0x58db37 ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=PAD_RETURN tid=%x seq=%x rsp=%p result=%p\", @$tid,@$t2,@rsp,@al; .echo; } }; gc"
+bp c_phase5_status+0x588d80 ".if (@$t0) { .if (@$tid==@$t1) { r @$t7=@rsp; .printf \"REC stage=WRITER_ENTRY tid=%x seq=%x rsp=%p receiver=%p text=%p len=%p rax=%p r9=%p rbp=%p\", @$tid,@$t2,@rsp,@rcx,@rdx,@r8,@rax,@r9,@rbp; .echo; } }; gc"
+bp c_phase5_status+0x588dae ".if (@$t0) { .if (@$tid==@$t1) { .printf \"REC stage=COPY_CALL tid=%x seq=%x rsp=%p receiver=%p dest=%p text=%p len=%p buffer=%p oldlen=%p\", @$tid,@$t2,@rsp,@rdi,@rcx,@rdx,@r8,poi(@rdi+8),poi(@rdi+0x10); .echo; } }; gc"
+sxe -c ".echo PHASE5_AV; .exr -1; r; kv; q" av
+sxe -c ".echo PHASE5_EXIT; .lastevent; q" epr
+g

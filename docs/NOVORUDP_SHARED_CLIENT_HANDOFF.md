@@ -1,5 +1,16 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-14 C Phase5：独立调查原状态查询上下文，不等待A代查
+
+C独立核对原周期JSON进度、历史JSON-RPC、原生二进制Status和观察器读文件路径；
+认证Status不调用该JSON快照，观察器也不发起此RPC。A仅接收Git协调，不作为本机调查审批。
+一次新增隔离验证实际使用原RpcLifecycle/ResidentNode、AOEM966、新测试状态及回环peer，
+独立线程在status窗口内完成3次原记录API更新。448组完整边界一致；另33组覆盖不完整，
+不计通过。程序/CDB退出均0，原shutdown完成，但首次错误仍未找到，不提交猜测性修复。
+[调用链、线程所有权、实际记录及缺口](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/C-state-context-phase5-20261114/README.md)。
+未重跑旧64次样例，未启部署节点、访问原库/身份或运行TTD。C仍NOT READY，双中继暂停；
+本次Git同步不等于A签收，不要求A/D重复运行或升级。
+
 ## 2026-11-14 C Phase4：独立调试构建及真实边界记录，根因仍未定位
 
 已从原a254源码构建优化诊断节点，库/bin均保留调试流并核验EXE/PDB身份；未运行该节点。

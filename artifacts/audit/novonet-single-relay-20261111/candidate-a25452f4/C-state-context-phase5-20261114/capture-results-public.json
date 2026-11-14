@@ -1,0 +1,29 @@
+{
+  "capture_sequence_count": 481,
+  "boundary_records": 4261,
+  "complete_correlated_calls": 448,
+  "complete_branch_counts": {
+    "tail": 434,
+    "padded_call": 14
+  },
+  "partial_sequences_not_passed": 33,
+  "checked_comparisons": 11176,
+  "failures": [],
+  "target_exit_code": 0,
+  "debugger_exit_code": 0,
+  "timeout": false,
+  "maximum_seconds": 180,
+  "start_utc": "2026-11-14T00:45:43.666016+00:00",
+  "end_utc": "2026-11-14T00:45:54.359425+00:00",
+  "observed_owner_thread_decimal": 22392,
+  "producer_thread_decimal": 6816,
+  "producer_before": 0,
+  "producer_after": 3,
+  "delivery_contended_events": 0,
+  "delivery_snapshot_events": 7,
+  "serialized_bytes": 13453,
+  "original_fault_reproduced": false,
+  "first_original_corruption_found": false,
+  "scope": "one actual RpcLifecycle status with test-only ResidentNode, real AOEM and new local state; not deployed node, production identity or real relay",
+  "coverage_limit": "33 partial capture sequences use another write_str body or have repeated/missing breakpoint observations; not 481 proven unique operations; no full-call pass claimed for partial sequences"
+}
