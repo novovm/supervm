@@ -9,3 +9,6 @@ Directed verification replayed prior real samples (including the missing-field s
 New unique evidence/private directories; original a254 EXE and AOEM966; LocalService fresh test identities and databases. One authorized run, native limit74m40s, controller74m50s, no retry. WER Full2, bounded dump retention2; before/after WHEA and real process exits. Old failed run is preserved. No debugger/PT/TTD, original DB/identity access, production edits or double relay.
 
 At publication: UAC requested; execution outcome pending. Do not call this run started or passed until actual started/result evidence exists. No non-reproduction establishes a fix. Runtime scripts/binaries stay under ignored target, outside release paths. Only guard logic, hashes and public evidence are published.
+
+## Launch outcome
+Windows UAC returned user-cancelled before creating the elevated process. No run2 BASE node, test identity or database was started/created by this entry. No automatic retry. The 75-minute experiment remains pending Windows confirmation; this is not a node failure.
