@@ -1,0 +1,128 @@
+{
+  "dump": "novovm-base-a254.exe.3848.dmp",
+  "bytes": 213986993,
+  "sha256": "6c3b7b9dc34ec3c137c2b4e7bcf0f4746cf6ce023db90f6a6dc423dce2613de6",
+  "flags": "0x221826",
+  "memory64_ranges": 434,
+  "captured_memory_bytes": 213872640,
+  "exception_thread": 34004,
+  "exception_code": "0xc0000409",
+  "exception_parameters": [
+    "0x7"
+  ],
+  "exception_module": {
+    "name": "novovm-base-a254.exe",
+    "base": 140702869946368,
+    "size": 48504832,
+    "pdb_guid": "e16d0b11-47ca-4ebf-b482-c91380cc57f8",
+    "pdb_age": 1
+  },
+  "registers": {
+    "rip": "0x7ff7f278e1e1",
+    "rsp": "0x53aacee830",
+    "rbp": "0x53aacee850"
+  },
+  "exception_code_page_present": true,
+  "rsp_page_present": true,
+  "rbp_page_present": true,
+  "threads": [
+    {
+      "tid": 29400,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 34004,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 44072,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 45104,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 4068,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 22352,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 36840,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 45644,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 30108,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 20040,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 29548,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 22072,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 19796,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 29972,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 45032,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 34040,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 38528,
+      "context_bytes": 1663,
+      "context_in_file": true
+    },
+    {
+      "tid": 45904,
+      "context_bytes": 1663,
+      "context_in_file": true
+    }
+  ],
+  "node": {
+    "name": "novovm-base-a254.exe",
+    "base": 140702869946368,
+    "size": 48504832,
+    "pdb_guid": "e16d0b11-47ca-4ebf-b482-c91380cc57f8",
+    "pdb_age": 1
+  },
+  "first_corruption_located": false
+}

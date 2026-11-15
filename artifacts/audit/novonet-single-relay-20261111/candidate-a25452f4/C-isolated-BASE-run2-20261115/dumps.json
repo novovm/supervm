@@ -1,0 +1,10 @@
+{
+  "full_memory_flag": true,
+  "sha256": "6C3B7B9DC34EC3C137C2B4E7BCF0F4746CF6CE023DB90F6A6DC423DCE2613DE6",
+  "minidump_signature": true,
+  "stable": true,
+  "streams": 18,
+  "flags": "0x221826",
+  "bytes": 213986993,
+  "name": "novovm-base-a254.exe.3848.dmp"
+}

@@ -1,0 +1,34 @@
+[
+  {
+    "exit_code": -1,
+    "pid": 17852,
+    "index": 1,
+    "forced_by_controller": true,
+    "created": "2026-11-15T04:13:19.5953461Z",
+    "observed_utc": "2026-11-15T04:17:12.8475001Z"
+  },
+  {
+    "exit_code": -1,
+    "pid": 34900,
+    "index": 2,
+    "forced_by_controller": true,
+    "created": "2026-11-15T04:13:19.6178234Z",
+    "observed_utc": "2026-11-15T04:17:13.4289715Z"
+  },
+  {
+    "exit_code": -1,
+    "pid": 23988,
+    "index": 3,
+    "forced_by_controller": true,
+    "created": "2026-11-15T04:13:19.7388091Z",
+    "observed_utc": "2026-11-15T04:17:14.3589362Z"
+  },
+  {
+    "exit_code": -1073740791,
+    "pid": 3848,
+    "index": 0,
+    "forced_by_controller": false,
+    "created": "2026-11-15T04:13:19.8638057Z",
+    "observed_utc": "2026-11-15T04:17:14.3596398Z"
+  }
+]

@@ -1,5 +1,14 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-15 12:17：隔离BASE run2自然失败并取得Full Dump
+
+修正两处诊断脚本后，一次a254+AOEM966隔离BASE于12:13:19启动。
+目标PID3848约4分钟自然退出0xC0000409，参数7；三个对端随后被控制器停止。
+取得213986993字节Full Dump，18线程上下文、异常代码和栈页齐；前后无新增WHEA。
+离线栈指向status -> IndexMap/Hashbrown扩容 -> Rust分配失败abort，不等于物理内存不足或已证RBP同根。
+真实退出码、负载及公开转储结构见[C-isolated-BASE-run2-20261115/README.md](C-isolated-BASE-run2-20261115/README.md)。
+原库身份不动，原始转储仅本机；未重启、未修生产代码、双中继暂停。
+
 ## CURRENT 2026-11-15 A核验8f66da37：修既有控制器误停，再执行一次BASE
 
 A已读取启动和终态；本轮135.73秒后四进程均被控制器强停-1，不是自然崩溃。

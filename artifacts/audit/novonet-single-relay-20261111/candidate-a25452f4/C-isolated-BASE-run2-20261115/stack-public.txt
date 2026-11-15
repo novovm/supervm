@@ -1,0 +1,20 @@
+Child-SP          RetAddr               : Args to Child                                                           : Call Site
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : novovm_base_a254!std::sys::pal::windows::abort_internal+0x5 (Inline Function @ 00007ff7`f278e1e1)
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : novovm_base_a254!std::process::abort+0x5 (Inline Function @ 00007ff7`f278e1e1)
+00000053`aacee830 00007ff7`f278a82f     : 000001e5`6ca60000 00007ffc`e31a5591 000001e5`6cb80000 00000000`00000001 : novovm_base_a254!std::alloc::rust_oom::closure$0+0x31
+00000053`aacee860 00007ff7`f278e1ab     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : novovm_base_a254!std::sys::backtrace::__rust_end_short_backtrace<std::alloc::rust_oom::closure_env$0,never$>+0xf
+00000053`aacee890 00007ff7`f277d5f8     : 000001e5`6ca60000 00000000`00000014 00000000`00000001 00007ff7`f27897b7 : novovm_base_a254!std::alloc::rust_oom+0x1b
+00000053`aacee8d0 00007ff7`f2d8335b     : 80000000`00000001 00000000`00000010 00000400`00000010 00000053`aacee9b8 : novovm_base_a254!std::alloc::_::__rust_alloc_error_handler+0x18
+(Inline Function) --------`--------     : --------`-------- --------`-------- --------`-------- --------`-------- : novovm_base_a254!alloc::alloc::handle_alloc_error::rt_error+0xb (Inline Function @ 00007ff7`f2d8335b)
+00000053`aacee900 00007ff7`f26e1e07     : 00000000`00000014 00000000`00000020 000001e5`7011af90 000001e5`6cb80cf0 : novovm_base_a254!alloc::alloc::handle_alloc_error+0x18
+00000053`aacee930 00007ff7`f2d7c81e     : 000001e5`6ca60000 00007ffc`e31a5591 000001e5`6cb80000 00000053`00000001 : novovm_base_a254!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801+0x197
+00000053`aacee990 00007ff7`f119f3ae     : 00000000`00000003 00000000`00000001 00000000`00000014 000001e5`7011af90 : novovm_base_a254!ZN9hashbrown3raw21RawTable$LT$T$C$A$GT$14reserve_rehash17he3b5727f83df977fE+0x8e
+00000053`aaceea70 00007ff7`f10c8395     : 000001e5`6ca60000 80000000`00000000 000001e5`6fc54230 00007ff7`f27897b7 : novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+0x35e
+00000053`aaceeb90 00007ff7`f0acd5e5     : 000001e5`6fba89c0 00000000`00000013 00000000`00000015 000001e5`6fba8860 : novovm_base_a254!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x6275
+00000053`aacef060 00007ff7`f09dad16     : 000001e5`6ca60000 00000000`00000000 000001e5`6e7b50a0 00000000`00000000 : novovm_base_a254!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+00000053`aacef170 00007ff7`f0b28d57     : 00000000`00000000 00007ffc`e3177475 00000000`00000000 00000000`00000002 : novovm_base_a254!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+00000053`aacff7f0 00007ff7`f0b2a0f5     : 00000053`aacff8b0 00007ff7`f2788572 00000000`00000000 00000000`00000000 : novovm_base_a254!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+00000053`aacff840 00007ff7`f278a0e8     : 000001e5`6cb07e00 000001e5`6cab59e0 000001e5`6cb080c0 00000000`00000000 : novovm_base_a254!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+00000053`aacff8f0 00007ffc`e175dda7     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : novovm_base_a254!std::sys::thread::windows::impl$0::new::thread_start+0x228
+00000053`aacff9a0 00007ffc`e3219c5c     : 00000000`00000000 00000000`00000000 000004f0`fffffb30 000004d0`fffffb30 : kernel32!BaseThreadInitThunk+0x17
+00000053`aacff9d0 00000000`00000000     : 00000000`00000000 00000000`00000000 00000000`00000000 00000000`00000000 : ntdll!RtlUserThreadStart+0x2c
