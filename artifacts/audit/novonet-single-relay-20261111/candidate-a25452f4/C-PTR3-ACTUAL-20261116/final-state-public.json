@@ -1,0 +1,39 @@
+{
+  "utc": "2026-11-15T22:35:13.326559+00:00",
+  "process_exit_codes": {
+    "1": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    },
+    "2": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    },
+    "3": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    },
+    "0": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    }
+  },
+  "debugger_exit_code": 0,
+  "exit_reason": "controller stopped isolation after logical-ID/physical-DR assertion",
+  "natural_exception": false,
+  "new_natural_dump": false,
+  "task_removed": true,
+  "test_wer_rule_removed": true,
+  "owned_processes_remaining": 0,
+  "original_node_started": false,
+  "original_database_and_identity_accessed": false,
+  "original_failure_evidence_preserved": true,
+  "full_query_interference_measurement_complete": false,
+  "qualifies_for_long_observation": false,
+  "production_fix": false,
+  "double_relay": false
+}

@@ -1,0 +1,25 @@
+{
+  "source_log_sha256": "2a882f74d17d9ee18a0d9435397c17f4421d7ea7f0e2059300affa6c1983a841",
+  "raw_log_local_only": true,
+  "controller_original_event_count": 1,
+  "offline_event_count": 3,
+  "offline_complete_calls": 1,
+  "physical_slots_used": [
+    [
+      0
+    ],
+    [
+      0
+    ],
+    [
+      0
+    ]
+  ],
+  "same_thread_call_and_receiver": true,
+  "source_consistent_at_all_three_boundaries": true,
+  "first_bad_boundary": null,
+  "first_invalid_pointer_instruction_proven": false,
+  "historical_PID43712_replayed": false,
+  "PID44948_history_incorporated": false,
+  "offline_decode_performed_without_rerun": true
+}

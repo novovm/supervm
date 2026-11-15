@@ -1,0 +1,89 @@
+[
+  {
+    "point": 0,
+    "call_id": 1,
+    "pid": 28312,
+    "tid": 31176,
+    "rva": "0x1e4cc60",
+    "entry_rsp": "0xe62feee7b8",
+    "rsp": "0xe62feee7b8",
+    "rbp": "0xe62feee800",
+    "rdx": "0xe62feee7fe",
+    "r14": "0x7ff7ead4cc60",
+    "r8": 2,
+    "r8_at_P2_omitted_as_volatile_not_source_length": false,
+    "receiver": "0xe62feee8d0",
+    "return_address": "0x7ff7ead50359",
+    "expected_two_digit_source": "0xe62feee7fe",
+    "physical_DR": [
+      "0x7ff7ead4cc60",
+      "0x0",
+      "0x0"
+    ],
+    "dr7": "0x401",
+    "matching_enabled_physical_slots": [
+      0
+    ],
+    "raw_line_sha256": "335ef11cf1b9761736edab8b4a8339489fc6cd5d17b380e8d23c661a2a00c08f",
+    "native_stop_resume_timestamps_available": false,
+    "offline_redecoded": true
+  },
+  {
+    "point": 1,
+    "call_id": 1,
+    "pid": 28312,
+    "tid": 31176,
+    "rva": "0x1e4ccb3",
+    "entry_rsp": "0xe62feee7b8",
+    "rsp": "0xe62feee770",
+    "rbp": "0xe62feee790",
+    "rdx": "0x0",
+    "r14": "0xe62feee7fe",
+    "r8": 2,
+    "r8_at_P2_omitted_as_volatile_not_source_length": false,
+    "receiver": "0xe62feee8d0",
+    "return_address": "0x7ff7ead50359",
+    "expected_two_digit_source": "0xe62feee7fe",
+    "physical_DR": [
+      "0x7ff7ead4ccb3",
+      "0x0",
+      "0x0"
+    ],
+    "dr7": "0x401",
+    "matching_enabled_physical_slots": [
+      0
+    ],
+    "raw_line_sha256": "1524c4e85c201102c66fd233d0c5829c5e9acc819e699e76fe4ba1044715b3f4",
+    "native_stop_resume_timestamps_available": false,
+    "offline_redecoded": true
+  },
+  {
+    "point": 2,
+    "call_id": 1,
+    "pid": 28312,
+    "tid": 31176,
+    "rva": "0x1e4ccbb",
+    "entry_rsp": "0xe62feee7b8",
+    "rsp": "0xe62feee770",
+    "rbp": "0xe62feee790",
+    "rdx": "0xe62feee7fe",
+    "r14": "0xe62feee7fe",
+    "r8": null,
+    "r8_at_P2_omitted_as_volatile_not_source_length": true,
+    "receiver": "0xe62feee8d0",
+    "return_address": "0x7ff7ead50359",
+    "expected_two_digit_source": "0xe62feee7fe",
+    "physical_DR": [
+      "0x7ff7ead4ccbb",
+      "0x0",
+      "0x0"
+    ],
+    "dr7": "0x401",
+    "matching_enabled_physical_slots": [
+      0
+    ],
+    "raw_line_sha256": "133127f4f44599c40960df25651ec0153a73681c3fa14f5470e847281f0ed468",
+    "native_stop_resume_timestamps_available": false,
+    "offline_redecoded": true
+  }
+]
