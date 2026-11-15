@@ -1,0 +1,193 @@
+[
+  {
+    "phase": "baseline",
+    "individual_native_counter_deltas": [
+      {
+        "completed_calls": 6,
+        "inclusive_wall_ms": 22.6436,
+        "report_elapsed_seconds": 31.625235800049268
+      },
+      {
+        "completed_calls": 7,
+        "inclusive_wall_ms": 16.8934,
+        "report_elapsed_seconds": 36.65324110002257
+      },
+      {
+        "completed_calls": 8,
+        "inclusive_wall_ms": 20.1919,
+        "report_elapsed_seconds": 41.65268980001565
+      },
+      {
+        "completed_calls": 9,
+        "inclusive_wall_ms": 22.7161,
+        "report_elapsed_seconds": 46.694362300040666
+      },
+      {
+        "completed_calls": 10,
+        "inclusive_wall_ms": 28.779,
+        "report_elapsed_seconds": 51.73138320003636
+      },
+      {
+        "completed_calls": 11,
+        "inclusive_wall_ms": 31.8306,
+        "report_elapsed_seconds": 56.75776380003663
+      },
+      {
+        "completed_calls": 12,
+        "inclusive_wall_ms": 25.3168,
+        "report_elapsed_seconds": 61.786622300045565
+      },
+      {
+        "completed_calls": 13,
+        "inclusive_wall_ms": 26.405,
+        "report_elapsed_seconds": 66.82660010003019
+      },
+      {
+        "completed_calls": 14,
+        "inclusive_wall_ms": 32.028,
+        "report_elapsed_seconds": 71.87064890004694
+      },
+      {
+        "completed_calls": 15,
+        "inclusive_wall_ms": 29.0599,
+        "report_elapsed_seconds": 76.89114540000446
+      },
+      {
+        "completed_calls": 16,
+        "inclusive_wall_ms": 27.3969,
+        "report_elapsed_seconds": 81.93682320002699
+      },
+      {
+        "completed_calls": 17,
+        "inclusive_wall_ms": 28.4435,
+        "report_elapsed_seconds": 86.98888560000341
+      }
+    ],
+    "last_load": {
+      "phase": "baseline",
+      "index": 0,
+      "elapsed": 86.98888560000341,
+      "mtime_ns": 1794764678437252700,
+      "ticks": 69133,
+      "objects": 256,
+      "reported_data_writes": 1299,
+      "accepted_data": 313,
+      "evicted": 20,
+      "expired": 0,
+      "transport_present": true,
+      "native_tick_status": {
+        "calls": 17,
+        "wall_ns": 349696800,
+        "max_wall_ns": 32028000
+      },
+      "native_stage_profile_enabled": true
+    }
+  },
+  {
+    "phase": "attached",
+    "individual_native_counter_deltas": [
+      {
+        "completed_calls": 6,
+        "inclusive_wall_ms": 6.7164,
+        "report_elapsed_seconds": 31.56204390001949
+      },
+      {
+        "completed_calls": 7,
+        "inclusive_wall_ms": 24.58,
+        "report_elapsed_seconds": 36.578402400016785
+      },
+      {
+        "completed_calls": 8,
+        "inclusive_wall_ms": 10.734,
+        "report_elapsed_seconds": 41.60187360004056
+      },
+      {
+        "completed_calls": 9,
+        "inclusive_wall_ms": 21.0745,
+        "report_elapsed_seconds": 46.61858080001548
+      },
+      {
+        "completed_calls": 10,
+        "inclusive_wall_ms": 12.4423,
+        "report_elapsed_seconds": 51.64023349998752
+      },
+      {
+        "completed_calls": 11,
+        "inclusive_wall_ms": 15.7531,
+        "report_elapsed_seconds": 56.66020760004176
+      },
+      {
+        "completed_calls": 12,
+        "inclusive_wall_ms": 13.2607,
+        "report_elapsed_seconds": 61.699545600044075
+      },
+      {
+        "completed_calls": 13,
+        "inclusive_wall_ms": 31.4078,
+        "report_elapsed_seconds": 66.73198079998838
+      },
+      {
+        "completed_calls": 14,
+        "inclusive_wall_ms": 27.8519,
+        "report_elapsed_seconds": 71.75291189999552
+      },
+      {
+        "completed_calls": 15,
+        "inclusive_wall_ms": 13.6096,
+        "report_elapsed_seconds": 76.77743419999024
+      },
+      {
+        "completed_calls": 16,
+        "inclusive_wall_ms": 16.3109,
+        "report_elapsed_seconds": 81.79294950002804
+      },
+      {
+        "completed_calls": 17,
+        "inclusive_wall_ms": 13.3317,
+        "report_elapsed_seconds": 86.86411700001918
+      }
+    ],
+    "last_load": {
+      "phase": "attached",
+      "index": 0,
+      "elapsed": 86.86411700001918,
+      "mtime_ns": 1794765071903180400,
+      "ticks": 69524,
+      "objects": 256,
+      "reported_data_writes": 1292,
+      "accepted_data": 305,
+      "evicted": 6,
+      "expired": 0,
+      "transport_present": true,
+      "native_tick_status": {
+        "calls": 17,
+        "wall_ns": 238327200,
+        "max_wall_ns": 31407800
+      },
+      "native_stage_profile_enabled": true
+    }
+  },
+  {
+    "phase": "three_boundaries",
+    "individual_native_counter_deltas": [],
+    "last_load": {
+      "phase": "three_boundaries",
+      "index": 0,
+      "elapsed": 25.80443939997349,
+      "mtime_ns": 1794765104633909400,
+      "ticks": 22542,
+      "objects": 90,
+      "reported_data_writes": 389,
+      "accepted_data": 103,
+      "evicted": 0,
+      "expired": 0,
+      "transport_present": true,
+      "native_tick_status": {
+        "calls": 5,
+        "wall_ns": 19769700,
+        "max_wall_ns": 8596000
+      },
+      "native_stage_profile_enabled": true
+    }
+  }
+]

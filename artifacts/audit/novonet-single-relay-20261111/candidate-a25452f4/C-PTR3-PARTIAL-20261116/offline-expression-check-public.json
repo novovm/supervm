@@ -1,0 +1,8 @@
+{
+  "cdb_exit": 0,
+  "receiver_register_adjusted_for_exception_context": true,
+  "node_started": false,
+  "ecxr_reselected_after_pseudoregister_assignment": true,
+  "read_existing_dump": true,
+  "expressions_evaluated": 3
+}
