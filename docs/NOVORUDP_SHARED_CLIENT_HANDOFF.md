@@ -1,5 +1,16 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-15 A签收d9bd6c25：自然BASE崩溃已复现，停止重复运行
+
+C目标3848约4分钟自然0xC0000409/参数7，其他三进程为控制器收尾；无新增WHEA，
+不是硬件排除。213986993字节Full Dump已留C。A复核同哈希原EXE机器码，把status栈
+定位到archive_work新对象首次插入reads_started，经Hashbrown分配返回空进入Rust abort。
+正常空表在此应申请52字节/对齐16，但实际申请量尚需同一dump与stderr核验；不凭OOM
+名称认定物理内存耗尽，也不把旧AV/RBP故障自动并为同根。代码未作猜测修改。
+C直接复用已有离线CDB和提权只读入口，恢复实际申请量/表字段；不重跑BASE、不另造工具，
+不禁用status掩盖故障，不更改原库或身份，双中继暂停。
+[当前精确地址、取证顺序与A机器码](../artifacts/audit/novonet-single-relay-20261111/candidate-a25452f4/CD-UPDATE.md)。
+
 ## 2026-11-15 A签收d2967fa1：C直接执行既定无调试器BASE
 
 CPU/内存短筛结果已读，不当硬件排除；C原PID27928的EXE/旧AOEM与A一致仍曾崩溃，

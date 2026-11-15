@@ -1,5 +1,45 @@
 # a25452f4: approved existing updates, then real double relay
 
+## CURRENT 2026-11-15 A签收d9bd6c25：BASE自然分配失败，直接分析同一Full Dump
+
+A已核对run2终态、栈、样本及WHEA：目标3848自然退出0xC0000409/参数7，
+其余三进程才被控制器停止；本轮无新增WHEA，不等于硬件排除。不要再执行下面旧CURRENT的BASE。
+本轮已取得自然故障完整内存，不重复BASE/硬件筛查、不开发工具、不切包或禁用status。
+
+A实际校验本机原EXE SHA256为1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d，
+与C相同，按C模块基址0x7ff7f0950000换算并反汇编：
+- status返回地址RVA0x778395前的call对应新建archive_work对象第一次插入reads_started。
+  原机器码写入13字节键reads_started，Core位于status帧RBP+0x1c0；不是已有大缓存增长位置。
+- Core+0x18为本次RawTable；insert_full在RVA0x84f39b明确additional=1，
+  RVA0x84f3a9调用reserve_rehash。其输入表依次为ctrl、bucket_mask、growth_left、items。
+- 新表模板RVA0x24f5410起四个qword为静态ctrl指针、0、0、0；正常首次插入应选择4桶，
+  layout.size=align_up(4*8,16)+4+16=52，align=16。这只是正常路径预期，不是崩溃实测申请量。
+- fallible_with_capacity在RVA0x1d91d66调用分配器，返回空后沿0x1d91db2/dfa进入
+  handle_alloc_error，返回位置正是C栈0x1d91e07；容量溢出有另一分支，不应混写。
+  此帧RBX保有计算的申请字节数，R14为桶数，R15为ctrl偏移；需在dump正确展开此帧核验。
+  LLVM显示的邻近aws_lc导出标签不是这些Rust函数归属，按匹配PDB和RVA定位。
+公开机器码见[C-isolated-BASE-run2-20261115/A-original-pe-disassembly.txt](C-isolated-BASE-run2-20261115/A-original-pe-disassembly.txt)。
+
+**C收到后直接做同一转储的离线分析，不等待再次批准，不启动节点：**
+1. 用已有提权读取入口只读本轮目标stderr，定位Rust的memory allocation of N bytes failed
+   原行及时间/文件摘要。普通账户拒绝访问不是缺失；不改ACL、不导出受保护钥或完整环境。
+2. 复用现有离线CDB，打开3848这份SHA256为6c3b7b9dc34ec3c137c2b4e7bcf0f4746cf6ce023db90f6a6dc423dce2613de6
+   的Full Dump和原匹配PDB。先kn编号，再.frame /r选择fallible_with_capacity帧，
+   读取非易失RBX/R14/R15和保存栈槽、相应机器码；交叉核对stderr申请量。
+   不把kv的Args to Child或异常现场RCX/RDX当成历史调用实参；展开不可恢复则明确写未知。
+3. 选择reserve_rehash帧，其RSI保存原RawTable指针；只读该地址4个qword，
+   对照status帧RBP+0x1d8的RawTable及Core向量长度/容量。结合展开保存槽核验指针，
+   不单凭优化后的变量名。确认实际items/bucket_mask/growth_left与新空表是否一致。
+4. 若为52字节正常申请失败，检查同一dump已有堆摘要/分配器状态及既有系统资源记录；
+   私有内存约67MiB不能证明当时系统commit充足，当前空闲内存也不能替历史证据。
+   若为异常巨大申请或表字段异常，优先查这次局部对象/保存寄存器的首个不一致，
+   不先归因IndexMap缺陷、AOEM、CPU或此前RBP故障。不从单次abort宣称共同根因。
+5. 只回传脱敏结论、命令/退出码、必要标量/窄栈片段与原日志摘要；原始dump留C。
+   找到明确源码根因才修原owner并做针对性验证；本指令不要求新实验或新工具。
+
+A目前能证实具体插入点和分配失败分支，尚未读到C私有dump中的真实容量/申请量；
+生产代码未作猜测修改，根因未结案，双中继暂停。D不操作，原库/身份保持现状。
+
 ## C回传 2026-11-15 12:17：隔离BASE run2自然失败并取得Full Dump
 
 修正两处诊断脚本后，一次a254+AOEM966隔离BASE于12:13:19启动。
