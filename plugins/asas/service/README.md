@@ -18,8 +18,9 @@ Codex adapter and same-device native pipe have passed actual inference and ACODE
 file-tool checks in same-device isolation: [Codex setup](docs/CODEX.md). The spawning
 probe lives in B's test support only. A accepts opaque B project IDs, never resolves
 B workspace paths. The native UDP application route now exists on the original
-node listener: [NOVONET boundary](docs/NOVONET.md). ACODE's production connection,
-service advertisement, qualified fallback and cross-device acceptance remain unfinished.
+node listener: [NOVONET boundary](docs/NOVONET.md). The B-only native process interface
+and ACODE shared-node settings/chat/tool integration are implemented and component-tested.
+Real node deployment, signed service advertisement, qualified fallback and cross-device acceptance remain unfinished.
 
 ## Run A Development Contract
 

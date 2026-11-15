@@ -40,13 +40,13 @@ export class AsasClient {
   }
   async cancel(taskId: string): Promise<void> { await this.request(`v1/tasks/${taskId}/cancel`, 'POST', {}); }
   async follow(input: TaskInput, receiptFile: string, execute: (event: AgentEvent) => Promise<ToolResult>,
-    receive: (event: AgentEvent) => void, signal: AbortSignal): Promise<TaskStatus> {
+    receive: (event: AgentEvent) => unknown, signal: AbortSignal): Promise<TaskStatus> {
     return followTask(this, input, receiptFile, execute, receive, signal);
   }
 }
 type TaskTransport = Pick<AsasClient, 'submit' | 'events' | 'result'>;
 export async function followTask(client: TaskTransport, input: TaskInput, receiptFile: string, execute: (event: AgentEvent) => Promise<ToolResult>,
-    receive: (event: AgentEvent) => void, signal: AbortSignal): Promise<TaskStatus> {
+    receive: (event: AgentEvent) => unknown, signal: AbortSignal): Promise<TaskStatus> {
     let after = 0;
     try { const saved = JSON.parse(await readFile(receiptFile, 'utf8')); if (saved.taskId !== input.id || !Number.isSafeInteger(saved.after) || saved.after < 0) throw Error('Task receipt mismatch'); after = saved.after; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -67,7 +67,7 @@ export async function followTask(client: TaskTransport, input: TaskInput, receip
       }
       for (const event of response.events) {
         if (event.taskId !== input.id || event.sequence !== after + 1) throw Error('ASAS event identity or sequence gap; query original task, do not restart');
-        receive(event);
+        await receive(event);
         if (event.type === 'tool' && response.activeCallIds.includes(event.callId!)) await client.result(input.id, await execute(event), signal);
         after = event.sequence; await saveJson(receiptFile, { taskId: input.id, after });
       }

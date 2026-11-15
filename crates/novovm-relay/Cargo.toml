@@ -27,7 +27,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
 zeroize = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-std", "io-util", "net", "time"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
@@ -48,6 +48,11 @@ socket2 = "0.6"
 [[bin]]
 name = "supervm-relay"
 path = "src/main.rs"
+
+[[bin]]
+name = "novovm-asas-client"
+path = "src/asas_client_main.rs"
+required-features = ["iroh-transport"]
 
 [[bin]]
 name = "novovm-rendezvous-service"

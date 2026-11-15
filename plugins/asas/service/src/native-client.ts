@@ -7,14 +7,15 @@ export class NativeClient {
   private buffer = Buffer.alloc(0);
   private closed = false;
   private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
-  constructor(private input: Readable, private output: Writable, private peerId: string) {
+  constructor(private input: Readable, private output: Writable, private peerId: string, private network = false) {
     input.on('data', this.data); input.once('end', this.end); input.once('close', this.end);
     input.once('error', this.error); output.once('error', this.error); output.once('close', this.end);
   }
   private request(operation: string, value?: unknown, signal?: AbortSignal): Promise<any> {
     if (this.closed || this.pending.size >= 16) return Promise.reject(Error('ASAS IPC unavailable or busy'));
     signal?.throwIfAborted();
-    const requestId = this.nextId++, frame = JSON.stringify({ id: requestId, operation, ...(operation === 'health' ? {} : { peerId: this.peerId, input: value }) }) + '\n';
+    const requestId = this.nextId++, frame = JSON.stringify({ id: requestId, operation: this.network && operation === 'health' ? 'capabilities' : operation,
+      ...(this.network ? { input: value } : operation === 'health' ? {} : { peerId: this.peerId, input: value }) }) + '\n';
     if (Buffer.byteLength(frame) > MAX_BYTES) return Promise.reject(Error('ASAS IPC request exceeds limit'));
     return new Promise((resolve, reject) => {
       const abort = () => { clearTimeout(timer); this.pending.delete(requestId); reject(Error('ASAS IPC cancelled; task effects may persist')); };
@@ -61,7 +62,23 @@ export class NativeClient {
   }
   async result(taskId: string, result: ToolResult, signal?: AbortSignal) { await this.request('result', { taskId: id.parse(taskId), result: ToolResult.parse(result) }, signal); }
   async cancel(taskId: string) { await this.request('cancel', { taskId: id.parse(taskId) }); }
-  follow(input: TaskInput, receiptFile: string, execute: (event: AgentEvent) => Promise<ToolResult>, receive: (event: AgentEvent) => void, signal: AbortSignal) {
+  follow(input: TaskInput, receiptFile: string, execute: (event: AgentEvent) => Promise<ToolResult>, receive: (event: AgentEvent) => unknown, signal: AbortSignal) {
     return followTask(this, input, receiptFile, execute, receive, signal);
+  }
+}
+
+/** B-only process interface. No application principal is supplied by B. */
+export class NetworkClient extends NativeClient {
+  constructor(input: Readable, output: Writable) { super(input, output, '', true); }
+  override async health(signal?: AbortSignal) {
+    const value = await super.health(signal);
+    if (value.remoteRouteReady !== true || !Array.isArray(value.projects) || !value.projects.every((id: unknown) => typeof id === 'string' && /^[a-f0-9]{64}$/.test(id))
+      || value.projects.length > 256 || typeof value.peerId !== 'string' || !value.peerId || value.peerId.length > 200
+      || typeof value.serverNodeId !== 'string' || !/^novovm-mldsa65:[a-f0-9]{64}$/.test(value.serverNodeId)
+      || !value.engines || typeof value.engines !== 'object' || Array.isArray(value.engines)
+      || !Object.entries(value.engines).length || Object.entries(value.engines).some(([name, engine]: [string, any]) =>
+        !['codex', 'claude'].includes(name) || !Array.isArray(engine?.models) || !engine.models.length || engine.models.length > 512
+        || engine.models.some((model: unknown) => typeof model !== 'string' || !model.trim() || model.length > 200))) throw Error('Invalid authenticated ASAS capabilities');
+    return value;
   }
 }

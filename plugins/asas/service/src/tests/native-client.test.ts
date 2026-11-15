@@ -6,8 +6,29 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { Application } from '../application';
-import { NativeClient } from '../native-client';
+import { NativeClient, NetworkClient } from '../native-client';
 import { serveStdio } from '../stdio';
+
+test('B network frames contain no caller-supplied principal or A-worker commands', async () => {
+  const input = new PassThrough(), output = new PassThrough();
+  const client = new NetworkClient(input, output), frames: any[] = [];
+  output.on('data', bytes => {
+    const frame = JSON.parse(bytes.toString()); frames.push(frame);
+    input.write(JSON.stringify({ id: frame.id, result: { version: 2, peerId: 'granted-B', projects: ['a'.repeat(64)], remoteRouteReady: true,
+      serverNodeId: 'novovm-mldsa65:' + 'b'.repeat(64), engines: { codex: { models: ['fixture'] } } } }) + '\n');
+  });
+  try {
+    assert.equal((await client.health()).peerId, 'granted-B');
+    assert.deepEqual(frames, [{ id: 0, operation: 'capabilities' }]);
+    assert.ok(!JSON.stringify(frames).includes('peerId'));
+  } finally { client.close(); input.end(); output.end(); }
+});
+test('B network health rejects a private-pipe health response', async () => {
+  const input = new PassThrough(), output = new PassThrough(), client = new NetworkClient(input, output);
+  output.on('data', bytes => input.write(JSON.stringify({ id: JSON.parse(bytes.toString()).id, result: { version: 2, remoteRouteReady: false } }) + '\n'));
+  try { await assert.rejects(client.health(), /authenticated/); }
+  finally { client.close(); input.end(); output.end(); }
+});
 
 test('native private pipe enforces peer, returns UTF-8 tools and never replays terminal calls', { timeout: 10000 }, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'asas-native-')), projectId = 'a'.repeat(64);

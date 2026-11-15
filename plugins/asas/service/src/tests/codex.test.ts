@@ -5,6 +5,12 @@ import { AppServerClient } from '../codex/rpc';
 import { dynamicTools, remoteOnlyConfig } from '../codex/engine';
 import { Configuration, enginesFor } from '../config';
 import { configureCodex } from '../codex/setup';
+import { CodexProcess } from '../codex/process';
+import { codexEngine } from '../codex/engine';
+import { mkdtemp, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 
 test('A bootstrap accepts opaque B project IDs, not local B project directories', async () => {
   await assert.rejects(configureCodex({ directory: '/not-created', executable: '/official/codex', loginHome: '/private/login',
@@ -41,4 +47,29 @@ test('reused Codex transport preserves split UTF-8 and fails pending RPC on disc
     const pending = client.request('account/read', { refreshToken: false });
     input.end(); await assert.rejects(pending, /disconnect|closed/);
   } finally { client.close(); input.destroy(); output.destroy(); }
+});
+
+test('resumed A Codex adapter retains current B context and plan mode instead of dropping it', async t => {
+  const root = await mkdtemp(path.join(tmpdir(), 'asas-codex-context-')), input = new PassThrough(), output = new PassThrough();
+  const client = new AppServerClient(input, output), requests: any[] = [];
+  output.on('data', bytes => {
+    const frame = JSON.parse(bytes.toString()); requests.push(frame);
+    if (!Number.isSafeInteger(frame.id)) return;
+    const result = frame.method === 'account/read' ? { account: { type: 'fixture' } } : frame.method === 'thread/resume'
+      ? { thread: { id: 'native-existing', model: 'fixture', modelProvider: 'openai' } } : { turn: { id: 'native-turn' } };
+    input.write(JSON.stringify({ id: frame.id, result }) + '\n');
+    if (frame.method === 'turn/start') setImmediate(() => input.write(JSON.stringify({ method: 'turn/completed', params: { threadId: 'native-existing', turn: { id: 'native-turn', status: 'completed' } } }) + '\n'));
+  });
+  t.mock.method(CodexProcess, 'start', async () => ({ client, stop: async () => client.close() }) as CodexProcess);
+  const id = randomUUID();
+  try {
+    await client.initialize();
+    const run = codexEngine(root, { executable: '/not-started', executableSha256: 'a'.repeat(64), home: '/not-loaded', catalog: '/not-loaded', models: ['fixture'], effort: 'medium' });
+    await run({ input: { id, sessionId: id, projectId: 'b'.repeat(64), engine: 'codex', model: 'fixture', mode: 'plan', prompt: 'current question', context: 'fresh B schema metadata' },
+      session: { id, peerId: 'B', projectId: 'b'.repeat(64), engine: 'codex', model: 'fixture', nativeSessionId: 'native-existing' }, signal: new AbortController().signal,
+      checkpoint: async () => {}, text: async () => {}, call: async () => { throw Error('No tool in this fixture'); } });
+    assert.match(requests.find(frame => frame.method === 'thread/resume').params.developerInstructions, /plan mode/);
+    assert.match(requests.find(frame => frame.method === 'turn/start').params.input[0].text, /fresh B schema metadata/);
+    assert.equal(requests.some(frame => frame.method === 'thread/start'), false);
+  } finally { client.close(); input.end(); output.end(); await rm(root, { recursive: true, force: true }); }
 });

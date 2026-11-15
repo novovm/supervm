@@ -12,5 +12,7 @@ pub mod windows_owner_files;
 
 #[cfg(feature = "iroh-transport")]
 pub mod asas_route;
+#[cfg(feature = "iroh-transport")]
+pub mod asas_client;
 pub mod purpose_keys;
 pub mod transport_identity;

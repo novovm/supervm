@@ -1,6 +1,6 @@
 # 原生应用通道
 
-日期：2026-11-14。本节实现 A 的原生分发及借用链接的 B SDK 适配器；不是 ACODE 界面已连接或双机验收声明。
+日期：2026-11-14。A 原生分发、B SDK 进程和 ACODE 连接接线已实现；不是已部署或双机验收声明。
 
 ## 实际入口
 
@@ -52,6 +52,26 @@ A 不依赖 ACODE，不解析 B 路径。工具事件和文本随 `events` 返�
 旧序号、错 Session、超时和断线不自动重跑；应用任务 ID/回执仍由原 Broker 持久保存。
 链路换代使旧证明失效；关闭通道同时撤下应用可用状态，不自动改走其他载体。
 
+### B 进程接口
+
+`novovm-asas-client` 是现有 NOVONET 原生客户端所有者的进程接口，不启动 ASAS Worker、
+模型、shell 或登录。它复用受保护用途密钥加载、合格 FFI、`connect_clients` 和应用适配器，
+不是另写传输、加密、身份库或公网服务。`--client-contract` 只返回角色和版本，不加载身份。
+
+正常启动必须显式给出 `--profile /absolute/B.json --profile-sha256 <digest>`。
+配置严格接受 `version=1`、`identity_path`、`chain_id`、`library`、`library_sha256`、
+`server_key`（A 的 1952 个公钥字节）、`server_address` 和 `bind_address`；不接受 A 的服务配置。
+身份和运行库路径归 B；A 的公钥必须经可信渠道固定，不信任无签名的节点广告。
+JSONL 接口为 `{id,operation,input}`，不允许 B 自报应用主体；只支持上述五种操作。
+认证链路导出的 `serverNodeId/localNodeId` 附加到能力响应，不取自 A 的应用正文。
+IPC/RPC 错误终止该客户端，不重跑原任务。完整 A 程序不依赖 ACODE。
+
+ACODE 的共享节点入口从该进程读取引擎/型号，并在 B 使用真实 LocalWorker 回执；
+不启动本地 Codex 核心包装 A 的循环。切换执行通道保留聊天，A 的会话 ID 与 B 本地历史独立。
+出站检查只覆盖常见明文凭据，不冒称完成语义过滤或中英翻译。
+任务、工具、显示文本和事件游标持久化；恢复跟随原任务且不重放已完成工具。
+当前支持单项目、单体、开发/计划、文本；其他能力没有静默本地回退。
+
 ## 验证与限制
 
 本机真实 UDP 已覆盖 UTF-8/大正文往返、认证主体、旧序号拒绝、超时/链接退役；
@@ -65,6 +85,7 @@ A 不依赖 ACODE，不解析 B 路径。工具事件和文本随 `events` 返�
 ```bash
 cargo test -p novovm-network --features iroh-transport --lib native_application
 cargo test -p novovm-network --features iroh-transport --lib application_and_mailbox_share
+cargo test -p novovm-relay --features iroh-transport --lib asas_client
 ASAS_TEST_NODE=/absolute/node ASAS_TEST_ENTRY=/checkout/plugins/asas/service/dist/main.js \
   cargo test -p novovm-relay --features iroh-transport --lib asas_route -- --include-ignored
 ```
@@ -74,6 +95,8 @@ ASAS_TEST_NODE=/absolute/node ASAS_TEST_ENTRY=/checkout/plugins/asas/service/dis
 该文件仅为尽力写入的本地诊断，不是认证或选路依据；写入失败不能拖停无关 L3 服务。
 通过该通道取得的 `capabilities` 才表明当前调用者已到达应用授权边界。
 
-尚缺：ACODE 生产连接/菜单和已有 NOVONET 客户端所有者的接线、签名应用能力公告、
-实际双机身份/工具闭环、撤销部署流程、合格备用通道及换网恢复。现有 Iroh/TLS 邮箱可用不等于
+尚缺：真实节点配置与部署、签名应用能力公告、实际双机身份/工具闭环、撤销部署流程、
+合格备用通道及换网恢复。B 客户端的 UDP/JSONL 检查使用组件签名夹具，
+ACODE 的读/补丁/再读、续接和 UI 检查使用明确测试夹具，不等于生产身份或真实远程推理验收。
+现有 Iroh/TLS 邮箱可用不等于
 ASAS 已支持其备用路径；当前不恢复 WSS、不另造中继或承诺所有路径被封锁时仍可连接。
