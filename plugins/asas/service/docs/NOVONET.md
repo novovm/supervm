@@ -102,7 +102,55 @@ ASAS 现有显式节点授权保持原样；用途授权签发/撤销、会话�
 改用本机已安装的 ARM 库后，原校验器前置返回
 `AOEM ML-DSA verification capability unavailable`。未降级或替换签名实现。
 该库为本机 `8ad6e5e1c5c3` 安装版本，不代表仓库随包或其它机器的运行库状态。
-真实UCA查询、生产登录和跨机验收仍未通过；这些失败不能被组件通过覆盖。
+上述为前次失败记录；本机真实查询现已按下一节通过，生产登录和跨机仍未通过。
+
+### 本机运行库匹配与真实查询（2026-11-15）
+
+UCA 为 Unified Chain Account（统一链账户），不是 Windows UAC。
+原安装库虽导出 ML-DSA 函数，但 `aoem_mldsa_supported()` 为 0；已有完整
+ML-DSA 插件是 x86-64，而本机为 ARM aarch64，不能通过修改标签或放宽检查解决。
+本轮使用 AOEM 原源码 `8ad6e5e1c5c3b3997c8d3fab49f2b33fe0f2f230`，不改源码、
+不安装、不替换 SGM 库，只构建本机隔离运行库。首次构建缺少支持 BF16 的 glslang
+路径，随后接回本机已安装工具链；没有关闭着色器构建或跳过验签。
+
+在 SUPERVM 根目录执行的构建命令：
+
+```bash
+env AOEM_GLSLANG_PATH=/home/aoem-dgx-01/.local/lib/toolchains/glslang-16.6.0-e1b562a8/glslang \
+  CARGO_TARGET_DIR=/home/aoem-dgx-01/supervm/target/aoem-native-identity \
+  CARGO_BUILD_JOBS=4 \
+  cargo build --manifest-path /home/aoem-dgx-01/AOEM/Cargo.toml \
+  -p aoem-ffi --release --locked --no-default-features \
+  --features mldsa,rocksdb-persistence
+```
+
+实际 ELF 为 ARM aarch64，`aoem_mldsa_supported()` 为 1。当前本机制品 SHA-256：
+`e490115809ff5688856e9df9e6bda1574f074da9b956b8e8cd64194c6a279ddd`。
+该摘要标识此构建，不是别的平台或重建产物的预设摘要；其他设备须核对自己的
+来源、架构和摘要，并执行原资格入口，不复制一个摘要就宣布合格。
+
+```bash
+target/runtime-rebuild/debug/novovmctl native-identity qualify-runtime \
+  --library /home/aoem-dgx-01/supervm/target/aoem-native-identity/release/libaoem_ffi.so \
+  --library-sha256 e490115809ff5688856e9df9e6bda1574f074da9b956b8e8cd64194c6a279ddd
+
+env NOVOVM_AOEM_TEST_LIBRARY=/home/aoem-dgx-01/supervm/target/aoem-native-identity/release/libaoem_ffi.so \
+  NOVOVM_AOEM_DLL=/home/aoem-dgx-01/supervm/target/aoem-native-identity/release/libaoem_ffi.so \
+  cargo test -p novovm-node --lib actual_native_uca_identity_readonly_query \
+  -- --ignored --nocapture --test-threads=1
+```
+
+原资格命令实际通过标量、统一语义、混合批量验签 KAT 和签名接口尺寸检查；
+资格命令自身不生成密钥、不启动服务。随后运行已编译的原 node 测试二进制，
+真实查询 1 项通过，耗时 1.87 秒。四服务分别核对 Present/Active 与密钥引用、
+Missing、错误链 ID 和错误 genesis 的 Unavailable；均对应原初始化根及高度 0。
+本轮隔离测试目录 `/tmp/novovm-uca-native-services/1543546-1794782852828052343`
+包含受保护测试材料，不上传其中的密钥、数据库或用户内容。
+
+未验证生产网络、双机、链高度推进或可移植最终性证明；此隔离库不是完整 FULLMAX
+发布包，未取得全节点或 GPU 性能资格。后续按顺序接应用用途签发/当前撤销状态、
+服务与 B 设备绑定的登录挑战。签名校验继续复用 AOEM ML-DSA owner，身份状态
+继续复用原发布根，不采用旧 Ed25519 管理候选，也不将本地配置视为链上授权。
 
 ## 验证与限制
 

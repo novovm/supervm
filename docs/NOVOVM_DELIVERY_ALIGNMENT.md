@@ -1,6 +1,28 @@
 # NOVOVM 产品目标与交付主线
 
-## 2026-11-15 ASAS 身份查询源码接线，实网前置未通过
+## 2026-11-15 ASAS 本机运行库匹配及真实身份查询通过
+
+正式名称为 UCA（Unified Chain Account，统一链账户），不是 Windows UAC。
+运行库阻塞已定位并解除：仓库随包 `.so` 是 LFS 指针；本机原 ARM 安装库虽有
+ML-DSA 导出符号，但 `aoem_mldsa_supported()` 返回 0；已有完整插件为 x86-64，
+不能加载到本机 ARM。此前“接口不可用”不应理解为主线身份仍采用 Ed25519。
+
+从未改动的 AOEM `8ad6e5e1c5c3b3997c8d3fab49f2b33fe0f2f230` 构建隔离 ARM 库，
+显式启用 `mldsa,rocksdb-persistence`；未替换已安装库或 SGM，未修改密码算法。
+本机产物为 `target/aoem-native-identity/release/libaoem_ffi.so`，SHA-256 为
+`e490115809ff5688856e9df9e6bda1574f074da9b956b8e8cd64194c6a279ddd`。
+原 `novovmctl native-identity qualify-runtime` 的标量、统一语义及混合批量
+验签 KAT 均通过。原 `actual_native_uca_identity_readonly_query` 实际执行 1 项通过：
+原四服务、独立数据库、真实 ML-DSA 初始化及 localhost NovoRUDP，逐节点核对
+已登记身份、缺失身份、错误 chain_id、错误 genesis；状态根和高度 0 均一致。
+构建与复现命令见 [ASAS 原网络交接](../plugins/asas/service/docs/NOVONET.md#本机运行库匹配与真实查询2026-11-15)。
+
+这是本机单进程四服务只读查询验证，不是四机、发布高度推进、生产 UCA 登录、
+完整 FULLMAX 包或全节点后量子资格。用途授权/撤销、会话挑战与生产提供者
+尚未接入；下一步接现有 ML-DSA 身份所有者的应用用途授权及撤销状态，再绑定
+ASAS 服务、B 设备和一次性登录挑战，不把 Active 身份或网络认证直接当作项目权限。
+
+### 前次源码接线与失败记录
 
 ACODE/ASAS 当前会话从 `03457cef` 认领原生 UCA 身份只读查询：
 `native_query` 协议、原 `/identity/` 分页记录读取、原 RpcLifecycle 查询接线和
@@ -12,10 +34,11 @@ ACODE/ASAS 当前会话从 `03457cef` 认领原生 UCA 身份只读查询：
 本地通过；协议lib完整74项通过（包含前述15项，不重复计数）。
 受影响node/protocol的lib与tests严格Clippy、定向格式和diff检查通过。
 原生真实UDP测试已加入，但尚未进入握手：仓库随包库是Git LFS指针；
-本机已安装ARM库能加载，但不提供NOVOVM当前ML-DSA验签接口，前置检查失败。
+本机已安装ARM库能加载，但实际 ML-DSA 能力标志关闭，前置检查失败。
 不把这些组件测试算作真实身份认证、ASAS登录、双机或部署验收。
 原节点/账户/算法不重做，不操作运行节点或其他设备；下一处须提供合格运行库，
 再实测只读查询，并沿既有身份状态所有者补用途授权/撤销和会话绑定。
+这两项运行前置现已按本节顶部通过，后续用途授权和登录仍未完成。
 
 ## 2026-11-05 A侧原生节点SCM接线，本地代码资格不等于服务已部署
 
