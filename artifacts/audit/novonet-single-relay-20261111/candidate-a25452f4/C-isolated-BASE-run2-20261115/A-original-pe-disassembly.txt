@@ -1,0 +1,237 @@
+
+C:\ProgramData\NOVOVM\releases\novonet-observation-a25452f4-windows-x86_64\bin\novovm-node.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+14077821d: 48 c7 85 c0 01 00 00 00 00 00 00    	movq	$0x0, 0x1c0(%rbp)
+140778228: 48 c7 85 c8 01 00 00 08 00 00 00    	movq	$0x8, 0x1c8(%rbp)
+140778233: 48 c7 85 d0 01 00 00 00 00 00 00    	movq	$0x0, 0x1d0(%rbp)
+14077823e: 0f 11 b5 d8 01 00 00        	movups	%xmm6, 0x1d8(%rbp)
+140778245: 0f 11 bd e8 01 00 00        	movups	%xmm7, 0x1e8(%rbp)
+14077824c: 48 89 85 f8 01 00 00        	movq	%rax, 0x1f8(%rbp)
+140778253: 48 89 95 00 02 00 00        	movq	%rdx, 0x200(%rbp)
+14077825a: e8 b1 95 a0 ff              	callq	0x140181810 <.text+0x180810>
+14077825f: b9 0d 00 00 00              	movl	$0xd, %ecx
+140778264: ba 01 00 00 00              	movl	$0x1, %edx
+140778269: e8 52 31 a6 ff              	callq	0x1401db3c0 <.text+0x1da3c0>
+14077826e: 48 85 c0                    	testq	%rax, %rax
+140778271: 0f 84 32 22 00 00           	je	0x14077a4a9 <.text+0x7794a9>
+140778277: 48 8d b5 f8 01 00 00        	leaq	0x1f8(%rbp), %rsi
+14077827e: 49 be 5f 73 74 61 72 74 65 64       	movabsq	$0x646574726174735f, %r14 # imm = 0x646574726174735F
+140778288: 4c 89 70 05                 	movq	%r14, 0x5(%rax)
+14077828c: 48 b9 72 65 61 64 73 5f 73 74       	movabsq	$0x74735f7364616572, %rcx # imm = 0x74735F7364616572
+140778296: 48 89 08                    	movq	%rcx, (%rax)
+140778299: 48 c7 85 10 03 00 00 0d 00 00 00    	movq	$0xd, 0x310(%rbp)
+1407782a4: 48 89 85 d0 03 00 00        	movq	%rax, 0x3d0(%rbp)
+1407782ab: 48 89 85 18 03 00 00        	movq	%rax, 0x318(%rbp)
+1407782b2: 48 c7 85 20 03 00 00 0d 00 00 00    	movq	$0xd, 0x320(%rbp)
+1407782bd: 48 8b 87 e8 37 00 00        	movq	0x37e8(%rdi), %rax
+1407782c4: 48 b9 02 00 00 00 00 00 00 80       	movabsq	$-0x7ffffffffffffffe, %rcx # imm = 0x8000000000000002
+1407782ce: 48 89 8d 30 03 00 00        	movq	%rcx, 0x330(%rbp)
+1407782d5: 48 c7 85 38 03 00 00 00 00 00 00    	movq	$0x0, 0x338(%rbp)
+1407782e0: 48 89 85 40 03 00 00        	movq	%rax, 0x340(%rbp)
+1407782e7: c6 85 7a 01 00 00 01        	movb	$0x1, 0x17a(%rbp)
+1407782ee: 48 8d 95 10 03 00 00        	leaq	0x310(%rbp), %rdx
+1407782f5: 48 89 f1                    	movq	%rsi, %rcx
+1407782f8: e8 33 0f a1 ff              	callq	0x140189230 <.text+0x188230>
+1407782fd: 48 8b 8d 20 03 00 00        	movq	0x320(%rbp), %rcx
+140778304: 48 89 8d 30 01 00 00        	movq	%rcx, 0x130(%rbp)
+14077830b: 0f 10 85 10 03 00 00        	movups	0x310(%rbp), %xmm0
+140778312: 0f 29 85 20 01 00 00        	movaps	%xmm0, 0x120(%rbp)
+140778319: 48 8b 8d 70 03 00 00        	movq	0x370(%rbp), %rcx
+140778320: 48 89 8d c0 03 00 00        	movq	%rcx, 0x3c0(%rbp)
+140778327: f3 0f 6f 85 30 03 00 00     	movdqu	0x330(%rbp), %xmm0
+14077832f: f3 0f 6f 8d 40 03 00 00     	movdqu	0x340(%rbp), %xmm1
+140778337: f3 0f 6f 95 50 03 00 00     	movdqu	0x350(%rbp), %xmm2
+14077833f: 0f 10 9d 60 03 00 00        	movups	0x360(%rbp), %xmm3
+140778346: 0f 29 9d b0 03 00 00        	movaps	%xmm3, 0x3b0(%rbp)
+14077834d: 66 0f 7f 95 a0 03 00 00     	movdqa	%xmm2, 0x3a0(%rbp)
+140778355: 66 0f 7f 8d 90 03 00 00     	movdqa	%xmm1, 0x390(%rbp)
+14077835d: 66 0f 7f 85 80 03 00 00     	movdqa	%xmm0, 0x380(%rbp)
+140778365: c6 85 7a 01 00 00 00        	movb	$0x0, 0x17a(%rbp)
+14077836c: 48 8d 8d 80 03 00 00        	leaq	0x380(%rbp), %rcx
+140778373: 48 89 4c 24 20              	movq	%rcx, 0x20(%rsp)
+140778378: 48 8d 8d 60 02 00 00        	leaq	0x260(%rbp), %rcx
+14077837f: 48 8d 95 c0 01 00 00        	leaq	0x1c0(%rbp), %rdx
+140778386: 4c 8d 8d 20 01 00 00        	leaq	0x120(%rbp), %r9
+14077838d: 49 89 c0                    	movq	%rax, %r8
+140778390: e8 bb 6c 0d 00              	callq	0x14084f050 <.text+0x84e050>
+
+C:\ProgramData\NOVOVM\releases\novonet-observation-a25452f4-windows-x86_64\bin\novovm-node.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+14084f38e: 48 8d 4f 18                 	leaq	0x18(%rdi), %rcx
+14084f392: c6 45 17 01                 	movb	$0x1, 0x17(%rbp)
+14084f396: c6 44 24 20 01              	movb	$0x1, 0x20(%rsp)
+14084f39b: ba 01 00 00 00              	movl	$0x1, %edx
+14084f3a0: 4c 89 c6                    	movq	%r8, %rsi
+14084f3a3: 4d 89 e0                    	movq	%r12, %r8
+14084f3a6: 49 89 d9                    	movq	%rbx, %r9
+14084f3a9: e8 e2 d3 bd 01              	callq	0x14242c790 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x3b2350>
+
+C:\ProgramData\NOVOVM\releases\novonet-observation-a25452f4-windows-x86_64\bin\novovm-node.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000140001000 <.text>:
+141d91c70: 41 57                       	pushq	%r15
+141d91c72: 41 56                       	pushq	%r14
+141d91c74: 41 54                       	pushq	%r12
+141d91c76: 56                          	pushq	%rsi
+141d91c77: 57                          	pushq	%rdi
+141d91c78: 55                          	pushq	%rbp
+141d91c79: 53                          	pushq	%rbx
+141d91c7a: 48 83 ec 20                 	subq	$0x20, %rsp
+141d91c7e: 48 89 ce                    	movq	%rcx, %rsi
+141d91c81: 48 85 d2                    	testq	%rdx, %rdx
+141d91c84: 74 1f                       	je	0x141d91ca5 <.text+0x1d90ca5>
+141d91c86: 48 83 fa 0f                 	cmpq	$0xf, %rdx
+141d91c8a: 73 33                       	jae	0x141d91cbf <.text+0x1d90cbf>
+141d91c8c: 89 d0                       	movl	%edx, %eax
+141d91c8e: 83 e0 08                    	andl	$0x8, %eax
+141d91c91: 48 83 c0 08                 	addq	$0x8, %rax
+141d91c95: 48 83 fa 04                 	cmpq	$0x4, %rdx
+141d91c99: 41 be 04 00 00 00           	movl	$0x4, %r14d
+141d91c9f: 4c 0f 43 f0                 	cmovaeq	%rax, %r14
+141d91ca3: eb 70                       	jmp	0x141d91d15 <.text+0x1d90d15>
+141d91ca5: 0f 10 05 f4 30 a2 00        	movups	0xa230f4(%rip), %xmm0   # 0x1427b4da0
+141d91cac: 0f 11 46 10                 	movups	%xmm0, 0x10(%rsi)
+141d91cb0: 0f 10 05 d9 30 a2 00        	movups	0xa230d9(%rip), %xmm0   # 0x1427b4d90
+141d91cb7: 0f 11 06                    	movups	%xmm0, (%rsi)
+141d91cba: e9 07 01 00 00              	jmp	0x141d91dc6 <.text+0x1d90dc6>
+141d91cbf: 48 89 d0                    	movq	%rdx, %rax
+141d91cc2: 48 c1 e8 3d                 	shrq	$0x3d, %rax
+141d91cc6: 0f 85 09 01 00 00           	jne	0x141d91dd5 <.text+0x1d90dd5>
+141d91ccc: 48 c1 e2 03                 	shlq	$0x3, %rdx
+141d91cd0: 48 b9 93 24 49 92 24 49 92 24       	movabsq	$0x2492492492492493, %rcx # imm = 0x2492492492492493
+141d91cda: 48 89 d0                    	movq	%rdx, %rax
+141d91cdd: 49 89 d1                    	movq	%rdx, %r9
+141d91ce0: 48 f7 e1                    	mulq	%rcx
+141d91ce3: 49 29 d1                    	subq	%rdx, %r9
+141d91ce6: 49 d1 e9                    	shrq	%r9
+141d91ce9: 49 01 d1                    	addq	%rdx, %r9
+141d91cec: 49 c1 e9 02                 	shrq	$0x2, %r9
+141d91cf0: 49 ff c9                    	decq	%r9
+141d91cf3: 49 0f bd c9                 	bsrq	%r9, %rcx
+141d91cf7: f7 d1                       	notl	%ecx
+141d91cf9: 49 c7 c6 ff ff ff ff        	movq	$-0x1, %r14
+141d91d00: 49 d3 ee                    	shrq	%cl, %r14
+141d91d03: 48 b8 fd ff ff ff ff ff ff 1f       	movabsq	$0x1ffffffffffffffd, %rax # imm = 0x1FFFFFFFFFFFFFFD
+141d91d0d: 49 39 c6                    	cmpq	%rax, %r14
+141d91d10: 77 30                       	ja	0x141d91d42 <.text+0x1d90d42>
+141d91d12: 49 ff c6                    	incq	%r14
+141d91d15: 4e 8d 3c f5 0f 00 00 00     	leaq	0xf(,%r14,8), %r15
+141d91d1d: 49 83 e7 f0                 	andq	$-0x10, %r15
+141d91d21: 49 8d 7e 10                 	leaq	0x10(%r14), %rdi
+141d91d25: 4c 89 fb                    	movq	%r15, %rbx
+141d91d28: 48 01 fb                    	addq	%rdi, %rbx
+141d91d2b: 0f 92 c0                    	setb	%al
+141d91d2e: 48 b9 f0 ff ff ff ff ff ff 7f       	movabsq	$0x7ffffffffffffff0, %rcx # imm = 0x7FFFFFFFFFFFFFF0
+141d91d38: 48 39 cb                    	cmpq	%rcx, %rbx
+141d91d3b: 0f 97 c1                    	seta	%cl
+141d91d3e: 08 c1                       	orb	%al, %cl
+141d91d40: 74 0e                       	je	0x141d91d50 <.text+0x1d90d50>
+141d91d42: 45 84 c0                    	testb	%r8b, %r8b
+141d91d45: 0f 85 97 00 00 00           	jne	0x141d91de2 <.text+0x1d90de2>
+141d91d4b: 45 31 e4                    	xorl	%r12d, %r12d
+141d91d4e: eb 67                       	jmp	0x141d91db7 <.text+0x1d90db7>
+141d91d50: 44 89 c5                    	movl	%r8d, %ebp
+141d91d53: e8 b8 fa 3e fe              	callq	0x140181810 <.text+0x180810>
+141d91d58: 41 bc 10 00 00 00           	movl	$0x10, %r12d
+141d91d5e: ba 10 00 00 00              	movl	$0x10, %edx
+141d91d63: 48 89 d9                    	movq	%rbx, %rcx
+141d91d66: e8 55 96 44 fe              	callq	0x1401db3c0 <.text+0x1da3c0>
+141d91d6b: 48 85 c0                    	testq	%rax, %rax
+141d91d6e: 74 42                       	je	0x141d91db2 <.text+0x1d90db2>
+141d91d70: 49 8d 5e ff                 	leaq	-0x1(%r14), %rbx
+141d91d74: 4c 89 f1                    	movq	%r14, %rcx
+141d91d77: 48 c1 e9 03                 	shrq	$0x3, %rcx
+141d91d7b: 49 83 e6 f8                 	andq	$-0x8, %r14
+141d91d7f: 49 29 ce                    	subq	%rcx, %r14
+141d91d82: 48 83 fb 08                 	cmpq	$0x8, %rbx
+141d91d86: 4c 0f 42 f3                 	cmovbq	%rbx, %r14
+141d91d8a: 4c 01 f8                    	addq	%r15, %rax
+141d91d8d: 48 89 c1                    	movq	%rax, %rcx
+141d91d90: b2 ff                       	movb	$-0x1, %dl
+141d91d92: 49 89 f8                    	movq	%rdi, %r8
+141d91d95: 48 89 c7                    	movq	%rax, %rdi
+141d91d98: e8 3c ca 61 00              	callq	0x1423ae7d9 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x334399>
+141d91d9d: 48 89 3e                    	movq	%rdi, (%rsi)
+141d91da0: 48 89 5e 08                 	movq	%rbx, 0x8(%rsi)
+141d91da4: 4c 89 76 10                 	movq	%r14, 0x10(%rsi)
+141d91da8: 48 c7 46 18 00 00 00 00     	movq	$0x0, 0x18(%rsi)
+141d91db0: eb 14                       	jmp	0x141d91dc6 <.text+0x1d90dc6>
+141d91db2: 40 84 ed                    	testb	%bpl, %bpl
+141d91db5: 75 43                       	jne	0x141d91dfa <.text+0x1d90dfa>
+141d91db7: 4c 89 66 08                 	movq	%r12, 0x8(%rsi)
+141d91dbb: 48 89 5e 10                 	movq	%rbx, 0x10(%rsi)
+141d91dbf: 48 c7 06 00 00 00 00        	movq	$0x0, (%rsi)
+141d91dc6: 48 83 c4 20                 	addq	$0x20, %rsp
+141d91dca: 5b                          	popq	%rbx
+141d91dcb: 5d                          	popq	%rbp
+141d91dcc: 5f                          	popq	%rdi
+141d91dcd: 5e                          	popq	%rsi
+141d91dce: 41 5c                       	popq	%r12
+141d91dd0: 41 5e                       	popq	%r14
+141d91dd2: 41 5f                       	popq	%r15
+141d91dd4: c3                          	retq
+141d91dd5: 45 84 c0                    	testb	%r8b, %r8b
+141d91dd8: 75 08                       	jne	0x141d91de2 <.text+0x1d90de2>
+141d91dda: 0f 57 c0                    	xorps	%xmm0, %xmm0
+141d91ddd: 0f 11 06                    	movups	%xmm0, (%rsi)
+141d91de0: eb e4                       	jmp	0x141d91dc6 <.text+0x1d90dc6>
+141d91de2: 48 8d 0d 5f 2f a2 00        	leaq	0xa22f5f(%rip), %rcx    # 0x1427b4d48
+141d91de9: 4c 8d 05 78 2f a2 00        	leaq	0xa22f78(%rip), %r8     # 0x1427b4d68
+141d91df0: ba 39 00 00 00              	movl	$0x39, %edx
+141d91df5: e8 e6 1d 6a 00              	callq	0x142433be0 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x3b97a0>
+141d91dfa: b9 10 00 00 00              	movl	$0x10, %ecx
+141d91dff: 48 89 da                    	movq	%rbx, %rdx
+141d91e02: e8 3c 15 6a 00              	callq	0x142433343 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x3b8f03>
+141d91e07: cc                          	int3
+
+C:\ProgramData\NOVOVM\releases\novonet-observation-a25452f4-windows-x86_64\bin\novovm-node.exe:	file format coff-x86-64
+
+Disassembly of section .text:
+
+000000014207a440 <aws_lc_0_45_0_jent_entropy_switch_notime_impl>:
+14242c790: 55                          	pushq	%rbp
+14242c791: 41 57                       	pushq	%r15
+14242c793: 41 56                       	pushq	%r14
+14242c795: 41 55                       	pushq	%r13
+14242c797: 41 54                       	pushq	%r12
+14242c799: 56                          	pushq	%rsi
+14242c79a: 57                          	pushq	%rdi
+14242c79b: 53                          	pushq	%rbx
+14242c79c: 48 81 ec 98 00 00 00        	subq	$0x98, %rsp
+14242c7a3: 48 8d ac 24 80 00 00 00     	leaq	0x80(%rsp), %rbp
+14242c7ab: 48 c7 45 10 fe ff ff ff     	movq	$-0x2, 0x10(%rbp)
+14242c7b3: 4c 89 4d 08                 	movq	%r9, 0x8(%rbp)
+14242c7b7: 4c 89 45 00                 	movq	%r8, (%rbp)
+14242c7bb: 44 0f b6 85 80 00 00 00     	movzbl	0x80(%rbp), %r8d
+14242c7c3: 48 03 51 18                 	addq	0x18(%rcx), %rdx
+14242c7c7: 0f 82 78 05 00 00           	jb	0x14242cd45 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x3b2905>
+14242c7cd: 48 89 ce                    	movq	%rcx, %rsi
+14242c7d0: 48 8b 49 08                 	movq	0x8(%rcx), %rcx
+14242c7d4: 48 89 c8                    	movq	%rcx, %rax
+14242c7d7: 48 83 f9 08                 	cmpq	$0x8, %rcx
+14242c7db: 72 1c                       	jb	0x14242c7f9 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x3b23b9>
+14242c7dd: 48 83 f9 ff                 	cmpq	$-0x1, %rcx
+14242c7e1: 0f 84 49 06 00 00           	je	0x14242ce30 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x3b29f0>
+14242c7e7: 48 8d 41 01                 	leaq	0x1(%rcx), %rax
+14242c7eb: 49 89 c1                    	movq	%rax, %r9
+14242c7ee: 49 c1 e9 03                 	shrq	$0x3, %r9
+14242c7f2: 48 83 e0 f8                 	andq	$-0x8, %rax
+14242c7f6: 4c 29 c8                    	subq	%r9, %rax
+14242c7f9: 49 89 c1                    	movq	%rax, %r9
+14242c7fc: 49 d1 e9                    	shrq	%r9
+14242c7ff: 4c 39 ca                    	cmpq	%r9, %rdx
+14242c802: 0f 86 e9 01 00 00           	jbe	0x14242c9f1 <aws_lc_0_45_0_jent_entropy_switch_notime_impl+0x3b25b1>
+14242c808: 48 ff c0                    	incq	%rax
+14242c80b: 48 39 d0                    	cmpq	%rdx, %rax
+14242c80e: 48 0f 46 c2                 	cmovbeq	%rdx, %rax
+14242c812: 48 8d 4d a8                 	leaq	-0x58(%rbp), %rcx
+14242c816: 48 89 c2                    	movq	%rax, %rdx
+14242c819: e8 52 54 96 ff              	callq	0x141d91c70 <.text+0x1d90c70>
