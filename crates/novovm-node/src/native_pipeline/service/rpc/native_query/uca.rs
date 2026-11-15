@@ -434,7 +434,7 @@ struct Entry {
 
 enum QueryRead {
     Asset(Box<AssetStateRead>),
-    Identity(Box<super::identity::IdentityReadV1>),
+    Authority(Box<super::identity::AuthorityReadV1>),
 }
 
 impl QueryRead {
@@ -445,7 +445,7 @@ impl QueryRead {
         height: u64,
     ) -> Result<Option<Answer>> {
         match self {
-            Self::Identity(read) => read.poll(pipeline),
+            Self::Authority(read) => read.poll(pipeline),
             Self::Asset(read) => Ok(read.poll(pipeline)?.map(|state| {
                 Answer::AssetSpendState(match state {
                     UcaReadResult::Missing => AssetState::Missing {
@@ -523,31 +523,72 @@ impl UcaQueries {
         now: Instant,
         budget: CaptureBudget,
     ) -> Answer {
-        use novovm_protocol::native_query::IdentityStateV1;
+        self.read_authority(query, root, height, now, budget)
+    }
+
+    pub(super) fn read_application(
+        &mut self,
+        query: Query,
+        root: Hash,
+        height: u64,
+        now: Instant,
+        budget: CaptureBudget,
+    ) -> Answer {
+        self.read_authority(query, root, height, now, budget)
+    }
+
+    fn read_authority(
+        &mut self,
+        query: Query,
+        root: Hash,
+        height: u64,
+        now: Instant,
+        budget: CaptureBudget,
+    ) -> Answer {
+        use super::identity::{AuthorityAccessV1, AuthorityReadV1};
+        use novovm_protocol::native_query::{ApplicationGrantStateV1, IdentityStateV1};
+        let application = matches!(query, Query::UcaApplicationGrant { .. });
+        let pending = if application {
+            Answer::UcaApplicationGrant(ApplicationGrantStateV1::Pending)
+        } else {
+            Answer::UcaIdentity(IdentityStateV1::Pending)
+        };
         if let Some(index) = self.0.iter().position(|entry| entry.query == query) {
-            return if self.0[index].answer.is_some() {
-                self.0.remove(index).unwrap().answer.unwrap()
+            // Application revocation observations must be recaptured if the
+            // caller's actual published head advances, not served from old cache.
+            if application && (self.0[index].root != root || self.0[index].height != height) {
+                self.0.remove(index);
             } else {
-                Answer::UcaIdentity(IdentityStateV1::Pending)
-            };
+                return if self.0[index].answer.is_some() {
+                    self.0.remove(index).unwrap().answer.unwrap()
+                } else {
+                    pending
+                };
+            }
         }
         if self.0.len() >= 8 {
             return Answer::Error(QueryError::Busy);
         }
-        let Query::UcaIdentity {
-            chain_id,
-            genesis,
-            identity,
-        } = &query
-        else {
-            return Answer::Error(QueryError::Unavailable);
+        let access = match &query {
+            Query::UcaIdentity {
+                chain_id,
+                genesis,
+                identity,
+            } => crate::native_pipeline::business::uca_identity::IdentityAccessV1::new(
+                *chain_id,
+                genesis,
+                identity.as_str(),
+            )
+            .map(AuthorityAccessV1::Identity),
+            Query::UcaApplicationGrant { selector } => {
+                crate::native_pipeline::business::uca_application::ApplicationGrantAccessV1::new(
+                    selector.clone(),
+                )
+                .map(|access| AuthorityAccessV1::Application(Box::new(access)))
+            }
+            _ => return Answer::Error(QueryError::Unavailable),
         };
-        let read = crate::native_pipeline::business::uca_identity::IdentityAccessV1::new(
-            *chain_id,
-            genesis,
-            identity.as_str(),
-        )
-        .and_then(|access| super::identity::IdentityReadV1::new(access, root, height, budget));
+        let read = access.and_then(|access| AuthorityReadV1::new(access, root, height, budget));
         match read {
             Err(_) => Answer::Error(QueryError::Unavailable),
             Ok(read) => {
@@ -556,10 +597,10 @@ impl UcaQueries {
                     root,
                     height,
                     expires: now + Duration::from_secs(30),
-                    read: QueryRead::Identity(Box::new(read)),
+                    read: QueryRead::Authority(Box::new(read)),
                     answer: None,
                 });
-                Answer::UcaIdentity(IdentityStateV1::Pending)
+                pending
             }
         }
     }

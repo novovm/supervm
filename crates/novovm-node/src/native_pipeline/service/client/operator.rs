@@ -244,6 +244,7 @@ fn answer_view(answer: Answer) -> Value {
     match answer {
         Answer::Status(status) => json!({"Status":status}),
         Answer::UcaIdentity(state) => json!({"UcaIdentity":state}),
+        Answer::UcaApplicationGrant(state) => json!({"UcaApplicationGrant":state}),
         Answer::Error(error) => json!({"Error":error}),
         Answer::Receipt {
             state,

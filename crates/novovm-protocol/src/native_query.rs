@@ -17,8 +17,13 @@ const MAGIC_V1: &[u8; 8] = b"NVQUERY1";
 const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
 const MAGIC_V4: &[u8; 8] = b"NVQUERY4";
 const MAGIC_IDENTITY_V7: &[u8; 8] = b"NVQUERY7";
+const MAGIC_APPLICATION_V8: &[u8; 8] = b"NVQUERY8";
 const MAGIC_RESPONSE_V6: &[u8; 8] = b"NVQUERY6";
 pub type Hash = [u8; 32];
+
+#[cfg(test)]
+#[path = "native_query/application_tests.rs"]
+mod application_tests;
 
 /// Immutable identity identifier, not an asset account or spending authority.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -171,6 +176,10 @@ pub enum Query {
         genesis: Hash,
         identity: UcaIdentityIdV1,
     },
+    /// Current published application authority, never a device login proof.
+    UcaApplicationGrant {
+        selector: crate::uca_application::ApplicationGrantSelectorV1,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,6 +207,29 @@ pub enum IdentityStateV1 {
     Pending,
     Missing { state_root: Hash, height: u64 },
     Present(UcaIdentityViewV1),
+}
+
+/// Metadata at one published root. Possession, head trust and project/tool
+/// permissions must be established independently by the application owner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationGrantViewV1 {
+    pub state_root: Hash,
+    pub height: u64,
+    pub revision: u64,
+    pub issuer_key_ref: Hash,
+    pub identity_key_ref: Hash,
+    pub identity_status: IdentityStatusV1,
+    pub revoked: bool,
+    pub not_before_height: u64,
+    pub expires_at_height: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApplicationGrantStateV1 {
+    Pending,
+    IdentityMissing { state_root: Hash, height: u64 },
+    Missing { state_root: Hash, height: u64 },
+    Present(ApplicationGrantViewV1),
 }
 
 /// The original NUAS intent bytes, bounded and validated BEFORE ownership.
@@ -341,6 +373,7 @@ pub enum Answer {
     },
     AssetSpendState(AssetState),
     UcaIdentity(IdentityStateV1),
+    UcaApplicationGrant(ApplicationGrantStateV1),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -384,6 +417,9 @@ fn is_uca(frame: &Frame) -> bool {
 fn is_identity(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::UcaIdentity { .. })
 }
+fn is_application(frame: &Frame) -> bool {
+    matches!(request(frame).query, Query::UcaApplicationGrant { .. })
+}
 fn valid_request(request: &Request) -> bool {
     if request.session == [0; 32] || request.sequence == 0 {
         return false;
@@ -393,6 +429,11 @@ fn valid_request(request: &Request) -> bool {
     } = &request.query
     {
         if *chain_id == 0 || *genesis == [0; 32] {
+            return false;
+        }
+    }
+    if let Query::UcaApplicationGrant { selector } = &request.query {
+        if selector.validate().is_err() {
             return false;
         }
     }
@@ -415,6 +456,19 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
         | (Query::NovBalance { .. }, Answer::NovBalance(_))
         | (Query::AssetSpendState { .. }, Answer::AssetSpendState(_))
         | (Query::UcaIdentity { .. }, Answer::UcaIdentity(_)) => true,
+        (Query::UcaApplicationGrant { .. }, Answer::UcaApplicationGrant(state)) => match state {
+            ApplicationGrantStateV1::Pending => true,
+            ApplicationGrantStateV1::IdentityMissing { state_root, .. }
+            | ApplicationGrantStateV1::Missing { state_root, .. } => *state_root != [0; 32],
+            ApplicationGrantStateV1::Present(view) => {
+                view.state_root != [0; 32]
+                    && view.revision > 0
+                    && (view.revision < u64::MAX || view.revoked)
+                    && view.issuer_key_ref != [0; 32]
+                    && view.identity_key_ref != [0; 32]
+                    && view.expires_at_height > view.not_before_height
+            }
+        },
         (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
             hashes.len() == states.len()
         }
@@ -428,6 +482,8 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     let batch = is_batch(&frame);
     let mut bytes = if matches!(frame, Frame::Response(_)) {
         MAGIC_RESPONSE_V6
+    } else if is_application(&frame) {
+        MAGIC_APPLICATION_V8
     } else if is_identity(&frame) {
         MAGIC_IDENTITY_V7
     } else if is_uca(&frame) {
@@ -457,11 +513,12 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
 pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     let uca = bytes.starts_with(MAGIC_V4);
     let identity = bytes.starts_with(MAGIC_IDENTITY_V7);
+    let application = bytes.starts_with(MAGIC_APPLICATION_V8);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
         true
-    } else if uca || identity {
+    } else if uca || identity || application {
         false
     } else {
         return Err("native query header/size");
@@ -478,6 +535,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
         || is_batch(&frame) != batch
         || is_uca(&frame) != uca
         || is_identity(&frame) != identity
+        || is_application(&frame) != application
     {
         return Err("native query trailing bytes/binding");
     }

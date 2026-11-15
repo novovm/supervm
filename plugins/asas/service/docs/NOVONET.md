@@ -152,6 +152,34 @@ Missing、错误链 ID 和错误 genesis 的 Unavailable；均对应原初始化
 服务与 B 设备绑定的登录挑战。签名校验继续复用 AOEM ML-DSA owner，身份状态
 继续复用原发布根，不采用旧 Ed25519 管理候选，也不将本地配置视为链上授权。
 
+### 原生应用授权查询（2026-11-15）
+
+`Query::UcaApplicationGrant { selector }` 接入原 RpcLifecycle 与客户端 `query` 操作，
+查询完整选择器（chain/genesis/UCA/application/service/device），使用独占请求头
+`NVQUERY8` 与原 V6 请求摘要响应；新枚举项追加在末尾，不改变既有查询编码。
+未另开服务端口、直接文件读取或第二状态库；只在原控制器已发布根上走原树 I/O。
+
+原 identity/application 读取共用一个有界捕获实现；应用查询将身份和应用全部 35 个
+声明键降为只读，保持原 64 步/单 I/O 边界。原八槽、30 秒回收与资产业务共享，
+满载返回 Busy、错误记录/轮换身份/恢复或投影失败返回 Unavailable，不当作无授权。
+应用缓存的根或高度与当前发布头不同即重建捕获，不沿用旧许可观察。
+
+`ApplicationGrantStateV1` 区分 Pending、IdentityMissing、Missing、Present。
+Present 包含根/高度、revision、签发与当前身份钥引用、身份状态、revoked 和有效期；
+撤销/过期/停用仍显示真实元数据，不输出“已登录”或项目工具许可。节点观察仍不是
+可移植最终性证明、设备持钥或匿名凭据；查询选择器和钥引用可关联。
+
+实际协议 83 项、node 查询 17 项、应用状态 2 项（含真实 ML-DSA）、身份读取 4 项、
+真实 UDP 1 项通过（共 107 项不重复计数），受影响 lib/tests 严格 Clippy 通过。
+扩展原 `actual_native_uca_identity_readonly_query`，四个本机原服务经真实 ML-DSA/UDP
+分别确认已登记身份无授权、未知身份、错误 chain/genesis 拒绝；均在原初始化根/高度 0。
+Present/撤销/失效投影另由原树状态组件与协议测试验证，不把它算作网络发布成功。
+
+应用写入尚未接原 native typed admission/body/effect/receipt、packet/journal 和冷恢复。
+当前服务固定资产业务 pin，不能仅改为应用专用 program 或借零金额转账写入；下一片
+沿原路径扩展明确版本化的资产+应用复合契约，并明确受限资源/费用责任，不从现有签名
+推导付款授权，不实际扣 NOV。查询接线不开放 ASAS UCA 登录；现有显式节点授权保留。
+
 ## 验证与限制
 
 ### UCA 应用授权组件（2026-11-15，尚非登录入口）
@@ -183,7 +211,7 @@ SignatureV1 身份暂时拒绝，包括 A→B→A 换回旧钥，不能把时间
 此密码测试的身份记录是原树组件夹具，不是真实链登记或授权已上链的证据。
 
 仍须把组件接入原 native typed admission、候选执行、effect/receipt 与 packet/journal
-发布，以及发布根上的授权/撤销查询。不能将返回的 StateChange 直接作为登录许可，
+发布。只读授权查询接线现已完成，见上方“原生应用授权查询”；不能将返回的 StateChange 直接作为登录许可，
 也不能把任意用户提交的根当作可信头。然后才接原 ASAS 会话绑定挑战及生产 UCA
 状态提供者；本片没有启用公开登录、替换显式节点授权或启动其他设备。
 

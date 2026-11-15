@@ -639,8 +639,9 @@ fn run_native_uca_service_fixture_with(
         .collect::<Result<Vec<_>>>()?;
     if identity_only {
         use novovm_protocol::native_query::{
-            IdentityStateV1, IdentityStatusV1, QueryError, UcaIdentityIdV1,
+            ApplicationGrantStateV1, IdentityStateV1, IdentityStatusV1, QueryError, UcaIdentityIdV1,
         };
+        use novovm_protocol::uca_application::ApplicationGrantSelectorV1;
         let selector = |identity: &str, chain_id, genesis| -> Result<Query> {
             Ok(Query::UcaIdentity {
                 identity: UcaIdentityIdV1::new(identity).map_err(anyhow::Error::msg)?,
@@ -653,6 +654,18 @@ fn run_native_uca_service_fixture_with(
                 novovm_adapter_api::UcaKeyAlgo::Mldsa65,
                 &keys[4].0,
             );
+        let application = |identity: &str, chain_id, genesis| -> Result<Query> {
+            Ok(Query::UcaApplicationGrant {
+                selector: ApplicationGrantSelectorV1 {
+                    chain_id,
+                    genesis,
+                    identity: UcaIdentityIdV1::new(identity).map_err(anyhow::Error::msg)?,
+                    application: [7; 32],
+                    service: [8; 32],
+                    device: [9; 32],
+                },
+            })
+        };
         for client in &mut clients {
             for (identity, present) in [(IDS[0], true), (IDS[1], false)] {
                 let deadline = Instant::now() + TIMEOUT;
@@ -685,11 +698,43 @@ fn run_native_uca_service_fixture_with(
             for wrong in [
                 selector(IDS[0], genesis.chain_id + 1, domain)?,
                 selector(IDS[0], genesis.chain_id, [99; 32])?,
+                application(IDS[0], genesis.chain_id + 1, domain)?,
+                application(IDS[0], genesis.chain_id, [99; 32])?,
             ] {
                 assert_eq!(
                     query(&mut nodes, client, wrong)?,
                     Answer::Error(QueryError::Unavailable)
                 );
+            }
+            // The original registered identity has NO application grant. Never
+            // turn successful transport/identity authentication into permission.
+            for (identity, identity_present) in [(IDS[0], true), (IDS[1], false)] {
+                let deadline = Instant::now() + TIMEOUT;
+                loop {
+                    ensure!(Instant::now() < deadline, "application observation timeout");
+                    match query(
+                        &mut nodes,
+                        client,
+                        application(identity, genesis.chain_id, domain)?,
+                    )? {
+                        Answer::UcaApplicationGrant(ApplicationGrantStateV1::Pending) => {}
+                        Answer::UcaApplicationGrant(ApplicationGrantStateV1::Missing {
+                            state_root,
+                            height,
+                        }) if identity_present => {
+                            assert_eq!((state_root, height), (initial.state().root(), 0));
+                            break;
+                        }
+                        Answer::UcaApplicationGrant(ApplicationGrantStateV1::IdentityMissing {
+                            state_root,
+                            height,
+                        }) if !identity_present => {
+                            assert_eq!((state_root, height), (initial.state().root(), 0));
+                            break;
+                        }
+                        other => anyhow::bail!("unexpected application observation {other:?}"),
+                    }
+                }
             }
         }
         for node in nodes {

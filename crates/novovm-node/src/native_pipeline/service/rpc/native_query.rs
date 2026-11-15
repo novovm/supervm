@@ -121,6 +121,25 @@ impl RpcLifecycle {
                         )
                     }
                 }
+                Query::UcaApplicationGrant { selector } => {
+                    if selector.chain_id != self.node.template.chain_id
+                        || selector.genesis != self.node.template.genesis_config_commitment
+                        || self.node.template.business_program
+                            != crate::native_pipeline::business::nov_transfer_batch::uca_program_id(
+                            )
+                    {
+                        Answer::Error(QueryError::Unavailable)
+                    } else {
+                        let parent = self.node.controller.parent();
+                        self.uca_queries.read_application(
+                            request.query.clone(),
+                            parent.state_root,
+                            parent.height,
+                            now,
+                            self.node.pipeline.capture_budget(),
+                        )
+                    }
+                }
                 Query::AssetSpendState { intent, .. } => {
                     let intent_value = intent.intent();
                     if intent_value.chain_id != self.node.template.chain_id

@@ -9,7 +9,9 @@ use crate::native_pipeline::state::{
 use anyhow::{ensure, Context, Result};
 use novovm_exec::uca_application::CheckedApplicationGrantV1;
 use novovm_protocol::{
-    native_query::{IdentityStatusV1, UcaIdentityViewV1},
+    native_query::{
+        ApplicationGrantStateV1, ApplicationGrantViewV1, IdentityStatusV1, UcaIdentityViewV1,
+    },
     uca_application::{ApplicationGrantActionV1, ApplicationGrantSelectorV1},
 };
 use serde::{Deserialize, Serialize};
@@ -94,6 +96,7 @@ impl ApplicationGrantAccessV1 {
         Ok(ApplicationGrantObservationV1 {
             selector: self.selector.clone(),
             parent_root,
+            height,
             identity,
             record,
         })
@@ -168,10 +171,46 @@ impl ApplicationGrantAccessV1 {
 pub struct ApplicationGrantObservationV1 {
     selector: ApplicationGrantSelectorV1,
     parent_root: NodeHash,
+    height: u64,
     identity: Option<UcaIdentityViewV1>,
     record: Option<GrantRecordV1>,
 }
 impl ApplicationGrantObservationV1 {
+    /// Retains revoked/expired/inactive metadata instead of disguising it as
+    /// absence. This projection cannot certify device possession or finality.
+    pub fn query_state(&self, height: u64) -> Result<ApplicationGrantStateV1> {
+        ensure!(
+            self.height == height,
+            "application observation height mismatch"
+        );
+        let Some(identity) = &self.identity else {
+            return Ok(ApplicationGrantStateV1::IdentityMissing {
+                state_root: self.parent_root,
+                height,
+            });
+        };
+        ensure!(
+            identity.height == height && identity.state_root == self.parent_root,
+            "application observation height/root mismatch"
+        );
+        Ok(match &self.record {
+            None => ApplicationGrantStateV1::Missing {
+                state_root: self.parent_root,
+                height,
+            },
+            Some(record) => ApplicationGrantStateV1::Present(ApplicationGrantViewV1 {
+                state_root: self.parent_root,
+                height,
+                revision: record.revision,
+                issuer_key_ref: record.issuer_key_ref,
+                identity_key_ref: identity.primary_key_ref,
+                identity_status: identity.status,
+                revoked: record.revoked,
+                not_before_height: record.not_before_height,
+                expires_at_height: record.expires_at_height,
+            }),
+        })
+    }
     fn current_identity(&self, parent_root: NodeHash) -> Result<&UcaIdentityViewV1> {
         ensure!(
             parent_root != [0; 32] && parent_root == self.parent_root,

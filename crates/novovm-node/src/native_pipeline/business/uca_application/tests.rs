@@ -88,6 +88,23 @@ fn application_state_missing_corrupt_and_orphan_records_never_authorize() -> Res
     )?;
     let observation = read(&memory, root, &access)?;
     assert_eq!(observation.revision(), 0);
+    assert_eq!(
+        observation.query_state(10)?,
+        ApplicationGrantStateV1::Missing {
+            state_root: root,
+            height: 10
+        }
+    );
+    assert!(observation.query_state(11).is_err());
+    let absent = read(&Memory::default(), empty_root(), &access)?;
+    assert_eq!(
+        absent.query_state(10)?,
+        ApplicationGrantStateV1::IdentityMissing {
+            state_root: empty_root(),
+            height: 10
+        }
+    );
+    assert!(absent.query_state(11).is_err());
     assert!(observation.check_at_root(root, 10, 0).is_err());
     for change in [
         StateChange::Put {
@@ -230,6 +247,16 @@ fn actual_mldsa_application_grant_revoke_and_replay_checks() -> Result<()> {
     );
     let active_root = update(&mut memory, initial, &effects)?;
     let active = read(&memory, active_root, &access)?;
+    let ApplicationGrantStateV1::Present(view) = active.query_state(10)? else {
+        anyhow::bail!("active grant projection missing")
+    };
+    assert_eq!(
+        (view.state_root, view.height, view.revision, view.revoked),
+        (active_root, 10, 1, false)
+    );
+    assert_eq!(view.issuer_key_ref, intent.issuer_key_ref);
+    assert_eq!(view.identity_key_ref, intent.issuer_key_ref);
+    assert_eq!(view.identity_status, IdentityStatusV1::Active);
     active.check_at_root(active_root, 10, 1)?;
     active.check_at_root(active_root, 99, 1)?;
     assert!(active.check_at_root(active_root, 9, 1).is_err());
@@ -252,6 +279,13 @@ fn actual_mldsa_application_grant_revoke_and_replay_checks() -> Result<()> {
         &access.transition(&active, &revoke, active_root, 11)?,
     )?;
     let revoked = read(&memory, revoked_root, &access)?;
+    let ApplicationGrantStateV1::Present(view) = revoked.query_state(10)? else {
+        anyhow::bail!("revoked grant must not be hidden as missing")
+    };
+    assert_eq!(
+        (view.state_root, view.revision, view.revoked),
+        (revoked_root, 2, true)
+    );
     assert_eq!(revoked.revision(), 2);
     assert!(revoked.check_at_root(revoked_root, 11, 1).is_err());
     assert!(revoked.check_at_root(revoked_root, 11, 2).is_err());
@@ -293,6 +327,10 @@ fn actual_mldsa_application_grant_revoke_and_replay_checks() -> Result<()> {
             &identity_record_changes(7, &[1; 32], &disabled)?,
         )?;
         let disabled = read(&memory, root, &access)?;
+        let ApplicationGrantStateV1::Present(view) = disabled.query_state(10)? else {
+            anyhow::bail!("inactive identity grant must remain observable")
+        };
+        assert_ne!(view.identity_status, IdentityStatusV1::Active);
         assert!(disabled.check_at_root(root, 11, 3).is_err());
         for action in [intent.action.clone(), ApplicationGrantActionV1::Revoke] {
             let mut command = intent.clone();

@@ -8,6 +8,103 @@ use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_protocol::native_query::AssetReadIntentV2;
 
 #[test]
+fn application_queries_share_capacity_and_recapture_when_published_head_changes() {
+    use novovm_protocol::{
+        native_query::{ApplicationGrantStateV1, UcaIdentityIdV1},
+        uca_application::ApplicationGrantSelectorV1,
+    };
+    let now = Instant::now();
+    let mut queries = UcaQueries::default();
+    let query = |n| Query::UcaApplicationGrant {
+        selector: ApplicationGrantSelectorV1 {
+            chain_id: 7,
+            genesis: [2; 32],
+            identity: UcaIdentityIdV1::new("uca-owner").unwrap(),
+            application: [3; 32],
+            service: [4; 32],
+            device: [n; 32],
+        },
+    };
+    let pending = Answer::UcaApplicationGrant(ApplicationGrantStateV1::Pending);
+    for n in 1..=7 {
+        assert_eq!(
+            queries.read_application(query(n), [9; 32], 10, now, capture_budget()),
+            pending
+        );
+    }
+    assert_eq!(
+        queries.read(
+            Query::AssetSpendState {
+                intent: AssetReadIntentV2::new(&intent()).unwrap()
+            },
+            [9; 32],
+            10,
+            now
+        ),
+        Answer::AssetSpendState(AssetState::Pending)
+    );
+    assert_eq!(
+        queries.read_application(query(8), [9; 32], 10, now, capture_budget()),
+        Answer::Error(QueryError::Busy)
+    );
+    queries.0[0].answer = Some(Answer::UcaApplicationGrant(
+        ApplicationGrantStateV1::Missing {
+            state_root: [9; 32],
+            height: 10,
+        },
+    ));
+    assert_eq!(
+        queries.read_application(query(1), [8; 32], 11, now, capture_budget()),
+        pending
+    );
+    assert_eq!(queries.0.len(), 8);
+    let index = queries.0.iter().position(|e| e.query == query(1)).unwrap();
+    assert_eq!(
+        (queries.0[index].root, queries.0[index].height),
+        ([8; 32], 11)
+    );
+    assert!(queries.0[index].answer.is_none());
+    let current = Answer::UcaApplicationGrant(ApplicationGrantStateV1::Missing {
+        state_root: [8; 32],
+        height: 11,
+    });
+    queries.0[index].answer = Some(current.clone());
+    assert_eq!(
+        queries.read_application(query(1), [8; 32], 11, now, capture_budget()),
+        current
+    );
+    assert_eq!(queries.0.len(), 7);
+    assert_eq!(
+        queries.read_application(query(8), [8; 32], 11, now, capture_budget()),
+        pending
+    );
+    for completed in [false, true] {
+        for (root, height) in [([8; 32], 10), ([9; 32], 11)] {
+            let mut queries = UcaQueries::default();
+            assert_eq!(
+                queries.read_application(query(1), [9; 32], 10, now, capture_budget()),
+                pending
+            );
+            if completed {
+                queries.0[0].answer = Some(Answer::UcaApplicationGrant(
+                    ApplicationGrantStateV1::Missing {
+                        state_root: [9; 32],
+                        height: 10,
+                    },
+                ));
+            }
+            assert_eq!(
+                queries.read_application(query(1), root, height, now, capture_budget()),
+                pending
+            );
+            assert_eq!(queries.0.len(), 1);
+            assert_eq!((queries.0[0].root, queries.0[0].height), (root, height));
+            assert!(queries.0[0].answer.is_none());
+        }
+    }
+}
+
+#[test]
 fn identity_queries_share_the_existing_bounded_queue_and_keep_captured_root_labels() {
     use novovm_protocol::native_query::{IdentityStateV1, UcaIdentityIdV1};
     let now = Instant::now();
