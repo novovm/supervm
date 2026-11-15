@@ -1,0 +1,839 @@
+{
+  "assumptions": "local slot identity and stable frame base; calls follow their own ABI; indirect/dynamic execution and memory aliases are not proven",
+  "rows": [
+    {
+      "entry_rva": "0x84f050",
+      "function_end_rva": "0x84f46a",
+      "unwind_rva": "0x297d43c",
+      "prologue_bytes": 43,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x30",
+          "rsp_offset": "0xb0"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x20",
+          "rsp_offset": "0xa0"
+        }
+      },
+      "normal_return_states": {
+        "0x84f38d": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x84f071",
+          "instruction": "movdqa xmmword ptr [rbp + 0x30], xmm7"
+        },
+        {
+          "rva": "0x84f076",
+          "instruction": "movdqa xmmword ptr [rbp + 0x20], xmm6"
+        },
+        {
+          "rva": "0x84f0c1",
+          "instruction": "pshufd xmm6, xmm0, 0x44"
+        },
+        {
+          "rva": "0x84f0da",
+          "instruction": "pcmpeqd xmm7, xmm7"
+        },
+        {
+          "rva": "0x84f0f1",
+          "instruction": "pcmpeqb xmm0, xmm6"
+        },
+        {
+          "rva": "0x84f1f1",
+          "instruction": "pcmpeqb xmm8, xmm7"
+        },
+        {
+          "rva": "0x84f36d",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x20]"
+        },
+        {
+          "rva": "0x84f371",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x30]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x863990",
+      "function_end_rva": "0x866b48",
+      "unwind_rva": "0x297ffb0",
+      "prologue_bytes": 41,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x1e0",
+          "rsp_offset": "0x260"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x1d0",
+          "rsp_offset": "0x250"
+        }
+      },
+      "normal_return_states": {
+        "0x86684b": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x8639ab",
+          "instruction": "movaps xmmword ptr [rbp + 0x1e0], xmm7"
+        },
+        {
+          "rva": "0x8639b2",
+          "instruction": "movaps xmmword ptr [rbp + 0x1d0], xmm6"
+        },
+        {
+          "rva": "0x863a03",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0x1caa6a6]"
+        },
+        {
+          "rva": "0x863a0a",
+          "instruction": "movups xmmword ptr [rbp - 0x18], xmm6"
+        },
+        {
+          "rva": "0x863a0e",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0x1caa6ab]"
+        },
+        {
+          "rva": "0x863a15",
+          "instruction": "movups xmmword ptr [rbp - 8], xmm7"
+        },
+        {
+          "rva": "0x86528b",
+          "instruction": "movups xmmword ptr [rbp + 0x38], xmm6"
+        },
+        {
+          "rva": "0x86528f",
+          "instruction": "movups xmmword ptr [rbp + 0x48], xmm7"
+        },
+        {
+          "rva": "0x86682a",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x1d0]"
+        },
+        {
+          "rva": "0x866831",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1e0]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN11novovm_node15native_pipeline7service3rpc9admission14AdmissionState6status17h57c0f2c92ff21162E",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x5cf780",
+      "function_end_rva": "0x5d0c95",
+      "unwind_rva": "0x290923c",
+      "prologue_bytes": 41,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x5f0",
+          "rsp_offset": "0x670"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x5e0",
+          "rsp_offset": "0x660"
+        }
+      },
+      "normal_return_states": {
+        "0x5d0a9c": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x5cf79b",
+          "instruction": "movaps xmmword ptr [rbp + 0x5f0], xmm7"
+        },
+        {
+          "rva": "0x5cf7a2",
+          "instruction": "movaps xmmword ptr [rbp + 0x5e0], xmm6"
+        },
+        {
+          "rva": "0x5cf818",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0x1f148a1]"
+        },
+        {
+          "rva": "0x5cf81f",
+          "instruction": "movups xmmword ptr [rbp + 0x420], xmm6"
+        },
+        {
+          "rva": "0x5cf826",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0x1f148a3]"
+        },
+        {
+          "rva": "0x5cf82d",
+          "instruction": "movups xmmword ptr [rbp + 0x430], xmm7"
+        },
+        {
+          "rva": "0x5d03e7",
+          "instruction": "movups xmmword ptr [rbp + 0x488], xmm6"
+        },
+        {
+          "rva": "0x5d03ee",
+          "instruction": "movups xmmword ptr [rbp + 0x498], xmm7"
+        },
+        {
+          "rva": "0x5d0a7b",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x5e0]"
+        },
+        {
+          "rva": "0x5d0a82",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x5f0]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN11novovm_node15native_pipeline9consensus16native_lifecycle5probe92_$LT$impl$u20$novovm_node..native_pipeline..consensus..native_lifecycle..NativeLifecycle$GT$25network_probe_observation17h6f86df782ba7d70dE",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x34b9a0",
+      "function_end_rva": "0x34cc77",
+      "unwind_rva": "0x28aa65c",
+      "prologue_bytes": 41,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x1f0",
+          "rsp_offset": "0x270"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x1e0",
+          "rsp_offset": "0x260"
+        }
+      },
+      "normal_return_states": {
+        "0x34ca79": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x34b9bb",
+          "instruction": "movaps xmmword ptr [rbp + 0x1f0], xmm7"
+        },
+        {
+          "rva": "0x34b9c2",
+          "instruction": "movaps xmmword ptr [rbp + 0x1e0], xmm6"
+        },
+        {
+          "rva": "0x34ba3f",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0x216960a]"
+        },
+        {
+          "rva": "0x34ba46",
+          "instruction": "movups xmmword ptr [rbp - 0x40], xmm6"
+        },
+        {
+          "rva": "0x34ba4a",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0x216960f]"
+        },
+        {
+          "rva": "0x34ba51",
+          "instruction": "movups xmmword ptr [rbp - 0x30], xmm7"
+        },
+        {
+          "rva": "0x34bc8a",
+          "instruction": "movups xmmword ptr [rbp + 0x78], xmm6"
+        },
+        {
+          "rva": "0x34bc8e",
+          "instruction": "movups xmmword ptr [rbp + 0x88], xmm7"
+        },
+        {
+          "rva": "0x34ca58",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x1e0]"
+        },
+        {
+          "rva": "0x34ca5f",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1f0]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN3std6thread5local17LocalKey$LT$T$GT$4with17h2ef6a9ab2b7ff097E",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x1d92e60",
+      "function_end_rva": "0x1d9309e",
+      "unwind_rva": "0x2c8fcb8",
+      "prologue_bytes": 42,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x10",
+          "rsp_offset": "0x90"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x0",
+          "rsp_offset": "0x80"
+        }
+      },
+      "normal_return_states": {
+        "0x1d93068": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x1d92e81",
+          "instruction": "movdqa xmmword ptr [rbp + 0x10], xmm7"
+        },
+        {
+          "rva": "0x1d92e86",
+          "instruction": "movaps xmmword ptr [rbp], xmm6"
+        },
+        {
+          "rva": "0x1d92ee3",
+          "instruction": "pshufd xmm6, xmm0, 0x44"
+        },
+        {
+          "rva": "0x1d92eeb",
+          "instruction": "pcmpeqd xmm7, xmm7"
+        },
+        {
+          "rva": "0x1d92f00",
+          "instruction": "pcmpeqb xmm0, xmm6"
+        },
+        {
+          "rva": "0x1d92fc0",
+          "instruction": "pcmpeqb xmm8, xmm7"
+        },
+        {
+          "rva": "0x1d93048",
+          "instruction": "movaps xmm6, xmmword ptr [rbp]"
+        },
+        {
+          "rva": "0x1d9304c",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x10]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN8indexmap3map25IndexMap$LT$K$C$V$C$S$GT$5entry17hb7cca18ecda8a7ebE",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x15af1d0",
+      "function_end_rva": "0x15af7f6",
+      "unwind_rva": "0x2aec8dc",
+      "prologue_bytes": 41,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x450",
+          "rsp_offset": "0x4d0"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x440",
+          "rsp_offset": "0x4c0"
+        }
+      },
+      "normal_return_states": {
+        "0x15af29b": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x15af1eb",
+          "instruction": "movaps xmmword ptr [rbp + 0x450], xmm7"
+        },
+        {
+          "rva": "0x15af1f2",
+          "instruction": "movaps xmmword ptr [rbp + 0x440], xmm6"
+        },
+        {
+          "rva": "0x15af27a",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x440]"
+        },
+        {
+          "rva": "0x15af281",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x450]"
+        },
+        {
+          "rva": "0x15af36b",
+          "instruction": "movups xmm7, xmmword ptr [rax + 0x308]"
+        },
+        {
+          "rva": "0x15af389",
+          "instruction": "movups xmm6, xmmword ptr [rax + 0x398]"
+        },
+        {
+          "rva": "0x15af411",
+          "instruction": "movups xmmword ptr [rbp + 0x278], xmm7"
+        },
+        {
+          "rva": "0x15af4bd",
+          "instruction": "movups xmmword ptr [rbp + 0x308], xmm6"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN14novovm_network8novorudp11diagnostics27NativeTransferDiagnosticsV18snapshot17ha37770f900290a0fE",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x15b7fc0",
+      "function_end_rva": "0x15ba11a",
+      "unwind_rva": "0x2aedef4",
+      "prologue_bytes": 55,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x301e0",
+          "rsp_offset": "0x30260"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x301d0",
+          "rsp_offset": "0x30250"
+        }
+      },
+      "normal_return_states": {
+        "0x15b9cd1": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x15b7fe9",
+          "instruction": "movaps xmmword ptr [rbp + 0x301e0], xmm7"
+        },
+        {
+          "rva": "0x15b7ff0",
+          "instruction": "movaps xmmword ptr [rbp + 0x301d0], xmm6"
+        },
+        {
+          "rva": "0x15b8141",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0xfc4248]"
+        },
+        {
+          "rva": "0x15b8148",
+          "instruction": "movups xmmword ptr [rbp + 0x300a8], xmm6"
+        },
+        {
+          "rva": "0x15b814f",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0xfc424a]"
+        },
+        {
+          "rva": "0x15b8156",
+          "instruction": "movups xmmword ptr [rbp + 0x300b8], xmm7"
+        },
+        {
+          "rva": "0x15b92f7",
+          "instruction": "movups xmmword ptr [rbp + 0x30018], xmm6"
+        },
+        {
+          "rva": "0x15b92fe",
+          "instruction": "movups xmmword ptr [rbp + 0x30028], xmm7"
+        },
+        {
+          "rva": "0x15b9ca8",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x301d0]"
+        },
+        {
+          "rva": "0x15b9caf",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x301e0]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN3std6thread5local17LocalKey$LT$T$GT$4with17hfa1d69b8d4cf62f5E",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x14ad210",
+      "function_end_rva": "0x14adf97",
+      "unwind_rva": "0x2ad542c",
+      "prologue_bytes": 105,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x2f0",
+          "rsp_offset": "0x370"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x2e0",
+          "rsp_offset": "0x360"
+        }
+      },
+      "normal_return_states": {
+        "0x14adf69": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x14ad26b",
+          "instruction": "movaps xmmword ptr [rbp + 0x2f0], xmm7"
+        },
+        {
+          "rva": "0x14ad272",
+          "instruction": "movaps xmmword ptr [rbp + 0x2e0], xmm6"
+        },
+        {
+          "rva": "0x14ad36b",
+          "instruction": "movups xmm6, xmmword ptr [r12 + 0x2a0]"
+        },
+        {
+          "rva": "0x14ad53c",
+          "instruction": "movups xmm7, xmmword ptr [r12 + 0x300]"
+        },
+        {
+          "rva": "0x14ad7a8",
+          "instruction": "movaps xmmword ptr [rbp + 0x80], xmm7"
+        },
+        {
+          "rva": "0x14ad7af",
+          "instruction": "movaps xmm7, xmm6"
+        },
+        {
+          "rva": "0x14ad7f7",
+          "instruction": "movups xmm6, xmmword ptr [r12 + 0x130]"
+        },
+        {
+          "rva": "0x14adb7d",
+          "instruction": "movups xmmword ptr [rax + r8 + 0x130], xmm6"
+        },
+        {
+          "rva": "0x14addd3",
+          "instruction": "movups xmmword ptr [rax + r8 + 0x2a0], xmm7"
+        },
+        {
+          "rva": "0x14adf08",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x2e0]"
+        },
+        {
+          "rva": "0x14adf0f",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x2f0]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN67_$LT$alloc..vec..Vec$LT$T$C$A$GT$$u20$as$u20$core..clone..Clone$GT$5clone17h76e01e6d7f77e42dE",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x15b5260",
+      "function_end_rva": "0x15b5855",
+      "unwind_rva": "0x2aeda24",
+      "prologue_bytes": 52,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x90",
+          "rsp_offset": "0x110"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x80",
+          "rsp_offset": "0x100"
+        }
+      },
+      "normal_return_states": {
+        "0x15b5637": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x15b5284",
+          "instruction": "movdqa xmmword ptr [rbp + 0x90], xmm7"
+        },
+        {
+          "rva": "0x15b528c",
+          "instruction": "movdqa xmmword ptr [rbp + 0x80], xmm6"
+        },
+        {
+          "rva": "0x15b52dd",
+          "instruction": "pshufd xmm6, xmm0, 0x44"
+        },
+        {
+          "rva": "0x15b52f4",
+          "instruction": "pcmpeqd xmm7, xmm7"
+        },
+        {
+          "rva": "0x15b530b",
+          "instruction": "pcmpeqb xmm0, xmm6"
+        },
+        {
+          "rva": "0x15b53f0",
+          "instruction": "pcmpeqb xmm8, xmm7"
+        },
+        {
+          "rva": "0x15b560e",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x80]"
+        },
+        {
+          "rva": "0x15b5615",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x90]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h88160f8ffe7771caE",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x15b1730",
+      "function_end_rva": "0x15b246e",
+      "unwind_rva": "0x2aecddc",
+      "prologue_bytes": 41,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x1d0",
+          "rsp_offset": "0x250"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x1c0",
+          "rsp_offset": "0x240"
+        }
+      },
+      "normal_return_states": {
+        "0x15b22a3": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x15b174b",
+          "instruction": "movaps xmmword ptr [rbp + 0x1d0], xmm7"
+        },
+        {
+          "rva": "0x15b1752",
+          "instruction": "movaps xmmword ptr [rbp + 0x1c0], xmm6"
+        },
+        {
+          "rva": "0x15b17a2",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0xfc9617]"
+        },
+        {
+          "rva": "0x15b17a9",
+          "instruction": "movups xmmword ptr [rbp + 0x20], xmm6"
+        },
+        {
+          "rva": "0x15b17ad",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0xfc961c]"
+        },
+        {
+          "rva": "0x15b17b4",
+          "instruction": "movups xmmword ptr [rbp + 0x30], xmm7"
+        },
+        {
+          "rva": "0x15b1e98",
+          "instruction": "movups xmmword ptr [rbp + 0x68], xmm6"
+        },
+        {
+          "rva": "0x15b1e9c",
+          "instruction": "movups xmmword ptr [rbp + 0x78], xmm7"
+        },
+        {
+          "rva": "0x15b2282",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x1c0]"
+        },
+        {
+          "rva": "0x15b2289",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1d0]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN14novovm_network8novorudp11diagnostics9IoTraffic8snapshot17h64768ecc7f112a0aE",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x15a57c0",
+      "function_end_rva": "0x15a6222",
+      "unwind_rva": "0x2aeb7f4",
+      "prologue_bytes": 105,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x210",
+          "rsp_offset": "0x290"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x200",
+          "rsp_offset": "0x280"
+        }
+      },
+      "normal_return_states": {
+        "0x15a6221": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x15a581b",
+          "instruction": "movaps xmmword ptr [rbp + 0x210], xmm7"
+        },
+        {
+          "rva": "0x15a5822",
+          "instruction": "movaps xmmword ptr [rbp + 0x200], xmm6"
+        },
+        {
+          "rva": "0x15a5887",
+          "instruction": "movups xmm6, xmmword ptr [rdi + 0x2a0]"
+        },
+        {
+          "rva": "0x15a58d1",
+          "instruction": "movups xmm7, xmmword ptr [rdi + 0x2b0]"
+        },
+        {
+          "rva": "0x15a5c29",
+          "instruction": "movaps xmmword ptr [rbp + 0x10], xmm7"
+        },
+        {
+          "rva": "0x15a5c7d",
+          "instruction": "movaps xmm7, xmm14"
+        },
+        {
+          "rva": "0x15a5ce3",
+          "instruction": "movaps xmm14, xmm7"
+        },
+        {
+          "rva": "0x15a5d3b",
+          "instruction": "movaps xmm14, xmm7"
+        },
+        {
+          "rva": "0x15a607e",
+          "instruction": "movups xmmword ptr [rsi + 0x2a0], xmm6"
+        },
+        {
+          "rva": "0x15a61c0",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x200]"
+        },
+        {
+          "rva": "0x15a61c7",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x210]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN102_$LT$novovm_network..novorudp..diagnostics..NativeTransferEvidenceV1$u20$as$u20$core..clone..Clone$GT$5clone17h4ae059557e4686acE.llvm.14424412830228093772",
+      "symbol_exact": true
+    },
+    {
+      "entry_rva": "0x1d936d0",
+      "function_end_rva": "0x1d93aea",
+      "unwind_rva": "0x2c8fe28",
+      "prologue_bytes": 43,
+      "frame_offset": 128,
+      "saved_register_slots": {
+        "xmm7": {
+          "base": "rbp",
+          "offset": "0x30",
+          "rsp_offset": "0xb0"
+        },
+        "xmm6": {
+          "base": "rbp",
+          "offset": "0x20",
+          "rsp_offset": "0xa0"
+        }
+      },
+      "normal_return_states": {
+        "0x1d93a0d": [
+          3
+        ]
+      },
+      "tail_exit_states": {},
+      "unresolved_local_exits": [],
+      "all_decoded_normal_returns_restore_local_vectors": true,
+      "code_matches_same_dump": true,
+      "vector_references": [
+        {
+          "rva": "0x1d936f1",
+          "instruction": "movdqa xmmword ptr [rbp + 0x30], xmm7"
+        },
+        {
+          "rva": "0x1d936f6",
+          "instruction": "movdqa xmmword ptr [rbp + 0x20], xmm6"
+        },
+        {
+          "rva": "0x1d93741",
+          "instruction": "pshufd xmm6, xmm0, 0x44"
+        },
+        {
+          "rva": "0x1d9375a",
+          "instruction": "pcmpeqd xmm7, xmm7"
+        },
+        {
+          "rva": "0x1d93771",
+          "instruction": "pcmpeqb xmm0, xmm6"
+        },
+        {
+          "rva": "0x1d93871",
+          "instruction": "pcmpeqb xmm8, xmm7"
+        },
+        {
+          "rva": "0x1d939ed",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x20]"
+        },
+        {
+          "rva": "0x1d939f1",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x30]"
+        }
+      ],
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h7aa2411826973b26E",
+      "symbol_exact": true
+    }
+  ],
+  "first_abnormal_change_located": false,
+  "read_only_dump_sha256": "6c3b7b9dc34ec3c137c2b4e7bcf0f4746cf6ce023db90f6a6dc423dce2613de6"
+}
