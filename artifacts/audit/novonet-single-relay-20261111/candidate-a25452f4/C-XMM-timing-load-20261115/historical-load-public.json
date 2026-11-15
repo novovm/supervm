@@ -1,0 +1,134 @@
+{
+  "cases": [
+    {
+      "case": "PID34452 original existing node",
+      "source_files": [
+        {
+          "file": "target/c-wer-natural-full-20261114T122549Z/progress.json",
+          "sha256": "a1ff69eb2ab81480993a3bfb08b0b68cee13aebe78c3aa1cbc37a0b8f5cf9f28"
+        },
+        {
+          "file": "target/c-wer-natural-full-20261114T122549Z/exit.json",
+          "sha256": "6fb4f9ae5b5beea02d8f9402352999dddfe983ffaf4064618eb355e5c4273eee"
+        },
+        {
+          "file": "target/c-wer-natural-full-20261114T122549Z/owner.json",
+          "sha256": "34f4950d399441500231fcd41d916230655b5878f35031051a33426f97b97cf0"
+        }
+      ],
+      "profile_elapsed_seconds": 3973.173208,
+      "profile_elapsed_minutes": 66.21955346666667,
+      "last_report_ticks": 2847944,
+      "retained_transport_objects": 76,
+      "expired_records": 2643,
+      "evicted_records": 0,
+      "omitted_records": 0,
+      "receive_counters": {
+        "accepted_data": 1708,
+        "accepted_repair": 5,
+        "duplicate_data": 0,
+        "duplicate_repair": 130,
+        "history_data": 15497,
+        "history_repair": 3182
+      },
+      "send_poll_counters": {
+        "active_calls": 423210,
+        "offered_budget": 27085440,
+        "reported_data_writes": 17192,
+        "jobs_visited": 425191,
+        "jobs_unvisited": 0,
+        "budget_exhausted": 0,
+        "deferred_yield": 0,
+        "visit_cap": 0,
+        "one_pass_end": 423210
+      },
+      "stage_profile_enabled": false,
+      "execution_profile": "native_execution_tick",
+      "fault_window_packet_capture_present": false,
+      "packet_sequence_replay_possible": false,
+      "duration_basis": "snapshot elapsed_us, not independently measured process start-to-fault time",
+      "state_mode": "existing, historical original identity and database; only archived scalar report read this round"
+    },
+    {
+      "case": "PID3848 fresh LocalService BASE",
+      "source_files": [
+        {
+          "file": "target/c-base-run2-20261115/evidence-20261115T035023Z/samples.jsonl",
+          "sha256": "faca7b2946a3c85283c013281ed4ad02002b7b852b474e01b3395df0ece81f83"
+        },
+        {
+          "file": "target/c-base-run2-20261115/evidence-20261115T035023Z/result.json",
+          "sha256": "8e64fbdd99c4cc15f175cba10d116f757ab794ed31c6ff5af0a3eea9691ed692"
+        },
+        {
+          "file": "target/c-base-run2-20261115/evidence-20261115T035023Z/started.json",
+          "sha256": "ade6a14f4d19bf4e8c3cfe242683223c2a8c8d3a527631aff57c4c7b89a9d92a"
+        }
+      ],
+      "samples": 14,
+      "sample_interval_seconds": 15,
+      "sampling_skips_reports": true,
+      "report_period_measurable_from_samples": false,
+      "configured_report_interval_ms": 5000,
+      "retained_transport_objects_last_sample": 246,
+      "evicted_records_last_sample": 191,
+      "expired_records_last_sample": 146,
+      "accepted_data_last_sample": 623,
+      "reported_data_writes_last_sample": 3129,
+      "thread_count_samples": [
+        18,
+        20,
+        23
+      ],
+      "state_mode": "fresh isolation database and fresh LocalService identity",
+      "last_sample_elapsed_seconds": 218.6504826,
+      "natural_nonzero_exit": true,
+      "historical_packet_capture_present": false,
+      "same_failure_source_record_clone_count_in_dump": 255
+    },
+    {
+      "case": "previous three-minute fourpoint group",
+      "source_files": [
+        {
+          "file": "D:/WEB3_AI/SUPERVM/target/c-xmm-fourpoint-20261115/corrected-20261115T074859Z/progress.jsonl",
+          "sha256": "5fb92d57940757fec23ec098ee863df8c002c9046740fc4b4f1a24ac9da68b7f"
+        }
+      ],
+      "records_seen": 36,
+      "max_retained_transport_objects": 256,
+      "last_retained_transport_objects": 256,
+      "expired_records": 87,
+      "evicted_records": 160,
+      "accepted_data": 549,
+      "reported_data_writes": 2598,
+      "configured_report_interval_ms": 5000,
+      "native_run_ms": 180000,
+      "actual_packet_sequence_recorded": false,
+      "active_status_threads_observed": [
+        15188
+      ],
+      "state_mode": "fresh loopback isolation"
+    }
+  ],
+  "known_recoverable_conditions": [
+    "pinned a254 EXE and AOEM966, LocalService account",
+    "original status/network observation code and configured report interval",
+    "isolated real native UDP object turnover with new test identities",
+    "record count and cumulative scalar counters, with stated snapshot/sample timing"
+  ],
+  "missing_historical_conditions": [
+    "original ordered UDP bytes, packet timestamps, retransmission and scheduling sequence",
+    "original per-query start/end event series",
+    "historical thread task interleaving and prior XMM save-slot values",
+    "same original database and identity state, intentionally preserved and excluded from new isolation",
+    "historical dynamic CPU scheduling and allocator history"
+  ],
+  "restoration_claims": {
+    "original_packet_sequence_restored": false,
+    "original_concurrency_restored": false,
+    "original_duration_covered_by_three_minute_tests": false,
+    "exact_failure_replay_ready": false
+  },
+  "long_run_decision": "not qualified; no automatic long run",
+  "production_state_opened": false
+}

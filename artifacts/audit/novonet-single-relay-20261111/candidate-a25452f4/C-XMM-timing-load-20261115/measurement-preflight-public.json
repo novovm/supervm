@@ -1,0 +1,51 @@
+{
+  "original_node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "measurement_code": [
+    {
+      "rva": "0x772120",
+      "bytes": "55415741564155",
+      "matches_same_dump": true
+    },
+    {
+      "rva": "0x7721fb",
+      "bytes": "0f11bd48010000",
+      "matches_same_dump": true
+    },
+    {
+      "rva": "0x777bad",
+      "bytes": "488d8d60020000",
+      "matches_same_dump": true
+    },
+    {
+      "rva": "0x777c36",
+      "bytes": "48b80500000000",
+      "matches_same_dump": true
+    },
+    {
+      "rva": "0x77823e",
+      "bytes": "0f11b5d8010000",
+      "matches_same_dump": true
+    },
+    {
+      "rva": "0x779ec5",
+      "bytes": "c34889cee862fe",
+      "matches_same_dump": true
+    }
+  ],
+  "status_normal_ret_rvas": [
+    "0x779ec5"
+  ],
+  "source_commit": "a25452f4",
+  "source_sha256": {
+    "crates/novovm-node/src/native_pipeline/service/rpc.rs": "47615e1436723349e5cc5747f2ea7d907c3202a5af154a9652d4988bbee8d335",
+    "crates/novovm-node/src/native_pipeline/profile.rs": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+    "crates/novovm-node/src/bin/novovm-node.rs": "2032c0d20d5f309a8a3a7aeca89dd4fde911d99bda2a8b75898f8f6bb59fd0ae"
+  },
+  "original_native_counter_full_status_exists": true,
+  "native_counter_requires_existing_opt_in": "NOVOVM_PROFILE_STAGES=1",
+  "counter_snapshot_is_non_atomic_and_precedes_current_call_completion": true,
+  "native_counter_delta_one_call_required_for_individual_latency": true,
+  "new_runtime_measurement_executed": false,
+  "exact_kernel_debug_stop_timestamps_available": false,
+  "long_run_authorized": false
+}

@@ -1,0 +1,19 @@
+{
+  "runtime_measurement_started": false,
+  "Windows_elevation_result": "cancelled",
+  "elevation_result_utc": "2026-11-15T08:10:56.5295574Z",
+  "Python_compile_checks_passed": true,
+  "PowerShell_parse_checks_passed": true,
+  "controller_response_written_after_assignment": true,
+  "runtime_callback_timing_validated": false,
+  "native_status_delta_extraction_executed_on_new_run": false,
+  "hardware_slot_reuse_runtime_validated": false,
+  "long_run_started": false,
+  "original_node_started": false,
+  "private_state_opened": false,
+  "first_XMM_change_found": false,
+  "script_sha256": {
+    "run_three_phases.py": "5d8e357d5ae191486bc715d970847e22e5eb010d1674d3ff6634c76c16db5d34",
+    "status_timing.py": "c53515d8a899e48494535e167f79ebe24151711cc4774f976dd13d17d8134d67"
+  }
+}

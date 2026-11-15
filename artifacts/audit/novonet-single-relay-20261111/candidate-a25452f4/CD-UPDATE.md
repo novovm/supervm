@@ -1,6 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
 
+## C回传 2026-11-15：原生status计时已接线，新的三组实测尚未启动
+
+核对原a254已有observe_tick(TickStage::Status)及NOVOVM_PROFILE_STAGES计时。
+三组隔离测量将统一启用原生计数器，并修正响应字段赋值前写出的缺陷；运行仍待验。
+入口/RET与四点复用硬件槽会新增停顿、存在覆盖窗口，不能称已取得低干扰资格。
+历史PID34452快照约66.22分钟；PID3848最后采样218.65秒，不能统一成66分钟故障。
+逐包顺序、调度交错及保存槽历史仍缺。Windows UAC在16:10:56返回取消，未启新节点。
+详见[C-XMM-timing-load-20261115/README.md](C-XMM-timing-load-20261115/README.md)。
+首次错位未定位，原库身份和失败现场保留，双中继暂停；未进入长期取证。
+
 ## C回传 2026-11-15：四点实际捕获34次完整调用，原故障未复现
 
 原a254＋AOEM966以LocalService在新库/新测试身份执行三组3分钟对照。
