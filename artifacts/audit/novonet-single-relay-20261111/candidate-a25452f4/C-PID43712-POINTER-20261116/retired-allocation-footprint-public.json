@@ -1,0 +1,21 @@
+{
+  "grow_return_slot": {
+    "address": "0xf3bd3ee698",
+    "current_value": "0x7ff6088434e2",
+    "module": "novovm-xmmguard-a254.exe",
+    "rva": "0x24334e2",
+    "active_history": false
+  },
+  "allocation_return_slot": {
+    "address": "0xf3bd3ee648",
+    "current_value": "0x7ff60884346a",
+    "module": "novovm-xmmguard-a254.exe",
+    "rva": "0x243346a",
+    "active_history": false
+  },
+  "grow_result_current_tag": 0,
+  "grow_result_current_pointer": "0x2124b61cd20",
+  "grow_result_current_size": 8,
+  "current_result_matches_String_descriptor": true,
+  "retired_slot_values_prove_execution_history": false
+}

@@ -1,0 +1,29 @@
+{
+  "dump_sha256": "6752ad40c591c2a5e9fde9f8d788ae14150cf08463647173a0b14ff585495ebe",
+  "formatter": {
+    "address": "0xf3bd3ee7d0",
+    "writer_self": "0xf3bd3ee860",
+    "vtable": "0x7ff608be3610",
+    "flags": "0x69000020",
+    "width": 2,
+    "precision": 0,
+    "writer_function": "0x7ff60825cc60",
+    "char_writer_function": "0x7ff60825cb50"
+  },
+  "numeric_length": 2,
+  "plus_sign_requested": false,
+  "alternate_prefix_requested": false,
+  "computed_sign_character": "0x110000",
+  "computed_prefix_length": 0,
+  "computed_content_width": 2,
+  "width_requires_padding": false,
+  "branch_reconstruction_uses_current_snapshot": true,
+  "historical_formatter_mutation_excluded": false,
+  "helper_has_nested_call_on_reconstructed_path": false,
+  "reconstructed_writer_call_rva": "0x1e52ff5",
+  "writer_entry_rva": "0x1e4cc60",
+  "writer_tail_target_matches_actual_active_frame": true,
+  "source_at_writer_entry_known": false,
+  "R14_before_and_after_reserve_known": false,
+  "first_invalid_pointer_definition_proven": false
+}

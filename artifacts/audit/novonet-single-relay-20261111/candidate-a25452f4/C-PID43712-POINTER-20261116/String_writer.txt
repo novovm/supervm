@@ -1,0 +1,36 @@
+01e4cc60 55                             push rbp
+01e4cc61 4156                           push r14
+01e4cc63 56                             push rsi
+01e4cc64 57                             push rdi
+01e4cc65 53                             push rbx
+01e4cc66 4883ec20                       sub rsp, 0x20
+01e4cc6a 488d6c2420                     lea rbp, [rsp + 0x20]
+01e4cc6f 4c89c6                         mov rsi, r8
+01e4cc72 4889cf                         mov rdi, rcx
+01e4cc75 488b01                         mov rax, qword ptr [rcx]
+01e4cc78 488b5910                       mov rbx, qword ptr [rcx + 0x10]
+01e4cc7c 4829d8                         sub rax, rbx
+01e4cc7f 4939c0                         cmp r8, rax
+01e4cc82 7723                           ja 0x1e4cca7
+01e4cc84 488b4f08                       mov rcx, qword ptr [rdi + 8]
+01e4cc88 4801d9                         add rcx, rbx
+01e4cc8b 4989f0                         mov r8, rsi
+01e4cc8e e8341b5600                     call 0x23ae7c7
+01e4cc93 4801f3                         add rbx, rsi
+01e4cc96 48895f10                       mov qword ptr [rdi + 0x10], rbx
+01e4cc9a 31c0                           xor eax, eax
+01e4cc9c 4883c420                       add rsp, 0x20
+01e4cca0 5b                             pop rbx
+01e4cca1 5f                             pop rdi
+01e4cca2 5e                             pop rsi
+01e4cca3 415e                           pop r14
+01e4cca5 5d                             pop rbp
+01e4cca6 c3                             ret
+01e4cca7 4889f9                         mov rcx, rdi
+01e4ccaa 4989d6                         mov r14, rdx
+01e4ccad 4889da                         mov rdx, rbx
+01e4ccb0 4989f0                         mov r8, rsi
+01e4ccb3 e8e8675e00                     call 0x24334a0
+01e4ccb8 4c89f2                         mov rdx, r14
+01e4ccbb 488b5f10                       mov rbx, qword ptr [rdi + 0x10]
+01e4ccbf ebc3                           jmp 0x1e4cc84

@@ -1,0 +1,14 @@
+[
+  {
+    "iat_rva": "0x2464b20",
+    "import_name": "GetProcessHeap",
+    "target_module": "kernel32.dll",
+    "target_rva": "0x23460"
+  },
+  {
+    "iat_rva": "0x2464b10",
+    "import_name": "HeapAlloc",
+    "target_module": "ntdll.dll",
+    "target_rva": "0x31240"
+  }
+]

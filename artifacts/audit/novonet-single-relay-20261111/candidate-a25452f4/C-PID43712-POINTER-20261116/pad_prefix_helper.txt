@@ -1,0 +1,40 @@
+01e52ea0 55                             push rbp
+01e52ea1 4156                           push r14
+01e52ea3 56                             push rsi
+01e52ea4 57                             push rdi
+01e52ea5 53                             push rbx
+01e52ea6 4883ec20                       sub rsp, 0x20
+01e52eaa 488d6c2420                     lea rbp, [rsp + 0x20]
+01e52eaf 4c89ce                         mov rsi, r9
+01e52eb2 4889d3                         mov rbx, rdx
+01e52eb5 488b7d50                       mov rdi, qword ptr [rbp + 0x50]
+01e52eb9 4181f800001100                 cmp r8d, 0x110000
+01e52ec0 7414                           je 0x1e52ed6
+01e52ec2 4989ce                         mov r14, rcx
+01e52ec5 4489c2                         mov edx, r8d
+01e52ec8 ff5320                         call qword ptr [rbx + 0x20]
+01e52ecb 4c89f1                         mov rcx, r14
+01e52ece 89c2                           mov edx, eax
+01e52ed0 b001                           mov al, 1
+01e52ed2 84d2                           test dl, dl
+01e52ed4 751e                           jne 0x1e52ef4
+01e52ed6 4885f6                         test rsi, rsi
+01e52ed9 7417                           je 0x1e52ef2
+01e52edb 488b4318                       mov rax, qword ptr [rbx + 0x18]
+01e52edf 4889f2                         mov rdx, rsi
+01e52ee2 4989f8                         mov r8, rdi
+01e52ee5 4883c420                       add rsp, 0x20
+01e52ee9 5b                             pop rbx
+01e52eea 5f                             pop rdi
+01e52eeb 5e                             pop rsi
+01e52eec 415e                           pop r14
+01e52eee 5d                             pop rbp
+01e52eef 48ffe0                         jmp rax
+01e52ef2 31c0                           xor eax, eax
+01e52ef4 4883c420                       add rsp, 0x20
+01e52ef8 5b                             pop rbx
+01e52ef9 5f                             pop rdi
+01e52efa 5e                             pop rsi
+01e52efb 415e                           pop r14
+01e52efd 5d                             pop rbp
+01e52efe c3                             ret

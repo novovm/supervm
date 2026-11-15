@@ -1,0 +1,36 @@
+024334a0 55                             push rbp
+024334a1 56                             push rsi
+024334a2 57                             push rdi
+024334a3 4883ec40                       sub rsp, 0x40
+024334a7 488d6c2440                     lea rbp, [rsp + 0x40]
+024334ac 4c01c2                         add rdx, r8
+024334af 724a                           jb 0x24334fb
+024334b1 4889ce                         mov rsi, rcx
+024334b4 488b01                         mov rax, qword ptr [rcx]
+024334b7 488d0c00                       lea rcx, [rax + rax]
+024334bb 4839ca                         cmp rdx, rcx
+024334be 480f47ca                       cmova rcx, rdx
+024334c2 4883f909                       cmp rcx, 9
+024334c6 bf08000000                     mov edi, 8
+024334cb 480f43f9                       cmovae rdi, rcx
+024334cf 4c8b4608                       mov r8, qword ptr [rsi + 8]
+024334d3 488d4de8                       lea rcx, [rbp - 0x18]
+024334d7 4889c2                         mov rdx, rax
+024334da 4989f9                         mov r9, rdi
+024334dd e82effffff                     call 0x2433410
+024334e2 837de801                       cmp dword ptr [rbp - 0x18], 1
+024334e6 741a                           je 0x2433502
+024334e8 488b45f0                       mov rax, qword ptr [rbp - 0x10]
+024334ec 48894608                       mov qword ptr [rsi + 8], rax
+024334f0 48893e                         mov qword ptr [rsi], rdi
+024334f3 4883c440                       add rsp, 0x40
+024334f7 5f                             pop rdi
+024334f8 5e                             pop rsi
+024334f9 5d                             pop rbp
+024334fa c3                             ret
+024334fb 31c9                           xor ecx, ecx
+024334fd e85afeffff                     call 0x243335c
+02433502 488b4df0                       mov rcx, qword ptr [rbp - 0x10]
+02433506 488b55f8                       mov rdx, qword ptr [rbp - 8]
+0243350a e84dfeffff                     call 0x243335c
+0243350f cc                             int3

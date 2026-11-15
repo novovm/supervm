@@ -1,0 +1,46 @@
+02433410 55                             push rbp
+02433411 56                             push rsi
+02433412 57                             push rdi
+02433413 53                             push rbx
+02433414 4883ec28                       sub rsp, 0x28
+02433418 488d6c2420                     lea rbp, [rsp + 0x20]
+0243341d 4889ce                         mov rsi, rcx
+02433420 bb01000000                     mov ebx, 1
+02433425 4d85c9                         test r9, r9
+02433428 7909                           jns 0x2433433
+0243342a b808000000                     mov eax, 8
+0243342f 31ff                           xor edi, edi
+02433431 eb5b                           jmp 0x243348e
+02433433 4c89cf                         mov rdi, r9
+02433436 4885d2                         test rdx, rdx
+02433439 7418                           je 0x2433453
+0243343b 4c89c1                         mov rcx, r8
+0243343e 41b801000000                   mov r8d, 1
+02433444 4989f9                         mov r9, rdi
+02433447 e8947fdafd                     call 0x1db3e0
+0243344c 4885c0                         test rax, rax
+0243344f 7532                           jne 0x2433483
+02433451 eb1c                           jmp 0x243346f
+02433453 4885ff                         test rdi, rdi
+02433456 7426                           je 0x243347e
+02433458 e8b3e3d4fd                     call 0x181810
+0243345d ba01000000                     mov edx, 1
+02433462 4889f9                         mov rcx, rdi
+02433465 e8567fdafd                     call 0x1db3c0
+0243346a 4885c0                         test rax, rax
+0243346d 7514                           jne 0x2433483
+0243346f 48c7460801000000               mov qword ptr [rsi + 8], 1
+02433477 b810000000                     mov eax, 0x10
+0243347c eb10                           jmp 0x243348e
+0243347e b801000000                     mov eax, 1
+02433483 48894608                       mov qword ptr [rsi + 8], rax
+02433487 b810000000                     mov eax, 0x10
+0243348c 31db                           xor ebx, ebx
+0243348e 48893c06                       mov qword ptr [rsi + rax], rdi
+02433492 48891e                         mov qword ptr [rsi], rbx
+02433495 4883c428                       add rsp, 0x28
+02433499 5b                             pop rbx
+0243349a 5f                             pop rdi
+0243349b 5e                             pop rsi
+0243349c 5d                             pop rbp
+0243349d c3                             ret

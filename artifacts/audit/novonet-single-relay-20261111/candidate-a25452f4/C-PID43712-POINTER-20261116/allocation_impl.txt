@@ -1,0 +1,34 @@
+01e2d1f0 55                             push rbp
+01e2d1f1 56                             push rsi
+01e2d1f2 57                             push rdi
+01e2d1f3 4883ec20                       sub rsp, 0x20
+01e2d1f7 488d6c2420                     lea rbp, [rsp + 0x20]
+01e2d1fc 4883fa11                       cmp rdx, 0x11
+01e2d200 7311                           jae 0x1e2d213
+01e2d202 31d2                           xor edx, edx
+01e2d204 4989c8                         mov r8, rcx
+01e2d207 4883c420                       add rsp, 0x20
+01e2d20b 5f                             pop rdi
+01e2d20c 5e                             pop rsi
+01e2d20d 5d                             pop rbp
+01e2d20e e98dc50000                     jmp 0x1e397a0
+01e2d213 4889d6                         mov rsi, rdx
+01e2d216 4801d1                         add rcx, rdx
+01e2d219 31ff                           xor edi, edi
+01e2d21b 31d2                           xor edx, edx
+01e2d21d 4989c8                         mov r8, rcx
+01e2d220 e87bc50000                     call 0x1e397a0
+01e2d225 4885c0                         test rax, rax
+01e2d228 7415                           je 0x1e2d23f
+01e2d22a 488d4eff                       lea rcx, [rsi - 1]
+01e2d22e 4821c1                         and rcx, rax
+01e2d231 4829ce                         sub rsi, rcx
+01e2d234 4889c7                         mov rdi, rax
+01e2d237 4801f7                         add rdi, rsi
+01e2d23a 48894430f8                     mov qword ptr [rax + rsi - 8], rax
+01e2d23f 4889f8                         mov rax, rdi
+01e2d242 4883c420                       add rsp, 0x20
+01e2d246 5f                             pop rdi
+01e2d247 5e                             pop rsi
+01e2d248 5d                             pop rbp
+01e2d249 c3                             ret

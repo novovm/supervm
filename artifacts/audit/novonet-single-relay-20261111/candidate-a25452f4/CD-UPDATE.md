@@ -1,5 +1,15 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-16：PID43712实际Formatter和reserve的R14约束
+
+从活动Formatter解析实际vtable，writer确为原RVA1e4cc60，当前flags69000020、width2，输入长度2。
+按当前值重建pad无需填充，prefix helper不发生嵌套writer调用；该推导没有冒充历史分支轨迹。
+reserve、grow以及紧邻分配适配函数本体没有R14写入，已核对原EXE和两份DMP代码一致。
+退役分配槽残留与当前cap8/buffer相容，仍不能恢复writer入口和reserve前后的R14历史。
+首次非法指针定义未定位，没有修复；44948保持独立调查，没有运行节点或样例，原库身份和现场保留，双中继暂停。
+详见[C-PID43712-POINTER-20261116/README.md](C-PID43712-POINTER-20261116/README.md)。
+
+
 ## C回传 2026-11-16：两份故障各自数据流和前轮标准库RVA更正
 
 本轮只读两份既有Full Dump，哈希一致，没有运行节点、样例或采集器。

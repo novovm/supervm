@@ -1,0 +1,113 @@
+{
+  "reserve": {
+    "start": "0x24334a0",
+    "end": "0x2433510",
+    "unwind": "0x2c9b4ec",
+    "instructions": 36,
+    "code_sha256": "2cc72457cefecdb874efe26e170b381fedf06a87b6032d484458bbc577abe965",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": []
+  },
+  "grow_helper": {
+    "start": "0x2433410",
+    "end": "0x243349e",
+    "unwind": "0x2c9a0d4",
+    "instructions": 46,
+    "code_sha256": "06f05f16d8341ceb445b140b8aed1d5e71d5d3ef3014a5239e131dbdf25ddbd5",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": []
+  },
+  "allocation_impl": {
+    "start": "0x1e2d1f0",
+    "end": "0x1e2d24a",
+    "unwind": "0x2c99150",
+    "instructions": 34,
+    "code_sha256": "bd8ad8e5d068786f29d9e9909067b2e2fd1e062ac045615083919c48abf0cedd",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": []
+  },
+  "heap_alloc_adapter": {
+    "start": "0x1e397a0",
+    "end": "0x1e397dc",
+    "unwind": "0x2c99150",
+    "instructions": 24,
+    "code_sha256": "a4989813a67e1260dba095f328f375e842bef4fc03546cc0927f348096a4efcd",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": []
+  },
+  "reallocation_impl": {
+    "start": "0x1e2d290",
+    "end": "0x1e2d33a",
+    "unwind": "0x2c9916c",
+    "instructions": 60,
+    "code_sha256": "e7d8e83442d1e15426ae0ef3830b02d9f6188a066267d0ed00dc9c177d82ecb8",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": [
+      "0x1e2d2c5",
+      "0x1e2d2d4",
+      "0x1e2d300",
+      "0x1e2d334"
+    ]
+  },
+  "pad_prefix_helper": {
+    "start": "0x1e52ea0",
+    "end": "0x1e52eff",
+    "unwind": "0x2c9c438",
+    "instructions": 40,
+    "code_sha256": "5d03aa7b2bf37fc2d4862f21f7ced79665cdf50d2e5eb9cbad8358af798c3cda",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": [
+      "0x1e52ec2",
+      "0x1e52eec",
+      "0x1e52efb"
+    ]
+  },
+  "pad_integral": {
+    "start": "0x1e52f00",
+    "end": "0x1e533fa",
+    "unwind": "0x2c9bf74",
+    "instructions": 342,
+    "code_sha256": "80eeb41ead0dcd3480fe67f5d075071058a9c069f1b748838b3a069d87e30ea9",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": [
+      "0x1e52f1b",
+      "0x1e52ff0",
+      "0x1e53351",
+      "0x1e533f4"
+    ]
+  },
+  "String_writer": {
+    "start": "0x1e4cc60",
+    "end": "0x1e4ccc1",
+    "unwind": "0x2c9c438",
+    "instructions": 36,
+    "code_sha256": "70d982a67891b23480a851313e3ea0511431a2cdf5d59a68263b360a3858fe4a",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": [
+      "0x1e4cca3",
+      "0x1e4ccaa"
+    ]
+  },
+  "core_fmt_write": {
+    "start": "0x1e52380",
+    "end": "0x1e52538",
+    "unwind": "0x2c9e13c",
+    "instructions": 139,
+    "code_sha256": "c8249cae9f058f4e833cb09cc07b71ecc045845f227da20651bd3615aba1c20b",
+    "code_equals_original_dump": true,
+    "code_equals_original_exe": true,
+    "direct_R14_writes": [
+      "0x1e523b9",
+      "0x1e52519",
+      "0x1e52532"
+    ]
+  }
+}

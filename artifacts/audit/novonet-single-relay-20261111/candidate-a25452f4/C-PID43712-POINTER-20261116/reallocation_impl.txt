@@ -1,0 +1,60 @@
+01e2d290 55                             push rbp
+01e2d291 4157                           push r15
+01e2d293 4156                           push r14
+01e2d295 56                             push rsi
+01e2d296 57                             push rdi
+01e2d297 53                             push rbx
+01e2d298 4883ec28                       sub rsp, 0x28
+01e2d29c 488d6c2420                     lea rbp, [rsp + 0x20]
+01e2d2a1 4c89cb                         mov rbx, r9
+01e2d2a4 4889ce                         mov rsi, rcx
+01e2d2a7 4983f811                       cmp r8, 0x11
+01e2d2ab 7324                           jae 0x1e2d2d1
+01e2d2ad ff156d786300                   call qword ptr [rip + 0x63786d]
+01e2d2b3 4889c1                         mov rcx, rax
+01e2d2b6 31d2                           xor edx, edx
+01e2d2b8 4989f0                         mov r8, rsi
+01e2d2bb 4989d9                         mov r9, rbx
+01e2d2be 4883c428                       add rsp, 0x28
+01e2d2c2 5b                             pop rbx
+01e2d2c3 5f                             pop rdi
+01e2d2c4 5e                             pop rsi
+01e2d2c5 415e                           pop r14
+01e2d2c7 415f                           pop r15
+01e2d2c9 5d                             pop rbp
+01e2d2ca 48ff25ef776300                 jmp qword ptr [rip + 0x6377ef]
+01e2d2d1 4d89c7                         mov r15, r8
+01e2d2d4 4989d6                         mov r14, rdx
+01e2d2d7 4901d8                         add r8, rbx
+01e2d2da 31ff                           xor edi, edi
+01e2d2dc 31d2                           xor edx, edx
+01e2d2de e8bdc40000                     call 0x1e397a0
+01e2d2e3 4885c0                         test rax, rax
+01e2d2e6 7442                           je 0x1e2d32a
+01e2d2e8 498d4fff                       lea rcx, [r15 - 1]
+01e2d2ec 4821c1                         and rcx, rax
+01e2d2ef 4929cf                         sub r15, rcx
+01e2d2f2 4889c7                         mov rdi, rax
+01e2d2f5 4c01ff                         add rdi, r15
+01e2d2f8 4a894438f8                     mov qword ptr [rax + r15 - 8], rax
+01e2d2fd 4c39f3                         cmp rbx, r14
+01e2d300 4c0f42f3                       cmovb r14, rbx
+01e2d304 4889f9                         mov rcx, rdi
+01e2d307 4889f2                         mov rdx, rsi
+01e2d30a 4d89f0                         mov r8, r14
+01e2d30d e8b5145800                     call 0x23ae7c7
+01e2d312 488b76f8                       mov rsi, qword ptr [rsi - 8]
+01e2d316 ff1504786300                   call qword ptr [rip + 0x637804]
+01e2d31c 4889c1                         mov rcx, rax
+01e2d31f 31d2                           xor edx, edx
+01e2d321 4989f0                         mov r8, rsi
+01e2d324 ff15ee776300                   call qword ptr [rip + 0x6377ee]
+01e2d32a 4889f8                         mov rax, rdi
+01e2d32d 4883c428                       add rsp, 0x28
+01e2d331 5b                             pop rbx
+01e2d332 5f                             pop rdi
+01e2d333 5e                             pop rsi
+01e2d334 415e                           pop r14
+01e2d336 415f                           pop r15
+01e2d338 5d                             pop rbp
+01e2d339 c3                             ret

@@ -1,0 +1,10 @@
+{
+  "address": "0xf3bd3ee7d0",
+  "writer_self": "0xf3bd3ee860",
+  "vtable": "0x7ff608be3610",
+  "flags": "0x69000020",
+  "width": 2,
+  "precision": 0,
+  "writer_function": "0x7ff60825cc60",
+  "char_writer_function": "0x7ff60825cb50"
+}

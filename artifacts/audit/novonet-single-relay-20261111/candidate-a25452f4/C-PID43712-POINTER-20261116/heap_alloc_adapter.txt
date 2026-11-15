@@ -1,0 +1,24 @@
+01e397a0 55                             push rbp
+01e397a1 56                             push rsi
+01e397a2 57                             push rdi
+01e397a3 4883ec20                       sub rsp, 0x20
+01e397a7 488d6c2420                     lea rbp, [rsp + 0x20]
+01e397ac 4c89c6                         mov rsi, r8
+01e397af 89d7                           mov edi, edx
+01e397b1 ff1569b36200                   call qword ptr [rip + 0x62b369]
+01e397b7 4885c0                         test rax, rax
+01e397ba 7416                           je 0x1e397d2
+01e397bc 4889c1                         mov rcx, rax
+01e397bf 89fa                           mov edx, edi
+01e397c1 4989f0                         mov r8, rsi
+01e397c4 4883c420                       add rsp, 0x20
+01e397c8 5f                             pop rdi
+01e397c9 5e                             pop rsi
+01e397ca 5d                             pop rbp
+01e397cb 48ff253eb36200                 jmp qword ptr [rip + 0x62b33e]
+01e397d2 31c0                           xor eax, eax
+01e397d4 4883c420                       add rsp, 0x20
+01e397d8 5f                             pop rdi
+01e397d9 5e                             pop rsi
+01e397da 5d                             pop rbp
+01e397db c3                             ret
