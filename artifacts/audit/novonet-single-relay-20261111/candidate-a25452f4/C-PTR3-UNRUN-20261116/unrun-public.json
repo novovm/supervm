@@ -1,0 +1,71 @@
+{
+  "utc": "2026-11-15T17:39:14.729428+00:00",
+  "elevation_result_utc": "2026-11-15T17:36:55.9078842Z",
+  "elevation_result": "Windows returned operation cancelled by user",
+  "runtime_started": false,
+  "isolation_root_created": false,
+  "evidence_directory_created": false,
+  "original_node_started": false,
+  "original_database_or_identity_accessed": false,
+  "original_failure_evidence_preserved": true,
+  "original_frozen_entrypoints_preserved": true,
+  "scope": "one new bounded three-boundary qualification only",
+  "points": [
+    {
+      "name": "P0 writer entry",
+      "rva": "0x1e4cc60",
+      "registers": [
+        "RDX",
+        "R14",
+        "R8",
+        "RSP",
+        "ThreadID"
+      ]
+    },
+    {
+      "name": "P1 before reserve call",
+      "rva": "0x1e4ccb3",
+      "registers": [
+        "R14",
+        "RDX",
+        "RSP",
+        "ThreadID"
+      ]
+    },
+    {
+      "name": "P2 after reserve and RDX restore",
+      "rva": "0x1e4ccbb",
+      "registers": [
+        "R14",
+        "RDX",
+        "RSP",
+        "ThreadID"
+      ]
+    }
+  ],
+  "intended_groups": [
+    "baseline",
+    "attached",
+    "three_boundaries"
+  ],
+  "intended_seconds_per_group": 90,
+  "maximum_selected_calls": 1,
+  "production_binary_modified": false,
+  "static_python_compile_passed": true,
+  "powershell_parse_passed": true,
+  "runtime_breakpoint_validation_passed": null,
+  "register_records": null,
+  "measured_interference": null,
+  "node_exit_codes": null,
+  "first_invalid_pointer_boundary": null,
+  "qualifies_for_long_observation": false,
+  "production_fix": false,
+  "double_relay": false,
+  "scripts_sha256": {
+    "boundary_capture.py": "083cd8431fa279328bee80998badb360571ceea0229a6bc5b45dd1acd27eb06b",
+    "run_three_phases.py": "d10d1ff91c0497423d0b3216b9ccef11947e4d50eb09d4849f7d92be669f8b5e",
+    "Owner.ps1": "6a3768013b30149353a29b0650ab3dff95e40ce0854322ee02972f1fa9c561bc",
+    "Launch-Once.ps1": "e7e4dbd87df71aa3d51838fcbbb04eb1204d22c59cb2d7ebea7f997c4a65fdc9",
+    "Invoke-Elevated.ps1": "24ce30dac6e856c5314d55ea21ef096487f550e97e4bbaf34db8cdf6280f90bb"
+  }
+}

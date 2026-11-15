@@ -1,5 +1,14 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-16 01:36：三边界短时资格测量未启动，UAC返回取消
+
+已准备writer入口1e4cc60、reserve前1e4ccb3、RDX恢复后1e4ccbb三个边界，最多选择一条实际调用。
+01:34:53请求Windows UAC，01:36:55返回用户取消，隔离目录和测量目录均未创建，节点未启动。
+仅Python编译和PowerShell语法检查完成，运行记录、退出码及干扰测量均缺失，没有首次指针变化证据。
+旧四点入口及诊断副本保持冻结，原库、身份和两份失败现场保留，双中继暂停。
+详见[C-PTR3-UNRUN-20261116/README.md](C-PTR3-UNRUN-20261116/README.md)。
+
+
 ## C回传 2026-11-16：PID43712实际Formatter和reserve的R14约束
 
 从活动Formatter解析实际vtable，writer确为原RVA1e4cc60，当前flags69000020、width2，输入长度2。
