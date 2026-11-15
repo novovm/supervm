@@ -1,0 +1,12 @@
+{
+  "event_count": 136,
+  "same_call_groups": 34,
+  "all_ordered_0123": true,
+  "all_32_byte_vectors_equal_template": true,
+  "all_actual_hit_DR_configurations_verified": true,
+  "no_missing_in_entry_tracked_groups": true,
+  "all_target_exit_codes_zero": true,
+  "new_WHEA_count": 0,
+  "raw_context_originals_stay_local": true,
+  "root_cause_found": false
+}

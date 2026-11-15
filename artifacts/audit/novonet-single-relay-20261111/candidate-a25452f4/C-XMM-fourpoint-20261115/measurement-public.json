@@ -1,0 +1,231 @@
+{
+  "date": "2026-11-15",
+  "original_exe_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "AOEM966_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "original_PDB_sha256": "8763d5cde5291460fa539430a082f7ace8408b0e75fa677ebd23f4d7e31643be",
+  "running_account": "S-1-5-19",
+  "only_new_loopback_databases_and_keys": true,
+  "phase_metrics": [
+    {
+      "mode": "baseline",
+      "wall_seconds": 182.903640500037,
+      "all_four_node_exit_codes": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit_code": null,
+      "report_intervals_seconds": {
+        "n": 30,
+        "p50": 5.03435045,
+        "p95": 5.05184768,
+        "p99": 5.067893752,
+        "max": 5.0736303,
+        "tail_statistical_claim": false
+      },
+      "metrics": {
+        "ticks_per_second": 821.7861517771637,
+        "reported_data_writes_per_second": 14.452959696187266,
+        "cpu_seconds_per_wall": 0.03751419039725441,
+        "context_switches_per_second": 725.44760356584
+      },
+      "median_report_interval_change_pct_vs_baseline": 0.0,
+      "ticks_rate_change_pct_vs_baseline": 0.0,
+      "write_rate_change_pct_vs_baseline": 0.0,
+      "node_cpu_change_pct_vs_baseline": 0.0,
+      "node_context_switch_rate_change_pct_vs_baseline": 0.0
+    },
+    {
+      "mode": "attached",
+      "wall_seconds": 182.15961830003653,
+      "all_four_node_exit_codes": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit_code": 0,
+      "report_intervals_seconds": {
+        "n": 30,
+        "p50": 5.0250731,
+        "p95": 5.0442084849999995,
+        "p99": 5.052501036,
+        "max": 5.0557553,
+        "tail_statistical_claim": false
+      },
+      "metrics": {
+        "ticks_per_second": 873.5701873120009,
+        "reported_data_writes_per_second": 14.364725312863618,
+        "cpu_seconds_per_wall": 0.03611121650444731,
+        "context_switches_per_second": 736.9311510992031
+      },
+      "median_report_interval_change_pct_vs_baseline": -0.1842809731293027,
+      "ticks_rate_change_pct_vs_baseline": 6.3014003610125435,
+      "write_rate_change_pct_vs_baseline": -0.61049352643614,
+      "node_cpu_change_pct_vs_baseline": -3.7398485158559702,
+      "node_context_switch_rate_change_pct_vs_baseline": 1.582960296087177
+    },
+    {
+      "mode": "four_points",
+      "wall_seconds": 183.14075010002125,
+      "all_four_node_exit_codes": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit_code": 0,
+      "report_intervals_seconds": {
+        "n": 30,
+        "p50": 5.1132722,
+        "p95": 5.158036065,
+        "p99": 5.1667933779999995,
+        "max": 5.1698273,
+        "tail_statistical_claim": false
+      },
+      "metrics": {
+        "ticks_per_second": 762.4078815431948,
+        "reported_data_writes_per_second": 14.399807009746691,
+        "cpu_seconds_per_wall": 0.04300722974940517,
+        "context_switches_per_second": 829.8707282687657
+      },
+      "median_report_interval_change_pct_vs_baseline": 1.5676650003576986,
+      "ticks_rate_change_pct_vs_baseline": -7.225513609052636,
+      "write_rate_change_pct_vs_baseline": -0.36776333400138084,
+      "node_cpu_change_pct_vs_baseline": 14.642564037721527,
+      "node_context_switch_rate_change_pct_vs_baseline": 14.39430279866496
+    }
+  ],
+  "first_failed_fourpoint": {
+    "reason": "checkpoint hit existed in original CDB log, controller console-pipe notification not received",
+    "point": 0,
+    "tid": 25836,
+    "recorded_vectors": 0,
+    "controller_report_stall_guard_fired": true,
+    "forced_target_exit_code": "0xe0000001",
+    "natural_crash": false,
+    "earlier_baseline_and_attached_groups_repeated": false
+  },
+  "corrected_fourpoint": {
+    "pid": 35412,
+    "actual_status_thread_ids": [
+      15188
+    ],
+    "hits": 136,
+    "hits_per_point": {
+      "0": 34,
+      "1": 34,
+      "2": 34,
+      "3": 34
+    },
+    "complete_calls": 34,
+    "all_entry_calls_complete": true,
+    "missing_checkpoints_detected": 0,
+    "incomplete_calls": 0,
+    "cross_call_mixing_checked": true,
+    "raw_context_size": 1232,
+    "raw_context_files_written_before_public_events": 136,
+    "raw_context_files_independently_reopened_and_hashed": false,
+    "expected_template_equal_at_all_points": true,
+    "first_observed_mismatch": null,
+    "actual_hit_thread_debugger_DR0_DR3_verified": true,
+    "initial_external_GetThreadContext_DR_all_zero": true,
+    "OS_debug_registers_while_debugger_stopped_not_used_as_coverage_proof": true,
+    "code_checkpoints_match_original_bytes": [
+      {
+        "rva": "0x7721fb",
+        "bytes": "0f11bd48010000",
+        "unchanged": true
+      },
+      {
+        "rva": "0x777bad",
+        "bytes": "488d8d60020000",
+        "unchanged": true
+      },
+      {
+        "rva": "0x777c36",
+        "bytes": "48b80500000000",
+        "unchanged": true
+      },
+      {
+        "rva": "0x77823e",
+        "bytes": "0f11b5d8010000",
+        "unchanged": true
+      }
+    ],
+    "selected_span_seconds": {
+      "count": 34,
+      "median": 0.0852958,
+      "min": 0.0477217,
+      "max": 0.126618
+    },
+    "selected_span_includes_debugger_pause_and_controller_delay": true,
+    "selected_span_is_entire_query_duration": false,
+    "callback_response_time_written_to_public_event": false,
+    "first_calls_before_attach_not_covered": true
+  },
+  "new_WHEA_record_ids": [],
+  "limitations": [
+    "three-minute sequential runs, no randomized repetition",
+    "30 report intervals per phase, tail quantiles descriptive only",
+    "report interval is not individual query duration",
+    "CPU and context switch samples describe target node only, not full-system scheduler activity",
+    "no exact original packet sequence replay",
+    "no first changed XMM instruction captured",
+    "no long-duration interference qualification"
+  ],
+  "original_state_accessed": false,
+  "root_cause_fixed": false,
+  "double_relay_resumed": false,
+  "new_test_WER_rule_removed": true,
+  "new_task_removed": true
+}
