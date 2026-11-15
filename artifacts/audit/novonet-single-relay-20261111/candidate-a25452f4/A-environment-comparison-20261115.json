@@ -1,0 +1,92 @@
+{
+  "host": "A",
+  "collected_at": "2026-11-15T10:31:19.0822919+08:00",
+  "scope": "Read-only current files and retained Windows logs; not matched-load or hardware qualification",
+  "candidate": "a25452f4",
+  "exe_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "aoem_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "owner_script_sha256": "b07831e80ee3ed6f49f79b872873969989d85f9b357c44692495fb814db424cf",
+  "run_config_sha256": "162c35c92c65eedc0de48e6b774138b0e030cc047e4be261db8e4c3b2eca1341",
+  "task": {
+    "name": "NOVOVM-A-a25452f4-Existing-20261112",
+    "state": "Ready",
+    "account": "LOCAL SERVICE",
+    "last_run": "2026-11-12T16:13:18.0000000+08:00",
+    "result": 0,
+    "execution_time_limit": "P1DT3M",
+    "node_run_ms": "86400000"
+  },
+  "exit": {
+    "exit_code": 0,
+    "start": "existing",
+    "time": "2026-11-13T08:13:19.9752626Z"
+  },
+  "exit_sha256": "b216436b4c5b7cbada938255319c1c7dd132084af62072d8fd906146d6a4eacf",
+  "node_process_count": 0,
+  "application_events": {
+    "since": "2026-11-08 local",
+    "scanned": 64,
+    "novovm_name_matches": 0,
+    "oldest_retained": "2026-07-07T15:57:52.2512582+08:00"
+  },
+  "whea": {
+    "since": "2026-11-12 local",
+    "count": 0,
+    "query_valid": true,
+    "oldest_retained": "2026-07-05T06:24:27.0776775+08:00"
+  },
+  "cpu": [
+    {
+      "Name": "Intel(R) Core(TM) Ultra 9 275HX",
+      "NumberOfCores": 24,
+      "NumberOfLogicalProcessors": 24
+    }
+  ],
+  "bios": {
+    "Manufacturer": "LENOVO",
+    "SMBIOSBIOSVersion": "Q7CN37WW",
+    "ReleaseDate": "2025-04-30T08:00:00+08:00"
+  },
+  "os": {
+    "Caption": "Microsoft Windows 11 家庭版 中文版",
+    "Version": "10.0.26200",
+    "BuildNumber": "26200"
+  },
+  "ram": [
+    {
+      "Manufacturer": "Micron Technology",
+      "Capacity": 34359738368,
+      "ConfiguredClockSpeed": 6400
+    },
+    {
+      "Manufacturer": "Micron Technology",
+      "Capacity": 34359738368,
+      "ConfiguredClockSpeed": 6400
+    }
+  ],
+  "configuration": {
+    "workers": 1,
+    "batch_size": 1024,
+    "aoem_workers": 1
+  },
+  "last_progress": {
+    "mtime_utc": "2026-11-13T08:13:18.7523644Z",
+    "sha256": "bbdfcdeb12f34ef8bea605dd46ea8bb69f8c95ca3ce343f665e3d40dacf7fef5",
+    "entry": "original_native_execution_tick",
+    "ticks": 233204557,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "execution_failures": 0,
+    "current_height": 1,
+    "native_rejected_messages": 3671,
+    "native_expired_sends": 5047,
+    "backend": "aoem_semantic_v2_cpu_callbacks"
+  },
+  "limitations": [
+    "No current process; on-disk hashes do not independently prove historical loaded module bytes",
+    "No exact status invocation counts or historical network packet order",
+    "Zero retained WHEA matches does not establish fault-free hardware",
+    "Zero executed batches and durable decisions; not an asset load comparison",
+    "No node restart, hardware load test, configuration change or new diagnostic tool"
+  ]
+}
