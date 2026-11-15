@@ -36,6 +36,8 @@ pub mod mailbox_seal;
 pub mod mailbox_store;
 #[cfg(feature = "iroh-transport")]
 pub mod mailbox_structured;
+#[cfg(feature = "iroh-transport")]
+pub mod native_application;
 pub mod network_time;
 pub mod novorudp;
 pub mod opaque_rendezvous;

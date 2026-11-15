@@ -1,6 +1,7 @@
 //! Native mailbox transport borrowed by the existing node owner. No task spawn,
 //! runtime, new store or parallel service protocol. Watch work is polled beside
 //! packet progress, so it cannot hold the transport receive loop hostage.
+use crate::native_application::{NativeApplicationDispatcherV1, NativeApplicationRouteV1};
 use crate::product_overlay::TransportIdentity;
 use crate::service_concurrency::{
     AdaptiveAdmissionV1, ServiceConcurrencyV1, ServiceRequestBodyPermitV1,
@@ -192,6 +193,15 @@ fn mailbox_link_with_resources(
     concurrency: Option<&Arc<ServiceConcurrencyV1>>,
     transport: Option<&ServiceTransportPermitV1>,
 ) -> Result<NativeObjectLink> {
+    mailbox_link_with_application(endpoint, reliable_carrier, concurrency, transport, None)
+}
+fn mailbox_link_with_application(
+    endpoint: NativeEndpoint,
+    reliable_carrier: bool,
+    concurrency: Option<&Arc<ServiceConcurrencyV1>>,
+    transport: Option<&ServiceTransportPermitV1>,
+    application: Option<&NativeApplicationRouteV1>,
+) -> Result<NativeObjectLink> {
     let work_limit = concurrency
         .map_or(WORK_LIMIT, |c| {
             crate::mailbox_structured::native_session::adaptive_request_slot_ceiling_v1(c)
@@ -208,33 +218,46 @@ fn mailbox_link_with_resources(
             .max(LIMITS.wire_bytes)
             .min(work_limit.saturating_mul(LIMITS.wire_bytes))
     });
-    let retained_bytes = transport.map_or(retained_bytes, |p| {
+    let mut retained_bytes = transport.map_or(retained_bytes, |p| {
         retained_bytes.min(p.bytes_per_direction())
     });
+    let mut lanes = Vec::new();
+    if let Some(application) = application {
+        let bytes = retained_bytes
+            .saturating_sub(LIMITS.wire_bytes)
+            .min(crate::native_application::MAX_WIRE_BYTES * crate::native_application::MAX_JOBS);
+        lanes.push(crate::native_application::lane(
+            application.stream,
+            application.domain,
+            bytes,
+        )?);
+        retained_bytes -= bytes;
+    }
     if concurrency.is_some() {
         require_mailbox_frame_budget(retained_bytes)?;
     }
     let peer_bytes = retained_bytes.min(peer_limit.saturating_mul(LIMITS.wire_bytes));
+    lanes.push(NativeLaneConfig {
+        stream: STREAM,
+        domain: domain(),
+        receive: ReassemblyLimits {
+            max_message_bytes: LIMITS.wire_bytes,
+            messages: work_limit,
+            bytes: retained_bytes,
+            peer_messages: peer_limit,
+            peer_bytes,
+            ttl: REQUEST_DEADLINE,
+        },
+        send: NativeSendLimits {
+            messages: work_limit,
+            bytes: retained_bytes,
+            peer_messages: peer_limit,
+            peer_bytes,
+        },
+    });
     NativeObjectLink::new(
         endpoint,
-        vec![NativeLaneConfig {
-            stream: STREAM,
-            domain: domain(),
-            receive: ReassemblyLimits {
-                max_message_bytes: LIMITS.wire_bytes,
-                messages: work_limit,
-                bytes: retained_bytes,
-                peer_messages: peer_limit,
-                peer_bytes,
-                ttl: REQUEST_DEADLINE,
-            },
-            send: NativeSendLimits {
-                messages: work_limit,
-                bytes: retained_bytes,
-                peer_messages: peer_limit,
-                peer_bytes,
-            },
-        }],
+        lanes,
         if reliable_carrier {
             NativeSendPolicy::reliable_carrier_v1(REQUEST_DEADLINE)
         } else {
@@ -339,6 +362,7 @@ pub struct NativeMailboxListenerV7 {
     connection_ceiling: u16,
     wire_ceiling: Option<u64>,
     transport: Option<ServiceTransportPermitV1>,
+    application: Option<NativeApplicationDispatcherV1>,
 }
 impl NativeMailboxListenerV7 {
     /// The caller advertises its actually reachable address. Binding does not
@@ -434,12 +458,63 @@ impl NativeMailboxListenerV7 {
     }
     fn bind_with_resources(
         listen: SocketAddr,
+        advertised: SocketAddr,
+        key: TransportIdentity,
+        stop: Arc<AtomicBool>,
+        max_connections: u16,
+        max_bytes_per_minute: u64,
+        concurrency: Option<Arc<ServiceConcurrencyV1>>,
+    ) -> Result<Self> {
+        Self::bind_with_application(
+            listen,
+            advertised,
+            key,
+            stop,
+            max_connections,
+            max_bytes_per_minute,
+            concurrency,
+            None,
+        )
+    }
+
+    /// Opt-in application lane on this SAME node listener and reservation.
+    pub fn bind_adaptive_with_application(
+        listen: SocketAddr,
+        advertised: SocketAddr,
+        key: TransportIdentity,
+        stop: Arc<AtomicBool>,
+        limits: (Option<u16>, Option<u64>),
+        concurrency: Arc<ServiceConcurrencyV1>,
+        application: NativeApplicationRouteV1,
+    ) -> Result<Self> {
+        let mut listener = Self::bind_with_application(
+            listen,
+            advertised,
+            key,
+            stop,
+            limits.0.unwrap_or(u16::MAX),
+            limits.1.unwrap_or(64 * 1024 * 1024),
+            Some(concurrency),
+            Some(application),
+        )?;
+        listener.wire_ceiling = limits.1;
+        listener.route = listener.current_route();
+        listener
+            .link
+            .update_wire_budget_v1(listener.route.max_bytes_per_minute, Instant::now())?;
+        Ok(listener)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn bind_with_application(
+        listen: SocketAddr,
         mut advertised: SocketAddr,
         key: TransportIdentity,
         stop: Arc<AtomicBool>,
         max_connections: u16,
         max_bytes_per_minute: u64,
         concurrency: Option<Arc<ServiceConcurrencyV1>>,
+        application: Option<NativeApplicationRouteV1>,
     ) -> Result<Self> {
         ensure!(max_connections > 0, "native connection bounds");
         let socket = UdpSocket::bind(listen)?;
@@ -464,7 +539,9 @@ impl NativeMailboxListenerV7 {
             socket,
             key,
             usize::from(route.max_connections),
-            vec![STREAM],
+            std::iter::once(STREAM)
+                .chain(application.iter().map(|route| route.stream))
+                .collect(),
             NativeHandshakeBudget {
                 lifetime: REQUEST_DEADLINE,
                 retry: Duration::from_millis(500),
@@ -479,8 +556,13 @@ impl NativeMailboxListenerV7 {
                     .context(NativeMailboxResourcesUnavailableV1)
             })
             .transpose()?;
-        let link =
-            mailbox_link_with_resources(endpoint, false, concurrency.as_ref(), transport.as_ref())?;
+        let link = mailbox_link_with_application(
+            endpoint,
+            false,
+            concurrency.as_ref(),
+            transport.as_ref(),
+            application.as_ref(),
+        )?;
         Ok(Self {
             link,
             readiness,
@@ -490,6 +572,7 @@ impl NativeMailboxListenerV7 {
             connection_ceiling: max_connections,
             wire_ceiling: Some(max_bytes_per_minute),
             transport,
+            application: application.map(NativeApplicationDispatcherV1::new),
         })
     }
 
@@ -545,6 +628,7 @@ impl NativeMailboxListenerV7 {
             readiness,
             stop,
             transport: _transport,
+            application,
             ..
         } = self;
         let authority = || {
@@ -552,7 +636,7 @@ impl NativeMailboxListenerV7 {
             host.check_continuous_native_peer_v7(now_ms()?)
         };
         let concurrency = slots.controller().or_else(|| self.concurrency.clone());
-        serve_link(
+        serve_link_with_application(
             link,
             Readiness::Udp(readiness),
             service,
@@ -563,12 +647,36 @@ impl NativeMailboxListenerV7 {
             },
             concurrency,
             authority,
+            application,
         )
         .await
     }
 }
 
 async fn serve_link(
+    link: NativeObjectLink,
+    readiness: Readiness<'_>,
+    service: &MailboxServiceV1,
+    stop: &AtomicBool,
+    admission: Admission,
+    concurrency: Option<Arc<ServiceConcurrencyV1>>,
+    authority: impl Fn() -> Result<()> + Copy,
+) -> Result<()> {
+    serve_link_with_application(
+        link,
+        readiness,
+        service,
+        stop,
+        admission,
+        concurrency,
+        authority,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn serve_link_with_application(
     mut link: NativeObjectLink,
     mut readiness: Readiness<'_>,
     service: &MailboxServiceV1,
@@ -576,6 +684,7 @@ async fn serve_link(
     admission: Admission,
     concurrency: Option<Arc<ServiceConcurrencyV1>>,
     authority: impl Fn() -> Result<()> + Copy,
+    mut application: Option<NativeApplicationDispatcherV1>,
 ) -> Result<()> {
     ensure!(
         link.local_identity() == service.identity_public_key(),
@@ -639,6 +748,7 @@ async fn serve_link(
                 .chain(pending.iter().map(|item| item.peer))
                 .chain(sending.iter().map(|(peer, _, _)| *peer))
                 .chain(held.iter().map(|item| item.peer))
+                .chain(application.iter().flat_map(|route| route.protected_peers()))
                 .collect();
             for retired in
                 link.retire_idle_clients(now, REQUEST_DEADLINE, &protected, slots.limit())?
@@ -675,7 +785,13 @@ async fn serve_link(
                 }
             }
         }
-        outbound = outbound.saturating_sub(report.completed.len());
+        outbound = outbound.saturating_sub(
+            report
+                .completed
+                .iter()
+                .filter(|item| item.stream == STREAM)
+                .count(),
+        );
         for completed in &report.completed {
             sending.retain(|(_, response, _permit)| !response.transport_complete(completed));
         }
@@ -696,6 +812,14 @@ async fn serve_link(
         // an inbound-only service sleeps its idle 200 ms after each frame.
         // No-progress/pacing/blocked writes still use the bounded wait below.
         let mut progress = report.data_sent > 0 || report.feedback_sent > 0;
+        if let Some(route) = &mut application {
+            match route.poll(&mut link, now, concurrency.as_ref()) {
+                Ok(advanced) => progress |= advanced,
+                // Application failure is isolated; the original mailbox and
+                // authenticated node transport keep their own lifecycle.
+                Err(_) => application = None,
+            }
+        }
         let mut index = 0;
         while index < pending.len() {
             match pending[index].response.try_send(&mut link, now, authority) {
@@ -914,11 +1038,12 @@ async fn serve_link(
         if progress {
             continue;
         }
-        let maintenance = if outbound == 0 {
-            Duration::from_millis(200)
-        } else {
-            Duration::from_millis(10)
-        };
+        let maintenance =
+            if outbound == 0 && !application.as_ref().is_some_and(|route| route.busy()) {
+                Duration::from_millis(200)
+            } else {
+                Duration::from_millis(10)
+            };
         tokio::select! {
             biased;
             Some((id, result)) = active.next(), if !active.is_empty() => {
@@ -946,6 +1071,10 @@ mod failure_tests;
 #[cfg(test)]
 #[path = "product_rendezvous_native_progress_tests.rs"]
 mod progress_tests;
+
+#[cfg(test)]
+#[path = "native_application_owner_tests.rs"]
+mod application_tests;
 
 #[cfg(test)]
 mod resource_boundary_tests {

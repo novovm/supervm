@@ -4,7 +4,7 @@ use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, process::Stdio, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command},
@@ -24,11 +24,26 @@ pub struct Config {
     pub entry_sha256: String,
     pub service_config: PathBuf,
     pub shutdown_ms: u64,
+    #[serde(default)]
+    pub network_peers: BTreeMap<String, String>,
 }
 
 impl Config {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.version == 1, "ASAS plugin configuration version");
+        ensure!(
+            self.network_peers.len() <= 64
+                && self.network_peers.iter().all(|(node, principal)| {
+                    node.strip_prefix("novovm-mldsa65:").is_some_and(|hash| {
+                        hash.len() == 64
+                            && hash
+                                .bytes()
+                                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+                    }) && !principal.is_empty()
+                        && principal.len() <= 200
+                }),
+            "ASAS explicit authenticated node/principal bindings required"
+        );
         ensure!(
             self.node.is_absolute()
                 && self.entry.is_absolute()
@@ -193,7 +208,7 @@ impl Worker {
     /// network handler, NEVER taken from an untrusted application envelope.
     pub async fn request(&mut self, peer_id: &str, operation: &str, input: Value) -> Result<Value> {
         ensure!(
-            ["submit", "events", "result", "cancel"].contains(&operation),
+            ["capabilities", "submit", "events", "result", "cancel"].contains(&operation),
             "ASAS operation not supported"
         );
         ensure!(
@@ -240,6 +255,7 @@ mod tests {
             entry_sha256: "a".repeat(64),
             service_config: root.join("asas.json"),
             shutdown_ms: 5000,
+            network_peers: BTreeMap::new(),
         }
     }
     #[test]
@@ -261,6 +277,19 @@ mod tests {
         bad = value;
         bad.entry_sha256.clear();
         assert!(bad.validate().is_err());
+    }
+    #[test]
+    fn network_grants_require_an_explicit_authenticated_node_id() {
+        let mut value = config();
+        value
+            .network_peers
+            .insert("body-supplied-peer".into(), "B".into());
+        assert!(value.validate().is_err());
+        value.network_peers.clear();
+        value
+            .network_peers
+            .insert(format!("novovm-mldsa65:{}", "a".repeat(64)), "B".into());
+        assert!(value.validate().is_ok());
     }
     #[test]
     fn rejects_unknown_configuration_instead_of_assuming_permissions() {

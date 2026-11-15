@@ -43,6 +43,7 @@ fn main() -> Result<()> {
         entry,
         service_config,
         shutdown_ms: 5000,
+        network_peers: Default::default(),
     };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

@@ -744,32 +744,38 @@ impl Owner {
         let start = async {
             let plugin: novovm_asas_plugin::Config =
                 serde_json::from_slice(&read_bounded(&path, 64 * 1024)?)?;
-            novovm_asas_plugin::Worker::start(&plugin).await
+            let worker = novovm_asas_plugin::Worker::start(&plugin).await?;
+            Ok::<_, anyhow::Error>((worker, plugin.network_peers))
         }
         .await;
-        let mut worker = match start {
-            Ok(worker) => worker,
+        let (worker, peers) = match start {
+            Ok(value) => value,
             Err(_) => {
                 // Application failure cannot take down unrelated L3 mailbox,
                 // node identity, or transport services.
-                status("failed_closed")?;
+                let _ = status("failed_closed");
                 return self.run_inner(stop).await;
             }
         };
-        status("local_worker_ready")?;
-        let run = self.run_inner(stop.clone());
+        // Application diagnostics are not node authority. A failed ASAS
+        // snapshot must not stop the unrelated transport/mailbox owner.
+        let _ = status("local_worker_ready");
+        let remote = !peers.is_empty() && self.policy.native_listener.is_some();
+        let (mut driver, route) = novovm_relay::asas_route::RouteDriverV1::new(worker, peers);
+        let _local_only_route = (!remote).then(|| route.clone());
+        let run = self.run_inner_with_application(stop.clone(), remote.then_some(route));
         tokio::pin!(run);
         let result = tokio::select! {
             result = &mut run => result,
-            _ = worker.unexpected_exit() => {
-                status("failed_closed")?;
-                return run.await;
+            _ = driver.run() => {
+                let _ = status("failed_closed");
+                run.await
             }
         };
-        if worker.shutdown().await.is_ok() {
-            status("stopped")?;
+        if driver.shutdown().await.is_ok() {
+            let _ = status("stopped");
         } else {
-            status("failed_closed")?;
+            let _ = status("failed_closed");
         }
         result
     }
@@ -883,6 +889,14 @@ impl Owner {
     }
 
     async fn run_inner(self, stop: Arc<AtomicBool>) -> Result<()> {
+        self.run_inner_with_application(stop, None).await
+    }
+
+    async fn run_inner_with_application(
+        self,
+        stop: Arc<AtomicBool>,
+        application: Option<novovm_network::native_application::NativeApplicationRouteV1>,
+    ) -> Result<()> {
         let _running_lock = self._lock.clone();
         let config = self.policy.config.clone();
         let relay_only = relay_only(&self.policy);
@@ -942,8 +956,35 @@ impl Owner {
             })().context(FailureStage::Publish)
         };
         let native = if let Some(settings) = native_settings {
-            Some(
-                novovm_network::product_rendezvous_owned::NativeMailboxListenerV7::bind_adaptive_with_limits(
+            use novovm_network::product_rendezvous_owned::NativeMailboxListenerV7;
+            let with_application = application.map(|route| {
+                NativeMailboxListenerV7::bind_adaptive_with_application(
+                    settings.listen,
+                    settings.advertised,
+                    key.clone(),
+                    stop.clone(),
+                    (settings.max_connections, settings.max_bytes_per_minute),
+                    concurrency.clone(),
+                    route,
+                )
+            });
+            let selected = match with_application {
+                Some(Ok(listener)) => {
+                    let _ = atomic(&config.root.join("asas-status.json"), serde_json::json!({
+                        "version":1,"phase":"native_route_bound","remoteRouteReady":true,"inferenceVerified":false,
+                        "crossDeviceVerified":false,"carrierFallbackReady":false
+                    }).to_string().as_bytes());
+                    Some(listener)
+                }
+                Some(Err(_)) => {
+                    let _ = atomic(&config.root.join("asas-status.json"), br#"{"version":1,"phase":"route_unavailable","remoteRouteReady":false,"inferenceVerified":false}"#);
+                    None
+                }
+                None => None,
+            };
+            Some(match selected {
+                Some(listener) => listener,
+                None => NativeMailboxListenerV7::bind_adaptive_with_limits(
                     settings.listen,
                     settings.advertised,
                     key.clone(),
@@ -953,7 +994,7 @@ impl Owner {
                     concurrency.clone(),
                 )
                 .context(FailureStage::NativeBind)?,
-            )
+            })
         } else {
             None
         };
@@ -1607,6 +1648,25 @@ mod tests {
         for (index, name) in [KEYS_FILE, POLICY_FILE].iter().enumerate() {
             assert_eq!(std::fs::read(root.join(name))?, identities[index]);
         }
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn asas_diagnostic_write_failure_cannot_replace_the_original_owner_failure() -> Result<()>
+    {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let root = &fixture.0.root;
+        atomic(&root.join("asas.json"), b"not valid json")?;
+        std::fs::create_dir(root.join("asas-status.json"))?;
+        std::fs::create_dir(root.join("mailbox.sqlite"))?;
+        owner
+            .run(Arc::new(AtomicBool::new(false)))
+            .await
+            .unwrap_err();
+        let original: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("last-failure.json"))?)?;
+        assert_eq!(original["failure"]["stage"], "mailbox_open");
         Ok(())
     }
 

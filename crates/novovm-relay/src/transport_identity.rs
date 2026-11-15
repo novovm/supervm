@@ -165,7 +165,7 @@ pub fn load_transport_verifier(library: &Path, sha256: &str) -> Result<Qualified
 
 #[cfg(test)]
 #[path = "transport_identity_fixture.rs"]
-mod component_fixture;
+pub(crate) mod component_fixture;
 
 #[cfg(test)]
 mod tests {

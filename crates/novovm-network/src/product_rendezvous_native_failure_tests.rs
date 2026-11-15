@@ -110,6 +110,7 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
         stop: stop.clone(),
         concurrency: None,
         transport: None,
+        application: None,
     };
     let service = Arc::new(MailboxServiceV1::new(
         MailboxStore::open_contributor(dir.path().join("mailbox.db"), Default::default(), true)?,

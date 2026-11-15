@@ -6,7 +6,8 @@
 
 HTTP 开发载体使用 Bearer 设备令牌；A 只存 SHA-256，B 放 SecretStorage。令牌与 A 的 Anthropic 凭据不同。
 每个 peer 只能操作配置明确授权的 project。project ID 是 B 规范工作区绝对路径的 SHA-256，不是 A 的目录。
-这是当前应用认证，不冒充已接入 NOVONET 的签名身份；以后通过网络 SDK 建立可信身份绑定，不用网络地址替代身份。
+这是 HTTP 开发载体认证。原生 UDP 由已有 NOVONET 认证节点 ID 映射应用主体，
+不使用 HTTP 令牌代替节点签名，也不用网络地址替代身份；具体接线及未完成项见 `NOVONET.md`。
 
 TaskInput：`id`、`sessionId` 为 UUID；`projectId` 为 64 位小写十六进制；`engine=claude|codex`、`prompt`、`model`、`mode=develop|plan` 必填。
 `context` 是经出站检查且明确允许转发的先前会话数据，不是新工具动作。未知字段拒绝。
@@ -17,8 +18,10 @@ Session 绑定 peer/project/engine/model，同一时刻一个写入者，不能�
 
 Node Worker 由 L3 插件通过继承的 stdin/stdout 管道启动，不新开网络端口。每行 JSON 最大 1 MiB。
 请求是 `{id, operation, peerId?, input?}`；响应是同 ID 的 `{result}` 或不含秘密的 `{error}`。
-`health` 仅证明进程和合同可用，`remoteRouteReady=false` 表示原生网络接线未完成。
-其余操作为 `submit/events/result/cancel`。`peerId` 只能由宿主从已验证连接解析，不能信任网络正文自报身份。
+`health` 仅证明进程和合同可用，其 `remoteRouteReady=false` 表示 Node 进程本身不拥有网络路由。
+宿主实际绑定原生应用通道后，授权的网络 `capabilities` 可返回 true；不等于双机已验。
+其余操作为 `capabilities/submit/events/result/cancel`。`capabilities` 核对主体并返回其项目和引擎目录。
+`peerId` 只能由宿主从已验证连接解析，不能信任网络正文自报身份。
 网络持钥不自动取得项目授权；工具和模型请求仍经过 Broker 的精确授权。
 
 ## 开发载体端点

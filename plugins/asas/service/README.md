@@ -17,7 +17,9 @@ Codex and Claude have separate engine identities and native sessions. The real
 Codex adapter and same-device native pipe have passed actual inference and ACODE
 file-tool checks in same-device isolation: [Codex setup](docs/CODEX.md). The spawning
 probe lives in B's test support only. A accepts opaque B project IDs, never resolves
-B workspace paths. NOVONET routing and ACODE UI remain unfinished.
+B workspace paths. The native UDP application route now exists on the original
+node listener: [NOVONET boundary](docs/NOVONET.md). ACODE's production connection,
+service advertisement, qualified fallback and cross-device acceptance remain unfinished.
 
 ## Run A Development Contract
 
@@ -60,7 +62,8 @@ actions stay on B. Local GPT/SGM paths retain the existing Codex core.
 Authenticated HTTPS with bounded, immediate long-poll event delivery. TLS provides
 confidentiality, not censorship immunity or automatic NAT traversal. A needs a
 reachable endpoint; a relay is a separate explicit deployment, not silently used.
-NOVORUDP has NOT been integrated. Reviewed reference: NOVOVM `8f66da37065f`.
+Native NovoRUDP application dispatch is implemented as described above, but not
+cross-device-qualified or connected to ACODE's daily UI. Historical transport review: NOVOVM `8f66da37065f`.
 Its current authoritative network policy is native NovoRUDP first, with qualified
 Iroh fallback under the existing NOVONET owner. The former WSS/Relay main-chain
 carrier is retired; NOVOCHAT also removed its old WSS client. Remaining generic

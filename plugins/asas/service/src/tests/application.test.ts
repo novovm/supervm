@@ -27,6 +27,9 @@ test('one host runs separate Codex/Claude fixture engines without cross-engine s
   await assert.rejects(app.dispatch('B', 'submit', { ...task('codex'), sessionId: claude.sessionId }), /403/);
   await assert.rejects(app.dispatch('unknown', 'submit', task('claude')), /403/);
   assert.deepEqual(Object.keys(app.health().engines).sort(), ['claude', 'codex']);
+  const capabilities = await app.dispatch('B', 'capabilities', {}) as { peerId: string; projects: string[] };
+  assert.equal(capabilities.peerId, 'B'); assert.deepEqual(capabilities.projects, [projectId]);
+  await assert.rejects(app.dispatch('unknown', 'capabilities', {}), /403/);
   release();
   for (const input of [claude, codex]) {
     let after = 0, status = 'running';

@@ -3,7 +3,7 @@ import { MAX_BYTES } from './protocol';
 import type { Application } from './application';
 import type { Readable, Writable } from 'node:stream';
 
-const Request = z.object({ id: z.number().int().nonnegative().safe(), operation: z.enum(['health', 'submit', 'events', 'result', 'cancel']),
+const Request = z.object({ id: z.number().int().nonnegative().safe(), operation: z.enum(['health', 'capabilities', 'submit', 'events', 'result', 'cancel']),
   peerId: z.string().max(200).optional(), input: z.unknown().optional() }).strict();
 
 // This is inherited local IPC, not a public authentication/transport protocol.

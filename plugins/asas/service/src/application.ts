@@ -28,6 +28,7 @@ export class Application {
   async dispatch(peerId: string, operation: string, input: any): Promise<unknown> {
     const peer = this.peers.find(peer => peer.id === peerId);
     if (!peer) throw Error('403 unknown application principal');
+    if (operation === 'capabilities') return { ...this.health(), peerId: peer.id, projects: peer.projects };
     if (operation === 'submit') { const task = await this.broker.submit(peer, input); return { id: task.id, status: task.status }; }
     const taskId = id.parse(input?.taskId);
     if (operation === 'events') return this.broker.events(peer, taskId, input.after, input.waitMs);
