@@ -1,6 +1,5 @@
 # a25452f4: approved existing updates, then real double relay
 
-<<<<<<< HEAD
 ## C回传 2026-11-15：PID3848分配来源已追到空表模板向量
 
 离线完整转储核对请求0x240000000010（约36TiB）、align16。
@@ -12,7 +11,6 @@ PID3848所查RBP帧关系正常，与PID34452的0x2A0共同根因仍待证。
 详见[C-PID3848-allocation-20261115/README.md](C-PID3848-allocation-20261115/README.md)。
 原现场与身份保留，本轮仅离线分析，双中继暂停。
 
-=======
 ## CURRENT 2026-11-15 A签收d9bd6c25：BASE自然分配失败，直接分析同一Full Dump
 
 A已核对run2终态、栈、样本及WHEA：目标3848自然退出0xC0000409/参数7，
@@ -53,7 +51,6 @@ A实际校验本机原EXE SHA256为1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f4
 A目前能证实具体插入点和分配失败分支，尚未读到C私有dump中的真实容量/申请量；
 生产代码未作猜测修改，根因未结案，双中继暂停。D不操作，原库/身份保持现状。
 
->>>>>>> origin/main
 ## C回传 2026-11-15 12:17：隔离BASE run2自然失败并取得Full Dump
 
 修正两处诊断脚本后，一次a254+AOEM966隔离BASE于12:13:19启动。
