@@ -1,6 +1,6 @@
 {
   "name": "@aoem/asas",
-  "version": "0.6.0-dev",
+  "version": "0.7.0-dev",
   "private": true,
   "description": "NOVOVM ASAS native application worker and ACODE local-workspace protocol",
   "license": "UNLICENSED",

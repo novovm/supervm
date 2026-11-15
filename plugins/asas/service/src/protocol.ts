@@ -6,6 +6,23 @@ export const id = z.string().uuid();
 export const EngineName = z.enum(['claude', 'codex']);
 export type EngineName = z.infer<typeof EngineName>;
 export const NodeId = z.string().regex(/^novovm-mldsa65:[a-f0-9]{64}$/);
+export const TokenCounts = z.object({ input: z.number().int().nonnegative().safe(), output: z.number().int().nonnegative().safe(),
+  cacheRead: z.number().int().nonnegative().safe(), cacheWrite: z.number().int().nonnegative().safe() }).strict();
+export type TokenCounts = z.infer<typeof TokenCounts>;
+// This is B's allocation, never the A account's plan or another B's usage.
+export const OwnQuota = z.object({ engine: z.literal('claude'), unit: z.literal('tokens'), cycleId: z.string().uuid().nullable(),
+  limitTokens: z.number().int().nonnegative().safe().nullable(), usedTokens: z.number().int().nonnegative().safe(),
+  remainingTokens: z.number().int().nonnegative().safe().nullable(), activeTasks: z.number().int().nonnegative(),
+  unsettledTasks: z.number().int().nonnegative(), status: z.enum(['unlimited', 'available', 'exhausted', 'unknown']),
+  updatedAt: z.string().datetime().nullable() }).strict().refine(value => {
+    const status = value.unsettledTasks ? 'unknown' : value.limitTokens === null ? 'unlimited' : value.usedTokens >= value.limitTokens ? 'exhausted' : 'available';
+    const remaining = value.limitTokens === null || value.unsettledTasks ? null : Math.max(0, value.limitTokens - value.usedTokens);
+    return value.status === status && value.remainingTokens === remaining
+      && (value.cycleId !== null || value.limitTokens === null && value.usedTokens === 0 && value.activeTasks === 0 && value.unsettledTasks === 0);
+  }, 'Inconsistent allocation snapshot');
+export type OwnQuota = z.infer<typeof OwnQuota>;
+export const OwnUsage = z.object({ claude: OwnQuota.optional() }).strict();
+export type OwnUsage = z.infer<typeof OwnUsage>;
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 export const SkillOwner = z.object({ nodeId: NodeId, projectId: sha256 }).strict();
 export type SkillOwner = z.infer<typeof SkillOwner>;

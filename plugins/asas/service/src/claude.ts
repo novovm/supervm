@@ -3,6 +3,8 @@ import { mkdir } from 'node:fs/promises';
 import { ToolShapes, toolNamesFor, toolDescription, workerInstructions } from './protocol';
 import type { Engine } from './broker';
 import type { TaskInput } from './protocol';
+import { ClaudeUsage, readClaudePlan, readClaudeSnapshot } from './claude-usage';
+import { tokenTotal } from './quota';
 
 export const claudeToolDefinitions = (input: Pick<TaskInput, 'toolContract'>) => toolNamesFor(input).map(name =>
   ({ name, description: toolDescription(name), schema: ToolShapes[name] }));
@@ -33,10 +35,30 @@ export function claudeEngine(directory: string, executable?: string): Engine {
         + (context.input.mode === 'plan' ? ' Current task is plan mode: inspect and propose; do not modify files or execute IDE actions.' : ' Current task is development mode.') },
     } });
     let succeeded = false;
+    const usage = new ClaudeUsage();
+    let baseline = context.session.nativeSessionId ? context.session.claudeUsageTotal : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    let planAvailable = false;
     try {
       for await (const message of stream) {
+        if (message.type === 'assistant' && !message.parent_tool_use_id) {
+          const value = usage.assistant(message.message.id, message.message.usage);
+          if (value) await context.usage?.(value, false);
+        }
+        if (message.type === 'result') {
+          const value = usage.complete(message.usage, message.modelUsage, baseline);
+          await context.usage?.(value.counts, value.final && (message.subtype === 'success' || tokenTotal(value.counts) > 0), value.cumulative);
+          if (context.plan) {
+            const snapshot = await readClaudePlan(stream);
+            if (snapshot.available || !planAvailable) await context.plan(snapshot);
+          }
+        }
         context.signal.throwIfAborted();
-        if (message.type === 'system' && message.subtype === 'init') await context.checkpoint(message.session_id);
+        if (message.type === 'system' && message.subtype === 'init') {
+          await context.checkpoint(message.session_id);
+          const snapshot = await readClaudeSnapshot(stream); baseline ??= snapshot.baseline;
+          planAvailable = snapshot.plan.available;
+          await context.plan?.(snapshot.plan);
+        }
         if (message.type === 'stream_event' && message.event.type === 'content_block_delta' && message.event.delta.type === 'text_delta') await context.text(message.event.delta.text);
         if (message.type === 'result') {
           if (message.subtype !== 'success' || message.is_error) throw Error(`Claude task failed: ${message.subtype}`);

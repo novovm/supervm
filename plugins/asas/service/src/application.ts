@@ -2,6 +2,7 @@ import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Broker, type Engines, type Peer } from './broker';
 import { id, VERSION, TOOL_CAPABILITY, NodeId } from './protocol';
+import { startQuotaAdmin } from './quota-admin';
 
 export class Application {
   private constructor(readonly broker: Broker, readonly peers: Peer[], readonly engines: Engines,
@@ -20,7 +21,10 @@ export class Application {
     const broker = new Broker(directory, engines);
     try { await lock.writeFile(JSON.stringify({ pid: process.pid })); await lock.sync(); await broker.load(); }
     catch (error) { await release(); throw error; }
-    return new Application(broker, peers, engines, release);
+    try {
+      const admin = await startQuotaAdmin(directory, broker.meter, peers.map(peer => peer.id));
+      return new Application(broker, peers, engines, async () => { try { await admin.close(); } finally { await release(); } });
+    } catch (error) { await broker.close(); await release(); throw error; }
   }
   health() { return { version: VERSION, toolContract: TOOL_CAPABILITY, engines: Object.fromEntries(Object.entries(this.engines).map(([name, value]) =>
     [name, { models: value!.models, inferenceVerified: false }])), remoteRouteReady: false }; }
@@ -29,10 +33,14 @@ export class Application {
     const grant = this.peers.find(peer => peer.id === peerId);
     if (!grant) throw Error('403 unknown application principal');
     const peer = { ...grant, nodeId: nodeId === undefined ? undefined : NodeId.parse(nodeId) };
-    if (operation === 'capabilities') return { ...this.health(), peerId: peer.id, projects: peer.projects, ...(peer.nodeId ? { workerNodeId: peer.nodeId } : {}) };
+    const ownUsage = () => this.engines.claude ? { claude: this.broker.meter.view(peer.id, peer.nodeId) } : {};
+    if (operation === 'capabilities') {
+      if (this.engines.claude) await this.broker.meter.touch(peer.id, peer.nodeId);
+      return { ...this.health(), peerId: peer.id, projects: peer.projects, ownUsage: ownUsage(), ...(peer.nodeId ? { workerNodeId: peer.nodeId } : {}) };
+    }
     if (operation === 'submit') { const task = await this.broker.submit(peer, input); return { id: task.id, status: task.status }; }
     const taskId = id.parse(input?.taskId);
-    if (operation === 'events') return this.broker.events(peer, taskId, input.after, input.waitMs);
+    if (operation === 'events') return { ...await this.broker.events(peer, taskId, input.after, input.waitMs), ownUsage: ownUsage() };
     if (operation === 'result') { await this.broker.result(peer, taskId, input.result); return { accepted: true }; }
     if (operation === 'cancel') { await this.broker.cancel(peer, taskId); return { cancelRequested: true }; }
     throw Error('400 unknown application operation');

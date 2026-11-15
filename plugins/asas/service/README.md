@@ -5,7 +5,7 @@ not primarily a failover tool. Record network bytes and model-token usage withou
 charging users or moving NOV. Any optional NOV reference conversion needs an
 explicit rule; statistics are not wallet balances or rewards.
 [Service-network baseline](docs/SERVICE-NETWORK.md) records the latest direction,
-authorization boundary and unfinished metering/multi-A work.
+authorization boundary and remaining multi-A/network-metering work.
 
 NOVOVM native off-chain L3 application plugin. Canonical source: `plugins/asas/service`.
 Remote Agent / Local Workspace. A runs official Codex or the Claude Agent SDK,
@@ -35,6 +35,12 @@ discovery/read tools. B explicitly approves a content-addressed skill bundle;
 same-name skills on other B nodes/projects are distinct. No global skills are
 scanned or installed on A. See the platform contract for scope, limits and legacy
 recovery requirements. Native A hosts must also update to pass the authenticated node ID.
+
+SDK 0.7 adds persistent Claude usage, per-authenticated-B token allocations,
+live owner-only limit/reset commands and B-only quota views. Official Claude
+plan windows remain separate and unknown when unavailable. In-flight requests
+can exceed a local cap; interrupted final usage is not assumed zero.
+See [quota operation and accounting](docs/QUOTAS.md). No billing or NOV transfer.
 
 ## Run A Development Contract
 

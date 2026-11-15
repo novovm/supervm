@@ -1,8 +1,9 @@
 import type { Readable, Writable } from 'node:stream';
-import { Event, id, TaskInput, ToolResult, MAX_BYTES, VERSION, type AgentEvent, type TaskStatus } from './protocol';
+import { Event, id, TaskInput, ToolResult, MAX_BYTES, VERSION, OwnUsage, type AgentEvent, type TaskStatus } from './protocol';
 import { followTask } from './client';
 
 export class NativeClient {
+  ownUsage?: OwnUsage;
   private nextId = 0;
   private buffer = Buffer.alloc(0);
   private closed = false;
@@ -52,10 +53,12 @@ export class NativeClient {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(Error('ASAS IPC closed; inspect original task')); }
     this.pending.clear();
   }
-  async health(signal?: AbortSignal) { const value = await this.request('health', undefined, signal); if (value.version !== VERSION) throw Error('ASAS protocol version mismatch'); return value; }
+  async health(signal?: AbortSignal) { const value = await this.request('health', undefined, signal); if (value.version !== VERSION) throw Error('ASAS protocol version mismatch');
+    this.ownUsage = value.ownUsage === undefined ? undefined : OwnUsage.parse(value.ownUsage); return value; }
   async submit(input: TaskInput, signal?: AbortSignal) { return this.request('submit', TaskInput.parse(input), signal); }
   async events(taskId: string, after: number, signal?: AbortSignal): Promise<{ status: TaskStatus; events: AgentEvent[]; activeCallIds: string[] }> {
     const value = await this.request('events', { taskId: id.parse(taskId), after, waitMs: 1000 }, signal);
+    this.ownUsage = value.ownUsage === undefined ? undefined : OwnUsage.parse(value.ownUsage);
     if (!['running', 'completed', 'failed', 'cancelled', 'needs_recovery'].includes(value.status) || !Array.isArray(value.events)
       || !Array.isArray(value.activeCallIds) || !value.activeCallIds.every((callId: unknown) => id.safeParse(callId).success)) throw Error('Invalid ASAS task page');
     return { status: value.status, events: value.events.map((event: unknown) => Event.parse(event)), activeCallIds: value.activeCallIds };

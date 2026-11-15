@@ -1,5 +1,10 @@
 # A 服务部署与 B 配置
 
+## 当前额度操作
+
+SDK 0.7 已接 Claude 的 A 本机额度管理和 B 私有用量显示。服务运行时用 `node dist/main.js quota CONFIG` 查看，`set`/`reset` 修改每个认证 B 的限额/周期，不重启、不暴露公网管理接口；详见 [QUOTAS.md](QUOTAS.md)。CLI 管理令牌和用量历史留在 A 私有目录；不可用的官方余量保持未知。
+本页下方为初始部署说明；原生网络/客户端的新接线状态另见 README、NOVONET.md 与 STATUS.md，不把旧的“未接线”描述作为当前结论。
+
 ## A 项目
 
 唯一项目目录是 NOVOVM 仓库 `plugins/asas/service`，原生宿主位于 `crates/plugins/asas`。不再保留外部 ASAS 目录或别名。

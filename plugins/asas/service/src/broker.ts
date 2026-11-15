@@ -4,14 +4,16 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import path from 'node:path';
 import { saveJson } from './storage';
-import { TaskInput, ToolResult, StoredTask, EngineName, ToolName, TOOL_POLICIES, toolNamesFor, NodeId, SkillListResult, SkillReadResult, id, parseTool, type AgentEvent, type TaskState } from './protocol';
+import { QuotaStore, type PlanSnapshot } from './quota';
+import { TaskInput, ToolResult, StoredTask, EngineName, ToolName, TOOL_POLICIES, toolNamesFor, NodeId, SkillListResult, SkillReadResult, TokenCounts, id, parseTool, type AgentEvent, type TaskState } from './protocol';
 
 export type Peer = { id: string; tokenSha256: string; projects: string[]; nodeId?: string };
 const SessionSchema = z.object({ id, peerId: z.string().min(1).max(200), projectId: z.string().regex(/^[a-f0-9]{64}$/),
-  engine: EngineName, model: z.string().min(1).max(200), workerNodeId: NodeId.optional(), nativeSessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(), active: id.optional(), recovery: z.boolean().optional() }).strict();
+  engine: EngineName, model: z.string().min(1).max(200), workerNodeId: NodeId.optional(), nativeSessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(), claudeUsageTotal: TokenCounts.optional(), active: id.optional(), recovery: z.boolean().optional() }).strict();
 export type Session = z.infer<typeof SessionSchema>;
 export type EngineContext = { input: TaskInput; session: Session; signal: AbortSignal;
-  text: (text: string) => Promise<void>; call: (name: string, args: unknown) => Promise<ToolResult>; checkpoint: (id: string) => Promise<void> };
+  text: (text: string) => Promise<void>; call: (name: string, args: unknown) => Promise<ToolResult>; checkpoint: (id: string) => Promise<void>;
+  usage?: (counts: TokenCounts, final: boolean, cumulative?: TokenCounts) => Promise<void>; plan?: (snapshot: PlanSnapshot) => Promise<void> };
 export type Engine = (context: EngineContext) => Promise<void>;
 export type Engines = Partial<Record<EngineName, { models: string[]; run: Engine }>>;
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -26,7 +28,8 @@ export class Broker extends EventEmitter {
   private mutations: Promise<unknown> = Promise.resolve();
   private results: Promise<unknown> = Promise.resolve();
   private storageFailed = false;
-  constructor(private directory: string, private engines: Engines) { super(); }
+  readonly meter: QuotaStore;
+  constructor(private directory: string, private engines: Engines) { super(); this.meter = new QuotaStore(directory); }
   private file(kind: string, id: string) { return path.join(this.directory, kind, id + '.json'); }
   private save(kind: string, id: string, value: unknown): Promise<void> {
     const snapshot = structuredClone(value);
@@ -34,6 +37,7 @@ export class Broker extends EventEmitter {
     this.writes = next.catch(() => { this.storageFailed = true; }); return next;
   }
   async load(): Promise<void> {
+    await this.meter.load();
     for (const kind of ['tasks', 'sessions']) {
       await mkdir(path.join(this.directory, kind), { recursive: true, mode: 0o700 });
       for (const name of await readdir(path.join(this.directory, kind))) {
@@ -76,6 +80,7 @@ export class Broker extends EventEmitter {
       let session = this.sessions.get(input.sessionId);
       if (session && (session.peerId !== peer.id || session.workerNodeId !== peer.nodeId || session.projectId !== input.projectId || session.model !== input.model || session.engine !== input.engine)) throw Error('403 session binding mismatch');
       if (session?.active || session?.recovery) throw Error('409 session busy or needs operator recovery');
+      if (input.engine === 'claude') await this.meter.admit(peer.id, peer.nodeId, input.id);
       session ??= { id: input.sessionId, peerId: peer.id, projectId: input.projectId, model: input.model, engine: input.engine, ...(peer.nodeId ? { workerNodeId: peer.nodeId } : {}) };
       session.active = input.id; this.sessions.set(session.id, session);
       const task: TaskState = { ...input, peerId: peer.id, status: 'running', events: [] };
@@ -102,10 +107,20 @@ export class Broker extends EventEmitter {
     try {
       await this.append(task, { type: 'started' });
       await this.engines[task.engine]!.run({ input: task, session, signal: controller.signal,
+        usage: async (counts, final, cumulative) => {
+          if (task.engine !== 'claude') return;
+          await this.meter.observe(task.id, counts, final);
+          if (final && cumulative) { session.claudeUsageTotal = TokenCounts.parse(cumulative); await this.save('sessions', session.id, session); }
+          if (!final && this.meter.view(task.peerId, task.workerNodeId).status === 'exhausted') controller.abort(Error('Claude allocation reached its token limit'));
+        },
+        plan: snapshot => this.meter.plan(snapshot),
         text: async text => { controller.signal.throwIfAborted(); if (Buffer.byteLength(text) > 200000) throw Error('Text event too large'); await this.append(task, { type: 'text', text }); },
         checkpoint: async value => { session.nativeSessionId = SessionSchema.shape.nativeSessionId.unwrap().parse(value); await this.save('sessions', session.id, session); },
         call: async (name, args) => {
           controller.signal.throwIfAborted(); const key = ToolName.parse(name), parsed = parseTool(key, args), policy = TOOL_POLICIES[key];
+          if (task.engine === 'claude' && this.meter.view(task.peerId, task.workerNodeId).status === 'exhausted') {
+            controller.abort(Error('Claude allocation exhausted')); controller.signal.throwIfAborted();
+          }
           if (!toolNamesFor(task).includes(key)) return { callId: randomUUID(), ok: false, output: 'B did not advertise this tool capability' };
           if (key === 'skills_list' || key === 'skills_read') {
             const owner = parsed.owner as { nodeId: string; projectId: string };
@@ -134,6 +149,7 @@ export class Broker extends EventEmitter {
       try { await this.append(task, { type: status, text: 'Engine stopped; inspect private diagnostics or recover the original task' }, status); }
       catch { task.status = 'needs_recovery'; session.recovery = true; await this.save('tasks', task.id, task).catch(() => undefined); }
     } finally {
+      if (task.engine === 'claude') await this.meter.finish(task.id).catch(() => { session.recovery = true; this.storageFailed = true; });
       session.active = undefined;
       for (const [id, value] of this.pending) if (value.taskId === task.id) { clearTimeout(value.timer); this.pending.delete(id); }
       await this.save('sessions', session.id, session).catch(() => { session.recovery = true; });
@@ -183,5 +199,5 @@ export class Broker extends EventEmitter {
       activeCallIds: [...this.pending].filter(([, value]) => value.taskId === id).map(([callId]) => callId) };
   }
   async cancel(peer: Peer, id: string): Promise<void> { const task = this.get(peer, id); this.controllers.get(task.id)?.abort(Error('Cancelled by owning peer')); }
-  async close(): Promise<void> { for (const controller of this.controllers.values()) controller.abort(Error('Service shutting down')); while (this.controllers.size) await new Promise(resolve => setTimeout(resolve, 10)); await this.writes; }
+  async close(): Promise<void> { for (const controller of this.controllers.values()) controller.abort(Error('Service shutting down')); while (this.controllers.size) await new Promise(resolve => setTimeout(resolve, 10)); await this.writes; await this.meter.close(); }
 }

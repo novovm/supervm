@@ -5,15 +5,23 @@ import { startService } from './server';
 import { Configuration, enginesFor } from './config';
 import { Application } from './application';
 import { serveStdio } from './stdio';
+import { quotaAdminRequest } from './quota-admin';
 
 async function main() {
   if (process.argv[2] === 'pair') {
     const directory = await realpath(process.argv[3] || process.cwd()), token = randomBytes(32).toString('base64url');
     console.log(JSON.stringify({ peer: { id: process.argv[4] || 'B', tokenSha256: createHash('sha256').update(token).digest('hex'), projects: [createHash('sha256').update(directory).digest('hex')] }, clientToken: token }, null, 2)); return;
   }
-  const stdio = process.argv[2] === '--stdio';
-  const file = process.argv[stdio ? 3 : 2]; if (!file) throw Error('Usage: npm start -- /absolute/config.json; or --stdio CONFIG; or pair /client/project B');
+  const stdio = process.argv[2] === '--stdio', quota = process.argv[2] === 'quota';
+  const file = process.argv[stdio || quota ? 3 : 2]; if (!file) throw Error('Usage: npm start -- /absolute/config.json; or --stdio CONFIG; or quota CONFIG [set PEER NODE TOKENS|reset PEER NODE CYCLE]; or pair /client/project B');
   const config = Configuration.parse(JSON.parse(await readFile(file, 'utf8')));
+  if (quota) {
+    const operation = process.argv[4] || 'report';
+    const owner = { peerId: process.argv[5], nodeId: process.argv[6] === '-' ? null : process.argv[6] };
+    const command = operation === 'report' ? { operation } : operation === 'set' ? { operation, ...owner, limitTokens: process.argv[7] === 'unlimited' ? null : Number(process.argv[7]) }
+      : { operation, ...owner, expectedCycleId: process.argv[7] };
+    console.log(JSON.stringify(await quotaAdminRequest(config.directory, command), null, 2)); return;
+  }
   const engines = enginesFor(config);
   if (!path.isAbsolute(config.directory)) throw Error('ASAS data directory must be absolute');
   if (stdio) {

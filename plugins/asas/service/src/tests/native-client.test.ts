@@ -8,6 +8,17 @@ import { randomUUID } from 'node:crypto';
 import { Application } from '../application';
 import { NativeClient, NetworkClient } from '../native-client';
 import { serveStdio } from '../stdio';
+import { OwnUsage } from '../protocol';
+
+test('B allocation schema rejects account totals and inconsistent remaining values', () => {
+  const quota = { engine: 'claude', unit: 'tokens', cycleId: randomUUID(), limitTokens: 100, usedTokens: 35,
+    remainingTokens: 65, activeTasks: 0, unsettledTasks: 0, status: 'available', updatedAt: null };
+  OwnUsage.parse({ claude: quota });
+  assert.throws(() => OwnUsage.parse({ claude: quota, account: { used: 900 } }));
+  assert.throws(() => OwnUsage.parse({ claude: { ...quota, remainingTokens: 100 } }));
+  assert.throws(() => OwnUsage.parse({ claude: { ...quota, remainingTokens: null } }));
+  assert.throws(() => OwnUsage.parse({ claude: { ...quota, otherClients: [] } }));
+});
 
 test('B network frames contain no caller-supplied principal or A-worker commands', async () => {
   const input = new PassThrough(), output = new PassThrough();
