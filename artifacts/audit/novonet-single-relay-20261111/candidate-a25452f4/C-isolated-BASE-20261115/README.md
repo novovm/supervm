@@ -1,3 +1,28 @@
+# C isolated BASE: stopped early by diagnostic controller
+
+## Terminal result (2026-11-15 11:31 Beijing)
+
+This is NOT a completed 75-minute BASE and NOT a natural NOVOVM crash. One run only; no retry.
+LocalService independently generated eight new test purpose keys; prepare exit 0. Four original a254 EXEs used new isolated databases and identities. All four actually loaded AOEM966 SHA256 5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52.
+
+At elapsed 135.7303592 seconds the controller classified `load_not_qualified` and killed the four isolated processes. All four real exit codes are -1, explicitly `forced_by_controller=true`. No natural failure code was observed. End UTC03:31:42.607; no DMP generated; WHEA query after run returned no new events. No result supports hardware health or an original-crash fix.
+
+### Why this run stopped
+
+Owner.ps1 line68 required every sampled report to contain `novonet`. Peer index3 had this field in the previous eight samples; in the last sample the field was absent while transport remained present and data writes grew 1709 to1941. Its process was alive. Target index0 had111124 ticks,1968 data writes,437 accepted data,1496 history data and0 execution failures.
+
+Original a254 source has two separate elapsed-time checks: first collecting `network.observation()`, then after `product.poll()` deciding to emit `product.status()`. The second check can cross the threshold when the first did not, legitimately leaving `novonet` absent in that report. This statically proves the diagnostic predicate is insufficient; the precise timing of this particular iteration was not captured. Missing one optional field is not evidence that networking stopped. No production source change was made.
+
+Launch-Once.ps1 also checks result before sleeping, then checks task state without rechecking result. It emitted `owner task ended without result` at03:31:50 although result.json had already been written at03:31:42. Both records are preserved; bootstrap error does not invalidate the saved target exit codes. Scheduled-task final exit/cleanup could not be read from the ordinary account (access denied); removal is not claimed. Task has no trigger or auto-retry. A subsequent process query found no original or isolated node running.
+
+### Evidence limits and next action
+
+9 samples are retained, not additional test executions. No exact network.observation/product.status invocation counts or allocation/free counts were instrumented. Loopback input, fresh state and four local peers are not historical packet replay. This short run does not cover the66-minute failure window. Full-dump capability was configured but not exercised by a natural crash here.
+
+Preserve this failed run. Before a separately authorized new run, correct only the diagnostic qualification predicate to use previously established capability plus actual counter progress and explicit errors; recheck result after the bootstrap wait. Do not change production reporting to satisfy the controller. Do not restart this run or original nodes. Original DB, identity and previous evidence untouched; double relay paused. Private keys, configs and dumps stay local; diagnostic scripts/binaries remain under ignored target, outside release source.
+
+## Initial launch record (historical; superseded by terminal result)
+
 # C isolated BASE — started, not an acceptance result
 
 2026-11-15 Beijing11:29:14. LocalService generated eight fresh sealed purpose keys

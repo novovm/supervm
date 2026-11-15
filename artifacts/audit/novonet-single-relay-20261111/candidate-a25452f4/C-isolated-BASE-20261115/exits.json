@@ -1,0 +1,34 @@
+[
+  {
+    "forced_by_controller": true,
+    "created": "2026-11-15T03:29:14.0665909Z",
+    "index": 1,
+    "exit_code": -1,
+    "observed_utc": "2026-11-15T03:31:29.8660835Z",
+    "pid": 22668
+  },
+  {
+    "forced_by_controller": true,
+    "created": "2026-11-15T03:29:14.0842251Z",
+    "index": 2,
+    "exit_code": -1,
+    "observed_utc": "2026-11-15T03:31:30.6721478Z",
+    "pid": 10600
+  },
+  {
+    "forced_by_controller": true,
+    "created": "2026-11-15T03:29:14.1983498Z",
+    "index": 3,
+    "exit_code": -1,
+    "observed_utc": "2026-11-15T03:31:31.4394956Z",
+    "pid": 42992
+  },
+  {
+    "forced_by_controller": true,
+    "created": "2026-11-15T03:29:14.3079648Z",
+    "index": 0,
+    "exit_code": -1,
+    "observed_utc": "2026-11-15T03:31:32.3107088Z",
+    "pid": 8088
+  }
+]
