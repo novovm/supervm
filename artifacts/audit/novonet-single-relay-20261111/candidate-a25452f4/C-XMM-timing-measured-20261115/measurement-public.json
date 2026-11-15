@@ -1,0 +1,286 @@
+{
+  "original_node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "AOEM966_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "account": "S-1-5-19",
+  "all_groups_original_stage_profiling_enabled": true,
+  "stage_profiling_differs_from_previous_group_and_historical_failure": true,
+  "phases": [
+    {
+      "mode": "baseline",
+      "wall_seconds": 182.744942899968,
+      "node_exit_codes": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit_code": null,
+      "teardown_actions": [],
+      "native_status_inclusive_wall_ms": {
+        "n": 30,
+        "p50": 14.4481,
+        "p95": 34.69172999999999,
+        "p99": 35.86467,
+        "max": 35.9073,
+        "tail_statistical_claim": false
+      },
+      "counter_gaps": [],
+      "report_intervals_seconds": {
+        "n": 30,
+        "p50": 5.0190631,
+        "p95": 5.040190355,
+        "p99": 5.043672702,
+        "max": 5.0447359,
+        "tail_statistical_claim": false
+      },
+      "node_metrics": {
+        "ticks_per_second": 798.8079364869047,
+        "reported_data_writes_per_second": 14.436208077633214,
+        "cpu_seconds_per_wall": 0.03314028627031158,
+        "context_switches_per_second": 680.4472365802051
+      },
+      "debugger_cpu_seconds_per_wall": null,
+      "controller_cpu_seconds_per_wall": 0.13598597709702318,
+      "observed_peak_node_private_bytes": 71323648,
+      "observed_peak_debugger_private_bytes": 0,
+      "load": {
+        "progress_snapshots": 36,
+        "last_ticks": 143558,
+        "maximum_retained_objects": 256,
+        "last_retained_objects": 256,
+        "last_reported_data_writes": 2561,
+        "last_accepted_data": 511,
+        "last_evicted_records": 146,
+        "last_expired_records": 84
+      },
+      "status_median_change_pct_vs_baseline": 0.0,
+      "tick_rate_change_pct_vs_baseline": 0.0
+    },
+    {
+      "mode": "attached",
+      "wall_seconds": 182.36740059999283,
+      "node_exit_codes": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit_code": 0,
+      "teardown_actions": [
+        "controller_terminated_debugger"
+      ],
+      "native_status_inclusive_wall_ms": {
+        "n": 30,
+        "p50": 26.8388,
+        "p95": 39.431695,
+        "p99": 40.546341000000005,
+        "max": 40.85,
+        "tail_statistical_claim": false
+      },
+      "counter_gaps": [],
+      "report_intervals_seconds": {
+        "n": 30,
+        "p50": 5.0328781,
+        "p95": 5.047148795,
+        "p99": 5.07150894,
+        "max": 5.0814223,
+        "tail_statistical_claim": false
+      },
+      "node_metrics": {
+        "ticks_per_second": 734.7747559679871,
+        "reported_data_writes_per_second": 14.407737459849292,
+        "cpu_seconds_per_wall": 0.03353618603248714,
+        "context_switches_per_second": 676.5277971465125
+      },
+      "debugger_cpu_seconds_per_wall": 0.0,
+      "controller_cpu_seconds_per_wall": 0.16324972239838337,
+      "observed_peak_node_private_bytes": 71647232,
+      "observed_peak_debugger_private_bytes": 14831616,
+      "load": {
+        "progress_snapshots": 36,
+        "last_ticks": 132884,
+        "maximum_retained_objects": 256,
+        "last_retained_objects": 256,
+        "last_reported_data_writes": 2562,
+        "last_accepted_data": 525,
+        "last_evicted_records": 173,
+        "last_expired_records": 86
+      },
+      "status_median_change_pct_vs_baseline": 85.76006533731078,
+      "tick_rate_change_pct_vs_baseline": -8.016092178619383
+    },
+    {
+      "mode": "four_points",
+      "wall_seconds": 183.2212942999904,
+      "node_exit_codes": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit_code": 0,
+      "teardown_actions": [
+        "controller_terminated_debugger"
+      ],
+      "native_status_inclusive_wall_ms": {
+        "n": 30,
+        "p50": 123.52645,
+        "p95": 167.90646999999998,
+        "p99": 177.90547600000002,
+        "max": 180.0241,
+        "tail_statistical_claim": false
+      },
+      "counter_gaps": [],
+      "report_intervals_seconds": {
+        "n": 30,
+        "p50": 5.1297214,
+        "p95": 5.177058295,
+        "p99": 5.183357895,
+        "max": 5.1848846,
+        "tail_statistical_claim": false
+      },
+      "node_metrics": {
+        "ticks_per_second": 752.265089958228,
+        "reported_data_writes_per_second": 14.410586852136667,
+        "cpu_seconds_per_wall": 0.03566185503904539,
+        "context_switches_per_second": 807.1490701366113
+      },
+      "debugger_cpu_seconds_per_wall": 0.0012088764420015387,
+      "controller_cpu_seconds_per_wall": 0.15080733613969194,
+      "observed_peak_node_private_bytes": 72646656,
+      "observed_peak_debugger_private_bytes": 34758656,
+      "load": {
+        "progress_snapshots": 36,
+        "last_ticks": 135725,
+        "maximum_retained_objects": 256,
+        "last_retained_objects": 255,
+        "last_reported_data_writes": 2611,
+        "last_accepted_data": 556,
+        "last_evicted_records": 174,
+        "last_expired_records": 93
+      },
+      "status_median_change_pct_vs_baseline": 754.9667430319557,
+      "tick_rate_change_pct_vs_baseline": -5.826537820013222
+    }
+  ],
+  "observed_calls": {
+    "complete": 34,
+    "events": 204,
+    "kinds": {
+      "ENTRY": 34,
+      "P0": 34,
+      "P1": 34,
+      "P2": 34,
+      "P3": 34,
+      "EXIT": 34
+    },
+    "threads": [
+      8076
+    ],
+    "entry_to_RET_observed_ms": {
+      "n": 34,
+      "p50": 108.10075,
+      "p95": 145.59915499999997,
+      "p99": 159.406754,
+      "max": 162.9992,
+      "tail_statistical_claim": false
+    },
+    "controller_response_ms": {
+      "n": 204,
+      "p50": 1.3999,
+      "p95": 3.241125,
+      "p99": 4.430083,
+      "max": 11.4429,
+      "tail_statistical_claim": false
+    },
+    "controller_handling_ms": {
+      "n": 204,
+      "p50": 0.921,
+      "p95": 2.66594,
+      "p99": 3.9071000000000002,
+      "max": 11.4023,
+      "tail_statistical_claim": false
+    },
+    "known_stopped_lower_bound_per_event_ms": {
+      "n": 204,
+      "p50": 1.3838,
+      "p95": 3.2307799999999998,
+      "p99": 4.413295,
+      "max": 11.4196,
+      "tail_statistical_claim": false
+    },
+    "debugger_echo_notification_after_command_ms": {
+      "n": 204,
+      "p50": 16.291449999999998,
+      "p95": 23.930374999999994,
+      "p99": 29.581190999999997,
+      "max": 32.6358,
+      "tail_statistical_claim": false
+    },
+    "all_template_points_equal": true,
+    "all_entry_exit_vectors_equal": true,
+    "missing_within_observed_entry_groups": 0,
+    "pending_ack_count": 0,
+    "native_kernel_stop_resume_timestamps_available": false,
+    "thread_scheduler_event_history_available": false,
+    "raw_context_files_stay_in_local_protected_root": true
+  },
+  "scheduler_evidence": "per-thread user/kernel CPU snapshots, thread cycles at stops, process context switch counters; no CSwitch event timeline",
+  "qualifies_for_long_run": false,
+  "reason": "measured whole-query latency differs substantially; exact historical input/interleaving absent",
+  "first_XMM_change_found": false,
+  "production_fix_applied": false,
+  "original_database_and_identity_opened": false,
+  "double_relay_resumed": false,
+  "new_WHEA_record_ids": [],
+  "new_test_task_removed": true,
+  "new_test_WER_rule_removed": true
+}

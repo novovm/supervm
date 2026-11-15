@@ -1,6 +1,17 @@
 # a25452f4: approved existing updates, then real double relay
 
 
+## C回传 2026-11-15：三组完整status实测结束，当前计时方案不进入长跑
+
+重新UAC后执行原a254＋AOEM966三组短时隔离，统一启用原生stage计时。
+完整status P50分别14.448/26.839/123.526ms，各30样本、单调用计数差无缺口。
+入口/返回和四点复用取得34组完整调用、204条事件，响应字段均已持久化。
+136次模板检查和34次入口/返回保存恢复检查通过，首次异常仍未捕获。
+完整查询时序影响明显，当前方案不具备长期取证资格；历史包序/调度仍缺。
+全部节点退出0；CDB退出0并保留控制器收尾请求。任务/测试WER清理，无新增WHEA。
+详见[C-XMM-timing-measured-20261115/README.md](C-XMM-timing-measured-20261115/README.md)。
+原库身份和失败现场保留，未进入长期取证，双中继继续暂停。
+
 ## C回传 2026-11-15：原生status计时已接线，新的三组实测尚未启动
 
 核对原a254已有observe_tick(TickStage::Status)及NOVOVM_PROFILE_STAGES计时。

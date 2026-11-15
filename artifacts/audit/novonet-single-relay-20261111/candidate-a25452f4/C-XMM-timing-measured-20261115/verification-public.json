@@ -1,0 +1,18 @@
+{
+  "phases_completed": 3,
+  "all_node_exit_codes_zero": true,
+  "native_status_individual_samples_per_group": [
+    30,
+    30,
+    30
+  ],
+  "same_call_groups": 34,
+  "event_count": 204,
+  "all_event_response_fields_persisted": true,
+  "all_entry_to_RET_orders_checked": true,
+  "template_checks": 136,
+  "entry_exit_preservation_checks": 34,
+  "first_XMM_change_found": false,
+  "qualifies_for_long_run": false,
+  "task_and_test_WER_cleaned": true
+}
