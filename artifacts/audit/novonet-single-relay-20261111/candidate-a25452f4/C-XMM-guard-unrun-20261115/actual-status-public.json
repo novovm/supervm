@@ -1,0 +1,227 @@
+{
+  "original_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "diagnostic_sha256": "a1a1f1f7fe5434065988a5a5c81fbb92080a9a6efae7afa9e283a0830b7f30b9",
+  "code_bytes": 1417164,
+  "log_bytes": 2097408,
+  "capacity": 16384,
+  "event_bytes": 128,
+  "original_call_instructions_modified": false,
+  "original_callee_return_addresses_preserved": true,
+  "observed_return_sites": 279,
+  "skipped_return_sites": [
+    {
+      "call_rva": "0x772413",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x772612",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7727e0",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77299f",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x772b68",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x772cf6",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x772f6f",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77310e",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77329c",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7735bf",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x773845",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7739d1",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x773b62",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x773d01",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x773e97",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77409e",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77423c",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7743d7",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x774567",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x774708",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77489e",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x774a6c",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x774c0e",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x774da2",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x774f4b",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7750db",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77527a",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77544e",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7755ec",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x775783",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x775941",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x775b23",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x775cd5",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x775e4a",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x776036",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x776247",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7763e5",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x776579",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x776714",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77691c",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x776a8a",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x776c7c",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x7772d8",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77746d",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77760d",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x777794",
+      "reason": "next call overlaps return window"
+    },
+    {
+      "call_rva": "0x77791d",
+      "reason": "next call overlaps return window"
+    }
+  ],
+  "parent_markers": 2,
+  "guards": 281,
+  "guard_saves": [
+    "rflags",
+    "rax",
+    "r10",
+    "r11",
+    "xmm0"
+  ],
+  "no_guard_allocation_calls_or_formatting": true,
+  "freeze_on_vector_mismatch": true,
+  "no_deliberate_exception": true,
+  "actual_runtime_qualification": false,
+  "uac_request_utc": "2026-11-15T14:00:33.7983020Z",
+  "uac_cancelled_utc": "2026-11-15T14:02:36.0500125Z",
+  "windows_result": "user cancelled elevation",
+  "isolation_root_created": false,
+  "baseline_executed": false,
+  "guard_executed": false,
+  "first_corrupting_instruction_proven": false,
+  "runtime_interference_measured": false,
+  "baseline_seconds": 120,
+  "guard_max_seconds": 1200,
+  "original_state_accessed": false,
+  "production_modified": false,
+  "double_relay": false
+}

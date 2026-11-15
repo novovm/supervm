@@ -1,5 +1,15 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-15 22:02：隔离向量采集未启动，Windows UAC返回取消
+
+本轮准备独立诊断副本的返回边界内存记录，原call及callee返回地址保留。
+279处返回边界、两个父帧位置可记录，47处重叠窗口保留为覆盖缺口，运行干扰尚未测量。
+22:00:33请求UAC，22:02:36返回用户取消，新隔离根及运行目录均未创建。
+没有新增同次调用或首次错位证据，没有启动基线/采集节点，原库身份及失败现场保留。
+详见[C-XMM-guard-unrun-20261115/README.md](C-XMM-guard-unrun-20261115/README.md)。
+已请求在场确认后重发同一入口。未修生产代码，双中继继续暂停。
+
+
 ## C回传 2026-11-15：PID44948 RawTable构造与insert入口帧归属复核
 
 原.pdata/.xdata及离线CDB确认0x77823e/0x778245属于status，按status.RBP计算写RawTable。
