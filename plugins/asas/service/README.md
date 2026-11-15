@@ -1,5 +1,12 @@
 # ASAS
 
+Product direction: free, authorized shared AI programming services on NOVOVM,
+not primarily a failover tool. Record network bytes and model-token usage without
+charging users or moving NOV. Any optional NOV reference conversion needs an
+explicit rule; statistics are not wallet balances or rewards.
+[Service-network baseline](docs/SERVICE-NETWORK.md) records the latest direction,
+authorization boundary and unfinished metering/multi-A work.
+
 NOVOVM native off-chain L3 application plugin. Canonical source: `plugins/asas/service`.
 Remote Agent / Local Workspace. A runs official Codex or the Claude Agent SDK,
 without an ACODE runtime dependency;

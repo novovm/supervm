@@ -1,5 +1,7 @@
 # ASAS
 
+- Latest product purpose (2026-11-14): ASAS provides free, authorized shared AI programming services, not primarily failover. Physical A providers run NOVOVM nodes. User withdrew ASAS billing: record actual network bytes and model-token usage; NOV remains the existing asset, with any optional NOV reference conversion requiring a defined rule, never a fabricated balance or reward. Follow `docs/SERVICE-NETWORK.md`: no charges, financial reservations, subscription-limit evasion, implicit account-sharing rights, auto online rewards or second ledger. Preserve other NOVOVM businesses' economic rules. Metering and safe multi-A handoff remain unimplemented.
+
 - AOEM Tool Contract is the platform-wide engine-neutral execution standard. Keep its unique versioned schema and policy in `src/protocol.ts`; Codex and Claude declarations must derive from it. ADR-002/003/004 and priority are in `docs/AOEM-TOOL-CONTRACT.md`. Deliver shared official-engine calls to the same B Worker before cross-engine orchestration or new vendor-specific tool systems. It is not a new AOEM compute ABI or chain interface.
 
 - Canonical source exists ONLY in NOVOVM `plugins/asas/service`; do not create an external ASAS checkout, alias or mirrored implementation.
