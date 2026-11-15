@@ -1,0 +1,25 @@
+01e1cc60  0000                         add byte ptr [rax], al
+01e1cc62  48f7e2                       mul rdx
+01e1cc65  4c01e7                       add rdi, r12
+01e1cc68  4911cf                       adc r15, rcx
+01e1cc6b  48037c2420                   add rdi, qword ptr [rsp + 0x20]
+01e1cc70  4d11cf                       adc r15, r9
+01e1cc73  4801c7                       add rdi, rax
+01e1cc76  4911d7                       adc r15, rdx
+01e1cc79  4c01df                       add rdi, r11
+01e1cc7c  4983d700                     adc r15, 0
+01e1cc80  490fa4ff0c                   shld r15, rdi, 0xc
+01e1cc85  480fa4ee0c                   shld rsi, rbp, 0xc
+01e1cc8a  48bd103d000010000000         movabs rbp, 0x1000003d10
+01e1cc94  4889f0                       mov rax, rsi
+01e1cc97  48f7e5                       mul rbp
+01e1cc9a  4c21f3                       and rbx, r14
+01e1cc9d  4801c3                       add rbx, rax
+01e1cca0  4883d200                     adc rdx, 0
+01e1cca4  4c01fb                       add rbx, r15
+01e1cca7  4883d200                     adc rdx, 0
+01e1ccab  480fa4da0c                   shld rdx, rbx, 0xc
+01e1ccb0  48b8ffffffffffff0000         movabs rax, 0xffffffffffff
+01e1ccba  4921c0                       and r8, rax
+01e1ccbd  4901d0                       add r8, rdx
+01e1ccc0  488b442440                   mov rax, qword ptr [rsp + 0x40]

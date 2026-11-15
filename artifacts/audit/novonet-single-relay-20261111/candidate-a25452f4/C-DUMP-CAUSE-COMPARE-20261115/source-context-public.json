@@ -1,0 +1,25 @@
+{
+  "commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "files": {
+    "crates/novovm-node/src/native_pipeline/profile.rs": {
+      "git_blob": "92c5cdd727cd7431a4d4327854ec4dfe24309b2a",
+      "sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b",
+      "markers": {
+        "fn hash(": 276,
+        "pub(crate) fn snapshot()": 536,
+        "status[\"stage_profile\"]": null,
+        "status[\"archive_work\"]": null
+      }
+    },
+    "crates/novovm-node/src/native_pipeline/service/rpc.rs": {
+      "git_blob": "c8367b3e93844c72e96a3790bc4f614b7fbe1582",
+      "sha256": "47615e1436723349e5cc5747f2ea7d907c3202a5af154a9652d4988bbee8d335",
+      "markers": {
+        "fn hash(": null,
+        "pub(crate) fn snapshot()": null,
+        "status[\"stage_profile\"]": 1374,
+        "status[\"archive_work\"]": 1391
+      }
+    }
+  }
+}

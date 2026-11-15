@@ -1,0 +1,96 @@
+{
+  "common_code_checks": [
+    {
+      "name": "profile snapshot call",
+      "rva": "0x777bb4",
+      "bytes": 5,
+      "original_dump_equals_original_exe": true,
+      "diagnostic_dump_equals_original_exe": true,
+      "sha256": "167ce370cd9c985646bbf26ea0db70f0b0773e8cdb8850146dcb0b3fa63705df"
+    },
+    {
+      "name": "profile snapshot unwind coverage",
+      "rva": "0x75c4a0",
+      "bytes": 28271,
+      "original_dump_equals_original_exe": true,
+      "diagnostic_dump_equals_original_exe": true,
+      "sha256": "6cc2bd586d00f17d062136bcfba70665e8b33167a31927f168fac9022b713b82"
+    },
+    {
+      "name": "String write_str",
+      "rva": "0x1e1cc60",
+      "bytes": 103,
+      "original_dump_equals_original_exe": true,
+      "diagnostic_dump_equals_original_exe": true,
+      "sha256": "d769856c26d282d024d967f0e82c51f2fe5b626f312a89086a29ef7a57cc5a47"
+    },
+    {
+      "name": "format_inner",
+      "rva": "0x1e1ce70",
+      "bytes": 376,
+      "original_dump_equals_original_exe": true,
+      "diagnostic_dump_equals_original_exe": true,
+      "sha256": "3715b332839f88588253654ef8d03b1b1cd055a6b5742cf7206f94644644c989"
+    },
+    {
+      "name": "numeric formatter sample",
+      "rva": "0x1e202f0",
+      "bytes": 256,
+      "original_dump_equals_original_exe": true,
+      "diagnostic_dump_equals_original_exe": true,
+      "sha256": "3ed7bcbc7e03561a4e9db4a4275b18d384faac5dc3471fdead5722165696083d"
+    },
+    {
+      "name": "core fmt write sample",
+      "rva": "0x1e22380",
+      "bytes": 688,
+      "original_dump_equals_original_exe": true,
+      "diagnostic_dump_equals_original_exe": true,
+      "sha256": "e0108a04cc8df8f5cd8fa7c35ef39e2b51b37ede81a66ce8732e0711aec0f5de"
+    },
+    {
+      "name": "VCRUNTIME tiny-copy code",
+      "rva": "0x11268",
+      "bytes": 7,
+      "both_dump_code_equal": true
+    }
+  ],
+  "relevant_parent_detours": [
+    {
+      "rva": "0x777b6a",
+      "bytes": 7,
+      "stub_rva": "0x2e51a59",
+      "original_hex": "488b85a0020000",
+      "diagnostic_hex": "e9ea9e6d029090"
+    },
+    {
+      "rva": "0x777bb9",
+      "bytes": 7,
+      "stub_rva": "0x2e51b57",
+      "original_hex": "c6858101000001",
+      "diagnostic_hex": "e9999f6d029090"
+    }
+  ],
+  "profile_callee_detour_count": 0,
+  "patch_windows_overlapping_PE_DIR64_relocations": [],
+  "profile_call_rva": "0x777bb4",
+  "profile_target_rva": "0x75c4a0",
+  "diagnostic_code_region": [
+    "0x2e42000",
+    "0x3242000"
+  ],
+  "diagnostic_event_region": [
+    "0x3242000",
+    "0x3442100"
+  ],
+  "String_compiled_field_offsets": {
+    "capacity": 0,
+    "pointer": 8,
+    "length": 16
+  },
+  "writer_owner_local": "format_inner local String at its RBP-0x20",
+  "writer_is_active_stack_object": true,
+  "allocation_free_history_available": false,
+  "diagnostic_effect_excluded": false,
+  "shared_first_corrupting_instruction_proven": false
+}

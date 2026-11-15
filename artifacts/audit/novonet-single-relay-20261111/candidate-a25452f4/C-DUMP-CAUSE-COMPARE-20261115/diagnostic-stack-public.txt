@@ -1,0 +1,26 @@
+*** Stack trace for last set context - .thread/.cxr resets it
+*** WARNING: Unable to verify checksum for novovm-xmmguard-a254.exe
+ # Child-SP          RetAddr               Call Site
+00 000000f3`bd3ee6f8 00007ff6`0825cc93     VCRUNTIME140!_NLG_Return2+0xc38
+01 (Inline Function) --------`--------     novovm_xmmguard_a254!alloc::vec::Vec::append_elements+0x1e
+02 (Inline Function) --------`--------     novovm_xmmguard_a254!alloc::vec::spec_extend::impl$4::spec_extend+0x1e
+03 (Inline Function) --------`--------     novovm_xmmguard_a254!alloc::vec::Vec::extend_from_slice+0x1e
+04 (Inline Function) --------`--------     novovm_xmmguard_a254!alloc::string::String::push_str+0x1e
+05 000000f3`bd3ee700 00007ff6`08260359     novovm_xmmguard_a254!alloc::string::impl$63::write_str+0x33
+06 000000f3`bd3ee750 00007ff6`082624e1     novovm_xmmguard_a254!core::fmt::num::impl$16::fmt+0x69
+07 000000f3`bd3ee7a0 00007ff6`0825cf9f     novovm_xmmguard_a254!core::fmt::write+0x161
+08 (Inline Function) --------`--------     novovm_xmmguard_a254!core::fmt::Write::write_fmt::impl$1::spec_write_fmt+0x16
+09 (Inline Function) --------`--------     novovm_xmmguard_a254!core::fmt::Write::write_fmt+0x16
+0a 000000f3`bd3ee830 00007ff6`06d9bc1a     novovm_xmmguard_a254!alloc::fmt::format::format_inner+0x12f
+0b 000000f3`bd3ee8c0 00007ff6`06e265a0     novovm_xmmguard_a254!ZN112_$LT$alloc..string..String$u20$as$u20$core..iter..traits..collect..FromIterator$LT$alloc..string..String$GT$$GT$9from_iter17h773a38bc89164ff9E+0xea
+0c 000000f3`bd3ee9b0 00007ff6`0702ff32     novovm_xmmguard_a254!ZN4core3ops8function5impls79_$LT$impl$u20$core..ops..function..FnMut$LT$A$GT$$u20$for$u20$$RF$mut$u20$F$GT$8call_mut17h734c4ecedfb29625E+0x990
+0d 000000f3`bd3eec00 00007ff6`06b714af     novovm_xmmguard_a254!ZN111_$LT$alloc..vec..Vec$LT$T$GT$$u20$as$u20$alloc..vec..spec_from_iter_nested..SpecFromIterNested$LT$T$C$I$GT$$GT$9from_iter17ha314b3c2dd4d8308E+0x102
+0e 000000f3`bd3eecc0 00007ff6`06b87bb9     novovm_xmmguard_a254!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0x50df
+0f 000000f3`bd3ef0e0 00007ff6`0658d5e5     novovm_xmmguard_a254!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x5a99
+10 000000f3`bd3ef5b0 00007ff6`0649ad16     novovm_xmmguard_a254!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+11 000000f3`bd3ef6c0 00007ff6`065e8d57     novovm_xmmguard_a254!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+12 000000f3`bd3ffd40 00007ff6`065ea0f5     novovm_xmmguard_a254!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+13 000000f3`bd3ffd90 00007ff6`0824a0e8     novovm_xmmguard_a254!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+14 000000f3`bd3ffe40 00007ffc`e175dda7     novovm_xmmguard_a254!std::sys::thread::windows::impl$0::new::thread_start+0x228
+15 000000f3`bd3ffef0 00007ffc`e3219c5c     kernel32!BaseThreadInitThunk+0x17
+16 000000f3`bd3fff20 00000000`00000000     ntdll!RtlUserThreadStart+0x2c

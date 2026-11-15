@@ -1,0 +1,21 @@
+*** Stack trace for last set context - .thread/.cxr resets it
+ # Child-SP          RetAddr               Call Site
+00 (Inline Function) --------`--------     novovm_node!std::sys::pal::windows::abort_internal+0x5
+01 (Inline Function) --------`--------     novovm_node!std::process::abort+0x5
+02 000000ab`6f9eece0 00007ff7`9d0aa82f     novovm_node!std::alloc::rust_oom::closure$0+0x31
+03 000000ab`6f9eed10 00007ff7`9d0ae1ab     novovm_node!std::sys::backtrace::__rust_end_short_backtrace<std::alloc::rust_oom::closure_env$0,never$>+0xf
+04 000000ab`6f9eed40 00007ff7`9d09d5f8     novovm_node!std::alloc::rust_oom+0x1b
+05 000000ab`6f9eed80 00007ff7`9d6a335b     novovm_node!std::alloc::_::__rust_alloc_error_handler+0x18
+06 (Inline Function) --------`--------     novovm_node!alloc::alloc::handle_alloc_error::rt_error+0xb
+07 000000ab`6f9eedb0 00007ff7`9d001e07     novovm_node!alloc::alloc::handle_alloc_error+0x18
+08 000000ab`6f9eede0 00007ff7`9d69c81e     novovm_node!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801+0x197
+09 000000ab`6f9eee40 00007ff7`9babf3ae     novovm_node!ZN9hashbrown3raw21RawTable$LT$T$C$A$GT$14reserve_rehash17he3b5727f83df977fE+0x8e
+0a 000000ab`6f9eef20 00007ff7`9b9e8395     novovm_node!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E+0x35e
+0b 000000ab`6f9ef040 00007ff7`9b3ed5e5     novovm_node!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x6275
+0c 000000ab`6f9ef510 00007ff7`9b2fad16     novovm_node!ZN11novovm_node15native_pipeline7service3rpc12observe_tick17hfe47e471214fef95E+0x55
+0d 000000ab`6f9ef620 00007ff7`9b448d57     novovm_node!ZN11novovm_node38run_native_execution_tick_node_mode_v117h71911803219ee92fE+0x1406
+0e 000000ab`6f9ffca0 00007ff7`9b44a0f5     novovm_node!ZN3std3sys9backtrace28__rust_begin_short_backtrace17hcc4844f95d989b4aE+0x27
+0f 000000ab`6f9ffcf0 00007ff7`9d0aa0e8     novovm_node!ZN42_$LT$$RF$T$u20$as$u20$core..fmt..Debug$GT$3fmt17hd69493c34947a1e4E+0x85
+10 000000ab`6f9ffda0 00007ffc`e175dda7     novovm_node!std::sys::thread::windows::impl$0::new::thread_start+0x228
+11 000000ab`6f9ffe50 00007ffc`e3219c5c     kernel32!BaseThreadInitThunk+0x17
+12 000000ab`6f9ffe80 00000000`00000000     ntdll!RtlUserThreadStart+0x2c
