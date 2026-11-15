@@ -1,0 +1,109 @@
+{
+  "utc": "2026-11-15T23:17:50.055530+00:00",
+  "route": "three-boundary debugger",
+  "folders": 4,
+  "guarded_entry_count": 12,
+  "entries": [
+    {
+      "folder": "c-pointer-three-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "before_sha256": "24ce30dac6e856c5314d55ea21ef096487f550e97e4bbaf34db8cdf6280f90bb",
+      "after_sha256": "b1b55fbaa9d224f13695cf4dfca90606e8441c8e2ad48f28f0ae708ea4fce49a",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-20261116",
+      "entry": "Launch-Once.ps1",
+      "before_sha256": "e7e4dbd87df71aa3d51838fcbbb04eb1204d22c59cb2d7ebea7f997c4a65fdc9",
+      "after_sha256": "e9d5e09c98f1f713b3956168001ce141c30fd324d0bba7efaa7b9fc42d925b93",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-20261116",
+      "entry": "Owner.ps1",
+      "before_sha256": "6a3768013b30149353a29b0650ab3dff95e40ce0854322ee02972f1fa9c561bc",
+      "after_sha256": "1d1a0445c1010957b64ee575d4954c2f96ec3f939721a0238962b99ce3993b66",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-finish-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "before_sha256": "24ce30dac6e856c5314d55ea21ef096487f550e97e4bbaf34db8cdf6280f90bb",
+      "after_sha256": "b1b55fbaa9d224f13695cf4dfca90606e8441c8e2ad48f28f0ae708ea4fce49a",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-finish-20261116",
+      "entry": "Launch-Once.ps1",
+      "before_sha256": "e7e4dbd87df71aa3d51838fcbbb04eb1204d22c59cb2d7ebea7f997c4a65fdc9",
+      "after_sha256": "e9d5e09c98f1f713b3956168001ce141c30fd324d0bba7efaa7b9fc42d925b93",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-finish-20261116",
+      "entry": "Owner.ps1",
+      "before_sha256": "6a3768013b30149353a29b0650ab3dff95e40ce0854322ee02972f1fa9c561bc",
+      "after_sha256": "1d1a0445c1010957b64ee575d4954c2f96ec3f939721a0238962b99ce3993b66",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-only-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "before_sha256": "24ce30dac6e856c5314d55ea21ef096487f550e97e4bbaf34db8cdf6280f90bb",
+      "after_sha256": "b1b55fbaa9d224f13695cf4dfca90606e8441c8e2ad48f28f0ae708ea4fce49a",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-only-20261116",
+      "entry": "Launch-Once.ps1",
+      "before_sha256": "e7e4dbd87df71aa3d51838fcbbb04eb1204d22c59cb2d7ebea7f997c4a65fdc9",
+      "after_sha256": "e9d5e09c98f1f713b3956168001ce141c30fd324d0bba7efaa7b9fc42d925b93",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-three-only-20261116",
+      "entry": "Owner.ps1",
+      "before_sha256": "6a3768013b30149353a29b0650ab3dff95e40ce0854322ee02972f1fa9c561bc",
+      "after_sha256": "1d1a0445c1010957b64ee575d4954c2f96ec3f939721a0238962b99ce3993b66",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-qualification-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "before_sha256": "24ce30dac6e856c5314d55ea21ef096487f550e97e4bbaf34db8cdf6280f90bb",
+      "after_sha256": "b1b55fbaa9d224f13695cf4dfca90606e8441c8e2ad48f28f0ae708ea4fce49a",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-qualification-20261116",
+      "entry": "Launch-Once.ps1",
+      "before_sha256": "f02b9dc67d91d883ac5f4e8395a25df2e6b5348d6ce90641c0eee6b48c4c66c4",
+      "after_sha256": "f02b9dc67d91d883ac5f4e8395a25df2e6b5348d6ce90641c0eee6b48c4c66c4",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    },
+    {
+      "folder": "c-pointer-qualification-20261116",
+      "entry": "Owner.ps1",
+      "before_sha256": "6a3768013b30149353a29b0650ab3dff95e40ce0854322ee02972f1fa9c561bc",
+      "after_sha256": "1d1a0445c1010957b64ee575d4954c2f96ec3f939721a0238962b99ce3993b66",
+      "before_bytes_preserved_locally": true,
+      "early_guard_present": true
+    }
+  ],
+  "diagnostic_recorders_edited": false,
+  "production_source_modified": false,
+  "node_started": false,
+  "original_database_and_identity_accessed": false,
+  "previous_entry_bytes_preserved": true
+}

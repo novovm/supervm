@@ -1,0 +1,13 @@
+{
+  "utc": "2026-11-15T23:19:13.2345663Z",
+  "node_started": false,
+  "original_database_or_identity_accessed": false,
+  "WER_dump_type": 2,
+  "WER_modified": false,
+  "WER_dump_count": 2,
+  "test_task_count": 0,
+  "test_process_count": 0,
+  "WER_dump_folder_exists": null,
+  "WER_dump_folder_current_read_check": "access denied for current user",
+  "WER_write_test_repeated": false
+}

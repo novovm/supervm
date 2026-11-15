@@ -1,0 +1,81 @@
+{
+  "entries": [
+    {
+      "folder": "c-pointer-three-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-20261116",
+      "entry": "Launch-Once.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-20261116",
+      "entry": "Owner.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-finish-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-finish-20261116",
+      "entry": "Launch-Once.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-finish-20261116",
+      "entry": "Owner.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-only-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-only-20261116",
+      "entry": "Launch-Once.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-three-only-20261116",
+      "entry": "Owner.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-qualification-20261116",
+      "entry": "Invoke-Elevated.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-qualification-20261116",
+      "entry": "Launch-Once.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    },
+    {
+      "folder": "c-pointer-qualification-20261116",
+      "entry": "Owner.ps1",
+      "exit_code": 1,
+      "stopped_at_freeze_guard": true
+    }
+  ],
+  "entry_count": 12,
+  "all_stopped_before_elevation_or_node_actions": true,
+  "test_root_created": false,
+  "test_evidence_created": false,
+  "node_started": false
+}

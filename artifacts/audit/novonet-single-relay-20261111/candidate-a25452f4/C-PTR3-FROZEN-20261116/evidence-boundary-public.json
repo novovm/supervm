@@ -1,0 +1,28 @@
+{
+  "PID44948": {
+    "dump_sha256": "50d0a28a2329ab02731c136d050c08476c2be55178060e0da72595a25d784a41",
+    "hash_reverified": true,
+    "exception": "0xc0000409",
+    "fast_fail_subcode": 7,
+    "raw_table_and_XMM_bytes_match": true,
+    "first_bad_XMM_definition_found": false,
+    "diagnostic_PID43712_history_incorporated": false
+  },
+  "PID43712": {
+    "dump_sha256": "6752ad40c591c2a5e9fde9f8d788ae14150cf08463647173a0b14ff585495ebe",
+    "hash_reverified": true,
+    "exception": "0xc0000005",
+    "invalid_source": "0xbc2520b34e04",
+    "historical_writer_entry_and_reserve_boundary_values_missing": true,
+    "later_normal_calls_exclude_historical_failure": false
+  },
+  "diagnostic_control": {
+    "exit": "0xe0000001",
+    "classification": "controlled termination",
+    "classified_as_NOVOVM_natural_crash": false
+  },
+  "new_root_cause_evidence": false,
+  "first_corrupting_instruction_found": false,
+  "production_fix": false,
+  "double_relay": false
+}
