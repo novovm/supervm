@@ -1,5 +1,11 @@
 # ASAS
 
+Current priority (2026-11-15): usable shared programming first; further token/NOV
+work is deferred. Real Codex completed a small Rust library/CLI, saw failing tests,
+fixed source, compiled and passed five fixed tests plus an independent fresh-input
+check on B's tools in same-device isolation. Daily VS Code and real dual-host
+Claude/Codex acceptance remain unfinished. See [actual coding evidence](docs/CODEX.md).
+
 Product direction: free, authorized shared AI programming services on NOVOVM,
 not primarily a failover tool. Record network bytes and model-token usage without
 charging users or moving NOV. Any optional NOV reference conversion needs an
