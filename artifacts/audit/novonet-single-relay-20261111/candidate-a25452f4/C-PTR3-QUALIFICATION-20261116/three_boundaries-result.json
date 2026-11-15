@@ -1,0 +1,91 @@
+{
+  "native_status": {
+    "individual_inclusive_wall_ms": null,
+    "counter_gaps": [],
+    "snapshot_lags_current_call": true,
+    "counter_snapshot_non_atomic": true,
+    "counter_deltas_require_single_status_producer": true,
+    "includes_debugger_pause_when_attached": true
+  },
+  "three_boundary_capture": {
+    "complete_calls": 1,
+    "events": 3,
+    "incomplete_call": null,
+    "mismatch": false,
+    "target": "String writer/reserve only",
+    "parent_four_points_enabled": false,
+    "source_code_or_binary_modified": false,
+    "maximum_selected_calls": 1,
+    "original_PID43712_execution_replayed": false,
+    "native_stop_resume_timestamps_available": false,
+    "coverage_issues": []
+  },
+  "mode": "three_boundaries",
+  "reason": "report_stall_interference_gate",
+  "error": null,
+  "wall_seconds": 53.40338860003976,
+  "process_exit_codes": {
+    "1": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    },
+    "2": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    },
+    "3": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    },
+    "0": {
+      "unsigned": 3758096385,
+      "hex": "0xe0000001",
+      "signed": -536870911
+    }
+  },
+  "debugger_exit_code": 0,
+  "termination_actions": [
+    "clear_breakpoints_and_detach",
+    "controller_terminated_isolated_node_1",
+    "controller_terminated_isolated_node_2",
+    "controller_terminated_isolated_node_3",
+    "controller_terminated_isolated_node_0"
+  ],
+  "natural_exception_seen": false,
+  "report_intervals_seconds": null,
+  "report_intervals_are_query_latency": false,
+  "entry_to_RET_observation_available": false,
+  "entire_query_duration_without_debugger_delays_available": false,
+  "metrics": {
+    "cpu_seconds_per_wall": 0.009366288564871953,
+    "context_switches_per_second": 201.4526321302166
+  },
+  "boundary_events": 3,
+  "hits_per_point": {},
+  "unfinished_calls": [],
+  "thread_coverage": [],
+  "selected_code_bytes": [
+    {
+      "rva": "0x1e4cc60",
+      "bytes": "55415656575348",
+      "unchanged": true
+    },
+    {
+      "rva": "0x1e4ccb3",
+      "bytes": "e8e8675e004c89",
+      "unchanged": true
+    },
+    {
+      "rva": "0x1e4ccbb",
+      "bytes": "488b5f10ebc3cc",
+      "unchanged": true
+    }
+  ],
+  "first_pointer_boundary_mismatch_observed": false,
+  "original_state_accessed": false,
+  "root_cause_fixed": false,
+  "double_relay": false
+}

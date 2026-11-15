@@ -1,0 +1,1108 @@
+{
+  "phases": [
+    {
+      "mode": "baseline",
+      "reason": "native_time_bound_all_exited",
+      "error": null,
+      "wall_seconds": 92.77757279999787,
+      "exits": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit": null,
+      "termination_actions": [],
+      "status_query_wall_ms": {
+        "n": 12,
+        "p50": 14.397749999999998,
+        "p95": 27.957924999999996,
+        "p99": 30.692305000000005,
+        "max": 31.3759,
+        "small_sample_tail_estimates": true
+      },
+      "query_samples": [
+        {
+          "completed_calls": 6,
+          "query_wall_ms": 6.7701,
+          "report_elapsed_seconds": 31.452125800016802
+        },
+        {
+          "completed_calls": 7,
+          "query_wall_ms": 8.629,
+          "report_elapsed_seconds": 36.47524639999028
+        },
+        {
+          "completed_calls": 8,
+          "query_wall_ms": 13.4888,
+          "report_elapsed_seconds": 41.4899177000043
+        },
+        {
+          "completed_calls": 9,
+          "query_wall_ms": 11.0631,
+          "report_elapsed_seconds": 46.51822450000327
+        },
+        {
+          "completed_calls": 10,
+          "query_wall_ms": 25.1614,
+          "report_elapsed_seconds": 51.55647589999717
+        },
+        {
+          "completed_calls": 11,
+          "query_wall_ms": 31.3759,
+          "report_elapsed_seconds": 56.57416199997533
+        },
+        {
+          "completed_calls": 12,
+          "query_wall_ms": 15.5925,
+          "report_elapsed_seconds": 61.59442909999052
+        },
+        {
+          "completed_calls": 13,
+          "query_wall_ms": 13.7428,
+          "report_elapsed_seconds": 66.62490509997588
+        },
+        {
+          "completed_calls": 14,
+          "query_wall_ms": 24.4875,
+          "report_elapsed_seconds": 71.63876439997694
+        },
+        {
+          "completed_calls": 15,
+          "query_wall_ms": 13.8006,
+          "report_elapsed_seconds": 76.65841159998672
+        },
+        {
+          "completed_calls": 16,
+          "query_wall_ms": 14.9949,
+          "report_elapsed_seconds": 81.6862646000227
+        },
+        {
+          "completed_calls": 17,
+          "query_wall_ms": 24.7309,
+          "report_elapsed_seconds": 86.70202580001205
+        }
+      ],
+      "metrics": {
+        "ticks_per_second": 841.8404528647627,
+        "reported_data_writes_per_second": 15.133613754881804,
+        "cpu_seconds_per_wall": 0.03554938952782852,
+        "context_switches_per_second": 710.5112365780351
+      },
+      "report_intervals_seconds": {
+        "n": 12,
+        "p50": 5.01897125,
+        "p95": 5.032441275,
+        "p99": 5.035198975,
+        "max": 5.0358884,
+        "tail_statistical_claim": false
+      },
+      "debugger_cpu_seconds_per_wall": null,
+      "controller_cpu_seconds_per_wall": 0.13355040930724765,
+      "target_peak_private_bytes": 70250496,
+      "last_load": {
+        "phase": "baseline",
+        "index": 0,
+        "elapsed": 86.70202580001205,
+        "mtime_ns": 1794783492152309600,
+        "ticks": 73876,
+        "objects": 256,
+        "reported_data_writes": 1296,
+        "accepted_data": 304,
+        "evicted": 4,
+        "expired": 0,
+        "transport_present": true,
+        "native_tick_status": {
+          "calls": 17,
+          "wall_ns": 218016900,
+          "max_wall_ns": 31375900
+        },
+        "native_stage_profile_enabled": true
+      },
+      "capture": null,
+      "query_median_change_percent": 0.0,
+      "group_median_does_not_measure_selected_call_only": true
+    },
+    {
+      "mode": "attached",
+      "reason": "native_time_bound_all_exited",
+      "error": null,
+      "wall_seconds": 92.65019299997948,
+      "exits": {
+        "1": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "2": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "3": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        },
+        "0": {
+          "unsigned": 0,
+          "hex": "0x00000000",
+          "signed": 0
+        }
+      },
+      "debugger_exit": 0,
+      "termination_actions": [
+        "controller_terminated_debugger"
+      ],
+      "status_query_wall_ms": {
+        "n": 12,
+        "p50": 24.9922,
+        "p95": 32.391265,
+        "p99": 34.440653000000005,
+        "max": 34.953,
+        "small_sample_tail_estimates": true
+      },
+      "query_samples": [
+        {
+          "completed_calls": 6,
+          "query_wall_ms": 11.508,
+          "report_elapsed_seconds": 30.921043700014707
+        },
+        {
+          "completed_calls": 7,
+          "query_wall_ms": 19.6521,
+          "report_elapsed_seconds": 35.94624349998776
+        },
+        {
+          "completed_calls": 8,
+          "query_wall_ms": 24.2585,
+          "report_elapsed_seconds": 40.96738829999231
+        },
+        {
+          "completed_calls": 9,
+          "query_wall_ms": 25.1657,
+          "report_elapsed_seconds": 45.997269799991045
+        },
+        {
+          "completed_calls": 10,
+          "query_wall_ms": 23.0463,
+          "report_elapsed_seconds": 51.027627900009975
+        },
+        {
+          "completed_calls": 11,
+          "query_wall_ms": 26.5416,
+          "report_elapsed_seconds": 56.070661399979144
+        },
+        {
+          "completed_calls": 12,
+          "query_wall_ms": 23.2228,
+          "report_elapsed_seconds": 61.09904210001696
+        },
+        {
+          "completed_calls": 13,
+          "query_wall_ms": 26.0085,
+          "report_elapsed_seconds": 66.14116539998213
+        },
+        {
+          "completed_calls": 14,
+          "query_wall_ms": 34.953,
+          "report_elapsed_seconds": 71.17152679996798
+        },
+        {
+          "completed_calls": 15,
+          "query_wall_ms": 27.0945,
+          "report_elapsed_seconds": 76.2075681000133
+        },
+        {
+          "completed_calls": 16,
+          "query_wall_ms": 24.8187,
+          "report_elapsed_seconds": 81.23814400000265
+        },
+        {
+          "completed_calls": 17,
+          "query_wall_ms": 30.2953,
+          "report_elapsed_seconds": 86.27471630001673
+        }
+      ],
+      "metrics": {
+        "ticks_per_second": 877.5462489731152,
+        "reported_data_writes_per_second": 14.80797181166412,
+        "cpu_seconds_per_wall": 0.04180005888647134,
+        "context_switches_per_second": 693.1545213196042
+      },
+      "report_intervals_seconds": {
+        "n": 12,
+        "p50": 5.03014385,
+        "p95": 5.038510055,
+        "p99": 5.038920091,
+        "max": 5.0390226,
+        "tail_statistical_claim": false
+      },
+      "debugger_cpu_seconds_per_wall": 0.0078074768515693895,
+      "controller_cpu_seconds_per_wall": 0.1448588247617369,
+      "target_peak_private_bytes": 70455296,
+      "last_load": {
+        "phase": "attached",
+        "index": 0,
+        "elapsed": 86.27471630001673,
+        "mtime_ns": 1794783585157118300,
+        "ticks": 75116,
+        "objects": 256,
+        "reported_data_writes": 1279,
+        "accepted_data": 304,
+        "evicted": 5,
+        "expired": 0,
+        "transport_present": true,
+        "native_tick_status": {
+          "calls": 17,
+          "wall_ns": 330415800,
+          "max_wall_ns": 34953000
+        },
+        "native_stage_profile_enabled": true
+      },
+      "capture": null,
+      "query_median_change_percent": 73.58406695490618,
+      "group_median_does_not_measure_selected_call_only": true
+    },
+    {
+      "mode": "three_boundaries",
+      "reason": "report_stall_interference_gate",
+      "error": null,
+      "wall_seconds": 53.40338860003976,
+      "exits": {
+        "1": {
+          "unsigned": 3758096385,
+          "hex": "0xe0000001",
+          "signed": -536870911
+        },
+        "2": {
+          "unsigned": 3758096385,
+          "hex": "0xe0000001",
+          "signed": -536870911
+        },
+        "3": {
+          "unsigned": 3758096385,
+          "hex": "0xe0000001",
+          "signed": -536870911
+        },
+        "0": {
+          "unsigned": 3758096385,
+          "hex": "0xe0000001",
+          "signed": -536870911
+        }
+      },
+      "debugger_exit": 0,
+      "termination_actions": [
+        "clear_breakpoints_and_detach",
+        "controller_terminated_isolated_node_1",
+        "controller_terminated_isolated_node_2",
+        "controller_terminated_isolated_node_3",
+        "controller_terminated_isolated_node_0"
+      ],
+      "status_query_wall_ms": null,
+      "query_samples": [],
+      "metrics": {
+        "cpu_seconds_per_wall": 0.009366288564871953,
+        "context_switches_per_second": 201.4526321302166
+      },
+      "report_intervals_seconds": null,
+      "debugger_cpu_seconds_per_wall": 0.022636839702284025,
+      "controller_cpu_seconds_per_wall": 0.134250136096498,
+      "target_peak_private_bytes": 67923968,
+      "last_load": {
+        "phase": "three_boundaries",
+        "index": 0,
+        "elapsed": 25.97138930001529,
+        "mtime_ns": 1794783618193622500,
+        "ticks": 22849,
+        "objects": 89,
+        "reported_data_writes": 385,
+        "accepted_data": 103,
+        "evicted": 0,
+        "expired": 0,
+        "transport_present": true,
+        "native_tick_status": {
+          "calls": 5,
+          "wall_ns": 33177800,
+          "max_wall_ns": 11545500
+        },
+        "native_stage_profile_enabled": true
+      },
+      "capture": {
+        "complete_calls": 1,
+        "events": 3,
+        "incomplete_call": null,
+        "mismatch": false,
+        "target": "String writer/reserve only",
+        "parent_four_points_enabled": false,
+        "source_code_or_binary_modified": false,
+        "maximum_selected_calls": 1,
+        "original_PID43712_execution_replayed": false,
+        "native_stop_resume_timestamps_available": false,
+        "coverage_issues": []
+      },
+      "query_median_change_percent": null,
+      "group_median_does_not_measure_selected_call_only": true
+    }
+  ],
+  "events": [
+    {
+      "matching_enabled_physical_slots": [
+        0
+      ],
+      "point": 0,
+      "tid": 6612,
+      "call_id": 1,
+      "entry_rsp": "0xcdeeeee548",
+      "rsp": "0xcdeeeee548",
+      "rbp": "0xcdeeeee590",
+      "rdx": "0xcdeeeee58e",
+      "r14": "0x7ff668b2cc60",
+      "r8": 2,
+      "receiver": "0xcdeeeee660",
+      "return_address": "0x7ff668b30359",
+      "expected_two_digit_source": "0xcdeeeee58e",
+      "dr": [
+        "0x7ff668b2cc60",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x401",
+      "controller_log_observed_ns": 394071119242800,
+      "kernel_stop_resume_timestamps_available": false
+    },
+    {
+      "matching_enabled_physical_slots": [
+        0
+      ],
+      "point": 1,
+      "tid": 6612,
+      "call_id": 1,
+      "entry_rsp": "0xcdeeeee548",
+      "rsp": "0xcdeeeee500",
+      "rbp": "0xcdeeeee520",
+      "rdx": "0x0",
+      "r14": "0xcdeeeee58e",
+      "r8": 2,
+      "receiver": "0xcdeeeee660",
+      "return_address": "0x7ff668b30359",
+      "expected_two_digit_source": "0xcdeeeee58e",
+      "dr": [
+        "0x7ff668b2ccb3",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x401",
+      "controller_log_observed_ns": 394071119255800,
+      "kernel_stop_resume_timestamps_available": false
+    },
+    {
+      "matching_enabled_physical_slots": [
+        0
+      ],
+      "point": 2,
+      "tid": 6612,
+      "call_id": 1,
+      "entry_rsp": "0xcdeeeee548",
+      "rsp": "0xcdeeeee500",
+      "rbp": "0xcdeeeee520",
+      "rdx": "0xcdeeeee58e",
+      "r14": "0xcdeeeee58e",
+      "r8": null,
+      "receiver": "0xcdeeeee660",
+      "return_address": "0x7ff668b30359",
+      "expected_two_digit_source": "0xcdeeeee58e",
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x401",
+      "controller_log_observed_ns": 394071137140700,
+      "kernel_stop_resume_timestamps_available": false,
+      "volatile_R8_omitted": true
+    }
+  ],
+  "calls": [
+    {
+      "call_id": 1,
+      "tid": 6612,
+      "entry_rsp": "0xcdeeeee548",
+      "receiver": "0xcdeeeee660",
+      "points": [
+        0,
+        1,
+        2
+      ],
+      "writer_source_matches_numeric_buffer": true,
+      "R14_before_reserve_matches_entry_source": true,
+      "R14_after_reserve_matches_before": true,
+      "RDX_after_restore_matches_R14": true,
+      "only_one_selected_call": true,
+      "unobserved_calls_remain": true
+    }
+  ],
+  "thread_states": [
+    {
+      "stage": "ARMED",
+      "tid": 31048,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 18184,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 29124,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 18176,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 6612,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 30156,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 37184,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 25580,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 30060,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 8632,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 23688,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 30656,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 39304,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 11296,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 42940,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 3956,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 32312,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 29488,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 40520,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 43288,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 25220,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 25784,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 43528,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "ARMED",
+      "tid": 32748,
+      "enabled_slots": [],
+      "dr": [
+        "0x0",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x0"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 31048,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 18184,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 29124,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 18176,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 6612,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x401"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 30156,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 37184,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 25580,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 30060,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 8632,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 23688,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 30656,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 39304,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 11296,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 42940,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 3956,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 32312,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 29488,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 40520,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 43288,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 25220,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 25784,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    },
+    {
+      "stage": "CLEARED",
+      "tid": 43528,
+      "enabled_slots": [
+        0
+      ],
+      "dr": [
+        "0x7ff668b2ccbb",
+        "0x0",
+        "0x0",
+        "0x0"
+      ],
+      "dr7": "0x1"
+    }
+  ],
+  "thread_counts": {
+    "ARMED": 24,
+    "CLEARED": 23,
+    "CREATED": 0
+  },
+  "coverage_issues": [],
+  "new_thread_events_observed": 0,
+  "new_thread_inheritance_fully_verified": false,
+  "actual_debugger_stop_resume_timestamps_available": false,
+  "native_scheduler_CSwitch_timeline_available": false,
+  "measured_full_query_duration_available": false,
+  "historical_PID43712_failure_replayed": false,
+  "first_bad_pointer_boundary": null,
+  "qualifies_for_long_observation": false,
+  "original_state_accessed": false,
+  "production_fix": false,
+  "double_relay": false,
+  "collection_finished": {
+    "automatic_restart": false,
+    "original_state_accessed": false,
+    "original_wer_modified": false,
+    "raw_data_local_only": true,
+    "utc": "2026-11-15T23:01:03.2382372Z"
+  },
+  "owner_exit": {
+    "account": "S-1-5-19",
+    "exit_code": 0,
+    "utc": "2026-11-15T23:00:45.8950036Z"
+  },
+  "capture_query_interference_complete": false,
+  "scheduler_information": "process context-switch counts and thread CPU accounting only",
+  "status_snapshots_before_capture_count": null,
+  "DR_snapshot_armed_observed_before_first_resume": true,
+  "DR_snapshot_cleared_observed_before_resuming_after_disable": true,
+  "snapshot_labels_do_not_prove_all_threads_hardware_programmed_or_cleared": true
+}

@@ -1,0 +1,9 @@
+{
+  "old_real_event_lines_replayed": 3,
+  "logical_slot_ID_not_assumed": true,
+  "missing_DR3_field_compatibility_value": 0,
+  "actual_DR3_at_hit_not_reconstructed": true,
+  "corrected_callback_runtime_validated": false,
+  "thread_snapshot_moved_to_file": true,
+  "coverage_issue_does_not_raise": true
+}

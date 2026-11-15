@@ -1,0 +1,21 @@
+{
+  "utc": "2026-11-15T23:05:32.936308+00:00",
+  "qualifies_for_long_observation": false,
+  "full_capture_query_timing_missing": true,
+  "exact_debugger_pause_time_missing": true,
+  "new_thread_inheritance_unverified": true,
+  "observed_attached_group_median_change_percent": 73.58406695490618,
+  "capture_ended_by_stall_guard": true,
+  "diagnostic_callback_tail_failure_proven_by_offline_existing_dump": true,
+  "corrected_callback_runtime_tested": false,
+  "physical_slot_fix_passed_current_call": true,
+  "first_pointer_corruption_found": false,
+  "production_fix": false,
+  "double_relay": false,
+  "old_evidence_preserved": true,
+  "task_removed": true,
+  "test_wer_rule_removed": true,
+  "owned_processes": 0,
+  "original_database_and_identity_accessed": false,
+  "native_WER_full_dump_remains_future_natural_failure_evidence_source": true
+}

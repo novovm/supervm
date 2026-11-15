@@ -1,0 +1,9 @@
+{
+  "existing_raw_log_replayed": true,
+  "event_count": 3,
+  "complete_call_count": 1,
+  "all_actual_slots_zero": true,
+  "coverage_issues": 0,
+  "target_started": false,
+  "previous_failed_log_preserved": true
+}
