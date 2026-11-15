@@ -1,0 +1,146 @@
+{
+  "utc": "2026-11-15T14:49:26.231671+00:00",
+  "phases": [
+    {
+      "mode": "baseline",
+      "reason": "native_time_bound_all_exited",
+      "error": null,
+      "wall_seconds": 122.78572670003632,
+      "exits": [
+        {
+          "index": 1,
+          "pid": 15288,
+          "exit_code": 0,
+          "exit_hex": "0x00000000",
+          "forced_by_controller": false
+        },
+        {
+          "index": 2,
+          "pid": 31168,
+          "exit_code": 0,
+          "exit_hex": "0x00000000",
+          "forced_by_controller": false
+        },
+        {
+          "index": 3,
+          "pid": 27084,
+          "exit_code": 0,
+          "exit_hex": "0x00000000",
+          "forced_by_controller": false
+        },
+        {
+          "index": 0,
+          "pid": 29824,
+          "exit_code": 0,
+          "exit_hex": "0x00000000",
+          "forced_by_controller": false
+        }
+      ],
+      "status_ms": {
+        "n": 23,
+        "p50": 13.4349,
+        "p95": 27.24159,
+        "p99": 37.46017800000001,
+        "max": 40.3191
+      },
+      "ticks_per_second": 699.6789355505355,
+      "last_progress": {
+        "mode": "baseline",
+        "utc": "2026-11-15T14:48:41.802106+00:00",
+        "elapsed": 117.17803100001765,
+        "ticks": 81987,
+        "objects": 256,
+        "evicted": 109,
+        "expired": 0,
+        "reported_data_writes": 1707,
+        "accepted_data": 390,
+        "native_tick_status": {
+          "calls": 23,
+          "wall_ns": 374747800,
+          "max_wall_ns": 40319100
+        }
+      },
+      "trace": null,
+      "qualification_passed": false,
+      "original_state_accessed": false,
+      "root_cause_fixed": false
+    },
+    {
+      "mode": "guard",
+      "reason": "natural_nonzero_exit",
+      "error": null,
+      "wall_seconds": 38.17478170001414,
+      "exits": [
+        {
+          "index": 1,
+          "pid": 27940,
+          "exit_code": 1,
+          "exit_hex": "0x00000001",
+          "forced_by_controller": true
+        },
+        {
+          "index": 2,
+          "pid": 41644,
+          "exit_code": 1,
+          "exit_hex": "0x00000001",
+          "forced_by_controller": true
+        },
+        {
+          "index": 3,
+          "pid": 12208,
+          "exit_code": 1,
+          "exit_hex": "0x00000001",
+          "forced_by_controller": true
+        },
+        {
+          "index": 0,
+          "pid": 43712,
+          "exit_code": 3221225477,
+          "exit_hex": "0xc0000005",
+          "forced_by_controller": false
+        }
+      ],
+      "status_ms": {
+        "n": 5,
+        "p50": 3.3203,
+        "p95": 8.710799999999999,
+        "p99": 9.676720000000001,
+        "max": 9.9182
+      },
+      "ticks_per_second": 771.2020942790485,
+      "last_progress": {
+        "mode": "guard",
+        "utc": "2026-11-15T14:49:14.495840+00:00",
+        "elapsed": 26.43665020004846,
+        "ticks": 20388,
+        "objects": 91,
+        "evicted": 0,
+        "expired": 0,
+        "reported_data_writes": 391,
+        "accepted_data": 103,
+        "native_tick_status": {
+          "calls": 5,
+          "wall_ns": 20336700,
+          "max_wall_ns": 9918200
+        }
+      },
+      "trace": {
+        "total_events": 1748,
+        "frozen": false,
+        "retained_events": 1748,
+        "overwritten_events": 0,
+        "complete_parent_calls_in_retained_window": 6,
+        "orphan_events": 0,
+        "first_bad": null
+      },
+      "qualification_passed": false,
+      "original_state_accessed": false,
+      "root_cause_fixed": false
+    }
+  ],
+  "vector_mismatch_observed": false,
+  "first_corrupting_instruction_proven": false,
+  "root_cause_fixed": false,
+  "double_relay": false,
+  "original_state_accessed": false
+}

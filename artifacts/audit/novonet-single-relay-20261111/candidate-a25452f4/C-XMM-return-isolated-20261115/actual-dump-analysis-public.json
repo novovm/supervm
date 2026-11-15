@@ -1,0 +1,229 @@
+{
+  "pid": 43712,
+  "dump_bytes": 211899968,
+  "dump_sha256": "6752ad40c591c2a5e9fde9f8d788ae14150cf08463647173a0b14ff585495ebe",
+  "full_memory": true,
+  "threads": 23,
+  "memory_ranges": 403,
+  "exception_code": "0xc0000005",
+  "exception_thread": 15828,
+  "fault_address": "0x7ffcb1d41268",
+  "fault_module": "VCRUNTIME140.dll",
+  "fault_rva": "0x11268",
+  "access_parameters": [
+    "0x0",
+    "0xffffffffffffffff"
+  ],
+  "registers": {
+    "rax": "0x2124b61cd20",
+    "rbx": "0x0",
+    "rcx": "0x2124b61cd20",
+    "rdx": "0xbc2520b34e04",
+    "rsp": "0xf3bd3ee6f8",
+    "rbp": "0xf3bd3ee720",
+    "rsi": "0x2",
+    "rdi": "0xf3bd3ee860",
+    "r8": "0x2",
+    "r9": "0x7ffcb1d41268",
+    "r10": "0x7ffcb1d30000",
+    "r11": "0x37",
+    "rip": "0x7ffcb1d41268"
+  },
+  "trace": {
+    "total_events": 1748,
+    "frozen": false,
+    "retained_events": 1748,
+    "overwritten_events": 0,
+    "complete_parent_calls_in_retained_window": 6,
+    "orphan_events": 0,
+    "first_bad": null
+  },
+  "tail_records": [
+    {
+      "sequence": 1737,
+      "checkpoint_rva": "0x77781a",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1738,
+      "checkpoint_rva": "0x7778b2",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1739,
+      "checkpoint_rva": "0x777922",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1740,
+      "checkpoint_rva": "0x777931",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1741,
+      "checkpoint_rva": "0x77796d",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1742,
+      "checkpoint_rva": "0x77797c",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1743,
+      "checkpoint_rva": "0x7779a4",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1744,
+      "checkpoint_rva": "0x7779e8",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1745,
+      "checkpoint_rva": "0x777a80",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1746,
+      "checkpoint_rva": "0x777aeb",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1747,
+      "checkpoint_rva": "0x777b56",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    },
+    {
+      "sequence": 1748,
+      "checkpoint_rva": "0x777b65",
+      "kind": 2,
+      "tid": 15828,
+      "rsp": "0xf3bd3ef0e0",
+      "rbp": "0xf3bd3ef160",
+      "mismatch": false,
+      "call_instance_entry_sequence": 1507
+    }
+  ],
+  "first_corrupting_instruction_proven": false,
+  "independent_raw_vector_matches": 1748,
+  "event_sequences_contiguous": true,
+  "active_call": {
+    "entry_sequence": 1507,
+    "tid": 15828,
+    "rsp": "0xf3bd3ef0e0",
+    "rbp": "0xf3bd3ef160",
+    "event_count": 242,
+    "completed_to_archive_marker": false,
+    "last_sequence": 1748,
+    "last_checkpoint_rva": "0x777b65"
+  },
+  "last_normal_return_rva": "0x777b65",
+  "next_unreturned_parent_call_rva": "0x777bb4",
+  "next_unreturned_parent_target_rva": "0x75c4a0",
+  "status_saved_return_rva": "0x777bb9",
+  "fault_instruction": "movzx ecx, word ptr [rdx]",
+  "source_pointer_from_context": "0xbc2520b34e04",
+  "copy_length_from_context": 2,
+  "unchanged_callee_code_checks": [
+    {
+      "sample_rva": "0x1e1cc93",
+      "function_start": "0x1e1bb00",
+      "function_end": "0x1e1da8d",
+      "same_original_a254_code": true,
+      "bytes": 8077,
+      "sha256": "decc473fa24e6e27fb4bdc7f6bfd5191c3fdbc3b227a3718cefd012e71ba34f1"
+    },
+    {
+      "sample_rva": "0x1e20359",
+      "function_start": "0x1e1f0f0",
+      "function_end": "0x1e22387",
+      "same_original_a254_code": true,
+      "bytes": 12951,
+      "sha256": "ecb86d94143b3afd3e23cff2b2735b6a91a1c252e4dc4f2b2b52db8de04dbebc"
+    },
+    {
+      "sample_rva": "0x1e224e1",
+      "function_start": "0x1e22430",
+      "function_end": "0x1e24d4b",
+      "same_original_a254_code": true,
+      "bytes": 10523,
+      "sha256": "cf556450deddf86da8300d71da6d9741e8b5443826544328b977e700d53ed3ba"
+    },
+    {
+      "sample_rva": "0x1e1cf9f",
+      "function_start": "0x1e1bb00",
+      "function_end": "0x1e1da8d",
+      "same_original_a254_code": true,
+      "bytes": 8077,
+      "sha256": "decc473fa24e6e27fb4bdc7f6bfd5191c3fdbc3b227a3718cefd012e71ba34f1"
+    },
+    {
+      "sample_rva": "0x7614af",
+      "function_start": "0x75c4a0",
+      "function_end": "0x76330f",
+      "same_original_a254_code": true,
+      "bytes": 28271,
+      "sha256": "6cc2bd586d00f17d062136bcfba70665e8b33167a31927f168fac9022b713b82"
+    }
+  ],
+  "diagnostic_influence_excluded": false,
+  "original_fault_same_root_proven": false,
+  "node_loaded_from_isolation_directory": true,
+  "aoem_loaded_from_isolation_directory": true
+}

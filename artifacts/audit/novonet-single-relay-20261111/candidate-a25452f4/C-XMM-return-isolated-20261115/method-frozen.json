@@ -1,0 +1,8 @@
+{
+  "utc": "2026-11-15T15:01:52.3166014Z",
+  "state": "frozen_after_one_isolated_attempt",
+  "reason": "diagnostic target access violation before the 120-second interference gate",
+  "actual_exit": "0xc0000005",
+  "original_fault_same_root_proven": false,
+  "no_automatic_retry": true
+}

@@ -1,0 +1,62 @@
+{
+  "baseline": {
+    "samples": 24,
+    "first": {
+      "mode": "baseline",
+      "elapsed": 0.7677877999958582,
+      "cpu_seconds": 0.0,
+      "private_bytes": 1003520,
+      "working_set": 3645440,
+      "threads": 1,
+      "context_switches": {
+        "voluntary": 6,
+        "involuntary": 0
+      }
+    },
+    "last": {
+      "mode": "baseline",
+      "elapsed": 117.68845370004419,
+      "cpu_seconds": 4.078125,
+      "private_bytes": 72105984,
+      "working_set": 90542080,
+      "threads": 26,
+      "context_switches": {
+        "voluntary": 76269,
+        "involuntary": 0
+      }
+    },
+    "peak_sampled_private_bytes": 73154560,
+    "peak_sampled_working_set": 90759168,
+    "peak_sampled_threads": 29
+  },
+  "guard": {
+    "samples": 8,
+    "first": {
+      "mode": "guard",
+      "elapsed": 0.8339376000221819,
+      "cpu_seconds": 0.0,
+      "private_bytes": 3121152,
+      "working_set": 3645440,
+      "threads": 1,
+      "context_switches": {
+        "voluntary": 5,
+        "involuntary": 0
+      }
+    },
+    "last": {
+      "mode": "guard",
+      "elapsed": 36.326113300048746,
+      "cpu_seconds": 1.21875,
+      "private_bytes": 71823360,
+      "working_set": 211812352,
+      "threads": 23,
+      "context_switches": {
+        "voluntary": 20572,
+        "involuntary": 0
+      }
+    },
+    "peak_sampled_private_bytes": 73203712,
+    "peak_sampled_working_set": 211812352,
+    "peak_sampled_threads": 23
+  }
+}

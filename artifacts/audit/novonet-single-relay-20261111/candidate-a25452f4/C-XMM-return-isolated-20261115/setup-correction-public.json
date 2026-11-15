@@ -1,0 +1,8 @@
+{
+  "failed_utc": "2026-11-15T14:44:04.8364357Z",
+  "failure": "Copied historical identity-helper path did not exist",
+  "node_started_in_failed_setup": false,
+  "corrected_helper_sha256": "271405511e72b78e4026f31506139818e4eba5317e69b3e5ac40df609d2caf73",
+  "correction": "Verified actual existing helper path and hash before creating the next isolation root",
+  "failed_setup_preserved": true
+}

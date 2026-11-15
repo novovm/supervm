@@ -1,0 +1,18 @@
+{
+  "utc": "2026-11-15T14:46:34.6586921Z",
+  "TTD": false,
+  "PT": false,
+  "debugger": false,
+  "baseline_seconds": 120,
+  "original_wer_modified": false,
+  "guard_native_seconds": 1200,
+  "native_stage_timing_both_groups": true,
+  "return_sites": 279,
+  "new_test_identities": true,
+  "original_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "diagnostic_sha256": "a1a1f1f7fe5434065988a5a5c81fbb92080a9a6efae7afa9e283a0830b7f30b9",
+  "skipped_return_sites": 47,
+  "loopback_only": true,
+  "original_state_accessed": false,
+  "automatic_restart": false
+}

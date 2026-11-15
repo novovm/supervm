@@ -1,0 +1,64 @@
+{
+  "mode": "baseline",
+  "reason": "native_time_bound_all_exited",
+  "error": null,
+  "wall_seconds": 122.78572670003632,
+  "exits": [
+    {
+      "index": 1,
+      "pid": 15288,
+      "exit_code": 0,
+      "exit_hex": "0x00000000",
+      "forced_by_controller": false
+    },
+    {
+      "index": 2,
+      "pid": 31168,
+      "exit_code": 0,
+      "exit_hex": "0x00000000",
+      "forced_by_controller": false
+    },
+    {
+      "index": 3,
+      "pid": 27084,
+      "exit_code": 0,
+      "exit_hex": "0x00000000",
+      "forced_by_controller": false
+    },
+    {
+      "index": 0,
+      "pid": 29824,
+      "exit_code": 0,
+      "exit_hex": "0x00000000",
+      "forced_by_controller": false
+    }
+  ],
+  "status_ms": {
+    "n": 23,
+    "p50": 13.4349,
+    "p95": 27.24159,
+    "p99": 37.46017800000001,
+    "max": 40.3191
+  },
+  "ticks_per_second": 699.6789355505355,
+  "last_progress": {
+    "mode": "baseline",
+    "utc": "2026-11-15T14:48:41.802106+00:00",
+    "elapsed": 117.17803100001765,
+    "ticks": 81987,
+    "objects": 256,
+    "evicted": 109,
+    "expired": 0,
+    "reported_data_writes": 1707,
+    "accepted_data": 390,
+    "native_tick_status": {
+      "calls": 23,
+      "wall_ns": 374747800,
+      "max_wall_ns": 40319100
+    }
+  },
+  "trace": null,
+  "qualification_passed": false,
+  "original_state_accessed": false,
+  "root_cause_fixed": false
+}
