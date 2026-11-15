@@ -1,0 +1,90 @@
+{
+  "utc": "2026-11-15T04:13:13.6025678Z",
+  "events": [
+    {
+      "utc": "2026-11-13T12:23:01.1665753Z",
+      "Id": 19,
+      "RecordId": 110869,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-11-13T12:05:18.8470191Z",
+      "Id": 19,
+      "RecordId": 110868,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-10-07T13:58:03.1471200Z",
+      "Id": 19,
+      "RecordId": 101136,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-10-06T03:42:00.8232836Z",
+      "Id": 19,
+      "RecordId": 100948,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-08-28T15:51:20.7128819Z",
+      "Id": 19,
+      "RecordId": 95069,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-08-15T17:11:24.4640032Z",
+      "Id": 19,
+      "RecordId": 90954,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-08-15T17:07:21.4485715Z",
+      "Id": 19,
+      "RecordId": 90952,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-08-14T23:21:10.9531186Z",
+      "Id": 19,
+      "RecordId": 90830,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-08-14T17:39:26.7661356Z",
+      "Id": 19,
+      "RecordId": 90800,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-08-09T10:26:08.5895819Z",
+      "Id": 19,
+      "RecordId": 89019,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-05-27T12:35:12.2424365Z",
+      "Id": 19,
+      "RecordId": 76638,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-05-27T04:53:19.5182095Z",
+      "Id": 19,
+      "RecordId": 76623,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-05-22T07:43:11.5607072Z",
+      "Id": 19,
+      "RecordId": 76280,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    },
+    {
+      "utc": "2026-05-08T14:41:08.0277342Z",
+      "Id": 19,
+      "RecordId": 72957,
+      "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+    }
+  ],
+  "count": 14
+}

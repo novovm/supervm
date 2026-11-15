@@ -1,0 +1,42 @@
+{
+  "original_identity_used": false,
+  "fresh_generated": true,
+  "key_files": [
+    {
+      "sha256": "60D44F0CA1BA23A216D2EF68FC440FF84E07054ED01B5CD28880AD952B545A40",
+      "file": "test-transport-0.sealed"
+    },
+    {
+      "sha256": "AD63055D5D6DF58F75518F7C9E4003804F4845C48A2E5D088820C3D831BAB62D",
+      "file": "test-transport-1.sealed"
+    },
+    {
+      "sha256": "573F0A99EC78F7B8E74266DCD414C6F7FA46AE3030DE5D964191E2B5B1D1663A",
+      "file": "test-transport-2.sealed"
+    },
+    {
+      "sha256": "06CA8C490A7396598841B5081E914B11399ED91F83963AF265D2781A993DF84B",
+      "file": "test-transport-3.sealed"
+    },
+    {
+      "sha256": "E5433A7BBDC1870EBF354723182FFF3522B2D4A746C8C3EB09A593CFCCDB4FEB",
+      "file": "test-validator-0.sealed"
+    },
+    {
+      "sha256": "6682AF1DD1D64741E4F00459F57F60CF632735BE6A7FDC3DDCB8F9BBC355CF29",
+      "file": "test-validator-1.sealed"
+    },
+    {
+      "sha256": "0524C8332328BB8E1920B3AC2CD36C0A031CD618E9B2247A49B9F5A373055E87",
+      "file": "test-validator-2.sealed"
+    },
+    {
+      "sha256": "281BCB20ADB560D2679479227A5F2D3AB495BDDB3256D0077ADF7438486AE9FF",
+      "file": "test-validator-3.sealed"
+    }
+  ],
+  "sid": "S-1-5-19",
+  "chain_id": 51420261114,
+  "prepare_mode_only": true,
+  "utc": "2026-11-15T04:13:18.6675595Z"
+}

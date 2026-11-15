@@ -12,3 +12,6 @@ At publication: UAC requested; execution outcome pending. Do not call this run s
 
 ## Launch outcome
 Windows UAC returned user-cancelled before creating the elevated process. No run2 BASE node, test identity or database was started/created by this entry. No automatic retry. The 75-minute experiment remains pending Windows confirmation; this is not a node failure.
+
+## Authorized UAC reissue: actual start
+After the user requested a fresh UAC prompt, the same verified entry started once at2026-11-15T04:13:19Z (Beijing12:13:19). Target PID3848; peers17852/34900/23988. Fresh LocalService preparation exit0. Actual loopback traffic recorded. Maximum node boundary approximately Beijing13:28:09; terminal outcome pending. This supersedes only the cancelled-launch status, not its preserved evidence.

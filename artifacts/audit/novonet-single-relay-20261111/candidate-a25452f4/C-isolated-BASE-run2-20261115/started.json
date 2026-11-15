@@ -1,0 +1,46 @@
+{
+  "workers": 1,
+  "batch_size": 1,
+  "report_interval_ms": 5000,
+  "sid": "S-1-5-19",
+  "double_relay": false,
+  "aoem_sha256": "5743F5875131330F8C8FEC58CDC2A85AA39DC6E9689358609A5F0A09A01C0D52",
+  "utc": "2026-11-15T04:13:19.9673672Z",
+  "nodes": [
+    {
+      "created": "2026-11-15T04:13:19.5953461Z",
+      "pid": 17852,
+      "index": 1
+    },
+    {
+      "created": "2026-11-15T04:13:19.6178234Z",
+      "pid": 34900,
+      "index": 2
+    },
+    {
+      "created": "2026-11-15T04:13:19.7388091Z",
+      "pid": 23988,
+      "index": 3
+    },
+    {
+      "created": "2026-11-15T04:13:19.8638057Z",
+      "pid": 3848,
+      "index": 0
+    }
+  ],
+  "node_sha256": "1758E4A79DD34D1688D8F7BF4B60F46ED9CED518186F42FDB16BAF04C0D0C46D",
+  "original_state_accessed": false,
+  "controller_stop_seconds": 4490,
+  "native_run_ms": 4480000,
+  "ports": [
+    49330,
+    49331,
+    49332,
+    49333,
+    49334,
+    49335,
+    49336,
+    49337
+  ],
+  "debugger": false
+}
