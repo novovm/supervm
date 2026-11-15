@@ -18,6 +18,7 @@ anyhow = "1"
 base64 = "0.22"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 novovm-network = { path = "../novovm-network" }
+novovm-asas-plugin = { path = "../plugins/asas" }
 novovm-exec = { path = "../novovm-exec" }
 rand = "0.8"
 rustls = "0.23.45"

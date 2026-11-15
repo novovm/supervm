@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/
+config.json
+*.pem
+*.key
+*.tgz

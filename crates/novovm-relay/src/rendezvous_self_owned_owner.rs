@@ -56,6 +56,7 @@ enum FailureStage {
     Activate,
     Publish,
     TransportRun,
+    AsasPlugin,
 }
 impl std::fmt::Display for FailureStage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -717,10 +718,60 @@ impl Owner {
         )
         .context(FailureStage::StatusWrite);
         let result = match started {
-            Ok(()) => self.run_inner(stop).await,
+            Ok(()) => self.run_with_asas(stop).await,
             Err(error) => Err(error),
         };
         evidence.finish(result)
+    }
+
+    async fn run_with_asas(self, stop: Arc<AtomicBool>) -> Result<()> {
+        let path = self.policy.config.root.join("asas.json");
+        // Existing nodes with no explicit ASAS selection retain their exact
+        // network, custody and service behavior. No new public listener.
+        if !path.try_exists()? {
+            return self.run_inner(stop).await;
+        }
+        let root = self.policy.config.root.clone();
+        let status = |phase: &str| -> Result<()> {
+            atomic(
+                &root.join("asas-status.json"),
+                &serde_json::to_vec(&serde_json::json!({
+                    "version":1,"phase":phase,"remoteRouteReady":false,"inferenceVerified":false
+                }))?,
+            )
+            .context(FailureStage::AsasPlugin)
+        };
+        let start = async {
+            let plugin: novovm_asas_plugin::Config =
+                serde_json::from_slice(&read_bounded(&path, 64 * 1024)?)?;
+            novovm_asas_plugin::Worker::start(&plugin).await
+        }
+        .await;
+        let mut worker = match start {
+            Ok(worker) => worker,
+            Err(_) => {
+                // Application failure cannot take down unrelated L3 mailbox,
+                // node identity, or transport services.
+                status("failed_closed")?;
+                return self.run_inner(stop).await;
+            }
+        };
+        status("local_worker_ready")?;
+        let run = self.run_inner(stop.clone());
+        tokio::pin!(run);
+        let result = tokio::select! {
+            result = &mut run => result,
+            _ = worker.unexpected_exit() => {
+                status("failed_closed")?;
+                return run.await;
+            }
+        };
+        if worker.shutdown().await.is_ok() {
+            status("stopped")?;
+        } else {
+            status("failed_closed")?;
+        }
+        result
     }
 
     fn activate_book(
@@ -1529,6 +1580,33 @@ mod tests {
         // A similar-looking message is not promoted to an IO or timeout class.
         let untyped = FailureEvidence::from_error(&anyhow::anyhow!("permission denied timeout"));
         assert_eq!(untyped.kind, FailureKind::Other);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn asas_invalid_configuration_preserves_original_l3_owner_and_failure() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let owner = fixture.provision()?;
+        let root = &fixture.0.root;
+        let identities =
+            [KEYS_FILE, POLICY_FILE].map(|name| std::fs::read(root.join(name)).unwrap());
+        atomic(&root.join("asas.json"), b"not valid json")?;
+        // Stop at the original mailbox boundary rather than opening a network.
+        std::fs::create_dir(root.join("mailbox.sqlite"))?;
+        owner
+            .run(Arc::new(AtomicBool::new(false)))
+            .await
+            .unwrap_err();
+        let plugin: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("asas-status.json"))?)?;
+        assert_eq!(plugin["phase"], "failed_closed");
+        assert_eq!(plugin["remoteRouteReady"], false);
+        let original: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("last-failure.json"))?)?;
+        assert_eq!(original["failure"]["stage"], "mailbox_open");
+        for (index, name) in [KEYS_FILE, POLICY_FILE].iter().enumerate() {
+            assert_eq!(std::fs::read(root.join(name))?, identities[index]);
+        }
         Ok(())
     }
 

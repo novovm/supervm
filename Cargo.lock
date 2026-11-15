@@ -2910,6 +2910,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "novovm-asas-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "novovm-bench"
 version = "0.1.0"
 dependencies = [
@@ -3134,6 +3145,7 @@ dependencies = [
  "hkdf 0.12.4",
  "libc",
  "mio",
+ "novovm-asas-plugin",
  "novovm-consensus",
  "novovm-exec",
  "novovm-network",
