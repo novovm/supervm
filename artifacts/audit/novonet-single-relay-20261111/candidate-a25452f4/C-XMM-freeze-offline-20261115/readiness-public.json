@@ -1,0 +1,26 @@
+{
+  "double_relay": false,
+  "new_node_started": false,
+  "utc": "2026-11-15T09:40:22.5661828Z",
+  "WPR": {
+    "exit_code": 0,
+    "output": "\nMicrosoft Windows Performance Recorder Version 10.0.26100 (CoreSystem)\nCopyright (c) 2024 Microsoft Corporation. All rights reserved.\n\nWPR is not recording"
+  },
+  "cpu": {
+    "name": "Intel(R) Core(TM) i9-14900HX",
+    "logical_processors": 32
+  },
+  "processes": [],
+  "windows": {
+    "display_version": "26H2",
+    "build": "26300",
+    "ubr": 9974
+  },
+  "original_state_opened": false,
+  "original_WER": {
+    "DumpType": 2,
+    "current_write_probe_performed": false,
+    "DumpCount": 2,
+    "DumpFolder": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\NOVOVM-Full-C-20261114T074716Z"
+  }
+}

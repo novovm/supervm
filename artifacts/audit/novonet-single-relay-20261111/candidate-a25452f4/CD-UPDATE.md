@@ -1,6 +1,17 @@
 # a25452f4: approved existing updates, then real double relay
 
 
+## C回传 2026-11-15：断点入口冻结，Clone局部XMM7流及PT旧资格复核
+
+四点/入口计时两套本机启动器增加冻结标记守卫，历史证据保留。
+只读查无节点/CDB；原WER Full Dump=2、Count=2保留，当前没有自然故障等待任务。
+Clone中XMM7的+0x2b0值先存RBP+0x10，0x15a5c7d分支再临时取XMM14，
+最终调用者值从RBP+0x210恢复；局部副本与调用者保存槽分别核对。
+同次255记录的四处来源均未匹配坏向量，最终状态不能排除历史输入变化。
+CPUID宣告PT支持，既有PT已采集解码，但异常尾部/状态关联资格仍失败；没有新录制。
+详见[C-XMM-freeze-offline-20261115/README.md](C-XMM-freeze-offline-20261115/README.md)。
+首次破坏仍未定位；原库身份和现场保留，双中继暂停。
+
 ## C回传 2026-11-15：三组完整status实测结束，当前计时方案不进入长跑
 
 重新UAC后执行原a254＋AOEM966三组短时隔离，统一启用原生stage计时。

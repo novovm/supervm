@@ -1,0 +1,27 @@
+{
+  "frozen_scopes": [
+    "c-xmm-fourpoint-20261115",
+    "c-xmm-timing-20261115"
+  ],
+  "launchers": [
+    {
+      "sha256": "20141314C23AA320B958FA7B4228C376B531C464C637EC0D371321E9A2C9A667",
+      "path": "target/c-xmm-fourpoint-20261115/Launch-Once.ps1"
+    },
+    {
+      "sha256": "D9709303742F5135D8B419288CA8663D7FFBBF6FE4965CCE8813D3DC45C960BE",
+      "path": "target/c-xmm-fourpoint-20261115/Invoke-Elevated.ps1"
+    },
+    {
+      "sha256": "16738C6C75815D63303D78A32342FAB228217A033A112099297ABF2198009431",
+      "path": "target/c-xmm-timing-20261115/Launch-Once.ps1"
+    },
+    {
+      "sha256": "D9709303742F5135D8B419288CA8663D7FFBBF6FE4965CCE8813D3DC45C960BE",
+      "path": "target/c-xmm-timing-20261115/Invoke-Elevated.ps1"
+    }
+  ],
+  "utc": "2026-11-15T09:40:22.6298489Z",
+  "guard_parse_passed": true,
+  "prior_measurements_preserved": true
+}

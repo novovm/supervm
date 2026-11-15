@@ -1,0 +1,13 @@
+{
+  "utc": "2026-11-15T09:38:23.2752717Z",
+  "leaf14": {
+    "edx": "0x00000000",
+    "ebx": "0x0000005f",
+    "ecx": "0x00000007",
+    "eax": "0x00000001"
+  },
+  "intel_pt_advertised": true,
+  "trace_started": false,
+  "hardware_state_msr_read": false,
+  "cpuid_leaf7_ebx": "0x239c27a9"
+}

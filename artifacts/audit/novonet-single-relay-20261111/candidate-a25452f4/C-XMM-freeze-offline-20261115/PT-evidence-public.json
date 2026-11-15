@@ -1,0 +1,15 @@
+{
+  "current_cpuid_PT_advertised": true,
+  "current_WPR_recording": false,
+  "existing_PT_capture_and_decode_succeeded": true,
+  "existing_fault_tail_complete": false,
+  "hardware_runtime_state_channel_qualified": false,
+  "original_novovm_workload_low_interference_qualified": false,
+  "new_capture_performed": false,
+  "prior_qualification_files": {
+    "C-pt-tail-bytes-20261115/README.md": "47a95bfb17e7f9925ba991e26648bce83d61379d6942819f53c3a722d5c0a26b",
+    "C-pt-tail-state-20261115/README.md": "9e9c1ddd68d29700b3ca8d9a7d7bffda330c5b0715d232dff4162ff0ed0dc947",
+    "C-pt-msr-access-20261115/README.md": "f5a8d34eba8b284f0a6e703ee8ee2b9aa02472fffed0b6686cca9f83b266a6b9",
+    "C-pt-feasibility-20261115/README.md": "ff2b6ab4da310fa7ab17c82db5ac7a0b723336f7584d30ae22c78f8582ada785"
+  }
+}
