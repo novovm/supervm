@@ -4,11 +4,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import path from 'node:path';
 import { saveJson } from './storage';
-import { TaskInput, ToolResult, StoredTask, EngineName, ToolName, TOOL_POLICIES, toolNamesFor, id, parseTool, type AgentEvent, type TaskState } from './protocol';
+import { TaskInput, ToolResult, StoredTask, EngineName, ToolName, TOOL_POLICIES, toolNamesFor, NodeId, SkillListResult, SkillReadResult, id, parseTool, type AgentEvent, type TaskState } from './protocol';
 
-export type Peer = { id: string; tokenSha256: string; projects: string[] };
+export type Peer = { id: string; tokenSha256: string; projects: string[]; nodeId?: string };
 const SessionSchema = z.object({ id, peerId: z.string().min(1).max(200), projectId: z.string().regex(/^[a-f0-9]{64}$/),
-  engine: EngineName, model: z.string().min(1).max(200), nativeSessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(), active: id.optional(), recovery: z.boolean().optional() }).strict();
+  engine: EngineName, model: z.string().min(1).max(200), workerNodeId: NodeId.optional(), nativeSessionId: z.string().regex(/^[a-zA-Z0-9_-]{1,200}$/).optional(), active: id.optional(), recovery: z.boolean().optional() }).strict();
 export type Session = z.infer<typeof SessionSchema>;
 export type EngineContext = { input: TaskInput; session: Session; signal: AbortSignal;
   text: (text: string) => Promise<void>; call: (name: string, args: unknown) => Promise<ToolResult>; checkpoint: (id: string) => Promise<void> };
@@ -49,20 +49,21 @@ export class Broker extends EventEmitter {
     }
     for (const task of this.tasks.values()) {
       const session = this.sessions.get(task.sessionId);
-      if (!session || session.peerId !== task.peerId || session.projectId !== task.projectId || session.engine !== task.engine || session.model !== task.model)
+      if (!session || session.peerId !== task.peerId || session.workerNodeId !== task.workerNodeId || session.projectId !== task.projectId || session.engine !== task.engine || session.model !== task.model)
         throw Error('Persisted task/session binding mismatch');
       if (task.status === 'needs_recovery') { session.recovery = true; await this.save('sessions', session.id, session); }
     }
   }
   get(peer: Peer, id: string): TaskState {
     const task = this.tasks.get(id);
-    if (!task || task.peerId !== peer.id || !peer.projects.includes(task.projectId)) throw Error('404 task not found');
+    if (!task || task.peerId !== peer.id || task.workerNodeId !== peer.nodeId || !peer.projects.includes(task.projectId)) throw Error('404 task not found');
     return task;
   }
   submit(peer: Peer, value: unknown): Promise<TaskState> {
     const work = this.admissions.then(async () => {
       if (this.storageFailed) throw Error('503 storage requires operator recovery');
       const input = TaskInput.parse(value);
+      if (input.workerNodeId !== peer.nodeId || (input.toolContract?.tools.some(name => name.startsWith('skills_')) && !peer.nodeId)) throw Error('403 authenticated worker identity required; body cannot select another B node');
       if (!peer.projects.includes(input.projectId) || !this.engines[input.engine]?.models.includes(input.model)) throw Error('403 project, engine or model not authorized');
       const prior = this.tasks.get(input.id);
       if (prior) {
@@ -73,9 +74,9 @@ export class Broker extends EventEmitter {
       }
       if (this.controllers.size >= 8) throw Error('429 active task limit');
       let session = this.sessions.get(input.sessionId);
-      if (session && (session.peerId !== peer.id || session.projectId !== input.projectId || session.model !== input.model || session.engine !== input.engine)) throw Error('403 session binding mismatch');
+      if (session && (session.peerId !== peer.id || session.workerNodeId !== peer.nodeId || session.projectId !== input.projectId || session.model !== input.model || session.engine !== input.engine)) throw Error('403 session binding mismatch');
       if (session?.active || session?.recovery) throw Error('409 session busy or needs operator recovery');
-      session ??= { id: input.sessionId, peerId: peer.id, projectId: input.projectId, model: input.model, engine: input.engine };
+      session ??= { id: input.sessionId, peerId: peer.id, projectId: input.projectId, model: input.model, engine: input.engine, ...(peer.nodeId ? { workerNodeId: peer.nodeId } : {}) };
       session.active = input.id; this.sessions.set(session.id, session);
       const task: TaskState = { ...input, peerId: peer.id, status: 'running', events: [] };
       this.tasks.set(task.id, task);
@@ -106,6 +107,10 @@ export class Broker extends EventEmitter {
         call: async (name, args) => {
           controller.signal.throwIfAborted(); const key = ToolName.parse(name), parsed = parseTool(key, args), policy = TOOL_POLICIES[key];
           if (!toolNamesFor(task).includes(key)) return { callId: randomUUID(), ok: false, output: 'B did not advertise this tool capability' };
+          if (key === 'skills_list' || key === 'skills_read') {
+            const owner = parsed.owner as { nodeId: string; projectId: string };
+            if (owner.nodeId !== task.workerNodeId || owner.projectId !== task.projectId) return { callId: randomUUID(), ok: false, output: 'Skill owner does not match the authenticated task worker' };
+          }
           if (task.mode === 'plan' && !policy.planAllowed) return { callId: randomUUID(), ok: false, output: 'Plan mode denies mutating tools' };
           const callId = randomUUID();
           const result = new Promise<ToolResult>((resolve, reject) => {
@@ -147,6 +152,18 @@ export class Broker extends EventEmitter {
     if (previous) { if (previous.text !== text) throw Error('409 conflicting tool result'); return; }
     const pending = this.pending.get(result.callId);
     if (task.status !== 'running' || !pending || pending.taskId !== task.id) throw Error('409 tool call is no longer active');
+    const call = task.events.find(event => event.type === 'tool' && event.callId === result.callId);
+    if (result.ok && (call?.tool === 'skills_list' || call?.tool === 'skills_read')) {
+      const receipt = (call.tool === 'skills_list' ? SkillListResult : SkillReadResult).parse(JSON.parse(result.output));
+      if (receipt.owner.nodeId !== task.workerNodeId || receipt.owner.projectId !== task.projectId) throw Error('403 skill receipt belongs to another worker');
+      if (call.tool === 'skills_read') {
+        const value = SkillReadResult.parse(receipt);
+        if (value.skill.skillId !== call.arguments?.skillId || value.skill.sha256 !== call.arguments?.sha256 || value.resource !== call.arguments?.resource) throw Error('409 skill receipt identity mismatch');
+        const resource = value.resources.find(resource => resource.path === value.resource);
+        if (fingerprint(value.resources) !== value.skill.sha256 || new Set(value.resources.map(resource => resource.path)).size !== value.resources.length
+          || !resource || resource.sha256 !== value.resourceSha256 || createHash('sha256').update(value.text).digest('hex') !== value.resourceSha256) throw Error('409 skill receipt content digest mismatch');
+      }
+    }
     await this.append(task, { type: 'tool_result', callId: result.callId, text });
     clearTimeout(pending.timer); this.pending.delete(result.callId); pending.resolve(result);
   }

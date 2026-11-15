@@ -11,13 +11,15 @@ HTTP 开发载体使用 Bearer 设备令牌；A 只存 SHA-256，B 放 SecretSto
 
 TaskInput：`id`、`sessionId` 为 UUID；`projectId` 为 64 位小写十六进制；`engine=claude|codex`、`prompt`、`model`、`mode=develop|plan` 必填。
 `context` 是经出站检查且明确允许转发的先前会话数据，不是新工具动作。可选 `toolContract={version:1,tools:[...]}` 固定 B 支持集，未知版本/字段拒绝；未声明的历史任务只允许旧五工具。
+原生连接提供认证 `workerNodeId`；TaskInput 必须匹配原网络 owner 经私有 IPC 提供的 nodeId。绑定贯穿任务/会话及事件、结果、取消，不接受正文换 B。
 同一任务 ID、同一规范输入返回原任务；同 ID 改变输入拒绝。不同 peer 不得查询或接收对方事件。
 Session 绑定 peer/project/engine/model，同一时刻一个写入者，不能仅通过换 task ID 抢占。缺失 engine 的旧开发记录不静默迁移。
 
 ## L3 本地 IPC
 
 Node Worker 由 L3 插件通过继承的 stdin/stdout 管道启动，不新开网络端口。每行 JSON 最大 1 MiB。
-请求是 `{id, operation, peerId?, input?}`；响应是同 ID 的 `{result}` 或不含秘密的 `{error}`。
+请求是 `{id, operation, peerId?, nodeId?, input?}`；响应是同 ID 的 `{result}` 或不含秘密的 `{error}`。
+nodeId 仅由 A 的认证网络 owner 设置，网络消息本身不能自报；原生 capabilities 返回 workerNodeId 供 B 固定任务身份。
 `health` 仅证明进程和合同可用，其 `remoteRouteReady=false` 表示 Node 进程本身不拥有网络路由。
 宿主实际绑定原生应用通道后，授权的网络 `capabilities` 可返回 true；不等于双机已验。
 其余操作为 `capabilities/submit/events/result/cancel`。`capabilities` 核对主体并返回其项目和引擎目录。
@@ -49,10 +51,11 @@ Node Worker 由 L3 插件通过继承的 stdin/stdout 管道启动，不新开�
 
 ## 工具合同
 
-平台规范与 ADR 见 [AOEM Tool Contract](AOEM-TOOL-CONTRACT.md)。当前 `workspace_list/file_read/file_patch/text_search/ide_execute/command_run`；参数、权限、计划模式和响应超时来自同一运行时定义。
+平台规范与 ADR 见 [AOEM Tool Contract](AOEM-TOOL-CONTRACT.md)。当前 `workspace_list/file_read/file_patch/text_search/ide_execute/command_run/skills_list/skills_read`；参数、权限、计划模式和响应超时来自同一运行时定义。
 `file_patch` 使用当前文件摘要及唯一精确替换，写入需 B 实际批准。
 `ide_execute` 是已有宿主能力的接合点，不代表已接通全部 VS Code API。
 `command_run` 在 B 实际批准后执行 argv，无隐式 shell，默认30秒/32KiB、最多120秒/64KiB；保留真实退出码与输出。构建/测试/Git 复用此执行面。普通用户权限不是文件系统沙箱；无自动提权、持久后台终端或交互 stdin。
 计划模式不开放写补丁、命令和通用 IDE 执行入口；安全的只读 IDE 能力以后逐项声明，不能默认放行。
 副作用共享 B 项目锁，跨 Worker 的同一操作独占认领；崩溃锁/未知效果需核对，不抢占或重放。
 工具结果出口与用户指令入口都执行敏感信息检查，规则和用户提示不增加模型能力声明。
+技能清单/读取为计划模式可用的只读接口，需 B 明确共享且版本未变；owner 绑定认证节点/项目，读取回执检查资源和正文摘要，详见正式契约。

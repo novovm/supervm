@@ -29,6 +29,10 @@ fn network_envelope_cannot_supply_a_principal_or_unknown_operation() {
         serde_json::json!({"operation":"submit","peerId":"privileged","input":{}})
     )
     .is_err());
+    assert!(serde_json::from_value::<Request>(
+        serde_json::json!({"operation":"submit","nodeId":"forged","input":{}})
+    )
+    .is_err());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -69,7 +73,7 @@ async fn native_udp_to_real_node_is_principal_bound_and_does_not_require_acode_o
         identity::component_identity([92; 32]),
     ];
     let allowed = peer_id_from_mldsa65_public_key_v1(keys[1].public_key());
-    let (mut driver, route) = RouteDriverV1::new(worker, [(allowed, "B".into())].into());
+    let (mut driver, route) = RouteDriverV1::new(worker, [(allowed.clone(), "B".into())].into());
     let sockets = [
         UdpSocket::bind("127.0.0.1:0")?,
         UdpSocket::bind("127.0.0.1:0")?,
@@ -121,6 +125,7 @@ async fn native_udp_to_real_node_is_principal_bound_and_does_not_require_acode_o
             let capabilities:Value=serde_json::from_slice(&response.unwrap())?;
             assert_eq!(capabilities["peerId"],"B");assert_eq!(capabilities["projects"][0],"b".repeat(64));
             assert_eq!(capabilities["remoteRouteReady"],true);
+            assert_eq!(capabilities["workerNodeId"], allowed);
             client.begin(br#"{"operation":"capabilities","peerId":"privileged"}"#,Instant::now())?;
             loop {
                 let now=Instant::now();let _=a.poll(1000,now,64)?;let _=b.poll(1000,now,64)?;

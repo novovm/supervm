@@ -28,7 +28,7 @@ test('official Codex and Claude declarations use identical versioned inputs and 
 
 test('A policy denies unadvertised commands and plan execution for both engines before routing', async t => {
   const directory = await mkdtemp(path.join(tmpdir(), 'asas-contract-')), projectId = 'a'.repeat(64);
-  const peer = { id: 'B', tokenSha256: 'b'.repeat(64), projects: [projectId] }, results: string[] = [];
+  const peer = { id: 'B', tokenSha256: 'b'.repeat(64), projects: [projectId], nodeId: 'novovm-mldsa65:' + 'c'.repeat(64) }, results: string[] = [];
   const run = async (context: Parameters<import('../broker').Engine>[0]) => {
     const result = await context.call('command_run', { command: 'must-not-spawn' });
     assert.equal(result.ok, false); results.push(result.output);
@@ -36,7 +36,7 @@ test('A policy denies unadvertised commands and plan execution for both engines 
   const app = await Application.open(directory, [peer], { codex: { models: ['fixture'], run }, claude: { models: ['fixture'], run } });
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
   for (const engine of ['codex', 'claude'] as const) for (const advertised of [false, true]) {
-    const input: TaskInput = { id: randomUUID(), sessionId: randomUUID(), projectId, engine, prompt: 'fixture', model: 'fixture', mode: advertised ? 'plan' : 'develop',
+    const input: TaskInput = { id: randomUUID(), sessionId: randomUUID(), projectId, engine, prompt: 'fixture', model: 'fixture', mode: advertised ? 'plan' : 'develop', workerNodeId: peer.nodeId,
       ...(advertised ? { toolContract: TOOL_CAPABILITY } : {}) };
     await app.broker.submit(peer, input);
     let after = 0, status = 'running';

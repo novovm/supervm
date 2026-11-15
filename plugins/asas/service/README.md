@@ -23,6 +23,11 @@ B workspace paths. The native UDP application route now exists on the original
 node listener: [NOVONET boundary](docs/NOVONET.md). The B-only native process interface
 and ACODE shared-node settings/chat/tool integration are implemented and component-tested.
 Real node deployment, signed service advertisement, qualified fallback and cross-device acceptance remain unfinished.
+SDK 0.6 adds authenticated B-node task/session binding and shared project skill
+discovery/read tools. B explicitly approves a content-addressed skill bundle;
+same-name skills on other B nodes/projects are distinct. No global skills are
+scanned or installed on A. See the platform contract for scope, limits and legacy
+recovery requirements. Native A hosts must also update to pass the authenticated node ID.
 
 ## Run A Development Contract
 

@@ -1,7 +1,7 @@
 import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Broker, type Engines, type Peer } from './broker';
-import { id, VERSION, TOOL_CAPABILITY } from './protocol';
+import { id, VERSION, TOOL_CAPABILITY, NodeId } from './protocol';
 
 export class Application {
   private constructor(readonly broker: Broker, readonly peers: Peer[], readonly engines: Engines,
@@ -25,10 +25,11 @@ export class Application {
   health() { return { version: VERSION, toolContract: TOOL_CAPABILITY, engines: Object.fromEntries(Object.entries(this.engines).map(([name, value]) =>
     [name, { models: value!.models, inferenceVerified: false }])), remoteRouteReady: false }; }
   // Only an authenticated transport owner may resolve this local principal.
-  async dispatch(peerId: string, operation: string, input: any): Promise<unknown> {
-    const peer = this.peers.find(peer => peer.id === peerId);
-    if (!peer) throw Error('403 unknown application principal');
-    if (operation === 'capabilities') return { ...this.health(), peerId: peer.id, projects: peer.projects };
+  async dispatch(peerId: string, operation: string, input: any, nodeId?: string): Promise<unknown> {
+    const grant = this.peers.find(peer => peer.id === peerId);
+    if (!grant) throw Error('403 unknown application principal');
+    const peer = { ...grant, nodeId: nodeId === undefined ? undefined : NodeId.parse(nodeId) };
+    if (operation === 'capabilities') return { ...this.health(), peerId: peer.id, projects: peer.projects, ...(peer.nodeId ? { workerNodeId: peer.nodeId } : {}) };
     if (operation === 'submit') { const task = await this.broker.submit(peer, input); return { id: task.id, status: task.status }; }
     const taskId = id.parse(input?.taskId);
     if (operation === 'events') return this.broker.events(peer, taskId, input.after, input.waitMs);

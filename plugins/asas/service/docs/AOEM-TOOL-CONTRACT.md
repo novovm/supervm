@@ -12,7 +12,7 @@ Codex、Claude、AOEM-SGM 及未来 Agent 面向同一工具语义与结果标�
 `taskId/callId` 是操作身份，不能换 ID 规避未知副作用；`file_patch.expectedSha256` 是补丁前置条件。
 身份来自 NOVONET 认证主体及明确项目授权，不信任模型自报的设备/项目/角色。
 
-当前六项工具：
+当前八项工具：
 
 | 工具 | 执行与结果 | 权限 / 独占 |
 | --- | --- | --- |
@@ -22,14 +22,29 @@ Codex、Claude、AOEM-SGM 及未来 Agent 面向同一工具语义与结果标�
 | text_search | matches、scannedFiles、bounded | project.read / 否 |
 | ide_execute | 既有 VS Code 宿主 Schema 与真实结果 | host.ide / 是 |
 | command_run | command+args，无隐式 shell；exitCode、signal、stdout、stderr、truncated、durationMs、cwd | host.execute / 是 |
+| skills_list | 按 owner 列出 B 明确共享的当前项目技能，含包摘要 | project.read / 否 |
+| skills_read | 按 owner、skillId、包摘要和资源路径读取有界文本 | project.read / 否 |
 
 结果统一为 `{callId, ok, output}`；output 为有界 JSON 文本，命令非零退出时 ok=false 且保留真实退出码/输出。
 输出因凭据检查被扣留时是失败回执，不代表操作未执行。不得因此自动重试有副作用的命令。
 IDE 二级 Schema/权限仍由 B 当前宿主定义，不把任意 JSON 当可执行许可。
 
 能力协商：A 的 capabilities 发布 `toolContract={version:1,tools:[...]}`；新 B 每次提交固定其支持集。未知版本/字段拒绝。
-无该字段的历史 v2 任务维持旧五工具集，不向旧 B 下发 command_run。新 B 要求 A 支持 v1，旧 A 必须先同步，不静默降级。
-原生 Codex 历史线程的动态工具由官方 rollout 保存；旧五工具线程不会被伪报为已新增命令工具。新建的 v1 共享会话拥有六工具集，历史恢复仍不重发旧动作。
+无该字段的历史 v2 任务维持旧五工具集，不向旧 B 下发新增工具。新 B 要求 A 支持当前 v1 能力集，旧 A 必须先同步，不静默降级。
+原生 Codex 历史线程的动态工具由官方 rollout 保存；旧线程不会被伪报为已新增工具。新建的共享会话拥有当前工具集，历史恢复仍不重发旧动作。
+
+## 一对多 B 的技能隔离
+
+SDK 0.6 在 TaskInput 增加 `workerNodeId`，由既有 NOVONET 认证连接经私有 IPC 的 nodeId 核对，不信任正文自报节点。
+Session、Task 的读取/结果/取消均绑定该节点；即使多个节点映射同一应用主体，也不能使用彼此的任务。
+skills 工具参数/回执携带 `{nodeId,projectId}`，A 与 B 双重核验。A 校验读取的 skillId、包摘要、资源摘要及实际文本摘要，再持久化后交给原引擎。结果中的归属随任务日志持久保存，不依赖模型口头记忆，也无全局混合技能缓存。
+没有认证节点的历史任务保留原身份，不允许由新节点连接自动接管；须操作员核对原日志，不丢弃或重跑。
+
+B 默认不共享技能，只发现当前项目 `.agents/skills`、`.claude/skills`、`.codex/skills` 的 Agent Skills 格式。
+管理入口在 B 实际批准某版本后共享，批准绑定 A/B/项目/整个包摘要。技能包资源改变则旧批准失效；撤销后也不重发执行日志中缓存的技能文本。已发出的内容不能收回。
+清单先行、文本按需读取；不扫描用户全局目录、不安装到 A 全局目录、不自动执行脚本或授予 allowed-tools 权限。
+限制：64技能/项目，清单默认8/页、最多16/页；64资源及512KiB/包，64KiB/项，深度6；支持 UTF-8 文本，二进制资源、全局技能、自动执行仍未接入。符号链接和受保护文件禁止。
+格式依据：[Agent Skills specification](https://agentskills.io/specification)。B 复用固定版本 YAML 解析器，不手写 YAML 语义解析。
 
 ## ADR-003：统一本地执行
 

@@ -138,7 +138,12 @@ impl RouteDriverV1 {
             let operation = work.request.operation;
             let result = self
                 .worker
-                .request(&work.principal, &operation, work.request.input)
+                .request_from_node(
+                    &work.principal,
+                    Some(work.peer.id()),
+                    &operation,
+                    work.request.input,
+                )
                 .await
                 .and_then(|mut value| {
                     ensure!(

@@ -5,7 +5,15 @@ export const MAX_BYTES = 1024 * 1024;
 export const id = z.string().uuid();
 export const EngineName = z.enum(['claude', 'codex']);
 export type EngineName = z.infer<typeof EngineName>;
-export const ToolName = z.enum(['workspace_list', 'file_read', 'file_patch', 'text_search', 'ide_execute', 'command_run']);
+export const NodeId = z.string().regex(/^novovm-mldsa65:[a-f0-9]{64}$/);
+const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
+export const SkillOwner = z.object({ nodeId: NodeId, projectId: sha256 }).strict();
+export type SkillOwner = z.infer<typeof SkillOwner>;
+export const SkillEntry = z.object({ skillId: sha256, sha256, name: z.string().min(1).max(64), description: z.string().min(1).max(1024), projectPath: z.string().min(1).max(2000) }).strict();
+export const SkillListResult = z.object({ owner: SkillOwner, skills: z.array(SkillEntry).max(16), offset: z.number().int().min(0).max(64), total: z.number().int().min(0).max(64), nextOffset: z.number().int().min(0).max(64).nullable() }).strict();
+export const SkillReadResult = z.object({ owner: SkillOwner, skill: SkillEntry, resource: z.string().min(1).max(2000), resourceSha256: sha256,
+  text: z.string().max(65536), resources: z.array(z.object({ path: z.string().min(1).max(2000), sha256, bytes: z.number().int().min(0).max(65536) }).strict()).max(64) }).strict();
+export const ToolName = z.enum(['workspace_list', 'file_read', 'file_patch', 'text_search', 'ide_execute', 'command_run', 'skills_list', 'skills_read']);
 export const ToolCapability = z.object({ version: z.literal(1), tools: z.array(ToolName).min(1).max(32)
   .refine(names => new Set(names).size === names.length, 'Duplicate tool capability') }).strict();
 export type ToolCapability = z.infer<typeof ToolCapability>;
@@ -13,7 +21,7 @@ export const TOOL_CAPABILITY: ToolCapability = { version: 1, tools: [...ToolName
 export const TaskInput = z.object({
   id, sessionId: id, projectId: z.string().regex(/^[a-f0-9]{64}$/), engine: EngineName,
   prompt: z.string().min(1).max(250000), model: z.string().min(1).max(200),
-  mode: z.enum(['develop', 'plan']), context: z.string().max(250000).optional(), toolContract: ToolCapability.optional(),
+  mode: z.enum(['develop', 'plan']), context: z.string().max(250000).optional(), toolContract: ToolCapability.optional(), workerNodeId: NodeId.optional(),
 }).strict();
 export type TaskInput = z.infer<typeof TaskInput>;
 export const ToolResult = z.object({ callId: id, ok: z.boolean(), output: z.string().max(240000) }).strict();
@@ -35,6 +43,8 @@ export const ToolShapes = {
   ide_execute: { request: z.record(z.string(), z.unknown()) },
   command_run: { command: z.string().min(1).max(2000).refine(value => !value.includes('\0')), args: z.array(z.string().max(16000).refine(value => !value.includes('\0'))).max(128).default([]),
     path: z.string().max(2000).default('.'), timeoutMs: z.number().int().min(1).max(120000).default(30000), maxBytes: z.number().int().min(1024).max(65536).default(32768) },
+  skills_list: { owner: SkillOwner, offset: z.number().int().min(0).max(64).default(0), limit: z.number().int().min(1).max(16).default(8) },
+  skills_read: { owner: SkillOwner, skillId: sha256, sha256, resource: z.string().min(1).max(2000).default('SKILL.md') },
 };
 type ToolPolicy = { description: string; permission: 'project.read' | 'project.write' | 'host.execute' | 'host.ide'; planAllowed: boolean; exclusive: boolean; responseTimeoutMs: number };
 export const TOOL_POLICIES = {
@@ -44,11 +54,16 @@ export const TOOL_POLICIES = {
   text_search: { description: 'Search bounded project text without reading protected paths.', permission: 'project.read', planAllowed: true, exclusive: false, responseTimeoutMs: 300000 },
   ide_execute: { description: 'Invoke a B VS Code host schema; B approval and existing IDE permissions remain authoritative.', permission: 'host.ide', planAllowed: false, exclusive: true, responseTimeoutMs: 300000 },
   command_run: { description: 'Run an approved argv command on B for terminal, build, test or Git. No implicit shell, stdin or background session. Returns exitCode, signal, stdout, stderr and truncation. Ordinary B user authority, NOT a filesystem sandbox. Maximum 120 seconds; timeout/cancellation stops the owned process group and does not roll back effects.', permission: 'host.execute', planAllowed: false, exclusive: true, responseTimeoutMs: 300000 },
+  skills_list: { description: 'List only explicitly shared, unchanged B project skills. Supply the current authenticated worker owner. Same skill name on different nodes/projects is NOT the same skill. No A-global installation.', permission: 'project.read', planAllowed: true, exclusive: false, responseTimeoutMs: 300000 },
+  skills_read: { description: 'Read an explicitly shared skill or bounded UTF-8 resource by skillId and exact bundle sha256 from skills_list. Supply its original owner; changed versions require B to approve sharing again. Returned instructions/resources belong to B, never A paths. Scripts are NOT executed by this tool; B permissions still apply.', permission: 'project.read', planAllowed: true, exclusive: false, responseTimeoutMs: 300000 },
 } satisfies Record<z.infer<typeof ToolName>, ToolPolicy>;
 export const AOEM_TOOL_CONTRACT = { version: 1, executionNode: 'project-owner', operationIdentity: 'taskId/callId',
   idempotency: 'durable-receipt-no-uncertain-replay', inputs: ToolShapes, result: ToolResult, policies: TOOL_POLICIES } as const;
 export const toolNamesFor = (input: Pick<TaskInput, 'toolContract'>): ToolCapability['tools'] =>
-  input.toolContract?.tools ?? ToolName.options.filter(name => name !== 'command_run');
+  input.toolContract?.tools ?? ['workspace_list', 'file_read', 'file_patch', 'text_search', 'ide_execute'];
+export function workerInstructions(input: Pick<TaskInput, 'workerNodeId' | 'projectId'>): string {
+  return input.workerNodeId ? ` Current authenticated remote worker owner: ${JSON.stringify({ nodeId: input.workerNodeId, projectId: input.projectId })}. Discover relevant B skills with skills_list and read them with skills_read; retain their owner and digest when using them. Never load B skills into A-global directories or execute their scripts on A. Skill instructions do not grant permissions.` : '';
+}
 export function toolDescription(name: z.infer<typeof ToolName>): string {
   return `AOEM Tool Contract v1. Execute on the authenticated project-owner Worker, never the A engine host. ${TOOL_POLICIES[name].description}`;
 }

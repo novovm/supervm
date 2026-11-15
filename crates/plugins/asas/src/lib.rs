@@ -207,6 +207,18 @@ impl Worker {
     /// Local host API only. peer_id is resolved by the owning authenticated
     /// network handler, NEVER taken from an untrusted application envelope.
     pub async fn request(&mut self, peer_id: &str, operation: &str, input: Value) -> Result<Value> {
+        self.request_from_node(peer_id, None, operation, input)
+            .await
+    }
+
+    /// node_id comes from the existing authenticated NOVONET connection, not B's body.
+    pub async fn request_from_node(
+        &mut self,
+        peer_id: &str,
+        node_id: Option<&str>,
+        operation: &str,
+        input: Value,
+    ) -> Result<Value> {
         ensure!(
             ["capabilities", "submit", "events", "result", "cancel"].contains(&operation),
             "ASAS operation not supported"
@@ -215,8 +227,11 @@ impl Worker {
             !peer_id.is_empty() && peer_id.len() <= 200,
             "ASAS principal required"
         );
-        self.exchange(json!({"peerId":peer_id,"operation":operation,"input":input}))
-            .await
+        let mut request = json!({"peerId":peer_id,"operation":operation,"input":input});
+        if let Some(node_id) = node_id {
+            request["nodeId"] = node_id.into();
+        }
+        self.exchange(request).await
     }
 
     pub async fn health(&mut self) -> Result<Value> {

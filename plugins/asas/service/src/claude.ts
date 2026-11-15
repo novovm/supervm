@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import { ToolShapes, toolNamesFor, toolDescription } from './protocol';
+import { ToolShapes, toolNamesFor, toolDescription, workerInstructions } from './protocol';
 import type { Engine } from './broker';
 import type { TaskInput } from './protocol';
 
@@ -29,6 +29,7 @@ export function claudeEngine(directory: string, executable?: string): Engine {
       canUseTool: async name => name.startsWith('mcp__acode__') ? { behavior: 'allow' as const } : { behavior: 'deny' as const, message: 'Only authenticated remote ACODE tools are permitted' },
       abortController, maxTurns: 100, maxBudgetUsd: 5, includePartialMessages: true,
       systemPrompt: { type: 'preset', preset: 'claude_code', append: 'You are serving a remote ACODE workspace. All project reads, edits, searches, builds, tests and IDE operations MUST use mcp__acode tools. The local directory is NOT the user project. Do not claim an operation ran without its tool receipt. No other local tools, plugins, hooks or servers are authorized.'
+        + workerInstructions(context.input)
         + (context.input.mode === 'plan' ? ' Current task is plan mode: inspect and propose; do not modify files or execute IDE actions.' : ' Current task is development mode.') },
     } });
     let succeeded = false;

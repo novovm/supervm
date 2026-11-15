@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { MAX_BYTES } from './protocol';
+import { MAX_BYTES, NodeId } from './protocol';
 import type { Application } from './application';
 import type { Readable, Writable } from 'node:stream';
 
 const Request = z.object({ id: z.number().int().nonnegative().safe(), operation: z.enum(['health', 'capabilities', 'submit', 'events', 'result', 'cancel']),
-  peerId: z.string().max(200).optional(), input: z.unknown().optional() }).strict();
+  peerId: z.string().max(200).optional(), nodeId: NodeId.optional(), input: z.unknown().optional() }).strict();
 
 // This is inherited local IPC, not a public authentication/transport protocol.
 export async function serveStdio(app: Application, input: Readable, output: Writable): Promise<void> {
@@ -30,7 +30,7 @@ export async function serveStdio(app: Application, input: Readable, output: Writ
         active.add(request.id); inflight++;
         const job = (async () => {
           try { const result = request.operation === 'health' ? app.health()
-            : await app.dispatch(request.peerId || '', request.operation, request.input);
+            : await app.dispatch(request.peerId || '', request.operation, request.input, request.nodeId);
             await reply({ id: request.id, result });
           } catch { await reply({ id: request.id, error: 'ASAS operation rejected; inspect local state; do not replay' }); }
         })().catch(onOutputError).finally(() => { active.delete(request.id); inflight--; jobs.delete(job); });
