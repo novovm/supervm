@@ -1,0 +1,9 @@
+{
+  "utc": "2026-11-15T14:35:46.6260418Z",
+  "user_requested_relaunch": true,
+  "windows_result": "user cancelled elevation",
+  "new_isolation_directory_created": false,
+  "baseline_started": false,
+  "guard_started": false,
+  "actual_dialog_visibility_unconfirmed": true
+}
