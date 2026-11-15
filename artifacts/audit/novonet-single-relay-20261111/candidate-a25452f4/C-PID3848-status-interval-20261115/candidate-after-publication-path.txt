@@ -1,0 +1,69 @@
+00777bad  lea rcx, [rbp + 0x260]
+00777bb4  call 0x7ff7f10ac4a0
+00777bb9  mov byte ptr [rbp + 0x181], 1
+00777bc0  lea rcx, [rip + 0x1d77a6d]
+00777bc7  lea r8, [rbp + 0x210]
+00777bce  mov edx, 0xd
+00777bd3  call 0x7ff7f26da1d0
+00777bd8  mov qword ptr [rbp + 0x3d0], rax
+00777bdf  mov rcx, rax
+00777be2  call 0x7ff7f0ca30d0
+00777be7  mov rax, qword ptr [rbp + 0x2a0]
+00777bee  mov rcx, qword ptr [rbp + 0x3d0]
+00777bf5  mov qword ptr [rcx + 0x40], rax
+00777bf9  movdqu xmm0, xmmword ptr [rbp + 0x260]
+00777c01  movdqu xmm1, xmmword ptr [rbp + 0x270]
+00777c09  movdqu xmm2, xmmword ptr [rbp + 0x280]
+00777c11  movups xmm3, xmmword ptr [rbp + 0x290]
+00777c18  movups xmmword ptr [rcx + 0x30], xmm3
+00777c1c  movdqu xmmword ptr [rcx + 0x20], xmm2
+00777c21  movdqu xmmword ptr [rcx + 0x10], xmm1
+00777c26  movdqu xmmword ptr [rcx], xmm0
+00777c2a  lea rcx, [rbp - 0x10]
+00777c2e  mov rdx, rdi
+00777c31  call 0x7ff7f0f1f780
+00777c36  movabs rax, 0x8000000000000005
+00777c40  cmp qword ptr [rbp - 0x10], rax
+00777c44  je 0x7ff7f10c7ca8
+00777c46  mov byte ptr [rbp + 0x180], 1
+00777c4d  lea rcx, [rip + 0x1d779ed]
+00777c54  lea r8, [rbp + 0x210]
+00777c5b  mov edx, 0x14
+00777c60  call 0x7ff7f26da1d0
+00777c65  mov qword ptr [rbp + 0x3d0], rax
+00777c6c  mov rcx, rax
+00777c6f  call 0x7ff7f0ca30d0
+00777c74  mov rax, qword ptr [rbp + 0x30]
+00777c78  mov rcx, qword ptr [rbp + 0x3d0]
+00777c7f  mov qword ptr [rcx + 0x40], rax
+00777c83  movdqu xmm0, xmmword ptr [rbp - 0x10]
+00777c88  movdqu xmm1, xmmword ptr [rbp]
+00777c8d  movdqu xmm2, xmmword ptr [rbp + 0x10]
+00777c92  movups xmm3, xmmword ptr [rbp + 0x20]
+00777c96  movups xmmword ptr [rcx + 0x30], xmm3
+00777c9a  movdqu xmmword ptr [rcx + 0x20], xmm2
+00777c9f  movdqu xmmword ptr [rcx + 0x10], xmm1
+00777ca4  movdqu xmmword ptr [rcx], xmm0
+00777ca8  lea rcx, [rbp - 0x58]
+00777cac  call 0x7ff7f1efc480
+00777cb1  movabs rax, 0x8000000000000005
+00777cbb  cmp qword ptr [rbp - 0x58], rax
+00777cbf  je 0x7ff7f10c7dab
+00777dab  mov eax, dword ptr [rip + 0x252c47f]
+00777db1  test eax, eax
+00777db3  jne 0x7ff7f10c9f72
+00777db9  cmp byte ptr [rip + 0x252c474], 1
+00777dc0  jne 0x7ff7f10c81fd
+007781fd  call 0x7ff7f278a8b0
+00778202  mov rsi, rax
+00778205  cmp byte ptr [rax + 0x10], 1
+00778209  jne 0x7ff7f10c9f83
+0077820f  mov rax, qword ptr [rsi]
+00778212  mov rdx, qword ptr [rsi + 8]
+00778216  lea rcx, [rax + 1]
+0077821a  mov qword ptr [rsi], rcx
+0077821d  mov qword ptr [rbp + 0x1c0], 0
+00778228  mov qword ptr [rbp + 0x1c8], 8
+00778233  mov qword ptr [rbp + 0x1d0], 0
+0077823e  movups xmmword ptr [rbp + 0x1d8], xmm6
+00778245  movups xmmword ptr [rbp + 0x1e8], xmm7

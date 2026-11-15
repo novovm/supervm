@@ -1,0 +1,9 @@
+{
+  "same_dump_sha256": "6c3b7b9dc34ec3c137c2b4e7bcf0f4746cf6ce023db90f6a6dc423dce2613de6",
+  "all_listed_instruction_bytes_match_same_dump": true,
+  "listed_instructions": 737,
+  "listed_calls": 74,
+  "candidate_calls": 8,
+  "candidate_unique_targets": 6,
+  "runtime_nodes_launched": 0
+}

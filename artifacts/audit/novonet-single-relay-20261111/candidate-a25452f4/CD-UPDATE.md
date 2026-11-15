@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+
+## C回传 2026-11-15：PID3848有限机器码区间及候选调用路径
+
+原a254从signature_work局部初始化到archive_work向量写入的有限清单已完成，
+737条指令逐条与同一Full Dump比较一致，含74个静态调用位置及同函数冷路径。
+按源码顺序和最终缓存/对象条件，发布后候选路径为8处调用、6个目标，
+包含profile快照、network_probe_observation、JSON entry/drop、IO快照和TLS getter。
+这是条件一致的候选路径，没有逐调用XMM历史；TLS最终已初始化不能排除本次冷初始化。
+signature_work对象合法也不能证明其构造完成时寄存器仍合法，保留其自身插入/释放调用。
+首次异常函数及指令仍未找到，没有可证实的ABI修复。原现场保留，双中继暂停。
+详见[C-PID3848-status-interval-20261115/README.md](C-PID3848-status-interval-20261115/README.md)。
 ## C回传 2026-11-15：同次stderr证实一次故障后formatter与上下文捕获
 
 管理员只读取得PID3848本轮stderr摘要，读取报告0，897字节，SHA256两次一致。
