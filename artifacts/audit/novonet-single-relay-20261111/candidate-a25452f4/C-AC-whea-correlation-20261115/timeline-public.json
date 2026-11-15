@@ -1,0 +1,42 @@
+[
+  {
+    "pid": 31296,
+    "utc": "2026-11-11T13:27:58Z",
+    "kind": "original875 dump timestamp",
+    "whea_within_5min": [],
+    "nearest_whea_record": 110868,
+    "whea_minus_exit_seconds": 167840.847019
+  },
+  {
+    "pid": 3228,
+    "utc": "2026-11-11T20:13:40Z",
+    "kind": "original875 dump timestamp",
+    "whea_within_5min": [],
+    "nearest_whea_record": 110868,
+    "whea_minus_exit_seconds": 143498.847019
+  },
+  {
+    "pid": 37796,
+    "utc": "2026-11-13T02:15:56Z",
+    "kind": "a254 AOEM966 owner exit; application error at02:15:52Z",
+    "whea_within_5min": [],
+    "nearest_whea_record": 110868,
+    "whea_minus_exit_seconds": 35362.847019
+  },
+  {
+    "pid": 39992,
+    "utc": "2026-11-13T12:48:17.6523272Z",
+    "kind": "TTD injected owner exit; Application Error at12:48:13.180773Z",
+    "whea_within_5min": [],
+    "nearest_whea_record": 110869,
+    "whea_minus_exit_seconds": -1516.485752
+  },
+  {
+    "pid": 34452,
+    "utc": "2026-11-14T09:13:47.4432268Z",
+    "kind": "un-instrumented a254 AOEM966 owner exit",
+    "whea_within_5min": [],
+    "nearest_whea_record": 110869,
+    "whea_minus_exit_seconds": -75046.276651
+  }
+]

@@ -1,0 +1,90 @@
+{
+  "started_utc": "2026-11-15T02:29:21.6515030Z",
+  "kind": "bounded WinSAT bandwidth and WHEA observation, not memory correctness certification",
+  "runs": [
+    {
+      "start_utc": "2026-11-15T02:29:21.8930456Z",
+      "mode": "single",
+      "controller_timeout": false,
+      "pid": 11776,
+      "end_utc": "2026-11-15T02:29:32.8558953Z",
+      "exit_code": 0,
+      "arguments": [
+        "mem",
+        "-rn",
+        "-mint",
+        "10",
+        "-maxt",
+        "10",
+        "-buffersize",
+        "16MB",
+        "-xml",
+        "single.xml (private local output)",
+        "-up"
+      ],
+      "xml_metrics": {
+        "OperationVersion": null,
+        "CmdLine": null,
+        "TestName": "MemCopy_128_SSE_UCW_BPF16K_NBT",
+        "Units": null,
+        "NumProcessors": "32",
+        "NumThreads": "1",
+        "PageSize": "0",
+        "MemBlockSize": "16777216",
+        "MemDestOffset": "64",
+        "TotalBytesPerSecond": "54046879552.75755",
+        "TotalBytesPerSecondMean": "46324068516.54897",
+        "CompletionStatus": "0"
+      },
+      "xml_sha256": "c7ca28fe4715caa43d38ca7676456d2be67464c85984f3c4269f4c762dbdc2ef"
+    },
+    {
+      "start_utc": "2026-11-15T02:29:32.9253991Z",
+      "mode": "multi",
+      "controller_timeout": false,
+      "pid": 21564,
+      "end_utc": "2026-11-15T02:29:44.1111521Z",
+      "exit_code": 0,
+      "arguments": [
+        "mem",
+        "-rn",
+        "-mint",
+        "10",
+        "-maxt",
+        "10",
+        "-buffersize",
+        "16MB",
+        "-xml",
+        "multi.xml (private local output)"
+      ],
+      "xml_metrics": {
+        "OperationVersion": null,
+        "CmdLine": null,
+        "TestName": "MemCopy_128_SSE_UCW_BPF16K_NBT",
+        "Units": null,
+        "NumProcessors": "32",
+        "NumThreads": "24",
+        "PageSize": "0",
+        "MemBlockSize": "16777216",
+        "MemDestOffset": "64",
+        "TotalBytesPerSecond": "90556869739.75421",
+        "TotalBytesPerSecondMean": "75052401969.59874",
+        "CompletionStatus": "0"
+      },
+      "xml_sha256": "cc193450a7c81e36b24cfd786a4a7e6e3a7be49689bbd36ac8850d8eb4459185"
+    }
+  ],
+  "status": "completed_no_observed_whea_not_stability_qualification",
+  "tool_sha256": "D11282169E3D074F5E585F39657DC79CCAC3D38C10C80EA31163EF88EC02A529",
+  "baseline_whea": [],
+  "whea": [],
+  "ended_utc": "2026-11-15T02:29:44.1757392Z",
+  "script_sha256": "E378548BE20C6A786F14C893BBE3516758835A66D6529CF83874D9DA8486F8C9",
+  "postcheck": {
+    "utc": "2026-11-15T02:30:15.7426280Z",
+    "events": [],
+    "errors": [
+      "NoMatchingEventsFound,Microsoft.PowerShell.Commands.GetWinEventCommand"
+    ]
+  }
+}

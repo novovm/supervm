@@ -1,0 +1,23 @@
+{
+  "A_receipt_utc": "2026-11-12T08:13:20.4666584Z",
+  "A_node": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "A_aoem": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "C_fault_run_node": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "C_fault_run_aoem": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "exe_equal": true,
+  "aoem_equal": false,
+  "A_current_24h_loaded_hashes": "not supplied",
+  "A_matching_load_counters": null,
+  "A_24h_no_failure": "user reported; not independently verified",
+  "C_final_archived_counters": {
+    "ticks": 2847944,
+    "retained_transport_records": 76,
+    "expired_records": 2643,
+    "evicted_records": 0,
+    "send_polls_active_calls": 423210,
+    "reported_data_writes": 17192,
+    "accepted_data": 1708,
+    "history_data": 15497
+  },
+  "exact_status_function_invocation_counts": null
+}
