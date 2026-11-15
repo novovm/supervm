@@ -1,6 +1,18 @@
 # a25452f4: approved existing updates, then real double relay
 
 
+## C回传 2026-11-15：构造期六次插入及255条传输记录快照
+
+已将signature_work六次Core::insert_full、可选旧值释放和发布entry/drop逐点关联。
+同次native_network_probe的events长度0，但transport.objects长度255，
+因此继续聚焦原记录collect到NativeTransferEvidence::clone的两个片段调用目标。
+最终活跃VecDeque cap256/head203/len255，53+202只是最终几何关系，不能充当历史命中数。
+两次旧Value已由新对象覆盖，实际旧tag仍缺；所查正常返回恢复配对，首次异常仍未定位。
+PID34452与PID3848共享insert入口，分别走Vec增长与reserve_rehash，尚无共同破坏指令。
+停止扩展静态候选，仅提出四父帧检查点的稀疏捕获评估，尚未执行、干扰未测。
+详见[C-PID3848-construction-focus-20261115/README.md](C-PID3848-construction-focus-20261115/README.md)。
+本轮只读既有证据，原库身份和失败现场保留，未重启，双中继暂停。
+
 ## C回传 2026-11-15：PID3848有限机器码区间及候选调用路径
 
 原a254从signature_work局部初始化到archive_work向量写入的有限清单已完成，

@@ -1,0 +1,341 @@
+{
+  "same_dump_sha256": "6c3b7b9dc34ec3c137c2b4e7bcf0f4746cf6ce023db90f6a6dc423dce2613de6",
+  "scope": "signature construction, existing network snapshot/record clone targets, existing Value release and the two already-observed insert_full paths; no new recursive graph expansion",
+  "signature_construction_calls": {
+    "call_sites": 35,
+    "unique_targets": 7,
+    "key_insertions": [
+      {
+        "key": "strict_verified_rows",
+        "insert_call_rva": "0x77726d",
+        "insert_target_rva": "0x84f050",
+        "optional_old_value_drop_rva": "0x7772d8",
+        "drop_target_rva": "0x3530d0",
+        "return_option_none_tag": "0x8000000000000005",
+        "old_value_live_history_present": false,
+        "guard_meaning": "drop skipped when insert_full returns Option::None; final table length is not a recorded return value"
+      },
+      {
+        "key": "reused_rows",
+        "insert_call_rva": "0x777402",
+        "insert_target_rva": "0x84f050",
+        "optional_old_value_drop_rva": "0x77746d",
+        "drop_target_rva": "0x3530d0",
+        "return_option_none_tag": "0x8000000000000005",
+        "old_value_live_history_present": false,
+        "guard_meaning": "drop skipped when insert_full returns Option::None; final table length is not a recorded return value"
+      },
+      {
+        "key": "uca_batch_calls",
+        "insert_call_rva": "0x7775a2",
+        "insert_target_rva": "0x84f050",
+        "optional_old_value_drop_rva": "0x77760d",
+        "drop_target_rva": "0x3530d0",
+        "return_option_none_tag": "0x8000000000000005",
+        "old_value_live_history_present": false,
+        "guard_meaning": "drop skipped when insert_full returns Option::None; final table length is not a recorded return value"
+      },
+      {
+        "key": "asset_prepared_at_startup",
+        "insert_call_rva": "0x777729",
+        "insert_target_rva": "0x84f050",
+        "optional_old_value_drop_rva": "0x777794",
+        "drop_target_rva": "0x3530d0",
+        "return_option_none_tag": "0x8000000000000005",
+        "old_value_live_history_present": false,
+        "guard_meaning": "drop skipped when insert_full returns Option::None; final table length is not a recorded return value"
+      },
+      {
+        "key": "asset_startup_us",
+        "insert_call_rva": "0x7778b2",
+        "insert_target_rva": "0x84f050",
+        "optional_old_value_drop_rva": "0x77791d",
+        "drop_target_rva": "0x3530d0",
+        "return_option_none_tag": "0x8000000000000005",
+        "old_value_live_history_present": false,
+        "guard_meaning": "drop skipped when insert_full returns Option::None; final table length is not a recorded return value"
+      },
+      {
+        "key": "scope",
+        "insert_call_rva": "0x777a80",
+        "insert_target_rva": "0x84f050",
+        "optional_old_value_drop_rva": "0x777aeb",
+        "drop_target_rva": "0x3530d0",
+        "return_option_none_tag": "0x8000000000000005",
+        "old_value_live_history_present": false,
+        "guard_meaning": "drop skipped when insert_full returns Option::None; final table length is not a recorded return value"
+      }
+    ],
+    "publication_entry_rva": "0x777b56",
+    "publication_drop_rva": "0x777b65",
+    "publication_complete_rva": "0x777ba9"
+  },
+  "same_dump_structural_metadata": {
+    "native_network_probe_value": "0x1e56e7b7bb0",
+    "probe_events": {
+      "capacity": 0,
+      "length": 0
+    },
+    "transport_objects": {
+      "capacity": 255,
+      "length": 255
+    },
+    "frame_validation": {
+      "status_rbp": "0x53aaceec10",
+      "status_rsp": "0x53aaceeb90",
+      "insert_saved_rbp_matches": true,
+      "insert_return_rva": "0x778395",
+      "saved_rpc_pointer": "0x53aacef230",
+      "observer_arc_pointer": "0x1e56e93b750",
+      "observer_reference_counts": [
+        4,
+        1
+      ]
+    },
+    "final_live_records": {
+      "capacity": 256,
+      "head": 203,
+      "length": 255,
+      "two_spans": {
+        "length": 53,
+        "second_length": 202,
+        "interpretation": "final live VecDeque geometry only; historical loop iterations were not recorded"
+      }
+    },
+    "state_snapshot_vectors": {
+      "objects": {
+        "capacity": 0,
+        "length": 0,
+        "empty_pointer": "0x8"
+      },
+      "udp_recovery": {
+        "capacity": 0,
+        "length": 0,
+        "empty_pointer": "0x8"
+      },
+      "relay_circuits": {
+        "capacity": 0,
+        "length": 0,
+        "empty_pointer": "0x8"
+      }
+    },
+    "current_record_clone_load_pair_equals_bad_32_bytes": 0,
+    "interpretation": "final serialized transport has 255 objects; original source has a direct snapshot and record-collection path. Final observer geometry and matching counts support that path, without logging its individual calls or register restoration."
+  },
+  "network_selected_edges": [
+    {
+      "call_rva": "0x5d0186",
+      "target_rva": "0x15af1d0",
+      "association": "input_trace Some -> NativeTransferDiagnosticsV1 snapshot; non-Null final transport supports source branch"
+    },
+    {
+      "call_rva": "0x15af6c0",
+      "target_rva": "0x1499950",
+      "association": "original record collection from VecDeque; serialized transport.objects length 255"
+    },
+    {
+      "call_rva": "0x1499a64",
+      "target_rva": "0x15a57c0",
+      "association": "first contiguous record span clone; individual dynamic hits unrecorded"
+    },
+    {
+      "call_rva": "0x1499ac4",
+      "target_rva": "0x15a57c0",
+      "association": "wrapped record span clone; individual dynamic hits unrecorded"
+    }
+  ],
+  "old_value_history": {
+    "stage_profile_drop_rva": "0x777be2",
+    "network_probe_drop_rva": "0x777c6f",
+    "same_slot_is_overwritten_by_new_value": true,
+    "actual_old_variants_known": false,
+    "original_new_key_path_initializes_Null_tag": "0x8000000000000000",
+    "branch_trace_available": false
+  },
+  "code_checks": [
+    {
+      "entry_rva": "0x181810",
+      "size": 768,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "59fc504279e469eecc78433bbc0a049689578239c8668554653e56bf24461f99",
+      "explicit_vector_writes": []
+    },
+    {
+      "entry_rva": "0x1db3c0",
+      "size": 144,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "0af7f5ec679fc5b6ae1f8ca992a8dbd27f6876e4a6c340cdb5cbd4579b3b4739",
+      "explicit_vector_writes": []
+    },
+    {
+      "entry_rva": "0x189230",
+      "size": 370,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "b77d8967a373aa141c6b21d05410fe9b9048e8b544fa7b7a17f1ab3cde6aeb1d",
+      "explicit_vector_writes": []
+    },
+    {
+      "entry_rva": "0x84f050",
+      "size": 1050,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "d30e61e0559e5bde04948127b63b16e7fb14523972759df3652b0b40efe894bb",
+      "explicit_vector_writes": [
+        {
+          "rva": "0x84f0c1",
+          "instruction": "pshufd xmm6, xmm0, 0x44"
+        },
+        {
+          "rva": "0x84f0da",
+          "instruction": "pcmpeqd xmm7, xmm7"
+        },
+        {
+          "rva": "0x84f36d",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x20]"
+        },
+        {
+          "rva": "0x84f371",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x30]"
+        }
+      ]
+    },
+    {
+      "entry_rva": "0x3530d0",
+      "size": 433,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "98884043a7eebf8f285c731cd28bab3a8fb0bca5819e2483ea7d97cd3ad94234",
+      "explicit_vector_writes": []
+    },
+    {
+      "entry_rva": "0x23ae7c7",
+      "size": 393,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "f678eb77c3e0fcdb199294473c5ee4d0c914fc253b994448c941ba41bb67bc24",
+      "explicit_vector_writes": []
+    },
+    {
+      "entry_rva": "0x1d8a1d0",
+      "size": 604,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "15877d31c7a5c5f9b306b81cd63ab9d29ff71ea8d87d41580fdcc09a6291474b",
+      "explicit_vector_writes": []
+    },
+    {
+      "entry_rva": "0x5cf780",
+      "size": 5397,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "4273ade32fe0c3eedffb792384742770e4e9f611c123e914356f06ccc476b002",
+      "explicit_vector_writes": [
+        {
+          "rva": "0x5cf818",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0x1f148a1]"
+        },
+        {
+          "rva": "0x5cf826",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0x1f148a3]"
+        },
+        {
+          "rva": "0x5d0a7b",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x5e0]"
+        },
+        {
+          "rva": "0x5d0a82",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x5f0]"
+        }
+      ]
+    },
+    {
+      "entry_rva": "0x15af1d0",
+      "size": 1574,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "deca36a1e115a3b17a717debecf7225d8da730c83d6f134ad93c8d0069ae6b68",
+      "explicit_vector_writes": [
+        {
+          "rva": "0x15af27a",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x440]"
+        },
+        {
+          "rva": "0x15af281",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x450]"
+        },
+        {
+          "rva": "0x15af36b",
+          "instruction": "movups xmm7, xmmword ptr [rax + 0x308]"
+        },
+        {
+          "rva": "0x15af389",
+          "instruction": "movups xmm6, xmmword ptr [rax + 0x398]"
+        }
+      ]
+    },
+    {
+      "entry_rva": "0x1499950",
+      "size": 467,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "cbf49d3c3a1219821b22faef5d4d2fe7cf28efc28601801fe2db55dd4c5ec4ac",
+      "explicit_vector_writes": []
+    },
+    {
+      "entry_rva": "0x15a57c0",
+      "size": 2658,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "586c3e83634660bda44e9a43b035005f2ed8f334f31f1f7a7507dc6cab88ce92",
+      "explicit_vector_writes": [
+        {
+          "rva": "0x15a5887",
+          "instruction": "movups xmm6, xmmword ptr [rdi + 0x2a0]"
+        },
+        {
+          "rva": "0x15a58d1",
+          "instruction": "movups xmm7, xmmword ptr [rdi + 0x2b0]"
+        },
+        {
+          "rva": "0x15a5c7d",
+          "instruction": "movaps xmm7, xmm14"
+        },
+        {
+          "rva": "0x15a61c0",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x200]"
+        },
+        {
+          "rva": "0x15a61c7",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x210]"
+        }
+      ]
+    },
+    {
+      "entry_rva": "0x14ad210",
+      "size": 3463,
+      "matches_original_PE_and_same_dump": true,
+      "sha256": "2124f7c2a036a737bcc2f2fa91b9da9c3f5cb18a5bb6c1e95bf5bce96e33a158",
+      "explicit_vector_writes": [
+        {
+          "rva": "0x14ad36b",
+          "instruction": "movups xmm6, xmmword ptr [r12 + 0x2a0]"
+        },
+        {
+          "rva": "0x14ad53c",
+          "instruction": "movups xmm7, xmmword ptr [r12 + 0x300]"
+        },
+        {
+          "rva": "0x14adf08",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x2e0]"
+        },
+        {
+          "rva": "0x14adf0f",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x2f0]"
+        },
+        {
+          "rva": "0x14ad7af",
+          "instruction": "movaps xmm7, xmm6"
+        },
+        {
+          "rva": "0x14ad7f7",
+          "instruction": "movups xmm6, xmmword ptr [r12 + 0x130]"
+        }
+      ]
+    }
+  ],
+  "first_bad_vector_boundary_found": false,
+  "ABI_violation_proven": false,
+  "new_runtime_or_test_processes_launched": 0
+}
