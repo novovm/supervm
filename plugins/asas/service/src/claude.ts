@@ -1,16 +1,20 @@
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import { ToolShapes } from './protocol';
+import { ToolShapes, toolNamesFor, toolDescription } from './protocol';
 import type { Engine } from './broker';
+import type { TaskInput } from './protocol';
+
+export const claudeToolDefinitions = (input: Pick<TaskInput, 'toolContract'>) => toolNamesFor(input).map(name =>
+  ({ name, description: toolDescription(name), schema: ToolShapes[name] }));
 
 export function claudeEngine(directory: string, executable?: string): Engine {
   return async context => {
     const { query, tool, createSdkMcpServer } = await import('@anthropic-ai/claude-agent-sdk');
     const cwd = path.join(directory, 'isolated', context.session.id);
     await mkdir(cwd, { recursive: true, mode: 0o700 });
-    const tools = Object.entries(ToolShapes).map(([name, schema]) => tool(name,
-      `Execute ${name} on the authenticated ACODE peer's authorized LOCAL project, never on this server.`, schema,
-      async args => { const result = await context.call(name, args); return { isError: !result.ok, content: [{ type: 'text' as const, text: result.output }] }; }));
+    const tools = claudeToolDefinitions(context.input).map(definition => tool(definition.name,
+      definition.description, definition.schema,
+      async args => { const result = await context.call(definition.name, args); return { isError: !result.ok, content: [{ type: 'text' as const, text: result.output }] }; }));
     const abortController = new AbortController();
     const abort = () => abortController.abort(); context.signal.addEventListener('abort', abort, { once: true });
     if (context.signal.aborted) abort();

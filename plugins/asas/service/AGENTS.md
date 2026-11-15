@@ -1,5 +1,7 @@
 # ASAS
 
+- AOEM Tool Contract is the platform-wide engine-neutral execution standard. Keep its unique versioned schema and policy in `src/protocol.ts`; Codex and Claude declarations must derive from it. ADR-002/003/004 and priority are in `docs/AOEM-TOOL-CONTRACT.md`. Deliver shared official-engine calls to the same B Worker before cross-engine orchestration or new vendor-specific tool systems. It is not a new AOEM compute ABI or chain interface.
+
 - Canonical source exists ONLY in NOVOVM `plugins/asas/service`; do not create an external ASAS checkout, alias or mirrored implementation.
 - ASAS is a native off-chain NOVOVM L3 application plugin. Its isolated worker hosts official Codex and Claude engines independently. B is ACODE; project tools execute on B.
 - Preserve ACODE's existing Codex and SGM paths. Do not copy proprietary extension code or vendor branding.

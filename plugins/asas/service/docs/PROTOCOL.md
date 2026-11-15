@@ -10,7 +10,7 @@ HTTP 开发载体使用 Bearer 设备令牌；A 只存 SHA-256，B 放 SecretSto
 不使用 HTTP 令牌代替节点签名，也不用网络地址替代身份；具体接线及未完成项见 `NOVONET.md`。
 
 TaskInput：`id`、`sessionId` 为 UUID；`projectId` 为 64 位小写十六进制；`engine=claude|codex`、`prompt`、`model`、`mode=develop|plan` 必填。
-`context` 是经出站检查且明确允许转发的先前会话数据，不是新工具动作。未知字段拒绝。
+`context` 是经出站检查且明确允许转发的先前会话数据，不是新工具动作。可选 `toolContract={version:1,tools:[...]}` 固定 B 支持集，未知版本/字段拒绝；未声明的历史任务只允许旧五工具。
 同一任务 ID、同一规范输入返回原任务；同 ID 改变输入拒绝。不同 peer 不得查询或接收对方事件。
 Session 绑定 peer/project/engine/model，同一时刻一个写入者，不能仅通过换 task ID 抢占。缺失 engine 的旧开发记录不静默迁移。
 
@@ -49,8 +49,10 @@ Node Worker 由 L3 插件通过继承的 stdin/stdout 管道启动，不新开�
 
 ## 工具合同
 
-当前 `workspace_list/file_read/file_patch/text_search/ide_execute`；参数通过统一 Schema 校验。
+平台规范与 ADR 见 [AOEM Tool Contract](AOEM-TOOL-CONTRACT.md)。当前 `workspace_list/file_read/file_patch/text_search/ide_execute/command_run`；参数、权限、计划模式和响应超时来自同一运行时定义。
 `file_patch` 使用当前文件摘要及唯一精确替换，写入需 B 实际批准。
 `ide_execute` 是已有宿主能力的接合点，不代表已接通全部 VS Code API。
-计划模式不开放写补丁和通用 IDE 执行入口；安全的只读 IDE 能力以后逐项声明，不能默认放行。
+`command_run` 在 B 实际批准后执行 argv，无隐式 shell，默认30秒/32KiB、最多120秒/64KiB；保留真实退出码与输出。构建/测试/Git 复用此执行面。普通用户权限不是文件系统沙箱；无自动提权、持久后台终端或交互 stdin。
+计划模式不开放写补丁、命令和通用 IDE 执行入口；安全的只读 IDE 能力以后逐项声明，不能默认放行。
+副作用共享 B 项目锁，跨 Worker 的同一操作独占认领；崩溃锁/未知效果需核对，不抢占或重放。
 工具结果出口与用户指令入口都执行敏感信息检查，规则和用户提示不增加模型能力声明。

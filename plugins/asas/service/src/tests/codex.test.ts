@@ -18,7 +18,7 @@ test('A bootstrap accepts opaque B project IDs, not local B project directories'
 });
 
 test('Codex tool declarations are ACODE-only; server-native tool families are disabled', () => {
-  const tools = dynamicTools(); assert.equal(tools.length, 5);
+  const tools = dynamicTools(); assert.equal(tools.length, 6);
   assert.ok(tools.every(tool => tool.name.startsWith('acode_') && tool.inputSchema.type === 'object'));
   const config = remoteOnlyConfig('/private/catalog.json');
   assert.equal(config.features.shell_tool, false); assert.equal(config.features.apps, false);

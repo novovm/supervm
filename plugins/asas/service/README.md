@@ -11,6 +11,8 @@ wraps Claude. B does not need Claude Code or A's model credentials.
 [Architecture](docs/ARCHITECTURE.md) · [Protocol](docs/PROTOCOL.md) ·
 [Security and translation](docs/SECURITY.md) · [ACODE UI](docs/CLIENT-UI.md) ·
 [Development and acceptance](docs/DEVELOPMENT.md) · [Operations](docs/OPERATIONS.md).
+[Platform AOEM Tool Contract and accepted ADRs](docs/AOEM-TOOL-CONTRACT.md) define
+the shared execution standard and prioritize real official Codex/Claude sharing.
 These are development contracts, not a claim of completed cross-device delivery.
 Native host and synchronization instructions: [ASAS plugin](../README.md).
 Codex and Claude have separate engine identities and native sessions. The real
@@ -51,12 +53,12 @@ access, expose it through a TLS 1.3 listener (`tlsFiles.cert`, `tlsFiles.key`) o
 trusted HTTPS reverse proxy. Never publish the loopback HTTP listener directly.
 Use one independently revocable peer token per device; project grants are exact.
 
-## Planned Native ACODE B
+## Native ACODE B
 
-The ACODE client and local Worker foundation exist; native menus/settings and the
-actual session route are not connected yet. The production connection will use
-the existing NOVONET owner, not this HTTP development listener. All file/IDE
-actions stay on B. Local GPT/SGM paths retain the existing Codex core.
+The native B client, settings and direct session route are implemented with the
+existing NOVONET owner, not this HTTP development listener. Both official engines
+derive declarations from one contract. All file/IDE/command actions execute on B.
+Local GPT/SGM paths retain the existing Codex core. Real cross-device acceptance is pending.
 
 ## Recovery And Scope
 
@@ -64,7 +66,7 @@ Authenticated HTTPS with bounded, immediate long-poll event delivery. TLS provid
 confidentiality, not censorship immunity or automatic NAT traversal. A needs a
 reachable endpoint; a relay is a separate explicit deployment, not silently used.
 Native NovoRUDP application dispatch is implemented as described above, but not
-cross-device-qualified or connected to ACODE's daily UI. Historical transport review: NOVOVM `8f66da37065f`.
+cross-device-qualified. ACODE's daily UI is connected in development. Historical transport review: NOVOVM `8f66da37065f`.
 Its current authoritative network policy is native NovoRUDP first, with qualified
 Iroh fallback under the existing NOVONET owner. The former WSS/Relay main-chain
 carrier is retired; NOVOCHAT also removed its old WSS client. Remaining generic
@@ -87,8 +89,11 @@ A's task and B's tool journal before creating a new session. Do not delete these
 records to pretend an uncertain write never happened.
 
 Initial scope: bounded workspace listing, text reads/search, hash-checked exact
-patches, and the existing ACODE IDE host. Arbitrary shell and administrator access
-are not exposed. SGM semantic review, global task scheduling, file rewinding,
+patches, the existing ACODE IDE host and approved bounded argv commands for B
+terminal/build/test/Git. Commands have ordinary B user authority, not a filesystem
+sandbox; no implicit shell or administrator access. Side effects use a shared project
+lock; operation journals are exclusively claimed and uncertain effects never replay.
+SGM semantic review, global task scheduling, file rewinding,
 cross-device deployment and 24-hour qualification are NOT completed capabilities.
 `npm test` uses explicit engine fixtures and real HTTP; it is not Claude inference.
 

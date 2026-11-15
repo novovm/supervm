@@ -1,7 +1,7 @@
 import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Broker, type Engines, type Peer } from './broker';
-import { id, VERSION } from './protocol';
+import { id, VERSION, TOOL_CAPABILITY } from './protocol';
 
 export class Application {
   private constructor(readonly broker: Broker, readonly peers: Peer[], readonly engines: Engines,
@@ -22,7 +22,7 @@ export class Application {
     catch (error) { await release(); throw error; }
     return new Application(broker, peers, engines, release);
   }
-  health() { return { version: VERSION, engines: Object.fromEntries(Object.entries(this.engines).map(([name, value]) =>
+  health() { return { version: VERSION, toolContract: TOOL_CAPABILITY, engines: Object.fromEntries(Object.entries(this.engines).map(([name, value]) =>
     [name, { models: value!.models, inferenceVerified: false }])), remoteRouteReady: false }; }
   // Only an authenticated transport owner may resolve this local principal.
   async dispatch(peerId: string, operation: string, input: any): Promise<unknown> {

@@ -2,6 +2,8 @@
 
 日期：2026-11-14。状态：开发基线，不是完整功能已交付声明。
 
+平台执行原则以 [AOEM Tool Contract / ADR-002/003/004](AOEM-TOOL-CONTRACT.md) 为准；共享调用 Codex、Claude 是第一优先级，不为每个厂商重建工具体系。
+
 ## 产品与目录
 
 - A 服务端：NOVOVM 原生应用插件，唯一源码 `plugins/asas/service`；原生宿主 `crates/plugins/asas`。不另建 ASAS 目录或路径别名。
@@ -18,7 +20,7 @@
 | A 的官方 Codex App Server | 独立 Codex Agent Loop、原生线程和动态工具回调 | 不让 Claude 套 Codex，也不让 Codex 套 Claude |
 | A Broker | 认证后绑定 peer/project/session/engine/model、持久任务、工具路由、取消及审计 | 接受任务不等于执行完成 |
 | B ACODE | 中文原文、英文发送预览、聊天/过程、用户授权、状态查询 | 不是另一个包裹 Claude 的 Codex Agent Loop |
-| B Worker | 本机授权项目的文件、搜索、补丁及工具凭据 | 不能跨项目或跨节点执行 |
+| B Worker | 本机项目的文件、搜索、补丁、审批后的命令及工具凭据 | 文件接口限制项目路径；命令以批准的本机用户权限运行，不伪称沙箱 |
 | B VS Code 扩展宿主 | 编辑器、诊断、已有任务/调试、扩展公开接口 | 后台 Worker 不直接拥有 VS Code API |
 | 现有 Codex 核心 | GPT/SGM 等既有连接的执行 | 不因新增 ASAS 被删除或全局替换 |
 
@@ -29,11 +31,11 @@
 ## 工具闭环
 
 1. B 保存用户原文和稳定请求 ID，完成本地出站检查与可选中译英。
-2. A 校验节点、项目和型号授权；取得独占 Session 后，持久化接收记录再启动 Claude。
-3. Claude 通过当前会话专属 MCP 代理请求 B 工具。A 禁用独立项目文件/Shell/插件/hook 入口，不继承任意项目配置。
+2. A 校验节点、项目、型号和 B 工具能力集；取得独占 Session 后，持久化接收记录再启动所选官方引擎。
+3. Claude 经专属 MCP，Codex 经 App Server dynamicTools 请求同一 B 工具。A 禁用独立项目文件/Shell/插件/hook 入口，不继承任意项目配置。
 4. B 检查身份、项目、调用 ID、路径、模式和实际用户授权，先写执行日志再操作。
 5. B 对真实工具结果再次执行出站检查；禁止导出的正文不发给 A，返回明确的“已执行但输出被扣留”回执。
-6. A 持久化结果后交给 Claude 继续。只有实际成功终态才显示完成。
+6. A 持久化结果后交给原官方引擎继续。只有实际成功终态才显示完成。
 
 MCP 是 Claude 与工具的适配接口，任务提交、输出、状态和恢复仍是 ASAS 的应用层合同。
 
@@ -45,13 +47,13 @@ MCP 是 Claude 与工具的适配接口，任务提交、输出、状态和恢�
 
 现有 HTTPS/回环 API 是应用合同的开发验证载体，尚非已签收的跨机网络方案。NOVONET 适配未完成前不标记接通。
 L3 原生 UDP 监听已有独立应用通道、认证主体映射和真实 Node 边界验证；
-ACODE 生产连接、签名服务公告、合格备用与实际双机尚缺。详见 `NOVONET.md`。
+ACODE 原生 B 连接和日常设置/会话路径已实现并完成组件测试；签名服务公告、合格备用与实际双机尚缺。详见 `NOVONET.md`。
 不设计私有加密，不关闭证书校验，不承诺运营商阻断或所有路径失效时仍能连通。
 
 ## 非目标与当前限制
 
 不接管 A 的交互终端、不注入键盘、不共享不同节点的 Claude 上下文、不复制账号令牌。
-任意 Shell、管理员命令、桌面操控、自动目标、多 Agent、检查点回退均须独立接入和验收，不从接口存在推定可用。
+已接入审批后的有界 argv 命令，Shell 需显式作为程序与参数批准，不开启 A 的本地 Shell。管理员命令、桌面操控、自动目标、多 Agent、检查点回退仍须独立接入和验收，不从接口存在推定可用。
 SGM 不是必经安全过滤器；语义审查以后作为可选能力，不替代确定性权限和实际批准。
 
 依据：[官方 Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)、[MCP](https://code.claude.com/docs/en/agent-sdk/mcp)、[认证边界](https://code.claude.com/docs/en/legal-and-compliance)。

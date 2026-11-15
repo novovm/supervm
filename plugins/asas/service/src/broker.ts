@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import path from 'node:path';
 import { saveJson } from './storage';
-import { TaskInput, ToolResult, StoredTask, EngineName, id, parseTool, type AgentEvent, type TaskState } from './protocol';
+import { TaskInput, ToolResult, StoredTask, EngineName, ToolName, TOOL_POLICIES, toolNamesFor, id, parseTool, type AgentEvent, type TaskState } from './protocol';
 
 export type Peer = { id: string; tokenSha256: string; projects: string[] };
 const SessionSchema = z.object({ id, peerId: z.string().min(1).max(200), projectId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -104,12 +104,13 @@ export class Broker extends EventEmitter {
         text: async text => { controller.signal.throwIfAborted(); if (Buffer.byteLength(text) > 200000) throw Error('Text event too large'); await this.append(task, { type: 'text', text }); },
         checkpoint: async value => { session.nativeSessionId = SessionSchema.shape.nativeSessionId.unwrap().parse(value); await this.save('sessions', session.id, session); },
         call: async (name, args) => {
-          controller.signal.throwIfAborted(); const parsed = parseTool(name, args);
-          if (task.mode === 'plan' && ['file_patch', 'ide_execute'].includes(name)) return { callId: randomUUID(), ok: false, output: 'Plan mode denies mutating tools' };
+          controller.signal.throwIfAborted(); const key = ToolName.parse(name), parsed = parseTool(key, args), policy = TOOL_POLICIES[key];
+          if (!toolNamesFor(task).includes(key)) return { callId: randomUUID(), ok: false, output: 'B did not advertise this tool capability' };
+          if (task.mode === 'plan' && !policy.planAllowed) return { callId: randomUUID(), ok: false, output: 'Plan mode denies mutating tools' };
           const callId = randomUUID();
           const result = new Promise<ToolResult>((resolve, reject) => {
             const abort = () => { session.recovery = true; clearTimeout(timer); this.pending.delete(callId); reject(controller.signal.reason || Error('Task cancelled')); };
-            const timer = setTimeout(() => { session.recovery = true; controller.signal.removeEventListener('abort', abort); this.pending.delete(callId); reject(Error('Worker response timeout; tool execution state may be unknown')); }, 300000);
+            const timer = setTimeout(() => { session.recovery = true; controller.signal.removeEventListener('abort', abort); this.pending.delete(callId); reject(Error('Worker response timeout; tool execution state may be unknown')); }, policy.responseTimeoutMs);
             controller.signal.addEventListener('abort', abort, { once: true });
             this.pending.set(callId, { taskId: task.id, timer, resolve: value => { controller.signal.removeEventListener('abort', abort); resolve(value); } });
           });
