@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-15：PID3848写表指令与保存槽复用已核对
+
+字段32字节、异常XMM6/7及insert保存值逐字节一致。正常构造写表指令为
+status RVA 0x77823e/0x778245；表与当前保存区互不重叠。
+同次主status对象50项可读，signature_work、stage_profile、native_network_probe表合法，
+可选IO/asset字段缺席。四个直接使用XMM6/7的被调函数保存恢复偏移可配对。
+它们旧XMM槽0x53aaceeb20/eb30已由当前insert的XMM7/XMM8覆盖，
+旧槽无法作为先前恢复历史。首个异常寄存器变化仍未定位，未修生产代码。
+详见[C-PID3848-vector-writes-20261115/README.md](C-PID3848-vector-writes-20261115/README.md)。
+本轮离线分析，原现场保留，双中继暂停。
+
 ## CURRENT 2026-11-15 A签收2336cfc9：36TiB申请已核实，追同一现场的首次错误恢复
 
 A已下拉C的README、allocation-values-public.json及机器码，并独立重算：

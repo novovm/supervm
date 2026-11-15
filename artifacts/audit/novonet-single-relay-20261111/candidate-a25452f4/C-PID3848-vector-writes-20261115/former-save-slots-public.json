@@ -1,0 +1,42 @@
+{
+  "caller_status_rsp": "0x53aaceeb90",
+  "basis": "static prologue and call-site stack relation, not historical saved values",
+  "former_callees": [
+    {
+      "name": "network_probe_observation",
+      "rva": "0x5cf780",
+      "former_rsp": "0x53aacee4c0",
+      "xmm6_slot": "0x53aaceeb20",
+      "xmm7_slot": "0x53aaceeb30"
+    },
+    {
+      "name": "LocalKey::with",
+      "rva": "0x34b9a0",
+      "former_rsp": "0x53aacee8c0",
+      "xmm6_slot": "0x53aaceeb20",
+      "xmm7_slot": "0x53aaceeb30"
+    },
+    {
+      "name": "AdmissionState::status",
+      "rva": "0x863990",
+      "former_rsp": "0x53aacee8d0",
+      "xmm6_slot": "0x53aaceeb20",
+      "xmm7_slot": "0x53aaceeb30"
+    }
+  ],
+  "current_occupants": [
+    {
+      "slot": "0x53aaceeb20",
+      "register": "insert_full XMM7",
+      "save_rva": "0x84f071",
+      "save_instruction": "movdqa [rbp+0x30],xmm7"
+    },
+    {
+      "slot": "0x53aaceeb30",
+      "register": "insert_full XMM8",
+      "save_rva": "0x84f06b",
+      "save_instruction": "movdqa [rbp+0x40],xmm8"
+    }
+  ],
+  "former_contents_recoverable_from_current_slots": false
+}

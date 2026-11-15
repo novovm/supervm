@@ -1,0 +1,694 @@
+{
+  "outer_status": {
+    "core": "0x53aaceee20",
+    "capacity": 56,
+    "length": 50,
+    "items": 50,
+    "mask": "0x3f"
+  },
+  "entries": [
+    {
+      "index": 0,
+      "key": "profile"
+    },
+    {
+      "index": 1,
+      "key": "experimental"
+    },
+    {
+      "index": 2,
+      "key": "core"
+    },
+    {
+      "index": 3,
+      "key": "transport"
+    },
+    {
+      "index": 4,
+      "key": "consensus"
+    },
+    {
+      "index": 5,
+      "key": "chain_id"
+    },
+    {
+      "index": 6,
+      "key": "head"
+    },
+    {
+      "index": 7,
+      "key": "current_height"
+    },
+    {
+      "index": 8,
+      "key": "round"
+    },
+    {
+      "index": 9,
+      "key": "scheduled_proposer"
+    },
+    {
+      "index": 10,
+      "key": "local_proposer"
+    },
+    {
+      "index": 11,
+      "key": "recovery_in_progress"
+    },
+    {
+      "index": 12,
+      "key": "pending"
+    },
+    {
+      "index": 13,
+      "key": "pending_bytes"
+    },
+    {
+      "index": 14,
+      "key": "rpc_indexed_height"
+    },
+    {
+      "index": 15,
+      "key": "projection_error"
+    },
+    {
+      "index": 16,
+      "key": "warm_projection_blocks"
+    },
+    {
+      "index": 17,
+      "key": "archive_projection_blocks"
+    },
+    {
+      "index": 18,
+      "key": "executed_batches"
+    },
+    {
+      "index": 19,
+      "key": "durable_decisions"
+    },
+    {
+      "index": 20,
+      "key": "execution_failures"
+    },
+    {
+      "index": 21,
+      "key": "execution_backend"
+    },
+    {
+      "index": 22,
+      "key": "execution_integer_rows_total"
+    },
+    {
+      "index": 23,
+      "key": "execution_integer_plans_total"
+    },
+    {
+      "index": 24,
+      "key": "execution_apfl_view_transactions_total"
+    },
+    {
+      "index": 25,
+      "key": "requested_bodies"
+    },
+    {
+      "index": 26,
+      "key": "served_bodies"
+    },
+    {
+      "index": 27,
+      "key": "native_pending_deliveries"
+    },
+    {
+      "index": 28,
+      "key": "native_rejected_messages"
+    },
+    {
+      "index": 29,
+      "key": "native_expired_sends"
+    },
+    {
+      "index": 30,
+      "key": "successor_overlap_active"
+    },
+    {
+      "index": 31,
+      "key": "business_proof_required"
+    },
+    {
+      "index": 32,
+      "key": "business_proof_verified"
+    },
+    {
+      "index": 33,
+      "key": "mempool_gossip"
+    },
+    {
+      "index": 34,
+      "key": "gossip_delivery"
+    },
+    {
+      "index": 35,
+      "key": "gossip_repair"
+    },
+    {
+      "index": 36,
+      "key": "gossip_verified_inputs"
+    },
+    {
+      "index": 37,
+      "key": "gossip_rejected_inputs"
+    },
+    {
+      "index": 38,
+      "key": "authentication_cache_hits"
+    },
+    {
+      "index": 39,
+      "key": "rpc_authentication"
+    },
+    {
+      "index": 40,
+      "key": "pending_survives_restart"
+    },
+    {
+      "index": 41,
+      "key": "receipt_query_scope"
+    },
+    {
+      "index": 42,
+      "key": "historical_receipt_queries"
+    },
+    {
+      "index": 43,
+      "key": "pending_retained_payload_bytes"
+    },
+    {
+      "index": 44,
+      "key": "pending_retained_authentication_bytes"
+    },
+    {
+      "index": 45,
+      "key": "pending_retained_total_bytes"
+    },
+    {
+      "index": 46,
+      "key": "pending_retained_apfl_owners"
+    },
+    {
+      "index": 47,
+      "key": "signature_work"
+    },
+    {
+      "index": 48,
+      "key": "stage_profile"
+    },
+    {
+      "index": 49,
+      "key": "native_network_probe",
+      "object_metadata": {
+        "capacity": 14,
+        "entries": "0x1e56fb23660",
+        "length": 8,
+        "ctrl": "0x1e56fee87b0",
+        "bucket_mask": "0xf",
+        "growth_left": 6,
+        "items": 8
+      }
+    }
+  ],
+  "decoded_object_maps": 16,
+  "maps_matching_bad_pointer_values": [],
+  "pointer_references": {
+    "0x1e5716ef0e0": {
+      "aligned_reference_count": 3,
+      "stack_references": [
+        "0x53aaceeb18",
+        "0x53aaceedf0"
+      ]
+    },
+    "0x1e5716c9e40": {
+      "aligned_reference_count": 2,
+      "stack_references": [
+        "0x53aaceeb28",
+        "0x53aaceee00"
+      ]
+    }
+  },
+  "traversal_limit": "map-valued descendants only; arrays, detached allocations and freed objects not traversed",
+  "normal_local_constructor": {
+    "XMM6_store_rva": "0x777126",
+    "XMM7_store_rva": "0x77712d",
+    "same_table_address": "0x53aaceede8",
+    "result_key": "signature_work",
+    "capacity": 7,
+    "length": 6,
+    "ctrl": "0x1e56fa894f0",
+    "bucket_mask": "0x7",
+    "growth_left": 1,
+    "items": 6
+  },
+  "narrow_interval_call_sites": [
+    {
+      "call_rva": "0x777142",
+      "instruction": "call 0x7ff7f0ad1810",
+      "target_rva": "0x181810",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x777151",
+      "instruction": "call 0x7ff7f0b2b3c0",
+      "target_rva": "0x1db3c0",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x7771d5",
+      "instruction": "call 0x7ff7f0ad9230",
+      "target_rva": "0x189230",
+      "symbol": "novovm_base_a254!ZN4core4hash11BuildHasher8hash_one17h2900b6a5ce603c97E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x77726d",
+      "instruction": "call 0x7ff7f119f050",
+      "target_rva": "0x84f050",
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7772d8",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7772dd",
+      "instruction": "call 0x7ff7f0ad1810",
+      "target_rva": "0x181810",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x7772ec",
+      "instruction": "call 0x7ff7f0b2b3c0",
+      "target_rva": "0x1db3c0",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x77736a",
+      "instruction": "call 0x7ff7f0ad9230",
+      "target_rva": "0x189230",
+      "symbol": "novovm_base_a254!ZN4core4hash11BuildHasher8hash_one17h2900b6a5ce603c97E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777402",
+      "instruction": "call 0x7ff7f119f050",
+      "target_rva": "0x84f050",
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x77746d",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777472",
+      "instruction": "call 0x7ff7f0ad1810",
+      "target_rva": "0x181810",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x777481",
+      "instruction": "call 0x7ff7f0b2b3c0",
+      "target_rva": "0x1db3c0",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x77750a",
+      "instruction": "call 0x7ff7f0ad9230",
+      "target_rva": "0x189230",
+      "symbol": "novovm_base_a254!ZN4core4hash11BuildHasher8hash_one17h2900b6a5ce603c97E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7775a2",
+      "instruction": "call 0x7ff7f119f050",
+      "target_rva": "0x84f050",
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x77760d",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777612",
+      "instruction": "call 0x7ff7f0ad1810",
+      "target_rva": "0x181810",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x777621",
+      "instruction": "call 0x7ff7f0b2b3c0",
+      "target_rva": "0x1db3c0",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x777691",
+      "instruction": "call 0x7ff7f0ad9230",
+      "target_rva": "0x189230",
+      "symbol": "novovm_base_a254!ZN4core4hash11BuildHasher8hash_one17h2900b6a5ce603c97E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777729",
+      "instruction": "call 0x7ff7f119f050",
+      "target_rva": "0x84f050",
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777794",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777799",
+      "instruction": "call 0x7ff7f0ad1810",
+      "target_rva": "0x181810",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x7777a8",
+      "instruction": "call 0x7ff7f0b2b3c0",
+      "target_rva": "0x1db3c0",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x77781a",
+      "instruction": "call 0x7ff7f0ad9230",
+      "target_rva": "0x189230",
+      "symbol": "novovm_base_a254!ZN4core4hash11BuildHasher8hash_one17h2900b6a5ce603c97E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7778b2",
+      "instruction": "call 0x7ff7f119f050",
+      "target_rva": "0x84f050",
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x77791d",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777922",
+      "instruction": "call 0x7ff7f0ad1810",
+      "target_rva": "0x181810",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x777931",
+      "instruction": "call 0x7ff7f0b2b3c0",
+      "target_rva": "0x1db3c0",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x77796d",
+      "instruction": "call 0x7ff7f0ad1810",
+      "target_rva": "0x181810",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x77797c",
+      "instruction": "call 0x7ff7f0b2b3c0",
+      "target_rva": "0x1db3c0",
+      "symbol": "novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x7779a4",
+      "instruction": "call 0x7ff7f2cfe7c7",
+      "target_rva": "0x23ae7c7",
+      "symbol": "novovm_base_a254!memcpy",
+      "runtime_function_known": false
+    },
+    {
+      "call_rva": "0x7779e8",
+      "instruction": "call 0x7ff7f0ad9230",
+      "target_rva": "0x189230",
+      "symbol": "novovm_base_a254!ZN4core4hash11BuildHasher8hash_one17h2900b6a5ce603c97E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777a80",
+      "instruction": "call 0x7ff7f119f050",
+      "target_rva": "0x84f050",
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777aeb",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777b56",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777b65",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777bb4",
+      "instruction": "call 0x7ff7f10ac4a0",
+      "target_rva": "0x75c4a0",
+      "symbol": "novovm_base_a254!ZN11novovm_node15native_pipeline7profile7elapsed17hc615faeebf7186c0E+0xd0",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777bd3",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777be2",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777c31",
+      "instruction": "call 0x7ff7f0f1f780",
+      "target_rva": "0x5cf780",
+      "symbol": "novovm_base_a254!ZN11novovm_node15native_pipeline9consensus16native_lifecycle5probe92_$LT$impl$u20$novovm_node..native_pipeline..consensus..native_lifecycle..NativeLifecycle$GT$25network_probe_observation17h6f86df782ba7d70dE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777c60",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777c6f",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777cac",
+      "instruction": "call 0x7ff7f1efc480",
+      "target_rva": "0x15ac480",
+      "symbol": "novovm_base_a254!ZN14novovm_network8novorudp11diagnostics23native_io_cost_snapshot17hf78afe81b0c85599E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777cdf",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777cee",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777d35",
+      "instruction": "call 0x7ff7f0c9b9a0",
+      "target_rva": "0x34b9a0",
+      "symbol": "novovm_base_a254!ZN3std6thread5local17LocalKey$LT$T$GT$4with17h2ef6a9ab2b7ff097E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777d54",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777d63",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777e13",
+      "instruction": "call 0x7ff7f1efdc80",
+      "target_rva": "0x15adc80",
+      "symbol": "novovm_base_a254!ZN14novovm_network8novorudp11diagnostics27NativeTransferDiagnosticsV119snapshot_send_polls17hd6d5b29484f3bbe6E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777e2f",
+      "instruction": "call 0x7ff7f101ff90",
+      "target_rva": "0x6cff90",
+      "symbol": "novovm_base_a254!ZN14novovm_network8novorudp11diagnostics1_120_$LT$impl$u20$serde_core..ser..Serialize$u20$for$u20$novovm_network..novorudp..diagnostics..NativeLinkPollEvidenceV1$GT$9serialize17h64ca20348a548369E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777e7b",
+      "instruction": "call 0x7ff7f2d83760",
+      "target_rva": "0x2433760",
+      "symbol": "novovm_base_a254!core::result::unwrap_failed",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777f15",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777f24",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777f83",
+      "instruction": "call 0x7ff7f1efde10",
+      "target_rva": "0x15ade10",
+      "symbol": "novovm_base_a254!ZN14novovm_network8novorudp11diagnostics27NativeTransferDiagnosticsV123snapshot_receive_totals17h5ade5adcb23149c0E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777f9f",
+      "instruction": "call 0x7ff7f101f4a0",
+      "target_rva": "0x6cf4a0",
+      "symbol": "novovm_base_a254!ZN14novovm_network8novorudp11diagnostics1_117_$LT$impl$u20$serde_core..ser..Serialize$u20$for$u20$novovm_network..novorudp..diagnostics..NativeReceiveTotalsV1$GT$9serialize17h7a546ce55cdb169fE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x777feb",
+      "instruction": "call 0x7ff7f2d83760",
+      "target_rva": "0x2433760",
+      "symbol": "novovm_base_a254!core::result::unwrap_failed",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x778085",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x778094",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7780e7",
+      "instruction": "call 0x7ff7f1ca5540",
+      "target_rva": "0x1355540",
+      "symbol": "novovm_base_a254!ZN14novovm_network14runtime_status42snapshot_network_runtime_receiver_queue_v117h2ea6d0c1b1f1b03eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x778116",
+      "instruction": "call 0x7ff7f1524bf0",
+      "target_rva": "0xbd4bf0",
+      "symbol": "novovm_base_a254!ZN14novovm_network14runtime_status1_118_$LT$impl$u20$serde_core..ser..Serialize$u20$for$u20$novovm_network..runtime_status..NetworkRuntimeReceiverQueueV1$GT$9serialize17h0ea92e85adadb007E",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7781a6",
+      "instruction": "call 0x7ff7f26da1d0",
+      "target_rva": "0x1d8a1d0",
+      "symbol": "novovm_base_a254!ZN55_$LT$str$u20$as$u20$serde_json..value..index..Index$GT$15index_or_insert17hdfd878737923b34eE",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7781b5",
+      "instruction": "call 0x7ff7f0ca30d0",
+      "target_rva": "0x3530d0",
+      "symbol": "novovm_base_a254!ZN4core3ptr45drop_in_place$LT$serde_json..value..Value$GT$17h2e35c9ab069f6483E.llvm.10042960713179918754",
+      "runtime_function_known": true
+    },
+    {
+      "call_rva": "0x7781fd",
+      "instruction": "call 0x7ff7f278a8b0",
+      "target_rva": "0x1e3a8b0",
+      "symbol": "novovm_base_a254!std::hash::random::impl$0::new::KEYS::constant$0::closure$1::__RUST_STD_INTERNAL_VAL",
+      "runtime_function_known": false
+    }
+  ],
+  "absent_target_fields": [
+    "native_io_costs",
+    "native_delivery_traffic",
+    "native_send_polls",
+    "native_receive_totals",
+    "native_receiver_queue"
+  ]
+}

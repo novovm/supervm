@@ -1,0 +1,362 @@
+{
+  "slots": {
+    "new_table": [
+      "0x53aaceede8",
+      "0x53aaceee08"
+    ],
+    "insert_XMM6_XMM7_save": [
+      "0x53aaceeb10",
+      "0x53aaceeb30"
+    ],
+    "status_incoming_XMM6_XMM7_save": [
+      "0x53aaceeff0",
+      "0x53aacef010"
+    ]
+  },
+  "pairwise_overlap_checks": [
+    {
+      "left": "new_table",
+      "right": "status_incoming_XMM6_XMM7_save",
+      "overlap": false
+    },
+    {
+      "left": "insert_XMM6_XMM7_save",
+      "right": "new_table",
+      "overlap": false
+    },
+    {
+      "left": "insert_XMM6_XMM7_save",
+      "right": "status_incoming_XMM6_XMM7_save",
+      "overlap": false
+    }
+  ],
+  "direct_callee_vector_audit": [
+    {
+      "rva": "0x84f050",
+      "symbol": "novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E",
+      "call_sites": [
+        "0x7723a8",
+        "0x7725a7",
+        "0x772775",
+        "0x772934",
+        "0x772afd",
+        "0x772c8b",
+        "0x772f04",
+        "0x7730a3",
+        "0x773231",
+        "0x77350a",
+        "0x7737da",
+        "0x773966",
+        "0x773af7",
+        "0x773c96",
+        "0x773e2c",
+        "0x774033",
+        "0x7741d1",
+        "0x77436c",
+        "0x7744fc",
+        "0x77469d",
+        "0x774833",
+        "0x774a01",
+        "0x774ba3",
+        "0x774d37",
+        "0x774ee0",
+        "0x775070",
+        "0x77520f",
+        "0x7753e3",
+        "0x775581",
+        "0x775718",
+        "0x7758d6",
+        "0x775ab8",
+        "0x775c6a",
+        "0x775ddf",
+        "0x775fcb",
+        "0x7761d0",
+        "0x77637a",
+        "0x77650e",
+        "0x7766a9",
+        "0x7768a5",
+        "0x776a1f",
+        "0x776c11",
+        "0x776dac",
+        "0x77726d",
+        "0x777402",
+        "0x7775a2",
+        "0x777729",
+        "0x7778b2",
+        "0x777a80"
+      ],
+      "xmm_instructions": [
+        {
+          "rva": "0x84f071",
+          "bytes": "660f7f7d30",
+          "instruction": "movdqa xmmword ptr [rbp + 0x30], xmm7"
+        },
+        {
+          "rva": "0x84f076",
+          "bytes": "660f7f7520",
+          "instruction": "movdqa xmmword ptr [rbp + 0x20], xmm6"
+        },
+        {
+          "rva": "0x84f0c1",
+          "bytes": "660f70f044",
+          "instruction": "pshufd xmm6, xmm0, 0x44"
+        },
+        {
+          "rva": "0x84f0da",
+          "bytes": "660f76ff",
+          "instruction": "pcmpeqd xmm7, xmm7"
+        },
+        {
+          "rva": "0x84f0f1",
+          "bytes": "660f74c6",
+          "instruction": "pcmpeqb xmm0, xmm6"
+        },
+        {
+          "rva": "0x84f1f1",
+          "bytes": "66440f74c7",
+          "instruction": "pcmpeqb xmm8, xmm7"
+        },
+        {
+          "rva": "0x84f36d",
+          "bytes": "0f287520",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x20]"
+        },
+        {
+          "rva": "0x84f371",
+          "bytes": "0f287d30",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x30]"
+        }
+      ],
+      "unwind_saves": [
+        {
+          "register": "xmm6",
+          "stack_offset": "0xa0",
+          "prologue_offset": 43
+        },
+        {
+          "register": "xmm7",
+          "stack_offset": "0xb0",
+          "prologue_offset": 38
+        }
+      ],
+      "code_in_dump_matches_original": true
+    },
+    {
+      "rva": "0x863990",
+      "symbol": "novovm_base_a254!ZN11novovm_node15native_pipeline7service3rpc9admission14AdmissionState6status17h57c0f2c92ff21162E",
+      "call_sites": [
+        "0x77677a"
+      ],
+      "xmm_instructions": [
+        {
+          "rva": "0x8639ab",
+          "bytes": "0f29bde0010000",
+          "instruction": "movaps xmmword ptr [rbp + 0x1e0], xmm7"
+        },
+        {
+          "rva": "0x8639b2",
+          "bytes": "0f29b5d0010000",
+          "instruction": "movaps xmmword ptr [rbp + 0x1d0], xmm6"
+        },
+        {
+          "rva": "0x863a03",
+          "bytes": "0f1035a6a6ca01",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0x1caa6a6]"
+        },
+        {
+          "rva": "0x863a0a",
+          "bytes": "0f1175e8",
+          "instruction": "movups xmmword ptr [rbp - 0x18], xmm6"
+        },
+        {
+          "rva": "0x863a0e",
+          "bytes": "0f103daba6ca01",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0x1caa6ab]"
+        },
+        {
+          "rva": "0x863a15",
+          "bytes": "0f117df8",
+          "instruction": "movups xmmword ptr [rbp - 8], xmm7"
+        },
+        {
+          "rva": "0x86528b",
+          "bytes": "0f117538",
+          "instruction": "movups xmmword ptr [rbp + 0x38], xmm6"
+        },
+        {
+          "rva": "0x86528f",
+          "bytes": "0f117d48",
+          "instruction": "movups xmmword ptr [rbp + 0x48], xmm7"
+        },
+        {
+          "rva": "0x86682a",
+          "bytes": "0f28b5d0010000",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x1d0]"
+        },
+        {
+          "rva": "0x866831",
+          "bytes": "0f28bde0010000",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1e0]"
+        }
+      ],
+      "unwind_saves": [
+        {
+          "register": "xmm6",
+          "stack_offset": "0x250",
+          "prologue_offset": 41
+        },
+        {
+          "register": "xmm7",
+          "stack_offset": "0x260",
+          "prologue_offset": 34
+        }
+      ],
+      "code_in_dump_matches_original": true
+    },
+    {
+      "rva": "0x5cf780",
+      "symbol": "novovm_base_a254!ZN11novovm_node15native_pipeline9consensus16native_lifecycle5probe92_$LT$impl$u20$novovm_node..native_pipeline..consensus..native_lifecycle..NativeLifecycle$GT$25network_probe_observation17h6f86df782ba7d70dE",
+      "call_sites": [
+        "0x777c31"
+      ],
+      "xmm_instructions": [
+        {
+          "rva": "0x5cf79b",
+          "bytes": "0f29bdf0050000",
+          "instruction": "movaps xmmword ptr [rbp + 0x5f0], xmm7"
+        },
+        {
+          "rva": "0x5cf7a2",
+          "bytes": "0f29b5e0050000",
+          "instruction": "movaps xmmword ptr [rbp + 0x5e0], xmm6"
+        },
+        {
+          "rva": "0x5cf818",
+          "bytes": "0f1035a148f101",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0x1f148a1]"
+        },
+        {
+          "rva": "0x5cf81f",
+          "bytes": "0f11b520040000",
+          "instruction": "movups xmmword ptr [rbp + 0x420], xmm6"
+        },
+        {
+          "rva": "0x5cf826",
+          "bytes": "0f103da348f101",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0x1f148a3]"
+        },
+        {
+          "rva": "0x5cf82d",
+          "bytes": "0f11bd30040000",
+          "instruction": "movups xmmword ptr [rbp + 0x430], xmm7"
+        },
+        {
+          "rva": "0x5d03e7",
+          "bytes": "0f11b588040000",
+          "instruction": "movups xmmword ptr [rbp + 0x488], xmm6"
+        },
+        {
+          "rva": "0x5d03ee",
+          "bytes": "0f11bd98040000",
+          "instruction": "movups xmmword ptr [rbp + 0x498], xmm7"
+        },
+        {
+          "rva": "0x5d0a7b",
+          "bytes": "0f28b5e0050000",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x5e0]"
+        },
+        {
+          "rva": "0x5d0a82",
+          "bytes": "0f28bdf0050000",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x5f0]"
+        }
+      ],
+      "unwind_saves": [
+        {
+          "register": "xmm6",
+          "stack_offset": "0x660",
+          "prologue_offset": 41
+        },
+        {
+          "register": "xmm7",
+          "stack_offset": "0x670",
+          "prologue_offset": 34
+        }
+      ],
+      "code_in_dump_matches_original": true
+    },
+    {
+      "rva": "0x34b9a0",
+      "symbol": "novovm_base_a254!ZN3std6thread5local17LocalKey$LT$T$GT$4with17h2ef6a9ab2b7ff097E",
+      "call_sites": [
+        "0x777d35"
+      ],
+      "xmm_instructions": [
+        {
+          "rva": "0x34b9bb",
+          "bytes": "0f29bdf0010000",
+          "instruction": "movaps xmmword ptr [rbp + 0x1f0], xmm7"
+        },
+        {
+          "rva": "0x34b9c2",
+          "bytes": "0f29b5e0010000",
+          "instruction": "movaps xmmword ptr [rbp + 0x1e0], xmm6"
+        },
+        {
+          "rva": "0x34ba3f",
+          "bytes": "0f10350a961602",
+          "instruction": "movups xmm6, xmmword ptr [rip + 0x216960a]"
+        },
+        {
+          "rva": "0x34ba46",
+          "bytes": "0f1175c0",
+          "instruction": "movups xmmword ptr [rbp - 0x40], xmm6"
+        },
+        {
+          "rva": "0x34ba4a",
+          "bytes": "0f103d0f961602",
+          "instruction": "movups xmm7, xmmword ptr [rip + 0x216960f]"
+        },
+        {
+          "rva": "0x34ba51",
+          "bytes": "0f117dd0",
+          "instruction": "movups xmmword ptr [rbp - 0x30], xmm7"
+        },
+        {
+          "rva": "0x34bc8a",
+          "bytes": "0f117578",
+          "instruction": "movups xmmword ptr [rbp + 0x78], xmm6"
+        },
+        {
+          "rva": "0x34bc8e",
+          "bytes": "0f11bd88000000",
+          "instruction": "movups xmmword ptr [rbp + 0x88], xmm7"
+        },
+        {
+          "rva": "0x34ca58",
+          "bytes": "0f28b5e0010000",
+          "instruction": "movaps xmm6, xmmword ptr [rbp + 0x1e0]"
+        },
+        {
+          "rva": "0x34ca5f",
+          "bytes": "0f28bdf0010000",
+          "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1f0]"
+        }
+      ],
+      "unwind_saves": [
+        {
+          "register": "xmm6",
+          "stack_offset": "0x260",
+          "prologue_offset": 41
+        },
+        {
+          "register": "xmm7",
+          "stack_offset": "0x270",
+          "prologue_offset": 34
+        }
+      ],
+      "code_in_dump_matches_original": true
+    }
+  ],
+  "scope": "direct calls in original status body before archive_work constructor, with static runtime-function ranges; nested calls, indirect calls and executed path not reconstructed"
+}
