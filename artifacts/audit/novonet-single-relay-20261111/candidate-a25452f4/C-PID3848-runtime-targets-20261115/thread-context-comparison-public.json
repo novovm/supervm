@@ -1,0 +1,8 @@
+{
+  "tid": 34004,
+  "thread_list_rip": "0x7ff7f278e1e1",
+  "exception_rip": "0x7ff7f278e1e1",
+  "rsp_equal": true,
+  "rbp_equal": true,
+  "XMM6_XMM7_equal": true
+}

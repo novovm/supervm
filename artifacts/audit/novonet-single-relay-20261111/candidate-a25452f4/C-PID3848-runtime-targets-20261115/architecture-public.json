@@ -1,0 +1,8 @@
+{
+  "node_machine": "0x8664",
+  "aoem_machine": "0x8664",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "aoem_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "interpretation": "both original artifacts have IMAGE_FILE_MACHINE_AMD64 (0x8664)",
+  "original_build_host_and_cpu_flags": "not encoded by PE machine field; not inferred from current compiler"
+}

@@ -1,0 +1,95 @@
+{
+  "sha256": "BDA146E159B99FB6B0E2A370757332FCEACDE941F00EB7EB427F2494EB6CE8EA",
+  "backtrace_addresses": [
+    {
+      "address": "0x7ff7f2796b62",
+      "index": 0
+    },
+    {
+      "address": "0x7ff7f27a24e1",
+      "index": 1
+    },
+    {
+      "address": "0x7ff7f2780854",
+      "index": 2
+    },
+    {
+      "address": "0x7ff7f278e117",
+      "index": 3
+    },
+    {
+      "address": "0x7ff7f278e1dc",
+      "index": 4
+    },
+    {
+      "address": "0x7ff7f278a82f",
+      "index": 5
+    },
+    {
+      "address": "0x7ff7f278e1ab",
+      "index": 6
+    },
+    {
+      "address": "0x7ff7f277d5f8",
+      "index": 7
+    },
+    {
+      "address": "0x7ff7f2d8335b",
+      "index": 8
+    },
+    {
+      "address": "0x7ff7f26e1e07",
+      "index": 9
+    },
+    {
+      "address": "0x7ff7f2d7c81e",
+      "index": 10
+    },
+    {
+      "address": "0x7ff7f119f3ae",
+      "index": 11
+    },
+    {
+      "address": "0x7ff7f10c8395",
+      "index": 12
+    },
+    {
+      "address": "0x7ff7f0acd5e5",
+      "index": 13
+    },
+    {
+      "address": "0x7ff7f09dad16",
+      "index": 14
+    },
+    {
+      "address": "0x7ff7f0b28d57",
+      "index": 15
+    },
+    {
+      "address": "0x7ff7f0b2a0f5",
+      "index": 16
+    },
+    {
+      "address": "0x7ff7f278a0e8",
+      "index": 17
+    },
+    {
+      "address": "0x7ffce175dda7",
+      "index": 18
+    },
+    {
+      "address": "0x7ffce3219c5c",
+      "index": 19
+    }
+  ],
+  "mtime_utc": "2026-11-15T04:17:07.2937253Z",
+  "bytes": 897,
+  "raw_log_published": false,
+  "backtrace_function_names": [],
+  "utc": "2026-11-15T05:35:18.2383804Z",
+  "read_exit": 0,
+  "line_count": 23,
+  "allocation_lines": [
+    "memory allocation of 39582418599952 bytes failed"
+  ]
+}

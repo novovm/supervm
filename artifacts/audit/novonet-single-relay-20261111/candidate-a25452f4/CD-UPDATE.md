@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-15：同次stderr证实一次故障后formatter与上下文捕获
+
+管理员只读取得PID3848本轮stderr摘要，读取报告0，897字节，SHA256两次一致。
+实际错误行为memory allocation of 39582418599952 bytes failed。
+20帧回溯将core::fmt::write的0x1e524dd关联到Backtrace formatter 0x1e469b0，
+首帧是其RtlCaptureContext调用的返回地址0x1e46b62。已解析同次Stderr vtable。
+这次捕获/回溯发生在坏表和巨大申请之后；更早XMM首次变化与错误恢复仍缺历史。
+原EXE与AOEM966的PE Machine均0x8664，原CPU优化参数未反推。
+详见[C-PID3848-runtime-targets-20261115/README.md](C-PID3848-runtime-targets-20261115/README.md)。
+最小捕获方案仅列静态预算，实际干扰未测、未启动新运行。原现场保留，双中继暂停。
+
 ## C回传 2026-11-15：PID3848嵌套XMM审查与剩余动态边界
 
 从22个原直接目标递归展开，新增嵌套向量使用者、静态TLS描述符目标、

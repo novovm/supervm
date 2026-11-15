@@ -1,0 +1,176 @@
+{
+  "stderr_metadata": {
+    "sha256": "BDA146E159B99FB6B0E2A370757332FCEACDE941F00EB7EB427F2494EB6CE8EA",
+    "backtrace_addresses": [
+      {
+        "address": "0x7ff7f2796b62",
+        "index": 0
+      },
+      {
+        "address": "0x7ff7f27a24e1",
+        "index": 1
+      },
+      {
+        "address": "0x7ff7f2780854",
+        "index": 2
+      },
+      {
+        "address": "0x7ff7f278e117",
+        "index": 3
+      },
+      {
+        "address": "0x7ff7f278e1dc",
+        "index": 4
+      },
+      {
+        "address": "0x7ff7f278a82f",
+        "index": 5
+      },
+      {
+        "address": "0x7ff7f278e1ab",
+        "index": 6
+      },
+      {
+        "address": "0x7ff7f277d5f8",
+        "index": 7
+      },
+      {
+        "address": "0x7ff7f2d8335b",
+        "index": 8
+      },
+      {
+        "address": "0x7ff7f26e1e07",
+        "index": 9
+      },
+      {
+        "address": "0x7ff7f2d7c81e",
+        "index": 10
+      },
+      {
+        "address": "0x7ff7f119f3ae",
+        "index": 11
+      },
+      {
+        "address": "0x7ff7f10c8395",
+        "index": 12
+      },
+      {
+        "address": "0x7ff7f0acd5e5",
+        "index": 13
+      },
+      {
+        "address": "0x7ff7f09dad16",
+        "index": 14
+      },
+      {
+        "address": "0x7ff7f0b28d57",
+        "index": 15
+      },
+      {
+        "address": "0x7ff7f0b2a0f5",
+        "index": 16
+      },
+      {
+        "address": "0x7ff7f278a0e8",
+        "index": 17
+      },
+      {
+        "address": "0x7ffce175dda7",
+        "index": 18
+      },
+      {
+        "address": "0x7ffce3219c5c",
+        "index": 19
+      }
+    ],
+    "mtime_utc": "2026-11-15T04:17:07.2937253Z",
+    "bytes": 897,
+    "raw_log_published": false,
+    "backtrace_function_names": [],
+    "utc": "2026-11-15T05:35:18.2383804Z",
+    "read_exit": 0,
+    "line_count": 23,
+    "allocation_lines": [
+      "memory allocation of 39582418599952 bytes failed"
+    ]
+  },
+  "writer_vtable": {
+    "address": "0x7ff7f311e918",
+    "object_type": "std::io::default_write_fmt::Adapter<std::sys::stdio::windows::Stderr>",
+    "drop_rva": "0x1e41350",
+    "size": 16,
+    "align": 8,
+    "write_str_rva": "0x1e45910",
+    "write_char_rva": "0x1e40c90",
+    "write_fmt_rva": "0x1e410c0"
+  },
+  "fmt_sites": [
+    {
+      "rva": "0x1e523f5",
+      "instruction": "call r14",
+      "target_in_stderr_instance": "0x1e45910",
+      "target_basis": "Stderr adapter vtable offset0x18",
+      "execution_proof": "static path in identified Stderr instance; individual site hit not logged"
+    },
+    {
+      "rva": "0x1e52442",
+      "instruction": "call r14",
+      "target_in_stderr_instance": "0x1e45910",
+      "target_basis": "Stderr adapter vtable offset0x18",
+      "execution_proof": "static path in identified Stderr instance; individual site hit not logged"
+    },
+    {
+      "rva": "0x1e524dd",
+      "instruction": "call qword ptr [rsi + rax + 8]",
+      "target_in_stderr_instance": null,
+      "target_basis": "argument formatter, caller-dependent",
+      "execution_proof": "return address0x1e524e1 in same-run stderr backtrace"
+    },
+    {
+      "rva": "0x1e5251e",
+      "instruction": "jmp rax",
+      "target_in_stderr_instance": "0x1e45910",
+      "target_basis": "Stderr adapter vtable offset0x18",
+      "execution_proof": "static path in identified Stderr instance; individual site hit not logged"
+    }
+  ],
+  "proven_argument_callback": {
+    "call_site_rva": "0x1e524dd",
+    "target_rva": "0x1e469b0",
+    "symbol": "std::sys::backtrace::impl$0::print::impl$0::fmt",
+    "evidence": "stderr frames0/1 + default hook explicit function-pointer store at0x1e3e0fc"
+  },
+  "related_number_formatter": {
+    "target_rva": "0x1e50080",
+    "basis": "default hook static pointer setup for allocation byte count"
+  },
+  "backtrace_context_calls": [
+    {
+      "rva": "0x1e46b5c",
+      "return_rva": "0x1e46b62",
+      "symbol": "ntdll.dll!RtlCaptureContext",
+      "resolved_address": "0x7ffce3276c00",
+      "evidence": "RtlCaptureContext return exactly matches stderr frame0"
+    },
+    {
+      "rva": "0x1e46b9e",
+      "return_rva": "0x1e46ba4",
+      "symbol": "ntdll.dll!RtlLookupFunctionEntry",
+      "resolved_address": "0x7ffce316d6c0",
+      "evidence": "static backtrace-walk call; individual call count absent"
+    },
+    {
+      "rva": "0x1e46d4e",
+      "return_rva": "0x1e46d54",
+      "symbol": "ntdll.dll!RtlVirtualUnwind",
+      "resolved_address": "0x7ffce3171270",
+      "evidence": "static backtrace-walk call; individual call count absent"
+    }
+  ],
+  "oom_hook_global": {
+    "address": "0x7ff7f362eab0",
+    "snapshot_value": "0x0",
+    "actual_default_hook_evidence": "same-run stderr frame3 return0x1e3e117"
+  },
+  "bad_vector_first_change_proven": false
+}
