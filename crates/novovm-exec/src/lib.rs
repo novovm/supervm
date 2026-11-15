@@ -15,6 +15,7 @@ pub mod resident;
 mod semantic_compute;
 mod semantic_graph_v3;
 mod semantic_integer;
+pub mod uca_application;
 pub mod uca_spend;
 
 pub const AOEM_FAILURE_CLASSIFICATION_CONTRACT_V1: &str = "novovm-exec/v1";
