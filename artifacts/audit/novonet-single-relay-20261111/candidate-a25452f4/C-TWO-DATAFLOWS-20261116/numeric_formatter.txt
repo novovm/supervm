@@ -1,0 +1,29 @@
+01e502f0 55                             push rbp
+01e502f1 4883ec40                       sub rsp, 0x40
+01e502f5 488d6c2440                     lea rbp, [rsp + 0x40]
+01e502fa 0fb609                         movzx ecx, byte ptr [rcx]
+01e502fd 31c0                           xor eax, eax
+01e502ff 4c8d056c3e9800                 lea r8, [rip + 0x983e6c]
+01e50306 662e0f1f840000000000           nop word ptr cs:[rax + rax]
+01e50310 440fb6c9                       movzx r9d, cl
+01e50314 c0e904                         shr cl, 4
+01e50317 4589ca                         mov r10d, r9d
+01e5031a 4183e20f                       and r10d, 0xf
+01e5031e 470fb61402                     movzx r10d, byte ptr [r10 + r8]
+01e50323 44885405ff                     mov byte ptr [rbp + rax - 1], r10b
+01e50328 48ffc8                         dec rax
+01e5032b 4180f90f                       cmp r9b, 0xf
+01e5032f 77df                           ja 0x1e50310
+01e50331 488d0c28                       lea rcx, [rax + rbp]
+01e50335 48f7d8                         neg rax
+01e50338 4889442428                     mov qword ptr [rsp + 0x28], rax
+01e5033d 48894c2420                     mov qword ptr [rsp + 0x20], rcx
+01e50342 4c8d05393e9800                 lea r8, [rip + 0x983e39]
+01e50349 41b902000000                   mov r9d, 2
+01e5034f 4889d1                         mov rcx, rdx
+01e50352 b201                           mov dl, 1
+01e50354 e8a72b0000                     call 0x1e52f00
+01e50359 90                             nop
+01e5035a 4883c440                       add rsp, 0x40
+01e5035e 5d                             pop rbp
+01e5035f c3                             ret

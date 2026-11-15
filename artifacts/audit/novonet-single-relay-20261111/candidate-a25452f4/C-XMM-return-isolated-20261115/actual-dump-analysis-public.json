@@ -182,36 +182,36 @@
   "copy_length_from_context": 2,
   "unchanged_callee_code_checks": [
     {
-      "sample_rva": "0x1e1cc93",
-      "function_start": "0x1e1bb00",
-      "function_end": "0x1e1da8d",
+      "sample_rva": "0x1e4cc93",
+      "function_start": "0x1e4cc60",
+      "function_end": "0x1e4ccc1",
       "same_original_a254_code": true,
-      "bytes": 8077,
-      "sha256": "decc473fa24e6e27fb4bdc7f6bfd5191c3fdbc3b227a3718cefd012e71ba34f1"
+      "bytes": 97,
+      "sha256": "70d982a67891b23480a851313e3ea0511431a2cdf5d59a68263b360a3858fe4a"
     },
     {
-      "sample_rva": "0x1e20359",
-      "function_start": "0x1e1f0f0",
-      "function_end": "0x1e22387",
+      "sample_rva": "0x1e50359",
+      "function_start": "0x1e502f0",
+      "function_end": "0x1e50360",
       "same_original_a254_code": true,
-      "bytes": 12951,
-      "sha256": "ecb86d94143b3afd3e23cff2b2735b6a91a1c252e4dc4f2b2b52db8de04dbebc"
+      "bytes": 112,
+      "sha256": "f0d6f14d56982c099d6dbb6f05e5504d845f8da770d69514f30652a75ccbd49a"
     },
     {
-      "sample_rva": "0x1e224e1",
-      "function_start": "0x1e22430",
-      "function_end": "0x1e24d4b",
+      "sample_rva": "0x1e524e1",
+      "function_start": "0x1e52380",
+      "function_end": "0x1e52538",
       "same_original_a254_code": true,
-      "bytes": 10523,
-      "sha256": "cf556450deddf86da8300d71da6d9741e8b5443826544328b977e700d53ed3ba"
+      "bytes": 440,
+      "sha256": "c8249cae9f058f4e833cb09cc07b71ecc045845f227da20651bd3615aba1c20b"
     },
     {
-      "sample_rva": "0x1e1cf9f",
-      "function_start": "0x1e1bb00",
-      "function_end": "0x1e1da8d",
+      "sample_rva": "0x1e4cf9f",
+      "function_start": "0x1e4ce70",
+      "function_end": "0x1e4cfff",
       "same_original_a254_code": true,
-      "bytes": 8077,
-      "sha256": "decc473fa24e6e27fb4bdc7f6bfd5191c3fdbc3b227a3718cefd012e71ba34f1"
+      "bytes": 399,
+      "sha256": "ab4bdf8981ae3ea53ddf9bdc6b1ec7f57a8ce3c2a79bb463b911ea41afec5aed"
     },
     {
       "sample_rva": "0x7614af",

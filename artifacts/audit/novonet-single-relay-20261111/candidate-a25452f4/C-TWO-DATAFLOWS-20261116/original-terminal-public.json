@@ -1,0 +1,25 @@
+{
+  "dump_sha256": "50d0a28a2329ab02731c136d050c08476c2be55178060e0da72595a25d784a41",
+  "status_RBP": "0xab6f9ef0c0",
+  "empty_template_address": "0x7ff79d765410",
+  "empty_template_qwords": [
+    "0x7ff79d765400",
+    "0x0",
+    "0x0",
+    "0x0"
+  ],
+  "status_incoming_vector_save_all_zero": true,
+  "table_address": "0xab6f9ef298",
+  "table_qwords": [
+    "0x8",
+    "0x26e79ffcf00",
+    "0x0",
+    "0x26e77557430"
+  ],
+  "current_context_matches_table": true,
+  "current_insert_save_matches_table": true,
+  "bad_template_first_load_history_available": false,
+  "first_bad_vector_definition_proven": false,
+  "empty_control_group_is_all_ff": true,
+  "exception_context_floating_state_valid": true
+}

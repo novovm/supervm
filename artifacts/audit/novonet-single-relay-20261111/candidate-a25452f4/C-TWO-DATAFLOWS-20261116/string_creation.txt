@@ -1,0 +1,35 @@
+01e4cf37 4989fe                         mov r14, rdi
+01e4cf3a 49d1ee                         shr r14, 1
+01e4cf3d eb0e                           jmp 0x1e4cf4d
+01e4cf3f 4983fe10                       cmp r14, 0x10
+01e4cf43 0f92c1                         setb cl
+01e4cf46 84c8                           test al, cl
+01e4cf48 7478                           je 0x1e4cfc2
+01e4cf4a 4531f6                         xor r14d, r14d
+01e4cf4d 4d85f6                         test r14, r14
+01e4cf50 741f                           je 0x1e4cf71
+01e4cf52 e8b94833fe                     call 0x181810
+01e4cf57 41bf01000000                   mov r15d, 1
+01e4cf5d ba01000000                     mov edx, 1
+01e4cf62 4c89f1                         mov rcx, r14
+01e4cf65 e856e438fe                     call 0x1db3c0
+01e4cf6a 4885c0                         test rax, rax
+01e4cf6d 750a                           jne 0x1e4cf79
+01e4cf6f eb59                           jmp 0x1e4cfca
+01e4cf71 b801000000                     mov eax, 1
+01e4cf76 4531f6                         xor r14d, r14d
+01e4cf79 4c8975e0                       mov qword ptr [rbp - 0x20], r14
+01e4cf7d 488945e8                       mov qword ptr [rbp - 0x18], rax
+01e4cf81 48c745f000000000               mov qword ptr [rbp - 0x10], 0
+01e4cf89 488d1580669800                 lea rdx, [rip + 0x986680]
+01e4cf90 488d4de0                       lea rcx, [rbp - 0x20]
+01e4cf94 4989d8                         mov r8, rbx
+01e4cf97 4989f9                         mov r9, rdi
+01e4cf9a e8e1530000                     call 0x1e52380
+01e4cf9f 84c0                           test al, al
+01e4cfa1 7532                           jne 0x1e4cfd5
+01e4cfa3 488b45f0                       mov rax, qword ptr [rbp - 0x10]
+01e4cfa7 48894610                       mov qword ptr [rsi + 0x10], rax
+01e4cfab 0f1045e0                       movups xmm0, xmmword ptr [rbp - 0x20]
+01e4cfaf 0f1106                         movups xmmword ptr [rsi], xmm0
+01e4cfb2 4889f0                         mov rax, rsi

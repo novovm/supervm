@@ -1,0 +1,74 @@
+01e52f00 55                             push rbp
+01e52f01 4157                           push r15
+01e52f03 4156                           push r14
+01e52f05 4155                           push r13
+01e52f07 4154                           push r12
+01e52f09 56                             push rsi
+01e52f0a 57                             push rdi
+01e52f0b 53                             push rbx
+01e52f0c 4883ec58                       sub rsp, 0x58
+01e52f10 488d6c2450                     lea rbp, [rsp + 0x50]
+01e52f15 4d89cc                         mov r12, r9
+01e52f18 4d89c7                         mov r15, r8
+01e52f1b 4989ce                         mov r14, rcx
+01e52f1e 488b7578                       mov rsi, qword ptr [rbp + 0x78]
+01e52f22 84d2                           test dl, dl
+01e52f24 7458                           je 0x1e52f7e
+01e52f26 418b7e10                       mov edi, dword ptr [r14 + 0x10]
+01e52f2a 89fb                           mov ebx, edi
+01e52f2c 81e300002000                   and ebx, 0x200000
+01e52f32 b800001100                     mov eax, 0x110000
+01e52f37 b92b000000                     mov ecx, 0x2b
+01e52f3c 0f44c8                         cmove ecx, eax
+01e52f3f 894d04                         mov dword ptr [rbp + 4], ecx
+01e52f42 c1eb15                         shr ebx, 0x15
+01e52f45 4801f3                         add rbx, rsi
+01e52f48 488b4570                       mov rax, qword ptr [rbp + 0x70]
+01e52f4c 488945f0                       mov qword ptr [rbp - 0x10], rax
+01e52f50 f7c700008000                   test edi, 0x800000
+01e52f56 7445                           je 0x1e52f9d
+01e52f58 4983fc20                       cmp r12, 0x20
+01e52f5c 0f8396000000                   jae 0x1e52ff8
+01e52f62 4d85e4                         test r12, r12
+01e52f65 0f849d000000                   je 0x1e53008
+01e52f6b 4983fc04                       cmp r12, 4
+01e52f6f 0f839a000000                   jae 0x1e5300f
+01e52f75 31c9                           xor ecx, ecx
+01e52f77 31c0                           xor eax, eax
+01e52f79 e9cf020000                     jmp 0x1e5324d
+01e52f7e 488d5e01                       lea rbx, [rsi + 1]
+01e52f82 418b7e10                       mov edi, dword ptr [r14 + 0x10]
+01e52f86 c745042d000000                 mov dword ptr [rbp + 4], 0x2d
+01e52f8d 488b4570                       mov rax, qword ptr [rbp + 0x70]
+01e52f91 488945f0                       mov qword ptr [rbp - 0x10], rax
+01e52f95 f7c700008000                   test edi, 0x800000
+01e52f9b 75bb                           jne 0x1e52f58
+01e52f9d 4531ff                         xor r15d, r15d
+01e52fa0 450fb76e14                     movzx r13d, word ptr [r14 + 0x14]
+01e52fa5 4c39eb                         cmp rbx, r13
+01e52fa8 0f82c5020000                   jb 0x1e53273
+01e52fae 498b3e                         mov rdi, qword ptr [r14]
+01e52fb1 498b5e08                       mov rbx, qword ptr [r14 + 8]
+01e52fb5 4c89642420                     mov qword ptr [rsp + 0x20], r12
+01e52fba 4889f9                         mov rcx, rdi
+01e52fbd 4889da                         mov rdx, rbx
+01e52fc0 448b4504                       mov r8d, dword ptr [rbp + 4]
+01e52fc4 4d89f9                         mov r9, r15
+01e52fc7 e8d4feffff                     call 0x1e52ea0
+01e52fcc 41b701                         mov r15b, 1
+01e52fcf 84c0                           test al, al
+01e52fd1 0f850f040000                   jne 0x1e533e6
+01e52fd7 488b4318                       mov rax, qword ptr [rbx + 0x18]
+01e52fdb 4889f9                         mov rcx, rdi
+01e52fde 488b55f0                       mov rdx, qword ptr [rbp - 0x10]
+01e52fe2 4989f0                         mov r8, rsi
+01e52fe5 4883c458                       add rsp, 0x58
+01e52fe9 5b                             pop rbx
+01e52fea 5f                             pop rdi
+01e52feb 5e                             pop rsi
+01e52fec 415c                           pop r12
+01e52fee 415d                           pop r13
+01e52ff0 415e                           pop r14
+01e52ff2 415f                           pop r15
+01e52ff4 5d                             pop rbp
+01e52ff5 48ffe0                         jmp rax

@@ -1,0 +1,7 @@
+{
+  "status_incoming_xmm_save_address": "0xab6f9ef4a0",
+  "incoming_saved_xmm_sha256": "66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925",
+  "incoming_matches_current_bad_table": false,
+  "incoming_matches_legal_template": false,
+  "incoming_saved_bytes_all_zero": true
+}

@@ -1,0 +1,12 @@
+00011200 488bc1                         mov rax, rcx
+00011203 4c8d15f6edfeff                 lea r10, [rip - 0x1120a]
+0001120a 4983f80f                       cmp r8, 0xf
+0001120e 0f870c010000                   ja 0x11320
+00011214 666666660f1f840000000000       nop word ptr [rax + rax]
+00011220 478b8c8270b10100               mov r9d, dword ptr [r10 + r8*4 + 0x1b170]
+00011228 4d03ca                         add r9, r10
+0001122b 41ffe1                         jmp r9
+00011268 0fb70a                         movzx ecx, word ptr [rdx]
+0001126b 668908                         mov word ptr [rax], cx
+0001126e c3                             ret
+0001126f 90                             nop
