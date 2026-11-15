@@ -1,0 +1,66 @@
+[
+  {
+    "name": "novovm-node.exe.44948.dmp",
+    "bytes": 227052423,
+    "sha256": "50d0a28a2329ab02731c136d050c08476c2be55178060e0da72595a25d784a41",
+    "full_memory": true,
+    "stream_types": [
+      0,
+      3,
+      4,
+      6,
+      7,
+      9,
+      12,
+      13,
+      15,
+      16,
+      17,
+      21,
+      22,
+      24
+    ],
+    "module_names": [
+      {
+        "name": "novovm-node.exe",
+        "base": "0x7ff79b270000",
+        "size": 48504832
+      },
+      {
+        "name": "ntdll.dll",
+        "base": "0x7ffce3150000",
+        "size": 2539520
+      },
+      {
+        "name": "KERNELBASE.dll",
+        "base": "0x7ffce02f0000",
+        "size": 4231168
+      },
+      {
+        "name": "VCRUNTIME140.dll",
+        "base": "0x7ffcb1d30000",
+        "size": 122880
+      },
+      {
+        "name": "aoem_ffi.dll",
+        "base": "0x7ffbe64b0000",
+        "size": 48730112
+      }
+    ],
+    "exception": {
+      "thread_id": 29824,
+      "code": "0xc0000409",
+      "flags": "0x1",
+      "address": "0x7ff79d0ae1e1",
+      "parameter_count": 1,
+      "first_parameter": "0x7",
+      "context_bytes": 1232,
+      "rip": "0x7ff79d0ae1e1",
+      "rsp": "0xab6f9eece0",
+      "rbp": "0xab6f9eed00"
+    },
+    "thread_count": 20,
+    "memory_ranges": 427,
+    "captured_memory_bytes": 226934784
+  }
+]

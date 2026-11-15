@@ -1,0 +1,25 @@
+{
+  "method": "Postmortem CDB on verified local Full Dump, after target exit",
+  "node_module_base": "0x7ff79b270000",
+  "exception_thread_id": 29824,
+  "exception_rva": "0x1e3e1e1",
+  "exception_instruction": "int 29h",
+  "fast_fail_parameter": 7,
+  "chain_fault_to_caller": [
+    "std::alloc::rust_oom::closure",
+    "std::sys::backtrace::__rust_end_short_backtrace (generic wrapper)",
+    "std::alloc::rust_oom",
+    "__rust_alloc_error_handler / alloc::alloc::handle_alloc_error",
+    "hashbrown::raw::RawTableInner::fallible_with_capacity",
+    "hashbrown::raw::RawTable::reserve_rehash",
+    "indexmap::inner::Core::insert_full, entry RVA 0x84f050",
+    "RpcLifecycle::status, return RVA 0x778395",
+    "observe_tick",
+    "run_native_execution_tick_node_mode_v1",
+    "std thread start / kernel32 / ntdll"
+  ],
+  "exact_node_pdb_guid": "E16D0B11-47CA-4EBF-B482-C91380CC57F8",
+  "exact_node_pdb_age": 1,
+  "source_information_limit": "Original matching PDB lacks source/debug streams for 16 node compilation units",
+  "earlier_register_history_available": false
+}

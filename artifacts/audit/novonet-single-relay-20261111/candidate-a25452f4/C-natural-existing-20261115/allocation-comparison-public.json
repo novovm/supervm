@@ -1,0 +1,75 @@
+{
+  "pid": 44948,
+  "dump_sha256": "50d0a28a2329ab02731c136d050c08476c2be55178060e0da72595a25d784a41",
+  "fault_code": "0xc0000409",
+  "fast_fail_parameter": 7,
+  "failure_kind": "Rust allocation error abort",
+  "stderr_allocation_request_bytes": 39582418599952,
+  "request_math_bytes": 39582418599952,
+  "request_hex": "0x240000000010",
+  "align": 16,
+  "active_stack_status_return_RVA": "0x778395",
+  "original_insert_full_RVA": "0x84f050",
+  "status_frame": {
+    "rsp": "0xab6f9ef040",
+    "rbp": "0xab6f9ef0c0"
+  },
+  "insert_frame": {
+    "rsp": "0xab6f9eef20",
+    "rbp": "0xab6f9eefa0",
+    "caller_saved_rbp_matches": true,
+    "return_address_matches_status_call": true
+  },
+  "table": {
+    "core_address": "0xab6f9ef280",
+    "raw_table_address": "0xab6f9ef298",
+    "entries_capacity": 0,
+    "entries_length": 0,
+    "ctrl": "0x8",
+    "bucket_mask": "0x26e79ffcf00",
+    "growth_left": 0,
+    "items": "0x26e77557430",
+    "mask_is_power_of_two_minus_one": false
+  },
+  "key": "reads_started",
+  "table_equals_exception_vectors_and_current_insert_saved_vectors": true,
+  "expected_template_qwords": [
+    "0x7ff79d765400",
+    "0x0",
+    "0x0",
+    "0x0"
+  ],
+  "full_capacity_computed": 2339326907680,
+  "requested_capacity_computed": 2673471747121,
+  "buckets_computed": 4398046511104,
+  "original_code_checks": [
+    {
+      "rva": "0x77823e",
+      "size": 7,
+      "same_original_and_dump": true,
+      "sha256": "264c8bbcdc8f6112422c5da9a9ed15ca287f29d1e0f07de07284499d1d58cceb"
+    },
+    {
+      "rva": "0x778245",
+      "size": 7,
+      "same_original_and_dump": true,
+      "sha256": "318bb75eb8f676e0c7590b33e35fe3817fd1f4b5429cc84ea91704c16d91e1bc"
+    },
+    {
+      "rva": "0x84f050",
+      "size": 1050,
+      "same_original_and_dump": true,
+      "sha256": "d30e61e0559e5bde04948127b63b16e7fb14523972759df3652b0b40efe894bb"
+    },
+    {
+      "rva": "0x77838f",
+      "size": 6,
+      "same_original_and_dump": true,
+      "sha256": "a2467e9f05439c5bffe8b8498758a8e9b477663b396ecb2bd54542170882a577"
+    }
+  ],
+  "same_failure_path_as_PID3848": true,
+  "first_corrupting_instruction_proven": false,
+  "clone_return_violation_proven": false,
+  "RBP_shift_2a0_in_this_status_insert_frame": false
+}

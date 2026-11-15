@@ -1,0 +1,19 @@
+{
+  "TTD": false,
+  "extra_stage_timing": false,
+  "debugger": false,
+  "native_run_limit_ms": 4485000,
+  "account": "S-1-5-19",
+  "utc": "2026-11-15T09:57:47.1813270Z",
+  "pid": 44948,
+  "controller_hard_limit_seconds": 4500,
+  "initialize_executed": false,
+  "PT": false,
+  "planned_latest_utc": "2026-11-15T11:12:47.1701836Z",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "created_utc": "2026-11-15T09:57:47.1701836Z",
+  "start": "existing",
+  "AOEM_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "automatic_restart": false,
+  "config_sha256": "5d6a0660b9c79b3c4ef1c92357456258fc5a8a4b653f755b4d07eaf960caf9ef"
+}

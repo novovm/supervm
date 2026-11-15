@@ -1,0 +1,40 @@
+{
+  "main_field_count": 50,
+  "signature_work_field_count": 6,
+  "archive_work_inserted": false,
+  "probe_event_count": 0,
+  "transport_object_count": 83,
+  "transport_evicted_records": 0,
+  "transport_expired_records": 529,
+  "source_geometry": {
+    "capacity": 128,
+    "head": 0,
+    "length": 83
+  },
+  "source_pair_matches": [
+    {
+      "offset": "0x2a0",
+      "records": 83,
+      "matches_bad_XMM6": 0,
+      "matches_bad_XMM7": 0
+    },
+    {
+      "offset": "0x2b0",
+      "records": 83,
+      "matches_bad_XMM6": 0,
+      "matches_bad_XMM7": 0
+    },
+    {
+      "offset": "0x310",
+      "records": 83,
+      "matches_bad_XMM6": 0,
+      "matches_bad_XMM7": 0
+    },
+    {
+      "offset": "0x320",
+      "records": 83,
+      "matches_bad_XMM6": 0,
+      "matches_bad_XMM7": 0
+    }
+  ]
+}

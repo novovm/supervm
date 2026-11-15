@@ -1,0 +1,18 @@
+{
+  "utc": "2026-11-15T09:56:46.8800822Z",
+  "original_config_sha256": "5d6a0660b9c79b3c4ef1c92357456258fc5a8a4b653f755b4d07eaf960caf9ef",
+  "network_config_sha256": "a41b09211b2e45e4fbf5ab5e7b6a9d3b9e7f35180a34cfffcabe7d5d39369230",
+  "node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "AOEM_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "original_owner_verified": true,
+  "native_limit_ms": 4485000,
+  "controller_hard_limit_seconds": 4500,
+  "debugger": false,
+  "PT": false,
+  "TTD": false,
+  "extra_timing": false,
+  "relay_forwarding": true,
+  "probe_control_exists": false,
+  "database_files": 28,
+  "free_C_bytes": 17683447808
+}

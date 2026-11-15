@@ -1,0 +1,21 @@
+{
+  "utc": "2026-11-15T10:12:58.5674714Z",
+  "keys": [
+    {
+      "purpose": "validator",
+      "sha256": "8d9b8bb2150496e79e50fc7d3127bffce06f25dcf7ee7f956fb7b54cfc382b9e",
+      "matches_before": true
+    },
+    {
+      "purpose": "transport",
+      "sha256": "5894e458fcde653e3b0e97a0390d849edc2efa501295964ac77a0c50ab9dd956",
+      "matches_before": true
+    },
+    {
+      "purpose": "carrier",
+      "sha256": "fbbea2280acc1bc564dfa6f81727f09cbc583a5e79030534e1a9a86a349e6713",
+      "matches_before": true
+    }
+  ],
+  "all_match": true
+}

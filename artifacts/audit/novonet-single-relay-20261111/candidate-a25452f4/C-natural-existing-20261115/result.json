@@ -1,0 +1,14 @@
+{
+  "utc": "2026-11-15T10:12:42.8266157Z",
+  "node_started": true,
+  "identity_replaced": false,
+  "root_cause_fixed": false,
+  "observed_seconds": 896.3265665,
+  "original_database_opened_existing": true,
+  "exit_code": -1073740791,
+  "reason": "node_exited",
+  "forced_by_controller": false,
+  "pid": 44948,
+  "double_relay": false,
+  "error": null
+}

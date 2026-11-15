@@ -1,0 +1,13 @@
+[
+  {
+    "sha256": "50d0a28a2329ab02731c136d050c08476c2be55178060e0da72595a25d784a41",
+    "bytes": 227052423,
+    "name": "novovm-node.exe.44948.dmp",
+    "full_memory_flag": true,
+    "flags": "0x221826",
+    "copy_verified": true,
+    "signature_valid": true,
+    "streams": 18,
+    "source_stable": true
+  }
+]

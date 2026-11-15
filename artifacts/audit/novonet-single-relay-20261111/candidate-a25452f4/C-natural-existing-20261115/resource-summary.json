@@ -1,0 +1,28 @@
+{
+  "sampling": "External process counters and existing progress file, approximately every 30 seconds",
+  "samples": 30,
+  "peak_sampled_private_bytes": 92352512,
+  "peak_sampled_working_set": 113262592,
+  "peak_sampled_threads": 25,
+  "last_before_exit": {
+    "utc": "2026-11-15T10:12:24.4203180Z",
+    "elapsed_seconds": 877.9187401,
+    "pid": 44948,
+    "alive": true,
+    "private_bytes": 92262400,
+    "working_set": 33742848,
+    "threads": 20,
+    "free_C_bytes": 17676943360,
+    "progress_mtime_utc": "2026-11-15T10:12:21.9581973Z",
+    "ticks": 783325,
+    "current_height": 1,
+    "retained_records": 85,
+    "evicted_records": 0,
+    "expired_records": 517,
+    "reported_data_writes": 3807,
+    "accepted_data": 376,
+    "stage_timing_enabled": false
+  },
+  "exact_status_call_count_available": false,
+  "per_call_timing_enabled": false
+}

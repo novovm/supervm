@@ -1,0 +1,29 @@
+{
+  "utc": "2026-11-15T10:24:13.8734761Z",
+  "processes": [
+    {
+      "ProcessId": 20952,
+      "ParentProcessId": 44948,
+      "Name": "novovm-node.exe",
+      "created_utc": "2026-11-15T10:12:37.1419770Z"
+    }
+  ],
+  "performance": [
+    {
+      "IDProcess": 20952,
+      "CreatingProcessID": 44948,
+      "ThreadCount": 0,
+      "HandleCount": 0,
+      "PrivateBytes": 77824,
+      "WorkingSet": 32768,
+      "PercentProcessorTime": 0
+    }
+  ],
+  "tcp": [],
+  "udp": [],
+  "WER": {
+    "DumpType": 2,
+    "DumpCount": 2
+  },
+  "WER_original_folder_matches": true
+}
