@@ -1,0 +1,15 @@
+{
+  "utc": "2026-11-15T03:50:08.6692825Z",
+  "nodes_executed": 0,
+  "production_changed": false,
+  "passed": [
+    "historical optional field omission accepted",
+    "never observed capability rejected",
+    "zero traffic rejected",
+    "post-wait result wins over ended task",
+    "missing result ended task fails",
+    "running task waits",
+    "startup grace preserved",
+    "all scripts parse"
+  ]
+}

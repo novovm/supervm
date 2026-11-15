@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Guards.ps1",
+    "sha256": "3f01958503b74dc4505c51bee9d6447bba28e0e28a71298be1e1ba09bef48b71"
+  },
+  {
+    "name": "Launch-Once.ps1",
+    "sha256": "1dd9cbebe463c6363dcfed7f40320b71aded7d293c06f974848e8be7c099f076"
+  },
+  {
+    "name": "Owner.ps1",
+    "sha256": "2b75d5973491593bafb3ace5ff0a7130d9da89ea273b652c2f1ec0555d939b7d"
+  }
+]
