@@ -1,0 +1,49 @@
+{
+  "utc": "2026-11-15T13:15:49.4175698Z",
+  "read_only": true,
+  "pid": 20952,
+  "expected_parent": 44948,
+  "expected_creation_utc": "2026-11-15T10:12:37.1419770Z",
+  "exists": true,
+  "process": {
+    "parent_pid": 44948,
+    "created_utc": "2026-11-15T10:12:37.1419770Z",
+    "image_path": null,
+    "command_line_present": false,
+    "owner_user": "LOCAL SERVICE",
+    "owner_domain": "NT AUTHORITY",
+    "owner_query_result": 0
+  },
+  "native_query_error": "找不到进程标识符为 20952 的进程。",
+  "performance": [
+    {
+      "IDProcess": 20952,
+      "CreatingProcessID": 44948,
+      "ThreadCount": 0,
+      "HandleCount": 0,
+      "PrivateBytes": 77824,
+      "WorkingSet": 32768,
+      "PercentProcessorTime": 0
+    }
+  ],
+  "related_events": [
+    {
+      "id": 1001,
+      "record_id": 547276,
+      "utc": "2026-11-15T10:12:40.7298407Z",
+      "provider": "Windows Error Reporting",
+      "mentions_parent_pid": false,
+      "mentions_child_pid": false
+    },
+    {
+      "id": 1000,
+      "record_id": 547275,
+      "utc": "2026-11-15T10:12:37.4968900Z",
+      "provider": "Application Error",
+      "mentions_parent_pid": true,
+      "mentions_child_pid": false
+    }
+  ],
+  "task_exists": false,
+  "stop_or_restart_executed": false
+}

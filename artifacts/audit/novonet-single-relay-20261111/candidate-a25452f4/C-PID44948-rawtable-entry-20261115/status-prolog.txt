@@ -1,0 +1,13 @@
+00772120  55                             push rbp
+00772121  4157                           push r15
+00772123  4156                           push r14
+00772125  4155                           push r13
+00772127  4154                           push r12
+00772129  56                             push rsi
+0077212a  57                             push rdi
+0077212b  53                             push rbx
+0077212c  4881ec88040000                 sub rsp, 0x488
+00772133  488dac2480000000               lea rbp, [rsp + 0x80]
+0077213b  0f29bdf0030000                 movaps xmmword ptr [rbp + 0x3f0], xmm7
+00772142  0f29b5e0030000                 movaps xmmword ptr [rbp + 0x3e0], xmm6
+00772149  48c785d8030000feffffff         mov qword ptr [rbp + 0x3d8], 0xfffffffffffffffe

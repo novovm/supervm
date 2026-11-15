@@ -1,0 +1,61 @@
+007781fd  e8ae266c01                     call 0x7ff79d0aa8b0
+00778202  4889c6                         mov rsi, rax
+00778205  80781001                       cmp byte ptr [rax + 0x10], 1
+00778209  0f85741d0000                   jne 0x7ff79b9e9f83
+0077820f  488b06                         mov rax, qword ptr [rsi]
+00778212  488b5608                       mov rdx, qword ptr [rsi + 8]
+00778216  488d4801                       lea rcx, [rax + 1]
+0077821a  48890e                         mov qword ptr [rsi], rcx
+0077821d  48c785c001000000000000         mov qword ptr [rbp + 0x1c0], 0
+00778228  48c785c801000008000000         mov qword ptr [rbp + 0x1c8], 8
+00778233  48c785d001000000000000         mov qword ptr [rbp + 0x1d0], 0
+0077823e  0f11b5d8010000                 movups xmmword ptr [rbp + 0x1d8], xmm6
+00778245  0f11bde8010000                 movups xmmword ptr [rbp + 0x1e8], xmm7
+0077824c  488985f8010000                 mov qword ptr [rbp + 0x1f8], rax
+00778253  48899500020000                 mov qword ptr [rbp + 0x200], rdx
+0077825a  e8b195a0ff                     call 0x7ff79b3f1810
+0077825f  b90d000000                     mov ecx, 0xd
+00778264  ba01000000                     mov edx, 1
+00778269  e85231a6ff                     call 0x7ff79b44b3c0
+0077826e  4885c0                         test rax, rax
+00778271  0f8432220000                   je 0x7ff79b9ea4a9
+00778277  488db5f8010000                 lea rsi, [rbp + 0x1f8]
+0077827e  49be5f73746172746564           movabs r14, 0x646574726174735f
+00778288  4c897005                       mov qword ptr [rax + 5], r14
+0077828c  48b972656164735f7374           movabs rcx, 0x74735f7364616572
+00778296  488908                         mov qword ptr [rax], rcx
+00778299  48c785100300000d000000         mov qword ptr [rbp + 0x310], 0xd
+007782a4  488985d0030000                 mov qword ptr [rbp + 0x3d0], rax
+007782ab  48898518030000                 mov qword ptr [rbp + 0x318], rax
+007782b2  48c785200300000d000000         mov qword ptr [rbp + 0x320], 0xd
+007782bd  488b87e8370000                 mov rax, qword ptr [rdi + 0x37e8]
+007782c4  48b90200000000000080           movabs rcx, 0x8000000000000002
+007782ce  48898d30030000                 mov qword ptr [rbp + 0x330], rcx
+007782d5  48c7853803000000000000         mov qword ptr [rbp + 0x338], 0
+007782e0  48898540030000                 mov qword ptr [rbp + 0x340], rax
+007782e7  c6857a01000001                 mov byte ptr [rbp + 0x17a], 1
+007782ee  488d9510030000                 lea rdx, [rbp + 0x310]
+007782f5  4889f1                         mov rcx, rsi
+007782f8  e8330fa1ff                     call 0x7ff79b3f9230
+007782fd  488b8d20030000                 mov rcx, qword ptr [rbp + 0x320]
+00778304  48898d30010000                 mov qword ptr [rbp + 0x130], rcx
+0077830b  0f108510030000                 movups xmm0, xmmword ptr [rbp + 0x310]
+00778312  0f298520010000                 movaps xmmword ptr [rbp + 0x120], xmm0
+00778319  488b8d70030000                 mov rcx, qword ptr [rbp + 0x370]
+00778320  48898dc0030000                 mov qword ptr [rbp + 0x3c0], rcx
+00778327  f30f6f8530030000               movdqu xmm0, xmmword ptr [rbp + 0x330]
+0077832f  f30f6f8d40030000               movdqu xmm1, xmmword ptr [rbp + 0x340]
+00778337  f30f6f9550030000               movdqu xmm2, xmmword ptr [rbp + 0x350]
+0077833f  0f109d60030000                 movups xmm3, xmmword ptr [rbp + 0x360]
+00778346  0f299db0030000                 movaps xmmword ptr [rbp + 0x3b0], xmm3
+0077834d  660f7f95a0030000               movdqa xmmword ptr [rbp + 0x3a0], xmm2
+00778355  660f7f8d90030000               movdqa xmmword ptr [rbp + 0x390], xmm1
+0077835d  660f7f8580030000               movdqa xmmword ptr [rbp + 0x380], xmm0
+00778365  c6857a01000000                 mov byte ptr [rbp + 0x17a], 0
+0077836c  488d8d80030000                 lea rcx, [rbp + 0x380]
+00778373  48894c2420                     mov qword ptr [rsp + 0x20], rcx
+00778378  488d8d60020000                 lea rcx, [rbp + 0x260]
+0077837f  488d95c0010000                 lea rdx, [rbp + 0x1c0]
+00778386  4c8d8d20010000                 lea r9, [rbp + 0x120]
+0077838d  4989c0                         mov r8, rax
+00778390  e8bb6c0d00                     call 0x7ff79babf050

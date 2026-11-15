@@ -1,0 +1,21 @@
+0084f050  55                             push rbp
+0084f051  4157                           push r15
+0084f053  4156                           push r14
+0084f055  4155                           push r13
+0084f057  4154                           push r12
+0084f059  56                             push rsi
+0084f05a  57                             push rdi
+0084f05b  53                             push rbx
+0084f05c  4881ecd8000000                 sub rsp, 0xd8
+0084f063  488dac2480000000               lea rbp, [rsp + 0x80]
+0084f06b  66440f7f4540                   movdqa xmmword ptr [rbp + 0x40], xmm8
+0084f071  660f7f7d30                     movdqa xmmword ptr [rbp + 0x30], xmm7
+0084f076  660f7f7520                     movdqa xmmword ptr [rbp + 0x20], xmm6
+0084f07b  48c74518feffffff               mov qword ptr [rbp + 0x18], 0xfffffffffffffffe
+0084f083  4c894df0                       mov qword ptr [rbp - 0x10], r9
+0084f087  4889d7                         mov rdi, rdx
+0084f08a  4989ce                         mov r14, rcx
+0084f08d  4c8b6208                       mov r12, qword ptr [rdx + 8]
+0084f091  488b5a10                       mov rbx, qword ptr [rdx + 0x10]
+0084f095  48837a2800                     cmp qword ptr [rdx + 0x28], 0
+0084f09a  0f84ee020000                   je 0x7ff79babf38e

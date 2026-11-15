@@ -1,0 +1,228 @@
+{
+  "scope": "PID44948 same Full Dump and original a254, postmortem only",
+  "dump_sha256": "50d0a28a2329ab02731c136d050c08476c2be55178060e0da72595a25d784a41",
+  "frame_values": {
+    "status_rsp": "0xab6f9ef040",
+    "status_rbp": "0xab6f9ef0c0",
+    "insert_rsp": "0xab6f9eef20",
+    "insert_rbp": "0xab6f9eefa0",
+    "status_return_address_in_insert": "0x7ff79b9e8395",
+    "status_saved_rbp_in_insert": "0xab6f9ef0c0",
+    "raw_exception_rbp": "0xab6f9eed00",
+    "status_and_insert_values_are_unwound_and_machine_code_cross_checked": true,
+    "raw_exception_rbp_is_not_either_caller_frame_rbp": true
+  },
+  "status_unwind": {
+    "begin_rva": "0x772120",
+    "end_rva_exclusive": "0x77a5f9",
+    "unwind_rva": "0x29581f0",
+    "version": 1,
+    "flags": 3,
+    "prolog_bytes": 41,
+    "frame_register_number": 5,
+    "frame_offset": "0x80",
+    "vector_saves": [
+      {
+        "register": "xmm6",
+        "offset_from_post_prolog_rsp": "0x460",
+        "prolog_offset": "0x29"
+      },
+      {
+        "register": "xmm7",
+        "offset_from_post_prolog_rsp": "0x470",
+        "prolog_offset": "0x22"
+      }
+    ]
+  },
+  "insert_unwind": {
+    "begin_rva": "0x84f050",
+    "end_rva_exclusive": "0x84f46a",
+    "unwind_rva": "0x297d43c",
+    "version": 1,
+    "flags": 3,
+    "prolog_bytes": 43,
+    "frame_register_number": 5,
+    "frame_offset": "0x80",
+    "vector_saves": [
+      {
+        "register": "xmm6",
+        "offset_from_post_prolog_rsp": "0xa0",
+        "prolog_offset": "0x2b"
+      },
+      {
+        "register": "xmm7",
+        "offset_from_post_prolog_rsp": "0xb0",
+        "prolog_offset": "0x26"
+      },
+      {
+        "register": "xmm8",
+        "offset_from_post_prolog_rsp": "0xc0",
+        "prolog_offset": "0x21"
+      }
+    ]
+  },
+  "distinct_vector_stores": [
+    {
+      "rva": "0x77823e",
+      "function_begin_rva": "0x772120",
+      "instruction": "movups xmmword ptr [rbp + 0x1d8], xmm6",
+      "frame_rbp": "0xab6f9ef0c0",
+      "destination": "0xab6f9ef298",
+      "is_raw_table_segment": true,
+      "is_current_insert_save_slot": false,
+      "captured_bytes_le": "080000000000000000cfff796e020000",
+      "register": "xmm6"
+    },
+    {
+      "rva": "0x778245",
+      "function_begin_rva": "0x772120",
+      "instruction": "movups xmmword ptr [rbp + 0x1e8], xmm7",
+      "frame_rbp": "0xab6f9ef0c0",
+      "destination": "0xab6f9ef2a8",
+      "is_raw_table_segment": true,
+      "is_current_insert_save_slot": false,
+      "captured_bytes_le": "0000000000000000307455776e020000",
+      "register": "xmm7"
+    },
+    {
+      "rva": "0x84f076",
+      "function_begin_rva": "0x84f050",
+      "instruction": "movdqa xmmword ptr [rbp + 0x20], xmm6",
+      "frame_rbp": "0xab6f9eefa0",
+      "destination": "0xab6f9eefc0",
+      "is_raw_table_segment": false,
+      "is_current_insert_save_slot": true,
+      "captured_bytes_le": "080000000000000000cfff796e020000",
+      "register": "xmm6"
+    },
+    {
+      "rva": "0x84f071",
+      "function_begin_rva": "0x84f050",
+      "instruction": "movdqa xmmword ptr [rbp + 0x30], xmm7",
+      "frame_rbp": "0xab6f9eefa0",
+      "destination": "0xab6f9eefd0",
+      "is_raw_table_segment": false,
+      "is_current_insert_save_slot": true,
+      "captured_bytes_le": "0000000000000000307455776e020000",
+      "register": "xmm7"
+    }
+  ],
+  "wrong_frame_calculation": {
+    "insert_rbp_plus_1d8": "0xab6f9ef178",
+    "insert_rbp_plus_1e8": "0xab6f9ef188",
+    "these_are_not_the_destinations_of_status_rva_77823e_778245": true
+  },
+  "archive_stack_local_core": "0xab6f9ef280",
+  "archive_raw_table": "0xab6f9ef298",
+  "archive_inner_core_bytes": 56,
+  "archive_map_with_hasher_bytes": 72,
+  "core_allocated_on_status_stack": true,
+  "template_bytes_le": "0054769df77f0000000000000000000000000000000000000000000000000000",
+  "template_pointer_PE_DIR64_relocation_verified": true,
+  "direct_xmm6_xmm7_definitions_before_archive": [
+    {
+      "rva": "0x7721e6",
+      "bytes": "0f10352332d801",
+      "instruction": "movups xmm6, xmmword ptr [rip + 0x1d83223]"
+    },
+    {
+      "rva": "0x7721f4",
+      "bytes": "0f103d2532d801",
+      "instruction": "movups xmm7, xmmword ptr [rip + 0x1d83225]"
+    }
+  ],
+  "archive_initialization_stores": [
+    {
+      "rva": "0x77821d",
+      "rbp_offset": "0x1c0",
+      "size": 8
+    },
+    {
+      "rva": "0x778228",
+      "rbp_offset": "0x1c8",
+      "size": 8
+    },
+    {
+      "rva": "0x778233",
+      "rbp_offset": "0x1d0",
+      "size": 8
+    },
+    {
+      "rva": "0x77823e",
+      "rbp_offset": "0x1d8",
+      "size": 16
+    },
+    {
+      "rva": "0x778245",
+      "rbp_offset": "0x1e8",
+      "size": 16
+    }
+  ],
+  "archive_calls_to_first_insert": [
+    {
+      "call_rva": "0x7781fd",
+      "target_rva": "0x1e3a8b0"
+    },
+    {
+      "call_rva": "0x77825a",
+      "target_rva": "0x181810"
+    },
+    {
+      "call_rva": "0x778269",
+      "target_rva": "0x1db3c0"
+    },
+    {
+      "call_rva": "0x7782f8",
+      "target_rva": "0x189230"
+    },
+    {
+      "call_rva": "0x778390",
+      "target_rva": "0x84f050"
+    }
+  ],
+  "call_parameters_at_rva_778390": {
+    "kind": "derived from original instructions and surviving nonvolatile registers/stack slots",
+    "rcx_return_area": "0xab6f9ef320",
+    "rdx_core": "0xab6f9ef280",
+    "r9_key_descriptor": "0xab6f9ef1e0",
+    "fifth_stack_argument_value_pointer": "0xab6f9ef440",
+    "r8_hash_entry_snapshot_available": false,
+    "actual_entry_rcx_rdx_r8_r9_history_available": false,
+    "current_unwound_insert_rdi": "0xab6f9ef280",
+    "current_unwound_insert_r14": "0xab6f9ef320",
+    "insert_saved_key_pointer_matches": true,
+    "caller_saved_rbp_matches": true
+  },
+  "signature_vs_archive": {
+    "same_core_stack_offsets": [
+      "0x1c0",
+      "0x1c8",
+      "0x1d0",
+      "0x1d8",
+      "0x1e8"
+    ],
+    "signature_init_rvas": [
+      "0x777105",
+      "0x777110",
+      "0x77711b",
+      "0x777126",
+      "0x77712d"
+    ],
+    "archive_init_rvas": [
+      "0x77821d",
+      "0x778228",
+      "0x778233",
+      "0x77823e",
+      "0x778245"
+    ],
+    "same_code_bytes_for_five_initial_stores": true,
+    "signature_publication_moves_local_object_before_archive_reuses_stack": true,
+    "historical_signature_vectors_available": false
+  },
+  "first_corrupting_instruction_proven": false,
+  "static_constructor_targets_RawTable": true,
+  "historical_RBP_at_constructor_stores_available": false,
+  "normal_insert_prolog_overlaps_raw_table": false,
+  "ABI_violation_proven": false,
+  "production_modified_or_node_started": false
+}

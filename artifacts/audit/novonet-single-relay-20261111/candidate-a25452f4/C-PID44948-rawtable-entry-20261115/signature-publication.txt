@@ -1,0 +1,29 @@
+00777af0  f30f6f85c0010000               movdqu xmm0, xmmword ptr [rbp + 0x1c0]
+00777af8  f30f6f8dd0010000               movdqu xmm1, xmmword ptr [rbp + 0x1d0]
+00777b00  f30f6f95e0010000               movdqu xmm2, xmmword ptr [rbp + 0x1e0]
+00777b08  0f109df0010000                 movups xmm3, xmmword ptr [rbp + 0x1f0]
+00777b0f  660f7f8560020000               movdqa xmmword ptr [rbp + 0x260], xmm0
+00777b17  660f7f8d70020000               movdqa xmmword ptr [rbp + 0x270], xmm1
+00777b1f  660f7f9580020000               movdqa xmmword ptr [rbp + 0x280], xmm2
+00777b27  0f299d90020000                 movaps xmmword ptr [rbp + 0x290], xmm3
+00777b2e  488b8500020000                 mov rax, qword ptr [rbp + 0x200]
+00777b35  488985a0020000                 mov qword ptr [rbp + 0x2a0], rax
+00777b3c  c6858201000001                 mov byte ptr [rbp + 0x182], 1
+00777b43  488d0ddc7ad701                 lea rcx, [rip + 0x1d77adc]
+00777b4a  4c8d8510020000                 lea r8, [rbp + 0x210]
+00777b51  ba0e000000                     mov edx, 0xe
+00777b56  e875266101                     call 0x7ff79cffa1d0
+00777b5b  488985d0030000                 mov qword ptr [rbp + 0x3d0], rax
+00777b62  4889c1                         mov rcx, rax
+00777b65  e866b5bdff                     call 0x7ff79b5c30d0
+00777b6a  488b85a0020000                 mov rax, qword ptr [rbp + 0x2a0]
+00777b71  488b8dd0030000                 mov rcx, qword ptr [rbp + 0x3d0]
+00777b78  48894140                       mov qword ptr [rcx + 0x40], rax
+00777b7c  660f6f8560020000               movdqa xmm0, xmmword ptr [rbp + 0x260]
+00777b84  660f6f8d70020000               movdqa xmm1, xmmword ptr [rbp + 0x270]
+00777b8c  660f6f9580020000               movdqa xmm2, xmmword ptr [rbp + 0x280]
+00777b94  0f289d90020000                 movaps xmm3, xmmword ptr [rbp + 0x290]
+00777b9b  0f115930                       movups xmmword ptr [rcx + 0x30], xmm3
+00777b9f  f30f7f5120                     movdqu xmmword ptr [rcx + 0x20], xmm2
+00777ba4  f30f7f4910                     movdqu xmmword ptr [rcx + 0x10], xmm1
+00777ba9  f30f7f01                       movdqu xmmword ptr [rcx], xmm0

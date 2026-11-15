@@ -1,0 +1,12 @@
+{
+  "archive-init-to-entry.txt": "9b9bcbb989e24f01cfe109c74debe71d7ed3d4e3eb96c1e86671fbdf2dcb7f06",
+  "child-admin-public.json": "5a421c838941c7bd9bcdab2ed447a6e0478c3723997bc0b224ac1ac1d98befe8",
+  "entry-dataflow-public.json": "9f016e17fa5fadc54ee657323ebaec57ad516c81dc9d81d2ca7e9b87f8c43c40",
+  "input-sha256-public.json": "db4542deeba6bb95eb2d4f4024b81b5c77b770021338ba706086bcd6cb7ae07e",
+  "insert-prolog.txt": "148c5624b02395d99d7af57b2f1d100dc37f3534db7b95c0d359b775aa8bea97",
+  "postmortem-exit.json": "cbfe0b3da1e634cf4167bd1f910eaf83970f17cebd65a691c9035a84b346eb53",
+  "README.md": "b9684d969a295b73ccc745ec99455efe8c4bf2fdc0158a7c4ab8f4ec63fa497e",
+  "signature-first-insert.txt": "32d57643ef0cd1624b43bd30f0fbaa0c09b8030b9f3f6592ff152468c931d3f9",
+  "signature-publication.txt": "3ae08e8029440c9b059e873e41787ccddc0293e21c70f0605d2871d9d3a920b6",
+  "status-prolog.txt": "3cd4b7884b96016146b0aaddd9466a8c6c869de534725086778d7b57bc8699b2"
+}

@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-15：PID44948 RawTable构造与insert入口帧归属复核
+
+原.pdata/.xdata及离线CDB确认0x77823e/0x778245属于status，按status.RBP计算写RawTable。
+insert_full真正的XMM6/7保存指令是0x84f076/0x84f071，保存区另列，不能混用两个帧的RBP。
+signature/archive前五条初始化字节一致并复用同一栈位，已交叉核对首次insert的参数指针。
+未取得历史入口XMM及首次坏值指令，ABI违规仍未证实，没有可证实的生产修复。
+管理员只读确认残留20952归属LocalService，映像仍缺，Get-Process无法取得该PID，未清理。
+详见[C-PID44948-rawtable-entry-20261115/README.md](C-PID44948-rawtable-entry-20261115/README.md)。
+本轮只离线分析及只读查询，原节点未启动，原库身份和失败现场保留，双中继暂停。
+
+
 ## C回传 2026-11-15 18:12：原库existing自然故障，取得PID44948完整转储
 
 按本轮授权仅启动一次原a254＋AOEM966、原库existing和原身份，LocalService。
