@@ -1,0 +1,233 @@
+{
+  "utc": "2026-11-15T02:24:37.9848379Z",
+  "hostRole": "validator-C",
+  "cpu": [
+    {
+      "Name": "Intel(R) Core(TM) i9-14900HX",
+      "NumberOfCores": 24,
+      "NumberOfLogicalProcessors": 32,
+      "MaxClockSpeed": 2200
+    }
+  ],
+  "ram": [
+    {
+      "Manufacturer": "Samsung",
+      "PartNumber": "M425R2GA3BB0-CWMOD  ",
+      "Capacity": 17179869184,
+      "Speed": 5600,
+      "ConfiguredClockSpeed": 5600,
+      "SMBIOSMemoryType": 34
+    },
+    {
+      "Manufacturer": "Micron Technology",
+      "PartNumber": "MTC8C1084S1SC56BD1  ",
+      "Capacity": 17179869184,
+      "Speed": 5600,
+      "ConfiguredClockSpeed": 5600,
+      "SMBIOSMemoryType": 34
+    }
+  ],
+  "board": [
+    {
+      "Manufacturer": "LENOVO",
+      "Product": "LNVNB161216"
+    }
+  ],
+  "bios": [
+    {
+      "Manufacturer": "LENOVO",
+      "SMBIOSBIOSVersion": "N0CN22WW",
+      "ReleaseDate": "2024-04-19T08:00:00+08:00"
+    }
+  ],
+  "windows": {
+    "ProductName": "Windows 10 Home China",
+    "DisplayVersion": "26H2",
+    "CurrentBuild": "26300",
+    "UBR": 9974
+  },
+  "gpu": [
+    {
+      "Name": "Intel(R) UHD Graphics",
+      "DriverVersion": "32.0.101.6881",
+      "DriverDate": "2025-06-10T08:00:00+08:00"
+    },
+    {
+      "Name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "DriverVersion": "32.0.15.9144",
+      "DriverDate": "2025-12-02T08:00:00+08:00"
+    }
+  ],
+  "system": {
+    "TotalPhysicalMemory": 34070192128,
+    "HypervisorPresent": true
+  },
+  "drivers": [
+    {
+      "DeviceName": "Meta Tunnel",
+      "DriverProviderName": "WireGuard LLC",
+      "DriverVersion": "0.14.0.0",
+      "DriverDate": "2021-10-13T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Hyper-V Virtual Switch Extension Adapter",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (Network Monitor)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (IPv6)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (IP)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (PPPOE)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (PPTP)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (L2TP)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (IKEv2)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "WAN Miniport (SSTP)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.1",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Realtek PCIe GbE Family Controller",
+      "DriverProviderName": "Realtek",
+      "DriverVersion": "1168.14.613.2023",
+      "DriverDate": "2023-06-13T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Microsoft Wi-Fi Direct Virtual Adapter",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.9818",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Microsoft Wi-Fi Direct Virtual Adapter",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.9818",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Intel(R) Wi-Fi 6E AX211 160MHz",
+      "DriverProviderName": "Intel",
+      "DriverVersion": "24.70.0.3",
+      "DriverDate": "2026-07-29T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Bluetooth Device (Personal Area Network)",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.9974",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Standard NVM Express Controller",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.9974",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Microsoft Kernel Debug Network Adapter",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.8521",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Microsoft Storage Spaces Controller",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.9974",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "Microsoft VHD Loopback Controller",
+      "DriverProviderName": "Microsoft",
+      "DriverVersion": "10.0.26100.9974",
+      "DriverDate": "2006-06-21T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "VirtualBox Host-Only Ethernet Adapter",
+      "DriverProviderName": "Oracle Corporation",
+      "DriverVersion": "7.0.26.18464",
+      "DriverDate": "2025-04-11T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "VirtualBox Host-Only Ethernet Adapter",
+      "DriverProviderName": "Oracle Corporation",
+      "DriverVersion": "7.0.26.18464",
+      "DriverDate": "2025-04-11T08:00:00+08:00"
+    },
+    {
+      "DeviceName": "TAP-Windows Adapter V9",
+      "DriverProviderName": "TAP-Windows Provider V9",
+      "DriverVersion": "9.24.6.601",
+      "DriverDate": "2020-10-08T08:00:00+08:00"
+    }
+  ],
+  "deviceGuard": {
+    "VirtualizationBasedSecurityStatus": 2,
+    "SecurityServicesConfigured": [
+      2
+    ],
+    "SecurityServicesRunning": [
+      2
+    ]
+  },
+  "whea": [
+    {
+      "TimeCreated": "2026-11-13T20:23:01.1665753+08:00",
+      "Id": 19,
+      "LevelDisplayName": "警告",
+      "RecordId": 110869
+    },
+    {
+      "TimeCreated": "2026-11-13T20:05:18.8470191+08:00",
+      "Id": 19,
+      "LevelDisplayName": "警告",
+      "RecordId": 110868
+    }
+  ],
+  "wheaQuery": "success",
+  "systemLog": {
+    "RecordCount": 41014,
+    "IsEnabled": true,
+    "LogMode": 0,
+    "MaximumSizeInBytes": 20971520
+  },
+  "oldestSystemEvent": {
+    "TimeCreated": "2026-04-19T11:24:01.2818884+08:00",
+    "RecordId": 70005
+  }
+}

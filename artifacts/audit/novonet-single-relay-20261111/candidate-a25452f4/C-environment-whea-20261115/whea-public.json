@@ -1,0 +1,14 @@
+[
+  {
+    "TimeCreated": "2026-11-13T20:23:01.1665753+08:00",
+    "Id": 19,
+    "RecordId": 110869,
+    "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+  },
+  {
+    "TimeCreated": "2026-11-13T20:05:18.8470191+08:00",
+    "Id": 19,
+    "RecordId": 110868,
+    "Message": "出现已更正的硬件错误。\r\n\r\n由以下组件报告: 处理器核心\r\n错误源: Corrected Machine Check\r\n错误类型: Internal parity error\r\n处理器 APIC ID: 33\r\n\r\n该项的详细信息视图包含进一步的信息。"
+  }
+]
