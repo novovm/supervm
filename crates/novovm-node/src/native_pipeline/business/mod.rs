@@ -6,4 +6,5 @@ pub mod fixed_supply;
 pub mod nov_transfer_batch;
 pub mod quoted_transfer;
 mod record_pages;
+pub(crate) mod uca_identity;
 pub mod uca_spend_state;

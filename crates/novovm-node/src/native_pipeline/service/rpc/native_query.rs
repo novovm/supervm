@@ -2,6 +2,7 @@
 //! No JSON conversion, new authoritative store, or transport-finality inference.
 use super::*;
 use novovm_protocol::native_query::{Answer, Query, QueryError, Response, Status};
+mod identity;
 mod uca;
 pub(super) use uca::{UcaBatchStateRead, UcaCaptureStats, UcaQueries, UcaReadResult};
 
@@ -97,6 +98,27 @@ impl RpcLifecycle {
                     match self.balance_read(account) {
                         Ok(balance) => Answer::NovBalance(balance),
                         Err(_) => Answer::Error(QueryError::Busy),
+                    }
+                }
+                Query::UcaIdentity {
+                    chain_id, genesis, ..
+                } => {
+                    if *chain_id != self.node.template.chain_id
+                        || *genesis != self.node.template.genesis_config_commitment
+                        || self.node.template.business_program
+                            != crate::native_pipeline::business::nov_transfer_batch::uca_program_id(
+                            )
+                    {
+                        Answer::Error(QueryError::Unavailable)
+                    } else {
+                        let parent = self.node.controller.parent();
+                        self.uca_queries.read_identity(
+                            request.query.clone(),
+                            parent.state_root,
+                            parent.height,
+                            now,
+                            self.node.pipeline.capture_budget(),
+                        )
                     }
                 }
                 Query::AssetSpendState { intent, .. } => {

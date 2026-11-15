@@ -243,6 +243,7 @@ fn answer_view(answer: Answer) -> Value {
     use native_query::AssetState;
     match answer {
         Answer::Status(status) => json!({"Status":status}),
+        Answer::UcaIdentity(state) => json!({"UcaIdentity":state}),
         Answer::Error(error) => json!({"Error":error}),
         Answer::Receipt {
             state,

@@ -143,15 +143,20 @@ pub fn identity_record_changes(
     genesis: &NodeHash,
     identity: &novovm_adapter_api::unified_account::UcaAccount,
 ) -> Result<Vec<StateChange>> {
-    valid_id(&identity.uca_id)?;
     ensure!(
         identity.primary_key_ref.len() == 32 && identity.updated_at >= identity.created_at,
         "invalid identity record"
     );
-    let mut prefix = domain(chain, genesis, b"/identity/")?;
-    prefix.push(identity.uca_id.len() as u8);
-    prefix.extend_from_slice(identity.uca_id.as_bytes());
+    let prefix = identity_prefix(chain, genesis, &identity.uca_id)?;
     record_pages::record_changes(&prefix, &postcard::to_allocvec(identity)?, 8192)
+}
+
+pub(super) fn identity_prefix(chain: u64, genesis: &NodeHash, identity: &str) -> Result<Vec<u8>> {
+    valid_id(identity)?;
+    let mut prefix = domain(chain, genesis, b"/identity/")?;
+    prefix.push(identity.len() as u8);
+    prefix.extend_from_slice(identity.as_bytes());
+    Ok(prefix)
 }
 
 pub(crate) fn account_write_declarations(

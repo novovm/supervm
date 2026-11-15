@@ -8,6 +8,54 @@ use novovm_adapter_api::uca_spend_policy::SuppliedAssetSpendGrantV2;
 use novovm_protocol::native_query::AssetReadIntentV2;
 
 #[test]
+fn identity_queries_share_the_existing_bounded_queue_and_keep_captured_root_labels() {
+    use novovm_protocol::native_query::{IdentityStateV1, UcaIdentityIdV1};
+    let now = Instant::now();
+    let mut queries = UcaQueries::default();
+    let query = |index| Query::UcaIdentity {
+        chain_id: 7,
+        genesis: [2; 32],
+        identity: UcaIdentityIdV1::new(&format!("uca-{index}")).unwrap(),
+    };
+    for index in 0..8 {
+        assert_eq!(
+            queries.read_identity(query(index), [9; 32], 10, now, capture_budget()),
+            Answer::UcaIdentity(IdentityStateV1::Pending)
+        );
+    }
+    assert_eq!(
+        queries.read_identity(query(0), [8; 32], 11, now, capture_budget()),
+        Answer::UcaIdentity(IdentityStateV1::Pending)
+    );
+    assert_eq!(queries.0.len(), 8);
+    assert_eq!(
+        queries.read_identity(query(8), [9; 32], 10, now, capture_budget()),
+        Answer::Error(QueryError::Busy)
+    );
+    let observation = Answer::UcaIdentity(IdentityStateV1::Missing {
+        state_root: [9; 32],
+        height: 10,
+    });
+    queries.0[0].answer = Some(observation.clone());
+    assert_eq!(
+        queries.read_identity(query(0), [8; 32], 11, now, capture_budget()),
+        observation
+    );
+    assert_eq!(queries.0.len(), 7);
+    let asset_query = Query::AssetSpendState {
+        intent: AssetReadIntentV2::new(&intent()).unwrap(),
+    };
+    assert_eq!(
+        queries.read(asset_query, [9; 32], 10, now),
+        Answer::AssetSpendState(AssetState::Pending)
+    );
+    assert_eq!(
+        queries.read_identity(query(8), [9; 32], 10, now, capture_budget()),
+        Answer::Error(QueryError::Busy)
+    );
+}
+
+#[test]
 fn uca_local_turn_caps_work_and_preserves_progress_without_a_real_clock() {
     let mut calls = 0;
     let (result, progress, steps) = poll_local_turn(

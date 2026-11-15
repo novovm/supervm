@@ -428,8 +428,37 @@ struct Entry {
     root: Hash,
     height: u64,
     expires: Instant,
-    read: AssetStateRead,
+    read: QueryRead,
     answer: Option<Answer>,
+}
+
+enum QueryRead {
+    Asset(Box<AssetStateRead>),
+    Identity(Box<super::identity::IdentityReadV1>),
+}
+
+impl QueryRead {
+    fn poll(
+        &mut self,
+        pipeline: &CandidatePipeline,
+        root: Hash,
+        height: u64,
+    ) -> Result<Option<Answer>> {
+        match self {
+            Self::Identity(read) => read.poll(pipeline),
+            Self::Asset(read) => Ok(read.poll(pipeline)?.map(|state| {
+                Answer::AssetSpendState(match state {
+                    UcaReadResult::Missing => AssetState::Missing {
+                        state_root: root,
+                        height,
+                    },
+                    UcaReadResult::Present(state) => {
+                        AssetState::Present(Box::new(view(&state, height)))
+                    }
+                })
+            })),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -441,18 +470,9 @@ impl UcaQueries {
         // turn: admission/nonce hydration must get the next opportunity.
         if let Some(index) = self.0.iter().position(|entry| entry.answer.is_none()) {
             let mut entry = self.0.remove(index).unwrap();
-            entry.answer = match entry.read.poll(pipeline) {
-                Ok(None) => None,
+            entry.answer = match entry.read.poll(pipeline, entry.root, entry.height) {
+                Ok(answer) => answer,
                 Err(_) => Some(Answer::Error(QueryError::Unavailable)),
-                Ok(Some(UcaReadResult::Missing)) => {
-                    Some(Answer::AssetSpendState(AssetState::Missing {
-                        state_root: entry.root,
-                        height: entry.height,
-                    }))
-                }
-                Ok(Some(UcaReadResult::Present(state))) => Some(Answer::AssetSpendState(
-                    AssetState::Present(Box::new(view(&state, entry.height))),
-                )),
             };
             self.0.push_back(entry);
         }
@@ -487,10 +507,59 @@ impl UcaQueries {
                     root,
                     height,
                     expires: now + Duration::from_secs(30),
-                    read,
+                    read: QueryRead::Asset(Box::new(read)),
                     answer: None,
                 });
                 Answer::AssetSpendState(AssetState::Pending)
+            }
+        }
+    }
+
+    pub(super) fn read_identity(
+        &mut self,
+        query: Query,
+        root: Hash,
+        height: u64,
+        now: Instant,
+        budget: CaptureBudget,
+    ) -> Answer {
+        use novovm_protocol::native_query::IdentityStateV1;
+        if let Some(index) = self.0.iter().position(|entry| entry.query == query) {
+            return if self.0[index].answer.is_some() {
+                self.0.remove(index).unwrap().answer.unwrap()
+            } else {
+                Answer::UcaIdentity(IdentityStateV1::Pending)
+            };
+        }
+        if self.0.len() >= 8 {
+            return Answer::Error(QueryError::Busy);
+        }
+        let Query::UcaIdentity {
+            chain_id,
+            genesis,
+            identity,
+        } = &query
+        else {
+            return Answer::Error(QueryError::Unavailable);
+        };
+        let read = crate::native_pipeline::business::uca_identity::IdentityAccessV1::new(
+            *chain_id,
+            genesis,
+            identity.as_str(),
+        )
+        .and_then(|access| super::identity::IdentityReadV1::new(access, root, height, budget));
+        match read {
+            Err(_) => Answer::Error(QueryError::Unavailable),
+            Ok(read) => {
+                self.0.push_back(Entry {
+                    query,
+                    root,
+                    height,
+                    expires: now + Duration::from_secs(30),
+                    read: QueryRead::Identity(Box::new(read)),
+                    answer: None,
+                });
+                Answer::UcaIdentity(IdentityStateV1::Pending)
             }
         }
     }

@@ -16,8 +16,55 @@ pub const MAX_BYTES: usize = 32 * 1024;
 const MAGIC_V1: &[u8; 8] = b"NVQUERY1";
 const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
 const MAGIC_V4: &[u8; 8] = b"NVQUERY4";
+const MAGIC_IDENTITY_V7: &[u8; 8] = b"NVQUERY7";
 const MAGIC_RESPONSE_V6: &[u8; 8] = b"NVQUERY6";
 pub type Hash = [u8; 32];
+
+/// Immutable identity identifier, not an asset account or spending authority.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UcaIdentityIdV1(String);
+impl UcaIdentityIdV1 {
+    pub fn new(value: &str) -> Result<Self, &'static str> {
+        if value.is_empty()
+            || value.len() > crate::uca_spend::MAX_UCA_ID_BYTES
+            || !value
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+        {
+            return Err("invalid UCA identity ID");
+        }
+        Ok(Self(value.to_owned()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+impl Serialize for UcaIdentityIdV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+impl<'de> Deserialize<'de> for UcaIdentityIdV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct IdentityVisitor;
+        impl<'de> serde::de::Visitor<'de> for IdentityVisitor {
+            type Value = UcaIdentityIdV1;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("nonempty bounded ASCII UCA identity ID")
+            }
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                UcaIdentityIdV1::new(value).map_err(E::custom)
+            }
+            fn visit_bytes<E: serde::de::Error>(self, value: &[u8]) -> Result<Self::Value, E> {
+                if value.len() > crate::uca_spend::MAX_UCA_ID_BYTES {
+                    return Err(E::custom("invalid UCA identity ID"));
+                }
+                self.visit_str(std::str::from_utf8(value).map_err(E::custom)?)
+            }
+        }
+        deserializer.deserialize_str(IdentityVisitor)
+    }
+}
 
 /// Nonempty bounded sequence. Its wire representation is an ordinary postcard
 /// sequence, but the advertised length is checked BEFORE allocating elements.
@@ -119,6 +166,38 @@ pub enum Query {
     AssetSpendState {
         intent: AssetReadIntentV2,
     },
+    UcaIdentity {
+        chain_id: u64,
+        genesis: Hash,
+        identity: UcaIdentityIdV1,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IdentityStatusV1 {
+    Active,
+    Suspended,
+    Recovering,
+    Revoked,
+}
+
+/// Serving-node observation at one published root, not an identity proof.
+/// Exposes only a key reference, never raw keys or linked asset-account data.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UcaIdentityViewV1 {
+    pub state_root: Hash,
+    pub height: u64,
+    pub status: IdentityStatusV1,
+    pub primary_key_ref: Hash,
+    pub created_at_ms: u64,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IdentityStateV1 {
+    Pending,
+    Missing { state_root: Hash, height: u64 },
+    Present(UcaIdentityViewV1),
 }
 
 /// The original NUAS intent bytes, bounded and validated BEFORE ownership.
@@ -261,6 +340,7 @@ pub enum Answer {
         indexed_height: u64,
     },
     AssetSpendState(AssetState),
+    UcaIdentity(IdentityStateV1),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -301,9 +381,25 @@ fn is_batch(frame: &Frame) -> bool {
 fn is_uca(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::AssetSpendState { .. })
 }
-fn valid(frame: &Frame) -> bool {
-    let request = request(frame);
+fn is_identity(frame: &Frame) -> bool {
+    matches!(request(frame).query, Query::UcaIdentity { .. })
+}
+fn valid_request(request: &Request) -> bool {
     if request.session == [0; 32] || request.sequence == 0 {
+        return false;
+    }
+    if let Query::UcaIdentity {
+        chain_id, genesis, ..
+    } = &request.query
+    {
+        if *chain_id == 0 || *genesis == [0; 32] {
+            return false;
+        }
+    }
+    true
+}
+fn valid(frame: &Frame) -> bool {
+    if !valid_request(request(frame)) {
         return false;
     }
     match frame {
@@ -317,7 +413,8 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
         | (Query::Status, Answer::Status(_))
         | (Query::Receipt { .. }, Answer::Receipt { .. })
         | (Query::NovBalance { .. }, Answer::NovBalance(_))
-        | (Query::AssetSpendState { .. }, Answer::AssetSpendState(_)) => true,
+        | (Query::AssetSpendState { .. }, Answer::AssetSpendState(_))
+        | (Query::UcaIdentity { .. }, Answer::UcaIdentity(_)) => true,
         (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
             hashes.len() == states.len()
         }
@@ -331,6 +428,8 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     let batch = is_batch(&frame);
     let mut bytes = if matches!(frame, Frame::Response(_)) {
         MAGIC_RESPONSE_V6
+    } else if is_identity(&frame) {
+        MAGIC_IDENTITY_V7
     } else if is_uca(&frame) {
         MAGIC_V4
     } else if batch {
@@ -357,11 +456,12 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
 }
 pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     let uca = bytes.starts_with(MAGIC_V4);
+    let identity = bytes.starts_with(MAGIC_IDENTITY_V7);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
         true
-    } else if uca {
+    } else if uca || identity {
         false
     } else {
         return Err("native query header/size");
@@ -377,6 +477,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
         || !valid(&frame)
         || is_batch(&frame) != batch
         || is_uca(&frame) != uca
+        || is_identity(&frame) != identity
     {
         return Err("native query trailing bytes/binding");
     }
@@ -387,6 +488,9 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
 /// A valid reply for another request is stale, not an answer to the current one.
 /// There is no fallback to the former full-request response wire formats.
 pub fn decode_response(bytes: &[u8], expected: &Request) -> Result<Option<Response>, &'static str> {
+    if !valid_request(expected) {
+        return Err("invalid native query binding");
+    }
     if !bytes.starts_with(MAGIC_RESPONSE_V6) || bytes.len() > MAX_BYTES {
         return Err("native query response header/size");
     }
@@ -418,6 +522,264 @@ pub fn decode_response(bytes: &[u8], expected: &Request) -> Result<Option<Respon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn identity_request() -> Request {
+        Request {
+            session: [7; 32],
+            sequence: u64::MAX,
+            query: Query::UcaIdentity {
+                chain_id: u64::MAX,
+                genesis: [2; 32],
+                identity: UcaIdentityIdV1::new("uca:Alice_01.test-id").unwrap(),
+            },
+        }
+    }
+
+    #[test]
+    fn identity_request_round_trip_and_exclusive_v7_header() {
+        let request = identity_request();
+        let frame = Frame::Request(request.clone());
+        let bytes = encode(frame.clone()).unwrap();
+        assert!(bytes.starts_with(MAGIC_IDENTITY_V7));
+        assert_eq!(decode(&bytes).unwrap(), frame);
+        for header in [MAGIC_V1, MAGIC_V2, MAGIC_V4, MAGIC_RESPONSE_V6, b"NVQUERY3"] {
+            let mut wrong = bytes.clone();
+            wrong[..8].copy_from_slice(header);
+            assert!(decode(&wrong).is_err());
+        }
+        for (query, header) in [
+            (Query::Status, MAGIC_V1),
+            (batch_request(1).query, MAGIC_V2),
+            (
+                Query::AssetSpendState {
+                    intent: AssetReadIntentV2::new(&uca_intent()).unwrap(),
+                },
+                MAGIC_V4,
+            ),
+        ] {
+            let legacy = Frame::Request(Request {
+                query,
+                ..request.clone()
+            });
+            let mut wire = encode(legacy.clone()).unwrap();
+            assert_eq!(&wire[..8], header);
+            assert_eq!(&wire[8..], postcard::to_allocvec(&legacy).unwrap());
+            wire[..8].copy_from_slice(MAGIC_IDENTITY_V7);
+            assert!(decode(&wire).is_err());
+        }
+        for n in 0..bytes.len() {
+            assert!(decode(&bytes[..n]).is_err());
+        }
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(decode(&trailing).is_err());
+    }
+
+    #[test]
+    fn identity_observations_round_trip_all_statuses_without_account_or_raw_key_data() {
+        let request = identity_request();
+        let mut states = vec![
+            IdentityStateV1::Pending,
+            IdentityStateV1::Missing {
+                state_root: [9; 32],
+                height: u64::MAX,
+            },
+        ];
+        for (tag, status) in [
+            IdentityStatusV1::Active,
+            IdentityStatusV1::Suspended,
+            IdentityStatusV1::Recovering,
+            IdentityStatusV1::Revoked,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let view = UcaIdentityViewV1 {
+                state_root: [9; 32],
+                height: u64::MAX,
+                status,
+                primary_key_ref: [6; 32],
+                created_at_ms: u64::MAX - 1,
+                updated_at_ms: u64::MAX,
+            };
+            // Exact public wire schema: two hashes, status and three integers.
+            // No raw key, asset account, balance, grant or spending fields.
+            let expected = [
+                vec![9; 32],
+                postcard::to_allocvec(&u64::MAX).unwrap(),
+                vec![tag as u8],
+                vec![6; 32],
+                postcard::to_allocvec(&(u64::MAX - 1)).unwrap(),
+                postcard::to_allocvec(&u64::MAX).unwrap(),
+            ]
+            .concat();
+            assert_eq!(postcard::to_allocvec(&view).unwrap(), expected);
+            states.push(IdentityStateV1::Present(view));
+        }
+        for state in states {
+            let frame = Frame::Response(Response {
+                request: request.clone(),
+                answer: Answer::UcaIdentity(state),
+            });
+            let bytes = encode(frame.clone()).unwrap();
+            assert_response_round_trip(&bytes, &frame);
+            assert!(bytes.len() <= MAX_V1_BYTES);
+            for n in 0..bytes.len() {
+                assert!(decode_response(&bytes[..n], &request).is_err());
+            }
+            let mut wrong = bytes;
+            wrong[..8].copy_from_slice(MAGIC_IDENTITY_V7);
+            assert!(decode_response(&wrong, &request).is_err());
+            assert!(decode(&wrong).is_err());
+        }
+    }
+
+    #[test]
+    fn identity_id_checks_borrowed_strings_and_bytes_before_ownership() {
+        use serde::de::value::{BytesDeserializer, Error, StrDeserializer};
+        let max = "a".repeat(crate::uca_spend::MAX_UCA_ID_BYTES);
+        for value in ["Az09._:-", max.as_str()] {
+            let id = UcaIdentityIdV1::new(value).unwrap();
+            assert_eq!(id.as_str(), value);
+            let encoded = postcard::to_allocvec(&id).unwrap();
+            assert_eq!(encoded, postcard::to_allocvec(value).unwrap());
+            assert_eq!(
+                postcard::from_bytes::<UcaIdentityIdV1>(&encoded).unwrap(),
+                id
+            );
+            assert_eq!(
+                UcaIdentityIdV1::deserialize(StrDeserializer::<Error>::new(value)).unwrap(),
+                id
+            );
+            assert_eq!(
+                UcaIdentityIdV1::deserialize(BytesDeserializer::<Error>::new(value.as_bytes()))
+                    .unwrap(),
+                id
+            );
+        }
+        let oversized = "a".repeat(crate::uca_spend::MAX_UCA_ID_BYTES + 1);
+        for value in [
+            "",
+            "a b",
+            "a/b",
+            "a\0b",
+            "a\nb",
+            "\u{e9}",
+            oversized.as_str(),
+        ] {
+            assert!(UcaIdentityIdV1::new(value).is_err());
+            assert!(UcaIdentityIdV1::deserialize(StrDeserializer::<Error>::new(value)).is_err());
+            assert!(
+                UcaIdentityIdV1::deserialize(BytesDeserializer::<Error>::new(value.as_bytes()))
+                    .is_err()
+            );
+            assert!(postcard::from_bytes::<UcaIdentityIdV1>(
+                &postcard::to_allocvec(value).unwrap()
+            )
+            .is_err());
+            let mut request = identity_request();
+            let Query::UcaIdentity { identity, .. } = &mut request.query else {
+                unreachable!()
+            };
+            // Bypass the public constructor only to manufacture hostile ingress.
+            *identity = UcaIdentityIdV1(value.to_owned());
+            let mut wire = MAGIC_IDENTITY_V7.to_vec();
+            wire.extend(postcard::to_allocvec(&Frame::Request(request)).unwrap());
+            assert!(decode(&wire).is_err());
+        }
+        assert!(UcaIdentityIdV1::deserialize(BytesDeserializer::<Error>::new(&[0xff])).is_err());
+        for count in [crate::uca_spend::MAX_UCA_ID_BYTES + 1, usize::MAX] {
+            let prefix = postcard::to_allocvec(&count).unwrap();
+            assert!(postcard::from_bytes::<UcaIdentityIdV1>(&prefix).is_err());
+        }
+    }
+
+    #[test]
+    fn identity_domain_validation_and_complete_response_binding() {
+        let request = identity_request();
+        let bytes = encode(Frame::Response(Response {
+            request: request.clone(),
+            answer: Answer::UcaIdentity(IdentityStateV1::Pending),
+        }))
+        .unwrap();
+        for change in 0..6 {
+            let mut wrong = request.clone();
+            let Query::UcaIdentity {
+                chain_id,
+                genesis,
+                identity,
+            } = &mut wrong.query
+            else {
+                unreachable!()
+            };
+            match change {
+                0 => *chain_id -= 1,
+                1 => genesis[0] ^= 1,
+                2 => *identity = UcaIdentityIdV1::new("uca:alice_01.test-id").unwrap(),
+                3 => wrong.session[0] ^= 1,
+                4 => wrong.sequence -= 1,
+                _ => wrong.query = Query::Status,
+            }
+            assert_eq!(decode_response(&bytes, &wrong).unwrap(), None);
+        }
+        for zero_chain in [true, false] {
+            let mut invalid = request.clone();
+            let Query::UcaIdentity {
+                chain_id, genesis, ..
+            } = &mut invalid.query
+            else {
+                unreachable!()
+            };
+            if zero_chain {
+                *chain_id = 0;
+            } else {
+                *genesis = [0; 32];
+            }
+            let frame = Frame::Request(invalid.clone());
+            assert!(encode(frame.clone()).is_err());
+            let mut wire = MAGIC_IDENTITY_V7.to_vec();
+            wire.extend(postcard::to_allocvec(&frame).unwrap());
+            assert!(decode(&wire).is_err());
+            assert!(encode(Frame::Response(Response {
+                request: invalid.clone(),
+                answer: Answer::UcaIdentity(IdentityStateV1::Pending),
+            }))
+            .is_err());
+            assert!(decode_response(&bytes, &invalid).is_err());
+        }
+        for (request, answer) in [
+            (request.clone(), Answer::NovBalance(None)),
+            (
+                Request {
+                    query: Query::Status,
+                    ..request.clone()
+                },
+                Answer::UcaIdentity(IdentityStateV1::Pending),
+            ),
+        ] {
+            assert!(encode(Frame::Response(Response {
+                request: request.clone(),
+                answer: answer.clone()
+            }))
+            .is_err());
+            let mut wire = MAGIC_RESPONSE_V6.to_vec();
+            wire.extend(
+                postcard::to_allocvec(&CompactResponse {
+                    session: request.session,
+                    sequence: request.sequence,
+                    request_digest: request_digest(&request).unwrap(),
+                    answer,
+                })
+                .unwrap(),
+            );
+            assert!(decode_response(&wire, &request).is_err());
+        }
+        let frame = Frame::Response(Response {
+            request,
+            answer: Answer::Error(QueryError::Unavailable),
+        });
+        assert_response_round_trip(&encode(frame.clone()).unwrap(), &frame);
+    }
 
     #[test]
     fn account_query_commits_authority_mode_and_rejects_the_old_grant_only_intent() {

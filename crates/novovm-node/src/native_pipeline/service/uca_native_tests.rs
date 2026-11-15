@@ -388,13 +388,19 @@ fn actual_native_uca_pool_backpressure_preserves_nonce_prefix_and_recaptures() -
 }
 
 fn run_native_uca_service_fixture(pool_pressure: bool) -> Result<()> {
-    run_native_uca_service_fixture_with(pool_pressure, None, None, false)
+    run_native_uca_service_fixture_with(pool_pressure, None, None, false, false)
 }
 
 #[test]
 #[ignore = "qualified AOEM; four original services, authenticated source learning and cold recovery, run alone"]
 fn actual_native_uca_authenticated_route_learning_and_cold_recovery() -> Result<()> {
-    run_native_uca_service_fixture_with(false, None, None, true)
+    run_native_uca_service_fixture_with(false, None, None, true, false)
+}
+
+#[test]
+#[ignore = "qualified AOEM; original four-service ML-DSA initialization and UDP identity reads, run alone"]
+fn actual_native_uca_identity_readonly_query() -> Result<()> {
+    run_native_uca_service_fixture_with(false, None, None, false, true)
 }
 
 #[test]
@@ -420,20 +426,20 @@ fn actual_native_proportional_fee_respend_and_cold_recovery() -> Result<()> {
         network_share_bps: 3766,
         split_remainder: SplitRemainderV2::Service,
     });
-    run_native_uca_service_fixture_with(false, None, Some(p.clone()), false)?;
+    run_native_uca_service_fixture_with(false, None, Some(p.clone()), false, false)?;
     // Small explicit bounds keep this original funded fixture valid; candidate
     // commercial units are independently checked in the arithmetic table.
     let m = p.amount_fee_v3.as_mut().unwrap();
     m.rate_bps = 1000;
     m.minimum_fee_units = 5;
     m.maximum_fee_units = 7;
-    run_native_uca_service_fixture_with(false, None, Some(p), false)
+    run_native_uca_service_fixture_with(false, None, Some(p), false, false)
 }
 
 type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV3]) -> Result<()>;
 
 pub(super) fn with_uca_gossip_service_fixture(check: GossipServiceCheck) -> Result<()> {
-    run_native_uca_service_fixture_with(false, Some(check), None, false)
+    run_native_uca_service_fixture_with(false, Some(check), None, false, false)
 }
 
 fn run_native_uca_service_fixture_with(
@@ -441,6 +447,7 @@ fn run_native_uca_service_fixture_with(
     gossip_check: Option<GossipServiceCheck>,
     amount_policy: Option<DirectNovFeePolicy>,
     learn_routes: bool,
+    identity_only: bool,
 ) -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
@@ -630,6 +637,67 @@ fn run_native_uca_service_fixture_with(
         .iter()
         .map(|config| connect(config, validators.clone(), client_identity.clone()))
         .collect::<Result<Vec<_>>>()?;
+    if identity_only {
+        use novovm_protocol::native_query::{
+            IdentityStateV1, IdentityStatusV1, QueryError, UcaIdentityIdV1,
+        };
+        let selector = |identity: &str, chain_id, genesis| -> Result<Query> {
+            Ok(Query::UcaIdentity {
+                identity: UcaIdentityIdV1::new(identity).map_err(anyhow::Error::msg)?,
+                chain_id,
+                genesis,
+            })
+        };
+        let expected_ref =
+            novovm_adapter_api::uca_key_binding::derive_primary_key_ref_from_binding_v1(
+                novovm_adapter_api::UcaKeyAlgo::Mldsa65,
+                &keys[4].0,
+            );
+        for client in &mut clients {
+            for (identity, present) in [(IDS[0], true), (IDS[1], false)] {
+                let deadline = Instant::now() + TIMEOUT;
+                loop {
+                    ensure!(Instant::now() < deadline, "identity observation timeout");
+                    match query(
+                        &mut nodes,
+                        client,
+                        selector(identity, genesis.chain_id, domain)?,
+                    )? {
+                        Answer::UcaIdentity(IdentityStateV1::Pending) => {}
+                        Answer::UcaIdentity(IdentityStateV1::Present(view)) if present => {
+                            assert_eq!(view.primary_key_ref.as_slice(), expected_ref);
+                            assert_eq!(view.status, IdentityStatusV1::Active);
+                            assert_eq!(view.state_root, initial.state().root());
+                            assert_eq!(view.height, 0);
+                            break;
+                        }
+                        Answer::UcaIdentity(IdentityStateV1::Missing { state_root, height })
+                            if !present =>
+                        {
+                            assert_eq!(state_root, initial.state().root());
+                            assert_eq!(height, 0);
+                            break;
+                        }
+                        other => anyhow::bail!("unexpected identity observation {other:?}"),
+                    }
+                }
+            }
+            for wrong in [
+                selector(IDS[0], genesis.chain_id + 1, domain)?,
+                selector(IDS[0], genesis.chain_id, [99; 32])?,
+            ] {
+                assert_eq!(
+                    query(&mut nodes, client, wrong)?,
+                    Answer::Error(QueryError::Unavailable)
+                );
+            }
+        }
+        for node in nodes {
+            node.node.shutdown()?;
+        }
+        // This test does not issue app grants, spend assets or modify an existing identity.
+        return Ok(());
+    }
     let intent =
         |payer: usize, recipient: usize, amount: u128, epoch: u64| -> Result<AssetSpendIntentV3> {
             Ok(AssetSpendIntentV3 {
