@@ -1,0 +1,14 @@
+{
+  "scripts": [
+    {
+      "name": "Launch-Once.ps1",
+      "sha256": "DA0D32178566FB8395702974B4D30AE13CB9CC439B069479F337E50E7504B8B6"
+    },
+    {
+      "name": "Owner.ps1",
+      "sha256": "BFF1C5E0E258F9232F8D1E58260E63FD7A994F040BB3BE82091E1C74AC386D39"
+    }
+  ],
+  "local_task_once": true,
+  "private_keys_uploaded": false
+}

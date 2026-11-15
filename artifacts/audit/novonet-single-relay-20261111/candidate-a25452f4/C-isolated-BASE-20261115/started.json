@@ -1,0 +1,46 @@
+{
+  "nodes": [
+    {
+      "pid": 22668,
+      "index": 1,
+      "created": "2026-11-15T03:29:14.0665909Z"
+    },
+    {
+      "pid": 10600,
+      "index": 2,
+      "created": "2026-11-15T03:29:14.0842251Z"
+    },
+    {
+      "pid": 42992,
+      "index": 3,
+      "created": "2026-11-15T03:29:14.1983498Z"
+    },
+    {
+      "pid": 8088,
+      "index": 0,
+      "created": "2026-11-15T03:29:14.3079648Z"
+    }
+  ],
+  "report_interval_ms": 5000,
+  "utc": "2026-11-15T03:29:14.4117215Z",
+  "sid": "S-1-5-19",
+  "node_sha256": "1758E4A79DD34D1688D8F7BF4B60F46ED9CED518186F42FDB16BAF04C0D0C46D",
+  "double_relay": false,
+  "controller_stop_seconds": 4490,
+  "ports": [
+    62264,
+    62265,
+    62266,
+    62267,
+    62268,
+    62269,
+    62270,
+    62271
+  ],
+  "aoem_sha256": "5743F5875131330F8C8FEC58CDC2A85AA39DC6E9689358609A5F0A09A01C0D52",
+  "debugger": false,
+  "original_state_accessed": false,
+  "native_run_ms": 4480000,
+  "batch_size": 1,
+  "workers": 1
+}
