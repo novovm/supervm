@@ -1,0 +1,46 @@
+[
+  {
+    "index": 0,
+    "delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_64_character_lower_hex_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "native_network_probe_present": true,
+    "executed_batches": 0,
+    "durable_decisions": 0
+  },
+  {
+    "index": 1,
+    "delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_64_character_lower_hex_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "native_network_probe_present": true,
+    "executed_batches": 0,
+    "durable_decisions": 0
+  },
+  {
+    "index": 2,
+    "delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_64_character_lower_hex_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "native_network_probe_present": true,
+    "executed_batches": 0,
+    "durable_decisions": 0
+  },
+  {
+    "index": 3,
+    "delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_64_character_lower_hex_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "native_network_probe_present": true,
+    "executed_batches": 0,
+    "durable_decisions": 0
+  }
+]

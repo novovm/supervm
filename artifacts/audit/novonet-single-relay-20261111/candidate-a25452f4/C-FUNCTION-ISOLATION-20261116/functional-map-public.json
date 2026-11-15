@@ -1,0 +1,189 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "source_files": [
+    {
+      "path": "crates/novovm-node/src/bin/novovm-node.rs",
+      "sha256": "2032c0d20d5f309a8a3a7aeca89dd4fde911d99bda2a8b75898f8f6bb59fd0ae"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native.rs",
+      "sha256": "40874bfd0fc4bf6127ef13da52db4f430f1e7c5501b026841adc297fa0709cd8"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/probe.rs",
+      "sha256": "0f8f3dfa5f030c31ab3bf5ed41bec0f55b82737d7c4bc8719034a6e4394bdd4e"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/recovery.rs",
+      "sha256": "7f713a3c6a35f16ac62452fcf69ac6f32bb2432447eb81badcd10db42276bc6d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/profile.rs",
+      "sha256": "3fcb710f2421a5e8225cca2dd6e3ac361b5171c7f09b46d01c221571d0aca47b"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/network.rs",
+      "sha256": "065d6e2ad4a381e504a6c0bbd8f8798479bf1de5aa280b6dee923a04b5c9e8af"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "sha256": "47615e1436723349e5cc5747f2ea7d907c3202a5af154a9652d4988bbee8d335"
+    }
+  ],
+  "function_map": [
+    {
+      "feature": "periodic status owner",
+      "path": "crates/novovm-node/src/bin/novovm-node.rs",
+      "lines": [
+        42522,
+        42549,
+        42610,
+        42631,
+        42635,
+        42935
+      ],
+      "condition": "timer due, first iteration primed due; shutdown status unconditional",
+      "original_independent_off_switch": false
+    },
+    {
+      "feature": "NOVONET driver observation",
+      "path": "crates/novovm-node/src/bin/novovm-node.rs",
+      "lines": [
+        42610,
+        42616
+      ],
+      "condition": "same report timer and NOVONET driver exists",
+      "original_independent_off_switch": false
+    },
+    {
+      "feature": "profile snapshot",
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "lines": [
+        1374
+      ],
+      "condition": "every status call, regardless PROFILE_STAGES",
+      "original_independent_off_switch": false
+    },
+    {
+      "feature": "native delivery capture and hex strings",
+      "path": "crates/novovm-node/src/native_pipeline/profile.rs",
+      "lines": [
+        112,
+        166,
+        173,
+        276,
+        577
+      ],
+      "condition": "explicit atomic enable OR environment PROFILE_NATIVE_DELIVERY=1; each retained peer/fragment formats bytes",
+      "group_off_requires": [
+        "omit network probe control file",
+        "PROFILE_NATIVE_DELIVERY=0"
+      ]
+    },
+    {
+      "feature": "network evidence activation",
+      "path": "crates/novovm-node/src/native_pipeline/service/network.rs",
+      "lines": [
+        269,
+        270,
+        272,
+        352
+      ],
+      "condition": "probe_control_file present enables node probe and diagnostic observer",
+      "network_connections_remain_configured_if_omitted": true
+    },
+    {
+      "feature": "transport.objects snapshot",
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/probe.rs",
+      "lines": [
+        232,
+        234,
+        235,
+        529,
+        534
+      ],
+      "condition": "probe state exists; calls channel observation with retained records",
+      "group_off_same_as_native_delivery": true
+    },
+    {
+      "feature": "archive_work JSON summary",
+      "path": "crates/novovm-node/src/native_pipeline/service/rpc.rs",
+      "lines": [
+        1391,
+        1392
+      ],
+      "condition": "every status, no independent switch; reads counter",
+      "starts_archive_IO_itself": false
+    },
+    {
+      "feature": "actual archive read owner",
+      "path": "crates/novovm-node/src/native_pipeline/consensus/native_lifecycle/recovery.rs",
+      "lines": [
+        334,
+        336,
+        344
+      ],
+      "condition": "archive recovery path starts ArchiveRead then increments counter",
+      "distinct_from_status_counter_serialization": true
+    },
+    {
+      "feature": "JSON output encoding",
+      "path": "crates/novovm-node/src/bin/novovm-node.rs",
+      "lines": [
+        42641,
+        42645,
+        42666,
+        42935
+      ],
+      "condition": "file encoding only when report path exists, stdout optional periodically; final status printed",
+      "removing_output_path_disables_status": false
+    }
+  ],
+  "requested_matrix": [
+    {
+      "id": "A",
+      "requested": "status on, network evidence off, archive and formatting off",
+      "executable_with_original_binary": false,
+      "reason": "archive JSON and other formatting unconditional inside status"
+    },
+    {
+      "id": "B",
+      "requested": "status and network evidence on, archive and formatting off",
+      "executable_with_original_binary": false,
+      "reason": "same status dependencies"
+    },
+    {
+      "id": "C",
+      "requested": "status/archive/formatting on, network evidence off",
+      "executable_with_original_binary": true,
+      "actual_variant": "F01-network-evidence-off",
+      "scope": "group disables native_delivery plus native transport diagnostic records, NOVONET basic driver observation remains"
+    },
+    {
+      "id": "D",
+      "requested": "full current observer combination",
+      "executable_with_original_binary": true,
+      "actual_variants": [
+        "BASE-observation-on",
+        "F02-network-evidence-reenabled"
+      ]
+    },
+    {
+      "id": "E",
+      "requested": "all periodic status and archive/formatting off",
+      "executable_with_original_binary": false,
+      "reason": "initial due and final unconditional status; raising interval only reduces repeated calls"
+    },
+    {
+      "id": "BASE-transaction",
+      "requested": "base transaction execution and persistence verification",
+      "executable_with_current_prepared_load": false,
+      "reason": "existing four-process network control load injected zero transactions and observed zero executed_batches/durable_decisions; requires real isolated transaction inputs before claiming coverage"
+    }
+  ],
+  "runtime_count_proof": "actual snapshot enabled/present fields and record counts; completed file reports are call lower bounds, no tracing instrumentation",
+  "runtime_protocol": "fresh shared test identity set; fresh per-group databases; same ports and configuration except diagnostic network evidence group; scheduler and packet order not deterministic",
+  "original_historical_inputs_replayed": false,
+  "production_changes": false,
+  "root_cause_proven": false
+}
