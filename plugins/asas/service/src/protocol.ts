@@ -35,10 +35,22 @@ export const ToolCapability = z.object({ version: z.literal(1), tools: z.array(T
   .refine(names => new Set(names).size === names.length, 'Duplicate tool capability') }).strict();
 export type ToolCapability = z.infer<typeof ToolCapability>;
 export const TOOL_CAPABILITY: ToolCapability = { version: 1, tools: [...ToolName.options] };
+export const ReasoningEffort = z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+export const EnginePermissionMode = z.enum(['default', 'auto']);
+export const ModelControls = z.object({
+  efforts: z.array(ReasoningEffort).max(7), defaultEffort: ReasoningEffort.optional(),
+  permissionModes: z.array(EnginePermissionMode).max(2),
+}).strict().refine(value => !value.defaultEffort || value.efforts.includes(value.defaultEffort), 'Invalid default effort');
+export type ModelControls = z.infer<typeof ModelControls>;
+export const EngineControls = z.object({ version: z.literal(1),
+  models: z.record(z.string().min(1).max(200), ModelControls).refine(value => Object.keys(value).length <= 100),
+}).strict();
+export type EngineControls = z.infer<typeof EngineControls>;
 export const TaskInput = z.object({
   id, sessionId: id, projectId: z.string().regex(/^[a-f0-9]{64}$/), engine: EngineName,
   prompt: z.string().min(1).max(250000), model: z.string().min(1).max(200),
   mode: z.enum(['develop', 'plan']), context: z.string().max(250000).optional(), toolContract: ToolCapability.optional(), workerNodeId: NodeId.optional(),
+  reasoningEffort: ReasoningEffort.optional(), enginePermissionMode: EnginePermissionMode.optional(),
 }).strict();
 export type TaskInput = z.infer<typeof TaskInput>;
 export const ToolResult = z.object({ callId: id, ok: z.boolean(), output: z.string().max(240000) }).strict();

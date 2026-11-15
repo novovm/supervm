@@ -5,7 +5,7 @@ import { z } from 'zod';
 import path from 'node:path';
 import { saveJson } from './storage';
 import { QuotaStore, type PlanSnapshot } from './quota';
-import { TaskInput, ToolResult, StoredTask, EngineName, ToolName, TOOL_POLICIES, toolNamesFor, NodeId, SkillListResult, SkillReadResult, TokenCounts, id, parseTool, type AgentEvent, type TaskState } from './protocol';
+import { TaskInput, ToolResult, StoredTask, EngineName, ToolName, TOOL_POLICIES, toolNamesFor, NodeId, SkillListResult, SkillReadResult, TokenCounts, id, parseTool, EngineControls, type AgentEvent, type TaskState } from './protocol';
 
 export type Peer = { id: string; tokenSha256: string; projects: string[]; nodeId?: string };
 const SessionSchema = z.object({ id, peerId: z.string().min(1).max(200), projectId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -15,7 +15,7 @@ export type EngineContext = { input: TaskInput; session: Session; signal: AbortS
   text: (text: string) => Promise<void>; call: (name: string, args: unknown) => Promise<ToolResult>; checkpoint: (id: string) => Promise<void>;
   usage?: (counts: TokenCounts, final: boolean, cumulative?: TokenCounts) => Promise<void>; plan?: (snapshot: PlanSnapshot) => Promise<void> };
 export type Engine = (context: EngineContext) => Promise<void>;
-export type Engines = Partial<Record<EngineName, { models: string[]; run: Engine }>>;
+export type Engines = Partial<Record<EngineName, { models: string[]; run: Engine; controls?: () => Promise<EngineControls> }>>;
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
 export class Broker extends EventEmitter {
@@ -75,6 +75,12 @@ export class Broker extends EventEmitter {
         const { peerId: _peer, status: _status, events: _events, ...original } = prior;
         if (fingerprint(original) !== fingerprint(input)) throw Error('409 task identity reused with different input');
         return prior;
+      }
+      if (input.reasoningEffort || input.enginePermissionMode === 'auto') {
+        const controls = EngineControls.parse(await this.engines[input.engine]?.controls?.()).models[input.model];
+        if (input.reasoningEffort && !controls?.efforts.includes(input.reasoningEffort)
+          || input.enginePermissionMode === 'auto' && (input.mode === 'plan' || !controls?.permissionModes.includes('auto')))
+          throw Error('400 requested engine control is unavailable');
       }
       if (this.controllers.size >= 8) throw Error('429 active task limit');
       let session = this.sessions.get(input.sessionId);

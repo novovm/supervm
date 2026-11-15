@@ -48,6 +48,24 @@ plan windows remain separate and unknown when unavailable. In-flight requests
 can exceed a local cap; interrupted final usage is not assumed zero.
 See [quota operation and accounting](docs/QUOTAS.md). No billing or NOV transfer.
 
+SDK 0.8 adds versioned, model-scoped native reasoning/permission capabilities and
+optional per-turn reasoning effort / Claude Auto requests. Claude capability
+discovery initializes its official CLI without sending a user prompt; Auto is
+advertised only after a successful native mode-control request. Codex reads its
+pinned native catalog. Unknown metadata never becomes a guessed capability.
+Auto has no blanket MCP allow rule or allow-on-classifier-refusal fallback. B's
+policy remains authoritative. Settings changes keep the original session and do
+not replay tasks; actual remote Claude inference remains unqualified.
+
+Latest entry requirement: B authenticates through the existing NOVOVM UCA purpose
+identity and common direct/relay route, not A's model credentials. This is not yet
+implemented by the current B adapter: `novovm-relay/src/asas_client.rs` only uses a
+pinned-key direct NovoRUDP handshake. UCA purpose authorization/revocation and
+the common relay selector still need wiring to their original owners. The
+`product_identity.rs` status interface currently has only a test implementation
+in this checkout; do not substitute an accept-all verifier or call transport
+key possession UCA login. ACODE's entry now distinguishes these states.
+
 ## Run A Development Contract
 
 Node 22 or newer. `npm ci --ignore-scripts`, then `npm run build`.

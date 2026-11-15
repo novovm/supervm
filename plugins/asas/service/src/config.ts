@@ -4,6 +4,7 @@ import { CodexProfile } from './codex/process';
 import { claudeEngine } from './claude';
 import { codexEngine } from './codex/engine';
 import type { Engines } from './broker';
+import { cachedControls, discoverClaudeControls, readCodexControls } from './controls';
 
 const models = z.array(z.string().min(1).max(200)).min(1).max(100);
 export const Configuration = z.object({ directory: z.string().refine(path.isAbsolute),
@@ -16,8 +17,13 @@ export const Configuration = z.object({ directory: z.string().refine(path.isAbso
 }).strict();
 export function enginesFor(config: z.infer<typeof Configuration>): Engines {
   const engines: Engines = {};
-  if (config.codex) engines.codex = { models: config.codex.models, run: codexEngine(config.directory, config.codex) };
-  if (config.claude) engines.claude = { models: config.claude.models, run: claudeEngine(config.directory, config.claude.executable) };
-  if (!config.codex && !config.claude) engines.claude = { models: config.models, run: claudeEngine(config.directory, config.executable) };
+  if (config.codex) {
+    const profile = config.codex;
+    engines.codex = { models: profile.models, run: codexEngine(config.directory, profile),
+      controls: cachedControls(() => readCodexControls(profile.catalog, profile.models, profile.effort)) };
+  }
+  const claude = config.claude || (!config.codex ? { models: config.models, executable: config.executable } : undefined);
+  if (claude) engines.claude = { models: claude.models, run: claudeEngine(config.directory, claude.executable),
+    controls: cachedControls(() => discoverClaudeControls(config.directory, claude.models, claude.executable)) };
   return engines;
 }

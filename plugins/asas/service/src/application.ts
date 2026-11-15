@@ -1,7 +1,7 @@
 import { mkdir, open, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { Broker, type Engines, type Peer } from './broker';
-import { id, VERSION, TOOL_CAPABILITY, NodeId } from './protocol';
+import { id, VERSION, TOOL_CAPABILITY, NodeId, EngineControls } from './protocol';
 import { startQuotaAdmin } from './quota-admin';
 
 export class Application {
@@ -36,7 +36,13 @@ export class Application {
     const ownUsage = () => this.engines.claude ? { claude: this.broker.meter.view(peer.id, peer.nodeId) } : {};
     if (operation === 'capabilities') {
       if (this.engines.claude) await this.broker.meter.touch(peer.id, peer.nodeId);
-      return { ...this.health(), peerId: peer.id, projects: peer.projects, ownUsage: ownUsage(), ...(peer.nodeId ? { workerNodeId: peer.nodeId } : {}) };
+      const health = this.health();
+      for (const [name, engine] of Object.entries(this.engines)) {
+        if (!engine?.controls) continue;
+        try { Object.assign(health.engines[name]!, { controls: EngineControls.parse(await engine.controls()) }); }
+        catch { /* Unknown controls must not prevent ordinary shared programming. */ }
+      }
+      return { ...health, peerId: peer.id, projects: peer.projects, ownUsage: ownUsage(), ...(peer.nodeId ? { workerNodeId: peer.nodeId } : {}) };
     }
     if (operation === 'submit') { const task = await this.broker.submit(peer, input); return { id: task.id, status: task.status }; }
     const taskId = id.parse(input?.taskId);

@@ -1,5 +1,5 @@
 import type { Readable, Writable } from 'node:stream';
-import { Event, id, TaskInput, ToolResult, MAX_BYTES, VERSION, OwnUsage, type AgentEvent, type TaskStatus } from './protocol';
+import { Event, id, TaskInput, ToolResult, MAX_BYTES, VERSION, OwnUsage, EngineControls, type AgentEvent, type TaskStatus } from './protocol';
 import { followTask } from './client';
 
 export class NativeClient {
@@ -82,6 +82,10 @@ export class NetworkClient extends NativeClient {
       || !Object.entries(value.engines).length || Object.entries(value.engines).some(([name, engine]: [string, any]) =>
         !['codex', 'claude'].includes(name) || !Array.isArray(engine?.models) || !engine.models.length || engine.models.length > 512
         || engine.models.some((model: unknown) => typeof model !== 'string' || !model.trim() || model.length > 200))) throw Error('Invalid authenticated ASAS capabilities');
+    for (const engine of Object.values(value.engines) as any[]) if (engine.controls !== undefined) {
+      engine.controls = EngineControls.parse(engine.controls);
+      if (Object.keys(engine.controls.models).some(model => !engine.models.includes(model))) throw Error('Controls outside authorized model list');
+    }
     return value;
   }
 }
