@@ -1,0 +1,75 @@
+{
+  "dump_sha256": "6c3b7b9dc34ec3c137c2b4e7bcf0f4746cf6ce023db90f6a6dc423dce2613de6",
+  "request_bytes": 39582418599952,
+  "request_hex": "0x240000000010",
+  "request_TiB": 36.00000000001455,
+  "align": 16,
+  "table": {
+    "ctrl": "0x8",
+    "bucket_mask": "0x1e5716ef0e0",
+    "growth_left": "0x0",
+    "items": "0x1e5716c9e40"
+  },
+  "additional": 1,
+  "full_capacity": 1824341955268,
+  "requested_capacity": 2084962082369,
+  "buckets": "0x40000000000",
+  "data_bytes": "0x200000000000",
+  "ctrl_bytes": "0x40000000010",
+  "mask_is_power_of_two_minus_one": false,
+  "source_constant_qwords": [
+    "0x7ff7f2e45400",
+    "0x0",
+    "0x0",
+    "0x0"
+  ],
+  "XMM6_XMM7_exception_qwords": [
+    [
+      "0x8",
+      "0x1e5716ef0e0"
+    ],
+    [
+      "0x0",
+      "0x1e5716c9e40"
+    ]
+  ],
+  "insert_entry_XMM_saved_qwords": [
+    "0x8",
+    "0x1e5716ef0e0",
+    "0x0",
+    "0x1e5716c9e40"
+  ],
+  "table_matches_saved_vectors": true,
+  "vectors_match_exception": true,
+  "code_checks": [
+    {
+      "name": "status",
+      "rva": "0x772120",
+      "bytes": 25216,
+      "matches_original_EXE": true,
+      "dump_sha256": "e12395096e99dbadf0fb0d2466dee748fbf0357f4f1b024691591cb0f11bac41"
+    },
+    {
+      "name": "insert_full",
+      "rva": "0x84f050",
+      "bytes": 870,
+      "matches_original_EXE": true,
+      "dump_sha256": "75327b9cd3791daec62f66766ad6cc4bc39ebf266102bfecf4a4df30c2e976b9"
+    },
+    {
+      "name": "reserve_prefix",
+      "rva": "0x242c790",
+      "bytes": 142,
+      "matches_original_EXE": true,
+      "dump_sha256": "10284f6368d76ff67ef8246f5c83cc7996d93069d1daf9cc7480a636a4293c72"
+    },
+    {
+      "name": "fallible",
+      "rva": "0x1d91c70",
+      "bytes": 407,
+      "matches_original_EXE": true,
+      "dump_sha256": "e2f2538b5b94f010b92218ecfeddb17648582ae288431d4ed464af7a397b3132"
+    }
+  ],
+  "first_corrupting_instruction_found": false
+}

@@ -1,5 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-15：PID3848分配来源已追到空表模板向量
+
+离线完整转储核对请求0x240000000010（约36TiB）、align16。
+status构造archive_work并首次插入reads_started时，空表Vec长度0，
+RawTable的ctrl=8，mask/items已成为堆地址形态值，扩容算术逐项匹配失败请求。
+字段与insert入口保存槽及原始异常XMM6/XMM7完全一致；只读空表常量仍合法，
+所查原EXE代码字节一致。首次向量改变的调用/恢复指令未定位，未提交生产修复。
+PID3848所查RBP帧关系正常，与PID34452的0x2A0共同根因仍待证。
+详见[C-PID3848-allocation-20261115/README.md](C-PID3848-allocation-20261115/README.md)。
+原现场与身份保留，本轮仅离线分析，双中继暂停。
+
 ## C回传 2026-11-15 12:17：隔离BASE run2自然失败并取得Full Dump
 
 修正两处诊断脚本后，一次a254+AOEM966隔离BASE于12:13:19启动。

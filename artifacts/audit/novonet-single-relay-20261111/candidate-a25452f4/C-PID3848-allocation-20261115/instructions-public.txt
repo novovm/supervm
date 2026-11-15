@@ -1,0 +1,140 @@
+00007ff7`f10c821d 48c785c001000000000000 mov qword ptr [rbp+1C0h],0
+00007ff7`f10c8228 48c785c801000008000000 mov qword ptr [rbp+1C8h],8
+00007ff7`f10c8233 48c785d001000000000000 mov qword ptr [rbp+1D0h],0
+00007ff7`f10c823e 0f11b5d8010000  movups  xmmword ptr [rbp+1D8h],xmm6
+00007ff7`f10c8245 0f11bde8010000  movups  xmmword ptr [rbp+1E8h],xmm7
+00007ff7`f10c824c 488985f8010000  mov     qword ptr [rbp+1F8h],rax
+00007ff7`f10c8253 48899500020000  mov     qword ptr [rbp+200h],rdx
+00007ff7`f10c825a e8b195a0ff      call    novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2 (00007ff7`f0ad1810)
+00007ff7`f10c825f b90d000000      mov     ecx,0Dh
+00007ff7`f10c8264 ba01000000      mov     edx,1
+00007ff7`f10c8269 e85231a6ff      call    novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc (00007ff7`f0b2b3c0)
+00007ff7`f10c826e 4885c0          test    rax,rax
+00007ff7`f10c8271 0f8432220000    je      novovm_base_a254!ZN11novovm_node15native_pipeline7service3rpc12RpcLifecycle6status17h9b605aaaa58c2eddE+0x8389 (00007ff7`f10ca4a9)
+00007ff7`f10c8277 488db5f8010000  lea     rsi,[rbp+1F8h]
+00007ff7`f10c827e 49be5f73746172746564 mov r14,646574726174735Fh
+00007ff7`f10c8288 4c897005        mov     qword ptr [rax+5],r14
+00007ff7`f10c828c 48b972656164735f7374 mov rcx,74735F7364616572h
+00007ff7`f10c8296 488908          mov     qword ptr [rax],rcx
+00007ff7`f10c8299 48c785100300000d000000 mov qword ptr [rbp+310h],0Dh
+00007ff7`f10c82a4 488985d0030000  mov     qword ptr [rbp+3D0h],rax
+00007ff7`f10c82ab 48898518030000  mov     qword ptr [rbp+318h],rax
+00007ff7`f10c82b2 48c785200300000d000000 mov qword ptr [rbp+320h],0Dh
+00007ff7`f10c82bd 488b87e8370000  mov     rax,qword ptr [rdi+37E8h]
+00007ff7`f10c82c4 48b90200000000000080 mov rcx,8000000000000002h
+00007ff7`f10c82ce 48898d30030000  mov     qword ptr [rbp+330h],rcx
+00007ff7`f10c82d5 48c7853803000000000000 mov qword ptr [rbp+338h],0
+00007ff7`f10c82e0 48898540030000  mov     qword ptr [rbp+340h],rax
+00007ff7`f10c82e7 c6857a01000001  mov     byte ptr [rbp+17Ah],1
+00007ff7`f10c82ee 488d9510030000  lea     rdx,[rbp+310h]
+00007ff7`f10c82f5 4889f1          mov     rcx,rsi
+00007ff7`f10c82f8 e8330fa1ff      call    novovm_base_a254!ZN4core4hash11BuildHasher8hash_one17h2900b6a5ce603c97E (00007ff7`f0ad9230)
+00007ff7`f10c82fd 488b8d20030000  mov     rcx,qword ptr [rbp+320h]
+00007ff7`f10c8304 48898d30010000  mov     qword ptr [rbp+130h],rcx
+00007ff7`f10c830b 0f108510030000  movups  xmm0,xmmword ptr [rbp+310h]
+00007ff7`f10c8312 0f298520010000  movaps  xmmword ptr [rbp+120h],xmm0
+00007ff7`f10c8319 488b8d70030000  mov     rcx,qword ptr [rbp+370h]
+00007ff7`f10c8320 48898dc0030000  mov     qword ptr [rbp+3C0h],rcx
+00007ff7`f10c8327 f30f6f8530030000 movdqu  xmm0,xmmword ptr [rbp+330h]
+00007ff7`f10c832f f30f6f8d40030000 movdqu  xmm1,xmmword ptr [rbp+340h]
+00007ff7`f10c8337 f30f6f9550030000 movdqu  xmm2,xmmword ptr [rbp+350h]
+00007ff7`f10c833f 0f109d60030000  movups  xmm3,xmmword ptr [rbp+360h]
+00007ff7`f10c8346 0f299db0030000  movaps  xmmword ptr [rbp+3B0h],xmm3
+00007ff7`f10c834d 660f7f95a0030000 movdqa  xmmword ptr [rbp+3A0h],xmm2
+00007ff7`f10c8355 660f7f8d90030000 movdqa  xmmword ptr [rbp+390h],xmm1
+00007ff7`f10c835d 660f7f8580030000 movdqa  xmmword ptr [rbp+380h],xmm0
+00007ff7`f10c8365 c6857a01000000  mov     byte ptr [rbp+17Ah],0
+00007ff7`f10c836c 488d8d80030000  lea     rcx,[rbp+380h]
+00007ff7`f10c8373 48894c2420      mov     qword ptr [rsp+20h],rcx
+00007ff7`f10c8378 488d8d60020000  lea     rcx,[rbp+260h]
+00007ff7`f10c837f 488d95c0010000  lea     rdx,[rbp+1C0h]
+00007ff7`f10c8386 4c8d8d20010000  lea     r9,[rbp+120h]
+00007ff7`f10c838d 4989c0          mov     r8,rax
+00007ff7`f10c8390 e8bb6c0d00      call    novovm_base_a254!ZN8indexmap5inner17Core$LT$K$C$V$GT$11insert_full17h19d67ba05d090cc3E (00007ff7`f119f050)
+00007ff7`f10c8395 f30f6f8568020000 movdqu  xmm0,xmmword ptr [rbp+268h]
+00007ff7`f10c21e6 0f10352332d801  movups  xmm6,xmmword ptr [novovm_base_a254!anon.349ae511e3d53d2322b3f632765bed26.1361.llvm.11811190485392588238+0x168 (00007ff7`f2e45410)]
+00007ff7`f10c21ed 0f11b538010000  movups  xmmword ptr [rbp+138h],xmm6
+00007ff7`f10c21f4 0f103d2532d801  movups  xmm7,xmmword ptr [novovm_base_a254!anon.349ae511e3d53d2322b3f632765bed26.1361.llvm.11811190485392588238+0x178 (00007ff7`f2e45420)]
+00007ff7`f10c21fb 0f11bd48010000  movups  xmmword ptr [rbp+148h],xmm7
+00007ff7`f10c2202 48898558010000  mov     qword ptr [rbp+158h],rax
+00007ff7`f119f38e 488d4f18        lea     rcx,[rdi+18h]
+00007ff7`f119f392 c6451701        mov     byte ptr [rbp+17h],1
+00007ff7`f119f396 c644242001      mov     byte ptr [rsp+20h],1
+00007ff7`f119f39b ba01000000      mov     edx,1
+00007ff7`f119f3a0 4c89c6          mov     rsi,r8
+00007ff7`f119f3a3 4d89e0          mov     r8,r12
+00007ff7`f119f3a6 4989d9          mov     r9,rbx
+00007ff7`f119f3a9 e8e2d3bd01      call    novovm_base_a254!ZN9hashbrown3raw21RawTable$LT$T$C$A$GT$14reserve_rehash17he3b5727f83df977fE (00007ff7`f2d7c790)
+00007ff7`f119f3ae 4989f0          mov     r8,rsi
+00007ff7`f2d7c7c3 48035118        add     rdx,qword ptr [rcx+18h]
+00007ff7`f2d7c7c7 0f8278050000    jb      novovm_base_a254!ZN9hashbrown3raw21RawTable$LT$T$C$A$GT$14reserve_rehash17he3b5727f83df977fE+0x5b5 (00007ff7`f2d7cd45)
+00007ff7`f2d7c7cd 4889ce          mov     rsi,rcx
+00007ff7`f2d7c7d0 488b4908        mov     rcx,qword ptr [rcx+8]
+00007ff7`f2d7c7d4 4889c8          mov     rax,rcx
+00007ff7`f2d7c7d7 4883f908        cmp     rcx,8
+00007ff7`f2d7c7db 721c            jb      novovm_base_a254!ZN9hashbrown3raw21RawTable$LT$T$C$A$GT$14reserve_rehash17he3b5727f83df977fE+0x69 (00007ff7`f2d7c7f9)
+00007ff7`f2d7c7dd 4883f9ff        cmp     rcx,0FFFFFFFFFFFFFFFFh
+00007ff7`f2d7c7e1 0f8449060000    je      novovm_base_a254!ZN9hashbrown3raw21RawTable$LT$T$C$A$GT$14reserve_rehash17he3b5727f83df977fE+0x6a0 (00007ff7`f2d7ce30)
+00007ff7`f2d7c7e7 488d4101        lea     rax,[rcx+1]
+00007ff7`f2d7c7eb 4989c1          mov     r9,rax
+00007ff7`f2d7c7ee 49c1e903        shr     r9,3
+00007ff7`f2d7c7f2 4883e0f8        and     rax,0FFFFFFFFFFFFFFF8h
+00007ff7`f2d7c7f6 4c29c8          sub     rax,r9
+00007ff7`f2d7c7f9 4989c1          mov     r9,rax
+00007ff7`f2d7c7fc 49d1e9          shr     r9,1
+00007ff7`f2d7c7ff 4c39ca          cmp     rdx,r9
+00007ff7`f2d7c802 0f86e9010000    jbe     novovm_base_a254!ZN9hashbrown3raw21RawTable$LT$T$C$A$GT$14reserve_rehash17he3b5727f83df977fE+0x261 (00007ff7`f2d7c9f1)
+00007ff7`f2d7c808 48ffc0          inc     rax
+00007ff7`f2d7c80b 4839d0          cmp     rax,rdx
+00007ff7`f2d7c80e 480f46c2        cmovbe  rax,rdx
+00007ff7`f2d7c812 488d4da8        lea     rcx,[rbp-58h]
+00007ff7`f2d7c816 4889c2          mov     rdx,rax
+00007ff7`f2d7c819 e8525496ff      call    novovm_base_a254!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801 (00007ff7`f26e1c70)
+00007ff7`f2d7c81e 4c8b45a8        mov     r8,qword ptr [rbp-58h]
+00007ff7`f26e1cbf 4889d0          mov     rax,rdx
+00007ff7`f26e1cc2 48c1e83d        shr     rax,3Dh
+00007ff7`f26e1cc6 0f8509010000    jne     novovm_base_a254!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801+0x165 (00007ff7`f26e1dd5)
+00007ff7`f26e1ccc 48c1e203        shl     rdx,3
+00007ff7`f26e1cd0 48b99324499224499224 mov rcx,2492492492492493h
+00007ff7`f26e1cda 4889d0          mov     rax,rdx
+00007ff7`f26e1cdd 4989d1          mov     r9,rdx
+00007ff7`f26e1ce0 48f7e1          mul     rax,rcx
+00007ff7`f26e1ce3 4929d1          sub     r9,rdx
+00007ff7`f26e1ce6 49d1e9          shr     r9,1
+00007ff7`f26e1ce9 4901d1          add     r9,rdx
+00007ff7`f26e1cec 49c1e902        shr     r9,2
+00007ff7`f26e1cf0 49ffc9          dec     r9
+00007ff7`f26e1cf3 490fbdc9        bsr     rcx,r9
+00007ff7`f26e1cf7 f7d1            not     ecx
+00007ff7`f26e1cf9 49c7c6ffffffff  mov     r14,0FFFFFFFFFFFFFFFFh
+00007ff7`f26e1d00 49d3ee          shr     r14,cl
+00007ff7`f26e1d03 48b8fdffffffffffff1f mov rax,1FFFFFFFFFFFFFFDh
+00007ff7`f26e1d0d 4939c6          cmp     r14,rax
+00007ff7`f26e1d10 7730            ja      novovm_base_a254!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801+0xd2 (00007ff7`f26e1d42)
+00007ff7`f26e1d12 49ffc6          inc     r14
+00007ff7`f26e1d15 4e8d3cf50f000000 lea     r15,[r14*8+0Fh]
+00007ff7`f26e1d1d 4983e7f0        and     r15,0FFFFFFFFFFFFFFF0h
+00007ff7`f26e1d21 498d7e10        lea     rdi,[r14+10h]
+00007ff7`f26e1d25 4c89fb          mov     rbx,r15
+00007ff7`f26e1d28 4801fb          add     rbx,rdi
+00007ff7`f26e1d2b 0f92c0          setb    al
+00007ff7`f26e1d2e 48b9f0ffffffffffff7f mov rcx,7FFFFFFFFFFFFFF0h
+00007ff7`f26e1d38 4839cb          cmp     rbx,rcx
+00007ff7`f26e1d3b 0f97c1          seta    cl
+00007ff7`f26e1d3e 08c1            or      cl,al
+00007ff7`f26e1d40 740e            je      novovm_base_a254!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801+0xe0 (00007ff7`f26e1d50)
+00007ff7`f26e1d42 4584c0          test    r8b,r8b
+00007ff7`f26e1d45 0f8597000000    jne     novovm_base_a254!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801+0x172 (00007ff7`f26e1de2)
+00007ff7`f26e1d4b 4531e4          xor     r12d,r12d
+00007ff7`f26e1d4e eb67            jmp     novovm_base_a254!ZN9hashbrown3raw13RawTableInner22fallible_with_capacity17h22c5a67cefb43e44E.llvm.15416535198312305801+0x147 (00007ff7`f26e1db7)
+00007ff7`f26e1d50 4489c5          mov     ebp,r8d
+00007ff7`f26e1d53 e8b8fa3efe      call    novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc35___rust_no_alloc_shim_is_unstable_v2 (00007ff7`f0ad1810)
+00007ff7`f26e1d58 41bc10000000    mov     r12d,10h
+00007ff7`f26e1d5e ba10000000      mov     edx,10h
+00007ff7`f26e1d63 4889d9          mov     rcx,rbx
+00007ff7`f26e1d66 e8559644fe      call    novovm_base_a254!RNvCs5QKde7ScR4H_7___rustc12___rust_alloc (00007ff7`f0b2b3c0)
+00007ff7`f26e1d6b 4885c0          test    rax,rax
+00007ff7`f26e1dfa b910000000      mov     ecx,10h
+00007ff7`f26e1dff 4889da          mov     rdx,rbx
+00007ff7`f26e1e02 e83c156a00      call    novovm_base_a254!alloc::alloc::handle_alloc_error (00007ff7`f2d83343)
+00007ff7`f26e1e07 cc              int     3
