@@ -30,7 +30,7 @@ export class Application {
     if (!peer) throw Error('403 unknown application principal');
     if (operation === 'submit') { const task = await this.broker.submit(peer, input); return { id: task.id, status: task.status }; }
     const taskId = id.parse(input?.taskId);
-    if (operation === 'events') return this.broker.events(peer, taskId, input.after);
+    if (operation === 'events') return this.broker.events(peer, taskId, input.after, input.waitMs);
     if (operation === 'result') { await this.broker.result(peer, taskId, input.result); return { accepted: true }; }
     if (operation === 'cancel') { await this.broker.cancel(peer, taskId); return { cancelRequested: true }; }
     throw Error('400 unknown application operation');

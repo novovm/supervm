@@ -149,19 +149,19 @@ export class Broker extends EventEmitter {
     await this.append(task, { type: 'tool_result', callId: result.callId, text });
     clearTimeout(pending.timer); this.pending.delete(result.callId); pending.resolve(result);
   }
-  async events(peer: Peer, id: string, after: number): Promise<{ status: string; events: AgentEvent[]; activeCallIds: string[] }> {
+  async events(peer: Peer, id: string, after: number, waitMs = 20000): Promise<{ status: string; events: AgentEvent[]; activeCallIds: string[] }> {
     const task = this.get(peer, id);
-    if (!Number.isSafeInteger(after) || after < 0 || after > task.events.length) throw Error('409 invalid event cursor');
-    if (task.events.length === after && task.status === 'running') await new Promise<void>(resolve => {
+    if (!Number.isSafeInteger(after) || after < 0 || after > task.events.length || !Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 20000) throw Error('409 invalid event cursor or wait budget');
+    if (task.events.length === after && (task.status === 'running' || this.controllers.has(task.id))) await new Promise<void>(resolve => {
       const done = () => { clearTimeout(timer); this.removeListener(id, done); resolve(); };
-      const timer = setTimeout(done, 20000); this.once(id, done);
+      const timer = setTimeout(done, waitMs); this.once(id, done);
     });
     const events: AgentEvent[] = [];
     for (const event of task.events.slice(after, after + 4)) {
       if (events.length && Buffer.byteLength(JSON.stringify([...events, event])) > 900000) break;
       events.push(event);
     }
-    return { status: after + events.length < task.events.length ? 'running' : task.status, events,
+    return { status: after + events.length < task.events.length || this.controllers.has(task.id) ? 'running' : task.status, events,
       activeCallIds: [...this.pending].filter(([, value]) => value.taskId === id).map(([callId]) => callId) };
   }
   async cancel(peer: Peer, id: string): Promise<void> { const task = this.get(peer, id); this.controllers.get(task.id)?.abort(Error('Cancelled by owning peer')); }

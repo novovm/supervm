@@ -204,6 +204,10 @@ impl Worker {
             .await
     }
 
+    pub async fn health(&mut self) -> Result<Value> {
+        self.exchange(json!({"operation":"health"})).await
+    }
+
     pub async fn unexpected_exit(&mut self) -> Result<()> {
         let _ = self.child.wait().await?;
         anyhow::bail!("ASAS worker exited; tasks require inspection, not automatic restart")

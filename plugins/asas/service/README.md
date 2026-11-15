@@ -1,7 +1,8 @@
 # ASAS
 
 NOVOVM native off-chain L3 application plugin. Canonical source: `plugins/asas/service`.
-Remote Agent / Local Workspace. A runs the unmodified official Claude Agent SDK;
+Remote Agent / Local Workspace. A runs official Codex or the Claude Agent SDK,
+without an ACODE runtime dependency;
 ACODE on B executes tools in B's authorized project. No second Codex agent loop
 wraps Claude. B does not need Claude Code or A's model credentials.
 
@@ -13,7 +14,10 @@ wraps Claude. B does not need Claude Code or A's model credentials.
 These are development contracts, not a claim of completed cross-device delivery.
 Native host and synchronization instructions: [ASAS plugin](../README.md).
 Codex and Claude have separate engine identities and native sessions. The real
-Codex adapter, NOVONET route and ACODE UI connection remain unfinished.
+Codex adapter and same-device native pipe have passed actual inference and ACODE
+file-tool checks in same-device isolation: [Codex setup](docs/CODEX.md). The spawning
+probe lives in B's test support only. A accepts opaque B project IDs, never resolves
+B workspace paths. NOVONET routing and ACODE UI remain unfinished.
 
 ## Run A Development Contract
 
