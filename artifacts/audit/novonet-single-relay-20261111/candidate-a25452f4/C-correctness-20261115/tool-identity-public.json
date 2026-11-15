@@ -1,0 +1,29 @@
+{
+  "download_page": "https://www.mersenne.org/download/",
+  "version": "30.19 build20 Windows64",
+  "files": [
+    {
+      "name": "prime95.zip",
+      "bytes": 8805545,
+      "sha256": "d9475f2ff3f4a6a701abc49a86a66126cb48abd10bda6fa87039d98fa8756bca"
+    },
+    {
+      "name": "prime95.exe",
+      "bytes": 29266944,
+      "sha256": "e28a68ac36dda0e29cb86d62032d9ffbe37862e926a5e905cd3b20a02cb48289"
+    },
+    {
+      "name": "Run-Isolated.ps1",
+      "bytes": 3275,
+      "sha256": "a309785d3ccb7c4d2ced53221221c9e979a6d1052d4071306bc3bc11485f005d"
+    },
+    {
+      "name": "Run-Memory.ps1",
+      "bytes": 3366,
+      "sha256": "1794d92febbc0f5a32184fb8427f45c15fa4bf722009728bd6a48ae6229dea50"
+    }
+  ],
+  "zip_official_sha256_matched": true,
+  "source_download_attempt": "mirror returned2469bytes not matching published source hash; not executable source; no build performed",
+  "driver_payloads_in_verified_zip": []
+}

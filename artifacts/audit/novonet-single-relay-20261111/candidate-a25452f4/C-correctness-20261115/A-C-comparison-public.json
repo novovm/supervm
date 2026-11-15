@@ -1,0 +1,32 @@
+{
+  "A_receipt_commit": "f3ce1f90",
+  "synced_main": "1aa5fb56",
+  "A_run_seconds": 86401.975262,
+  "A_exit_code": 0,
+  "A_current_processes": 0,
+  "A_final_progress": {
+    "mtime_utc": "2026-11-13T08:13:18.7523644Z",
+    "sha256": "bbdfcdeb12f34ef8bea605dd46ea8bb69f8c95ca3ce343f665e3d40dacf7fef5",
+    "entry": "original_native_execution_tick",
+    "ticks": 233204557,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "execution_failures": 0,
+    "current_height": 1,
+    "native_rejected_messages": 3671,
+    "native_expired_sends": 5047,
+    "backend": "aoem_semantic_v2_cpu_callbacks"
+  },
+  "A_exe": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "A_aoem": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "C_original_a254_pid": 27928,
+  "C_original_a254_exe": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "C_original_a254_aoem": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+  "historical_exe_equal": true,
+  "historical_aoem_equal": true,
+  "C_later_AOEM966_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "C_PID27928_crashed_with_old_runtime": true,
+  "matched_load_proven": false,
+  "A_exact_status_calls": null,
+  "C_exact_status_calls": null
+}

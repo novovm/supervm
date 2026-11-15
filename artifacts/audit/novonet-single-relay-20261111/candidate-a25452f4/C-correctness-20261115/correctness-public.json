@@ -1,0 +1,73 @@
+{
+  "runs": [
+    {
+      "name": "cpu",
+      "pid": 26828,
+      "start_utc": "2026-11-15T02:50:10.9420015Z",
+      "limits": {
+        "mem": 0,
+        "name": "cpu",
+        "seconds": 120,
+        "max": 64,
+        "min": 16
+      },
+      "peak_private_bytes": 6746112,
+      "stop_reason": "time_bound",
+      "close_requested": false,
+      "forced_stop": true,
+      "exit_code": -1,
+      "end_utc": "2026-11-15T02:52:23.0024315Z",
+      "whea_after": [],
+      "completed_selftests": 8,
+      "completed_sizes": {
+        "16K": 4,
+        "18K": 4
+      },
+      "logged_error_detected": false,
+      "log_sha256": "64ef619c6bdfe2cd0be95a27ca7c487f513f70fa3170f2e3cb2920bbfc2e91aa",
+      "elapsed_seconds": 132.06043
+    },
+    {
+      "name": "memory",
+      "pid": 22084,
+      "start_utc": "2026-11-15T02:52:51.1441263Z",
+      "limits": {
+        "seconds": 180,
+        "max": 4096,
+        "mem": 1024,
+        "min": 1024,
+        "name": "memory"
+      },
+      "peak_private_bytes": 1092816896,
+      "stop_reason": "time_bound",
+      "close_requested": true,
+      "forced_stop": false,
+      "close_command_exit": 0,
+      "close_output": "SUCCESS: Sent termination signal to the process with PID 22084.",
+      "exit_code": 0,
+      "end_utc": "2026-11-15T02:55:55.1009309Z",
+      "whea_after": [],
+      "completed_selftests": 12,
+      "completed_sizes": {
+        "1024K": 4,
+        "1600K": 4,
+        "1680K": 4
+      },
+      "logged_error_detected": false,
+      "log_sha256": "4feb68511db3c0d71ce166b61eddb73e62e307bf0cfd0587c99a4c4116fe5717",
+      "elapsed_seconds": 183.956804
+    }
+  ],
+  "postcheck": {
+    "utc": "2026-11-15T02:56:22.0303675Z",
+    "events": [],
+    "query_errors": [
+      "NoMatchingEventsFound,Microsoft.PowerShell.Commands.GetWinEventCommand"
+    ],
+    "prime95_count": 0,
+    "node_count": 0
+  },
+  "root_cause_found": false,
+  "hardware_cleared": false,
+  "double_relay_resumed": false
+}
