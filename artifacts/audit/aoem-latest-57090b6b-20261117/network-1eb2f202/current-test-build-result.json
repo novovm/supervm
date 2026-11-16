@@ -1,0 +1,11 @@
+{
+  "source": "1eb2f202d821fbb2e7cccee4e8bbfb3cd789c864",
+  "exit": 0,
+  "artifacts": [
+    {
+      "sha256": "c5d10f26435aecc4b365806d6a4406627bd0221ac06d6a8aba339675cd2b82ce",
+      "path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\build-2b97fc8e-windows\\x86_64-pc-windows-msvc\\release\\deps\\novovm_node-54cb56b90f89af0a.exe"
+    }
+  ],
+  "utc": "2026-11-16T20:42:55.3632156Z"
+}

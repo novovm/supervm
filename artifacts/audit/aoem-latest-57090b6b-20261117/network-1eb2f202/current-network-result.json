@@ -1,0 +1,46 @@
+{
+  "results": [
+    {
+      "log": "current-network-retained_tick_reactor_.log",
+      "listed": 3,
+      "exit": 0,
+      "filter": "retained_tick_reactor_"
+    },
+    {
+      "log": "current-network-service-network-diagnostic.log",
+      "listed": 5,
+      "exit": 0,
+      "filter": "service::network::diagnostic"
+    },
+    {
+      "log": "current-network-service-network-tests-diagnostic.log",
+      "listed": 2,
+      "exit": 0,
+      "filter": "service::network::tests::diagnostic"
+    },
+    {
+      "log": "current-network-all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates.log",
+      "listed": 1,
+      "exit": 0,
+      "filter": "all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates"
+    },
+    {
+      "log": "current-network-cold_private_only_checkpoint_keeps_authenticated_seed_as_dial_hint.log",
+      "listed": 1,
+      "exit": 0,
+      "filter": "cold_private_only_checkpoint_keeps_authenticated_seed_as_dial_hint"
+    },
+    {
+      "log": "current-network-carrier_tests.log",
+      "listed": 2,
+      "exit": 0,
+      "filter": "carrier_tests"
+    }
+  ],
+  "utc": "2026-11-16T20:44:29.2059975Z",
+  "source": "1eb2f202d821fbb2e7cccee4e8bbfb3cd789c864",
+  "test_sha256": "c5d10f26435aecc4b365806d6a4406627bd0221ac06d6a8aba339675cd2b82ce",
+  "complete": true,
+  "four_host_acceptance": false,
+  "library_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa"
+}

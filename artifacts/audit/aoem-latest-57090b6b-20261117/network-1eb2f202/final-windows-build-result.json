@@ -1,0 +1,5 @@
+{
+  "status": "FAILED",
+  "error": "Build failed for 'novovm-node'; refusing to package possibly stale binaries.",
+  "utc": "2026-11-16T20:45:13.1272894Z"
+}

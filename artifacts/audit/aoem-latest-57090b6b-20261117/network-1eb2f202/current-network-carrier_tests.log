@@ -1,0 +1,7 @@
+
+running 2 tests
+test native_pipeline::consensus::native::tests::carrier_tests::original_native_channel_consumes_authenticated_iroh_carrier ... ok
+test native_pipeline::consensus::native::tests::carrier_tests::original_udp_channel_adopts_real_iroh_fallback_without_losing_client_ingress ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1835 filtered out; finished in 0.31s
+
