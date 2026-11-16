@@ -1,0 +1,104 @@
+{
+  "base_commit": "2b90ffec",
+  "RSI_branch_status": "closed for this investigation round at 2b90ffec; unexplained snapshot discrepancy, not a proven consumed wrong result",
+  "scope": "only repeat-location XMM6 fault and save-slot lifetime comparison; offline; prior static/VEH/AV conclusions reused",
+  "node_started": false,
+  "production_code_changed": false,
+  "database_or_identity_accessed": false,
+  "two_faults": [
+    {
+      "pid": 38324,
+      "dump_sha256": "c24346b575d048469a51fad1f897d82bc5947c1c3b5d57e7b2f703a779cc4249",
+      "dump_full_memory": true,
+      "fault_RIP": "0x7ff770faf36d",
+      "fault_RVA": "0x84f36d",
+      "fault_bytes_captured": "0f287520",
+      "exception_information": [
+        "0x0",
+        "0xffffffffffffffff"
+      ],
+      "operand_address": "0x3e48fee2b0",
+      "operand_16_bytes_captured": true,
+      "operand_mod16": 0,
+      "operand_crosses_4KiB_page": false,
+      "operand_memory_info": {
+        "base": "0x3e48f9c000",
+        "allocation_base": "0x3e48000000",
+        "region_size": 409600,
+        "state": "0x1000",
+        "protect": "0x4",
+        "type": "0x20000"
+      },
+      "page_state_evidence": "Captured MemoryInfoList",
+      "save_rva": "0x84f076",
+      "slot_payload_qwords": [
+        "0x7ff772c55400",
+        "0x0"
+      ],
+      "upstream_status_load_rva": "0x7721e6",
+      "upstream_status_literal_rva": "0x24f5410",
+      "literal_first_qword_DIR64_relocation_RVAs": [
+        "0x24f5410"
+      ],
+      "literal_bytes_in_dump": true,
+      "captured_literal_matches_original_after_loader_relocation": true,
+      "slot_matches_original_literal_after_loader_relocation": true,
+      "slot_matches_captured_literal": true,
+      "literal_points_to_original_ff16_block": true,
+      "temporary_xmm6_definition_rva": "0x84f0c1",
+      "captured_hash_high7": 63,
+      "live_xmm6_matches_repeated_hash_high7": true,
+      "normal_return_completed": false,
+      "historical_save_write_observed": false,
+      "historical_intermediate_slot_writes_observed": false
+    },
+    {
+      "pid": 13020,
+      "dump_sha256": "32a264e2a8ea23334760db4b047802bd8b8ba6836d2faead170b91c12e74ea50",
+      "dump_full_memory": false,
+      "fault_RIP": "0x7ff77e74f59d",
+      "fault_RVA": "0x65f59d",
+      "fault_bytes_captured": "0f287520",
+      "exception_information": [
+        "0x0",
+        "0xffffffffffffffff"
+      ],
+      "operand_address": "0x3d4f8ee640",
+      "operand_16_bytes_captured": true,
+      "operand_mod16": 0,
+      "operand_crosses_4KiB_page": false,
+      "operand_memory_info": null,
+      "page_state_evidence": "No captured MemoryInfoList; stack bytes do not establish fault-time page state",
+      "save_rva": "0x65f2a6",
+      "slot_payload_qwords": [
+        "0x7ff7805e0ec0",
+        "0x0"
+      ],
+      "upstream_status_load_rva": "0x7725e6",
+      "upstream_status_literal_rva": "0x24f0ed0",
+      "literal_first_qword_DIR64_relocation_RVAs": [
+        "0x24f0ed0"
+      ],
+      "literal_bytes_in_dump": false,
+      "captured_literal_matches_original_after_loader_relocation": null,
+      "slot_matches_original_literal_after_loader_relocation": true,
+      "slot_matches_captured_literal": null,
+      "literal_points_to_original_ff16_block": true,
+      "temporary_xmm6_definition_rva": "0x65f2f1",
+      "captured_hash_high7": 48,
+      "live_xmm6_matches_repeated_hash_high7": true,
+      "normal_return_completed": false,
+      "historical_save_write_observed": false,
+      "historical_intermediate_slot_writes_observed": false
+    }
+  ],
+  "same_function_relative_fault_offset": "0x31d",
+  "prior_full_function_normalized_equality_reused_from": "Phase29 25394c5c",
+  "saved_payload_damage_observed": false,
+  "historical_identical_lifetime_proven": false,
+  "direct_access_fault_cause_proven": false,
+  "first_corrupting_instruction_found": false,
+  "production_fix": false,
+  "decision": "Stop retrospective causal inference from these snapshots. Preserve originals and await genuinely earlier first-abnormality evidence; no automatic restart, experiment or collector is authorized by this record.",
+  "ordinary_exception_paths_scope": "Only previously examined paths are closed; this is not a global exclusion of all Windows behavior."
+}
