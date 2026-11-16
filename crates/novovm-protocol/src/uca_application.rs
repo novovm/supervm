@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod receipt;
+pub use receipt::ApplicationGrantReceiptV1;
+
 pub const APPLICATION_CONTEXT_V1: &[u8] = b"NOVOVM/UCA/application-authority/v1";
 pub const MAX_COMMAND_WINDOW: u64 = 256;
 const MAGIC: &[u8; 6] = b"NUAP\x01\x41";

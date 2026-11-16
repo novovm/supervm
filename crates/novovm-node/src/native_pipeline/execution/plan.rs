@@ -433,6 +433,31 @@ fn framed(digest: &mut Sha256, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn ordered_receipt_commitment(codec: NodeHash, receipts: &[Vec<u8>]) -> NodeHash {
+    let mut digest = Sha256::new();
+    digest.update(b"novovm/replacement/nov-receipt-batch/v1\0");
+    digest.update(codec);
+    digest.update((receipts.len() as u64).to_be_bytes());
+    for receipt in receipts {
+        digest.update((receipt.len() as u64).to_be_bytes());
+        digest.update(receipt);
+    }
+    digest.finalize().into()
+}
+
+pub(crate) fn executed_statement_commitment(
+    plan: NodeHash,
+    root: NodeHash,
+    receipts: NodeHash,
+) -> NodeHash {
+    let mut digest = Sha256::new();
+    digest.update(b"novovm/replacement/nov-executed-batch/v1\0");
+    digest.update(plan);
+    digest.update(root);
+    digest.update(receipts);
+    digest.finalize().into()
+}
+
 fn framed_source_row(digest: &mut Sha256, source: &BatchSource, index: usize) -> Result<()> {
     match source {
         BatchSource::Raw(raw) => framed(digest, &raw[index]),

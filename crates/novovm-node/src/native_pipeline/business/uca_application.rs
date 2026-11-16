@@ -16,6 +16,14 @@ use novovm_protocol::{
 };
 use serde::{Deserialize, Serialize};
 
+mod batch;
+pub(crate) use batch::application_command_id;
+pub use batch::{
+    application_effect_contract_v1, application_program_id_v1, application_receipt_codec_v1,
+    ApplicationGrantBodyV1, ApplicationGrantCaptureV1, ApplicationGrantInputV1,
+    ApplicationGrantPlanV1, ExecutedApplicationGrantBatchV1, APPLICATION_SEMANTIC_VERSION_V1,
+};
+
 const GRANT_BYTES: usize = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +118,17 @@ impl ApplicationGrantAccessV1 {
         parent_root: NodeHash,
         execution_height: u64,
     ) -> Result<Vec<StateChange>> {
+        let record = self.transition_record(state, checked, parent_root, execution_height)?;
+        record_pages::record_changes(&self.prefix, &postcard::to_allocvec(&record)?, GRANT_BYTES)
+    }
+
+    fn transition_record(
+        &self,
+        state: &ApplicationGrantObservationV1,
+        checked: &CheckedApplicationGrantV1,
+        parent_root: NodeHash,
+        execution_height: u64,
+    ) -> Result<GrantRecordV1> {
         let intent = checked.intent();
         ensure!(
             intent.selector == self.selector && state.selector == self.selector,
@@ -154,7 +173,7 @@ impl ApplicationGrantAccessV1 {
                 (previous.not_before_height, previous.expires_at_height, true)
             }
         };
-        let record = GrantRecordV1 {
+        Ok(GrantRecordV1 {
             grant_id: self.selector.grant_id()?,
             issuer_key_ref: intent.issuer_key_ref,
             revision: revision
@@ -163,8 +182,7 @@ impl ApplicationGrantAccessV1 {
             revoked,
             not_before_height,
             expires_at_height,
-        };
-        record_pages::record_changes(&self.prefix, &postcard::to_allocvec(&record)?, GRANT_BYTES)
+        })
     }
 }
 

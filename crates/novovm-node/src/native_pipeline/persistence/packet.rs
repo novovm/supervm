@@ -1,6 +1,6 @@
 //! Immutable execution output packaging, not a second executor or a finality proof.
 //!
-//! Only `ExecutedNovBatch` enters the production preparation API. The complete
+//! Only complete typed asset/application execution enters the preparation API. The complete
 //! original plan/body, output roots, ordered receipts and new-node manifest are
 //! bound together. Recovery creates `StoredCandidate`, never an authenticated or
 //! executed capability. It validates this packet's content, not all inherited
@@ -10,6 +10,9 @@
 use crate::native_pipeline::business::direct_nov_fee::{FeeFailure, FeeQuote, ThresholdState};
 use crate::native_pipeline::business::nov_transfer_batch::{
     program_id, receipt_codec, ExecutedNovBatch, SpendOutput, SEMANTIC_VERSION,
+};
+use crate::native_pipeline::execution::plan::{
+    executed_statement_commitment as statement_hash, ordered_receipt_commitment as receipt_hash,
 };
 use crate::native_pipeline::execution::plan::{BatchContext, BatchPlan, PlanBudget};
 use crate::native_pipeline::ingress::wire::{canonical_tx_hash, decode_transfer_v3};
@@ -28,6 +31,8 @@ use std::{
 const DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND01";
 // UCA extends the same candidate document, never re-labels a V3 body/receipt.
 const UCA_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND03";
+const APPLICATION_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND04";
+mod application;
 mod uca;
 const MARKER_MAGIC: &[u8; 8] = b"NVCOMP01";
 const MARKER_BYTES: usize = 8 + 32 + 8 + 4 + 32;
@@ -110,6 +115,34 @@ struct Resources {
 }
 
 impl PreparedCandidate {
+    /// Only complete typed application execution enters; never caller patches.
+    /// Persisting this candidate still does not publish or authorize a login.
+    pub fn from_application_executed(
+        batch: crate::native_pipeline::business::uca_application::ExecutedApplicationGrantBatchV1,
+        budget: PacketBudget,
+    ) -> Result<Self> {
+        let effects = batch.effects();
+        ensure!(
+            effects.update().parent_root() == effects.context().parent_state_root,
+            "application executed candidate parent mismatch"
+        );
+        let receipts = batch
+            .receipts()
+            .iter()
+            .map(novovm_protocol::uca_application::ApplicationGrantReceiptV1::encode)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        prepare_with_spend(
+            effects.plan(),
+            effects.update().root(),
+            &receipts,
+            effects.update().nodes(),
+            batch.receipt_batch_commitment(),
+            batch.statement_commitment(),
+            budget,
+            None,
+        )
+    }
+
     pub fn from_executed(batch: ExecutedNovBatch, budget: PacketBudget) -> Result<Self> {
         Self::prepare_executed(&batch, budget)
     }
@@ -345,6 +378,23 @@ impl StoredCandidate {
     pub fn receipt_bytes(&self) -> &[Vec<u8>] {
         &self.receipts
     }
+
+    pub fn application_receipt(
+        &self,
+        index: usize,
+    ) -> Result<novovm_protocol::uca_application::ApplicationGrantReceiptV1> {
+        ensure!(
+            application::is_profile(self.context()),
+            "not an application candidate"
+        );
+        Ok(
+            novovm_protocol::uca_application::ApplicationGrantReceiptV1::decode(
+                self.receipts
+                    .get(index)
+                    .context("application receipt index out of bounds")?,
+            )?,
+        )
+    }
     /// Content-checked UCA receipt effects, not authorization or finality proof.
     pub fn spend_outputs(&self) -> Option<&[SpendOutput]> {
         self.spend_outputs.as_deref()
@@ -352,6 +402,10 @@ impl StoredCandidate {
     /// Query-only view of an already content-checked stored receipt. This cannot
     /// construct an executed batch, durable candidate or signing permission.
     pub fn receipt_view(&self, index: usize) -> Result<ReceiptView> {
+        ensure!(
+            !application::is_profile(self.context()),
+            "application receipts are not asset receipts"
+        );
         let bytes = self
             .receipts
             .get(index)
@@ -474,27 +528,6 @@ fn document_hash(bytes: &[u8]) -> NodeHash {
     hash.finalize().into()
 }
 
-fn receipt_hash(codec: NodeHash, receipts: &[Vec<u8>]) -> NodeHash {
-    let mut hash = Sha256::new();
-    hash.update(b"novovm/replacement/nov-receipt-batch/v1\0");
-    hash.update(codec);
-    hash.update((receipts.len() as u64).to_be_bytes());
-    for receipt in receipts {
-        hash.update((receipt.len() as u64).to_be_bytes());
-        hash.update(receipt);
-    }
-    hash.finalize().into()
-}
-
-fn statement_hash(plan: NodeHash, root: NodeHash, receipts: NodeHash) -> NodeHash {
-    let mut hash = Sha256::new();
-    hash.update(b"novovm/replacement/nov-executed-batch/v1\0");
-    hash.update(plan);
-    hash.update(root);
-    hash.update(receipts);
-    hash.finalize().into()
-}
-
 #[cfg(test)]
 fn prepare(
     plan: &BatchPlan,
@@ -540,6 +573,8 @@ fn prepare_with_spend(
     let mut document = Encoder::new(budget.max_bytes);
     document.put(if is_uca {
         UCA_DOCUMENT_MAGIC
+    } else if application::is_profile(plan.context()) {
+        APPLICATION_DOCUMENT_MAGIC
     } else {
         DOCUMENT_MAGIC
     })?;
@@ -584,7 +619,11 @@ fn prepare_with_spend(
     // The immutable plan already owns its canonical body/access commitment.
     // Validate the same receipt/economic relations as cold recovery without
     // decoding a second full plan from bytes that this function just encoded.
-    let mut receipt_projection = Vec::with_capacity(receipts.len());
+    let mut receipt_projection = Vec::with_capacity(if application::is_profile(plan.context()) {
+        0
+    } else {
+        receipts.len()
+    });
     validate_effects(
         plan,
         root,
@@ -824,7 +863,8 @@ fn decode_plan(input: &mut Reader<'_>, budget: PacketBudget) -> Result<BatchPlan
         (context.business_program == program_id()
             && context.receipt_codec == receipt_codec()
             && context.semantic_version == SEMANTIC_VERSION)
-            || uca::is_profile(&context),
+            || uca::is_profile(&context)
+            || application::is_profile(&context),
         "unsupported candidate business/receipt profile"
     );
     let count = input.count(budget.max_transactions, 9)?;
@@ -872,14 +912,17 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
     let mut input = Reader::new(bytes);
     let magic = input.take(8)?;
     ensure!(
-        magic == DOCUMENT_MAGIC || magic == UCA_DOCUMENT_MAGIC,
+        magic == DOCUMENT_MAGIC
+            || magic == UCA_DOCUMENT_MAGIC
+            || magic == APPLICATION_DOCUMENT_MAGIC,
         "unsupported candidate document codec"
     );
     ensure!(input.hash()? == id, "candidate document identity mismatch");
     let plan = decode_plan(&mut input, budget)?;
     let is_uca = magic == UCA_DOCUMENT_MAGIC;
     ensure!(
-        is_uca == uca::is_profile(plan.context()),
+        is_uca == uca::is_profile(plan.context())
+            && (magic == APPLICATION_DOCUMENT_MAGIC) == application::is_profile(plan.context()),
         "candidate document/profile mismatch"
     );
     ensure!(
@@ -973,6 +1016,7 @@ fn validate_effects(
     let is_uca = uca::is_profile(context);
     ensure!(
         is_uca
+            || application::is_profile(context)
             || (context.business_program == program_id()
                 && context.receipt_codec == receipt_codec()
                 && context.semantic_version == SEMANTIC_VERSION),
@@ -986,7 +1030,9 @@ fn validate_effects(
         state_root != [0; 32],
         "candidate output root must be nonzero"
     );
-    if let Some(outputs) = spend_outputs {
+    if application::is_profile(context) {
+        application::validate_receipts(plan, receipts, budget)?;
+    } else if let Some(outputs) = spend_outputs {
         uca::validate_receipts(plan, receipts, outputs, budget, projection)?;
     } else {
         validate_receipts(plan, receipts, budget, projection)?;

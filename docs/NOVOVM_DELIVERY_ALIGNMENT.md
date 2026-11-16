@@ -1,5 +1,34 @@
 # NOVOVM 产品目标与交付主线
 
+## 2026-11-15 ASAS 授权执行与原候选存储接线，尚非共识发布
+
+应用签名事实现可重附精确原指令，编译为不可变 body/plan，使用原 BatchPlan、
+BoundBatchCapture、OwnedBatchInput 及 AOEM ComputeSession 回调执行。同根读取当前
+初始化身份和授权版本，只允许应用记录页写入；身份、资产、费用和转账 nonce 不修改。
+一批中同一 grant selector 最多出现一次，其他行可共享身份读取；任何行拒绝则整批
+不产生已执行结果或部分效应，重放旧版本、失效命令及非当前持钥人继续拒绝。
+
+`NUAR v1` 有界规范回执绑定 command/grant/issuer、前后 revision、撤销标记和有效期。
+执行结果只有完整编译器可构造，原始树补丁不能取得该能力。新增
+`PreparedCandidate::from_application_executed`，沿原 packet、CandidateStore 原子写入及
+StoredCandidate 恢复所有者保存 `NVCAND04`；恢复检查精确声明权限及逐行指令/回执绑定。
+旧资产候选格式不重标，应用候选没有资产 receipt/nonce projection，也不假造零额转账。
+恢复出来的内容仍不是新的验签事实、已执行能力或最终性证明。
+
+本轮 143 个不同定向测试通过：protocol 91、原 packet 26、原 plan 19、真实应用
+执行/存储与绑定边界 2、原授权状态 2、原资产 CPU 实际执行 2、不可伪造 doctest 1。
+真实测试在隔离 ARM AOEM 库上完成授权→原数据库写入→关闭重开→撤销→再次关闭重开，
+逐项核对父根/正文/回执、height 2/revision 2 墓碑拒绝及另一 grant 仍有效；未替换已安装运行库。
+首次实测发现普通业务拒绝返回 callback Err 会 poison 会话；现改为计划绑定的正常
+拒绝结果，运行库错误/异常仍保留原失效行为，实际验证拒绝后同 session 可继续执行。
+protocol/node lib/tests 严格 Clippy、定向格式和 diff 检查通过。
+
+**未激活：** 新 V4 业务契约绑定现有资产语义与应用分支，但本片仅完成应用分支的
+编译/执行/候选存储，资产分支尚未迁入 V4；原服务 template、收单和共识 journal
+仍未切换，不称新复合业务、链上授权或 ASAS 登录已经可用。下一片把两分支接回同一
+原服务和发布/恢复循环，验证发布后查询，再接一次性挑战。没有部署节点、扣 NOV、
+替换 SGM 运行库或修改实际身份。
+
 ## 2026-11-15 ASAS 应用签名准入接原计算队列，授权发布仍未开放
 
 应用指令现有独立 `AdmissionInput::Application` / `CheckedAdmission::Application`，

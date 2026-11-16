@@ -208,6 +208,34 @@ packet/journal 和冷恢复。
 
 ## 验证与限制
 
+### 授权执行与原候选存储（2026-11-15，未激活发布）
+
+`ApplicationGrantBodyV1` 从精确签名事实重附原始指令，生成有界声明，绑定 chain/genesis
+及 V4 业务/effect/receipt pins；使用原 BatchPlan 和增量 BoundBatchCapture，不接受替换
+父根/权限的外部 witness。`ApplicationGrantInputV1::execute` 使用调用者的原 AOEM
+ComputeSession，不另开执行服务或状态库。每 selector 每批最多一次，跨 selector 可
+共享身份读取；所有行基于同一父状态，任一拒绝则整批无已执行结果，不提交部分写入。
+
+`NUAR v1` 规范回执绑定意图命令 ID、grant ID、issuer、前后 revision、撤销和有效期。
+完整执行产生私有构造的 `ExecutedApplicationGrantBatchV1`；原
+`PreparedCandidate::from_application_executed`、CandidateStore 和 StoredCandidate
+承接 `NVCAND04`，不接受任意树补丁来伪造已执行结果。恢复检查命令/回执/声明精确匹配，
+应用记录没有资产 nonce projection 或费用结算；旧候选记录格式保持不变。
+
+本轮 protocol 91、packet 26、plan 19、真实应用执行/存储及绑定边界 2、原授权状态 2、
+原资产 CPU 实际执行 2、不可伪造 doctest 1，共 143 个不同测试通过；protocol/node
+lib/tests 严格 Clippy、定向格式和 diff 检查通过。实际应用测试名为
+`real_application_batch_capture_execute_revoke_atomic_failure_and_cold_recovery` 与
+`real_application_body_rejects_duplicate_fact_signature_domain_pins_and_budgets`，显式使用
+前述合格隔离 ARM 库及临时测试身份/数据库，证明两次关闭重开后的授权/撤销记录一致。
+首次实测的正常拒绝 poison 已修为计划绑定的业务拒绝结果；同 session 实际复用通过，
+运行库失败和异常没有被吞掉。此处 candidate 冷恢复不是原共识 journal 发布/恢复验收。
+
+V4 pin 包含现有资产语义约束，但仅应用分支完成，资产分支尚未迁入；原服务 template、
+native 收单及共识 journal 尚未启用 V4。因此候选持久化/冷恢复不等于发布、可信登录
+状态或双机验收。下一片沿原服务完成两分支与发布/恢复接线，再将已发布授权用于挑战。
+本片不实际扣 NOV、不替换运行库，不更换实际节点/账号身份，现有显式授权继续生效。
+
 ### UCA 应用授权组件（2026-11-15，尚非登录入口）
 
 新增共享 `novovm-protocol::uca_application` 与原 `novovm-exec` 签名消费者；
