@@ -1,0 +1,1351 @@
+{
+  "base_commit": "25394c5c",
+  "scope": "offline common-path data/alias and nonlocal-context analysis; no node launch, DB/identity read or production edits",
+  "new_finding": "PID38324 output index7 conflicts with captured RSI0 and valid target map index0; PID13020 output4 equals RSI4. Independently checked in CDB.",
+  "alias": [
+    {
+      "pid": 38324,
+      "sha256": "c24346b575d048469a51fad1f897d82bc5947c1c3b5d57e7b2f703a779cc4249",
+      "dump_full_memory": true,
+      "current_key": "seq",
+      "key_byte_length": 3,
+      "key_bytes_captured": true,
+      "insert_result_index": 7,
+      "result_Value_discriminant": "0x8000000000000005",
+      "map_capacity": 8,
+      "map_length": 1,
+      "RawTable_bucket_mask": 15,
+      "RawTable_growth_left": 13,
+      "RawTable_items": 1,
+      "dense_entry_names": [
+        "seq"
+      ],
+      "dense_descriptors_and_names_fully_captured": true,
+      "regions": [
+        {
+          "region": "output Option/value",
+          "start": "0x3e48fee360",
+          "end_exclusive": "0x3e48fee3b0",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "target map Core",
+          "start": "0x3e48fee580",
+          "end_exclusive": "0x3e48fee5b8",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "input owned key",
+          "start": "0x3e48fee400",
+          "end_exclusive": "0x3e48fee418",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "input Value",
+          "start": "0x3e48fee460",
+          "end_exclusive": "0x3e48fee4a8",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "target dense entries capacity",
+          "start": "0x140d9e111f0",
+          "end_exclusive": "0x140d9e11530",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "target RawTable allocation",
+          "start": "0x140d9e14170",
+          "end_exclusive": "0x140d9e14210",
+          "overlaps_XMM6_save": false
+        }
+      ],
+      "active_stack_pointer_hits_into_save_slot": [],
+      "active_stack_scan_range": [
+        "0x3e48fee210",
+        "0x3e48fef010"
+      ],
+      "active_stack_scan_missing_bytes": 0,
+      "exception_record": {
+        "code": "0xc0000005",
+        "flags": "0x0",
+        "chained_record_pointer": "0x0"
+      },
+      "frames": [
+        {
+          "label": "insert_full",
+          "rsp": "0x3e48fee210"
+        },
+        {
+          "label": "serialize_value",
+          "rsp": "0x3e48fee330"
+        },
+        {
+          "label": "Value::serialize",
+          "rsp": "0x3e48fee500"
+        },
+        {
+          "label": "collect_seq",
+          "rsp": "0x3e48fee630"
+        },
+        {
+          "label": "profile snapshot",
+          "rsp": "0x3e48fee720"
+        },
+        {
+          "label": "status",
+          "rsp": "0x3e48feeb40"
+        }
+      ],
+      "no_current_descriptor_alias_found": true,
+      "limits": "Descriptors are final captured state, not history of a prior store. Missing MiniDump heap pages are unknown. R14/RDI interpretation relies on the established function contract; arbitrary earlier pointer corruption is not excluded.",
+      "append_helper_rva": "0x84ed90"
+    },
+    {
+      "pid": 13020,
+      "sha256": "32a264e2a8ea23334760db4b047802bd8b8ba6836d2faead170b91c12e74ea50",
+      "dump_full_memory": false,
+      "current_key": null,
+      "key_byte_length": 6,
+      "key_bytes_captured": false,
+      "insert_result_index": 4,
+      "result_Value_discriminant": "0x8000000000000005",
+      "map_capacity": 8,
+      "map_length": 5,
+      "RawTable_bucket_mask": 15,
+      "RawTable_growth_left": 9,
+      "RawTable_items": 5,
+      "dense_entry_names": [],
+      "dense_descriptors_and_names_fully_captured": false,
+      "regions": [
+        {
+          "region": "output Option/value",
+          "start": "0x3d4f8ee6f0",
+          "end_exclusive": "0x3d4f8ee740",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "target map Core",
+          "start": "0x3d4f8ee8b0",
+          "end_exclusive": "0x3d4f8ee8e8",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "input owned key",
+          "start": "0x3d4f8ee790",
+          "end_exclusive": "0x3d4f8ee7a8",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "input Value",
+          "start": "0x3d4f8ee7f0",
+          "end_exclusive": "0x3d4f8ee838",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "target dense entries capacity",
+          "start": "0x1932db78490",
+          "end_exclusive": "0x1932db787d0",
+          "overlaps_XMM6_save": false
+        },
+        {
+          "region": "target RawTable allocation",
+          "start": "0x1932dba2db0",
+          "end_exclusive": "0x1932dba2e50",
+          "overlaps_XMM6_save": false
+        }
+      ],
+      "active_stack_pointer_hits_into_save_slot": [],
+      "active_stack_scan_range": [
+        "0x3d4f8ee5a0",
+        "0x3d4f8ef3a0"
+      ],
+      "active_stack_scan_missing_bytes": 0,
+      "exception_record": {
+        "code": "0xc0000005",
+        "flags": "0x0",
+        "chained_record_pointer": "0x0"
+      },
+      "frames": [
+        {
+          "label": "insert_full",
+          "rsp": "0x3d4f8ee5a0"
+        },
+        {
+          "label": "serialize_value",
+          "rsp": "0x3d4f8ee6c0"
+        },
+        {
+          "label": "Value::serialize",
+          "rsp": "0x3d4f8ee890"
+        },
+        {
+          "label": "collect_seq",
+          "rsp": "0x3d4f8ee9c0"
+        },
+        {
+          "label": "profile snapshot",
+          "rsp": "0x3d4f8eeab0"
+        },
+        {
+          "label": "status",
+          "rsp": "0x3d4f8eeed0"
+        }
+      ],
+      "no_current_descriptor_alias_found": true,
+      "limits": "Descriptors are final captured state, not history of a prior store. Missing MiniDump heap pages are unknown. R14/RDI interpretation relies on the established function contract; arbitrary earlier pointer corruption is not excluded.",
+      "append_helper_rva": "0x65efc0"
+    }
+  ],
+  "context_and_return": [
+    {
+      "pid": 38324,
+      "active_common_functions": [
+        {
+          "name": "insert_full",
+          "start": "0x84f050",
+          "end": "0x84f46a",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 1,
+          "try_block_count": 0,
+          "ip_state_entries": 3,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0x84f470"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 1,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "SerializeMap::serialize_value",
+          "start": "0xbef270",
+          "end": "0xbef46a",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 2,
+          "try_block_count": 0,
+          "ip_state_entries": 4,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0xbef470"
+            },
+            {
+              "to_state": -1,
+              "action_rva": "0xbef4b0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 2,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "Value::serialize",
+          "start": "0xa2f2e0",
+          "end": "0xa2f5af",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 2,
+          "try_block_count": 0,
+          "ip_state_entries": 7,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0xa2f600"
+            },
+            {
+              "to_state": -1,
+              "action_rva": "0xa2f5b0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 2,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "collect_seq",
+          "start": "0xb95570",
+          "end": "0xb95726",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 4,
+          "try_block_count": 0,
+          "ip_state_entries": 5,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0xb95790"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0xb95730"
+            },
+            {
+              "to_state": -1,
+              "action_rva": "0xb957e0"
+            },
+            {
+              "to_state": 2,
+              "action_rva": "0xb95820"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 4,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "profile snapshot",
+          "start": "0x75c4a0",
+          "end": "0x76330f",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 120,
+          "try_block_count": 0,
+          "ip_state_entries": 220,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0x765c60"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x765c10"
+            },
+            {
+              "to_state": 1,
+              "action_rva": "0x765bd0"
+            },
+            {
+              "to_state": 2,
+              "action_rva": "0x765b90"
+            },
+            {
+              "to_state": 3,
+              "action_rva": "0x765b50"
+            },
+            {
+              "to_state": 4,
+              "action_rva": "0x765b10"
+            },
+            {
+              "to_state": 5,
+              "action_rva": "0x765ad0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x764c20"
+            },
+            {
+              "to_state": 7,
+              "action_rva": "0x764bb0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x764d50"
+            },
+            {
+              "to_state": 9,
+              "action_rva": "0x764b50"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765a70"
+            },
+            {
+              "to_state": 11,
+              "action_rva": "0x764ae0"
+            },
+            {
+              "to_state": 11,
+              "action_rva": "0x765840"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x7659b0"
+            },
+            {
+              "to_state": 14,
+              "action_rva": "0x764a70"
+            },
+            {
+              "to_state": 14,
+              "action_rva": "0x7657f0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765a10"
+            },
+            {
+              "to_state": 17,
+              "action_rva": "0x764a00"
+            },
+            {
+              "to_state": 17,
+              "action_rva": "0x7657a0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765950"
+            },
+            {
+              "to_state": 20,
+              "action_rva": "0x764990"
+            },
+            {
+              "to_state": 20,
+              "action_rva": "0x765750"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x7658f0"
+            },
+            {
+              "to_state": 23,
+              "action_rva": "0x764920"
+            },
+            {
+              "to_state": 23,
+              "action_rva": "0x765700"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765890"
+            },
+            {
+              "to_state": 26,
+              "action_rva": "0x7648b0"
+            },
+            {
+              "to_state": 26,
+              "action_rva": "0x7656b0"
+            },
+            {
+              "to_state": 4,
+              "action_rva": "0x764210"
+            },
+            {
+              "to_state": 29,
+              "action_rva": "0x7636a0"
+            },
+            {
+              "to_state": 29,
+              "action_rva": "0x763940"
+            },
+            {
+              "to_state": 31,
+              "action_rva": "0x763640"
+            },
+            {
+              "to_state": 4,
+              "action_rva": "0x765160"
+            },
+            {
+              "to_state": 33,
+              "action_rva": "0x765120"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x763480"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x763420"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x7634e0"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x763590"
+            },
+            {
+              "to_state": 38,
+              "action_rva": "0x7633c0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 40,
+          "unwind_actions_list_complete": false
+        },
+        {
+          "name": "status",
+          "start": "0x772120",
+          "end": "0x77a5f9",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 130,
+          "try_block_count": 0,
+          "ip_state_entries": 221,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0x77a600"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77a960"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77aa50"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77aac0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77ad60"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77add0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77ae40"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77aeb0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77afb0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b020"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b090"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b100"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b170"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b250"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b2c0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b330"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b3a0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b410"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b500"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b570"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b940"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b9b0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77ba20"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77bca0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77bbc0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b730"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b6c0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b650"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b5e0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77a7a0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77dd90"
+            },
+            {
+              "to_state": 30,
+              "action_rva": "0x77a720"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77dd10"
+            },
+            {
+              "to_state": 32,
+              "action_rva": "0x77a810"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77dc90"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x77a880"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77dc10"
+            },
+            {
+              "to_state": 36,
+              "action_rva": "0x77a8f0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77db90"
+            },
+            {
+              "to_state": 38,
+              "action_rva": "0x77a9d0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 40,
+          "unwind_actions_list_complete": false
+        }
+      ],
+      "current_return_object_consistency": {
+        "observed_output_index": 7,
+        "captured_RSI": 0,
+        "captured_R13": 120,
+        "matches_new_insert_store_RSI": false,
+        "matches_existing_key_store_R13": false,
+        "output_None_tag": "0x8000000000000005",
+        "relevant_write_rvas": {
+          "new_insert": "0x84f359",
+          "existing_key": "0x84f2bd"
+        },
+        "warning": "An inconsistency of captured registers and later dump memory is not proof of the first bad write, nor proof that a listed predecessor actually executed. Later handlers/context changes are not excluded."
+      },
+      "same_flags_CONTEXT_candidates_in_selected_stack": [
+        {
+          "rip": "0x7ff770faf36d",
+          "module": "novovm-node.exe",
+          "equals_fault_context": true
+        }
+      ],
+      "matched_full_fault_context_count": 1,
+      "search_limits": "Selected captured stack only; matching ContextFlags and valid CS/SS plus same-stack RSP. Missing/different context/jump-buffer formats and historical erased state are not excluded."
+    },
+    {
+      "pid": 13020,
+      "active_common_functions": [
+        {
+          "name": "insert_full",
+          "start": "0x65f280",
+          "end": "0x65f69a",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 1,
+          "try_block_count": 0,
+          "ip_state_entries": 3,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0x65f6a0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 1,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "SerializeMap::serialize_value",
+          "start": "0xc2c030",
+          "end": "0xc2c22a",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 2,
+          "try_block_count": 0,
+          "ip_state_entries": 4,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0xc2c230"
+            },
+            {
+              "to_state": -1,
+              "action_rva": "0xc2c270"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 2,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "Value::serialize",
+          "start": "0x961230",
+          "end": "0x9614c1",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 1,
+          "try_block_count": 0,
+          "ip_state_entries": 5,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0x9614d0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 1,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "collect_seq",
+          "start": "0xbd5600",
+          "end": "0xbd57b6",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 4,
+          "try_block_count": 0,
+          "ip_state_entries": 5,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0xbd5820"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0xbd57c0"
+            },
+            {
+              "to_state": -1,
+              "action_rva": "0xbd5870"
+            },
+            {
+              "to_state": 2,
+              "action_rva": "0xbd58b0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 4,
+          "unwind_actions_list_complete": true
+        },
+        {
+          "name": "profile snapshot",
+          "start": "0x75c8a0",
+          "end": "0x76370f",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 120,
+          "try_block_count": 0,
+          "ip_state_entries": 220,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0x766060"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x766010"
+            },
+            {
+              "to_state": 1,
+              "action_rva": "0x765fd0"
+            },
+            {
+              "to_state": 2,
+              "action_rva": "0x765f90"
+            },
+            {
+              "to_state": 3,
+              "action_rva": "0x765f50"
+            },
+            {
+              "to_state": 4,
+              "action_rva": "0x765f10"
+            },
+            {
+              "to_state": 5,
+              "action_rva": "0x765ed0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765020"
+            },
+            {
+              "to_state": 7,
+              "action_rva": "0x764fb0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765150"
+            },
+            {
+              "to_state": 9,
+              "action_rva": "0x764f50"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765e70"
+            },
+            {
+              "to_state": 11,
+              "action_rva": "0x764ee0"
+            },
+            {
+              "to_state": 11,
+              "action_rva": "0x765c40"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765db0"
+            },
+            {
+              "to_state": 14,
+              "action_rva": "0x764e70"
+            },
+            {
+              "to_state": 14,
+              "action_rva": "0x765bf0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765e10"
+            },
+            {
+              "to_state": 17,
+              "action_rva": "0x764e00"
+            },
+            {
+              "to_state": 17,
+              "action_rva": "0x765ba0"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765d50"
+            },
+            {
+              "to_state": 20,
+              "action_rva": "0x764d90"
+            },
+            {
+              "to_state": 20,
+              "action_rva": "0x765b50"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765cf0"
+            },
+            {
+              "to_state": 23,
+              "action_rva": "0x764d20"
+            },
+            {
+              "to_state": 23,
+              "action_rva": "0x765b00"
+            },
+            {
+              "to_state": 6,
+              "action_rva": "0x765c90"
+            },
+            {
+              "to_state": 26,
+              "action_rva": "0x764cb0"
+            },
+            {
+              "to_state": 26,
+              "action_rva": "0x765ab0"
+            },
+            {
+              "to_state": 4,
+              "action_rva": "0x764610"
+            },
+            {
+              "to_state": 29,
+              "action_rva": "0x763aa0"
+            },
+            {
+              "to_state": 29,
+              "action_rva": "0x763d40"
+            },
+            {
+              "to_state": 31,
+              "action_rva": "0x763a40"
+            },
+            {
+              "to_state": 4,
+              "action_rva": "0x765560"
+            },
+            {
+              "to_state": 33,
+              "action_rva": "0x765520"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x763880"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x763820"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x7638e0"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x763990"
+            },
+            {
+              "to_state": 38,
+              "action_rva": "0x7637c0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 40,
+          "unwind_actions_list_complete": false
+        },
+        {
+          "name": "status",
+          "start": "0x772520",
+          "end": "0x77a9f9",
+          "handler": "VCRUNTIME140.dll!__CxxFrameHandler3",
+          "funcinfo_magic": "0x19930522",
+          "unwind_state_count": 130,
+          "try_block_count": 0,
+          "ip_state_entries": 221,
+          "unwind_actions": [
+            {
+              "to_state": -1,
+              "action_rva": "0x77aa00"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77ad60"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77ae50"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77aec0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b160"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b1d0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b240"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b2b0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b3b0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b420"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b490"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b500"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b570"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b650"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b6c0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b730"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b7a0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b810"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b900"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b970"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77bd40"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77bdb0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77be20"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77c0a0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77bfc0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77bb30"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77bac0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77ba50"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77b9e0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77aba0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77e190"
+            },
+            {
+              "to_state": 30,
+              "action_rva": "0x77ab20"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77e110"
+            },
+            {
+              "to_state": 32,
+              "action_rva": "0x77ac10"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77e090"
+            },
+            {
+              "to_state": 34,
+              "action_rva": "0x77ac80"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77e010"
+            },
+            {
+              "to_state": 36,
+              "action_rva": "0x77acf0"
+            },
+            {
+              "to_state": 0,
+              "action_rva": "0x77df90"
+            },
+            {
+              "to_state": 38,
+              "action_rva": "0x77add0"
+            }
+          ],
+          "nonlocal_restore_calls_in_function": [],
+          "unwind_actions_listed_count": 40,
+          "unwind_actions_list_complete": false
+        }
+      ],
+      "current_return_object_consistency": {
+        "observed_output_index": 4,
+        "captured_RSI": 4,
+        "captured_R13": 72,
+        "matches_new_insert_store_RSI": true,
+        "matches_existing_key_store_R13": false,
+        "output_None_tag": "0x8000000000000005",
+        "relevant_write_rvas": {
+          "new_insert": "0x65f589",
+          "existing_key": "0x65f4ed"
+        },
+        "warning": "An inconsistency of captured registers and later dump memory is not proof of the first bad write, nor proof that a listed predecessor actually executed. Later handlers/context changes are not excluded."
+      },
+      "same_flags_CONTEXT_candidates_in_selected_stack": [
+        {
+          "rip": "0x7ff77e74f59d",
+          "module": "novovm-node.exe",
+          "equals_fault_context": true
+        }
+      ],
+      "matched_full_fault_context_count": 1,
+      "search_limits": "Selected captured stack only; matching ContextFlags and valid CS/SS plus same-stack RSP. Missing/different context/jump-buffer formats and historical erased state are not excluded."
+    }
+  ],
+  "store_boundary": [
+    {
+      "pid": 38324,
+      "current_map_bucket_checks": {
+        "bucket_index_from_captured_R13": 15,
+        "dense_length": 1,
+        "captured_RSI": 0,
+        "bucket_entry_index": 0,
+        "bucket_entry_index_equals_RSI": true,
+        "control_matches_captured_hash_top7": true,
+        "dense_entry_hash_matches_captured_RDX": true
+      },
+      "new_insert_final_write": {
+        "rva": "0x84f359",
+        "bytes": "498936",
+        "operation": "[R14] := RSI",
+        "captured_RSI": 0,
+        "dump_memory_at_R14": 7,
+        "fault_after_bytes": 20,
+        "same_output_address_as_RAX": true
+      },
+      "EH_state_alias_checks": [
+        {
+          "frame": "insert_full",
+          "EH_state_offset_from_frame_RSP": 152,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0x84f07b",
+              "instruction": "mov qword ptr [rbp + 0x18], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3e48fee2a8",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "SerializeMap::serialize_value",
+          "EH_state_offset_from_frame_RSP": 424,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0xbef282",
+              "instruction": "mov qword ptr [rbp + 0x128], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3e48fee4d8",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "Value::serialize",
+          "EH_state_offset_from_frame_RSP": 240,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0xa2f2f7",
+              "instruction": "mov qword ptr [rbp + 0x70], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3e48fee5f0",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "collect_seq",
+          "EH_state_offset_from_frame_RSP": 160,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0xb9558b",
+              "instruction": "mov qword ptr [rbp + 0x20], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3e48fee6d0",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "profile snapshot",
+          "EH_state_offset_from_frame_RSP": 976,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0x75c4bb",
+              "instruction": "mov qword ptr [rbp + 0x350], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3e48feeaf0",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "status",
+          "EH_state_offset_from_frame_RSP": 1112,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0x772149",
+              "instruction": "mov qword ptr [rbp + 0x3d8], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3e48feef98",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        }
+      ],
+      "interpretation": "Current map snapshot for PID38324 agrees with index0, while output index is7. It narrows a consistency question to the final output write/return join, but not the time or cause of first corruption. Post-fault memory changes and redirected context remain possible, unproved."
+    },
+    {
+      "pid": 13020,
+      "current_map_bucket_checks": {
+        "bucket_index_from_captured_R13": 9,
+        "dense_length": 5,
+        "captured_RSI": 4,
+        "missing_heap_bytes": true
+      },
+      "new_insert_final_write": {
+        "rva": "0x65f589",
+        "bytes": "498936",
+        "operation": "[R14] := RSI",
+        "captured_RSI": 4,
+        "dump_memory_at_R14": 4,
+        "fault_after_bytes": 20,
+        "same_output_address_as_RAX": true
+      },
+      "EH_state_alias_checks": [
+        {
+          "frame": "insert_full",
+          "EH_state_offset_from_frame_RSP": 152,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0x65f2ab",
+              "instruction": "mov qword ptr [rbp + 0x18], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3d4f8ee638",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "SerializeMap::serialize_value",
+          "EH_state_offset_from_frame_RSP": 424,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0xc2c042",
+              "instruction": "mov qword ptr [rbp + 0x128], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3d4f8ee868",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "Value::serialize",
+          "EH_state_offset_from_frame_RSP": 240,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0x961247",
+              "instruction": "mov qword ptr [rbp + 0x70], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3d4f8ee980",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "collect_seq",
+          "EH_state_offset_from_frame_RSP": 160,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0xbd561b",
+              "instruction": "mov qword ptr [rbp + 0x20], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3d4f8eea60",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "profile snapshot",
+          "EH_state_offset_from_frame_RSP": 976,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0x75c8bb",
+              "instruction": "mov qword ptr [rbp + 0x350], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3d4f8eee80",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        },
+        {
+          "frame": "status",
+          "EH_state_offset_from_frame_RSP": 1112,
+          "prologue_marker_matches_metadata": [
+            {
+              "rva": "0x772549",
+              "instruction": "mov qword ptr [rbp + 0x3d8], 0xfffffffffffffffe"
+            }
+          ],
+          "state_slot": "0x3d4f8ef328",
+          "overlaps_XMM6_save": false,
+          "overlaps_output_result": false
+        }
+      ],
+      "interpretation": "Current map snapshot for PID38324 agrees with index0, while output index is7. It narrows a consistency question to the final output write/return join, but not the time or cause of first corruption. Post-fault memory changes and redirected context remain possible, unproved."
+    }
+  ],
+  "first_corrupting_instruction_found": false,
+  "shared_root_cause_proven": false,
+  "nonlocal_restore_executed_before_fault_proven": false,
+  "production_fix": false,
+  "warning": "The 20-byte final-store to fault slice is an inconsistency checkpoint, not an observed first-corruption interval. Captured registers and later dump memory cannot establish when the discrepancy formed."
+}
