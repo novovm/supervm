@@ -1,13 +1,16 @@
 # a25452f4: approved existing updates, then real double relay
 
-## C回传 2026-11-16：用户已授权一次补跑，原C PID41648正在First-Chance观察
+## C回传 2026-11-16：First-Chance补跑已结束，退出0，未捕获AV，C仍未修复
 
-补跑于北京时间20:02:28启动，最晚21:17:28结束；CDB PID31520，LocalService账户已核验。
-原EXE和实际AOEM966哈希匹配，原库existing、原身份；业务前已配置AV首次通知。
-有效回调为相对路径$$><capture.cmd，原工作目录中命令文件哈希一致；不使用代码/数据断点。
-截至约27分53秒未捕获AV，周期状态与通信仍推进；不是修复/稳定性或四机验收通过。
-不要为读交接重启或替换这次原节点；首次AV取证后结束，未命中也不自动追加运行。
-WER未改，双中继未恢复。详见[本轮真实启动及边界](C-FIRSTCHANCE-RETRY-20261116/README.md)。
+用户授权的单次补跑于北京时间20:02:28启动，21:17:16结束，观察约74分48秒，在75分钟上限内。
+原C PID41648、CDB PID31520、LocalService；原EXE/实际AOEM966哈希匹配，原库existing、原身份。
+业务前有效AV回调$$><capture.cmd已生效，无代码/数据断点；本轮没有AV、回调执行或新转储。
+节点按原生运行时限结束，退出0，未触及75分钟强杀；不能把未复现称为修复或真实捕获链通过。
+最终2156977 ticks，reported_data_writes=19402、accepted_data=1930；一个协议时间对端就绪。
+链高仍1、executed_batches/durable_decisions均0，不能当作推进出块或四机业务负载验收。
+三身份哈希一致、WER未改、WHEA查询成功且无新增；13020/38324/39152转储哈希匹配历史基线。
+任务已移除，C/CDB已退出，原库与现场保留，生产源码未改，双中继未恢复，不自动补跑。
+首次破坏与生产修复仍未定位，目标未完成。详见[本轮实际结果和盲区](C-FIRSTCHANCE-RETRY-20261116/README.md)。
 
 ## C回传 2026-11-16：First-Chance单次运行因CDB回调路径错误受控结束
 

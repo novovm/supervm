@@ -1,0 +1,58 @@
+{
+  "original_database_preserved": true,
+  "reason": "debugger_exited",
+  "final_native_summary": {
+    "execution_failures": 0,
+    "history_data": 17485,
+    "history_repair": 1551,
+    "accepted_repair": 2,
+    "source": "last native JSON line on cdb.stdout, after periodic report",
+    "executed_batches": 0,
+    "protocol_time_peers": [
+      {
+        "relative_ready": false,
+        "accepted_samples": 0,
+        "rejected_samples": 0
+      },
+      {
+        "relative_ready": true,
+        "accepted_samples": 735,
+        "rejected_samples": 0
+      },
+      {
+        "relative_ready": false,
+        "accepted_samples": 0,
+        "rejected_samples": 0
+      }
+    ],
+    "durable_decisions": 0,
+    "accepted_data": 1930,
+    "writes": 19402,
+    "height": 1,
+    "ticks": 2156977
+  },
+  "start_utc": "2026-11-16T12:02:28.7128680Z",
+  "first_chance_exception_captured": false,
+  "node_pid": 41648,
+  "max_seconds": 4500,
+  "observer_end_utc": "2026-11-16T13:17:16.0785176Z",
+  "baseline": "d6ac9935",
+  "new_dump_count": 0,
+  "WER_unchanged": true,
+  "AV_callback_executed": false,
+  "root_cause_fixed": false,
+  "AV_event_count": 0,
+  "WHEA_query_completed": true,
+  "exit_code": 0,
+  "debugger_pid": 31520,
+  "account": "LocalService",
+  "task_removed": true,
+  "historical_dumps_hash_match": true,
+  "native_run_ms": 4485000,
+  "owned_process_count": 0,
+  "production_code_changed": false,
+  "automatic_restart": false,
+  "identity_all_match": true,
+  "observed_seconds": 4487.6564917,
+  "new_WHEA_count": 0
+}
