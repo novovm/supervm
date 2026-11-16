@@ -1,5 +1,12 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-16：PID39152 XMM7高64位对象关联
+
+坏items=0x18e3c1f7510在同次FullDump内亦为events数组下标804的8字段JSON表ctrl指针。父events对象形状与native_delivery一致；没有历史载入/恢复记录，不能认定因果来源。status区间仅0x7721f4直接定义XMM7，后续是存储；有限候选均完整128位覆盖/置1，不能从高64位异常倒推部分写入指令。
+首次变化与ABI违规未证实，无修复；本轮仅离线分析，原节点未启动，双中继暂停。516报告为四节点合计；GPU无直接活动测量，不宣称已排除。
+详见[C-PID39152-XMM7-HIGH64-20261116/README.md](C-PID39152-XMM7-HIGH64-20261116/README.md)。
+
+
 ## C回传 2026-11-16：75分钟隔离BASE提前自然失败
 
 原a254＋AOEM966、新LocalService测试身份和新库，无调试器/PT/TTD。PID39152运行约648秒自然0xC0000409/子码7；控制器651.378秒收尾，其他三节点受控0xE0000001。完整DMP210,746,528字节，19线程、421内存范围，哈希稳定；WHEA新增0条。

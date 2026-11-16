@@ -1,0 +1,318 @@
+{
+  "dump_sha256": "42c4be50c967c8a927eec7110b7ddda4a1079385e8c65e6c38b68de804c46194",
+  "scan_scope": "original status linear instructions 0x772120..0x77824c and existing bounded graph; no new recursive expansion",
+  "status_xmm7_definitions": [
+    {
+      "rva": "0x7721f4",
+      "bytes": "0f103d2532d801",
+      "instruction": "movups xmm7, xmmword ptr [rip + 0x1d83225]",
+      "current_dump_code_matches_original": true
+    }
+  ],
+  "status_xmm7_stores": [
+    {
+      "rva": "0x77213b",
+      "bytes": "0f29bdf0030000",
+      "instruction": "movaps xmmword ptr [rbp + 0x3f0], xmm7",
+      "current_dump_code_matches_original": true
+    },
+    {
+      "rva": "0x7721fb",
+      "bytes": "0f11bd48010000",
+      "instruction": "movups xmmword ptr [rbp + 0x148], xmm7",
+      "current_dump_code_matches_original": true
+    },
+    {
+      "rva": "0x77712d",
+      "bytes": "0f11bde8010000",
+      "instruction": "movups xmmword ptr [rbp + 0x1e8], xmm7",
+      "current_dump_code_matches_original": true
+    },
+    {
+      "rva": "0x778245",
+      "bytes": "0f11bde8010000",
+      "instruction": "movups xmmword ptr [rbp + 0x1e8], xmm7",
+      "current_dump_code_matches_original": true
+    }
+  ],
+  "first_static_call_after_template": {
+    "rva": "0x772210",
+    "bytes": "e8fbf5a0ff",
+    "instruction": "call 0x7ff779041810",
+    "current_dump_code_matches_original": true,
+    "body": "RVA0x181810: c3 ret; no register write"
+  },
+  "static_call_sites_count": 326,
+  "known_candidate_xmm7_writes": [
+    {
+      "rva": "0x84f0da",
+      "bytes": "660f76ff",
+      "instruction": "pcmpeqd xmm7, xmm7",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x84f050",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "all128 become ones; cannot directly produce current zero-low/pointer-high pair"
+    },
+    {
+      "rva": "0x84f371",
+      "bytes": "0f287d30",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x30]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x84f050",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x863a0e",
+      "bytes": "0f103daba6ca01",
+      "instruction": "movups xmm7, xmmword ptr [rip + 0x1caa6ab]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x863990",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x866831",
+      "bytes": "0f28bde0010000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1e0]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x863990",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x5cf826",
+      "bytes": "0f103da348f101",
+      "instruction": "movups xmm7, xmmword ptr [rip + 0x1f148a3]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x5cf780",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x5d0a82",
+      "bytes": "0f28bdf0050000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x5f0]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x5cf780",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x34ba4a",
+      "bytes": "0f103d0f961602",
+      "instruction": "movups xmm7, xmmword ptr [rip + 0x216960f]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x34b9a0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x34ca5f",
+      "bytes": "0f28bdf0010000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1f0]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x34b9a0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x1d92eeb",
+      "bytes": "660f76ff",
+      "instruction": "pcmpeqd xmm7, xmm7",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x1d92e60",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "all128 become ones; cannot directly produce current zero-low/pointer-high pair"
+    },
+    {
+      "rva": "0x1d9304c",
+      "bytes": "0f287d10",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x10]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x1d92e60",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15af281",
+      "bytes": "0f28bd50040000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x450]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15af1d0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15af36b",
+      "bytes": "0f10b808030000",
+      "instruction": "movups xmm7, xmmword ptr [rax + 0x308]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15af1d0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15b814f",
+      "bytes": "0f103d4a42fc00",
+      "instruction": "movups xmm7, xmmword ptr [rip + 0xfc424a]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15b7fc0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15b9caf",
+      "bytes": "0f28bde0010300",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x301e0]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15b7fc0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x14ad53c",
+      "bytes": "410f10bc2400030000",
+      "instruction": "movups xmm7, xmmword ptr [r12 + 0x300]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x14ad210",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x14adf0f",
+      "bytes": "0f28bdf0020000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x2f0]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x14ad210",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x14ad7af",
+      "bytes": "0f28fe",
+      "instruction": "movaps xmm7, xmm6",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x14ad210",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15b52f4",
+      "bytes": "660f76ff",
+      "instruction": "pcmpeqd xmm7, xmm7",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15b5260",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "all128 become ones; cannot directly produce current zero-low/pointer-high pair"
+    },
+    {
+      "rva": "0x15b5615",
+      "bytes": "0f28bd90000000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x90]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15b5260",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15b17ad",
+      "bytes": "0f103d1c96fc00",
+      "instruction": "movups xmm7, xmmword ptr [rip + 0xfc961c]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15b1730",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15b2289",
+      "bytes": "0f28bdd0010000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x1d0]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15b1730",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15a58d1",
+      "bytes": "0f10bfb0020000",
+      "instruction": "movups xmm7, xmmword ptr [rdi + 0x2b0]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15a57c0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15a5c7d",
+      "bytes": "410f28fe",
+      "instruction": "movaps xmm7, xmm14",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15a57c0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x15a61c7",
+      "bytes": "0f28bd10020000",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x210]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x15a57c0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    },
+    {
+      "rva": "0x1d9375a",
+      "bytes": "660f76ff",
+      "instruction": "pcmpeqd xmm7, xmm7",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x1d936d0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "all128 become ones; cannot directly produce current zero-low/pointer-high pair"
+    },
+    {
+      "rva": "0x1d939f1",
+      "bytes": "0f287d30",
+      "instruction": "movaps xmm7, xmmword ptr [rbp + 0x30]",
+      "current_dump_code_matches_original": true,
+      "function_entry_rva": "0x1d936d0",
+      "execution_status": "static candidate from previously bounded graph, not historical execution proof",
+      "effect": "replace all 128 bits from source; cannot infer high-only write from final value"
+    }
+  ],
+  "bad_qword_occurrences": [
+    {
+      "address": "0x6b96feefc8",
+      "aligned8": true,
+      "in_status_frame": false,
+      "in_current_insert_frame": true
+    },
+    {
+      "address": "0x6b96fef2a0",
+      "aligned8": true,
+      "in_status_frame": true,
+      "in_current_insert_frame": false
+    },
+    {
+      "address": "0x18e3a626648",
+      "aligned8": true,
+      "in_status_frame": false,
+      "in_current_insert_frame": false
+    }
+  ],
+  "bad_qword_address_captured_range": {
+    "start": "0x18e3c110000",
+    "end": "0x18e3c25b000"
+  },
+  "pointer_object_type_proven": false,
+  "parent_entry_save_slot_xmm7": "00000000000000000000000000000000",
+  "historical_save_values_available": false,
+  "first_corrupting_instruction_found": false,
+  "ABI_violation_proven": false,
+  "first_nontrivial_unobserved_return_boundary": {
+    "call_rva": "0x77221f",
+    "target_rva": "0x1db3c0",
+    "tail_target_rva": "0x1e2d1f0",
+    "historical_XMM7_before_after_available": false,
+    "culpability_proven": false
+  }
+}
