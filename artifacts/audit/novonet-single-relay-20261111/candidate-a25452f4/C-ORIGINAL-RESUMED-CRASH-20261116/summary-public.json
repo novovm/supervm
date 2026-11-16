@@ -1,0 +1,101 @@
+{
+  "original_node_actual_start_count": 1,
+  "prelaunch_attempts_without_node_start": 2,
+  "start_beijing": "2026-11-16 15:17:59",
+  "exit_beijing": "2026-11-16 15:35:47",
+  "pid": 38324,
+  "mode": "existing",
+  "original_EXE_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "loaded_AOEM_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "run": {
+    "forced_by_controller": false,
+    "original_database_opened_existing": true,
+    "reason": "node_exited",
+    "node_started": true,
+    "exit_code": -1073741819,
+    "observed_seconds": 1068.5484163,
+    "utc": "2026-11-16T07:35:47.0008866Z",
+    "error": null,
+    "double_relay": false,
+    "root_cause_fixed": false,
+    "pid": 38324,
+    "identity_replaced": false
+  },
+  "dump": [
+    {
+      "bytes": 229673411,
+      "copy_verified": true,
+      "signature_valid": true,
+      "sha256": "c24346b575d048469a51fad1f897d82bc5947c1c3b5d57e7b2f703a779cc4249",
+      "streams": 18,
+      "full_memory_flag": true,
+      "flags": "0x221826",
+      "source_stable": true,
+      "name": "novovm-node.exe.38324.dmp"
+    }
+  ],
+  "fault_analysis": {
+    "dump_sha256": "c24346b575d048469a51fad1f897d82bc5947c1c3b5d57e7b2f703a779cc4249",
+    "exception": "0xc0000005",
+    "access_type": "read",
+    "reported_bad_address": "0xffffffffffffffff",
+    "fault_rva": "0x84f36d",
+    "fault_instruction": "movaps xmm6, [rbp+0x20]",
+    "fault_bytes": "0f287520",
+    "original_instruction_matches": true,
+    "operand_mod16": 0,
+    "operand_canonical": true,
+    "operand_present_in_dump": true,
+    "operand_crosses_page": false,
+    "rsp_rbp_delta": 128,
+    "exception_and_thread_context_identical": false,
+    "thread_context_size": 1663,
+    "exception_context_size": 1232,
+    "code_frames": [
+      {
+        "label": "insert_full",
+        "rsp_rbp_delta": 128,
+        "code_matches_original": true
+      },
+      {
+        "label": "profile snapshot",
+        "rsp_rbp_delta": 128,
+        "code_matches_original": true
+      },
+      {
+        "label": "status",
+        "rsp_rbp_delta": 128,
+        "code_matches_original": true
+      }
+    ],
+    "mxcsr": "0x1fa0",
+    "first_corrupting_instruction_found": false,
+    "conclusion": "Aligned readable captured operand does not establish misalignment. Reported fault address is not captured effective address. Final contexts cannot recover pre-fault execution history or identify hardware/software cause.",
+    "thread_and_exception_first1232_equal": false,
+    "thread_and_exception_registers_equal": false,
+    "context_differing_byte_count": 311,
+    "thread_context_flags": "0x10005f",
+    "exception_context_flags": "0x10005f",
+    "thread_list_context_explanation": "Offline CDB shows NtWaitForMultipleObjects -> WER report fault path. It is later dump-time state; use ExceptionStream for fault analysis, not this later wait context.",
+    "operand_dump_memory_info": "CDB !address: Stack, MEM_COMMIT, PAGE_READWRITE. Dump-time mapping is not a history of the faulting access."
+  },
+  "identity_hashes_unchanged": true,
+  "WER_original_folder_restored": true,
+  "temporary_task_removed": true,
+  "automatic_restart": false,
+  "new_WHEA_record_count": 0,
+  "last_completed_status": {
+    "ticks": 923700,
+    "data_writes": 4587,
+    "accepted_data": 452,
+    "verified_retained_objects": 43,
+    "transport_delivered_retained": 40,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "height": 1,
+    "head_present": false
+  },
+  "communication_limits": "Actual C send/receive, verified and transport-delivered records observed. Only one of three peer time rows ever had accepted samples in collected snapshots; no claim that all four hosts are online/authenticated or that application object receipts passed. No test transaction/object injected.",
+  "production_fix": false,
+  "first_corrupting_instruction_found": false
+}
