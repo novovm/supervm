@@ -1,0 +1,263 @@
+{
+  "production_fix": false,
+  "first_corrupting_instruction_found": false,
+  "original_database_and_identity_used": false,
+  "old_debugger_routes_reopened": false,
+  "original_asan_configuration_heap_tests": {
+    "clean": {
+      "exit": 0,
+      "expected": null,
+      "passed": true
+    },
+    "heap_oob": {
+      "exit": 0,
+      "expected": "heap-buffer-overflow",
+      "passed": false
+    },
+    "heap_uaf": {
+      "exit": 0,
+      "expected": "heap-use-after-free",
+      "passed": false
+    }
+  },
+  "qualified_asan_configuration_tests": {
+    "clean": {
+      "exit": 0,
+      "expected": null,
+      "passed": true
+    },
+    "heap_oob": {
+      "exit": 1,
+      "expected": "heap-buffer-overflow",
+      "passed": true
+    },
+    "heap_uaf": {
+      "exit": 1,
+      "expected": "heap-use-after-free",
+      "passed": true
+    },
+    "stack_oob": {
+      "exit": 1,
+      "expected": "stack-buffer-overflow",
+      "passed": true
+    }
+  },
+  "localservice_tests": [
+    {
+      "case": "clean",
+      "passed": true,
+      "exit": 0
+    },
+    {
+      "case": "heap_oob",
+      "passed": true,
+      "exit": 1
+    },
+    {
+      "case": "heap_uaf",
+      "passed": true,
+      "exit": 1
+    },
+    {
+      "case": "stack_oob",
+      "passed": true,
+      "exit": 1
+    }
+  ],
+  "essential_runtime_option": "windows_hook_rtl_allocators=true",
+  "rust_coverage": {
+    "archives": 318,
+    "archives_with_references": 318,
+    "nm_errors": 0,
+    "target_fingerprints": 319,
+    "fingerprints_with_asan": 319,
+    "note": "An archive without references may contain only data or inlined code. Flags and symbol references do not prove every instruction or native dependency instrumented."
+  },
+  "native_gaps": [
+    "AOEM966 DLL",
+    "RocksDB",
+    "SQLite and SQLite quota shim",
+    "aws-lc",
+    "ring",
+    "BLAKE3 assembly",
+    "system DLLs and uninstrumented assembly"
+  ],
+  "move_bytes": 72,
+  "move_source_destination_overlap": false,
+  "identified_save_slots_overlap_move_source": false,
+  "event_adjacent_low64": 8,
+  "corrupt_xmm7_low64": 0,
+  "whole128_event_source_match": false,
+  "business_run": {
+    "phase": "BASE-observation-on",
+    "reason": "native_time_bound_all_exited",
+    "error": null,
+    "wall_seconds": 1203.4138510000193,
+    "network_evidence": true,
+    "exits": {
+      "1": {
+        "unsigned": 0,
+        "hex": "0x00000000",
+        "forced": false,
+        "pid": 19168
+      },
+      "2": {
+        "unsigned": 0,
+        "hex": "0x00000000",
+        "forced": false,
+        "pid": 35932
+      },
+      "3": {
+        "unsigned": 0,
+        "hex": "0x00000000",
+        "forced": false,
+        "pid": 11620
+      },
+      "0": {
+        "unsigned": 0,
+        "hex": "0x00000000",
+        "forced": false,
+        "pid": 27796
+      }
+    },
+    "last_load": {
+      "0": {
+        "phase": "BASE-observation-on",
+        "index": 0,
+        "elapsed": 1199.338490400056,
+        "mtime_ns": 1794812546359295000,
+        "completed_status_reports_lower_bound": 198,
+        "ticks": 598538,
+        "executed_batches": 0,
+        "durable_decisions": 0,
+        "execution_failures": 0,
+        "gossip_verified_inputs": 0,
+        "requested_bodies": 0,
+        "served_bodies": 0,
+        "native_delivery_enabled": true,
+        "native_delivery_records": 2048,
+        "native_network_probe_present": true,
+        "transport_records": 251,
+        "reported_data_writes": 29281,
+        "accepted_data": 4350,
+        "transport_evicted": 4846,
+        "transport_expired": 2184,
+        "archive_work_present": true,
+        "archive_reads_started": 0,
+        "novonet_present": true,
+        "bound_peer_routes": 0,
+        "novonet_capability_observed_earlier": true
+      },
+      "1": {
+        "phase": "BASE-observation-on",
+        "index": 1,
+        "elapsed": 1199.338490400056,
+        "mtime_ns": 1794812546458560000,
+        "completed_status_reports_lower_bound": 198,
+        "ticks": 595022,
+        "executed_batches": 0,
+        "durable_decisions": 0,
+        "execution_failures": 0,
+        "gossip_verified_inputs": 0,
+        "requested_bodies": 0,
+        "served_bodies": 0,
+        "native_delivery_enabled": true,
+        "native_delivery_records": 2048,
+        "native_network_probe_present": true,
+        "transport_records": 250,
+        "reported_data_writes": 25194,
+        "accepted_data": 4315,
+        "transport_evicted": 4412,
+        "transport_expired": 2202,
+        "archive_work_present": true,
+        "archive_reads_started": 0,
+        "novonet_present": true,
+        "bound_peer_routes": 1,
+        "novonet_capability_observed_earlier": true
+      },
+      "2": {
+        "phase": "BASE-observation-on",
+        "index": 2,
+        "elapsed": 1199.338490400056,
+        "mtime_ns": 1794812546319729600,
+        "completed_status_reports_lower_bound": 198,
+        "ticks": 594976,
+        "executed_batches": 0,
+        "durable_decisions": 0,
+        "execution_failures": 0,
+        "gossip_verified_inputs": 0,
+        "requested_bodies": 0,
+        "served_bodies": 0,
+        "native_delivery_enabled": true,
+        "native_delivery_records": 2048,
+        "native_network_probe_present": true,
+        "transport_records": 252,
+        "reported_data_writes": 24593,
+        "accepted_data": 4117,
+        "transport_evicted": 3798,
+        "transport_expired": 2157,
+        "archive_work_present": true,
+        "archive_reads_started": 0,
+        "novonet_present": true,
+        "bound_peer_routes": 0,
+        "novonet_capability_observed_earlier": true
+      },
+      "3": {
+        "phase": "BASE-observation-on",
+        "index": 3,
+        "elapsed": 1199.076000000001,
+        "mtime_ns": 1794812546062319200,
+        "completed_status_reports_lower_bound": 197,
+        "ticks": 601692,
+        "executed_batches": 0,
+        "durable_decisions": 0,
+        "execution_failures": 0,
+        "gossip_verified_inputs": 0,
+        "requested_bodies": 0,
+        "served_bodies": 0,
+        "native_delivery_enabled": true,
+        "native_delivery_records": 2048,
+        "native_network_probe_present": true,
+        "transport_records": 253,
+        "reported_data_writes": 36588,
+        "accepted_data": 4390,
+        "transport_evicted": 4426,
+        "transport_expired": 2101,
+        "archive_work_present": true,
+        "archive_reads_started": 0,
+        "novonet_present": true,
+        "bound_peer_routes": 1,
+        "novonet_capability_observed_earlier": true
+      }
+    },
+    "status_reports_lower_bound": {
+      "0": 198,
+      "1": 198,
+      "2": 198,
+      "3": 197
+    },
+    "exact_internal_function_call_count_measured": false,
+    "original_historical_packet_order_replayed": false,
+    "transaction_execution_coverage": false,
+    "raw_dumps_local_only": true,
+    "production_fix": false,
+    "double_relay": false
+  },
+  "asan_reports": 0,
+  "dumps": {
+    "files": []
+  },
+  "whea": {
+    "utc": "2026-11-16T07:02:45.6613396Z",
+    "comparison_complete": true,
+    "after_available": true,
+    "before_available": true,
+    "new_events": []
+  },
+  "limits": [
+    "Instrumented build changes register allocation and timing.",
+    "Symbol references do not prove all instructions instrumented.",
+    "No report does not exclude a native write, intra-object overwrite or register-only ABI failure.",
+    "Final dump does not contain historical callee return register values."
+  ]
+}
