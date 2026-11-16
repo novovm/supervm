@@ -1,0 +1,22 @@
+{
+  "source_commit": "57090b6b430c3e8f3389186ec2e97cf370a6963a",
+  "core_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "core_bytes": 49140736,
+  "bundle_manifest_sha256": "d85e8a9577c1525e5665be4b74e9f0af7f8c26221002734feca7ff4b98745c75",
+  "checksums_sha256": "d3595a41bc587433b18effb035e1e4aeab72a1063c105e048de331165db96e21",
+  "package_validation": {
+    "native_load_and_exports": "passed",
+    "core_header_symbols": 148,
+    "c_examples_syntax": "passed",
+    "unified_compute_smoke": "passed",
+    "full_product_gpu_and_proof_acceptance": "not_run_by_packager"
+  },
+  "identity_qualified": true,
+  "cold_recovery_exit": 0,
+  "test_binary_sha256": "5e0645a6b36bd53e5ff7ddbee5b412fcb1b8e4ac0aca8f4a602764893556e5aa",
+  "original_node_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "A_started": false,
+  "phase": "WAITING_ORIGINAL_A_COMPARISON_EXIT",
+  "first_mismatched_harness_failure_preserved": true,
+  "four_host_acceptance": false
+}

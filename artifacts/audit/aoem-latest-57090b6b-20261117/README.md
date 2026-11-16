@@ -1,5 +1,15 @@
 # A: latest AOEM candidate preparation
 
+## Update: fixed bundle and new-library compatibility qualified, Beijing02:59
+
+User removed the indicated cache; D free rose to34.05GiB. Original FullMax builder completed11m25s, source unchanged. Original validation passed148 public header exports,14 plugin files, actual native load, C example checks and unified compute smoke; no full GPU/proof/performance claim. Core SHA256 `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`,49140736bytes. All manifest/checksums retained. [Public qualification](qualified-public.json).
+
+Original `novovmctl` verifies this actual new DLL with required strict manifest: scalar, unified semantic and mixed ML-DSA KATs passed. Original a254 source-matched harness then ran `native_only_genesis_transactions_queries_and_cold_recovery` against the new library and the actual original node;1 passed, exit0,2.06seconds. Isolated fixture, not four-machine business acceptance or original A database opening.
+
+First attempt selected the wrong cached November9 harness (SHA1a3ce257...,1768 tests) and failed at90.26s Status readiness, exit101. Failure logs/results retained separately; no runtime replacement occurred. Original candidate receipt explicitly names November12 `novovm_node-2448a5ce12032170.exe`, SHA5e0645a6...,1795tests. Exact hash verified and entry corrected before the passing attempt. Do not attribute the initial timeout to new AOEM or hide it as a pass.
+
+A PID21480 still running at02:59:16, ticks3229133, height1, executed_batches0, execution_failures0; no terminal yet. No old-version rerun. A single local serial continuation is waiting for existing task termination. It will read actual exit/task result and WHEA, retain old result, cold-copy original database only after all node owners exit, then start the qualified new DLL with original A EXE/identity/`existing`. It checks loaded DLL hash, identity hashes and state projection; failure stops the workflow and leaves explicit `workflow-result.json`. No new instance is reported started yet. Raw build/qualification/continuation logs remain under the same ignored target directory. B/C/D remain untouched. Old WHEA/exit and actual new-A receipt must be reported separately after observed completion.
+
 User authorizes latest fixed AOEM build, compatibility qualification, then A existing-state run; do not repeat old-version tests or require resolution of old crashes before mainline development.
 
 ## Actual state at Beijing 2026-11-17 02:30
