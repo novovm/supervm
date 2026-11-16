@@ -1,0 +1,20 @@
+{
+  "observed_utc": "2026-11-16T18:18:12.8705088Z",
+  "pid": 21480,
+  "created": "2026-11-16T18:17:44.2435070Z",
+  "owner": "NT AUTHORITY\\LOCAL SERVICE",
+  "exe_sha256": "1758E4A79DD34D1688D8F7BF4B60F46ED9CED518186F42FDB16BAF04C0D0C46D",
+  "loaded_aoem_sha256": "1B764A36C1F782425237D40446D4EA827F56A66FB341B870855D84C15ACDCE50",
+  "start": "existing",
+  "initialize": false,
+  "debugger": false,
+  "native_run_ms": 4480000,
+  "task_max_seconds": 4500,
+  "height": 1,
+  "execution_failures": 0,
+  "recovery_in_progress": false,
+  "progress_bytes": 289049,
+  "status": "RUNNING_NOT_ACCEPTED",
+  "C966_same_library": false,
+  "C_hardware_fault_proven": false
+}
