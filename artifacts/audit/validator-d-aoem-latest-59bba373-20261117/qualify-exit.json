@@ -1,0 +1,8 @@
+{
+  "node_started": false,
+  "database_opened": false,
+  "manifest_required": true,
+  "program_sha256": "db38ea6247a3be359f4165276feac39fb3a62990ea7e0b628ef37827e946b281",
+  "library_sha256": "e7f25d47a61a16820d54e4cebc30818eafd93e65cb2c7a46d72a425df4e9ecce",
+  "exit_code": 0
+}

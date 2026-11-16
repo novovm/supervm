@@ -1,0 +1,30 @@
+{
+  "host_id": "D",
+  "supervm_synchronized_commit": "bf8271ba",
+  "aoem_source_commit": "59bba373bacbc1af056fa0b7d3df35fc7cb84ca6",
+  "build_exit": 0,
+  "build_seconds": 562.4524091,
+  "bundle_path": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\validator-d-59bba373-20261117\\windows\\20261117-041012",
+  "core_sha256": "e7f25d47a61a16820d54e4cebc30818eafd93e65cb2c7a46d72a425df4e9ecce",
+  "core_bytes": 49146368,
+  "validation": {
+    "native_load_and_exports": "passed",
+    "core_header_symbols": 148,
+    "c_examples_syntax": "passed",
+    "unified_compute_smoke": "passed",
+    "full_product_gpu_and_proof_acceptance": "not_run_by_packager"
+  },
+  "bundle_checksum_verify_passed": true,
+  "package_regression_cases": 6,
+  "package_regression_exit": 0,
+  "native_qualifier_exit": 0,
+  "native_verification_qualified": true,
+  "A_latest_documented_source": "57090b6b430c3e8f3389186ec2e97cf370a6963a",
+  "A_latest_documented_core_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "A_D_binary_identical": false,
+  "C_current_loaded_runtime_verified_this_round": false,
+  "runtime_deployed": false,
+  "node_restarted": false,
+  "original_database_opened": false,
+  "multi_host_acceptance": false
+}

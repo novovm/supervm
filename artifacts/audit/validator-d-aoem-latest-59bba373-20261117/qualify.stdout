@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "command": "native-identity",
+  "timestamp_unix_ms": 1794860423386,
+  "host": "SUPERVM-L2-01",
+  "data": {
+    "action": "qualify-runtime",
+    "qualification": "ml-dsa-65-native-verification-owner",
+    "algorithm": "ML-DSA-65",
+    "signature_suite": 65,
+    "library": "\\\\?\\D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\validator-d-59bba373-20261117\\windows\\20261117-041012\\core\\bin\\aoem_ffi.dll",
+    "library_sha256": "e7f25d47a61a16820d54e4cebc30818eafd93e65cb2c7a46d72a425df4e9ecce",
+    "verification_qualified": true,
+    "scalar_verification_kat_passed": true,
+    "unified_semantic_verification_kat_passed": true,
+    "mixed_batch_verification_kat_passed": true,
+    "primitive_sign_interface_size_checked": true,
+    "signing_tested": false,
+    "keygen_tested": false,
+    "protected_key_created": false,
+    "custody_accessed": false,
+    "database_created": false,
+    "service_started": false,
+    "whole_node_post_quantum_qualified": false
+  }
+}

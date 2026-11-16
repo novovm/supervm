@@ -1,0 +1,4 @@
+{
+  "glslc": "shaderc v2026.1 v2026.1\r\nspirv-tools v2026.1 v2022.4-1089-gfbe4f3ad\r\nglslang 11.1.0-1366-gf0bd0257\r\n\r\nTarget: SPIR-V 1.0",
+  "glslang": "Glslang Version: 11:16.2.0\r\nESSL Version: OpenGL ES GLSL 3.20 glslang Khronos. 16.2.0\r\nGLSL Version: 4.60 glslang Khronos. 16.2.0\r\nSPIR-V Version 0x00010600, Revision 1\r\nGLSL.std.450 Version 100, Revision 1\r\nKhronos Tool ID 8\r\nSPIR-V Generator Version 11\r\nGL_KHR_vulkan_glsl version 100\r\nARB_GL_gl_spirv version 100"
+}

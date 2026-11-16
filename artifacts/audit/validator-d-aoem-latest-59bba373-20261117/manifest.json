@@ -1,0 +1,362 @@
+{
+  "stamp": "20261117-041012",
+  "release_version": "Beta 0.9",
+  "source_commit": "59bba373bacbc1af056fa0b7d3df35fc7cb84ca6",
+  "platform": "windows",
+  "profile": "fullmax",
+  "bundle_dir": ".",
+  "core_dll": "core/bin/aoem_ffi.dll",
+  "public_header": "include/aoem.h",
+  "plugins": [
+    "aoem_ffi_crypto_hsm.dll",
+    "aoem_ffi_crypto_kms.dll",
+    "aoem_ffi_crypto_mldsa.dll",
+    "aoem_ffi_hsm.dll",
+    "aoem_ffi_kms.dll",
+    "aoem_ffi_mldsa.dll",
+    "aoem_ffi_persist.dll",
+    "aoem_ffi_persist_rocksdb.dll",
+    "aoem_ffi_runtime_wasm_wasmtime.dll",
+    "aoem_ffi_wasm.dll",
+    "aoem_ffi_zkvm.dll",
+    "aoem_ffi_zkvm_executor.dll",
+    "aoem_hsm_plugin.dll",
+    "aoem_kms_plugin.dll"
+  ],
+  "features": "apfl-model-session,rocksdb-persistence,wasmtime-runtime,privacy-verify,mldsa,zkvm-executor,risc0,sp1,halo2",
+  "storage_provider": {
+    "entry": "aoem_storage_provider_wire_v1",
+    "wire": "binary",
+    "raw_values": true,
+    "multi_database": true,
+    "consistent_read_snapshots": true,
+    "bounded_ordered_range_reads": true,
+    "json": false
+  },
+  "semantic_batch": {
+    "entry": "aoem_execute_semantic_batch_v1",
+    "nonblocking_entry": "aoem_submit_semantic_batch_v1",
+    "continuation_graph_entry": "aoem_submit_semantic_graph_v1",
+    "input": "opaque_binary",
+    "output": "opaque_binary",
+    "synchronous_join": true,
+    "nonblocking_owned_input_submit": true,
+    "nonblocking_continuation_submit": true,
+    "completion_callback_once": true,
+    "stable_result_order": true,
+    "per_task_status": true,
+    "host_neutral": true,
+    "business_semantics": false
+  },
+  "ai_sgm_infer": {
+    "fullmax_ai_sgm_infer_included": true,
+    "compute_request_name": "compute.ai.sgm_infer_v1",
+    "entry": "aoem_execute_ops_wire_v1",
+    "result": "aoem_state_read_v1",
+    "payload_contract": "versioned_model_session_or_checked_program_binary",
+    "model_asset_required": true,
+    "model_asset_required_scope": "model_session_payloads_only",
+    "checked_integer_resources_v7": {
+      "included": true,
+      "capability_flag": "compute_checked_integer_resources_v7",
+      "payload_magic": "AOIP0",
+      "payload_version": 7,
+      "numeric_versions": [
+        4,
+        5
+      ],
+      "lifecycle": "context_owned_open_run_close",
+      "model_asset_required": false,
+      "max_rows": 4096,
+      "max_program_bytes": 4194304,
+      "max_input_bytes": 8388608,
+      "max_live_handles": 64,
+      "max_distinct_live_programs": 8,
+      "max_resident_bytes": 67108864,
+      "byte_quota_scope": "retained_program_and_logical_gpu_program_input_output_extents",
+      "cache_key": "exact_program_bytes_numeric_version_rows",
+      "fallback": false,
+      "faulted_runtime_recovery": "new_aoem_context"
+    },
+    "legacy_aoai_v0_supported": false,
+    "teacher_runtime_used": false,
+    "source_runtime_used": false,
+    "execution_backend": "AOEM Vulkan/SPIR-V",
+    "public_aoem_graph_lifecycle_abi": false,
+    "public_aoem_tensor_build_abi": false,
+    "capability_manifest": "ai-sgm-infer-wire-v1-capability.json"
+  },
+  "boundaries": {
+    "new_standalone_apfl_ffi": false,
+    "public_ffi_abi_changed": false,
+    "new_wire_op": false,
+    "new_compute_op": false
+  },
+  "checksums": "CHECKSUMS.sha256",
+  "notes": "windows fullmax compiles the unique AOEM FFI product bundle; model sessions require sealed model assets and checked integer execution requires validated program assets through compute.ai.sgm_infer_v1",
+  "source": {
+    "commit": "59bba373bacbc1af056fa0b7d3df35fc7cb84ca6",
+    "dirty": false,
+    "tracked_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "untracked_sha256": {}
+  },
+  "default_features": [
+    "apfl-model-session",
+    "word256-gpu-forward-production"
+  ],
+  "component_features": {
+    "core": {
+      "requested": [
+        "apfl-model-session",
+        "rocksdb-persistence",
+        "wasmtime-runtime",
+        "privacy-verify",
+        "mldsa",
+        "zkvm-executor",
+        "risc0",
+        "sp1",
+        "halo2"
+      ],
+      "effective_ffi": [
+        "apfl-model-session",
+        "default",
+        "halo2",
+        "mldsa",
+        "privacy-verify",
+        "risc0",
+        "rocksdb-persistence",
+        "sp1",
+        "wasmtime-runtime",
+        "word256-gpu-forward-production",
+        "zkvm-executor"
+      ]
+    },
+    "persist": {
+      "requested": [
+        "rocksdb-persistence",
+        "persist-plugin-sidecar"
+      ],
+      "effective_ffi": [
+        "apfl-model-session",
+        "default",
+        "persist-plugin-sidecar",
+        "rocksdb-persistence",
+        "word256-gpu-forward-production"
+      ]
+    },
+    "wasm": {
+      "requested": [
+        "wasmtime-runtime",
+        "wasm-plugin-sidecar"
+      ],
+      "effective_ffi": [
+        "apfl-model-session",
+        "default",
+        "wasm-plugin-sidecar",
+        "wasmtime-runtime",
+        "word256-gpu-forward-production"
+      ]
+    },
+    "zkvm": {
+      "requested": [
+        "zkvm-executor",
+        "risc0",
+        "sp1",
+        "halo2",
+        "zkvm-plugin-sidecar"
+      ],
+      "effective_ffi": [
+        "apfl-model-session",
+        "default",
+        "halo2",
+        "risc0",
+        "sp1",
+        "word256-gpu-forward-production",
+        "zkvm-executor",
+        "zkvm-plugin-sidecar"
+      ]
+    },
+    "mldsa": {
+      "requested": [
+        "mldsa",
+        "mldsa-plugin-sidecar"
+      ],
+      "effective_ffi": [
+        "apfl-model-session",
+        "default",
+        "mldsa",
+        "mldsa-plugin-sidecar",
+        "word256-gpu-forward-production"
+      ]
+    }
+  },
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)\nbinary: rustc\ncommit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a\ncommit-date: 2026-11-09\nhost: x86_64-pc-windows-msvc\nrelease: 1.100.0\nLLVM version: 23.1.5",
+  "cargo": "cargo 1.100.0 (3acc79c0c 2026-11-05)",
+  "shader_compilers": {
+    "glslc": "shaderc v2026.1 v2026.1\r\nspirv-tools v2026.1 v2022.4-1089-gfbe4f3ad\r\nglslang 11.1.0-1366-gf0bd0257\r\n\r\nTarget: SPIR-V 1.0",
+    "glslang": "Glslang Version: 11:16.2.0\r\nESSL Version: OpenGL ES GLSL 3.20 glslang Khronos. 16.2.0\r\nGLSL Version: 4.60 glslang Khronos. 16.2.0\r\nSPIR-V Version 0x00010600, Revision 1\r\nGLSL.std.450 Version 100, Revision 1\r\nKhronos Tool ID 8\r\nSPIR-V Generator Version 11\r\nGL_KHR_vulkan_glsl version 100\r\nARB_GL_gl_spirv version 100"
+  },
+  "cargo_lock_sha256": "b7cb9bb6f2035bfca23eeadcd6e64b7a0deb3eeff5d4415df71775ef038c00a8",
+  "kms_hsm_scope": "sample signing provider; not a connection to a real KMS or HSM",
+  "validation": {
+    "native_load_and_exports": "passed",
+    "core_header_symbols": 148,
+    "c_examples_syntax": "passed",
+    "unified_compute_smoke": "passed",
+    "full_product_gpu_and_proof_acceptance": "not_run_by_packager"
+  },
+  "artifacts": {
+    "ai-sgm-infer-wire-v1-capability.json": {
+      "sha256": "105c63bc589906e3c87e88861f800e44b853f88c060c40e2d00a9b0f3929d72a",
+      "bytes": 1508
+    },
+    "BUILD-AND-USE.md": {
+      "sha256": "cae67164072bfae59c151cc5cd6e878046116f3d20946abf34defbf0a3fcae19",
+      "bytes": 937
+    },
+    "build-source.json": {
+      "sha256": "2a216e7ea3ac27bbdab57b87e6cef9b5b21f5a640c77e33ce633c2536870d70b",
+      "bytes": 202
+    },
+    "build-tools.json": {
+      "sha256": "fdc9d0cda980bf0514bd5bac1bc076c5fb26e4e8947d4caf760bc29fdfb25c15",
+      "bytes": 498
+    },
+    "core/bin/aoem_ffi.dll": {
+      "sha256": "e7f25d47a61a16820d54e4cebc30818eafd93e65cb2c7a46d72a425df4e9ecce",
+      "bytes": 49146368
+    },
+    "core/plugins/aoem_ffi_crypto_hsm.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "core/plugins/aoem_ffi_crypto_kms.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "core/plugins/aoem_ffi_crypto_mldsa.dll": {
+      "sha256": "ef9abe59003959302f3400ee519f6bc646d3978f3f5cbb118a679a9ff7998245",
+      "bytes": 27854848
+    },
+    "core/plugins/aoem_ffi_hsm.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "core/plugins/aoem_ffi_kms.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "core/plugins/aoem_ffi_mldsa.dll": {
+      "sha256": "ef9abe59003959302f3400ee519f6bc646d3978f3f5cbb118a679a9ff7998245",
+      "bytes": 27854848
+    },
+    "core/plugins/aoem_ffi_persist.dll": {
+      "sha256": "3eb54cc7bfc27191dff6946ba16169e4fe182bb55f99a2192beb3d51aed973f1",
+      "bytes": 33699840
+    },
+    "core/plugins/aoem_ffi_persist_rocksdb.dll": {
+      "sha256": "3eb54cc7bfc27191dff6946ba16169e4fe182bb55f99a2192beb3d51aed973f1",
+      "bytes": 33699840
+    },
+    "core/plugins/aoem_ffi_runtime_wasm_wasmtime.dll": {
+      "sha256": "99bc8f1ac407f73159fd27dca595a289a7a8c422e7d08178031e1035bc583fa6",
+      "bytes": 27658752
+    },
+    "core/plugins/aoem_ffi_wasm.dll": {
+      "sha256": "99bc8f1ac407f73159fd27dca595a289a7a8c422e7d08178031e1035bc583fa6",
+      "bytes": 27658752
+    },
+    "core/plugins/aoem_ffi_zkvm.dll": {
+      "sha256": "4f6b70c4c5f8f66b9029a964866c6e6c4cf7ecc958a253fe627281c0086c154d",
+      "bytes": 31336448
+    },
+    "core/plugins/aoem_ffi_zkvm_executor.dll": {
+      "sha256": "4f6b70c4c5f8f66b9029a964866c6e6c4cf7ecc958a253fe627281c0086c154d",
+      "bytes": 31336448
+    },
+    "core/plugins/aoem_hsm_plugin.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "core/plugins/aoem_kms_plugin.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "examples/aoem_proof_worker.c": {
+      "sha256": "7526010d24a67bcbca36b7540511828a2028b76624593de1462d6492f2d6418a",
+      "bytes": 37510
+    },
+    "examples/hosted_compute_native_smoke.c": {
+      "sha256": "2c2eb7888b2345f99d771a26e95e7794bc9b6ed3ba52e4c57ef0d36eef6a5842",
+      "bytes": 12257
+    },
+    "examples/hosted_confidential_transfer_smoke.c": {
+      "sha256": "548425f22acf3a233000f792b293d207a9bfbe12110e8ee7a22d850c15b14d49",
+      "bytes": 28956
+    },
+    "examples/hosted_high_frequency_compute_service.c": {
+      "sha256": "d43c5ccf7bc611366ecf952965747375755c2b0c1c4409252a731be45a58b2af",
+      "bytes": 15902
+    },
+    "examples/hosted_resident_pipeline_digest_smoke.c": {
+      "sha256": "be3a6f331aaa6cb90479c1f97e32849556f78ce29c164d725a4417c378a3c9e8",
+      "bytes": 13650
+    },
+    "examples/hosted_resident_proof_service.c": {
+      "sha256": "3d2151ae945d21baf529c9f4c29f37f6b12650dd38179a6940eeb4053db70660",
+      "bytes": 24546
+    },
+    "examples/hosted_resident_proof_smoke.c": {
+      "sha256": "4ea8c4ddce44159c9c20f55e49c9025725337796f482d49fa952e75c9564ce53",
+      "bytes": 35048
+    },
+    "examples/hosted_resident_proof_verify.c": {
+      "sha256": "588588f136c73ad868980cb84979a60b67494fa784b9f202b052441803895ff3",
+      "bytes": 30695
+    },
+    "examples/hosted_verify_only_ecdsa_smoke.c": {
+      "sha256": "cb08caf59fdcaad77d4fc3a2eac25286b848caa78926aeeb55d34502d3ef43b6",
+      "bytes": 4845
+    },
+    "include/aoem.h": {
+      "sha256": "d6fc8c4e72179642444ecc4cc4f0e93c5dc6963c95d3af2e0eabdc23f33ed0e6",
+      "bytes": 185523
+    },
+    "kms-hsm-plugin/aoem_ffi_crypto_hsm.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "kms-hsm-plugin/aoem_ffi_crypto_kms.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "kms-hsm-plugin/aoem_ffi_hsm.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "kms-hsm-plugin/aoem_ffi_kms.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "kms-hsm-plugin/aoem_hsm_plugin.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "kms-hsm-plugin/aoem_kms_plugin.dll": {
+      "sha256": "3447854149f553691594a067149623f3852fc36ce15b4b6c96a7f8cb03ac4c3c",
+      "bytes": 138240
+    },
+    "licenses/mldsa-native/LICENSE": {
+      "sha256": "e6419564d3f08011e7bbdb00b5203a91ed0c1f4b5b0501366282247c8bd082bb",
+      "bytes": 16457
+    },
+    "licenses/mldsa-native/UPSTREAM.txt": {
+      "sha256": "f867c4bacbe0cedc3c04fa3dc30566f618bf5b198fa0df473b7bbcfb63885948",
+      "bytes": 636
+    },
+    "README.md": {
+      "sha256": "f90dd8184a648d14714c9d43681af803c2e6e881d0be9ca340c9921a3881e919",
+      "bytes": 3019
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "entries": [
+    {
+      "name": "core",
+      "platform": "windows-x86_64",
+      "dll": "D:\\WEB3_AI\\AOEM\\artifacts\\ffi-bundles\\validator-d-59bba373-20261117\\windows\\20261117-041012/core/bin/aoem_ffi.dll",
+      "sha256": "e7f25d47a61a16820d54e4cebc30818eafd93e65cb2c7a46d72a425df4e9ecce",
+      "source_commit": "aab3f8bb8cf5c685b8314a08378e8763fbbe83ab",
+      "abi_expected": 1,
+      "capabilities_required": {
+        "execute_ops_v2": true,
+        "semantic_graph_v3": true,
+        "storage_provider_wire_v1": true,
+        "compute_checked_integer_resources_v7": true,
+        "compute_checked_integer_binary_result_v1": true,
+        "compute_checked_integer_dataflow_v1": true,
+        "compute_checked_integer_composition_v1": true
+      },
+      "core_source_identity": {
+        "base_commit": "4c57372ad0cc12123df5ca9e163a130039bfb599",
+        "source_overlay_sha256": "8ee88c113611cbdcfacce949ae06b49f9870bb8cdd570a8eddeb8343505ab4fb",
+        "core_sha256": "1b764a36c1f782425237d40446d4ea827f56a66fb341b870855d84c15acdce50",
+        "compiler": "rustc 1.94.0",
+        "source_snapshot": "exact qualified Linux source snapshot, rebuilt for Windows",
+        "additional_lock_change": "libz-sys 1.1.23 -> 1.1.31",
+        "final_lock_sha256": "46625b6be8ad25c323fbba6e23263fe9f9f1b649805303ebdb89a7fe7f7abbec",
+        "features": [
+          "apfl-model-session",
+          "word256-gpu-forward-production",
+          "rocksdb-persistence",
+          "wasmtime-runtime",
+          "privacy-verify",
+          "mldsa",
+          "zkvm-executor",
+          "risc0",
+          "sp1",
+          "halo2"
+        ],
+        "retained_sidecars_commit": "1377cd1e7c1d43a4bf81cb16a169319772cf3e84",
+        "scope": "isolated complete-feature Windows core; retained sidecars not rebuilt or newly qualified; not shipped, not whole-node/proof/GPU/performance qualified"
+      },
+      "source_commit_scope": "historical_source_commit_superseded_for_core_by_core_source_identity"
+    }
+  ],
+  "package": "D latest AOEM read-only qualification; no deployment",
+  "source_commit": "59bba373bacbc1af056fa0b7d3df35fc7cb84ca6"
+}

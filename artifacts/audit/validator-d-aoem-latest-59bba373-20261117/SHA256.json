@@ -1,0 +1,72 @@
+[
+  {
+    "file": "build-exit.json",
+    "bytes": 221,
+    "sha256": "b275d8971dd2a1f7bedb06f928a779bd5ae842e789539602b74587aec3a4dcca"
+  },
+  {
+    "file": "build-source.json",
+    "bytes": 202,
+    "sha256": "2a216e7ea3ac27bbdab57b87e6cef9b5b21f5a640c77e33ce633c2536870d70b"
+  },
+  {
+    "file": "build-start.json",
+    "bytes": 310,
+    "sha256": "acef57a4ed73b9f12ef20a5093c2243d510efa82c6104f03116155f08ff68df5"
+  },
+  {
+    "file": "build-tools.json",
+    "bytes": 498,
+    "sha256": "fdc9d0cda980bf0514bd5bac1bc076c5fb26e4e8947d4caf760bc29fdfb25c15"
+  },
+  {
+    "file": "CHECKSUMS.sha256",
+    "bytes": 4007,
+    "sha256": "c5fea3f3a686b71226b2cf666b014c414a116c7f758cb45b8c619664512860cd"
+  },
+  {
+    "file": "manifest.json",
+    "bytes": 13118,
+    "sha256": "d875068a927866d098db88f4d58075da45b6183370e04536b56906a08090418a"
+  },
+  {
+    "file": "package-tests-exit.json",
+    "bytes": 24,
+    "sha256": "75876e0e3f497cad271143ba85bd4f36569cd81195509043f860dab14265b716"
+  },
+  {
+    "file": "package-tests.stderr",
+    "bytes": 109,
+    "sha256": "481f491fde1df228512c198dfd645803c20eed71cb99ee5e9a936c8101409c37"
+  },
+  {
+    "file": "package-tests.stdout",
+    "bytes": 24,
+    "sha256": "db7480c54821fbfd22b440cbab890e6ee202abfce6529160410036019082b20a"
+  },
+  {
+    "file": "qualification-manifest.json",
+    "bytes": 2190,
+    "sha256": "27e146a691e011737175a741b9b6d115e0e5117edd103a54e0c2e5c3e7ebf836"
+  },
+  {
+    "file": "qualify-exit.json",
+    "bytes": 287,
+    "sha256": "cac8454be54265e3ecdd4bc08c76943087a5cf20cfe0600197503f20a3595a19"
+  },
+  {
+    "file": "qualify.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "qualify.stdout",
+    "bytes": 986,
+    "sha256": "ea0e695e575f7a2f034a180e4c6a1f510c8a40d5c44455d551fedb9e6ebb7321"
+  },
+  {
+    "file": "result-public.json",
+    "bytes": 1257,
+    "sha256": "9c001a1b85a51a0ce31cc4d55a3520df717e9ef209dc21b788918cbf7194f9f4"
+  }
+]
