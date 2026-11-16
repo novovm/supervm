@@ -19,6 +19,19 @@ SPEC.loader.exec_module(ci)
 
 
 class ScopeTests(unittest.TestCase):
+    def test_nested_node_package_keeps_install_test_and_lockfile_cache(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        node = jobs["node"]
+        self.assertIn("node-version: '22'", node)
+        self.assertIn("cache-dependency-path: '**/package-lock.json'", node)
+        self.assertIn('cd "$(dirname "$pkg")"', node)
+        self.assertIn("npm ci\n", node)
+        self.assertIn("npm test\n", node)
+        out = ci.outputs_for("full", ["Cargo.toml", "plugins/asas/service/package.json"])
+        self.assertEqual(out["node_package_json"], "plugins/asas/service/package.json")
+        self.assertEqual(out["has_node"], "true")
+
     def test_pr_only_reviewed_prose_is_light(self):
         for name in ci.PROSE_ONLY:
             self.assertEqual(ci.select_scope("pull_request", {}, [name]), "docs")
@@ -106,7 +119,8 @@ class ScopeTests(unittest.TestCase):
         self.assertIn("recovery: ${{ steps.detect.outputs.recovery }}", jobs["detect"])
         self.assertIn("needs: detect\n", recovery)
         self.assertIn("if: needs.detect.outputs.recovery == 'true'\n", recovery)
-        self.assertIn("runs-on: ubuntu-latest\n", recovery)
+        self.assertIn("runs-on: ubuntu-24.04\n", recovery)
+        self.assertIn("runs-on: ubuntu-24.04\n", jobs["rust"])
         self.assertIn("ci-native-recovery-${{ github.ref }}-", recovery)
         self.assertIn("cancel-in-progress: false", recovery)
         self.assertIn("Swatinem/rust-cache@v2", recovery)

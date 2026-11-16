@@ -223,7 +223,9 @@ jobs:
     concurrency:
       group: ci-rust-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
       cancel-in-progress: true
-    runs-on: ubuntu-latest
+    # Match the supported B deployment baseline. ubuntu-latest moved to 26.04;
+    # its C++ headers no longer compile the pinned RocksDB source unchanged.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -679,7 +681,7 @@ jobs:
     concurrency:
       group: ci-native-recovery-${{ github.ref }}-${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && github.run_id || 'auto' }}
       cancel-in-progress: false
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       NOVOVM_ALLOW_LEGACY_HOST_EXECUTION: '0'
@@ -840,8 +842,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
+          # Product Node packages may live below the repository root (ASAS).
+          # Installation below still uses the package selected by detect.
+          cache-dependency-path: '**/package-lock.json'
 
       - name: Install & Test
         shell: bash

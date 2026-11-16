@@ -1,52 +1,38 @@
-# CURRENT: update all four runtime consumers, then double-relay delivery
+# CURRENT: new common node + latest AOEM, then real double relay
 
-## SUPERSEDING ACTION: C's e4fad013 handoff received; use the new common node EXE
+Updated 2026-11-17 04:35 Beijing. User authorized A/B/C/D upgrades and four-host integration. No old crash test or BASE rerun. Stop/replacement authority is already granted; execution still needs a qualified actual package and an authenticated management path.
 
-C already qualified the e8f7d87b runtime code plus AOEM570 and published a new EXE hash in `../novovm-four-host-latest-20261117/README.md`. A has read it. The runtime-only a254 upgrade instructions below are withdrawn, and the unexecuted a254-only updater has been removed. **C/D must not execute that old entry or downgrade C to a254.** Its ZIP is still a valid AOEM bundle, not the complete common-node deployment package.
+## Actual network blocker
 
-The approved goal now explicitly includes upgrading A's node EXE and B/C/D to the common new runtime code, as well as AOEM570. A is preparing the missing Windows/Linux common-node packages using the original packager. A's current a254+new-AOEM process stays live until the complete replacement qualifies. No old crash test is reopened. Subsequent source commits contain documentation/deployment-only changes; A checked `git diff e8f7d87b..HEAD -- crates Cargo.lock Cargo.toml .cargo` empty. Record actual package commit and this program-source equivalence; do not pretend documentation hashes are C's EXE hash.
+A's live original owner has completed repeated direct Carrier connections to B `47.103.59.206:42050`, QUIC/stream readiness, bound authentication, domain selection and discovery publication/lookup. Historical failure counters are retained, not current Carrier-failure evidence. A has only one verified remote locator. C is stopped after its successful new-code run; D has not installed its new runtime. Fresh C/D owners and readiness, not another direct-delivery retest, are required.
 
-Until a complete package and exact updater are published, C keeps its qualified candidate and preserved original identity/database; D only reports actual current state. Do not start observers or send an object before the four current owners are known.
+B's SSH banner currently times out. This does not contradict working native Carrier. No B update command has run in this round. Use B's available authenticated local/console management, not repeated SSH probes or global VPN/firewall changes. A's browser-control helper also failed initialization; no cloud-console command was executed through it.
 
-User approval 2026-11-17 covers latest AOEM updates on A/B/C/D and continuing real four-host networking. No repeated crash investigations or old-runtime tests. Original a254 node/network protocol remains fixed; this update replaces the AOEM runtime and its matching sidecars, not consensus or transport semantics.
+## Source and artifacts (not deployment acceptance)
 
-## Verified current facts
+- Common NOVOVM runtime baseline: `e8f7d87ba4a22f02cb37eccae35dbbd08ae20d55`. Later receipts/document changes through `b66142c0` do not change that runtime. The subsequent relay module-order change is rustfmt-only; no network logic change.
+- A's original unified Windows packager completed source `353223434eb65379b81a4465098a9cb88647d678` at `2026-11-16T20:29:33Z`. Package: `artifacts/product-overlay/novovm-common-35322343-aoem570-windows-x86_64`. New node SHA256: `0f4cdbf7189d05ceb6b0333e934cec04c43faf84a9399e531fc00566e189d2dc`. Its new-code runtime/network qualification and final archive are not yet complete. Do not install this directory as an accepted candidate yet.
+- AOEM common production baseline: `57090b6b430c3e8f3389186ec2e97cf370a6963a`. A's Windows DLL SHA256: `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`; actual original FullMax bundle qualified. Linux FullMax build is running, not yet qualified/installed on B.
+- C's independently qualified new EXE: `b856ad54cd0092df83a95931f8a15b756efb5be3bca6326e58f0947404560444`; AOEM DLL: `c06c887f9e62db9b407edb0ef1e4faecc985e2603e5de55a7d75fd67dcc3af44`. C is currently stopped, not ready for relay. [C handoff](../novovm-four-host-latest-20261117/README.md).
+- D built/qualified AOEM `59bba373bacbc1af056fa0b7d3df35fc7cb84ca6`, DLL `e7f25d47a61a16820d54e4cebc30818eafd93e65cb2c7a46d72a425df4e9ecce`. A checked the 570-to-59 diff: only test-gated research code, no production runtime change. Keep D's actual qualified hash; do not rebuild only to force byte equality. D has not installed/started this candidate. [D receipt](../validator-d-aoem-latest-59bba373-20261117/README.md).
 
-A already runs latest AOEM source57090b6b, DLL `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`, original a254 EXE, original database/identity `existing`. Do not update/restart A again without an actual need.
+The previous a254-EXE/runtime-only updater was withdrawn and deleted before use. Its 98,511,065-byte AOEM ZIP is **not** a complete new-node package. No host should execute the withdrawn entry, downgrade C, or report a DLL swap as a common-node EXE upgrade.
 
-Fresh A observation at04:09–04:10 disproves an ongoing blanket Carrier-connect failure: repeated actual direct `47.103.59.206:42050` selection, QuicReady, StreamReady, bound authentication, domain selection, publication/lookup and completed close. Seven object-outbound failures are retained cumulative history, not evidence that the latest discovery attempts fail. Only one verified remote locator, and no fresh C/D ready receipts. Do not tune Carrier, disable auth, clear cache, increase timeouts or repeat completed direct tests.
+## Full 43949487014: real failures, not green
 
-## C then D: use this one new Windows runtime ZIP
+Run head: `b66142c0720aab392d773047e5942b6b18ec092f`. [Original run](https://github.com/novovm/supervm/actions/runs/43949487014). Still finishing at this observation; already failed required jobs:
 
-A file:
-`C:\Users\leadb\AppData\Local\NOVOVM\aoem-57090b6b-20261117\aoem-fullmax-57090b6b-windows-x86_64.zip`
+1. Isolation roster omitted the explicitly approved native ASAS member, stopping Rust/component checks before their tests. Fix the explicit roster and independent positive/negative fixtures, not the boundary enforcement.
+2. Node cache looked for a root lockfile and used Node20 although ASAS requires >=22. Keep detected-package `npm ci`/`npm test`; cache nested lockfiles and use Node22.
+3. Native-auth format gate found unsorted ASAS module declarations. Apply rustfmt's module ordering only.
+4. Native recovery build used runner image Ubuntu26.04; pinned RocksDB C++ failed on undeclared `uint64_t`, before recovery tests. Pin the two product/RocksDB Linux jobs to supported Ubuntu24.04 (B's platform). Do not change RocksDB/state formats or skip recovery.
 
-- Bytes: **98,511,065**
-- SHA256: **8fa986515192c9cee246dfdfb3ba8e562c0c4b8b2f2b1457eb9788f984148972**
-- Core DLL SHA256: **f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa**
-- Bundle manifest SHA256: **d85e8a9577c1525e5665be4b74e9f0af7f8c26221002734feca7ff4b98745c75**
+Local revised isolation: real Cargo metadata PASS (23 product/3 preserved members), fixtures 2 accepted/12 refused; CI-scope tests 28/28; native-auth format/guest checks PASS. ASAS `npm ci` and actual `npm test` passed 31/31 on local Node24.19.0; this is not a Node22 cloud result. No full success or four-host result is inferred. Let the original run finish; do not cancel/repeatedly dispatch Full while local fixes/package qualification remain incomplete.
 
-Copy once to the original receiving directory on each machine. Sync main containing this document and `scripts/windows/Update-NovonetAoem570Existing.ps1`. Original a254 program ZIP is not needed. Verify ZIP size/SHA256 before extracting to a fresh directory; the extracted RuntimeRoot directly contains manifest.json, CHECKSUMS.sha256, core/, include/, etc. Do not put unrelated files into this root.
+## Execute next
 
-C Codex: inspect current original process/task and run the updater once in elevated PowerShell7:
-
-```powershell
-& 'D:\WEB3_AI\SUPERVM\scripts\windows\Update-NovonetAoem570Existing.ps1' `
-  -HostId C `
-  -RuntimeRoot 'E:\区块链四机通讯\aoem-fullmax-57090b6b-windows-x86_64' `
-  -EvidenceRoot 'D:\WEB3_AI\SUPERVM\target\C-aoem570-existing-20261117'
-```
-
-Adjust only the checkout/receiving/evidence directories to actual local locations; never use the original database directory as EvidenceRoot. D uses the same entry with `-HostId D`, its actual checkout and fresh D EvidenceRoot. No repeat stop approval is needed. Execute C first; publish actual C health before proceeding D. If a destination/task already exists, inspect its real outcome rather than rerun or overwrite.
-
-The updater verifies all bundle members, pinned original EXE/DLL, and original required capabilities before stopping a node. Only an unambiguous LocalService original node may be stopped. It never initializes or removes LOCK; with node stopped it makes a cold copy, uses original database and identity in existing mode, verifies loaded DLL/hash and state projection, then reports `C_AOEM570_EXISTING_READY_FOR_A_QUERY` or D equivalent. It has no old diagnostic runtime cap, debugger or automatic restart. A failure is preserved; no automatic retry or old-test rerun.
-
-Return `result-public.json` or `error-public.json`, actual script/ZIP SHA256, original process/stop outcome, task state and fresh progress availability. Do not upload private database, protected key files, full environment, raw stdout/progress with business content or old dumps. Runtime key hashes can be compared locally; this upload needs only unchanged=true and actual public hashes. No relay observation window yet: first finish new-runtime/query readiness, then use the existing bounded observers with the correct new progress path.
-
-## B / Linux in parallel preparation
-
-Same fixed AOEM source57090b6b; original Linux FullMax builder and matching native platform qualification are required. Windows hash is not a Linux artifact hash. A has not yet built/qualified or installed this Linux runtime. B SSH currently times out at banner exchange, so no B process/hash receipt has been obtained in this round. A→B native Carrier success is independent of that management-access gap. Do not claim B upgraded, retest old SSH endlessly or alter global VPN/firewall. Resolve an available authenticated management path, qualify the same-source Linux package, then use original novovm identity and existing database owner.
-
-## Next real relay sample
-
-After all four actual versions/readiness are recorded, use the original A diagnostic owner for one A→B→C→D unique object. Adapt only the existing sender/observer deployment/progress path pins to these actual owners; do not bypass source/node/hash/readiness checks. Collect fresh B/C forwarding and final D custody/integrity against the same Object ID/Session/circuit, plus A sender DONE. UDP ACK, discovery Status or selected route is not final Object DONE. Business Receipt/finality remain separate. No object is sent by this document or runtime updater.
+1. Finish native Windows/Linux package qualification and exact hashes, retain genuine failed attempts. Complete the necessary corrected Full once locally ready; light sync is not Full.
+2. Publish one exact new common-node deployment entry with original database/identity `existing`, actual per-host EXE/AOEM manifests, current progress paths and health receipts. A/B need new EXEs, C must not be downgraded, D may use its qualified production-equivalent AOEM build. No initialization or key changes are needed.
+3. Upgrade/verify actual owners in order, using each host's existing lifecycle/account. Do not start observer windows while packages or management access are blocked.
+4. Adapt only the original sender/observer deployment pins. Prepare one actual A→B→C→D circuit, then send one unique object. Retain same Object ID/session/circuit evidence for A sender DONE, B/C actual forwarding and D final custody/integrity/DONE. Route planning, ACK and Status do not replace these results.
+5. Business execution, receipts and three-vote finality remain separate subsequent acceptance. No double-relay object has been sent in this new-code round.

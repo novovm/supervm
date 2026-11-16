@@ -11,6 +11,7 @@ $productPaths = @(
     'crates/novovm-adapter-novovm',
     'crates/gateways/evm-gateway',
     'crates/novovm-adapter-sample-plugin',
+    'crates/plugins/asas',
     'crates/plugins/evm/plugin',
     'crates/plugins/evm/core',
     'crates/novovm-bench',
@@ -101,7 +102,7 @@ $product = New-Metadata $productPaths
 $components = New-Metadata $componentPaths
 $location = (Get-Location).Path
 $output = @(Invoke-CheckerFixture $product $components)
-Assert-True ($output -contains 'PASS: Product has 22 approved members and no legacy dependency.') 'Product roster was not accepted'
+Assert-True ($output -contains 'PASS: Product has 23 approved members and no legacy dependency.') 'Product roster was not accepted'
 Assert-True ($output -contains 'PASS: Preserved components has 3 approved members and no legacy dependency.') 'Component roster was not accepted'
 Assert-True (($script:cargoCalls -join ',') -eq 'Cargo.toml,runtime/Cargo.toml') 'Both workspaces must be checked'
 Assert-True ((Get-Location).Path -eq $location) 'Success changed caller location'
@@ -116,7 +117,7 @@ $caseFeatures.Add('usb', @('feature-b'))
 $caseProduct = New-Metadata $productPaths
 $caseProduct.packages[0] | Add-Member -NotePropertyName features -NotePropertyValue $caseFeatures
 $caseOutput = @(Invoke-CheckerFixture $caseProduct $components)
-Assert-True ($caseOutput -contains 'PASS: Product has 22 approved members and no legacy dependency.') 'Valid case-distinct Cargo features were rejected'
+Assert-True ($caseOutput -contains 'PASS: Product has 23 approved members and no legacy dependency.') 'Valid case-distinct Cargo features were rejected'
 Assert-True ($caseOutput -contains 'PASS: Preserved components has 3 approved members and no legacy dependency.') 'Feature parsing skipped the component boundary'
 Write-Output 'PASS: valid metadata preserves case-distinct USB/usb Cargo features'
 
@@ -137,6 +138,10 @@ $product = New-Metadata $productPaths
 $product.workspace_members = @($product.workspace_members | Where-Object { $_ -ne 'fixture:crates/novovm-storage-budget' })
 $storageManifest = (New-LocalPackage 'crates/novovm-storage-budget').manifest_path
 Assert-Rejected $product $components "Product is missing an approved member: $storageManifest"
+
+$product = New-Metadata @($productPaths | Where-Object { $_ -ne 'crates/plugins/asas' })
+$asasManifest = (New-LocalPackage 'crates/plugins/asas').manifest_path
+Assert-Rejected $product $components "Product is missing an approved member: $asasManifest"
 
 $product = New-Metadata @($productPaths | Where-Object { $_ -ne 'crates/novovm-storage-budget' })
 Assert-Rejected $product $components "Product is missing an approved member: $storageManifest"
@@ -164,5 +169,5 @@ $components = New-Metadata $componentPaths
 Assert-Rejected $product $components 'Product Cargo metadata failed' 'Cargo.toml'
 Assert-True (($script:cargoCalls -join ',') -eq 'Cargo.toml') 'Failed product metadata must stop the checker'
 Assert-Rejected $product $components 'Preserved components Cargo metadata failed' 'runtime/Cargo.toml'
-Write-Output 'PASS: workspace isolation fixtures (2 accepted, 11 refused); no Cargo build invoked'
+Write-Output 'PASS: workspace isolation fixtures (2 accepted, 12 refused); no Cargo build invoked'
 exit 0

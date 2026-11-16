@@ -3,14 +3,15 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
 $legacyPrefix = [IO.Path]::GetFullPath((Join-Path $repoRoot 'legacy')) + [IO.Path]::DirectorySeparatorChar
 
-# Twenty-one explicit approved product members, plus the existing EVM core path
-# dependency which Cargo automatically includes as a workspace member.
+# Explicit approved product members, including the native ASAS L3 host and the
+# existing EVM core path dependency automatically included by Cargo.
 $productMembers = @(
     'crates/aoem-bindings',
     'crates/novovm-adapter-api',
     'crates/novovm-adapter-novovm',
     'crates/gateways/evm-gateway',
     'crates/novovm-adapter-sample-plugin',
+    'crates/plugins/asas',
     'crates/plugins/evm/plugin',
     'crates/plugins/evm/core',
     'crates/novovm-bench',
