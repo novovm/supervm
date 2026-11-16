@@ -1,5 +1,19 @@
 # a25452f4: approved existing updates, then real double relay
 
+## CURRENT 2026-11-17 A已切最新AOEM，旧轮终态已封存，返回网络主线
+
+A旧轮03:32:24自然到界exit0、任务结果0，运行4480.838秒，stderr空、同期新增WHEA0。
+未复现C同类异常，不代表C硬件已证实有错；不再重跑旧版本或以旧案归因作为主线前置。
+最新AOEM57090b6b完整固定包及原节点兼容已通过，A03:32:31由LocalService以原库existing启动。
+实际PID28124，进程加载SHA256=f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa；
+原身份/状态根投影一致，未初始化/换钥。04:05以后复核仍健康、stderr空、无新WHEA，
+41051/42051监听。详见[完整实际回执](../../aoem-latest-57090b6b-20261117/A-actual-results.json)。
+
+B/C/D未因此换包或启动。新A健康不替双中继验收：当前原观察仅1份有效locator、
+0条installed bound route，Carrier出站连接超时；一轮B只读SSH亦横幅超时，未获得B现场。
+下一项沿原NOVONET恢复实际对端发现/Carrier就绪再继续双中继，不重做已通过直连，
+不增加新网络或降低认证/配额；不要把A换库成功写成C崩溃修复或四机验收完成。
+
 ## 2026-11-17 A原库有界对照已启动，尚无终态
 
 用户要求在A核对是否同样崩溃。A于北京时间02:17:44实际启动原a254 PID21480，

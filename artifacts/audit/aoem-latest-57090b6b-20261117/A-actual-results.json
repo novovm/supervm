@@ -1,0 +1,69 @@
+{
+  "observed_utc": "2026-11-16T20:07:15.5498151Z",
+  "old_run": {
+    "whea_query_complete": true,
+    "aoem966": false,
+    "root_cause_fixed": false,
+    "exit": {
+      "exit_code": 0,
+      "forced_by_this_script": false,
+      "utc": "2026-11-16T19:32:24.716924Z",
+      "elapsed_seconds": 4480.8377926
+    },
+    "height": 1,
+    "executed_batches": 0,
+    "task_result": 0,
+    "stderr_bytes": 0,
+    "whea": [],
+    "ticks": 6156152,
+    "execution_failures": 0
+  },
+  "new_A": {
+    "alive": true,
+    "start": "existing",
+    "entry": "original_native_execution_tick",
+    "pid": 28124,
+    "whea_query_complete": true,
+    "bound_udp_ports": [
+      42051,
+      41051
+    ],
+    "ticks": 4677840,
+    "height": 1,
+    "recovering": false,
+    "loaded_library_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+    "created_utc": "2026-11-16T19:32:31.8210980Z",
+    "execution_failures": 0,
+    "native_state_and_identity_preserved": true,
+    "stderr_bytes": 0,
+    "executed_batches": 0,
+    "source": "57090b6b430c3e8f3389186ec2e97cf370a6963a",
+    "whea": []
+  },
+  "network": {
+    "B_ssh_readonly_attempt": "banner exchange timed out; no remote command completion",
+    "verified_locator_count": 1,
+    "relay_active": false,
+    "installed_bound_peer_routes": 0,
+    "carrier_failure_summary": {
+      "available": true,
+      "first": {
+        "ordinal": 1,
+        "stage": "object_outbound",
+        "peer": 1,
+        "error": "native carrier IO failed: connection aborted"
+      },
+      "last": {
+        "ordinal": 7,
+        "stage": "object_outbound",
+        "peer": 1,
+        "error": "carrier connect unavailable: timed out: timed out: timed out: timed out: timed out: timed out"
+      },
+      "omitted": 0
+    }
+  },
+  "C_hardware_failure_proven": false,
+  "historical_crash_fixed": false,
+  "four_host_acceptance": false,
+  "old_run_repeated": false
+}

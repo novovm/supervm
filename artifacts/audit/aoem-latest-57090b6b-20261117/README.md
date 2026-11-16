@@ -1,5 +1,15 @@
 # A: latest AOEM candidate preparation
 
+## Actual switch completed: Beijing03:32, live checked04:05 onward
+
+Old PID21480 ended at03:32:24.716,4480.838seconds, natural configured time-bound exit0, task result0; not forcibly stopped. stderr0bytes; WHEA query for the exact run completed with0new records. Final periodic ticks6156152, height1, executed_batches0, execution_failures0. No observed C-like natural crash during this bounded old-library run; this does not prove C hardware faulty or the old corruptor repaired. No old test rerun.
+
+The serial workflow retained that terminal evidence and made a cold copy of the original database after all node processes exited. New A PID28124 started at03:32:31.821 as LocalService, original a254 EXE, original identity and database `existing`, latest AOEM source57090b6b. Actual loaded DLL SHA256 `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa` verified from process modules. New state projection and protected identity-file hashes match before switch. No initialize, new keys, cache clearing, firewall change or B/C/D update.
+
+At live check04:05:35, new process remained alive ~33minutes, fresh original-native progress, height1, recoveryfalse, execution_failures0, stderr0bytes, native UDP41051/42051 listening, no new WHEA. This is actual startup/continued health, not sustained transaction/finality or four-machine relay acceptance. The new owner has no old24-hour experimental runtime cap and no automatic restart. Product source/protocol unchanged by this AOEM switch.
+
+[Actual exit, WHEA, loaded hash and live network result](A-actual-results.json). Mainline resumes on this new A runtime, not old-crash analysis. Current read-only network observation has only1verified locator,0installed bound peer routes and Carrier object-outbound connection timeouts; relay inactive. One read-only B SSH attempt timed out at banner exchange, so no B service state was obtained; no repeated SSH investigation or remote mutation. These network gaps remain distinct from new AOEM startup success. Next work is original NOVONET discovery/Carrier peer readiness and pending double-relay delivery, not another old-runtime stability test.
+
 ## Update: fixed bundle and new-library compatibility qualified, Beijing02:59
 
 User removed the indicated cache; D free rose to34.05GiB. Original FullMax builder completed11m25s, source unchanged. Original validation passed148 public header exports,14 plugin files, actual native load, C example checks and unified compute smoke; no full GPU/proof/performance claim. Core SHA256 `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`,49140736bytes. All manifest/checksums retained. [Public qualification](qualified-public.json).
