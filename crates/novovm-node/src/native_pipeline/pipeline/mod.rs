@@ -545,6 +545,7 @@ pub(crate) struct SignatureWork {
     strict_verified: Arc<AtomicU64>,
     reused: AtomicU64,
     uca_batch_calls: AtomicU64,
+    application_batch_calls: AtomicU64,
     asset_prepared_at_startup: AtomicBool,
     asset_startup_us: AtomicU64,
 }
@@ -571,10 +572,16 @@ impl CandidatePipeline {
             self.signatures.reused.load(Ordering::Relaxed),
         )
     }
-    /// Business verification calls only, excluding capability qualification/KAT.
+    /// Asset business verification calls only, excluding qualification/KAT.
     /// A failed call is counted; this is neither successful rows nor finality.
     pub fn signature_batch_calls(&self) -> u64 {
         self.signatures.uca_batch_calls.load(Ordering::Relaxed)
+    }
+    /// Application-purpose batches, not published grants or logins.
+    pub fn application_signature_batch_calls(&self) -> u64 {
+        self.signatures
+            .application_batch_calls
+            .load(Ordering::Relaxed)
     }
     /// Startup qualification is separate from timed business verification calls.
     pub fn signature_startup(&self) -> (bool, u64) {
@@ -895,6 +902,8 @@ impl Drop for CandidatePipeline {
     }
 }
 
+#[cfg(test)]
+mod application_input_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

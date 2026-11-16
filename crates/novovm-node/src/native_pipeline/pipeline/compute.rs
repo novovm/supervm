@@ -741,6 +741,113 @@ fn admit_uca_rows(
     })
 }
 
+fn admit_application_rows(
+    facade: &mut Option<novovm_exec::uca_application::ApplicationGrantVerifierV1>,
+    config: &ComputeConfig,
+    inputs: Vec<AdmissionInput>,
+) -> Result<AdmissionRows> {
+    use novovm_protocol::uca_application::SignedApplicationGrantV1;
+    let (bytes, max) = admission_sizes(&inputs)?;
+    ensure!(
+        !inputs.is_empty()
+            && inputs.len() <= config.authentication.transactions
+            && inputs.len() <= novovm_exec::pq_signature::MLDSA_VERIFY_BATCH_MAX_ITEMS
+            && max <= config.authentication.transaction_bytes
+            && bytes <= config.authentication.body_bytes
+            && admission_retained_bytes(&inputs)? <= config.authentication.body_bytes,
+        "application signature admission exceeds input budget"
+    );
+    ensure!(
+        inputs
+            .iter()
+            .all(|input| matches!(input, AdmissionInput::Application(_))),
+        "application signature admission requires application rows only"
+    );
+    // Keep malformed/wrong-domain rows in place. Only eligible commands reach
+    // the original AOEM batch owner, without scalar retries on rejected rows.
+    let mut errors = Vec::with_capacity(inputs.len());
+    let mut signed = Vec::with_capacity(inputs.len());
+    for input in &inputs {
+        let decoded: Result<_> = (|| {
+            let AdmissionInput::Application(raw) = input else {
+                unreachable!("checked contract");
+            };
+            let signed = SignedApplicationGrantV1::decode(raw)?;
+            ensure!(
+                signed.intent.selector.chain_id == config.domain.chain_id
+                    && signed.intent.selector.genesis == config.domain.genesis_config_commitment,
+                "application authentication domain mismatch"
+            );
+            Ok(signed)
+        })();
+        match decoded {
+            Ok(value) => {
+                signed.push(value);
+                errors.push(None);
+            }
+            Err(error) => errors.push(Some(error)),
+        }
+    }
+    let count = signed.len();
+    let verified = if count == 0 {
+        Vec::new()
+    } else {
+        if facade.is_none() {
+            let selection = novovm_exec::resident::AoemLibrarySelection::new(
+                &config.library,
+                novovm_exec::AoemExecOpenOptions {
+                    ingress_workers: Some(config.workers),
+                },
+            )?;
+            *facade = Some(
+                selection
+                    .open_wire_facade()?
+                    .application_grant_verifier_with_backend_v1(config.signature_backend)?,
+            );
+        }
+        config
+            .signatures
+            .application_batch_calls
+            .fetch_add(1, Ordering::Relaxed);
+        facade
+            .as_ref()
+            .context("application verifier unavailable")?
+            .verify_batch(signed)?
+    };
+    ensure!(
+        verified.len() == count,
+        "application batch verification result count"
+    );
+    let mut verified = verified.into_iter();
+    let mut rows = std::collections::VecDeque::with_capacity(inputs.len());
+    for (input, error) in inputs.into_iter().zip(errors) {
+        let result = if let Some(error) = error {
+            Err(error)
+        } else {
+            verified
+                .next()
+                .context("application verification row missing")?
+                .and_then(|checked| {
+                    let fact = checked.into_signature_fact()?;
+                    config
+                        .signatures
+                        .strict_verified
+                        .fetch_add(1, Ordering::Relaxed);
+                    Ok(CheckedAdmission::Application(Box::new(fact)))
+                })
+        };
+        rows.push_back(AdmissionRow { input, result });
+    }
+    ensure!(
+        verified.next().is_none(),
+        "extra application verification row"
+    );
+    Ok(AdmissionRows {
+        rows,
+        peak_callbacks: 0,
+    })
+}
+
 fn execute(
     session: &mut ComputeSession,
     config: &ComputeConfig,
@@ -781,6 +888,7 @@ fn run_owner(
     notification: &Notification,
     failed: &AtomicBool,
 ) {
+    let mut application_facade = None;
     // The required verifier was qualified on this same owner before ready.
     // Reference-only pipelines retain lazy qualification if a test submits UCA.
     while let Ok(queued) = receiver.recv() {
@@ -802,6 +910,12 @@ fn run_owner(
                     crate::native_pipeline::profile::Phase::Admission,
                 );
                 let result = lanes::checked(failed, || {
+                    if inputs
+                        .iter()
+                        .any(|input| matches!(input, AdmissionInput::Application(_)))
+                    {
+                        return admit_application_rows(&mut application_facade, config, inputs);
+                    }
                     if inputs
                         .iter()
                         .any(|input| matches!(input, AdmissionInput::Uca { .. }))

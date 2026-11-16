@@ -136,6 +136,7 @@ impl Pending {
                 (bytes == self.canonical_len).then_some(bytes)
             }
             AdmissionInput::Raw(_) | AdmissionInput::Apfl { .. } => Some(self.canonical_len),
+            AdmissionInput::Application(_) => None,
         }
     }
 
@@ -221,6 +222,9 @@ impl Pending {
             AdmissionInput::Raw(raw) => decode_transfer_view_v3(raw, 1024),
             AdmissionInput::Apfl { batch, index } => batch.row(*index),
             AdmissionInput::Uca { .. } => anyhow::bail!("NUAS is not a V3 transfer view"),
+            AdmissionInput::Application(_) => {
+                anyhow::bail!("application command is not a transfer")
+            }
         }
     }
 
@@ -228,7 +232,7 @@ impl Pending {
         match &self.input {
             AdmissionInput::Raw(raw) => view.matches_canonical_bytes(raw),
             AdmissionInput::Apfl { batch, index } => Ok(view == batch.row(*index)?),
-            AdmissionInput::Uca { .. } => Ok(false),
+            AdmissionInput::Uca { .. } | AdmissionInput::Application(_) => Ok(false),
         }
     }
 }
@@ -257,6 +261,9 @@ impl std::error::Error for PoolBackpressure {}
 impl PoolRetention {
     fn reserve(&mut self, input: &AdmissionInput, metadata: usize, limit: usize) -> Result<()> {
         let (owner, payload) = match input {
+            AdmissionInput::Application(_) => {
+                anyhow::bail!("application publication is not active")
+            }
             AdmissionInput::Raw(raw) => (None, raw.capacity()),
             AdmissionInput::Apfl { batch, .. } => {
                 let key = Arc::as_ptr(batch) as usize;
@@ -306,7 +313,9 @@ impl PoolRetention {
         self.bytes -= metadata;
         self.metadata_bytes -= metadata;
         match input {
-            AdmissionInput::Raw(raw) => self.bytes -= raw.capacity(),
+            AdmissionInput::Raw(raw) | AdmissionInput::Application(raw) => {
+                self.bytes -= raw.capacity()
+            }
             AdmissionInput::Apfl { batch, .. } => {
                 let key = Arc::as_ptr(batch) as usize;
                 let record = self.owners.get_mut(&key).expect("retained pool owner");
@@ -1134,6 +1143,11 @@ impl RpcLifecycle {
         broadcast: bool,
     ) -> Result<Hash> {
         ensure!(
+            !matches!(input, AdmissionInput::Application(_))
+                && admitted.checked_application().is_none(),
+            "application signature evidence cannot enter the asset pool"
+        );
+        ensure!(
             self.node.template.business_program
                 == crate::native_pipeline::business::nov_transfer_batch::program_id(),
             "UCA native asset admission is not active; legacy V3 admission is forbidden"
@@ -1150,7 +1164,7 @@ impl RpcLifecycle {
             crate::native_pipeline::pipeline::AdmissionInput::Apfl { batch, index } => {
                 checked.transfer() == batch.row(*index)?
             }
-            AdmissionInput::Uca { .. } => false,
+            AdmissionInput::Uca { .. } | AdmissionInput::Application(_) => false,
         };
         ensure!(matches, "admission signature/input mismatch");
         // Signature-checked memory admission is not current-state admission.
@@ -1581,6 +1595,7 @@ fn retain_admitted_for_pool(
     admitted: AdmittedTransfer,
 ) -> Result<Option<AdmittedTransfer>> {
     match input {
+        AdmissionInput::Application(_) => anyhow::bail!("application cannot enter the asset pool"),
         AdmissionInput::Apfl { batch, index } => {
             // Value equality alone does not identify retained memory: a token
             // from another dictionary could pin uncharged source bytes.
@@ -2314,6 +2329,38 @@ mod tests {
     }
 
     #[test]
+    fn application_commands_cannot_be_retained_or_selected_as_asset_transfers() -> Result<()> {
+        let input = AdmissionInput::Application(vec![0; 64]);
+        let mut retention = PoolRetention::default();
+        assert!(retention.reserve(&input, 64, 4096).is_err());
+        assert_eq!(retention.bytes, 0);
+        assert_eq!(retention.metadata_bytes, 0);
+        assert!(retention.owners.is_empty());
+        let entry = Pending {
+            input,
+            admitted: None,
+            canonical_len: 64,
+            signer: [1; 32],
+            nonce: 0,
+            gossip_missing: 0,
+        };
+        assert_eq!(entry.selection_input_bytes(), None);
+        assert!(entry.view().is_err());
+        let raw = super::super::tests::signed_raw(19, 0);
+        assert!(!entry.matches(decode_transfer_view_v3(&raw, 1024)?)?);
+        let hash = [2; 32];
+        assert!(select_pending_batch(
+            &VecDeque::from([hash]),
+            &BTreeMap::from([(hash, entry)]),
+            &BTreeMap::from([([1; 32], 0)]),
+            BTreeMap::new(),
+            1,
+        )
+        .is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn batch_selection_obeys_network_byte_limit_without_dropping_pending_or_nonce_credit() {
         let (order, pending) = pending_fixture(1024, 1024);
         let known = BTreeMap::from([([1; 32], 0)]);
@@ -2369,6 +2416,9 @@ mod tests {
             .iter()
             .map(|hash| match &pending[hash].input {
                 AdmissionInput::Raw(raw) => raw.clone(),
+                AdmissionInput::Application(_) => {
+                    panic!("application cannot be selected as an asset")
+                }
                 AdmissionInput::Apfl { batch, index } => batch.canonical_raw(*index).unwrap(),
                 AdmissionInput::Uca { batch, index } => batch.raw_transaction(*index).unwrap(),
             })

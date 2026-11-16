@@ -114,6 +114,7 @@ impl From<Vec<Vec<u8>>> for BatchSource {
 /// signature-checked capability; only the shared verifier below creates it.
 pub enum AdmissionInput {
     Raw(Vec<u8>),
+    Application(Vec<u8>),
     Apfl {
         batch: Arc<ApflTransferBatch>,
         index: usize,
@@ -127,7 +128,7 @@ pub enum AdmissionInput {
 impl AdmissionInput {
     pub fn encoded_len(&self) -> Result<usize> {
         match self {
-            Self::Raw(raw) => Ok(raw.len()),
+            Self::Raw(raw) | Self::Application(raw) => Ok(raw.len()),
             Self::Apfl { batch, index } => batch.row(*index)?.encoded_len(),
             Self::Uca { batch, index } => Ok(batch.transaction_bytes(*index)?),
         }
@@ -136,7 +137,7 @@ impl AdmissionInput {
     /// Preserve raw allocations; project just this structured row when needed.
     pub fn into_raw(self) -> Result<Vec<u8>> {
         match self {
-            Self::Raw(raw) => Ok(raw),
+            Self::Raw(raw) | Self::Application(raw) => Ok(raw),
             Self::Apfl { batch, index } => batch.canonical_raw(index),
             Self::Uca { batch, index } => Ok(batch.raw_transaction(index)?),
         }
@@ -148,9 +149,10 @@ pub struct AdmissionRow {
     pub result: Result<CheckedAdmission>,
 }
 
-/// Separate verified contracts. A UCA result cannot become a V3 capability.
+/// Separate verified contracts. Application evidence is never an asset or V3 capability.
 pub enum CheckedAdmission {
     V3(SignatureCheckedTransfer),
+    Application(Box<novovm_exec::uca_application::ApplicationGrantSignatureFactV1>),
     Uca {
         checked: novovm_exec::uca_spend::AssetSpendSignatureFactV3,
         batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
@@ -162,14 +164,23 @@ impl CheckedAdmission {
     pub fn v3(&self) -> Option<&SignatureCheckedTransfer> {
         match self {
             Self::V3(value) => Some(value),
-            Self::Uca { .. } => None,
+            Self::Uca { .. } | Self::Application(_) => None,
         }
     }
 
     pub fn uca(&self) -> Option<&novovm_exec::uca_spend::AssetSpendSignatureFactV3> {
         match self {
             Self::Uca { checked, .. } => Some(checked),
-            Self::V3(_) => None,
+            Self::V3(_) | Self::Application(_) => None,
+        }
+    }
+
+    pub fn application(
+        &self,
+    ) -> Option<&novovm_exec::uca_application::ApplicationGrantSignatureFactV1> {
+        match self {
+            Self::Application(checked) => Some(checked),
+            Self::V3(_) | Self::Uca { .. } => None,
         }
     }
 
@@ -231,6 +242,9 @@ impl AuthenticationSource for Vec<AdmissionInput> {
                 authenticate_apfl_row(batch.clone(), *index, chain)
             }
             AdmissionInput::Uca { .. } => anyhow::bail!("NUAS cannot use V3 signature admission"),
+            AdmissionInput::Application(_) => {
+                anyhow::bail!("application commands cannot use V3 signature admission")
+            }
         }
     }
 }
@@ -256,6 +270,7 @@ pub(crate) fn admission_retained_bytes(inputs: &[AdmissionInput]) -> Result<usiz
     for input in inputs {
         let retained = match input {
             AdmissionInput::Raw(raw) => raw.len(),
+            AdmissionInput::Application(raw) => raw.capacity(),
             AdmissionInput::Apfl { batch, .. }
                 if owners.insert((0u8, Arc::as_ptr(batch) as usize)) =>
             {

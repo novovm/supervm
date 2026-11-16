@@ -81,6 +81,12 @@ impl AdmittedTransfer {
         self.checked_uca().is_some()
     }
 
+    pub fn checked_application(
+        &self,
+    ) -> Option<&novovm_exec::uca_application::ApplicationGrantSignatureFactV1> {
+        self.checked.application()
+    }
+
     pub fn matches_uca_source(
         &self,
         batch: &Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
@@ -107,6 +113,9 @@ impl AdmittedTransfer {
             + self
                 .checked_uca()
                 .map_or(0, |checked| checked.intent().retained_heap_bytes())
+            + self.checked_application().map_or(0, |checked| {
+                std::mem::size_of_val(checked) + checked.intent().selector.identity.as_str().len()
+            })
     }
 }
 
@@ -270,12 +279,21 @@ impl SignatureAdmissionRequest {
 
     pub fn new(inputs: Vec<AdmissionInput>) -> Result<Self> {
         ensure!(!inputs.is_empty(), "empty signature admission request");
-        let uca = matches!(&inputs[0], AdmissionInput::Uca { .. });
+        let family = |input: &AdmissionInput| match input {
+            AdmissionInput::Raw(_) | AdmissionInput::Apfl { .. } => 0,
+            AdmissionInput::Uca { .. } => 1,
+            AdmissionInput::Application(_) => 2,
+        };
         ensure!(
             inputs
                 .iter()
-                .all(|input| matches!(input, AdmissionInput::Uca { .. }) == uca),
-            "mixed UCA and V3 signature admission is forbidden"
+                .all(|input| family(input) == family(&inputs[0])),
+            "mixed application, UCA and V3 signature admission is forbidden"
+        );
+        ensure!(
+            family(&inputs[0]) != 2
+                || inputs.len() <= novovm_exec::pq_signature::MLDSA_VERIFY_BATCH_MAX_ITEMS,
+            "application signature batch exceeds verifier limit"
         );
         let (body_bytes, max_transaction_bytes) = admission_sizes(&inputs)?;
         let retained_bytes = admission_retained_bytes(&inputs)?;
@@ -289,6 +307,11 @@ impl SignatureAdmissionRequest {
 
     pub fn from_raw(raw: Vec<Vec<u8>>) -> Result<Self> {
         Self::new(raw.into_iter().map(AdmissionInput::Raw).collect())
+    }
+
+    /// Signature admission only; this does not submit a state transition.
+    pub fn from_application(raw: Vec<Vec<u8>>) -> Result<Self> {
+        Self::new(raw.into_iter().map(AdmissionInput::Application).collect())
     }
 
     pub fn from_apfl(batch: Arc<ApflTransferBatch>) -> Result<Self> {

@@ -704,6 +704,9 @@ impl RpcLifecycle {
             AdmissionInput::Raw(raw) => decode_transfer_view_v3(raw, 1024)?,
             AdmissionInput::Apfl { batch, index } => batch.row(*index)?,
             AdmissionInput::Uca { .. } => unreachable!("handled above"),
+            AdmissionInput::Application(_) => {
+                anyhow::bail!("application publication is not active")
+            }
         };
         let hash = view.canonical_tx_hash()?;
         let exact = match self.pending.get(&hash) {

@@ -175,10 +175,36 @@ Present 包含根/高度、revision、签发与当前身份钥引用、身份状
 分别确认已登记身份无授权、未知身份、错误 chain/genesis 拒绝；均在原初始化根/高度 0。
 Present/撤销/失效投影另由原树状态组件与协议测试验证，不把它算作网络发布成功。
 
-应用写入尚未接原 native typed admission/body/effect/receipt、packet/journal 和冷恢复。
+应用签名准入已接原队列（见下节）；应用写入尚未接原 body/effect/receipt、
+packet/journal 和冷恢复。
 当前服务固定资产业务 pin，不能仅改为应用专用 program 或借零金额转账写入；下一片
 沿原路径扩展明确版本化的资产+应用复合契约，并明确受限资源/费用责任，不从现有签名
 推导付款授权，不实际扣 NOV。查询接线不开放 ASAS UCA 登录；现有显式节点授权保留。
+
+### 原计算所有者的应用签名准入（2026-11-15）
+
+`SignatureAdmissionRequest::from_application` 使用独立输入/验签结果类型，复用原有
+保留内存预留、单 ingress 槽、driver/compute 队列及配置的 AOEM 库/验签后端。
+不增加原生 wire 提交入口、第二调度器或状态库；不与资产/V3 混批。
+输入按原始 Vec capacity 及最大批行数受限。解码和 chain/genesis 检查后，合格行
+进入一次 AOEM 批验；格式、域、签发钥或签名错误保留原行位置，运行库失败不标量重试。
+
+`ApplicationGrantSignatureFactV1` 无公开构造器/serde，只能由严格验签产生，绑定精确
+意图、ML-DSA-65、用途、公钥和签名字节；重新签署同一意图不能复用旧事实。
+`AdmittedTransfer::checked_application` 只取应用事实，原资产/V3 accessor 不接受它；
+原资产 pool、视图和候选结构化重绑定拒绝应用输入，不能借资产业务发布授权。
+应用/资产批次统计分开，成功验签仍不证明当前身份、应用许可、共识接受或登录完成。
+
+本轮原 pipeline 60、RPC 16、真实应用准入 1、原资产真实准入 1、实际 ML-DSA 组件 2、
+防构造/serde doctest 3，共 83 个不同定向测试通过；exec/node lib/tests 严格 Clippy、
+定向格式及 diff 检查通过。实际准入用上方已资格验证的隔离 ARM 库及临时测试密钥/库，
+测试名为 `actual_mldsa_application_admission_rejects_rows_without_asset_authority`；
+含原队列、计算所有者、错误行保序、owner 隔离、原 metadata 无发布头及拒绝转账重绑定。
+组件测试另验证精确签名字节重附及同一意图重新签署后旧事实不可复用；不称真实授权发布。
+
+本阶段没有应用候选正文/效应/回执及发布恢复接线。下一片沿原发布所有者接资产+应用
+版本化复合业务契约和撤销记录；之后才将当前可信授权状态用于 ASAS 登录挑战。
+授权指令没有签署付款/赞助合同，不能据此扣 NOV；显式节点授权及已有会话行为不变。
 
 ## 验证与限制
 
