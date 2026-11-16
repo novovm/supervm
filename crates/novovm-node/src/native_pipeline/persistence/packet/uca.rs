@@ -1,4 +1,4 @@
-//! Explicit asset-account v3 archive extension on the original packet/store.
+//! Explicit asset-account archive branches on the original packet/store.
 //! These are bounded content/continuity checks, not cryptographic verification,
 //! a trusted-parent proof or a reconstruction of the economic execution plan.
 use super::*;
@@ -50,7 +50,7 @@ pub(super) fn validate_receipts(
     mut projection: Option<&mut Vec<ReceiptProjection>>,
 ) -> Result<()> {
     ensure!(
-        is_profile(plan.context()),
+        is_profile(plan.context()) || application::is_profile(plan.context()),
         "unsupported UCA candidate profile"
     );
     ensure!(

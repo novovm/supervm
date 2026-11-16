@@ -31,6 +31,8 @@ use novovm_protocol::{
 use sha2::{Digest, Sha256};
 use std::{net::UdpSocket, path::PathBuf};
 
+mod application;
+
 const IDS: [&str; 2] = ["uca:native-alice", "uca:native-bob"];
 const ADDRESSES: [[u8; 20]; 2] = [[11; 20], [12; 20]];
 const TIMEOUT: Duration = Duration::from_secs(45);
@@ -404,6 +406,12 @@ fn actual_native_uca_identity_readonly_query() -> Result<()> {
 }
 
 #[test]
+#[ignore = "qualified AOEM; four original services, real UDP V4 application/asset publication and cold recovery, run alone"]
+fn actual_native_uca_application_publication_and_cold_recovery() -> Result<()> {
+    run_native_uca_service_fixture_with_versioned(false, None, None, false, false, true)
+}
+
+#[test]
 #[ignore = "qualified AOEM; real four-service proportional-fee publication/replay and original RocksDB cold recovery"]
 fn actual_native_proportional_fee_respend_and_cold_recovery() -> Result<()> {
     use crate::native_pipeline::business::direct_nov_fee::{
@@ -448,6 +456,24 @@ fn run_native_uca_service_fixture_with(
     amount_policy: Option<DirectNovFeePolicy>,
     learn_routes: bool,
     identity_only: bool,
+) -> Result<()> {
+    run_native_uca_service_fixture_with_versioned(
+        pool_pressure,
+        gossip_check,
+        amount_policy,
+        learn_routes,
+        identity_only,
+        false,
+    )
+}
+
+fn run_native_uca_service_fixture_with_versioned(
+    pool_pressure: bool,
+    gossip_check: Option<GossipServiceCheck>,
+    amount_policy: Option<DirectNovFeePolicy>,
+    learn_routes: bool,
+    identity_only: bool,
+    application_mode: bool,
 ) -> Result<()> {
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
@@ -552,14 +578,42 @@ fn run_native_uca_service_fixture_with(
             })
             .collect::<Result<Vec<_>>>()?,
     };
-    let domain = manifest.signing_domain()?;
+    let version = if application_mode { 3 } else { 2 };
+    let domain = manifest.signing_domain_for_version(version)?;
     let approval_keys = keys
         .iter()
         .map(|(p, s)| (p.as_slice(), s.as_slice()))
         .collect::<Vec<_>>();
-    let approvals = approve_manifest(&runtime, &manifest, &approval_keys)?;
-    let initial = manifest.compile(&runtime, domain, &approvals)?;
+    let approvals = if application_mode {
+        let plan = manifest.prepare_approvals_for_version(version)?;
+        let signer = runtime.mldsa_signer_v1(AoemMldsaParameterSet::MlDsa65)?;
+        plan.subjects()
+            .map(|(subject, public)| {
+                let (_, secret) = approval_keys
+                    .iter()
+                    .find(|(key, _)| *key == public)
+                    .context("application fixture lacks subject-purpose key")?;
+                Ok(config::uca_genesis::UcaGenesisApprovalV2 {
+                    subject: subject.clone(),
+                    signature: signer.sign(
+                        public,
+                        secret,
+                        &plan.signing_bytes(subject)?,
+                        plan.signing_context(),
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        approve_manifest(&runtime, &manifest, &approval_keys)?
+    };
+    let initial = if application_mode {
+        manifest.compile_for_version(version, &runtime, domain, &approvals)?
+    } else {
+        manifest.compile(&runtime, domain, &approvals)?
+    };
     let material = UcaInitializationConfigV2 {
+        version,
         pages: vec![],
         identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),
@@ -637,6 +691,17 @@ fn run_native_uca_service_fixture_with(
         .iter()
         .map(|config| connect(config, validators.clone(), client_identity.clone()))
         .collect::<Result<Vec<_>>>()?;
+    if application_mode {
+        return application::run(
+            &runtime,
+            &configs,
+            &keys,
+            nodes,
+            clients,
+            ingress,
+            client_identity,
+        );
+    }
     if identity_only {
         use novovm_protocol::native_query::{
             ApplicationGrantStateV1, IdentityStateV1, IdentityStatusV1, QueryError, UcaIdentityIdV1,

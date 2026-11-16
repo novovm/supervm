@@ -13,6 +13,10 @@ use crate::native_pipeline::business::nov_transfer_batch::{
     uca_receipt_codec,
 };
 use crate::native_pipeline::business::quoted_transfer::Account;
+use crate::native_pipeline::business::uca_application::{
+    application_effect_contract_v1, application_program_id_v1, application_receipt_codec_v1,
+    APPLICATION_SEMANTIC_VERSION_V1,
+};
 use crate::native_pipeline::business::uca_spend_state::{
     account_record_changes, grant_record_changes, identity_association_changes,
     identity_record_changes, AssetAccountAuthorityV2,
@@ -39,9 +43,24 @@ use std::collections::{BTreeMap, BTreeSet};
 // The Rust data structures remain shared with existing callers. The signed
 // contract is explicitly v3: a bounded transcript commits the entire manifest.
 pub const INITIALIZATION_CONTEXT_V2: &[u8] = b"NOVOVM/identity-and-asset/genesis-init/v3";
+pub const INITIALIZATION_CONTEXT_V3: &[u8] = b"NOVOVM/identity-and-asset/genesis-init/v4";
 pub const MAX_INITIAL_GRANTS_PER_ACCOUNT: usize = 8;
+#[cfg(test)]
+mod application_tests;
 mod pages;
 pub use pages::UcaGenesisManifestPagesV3;
+
+fn legacy_initialization_version() -> u32 {
+    2
+}
+
+fn validate_initialization_version(version: u32) -> Result<()> {
+    ensure!(
+        matches!(version, 2 | 3),
+        "unsupported UCA initialization version"
+    );
+    Ok(())
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,6 +158,10 @@ pub enum UcaGenesisApprovalSubjectV2 {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UcaInitializationConfigV2 {
+    /// Missing versions retain legacy approvals. Only explicit v3 opts into
+    /// the composite asset/application profile in a freshly approved domain.
+    #[serde(default = "legacy_initialization_version")]
+    pub version: u32,
     #[serde(default)]
     pub identities: Vec<UcaGenesisIdentityV2>,
     #[serde(default)]
@@ -155,7 +178,12 @@ pub struct UcaInitializationConfigV2 {
 }
 
 impl UcaInitializationConfigV2 {
+    pub fn application_authority_enabled(&self) -> bool {
+        self.version == 3
+    }
+
     pub fn validate_manifest(&self, genesis: &GenesisConfig) -> Result<UcaGenesisManifestV2> {
+        validate_initialization_version(self.version)?;
         ensure!(
             self.expected_signing_domain != [0; 32]
                 && self.expected_initial_root != [0; 32]
@@ -208,7 +236,7 @@ impl UcaInitializationConfigV2 {
             accounts: self.accounts.clone(),
         };
         ensure!(
-            manifest.signing_domain()? == self.expected_signing_domain,
+            manifest.signing_domain_for_version(self.version)? == self.expected_signing_domain,
             "UCA initialization manifest/domain mismatch"
         );
         Ok(manifest)
@@ -221,7 +249,12 @@ impl UcaInitializationConfigV2 {
         runtime: &AoemExecFacade,
     ) -> Result<VerifiedUcaGenesisV2> {
         let manifest = self.validate_manifest(genesis)?;
-        let verified = manifest.compile(runtime, self.expected_signing_domain, &self.approvals)?;
+        let verified = manifest.compile_for_version(
+            self.version,
+            runtime,
+            self.expected_signing_domain,
+            &self.approvals,
+        )?;
         ensure!(
             verified.signing_domain() == self.expected_signing_domain
                 && verified.state().root() == self.expected_initial_root
@@ -423,6 +456,28 @@ impl UcaGenesisManifestV2 {
         Ok(Sha256::digest(self.canonical_bytes()?).into())
     }
 
+    /// Config v2 retains the exact historical v3 transcript. Config v3 binds
+    /// that asset/identity manifest AND the composite application's V4 pins.
+    pub fn canonical_bytes_for_version(&self, version: u32) -> Result<Vec<u8>> {
+        validate_initialization_version(version)?;
+        let legacy = self.canonical_bytes()?;
+        if version == 2 {
+            return Ok(legacy);
+        }
+        let mut out = b"NOVOVM/identity-and-asset/initial-manifest/v4\0".to_vec();
+        out.extend_from_slice(&version.to_be_bytes());
+        out.extend_from_slice(&APPLICATION_SEMANTIC_VERSION_V1.to_be_bytes());
+        out.extend_from_slice(&application_program_id_v1());
+        out.extend_from_slice(&application_receipt_codec_v1());
+        out.extend_from_slice(&application_effect_contract_v1(&self.genesis.policy)?);
+        append(&mut out, &legacy)?;
+        Ok(out)
+    }
+
+    pub fn signing_domain_for_version(&self, version: u32) -> Result<NodeHash> {
+        Ok(Sha256::digest(self.canonical_bytes_for_version(version)?).into())
+    }
+
     /// expected_domain must come from the independently approved/pinned new
     /// domain manifest, NOT from the same untrusted packet as this object.
     /// Approval cannot mutate an existing chain, grant or identity record.
@@ -435,7 +490,17 @@ impl UcaGenesisManifestV2 {
         expected_domain: NodeHash,
         approvals: &[UcaGenesisApprovalV2],
     ) -> Result<VerifiedUcaGenesisV2> {
-        let plan = self.prepare_approvals()?;
+        self.compile_for_version(2, runtime, expected_domain, approvals)
+    }
+
+    pub fn compile_for_version(
+        &self,
+        version: u32,
+        runtime: &AoemExecFacade,
+        expected_domain: NodeHash,
+        approvals: &[UcaGenesisApprovalV2],
+    ) -> Result<VerifiedUcaGenesisV2> {
+        let plan = self.prepare_approvals_for_version(version)?;
         let domain = plan.domain();
         ensure!(
             domain == expected_domain && domain != [0; 32],
@@ -462,7 +527,7 @@ impl UcaGenesisManifestV2 {
             verifier.verify(
                 public_key,
                 &plan.signing_bytes(subject)?,
-                INITIALIZATION_CONTEXT_V2,
+                plan.signing_context(),
                 signatures
                     .get(subject)
                     .context("missing identity/asset purpose approval")?,
@@ -573,7 +638,11 @@ impl UcaGenesisManifestV2 {
         }
         let state = state.finish()?;
         let mut final_hash = Sha256::new();
-        final_hash.update(b"NOVOVM/identity-and-asset/initial-final-commitment/v3\0");
+        final_hash.update(if version == 3 {
+            b"NOVOVM/identity-and-asset/initial-final-commitment/v4\0"
+        } else {
+            b"NOVOVM/identity-and-asset/initial-final-commitment/v3\0"
+        });
         final_hash.update(domain);
         final_hash.update(state.root());
         Ok(VerifiedUcaGenesisV2 {
@@ -590,8 +659,13 @@ impl UcaGenesisManifestV2 {
     }
 
     pub fn prepare_approvals(&self) -> Result<UcaGenesisApprovalPlanV3> {
+        self.prepare_approvals_for_version(2)
+    }
+
+    pub fn prepare_approvals_for_version(&self, version: u32) -> Result<UcaGenesisApprovalPlanV3> {
         Ok(UcaGenesisApprovalPlanV3 {
-            domain: self.signing_domain()?,
+            version,
+            domain: self.signing_domain_for_version(version)?,
             subjects: self.required_approval_subjects().into_iter().collect(),
         })
     }
@@ -625,11 +699,20 @@ impl UcaGenesisManifestV2 {
 /// Prepared immutable approval transcript. Computing the full manifest once
 /// avoids quadratic canonicalization/signing when initializing many accounts.
 pub struct UcaGenesisApprovalPlanV3 {
+    version: u32,
     domain: NodeHash,
     subjects: BTreeMap<UcaGenesisApprovalSubjectV2, Vec<u8>>,
 }
 
 impl UcaGenesisApprovalPlanV3 {
+    pub fn signing_context(&self) -> &'static [u8] {
+        if self.version == 3 {
+            INITIALIZATION_CONTEXT_V3
+        } else {
+            INITIALIZATION_CONTEXT_V2
+        }
+    }
+
     pub fn domain(&self) -> NodeHash {
         self.domain
     }
@@ -645,7 +728,11 @@ impl UcaGenesisApprovalPlanV3 {
             self.subjects.contains_key(subject),
             "unknown identity/asset approval subject"
         );
-        let mut bytes = b"NOVOVM/identity-and-asset/approval/v3\0".to_vec();
+        let mut bytes = if self.version == 3 {
+            b"NOVOVM/identity-and-asset/approval/v4\0".to_vec()
+        } else {
+            b"NOVOVM/identity-and-asset/approval/v3\0".to_vec()
+        };
         bytes.extend_from_slice(&self.domain);
         append(&mut bytes, &postcard::to_allocvec(subject)?)?;
         Ok(bytes)
@@ -721,7 +808,7 @@ mod tests {
         protocol_commitment, GenesisAllocation, GenesisValidator,
     };
 
-    fn manifest() -> UcaGenesisManifestV2 {
+    pub(super) fn manifest() -> UcaGenesisManifestV2 {
         let accounts = (1u8..=2)
             .map(|i| {
                 let spend_public_key = vec![i + 20; MLDSA65_PUBLIC_KEY_BYTES];
@@ -1044,6 +1131,7 @@ mod tests {
     fn paged_initialization_preserves_pins_and_rejects_mixed_or_tampered_material() -> Result<()> {
         let manifest = many_accounts(65);
         let material = UcaInitializationConfigV2 {
+            version: 2,
             pages: vec![],
             identities: manifest.identities.clone(),
             accounts: manifest.accounts.clone(),
@@ -1128,6 +1216,7 @@ mod tests {
         assert_eq!(loaded.genesis.allocations.len(), 65);
         assert_eq!(loaded.signing_domain()?, domain);
         let material = UcaInitializationConfigV2 {
+            version: 2,
             identities: loaded.identities.clone(),
             accounts: loaded.accounts.clone(),
             approvals: vec![],

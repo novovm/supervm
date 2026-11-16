@@ -45,12 +45,14 @@ enum Phase {
     Queued(SignatureAdmissionRequest),
     Checking(SignatureAdmissionTicket),
     Completed(Result<crate::native_pipeline::pipeline::SignatureAdmissionOutput>),
+    Application(Box<application::ApplicationWork>),
 }
 
 struct Work {
     target: Target,
     phase: Phase,
     rows: usize,
+    application: bool,
 }
 
 #[derive(Default)]
@@ -199,6 +201,7 @@ impl AdmissionState {
         json!({"owner":"same_resident_aoem_compute_session",
             "http_waiting":self.http.len(),"signature_batch_pending":self.work.is_some(),
             "uca_authority_pending":self.uca.is_some(),
+            "application_authority_pending":self.work.as_ref().is_some_and(|work| matches!(work.phase, Phase::Application(_))),
             "signature_completed_waiting_for_authority":self.work.as_ref().is_some_and(|work| matches!(work.phase, Phase::Completed(_))),
             "next_signature_submitted_while_capture":self.next_signature_submitted_while_capture,
             "signature_completed_while_capture":self.signature_completed_while_capture,
@@ -689,6 +692,11 @@ impl RpcLifecycle {
         input: &AdmissionInput,
         broadcast: bool,
     ) -> Result<Option<Hash>> {
+        if matches!(input, AdmissionInput::Application(_)) {
+            ensure!(self.is_application_v4(), "application requires native V4");
+            // Exact duplicates still pass the authoritative current-root check.
+            return Ok(None);
+        }
         if matches!(input, AdmissionInput::Uca { .. }) {
             return self.cached_uca(input, broadcast);
         }
@@ -796,6 +804,25 @@ impl RpcLifecycle {
                     work.phase = Phase::Completed(output);
                     self.admission.work = Some(work);
                 }
+                Phase::Application(mut application) => {
+                    if matches!(&work.target, Target::Http { token, .. } if !self.admission.http.contains_key(token))
+                    {
+                        self.admission.made_progress = true;
+                        return Ok(());
+                    }
+                    let broadcast = match &work.target {
+                        Target::Http { .. } => true,
+                        Target::Gossip { broadcast, .. } => *broadcast,
+                    };
+                    if self.poll_application_admission(&mut application, broadcast)? {
+                        self.admission.rejected_rows +=
+                            application.results.iter().filter(|r| r.is_err()).count() as u64;
+                        self.finish_admission_results(work.target, application.results)?;
+                    } else {
+                        work.phase = Phase::Application(application);
+                        self.admission.work = Some(work);
+                    }
+                }
             }
         }
         // Only the oldest output can enter authority capture. The one next
@@ -812,7 +839,7 @@ impl RpcLifecycle {
             let Phase::Completed(output) = work.phase else {
                 unreachable!("completed phase checked")
             };
-            self.finish_admission(work.target, work.rows, output)?;
+            self.finish_admission(work.target, work.rows, work.application, output)?;
         }
         if self.admission.work.is_some() {
             return Ok(());
@@ -888,7 +915,7 @@ impl RpcLifecycle {
                             && (id.is_null() || id.is_string() || id.is_number()),
                         "invalid JSON-RPC request"
                     );
-                    one_hex_param(&request, 1024)
+                    one_hex_param(&request, if self.is_application_v4() { 8192 } else { 1024 })
                 })();
                 match parsed {
                     Err(err) => slots.push(ResponseSlot::Ready(error(id, &err.to_string()))),
@@ -898,7 +925,15 @@ impl RpcLifecycle {
                             break;
                         }
                         bytes += raw.len();
-                        let input = AdmissionInput::Raw(raw);
+                        let input = application::raw_input(self.is_application_v4(), raw);
+                        let application = matches!(input, AdmissionInput::Application(_));
+                        if inputs.first().is_some_and(|first| {
+                            matches!(first, AdmissionInput::Application(_)) != application
+                        }) || application && inputs.len() == application::MAX_ROWS
+                        {
+                            work.requests.push_front(request);
+                            break;
+                        }
                         match self.cached_admission(&input, true) {
                             Ok(Some(hash)) => slots.push(ResponseSlot::Ready(response(
                                 id,
@@ -924,6 +959,7 @@ impl RpcLifecycle {
                 self.admission.http.insert(token, work);
                 continue;
             }
+            let application = matches!(inputs.first(), Some(AdmissionInput::Application(_)));
             let request = SignatureAdmissionRequest::new(inputs)?;
             work.waiting = true;
             self.admission.http.insert(token, work);
@@ -932,6 +968,7 @@ impl RpcLifecycle {
                 target: Target::Http { token, slots },
                 phase: Phase::Queued(request),
                 rows,
+                application,
             }));
         }
         Ok(None)
@@ -979,7 +1016,11 @@ impl RpcLifecycle {
             _ => anyhow::bail!("transaction channel returned non-transaction message"),
         };
         let mut inputs = Vec::new();
-        let signature_rows = if self.is_uca() {
+        let application = matches!(message.as_ref(), Message::Transactions { raw_transactions, .. }
+            if self.is_application_v4() && raw_transactions.get(index).is_some_and(|raw| raw.starts_with(b"NUAP")));
+        let signature_rows = if application {
+            self.batch_size.min(application::MAX_ROWS)
+        } else if self.is_uca() {
             super::super::native_decode_limits(self.batch_size, true).transactions
         } else {
             self.batch_size
@@ -992,7 +1033,16 @@ impl RpcLifecycle {
             let input = match message.as_ref() {
                 Message::Transactions {
                     raw_transactions, ..
-                } => AdmissionInput::Raw(raw_transactions[index].clone()),
+                } => {
+                    let input = application::raw_input(
+                        self.is_application_v4(),
+                        raw_transactions[index].clone(),
+                    );
+                    if matches!(input, AdmissionInput::Application(_)) != application {
+                        break;
+                    }
+                    input
+                }
                 Message::ApflTransactions { batch, .. } => AdmissionInput::Apfl {
                     batch: batch.clone(),
                     index,
@@ -1012,7 +1062,7 @@ impl RpcLifecycle {
         }
         let complete_body = index == count;
         let origin = self.admission.incoming_origin;
-        let detached_body = self.is_uca() && complete_body;
+        let detached_body = self.is_uca() && !application && complete_body;
         // Retain the body marker until the whole verified prefix is admitted;
         // a partially checked body must not cause tiny proposal fragments. A
         // full UCA source moves to its work; the admission-state selection gate
@@ -1049,6 +1099,7 @@ impl RpcLifecycle {
             },
             phase: Phase::Queued(request),
             rows,
+            application,
         }))
     }
 
@@ -1056,6 +1107,7 @@ impl RpcLifecycle {
         &mut self,
         target: Target,
         rows: usize,
+        application: bool,
         output: Result<crate::native_pipeline::pipeline::SignatureAdmissionOutput>,
     ) -> Result<()> {
         if let Ok(output) = &output {
@@ -1063,6 +1115,24 @@ impl RpcLifecycle {
                 output.len() == rows,
                 "signature admission result count mismatch"
             );
+        }
+        if application {
+            if let Ok(output) = output {
+                self.admission.checked_rows += rows as u64;
+                self.admission.work = Some(Work {
+                    target,
+                    rows,
+                    application: true,
+                    phase: Phase::Application(Box::new(application::ApplicationWork::new(output))),
+                });
+            } else {
+                let error = output.err().expect("application signature failure");
+                let results = (0..rows)
+                    .map(|_| Err(anyhow::anyhow!("signature owner failed: {error:#}")))
+                    .collect();
+                self.finish_admission_results(target, results)?;
+            }
+            return Ok(());
         }
         let output = match (self.is_uca(), &target, output) {
             (
@@ -1147,6 +1217,28 @@ impl RpcLifecycle {
                 }
             }
         }
+        let broadcast = match &target {
+            Target::Http { .. } => true,
+            Target::Gossip { broadcast, .. } => *broadcast,
+        };
+        if matches!(&target, Target::Http { token, .. } if !self.admission.http.contains_key(token))
+        {
+            return Ok(());
+        }
+        let results = results
+            .into_iter()
+            .map(|result| {
+                result.and_then(|(input, checked)| self.admit_checked(input, checked, broadcast))
+            })
+            .collect();
+        self.finish_admission_results(target, results)
+    }
+
+    fn finish_admission_results(
+        &mut self,
+        target: Target,
+        mut results: VecDeque<Result<Hash>>,
+    ) -> Result<()> {
         match target {
             Target::Http { token, slots } => {
                 if let Some(mut work) = self.admission.http.remove(&token) {
@@ -1155,12 +1247,10 @@ impl RpcLifecycle {
                             ResponseSlot::Ready(value) => value,
                             ResponseSlot::Checked(id) => response(
                                 id,
-                                results.pop_front().expect("count checked").and_then(
-                                    |(input, checked)| {
-                                        self.admit_checked(input, checked, true)
-                                            .map(|hash| self.receipt_status_json(hash))
-                                    },
-                                ),
+                                results
+                                    .pop_front()
+                                    .expect("count checked")
+                                    .map(|hash| self.receipt_status_json(hash)),
                             ),
                         });
                     }
@@ -1171,13 +1261,11 @@ impl RpcLifecycle {
             Target::Gossip {
                 complete_body,
                 detached_body,
-                broadcast,
+                broadcast: _,
                 origin: _,
             } => {
                 for result in results {
-                    match result
-                        .and_then(|(input, checked)| self.admit_checked(input, checked, broadcast))
-                    {
+                    match result {
                         Ok(_) => self.gossip_verified += 1,
                         Err(_) => self.gossip_rejected += 1,
                     }
@@ -1499,6 +1587,7 @@ mod tests {
             },
             phase: Phase::Completed(Err(anyhow::anyhow!("injected signature owner error"))),
             rows: 1,
+            application: false,
         }
     }
 

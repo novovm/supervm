@@ -99,6 +99,71 @@ fn fixture() -> Result<Fixture> {
     })
 }
 
+#[test]
+fn native_v4_routes_asset_and_application_bodies_without_relabeling_legacy() -> Result<()> {
+    let f = fixture()?;
+    let context = BatchContext {
+        business_program: application_program_id_v1(),
+        semantic_version: APPLICATION_SEMANTIC_VERSION_V1,
+        receipt_codec: application_receipt_codec_v1(),
+        effect_contract: application_effect_contract_v1(&f.policy)?,
+        ..f.context
+    };
+    let asset = Message::AssetBody {
+        context,
+        batch: f.batch.clone(),
+    };
+    let encoded = super::super::encode(&asset, f.limits)?;
+    assert_eq!(super::super::decode(&encoded, f.limits)?, asset);
+    candidate_request(&asset, &f.policy)?;
+    assert!(native_v4_policy(&context, &f.policy)?);
+    let application = Message::Body {
+        context,
+        raw_transactions: vec![b"NUAP-input-is-still-unverified".to_vec()],
+    };
+    let encoded = super::super::encode(&application, f.limits)?;
+    assert_eq!(super::super::decode(&encoded, f.limits)?, application);
+    candidate_request(&application, &f.policy)?;
+    for case in 0..4 {
+        let mut wrong = context;
+        match case {
+            0 => wrong.business_program[0] ^= 1,
+            1 => wrong.semantic_version = SEMANTIC_VERSION,
+            2 => wrong.receipt_codec[0] ^= 1,
+            _ => wrong.effect_contract = uca_effect_contract(&f.policy)?,
+        }
+        assert!(candidate_request(
+            &Message::Body {
+                context: wrong,
+                raw_transactions: vec![vec![1]]
+            },
+            &f.policy
+        )
+        .is_err());
+        assert!(candidate_request(
+            &Message::AssetBody {
+                context: wrong,
+                batch: f.batch.clone()
+            },
+            &f.policy
+        )
+        .is_err());
+    }
+    assert!(candidate_request(
+        &Message::Body {
+            context: f.context,
+            raw_transactions: vec![vec![1]]
+        },
+        &f.policy
+    )
+    .is_err());
+    assert_ne!(
+        candidate_body_id(&asset, f.limits)?,
+        candidate_body_id(&application, f.limits)?
+    );
+    Ok(())
+}
+
 pub(in super::super) fn recovery_specimen() -> Result<(Message, DecodeLimits)> {
     let f = fixture()?;
     Ok((

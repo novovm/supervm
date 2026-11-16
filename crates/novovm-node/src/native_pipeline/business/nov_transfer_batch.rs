@@ -241,18 +241,33 @@ impl NovTransferBody {
     /// nonzero domain pins, height/version arithmetic, body and access limits.
     /// Successful binding is not validation of the parent's authority or state.
     pub fn bind(self, context: BatchContext) -> Result<NovTransferPlan> {
+        use super::uca_application::{
+            application_effect_contract_v1, application_program_id_v1,
+            application_receipt_codec_v1, APPLICATION_SEMANTIC_VERSION_V1,
+        };
+
         let uca = matches!(&self.batch, BodyInput::Uca { .. });
+        let v4_asset = uca && context.semantic_version == APPLICATION_SEMANTIC_VERSION_V1;
         ensure!(
-            context.business_program == if uca { uca_program_id() } else { program_id() },
+            context.business_program
+                == if v4_asset {
+                    application_program_id_v1()
+                } else if uca {
+                    uca_program_id()
+                } else {
+                    program_id()
+                },
             "unsupported NOV business program"
         );
         ensure!(
-            context.semantic_version == SEMANTIC_VERSION,
+            context.semantic_version == SEMANTIC_VERSION || v4_asset,
             "unsupported NOV semantic version"
         );
         ensure!(
             context.receipt_codec
-                == if uca {
+                == if v4_asset {
+                    application_receipt_codec_v1()
+                } else if uca {
                     uca_receipt_codec()
                 } else {
                     receipt_codec()
@@ -260,7 +275,12 @@ impl NovTransferBody {
             "unsupported NOV receipt codec"
         );
         ensure!(
-            context.effect_contract == self.effect_contract,
+            context.effect_contract
+                == if v4_asset {
+                    application_effect_contract_v1(&self.policy)?
+                } else {
+                    self.effect_contract
+                },
             "fee/effect policy commitment mismatch"
         );
         Ok(NovTransferPlan {

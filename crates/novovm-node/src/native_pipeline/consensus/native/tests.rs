@@ -20,6 +20,265 @@ mod recovery_namespace;
 #[cfg(feature = "iroh-transport")]
 mod carrier_tests;
 
+fn application_lane_scope() -> transport::TransactionsScope {
+    transport::TransactionsScope {
+        chain_id: 292,
+        genesis: [0x71; 32],
+        protocol: [0x72; 32],
+        epoch: 1,
+        validator_set_hash: [3; 32],
+        session: [8; 32],
+        sequence: 1,
+    }
+}
+
+fn application_lane_command() -> Result<Vec<u8>> {
+    use novovm_protocol::{
+        native_query::UcaIdentityIdV1,
+        uca_application::{
+            ApplicationGrantActionV1, ApplicationGrantIntentV1, ApplicationGrantSelectorV1,
+            SignedApplicationGrantV1,
+        },
+        uca_spend::{MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES},
+    };
+    let scope = application_lane_scope();
+    Ok(SignedApplicationGrantV1 {
+        intent: ApplicationGrantIntentV1 {
+            selector: ApplicationGrantSelectorV1 {
+                chain_id: scope.chain_id,
+                genesis: scope.genesis,
+                identity: UcaIdentityIdV1::new("uca:owner").map_err(anyhow::Error::msg)?,
+                application: [4; 32],
+                service: [5; 32],
+                device: [6; 32],
+            },
+            issuer_key_ref: [7; 32],
+            expected_revision: 0,
+            valid_from_height: 1,
+            valid_until_height: 100,
+            action: ApplicationGrantActionV1::Authorize {
+                not_before_height: 1,
+                expires_at_height: 100,
+            },
+        },
+        // Encoding-only fixture: neither key binding nor signature is verified here.
+        public_key: vec![9; MLDSA65_PUBLIC_KEY_BYTES],
+        signature: vec![0; MLDSA65_SIGNATURE_BYTES],
+    }
+    .encode()?)
+}
+
+fn application_lane_structured_inputs() -> Result<(transport::Message, transport::Message)> {
+    use crate::native_pipeline::ingress::{
+        apfl::{ApflLimits, ApflTransferBatch},
+        wire::{encode_transfer_v3, FeePolicy, TransferV3},
+    };
+    use novovm_protocol::{
+        uca_spend::{
+            spend_key_ref_v1, AssetSpendAuthorityV3, AssetSpendIntentV3, SignedAssetSpendV3,
+            MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES, NATIVE_NOV_ASSET,
+        },
+        uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3},
+    };
+    let scope = application_lane_scope();
+    let legacy = encode_transfer_v3(&TransferV3 {
+        chain_id: scope.chain_id,
+        from: vec![1; 20],
+        to: vec![2; 20],
+        asset: "NOV".into(),
+        amount: 1,
+        nonce: 0,
+        fee_policy: FeePolicy {
+            pay_asset: "NOV".into(),
+            max_pay_amount: 1,
+            slippage_bps: 0,
+        },
+        signature: vec![0; 96],
+    })?;
+    let apfl = ApflTransferBatch::from_raw(
+        &[legacy],
+        ApflLimits {
+            transactions: 1,
+            transaction_bytes: 8192,
+            body_bytes: 8192,
+        },
+    )?;
+    let public_key = vec![9; MLDSA65_PUBLIC_KEY_BYTES];
+    let asset = SignedAssetSpendV3 {
+        intent: AssetSpendIntentV3 {
+            authority: AssetSpendAuthorityV3::Controller,
+            chain_id: scope.chain_id,
+            genesis: scope.genesis,
+            payer: vec![1; 20],
+            authorization_epoch: 1,
+            spend_key_ref: spend_key_ref_v1(&public_key)?,
+            recipient: vec![2; 20],
+            asset: NATIVE_NOV_ASSET,
+            amount: 1,
+            max_fee: 1,
+            nonce: 0,
+            not_before_height: 1,
+            expires_at_height: 100,
+            authority_update: None,
+            recipient_creation: None,
+        },
+        public_key,
+        signature: vec![0; MLDSA65_SIGNATURE_BYTES],
+    }
+    .encode()?;
+    let asset = AssetSpendBatchV3::from_raw(
+        &[asset],
+        AssetSpendBatchLimitsV3 {
+            transactions: 1,
+            transaction_bytes: 8192,
+            body_bytes: 8192,
+        },
+    )?;
+    Ok((
+        transport::Message::ApflTransactions {
+            scope,
+            batch: Arc::new(apfl),
+        },
+        transport::Message::AssetTransactions {
+            scope,
+            batch: Arc::new(asset),
+        },
+    ))
+}
+
+#[test]
+fn application_input_accepts_shaped_nuap_without_claiming_signature_authority() -> Result<()> {
+    use novovm_protocol::uca_application::{ApplicationGrantActionV1, SignedApplicationGrantV1};
+    let raw = application_lane_command()?;
+    let mut revoke = SignedApplicationGrantV1::decode(&raw)?;
+    revoke.intent.action = ApplicationGrantActionV1::Revoke;
+    revoke.intent.expected_revision = 1;
+    revoke.signature[0] ^= 1;
+    for raw_transactions in [vec![raw.clone()], vec![raw, revoke.encode()?]] {
+        assert!(application_input(&transport::Message::Transactions {
+            scope: application_lane_scope(),
+            raw_transactions,
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn application_input_preserves_both_structured_input_types() -> Result<()> {
+    let (apfl, asset) = application_lane_structured_inputs()?;
+    assert!(application_input(&apfl));
+    assert!(application_input(&asset));
+    Ok(())
+}
+
+#[test]
+fn application_input_rejects_empty_malformed_mixed_and_v3_raw_rows() -> Result<()> {
+    let valid = application_lane_command()?;
+    let (transport::Message::ApflTransactions { batch, .. }, _) =
+        application_lane_structured_inputs()?
+    else {
+        unreachable!()
+    };
+    let legacy = batch.canonical_raw(0)?;
+    let mut trailing = valid.clone();
+    trailing.push(0);
+    let mut wrong_version = valid.clone();
+    wrong_version[4] = 2;
+    let mut empty_intent = valid.clone();
+    empty_intent[6..8].fill(0);
+    let malformed = b"NUAP\x01\x41".to_vec();
+    for (case, raw_transactions) in [
+        vec![],
+        vec![vec![]],
+        vec![malformed.clone()],
+        vec![valid[..valid.len() - 1].to_vec()],
+        vec![trailing],
+        vec![wrong_version],
+        vec![empty_intent],
+        vec![legacy.clone()],
+        vec![valid.clone(), legacy.clone()],
+        vec![legacy, valid.clone()],
+        vec![valid.clone(), malformed.clone()],
+        vec![malformed, valid],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            !application_input(&transport::Message::Transactions {
+                scope: application_lane_scope(),
+                raw_transactions,
+            }),
+            "case {case}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn application_input_rejects_body_and_control_messages_even_with_nuap_rows() -> Result<()> {
+    use crate::native_pipeline::execution::plan::BatchContext;
+    let (apfl, asset) = application_lane_structured_inputs()?;
+    let (
+        transport::Message::ApflTransactions { batch: apfl, .. },
+        transport::Message::AssetTransactions { batch: asset, .. },
+    ) = (apfl, asset)
+    else {
+        unreachable!()
+    };
+    let context = BatchContext {
+        chain_id: 292,
+        genesis_config_commitment: [0x71; 32],
+        protocol_commitment: [0x72; 32],
+        business_program: [1; 32],
+        semantic_version: 4,
+        effect_contract: [2; 32],
+        parent_block_hash: [0; 32],
+        parent_height: 0,
+        parent_state_root: [3; 32],
+        parent_receipt_root: [4; 32],
+        parent_state_version: 0,
+        receipt_codec: [5; 32],
+        height: 1,
+        slot: 1,
+        timestamp_unix_ms: 1,
+    };
+    let (keys, _, domain, vote_context) = separated_material()?;
+    let vote = test_vectors::sign_vote(
+        vote_context,
+        0,
+        Phase::Prevote,
+        Some([7; 32]),
+        &domain.validators,
+        &keys[0],
+    )?;
+    for message in [
+        transport::Message::Body {
+            context,
+            raw_transactions: vec![application_lane_command()?],
+        },
+        transport::Message::ApflBody {
+            context,
+            batch: apfl,
+        },
+        transport::Message::AssetBody {
+            context,
+            batch: asset,
+        },
+        transport::Message::Vote(vote),
+        transport::Message::RequestBody { body_id: [6; 32] },
+        transport::Message::RequestDecision {
+            context: vote_context,
+        },
+    ] {
+        assert!(
+            !application_input(&message),
+            "unexpected client input: {message:?}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn io_hint_ignores_duplicate_rejected_and_stalled_io() {
     let mut hint = IoProgressHint::default();

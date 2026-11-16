@@ -32,6 +32,7 @@ const DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND01";
 // UCA extends the same candidate document, never re-labels a V3 body/receipt.
 const UCA_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND03";
 const APPLICATION_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND04";
+const V4_ASSET_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND05";
 mod application;
 mod uca;
 const MARKER_MAGIC: &[u8; 8] = b"NVCOMP01";
@@ -384,7 +385,7 @@ impl StoredCandidate {
         index: usize,
     ) -> Result<novovm_protocol::uca_application::ApplicationGrantReceiptV1> {
         ensure!(
-            application::is_profile(self.context()),
+            application::is_profile(self.context()) && self.spend_outputs.is_none(),
             "not an application candidate"
         );
         Ok(
@@ -403,7 +404,7 @@ impl StoredCandidate {
     /// construct an executed batch, durable candidate or signing permission.
     pub fn receipt_view(&self, index: usize) -> Result<ReceiptView> {
         ensure!(
-            !application::is_profile(self.context()),
+            !application::is_profile(self.context()) || self.spend_outputs.is_some(),
             "application receipts are not asset receipts"
         );
         let bytes = self
@@ -561,9 +562,10 @@ fn prepare_with_spend(
     budget: PacketBudget,
     spend_outputs: Option<&[SpendOutput]>,
 ) -> Result<PreparedCandidate> {
-    let is_uca = uca::is_profile(plan.context());
+    let v4 = application::is_profile(plan.context());
+    let is_uca = spend_outputs.is_some();
     ensure!(
-        is_uca == spend_outputs.is_some(),
+        v4 || uca::is_profile(plan.context()) == is_uca,
         "candidate UCA output/profile mismatch"
     );
     ensure!(
@@ -571,9 +573,11 @@ fn prepare_with_spend(
         "candidate node count exceeds budget"
     );
     let mut document = Encoder::new(budget.max_bytes);
-    document.put(if is_uca {
+    document.put(if v4 && is_uca {
+        V4_ASSET_DOCUMENT_MAGIC
+    } else if is_uca {
         UCA_DOCUMENT_MAGIC
-    } else if application::is_profile(plan.context()) {
+    } else if v4 {
         APPLICATION_DOCUMENT_MAGIC
     } else {
         DOCUMENT_MAGIC
@@ -619,11 +623,7 @@ fn prepare_with_spend(
     // The immutable plan already owns its canonical body/access commitment.
     // Validate the same receipt/economic relations as cold recovery without
     // decoding a second full plan from bytes that this function just encoded.
-    let mut receipt_projection = Vec::with_capacity(if application::is_profile(plan.context()) {
-        0
-    } else {
-        receipts.len()
-    });
+    let mut receipt_projection = Vec::with_capacity(if v4 && !is_uca { 0 } else { receipts.len() });
     validate_effects(
         plan,
         root,
@@ -914,15 +914,21 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
     ensure!(
         magic == DOCUMENT_MAGIC
             || magic == UCA_DOCUMENT_MAGIC
-            || magic == APPLICATION_DOCUMENT_MAGIC,
+            || magic == APPLICATION_DOCUMENT_MAGIC
+            || magic == V4_ASSET_DOCUMENT_MAGIC,
         "unsupported candidate document codec"
     );
     ensure!(input.hash()? == id, "candidate document identity mismatch");
     let plan = decode_plan(&mut input, budget)?;
-    let is_uca = magic == UCA_DOCUMENT_MAGIC;
+    let v4 = application::is_profile(plan.context());
+    let is_uca = magic == UCA_DOCUMENT_MAGIC || magic == V4_ASSET_DOCUMENT_MAGIC;
     ensure!(
-        is_uca == uca::is_profile(plan.context())
-            && (magic == APPLICATION_DOCUMENT_MAGIC) == application::is_profile(plan.context()),
+        if v4 {
+            magic == APPLICATION_DOCUMENT_MAGIC || magic == V4_ASSET_DOCUMENT_MAGIC
+        } else {
+            (magic == UCA_DOCUMENT_MAGIC && uca::is_profile(plan.context()))
+                || (magic == DOCUMENT_MAGIC && !uca::is_profile(plan.context()))
+        },
         "candidate document/profile mismatch"
     );
     ensure!(
@@ -1014,26 +1020,27 @@ fn validate_effects(
     let (receipt_commitment, statement_commitment) = commitments;
     let context = plan.context();
     let is_uca = uca::is_profile(context);
+    let v4 = application::is_profile(context);
     ensure!(
         is_uca
-            || application::is_profile(context)
+            || v4
             || (context.business_program == program_id()
                 && context.receipt_codec == receipt_codec()
                 && context.semantic_version == SEMANTIC_VERSION),
         "unsupported candidate business/receipt profile"
     );
     ensure!(
-        is_uca == spend_outputs.is_some(),
+        v4 || is_uca == spend_outputs.is_some(),
         "candidate document/profile mismatch"
     );
     ensure!(
         state_root != [0; 32],
         "candidate output root must be nonzero"
     );
-    if application::is_profile(context) {
-        application::validate_receipts(plan, receipts, budget)?;
-    } else if let Some(outputs) = spend_outputs {
+    if let Some(outputs) = spend_outputs {
         uca::validate_receipts(plan, receipts, outputs, budget, projection)?;
+    } else if v4 {
+        application::validate_receipts(plan, receipts, budget)?;
     } else {
         validate_receipts(plan, receipts, budget, projection)?;
     }
@@ -1352,3 +1359,7 @@ fn validate_fee_receipt(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "packet/tests/native_v4.rs"]
+mod native_v4;

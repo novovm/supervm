@@ -136,6 +136,19 @@ pub struct BatchRequest {
 }
 
 impl BatchRequest {
+    pub fn from_application(
+        raw_transactions: Vec<Vec<u8>>,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        Self::from_input(
+            compute::CandidateInput::Application {
+                source: BatchSource::Raw(raw_transactions),
+            },
+            context,
+            policy,
+        )
+    }
     /// Preserve the immutable structural batch until the resident verifier
     /// consumes each canonical row, including its signed asset accounts.
     pub fn from_uca_batch(

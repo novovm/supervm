@@ -387,6 +387,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
         .collect();
     let domain = input.signing_domain()?;
     let initialization = UcaInitializationConfigV2 {
+        version: 2,
         pages: vec![],
         identities: input.identities.clone(),
         accounts: input.accounts.clone(),
@@ -1527,6 +1528,7 @@ fn check_offline_initialization(
     let domain = input.signing_domain()?;
     let verified = input.compile(&runtime, domain, approvals)?;
     let material = UcaInitializationConfigV2 {
+        version: 2,
         pages: vec![],
         identities: input.identities.clone(),
         accounts: input.accounts.clone(),

@@ -3,7 +3,7 @@
 //! is a locator only: the local validated prefix and archive evidence decide
 //! whether a receipt is final. Hash-only lookup keeps its existing cache scope.
 
-use super::{hex, hex_param, receipt_json, Hash};
+use super::{application, hex, hex_param, receipt_json, Hash};
 use crate::native_pipeline::consensus::statement::ParentPoint;
 use crate::native_pipeline::consensus::wire::{Context as ConsensusContext, ValidatorSet};
 use crate::native_pipeline::consensus::{ArchiveBlock, ArchiveRead};
@@ -165,6 +165,18 @@ fn completed_receipt(locator: Locator, block: Option<ArchiveBlock>) -> Result<Va
         "historical receipt archive returned another height"
     );
     for index in 0..block.stored().receipt_bytes().len() {
+        if application::is_application_context(block.stored().context())
+            && block.stored().spend_outputs().is_none()
+        {
+            let receipt = block.stored().application_receipt(index)?;
+            if receipt.command_id == locator.hash {
+                let mut result = application::receipt_json(&receipt, block.point());
+                result["lookup_complete"] = json!(true);
+                result["query_scope"] = json!("block");
+                return Ok(result);
+            }
+            continue;
+        }
         let receipt = block.stored().receipt_view(index)?;
         if receipt.tx_hash == locator.hash {
             let mut result = receipt_json(receipt, block.point().height, block.point().block_hash);

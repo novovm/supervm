@@ -22,8 +22,8 @@ use std::{
 
 pub const APPLICATION_SEMANTIC_VERSION_V1: u32 = 4;
 
-// These pins are not activated in the node template. They bind the application
-// branch together with the existing asset semantics, never relabel old packets.
+// Explicit initialization approvals select these composite pins. They bind
+// application and asset semantics without relabelling old packets.
 pub fn application_program_id_v1() -> NodeHash {
     Sha256::digest(b"novovm/uca/native-asset-and-application/v4").into()
 }
@@ -171,6 +171,19 @@ pub struct ApplicationGrantCaptureV1 {
     accesses: Vec<ApplicationGrantAccessV1>,
 }
 impl ApplicationGrantCaptureV1 {
+    pub(crate) fn context(&self) -> &BatchContext {
+        self.capture.context()
+    }
+    pub(crate) fn seed_hits(&self) -> usize {
+        self.capture.seed_hits()
+    }
+    pub(crate) fn advance_with_seed(
+        &mut self,
+        steps: usize,
+        seed: Option<&crate::native_pipeline::state::frontier::StateReadSeed>,
+    ) -> Result<CaptureStep> {
+        self.capture.advance_with_seed(steps, seed)
+    }
     pub fn advance(&mut self, steps: usize) -> Result<CaptureStep> {
         self.capture.advance(steps)
     }

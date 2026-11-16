@@ -60,8 +60,7 @@ fn pool(
                 input,
                 admitted: Some(admitted),
                 canonical_len,
-                signer,
-                nonce,
+                position: PendingPosition::Asset { signer, nonce },
                 gossip_missing: 0,
             },
         );
@@ -342,8 +341,10 @@ fn actual_mldsa_uca_body_reuses_only_complete_pool_owned_signed_objects() -> Res
                     index,
                 )?),
                 canonical_len: raws[index].len(),
-                signer: row.intent.nonce_identity()?,
-                nonce: row.intent.nonce,
+                position: PendingPosition::Asset {
+                    signer: row.intent.nonce_identity()?,
+                    nonce: row.intent.nonce,
+                },
                 gossip_missing: 0,
             },
         );

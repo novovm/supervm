@@ -39,6 +39,24 @@ pub use bindings::ValidatorTransportBindings;
 pub(crate) use query::lane as query_lane;
 use query::{QueryDelivery, QueryInbox};
 
+// Shape-only admission to the client lane. The resident signature/state owners
+// still establish authorization; a client cannot inject body or vote traffic.
+fn application_input(message: &transport::Message) -> bool {
+    match message {
+        transport::Message::ApflTransactions { .. }
+        | transport::Message::AssetTransactions { .. } => true,
+        transport::Message::Transactions {
+            raw_transactions, ..
+        } => {
+            !raw_transactions.is_empty()
+                && raw_transactions.iter().all(|raw| {
+                    novovm_protocol::uca_application::SignedApplicationGrantV1::decode(raw).is_ok()
+                })
+        }
+        _ => false,
+    }
+}
+
 const STREAMS: [u64; 3] = [
     u64::from_be_bytes(*b"NVBFT001"),
     u64::from_be_bytes(*b"NVBODY01"),
@@ -841,13 +859,8 @@ impl NativeChannel {
             }
             let message = transport::decode(&bytes, self.codec)?;
             ensure!(
-                !application
-                    || matches!(
-                        &message,
-                        transport::Message::ApflTransactions { .. }
-                            | transport::Message::AssetTransactions { .. }
-                    ),
-                "application lane accepts only signed structural transaction inputs"
+                !application || application_input(&message),
+                "application lane accepts only signed asset or application inputs"
             );
             let evidence = message_evidence::verify(&message, &self.domain)?;
             Ok((message, evidence))

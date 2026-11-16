@@ -341,6 +341,7 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
     let approvals = approve_manifest(&runtime, &manifest, &approval_keys)?;
     let initial = manifest.compile(&runtime, domain, &approvals)?;
     let material = UcaInitializationConfigV2 {
+        version: 2,
         pages: vec![],
         identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),

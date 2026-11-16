@@ -1,6 +1,6 @@
 use super::super::{
     advance_nonce_window, nonce_selection_window, select_pending_batch,
-    select_prepared_nonce_window, AdmissionInput, Pending,
+    select_prepared_nonce_window, AdmissionInput, Pending, PendingPosition,
 };
 use super::*;
 
@@ -229,8 +229,10 @@ fn pending(subject: Hash, nonces: &[u64]) -> (VecDeque<Hash>, BTreeMap<Hash, Pen
                 input: AdmissionInput::Raw(vec![0; 8]),
                 admitted: None,
                 canonical_len: 8,
-                signer: subject,
-                nonce: *nonce,
+                position: PendingPosition::Asset {
+                    signer: subject,
+                    nonce: *nonce,
+                },
                 gossip_missing: 0,
             },
         );
@@ -472,8 +474,10 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
                 input: AdmissionInput::Raw(vec![0; 8]),
                 admitted: None,
                 canonical_len: 8,
-                signer: id,
-                nonce: 0,
+                position: PendingPosition::Asset {
+                    signer: id,
+                    nonce: 0,
+                },
                 gossip_missing: 0,
             },
         );
@@ -488,7 +492,9 @@ fn cold_1024_subject_candidate_waits_for_window_not_eight_row_blocks() -> Result
     for phase in 0..=128 {
         cache.poll(
             parent,
-            window.iter().map(|hash| pending[hash].signer),
+            window
+                .iter()
+                .map(|hash| pending[hash].asset_position().unwrap().0),
             |root, _| {
                 assert_eq!(root, parent.state_root);
                 submissions += 1;
@@ -578,8 +584,10 @@ fn fully_known_gap_window_rotates_to_ready_work_but_unknown_window_does_not() {
                 input: AdmissionInput::Raw(vec![0; 8]),
                 admitted: None,
                 canonical_len: 8,
-                signer: id,
-                nonce: if index < 4 { 7 } else { 0 },
+                position: PendingPosition::Asset {
+                    signer: id,
+                    nonce: if index < 4 { 7 } else { 0 },
+                },
                 gossip_missing: 0,
             },
         );

@@ -183,6 +183,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
         let body = authenticate(
             &mut session,
             &mut verifier,
+            &mut None,
             &config,
             AuthenticateRequest {
                 raw_transactions: CandidateInput::Admitted(admitted),
@@ -280,6 +281,7 @@ fn actual_mldsa_reused_signature_recaptures_revocation_budget_nonce_and_balance(
     let body = authenticate(
         &mut session,
         &mut verifier,
+        &mut None,
         &config,
         AuthenticateRequest {
             raw_transactions: CandidateInput::Uca {

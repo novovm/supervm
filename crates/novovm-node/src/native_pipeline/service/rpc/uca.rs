@@ -20,6 +20,7 @@ impl RpcLifecycle {
     pub(super) fn is_uca(&self) -> bool {
         self.node.template.business_program
             == crate::native_pipeline::business::nov_transfer_batch::uca_program_id()
+            || self.is_application_v4()
     }
 
     pub(super) fn input_body_limit(&self) -> usize {
@@ -195,12 +196,15 @@ impl RpcLifecycle {
                     Err(error) if error.is::<PoolBackpressure>() => {
                         self.nonces.bind_current_parent(parent);
                         let has_ready = self.pending.values().any(|entry| {
-                            let known = if entry.signer == signer {
+                            let Some((entry_signer, entry_nonce)) = entry.asset_position() else {
+                                return false;
+                            };
+                            let known = if entry_signer == signer {
                                 Some(state.next_nonce())
                             } else {
-                                self.nonces.get(&entry.signer).copied()
+                                self.nonces.get(&entry_signer).copied()
                             };
-                            known == Some(entry.nonce)
+                            known == Some(entry_nonce)
                         });
                         if has_ready {
                             return Ok(UcaAdmission::Backpressured(input, admitted));
@@ -266,8 +270,7 @@ impl RpcLifecycle {
                 input,
                 admitted: Some(admitted),
                 canonical_len,
-                signer,
-                nonce,
+                position: PendingPosition::Asset { signer, nonce },
                 gossip_missing: 0,
             },
         );

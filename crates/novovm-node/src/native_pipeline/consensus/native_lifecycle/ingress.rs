@@ -2,7 +2,9 @@
 //! authentication engine or delivery/finality acknowledgement is introduced.
 use super::*;
 use crate::native_pipeline::consensus::{
-    statement::ParentPoint, transport::TransactionsScope, wire::Context as VoteContext,
+    statement::ParentPoint,
+    transport::{self, TransactionsScope},
+    wire::Context as VoteContext,
 };
 use crate::native_pipeline::ingress::apfl::ApflTransferBatch;
 use crate::native_pipeline::pipeline::{
@@ -171,6 +173,19 @@ impl NativeLifecycle {
             scope: self.next_transactions_scope()?,
             batch,
         }))
+    }
+
+    pub(crate) fn transactions_message(
+        &mut self,
+        raw_transactions: Vec<Vec<u8>>,
+    ) -> Result<Arc<Message>> {
+        let message = Message::Transactions {
+            scope: self.next_transactions_scope()?,
+            raw_transactions,
+        };
+        // Reuse the original raw-input envelope limits before fanout admission.
+        transport::encode(&message, self.codec)?;
+        Ok(Arc::new(message))
     }
 
     pub fn uca_transactions_message(

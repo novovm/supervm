@@ -61,8 +61,10 @@ fn pending_uca(rows: usize) -> Result<(VecDeque<Hash>, BTreeMap<Hash, Pending>)>
                     },
                     admitted: None,
                     canonical_len: raw.len(),
-                    signer: [3; 32],
-                    nonce: nonce as u64,
+                    position: PendingPosition::Asset {
+                        signer: [3; 32],
+                        nonce: nonce as u64,
+                    },
                     gossip_missing: 0,
                 },
             );
@@ -107,7 +109,7 @@ fn asset_full_known_stream_does_not_skip_an_older_unknown_nonce_subject() -> Res
     let (order, mut pending) = pending_uca(1025)?;
     // Selection-only fixture: distinguish the older subject without granting
     // it a read result or passing this shaped row to execution.
-    pending.get_mut(&order[0]).unwrap().signer = [4; 32];
+    *pending.get_mut(&order[0]).unwrap().asset_position_mut().0 = [4; 32];
     let known = BTreeMap::from([([3; 32], 1)]);
     let (available, _, no_ready) =
         select_pending_batch_with_budget(&order, &pending, &known, BTreeMap::new(), 1024);
@@ -301,8 +303,10 @@ fn eight_grant_openings_respect_original_access_budget_and_preserve_suffix() -> 
                     },
                     admitted: None,
                     canonical_len: raw.len(),
-                    signer: id,
-                    nonce: 0,
+                    position: PendingPosition::Asset {
+                        signer: id,
+                        nonce: 0,
+                    },
                     gossip_missing: 0,
                 },
             );
@@ -402,7 +406,7 @@ fn asset_ready_selection_reports_actual_budget_not_pool_count_or_partial_quantum
 
     // Many retained rows do not imply an executable prefix. Neither a real
     // nonce gap nor an unresolved read grants the full-candidate exception.
-    pending.get_mut(&order[0]).unwrap().nonce = 7;
+    *pending.get_mut(&order[0]).unwrap().asset_position_mut().1 = 7;
     let (selected, full) =
         select_prepared_nonce_window(&order, &pending, &known, &BTreeMap::new(), 1024).unwrap();
     assert!(selected.is_empty() && !full);
@@ -550,11 +554,13 @@ fn asset_whole_pool_gap_wait_wakes_for_same_size_nonce_bridge() -> Result<()> {
 #[test]
 fn asset_local_gap_never_parks_over_ready_or_unknown_tail() -> Result<()> {
     let (order, mut pending) = pending_uca(3)?;
-    pending.get_mut(&order[0]).unwrap().nonce = 1;
-    pending.get_mut(&order[1]).unwrap().nonce = 2;
+    *pending.get_mut(&order[0]).unwrap().asset_position_mut().1 = 1;
+    *pending.get_mut(&order[1]).unwrap().asset_position_mut().1 = 2;
     let tail = pending.get_mut(&order[2]).unwrap();
-    tail.signer = [4; 32];
-    tail.nonce = 0;
+    tail.position = PendingPosition::Asset {
+        signer: [4; 32],
+        nonce: 0,
+    };
     let known = BTreeMap::from([([3; 32], 0), ([4; 32], 0)]);
     let (window, no_ready) =
         asset_nonce_selection_window(&order, &pending, &known, &BTreeMap::new(), 0, 2);

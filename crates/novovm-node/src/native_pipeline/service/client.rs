@@ -156,6 +156,25 @@ impl NativeApplicationClient {
         self.prepare_input(|scope| Message::AssetTransactions { scope, batch })
     }
 
+    /// Purpose-bound application commands over the existing authenticated input
+    /// channel. Delivery acknowledges custody only, never grant publication.
+    pub fn prepare_application_grants(
+        &mut self,
+        raw_transactions: Vec<Vec<u8>>,
+    ) -> Result<PreparedApplicationInput> {
+        ensure!(
+            !raw_transactions.is_empty(),
+            "empty application command input"
+        );
+        for raw in &raw_transactions {
+            novovm_protocol::uca_application::SignedApplicationGrantV1::decode(raw)?;
+        }
+        self.prepare_input(|scope| Message::Transactions {
+            scope,
+            raw_transactions,
+        })
+    }
+
     fn prepare_input(
         &mut self,
         build: impl FnOnce(TransactionsScope) -> Message,

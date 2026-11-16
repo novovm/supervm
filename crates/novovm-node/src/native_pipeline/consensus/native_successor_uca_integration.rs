@@ -6,6 +6,10 @@ use super::*;
 use crate::native_pipeline::business::nov_transfer_batch::{
     nonce_key, uca_effect_contract, uca_program_id, uca_receipt_codec,
 };
+use crate::native_pipeline::business::uca_application::{
+    application_effect_contract_v1, application_program_id_v1, application_receipt_codec_v1,
+    APPLICATION_SEMANTIC_VERSION_V1,
+};
 use crate::native_pipeline::business::uca_spend_state::{
     account_record_changes, grant_record_changes, AssetAccountAuthorityV2, AssetSpendStateAccessV2,
 };
@@ -19,6 +23,12 @@ use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV
 
 const ALICE: &str = "uca:successor-alice";
 const BOB: &str = "uca:successor-bob";
+
+#[derive(Clone, Copy)]
+enum AssetProfile {
+    Legacy,
+    NativeV4,
+}
 
 fn uca_codec() -> transport::DecodeLimits {
     transport::DecodeLimits {
@@ -82,10 +92,24 @@ fn intent(
 }
 
 fn uca_context(parent: ParentPoint, height: u64) -> Result<BatchContext> {
+    asset_context(parent, height, AssetProfile::Legacy)
+}
+
+fn asset_context(parent: ParentPoint, height: u64, profile: AssetProfile) -> Result<BatchContext> {
     let mut context = batch_context(parent.state_root);
-    context.business_program = uca_program_id();
-    context.receipt_codec = uca_receipt_codec();
-    context.effect_contract = uca_effect_contract(&policy())?;
+    match profile {
+        AssetProfile::Legacy => {
+            context.business_program = uca_program_id();
+            context.receipt_codec = uca_receipt_codec();
+            context.effect_contract = uca_effect_contract(&policy())?;
+        }
+        AssetProfile::NativeV4 => {
+            context.business_program = application_program_id_v1();
+            context.receipt_codec = application_receipt_codec_v1();
+            context.semantic_version = APPLICATION_SEMANTIC_VERSION_V1;
+            context.effect_contract = application_effect_contract_v1(&policy())?;
+        }
+    }
     context.parent_height = parent.height;
     context.parent_block_hash = parent.block_hash;
     context.parent_receipt_root = parent.receipt_batch_commitment;
@@ -97,6 +121,7 @@ fn uca_context(parent: ParentPoint, height: u64) -> Result<BatchContext> {
 }
 
 struct UcaFixture {
+    profile: AssetProfile,
     native: NativeFixture,
     parent_batch: Arc<AssetSpendBatchV3>,
     child_batch: Arc<AssetSpendBatchV3>,
@@ -106,6 +131,10 @@ struct UcaFixture {
 
 impl UcaFixture {
     fn new() -> Result<Self> {
+        Self::with_profile(AssetProfile::Legacy)
+    }
+
+    fn with_profile(profile: AssetProfile) -> Result<Self> {
         let facade = AoemExecFacade::open(&library()?, Default::default())?;
         let signer = facade.asset_spend_signer_v3()?;
         let mut keys = (0..4)
@@ -215,7 +244,7 @@ impl UcaFixture {
         {
             let bodies = CandidateBodies::new(
                 &base.services.0[i],
-                uca_context(base.anchor, 1)?,
+                asset_context(base.anchor, 1, profile)?,
                 policy(),
                 uca_codec(),
                 BodyLimits {
@@ -238,6 +267,7 @@ impl UcaFixture {
             )?);
         }
         Ok(Self {
+            profile,
             native: NativeFixture {
                 nodes,
                 base,
@@ -258,7 +288,7 @@ impl UcaFixture {
         let first = f.leader(1)?;
         let next = f.leader(2)?;
         let parent = Arc::new(Message::AssetBody {
-            context: uca_context(f.base.anchor, 1)?,
+            context: asset_context(f.base.anchor, 1, self.profile)?,
             batch: self.parent_batch.clone(),
         });
         ensure!(f.nodes[first].offer(&parent)?, "UCA parent backpressured");
@@ -284,8 +314,9 @@ impl UcaFixture {
             selection.nonce_after.get(&self.grants[0].nonce_identity()?) == Some(&1),
             "real UCA parent receipt missing stable account nonce"
         );
+        let child_context = asset_context(selection.parent, 2, self.profile)?;
         let child = Arc::new(Message::AssetBody {
-            context: uca_context(selection.parent, 2)?,
+            context: child_context,
             batch: self.child_batch.clone(),
         });
         reject_altered_pins(
@@ -303,6 +334,26 @@ impl UcaFixture {
                 )
                 .is_err(),
             "V3 successor bypassed UCA profile"
+        );
+        // Match every context pin so this rejection exercises the wire guard,
+        // not merely the legacy body's different business/receipt commitments.
+        let mut wrong_wire = body(selection.parent, 2)?.as_ref().clone();
+        let Message::ApflBody { context, .. } = &mut wrong_wire else {
+            anyhow::bail!("V3 successor fixture must retain APFL input");
+        };
+        *context = child_context;
+        let error = f.nodes[next]
+            .offer_successor(&Arc::new(wrong_wire), &selection, &f.base.services.0[next])
+            .expect_err("V3 wire accepted with the asset child's exact context");
+        ensure!(
+            error
+                .to_string()
+                .contains("successor body wire/profile mismatch"),
+            "V3 wire rejected outside the offer guard: {error:#}"
+        );
+        ensure!(
+            !f.nodes[next].is_frozen() && f.nodes[next].successor_metrics() == [0; 5],
+            "rejected V3 wire froze the owner or consumed successor work"
         );
         let accepted = if reused {
             let pipeline = &f.base.services.0[next];
@@ -334,6 +385,12 @@ impl UcaFixture {
 #[ignore = "real AOEM and native sockets; full UCA speculative root, ACK, credits and cold recovery, not TPS"]
 fn native_successor_uca_complete_state_waits_for_ack_and_recovers() -> Result<()> {
     run_uca_successor(false)
+}
+
+#[test]
+#[ignore = "real AOEM/native sockets; consecutive V4 assets, exact-context V3 offer rejection, ACK promotion and cold recovery, run alone"]
+fn native_successor_v4_assets_reject_v3_wire_wait_for_ack_and_recover() -> Result<()> {
+    run_uca_successor_with_profile(false, AssetProfile::NativeV4)
 }
 
 #[test]
@@ -1212,8 +1269,19 @@ fn native_successor_owned_body_does_not_request_second_full_copy_after_ack() -> 
 }
 
 fn run_uca_successor(reused: bool) -> Result<()> {
-    let mut u = UcaFixture::new()?;
+    run_uca_successor_with_profile(reused, AssetProfile::Legacy)
+}
+
+fn run_uca_successor_with_profile(reused: bool, profile: AssetProfile) -> Result<()> {
+    let mut u = UcaFixture::with_profile(profile)?;
     let (first, next, selection, child) = u.prepare_successor(reused)?;
+    let Message::AssetBody {
+        context: child_context,
+        ..
+    } = child.as_ref()
+    else {
+        anyhow::bail!("successor fixture must retain typed asset input");
+    };
     let f = &mut u.native;
     let child_id = transport::candidate_body_id(&child, uca_codec())?;
     f.until(
@@ -1286,6 +1354,14 @@ fn run_uca_successor(reused: bool) -> Result<()> {
         };
         ensure!(archive.point() == final_head, "UCA archive point differs");
         let stored = archive.stored();
+        ensure!(
+            stored.context() == child_context,
+            "cold asset profile/context differs"
+        );
+        ensure!(
+            stored.application_receipt(0).is_err(),
+            "asset archive exposed an application receipt"
+        );
         let outputs = stored.spend_outputs().context("UCA grant outputs absent")?;
         let receipts = (0..7)
             .map(|n| stored.receipt_view(n))

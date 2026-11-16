@@ -361,6 +361,7 @@ fn verify(
         ));
     }
     let material = UcaInitializationConfigV2 {
+        version: 2,
         pages: vec![],
         identities: manifest.identities.clone(),
         accounts: manifest.accounts.clone(),

@@ -8,6 +8,7 @@ use novovm_protocol::uca_application::{
     ApplicationGrantActionV1, ApplicationGrantReceiptV1, SignedApplicationGrantV1,
 };
 
+// Shared V4 pins cover both branches; outputs/header select the receipt type.
 pub(super) fn is_profile(context: &BatchContext) -> bool {
     context.business_program == application_program_id_v1()
         && context.receipt_codec == application_receipt_codec_v1()

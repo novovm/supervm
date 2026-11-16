@@ -95,6 +95,7 @@ impl IdleBackoff {
 mod admission;
 #[cfg(test)]
 mod admitted_tests;
+mod application;
 mod gossip;
 mod history;
 mod native_query;
@@ -115,17 +116,37 @@ struct BalanceQuery {
 
 struct Pending {
     input: AdmissionInput,
-    // Parent-independent signature capability from this pipeline. APFL only:
-    // a Raw row must not retain its separately decoded duplicate transaction.
+    // Parent-independent signature capability from this pipeline. Raw V3
+    // alone discards its separately decoded duplicate transaction.
     admitted: Option<AdmittedTransfer>,
     canonical_len: usize,
-    signer: Hash,
-    nonce: u64,
+    position: PendingPosition,
     /// Peers omitted from local fanout reservation, NOT delivery/finality bits.
     gossip_missing: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingPosition {
+    Asset { signer: Hash, nonce: u64 },
+    Application(application::ApplicationPosition),
+}
+
 impl Pending {
+    fn asset_position(&self) -> Option<(Hash, u64)> {
+        match self.position {
+            PendingPosition::Asset { signer, nonce } => Some((signer, nonce)),
+            PendingPosition::Application(_) => None,
+        }
+    }
+
+    #[cfg(test)]
+    fn asset_position_mut(&mut self) -> (&mut Hash, &mut u64) {
+        match &mut self.position {
+            PendingPosition::Asset { signer, nonce } => (signer, nonce),
+            PendingPosition::Application(_) => panic!("application has no asset nonce"),
+        }
+    }
+
     /// Match the original pipeline's expanded-input budget. APFL sharing does
     /// not exempt the expanded transaction from resource accounting. Invalid
     /// metadata cannot be selected or advance the local nonce prefix.
@@ -136,7 +157,9 @@ impl Pending {
                 (bytes == self.canonical_len).then_some(bytes)
             }
             AdmissionInput::Raw(_) | AdmissionInput::Apfl { .. } => Some(self.canonical_len),
-            AdmissionInput::Application(_) => None,
+            AdmissionInput::Application(raw) => {
+                (raw.len() == self.canonical_len).then_some(raw.len())
+            }
         }
     }
 
@@ -261,10 +284,7 @@ impl std::error::Error for PoolBackpressure {}
 impl PoolRetention {
     fn reserve(&mut self, input: &AdmissionInput, metadata: usize, limit: usize) -> Result<()> {
         let (owner, payload) = match input {
-            AdmissionInput::Application(_) => {
-                anyhow::bail!("application publication is not active")
-            }
-            AdmissionInput::Raw(raw) => (None, raw.capacity()),
+            AdmissionInput::Raw(raw) | AdmissionInput::Application(raw) => (None, raw.capacity()),
             AdmissionInput::Apfl { batch, .. } => {
                 let key = Arc::as_ptr(batch) as usize;
                 let bytes = if self.owners.contains_key(&key) {
@@ -416,6 +436,8 @@ pub struct RpcLifecycle {
     selection_wait: Option<SelectionWait>,
     selection_diagnostic: Option<SelectionDiagnostic>,
     receipts: BTreeMap<Hash, ReceiptState>,
+    // Same bounded recent-receipt projection, never application authority.
+    application_receipts: BTreeMap<Hash, Value>,
     recent: VecDeque<Hash>,
     indexed_height: u64,
     warm_projection_blocks: u64,
@@ -438,6 +460,8 @@ pub struct RpcLifecycle {
     admission: admission::AdmissionState,
     history: history::ReceiptHistory,
     uca_queries: native_query::UcaQueries,
+    application_selection: Option<application::ApplicationSelection>,
+    prefer_application: bool,
 }
 
 impl RpcLifecycle {
@@ -450,6 +474,7 @@ impl RpcLifecycle {
         let mut nonces = NonceCache::new(NONCE_CACHE_ENTRIES);
         if node.template.business_program
             == crate::native_pipeline::business::nov_transfer_batch::uca_program_id()
+            || application::is_application_context(&node.template)
         {
             nonces.require_initialized_subjects();
         }
@@ -468,6 +493,7 @@ impl RpcLifecycle {
             selection_wait: None,
             selection_diagnostic: None,
             receipts: BTreeMap::new(),
+            application_receipts: BTreeMap::new(),
             recent: VecDeque::new(),
             indexed_height: 0,
             warm_projection_blocks: 0,
@@ -490,6 +516,8 @@ impl RpcLifecycle {
             admission: admission::AdmissionState::default(),
             history: history::ReceiptHistory::default(),
             uca_queries: native_query::UcaQueries::default(),
+            application_selection: None,
+            prefer_application: true,
         })
     }
 
@@ -560,6 +588,9 @@ impl RpcLifecycle {
         // exact published projection. Neither it nor selection mutates nonces.
         if self.indexed_height != self.node.controller.parent().height {
             self.record_selection_gate("projection_pending", None, 0, None, None);
+            return Ok(());
+        }
+        if self.poll_application_selection()? {
             return Ok(());
         }
         let awaiting_admission = self.incoming.is_some()
@@ -719,9 +750,13 @@ impl RpcLifecycle {
             };
             let window_len = window.len();
             if self.is_uca()
-                && !budget_full
-                && window_len < self.batch_size
-                && window_len < self.order.len()
+                && should_expand_asset_nonce_window(
+                    &self.order,
+                    &self.pending,
+                    window_len,
+                    self.batch_size,
+                    budget_full,
+                )
             {
                 // All reads for the old window are complete. Include newly
                 // admitted suffix rows before releasing a whole-body turn.
@@ -782,6 +817,8 @@ impl RpcLifecycle {
                         reason: SelectionWaitReason::NoReady,
                         selected: 0,
                     });
+                    self.prefer_application = true;
+                    self.poll_application_selection()?;
                     return Ok(());
                 }
                 // All required reads are known: these are actual gaps/stale
@@ -790,6 +827,10 @@ impl RpcLifecycle {
                 self.nonce_scan =
                     advance_nonce_window(self.nonce_scan, window_len, self.order.len());
                 self.nonce_window = None;
+                // A real asset nonce gap is not permission to starve grants.
+                // Keep the original fair asset scan progress before yielding.
+                self.prefer_application = true;
+                self.poll_application_selection()?;
                 return Ok(());
             }
             let mut context = self.node.template;
@@ -842,8 +883,7 @@ impl RpcLifecycle {
                                     || {
                                         json!({"source_ref": Arc::as_ptr(batch) as usize,
                                         "index": index, "tx": hex(hash),
-                                            "nonce": entry.nonce,
-                                        "signer": hex(&entry.signer),
+                                        "position": format!("{:?}", entry.position),
                                         "parent_state_root": hex(&parent.state_root)})
                                     },
                                 );
@@ -875,6 +915,7 @@ impl RpcLifecycle {
                 (None, None) => self.node.controller.offer(message)?,
             };
         if accepted {
+            self.prefer_application = true;
             self.offered = Some(position);
             // Consume the whole-source opportunity only after the original
             // body owner accepts it. Parent projection, nonce I/O and owner
@@ -939,9 +980,10 @@ impl RpcLifecycle {
                 self.nonce_window.as_ref().and_then(|(_, window)| {
                     window.iter().find_map(|hash| {
                         let entry = self.pending.get(hash)?;
-                        (!self.nonces.values.contains_key(&entry.signer)
-                            && !nonce_after.is_some_and(|next| next.contains_key(&entry.signer)))
-                        .then_some((*hash, entry.nonce, entry.signer))
+                        let (signer, nonce) = entry.asset_position()?;
+                        (!self.nonces.values.contains_key(&signer)
+                            && !nonce_after.is_some_and(|next| next.contains_key(&signer)))
+                        .then_some((*hash, nonce, signer))
                     })
                 })
             })
@@ -975,7 +1017,10 @@ impl RpcLifecycle {
         // Only the next exact, locally acknowledged published head is eligible.
         // Never abandon an in-flight archive read (including its error) for a
         // cache hit. Cold/history/missed-slot paths retain the full validator.
-        let warm = self.archive.is_none()
+        // Application packets deliberately have NO asset receipt projection.
+        // Use the existing validated archive reader until a typed warm view exists.
+        let warm = !self.is_application_v4()
+            && self.archive.is_none()
             && self.indexed_height.checked_add(1) == Some(head.height)
             && self.node.controller.published_packet(head).is_some();
         if !warm && self.archive.is_none() {
@@ -995,6 +1040,29 @@ impl RpcLifecycle {
             Some(block.context("decided block missing during RPC projection")?)
         };
         let point = block.as_ref().map_or(head, |block| block.point());
+        if let Some(block) = block.as_ref().filter(|block| {
+            application::is_application_context(block.stored().context())
+                && block.stored().spend_outputs().is_none()
+        }) {
+            for index in 0..block.stored().receipt_bytes().len() {
+                let receipt = block.stored().application_receipt(index)?;
+                self.remove_application_pending(receipt.command_id);
+                self.application_receipts.insert(
+                    receipt.command_id,
+                    application::receipt_json(&receipt, point),
+                );
+                self.recent.push_back(receipt.command_id);
+            }
+            self.trim_recent_receipts();
+            self.indexed_height = point.height;
+            self.archive_projection_blocks = self.archive_projection_blocks.saturating_add(1);
+            self.archive = None;
+            crate::native_pipeline::profile::critical_projection_visible(
+                point.height,
+                point.block_hash,
+            );
+            return Ok(());
+        }
         let count = match &block {
             Some(block) => block.stored().receipt_bytes().len(),
             None => self
@@ -1038,7 +1106,9 @@ impl RpcLifecycle {
                 self.pending_bytes -= entry.canonical_len;
                 self.pending_retention
                     .release(&entry.input, entry.retained_metadata_bytes());
-                self.reservations.remove(&(entry.signer, entry.nonce));
+                if let Some(position) = entry.asset_position() {
+                    self.reservations.remove(&position);
+                }
             }
             let hash = receipt.tx_hash;
             self.receipts.insert(
@@ -1052,10 +1122,7 @@ impl RpcLifecycle {
                 },
             );
             self.recent.push_back(hash);
-            while self.recent.len() > RECENT_RECEIPTS {
-                self.receipts
-                    .remove(&self.recent.pop_front().expect("old receipt"));
-            }
+            self.trim_recent_receipts();
         }
         // Conflicting same-nonce input is not reported as an executed failure.
         self.retire_stale_pending();
@@ -1083,7 +1150,12 @@ impl RpcLifecycle {
             .expect("prepared nonce window")
             .1
             .iter()
-            .filter_map(|hash| pending.get(hash).map(|entry| entry.signer))
+            .filter_map(|hash| {
+                pending
+                    .get(hash)?
+                    .asset_position()
+                    .map(|(signer, _)| signer)
+            })
             .filter(|subject| !successor.contains_key(subject));
         let progressed = self.nonces.poll(parent, subjects, |root, subject| {
             pipeline.try_read_value(root, nonce_key(&subject))
@@ -1109,9 +1181,10 @@ impl RpcLifecycle {
             .pending
             .iter()
             .filter_map(|(hash, entry)| {
+                let (signer, nonce) = entry.asset_position()?;
                 self.nonces
-                    .get(&entry.signer)
-                    .is_some_and(|known| entry.nonce < *known)
+                    .get(&signer)
+                    .is_some_and(|known| nonce < *known)
                     .then_some(*hash)
             })
             .collect();
@@ -1122,13 +1195,13 @@ impl RpcLifecycle {
             self.pending_bytes -= entry.canonical_len;
             self.pending_retention
                 .release(&entry.input, entry.retained_metadata_bytes());
-            self.reservations.remove(&(entry.signer, entry.nonce));
+            if let Some(position) = entry.asset_position() {
+                self.reservations.remove(&position);
+            }
             self.receipts.insert(hash, ReceiptState::RejectedNonce);
             self.recent.push_back(hash);
         }
-        while self.recent.len() > RECENT_RECEIPTS {
-            self.receipts.remove(&self.recent.pop_front().unwrap());
-        }
+        self.trim_recent_receipts();
         self.order.retain(|hash| self.pending.contains_key(hash));
         self.gossip_order
             .retain(|hash| self.pending.contains_key(hash));
@@ -1220,8 +1293,7 @@ impl RpcLifecycle {
                 input,
                 admitted,
                 canonical_len,
-                signer,
-                nonce,
+                position: PendingPosition::Asset { signer, nonce },
                 gossip_missing: 0,
             },
         );
@@ -1241,6 +1313,15 @@ impl RpcLifecycle {
     }
 
     fn pending_status(&self, hash: Hash) -> Value {
+        if let Some(Pending {
+            position: PendingPosition::Application(position),
+            ..
+        }) = self.pending.get(&hash)
+        {
+            return json!({"tx_hash":hex(&hash),"state":"received_application",
+                "signature_verified":true,"finalized":false,"proof_verified":false,
+                "grant_id":hex(&position.grant_id),"expected_revision":position.expected_revision});
+        }
         json!({"tx_hash":hex(&hash),"state":"received","signature_verified":true,
             "admission_durable":false,"nonce_checked_at_execution":true,
             "nonce_projection_height":self.indexed_height,
@@ -1512,7 +1593,10 @@ fn pending_apfl_prefix(
         if !entry.matches(row)? {
             return Ok(None);
         }
-        let expected = match next.entry(entry.signer) {
+        let Some((signer, nonce)) = entry.asset_position() else {
+            return Ok(None);
+        };
+        let expected = match next.entry(signer) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
                 let Some(known) = nonces.get(entry.key()) else {
@@ -1521,7 +1605,7 @@ fn pending_apfl_prefix(
                 entry.insert(*known)
             }
         };
-        if *expected != entry.nonce {
+        if *expected != nonce {
             return Ok(None);
         }
         *expected = expected.checked_add(1).context("hint nonce overflow")?;
@@ -1562,7 +1646,10 @@ fn advance_pending_raw(
     if !entry.matches(decoded.as_view())? {
         return Ok(false);
     }
-    let expected = match next.entry(entry.signer) {
+    let Some((signer, nonce)) = entry.asset_position() else {
+        return Ok(false);
+    };
+    let expected = match next.entry(signer) {
         std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
         std::collections::btree_map::Entry::Vacant(entry) => {
             let Some(known) = nonces.get(entry.key()) else {
@@ -1571,7 +1658,7 @@ fn advance_pending_raw(
             entry.insert(*known)
         }
     };
-    if *expected != entry.nonce {
+    if *expected != nonce {
         return Ok(false);
     }
     *expected = expected.checked_add(1).context("hint nonce overflow")?;
@@ -1595,7 +1682,15 @@ fn retain_admitted_for_pool(
     admitted: AdmittedTransfer,
 ) -> Result<Option<AdmittedTransfer>> {
     match input {
-        AdmissionInput::Application(_) => anyhow::bail!("application cannot enter the asset pool"),
+        AdmissionInput::Application(raw) => {
+            let fact = admitted
+                .checked_application()
+                .context("application signature fact missing")?;
+            fact.reattach(
+                novovm_protocol::uca_application::SignedApplicationGrantV1::decode(raw)?,
+            )?;
+            Ok(Some(admitted))
+        }
         AdmissionInput::Apfl { batch, index } => {
             // Value equality alone does not identify retained memory: a token
             // from another dictionary could pin uncharged source bytes.
@@ -1680,6 +1775,7 @@ fn admitted_for_body<'a>(
             return Ok(None);
         };
         if checked.is_uca()
+            || checked.checked_application().is_some()
             || checked.checked().transfer() != row
             || checked.checked().tx_hash() != hash
         {
@@ -1737,6 +1833,26 @@ fn advance_nonce_window(start: usize, count: usize, remaining: usize) -> usize {
     }
 }
 
+fn should_expand_asset_nonce_window(
+    order: &VecDeque<Hash>,
+    pending: &BTreeMap<Hash, Pending>,
+    window_len: usize,
+    batch_size: usize,
+    budget_full: bool,
+) -> bool {
+    !budget_full
+        && window_len < batch_size
+        && order
+            .iter()
+            .filter(|hash| {
+                pending
+                    .get(*hash)
+                    .is_some_and(|entry| entry.asset_position().is_some())
+            })
+            .nth(window_len)
+            .is_some()
+}
+
 /// Current-height rows remain queued until publication even while preparing a
 /// successor. Do not let those stale-for-successor rows consume its entire
 /// bounded read window when a full executable group is already known. The
@@ -1751,13 +1867,27 @@ fn asset_nonce_selection_window(
     start: usize,
     batch_size: usize,
 ) -> (VecDeque<Hash>, bool) {
-    let ordinary = nonce_selection_window(order, start, batch_size);
+    let start = start.min(order.len());
+    let ordinary: VecDeque<_> = order
+        .iter()
+        .skip(start)
+        .chain(order.iter().take(start))
+        .filter(|hash| {
+            pending
+                .get(*hash)
+                .is_some_and(|entry| entry.asset_position().is_some())
+        })
+        .take(batch_size)
+        .copied()
+        .collect();
     // Preserve the original window's nonce reads before skipping any rows.
     // Otherwise a continuous full known stream could starve an older subject
     // whose nonce was evicted or invalidated by a parent change.
     if ordinary.iter().any(|hash| {
         pending.get(hash).is_some_and(|entry| {
-            !next.contains_key(&entry.signer) && !nonces.contains_key(&entry.signer)
+            entry.asset_position().is_some_and(|(signer, _)| {
+                !next.contains_key(&signer) && !nonces.contains_key(&signer)
+            })
         })
     }) {
         return (ordinary, false);
@@ -1783,7 +1913,9 @@ fn select_prepared_nonce_window(
 ) -> Option<(Vec<Hash>, bool)> {
     if window.iter().any(|hash| {
         pending.get(hash).is_some_and(|entry| {
-            !next.contains_key(&entry.signer) && !nonces.contains_key(&entry.signer)
+            entry.asset_position().is_some_and(|(signer, _)| {
+                !next.contains_key(&signer) && !nonces.contains_key(&signer)
+            })
         })
     }) {
         return None;
@@ -1823,7 +1955,7 @@ fn select_pending_batch_with_budget(
     let mut access_keys = 42;
     let body_limit = if pending
         .values()
-        .next()
+        .find(|entry| entry.asset_position().is_some())
         .is_some_and(|p| matches!(p.input, AdmissionInput::Uca { .. }))
     {
         super::uca_body_byte_limit(batch_size)
@@ -1834,7 +1966,10 @@ fn select_pending_batch_with_budget(
         let Some(entry) = pending.get(hash) else {
             continue;
         };
-        let expected = match next.entry(entry.signer) {
+        let Some((signer, nonce)) = entry.asset_position() else {
+            continue;
+        };
+        let expected = match next.entry(signer) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
                 let Some(known) = nonces.get(entry.key()) else {
@@ -1846,7 +1981,7 @@ fn select_pending_batch_with_budget(
                 entry.insert(*known)
             }
         };
-        if entry.nonce == *expected {
+        if nonce == *expected {
             let Some(row_bytes) = entry.selection_input_bytes() else {
                 exhausted = false;
                 break;
@@ -2163,7 +2298,11 @@ mod tests {
         // The last row belongs to an independent sender and must use the
         // published prefix when the durable parent did not touch that sender.
         let independent = *order.back().unwrap();
-        pending.get_mut(&independent).unwrap().signer = [2; 32];
+        *pending
+            .get_mut(&independent)
+            .unwrap()
+            .asset_position_mut()
+            .0 = [2; 32];
         let published = BTreeMap::from([([1; 32], 0), ([2; 32], 3)]);
         // This is an already-executed parent result (success/failure nonce
         // semantics are covered by the real-pipeline tests), not guessed credit.
@@ -2190,8 +2329,10 @@ mod tests {
                     input: AdmissionInput::Raw(raw.clone()),
                     admitted: None,
                     canonical_len: raw.len(),
-                    signer: checked.nonce_identity(),
-                    nonce: checked.transfer().nonce,
+                    position: PendingPosition::Asset {
+                        signer: checked.nonce_identity(),
+                        nonce: checked.transfer().nonce,
+                    },
                     gossip_missing: 0,
                 },
             );
@@ -2242,8 +2383,10 @@ mod tests {
                     input: AdmissionInput::Raw(raw.clone()),
                     admitted: None,
                     canonical_len: raw.len(),
-                    signer: checked.nonce_identity(),
-                    nonce: checked.transfer().nonce,
+                    position: PendingPosition::Asset {
+                        signer: checked.nonce_identity(),
+                        nonce: checked.transfer().nonce,
+                    },
                     gossip_missing: 0,
                 },
             );
@@ -2319,8 +2462,10 @@ mod tests {
                     canonical_len: raw.len(),
                     input: AdmissionInput::Raw(raw),
                     admitted: None,
-                    signer: [1; 32],
-                    nonce: nonce as u64,
+                    position: PendingPosition::Asset {
+                        signer: [1; 32],
+                        nonce: nonce as u64,
+                    },
                     gossip_missing: 0,
                 },
             );
@@ -2329,22 +2474,89 @@ mod tests {
     }
 
     #[test]
-    fn application_commands_cannot_be_retained_or_selected_as_asset_transfers() -> Result<()> {
+    fn mixed_pool_expands_asset_window_only_for_additional_asset_rows() {
+        let (mut order, mut pending) = pending_fixture(1, 8);
+        *pending.get_mut(&order[0]).unwrap().asset_position_mut().1 = 77;
+        let application = [2; 32];
+        order.push_back(application);
+        pending.insert(
+            application,
+            Pending {
+                input: AdmissionInput::Application(b"NUAPbad".to_vec()),
+                admitted: None,
+                canonical_len: 7,
+                position: PendingPosition::Application(application::ApplicationPosition {
+                    grant_id: application,
+                    expected_revision: 1,
+                }),
+                gossip_missing: 0,
+            },
+        );
+        let known = BTreeMap::from([([1; 32], 0)]);
+        let (window, no_ready) =
+            asset_nonce_selection_window(&order, &pending, &known, &BTreeMap::new(), 0, 3);
+        assert!(no_ready);
+        let (selected, full) =
+            select_prepared_nonce_window(&window, &pending, &known, &BTreeMap::new(), 3).unwrap();
+        assert!(selected.is_empty() && !full);
+        assert_eq!(window.len(), 1);
+        assert!(
+            !should_expand_asset_nonce_window(&order, &pending, window.len(), 3, full),
+            "the application row must not prevent the empty-asset fallback"
+        );
+
+        let additional_asset = [3; 32];
+        order.push_back(additional_asset);
+        pending.insert(
+            additional_asset,
+            Pending {
+                input: AdmissionInput::Raw(vec![0; 8]),
+                admitted: None,
+                canonical_len: 8,
+                position: PendingPosition::Asset {
+                    signer: [4; 32],
+                    nonce: 0,
+                },
+                gossip_missing: 0,
+            },
+        );
+        assert!(should_expand_asset_nonce_window(
+            &order, &pending, 1, 3, false
+        ));
+        assert!(!should_expand_asset_nonce_window(
+            &order, &pending, 1, 3, true
+        ));
+        assert!(!should_expand_asset_nonce_window(
+            &order, &pending, 1, 1, false
+        ));
+        assert!(!should_expand_asset_nonce_window(
+            &order, &pending, 2, 3, false
+        ));
+        assert_eq!(pending.len(), 3);
+        assert_eq!(known[&[1; 32]], 0);
+    }
+
+    #[test]
+    fn application_commands_share_retention_but_never_asset_nonce_selection() -> Result<()> {
         let input = AdmissionInput::Application(vec![0; 64]);
         let mut retention = PoolRetention::default();
-        assert!(retention.reserve(&input, 64, 4096).is_err());
-        assert_eq!(retention.bytes, 0);
-        assert_eq!(retention.metadata_bytes, 0);
+        retention.reserve(&input, 64, 4096)?;
+        assert_eq!(retention.bytes, 128);
+        assert_eq!(retention.metadata_bytes, 64);
         assert!(retention.owners.is_empty());
+        retention.release(&input, 64);
+        assert_eq!(retention.bytes, 0);
         let entry = Pending {
             input,
             admitted: None,
             canonical_len: 64,
-            signer: [1; 32],
-            nonce: 0,
+            position: PendingPosition::Application(application::ApplicationPosition {
+                grant_id: [1; 32],
+                expected_revision: 0,
+            }),
             gossip_missing: 0,
         };
-        assert_eq!(entry.selection_input_bytes(), None);
+        assert_eq!(entry.selection_input_bytes(), Some(64));
         assert!(entry.view().is_err());
         let raw = super::super::tests::signed_raw(19, 0);
         assert!(!entry.matches(decode_transfer_view_v3(&raw, 1024)?)?);
@@ -2445,13 +2657,15 @@ mod tests {
                     },
                     admitted: None,
                     canonical_len: raw.len(),
-                    signer: checked.nonce_identity(),
-                    nonce: checked.transfer().nonce,
+                    position: PendingPosition::Asset {
+                        signer: checked.nonce_identity(),
+                        nonce: checked.transfer().nonce,
+                    },
                     gossip_missing: 0,
                 },
             );
         }
-        let known = BTreeMap::from([(pending[&order[0]].signer, 0)]);
+        let known = BTreeMap::from([(pending[&order[0]].asset_position().unwrap().0, 0)]);
         let selected = select_pending_batch(&order, &pending, &known, BTreeMap::new(), 2);
         assert_eq!(selected, order.iter().take(2).copied().collect::<Vec<_>>());
         let batch = selected_apfl_batch(&selected, &pending, 2)?;

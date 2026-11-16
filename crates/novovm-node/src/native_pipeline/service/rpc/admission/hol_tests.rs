@@ -141,7 +141,16 @@ fn admit_future_prefix(rpc: &mut RpcLifecycle, signed: &[SignedAssetSpendV3]) ->
         rpc.incoming.is_none() && !rpc.admission.has_pending_native_admission()
     })?;
     ensure!(rpc.pending.len() == 1 && rpc.reservations.len() == 1);
-    ensure!(rpc.pending.values().next().unwrap().nonce == 1);
+    ensure!(
+        rpc.pending
+            .values()
+            .next()
+            .unwrap()
+            .asset_position()
+            .unwrap()
+            .1
+            == 1
+    );
     ensure!(rpc.node.controller.head().is_none());
     Ok(rpc.pending_retention.bytes)
 }
@@ -182,7 +191,18 @@ fn future_nonce_pool_wait_without_source_return_holds_late_bridge() -> Result<()
         for _ in 0..32 {
             rpc.poll_admission()?;
         }
-        ensure!(rpc.pending.len() == 1 && rpc.pending.values().next().unwrap().nonce == 1);
+        ensure!(
+            rpc.pending.len() == 1
+                && rpc
+                    .pending
+                    .values()
+                    .next()
+                    .unwrap()
+                    .asset_position()
+                    .unwrap()
+                    .1
+                    == 1
+        );
         ensure!(
             rpc.admission.checked_rows == checked && rpc.admission.uca_capture.batches == captured
         );

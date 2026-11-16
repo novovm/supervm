@@ -1,12 +1,29 @@
 //! NUAS structural bodies share the original bounded channel and candidate
 //! executor. This is neither asset admission nor a new publication authority.
 use super::*;
+use crate::native_pipeline::business::uca_application::{
+    application_effect_contract_v1, application_program_id_v1, application_receipt_codec_v1,
+    APPLICATION_SEMANTIC_VERSION_V1,
+};
 use crate::native_pipeline::{
     business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch::*},
     persistence::StoredCandidate,
     pipeline::BatchRequest,
 };
 use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
+
+pub(crate) fn native_v4(context: &BatchContext) -> bool {
+    context.business_program == application_program_id_v1()
+        && context.receipt_codec == application_receipt_codec_v1()
+        && context.semantic_version == APPLICATION_SEMANTIC_VERSION_V1
+}
+
+pub(crate) fn native_v4_policy(
+    context: &BatchContext,
+    policy: &DirectNovFeePolicy,
+) -> Result<bool> {
+    Ok(native_v4(context) && context.effect_contract == application_effect_contract_v1(policy)?)
+}
 
 const VERSION: u16 = 2;
 
@@ -20,9 +37,10 @@ fn batch_limits(limits: DecodeLimits) -> AssetSpendBatchLimitsV3 {
 
 fn uca_profile(context: &BatchContext) -> Result<()> {
     ensure!(
-        context.business_program == uca_program_id()
-            && context.receipt_codec == uca_receipt_codec()
-            && context.semantic_version == SEMANTIC_VERSION,
+        native_v4(context)
+            || (context.business_program == uca_program_id()
+                && context.receipt_codec == uca_receipt_codec()
+                && context.semantic_version == SEMANTIC_VERSION),
         "NUAS body requires exact UCA program/receipt/semantic profile"
     );
     Ok(())
@@ -261,7 +279,11 @@ pub(crate) fn candidate_request(
         Message::AssetBody { context, batch } => {
             uca_profile(context)?;
             ensure!(
-                context.effect_contract == uca_effect_contract(policy)?,
+                if native_v4(context) {
+                    native_v4_policy(context, policy)?
+                } else {
+                    context.effect_contract == uca_effect_contract(policy)?
+                },
                 "UCA body policy mismatch"
             );
             BatchRequest::from_uca_batch(batch.clone(), *context, policy.clone())
@@ -270,6 +292,13 @@ pub(crate) fn candidate_request(
             context,
             raw_transactions,
         } => {
+            if native_v4_policy(context, policy)? {
+                return BatchRequest::from_application(
+                    raw_transactions.clone(),
+                    *context,
+                    policy.clone(),
+                );
+            }
             legacy_profile(context, policy)?;
             BatchRequest::new(raw_transactions.clone(), *context, policy.clone())
         }
@@ -296,7 +325,15 @@ fn legacy_profile(context: &BatchContext, policy: &DirectNovFeePolicy) -> Result
 /// receiving pipeline must still verify signatures and read its own parent.
 pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Result<Message> {
     let context = *stored.context();
-    if context.business_program == uca_program_id() {
+    if native_v4(&context) && stored.spend_outputs().is_none() {
+        let message = Message::Body {
+            context,
+            raw_transactions: stored.raw_transactions().to_vec(),
+        };
+        super::encode(&message, limits)?;
+        return Ok(message);
+    }
+    if context.business_program == uca_program_id() || native_v4(&context) {
         uca_profile(&context)?;
         Ok(Message::AssetBody {
             context,

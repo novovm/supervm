@@ -3,6 +3,7 @@
 
 pub mod direct_nov_fee;
 pub mod fixed_supply;
+pub(crate) mod native_business;
 pub mod nov_transfer_batch;
 pub mod quoted_transfer;
 mod record_pages;

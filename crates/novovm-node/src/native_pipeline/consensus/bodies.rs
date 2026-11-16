@@ -93,13 +93,14 @@ impl CandidateBodies {
             "invalid body budget"
         );
         ensure!(
-            pin.semantic_version == SEMANTIC_VERSION
-                && ((pin.business_program == program_id()
-                    && pin.receipt_codec == receipt_codec()
-                    && pin.effect_contract == effect_contract(&policy)?)
-                    || (pin.business_program == uca_program_id()
-                        && pin.receipt_codec == uca_receipt_codec()
-                        && pin.effect_contract == uca_effect_contract(&policy)?)),
+            transport::native_v4_policy(&pin, &policy)?
+                || (pin.semantic_version == SEMANTIC_VERSION
+                    && ((pin.business_program == program_id()
+                        && pin.receipt_codec == receipt_codec()
+                        && pin.effect_contract == effect_contract(&policy)?)
+                        || (pin.business_program == uca_program_id()
+                            && pin.receipt_codec == uca_receipt_codec()
+                            && pin.effect_contract == uca_effect_contract(&policy)?))),
             "body program/receipt/policy pin mismatch"
         );
         transport::encode(&Message::RequestBody { body_id: [1; 32] }, codec)?;
@@ -204,8 +205,15 @@ impl CandidateBodies {
             "body parent/business pins mismatch"
         );
         ensure!(
-            matches!(message.as_ref(), Message::AssetBody { .. })
-                == (self.pin.business_program == uca_program_id()),
+            if transport::native_v4(&self.pin) {
+                matches!(
+                    message.as_ref(),
+                    Message::Body { .. } | Message::AssetBody { .. }
+                )
+            } else {
+                matches!(message.as_ref(), Message::AssetBody { .. })
+                    == (self.pin.business_program == uca_program_id())
+            },
             "candidate body wire/profile mismatch"
         );
         let identity_started = crate::native_pipeline::profile::mark();
@@ -273,9 +281,7 @@ impl CandidateBodies {
             return Ok(false);
         }
         let request = match message.as_ref() {
-            Message::Body {
-                raw_transactions, ..
-            } => BatchRequest::new(raw_transactions.clone(), *context, self.policy.clone())?,
+            Message::Body { .. } => transport::candidate_request(message, &self.policy)?,
             Message::ApflBody { batch, .. } => match admitted {
                 Some((pipeline, rows)) => {
                     let checked = pipeline.rebind_admitted_apfl(batch.clone(), rows)?;

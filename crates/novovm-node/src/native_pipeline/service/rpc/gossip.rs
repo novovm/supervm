@@ -87,6 +87,12 @@ fn select_repair(
         if entry.gossip_missing & (1_u64 << peer) == 0 {
             continue;
         }
+        if hashes.first().is_some_and(|hash| {
+            matches!(pending[hash].position, PendingPosition::Application(_))
+                != matches!(entry.position, PendingPosition::Application(_))
+        }) {
+            break;
+        }
         if hashes.len() == batch_size
             || bytes + entry.canonical_len
                 > if matches!(entry.input, AdmissionInput::Uca { .. }) {
@@ -183,6 +189,14 @@ impl RpcLifecycle {
                 let mut bytes = 0;
                 while let Some(hash) = self.gossip_order.front().copied() {
                     if let Some(entry) = self.pending.get(&hash) {
+                        if hashes.first().is_some_and(|first| {
+                            matches!(
+                                self.pending[first].position,
+                                PendingPosition::Application(_)
+                            ) != matches!(entry.position, PendingPosition::Application(_))
+                        }) {
+                            break;
+                        }
                         if hashes.len() == self.batch_size
                             || bytes + entry.canonical_len > self.input_body_limit()
                         {
@@ -198,7 +212,14 @@ impl RpcLifecycle {
                 (hashes, None, 0)
             };
             if !hashes.is_empty() {
-                let message = if self.is_uca() {
+                let message = if matches!(
+                    self.pending[&hashes[0]].position,
+                    PendingPosition::Application(_)
+                ) {
+                    self.node
+                        .controller
+                        .transactions_message(self.selected_application_raw(&hashes)?)?
+                } else if self.is_uca() {
                     self.node
                         .controller
                         .uca_transactions_message(self.selected_uca_batch(&hashes)?)?
@@ -544,7 +565,8 @@ mod tests {
             // a synthetic receipt, executed transaction or finality proof.
             let stale = &rpc.pending[&hashes[4]];
             let released = sources[4].retained_bytes()? + stale.retained_metadata_bytes();
-            rpc.nonces.published(stale.signer, stale.nonce + 1);
+            let (signer, nonce) = stale.asset_position().unwrap();
+            rpc.nonces.published(signer, nonce + 1);
             rpc.retire_stale_pending();
             retained_bytes -= released;
             assert_eq!(rpc.pending_retention.bytes, retained_bytes);
@@ -656,8 +678,10 @@ mod tests {
                     input: AdmissionInput::Raw(vec![n; 8]),
                     admitted: None,
                     canonical_len: 8,
-                    signer: [1; 32],
-                    nonce: n as u64,
+                    position: PendingPosition::Asset {
+                        signer: [1; 32],
+                        nonce: n as u64,
+                    },
                     gossip_missing: if n == 0 { 0 } else { 0b101 },
                 },
             );
@@ -717,8 +741,10 @@ mod tests {
                     },
                     admitted: None,
                     canonical_len: raw.len(),
-                    signer: checked.nonce_identity(),
-                    nonce: checked.transfer().nonce,
+                    position: PendingPosition::Asset {
+                        signer: checked.nonce_identity(),
+                        nonce: checked.transfer().nonce,
+                    },
                     gossip_missing: if index == 0 { 0 } else { 0b100 },
                 },
             );

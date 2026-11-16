@@ -5,6 +5,8 @@ use super::*;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+// Container format only, NOT UcaInitializationConfigV2.version. The selected
+// initialization transcript, approvals and all three pins authorize state.
 const PAGE_VERSION: u8 = 3;
 const PAGE_RECORDS: usize = 64;
 const PAGE_BYTES: usize = super::super::MAX_STARTUP_DOCUMENT_BYTES;
@@ -97,6 +99,7 @@ impl UcaGenesisManifestV2 {
                 "initialization manifest page version"
             );
             let mut material = UcaInitializationConfigV2 {
+                version: 2,
                 identities: vec![],
                 accounts: vec![],
                 approvals: vec![],
@@ -131,6 +134,7 @@ impl UcaGenesisManifestV2 {
     ) -> Result<UcaGenesisManifestPagesV3> {
         let mut genesis = self.genesis.clone();
         let header = UcaInitializationConfigV2 {
+            version: 2,
             identities: self.identities.clone(),
             accounts: self.accounts.clone(),
             approvals: vec![],
@@ -187,6 +191,7 @@ impl UcaInitializationConfigV2 {
         directory: &Path,
         page_records: usize,
     ) -> Result<Self> {
+        validate_initialization_version(self.version)?;
         ensure!(
             self.pages.is_empty(),
             "initialization material already paged"
@@ -232,6 +237,7 @@ impl UcaInitializationConfigV2 {
             write(page)?;
         }
         Ok(Self {
+            version: self.version,
             identities: vec![],
             accounts: vec![],
             approvals: vec![],
@@ -259,6 +265,7 @@ impl UcaInitializationConfigV2 {
     }
 
     fn hydrate_records(&mut self, base: &Path) -> Result<Vec<GenesisAllocation>> {
+        validate_initialization_version(self.version)?;
         if self.pages.is_empty() {
             return Ok(vec![]);
         }

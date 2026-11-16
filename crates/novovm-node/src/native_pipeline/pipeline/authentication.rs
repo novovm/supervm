@@ -3,7 +3,7 @@
 //! Its original whole-pipeline permit survives the pause before explicit bind.
 
 use super::*;
-use crate::native_pipeline::business::nov_transfer_batch::NovTransferBody;
+use crate::native_pipeline::business::native_business::Body as NovTransferBody;
 
 pub struct AuthenticationRequest {
     pub(super) request: Box<compute::AuthenticateRequest>,

@@ -4,8 +4,9 @@ use super::compute::{
 };
 use super::seed::{SeedCache, SeedSlot};
 use super::*;
-use crate::native_pipeline::business::nov_transfer_batch::{
-    NovCapturedInput, NovTransferBody, NovTransferCapture, NovTransferPlan,
+use crate::native_pipeline::business::native_business::{
+    Body as NovTransferBody, Capture as NovTransferCapture, Captured as NovCapturedInput,
+    Plan as NovTransferPlan,
 };
 use crate::native_pipeline::ingress::batch::AdmissionRows;
 use crate::native_pipeline::persistence::io::NodeReadReply;

@@ -564,6 +564,7 @@ fn run_native_uca_load_mode(
             accounts,
         } = manifest;
         let material = UcaInitializationConfigV2 {
+            version: 2,
             identities,
             accounts,
             approvals,

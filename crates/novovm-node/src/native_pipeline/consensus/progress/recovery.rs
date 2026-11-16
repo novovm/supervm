@@ -84,13 +84,14 @@ impl RoundProgress {
                 let stored = stored.context("cold candidate marker missing")?;
                 let locator = *locator;
                 let context = stored.context();
-                let matches_policy = context.semantic_version == SEMANTIC_VERSION
-                    && ((context.business_program == program_id()
-                        && context.receipt_codec == receipt_codec()
-                        && context.effect_contract == effect_contract(policy)?)
-                        || (context.business_program == uca_program_id()
-                            && context.receipt_codec == uca_receipt_codec()
-                            && context.effect_contract == uca_effect_contract(policy)?));
+                let matches_policy = super::super::transport::native_v4_policy(context, policy)?
+                    || (context.semantic_version == SEMANTIC_VERSION
+                        && ((context.business_program == program_id()
+                            && context.receipt_codec == receipt_codec()
+                            && context.effect_contract == effect_contract(policy)?)
+                            || (context.business_program == uca_program_id()
+                                && context.receipt_codec == uca_receipt_codec()
+                                && context.effect_contract == uca_effect_contract(policy)?)));
                 ensure!(
                     stored.candidate_id() == locator.candidate_id
                         && stored.document_digest() == locator.document_digest

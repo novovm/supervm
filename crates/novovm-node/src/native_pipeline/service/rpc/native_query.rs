@@ -18,6 +18,9 @@ impl RpcLifecycle {
     }
 
     pub(super) fn receipt_status_json(&self, hash: Hash) -> Value {
+        if let Some(receipt) = self.application_receipts.get(&hash) {
+            return receipt.clone();
+        }
         match self.recent_receipt(hash) {
             ReceiptState::Received => self.pending_status(hash),
             ReceiptState::NotRecent => json!({"tx_hash":hex(&hash),"state":"not_in_recent_index",
@@ -79,6 +82,17 @@ impl RpcLifecycle {
         } else {
             match &request.query {
                 Query::Status => unreachable!(),
+                Query::Receipt { hash } if self.application_receipts.contains_key(hash) => {
+                    // Binary receipt v1 has asset nonce/fee fields, not NUAR.
+                    Answer::Error(QueryError::Unavailable)
+                }
+                Query::Receipts { hashes }
+                    if hashes
+                        .iter()
+                        .any(|hash| self.application_receipts.contains_key(hash)) =>
+                {
+                    Answer::Error(QueryError::Unavailable)
+                }
                 Query::Receipt { hash } => Answer::Receipt {
                     state: self.recent_receipt(*hash),
                     indexed_height: self.indexed_height,
@@ -105,9 +119,7 @@ impl RpcLifecycle {
                 } => {
                     if *chain_id != self.node.template.chain_id
                         || *genesis != self.node.template.genesis_config_commitment
-                        || self.node.template.business_program
-                            != crate::native_pipeline::business::nov_transfer_batch::uca_program_id(
-                            )
+                        || !self.is_uca()
                     {
                         Answer::Error(QueryError::Unavailable)
                     } else {
@@ -124,9 +136,7 @@ impl RpcLifecycle {
                 Query::UcaApplicationGrant { selector } => {
                     if selector.chain_id != self.node.template.chain_id
                         || selector.genesis != self.node.template.genesis_config_commitment
-                        || self.node.template.business_program
-                            != crate::native_pipeline::business::nov_transfer_batch::uca_program_id(
-                            )
+                        || !self.is_uca()
                     {
                         Answer::Error(QueryError::Unavailable)
                     } else {
@@ -144,9 +154,7 @@ impl RpcLifecycle {
                     let intent_value = intent.intent();
                     if intent_value.chain_id != self.node.template.chain_id
                         || intent_value.genesis != self.node.template.genesis_config_commitment
-                        || self.node.template.business_program
-                            != crate::native_pipeline::business::nov_transfer_batch::uca_program_id(
-                            )
+                        || !self.is_uca()
                     {
                         Answer::Error(QueryError::Unavailable)
                     } else {

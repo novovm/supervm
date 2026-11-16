@@ -4,9 +4,11 @@
 //! This module neither changes AOEM's domain-neutral ABI nor publishes a head.
 
 use crate::native_pipeline::business::direct_nov_fee::DirectNovFeePolicy;
+use crate::native_pipeline::business::native_business::{
+    Body as NovTransferBody, Captured as NovCapturedInput, Plan as NovTransferPlan,
+};
 use crate::native_pipeline::business::nov_transfer_batch::{
-    ExecutionObservation, NovCapturedInput, NovTransferBody, NovTransferPlan,
-    ResidentTransferResources,
+    ExecutionObservation, ResidentTransferResources,
 };
 use crate::native_pipeline::execution::plan::{BatchContext, PlanBudget};
 use crate::native_pipeline::ingress::batch::{
@@ -49,6 +51,7 @@ pub(crate) enum CandidateInput {
     Unverified(BatchSource),
     Admitted(super::AdmittedBatch),
     Uca { source: BatchSource },
+    Application { source: BatchSource },
 }
 
 impl CandidateInput {
@@ -56,12 +59,12 @@ impl CandidateInput {
         match self {
             Self::Unverified(source) => source,
             Self::Admitted(batch) => batch.source(),
-            Self::Uca { source, .. } => source,
+            Self::Uca { source, .. } | Self::Application { source } => source,
         }
     }
     pub(super) fn ensure_owner(&self, owner: &Arc<()>) -> Result<()> {
         match self {
-            Self::Unverified(_) | Self::Uca { .. } => Ok(()),
+            Self::Unverified(_) | Self::Uca { .. } | Self::Application { .. } => Ok(()),
             Self::Admitted(batch) => batch.ensure_owner(owner),
         }
     }
@@ -71,6 +74,7 @@ impl CandidateInput {
             Self::Unverified(source) => source.into_raw(),
             Self::Admitted(_) => anyhow::bail!("raw-only allocation fixture"),
             Self::Uca { .. } => anyhow::bail!("raw-only allocation fixture"),
+            Self::Application { .. } => anyhow::bail!("typed application input"),
         }
     }
 }
@@ -96,6 +100,7 @@ impl std::ops::DerefMut for CandidateInput {
             Self::Unverified(source) => source,
             Self::Admitted(_) => panic!("authenticated input is immutable"),
             Self::Uca { .. } => panic!("typed UCA input is immutable"),
+            Self::Application { .. } => panic!("typed application input is immutable"),
         }
     }
 }
@@ -418,6 +423,7 @@ impl ComputeOwner {
         let sender = self
             .integer
             .as_ref()
+            .filter(|_| !input.is_application())
             .map_or(&self.sender, |lane| &lane.sender);
         match sender.try_send(Command::Execute {
             queued: profile::mark(),
@@ -491,6 +497,7 @@ fn domain_matches(domain: StorageDomain, context: &BatchContext) -> Result<()> {
 fn prepare(
     session: &mut ComputeSession,
     uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV3>,
+    application_facade: &mut Option<novovm_exec::uca_application::ApplicationGrantVerifierV1>,
     config: &ComputeConfig,
     request: PrepareRequest,
 ) -> Result<NovTransferPlan> {
@@ -498,6 +505,7 @@ fn prepare(
     let body = authenticate(
         session,
         uca_facade,
+        application_facade,
         config,
         AuthenticateRequest {
             raw_transactions: request.raw_transactions,
@@ -510,6 +518,7 @@ fn prepare(
 fn authenticate(
     session: &mut ComputeSession,
     uca_facade: &mut Option<novovm_exec::uca_spend::AssetSpendVerifierV3>,
+    application_facade: &mut Option<novovm_exec::uca_application::ApplicationGrantVerifierV1>,
     config: &ComputeConfig,
     request: AuthenticateRequest,
 ) -> Result<NovTransferBody> {
@@ -517,6 +526,34 @@ fn authenticate(
         crate::native_pipeline::profile::Phase::Authentication,
     );
     let batch = match request.raw_transactions {
+        CandidateInput::Application { source } => {
+            let BatchSource::Raw(raw) = source else {
+                anyhow::bail!("application body requires its own raw command contract");
+            };
+            let rows = admit_application_rows(
+                application_facade,
+                config,
+                raw.into_iter().map(AdmissionInput::Application).collect(),
+            )?;
+            let mut signed = Vec::with_capacity(rows.rows.len());
+            let mut facts = Vec::with_capacity(rows.rows.len());
+            for row in rows.rows {
+                let checked = row.result?;
+                facts.push(
+                    checked
+                        .application()
+                        .context("application signature fact missing")?
+                        .clone(),
+                );
+                signed.push(
+                    novovm_protocol::uca_application::SignedApplicationGrantV1::decode(
+                        &row.input.into_raw()?,
+                    )?,
+                );
+            }
+            return crate::native_pipeline::business::uca_application::ApplicationGrantBodyV1::prepare(
+                signed, &facts, &request.policy, config.plan).map(NovTransferBody::Application);
+        }
         CandidateInput::Uca { source } => {
             let (bytes, max) = source.sizes()?;
             ensure!(
@@ -854,6 +891,23 @@ fn execute(
     input: NovCapturedInput,
 ) -> Result<ComputedCandidate> {
     domain_matches(config.domain, input.plan().context())?;
+    if let NovCapturedInput::Application(input) = input {
+        let rows = input.plan().transaction_count();
+        let executed = input.execute(session, config.timeout)?;
+        return Ok(ComputedCandidate {
+            packet: PreparedCandidate::from_application_executed(executed, config.packet)?,
+            observation: ExecutionObservation {
+                apfl_view_transactions: 0,
+                components: 1,
+                credit_only_accounts: 0,
+                recomputed_transactions: rows,
+                gpu_rows: 0,
+                gpu_waves: 0,
+                peak_callbacks: 1,
+            },
+            seed: None,
+        });
+    }
     let input = {
         let _span = crate::native_pipeline::profile::span(
             crate::native_pipeline::profile::Phase::FinalizeCapture,
@@ -944,7 +998,13 @@ fn run_owner(
             } => {
                 profile::elapsed(profile::Phase::QueueCandidate, queued);
                 let result = lanes::checked(failed, || {
-                    authenticate(session, &mut uca_facade, config, *request)
+                    authenticate(
+                        session,
+                        &mut uca_facade,
+                        &mut application_facade,
+                        config,
+                        *request,
+                    )
                 });
                 let _ = reply.send(result);
             }
@@ -970,7 +1030,13 @@ fn run_owner(
             } => {
                 profile::elapsed(profile::Phase::QueueCandidate, queued);
                 let result = lanes::checked(failed, || {
-                    prepare(session, &mut uca_facade, config, *request)
+                    prepare(
+                        session,
+                        &mut uca_facade,
+                        &mut application_facade,
+                        config,
+                        *request,
+                    )
                 });
                 let _ = reply.send(result);
             }

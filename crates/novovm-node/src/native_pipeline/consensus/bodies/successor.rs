@@ -411,7 +411,8 @@ impl CandidateBodies {
         };
         let pin = Pin::from_selection(&selection);
         if context.parent_height != progress.context().height
-            || self.pin.business_program != uca_program_id()
+            || !(self.pin.business_program == uca_program_id()
+                || transport::native_v4_policy(&self.pin, &self.policy)?)
             || !matches_successor_context(context, &self.pin, pin)?
         {
             return Ok(None);
@@ -542,7 +543,8 @@ impl CandidateBodies {
         };
         ensure!(
             matches!(message.as_ref(), Message::AssetBody { .. })
-                == (self.pin.business_program == uca_program_id()),
+                == (self.pin.business_program == uca_program_id()
+                    || transport::native_v4_policy(&self.pin, &self.policy)?),
             "successor body wire/profile mismatch"
         );
         ensure!(

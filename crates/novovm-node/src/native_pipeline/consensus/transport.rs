@@ -32,8 +32,8 @@ pub use apfl::{apfl_body_id, apfl_early_body_id};
 mod uca;
 pub use uca::uca_body_id;
 pub(crate) use uca::{
-    candidate_body_id, candidate_body_id_and_wire_len, candidate_request, stored_body,
-    uca_body_reference,
+    candidate_body_id, candidate_body_id_and_wire_len, candidate_request, native_v4,
+    native_v4_policy, stored_body, uca_body_reference,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -13,6 +13,10 @@ use super::business::nov_transfer_batch::{
     effect_contract, program_id, receipt_codec, uca_effect_contract, uca_program_id,
     uca_receipt_codec, SEMANTIC_VERSION,
 };
+use super::business::uca_application::{
+    application_effect_contract_v1, application_program_id_v1, application_receipt_codec_v1,
+    APPLICATION_SEMANTIC_VERSION_V1,
+};
 use super::consensus::{
     bodies::{BodyLimits, CandidateBodies},
     collector::CollectorLimits,
@@ -153,17 +157,28 @@ impl ResidentNode {
             identities,
         } = prepared;
         let pipeline_config = pipeline_config(&config);
+        let application = config.uca_initialization.as_ref().is_some_and(
+            config::uca_genesis::UcaInitializationConfigV2::application_authority_enabled,
+        );
         let template = BatchContext {
             chain_id: config.genesis.chain_id,
             genesis_config_commitment: config.genesis.genesis_config_commitment,
             protocol_commitment: config.genesis.protocol_commitment,
-            business_program: if config.uca_initialization.is_some() {
+            business_program: if application {
+                application_program_id_v1()
+            } else if config.uca_initialization.is_some() {
                 uca_program_id()
             } else {
                 program_id()
             },
-            semantic_version: SEMANTIC_VERSION,
-            effect_contract: if config.uca_initialization.is_some() {
+            semantic_version: if application {
+                APPLICATION_SEMANTIC_VERSION_V1
+            } else {
+                SEMANTIC_VERSION
+            },
+            effect_contract: if application {
+                application_effect_contract_v1(&config.genesis.policy)?
+            } else if config.uca_initialization.is_some() {
                 uca_effect_contract(&config.genesis.policy)?
             } else {
                 effect_contract(&config.genesis.policy)?
@@ -173,7 +188,9 @@ impl ResidentNode {
             parent_state_root: initial.root(),
             parent_receipt_root: empty_root(),
             parent_state_version: 0,
-            receipt_codec: if config.uca_initialization.is_some() {
+            receipt_codec: if application {
+                application_receipt_codec_v1()
+            } else if config.uca_initialization.is_some() {
                 uca_receipt_codec()
             } else {
                 receipt_codec()
