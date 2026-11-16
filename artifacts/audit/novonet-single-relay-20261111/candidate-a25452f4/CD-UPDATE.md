@@ -1,5 +1,14 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-16：用户已授权一次补跑，原C PID41648正在First-Chance观察
+
+补跑于北京时间20:02:28启动，最晚21:17:28结束；CDB PID31520，LocalService账户已核验。
+原EXE和实际AOEM966哈希匹配，原库existing、原身份；业务前已配置AV首次通知。
+有效回调为相对路径$$><capture.cmd，原工作目录中命令文件哈希一致；不使用代码/数据断点。
+截至约27分53秒未捕获AV，周期状态与通信仍推进；不是修复/稳定性或四机验收通过。
+不要为读交接重启或替换这次原节点；首次AV取证后结束，未命中也不自动追加运行。
+WER未改，双中继未恢复。详见[本轮真实启动及边界](C-FIRSTCHANCE-RETRY-20261116/README.md)。
+
 ## C回传 2026-11-16：First-Chance单次运行因CDB回调路径错误受控结束
 
 基于d6ac9935，用户授权一次原C、原EXE+AOEM966、原库existing和原身份，最多75分钟。
