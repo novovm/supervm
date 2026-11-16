@@ -2,6 +2,13 @@
 
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
+05:41更新：用户清理后Windows95新整包及实际新EXE＋AOEM冷恢复已过，C/D只先复制核验。
+Linux FullMax已过，Linux整节点继续；Full43952963989仅Rust尚在运行。另已实际读到A于
+04:45因磁盘满/OS112排空退出1，当前不是在线PID28124，也不是C类AV；旧Carrier成功
+只代表停机前。清理后恢复直接用新候选existing，不重跑旧包。准确制品和执行入口见
+[当前95整包交接](../artifacts/audit/aoem-latest-57090b6b-20261117/candidate-common-95ec9c2e/README.md)。
+下方早一轮“Windows失败/旧PID运行”的观察已被本段与该交接更新，不作为当前健康证明。
+
 用户要求 A/B/C/D 全部升级到新版共同运行时代码与最新合格 AOEM，继续原 owner 双中继。
 A 已签收 C 的 e4fad013 和 D 的22542a2b：C 新 EXE 资格已跑完但当前停止，D 新 AOEM
 已资格、未部署；A 当前仍是 a254 EXE＋新 AOEM，不冒称新节点已升级。A→B Carrier

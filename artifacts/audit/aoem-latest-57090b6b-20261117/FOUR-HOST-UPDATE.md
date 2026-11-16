@@ -1,5 +1,9 @@
 # CURRENT: new common node + latest AOEM, then real double relay
 
+## SUPERSEDING 05:41 ACTION
+
+User cleared the idle debug cache; space restoration was verified. Final Windows95 whole-node package and its new EXE+AOEM cold-recovery qualification passed. Fixed ZIP is ready for C/D receipt-only preparation. **A is stopped:** its actual exit1 at04:45 was disk-full/OS112 with original node drained, not a C-type AV; prior Carrier success is pre-stop evidence only. Linux FullMax passed, Linux whole-node build continues; corrected Full still finishing Rust. No host upgraded this new round. Exact hashes, original records and current next steps: [candidate-common-95ec9c2e/README.md](candidate-common-95ec9c2e/README.md). This supersedes the earlier capacity/build/current-PID observations below, retained as historical attempts.
+
 Updated 2026-11-17 04:48 Beijing. User authorized A/B/C/D upgrades and four-host integration. No old crash test or BASE rerun. Stop/replacement authority is already granted; execution still needs a qualified actual package and an authenticated management path.
 
 ## Immediate blockers and completed work
