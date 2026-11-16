@@ -1,0 +1,46 @@
+[
+  {
+    "index": 0,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_hex64_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 536640
+  },
+  {
+    "index": 1,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_hex64_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 535996
+  },
+  {
+    "index": 2,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_hex64_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 512441
+  },
+  {
+    "index": 3,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_hex64_strings": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 538622
+  }
+]

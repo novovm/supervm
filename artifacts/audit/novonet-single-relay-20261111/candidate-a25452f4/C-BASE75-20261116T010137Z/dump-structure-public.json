@@ -1,0 +1,66 @@
+[
+  {
+    "name": "novovm-base75-a254.exe.39152.dmp",
+    "bytes": 210746528,
+    "sha256": "42c4be50c967c8a927eec7110b7ddda4a1079385e8c65e6c38b68de804c46194",
+    "full_memory": true,
+    "stream_types": [
+      0,
+      3,
+      4,
+      6,
+      7,
+      9,
+      12,
+      13,
+      15,
+      16,
+      17,
+      21,
+      22,
+      24
+    ],
+    "module_names": [
+      {
+        "name": "novovm-base75-a254.exe",
+        "base": "0x7ff778ec0000",
+        "size": 48504832
+      },
+      {
+        "name": "ntdll.dll",
+        "base": "0x7ffce3150000",
+        "size": 2539520
+      },
+      {
+        "name": "KERNELBASE.dll",
+        "base": "0x7ffce02f0000",
+        "size": 4231168
+      },
+      {
+        "name": "VCRUNTIME140.dll",
+        "base": "0x7ffcb1d30000",
+        "size": 122880
+      },
+      {
+        "name": "aoem_ffi.dll",
+        "base": "0x7ffbe64b0000",
+        "size": 48730112
+      }
+    ],
+    "exception": {
+      "thread_id": 676,
+      "code": "0xc0000409",
+      "flags": "0x1",
+      "address": "0x7ff77acfe1e1",
+      "parameter_count": 1,
+      "first_parameter": "0x7",
+      "context_bytes": 1232,
+      "rip": "0x7ff77acfe1e1",
+      "rsp": "0x6b96feecd0",
+      "rbp": "0x6b96feecf0"
+    },
+    "thread_count": 19,
+    "memory_ranges": 421,
+    "captured_memory_bytes": 210632704
+  }
+]

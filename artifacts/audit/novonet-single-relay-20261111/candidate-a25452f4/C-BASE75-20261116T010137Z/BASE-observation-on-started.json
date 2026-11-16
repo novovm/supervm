@@ -1,0 +1,19 @@
+{
+  "utc": "2026-11-16T01:02:10.071948+00:00",
+  "pids": {
+    "1": 44948,
+    "2": 39152,
+    "3": 25260,
+    "0": 4764
+  },
+  "EXE_sha256": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+  "AOEM_sha256": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52",
+  "shared_test_identities": true,
+  "network_evidence": true,
+  "report_interval_ms": 5000,
+  "stage_timing": false,
+  "debugger": false,
+  "PT": false,
+  "TTD": false,
+  "transactions_injected": 0
+}

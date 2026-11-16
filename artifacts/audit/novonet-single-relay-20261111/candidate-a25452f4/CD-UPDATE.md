@@ -1,5 +1,13 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-16：75分钟隔离BASE提前自然失败
+
+原a254＋AOEM966、新LocalService测试身份和新库，无调试器/PT/TTD。PID39152运行约648秒自然0xC0000409/子码7；控制器651.378秒收尾，其他三节点受控0xE0000001。完整DMP210,746,528字节，19线程、421内存范围，哈希稳定；WHEA新增0条。
+status/archive_work首次reads_started插入重现损坏RawTable→巨额申请→Rust OOM。新差异：XMM6和XMM7低64位保持合法，仅XMM7高64位/items=0x18e3c1f7510异常，申请18TiB+16B；不是历史36TiB+16B完全相同。首次异常定义仍未知，无猜测性修复。
+只执行授权BASE一次；原库身份和全部失败现场保留，双中继暂停，临时节点/任务/专属WER已清理。公开材料与产品隔离。
+详见[C-BASE75-20261116T010137Z/README.md](C-BASE75-20261116T010137Z/README.md)。
+
+
 ## C回传 2026-11-16：修正后功能隔离首组结束
 
 本次一次UAC后由同一LocalService任务执行有界批次。BASE实际1202.624秒，终态native_time_bound_all_exited。

@@ -1,0 +1,18 @@
+{
+  "TTD": false,
+  "original_state_accessed": false,
+  "PT": false,
+  "production_modified": false,
+  "original_wer_modified": false,
+  "maximum_phase_seconds": 4500,
+  "groups": [
+    "BASE-observation-on"
+  ],
+  "shared_only_inside_batch": true,
+  "transactions_injected": 0,
+  "utc": "2026-11-16T01:02:07.4124586Z",
+  "debugger": false,
+  "new_test_identities": true,
+  "loopback_only": true,
+  "maximum_phases": 1
+}

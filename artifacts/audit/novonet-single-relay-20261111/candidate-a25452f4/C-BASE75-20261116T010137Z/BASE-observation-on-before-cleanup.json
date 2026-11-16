@@ -1,0 +1,14 @@
+{
+  "utc": "2026-11-16T01:12:59.594904+00:00",
+  "reason": "natural_nonzero_exit",
+  "error": null,
+  "exits": {
+    "1": null,
+    "2": {
+      "unsigned": 3221226505,
+      "hex": "0xc0000409"
+    },
+    "3": null,
+    "0": null
+  }
+}
