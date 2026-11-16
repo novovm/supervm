@@ -1,0 +1,12 @@
+
+running 1 test
+test native_pipeline::service::network::tests::all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates ... Error: owner directory must be owned by this user and mode 0700
+FAILED
+
+failures:
+
+failures:
+    native_pipeline::service::network::tests::all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1828 filtered out; finished in 0.03s
+

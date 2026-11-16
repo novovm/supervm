@@ -1,3 +1,5 @@
 # Preserve original qualification stdout and report bytes across checkouts.
 *.log -text whitespace=-blank-at-eof,cr-at-eol
 *.json -text whitespace=cr-at-eol
+*.py -text whitespace=cr-at-eol
+*.ps1 -text whitespace=cr-at-eol

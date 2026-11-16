@@ -1,0 +1,55 @@
+{
+  "pid": 2621117,
+  "uid": 996,
+  "source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "node_sha256": "e709c0d78776492b0e04f28cb817ae83f73e3f4642ccda67b27838feb448b0a4",
+  "aoem_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+  "start": "existing",
+  "initialize_executed": false,
+  "custody_unchanged": true,
+  "other_services_unchanged": true,
+  "other_services_after": "MainPID=913371\nId=novonet-mailbox.service\nActiveState=active\nSubState=running\n\nMainPID=913258\nId=supervm-relay.service\nActiveState=active\nSubState=running\n\nMainPID=913340\nId=nginx.service\nActiveState=active\nSubState=running\n\nMainPID=1414\nId=docker.service\nActiveState=active\nSubState=running\n",
+  "other_service_continuity_required": false,
+  "listeners": "UNCONN 0      0      0.0.0.0:42050 0.0.0.0:* users:((\"novovm-node\",pid=2621117,fd=17))\nUNCONN 0      0      0.0.0.0:41050 0.0.0.0:* users:((\"novovm-node\",pid=2621117,fd=3)) \n",
+  "external_authenticated_status_required": true,
+  "prepared": {
+    "source": "95ec9c2eced988c5798d549971354ef8722367b7",
+    "node_sha256": "e709c0d78776492b0e04f28cb817ae83f73e3f4642ccda67b27838feb448b0a4",
+    "aoem_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+    "artifacts_verified": 92,
+    "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+    "start": "existing",
+    "resume_stopped": false,
+    "initialize_executed": false,
+    "node_started": false,
+    "config_sha256": "3e1d1c38ef8ed53af701dc7243af443cd0b41173f46c9d0f569974c0bae7115d",
+    "network_sha256": "b39a171852cfbbca31e0a27713cf964950a6b0755242cf12d1ab7bceae02dd63"
+  },
+  "old_exit": {
+    "pid": 913266,
+    "start_ticks": "271071754",
+    "signal": "SIGTERM",
+    "scope": "interrupted original-database recovery; not certified graceful drain"
+  },
+  "before_progress": {
+    "entry": "original_native_execution_tick",
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  },
+  "after_progress": {
+    "entry": "original_native_execution_tick",
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  },
+  "program_source": "1eb2f202d821fbb2e7cccee4e8bbfb3cd789c864",
+  "full_run": 43952963989,
+  "object_sent": false,
+  "scope": "Actual B existing update; finality and relay acceptance remain separate"
+}

@@ -1,5 +1,9 @@
 # CURRENT 2026-11-17: common Windows candidate ready for receipt, not yet deployed
 
+## SUPERSEDING 07:34: Full green, B/A updated; C dispatched next
+
+Full43952963989 completed success on exact program1eb. Linux and Windows actual new-package qualifications passed. B updated to PID2621117 then A to PID34208, both original-state existing/unchanged custody and authenticated Status passed (B68ms/A30ms). C/D new Windows ZIPs received; C acts now, D waits for C health. [Current execution handoff](CD-UPDATE.md) and actual public receipts supersede the earlier pending/stopped observations below. No double-relay object has been sent in this round.
+
 User approved A/B/C/D upgrades and subsequent real double-relay integration. No old crash/BASE reruns. No new stop permission is needed. This is internal deployment, not a public mainnet release.
 
 ## Fixed Windows ZIP: C/D copy and verify only for now

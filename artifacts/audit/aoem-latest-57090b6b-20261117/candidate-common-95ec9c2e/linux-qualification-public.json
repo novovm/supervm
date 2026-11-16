@@ -1,0 +1,18 @@
+{
+  "network_final_passed": 14,
+  "four_host_delivery": false,
+  "core_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "manifest_sha256": "ae6c99f0ca700a5f6aadc9ad38efcb0550e936c2a751d90a7dd6b986476cae3a",
+  "node_sha256": "e709c0d78776492b0e04f28cb817ae83f73e3f4642ccda67b27838feb448b0a4",
+  "archive_bytes": 375956604,
+  "program_source": "1eb2f202d821fbb2e7cccee4e8bbfb3cd789c864",
+  "initial_failed_case": "cold discovery refused NTFS owner-mode0700; kept original failure; only failed/unexecuted cases continued on native Linux fs",
+  "payload_count": 92,
+  "test_binary_sha256": "80b6b91b79ff52191cab72750f03ca3bbdff9eb9f01a150964a8e5ad2e9219ae",
+  "utc": "2026-11-16T23:37:21.2364586Z",
+  "native_cold_recovery_passed": 1,
+  "native_fs_exit": "exit=0",
+  "scope": "actual fixed new Linux package local qualification",
+  "package_source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "archive_sha256": "6faa402f85164acb45cc586578a213b3052478ee2806bdaffb8d050837f598ad"
+}

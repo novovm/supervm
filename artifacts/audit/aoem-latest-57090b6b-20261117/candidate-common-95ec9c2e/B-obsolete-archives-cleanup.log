@@ -1,0 +1,14 @@
+354664477 /home/ecs-user/novovm-incoming-20261102/novovm-14333419-linux-x86_64-20261102.tar.gz
+7d4f4dc184300eb3e19081db8e5199bf32bc1d729fb6a81be0071bdbc339229a  /home/ecs-user/novovm-incoming-20261102/novovm-14333419-linux-x86_64-20261102.tar.gz
+355899424 /home/ecs-user/novovm-incoming-20261104/novovm-d7ef793b-linux-x86_64-20261104.tar.gz
+fc2b01712369e7d1a53e4c8a65d1dfd95cc66d8f44f5638a1132dd1fb8e75901  /home/ecs-user/novovm-incoming-20261104/novovm-d7ef793b-linux-x86_64-20261104.tar.gz
+358788674 /home/ecs-user/novovm-incoming-ce1f54ea-20261107/novonet-ce1f54ea-linux-x86_64-r2.tar.gz
+e2da38deafb0a97e4f47739cee8eb0aea14e450a97c7bace3be5a803b0911fce  /home/ecs-user/novovm-incoming-ce1f54ea-20261107/novonet-ce1f54ea-linux-x86_64-r2.tar.gz
+358788713 /home/ecs-user/novovm-incoming-08236129-20261108/novonet-08236129-linux-x86_64.tar.gz
+51bfb427697132a56064a186a098516b70b9403da4dc572d947ebd9ecc811932  /home/ecs-user/novovm-incoming-08236129-20261108/novonet-08236129-linux-x86_64.tar.gz
+Filesystem       1B-blocks        Used  Available Use% Mounted on
+/dev/vda3      63017381888 58803568640 1419104256  98% /
+REMOVED_FOUR_OBSOLETE_UPLOAD_ARCHIVES_ONLY
+Filesystem       1B-blocks        Used  Available Use% Mounted on
+/dev/vda3      63017381888 57375412224 2847260672  96% /
+bash: line 24: $'\r': command not found

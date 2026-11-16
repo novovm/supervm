@@ -1,5 +1,9 @@
 # CURRENT: new common node + latest AOEM, then real double relay
 
+## SUPERSEDING 07:34: B/A are updated and healthy; C is next
+
+Full43952963989 passed on fixed program1eb. Linux/Windows new packages qualified. B was updated first (PID2621117), then A recovered with the new EXE (PID34208), both original database/identity existing. Authenticated Status B68ms/A30ms passed. C/D whole-program ZIPs received; [C's current local-owner update instructions](candidate-common-95ec9c2e/CD-UPDATE.md) now apply. D waits for C health. Do not repeat old crash or direct object tests; no new double-relay object has been sent. Earlier stopped/pending states below are historical, not current blockers.
+
 ## SUPERSEDING 05:41 ACTION
 
 User cleared the idle debug cache; space restoration was verified. Final Windows95 whole-node package and its new EXE+AOEM cold-recovery qualification passed. Fixed ZIP is ready for C/D receipt-only preparation. **A is stopped:** its actual exit1 at04:45 was disk-full/OS112 with original node drained, not a C-type AV; prior Carrier success is pre-stop evidence only. Linux FullMax passed, Linux whole-node build continues; corrected Full still finishing Rust. No host upgraded this new round. Exact hashes, original records and current next steps: [candidate-common-95ec9c2e/README.md](candidate-common-95ec9c2e/README.md). This supersedes the earlier capacity/build/current-PID observations below, retained as historical attempts.

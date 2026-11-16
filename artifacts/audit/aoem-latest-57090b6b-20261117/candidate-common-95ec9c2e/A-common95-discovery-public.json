@@ -1,0 +1,113 @@
+{
+  "utc": "2026-11-16T23:34:23.9164962Z",
+  "execution_failures": 0,
+  "object_sent_this_round": false,
+  "pid": 34208,
+  "carrier_events": [
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "Started",
+      "elapsed_ms": 0,
+      "wall_ms": 1794872052893
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "DialStarted",
+      "elapsed_ms": 0,
+      "wall_ms": 1794872052893
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "RelayConnected",
+      "elapsed_ms": 0,
+      "wall_ms": 1794872052893
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "AddressReady",
+      "elapsed_ms": 2,
+      "wall_ms": 1794872052895
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "QuicReady",
+      "elapsed_ms": 41,
+      "wall_ms": 1794872052934
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "StreamReady",
+      "elapsed_ms": 41,
+      "wall_ms": 1794872052934
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "selected_path",
+      "kind": "direct",
+      "selected_remote": "47.103.59.206:42050",
+      "elapsed_ms": 41,
+      "wall_ms": 1794872052934
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "entry write",
+      "elapsed_ms": 41,
+      "wall_ms": 1794872052934
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "bound authentication",
+      "elapsed_ms": 41,
+      "wall_ms": 1794872052934
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "domain selection",
+      "elapsed_ms": 70,
+      "wall_ms": 1794872052963
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "remote publication",
+      "elapsed_ms": 187,
+      "wall_ms": 1794872053080
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "remote lookup",
+      "elapsed_ms": 202,
+      "wall_ms": 1794872053095
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "close",
+      "elapsed_ms": 244,
+      "wall_ms": 1794872053137
+    },
+    {
+      "direction": "outbound",
+      "attempt": 29,
+      "phase": "close",
+      "outcome": "completed",
+      "elapsed_ms": 274,
+      "carrier_failure": null,
+      "capacity_rejected": false,
+      "terminal_auth_or_domain_rejection": false,
+      "wall_ms": 1794872053167
+    }
+  ],
+  "verified_locator_count": 1
+}

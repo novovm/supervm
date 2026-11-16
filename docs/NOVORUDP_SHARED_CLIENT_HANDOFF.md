@@ -2,6 +2,13 @@
 
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
+07:34最新：Full43952963989最终全绿（程序1eb）；Linux/Windows新包资格通过。已先B后A
+以原库existing实际更新，新PID为B2621117/A34208，实际加载新AOEM，身份与状态投影未变；
+认证Status B68ms/A30ms通过。C/D整包已收，当前只派C执行本机既有owner更新，D待C健康；
+不再等旧崩溃测试，不重复直连对象，不提前开启观察窗口。实际回执和C具体执行要求：
+[当前C更新交接](../artifacts/audit/aoem-latest-57090b6b-20261117/candidate-common-95ec9c2e/CD-UPDATE.md)。
+下方05:41的A停止、Full待结束描述是已收口的历史状态，不再当作当前阻断。
+
 05:41更新：用户清理后Windows95新整包及实际新EXE＋AOEM冷恢复已过，C/D只先复制核验。
 Linux FullMax已过，Linux整节点继续；Full43952963989仅Rust尚在运行。另已实际读到A于
 04:45因磁盘满/OS112排空退出1，当前不是在线PID28124，也不是C类AV；旧Carrier成功

@@ -1,5 +1,6 @@
 """Offline guards for the original B-only updater; not node recovery acceptance."""
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -15,6 +16,34 @@ spec.loader.exec_module(update)
 
 
 class ExistingGuards(unittest.TestCase):
+    def test_fixed_artifact_count_remains_exact_for_new_package_shapes(self):
+        self.assertEqual(update.ARTIFACT_COUNT, 80)
+        with tempfile.TemporaryDirectory(prefix='novonet-package-shape-') as directory:
+            root = Path(directory)
+            node, library = root / 'bin/novovm-node', root / 'aoem/linux/core/bin/libaoem_ffi.so'
+            artifacts = []
+            for path, content in ((node, b'node fixture'), (library, b'core fixture')):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+                artifacts.append({'path': path.relative_to(root).as_posix(),
+                                  'bytes': len(content), 'sha256': hashlib.sha256(content).hexdigest()})
+            manifest = root / 'release-manifest.json'
+            manifest.write_text(json.dumps({'git_commit': update.SOURCE, 'artifacts': artifacts,
+                                           'aoem_runtime': {'path': library.relative_to(root).as_posix()}}))
+            with patch.object(update, 'MANIFEST_PIN', update.digest(manifest)), \
+                    patch.object(update, 'NODE_PIN', update.digest(node)), \
+                    patch.object(update, 'CORE_PIN', update.digest(library)):
+                with self.assertRaisesRegex(RuntimeError, 'source/count'):
+                    update.check_package(root)
+                with patch.object(update, 'ARTIFACT_COUNT', 2):
+                    self.assertEqual(update.check_package(root), library)
+                    node.write_bytes(b'tampered')
+                    with self.assertRaisesRegex(RuntimeError, 'Artifact mismatch'):
+                        update.check_package(root)
+                with patch.object(update, 'ARTIFACT_COUNT', 3), \
+                        self.assertRaisesRegex(RuntimeError, 'source/count'):
+                    update.check_package(root)
+
     def test_continuous_launch_only_changes_process_duration(self):
         commands = []
         with tempfile.TemporaryDirectory() as directory:

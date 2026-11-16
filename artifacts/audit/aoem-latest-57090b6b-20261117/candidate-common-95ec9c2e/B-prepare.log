@@ -1,0 +1,4 @@
+6faa402f85164acb45cc586578a213b3052478ee2806bdaffb8d050837f598ad  novovm-common-95ec9c2e-aoem570-linux-x86_64.tar.gz
+276c919eb3197fb8c6233a21d5706f21d05353b4ad7ba79d43b720de7842b81b  update-novonet-existing.py
+a97c6036a4a78b79506753ee2dbaf4165b8097891b65e7f784393fd3f3a3d4f4  full-final.json
+PASS B staged package/runtime; no node started, no database opened

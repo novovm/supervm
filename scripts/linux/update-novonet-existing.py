@@ -17,6 +17,7 @@ import tarfile
 import time
 
 SOURCE = '3fa11f940b18e54b46e6b927d3d66294bea37088'
+ARTIFACT_COUNT = 80
 ARCHIVE_PIN = 'd6ed8d869c46530077e9feb61b4ce0ef83dddcddc907f2e6d8a443825ae3e692'
 MANIFEST_PIN = '3a837ed6095a826e96df42610972980287f677c59d8ba02d426961a99dae2247'
 NODE_PIN = '8ae62f05146112f792b7868e170a1ae03445c783bf7964f2416bfb7ebff2184c'
@@ -263,7 +264,7 @@ def resume_current():
 def check_package(root):
     require(digest(no_redirect(root / 'release-manifest.json')) == MANIFEST_PIN, 'Manifest mismatch')
     manifest = read(root / 'release-manifest.json')
-    require(manifest['git_commit'] == SOURCE and len(manifest['artifacts']) == 80, 'Candidate source/count differs')
+    require(manifest['git_commit'] == SOURCE and len(manifest['artifacts']) == ARTIFACT_COUNT, 'Candidate source/count differs')
     for entry in manifest['artifacts']:
         relative = PurePosixPath(entry['path'])
         require(not relative.is_absolute() and '..' not in relative.parts, 'Artifact escaped release')
@@ -327,7 +328,7 @@ def prepare(resume_stopped):
         (work / name).chmod(0o440)
     require(snapshot['custody'] == custody(config, network), 'Custody changed during preparation')
     write(evidence / 'prepared.json', {'source': SOURCE, 'node_sha256': NODE_PIN, 'aoem_sha256': CORE_PIN,
-          'artifacts_verified': 80, 'database': fresh['database'], 'start': 'existing',
+          'artifacts_verified': ARTIFACT_COUNT, 'database': fresh['database'], 'start': 'existing',
           'resume_stopped': resume_stopped, 'initialize_executed': False, 'node_started': False,
           'config_sha256': digest(work / 'run.json'), 'network_sha256': digest(work / 'network.json')})
     print('PASS B staged package/runtime; no node started, no database opened')

@@ -1,0 +1,25 @@
+{
+  "unit": "novovm-B-common95-network-20261117.service",
+  "pid": 2621117,
+  "uid": 996,
+  "exe": "/opt/novovm/releases/novovm-common-95ec9c2e-aoem570-linux-x86_64/bin/novovm-node",
+  "node_sha256": "e709c0d78776492b0e04f28cb817ae83f73e3f4642ccda67b27838feb448b0a4",
+  "library": "/opt/novovm/releases/novovm-common-95ec9c2e-aoem570-linux-x86_64/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "mapped_core_libraries": [
+    "/opt/novovm/releases/novovm-common-95ec9c2e-aoem570-linux-x86_64/aoem/linux/core/bin/libaoem_ffi.so"
+  ],
+  "config": "/var/lib/novovm/selfrun/91129655606029/B/novovm-common-95ec9c2e-20261117/run.json",
+  "progress": "/var/lib/novovm/selfrun/91129655606029/B/novovm-common-95ec9c2e-20261117/logs/progress.json",
+  "network": "/var/lib/novovm/selfrun/91129655606029/B/novovm-common-95ec9c2e-20261117/network.json",
+  "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+  "launch_start": "existing",
+  "configured_run_ms": null,
+  "projection": {
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  }
+}

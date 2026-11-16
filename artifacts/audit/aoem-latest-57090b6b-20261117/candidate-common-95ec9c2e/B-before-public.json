@@ -1,0 +1,25 @@
+{
+  "unit": "novovm-B-a25452f4-network-20261112.service",
+  "pid": 913266,
+  "uid": 996,
+  "exe": "/opt/novovm/releases/novonet-observation-a25452f4-linux-x86_64/bin/novovm-node",
+  "node_sha256": "89854a24d4259b912fdbb8c6f8e21ea48af6c74c0c89da8f3cdc648c1845a769",
+  "library": "/opt/novovm/releases/novonet-observation-a25452f4-linux-x86_64/aoem/linux/core/bin/libaoem_ffi.so",
+  "library_sha256": "d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33",
+  "mapped_core_libraries": [
+    "/opt/novovm/releases/novonet-observation-a25452f4-linux-x86_64/aoem/linux/core/bin/libaoem_ffi.so"
+  ],
+  "config": "/var/lib/novovm/selfrun/91129655606029/B/novonet-observation-a25452f4-20261112/run.json",
+  "progress": "/var/lib/novovm/selfrun/91129655606029/B/novonet-observation-a25452f4-20261112/logs/progress.json",
+  "network": "/var/lib/novovm/selfrun/91129655606029/B/novonet-observation-a25452f4-20261112/network.json",
+  "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+  "launch_start": "existing",
+  "configured_run_ms": null,
+  "projection": {
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null,
+    "execution_failures": 0,
+    "recovery_in_progress": false
+  }
+}
