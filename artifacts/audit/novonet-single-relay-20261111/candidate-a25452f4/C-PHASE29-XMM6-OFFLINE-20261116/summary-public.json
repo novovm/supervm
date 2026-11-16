@@ -1,0 +1,465 @@
+{
+  "base_commit": "39c8bd3f",
+  "scope": "offline only; no node/database/identity access; no production code change",
+  "P0": {
+    "pid": 38324,
+    "fault_rva": "0x84f36d",
+    "exception_information": [
+      "0x0",
+      "0xffffffffffffffff"
+    ],
+    "RIP": "0x7ff770faf36d",
+    "RSP": "0x3e48fee210",
+    "RBP": "0x3e48fee290",
+    "effective_address": "0x3e48fee2b0",
+    "effective_address_mod16": 0,
+    "runtime_function": {
+      "begin": "0x84f050",
+      "end": "0x84f46a",
+      "unwind_rva": "0x297d43c"
+    },
+    "prologue": [
+      {
+        "rva": "0x84f050",
+        "bytes": "55",
+        "instruction": "push rbp"
+      },
+      {
+        "rva": "0x84f051",
+        "bytes": "4157",
+        "instruction": "push r15"
+      },
+      {
+        "rva": "0x84f053",
+        "bytes": "4156",
+        "instruction": "push r14"
+      },
+      {
+        "rva": "0x84f055",
+        "bytes": "4155",
+        "instruction": "push r13"
+      },
+      {
+        "rva": "0x84f057",
+        "bytes": "4154",
+        "instruction": "push r12"
+      },
+      {
+        "rva": "0x84f059",
+        "bytes": "56",
+        "instruction": "push rsi"
+      },
+      {
+        "rva": "0x84f05a",
+        "bytes": "57",
+        "instruction": "push rdi"
+      },
+      {
+        "rva": "0x84f05b",
+        "bytes": "53",
+        "instruction": "push rbx"
+      },
+      {
+        "rva": "0x84f05c",
+        "bytes": "4881ecd8000000",
+        "instruction": "sub rsp, 0xd8"
+      },
+      {
+        "rva": "0x84f063",
+        "bytes": "488dac2480000000",
+        "instruction": "lea rbp, [rsp + 0x80]"
+      },
+      {
+        "rva": "0x84f06b",
+        "bytes": "66440f7f4540",
+        "instruction": "movdqa xmmword ptr [rbp + 0x40], xmm8"
+      },
+      {
+        "rva": "0x84f071",
+        "bytes": "660f7f7d30",
+        "instruction": "movdqa xmmword ptr [rbp + 0x30], xmm7"
+      },
+      {
+        "rva": "0x84f076",
+        "bytes": "660f7f7520",
+        "instruction": "movdqa xmmword ptr [rbp + 0x20], xmm6"
+      }
+    ],
+    "normal_epilogue": [
+      {
+        "rva": "0x84f36a",
+        "bytes": "4c89f0",
+        "instruction": "mov rax, r14"
+      },
+      {
+        "rva": "0x84f36d",
+        "bytes": "0f287520",
+        "instruction": "movaps xmm6, xmmword ptr [rbp + 0x20]"
+      },
+      {
+        "rva": "0x84f371",
+        "bytes": "0f287d30",
+        "instruction": "movaps xmm7, xmmword ptr [rbp + 0x30]"
+      },
+      {
+        "rva": "0x84f375",
+        "bytes": "440f284540",
+        "instruction": "movaps xmm8, xmmword ptr [rbp + 0x40]"
+      },
+      {
+        "rva": "0x84f37a",
+        "bytes": "4881c4d8000000",
+        "instruction": "add rsp, 0xd8"
+      },
+      {
+        "rva": "0x84f381",
+        "bytes": "5b",
+        "instruction": "pop rbx"
+      },
+      {
+        "rva": "0x84f382",
+        "bytes": "5f",
+        "instruction": "pop rdi"
+      },
+      {
+        "rva": "0x84f383",
+        "bytes": "5e",
+        "instruction": "pop rsi"
+      },
+      {
+        "rva": "0x84f384",
+        "bytes": "415c",
+        "instruction": "pop r12"
+      },
+      {
+        "rva": "0x84f386",
+        "bytes": "415d",
+        "instruction": "pop r13"
+      },
+      {
+        "rva": "0x84f388",
+        "bytes": "415e",
+        "instruction": "pop r14"
+      },
+      {
+        "rva": "0x84f38a",
+        "bytes": "415f",
+        "instruction": "pop r15"
+      },
+      {
+        "rva": "0x84f38c",
+        "bytes": "5d",
+        "instruction": "pop rbp"
+      },
+      {
+        "rva": "0x84f38d",
+        "bytes": "c3",
+        "instruction": "ret "
+      }
+    ],
+    "unwind": {
+      "rva": "0x297d43c",
+      "version": 1,
+      "flags": 3,
+      "prologue_size": 43,
+      "frame_register": 5,
+      "frame_offset": 128,
+      "ops": [
+        {
+          "code_offset": 43,
+          "op": 8,
+          "info": 6,
+          "save_offset": 160
+        },
+        {
+          "code_offset": 38,
+          "op": 8,
+          "info": 7,
+          "save_offset": 176
+        },
+        {
+          "code_offset": 33,
+          "op": 8,
+          "info": 8,
+          "save_offset": 192
+        },
+        {
+          "code_offset": 27,
+          "op": 3,
+          "info": 0
+        },
+        {
+          "code_offset": 19,
+          "op": 1,
+          "info": 0,
+          "allocation": 216
+        },
+        {
+          "code_offset": 12,
+          "op": 0,
+          "info": 3
+        },
+        {
+          "code_offset": 11,
+          "op": 0,
+          "info": 7
+        },
+        {
+          "code_offset": 10,
+          "op": 0,
+          "info": 6
+        },
+        {
+          "code_offset": 9,
+          "op": 0,
+          "info": 12
+        },
+        {
+          "code_offset": 7,
+          "op": 0,
+          "info": 13
+        },
+        {
+          "code_offset": 5,
+          "op": 0,
+          "info": 14
+        },
+        {
+          "code_offset": 3,
+          "op": 0,
+          "info": 15
+        },
+        {
+          "code_offset": 1,
+          "op": 0,
+          "info": 5
+        }
+      ]
+    },
+    "unwind_bytes_match_dump": true,
+    "full_function_bytes_match_dump": true,
+    "normal_cfg_states_at_fault": [
+      [
+        0,
+        128
+      ]
+    ],
+    "normal_returns": [
+      {
+        "rva": "0x84f38d",
+        "bytes": "c3",
+        "instruction": "ret ",
+        "rsp_offset": 280
+      }
+    ],
+    "unknown_stack_updates_or_exits": [],
+    "explicit_static_writes_overlapping_xmm6_save": [
+      {
+        "rva": "0x84f076",
+        "bytes": "660f7f7520",
+        "instruction": "movdqa xmmword ptr [rbp + 0x20], xmm6",
+        "offset_from_final_rsp": 160,
+        "size": 16
+      }
+    ],
+    "unique_static_calls": [
+      {
+        "rva": "0x84f3a9",
+        "bytes": "e8e2d3bd01",
+        "instruction": "call 0x242c790"
+      },
+      {
+        "rva": "0x84f451",
+        "bytes": "e8aa43be01",
+        "instruction": "call 0x2433800"
+      },
+      {
+        "rva": "0x84f463",
+        "bytes": "e89843be01",
+        "instruction": "call 0x2433800"
+      },
+      {
+        "rva": "0x84f3d8",
+        "bytes": "e82344be01",
+        "instruction": "call 0x2433800"
+      },
+      {
+        "rva": "0x84f23c",
+        "bytes": "e8bf45be01",
+        "instruction": "call 0x2433800"
+      },
+      {
+        "rva": "0x84f41b",
+        "bytes": "e8a044be01",
+        "instruction": "call 0x24338c0"
+      },
+      {
+        "rva": "0x84f3f4",
+        "bytes": "e80946be01",
+        "instruction": "call 0x2433a02"
+      },
+      {
+        "rva": "0x84f42d",
+        "bytes": "e8ce43be01",
+        "instruction": "call 0x2433800"
+      },
+      {
+        "rva": "0x84f43f",
+        "bytes": "e8bc43be01",
+        "instruction": "call 0x2433800"
+      },
+      {
+        "rva": "0x84f176",
+        "bytes": "e858f6b501",
+        "instruction": "call 0x23ae7d3"
+      },
+      {
+        "rva": "0x84f354",
+        "bytes": "e837faffff",
+        "instruction": "call 0x84ed90"
+      },
+      {
+        "rva": "0x84f409",
+        "bytes": "e8f445be01",
+        "instruction": "call 0x2433a02"
+      },
+      {
+        "rva": "0x84f2d5",
+        "bytes": "e8f6c098ff",
+        "instruction": "call 0x1db3d0"
+      }
+    ],
+    "frame": {
+      "entry_rsp_inferred": "0x3e48fee328",
+      "caller_rsp_inferred": "0x3e48fee330",
+      "caller_saved_rbp": "0x3e48fee3b0",
+      "return_address": "0x7ff77134f3e0",
+      "save_and_restore_slot": "0x3e48fee2b0",
+      "slot_at_rbp20_equal": true
+    },
+    "slot_belongs_to_current_active_frame_under_captured_registers": true,
+    "warning": "CFG assumes callees preserve nonvolatile registers and RSP. Stack-relative explicit write inventory does not exclude corrupted pointer aliases, other threads, old values, or asynchronous context changes."
+  },
+  "P1_consistency": {
+    "user_memory_exception_record_copies": 1,
+    "user_memory_full_exception_context_matches": [
+      true
+    ],
+    "current_key_if_known_event_field": "seq",
+    "slot_range": [
+      "0x3e48fee2b0",
+      "0x3e48fee2c0"
+    ],
+    "slot_inside_dump_stack_bounds": true,
+    "captured_TEB_stack_limit": "0x3e48f9c000",
+    "captured_TEB_stack_base": "0x3e49000000",
+    "limitations": [
+      "User dump lacks fault-time page tables, CR2, trap vector/error code, CR0/CR4 and segment descriptor history.",
+      "Current readable mapping is not proof of fault-time permissions.",
+      "No evidence that saved payload corruption can itself cause MOVAPS memory access violation.",
+      "No register entry/save/restore time series exists; a unique inferred frame is not an observed entry value."
+    ]
+  },
+  "P1_handler": {
+    "handler_rva": "0x23ae7cd",
+    "handler_first_instruction": "jmp qword ptr [rip + 0xb5bbd]",
+    "handler_import": "VCRUNTIME140.dll!__CxxFrameHandler3"
+  },
+  "P2": {
+    "875_comparison": {
+      "older_PID13020_fault_rva": "0x65f59d",
+      "current_PID38324_fault_rva": "0x84f36d",
+      "function_relative_fault_offset": "0x31d",
+      "older_function": [
+        "0x65f280",
+        "0x65f69a"
+      ],
+      "current_function": [
+        "0x84f050",
+        "0x84f46a"
+      ],
+      "both_full_ranges_decode": true,
+      "normalized_full_function_equal": true,
+      "normalized_sha256": "86255abdbb2994db4282853cdf3c9efdb799bb1a5a4d1db0231b6fac8605db15",
+      "normalization": "Only PC-relative branch/call displacement and RIP-relative displacement bytes zeroed; no instruction, stack displacement or register encoding normalized.",
+      "historical_aligned_restore_failure_is_not_new": true,
+      "captures": "PID13020: aligned operand, RBP-RSP=0x80, operand captured, exception[0,ffffffffffffffff]. PID31296 historical report: operand mod16=8, frame relation inconsistent; kept distinct."
+    },
+    "fault_record_copies_count": 1,
+    "context_flags_and_gpr_copies_count": 1,
+    "boundary_targets": [
+      {
+        "rva": "0x23ae7d3",
+        "instruction": "jmp qword ptr [rip + 0xb5ba7]",
+        "IAT_rva": "0x2464380",
+        "resolved_module": "VCRUNTIME140.dll",
+        "import": "VCRUNTIME140.dll!memcmp"
+      },
+      {
+        "rva": "0x1db3d0",
+        "instruction": "jmp 0x1e2d250",
+        "direct_target_rva": "0x1e2d250"
+      },
+      {
+        "rva": "0x84ed90",
+        "instruction": "push rbp"
+      },
+      {
+        "rva": "0x242c790",
+        "instruction": "push rbp"
+      }
+    ],
+    "common_active_path_with_PID39152": [
+      "RpcLifecycle::status",
+      "same Core::insert_full compiled function"
+    ],
+    "distinct_paths": [
+      "PID38324: profile -> Value serializer -> insert_full, fault at restore before returning",
+      "PID39152: status archive_work -> insert_full -> reserve_rehash -> Rust OOM, restore not reached"
+    ],
+    "common_ABI_violation_proven": false,
+    "common_handwritten_trampoline_proven": false,
+    "current_insert_has_indirect_calls": false,
+    "windows_to_sysv_transition_seen_in_selected_code": false,
+    "note": "No absence-of-all-FFI claim. Earlier completed callees, native library internals and nonlocal context changes lack dynamic history. MOVAPS moves bits, so a bad saved payload itself does not make the operand address invalid."
+  },
+  "historical": [
+    {
+      "sha256": "42c4be50c967c8a927eec7110b7ddda4a1079385e8c65e6c38b68de804c46194",
+      "exception_code": "0xc0000409",
+      "exception_information": [
+        "0x7",
+        "0x0"
+      ],
+      "fault_rva": "0x1e3e1e1",
+      "operand_mod16": 0,
+      "rsp_rbp_delta": 32,
+      "operand_present": true,
+      "name": "PID39152",
+      "operand_relevant_only_for_movaps": false
+    },
+    {
+      "sha256": "32a264e2a8ea23334760db4b047802bd8b8ba6836d2faead170b91c12e74ea50",
+      "exception_code": "0xc0000005",
+      "exception_information": [
+        "0x0",
+        "0xffffffffffffffff"
+      ],
+      "fault_rva": "0x65f59d",
+      "operand_mod16": 0,
+      "rsp_rbp_delta": 128,
+      "operand_present": true,
+      "name": "PID13020",
+      "operand_relevant_only_for_movaps": true
+    }
+  ],
+  "P3": {
+    "direct_reason_for_access_violation_proven": false,
+    "first_corrupting_instruction_found": false,
+    "incorrect_save_restore_offset_found": false,
+    "unwind_mismatch_found": false,
+    "shared_ABI_or_assembly_violation_found": false,
+    "production_fix": false,
+    "reason": "Captured frame, instruction and mapping are internally consistent for an aligned load. User-mode dump cannot establish fault-time translation/trap/control state or prior register history."
+  }
+}
