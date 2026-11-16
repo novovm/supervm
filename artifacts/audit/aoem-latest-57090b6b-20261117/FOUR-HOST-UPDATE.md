@@ -1,5 +1,13 @@
 # CURRENT: update all four runtime consumers, then double-relay delivery
 
+## SUPERSEDING ACTION: C's e4fad013 handoff received; use the new common node EXE
+
+C already qualified the e8f7d87b runtime code plus AOEM570 and published a new EXE hash in `../novovm-four-host-latest-20261117/README.md`. A has read it. The runtime-only a254 upgrade instructions below are withdrawn, and the unexecuted a254-only updater has been removed. **C/D must not execute that old entry or downgrade C to a254.** Its ZIP is still a valid AOEM bundle, not the complete common-node deployment package.
+
+The approved goal now explicitly includes upgrading A's node EXE and B/C/D to the common new runtime code, as well as AOEM570. A is preparing the missing Windows/Linux common-node packages using the original packager. A's current a254+new-AOEM process stays live until the complete replacement qualifies. No old crash test is reopened. Subsequent source commits contain documentation/deployment-only changes; A checked `git diff e8f7d87b..HEAD -- crates Cargo.lock Cargo.toml .cargo` empty. Record actual package commit and this program-source equivalence; do not pretend documentation hashes are C's EXE hash.
+
+Until a complete package and exact updater are published, C keeps its qualified candidate and preserved original identity/database; D only reports actual current state. Do not start observers or send an object before the four current owners are known.
+
 User approval 2026-11-17 covers latest AOEM updates on A/B/C/D and continuing real four-host networking. No repeated crash investigations or old-runtime tests. Original a254 node/network protocol remains fixed; this update replaces the AOEM runtime and its matching sidecars, not consensus or transport semantics.
 
 ## Verified current facts
