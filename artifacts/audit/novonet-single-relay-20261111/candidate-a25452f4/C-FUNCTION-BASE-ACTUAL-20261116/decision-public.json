@@ -1,0 +1,18 @@
+{
+  "utc": "2026-11-16T00:34:05.935881+00:00",
+  "bounded_BASE_completed": true,
+  "BASE_natural_failure": false,
+  "only_BASE_executed": true,
+  "disabled_group_executed": false,
+  "reenabled_group_executed": false,
+  "absence_of_crash_is_censored_evidence": true,
+  "necessary_function_trigger_established": false,
+  "minimum_trigger_combination_found": false,
+  "first_corrupting_instruction_found": false,
+  "production_fix": false,
+  "original_state_accessed": false,
+  "double_relay": false,
+  "one_successful_UAC_for_this_batch": true,
+  "scheduled_task_removed_after_batch": true,
+  "permanent_elevated_task_installed": false
+}

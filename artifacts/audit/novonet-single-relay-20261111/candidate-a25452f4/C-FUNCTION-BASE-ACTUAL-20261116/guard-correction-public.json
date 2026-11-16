@@ -1,0 +1,11 @@
+{
+  "real_reports_replayed": 175,
+  "optional_field_omission_reports": 1,
+  "all_nodes_capability_seen": true,
+  "corrected_guard_rejects_actual_run": false,
+  "never_seen_capability_case_rejected": true,
+  "positive_protocol_traffic_retained": true,
+  "original_failure_logs_preserved": true,
+  "old_exit": "0xe0000001",
+  "original_natural_crash": false
+}

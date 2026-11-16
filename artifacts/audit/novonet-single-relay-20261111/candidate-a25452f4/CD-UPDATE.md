@@ -1,5 +1,14 @@
 # a25452f4: approved existing updates, then real double relay
 
+## C回传 2026-11-16：修正后功能隔离首组结束
+
+本次一次UAC后由同一LocalService任务执行有界批次。BASE实际1202.624秒，终态native_time_bound_all_exited。
+首轮可选novonet字段守卫错误保留，修正后本轮16份字段省略未导致误停。
+关闭/重新开启组是否执行及真实退出码见本轮终态表；未复现不算修好，尚未确立必要触发功能或首次破坏指令。
+原库身份和历史失败现场保留，冻结调试器路线保留，无生产修复，双中继暂停。
+详见[C-FUNCTION-BASE-ACTUAL-20261116/README.md](C-FUNCTION-BASE-ACTUAL-20261116/README.md)。
+
+
 ## C回传 2026-11-16 07:45：功能地图已核验，首组被可选字段守卫误判中止
 
 原a254的status无独立归档/格式化关闭开关，首次定时与退出status无条件保留；probe会显式开启native_delivery。

@@ -1,0 +1,9 @@
+{
+  "source_commit": "a25452f4c49be37cd984e650f2079642e6c273b3",
+  "sha256": {
+    "novovm-feature-a254.exe": "1758e4a79dd34d1688d8f7bf4b60f46ed9ced518186f42fdb16baf04c0d0c46d",
+    "aoem/windows/core/bin/aoem_ffi.dll": "5743f5875131330f8c8fec58cdc2a85aa39dc6e9689358609a5f0a09a01c0d52"
+  },
+  "post_run_copy_hash_verified": true,
+  "startup_hash_checks_required": true
+}

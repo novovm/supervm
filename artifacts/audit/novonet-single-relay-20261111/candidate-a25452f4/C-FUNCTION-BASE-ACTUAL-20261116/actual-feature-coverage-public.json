@@ -1,0 +1,50 @@
+[
+  {
+    "phase": "BASE-observation-on",
+    "index": 0,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_lower_hex_strings_64_chars": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 980552
+  },
+  {
+    "phase": "BASE-observation-on",
+    "index": 1,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_lower_hex_strings_64_chars": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 971549
+  },
+  {
+    "phase": "BASE-observation-on",
+    "index": 2,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_lower_hex_strings_64_chars": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 984248
+  },
+  {
+    "phase": "BASE-observation-on",
+    "index": 3,
+    "native_delivery_enabled": true,
+    "delivery_records": 2048,
+    "valid_lower_hex_strings_64_chars": 4096,
+    "archive_work_present": true,
+    "archive_reads_started": 0,
+    "executed_batches": 0,
+    "durable_decisions": 0,
+    "ticks": 983361
+  }
+]

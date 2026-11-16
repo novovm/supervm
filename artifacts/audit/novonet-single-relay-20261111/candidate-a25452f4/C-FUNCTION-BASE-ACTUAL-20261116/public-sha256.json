@@ -1,0 +1,21 @@
+{
+  "actual-feature-coverage-public.json": "220a9d4f4517401dfe246bee6b72000e192c3246d1198257e8862049181618cd",
+  "BASE-observation-on-started.json": "0ece079a1b5399641f94cca378dde0325092cbbd089da963d26d003bf4d67cc7",
+  "build-hashes-public.json": "d0261612f5c75931bd2e946ee078e34e1ee69f0fd34808598a8b4be03e01895f",
+  "collection-finished.json": "f2317a26c7741a2d65e76d6149b8a6b66288d30e35bdfef5c30ed063b0a356cd",
+  "decision-public.json": "a2e5671690e5db1f0a785024ef5a167af028d5615a26dc4843d2a2f286d8de85",
+  "final-state-public.json": "da59580cbf0d4087fe12ec263c043b0d3ef0a53178661717be8c78e76cd0b654",
+  "functional-results-summary-public.json": "3391eef8d75c0dd57c95b74c9995372040737e88505f24c5143fb31906c3a311",
+  "guard-correction-public.json": "7f93dd12747bd3004d41c10aceceafef92727603ddfa4c53efa84c44ae296996",
+  "identity-ready-public.json": "8e14b9897afbfdaf21330f7f71dbd2b4f979268265c8604a10cf21598d3bf416",
+  "owner-exit.json": "40dc6a07dbef9d1b97fc136e3efe8eba20f49ca6c5a895a4bad169b7ce2f03de",
+  "owner-result-public.json": "a40b5ec0c0034d7af021d08303c7b6be9bd033e0413376ae1dbb4b56bcb6da6a",
+  "preflight-public.json": "616e2c152051ddcedd08c6a7bbcc74355062577cd80cc01bbf0d8ff4d1361f32",
+  "progress-public.jsonl": "c8c1ce2fddd92ea08e9cf7be11197b588f54a22d143e430c1ad5b309111ef5eb",
+  "README.md": "b05951938c3d65a79aafe9aa851d39e8e3614ee32d16043bf3d52f69f4e2d6f1",
+  "resources-public.jsonl": "c450b7b4a7af881acd7a62146f8335f9c647290a5cd2620a91851957f45de76e",
+  "task-cleanup.json": "9c0c80a4e81f5f3501335b9852fb25c24922eeeb98bde30dcc4173cdb66d23b4",
+  "task-result.json": "2de2aa3b7d6375eafda35a62f5592d61c4024a4d206c798ba8ccf2a2cad07c04",
+  "WHEA-public.json": "eb4a2eb0080863eb217582f2d45d0bfddb3ba54e37009d8e97690016a6c22dd6",
+  "WHEA-window-public.json": "66cf5ecc238f70f0b90d7d8f52a33a65655797fed14e02b08c1490c1d6a52d07"
+}
