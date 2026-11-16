@@ -1,0 +1,509 @@
+{
+  "base_commit": "25272f43",
+  "offline_only": true,
+  "node_started": false,
+  "production_code_changed": false,
+  "database_or_identity_accessed": false,
+  "first_corrupting_instruction_found": false,
+  "hypothesis_uniquely_resolved": false,
+  "context_candidates": [
+    {
+      "pid": 38324,
+      "thread_id": 29676,
+      "captured_stack_start": "0x3e48feccd8",
+      "captured_stack_end_exclusive": "0x3e49000000",
+      "qualified_CONTEXT_candidates": [
+        {
+          "address": "0x3e48fedb00",
+          "flags": "0x10005f",
+          "module": "novovm-node.exe",
+          "registers": {
+            "rip": "0x7ff770faf36d",
+            "rsp": "0x3e48fee210",
+            "rbp": "0x3e48fee290",
+            "rsi": "0x0",
+            "rdi": "0x3e48fee580",
+            "r14": "0x3e48fee360"
+          },
+          "equals_exception": true
+        }
+      ],
+      "exception_context_SHA256": "503fb9f17f29a27c2f6ebe02863efcc930307221ef6608ab39b44058b3e57496",
+      "dump_sha256": "c24346b575d048469a51fad1f897d82bc5947c1c3b5d57e7b2f703a779cc4249",
+      "limits": "Whole captured fault-thread stack; candidates require ContextFlags control/integer, CS33/SS2b, in-stack RSP and RIP within a captured module. Candidate roles require code/argument linkage; this is not a history of context changes."
+    },
+    {
+      "pid": 13020,
+      "thread_id": 18664,
+      "captured_stack_start": "0x3d4f8ed058",
+      "captured_stack_end_exclusive": "0x3d4f900000",
+      "qualified_CONTEXT_candidates": [
+        {
+          "address": "0x3d4f8ede80",
+          "flags": "0x10005f",
+          "module": "novovm-node.exe",
+          "registers": {
+            "rip": "0x7ff77e74f59d",
+            "rsp": "0x3d4f8ee5a0",
+            "rbp": "0x3d4f8ee620",
+            "rsi": "0x4",
+            "rdi": "0x3d4f8ee8b0",
+            "r14": "0x3d4f8ee6f0"
+          },
+          "equals_exception": true
+        }
+      ],
+      "exception_context_SHA256": "d099a4ae17bba1d497bc02018bb96b1f5af5e59d535bb5295b810e530a1409e9",
+      "dump_sha256": "32a264e2a8ea23334760db4b047802bd8b8ba6836d2faead170b91c12e74ea50",
+      "limits": "Whole captured fault-thread stack; candidates require ContextFlags control/integer, CS33/SS2b, in-stack RSP and RIP within a captured module. Candidate roles require code/argument linkage; this is not a history of context changes."
+    }
+  ],
+  "context_ownership_and_ranges": [
+    {
+      "pid": 38324,
+      "contexts": [
+        {
+          "role": "original_exception_context",
+          "address": "0x3e48fedb00",
+          "flags": "0x10005f",
+          "registers": {
+            "rip": "0x7ff770faf36d",
+            "rsp": "0x3e48fee210",
+            "rsi": "0x0",
+            "r14": "0x3e48fee360"
+          },
+          "basic_context_overlaps_output": false,
+          "exactly_equals_ExceptionStream": true,
+          "CONTEXT_EX": {
+            "layout_validated": true,
+            "All_offset": -1232,
+            "All_length": 1808,
+            "Legacy_offset": -1232,
+            "Legacy_length": 1232,
+            "XState_offset": 240,
+            "XState_length": 336
+          },
+          "complete_declared_context_range": [
+            "0x3e48fedb00",
+            "0x3e48fee210"
+          ],
+          "complete_declared_context_overlaps_output": false
+        },
+        {
+          "role": "dispatcher_working_context",
+          "address": "0x3e48fed400",
+          "flags": "0x10000f",
+          "registers": {
+            "rip": "0x0",
+            "rsp": "0x3e48fff9d0",
+            "rsi": "0x0",
+            "r14": "0x0"
+          },
+          "basic_context_overlaps_output": false,
+          "exactly_equals_ExceptionStream": false,
+          "CONTEXT_EX": {
+            "layout_validated": true,
+            "All_offset": -1232,
+            "All_length": 1264,
+            "Legacy_offset": -1232,
+            "Legacy_length": 1232,
+            "XState_offset": 33,
+            "XState_length": 0
+          },
+          "complete_declared_context_range": [
+            "0x3e48fed400",
+            "0x3e48fed8f0"
+          ],
+          "complete_declared_context_overlaps_output": false
+        }
+      ],
+      "pre_VEH_exception_log": {
+        "PEB_NtGlobalFlag": "0x0",
+        "exception_log_bit_0x800000": false,
+        "exception_log_pointer_nonnull": false,
+        "exception_log_ring_counter": 0,
+        "independent_pre_VEH_log_available": false
+      },
+      "output_address": "0x3e48fee360",
+      "output_value": 7,
+      "warning": "These context snapshots are after exception dispatch has begun. Same bytes in ExceptionStream and its in-process source are not independent earlier observations."
+    },
+    {
+      "pid": 13020,
+      "contexts": [
+        {
+          "role": "original_exception_context",
+          "address": "0x3d4f8ede80",
+          "flags": "0x10005f",
+          "registers": {
+            "rip": "0x7ff77e74f59d",
+            "rsp": "0x3d4f8ee5a0",
+            "rsi": "0x4",
+            "r14": "0x3d4f8ee6f0"
+          },
+          "basic_context_overlaps_output": false,
+          "exactly_equals_ExceptionStream": true,
+          "CONTEXT_EX": {
+            "layout_validated": true,
+            "All_offset": -1232,
+            "All_length": 1824,
+            "Legacy_offset": -1232,
+            "Legacy_length": 1232,
+            "XState_offset": 240,
+            "XState_length": 352
+          },
+          "complete_declared_context_range": [
+            "0x3d4f8ede80",
+            "0x3d4f8ee5a0"
+          ],
+          "complete_declared_context_overlaps_output": false
+        },
+        {
+          "role": "dispatcher_working_context",
+          "address": "0x3d4f8ed780",
+          "flags": "0x10000f",
+          "registers": {
+            "rip": "0x0",
+            "rsp": "0x3d4f8ffd60",
+            "rsi": "0x0",
+            "r14": "0x0"
+          },
+          "basic_context_overlaps_output": false,
+          "exactly_equals_ExceptionStream": false,
+          "CONTEXT_EX": {
+            "layout_validated": true,
+            "All_offset": -1232,
+            "All_length": 1264,
+            "Legacy_offset": -1232,
+            "Legacy_length": 1232,
+            "XState_offset": 33,
+            "XState_length": 0
+          },
+          "complete_declared_context_range": [
+            "0x3d4f8ed780",
+            "0x3d4f8edc70"
+          ],
+          "complete_declared_context_overlaps_output": false
+        }
+      ],
+      "pre_VEH_exception_log": {
+        "PEB_NtGlobalFlag": "0x0",
+        "exception_log_bit_0x800000": false,
+        "exception_log_pointer_nonnull": false,
+        "exception_log_ring_counter": 0,
+        "independent_pre_VEH_log_available": false
+      },
+      "output_address": "0x3d4f8ee6f0",
+      "output_value": 4,
+      "warning": "These context snapshots are after exception dispatch has begun. Same bytes in ExceptionStream and its in-process source are not independent earlier observations."
+    }
+  ],
+  "captured_vectored_handlers": [
+    {
+      "pid": 38324,
+      "lists": [
+        {
+          "name": "VEH",
+          "entries": [
+            {
+              "module": "novovm-node.exe",
+              "target_RVA": "0x1e37a80"
+            }
+          ],
+          "count": 1,
+          "captured_list_complete": true
+        },
+        {
+          "name": "VCH",
+          "entries": [],
+          "count": 0,
+          "captured_list_complete": true
+        }
+      ]
+    },
+    {
+      "pid": 13020,
+      "lists": [],
+      "limitation": "StopIteration: "
+    }
+  ],
+  "write_paths": {
+    "system_function_checks": [
+      {
+        "function": "RtlDispatchException",
+        "range": [
+          "0xc6390",
+          "0xc6c28"
+        ],
+        "entire_function_code_present": true,
+        "matches_reference_ntdll": true
+      },
+      {
+        "function": "RtlpSanitizeContext",
+        "range": [
+          "0xc6c30",
+          "0xc6d10"
+        ],
+        "entire_function_code_present": true,
+        "matches_reference_ntdll": true,
+        "direct_writes_through_context_base_RBX": [
+          {
+            "rva": "0xc6ce3",
+            "context_offset": 48,
+            "size": 4,
+            "instruction": "mov dword ptr [rbx + 0x30], eax"
+          },
+          {
+            "rva": "0xc6cef",
+            "context_offset": 48,
+            "size": 4,
+            "instruction": "mov dword ptr [rbx + 0x30], r10d"
+          },
+          {
+            "rva": "0xc6cf5",
+            "context_offset": 48,
+            "size": 4,
+            "instruction": "mov dword ptr [rbx + 0x30], 0x10000b"
+          }
+        ],
+        "direct_write_overlaps_RSI_at_0xa8": false
+      },
+      {
+        "function": "RtlpCallVectoredHandlers",
+        "range": [
+          "0xc6d20",
+          "0xc70fe"
+        ],
+        "entire_function_code_present": true,
+        "matches_reference_ntdll": true
+      },
+      {
+        "function": "RtlDecodePointer",
+        "range": [
+          "0xc7110",
+          "0xc717c"
+        ],
+        "entire_function_code_present": true,
+        "matches_reference_ntdll": true
+      }
+    ],
+    "registered_VEH_current_AV_route": {
+      "RVA": "0x1e37a80",
+      "entire_code_matches_original": true,
+      "exception_code_checked": "0xc00000fd",
+      "current_exception_code": "0xc0000005",
+      "current_AV_route": [
+        {
+          "rva": "0x1e37a80",
+          "bytes": "55",
+          "instruction": "push rbp"
+        },
+        {
+          "rva": "0x1e37a81",
+          "bytes": "4883ec30",
+          "instruction": "sub rsp, 0x30"
+        },
+        {
+          "rva": "0x1e37a85",
+          "bytes": "488d6c2430",
+          "instruction": "lea rbp, [rsp + 0x30]"
+        },
+        {
+          "rva": "0x1e37a8a",
+          "bytes": "48c745f8feffffff",
+          "instruction": "mov qword ptr [rbp - 8], 0xfffffffffffffffe"
+        },
+        {
+          "rva": "0x1e37a92",
+          "bytes": "488b01",
+          "instruction": "mov rax, qword ptr [rcx]"
+        },
+        {
+          "rva": "0x1e37a95",
+          "bytes": "8138fd0000c0",
+          "instruction": "cmp dword ptr [rax], 0xc00000fd"
+        },
+        {
+          "rva": "0x1e37a9b",
+          "bytes": "753a",
+          "instruction": "jne 0x1e37ad7"
+        },
+        {
+          "rva": "0x1e37ad7",
+          "bytes": "31c0",
+          "instruction": "xor eax, eax"
+        },
+        {
+          "rva": "0x1e37ad9",
+          "bytes": "4883c430",
+          "instruction": "add rsp, 0x30"
+        },
+        {
+          "rva": "0x1e37add",
+          "bytes": "5d",
+          "instruction": "pop rbp"
+        },
+        {
+          "rva": "0x1e37ade",
+          "bytes": "c3",
+          "instruction": "ret "
+        }
+      ],
+      "current_AV_route_context_dereference": false,
+      "current_AV_route_output_write": false,
+      "return_value": 0,
+      "limitations": "The captured registration and code do not establish the history of earlier registration/removal or prove a particular invocation record."
+    },
+    "branch_history": [
+      {
+        "pid": 38324,
+        "branch_fields": {
+          "LastBranchToRip": "0x0",
+          "LastBranchFromRip": "0x0",
+          "LastExceptionToRip": "0x0",
+          "LastExceptionFromRip": "0x0"
+        },
+        "independent_branch_history_available": false,
+        "note": "These all-zero fields provide no last-store execution evidence. CDB user exception frame labels are not kernel trap/error-code records."
+      },
+      {
+        "pid": 13020,
+        "branch_fields": {
+          "LastBranchToRip": "0x0",
+          "LastBranchFromRip": "0x0",
+          "LastExceptionToRip": "0x0",
+          "LastExceptionFromRip": "0x0"
+        },
+        "independent_branch_history_available": false,
+        "note": "These all-zero fields provide no last-store execution evidence. CDB user exception frame labels are not kernel trap/error-code records."
+      }
+    ],
+    "three_hypotheses": {
+      "last_store_not_completed": "Not proven. Ordinary same-path execution with unchanged RSI/R14 and no later writer predicts0; the dump does not record that path or those earlier values.",
+      "original_exception_context_changed": "Not proven. Separate search-copy changes are explained by virtual unwind, not evidence of original RSI mutation; stream/source equality is same-time evidence.",
+      "post_fault_memory_rewrite": "No direct writer found in the qualified VEH or normal context-buffer destinations; arbitrary pointer writes, other threads and missing history are not excluded."
+    }
+  },
+  "Cxx_AV_gate": {
+    "pid": 38324,
+    "code": [
+      {
+        "name": "CxxFrameHandler3 wrapper",
+        "RVA_start": "0x102a0",
+        "RVA_end": "0x10326",
+        "full_code_captured_and_matches_reference": true
+      },
+      {
+        "name": "Internal handler",
+        "RVA_start": "0x2b68",
+        "RVA_end": "0x2d80",
+        "full_code_captured_and_matches_reference": true
+      },
+      {
+        "name": "Forwarding thunk",
+        "RVA_start": "0x3014",
+        "RVA_end": "0x3019",
+        "full_code_captured_and_matches_reference": true
+      },
+      {
+        "name": "Context RSP validator",
+        "RVA_start": "0xea90",
+        "RVA_end": "0xeac7",
+        "full_code_captured_and_matches_reference": true
+      },
+      {
+        "name": "PTD getter wrapper",
+        "RVA_start": "0x5518",
+        "RVA_end": "0x5532",
+        "full_code_captured_and_matches_reference": true
+      }
+    ],
+    "metadata": [
+      {
+        "frame": "insert_full",
+        "FuncInfo_RVA": "0x297d490",
+        "FuncInfo_matches_dump": true,
+        "magic": "0x19930522",
+        "try_block_count": 0,
+        "exception_specification_offset": 0,
+        "EH_flags": 1
+      },
+      {
+        "frame": "SerializeMap::serialize_value",
+        "FuncInfo_RVA": "0x29fb8b4",
+        "FuncInfo_matches_dump": true,
+        "magic": "0x19930522",
+        "try_block_count": 0,
+        "exception_specification_offset": 0,
+        "EH_flags": 1
+      },
+      {
+        "frame": "Value::serialize",
+        "FuncInfo_RVA": "0x29ca93c",
+        "FuncInfo_matches_dump": true,
+        "magic": "0x19930522",
+        "try_block_count": 0,
+        "exception_specification_offset": 0,
+        "EH_flags": 1
+      },
+      {
+        "frame": "collect_seq",
+        "FuncInfo_RVA": "0x29f5254",
+        "FuncInfo_matches_dump": true,
+        "magic": "0x19930522",
+        "try_block_count": 0,
+        "exception_specification_offset": 0,
+        "EH_flags": 1
+      },
+      {
+        "frame": "profile snapshot",
+        "FuncInfo_RVA": "0x2956064",
+        "FuncInfo_matches_dump": true,
+        "magic": "0x19930522",
+        "try_block_count": 0,
+        "exception_specification_offset": 0,
+        "EH_flags": 1
+      },
+      {
+        "frame": "status",
+        "FuncInfo_RVA": "0x295925c",
+        "FuncInfo_matches_dump": true,
+        "magic": "0x19930522",
+        "try_block_count": 0,
+        "exception_specification_offset": 0,
+        "EH_flags": 1
+      }
+    ],
+    "original_context_forwarded_to_internal_handler": true,
+    "pre_gate_context_validator": "RVA0xea90 checks CONTEXT.Rsp against current stack bounds; captured routine has no writes through that context pointer.",
+    "AV_gate_paths": [
+      {
+        "condition": "PTD+0x40 is zero",
+        "rvas": [
+          "0x2bb7",
+          "0x2bbf",
+          "0x2bd3",
+          "0x2bd8",
+          "0x2be3",
+          "0x2d61"
+        ],
+        "result": "For AV and magic19930522/EHflags1, return frame disposition1 before unwind/catch handling."
+      },
+      {
+        "condition": "PTD+0x40 is nonzero",
+        "rvas": [
+          "0x2bed",
+          "0x2c7d",
+          "0x2c8e",
+          "0x2ca5",
+          "0x2cb4",
+          "0x2d61"
+        ],
+        "result": "For AV flags0, try_count0, no exception specification and EHflags1, return frame disposition1."
+      }
+    ],
+    "scope": "Selected captured C++ frame handler and six current immutable FuncInfo records; does not prove a specific historical invocation or clear other callbacks/threads. Frame disposition1 and VEH return0 use different enums, both mean continue search here.",
+    "direct_original_RSI_or_output_index_writer_identified_in_these_AV_paths": false
+  },
+  "warning": "ExceptionStream and in-process context are same-source dump-time observations, not an independent before/after history. Output buffer had not yet been returned to its caller."
+}
