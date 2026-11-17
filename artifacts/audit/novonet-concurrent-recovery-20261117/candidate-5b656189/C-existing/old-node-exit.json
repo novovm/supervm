@@ -1,0 +1,10 @@
+{
+  "elapsed_seconds": 19890.490992,
+  "utc": "2026-11-17T15:55:08.7657955Z",
+  "exit_code": -1,
+  "error": null,
+  "forced_by_controller": false,
+  "reason": "node_exited",
+  "pid": 7384,
+  "automatic_restart": false
+}
