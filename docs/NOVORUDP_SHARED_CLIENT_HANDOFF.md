@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 00:35 A: recovered-route fresh object sender DONE; C/D originals pending
+
+A pulled fresh actual C/D READY799b3e5d and ran original guarded continuation
+once: A→B→C→D Object2239b3c22fc30a7ba5b29f649d93271639ed439e93e6adb1cecd7cd275de9412,
+Session54868614a4c0ecda6864b04af6dad539, Circuit55ff173d2812e03d6dc892f067620355.
+Actual admitted→DONE00:34:08.537→08.791 Beijing; controller exit0 at00:34:12.
+B matching original circuit forwarded9/9, failed writes0/0, downstream ready.
+[Raw sender/B evidence and remaining C/D collection](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/live-recovery-0034/README.md).
+C/D return same observer originals only; no new window/object/outage/update.
+Receiver custody/integrity/time and C forwarding not yet independently accepted.
+Iroh hop-stream relay is not nativeUDP multihop; fresh delivery after separate
+restore/upgrade is not old-object or automatic five-second recovery. Historical
+failure and unproven actual in-flight concurrency remain, no accepted test rerun.
+
 ## 2026-11-18 00:26 A: D5b signed off; four-host update health complete
 
 A pulled D e05c1cfd actual update (PID34148/LocalService, controller0, fixed
