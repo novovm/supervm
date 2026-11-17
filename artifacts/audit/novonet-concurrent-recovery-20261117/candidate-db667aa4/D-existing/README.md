@@ -1,0 +1,9 @@
+# D db667 existing update: elevated launcher cancelled, NOT READY
+
+D synchronized main c1a7fceb. Local ZIP162799838bytes/SHA2567a80bf900038bf88c6c4ab77d388216d9b16cf7f9972c500c72d15a624668fbb verified again; safe independent extraction to target/d-db667-package-20261117 and all91 manifest payload length/hash checks passed, fixed manifest8c340c7d27318bede380ff07812584971601058d20eef48e7da6712058324d7e.
+
+Administrator read-only inspection at2026-11-17T10:06:03Z confirmed actual old common95 PID23340/LocalService original task Running, no restart policy/triggers, original database/height1/head null, failures0/recovery false, no active diagnostic or control file. Prior observer40456 had already exited0 at08:22:38Z. inspection-public.json is public metadata only, not private config or keys.
+
+The subsequent one-shot elevated update launch returned Windows Start-Process error: operation cancelled by user. The update controller never entered (no update-invoked.json/update-exit.json), so this attempt did not stop the old owner, install the new release, start a new node or mutate original custody/database. No retry or READY claim. This is not db667 startup failure or a package qualification failure. A's D query remains pending an actual completed update.
+
+Local prepared entry: D:\WEB3_AI\SUPERVM\target\d-db667-controller-20261117\Switch-D.ps1, adapted only from qualified LocalService existing owner bindings with pinned source checks, exact process stop, original custody/health, unchanged firewall scope and cold-copy hash verification. It was parsed but not executed. Local one-shot wrapper run-once.ps1 remains uninvoked; no need to recopy/re-extract or initialize. Await renewed operator action for that cancelled elevation before any update. No observer, object send, old crash test, rekey or initialization was performed.
