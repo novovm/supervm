@@ -1,5 +1,18 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 A: paired dual-end delivery accepted, concurrency still unproven
+
+A pulled C d2cf9b56/D4c618286;15 original length/hash checks and5 raw snapshots
+confirm both exact object/session target integrity/time events, sender DONE,
+all3 adjacent authentication bindings per path and both relays9/9forwarded,
+0failed writes. Independent transfer tags match1/1verified fragments/hash and
+zero duplicates; both collectors exit0. [Final raw correlation](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/live-inflight-0052/DUAL-END-CORRELATION.json).
+The two deliveries pass; zero in-flight overlap/minimum461ms gap still fails
+concurrency acceptance. C/D no further action, no repeated window/object/restart.
+Next actual blocker is bounded diagnostic release coordination in original owner,
+not another transport/collector or production timeout/resource/payload change.
+No new runtime build/deployment or asset/finality claim in this signoff.
+
 ## 2026-11-18 00:55 A: two actual DONEs; in-flight overlap remains failed
 
 Original ConcurrentOnly workload ran once after actual C/D READYd35e4eed,

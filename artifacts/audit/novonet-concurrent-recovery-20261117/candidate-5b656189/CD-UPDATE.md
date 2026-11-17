@@ -1,4 +1,18 @@
-# CURRENT 2026-11-18 00:55: paired objects DONE, no overlap; return same originals
+# CURRENT 2026-11-18: paired dual-end delivery signed off; no C/D action
+
+A pulled C d2cf9b56/D4c618286 and independently verified15 original hashes/lengths,
+5 raw snapshots, both unique target object/session integrity/time events and
+sender DONE, all3 adjacent authenticated bindings on each path. Both relays per
+route9/9forwarded, failed writes0/0;1/1verified fragments/hash, zero duplicates.
+Both collectors exit0. [Final independent acceptance](live-inflight-0052/DUAL-END-CORRELATION.json).
+
+Two actual deliveries accepted; true in-flight concurrency remains NOT accepted:
+zero overlap, minimum461ms separation. C/D do not reopen observers, resend, restart
+or update. Next actual blocker is original diagnostic owner bounded release
+coordination; old1s read phases cannot be fixed by same-time file publication alone.
+No new runtime modification/qualification/deployment is claimed by this receipt.
+
+## Historical 00:55: paired originals requested (now received)
 
 A ran ConcurrentOnly once using fresh C/D READYd35e4eed. Two original sender
 DONEs, controller0, no B outage/recovered-object repeat. Actual conservative

@@ -1,10 +1,27 @@
 # Paired actual objects: both sender DONE, no in-flight overlap
 
+## Final receiver/hop audit: both deliveries accepted; overlap still failed
+
+A pulled actual C d2cf9b56 and D4c618286, independently checked15 original file
+lengths/SHA256 and all5 raw snapshots. Both paths have unique same-object/session
+target integrity events, original sender DONE and all3 adjacent authenticated
+bindings matching. Both relays on each route forwarded9/9packets, failed writes0/0.
+Independently derived receiver transfer tags match1/1fragment/hash verification,
+zero duplicate data/repair; complete peer-time intervals lie inside original
+validity. Both collectors exited0. [Independent raw correlation](DUAL-END-CORRELATION.json).
+
+Both delivery chains are accepted. The measured461ms minimum separation and
+zero overlap remain unchanged: these successes do not establish simultaneous
+in-flight operation. C/D no further collection, new window, resend or restart.
+Next missing implementation is original-owner bounded diagnostic release
+coordination; do not repeat completed object tests or compensate by altering
+payload size, production timeout, resource limits or receipt semantics.
+
 A pulled fresh C/D READY throughd35e4eed, confirmed original exact5b owners,
 two-circuit scope and no terminal outputs, then executed original -ConcurrentOnly
 once. Controller exited0 at Beijing00:52:05.994, no B stop or accepted test repeat.
-Both original objects reached sender DONE; receiver/hop originals requested from
-the SAME observers, not new windows or resends.
+Both original objects reached sender DONE; receiver/hop originals were requested
+from the SAME observers and are now independently checked above.
 
 Actual objects and conservative timing are in [independent correlation](TIMING-CORRELATION.json).
 A admission→DONE1794934320013→1794934320054 (41ms). B admission→DONE
