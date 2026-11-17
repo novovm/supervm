@@ -1,0 +1,11 @@
+# D_RELAY_OBSERVER_ARMED: unfinished recovery object only
+
+D synchronized main f437f4d9 and followed CURRENT18:55. Previous PID50540 exit0 is retained; no old READY reused. Started one original Watch-Relay.ps1, adjacent Read-RelayProgress.ps1, CommonRoleFix, HostId D, TerminalCircuitCount1, MaximumWaitSeconds7200. Source/node/WorkName/ExpectedOrigin/ExpectedPath are read from the published recovery-observer-args.json. Route expectation constrains only the original observer stop condition; all original snapshots remain unfiltered.
+
+- Actual observer PID45900, created2026-11-17T11:02:53.6450580Z (19:02:53 Beijing), hidden independent administrator PowerShell7. Actual READY11:02:55.5290144Z includes the original expected route array.
+- Actual node PID56148; original observer validates LocalService/fixed executable. Read-only precheck11:02:54Z: height1, failures0, recovery false, projection error null.
+- New EvidenceRoot: D:\WEB3_AI\SUPERVM\target\d-db667-recovery-observer-20261117\observation.
+- Process command invokes local run-original.ps1, which loads the fixed JSON and calls the original Watch-Relay in that same process, preserving ExpectedPath as a PowerShell array (not flattened CLI strings). It introduces no observer logic/network process. Invoker SHA256 and binding SHA256 are in invocation-binding.json; the expected values are in actual ready.json and the copied public argument file.
+- Launcher PID33864 waits only to record observer exit in the parent directory; no retry. stdout/stderr retained there. Elevated precheck found no other direct original observer process. Maximum window approximately21:02:55 Beijing; original early terminal/64-snapshot/freshness bounds remain.
+
+Real ready/current liveness, creation/command, node PID and terminal-file presence are adjacent. Missing terminal files are recorded as absent, never fabricated. stdout/stderr are point-in-time copies. Local originals continue updating. No node restart/update, package copy, object send, previous delivery replay, B interruption or C operation. This is readiness only, not recovery-object reception, automatic five-second recovery or concurrency acceptance. Keep this one window; do not rearm from the receipt.
