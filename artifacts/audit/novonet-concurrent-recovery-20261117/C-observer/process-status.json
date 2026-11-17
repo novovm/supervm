@@ -1,0 +1,12 @@
+{
+  "observer_pid": 1696,
+  "maximum_wait_seconds": 7200,
+  "exit_present": false,
+  "result_present": false,
+  "node_pid": 38500,
+  "observer_created_utc": "2026-11-17T06:23:15.6239210Z",
+  "observer_running": true,
+  "terminal_circuit_count": 4,
+  "utc": "2026-11-17T06:23:46.7997391Z",
+  "error_present": false
+}

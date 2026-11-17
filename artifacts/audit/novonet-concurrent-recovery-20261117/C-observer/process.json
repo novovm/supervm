@@ -1,0 +1,7 @@
+{
+  "pid": 1696,
+  "created_utc": "2026-11-17T06:23:15.6239210Z",
+  "maximum_wait_seconds": 7200,
+  "terminal_circuit_count": 4,
+  "evidence": "D:\\WEB3_AI\\SUPERVM\\target\\c-concurrent-recovery-observer-20261117-01\\evidence"
+}
