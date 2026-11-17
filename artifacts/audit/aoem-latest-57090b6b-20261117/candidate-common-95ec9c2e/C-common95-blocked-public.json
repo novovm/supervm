@@ -1,0 +1,13 @@
+{
+  "observed_utc": "2026-11-17T01:48:52.9946343Z",
+  "status": "BLOCKED_PACKAGE_NOT_ACCESSIBLE",
+  "git_head": "818e71cbd12051d5dbb7598b17b85d42f919a1a0",
+  "expected_package": "E:\\区块链四机通讯\\novovm-common-95ec9c2e-windows-x86_64.zip",
+  "expected_sha256": "39eba348fed675f853a0c4bdf60f6b4bae789fb99cc04fc89c4614a99285932c",
+  "reason": "E drive absent; no local ZIP found in SUPERVM target, D Temp or Codex documents",
+  "prior_receipt": "ZIP was present and hash verified in prior turn",
+  "active_c_node_count": 0,
+  "update_attempted": false,
+  "observer_started": false,
+  "initialized": false
+}
