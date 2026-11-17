@@ -1,0 +1,33 @@
+{
+  "status": "C_DB667_EXISTING_READY_FOR_A_QUERY",
+  "utc": "2026-11-17T09:22:44.7197698Z",
+  "pid": 45220,
+  "created_utc": "2026-11-17T09:21:46.1340715Z",
+  "account": "NT AUTHORITY\\LOCAL SERVICE",
+  "task": "NOVOVM-Db667-C-20261117",
+  "node_sha256": "442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825",
+  "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "release_manifest_sha256": "8c340c7d27318bede380ff07812584971601058d20eef48e7da6712058324d7e",
+  "original_database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "start": "existing",
+  "identity_hashes_unchanged": true,
+  "head_unchanged": true,
+  "height_unchanged": true,
+  "height": 1,
+  "head": null,
+  "ticks": 77198,
+  "recovery_in_progress": false,
+  "execution_failures": 0,
+  "udp_ports": [
+    42052,
+    41052
+  ],
+  "config_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-CommonDb667-C-20261117\\run.json",
+  "progress_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-CommonDb667-C-20261117\\progress.json",
+  "control_path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
+  "control_present": false,
+  "initialized": false,
+  "observer_started": false,
+  "node_running": true,
+  "exit_record_present": false
+}
