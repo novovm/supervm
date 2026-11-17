@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-17T06:44:06.7955851Z",
+  "observer_pid": 1696,
+  "observer_running": true,
+  "observer_created_utc": "2026-11-17T06:23:15.6239210Z",
+  "node_pid": 38500,
+  "relay_snapshots": 4,
+  "result_present": false,
+  "error_present": false,
+  "exit_present": false,
+  "new_observer_started": false
+}
