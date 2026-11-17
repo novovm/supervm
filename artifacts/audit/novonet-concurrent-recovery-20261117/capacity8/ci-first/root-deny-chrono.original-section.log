@@ -1,0 +1,26 @@
+error[unmaintained]: chrono is unmaintained
+   ┌─ D:\WorksArea\SUPERVM/Cargo.lock:36:1
+   │
+36 │ chrono 0.4.44 registry+https://github.com/rust-lang/crates.io-index
+   │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ unmaintained advisory detected
+   │
+   ├ ID: RUSTSEC-2026-0543
+   ├ Advisory: https://rustsec.org/advisories/RUSTSEC-2026-0543
+   ├ The chrono crate is unmaintained; all versions are affected.
+     
+     Recommended alternatives:
+     
+     - [jiff](https://crates.io/crates/jiff)
+     - [time](https://crates.io/crates/time)
+   ├ Announcement: https://github.com/chronotope/chrono/issues/1768
+   ├ Solution: No safe upgrade is available!
+   ├ chrono v0.4.44
+     ├── novovm-governance-observability v0.1.0
+     │   ├── novovm-node v0.1.0
+     │   │   ├── novovm-bench v0.1.0
+     │   │   ├── novovm-evm-gateway v0.1.0
+     │   │   └── novovmctl v0.1.0
+     │   └── novovmctl v0.1.0 (*)
+     ├── novovm-node v0.1.0 (*)
+     └── novovm-rollout-policy v0.1.0
+

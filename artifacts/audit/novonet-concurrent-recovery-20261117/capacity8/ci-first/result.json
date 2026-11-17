@@ -1,0 +1,31 @@
+{
+  "source": "e666a6fb8e1f7127b27fb1bc38568e1eea1dc052",
+  "full_run": 44079683535,
+  "security_job": 134026939952,
+  "security_job_result": "failure",
+  "root_ci_audit": "libz-sys1.1.31 RUSTSEC-2026-0544",
+  "ci_runtime_audit": "not reached",
+  "ci_deny": "skipped",
+  "libz_generated_lock_patch": "1.1.31 ->1.1.33 only version/checksum",
+  "root_local_audit_after_exit": 0,
+  "runtime_local_audit_exit": 0,
+  "root_local_deny_after": "FAILED RUSTSEC-2026-0543 chrono unmaintained; bans/licenses/sources OK",
+  "root_deny_first": "Git advisory-db fetch TLS failure; preserved",
+  "runtime_local_deny_exit": 0,
+  "active_windows_node_graph_unchanged": true,
+  "active_linux_node_graph_unchanged": true,
+  "warnings": "Existing allowed rand/paste/chrono audit warnings and yanked crypto-bigint warning retained; no new ignore",
+  "root_rust_modules_unchanged": true,
+  "new_manual_full_after_dependency_patch": false,
+  "packages": "Both e666 original packagers completed assembly only; not archived/qualified/installed",
+  "deployed": false,
+  "utc": "2026-11-17T12:24:51.6672397Z",
+  "full_security_raw_original": {
+    "local_path": "D:\\WorksArea\\SUPERVM\\target\\aoem-latest-57090b6b-20261117\\capacity8-security-failure.raw.log",
+    "sha256": "25805275feb9ebcbd3ece3962a22e02660c12e128f9f62b751ff7c3295966e32"
+  },
+  "full_root_deny_raw_original": {
+    "sha256": "886129515522d1e5c616ab24980824667ab2a6fc58793712d60c413515f1feb6",
+    "local_path": "D:\\WorksArea\\SUPERVM\\target\\aoem-latest-57090b6b-20261117\\capacity8-deny-root-retry.stderr"
+  }
+}

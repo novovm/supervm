@@ -1,0 +1,53 @@
+2026-11-17T12:06:29.5703462Z [0m[0m[1m[32m    Updating[0m crates.io index
+2026-11-17T12:06:29.5824583Z [0m[0m[1m[32m    Scanning[0m Cargo.lock for vulnerabilities (571 crate dependencies)
+2026-11-17T12:06:29.9785559Z [0m[0m[1m[31mCrate:    [0m libz-sys
+2026-11-17T12:06:29.9785944Z [0m[0m[1m[31mVersion:  [0m 1.1.31
+2026-11-17T12:06:29.9786286Z [0m[0m[1m[31mTitle:    [0m libs-sys: heap buffer overflow
+2026-11-17T12:06:29.9786633Z [0m[0m[1m[31mDate:     [0m 2026-11-11
+2026-11-17T12:06:29.9786967Z [0m[0m[1m[31mID:       [0m RUSTSEC-2026-0544
+2026-11-17T12:06:29.9787397Z [0m[0m[1m[31mURL:      [0m https://rustsec.org/advisories/RUSTSEC-2026-0544
+2026-11-17T12:06:29.9787826Z [0m[0m[1m[31mSolution: [0m Upgrade to >=1.1.33 (patched)
+2026-11-17T12:06:29.9788026Z 
+2026-11-17T12:06:29.9788152Z [0m[0m[1m[33mCrate:    [0m chrono
+2026-11-17T12:06:29.9788428Z [0m[0m[1m[33mVersion:  [0m 0.4.44
+2026-11-17T12:06:29.9788696Z [0m[0m[1m[33mWarning:  [0m unmaintained
+2026-11-17T12:06:29.9789017Z [0m[0m[1m[33mTitle:    [0m chrono is unmaintained
+2026-11-17T12:06:29.9789384Z [0m[0m[1m[33mDate:     [0m 2026-09-14
+2026-11-17T12:06:29.9789684Z [0m[0m[1m[33mID:       [0m RUSTSEC-2026-0543
+2026-11-17T12:06:29.9790110Z [0m[0m[1m[33mURL:      [0m https://rustsec.org/advisories/RUSTSEC-2026-0543
+2026-11-17T12:06:29.9790544Z [0m[0m[1m[31mSolution: [0m No fixed upgrade is available!
+2026-11-17T12:06:29.9790759Z 
+2026-11-17T12:06:29.9790885Z [0m[0m[1m[33mCrate:    [0m paste
+2026-11-17T12:06:29.9791157Z [0m[0m[1m[33mVersion:  [0m 1.0.15
+2026-11-17T12:06:29.9791438Z [0m[0m[1m[33mWarning:  [0m unmaintained
+2026-11-17T12:06:29.9791784Z [0m[0m[1m[33mTitle:    [0m paste - no longer maintained
+2026-11-17T12:06:29.9792110Z [0m[0m[1m[33mDate:     [0m 2024-10-07
+2026-11-17T12:06:29.9792407Z [0m[0m[1m[33mID:       [0m RUSTSEC-2024-0436
+2026-11-17T12:06:29.9792806Z [0m[0m[1m[33mURL:      [0m https://rustsec.org/advisories/RUSTSEC-2024-0436
+2026-11-17T12:06:29.9793234Z [0m[0m[1m[31mSolution: [0m No fixed upgrade is available!
+2026-11-17T12:06:29.9793445Z 
+2026-11-17T12:06:29.9793570Z [0m[0m[1m[33mCrate:    [0m rand
+2026-11-17T12:06:29.9793840Z [0m[0m[1m[33mVersion:  [0m 0.8.5
+2026-11-17T12:06:29.9794253Z [0m[0m[1m[33mWarning:  [0m unsound
+2026-11-17T12:06:29.9798593Z [0m[0m[1m[33mTitle:    [0m Rand is unsound with a custom logger using `rand::rng()`
+2026-11-17T12:06:29.9798858Z [0m[0m[1m[33mDate:     [0m 2026-04-09
+2026-11-17T12:06:29.9799053Z [0m[0m[1m[33mID:       [0m RUSTSEC-2026-0097
+2026-11-17T12:06:29.9799314Z [0m[0m[1m[33mURL:      [0m https://rustsec.org/advisories/RUSTSEC-2026-0097
+2026-11-17T12:06:29.9799655Z [0m[0m[1m[31mSolution: [0m Upgrade to >=0.10.1 OR <0.10.0, >=0.9.3 OR <0.9.0, >=0.8.6 (patched)
+2026-11-17T12:06:29.9799838Z 
+2026-11-17T12:06:29.9799921Z [0m[0m[1m[33mCrate:    [0m rand
+2026-11-17T12:06:29.9800093Z [0m[0m[1m[33mVersion:  [0m 0.9.2
+2026-11-17T12:06:29.9800269Z [0m[0m[1m[33mWarning:  [0m unsound
+2026-11-17T12:06:29.9801065Z [0m[0m[1m[33mTitle:    [0m Rand is unsound with a custom logger using `rand::rng()`
+2026-11-17T12:06:29.9801432Z [0m[0m[1m[33mDate:     [0m 2026-04-09
+2026-11-17T12:06:29.9801622Z [0m[0m[1m[33mID:       [0m RUSTSEC-2026-0097
+2026-11-17T12:06:29.9801876Z [0m[0m[1m[33mURL:      [0m https://rustsec.org/advisories/RUSTSEC-2026-0097
+2026-11-17T12:06:29.9802208Z [0m[0m[1m[31mSolution: [0m Upgrade to >=0.10.1 OR <0.10.0, >=0.9.3 OR <0.9.0, >=0.8.6 (patched)
+2026-11-17T12:06:29.9802388Z 
+2026-11-17T12:06:29.9802476Z [0m[0m[1m[33mCrate:    [0m crypto-bigint
+2026-11-17T12:06:29.9802662Z [0m[0m[1m[33mVersion:  [0m 0.7.6
+2026-11-17T12:06:29.9802841Z [0m[0m[1m[33mWarning:  [0m yanked
+2026-11-17T12:06:29.9802936Z 
+2026-11-17T12:06:29.9803041Z [0m[0m[1m[31merror:[0m 1 vulnerability found!
+2026-11-17T12:06:29.9803254Z [0m[0m[1m[33mwarning:[0m 5 allowed warnings found
+2026-11-17T12:06:29.9915715Z ##[error]Process completed with exit code 1.

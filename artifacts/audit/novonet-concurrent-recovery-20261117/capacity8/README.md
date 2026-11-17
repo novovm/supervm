@@ -1,5 +1,9 @@
 # Main-node shared Carrier capacity candidate (2026-11-17)
 
+## CURRENT20:25: local code passed; security/dependency decision blocks qualification
+
+One exact-source Full44079683535 for e666a6fb has a failed root Audit job (libz-sys). The generated lock-only patch to1.1.33 passes local root/runtime Audit; runtime Deny also passes, but root Deny now exposes chrono unmaintained with no patched version. No ignore, rollout or second manual Full. [Actual outcomes and migration-scope decision](ci-first/README.md). Both original e666 packagers assembled outputs only, not qualified archives. The local-only next-step narrative below predates this newly observed security gate and does not authorize rerunning an already-known-red Full or deploying e666.
+
 User approved **candidate validation with a maximum of eight shared Carrier connections**, reusing `ServiceConcurrencyV1`. This is not approval to install an unqualified package. Generic SDK compatibility default four, signed relay sessions four, shared relay 128KiB/minute, original authentication, timeouts, NativeObjectLink, AOEM/ledger and consensus remain unchanged.
 
 ## Actual unfinished recovery attempt, 19:05 Beijing

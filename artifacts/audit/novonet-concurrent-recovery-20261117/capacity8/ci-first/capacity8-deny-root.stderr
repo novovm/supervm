@@ -1,0 +1,3 @@
+2026-11-17 12:18:05 [ERROR] failed to fetch advisory database https://github.com/RustSec/advisory-db with cli: failed to fetch latest changes: ["-C", "C:\\Users\\leadb\\.cargo\\advisory-dbs\\advisory-db-3157b0e258782691", "fetch", "--depth=1", "-u", "origin", "+main:main"]
+fatal: unable to access 'https://github.com/RustSec/advisory-db/': schannel: failed to receive handshake, SSL/TLS connection failed
+

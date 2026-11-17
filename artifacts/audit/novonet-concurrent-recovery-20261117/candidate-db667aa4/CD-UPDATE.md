@@ -1,5 +1,7 @@
 # CURRENT: no new db667 observer/send; capacity-eight candidate validation
 
+20:25: eight-slot local implementation/tests are complete, but its fixed e666 Full security job failed. Root libz lock patch now passes local Audit; **root Deny still rejects chrono maintenance status**, requiring a separate dependency-migration decision. Runtime Audit/Deny pass. [Actual gates and next scope](../capacity8/ci-first/README.md). C/D have no new package/Full-approved update or observer action; keep prior bounded evidence, do not retry the old capacity-four route. A has not sent another object or changed any running node.
+
 The fresh recovery-only observers were received. The19:05 original-owner attempt failed before any new object: B retained three bound business routes, accepted inbound relay, then refused the downstream connection at the shared-four gate. No second B stop, completed-pair resend or new object. User approved maximum-eight **candidate validation** using existing ServiceConcurrencyV1; SDK default four, signed relay sessions four,128KiB/min and all auth/timeouts/ledger remain unchanged. [Original failure and candidate gates](../capacity8/README.md). C/D preserve their current bounded observer outputs; do not rearm/retry db667, update nodes or copy a nonexistent new package. New version-bound instructions follow qualification and deployment confirmation, not these historical instructions.
 
 ## Earlier18:55: two crossed deliveries accepted; observe only the unfinished recovered object

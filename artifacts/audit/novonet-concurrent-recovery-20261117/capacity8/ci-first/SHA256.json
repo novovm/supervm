@@ -1,0 +1,107 @@
+[
+  {
+    "bytes": 23258,
+    "sha256": "587b72890910d0e508d1776c09c26eeee6063c3e3ca6cedc82cbdccb7f22bc12",
+    "name": "capacity8-active-linux-after.txt"
+  },
+  {
+    "bytes": 23258,
+    "sha256": "587b72890910d0e508d1776c09c26eeee6063c3e3ca6cedc82cbdccb7f22bc12",
+    "name": "capacity8-active-linux-before.txt"
+  },
+  {
+    "bytes": 23678,
+    "sha256": "84867e6e61f3bab22aa6d0cf56c88bd5fc5a0087572c3180af6988f3e8790e92",
+    "name": "capacity8-active-windows-after.txt"
+  },
+  {
+    "bytes": 23678,
+    "sha256": "84867e6e61f3bab22aa6d0cf56c88bd5fc5a0087572c3180af6988f3e8790e92",
+    "name": "capacity8-active-windows-before.txt"
+  },
+  {
+    "bytes": 4099,
+    "sha256": "99e10ec1e08817c8be36a74537d0e0c3c3e66b5a7c24e48e8aa0c4a7c8a8acba",
+    "name": "capacity8-audit-runtime.json"
+  },
+  {
+    "bytes": 52,
+    "sha256": "da37e522d5b3103a1c4aba99887f6c3cc89aee5534b41819544124a22f55dfd3",
+    "name": "capacity8-deny-root-retry.stdout"
+  },
+  {
+    "bytes": 410,
+    "sha256": "5542da5898a0b0c8ae1507782e112365984dd4e0719a3209b3fa5e1fb78e68c7",
+    "name": "capacity8-deny-root.stderr"
+  },
+  {
+    "bytes": 94,
+    "sha256": "b523ea4912775b6b0788eb6a41504941d2213c2ad91217e2e81d969a626c72e2",
+    "name": "capacity8-deny-runtime-final-result.json"
+  },
+  {
+    "bytes": 34283,
+    "sha256": "d95653c30cc0f0a17e162022588faf140549a924e5d9672c5525077aa40d66b0",
+    "name": "capacity8-deny-runtime-final.stderr"
+  },
+  {
+    "bytes": 48,
+    "sha256": "f1a0fca39d4280363937aabd77783990ea6480bd9ca257816de3b68fc8efa845",
+    "name": "capacity8-deny-runtime-final.stdout"
+  },
+  {
+    "bytes": 113,
+    "sha256": "456601639c34a96b8dc75681fe98788e59b11f3f7cf7ac585042880aef670aca",
+    "name": "capacity8-libz-update.log"
+  },
+  {
+    "bytes": 120,
+    "sha256": "24acef5a3e1a16a43bde29e3be33cd14fa0b74e7706ff66a511dabf19490a104",
+    "name": "capacity8-linux-package-result.json"
+  },
+  {
+    "bytes": 66,
+    "sha256": "07f91a816afa941e96e4b565f6d65ede76e645f4607e78703fc0df2a0fa95e7d",
+    "name": "capacity8-local-audit-after-result.json"
+  },
+  {
+    "bytes": 9292,
+    "sha256": "e8791ee5064851de95dd0659e7b6b931811840f18bf68c6e4d529544107f5f2a",
+    "name": "capacity8-local-audit-after.json"
+  },
+  {
+    "bytes": 11007,
+    "sha256": "64e92aafe84766ea5a9387733b15ff590747608583c3a71ff7167cda49eb7e77",
+    "name": "capacity8-local-audit-before.json"
+  },
+  {
+    "bytes": 125,
+    "sha256": "72fa9da02d01826f10f9a423b33cee8b8d4c2c7e675f2dacfed57d7e6acf4d33",
+    "name": "capacity8-windows-package-result.json"
+  },
+  {
+    "bytes": 222,
+    "sha256": "cab3016ed6db2fe2e0c944f47c486cdae7a70ccf17562726e1c8c51b26ce2373",
+    "name": "full-current-snapshot.json"
+  },
+  {
+    "bytes": 3623,
+    "sha256": "5051d5f27bfc7b3dbc3f89de1158f359460df836e8ee70a4e0149649f7081e05",
+    "name": "README.md"
+  },
+  {
+    "bytes": 1593,
+    "sha256": "ba9865c42b51a2bb5fbbc85b14f1c9287cadd8bd6f30ec1c53d1abf2df961720",
+    "name": "result.json"
+  },
+  {
+    "bytes": 1244,
+    "sha256": "9f62c2d53272855467759a640bf06a91fe859c334b87f1d8c1cf540e6a21ced7",
+    "name": "root-deny-chrono.original-section.log"
+  },
+  {
+    "bytes": 4182,
+    "sha256": "dcae20ee02f8e7fad21af4ac9ec07c33313b0350a67b45c7ee4ee5a42a4a5150",
+    "name": "security-audit.original-section.log"
+  }
+]
