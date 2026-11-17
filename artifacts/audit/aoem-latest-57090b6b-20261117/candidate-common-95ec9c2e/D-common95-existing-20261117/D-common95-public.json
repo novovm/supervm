@@ -1,0 +1,42 @@
+{
+  "progress_path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\novovm-common-95ec9c2e-20261117/logs/progress.json",
+  "release_manifest_sha256": "82e5229ed041af942e0333597ce1fbfcca6f9f66f69dd4bb598d69b5c0e66ea8",
+  "task": "NOVOVM-D-Common95-Existing-20261117",
+  "utc": "2026-11-17T03:39:31.3519795Z",
+  "keys_generated": false,
+  "node_sha256": "754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7",
+  "status": "D_COMMON95_EXISTING_READY_FOR_A_QUERY",
+  "head": null,
+  "config_path": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\novovm-common-95ec9c2e-20261117/run.json",
+  "execution_failures": 0,
+  "double_relay_done": false,
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 42053,
+      "OwningProcess": 23340
+    },
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 41053,
+      "OwningProcess": 23340
+    }
+  ],
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\chain-state",
+  "program_source": "1eb2f202d821fbb2e7cccee4e8bbfb3cd789c864",
+  "initialize": false,
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "start": "existing",
+  "height": 1,
+  "custody_unchanged": true,
+  "pid": 23340,
+  "source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "prior_clean_exit": {
+    "exit_code": 0,
+    "start": "existing",
+    "time": "2026-11-13T08:49:58.1569399Z"
+  },
+  "state_projection_unchanged": true,
+  "sid": "S-1-5-19",
+  "actual_aoem": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-95ec9c2e-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll"
+}

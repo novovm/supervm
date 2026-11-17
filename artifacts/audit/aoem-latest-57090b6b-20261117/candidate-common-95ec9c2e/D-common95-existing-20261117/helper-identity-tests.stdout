@@ -1,0 +1,8 @@
+PASS LF
+PASS CRLF
+PASS mixed EOL
+PASS code mutation
+PASS space mutation
+PASS bare CR
+PASS BOM added
+PASS actual pinned deployment helper; no deployment entry executed

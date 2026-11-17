@@ -1,4 +1,10 @@
-# CURRENT 09:55: C healthy; D executes approved common95 existing update
+# CURRENT 11:41: D common95 existing ready for A query
+
+2026-11-17 Beijing. D completed one approved common95 existing update, controller exit0. Actual PID23340, LocalService, task `NOVOVM-D-Common95-Existing-20261117` Running; EXE/loaded AOEM/release manifest match fixed95. Original DB and identity unchanged, local height1/head null unchanged, recovery false, failures0; ports41053/42053 owned by PID23340. Read-only health at03:40:59Z confirms fresh progress and no exit/error record.
+
+**D_COMMON95_EXISTING_READY_FOR_A_QUERY**. [Public receipt and original results](D-common95-existing-20261117/README.md). Current config: `C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-95ec9c2e-20261117\run.json`; progress: same directory `logs\progress.json`. D stays running; do not repeat the update. A's authenticated D query and actual object delivery remain pending. C unchanged, no observers started or objects sent by D.
+
+## Earlier 09:55 D dispatch (completed; retained)
 
 2026-11-17 09:55 Beijing. A pulled C's actual receipts through `42de31f7`. The earlier E-drive/package-unavailable report `d5a0172c` was superseded by C's successful local-copy/start receipt; do not ask for another ZIP or rerun C's update.
 
