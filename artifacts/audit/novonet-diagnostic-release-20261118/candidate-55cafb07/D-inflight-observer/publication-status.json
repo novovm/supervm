@@ -1,0 +1,15 @@
+{
+  "snapshots": 0,
+  "node_pid": 34148,
+  "result_present": false,
+  "invocation_error_present": false,
+  "launcher_error_present": false,
+  "liveness_utc": "2026-11-17T22:52:27.71619Z",
+  "error_present": false,
+  "utc": "2026-11-17T22:52:28.1121550Z",
+  "observer_pid": 42256,
+  "collector_exit_present": false,
+  "observer_running": true,
+  "node_source": "5b656189784c854ac356aae77610c931b9f2189d",
+  "observer_created_utc": "2026-11-17T22:51:43.1358020Z"
+}

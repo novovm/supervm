@@ -1,0 +1,7 @@
+{
+  "command": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -File \"D:\\WEB3_AI\\SUPERVM\\target\\d-55-origins-inflight-observer-20261118\\run-original.ps1\"",
+  "launcher_pid": 53504,
+  "created_utc": "2026-11-17T22:51:43.1358020Z",
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\d-55-origins-inflight-observer-20261118\\observation",
+  "pid": 42256
+}
