@@ -1,0 +1,10 @@
+{
+  "read_anomaly_first_present": false,
+  "error_present": false,
+  "collector_exit_present": true,
+  "observer_pid": 51148,
+  "read_anomaly_last_present": false,
+  "launcher_error_present": false,
+  "utc": "2026-11-17T05:15:15.5960511Z",
+  "result_present": true
+}
