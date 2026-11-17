@@ -1,0 +1,17 @@
+{
+  "active": true,
+  "node_mutated": false,
+  "liveness_utc": "2026-11-17T06:52:35.0345571Z",
+  "node_pid": 23340,
+  "observer_running": true,
+  "observer_pid": 40456,
+  "relay_snapshots": 4,
+  "result_present": false,
+  "new_observer_started": false,
+  "utc": "2026-11-17T06:52:35.3230831Z",
+  "launcher_error_present": false,
+  "error_present": false,
+  "copied_without_object_or_session_filter": true,
+  "collector_exit_present": false,
+  "observer_created_utc": "2026-11-17T06:22:37.0892130Z"
+}

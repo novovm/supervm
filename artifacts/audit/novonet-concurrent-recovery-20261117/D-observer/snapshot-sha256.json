@@ -1,0 +1,26 @@
+[
+  {
+    "file": "relay-00.json",
+    "sha256": "96baab5ed83a874c2da06d38a5d1b8cf7c8cbd8147b0188d7bebcf4128e1f883",
+    "original_bytes_preserved": true,
+    "bytes": 774123
+  },
+  {
+    "file": "relay-01.json",
+    "sha256": "ab1ad842083b9332638d87a494282ffdc2491d7410aa5c9270d19168af946a58",
+    "original_bytes_preserved": true,
+    "bytes": 772483
+  },
+  {
+    "file": "relay-02.json",
+    "sha256": "a6c4934b0321979741d81e38e8f44829fa79072db311cb00882222bf641eced1",
+    "original_bytes_preserved": true,
+    "bytes": 752005
+  },
+  {
+    "file": "relay-03.json",
+    "sha256": "e07f220c65f659de4f1c9a5afbfd855a72ee4901d78129111cb8ffb114727f1f",
+    "original_bytes_preserved": true,
+    "bytes": 763831
+  }
+]

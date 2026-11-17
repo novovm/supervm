@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-17T06:51:51.9585467Z",
+  "observer_pid": 40456,
+  "observer_running": true,
+  "observer_created_utc": "2026-11-17T06:22:37.0892130Z",
+  "node_pid": 23340,
+  "node_created_utc": "2026-11-17T03:39:29.7521670Z",
+  "node_sid": "S-1-5-19",
+  "projection_exit_code": 0,
+  "node_mutated": false,
+  "new_observer_started": false
+}
