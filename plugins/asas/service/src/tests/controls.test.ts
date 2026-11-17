@@ -83,19 +83,27 @@ test('admission persists per-turn settings without replacing sessions, rejects u
   const peer = { id: 'B', tokenSha256: 'b'.repeat(64), projects: ['a'.repeat(64)] }, seen: TaskInput[] = [];
   const app = await Application.open(root, [peer], { claude: { models: ['fixture'], controls: async () => ({ version: 1,
     models: { fixture: { efforts: ['low', 'high'], permissionModes: ['default', 'auto'] } } }), run: async c => { seen.push(c.input); } } });
+  const completed = async (id: string) => {
+    let cursor = 0;
+    while (true) {
+      // The public event status stays running until durable session cleanup finishes.
+      const batch = await app.broker.events(peer, id, cursor);
+      cursor += batch.events.length;
+      if (batch.status !== 'running') { assert.equal(batch.status, 'completed'); return; }
+    }
+  };
   try {
     const caps: any = await app.dispatch('B', 'capabilities', {}); assert.equal(caps.engines.claude.controls.version, 1);
     const first = { ...input(), reasoningEffort: 'high' as const, enginePermissionMode: 'auto' as const };
     await app.broker.submit(peer, first);
-    while (app.broker.get(peer, first.id).status === 'running') await app.broker.events(peer, first.id, app.broker.get(peer, first.id).events.length);
-    await new Promise(resolve => setTimeout(resolve, 20));
+    await completed(first.id);
     await app.broker.submit(peer, first); assert.equal(seen.length, 1);
     await assert.rejects(app.broker.submit(peer, { ...first, reasoningEffort: 'low' }), /409/);
     await assert.rejects(app.broker.submit(peer, { ...input(), reasoningEffort: 'max' }), /unavailable/);
     await assert.rejects(app.broker.submit(peer, { ...input(), mode: 'plan', enginePermissionMode: 'auto' }), /unavailable/);
     const next = { ...input(), sessionId: first.sessionId, reasoningEffort: 'low' as const };
     await app.broker.submit(peer, next);
-    while (app.broker.get(peer, next.id).status === 'running') await app.broker.events(peer, next.id, app.broker.get(peer, next.id).events.length);
+    await completed(next.id);
     assert.equal(seen.length, 2); assert.equal(seen[0].sessionId, seen[1].sessionId);
   } finally { await app.close(); await rm(root, { recursive: true, force: true }); }
 });

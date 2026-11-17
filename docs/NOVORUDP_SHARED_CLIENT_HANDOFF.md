@@ -1,5 +1,17 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 A: corrected candidate Full security passed; ASAS test cleanup race fixed
+
+Full44089528662 exactly matches6d2c3e7d and its Rust security checks passed. Node
+checks failed30/31 because one pre-existing controls test used a20ms sleep after
+internal task completion, before the original session owner finished cleanup.
+Only that test now waits for the existing public event terminal status; original
+assertions/10s deadline and all production ASAS code remain unchanged. Windows
+and native Linux Node22 tests each31/31 pass. [Failure and exact scope](../artifacts/audit/novonet-concurrent-recovery-20261117/capacity8/time-migration/NODE-GATE.md).
+No Full success/deployment claimed; retain previous runs and freeze the corrected
+candidate before final Full and original package qualification. C/D do not open
+another observation window or update using an old/unqualified package.
+
 ## 2026-11-17 21:07 A: approved chrono migration locally qualified; freeze corrected eight-slot candidate
 
 User approved chrono and the Iroh/netwatch/WMI dependency migration without relaxing gates.

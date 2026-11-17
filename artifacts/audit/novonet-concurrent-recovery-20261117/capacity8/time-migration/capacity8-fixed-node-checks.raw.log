@@ -1,0 +1,433 @@
+﻿2026-11-17T13:07:49.4947771Z Current runner version: '2.338.2'
+2026-11-17T13:07:49.4965274Z ##[group]Runner Image Provisioner
+2026-11-17T13:07:49.4965816Z Hosted Compute Agent
+2026-11-17T13:07:49.4966212Z Version: 20261103.629
+2026-11-17T13:07:49.4966609Z Commit: 15dbd9ccb5dbf34fae002b6ed1a2670f52df37bc
+2026-11-17T13:07:49.4967013Z Build Date: 2026-11-03T17:26:59Z
+2026-11-17T13:07:49.4967442Z Worker ID: {0e6e0f1e-c18d-4a3b-9395-e73a1b38e7c7}
+2026-11-17T13:07:49.4967831Z Region: westus3
+2026-11-17T13:07:49.4968165Z Cloud: Azure
+2026-11-17T13:07:49.4968507Z ##[endgroup]
+2026-11-17T13:07:49.4969469Z ##[group]Operating System
+2026-11-17T13:07:49.4969859Z Ubuntu
+2026-11-17T13:07:49.4970187Z 26.04.1
+2026-11-17T13:07:49.4970501Z LTS
+2026-11-17T13:07:49.4970836Z ##[endgroup]
+2026-11-17T13:07:49.4971144Z ##[group]Runner Image
+2026-11-17T13:07:49.4971725Z Image: ubuntu-26.04
+2026-11-17T13:07:49.4972075Z Version: 20261111.196.1
+2026-11-17T13:07:49.4972833Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261111.196/images/ubuntu/Ubuntu2604-Readme.md
+2026-11-17T13:07:49.4973702Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261111.196
+2026-11-17T13:07:49.4974260Z ##[endgroup]
+2026-11-17T13:07:49.4974896Z ##[group]GITHUB_TOKEN Permissions
+2026-11-17T13:07:49.4976106Z Contents: read
+2026-11-17T13:07:49.4976437Z Metadata: read
+2026-11-17T13:07:49.4977106Z ##[endgroup]
+2026-11-17T13:07:49.4978439Z Secret source: Actions
+2026-11-17T13:07:49.4979009Z Cache mode: write
+2026-11-17T13:07:49.4979564Z Prepare workflow directory
+2026-11-17T13:07:49.5177839Z Prepare all required actions
+2026-11-17T13:07:49.5208192Z Getting action download info
+2026-11-17T13:07:49.8045574Z Download action repository 'actions/checkout@v4' (SHA:11d5960a326750d5838078e36cf38b85af677262)
+2026-11-17T13:07:49.9011066Z Download action repository 'actions/setup-node@v4' (SHA:49933ea5288caeca8642d1e84afbd3f7d6820020)
+2026-11-17T13:07:50.0474327Z Complete job name: Node checks
+2026-11-17T13:07:50.0975174Z ##[group]Run actions/checkout@v4
+2026-11-17T13:07:50.0975597Z with:
+2026-11-17T13:07:50.0975840Z   repository: novovm/supervm
+2026-11-17T13:07:50.0977824Z   token: ***
+2026-11-17T13:07:50.0978056Z   ssh-strict: true
+2026-11-17T13:07:50.0978294Z   ssh-user: git
+2026-11-17T13:07:50.0978538Z   persist-credentials: true
+2026-11-17T13:07:50.0978802Z   clean: true
+2026-11-17T13:07:50.0979040Z   sparse-checkout-cone-mode: true
+2026-11-17T13:07:50.0979324Z   fetch-depth: 1
+2026-11-17T13:07:50.0979558Z   fetch-tags: false
+2026-11-17T13:07:50.0979796Z   show-progress: true
+2026-11-17T13:07:50.0980039Z   lfs: false
+2026-11-17T13:07:50.0980261Z   submodules: false
+2026-11-17T13:07:50.0980506Z   set-safe-directory: true
+2026-11-17T13:07:50.0980777Z   allow-unsafe-pr-checkout: false
+2026-11-17T13:07:50.0981119Z ##[endgroup]
+2026-11-17T13:07:50.3110364Z Syncing repository: novovm/supervm
+2026-11-17T13:07:50.3111390Z ##[group]Getting Git version info
+2026-11-17T13:07:50.3112004Z Working directory is '/home/runner/work/supervm/supervm'
+2026-11-17T13:07:50.3112724Z [command]/usr/bin/git version
+2026-11-17T13:07:50.3120107Z git version 2.56.1
+2026-11-17T13:07:50.3130584Z ##[endgroup]
+2026-11-17T13:07:50.3139375Z Temporarily overriding HOME='/home/runner/work/_temp/c002bb27-99a6-4350-ae07-740470009f16' before making global git config changes
+2026-11-17T13:07:50.3142843Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-17T13:07:50.3143489Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/supervm/supervm
+2026-11-17T13:07:50.3196198Z Deleting the contents of '/home/runner/work/supervm/supervm'
+2026-11-17T13:07:50.3198788Z ##[group]Initializing the repository
+2026-11-17T13:07:50.3201354Z [command]/usr/bin/git init /home/runner/work/supervm/supervm
+2026-11-17T13:07:50.3312743Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-17T13:07:50.3313462Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-17T13:07:50.3313962Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-17T13:07:50.3314587Z hint: call:
+2026-11-17T13:07:50.3314831Z hint:
+2026-11-17T13:07:50.3315257Z hint: 	git config --global init.defaultBranch <name>
+2026-11-17T13:07:50.3315725Z hint:
+2026-11-17T13:07:50.3316035Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-17T13:07:50.3316522Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-17T13:07:50.3317008Z hint:
+2026-11-17T13:07:50.3317352Z hint: 	git branch -m <name>
+2026-11-17T13:07:50.3317745Z hint:
+2026-11-17T13:07:50.3318279Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-17T13:07:50.3319102Z Initialized empty Git repository in /home/runner/work/supervm/supervm/.git/
+2026-11-17T13:07:50.3332322Z [command]/usr/bin/git remote add origin https://github.com/novovm/supervm
+2026-11-17T13:07:50.3369298Z ##[endgroup]
+2026-11-17T13:07:50.3369741Z ##[group]Disabling automatic garbage collection
+2026-11-17T13:07:50.3372492Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-17T13:07:50.3398392Z ##[endgroup]
+2026-11-17T13:07:50.3398778Z ##[group]Setting up auth
+2026-11-17T13:07:50.3403675Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-17T13:07:50.3430517Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-17T13:07:50.3793428Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-17T13:07:50.3819085Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-17T13:07:50.4024297Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-17T13:07:50.4050709Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-17T13:07:50.4254980Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-17T13:07:50.4286220Z ##[endgroup]
+2026-11-17T13:07:50.4286646Z ##[group]Fetching the repository
+2026-11-17T13:07:50.4291926Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +6d2c3e7d001b9d1c6635f07eb8b9a30bc1e3b4cd:refs/remotes/origin/main
+2026-11-17T13:07:54.6318370Z From https://github.com/novovm/supervm
+2026-11-17T13:07:54.6320198Z  * [new ref]         6d2c3e7d001b9d1c6635f07eb8b9a30bc1e3b4cd -> origin/main
+2026-11-17T13:07:54.6324220Z ##[endgroup]
+2026-11-17T13:07:54.6325470Z ##[group]Determining the checkout info
+2026-11-17T13:07:54.6326857Z ##[endgroup]
+2026-11-17T13:07:54.6327999Z [command]/usr/bin/git sparse-checkout disable
+2026-11-17T13:07:54.6374107Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-17T13:07:54.6398518Z ##[group]Checking out the ref
+2026-11-17T13:07:54.6401350Z [command]/usr/bin/git checkout --progress --force -B main refs/remotes/origin/main
+2026-11-17T13:07:55.6509296Z Updating files:  44% (3676/8322)
+2026-11-17T13:07:55.6703577Z Updating files:  45% (3745/8322)
+2026-11-17T13:07:55.6739215Z Updating files:  46% (3829/8322)
+2026-11-17T13:07:55.6791976Z Updating files:  47% (3912/8322)
+2026-11-17T13:07:55.6868958Z Updating files:  48% (3995/8322)
+2026-11-17T13:07:55.6975065Z Updating files:  49% (4078/8322)
+2026-11-17T13:07:55.7084069Z Updating files:  50% (4161/8322)
+2026-11-17T13:07:55.7711334Z Updating files:  51% (4245/8322)
+2026-11-17T13:07:55.7900432Z Updating files:  52% (4328/8322)
+2026-11-17T13:07:55.8047408Z Updating files:  53% (4411/8322)
+2026-11-17T13:07:55.8762587Z Updating files:  54% (4494/8322)
+2026-11-17T13:07:55.8828672Z Updating files:  55% (4578/8322)
+2026-11-17T13:07:55.8974006Z Updating files:  56% (4661/8322)
+2026-11-17T13:07:55.9312356Z Updating files:  57% (4744/8322)
+2026-11-17T13:07:55.9357628Z Updating files:  58% (4827/8322)
+2026-11-17T13:07:55.9405131Z Updating files:  59% (4910/8322)
+2026-11-17T13:07:55.9481448Z Updating files:  60% (4994/8322)
+2026-11-17T13:07:55.9501838Z Updating files:  61% (5077/8322)
+2026-11-17T13:07:55.9540438Z Updating files:  62% (5160/8322)
+2026-11-17T13:07:55.9611419Z Updating files:  63% (5243/8322)
+2026-11-17T13:07:55.9676737Z Updating files:  64% (5327/8322)
+2026-11-17T13:07:55.9732001Z Updating files:  65% (5410/8322)
+2026-11-17T13:07:55.9807093Z Updating files:  66% (5493/8322)
+2026-11-17T13:07:55.9870832Z Updating files:  67% (5576/8322)
+2026-11-17T13:07:56.0027594Z Updating files:  68% (5659/8322)
+2026-11-17T13:07:56.0088066Z Updating files:  69% (5743/8322)
+2026-11-17T13:07:56.0149787Z Updating files:  70% (5826/8322)
+2026-11-17T13:07:56.0210373Z Updating files:  71% (5909/8322)
+2026-11-17T13:07:56.0274956Z Updating files:  72% (5992/8322)
+2026-11-17T13:07:56.0360575Z Updating files:  73% (6076/8322)
+2026-11-17T13:07:56.0402154Z Updating files:  74% (6159/8322)
+2026-11-17T13:07:56.0449516Z Updating files:  75% (6242/8322)
+2026-11-17T13:07:56.0515483Z Updating files:  76% (6325/8322)
+2026-11-17T13:07:56.0692416Z Updating files:  77% (6408/8322)
+2026-11-17T13:07:56.0737567Z Updating files:  78% (6492/8322)
+2026-11-17T13:07:56.0780831Z Updating files:  79% (6575/8322)
+2026-11-17T13:07:56.0826845Z Updating files:  80% (6658/8322)
+2026-11-17T13:07:56.0895668Z Updating files:  81% (6741/8322)
+2026-11-17T13:07:56.0971702Z Updating files:  82% (6825/8322)
+2026-11-17T13:07:56.1050365Z Updating files:  83% (6908/8322)
+2026-11-17T13:07:56.1151424Z Updating files:  84% (6991/8322)
+2026-11-17T13:07:56.1204560Z Updating files:  85% (7074/8322)
+2026-11-17T13:07:56.1281073Z Updating files:  86% (7157/8322)
+2026-11-17T13:07:56.1318762Z Updating files:  87% (7241/8322)
+2026-11-17T13:07:56.1366859Z Updating files:  88% (7324/8322)
+2026-11-17T13:07:56.1409537Z Updating files:  89% (7407/8322)
+2026-11-17T13:07:56.1447419Z Updating files:  90% (7490/8322)
+2026-11-17T13:07:56.1490090Z Updating files:  91% (7574/8322)
+2026-11-17T13:07:56.1554290Z Updating files:  92% (7657/8322)
+2026-11-17T13:07:56.1600764Z Updating files:  93% (7740/8322)
+2026-11-17T13:07:56.1641317Z Updating files:  94% (7823/8322)
+2026-11-17T13:07:56.1673205Z Updating files:  95% (7906/8322)
+2026-11-17T13:07:56.1726378Z Updating files:  96% (7990/8322)
+2026-11-17T13:07:56.1762049Z Updating files:  97% (8073/8322)
+2026-11-17T13:07:56.1791415Z Updating files:  98% (8156/8322)
+2026-11-17T13:07:56.1824148Z Updating files:  99% (8239/8322)
+2026-11-17T13:07:56.1824629Z Updating files: 100% (8322/8322)
+2026-11-17T13:07:56.1824878Z Updating files: 100% (8322/8322), done.
+2026-11-17T13:07:56.1884577Z Switched to a new branch 'main'
+2026-11-17T13:07:56.1888877Z branch 'main' set up to track 'origin/main'.
+2026-11-17T13:07:56.2483450Z ##[endgroup]
+2026-11-17T13:07:56.2524306Z [command]/usr/bin/git log -1 --format=%H
+2026-11-17T13:07:56.2542943Z 6d2c3e7d001b9d1c6635f07eb8b9a30bc1e3b4cd
+2026-11-17T13:07:56.2782579Z ##[group]Run actions/setup-node@v4
+2026-11-17T13:07:56.2782731Z with:
+2026-11-17T13:07:56.2782842Z   node-version: 22
+2026-11-17T13:07:56.2782952Z   cache: npm
+2026-11-17T13:07:56.2783080Z   cache-dependency-path: **/package-lock.json
+2026-11-17T13:07:56.2783238Z   always-auth: false
+2026-11-17T13:07:56.2783354Z   check-latest: false
+2026-11-17T13:07:56.2784736Z   token: ***
+2026-11-17T13:07:56.2784843Z ##[endgroup]
+2026-11-17T13:07:56.3675933Z Found in cache @ /opt/hostedtoolcache/node/22.23.4/x64
+2026-11-17T13:07:56.3677725Z ##[group]Environment details
+2026-11-17T13:07:56.3682107Z (node:2231) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-17T13:07:56.3685898Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-17T13:07:56.6418914Z node: v22.23.4
+2026-11-17T13:07:56.6419166Z npm: 10.9.9
+2026-11-17T13:07:56.6419325Z yarn: 1.22.22
+2026-11-17T13:07:56.6420646Z ##[endgroup]
+2026-11-17T13:07:56.6445018Z [command]/opt/hostedtoolcache/node/22.23.4/x64/bin/npm config get cache
+2026-11-17T13:07:56.7162511Z /home/runner/.npm
+2026-11-17T13:07:57.2676187Z Cache hit for: node-cache-Linux-x64-npm-82596616e652d1899d776218745fc7343faa5114573bd5d5f8f84dfd3df63a4e
+2026-11-17T13:07:57.2738845Z (node:2231) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+2026-11-17T13:07:58.4849059Z Received 88080384 of 182251856 (48.3%), 84.0 MBs/sec
+2026-11-17T13:07:59.2074066Z Received 182251856 of 182251856 (100.0%), 100.9 MBs/sec
+2026-11-17T13:07:59.2074738Z Cache Size: ~174 MB (182251856 B)
+2026-11-17T13:07:59.2093838Z [command]/usr/bin/tar -xf /home/runner/work/_temp/f4bff6f2-c4d3-42ba-b3a2-a44e9d186561/cache.tzst -P -C /home/runner/work/supervm/supervm --use-compress-program unzstd
+2026-11-17T13:07:59.3833105Z Cache restored successfully
+2026-11-17T13:07:59.3908414Z Cache restored from key: node-cache-Linux-x64-npm-82596616e652d1899d776218745fc7343faa5114573bd5d5f8f84dfd3df63a4e
+2026-11-17T13:07:59.4200201Z ##[group]Run set -euo pipefail
+2026-11-17T13:07:59.4200411Z [36;1mset -euo pipefail[0m
+2026-11-17T13:07:59.4200581Z [36;1mpkg="plugins/asas/service/package.json"[0m
+2026-11-17T13:07:59.4200761Z [36;1mcd "$(dirname "$pkg")"[0m
+2026-11-17T13:07:59.4200902Z [36;1mnpm ci[0m
+2026-11-17T13:07:59.4201015Z [36;1mnpm test[0m
+2026-11-17T13:07:59.4249834Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-11-17T13:07:59.4250035Z ##[endgroup]
+2026-11-17T13:08:02.2174927Z 
+2026-11-17T13:08:02.2181442Z added 108 packages, and audited 109 packages in 3s
+2026-11-17T13:08:02.2181891Z 
+2026-11-17T13:08:02.2182068Z 36 packages are looking for funding
+2026-11-17T13:08:02.2182341Z   run `npm fund` for details
+2026-11-17T13:08:02.2182499Z 
+2026-11-17T13:08:02.2182618Z found 0 vulnerabilities
+2026-11-17T13:08:02.3376990Z 
+2026-11-17T13:08:02.3377602Z > @aoem/asas@0.8.0-dev test
+2026-11-17T13:08:02.3377964Z > npm run build && node --test dist/tests/*.test.js
+2026-11-17T13:08:02.3378190Z 
+2026-11-17T13:08:02.3977563Z 
+2026-11-17T13:08:02.3978044Z > @aoem/asas@0.8.0-dev build
+2026-11-17T13:08:02.3978294Z > tsc -p tsconfig.json
+2026-11-17T13:08:02.3978417Z 
+2026-11-17T13:08:04.1913584Z TAP version 13
+2026-11-17T13:08:05.2139173Z # Subtest: one host runs separate Codex/Claude fixture engines without cross-engine session reuse
+2026-11-17T13:08:05.2144753Z ok 1 - one host runs separate Codex/Claude fixture engines without cross-engine session reuse
+2026-11-17T13:08:05.2145156Z   ---
+2026-11-17T13:08:05.2145388Z   duration_ms: 937.114703
+2026-11-17T13:08:05.2145601Z   type: 'test'
+2026-11-17T13:08:05.2145772Z   ...
+2026-11-17T13:08:05.5787271Z # Subtest: exclusive data ownership and malformed durable records fail closed
+2026-11-17T13:08:05.5787827Z ok 2 - exclusive data ownership and malformed durable records fail closed
+2026-11-17T13:08:05.5788196Z   ---
+2026-11-17T13:08:05.5788388Z   duration_ms: 363.675796
+2026-11-17T13:08:05.5788675Z   type: 'test'
+2026-11-17T13:08:05.5788882Z   ...
+2026-11-17T13:08:05.9736364Z # Subtest: concurrent duplicate tool receipts are durable and resolve the engine only once
+2026-11-17T13:08:05.9737404Z ok 3 - concurrent duplicate tool receipts are durable and resolve the engine only once
+2026-11-17T13:08:05.9738133Z   ---
+2026-11-17T13:08:05.9738482Z   duration_ms: 395.85261
+2026-11-17T13:08:05.9738837Z   type: 'test'
+2026-11-17T13:08:05.9739305Z   ...
+2026-11-17T13:08:05.9831663Z # Subtest: A bootstrap accepts opaque B project IDs, not local B project directories
+2026-11-17T13:08:05.9852315Z ok 4 - A bootstrap accepts opaque B project IDs, not local B project directories
+2026-11-17T13:08:05.9864716Z   ---
+2026-11-17T13:08:05.9868834Z   duration_ms: 0.852074
+2026-11-17T13:08:05.9869201Z   type: 'test'
+2026-11-17T13:08:05.9872104Z   ...
+2026-11-17T13:08:05.9872601Z # Subtest: Codex tool declarations are ACODE-only; server-native tool families are disabled
+2026-11-17T13:08:05.9873641Z ok 5 - Codex tool declarations are ACODE-only; server-native tool families are disabled
+2026-11-17T13:08:05.9874032Z   ---
+2026-11-17T13:08:05.9874224Z   duration_ms: 3.108892
+2026-11-17T13:08:05.9874575Z   type: 'test'
+2026-11-17T13:08:05.9874772Z   ...
+2026-11-17T13:08:05.9875174Z # Subtest: explicit Codex configuration does not silently register a Claude fallback
+2026-11-17T13:08:05.9875752Z ok 6 - explicit Codex configuration does not silently register a Claude fallback
+2026-11-17T13:08:05.9876108Z   ---
+2026-11-17T13:08:05.9876297Z   duration_ms: 3.042882
+2026-11-17T13:08:05.9876518Z   type: 'test'
+2026-11-17T13:08:05.9876716Z   ...
+2026-11-17T13:08:05.9877178Z # Subtest: reused Codex transport preserves split UTF-8 and fails pending RPC on disconnect
+2026-11-17T13:08:05.9877888Z ok 7 - reused Codex transport preserves split UTF-8 and fails pending RPC on disconnect
+2026-11-17T13:08:05.9878276Z   ---
+2026-11-17T13:08:05.9878470Z   duration_ms: 2.784673
+2026-11-17T13:08:05.9878679Z   type: 'test'
+2026-11-17T13:08:05.9878870Z   ...
+2026-11-17T13:08:05.9879566Z # Subtest: resumed A Codex adapter retains current B context and plan mode instead of dropping it
+2026-11-17T13:08:05.9880220Z ok 8 - resumed A Codex adapter retains current B context and plan mode instead of dropping it
+2026-11-17T13:08:05.9880625Z   ---
+2026-11-17T13:08:05.9880817Z   duration_ms: 71.482231
+2026-11-17T13:08:05.9881031Z   type: 'test'
+2026-11-17T13:08:05.9881250Z   ...
+2026-11-17T13:08:05.9881918Z # Subtest: native model controls preserve allowlists and require successful Auto activation, not a model-name guess
+2026-11-17T13:08:05.9882704Z ok 9 - native model controls preserve allowlists and require successful Auto activation, not a model-name guess
+2026-11-17T13:08:05.9883162Z   ---
+2026-11-17T13:08:05.9883343Z   duration_ms: 3.685591
+2026-11-17T13:08:05.9883551Z   type: 'test'
+2026-11-17T13:08:05.9883737Z   ...
+2026-11-17T13:08:05.9884159Z # Subtest: controls coalesce concurrent native initialization and reject malformed metadata
+2026-11-17T13:08:05.9884794Z ok 10 - controls coalesce concurrent native initialization and reject malformed metadata
+2026-11-17T13:08:05.9885176Z   ---
+2026-11-17T13:08:05.9885365Z   duration_ms: 2.225421
+2026-11-17T13:08:05.9885569Z   type: 'test'
+2026-11-17T13:08:05.9885751Z   ...
+2026-11-17T13:08:05.9886250Z # Subtest: Claude Auto does not preapprove MCP or override a classifier denial; local tools and hooks stay disabled
+2026-11-17T13:08:05.9886989Z ok 11 - Claude Auto does not preapprove MCP or override a classifier denial; local tools and hooks stay disabled
+2026-11-17T13:08:05.9887424Z   ---
+2026-11-17T13:08:05.9887615Z   duration_ms: 0.422476
+2026-11-17T13:08:05.9887816Z   type: 'test'
+2026-11-17T13:08:05.9887993Z   ...
+2026-11-17T13:08:05.9888432Z # Subtest: Codex controls read only the pinned native catalog, not another model or provider preset
+2026-11-17T13:08:05.9889122Z ok 12 - Codex controls read only the pinned native catalog, not another model or provider preset
+2026-11-17T13:08:05.9889521Z   ---
+2026-11-17T13:08:05.9889705Z   duration_ms: 7.217339
+2026-11-17T13:08:05.9889918Z   type: 'test'
+2026-11-17T13:08:05.9890094Z   ...
+2026-11-17T13:08:05.9890672Z # Subtest: Claude configures actual native controls before releasing the prompt and rejects unsupported Auto without sending it
+2026-11-17T13:08:05.9891730Z ok 13 - Claude configures actual native controls before releasing the prompt and rejects unsupported Auto without sending it
+2026-11-17T13:08:05.9892217Z   ---
+2026-11-17T13:08:05.9892406Z   duration_ms: 170.045444
+2026-11-17T13:08:05.9892623Z   type: 'test'
+2026-11-17T13:08:05.9892827Z   ...
+2026-11-17T13:08:05.9893551Z # Subtest: admission persists per-turn settings without replacing sessions, rejects unavailable controls before inference and forbids changed retries
+2026-11-17T13:08:05.9894604Z not ok 14 - admission persists per-turn settings without replacing sessions, rejects unavailable controls before inference and forbids changed retries
+2026-11-17T13:08:05.9895410Z   ---
+2026-11-17T13:08:05.9895599Z   duration_ms: 648.857536
+2026-11-17T13:08:05.9895808Z   type: 'test'
+2026-11-17T13:08:05.9896256Z   location: '/home/runner/work/supervm/supervm/plugins/asas/service/dist/tests/controls.test.js:111:25'
+2026-11-17T13:08:05.9896743Z   failureType: 'testCodeFailure'
+2026-11-17T13:08:05.9897060Z   error: '409 session busy or needs operator recovery'
+2026-11-17T13:08:05.9897355Z   code: 'ERR_TEST_FAILURE'
+2026-11-17T13:08:05.9897581Z   stack: |-
+2026-11-17T13:08:05.9897936Z     /home/runner/work/supervm/supervm/plugins/asas/service/dist/broker.js:121:23
+2026-11-17T13:08:05.9898289Z   ...
+2026-11-17T13:08:05.9898689Z # Subtest: B allocation schema rejects account totals and inconsistent remaining values
+2026-11-17T13:08:05.9899279Z ok 15 - B allocation schema rejects account totals and inconsistent remaining values
+2026-11-17T13:08:05.9899659Z   ---
+2026-11-17T13:08:05.9899842Z   duration_ms: 2.953848
+2026-11-17T13:08:05.9900055Z   type: 'test'
+2026-11-17T13:08:05.9900238Z   ...
+2026-11-17T13:08:05.9900785Z # Subtest: B network frames contain no caller-supplied principal or A-worker commands
+2026-11-17T13:08:05.9901367Z ok 16 - B network frames contain no caller-supplied principal or A-worker commands
+2026-11-17T13:08:05.9901868Z   ---
+2026-11-17T13:08:05.9902044Z   duration_ms: 1.893401
+2026-11-17T13:08:05.9902251Z   type: 'test'
+2026-11-17T13:08:05.9902429Z   ...
+2026-11-17T13:08:05.9902746Z # Subtest: B network health rejects a private-pipe health response
+2026-11-17T13:08:05.9903199Z ok 17 - B network health rejects a private-pipe health response
+2026-11-17T13:08:05.9903498Z   ---
+2026-11-17T13:08:05.9903678Z   duration_ms: 0.508136
+2026-11-17T13:08:05.9903892Z   type: 'test'
+2026-11-17T13:08:05.9904076Z   ...
+2026-11-17T13:08:05.9904519Z # Subtest: native private pipe enforces peer, returns UTF-8 tools and never replays terminal calls
+2026-11-17T13:08:05.9905172Z ok 18 - native private pipe enforces peer, returns UTF-8 tools and never replays terminal calls
+2026-11-17T13:08:05.9905581Z   ---
+2026-11-17T13:08:05.9905761Z   duration_ms: 1536.170836
+2026-11-17T13:08:05.9905981Z   type: 'test'
+2026-11-17T13:08:05.9906205Z   ...
+2026-11-17T13:08:06.4692965Z # Subtest: three allocations are independent; reset retains history and uses a cycle precondition
+2026-11-17T13:08:06.4699672Z ok 19 - three allocations are independent; reset retains history and uses a cycle precondition
+2026-11-17T13:08:06.4700150Z   ---
+2026-11-17T13:08:06.4700351Z   duration_ms: 634.393283
+2026-11-17T13:08:06.4700562Z   type: 'test'
+2026-11-17T13:08:06.4700739Z   ...
+2026-11-17T13:08:06.4701210Z # Subtest: unsettled usage never becomes zero or sufficient; limits block admission, not historical recovery
+2026-11-17T13:08:06.4702117Z ok 20 - unsettled usage never becomes zero or sufficient; limits block admission, not historical recovery
+2026-11-17T13:08:06.4702499Z   ---
+2026-11-17T13:08:06.4702678Z   duration_ms: 665.382092
+2026-11-17T13:08:06.4702914Z   type: 'test'
+2026-11-17T13:08:06.4703081Z   ...
+2026-11-17T13:08:07.1151740Z # Subtest: A local operator can allocate live; B cannot see account/other clients, reset, or spend another node allocation
+2026-11-17T13:08:07.1152401Z ok 21 - A local operator can allocate live; B cannot see account/other clients, reset, or spend another node allocation
+2026-11-17T13:08:07.1152744Z   ---
+2026-11-17T13:08:07.1152919Z   duration_ms: 646.645154
+2026-11-17T13:08:07.1153123Z   type: 'test'
+2026-11-17T13:08:07.1153291Z   ...
+2026-11-17T13:08:07.1153678Z # Subtest: streamed parallel blocks count once, final result output replaces placeholders, resumed cumulative modelUsage is unused
+2026-11-17T13:08:07.1154180Z ok 22 - streamed parallel blocks count once, final result output replaces placeholders, resumed cumulative modelUsage is unused
+2026-11-17T13:08:07.1154469Z   ---
+2026-11-17T13:08:07.1154581Z   duration_ms: 0.481505
+2026-11-17T13:08:07.1154709Z   type: 'test'
+2026-11-17T13:08:07.1154821Z   ...
+2026-11-17T13:08:07.1445044Z # Subtest: official plan reads skip local transcript scans; missing, invalid and timed-out data remain unknown
+2026-11-17T13:08:07.1445607Z ok 23 - official plan reads skip local transcript scans; missing, invalid and timed-out data remain unknown
+2026-11-17T13:08:07.1445941Z   ---
+2026-11-17T13:08:07.1446088Z   duration_ms: 5.722298
+2026-11-17T13:08:07.1446266Z   type: 'test'
+2026-11-17T13:08:07.1446815Z   ...
+2026-11-17T13:08:07.1447579Z # Subtest: whole-pipeline totals include compaction, subtract prior session usage, and never count thinking/cache subfields twice
+2026-11-17T13:08:07.1448093Z ok 24 - whole-pipeline totals include compaction, subtract prior session usage, and never count thinking/cache subfields twice
+2026-11-17T13:08:07.1448396Z   ---
+2026-11-17T13:08:07.1449100Z   duration_ms: 0.754837
+2026-11-17T13:08:07.1449494Z   type: 'test'
+2026-11-17T13:08:07.1449932Z   ...
+2026-11-17T13:08:07.1694541Z # Subtest: HTTPS is mandatory except exact loopback; URL credentials and query secrets are rejected
+2026-11-17T13:08:07.1695430Z ok 25 - HTTPS is mandatory except exact loopback; URL credentials and query secrets are rejected
+2026-11-17T13:08:07.1696362Z   ---
+2026-11-17T13:08:07.1697078Z   duration_ms: 0.620033
+2026-11-17T13:08:07.1697416Z   type: 'test'
+2026-11-17T13:08:07.1697713Z   ...
+2026-11-17T13:08:07.1698289Z # Subtest: actual HTTP task/tool/result flow is peer-bound, durable and admission-idempotent
+2026-11-17T13:08:07.1698901Z ok 26 - actual HTTP task/tool/result flow is peer-bound, durable and admission-idempotent
+2026-11-17T13:08:07.1699242Z   ---
+2026-11-17T13:08:07.1699461Z   duration_ms: 1128.20266
+2026-11-17T13:08:07.1699705Z   type: 'test'
+2026-11-17T13:08:07.1699918Z   ...
+2026-11-17T13:08:08.0964506Z # Subtest: same session locks out a second writer and restart reports recovery rather than replay
+2026-11-17T13:08:08.0965097Z ok 27 - same session locks out a second writer and restart reports recovery rather than replay
+2026-11-17T13:08:08.0966125Z   ---
+2026-11-17T13:08:08.0966439Z   duration_ms: 927.178464
+2026-11-17T13:08:08.0966658Z   type: 'test'
+2026-11-17T13:08:08.0966838Z   ...
+2026-11-17T13:08:08.1058230Z # Subtest: one A isolates two B nodes even with the same principal/project and same skill name
+2026-11-17T13:08:08.1059058Z ok 28 - one A isolates two B nodes even with the same principal/project and same skill name
+2026-11-17T13:08:08.1059367Z   ---
+2026-11-17T13:08:08.1059492Z   duration_ms: 1092.933677
+2026-11-17T13:08:08.1059624Z   type: 'test'
+2026-11-17T13:08:08.1059735Z   ...
+2026-11-17T13:08:08.1060075Z # Subtest: A verifies skill bundle and text hashes before persisting or forwarding a successful receipt
+2026-11-17T13:08:08.1060594Z ok 29 - A verifies skill bundle and text hashes before persisting or forwarding a successful receipt
+2026-11-17T13:08:08.1060831Z   ---
+2026-11-17T13:08:08.1060947Z   duration_ms: 792.005895
+2026-11-17T13:08:08.1061077Z   type: 'test'
+2026-11-17T13:08:08.1061183Z   ...
+2026-11-17T13:08:08.2523062Z # Subtest: official Codex and Claude declarations use identical versioned inputs and semantics
+2026-11-17T13:08:08.2523964Z ok 30 - official Codex and Claude declarations use identical versioned inputs and semantics
+2026-11-17T13:08:08.2524344Z   ---
+2026-11-17T13:08:08.2524570Z   duration_ms: 7.067634
+2026-11-17T13:08:08.2524771Z   type: 'test'
+2026-11-17T13:08:08.2525062Z   ...
+2026-11-17T13:08:08.2525482Z # Subtest: A policy denies unadvertised commands and plan execution for both engines before routing
+2026-11-17T13:08:08.2526131Z ok 31 - A policy denies unadvertised commands and plan execution for both engines before routing
+2026-11-17T13:08:08.2526458Z   ---
+2026-11-17T13:08:08.2526632Z   duration_ms: 1042.259554
+2026-11-17T13:08:08.2526888Z   type: 'test'
+2026-11-17T13:08:08.2527066Z   ...
+2026-11-17T13:08:08.2599484Z 1..31
+2026-11-17T13:08:08.2599679Z # tests 31
+2026-11-17T13:08:08.2599850Z # suites 0
+2026-11-17T13:08:08.2612037Z # pass 30
+2026-11-17T13:08:08.2620952Z # fail 1
+2026-11-17T13:08:08.2621145Z # cancelled 0
+2026-11-17T13:08:08.2621732Z # skipped 0
+2026-11-17T13:08:08.2621933Z # todo 0
+2026-11-17T13:08:08.2622125Z # duration_ms 4082.173637
+2026-11-17T13:08:08.2783135Z ##[error]Process completed with exit code 1.
+2026-11-17T13:08:08.3051179Z Post job cleanup.
+2026-11-17T13:08:08.3618211Z [command]/usr/bin/git version
+2026-11-17T13:08:08.3652021Z git version 2.56.1
+2026-11-17T13:08:08.3674413Z Temporarily overriding HOME='/home/runner/work/_temp/0e96c836-ab14-49ef-8a63-d7347c98bdce' before making global git config changes
+2026-11-17T13:08:08.3675158Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-17T13:08:08.3677482Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/supervm/supervm
+2026-11-17T13:08:08.3750176Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-17T13:08:08.3777415Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-17T13:08:08.4022360Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-17T13:08:08.4079540Z http.https://github.com/.extraheader
+2026-11-17T13:08:08.4087782Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+2026-11-17T13:08:08.4339473Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-17T13:08:08.4555862Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-17T13:08:08.4580784Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-17T13:08:08.4902737Z Cleaning up orphan processes
+2026-11-17T13:08:08.5173838Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

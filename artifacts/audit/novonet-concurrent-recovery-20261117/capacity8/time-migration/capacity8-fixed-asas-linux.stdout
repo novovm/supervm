@@ -1,0 +1,196 @@
+TAP version 13
+# Subtest: one host runs separate Codex/Claude fixture engines without cross-engine session reuse
+ok 1 - one host runs separate Codex/Claude fixture engines without cross-engine session reuse
+  ---
+  duration_ms: 193.548158
+  type: 'test'
+  ...
+# Subtest: exclusive data ownership and malformed durable records fail closed
+ok 2 - exclusive data ownership and malformed durable records fail closed
+  ---
+  duration_ms: 55.625904
+  type: 'test'
+  ...
+# Subtest: concurrent duplicate tool receipts are durable and resolve the engine only once
+ok 3 - concurrent duplicate tool receipts are durable and resolve the engine only once
+  ---
+  duration_ms: 129.419929
+  type: 'test'
+  ...
+# Subtest: A bootstrap accepts opaque B project IDs, not local B project directories
+ok 4 - A bootstrap accepts opaque B project IDs, not local B project directories
+  ---
+  duration_ms: 0.944657
+  type: 'test'
+  ...
+# Subtest: Codex tool declarations are ACODE-only; server-native tool families are disabled
+ok 5 - Codex tool declarations are ACODE-only; server-native tool families are disabled
+  ---
+  duration_ms: 6.178729
+  type: 'test'
+  ...
+# Subtest: explicit Codex configuration does not silently register a Claude fallback
+ok 6 - explicit Codex configuration does not silently register a Claude fallback
+  ---
+  duration_ms: 3.230171
+  type: 'test'
+  ...
+# Subtest: reused Codex transport preserves split UTF-8 and fails pending RPC on disconnect
+ok 7 - reused Codex transport preserves split UTF-8 and fails pending RPC on disconnect
+  ---
+  duration_ms: 1.944673
+  type: 'test'
+  ...
+# Subtest: resumed A Codex adapter retains current B context and plan mode instead of dropping it
+ok 8 - resumed A Codex adapter retains current B context and plan mode instead of dropping it
+  ---
+  duration_ms: 7.645326
+  type: 'test'
+  ...
+# Subtest: native model controls preserve allowlists and require successful Auto activation, not a model-name guess
+ok 9 - native model controls preserve allowlists and require successful Auto activation, not a model-name guess
+  ---
+  duration_ms: 5.768384
+  type: 'test'
+  ...
+# Subtest: controls coalesce concurrent native initialization and reject malformed metadata
+ok 10 - controls coalesce concurrent native initialization and reject malformed metadata
+  ---
+  duration_ms: 1.440624
+  type: 'test'
+  ...
+# Subtest: Claude Auto does not preapprove MCP or override a classifier denial; local tools and hooks stay disabled
+ok 11 - Claude Auto does not preapprove MCP or override a classifier denial; local tools and hooks stay disabled
+  ---
+  duration_ms: 0.272679
+  type: 'test'
+  ...
+# Subtest: Codex controls read only the pinned native catalog, not another model or provider preset
+ok 12 - Codex controls read only the pinned native catalog, not another model or provider preset
+  ---
+  duration_ms: 4.905706
+  type: 'test'
+  ...
+# Subtest: Claude configures actual native controls before releasing the prompt and rejects unsupported Auto without sending it
+ok 13 - Claude configures actual native controls before releasing the prompt and rejects unsupported Auto without sending it
+  ---
+  duration_ms: 219.634043
+  type: 'test'
+  ...
+# Subtest: admission persists per-turn settings without replacing sessions, rejects unavailable controls before inference and forbids changed retries
+ok 14 - admission persists per-turn settings without replacing sessions, rejects unavailable controls before inference and forbids changed retries
+  ---
+  duration_ms: 176.034025
+  type: 'test'
+  ...
+# Subtest: B allocation schema rejects account totals and inconsistent remaining values
+ok 15 - B allocation schema rejects account totals and inconsistent remaining values
+  ---
+  duration_ms: 2.717816
+  type: 'test'
+  ...
+# Subtest: B network frames contain no caller-supplied principal or A-worker commands
+ok 16 - B network frames contain no caller-supplied principal or A-worker commands
+  ---
+  duration_ms: 1.667922
+  type: 'test'
+  ...
+# Subtest: B network health rejects a private-pipe health response
+ok 17 - B network health rejects a private-pipe health response
+  ---
+  duration_ms: 0.432858
+  type: 'test'
+  ...
+# Subtest: native private pipe enforces peer, returns UTF-8 tools and never replays terminal calls
+ok 18 - native private pipe enforces peer, returns UTF-8 tools and never replays terminal calls
+  ---
+  duration_ms: 316.814068
+  type: 'test'
+  ...
+# Subtest: three allocations are independent; reset retains history and uses a cycle precondition
+ok 19 - three allocations are independent; reset retains history and uses a cycle precondition
+  ---
+  duration_ms: 121.906267
+  type: 'test'
+  ...
+# Subtest: unsettled usage never becomes zero or sufficient; limits block admission, not historical recovery
+ok 20 - unsettled usage never becomes zero or sufficient; limits block admission, not historical recovery
+  ---
+  duration_ms: 104.560017
+  type: 'test'
+  ...
+# Subtest: A local operator can allocate live; B cannot see account/other clients, reset, or spend another node allocation
+ok 21 - A local operator can allocate live; B cannot see account/other clients, reset, or spend another node allocation
+  ---
+  duration_ms: 182.168126
+  type: 'test'
+  ...
+# Subtest: streamed parallel blocks count once, final result output replaces placeholders, resumed cumulative modelUsage is unused
+ok 22 - streamed parallel blocks count once, final result output replaces placeholders, resumed cumulative modelUsage is unused
+  ---
+  duration_ms: 0.344547
+  type: 'test'
+  ...
+# Subtest: official plan reads skip local transcript scans; missing, invalid and timed-out data remain unknown
+ok 23 - official plan reads skip local transcript scans; missing, invalid and timed-out data remain unknown
+  ---
+  duration_ms: 5.837989
+  type: 'test'
+  ...
+# Subtest: whole-pipeline totals include compaction, subtract prior session usage, and never count thinking/cache subfields twice
+ok 24 - whole-pipeline totals include compaction, subtract prior session usage, and never count thinking/cache subfields twice
+  ---
+  duration_ms: 0.72823
+  type: 'test'
+  ...
+# Subtest: HTTPS is mandatory except exact loopback; URL credentials and query secrets are rejected
+ok 25 - HTTPS is mandatory except exact loopback; URL credentials and query secrets are rejected
+  ---
+  duration_ms: 0.579869
+  type: 'test'
+  ...
+# Subtest: actual HTTP task/tool/result flow is peer-bound, durable and admission-idempotent
+ok 26 - actual HTTP task/tool/result flow is peer-bound, durable and admission-idempotent
+  ---
+  duration_ms: 314.005549
+  type: 'test'
+  ...
+# Subtest: same session locks out a second writer and restart reports recovery rather than replay
+ok 27 - same session locks out a second writer and restart reports recovery rather than replay
+  ---
+  duration_ms: 152.548264
+  type: 'test'
+  ...
+# Subtest: one A isolates two B nodes even with the same principal/project and same skill name
+ok 28 - one A isolates two B nodes even with the same principal/project and same skill name
+  ---
+  duration_ms: 225.666387
+  type: 'test'
+  ...
+# Subtest: A verifies skill bundle and text hashes before persisting or forwarding a successful receipt
+ok 29 - A verifies skill bundle and text hashes before persisting or forwarding a successful receipt
+  ---
+  duration_ms: 118.324683
+  type: 'test'
+  ...
+# Subtest: official Codex and Claude declarations use identical versioned inputs and semantics
+ok 30 - official Codex and Claude declarations use identical versioned inputs and semantics
+  ---
+  duration_ms: 7.286692
+  type: 'test'
+  ...
+# Subtest: A policy denies unadvertised commands and plan execution for both engines before routing
+ok 31 - A policy denies unadvertised commands and plan execution for both engines before routing
+  ---
+  duration_ms: 280.405787
+  type: 'test'
+  ...
+1..31
+# tests 31
+# suites 0
+# pass 31
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1791.219166

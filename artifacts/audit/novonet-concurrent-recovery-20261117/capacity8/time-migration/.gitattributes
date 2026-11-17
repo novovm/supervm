@@ -1,4 +1,5 @@
 *.stdout -text -whitespace
 *.stderr -text -whitespace
+capacity8-fixed-node-checks.raw.log -text -whitespace
 *.txt -text -whitespace
 time-migration-*.json -text -whitespace

@@ -1,0 +1,47 @@
+
+> @aoem/asas@0.8.0-dev test
+> npm run build && node --test dist/tests/*.test.js
+
+
+> @aoem/asas@0.8.0-dev build
+> tsc -p tsconfig.json
+
+✔ one host runs separate Codex/Claude fixture engines without cross-engine session reuse (98.1012ms)
+✔ exclusive data ownership and malformed durable records fail closed (39.4113ms)
+✔ concurrent duplicate tool receipts are durable and resolve the engine only once (75.1603ms)
+✔ A bootstrap accepts opaque B project IDs, not local B project directories (0.8238ms)
+✔ Codex tool declarations are ACODE-only; server-native tool families are disabled (3.1653ms)
+✔ explicit Codex configuration does not silently register a Claude fallback (3.1894ms)
+✔ reused Codex transport preserves split UTF-8 and fails pending RPC on disconnect (1.8549ms)
+✔ resumed A Codex adapter retains current B context and plan mode instead of dropping it (8.1592ms)
+✔ native model controls preserve allowlists and require successful Auto activation, not a model-name guess (4.8866ms)
+✔ controls coalesce concurrent native initialization and reject malformed metadata (1.561ms)
+✔ Claude Auto does not preapprove MCP or override a classifier denial; local tools and hooks stay disabled (0.2564ms)
+✔ Codex controls read only the pinned native catalog, not another model or provider preset (8.6339ms)
+✔ Claude configures actual native controls before releasing the prompt and rejects unsupported Auto without sending it (98.8156ms)
+✔ admission persists per-turn settings without replacing sessions, rejects unavailable controls before inference and forbids changed retries (92.8561ms)
+✔ B allocation schema rejects account totals and inconsistent remaining values (3.9502ms)
+✔ B network frames contain no caller-supplied principal or A-worker commands (1.8901ms)
+✔ B network health rejects a private-pipe health response (0.6451ms)
+✔ native private pipe enforces peer, returns UTF-8 tools and never replays terminal calls (170.0928ms)
+✔ three allocations are independent; reset retains history and uses a cycle precondition (54.2068ms)
+✔ unsettled usage never becomes zero or sufficient; limits block admission, not historical recovery (51.6332ms)
+✔ A local operator can allocate live; B cannot see account/other clients, reset, or spend another node allocation (92.9658ms)
+✔ streamed parallel blocks count once, final result output replaces placeholders, resumed cumulative modelUsage is unused (0.3502ms)
+✔ official plan reads skip local transcript scans; missing, invalid and timed-out data remain unknown (8.8934ms)
+✔ whole-pipeline totals include compaction, subtract prior session usage, and never count thinking/cache subfields twice (0.8786ms)
+✔ HTTPS is mandatory except exact loopback; URL credentials and query secrets are rejected (1.1195ms)
+✔ actual HTTP task/tool/result flow is peer-bound, durable and admission-idempotent (378.0522ms)
+✔ same session locks out a second writer and restart reports recovery rather than replay (79.2462ms)
+✔ one A isolates two B nodes even with the same principal/project and same skill name (124.8061ms)
+✔ A verifies skill bundle and text hashes before persisting or forwarding a successful receipt (74.2507ms)
+✔ official Codex and Claude declarations use identical versioned inputs and semantics (7.2607ms)
+✔ A policy denies unadvertised commands and plan execution for both engines before routing (155.6196ms)
+ℹ tests 31
+ℹ suites 0
+ℹ pass 31
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 677.212
