@@ -1,5 +1,9 @@
 # CURRENT: new common node + latest AOEM, then real double relay
 
+## SUPERSEDING 11:52: D accepted; all four updated; arm C/D original observers
+
+D receipt93291988 verified: PID23340/LocalService, fixed95 EXE/loaded-AOEM/manifest, original database/identity existing. A→D authenticated Status34ms at03:49:09Z with unchanged A/B/C public state root/height1, no recovery/projection failure. B/A/C/D updates are complete; object delivery is not. A/B each have three verified locators, A already elevated. Original sender/observer bindings now match the actual new package/paths;38 local reader/readiness checks passed, no node/package/protocol change or new Full. C/D each arm one original bounded observer and immediately push real READY/liveness per [CURRENT handoff](candidate-common-95ec9c2e/CD-UPDATE.md). A then sends one ordered A→B→C→D native-object-over-hop-stream relay sample; no repeat direct-object/crash test.
+
 ## SUPERSEDING 09:55: C updated and authenticated; D executes now
 
 A pulled C receipts through42de31f7. C PID38500/LocalService has the fixed common95 EXE, actually loaded AOEM and manifest hashes, original database existing and unchanged identity. Its earlier unavailable E-drive package was resolved by a local copied ZIP. A's new native client authenticated C once in400ms with height1 and the unchanged A/B public state root, no recovery/projection failure. C's local projection-equality field remains unproven locally; A's current authenticated projection is separate evidence. C stays running, D now performs the already-approved same-package local-owner existing update under [CURRENT instructions](candidate-common-95ec9c2e/CD-UPDATE.md). No observer, new object, old-crash or repeated direct-object test this round.

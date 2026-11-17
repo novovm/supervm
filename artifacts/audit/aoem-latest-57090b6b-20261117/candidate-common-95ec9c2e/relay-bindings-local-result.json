@@ -1,0 +1,14 @@
+{
+  "scope": "Original diagnostic deployment bindings only; no product/network execution",
+  "observer_reader_and_actual_fixed_binding_tests": {"passed": 18, "failed": 0},
+  "observer_readiness_tests": {"passed": 20, "failed": 0},
+  "original_sender_two_ordered_via_generation_and_parse": "pass; not executed",
+  "source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "actual_program_full_sha": "1eb2f202d821fbb2e7cccee4e8bbfb3cd789c864",
+  "candidate_exe_changed": false,
+  "candidate_aoem_changed": false,
+  "protocol_timeouts_changed": false,
+  "network_resource_limits_changed": false,
+  "new_full_dispatched": false,
+  "object_sent": false
+}

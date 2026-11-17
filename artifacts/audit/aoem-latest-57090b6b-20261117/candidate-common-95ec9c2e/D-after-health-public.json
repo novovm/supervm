@@ -1,0 +1,17 @@
+{
+  "business_receipt": false,
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "client_source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "projection_failed": false,
+  "recovering": false,
+  "current_height": 1,
+  "utc": "2026-11-17T03:49:09.4053033Z",
+  "independently_verified_finality": false,
+  "chain_id": 91129655606029,
+  "host": "D",
+  "object_sent": false,
+  "client_sha256": "58b2f729b396bdfcfaf499215195d0ba3994858287694fdefa8a50b4fe130e98",
+  "status": "AUTHENTICATED_STATUS_PASS",
+  "elapsed_ms": 34,
+  "relay_acceptance": false
+}

@@ -35,6 +35,24 @@ if($anomaly.accepted -or $anomaly.reason -ne 'missing_novonet'){throw 'Missing o
 $tokens=$null;$errors=$null
 [Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot/../../artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1",[ref]$tokens,[ref]$errors)|Out-Null
 if($errors.Count){throw ($errors|Out-String)};$checks++
+$observerAst=[Management.Automation.Language.Parser]::ParseFile("$PSScriptRoot/../../artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1",[ref]$tokens,[ref]$errors)
+$binding=$observerAst.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if($Common95)')},$true)
+if($null -eq $binding){throw 'Missing fixed deployment binding'}
+$applyBinding=[scriptblock]::Create($binding.Extent.Text)
+$Common95=$true;$Source='95ec9c2eced988c5798d549971354ef8722367b7';$NodeSha256='754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7';$WorkName='novovm-common-95ec9c2e-20261117'
+foreach($HostId in @('C','D')){
+    . $applyBinding
+    if($exe -ne 'C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-windows-x86_64\bin\novovm-node.exe'){throw 'Wrong common executable'}
+    $expectedFile=if($HostId -eq 'C'){'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common95-C-20261117\progress.json'}else{'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-95ec9c2e-20261117\logs\progress.json'}
+    if($file -cne $expectedFile){throw 'Wrong current receiver progress binding'};$checks++
+}
+$Source='0'*40
+try{. $applyBinding;throw 'UNEXPECTED_ACCEPT'}catch{if($_.Exception.Message -notlike '*fixed program differs*'){throw}};$checks++
+$Source='95ec9c2eced988c5798d549971354ef8722367b7';$NodeSha256='0'*64
+try{. $applyBinding;throw 'UNEXPECTED_ACCEPT'}catch{if($_.Exception.Message -notlike '*fixed program differs*'){throw}};$checks++
+$Common95=$false;$exe='legacy-exe';$file='legacy-progress';. $applyBinding
+if($exe -cne 'legacy-exe' -or $file -cne 'legacy-progress'){throw 'Legacy binding changed'};$checks++
+$file=Join-Path $root 'progress.json'
 [IO.File]::WriteAllText($file,('x'*(4MB+1)))
 try {Read-RelayProgress $file $root|Out-Null;throw 'UNEXPECTED_ACCEPT'}catch{if($_.Exception.Message -notlike '*Invalid observation*'){throw}};$checks++
 Write-Output "PASS $checks relay observation reader checks; evidence $root"

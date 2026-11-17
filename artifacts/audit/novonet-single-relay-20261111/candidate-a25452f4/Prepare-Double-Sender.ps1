@@ -1,5 +1,5 @@
 # Adapt only the proven one-shot sender's fixed path and CLI arity. No send here.
-param([Parameter(Mandatory)][string]$OutputFile)
+param([Parameter(Mandatory)][string]$OutputFile,[switch]$Common95)
 $ErrorActionPreference='Stop'
 $repo=(Resolve-Path (Join-Path $PSScriptRoot '../../../..')).Path
 $original=Join-Path $repo 'target/relay-constraint-20261111/Send-A-C-D.ps1'
@@ -27,6 +27,16 @@ if($b.host -cne 'B' -or $b.source -cne $source -or $b.node_sha256 -cne '89854a24
 Copy-Item -LiteralPath $BReadyFile -Destination "$out/B-before.json"
 '@
 Change '$nonce=Hex ([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))' ($guard+"`n"+'$nonce=Hex ([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))')
+if($Common95){
+    # Fixed new-package bindings; keep original one-shot prepare/send/cancel flow.
+    Change '$delivery="C:/Users/leadb/AppData/Local/NOVOVM/candidate-observation-$short-20261112"' '$delivery="C:/Users/leadb/AppData/Local/NOVOVM/candidate-common-95ec9c2e-20261117"'
+    Change '$verified=Get-Content "$delivery/verified-windows.json" -Raw|ConvertFrom-Json' '$verified=[pscustomobject]@{source_commit="95ec9c2eced988c5798d549971354ef8722367b7";node_sha256="754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7";ctl_sha256="6d5c03dcd89c8b3c6c82fa87700208a7d92a4b6196984ff867dbc9252c008248"}'
+    Change '$work="C:/ProgramData/NOVOVM/selfrun/91129655606029/A/novonet-observation-$short-20261112"' '$work="C:/ProgramData/NOVOVM/selfrun/91129655606029/A/novovm-common-95ec9c2e-20261117"'
+    Change '$root="C:/ProgramData/NOVOVM/releases/novonet-observation-$short-windows-x86_64"' '$root="C:/ProgramData/NOVOVM/releases/novovm-common-95ec9c2e-windows-x86_64"'
+    # The upgraded owner deliberately kept its original control-file binding.
+    Change '$command="$work/commands/control.nvprobe"' '$command="C:/ProgramData/NOVOVM/selfrun/91129655606029/A/novonet-observation-a25452f4-20261112/commands/control.nvprobe"'
+    Change '89854a24d4259b912fdbb8c6f8e21ea48af6c74c0c89da8f3cdc648c1845a769' 'e709c0d78776492b0e04f28cb817ae83f73e3f4642ccda67b27838feb448b0a4'
+}
 $tokens=$null;$errors=$null
 $null=[Management.Automation.Language.Parser]::ParseInput($s,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Derived sender parse failed'}

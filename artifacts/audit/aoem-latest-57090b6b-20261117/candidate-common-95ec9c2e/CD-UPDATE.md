@@ -1,4 +1,22 @@
-# CURRENT 11:41: D common95 existing ready for A query
+# CURRENT 11:52: four common95 owners accepted; C/D arm original relay observers
+
+A pulled D through `93291988` and verified the actual common95 owner receipt. At `2026-11-17T03:49:09Z`, A's new installed native client authenticated D in **34ms**, height1, recovery/projection-failure false, and original A/B/C state root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. D EXE, actually loaded AOEM and release manifest match the fixed package; PID23340/LocalService, original database existing and identities unchanged. Original status reply/stderr/exit and health receipt are alongside this file. All four new-package updates are accepted, not yet double-relay delivery.
+
+At11:51 A and B original diagnostic owners each report three verified locators, no execution failures; B remains PID2621117. A is elevated, new fixed one-shot double sender is prepared, no reservation/object has yet been published. No UAC or package update is needed before C/D observation.
+
+**C and D now:** synchronize this commit, then each start **one original** `artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1` with its adjacent unchanged `Read-RelayProgress.ps1` in a hidden independent administrator PowerShell7 process. If a same-purpose observer exists, report its actual PID/creation/command and terminal state instead of launching a duplicate or killing broadly. Preserve stdout/stderr and process exit. Use these arguments (replace C with D for D):
+
+```powershell
+-HostId C -Source 95ec9c2eced988c5798d549971354ef8722367b7 -NodeSha256 754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7 -WorkName novovm-common-95ec9c2e-20261117 -Common95 -EvidenceRoot '<fresh-local-evidence-root>' -MaximumWaitSeconds 7200
+```
+
+`-Common95` only binds this original observer to the actual installed common95 EXE and reported C/D progress paths. C uses its own LocalService directory, D its ProgramData logs directory. It does not edit the nodes, enable a new observer inside them, change network budgets or extend any protocol lifetime. The original2-hour maximum standby,64 snapshots, fresh-progress reader and early terminal exit remain unchanged. Actual program source is Full1eb;95 is the fixed documentation-only package label, not a different Rust program. Original-reader/path tests18/18 and freshness/readiness tests20/20 passed; original two-ordered-via sender generation/parse also passed, without execution. No product EXE/DLL or new Full is needed.
+
+**Immediately push** actual `ready.json`, fresh `liveness.json`, observer PID/creation time, actual node PID and terminal-file presence under this candidate's `C-common95-relay-ready-20261117` / `D-common95-relay-ready-20261117`. Return C_RELAY_OBSERVER_ARMED / D_RELAY_OBSERVER_ARMED only if actually running. Do not wait two hours before replying. If preparation fails, return the original precise error; do not restart/update nodes, send objects or rerun old crash/direct-object tests.
+
+After both real fresh receipts arrive, A will refresh B's original public progress, publish one original prepare reservation for ordered **A→B→C→D**, send one unique fixed object only after actual authenticated route readiness, and retain B/C forwarding plus A sender DONE and D final custody/integrity for the same Object ID/session/circuit. This is the existing authenticated Iroh hop-stream relay carrying the native object channel, **not native UDP multihop**. Route selection, Status and UDP ACK do not establish object or business success.
+
+## Earlier 11:41 D ready receipt (accepted by A query above)
 
 2026-11-17 Beijing. D completed one approved common95 existing update, controller exit0. Actual PID23340, LocalService, task `NOVOVM-D-Common95-Existing-20261117` Running; EXE/loaded AOEM/release manifest match fixed95. Original DB and identity unchanged, local height1/head null unchanged, recovery false, failures0; ports41053/42053 owned by PID23340. Read-only health at03:40:59Z confirms fresh progress and no exit/error record.
 

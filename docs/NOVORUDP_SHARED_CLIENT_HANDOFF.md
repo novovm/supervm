@@ -2,6 +2,15 @@
 
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
+11:52最新：A已下拉D `93291988`，签收PID23340/LocalService原库existing，实际新EXE、
+已加载AOEM和manifest匹配；A→D认证34ms，height1及原A/B/C同状态根，健康检查通过。
+四端新版升级已完成，尚未发送双中继对象。A/B各3个已验证locator，A已提权、原一次性
+双中继发送器已按新制品绑定准备；只读观察路径/新鲜度38项检查通过，不需换包/新Full。
+C/D现在各启动一次原Watch-Relay加Common95路径绑定，立即推真实READY及liveness，
+不要等2小时窗口结束。两端就绪后A直接一条A→B→C→D，核两跳转发和双端DONE；
+非原生UDP多跳、非资产回执。详见
+[当前四机双中继交接](../artifacts/audit/aoem-latest-57090b6b-20261117/candidate-common-95ec9c2e/CD-UPDATE.md)。
+
 09:55最新：A已下拉并签收C `42de31f7` 的新整包existing回执，PID38500/LocalService，
 实际EXE、已加载AOEM及manifest哈希匹配；此前E盘包不可用已被后续成功回执覆盖。
 A→C新版本认证Status400ms，height1、原A/B同状态根、非恢复且无投影错误；不是DONE/最终性。

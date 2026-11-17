@@ -5,17 +5,24 @@ param(
     [Parameter(Mandatory)][ValidateSet('C','D')][string]$HostId,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{40}$')][string]$Source,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string]$NodeSha256,
-    [Parameter(Mandatory)][ValidatePattern('^novonet-observation-[a-f0-9]{8}-[0-9]{8}$')][string]$WorkName,
+    [Parameter(Mandatory)][ValidatePattern('^(novonet-observation|novovm-common)-[a-f0-9]{8}-[0-9]{8}$')][string]$WorkName,
     [Parameter(Mandatory)][string]$EvidenceRoot,
-    [ValidateRange(1800,7200)][int]$MaximumWaitSeconds=1800
+    [ValidateRange(1800,7200)][int]$MaximumWaitSeconds=1800,
+    [switch]$Common95
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . "$PSScriptRoot/Read-RelayProgress.ps1"
 $short=$Source.Substring(0,8)
-if(!$WorkName.StartsWith("novonet-observation-$short-")){throw 'Work/source mismatch'}
+if(!$Common95 -and !$WorkName.StartsWith("novonet-observation-$short-")){throw 'Work/source mismatch'}
 $exe="C:\ProgramData\NOVOVM\releases\novonet-observation-$short-windows-x86_64\bin\novovm-node.exe"
 $file="C:\ProgramData\NOVOVM\selfrun\91129655606029\$HostId\$WorkName\logs\progress.json"
+if($Common95){
+    if($Source -cne '95ec9c2eced988c5798d549971354ef8722367b7' -or $NodeSha256 -cne '754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7' -or $WorkName -cne 'novovm-common-95ec9c2e-20261117'){throw 'Common95 fixed program differs'}
+    # Deployment bindings only: C retained its qualified LocalService launch root.
+    $exe='C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-windows-x86_64\bin\novovm-node.exe'
+    $file=if($HostId -eq 'C'){'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common95-C-20261117\progress.json'}else{'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-95ec9c2e-20261117\logs\progress.json'}
+}
 $out=[IO.Path]::GetFullPath($EvidenceRoot)
 if(Test-Path -LiteralPath $out){throw 'Fresh evidence root required'}
 $nodes=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'"|Where-Object ExecutablePath -IEQ $exe)

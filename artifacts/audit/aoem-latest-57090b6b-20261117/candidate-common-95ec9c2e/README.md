@@ -1,4 +1,6 @@
-# CURRENT 2026-11-17: B/A/C updated; D update dispatched
+# CURRENT 2026-11-17: four owners updated; relay observers next
+
+11:52: D receipt93291988 accepted and A→D authenticated Status34ms passed, original A/B/C state root/height1 unchanged. All four actual owners now use the qualified common95 package; no double-relay object yet. A/B original discovery reports three verified locators. C/D each arm one original observer with fixed common95 path binding per [CURRENT instructions](CD-UPDATE.md), publish real READY/liveness immediately; no new ZIP, update, old-crash or direct-object test. A is already elevated and prepares one ordered double-relay send after actual readiness.
 
 09:55: C receipt42de31f7 verified against fixed EXE/loaded-AOEM/manifest hashes, PID38500 LocalService, original database existing. A→C authenticated Status400ms, height1, same original A/B public state root and healthy projection. D now executes the approved same-package existing update; C stays running. [CURRENT D instructions](CD-UPDATE.md). Do not treat older receipt-only or pending descriptions below as current actions. No double-relay object or finality acceptance yet.
 
