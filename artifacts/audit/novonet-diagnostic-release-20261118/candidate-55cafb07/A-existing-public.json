@@ -1,0 +1,32 @@
+{
+  "utc": "2026-11-17T22:39:28.7628361Z",
+  "config": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\novovm-common-55cafb07-20261118/run.json",
+  "height": 1,
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "sid": "S-1-5-19",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+  "custody_unchanged": true,
+  "pid": 16528,
+  "manifest_sha256": "755e297ed816fc5bb5d4f1ed3b97dc0afe07b5c7656db4e347329753f5c61bc6",
+  "execution_failures": 0,
+  "actual_aoem": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-55cafb07-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "node_sha256": "9e0dc313325d6b805735b490b0d3fe475c0746b2ef7e8cbc46e291b3f1bf0476",
+  "progress": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\novovm-common-55cafb07-20261118/logs/progress.json",
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.74",
+      "LocalPort": 42051,
+      "OwningProcess": 16528
+    },
+    {
+      "LocalAddress": "192.168.71.74",
+      "LocalPort": 41051,
+      "OwningProcess": 16528
+    }
+  ],
+  "source": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "status": "EXISTING_RUNNING_HEALTHY_NOT_DELIVERY",
+  "initialize": false,
+  "head": null,
+  "start": "existing"
+}

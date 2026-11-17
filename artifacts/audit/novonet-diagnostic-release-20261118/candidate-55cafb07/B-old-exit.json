@@ -1,0 +1,6 @@
+{
+  "pid": 3003007,
+  "start_ticks": "303367063",
+  "signal": "SIGTERM",
+  "scope": "interrupted original-database recovery; not certified graceful drain"
+}

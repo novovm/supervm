@@ -1,0 +1,8 @@
+{
+  "host": "B",
+  "finished_utc": "2026-11-17T22:39:03.8109645Z",
+  "exit_code": 0,
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "started_utc": "2026-11-17T22:39:03.5119004Z",
+  "client_sha256": "c42023dca8be008db50e6b78b5081de90cfc132cd03489b07bba43f02d3f1291"
+}

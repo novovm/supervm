@@ -1,5 +1,20 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 06:42 A: exact55 Full SUCCESS; B/A updated and healthy
+
+A independently verified Full44136917939 completed SUCCESS on exact55cafb07,
+including Rust/native recovery/platform owners;17success and one conditional
+PR-only observation skipped. Original existing owners switched B3003007→3167799
+and A32592→16528. Actual new EXE/mapped AOEM, original DB/identity/head/height/
+listeners passed; independent B69ms/A18ms authenticated Status matches original
+root. Exact old exits retained, not claimed graceful drain. C/D stay actual5b.
+[Actual receipts and one fresh C/D two-circuit observer dispatch](../artifacts/audit/novonet-diagnostic-release-20261118/candidate-55cafb07/README.md).
+No new live object or overlap pass yet. The original coordinator pins new55 A/B
+origins and separately pins unchanged5b C/D observers. No new package/copy/update
+for C/D, node restart, repeated accepted baseline/recovery or second outage.
+Fresh real READYs allow only one new scheduled pair and actual overlap/two-hop/
+dual-end audit, never simultaneous command publication as success.
+
 ## 2026-11-18 A:55cafb07 packages fixed; one matching Full running, no deployment
 
 Original-owner monotonic diagnostic release source55cafb07 is pushed. Full

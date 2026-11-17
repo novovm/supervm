@@ -1,0 +1,22 @@
+{
+  "pid": 3167799,
+  "uid": 996,
+  "source": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "node_sha256": "b399dd87c267b42bdeb009d54a757a9967ac04061a73675817c48fd4d9bea144",
+  "aoem_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+  "start": "existing",
+  "initialize_executed": false,
+  "custody_unchanged": true,
+  "listeners": "UNCONN 0      0      0.0.0.0:42050 0.0.0.0:* users:((\"novovm-node\",pid=3167799,fd=20))\nUNCONN 0      0      0.0.0.0:41050 0.0.0.0:* users:((\"novovm-node\",pid=3167799,fd=3)) \n",
+  "other_services_unchanged": true,
+  "other_services_after": "MainPID=913371\nId=novonet-mailbox.service\nActiveState=active\nSubState=running\n\nMainPID=913258\nId=supervm-relay.service\nActiveState=active\nSubState=running\n\nMainPID=913340\nId=nginx.service\nActiveState=active\nSubState=running\n\nMainPID=1414\nId=docker.service\nActiveState=active\nSubState=running\n",
+  "progress": {
+    "head": null,
+    "execution_failures": 0,
+    "current_height": 1,
+    "entry": "original_native_execution_tick",
+    "chain_id": 91129655606029,
+    "recovery_in_progress": false
+  }
+}

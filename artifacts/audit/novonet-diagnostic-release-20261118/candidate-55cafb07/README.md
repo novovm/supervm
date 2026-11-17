@@ -1,5 +1,39 @@
 # Fixed diagnostic-release candidate55cafb07
 
+## CURRENT2026-11-18 06:42: Full passed; B/A existing health passed; C/D arm once
+
+Full44136917939 completed SUCCESS at18:50:24Z on exact55cafb07:17 jobs success,
+one conditional PR-only observation skipped. Original final run/jobs are adjacent.
+B original owner switched3003007→3167799/novovm; A32592→16528/LocalService.
+Actual fixed EXEs, mapped AOEM, original DB existing/custody/head/height and native
+listeners passed. Independent queries B69ms/A18ms match original height1/root
+f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333.
+Original SIGTERM/A exit-1 retained, not certified graceful drain. No new object
+or true overlap pass yet. C/D remain actual5b, not claimed upgraded to55.
+
+**C/D now each arm ONE new original read-only observer** using qualified hidden
+administrator PowerShell7 wrapper, adjacent Read-RelayProgress.ps1, a new local
+EvidenceRoot and these fixed arguments (HostIdD on D):
+
+```powershell
+-HostId C -Source 5b656189784c854ac356aae77610c931b9f2189d -NodeSha256 4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038 -WorkName novovm-common-5b656189-20261117 -CommonCapacity8 -TerminalCircuitCount 2 -MaximumWaitSeconds 7200 -EvidenceRoot '<new-local-root>'
+```
+
+Use original artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1.
+Do not pass ExpectedOrigin/ExpectedPath: observe both A→B→D→C and B→A→C→D.
+Confirm previous same-purpose observer exited; no duplicates. Immediately push
+real ready.json/liveness.json, observer PID/creation/command, actual node PID
+and result/error/collector-exit presence into THIS candidate's C-inflight-observer/
+or D-inflight-observer/. Do not wait for terminal/two-hour expiry. No package
+copy, node update/restart, old test rerun or object send. If unhealthy return
+precise actual blocker, no invented READY. Keep all raw snapshots, not filtered
+by opaque relay Object/Session. A is elevated; B original sender preflight3167799
+is idle. Fresh READYs permit one new paired ConcurrentOnly workload, with owner
+scheduled release, actual conservative admission→DONE overlap and dual-end/hop
+audit. No new outage, recovered object replay or automatic resend.
+
+## Historical freeze / qualification (before live update)
+
 Program source55cafb072ad83921f4a1ed5ea19a71941700d056 is pushed. Exactly one
 Full44136917939 was dispatched with the matching head SHA. Latest observation
 is IN_PROGRESS, not successful. No node has been updated to this candidate.
