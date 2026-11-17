@@ -1,12 +1,13 @@
 {
-  "utc": "2026-11-17T10:26:52.1348278Z",
-  "observer_running": true,
-  "earlier_blocker_resolved_by_user_authorized_restart": true,
-  "exit_present": false,
-  "error_present": false,
+  "utc": "2026-11-17T10:44:39.078522+00:00",
   "observer_pid": 39028,
+  "observer_running": false,
   "node_pid": 7384,
-  "created_utc": "2026-11-17T10:26:11.9501360Z",
-  "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File \"D:\\WEB3_AI\\SUPERVM\\target\\c-db667-relay-20261117-01\\Launch.ps1\"",
-  "result_present": false
+  "relay_snapshots": 7,
+  "result_present": true,
+  "error_present": false,
+  "collector_exit_present": true,
+  "collector_exit_code": 0,
+  "window_ended": true,
+  "new_window_started": false
 }

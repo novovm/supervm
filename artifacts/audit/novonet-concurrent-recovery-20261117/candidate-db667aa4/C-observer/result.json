@@ -1,0 +1,11 @@
+{
+  "host": "C",
+  "utc": "2026-11-17T10:30:56.4753429Z",
+  "snapshots": 7,
+  "maximum_wait_seconds": 7200,
+  "terminal_observed": true,
+  "wait_expired": false,
+  "capture_limit_reached": false,
+  "node_mutated": false,
+  "business_receipt": false
+}

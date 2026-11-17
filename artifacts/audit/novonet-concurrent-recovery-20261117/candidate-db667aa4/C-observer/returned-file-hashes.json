@@ -1,0 +1,62 @@
+[
+  {
+    "file": "relay-00.json",
+    "bytes": 694512,
+    "sha256": "8e6285d07a3f3b2e163ac44d6177782a018bc112cbbb73d085177636f720cbcc"
+  },
+  {
+    "file": "relay-01.json",
+    "bytes": 765318,
+    "sha256": "c06070cd962fec6b6c732eb22a01d48fb68a0083f0cc9971f12c18e626933c78"
+  },
+  {
+    "file": "relay-02.json",
+    "bytes": 767879,
+    "sha256": "5fdfecf40d93a789a49ba6ad09c3cad8534c8ed372495be8554d293ec487af73"
+  },
+  {
+    "file": "relay-03.json",
+    "bytes": 775069,
+    "sha256": "46e4779b4c28fa099ac1b65a1929788f8400cc1881e99947ce50bdc6efc1bb94"
+  },
+  {
+    "file": "relay-04.json",
+    "bytes": 781573,
+    "sha256": "8fe8aea2d64ce016a0d56811cda695db7db108d33d909cda783486c09b010946"
+  },
+  {
+    "file": "relay-05.json",
+    "bytes": 755863,
+    "sha256": "3fc5dc04b356d0ad35893482f1d3c0382afc040ba4a948585f5cba2310690d89"
+  },
+  {
+    "file": "relay-06.json",
+    "bytes": 781214,
+    "sha256": "de9f327799c568d3ff9336a522b60da609429012aa64e430c8a5d28d263e0edf"
+  },
+  {
+    "file": "liveness.json",
+    "bytes": 240,
+    "sha256": "3d4fe4f85939c6145ca6538a0a1c60cb236485ba16586aa31d0b0d32c523f175"
+  },
+  {
+    "file": "result.json",
+    "bytes": 262,
+    "sha256": "d449da736115039da1e409457aac4d4cbf64e04242c9a58e0a5fb1f5c0ef8bf9"
+  },
+  {
+    "file": "collector-exit.json",
+    "bytes": 83,
+    "sha256": "fd44237927ce46213dca811b2684ced8617f7e82c63a7212062821fae8e101a8"
+  },
+  {
+    "file": "observer.stdout",
+    "bytes": 124,
+    "sha256": "0c4a5188ab900d935235b4450cf43aae68ee13940242c2f7cee5e1964a4fb484"
+  },
+  {
+    "file": "observer.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]
