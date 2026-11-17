@@ -1,0 +1,13 @@
+{
+  "observer_pid": 32976,
+  "observer_created_utc": "2026-11-17T11:02:13.4512070Z",
+  "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File \"D:\\WEB3_AI\\SUPERVM\\target\\c-db667-recovery-observer-20261117-01\\Launch.ps1\"",
+  "fixed_args_file": "recovery-observer-args.json",
+  "new_node_started": false,
+  "utc": "2026-11-17T11:02:48.8926841Z",
+  "error_present": false,
+  "collector_exit_present": false,
+  "node_pid": 7384,
+  "observer_running": true,
+  "result_present": false
+}
