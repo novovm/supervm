@@ -1,0 +1,8 @@
+{
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "started_utc": "2026-11-17T09:31:51.1545198Z",
+  "exit_code": 0,
+  "finished_utc": "2026-11-17T09:31:51.3058963Z",
+  "host": "C",
+  "client_sha256": "99dc33a60e176e08ffd0655f39e2f1a0d1c7e906f4ac02866b15cec4530f32d2"
+}

@@ -1,4 +1,8 @@
-# CURRENT16:53: B/A updated and healthy; C existing update dispatched, D waits
+# CURRENT17:32: C receipt accepted and A→C44ms passed; D now updates
+
+A fetched actual C receipt9b27a904 and checked its reported original LocalService PID45220, fixed EXE/loaded AOEM/manifest hashes and original existing/custody/head/listener state. A's new fixed native client independently authenticated C44ms at09:31:51Z, original height1/state root unchanged. Original query/exit/stderr/health are under `C-existing/`. **D now follows [CD-UPDATE.md](CD-UPDATE.md)** with its already-received db667 ZIP and original LocalService owner; C remains running, no observers yet. Do not repeat C update, package copying, old crash or accepted direct-object tests. Concurrent and relay-recovery real-host verdicts remain pending.
+
+## Earlier16:53 B/A cutover (completed)
 
 Exact-source Full44037306356 **completed successfully**. Both fixed platform packages, actual CTL/runtime KATs, actual new Node/AOEM native cold recovery and all archive members passed. B old2621117 exited by exact SIGTERM; new2840424/novovm UID996 uses original database existing, unchanged custody and actual pinned mapped SO. A old34208 precisely stopped; new22576/LocalService uses original database existing, unchanged custody and actual pinned mapped DLL. Authentication queries: B60ms, A31ms, both original height1/root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. This is update/health acceptance, not concurrent delivery or recovery acceptance.
 

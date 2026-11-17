@@ -1,4 +1,8 @@
-# CURRENT16:53: fixed db667 Full/packages passed, B/A updated; C next
+# CURRENT17:32: B/A/C updated and healthy; D now updates
+
+A pulled actual C receipt9b27a904: reported PID45220/LocalService and fixed package/original existing-state checks passed. A independently authenticated C44ms, original height1/state root unchanged. **D is now released for the same qualified existing update** using the already-received db667 whole ZIP; [current dispatch](candidate-db667aa4/CD-UPDATE.md). C stays running, no new observer yet. No direct/single/double one-object replay. Concurrent objects and B interruption/recovery remain unexecuted, not passed.
+
+## Earlier16:53 B/A update (completed)
 
 Runtime `db667aa4` exact Full44037306356 passed. Both original fixed packagers, actual runtime KATs/native cold recovery, Windows91-payload/94-archive-file and Linux92-payload/95-archive-file verification passed. B newPID2840424 and A22576 are original-database existing/unchanged custody; A authenticated B60ms and A31ms at original height1/state root. **Concurrent delivery and relay interruption/recovery have not run/passed.** The failed common95 preparation is not retried unchanged.
 

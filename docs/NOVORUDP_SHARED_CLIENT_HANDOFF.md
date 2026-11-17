@@ -1,5 +1,11 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 17:32 A: C db667 accepted, D existing update dispatched
+
+A fetched/fast-forwarded actual C receipt9b27a904: C reports PID45220/LocalService, exact db667 Node/loaded AOEM/manifest, original DB existing/custody/head/height, healthy original listeners and no unexpected command/exit. At09:31:51Z A's fixed new client independently authenticated C44ms, original height1/root unchanged. C's config/progress paths match the existing tested CommonRoleFix observation binding; no new tool/window needed. [Actual receipt and independent query](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/C-existing/).
+
+**D now executes the same qualified original-owner existing update** per [CD-UPDATE](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/CD-UPDATE.md), with the already-received ZIP; no new stop request, old crash test, package recopy or observer. C remains running. B/A/C update/health and exact candidate Full are passed, but real concurrent objects/B interruption-recovery have not run or passed. No repeated accepted direct/single/double one-object sample and no business/finality claim.
+
 ## 2026-11-17 16:53 A: db667 Full passed; B/A switched, C next
 
 Actual common95 concurrent preparation was blocked by the original owner locking opaque forwarding as endpoint occupancy; no new diagnostic object or B interruption occurred. Minimal original-owner fix `db667aa420477e76766352c8efd7fea83fdb6eac` passed Windows/Linux role/endpoint regressions and strict Clippy, exact Full44037306356, both fixed packages/actual runtime KAT/native cold recovery and complete archives. Normal production routing, auth, original4-session/128KiB budget, diagnostic60s lease, AOEM and ledger remain unchanged.

@@ -1,8 +1,12 @@
-# CURRENT: C update now; D after A signs C health
+# CURRENT17:32: C accepted; D existing update now
+
+A fetched and fast-forwarded C's actual receipt `9b27a904`. C reports db667 PID45220/LocalService, exact Node/loaded AOEM/release-manifest pins, original DB existing, unchanged identity/head/height, failures0/recovery false,41052/42052 and no unexpected control or exit. Actual config/progress match the already-tested CommonRoleFix observer paths; no observer adaptation or new window is needed now. At09:31:51Z, A's fixed new client independently authenticated C in **44ms**, original height1/state root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. C's reported package/owner facts and A's independent authenticated status remain separate evidence.
+
+**D now:** execute the already-approved same-version existing update below using the already-received ZIP and your qualified local LocalService startup owner. Do not wait for another stop permission or copy the package again. Return D_DB667_EXISTING_READY_FOR_A_QUERY plus actual public result under `D-existing/`; no observer, initialization, old crash test or object send. C stays running, no further C action now. This is update/health acceptance only; concurrent delivery and relay recovery are still pending.
 
 B/A are already db667 existing and independently authenticated, documented in this directory. Full44037306356 succeeded at exact runtime SHA `db667aa420477e76766352c8efd7fea83fdb6eac`. C/D ZIP receipt is already confirmed; do not recopy. This runtime is necessary for the actual endpoint/forwarder reservation defect; common95 cannot complete the planned crossed-role concurrency. No new stop approval, old crash/BASE comparison or repeated direct-object test.
 
-## C: one qualified original LocalService existing update
+## C: completed, retain these original update requirements for D
 
 1. Inspect actual current task/PID/creation/EXE, config, loaded AOEM, original DB/identity and ports41052/42052. Expected common95 node hash `754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7`, originally PID38500. Use the real current owner, never assume that PID is still valid. Preserve the ended old concurrency observer output; do not rearm it.
 2. Verify received ZIP162799838bytes/SHA256 `7a80bf900038bf88c6c4ab77d388216d9b16cf7f9972c500c72d15a624668fbb`. Extract to new side-by-side `C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-C-20261117`, verifying all91 payloads plus3 metadata files. Expected Node `442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825`, loaded AOEM `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`, release manifest `8c340c7d27318bede380ff07812584971601058d20eef48e7da6712058324d7e`. Use actual new EXE+DLL+manifest together.
@@ -12,7 +16,7 @@ B/A are already db667 existing and independently authenticated, documented in th
 
 Do not start an observer yet. A signs the real receipt and performs one new-version authentication health query, not a repeated direct-object baseline.
 
-## D: wait for C health and explicit next dispatch
+## D: dispatched now after C health
 
 Then use the same qualified local-owner steps, HostId D, original ports41053/42053. Expected old common95 PID23340 is historical, not a stop target without inspection. New release `C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-windows-x86_64`; work `C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-db667aa4-20261117`, config `run.json`, progress `logs\progress.json`. Return **D_DB667_EXISTING_READY_FOR_A_QUERY** under `D-existing/`. Same fixed pins and no observer until A signs actual health.
 
