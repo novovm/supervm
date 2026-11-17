@@ -1,0 +1,18 @@
+{
+  "status": "C_RELAY_OBSERVER_ARMED",
+  "observer_version": 3,
+  "observer_pid": 32976,
+  "source": "db667aa420477e76766352c8efd7fea83fdb6eac",
+  "node_sha256": "442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825",
+  "pid": 7384,
+  "utc": "2026-11-17T11:02:14.7503387Z",
+  "read_only": true,
+  "maximum_wait_seconds": 7200,
+  "terminal_circuit_count": 1,
+  "expected_origin": "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3",
+  "expected_path": [
+    "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f",
+    "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2",
+    "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946"
+  ]
+}
