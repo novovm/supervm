@@ -1,4 +1,12 @@
-# CURRENT 13:19: A/B/D verified; C returns only 3 existing raw relay snapshots
+# CLOSED13:36: four-host single-object double relay accepted; C/D no further action
+
+A pulled C originals4f2404c9 and verified all14 C/D declared original-file hashes. C's3 snapshots match the same Circuit/Route, relay cursor1/PID38500, actual8/8→9/9packets, final9380/9044bytes,writes0/0. B cursor0 also forwarded9/9packets with writes0/0. All3 adjacent authenticated bindings match A–B, B–C and C–D, while A/D share native Session/Object. Original A sender DONE/exit0 and D full/hash/time-accepted bounded custody complete this actual **one-object A→B→C→D diagnostic sample**.
+
+**C and D: this sample is closed; no more files or actions required.** Keep current node owners running. Do not resend, rearm observers, restart/update nodes or rerun old/direct tests. Earlier requests below are completed history, not current dispatches. No new Full/candidate package is needed for evidence-only signoff.
+
+[Final independent correlation and original evidence](double-relay-20261117-1214/README.md). C observer exit code remains unknown; D observer exit0. No fabricated receiver transport_done_us, business receipt, native UDP-multihop, asset execution/finality or unbounded stability acceptance. Remaining concurrent/recovery and native business/consensus scenarios remain independent, not silently marked passed.
+
+## Earlier13:19 missing-file review (resolved)
 
 A pulled C/D through6556e0c6. D's8 original-file hashes and3 raw target snapshots are independently verified: same object/session/circuit/digest, unique integrity-verified receiver event, full authenticated time interval inside original lifetime and matching1/1-fragment/hash-verified transfer. D observer exited0, terminal_observed=true; D is complete for this diagnostic reception. Do not rearm D or fabricate a D-side transport_done_us (null), business receipt or finality.
 

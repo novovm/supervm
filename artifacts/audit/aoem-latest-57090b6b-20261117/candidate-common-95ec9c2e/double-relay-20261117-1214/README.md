@@ -1,4 +1,14 @@
-# Actual A→B→C→D object: A/B/D verified; C original snapshots pending
+# PASS: one real A→B→C→D diagnostic object delivered over two relays
+
+## FINAL A acceptance13:36, original C/D files independently checked
+
+A pulled C's byte-preserving original snapshots through4f2404c9 and verified **all14 declared C/D original-file SHA256s** (C6,D8), including3 C and3 D snapshots. The actual same-circuit C relay is cursor1/PID38500, advancing8/8→9/9 forwarded packets, ending9380/9044bytes with failed writes0/0. B cursor0/PID2621117 has the same final counters/no failed writes. All four owners share the ordered route/digest/circuit and correct local-peer roles. **A–B, B–C and C–D adjacent authenticated bindings match pairwise**, with the same A/D native session/object. B/C null native_session is expected opaque forwarding.
+
+**This single real four-host double-relay sample is accepted:** original A sender Object DONE/controller exit0, both actual B/C forwarding hops, and D full/hash-verified bounded custody plus valid authenticated-time reception. Exact final independent correlation: [FINAL-CORRELATED-RESULT.json](FINAL-CORRELATED-RESULT.json). Earlier pending summaries below remain historical intermediate reviews and are superseded, not rewritten.
+
+No resend, new collection, observer rearm, node restart, key/state change or Full was used to obtain C's missing evidence. C's original observer exit code remains unknown (not captured); its terminal result/3 originals are present. D observer exit0. Receiver transport_done_us remains null; no invented receiver DONE timestamp or durable Business Receipt. Cross-host wall timestamps are not synchronized one-way latency proof.
+
+Scope is **one predefined non-business object** on fixed common95/Full1eb, original authenticated Iroh hop-stream relay and native object channel. This does not certify native UDP multihop, concurrent/stress/recovery scenarios, NOV asset execution, three-vote finality, indefinite stability or public mainnet release. Native NovoRUDP business priority, fallback policy, limits and ownership are unchanged. C/D have no further action for this sample; leave current nodes running and do not repeat it.
 
 ## A review13:19: D complete; C original-file return only
 

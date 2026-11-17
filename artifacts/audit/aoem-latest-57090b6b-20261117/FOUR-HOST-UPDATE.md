@@ -1,5 +1,9 @@
 # CURRENT: new common node + latest AOEM, then real double relay
 
+## FINAL13:36: one real four-host double-relay object accepted
+
+A pulled C originals4f2404c9 and verified14 declared C/D original-file hashes. Actual C cursor1 progresses8/8→9/9packets, final9380/9044bytes,writes0/0; B cursor0 matches final counters/no failures. Same ordered route/circuit/digest and all3 pairwise authenticated bindings correlate A–B–C–D with shared A/D endpoint Object/Session. A sender DONE/exit0 plus D full/hash/time-verified bounded custody establish acceptance of this one diagnostic object. [Final correlation and preserved originals](candidate-common-95ec9c2e/double-relay-20261117-1214/README.md). C/D no further action; no resend/new capture/restart/Full. C observer exit unknown, D exit0. Existing Iroh hop-stream/native-object double relay, not native UDP multihop, concurrent/recovery/TPS, asset receipt/finality or release acceptance.
+
 ## SUPERSEDING13:19: D original reception accepted; C existing raw snapshots only
 
 A pulled6556e0c6 and independently verified D's8 original-file hashes/3 snapshots against exact object/session/circuit/digest, unique integrity/time accepted event and original transfer tag/full1/1fragment/hash record. A DONE/B forwarding/D receiver acceptance now correlate. C's terminal summary has9/9packets,9380/9044bytes,writes0/0 but no3 raw snapshots uploaded; opaque relays do not need to expose end-to-end object/session. Only C returns those existing files/hashes, no rearm/resend/tool or node action. Complete per-hop acceptance awaits that original C audit. [Current evidence](candidate-common-95ec9c2e/double-relay-20261117-1214/README.md).

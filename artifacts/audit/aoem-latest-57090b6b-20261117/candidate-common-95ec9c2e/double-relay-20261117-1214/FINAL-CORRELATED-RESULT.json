@@ -1,0 +1,188 @@
+{
+  "status": "PASS_FOUR_HOST_SINGLE_OBJECT_DOUBLE_RELAY",
+  "audited_utc": "2026-11-17T05:36:42.0395278Z",
+  "program_full_sha": "1eb2f202d821fbb2e7cccee4e8bbfb3cd789c864",
+  "fixed_package_source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "C_D_original_files_hash_verified": 14,
+  "ordered_hosts": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "ordered_peer_path": [
+    "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f",
+    "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2",
+    "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946"
+  ],
+  "object_id": "e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d",
+  "native_session": "b960c007c82275a45ee5c45f75705aab",
+  "circuit_id": "457c502773ba39993a584d68cbbf1515",
+  "route_digest": "82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14",
+  "sender_done": true,
+  "sender_exit_code": 0,
+  "two_actual_relays_verified": true,
+  "three_adjacent_authenticated_bindings_match": true,
+  "actual_owner_snapshots": [
+    {
+      "host": "A",
+      "pid": 34208,
+      "role": "origin",
+      "cursor": 0,
+      "local_peer": "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3",
+      "first_hop_binding": "41966d012f72ae5463f70ddf06fcf98cfeba441066ec92f1537e9db01ea70913",
+      "downstream_binding": null,
+      "native_session": "b960c007c82275a45ee5c45f75705aab",
+      "forwarded": [
+        {
+          "packets": 0,
+          "bytes": 0
+        },
+        {
+          "packets": 0,
+          "bytes": 0
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ]
+    },
+    {
+      "host": "B",
+      "pid": 2621117,
+      "role": "relay",
+      "cursor": 0,
+      "local_peer": "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f",
+      "first_hop_binding": "41966d012f72ae5463f70ddf06fcf98cfeba441066ec92f1537e9db01ea70913",
+      "downstream_binding": "ad889919dfb87641f3b26321afab081aab4bd7385ad7552b36df8b22979fe246",
+      "native_session": null,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ]
+    },
+    {
+      "host": "C",
+      "pid": 38500,
+      "role": "relay",
+      "cursor": 1,
+      "local_peer": "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2",
+      "first_hop_binding": "ad889919dfb87641f3b26321afab081aab4bd7385ad7552b36df8b22979fe246",
+      "downstream_binding": "5471e168e4a5514dc37dc440ded1ff67cda6105171612b3d6503581f5a6c84f0",
+      "native_session": null,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ]
+    },
+    {
+      "host": "D",
+      "pid": 23340,
+      "role": "target",
+      "cursor": 2,
+      "local_peer": "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946",
+      "first_hop_binding": "5471e168e4a5514dc37dc440ded1ff67cda6105171612b3d6503581f5a6c84f0",
+      "downstream_binding": null,
+      "native_session": "b960c007c82275a45ee5c45f75705aab",
+      "forwarded": [
+        {
+          "packets": 0,
+          "bytes": 0
+        },
+        {
+          "packets": 0,
+          "bytes": 0
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ]
+    }
+  ],
+  "C_original_three_snapshot_progress": [
+    {
+      "utc": "2026-11-17T04:14:42.3790599Z",
+      "forwarded": [
+        {
+          "packets": 8,
+          "bytes": 8592
+        },
+        {
+          "packets": 8,
+          "bytes": 8656
+        }
+      ],
+      "file": "relay-00.json",
+      "native_session": null
+    },
+    {
+      "utc": "2026-11-17T04:14:48.0327754Z",
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "file": "relay-01.json",
+      "native_session": null
+    },
+    {
+      "utc": "2026-11-17T04:14:52.3362979Z",
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "file": "relay-02.json",
+      "native_session": null
+    }
+  ],
+  "D_received_integrity_time_and_bounded_custody": true,
+  "D_receiver_event_wall_ms": 1794888884453,
+  "D_peer_time_interval": [
+    1794888883915,
+    1794888884042
+  ],
+  "D_receiver_transport_done_us": null,
+  "D_observer_exit_code": 0,
+  "C_observer_exit_code": "unknown; not captured by its existing launcher",
+  "complete_double_relay_sample_acceptance": true,
+  "scope": "One fixed diagnostic object over existing authenticated Iroh hop streams and native object channel; not native UDP multihop",
+  "business_receipt": false,
+  "consensus_finality": false,
+  "unbounded_stability_or_throughput_acceptance": false,
+  "resend": false,
+  "new_collection": false,
+  "new_full_dispatched": false
+}

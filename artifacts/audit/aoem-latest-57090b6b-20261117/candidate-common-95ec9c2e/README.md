@@ -1,4 +1,6 @@
-# CURRENT 2026-11-17: A/B/D correlated; C original-file audit pending
+# CLOSED 2026-11-17: four upgrades and one real double-relay diagnostic sample accepted
+
+13:36: C originals4f2404c9 received. A independently verified14 C/D original hashes, both actual relay hops/forward counters and all3 adjacent authentication bindings against the same route/circuit, plus A/D same Object/Session, A sender DONE/exit0 and D full/hash/time-accepted bounded custody. [Final independent result and original evidence](double-relay-20261117-1214/README.md). This one A→B→C→D diagnostic object is accepted; C/D no further action, no resend/rearm/restart/new Full. C observer exit unknown remains explicit. Concurrent/recovery/native asset/finality and public release acceptance are separate; not native UDP multihop.
 
 13:19: A independently verified D's8 original-file hashes and3 target snapshots: exact same object/session/circuit, complete/hash-verified reception and authenticated interval within the original lifetime. A sender DONE/B forwarding/D receiver custody/integrity/time outcome correlate. C uploaded only a terminal summary; only return its3 already-existing raw relay snapshots/hashes for circuit/cursor1 forwarding audit. Opaque relay Object ID/session absence is not a failure. No new capture, object, observer, node restart or tool; D complete/no action. [Actual evidence and limits](double-relay-20261117-1214/README.md).
 
