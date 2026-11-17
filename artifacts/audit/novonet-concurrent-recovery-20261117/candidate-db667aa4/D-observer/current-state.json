@@ -1,0 +1,21 @@
+{
+  "same_window_available_for_future_capture": false,
+  "observer_pid": 50540,
+  "result_present": true,
+  "node_mutated": false,
+  "object_or_session_filter_used": false,
+  "launcher_error_present": false,
+  "latest_liveness_utc": "2026-11-17T10:31:14.8803456Z",
+  "collector_exit": {
+    "observer_pid": 50540,
+    "exit_code": 0,
+    "utc": "2026-11-17T10:31:14.9162722Z"
+  },
+  "node_pid": 56148,
+  "collector_exit_present": true,
+  "new_observer_started": false,
+  "active": false,
+  "error_present": false,
+  "utc": "2026-11-17T10:43:30.5941727Z",
+  "all_snapshots_returned": 8
+}

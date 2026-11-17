@@ -1,0 +1,50 @@
+[
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-00.json",
+    "bytes": 732630,
+    "sha256": "7e325ce749a9609a27916b45ede1f7f914499295fdbbf0cb89d0c22cb1c7c7fd"
+  },
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-01.json",
+    "bytes": 731630,
+    "sha256": "d1c6966535a343d77d90ee8c18f6cf5879aa43345722c9952c2202142ee2ba06"
+  },
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-02.json",
+    "bytes": 755074,
+    "sha256": "c22c44c358faf3104aa31ee9a007dc5421783c47a23b0e8511f4d864cec6b40d"
+  },
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-03.json",
+    "bytes": 737591,
+    "sha256": "49450dd6b8e9132f526bdeb9d1a7a75ed4c56f65e2786137f0fa985577585261"
+  },
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-04.json",
+    "bytes": 784213,
+    "sha256": "2fbd59d6354255e986b4fc9acae48af4844830216f3b56323ba0c1e9c6af37ca"
+  },
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-05.json",
+    "bytes": 789438,
+    "sha256": "3c815b30b0d63d93e58c07f9547e7aae6531af9fa92eee0bdeff6389cce2bf6f"
+  },
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-06.json",
+    "bytes": 759823,
+    "sha256": "797d8535f1be55cf56a46daedd371a83114c31c20d4720cdbfde52185bd0f179"
+  },
+  {
+    "original_bytes_preserved": true,
+    "file": "relay-07.json",
+    "bytes": 799048,
+    "sha256": "2fa419fb7d02636b50a08de2429d3730e5fbce44bddad1bf8dcb7b48001b2d6c"
+  }
+]

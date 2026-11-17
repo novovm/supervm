@@ -1,0 +1,505 @@
+{
+  "events": [
+    {
+      "object": null,
+      "session": "cad7f1818f501775790b91b8ff088c03",
+      "detail": {
+        "remote": [
+          76,
+          236,
+          212,
+          186,
+          64,
+          146,
+          200,
+          33,
+          51,
+          53,
+          1,
+          104,
+          126,
+          122,
+          54,
+          61,
+          130,
+          157,
+          84,
+          76,
+          26,
+          32,
+          62,
+          162,
+          57,
+          13,
+          118,
+          232,
+          178,
+          165,
+          98,
+          127
+        ]
+      },
+      "wall_ms": 1794911336036,
+      "probe": null,
+      "event": "relay_diagnostic_authenticated"
+    },
+    {
+      "object": null,
+      "session": "cad7f1818f501775790b91b8ff088c03",
+      "detail": {
+        "remote": [
+          76,
+          236,
+          212,
+          186,
+          64,
+          146,
+          200,
+          33,
+          51,
+          53,
+          1,
+          104,
+          126,
+          122,
+          54,
+          61,
+          130,
+          157,
+          84,
+          76,
+          26,
+          32,
+          62,
+          162,
+          57,
+          13,
+          118,
+          232,
+          178,
+          165,
+          98,
+          127
+        ],
+        "interval": [
+          1794911336566,
+          1794911336991
+        ]
+      },
+      "wall_ms": 1794911336770,
+      "probe": null,
+      "event": "relay_time_reference_ready"
+    },
+    {
+      "object": "dacc8cf0e64e261b37bef2b6f246e466debf73d0a276ae48ca01035e94551b34",
+      "session": "cad7f1818f501775790b91b8ff088c03",
+      "detail": {
+        "peer_time_interval": [
+          1794911354437,
+          1794911354880
+        ]
+      },
+      "wall_ms": 1794911354650,
+      "probe": {
+        "nonce": [
+          185,
+          196,
+          99,
+          61,
+          148,
+          223,
+          227,
+          169,
+          14,
+          116,
+          219,
+          158,
+          142,
+          140,
+          125,
+          26,
+          244,
+          44,
+          193,
+          203,
+          122,
+          70,
+          220,
+          179,
+          189,
+          99,
+          122,
+          250,
+          172,
+          244,
+          230,
+          118
+        ],
+        "sender": [
+          76,
+          236,
+          212,
+          186,
+          64,
+          146,
+          200,
+          33,
+          51,
+          53,
+          1,
+          104,
+          126,
+          122,
+          54,
+          61,
+          130,
+          157,
+          84,
+          76,
+          26,
+          32,
+          62,
+          162,
+          57,
+          13,
+          118,
+          232,
+          178,
+          165,
+          98,
+          127
+        ],
+        "recipient": [
+          217,
+          15,
+          81,
+          69,
+          243,
+          36,
+          121,
+          13,
+          108,
+          239,
+          123,
+          89,
+          45,
+          37,
+          116,
+          125,
+          15,
+          178,
+          25,
+          88,
+          50,
+          126,
+          174,
+          235,
+          35,
+          103,
+          200,
+          0,
+          215,
+          74,
+          143,
+          144
+        ],
+        "issued_at_ms": 1794911354405,
+        "expires_at_ms": 1794911364405
+      },
+      "event": "relay_probe_received_integrity_verified"
+    },
+    {
+      "object": null,
+      "session": "cc0c77210313adcc79d0cb2e806da5f7",
+      "detail": {
+        "remote": [
+          181,
+          210,
+          87,
+          115,
+          186,
+          175,
+          130,
+          232,
+          193,
+          9,
+          212,
+          23,
+          130,
+          161,
+          90,
+          195,
+          228,
+          91,
+          87,
+          86,
+          47,
+          155,
+          176,
+          35,
+          200,
+          193,
+          202,
+          182,
+          61,
+          106,
+          204,
+          67
+        ]
+      },
+      "wall_ms": 1794911412532,
+      "probe": null,
+      "event": "relay_diagnostic_authenticated"
+    },
+    {
+      "object": null,
+      "session": "cc0c77210313adcc79d0cb2e806da5f7",
+      "detail": {
+        "remote": [
+          181,
+          210,
+          87,
+          115,
+          186,
+          175,
+          130,
+          232,
+          193,
+          9,
+          212,
+          23,
+          130,
+          161,
+          90,
+          195,
+          228,
+          91,
+          87,
+          86,
+          47,
+          155,
+          176,
+          35,
+          200,
+          193,
+          202,
+          182,
+          61,
+          106,
+          204,
+          67
+        ],
+        "interval": [
+          1794911412300,
+          1794911412566
+        ]
+      },
+      "wall_ms": 1794911413138,
+      "probe": null,
+      "event": "relay_time_reference_ready"
+    }
+  ],
+  "observer_pid": 50540,
+  "resend": false,
+  "node_pid": 56148,
+  "observer_restarted": false,
+  "circuits": [
+    {
+      "downstream_ready_us": 989219484,
+      "downstream": null,
+      "cursor": 2,
+      "stream_dropped_us": 1009399218,
+      "native_session": "cad7f1818f501775790b91b8ff088c03",
+      "failed_writes": [
+        0,
+        0
+      ],
+      "role": "target",
+      "authenticated_us": 989219464,
+      "forwarded": [
+        {
+          "packets": 0,
+          "bytes": 0
+        },
+        {
+          "packets": 0,
+          "bytes": 0
+        }
+      ],
+      "route_digest": "0f8d47d3321a36c3dd4508508e24eca55d5bd3574f0e597eebfd866c825fbaa2",
+      "circuit": "af188fd2a5b1d7b09c09ad3954a37202",
+      "path": [
+        "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3",
+        "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2",
+        "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946"
+      ],
+      "origin": "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f"
+    },
+    {
+      "downstream_ready_us": 998556208,
+      "downstream": {
+        "peer_key": [
+          106,
+          53,
+          16,
+          231,
+          112,
+          52,
+          173,
+          207,
+          107,
+          210,
+          157,
+          167,
+          138,
+          68,
+          159,
+          241,
+          151,
+          100,
+          217,
+          222,
+          101,
+          40,
+          31,
+          93,
+          13,
+          197,
+          200,
+          195,
+          184,
+          85,
+          130,
+          196
+        ],
+        "binding": [
+          16,
+          168,
+          35,
+          227,
+          235,
+          107,
+          166,
+          176,
+          2,
+          172,
+          134,
+          184,
+          59,
+          202,
+          139,
+          207,
+          37,
+          180,
+          104,
+          57,
+          102,
+          213,
+          85,
+          15,
+          245,
+          120,
+          251,
+          72,
+          9,
+          41,
+          166,
+          197
+        ]
+      },
+      "cursor": 1,
+      "stream_dropped_us": 1010391513,
+      "native_session": null,
+      "failed_writes": [
+        0,
+        0
+      ],
+      "role": "relay",
+      "authenticated_us": 998503294,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "route_digest": "9a5a051e0bdf0b894b2323a81e8cd497da0cc97b2211b7f42b91c4b518182bba",
+      "circuit": "7a04952558722e4461dc0d4be9ef9e36",
+      "path": [
+        "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f",
+        "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946",
+        "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2"
+      ],
+      "origin": "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3"
+    },
+    {
+      "downstream_ready_us": 1065694311,
+      "downstream": null,
+      "cursor": 2,
+      "stream_dropped_us": 1085894998,
+      "native_session": "cc0c77210313adcc79d0cb2e806da5f7",
+      "failed_writes": [
+        0,
+        0
+      ],
+      "role": "target",
+      "authenticated_us": 1065694295,
+      "forwarded": [
+        {
+          "packets": 0,
+          "bytes": 0
+        },
+        {
+          "packets": 0,
+          "bytes": 0
+        }
+      ],
+      "route_digest": "151f5d92f8440f9ff63afc8acc599e40462e74d3f65b842ed75e82ea2e09ee1b",
+      "circuit": "e405f669ded4a84d9adf81f25fabccf4",
+      "path": [
+        "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f",
+        "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2",
+        "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946"
+      ],
+      "origin": "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3"
+    },
+    {
+      "downstream_ready_us": null,
+      "downstream": null,
+      "cursor": 0,
+      "stream_dropped_us": 1120587493,
+      "native_session": null,
+      "failed_writes": [
+        0,
+        0
+      ],
+      "role": "relay",
+      "authenticated_us": 1105580151,
+      "forwarded": [
+        {
+          "packets": 0,
+          "bytes": 0
+        },
+        {
+          "packets": 0,
+          "bytes": 0
+        }
+      ],
+      "route_digest": "ca5fbe0928b3ef34197e72dbcc39448d8686a42dfec4758cdfa936775a716438",
+      "circuit": "d48f99d87a6bf2aefd13c7abed018b60",
+      "path": [
+        "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946",
+        "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f"
+      ],
+      "origin": "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3"
+    }
+  ],
+  "relay_object_binding": "opaque relay has no Object/Session visibility; A must correlate circuit and hop bindings",
+  "scope": "derived final-snapshot index; all raw snapshots returned without filtering",
+  "requested_B_object": "dacc8cf0e64e261b37bef2b6f246e466debf73d0a276ae48ca01035e94551b34",
+  "requested_A_object": "528a2ae9174fa5d4dc89b1d1023e28e07f5422e6b0468234e0012c8783a5706a",
+  "business_finality": false
+}
