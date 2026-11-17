@@ -1,0 +1,16 @@
+359039913 /home/ecs-user/novovm-session-clock-update-8fed4b76-20261110/novonet-observation-8fed4b76-linux-x86_64.tar.gz
+c279cc1a4860f14e2142e0fa6bbf245d9f0f48f1e05358a9bd3efae7efa9953a  /home/ecs-user/novovm-session-clock-update-8fed4b76-20261110/novonet-observation-8fed4b76-linux-x86_64.tar.gz
+359386130 /home/ecs-user/novovm-session-clock-update-e7b0cca7-20261110/novonet-observation-e7b0cca7-linux-x86_64.tar.gz
+e531af4b7ddcbed564e98d4114e5ca66f8640c97dc0af8b445e74b634d905e97  /home/ecs-user/novovm-session-clock-update-e7b0cca7-20261110/novonet-observation-e7b0cca7-linux-x86_64.tar.gz
+359230285 /home/ecs-user/novovm-relay-update-883c6183-20261109/novonet-relay-evidence-883c6183-linux-x86_64.tar.gz
+3fa3b66645d99720e297c3688a704a601385c41ed36b20fefaca40420a87c91e  /home/ecs-user/novovm-relay-update-883c6183-20261109/novonet-relay-evidence-883c6183-linux-x86_64.tar.gz
+359196043 /home/ecs-user/novovm-probe-update-ddd89e8e-20261108/novonet-probe-ddd89e8e-linux-x86_64.tar.gz
+38f520b3110691cafdb690ff46cb56578c1a7d2682b98ae688b0c5e6dcc03a94  /home/ecs-user/novovm-probe-update-ddd89e8e-20261108/novonet-probe-ddd89e8e-linux-x86_64.tar.gz
+359271810 /home/ecs-user/novovm-observation-update-1ef31893-20261110/novonet-observation-1ef31893-linux-x86_64.tar.gz
+0ffcb14a76581fc17a8f479a3048bcdeb5bc434291d1ec87b6f4de84936f7509  /home/ecs-user/novovm-observation-update-1ef31893-20261110/novonet-observation-1ef31893-linux-x86_64.tar.gz
+Filesystem       1B-blocks        Used Available Use% Mounted on
+/dev/vda3      63017381888 59817897984 404774912 100% /
+REMOVED_FIVE_OBSOLETE_UPLOAD_ARCHIVES_ONLY
+Filesystem       1B-blocks        Used  Available Use% Mounted on
+/dev/vda3      63017381888 58021752832 2200920064  97% /
+bash: line 23: $'\r': command not found

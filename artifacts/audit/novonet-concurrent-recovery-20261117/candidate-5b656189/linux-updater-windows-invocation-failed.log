@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "D:\WorksArea\SUPERVM\scripts\tests\test_novonet_linux_existing.py", line 15, in <module>
+    spec.loader.exec_module(update)
+  File "<frozen importlib._bootstrap_external>", line 940, in exec_module
+  File "<frozen importlib._bootstrap>", line 241, in _call_with_frames_removed
+  File "D:\WorksArea\SUPERVM\scripts\linux\update-novonet-existing.py", line 13, in <module>
+    import pwd
+ModuleNotFoundError: No module named 'pwd'

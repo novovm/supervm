@@ -1,0 +1,11 @@
+{
+  "host": "A",
+  "source": "5b656189784c854ac356aae77610c931b9f2189d",
+  "utc": "2026-11-17T15:48:40.6493506Z",
+  "object_sent": false,
+  "status": "AUTHENTICATED_STATUS_PASS",
+  "elapsed_ms": 28,
+  "height": 1,
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "business_receipt": false
+}

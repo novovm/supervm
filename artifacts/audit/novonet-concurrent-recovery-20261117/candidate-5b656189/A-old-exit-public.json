@@ -1,0 +1,15 @@
+{
+  "old_pid": 22576,
+  "new_pid": 32592,
+  "old_task": "NOVOVM-A-db667aa4-Existing-20261117",
+  "task_state": "Ready",
+  "task_last_result": 4294967295,
+  "original_exit_present": true,
+  "original_exit": {
+    "start": "existing",
+    "utc": "2026-11-17T15:48:15.455239Z",
+    "exit_code": -1
+  },
+  "method": "original Stop-NovonetExactProcess; not certified graceful drain",
+  "utc": "2026-11-17T15:49:29.2727531Z"
+}

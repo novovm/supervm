@@ -1,6 +1,24 @@
 # Fixed eight-slot / dependency-repair candidate 5b656189
 
-## CURRENT23:33: exact Full and packages qualified; NOT deployed
+## CURRENT23:49: B/A existing updates healthy; C dispatched, D waits
+
+User confirmed this fixed-version four-host existing rollout and subsequent
+missing recovery/concurrency acceptance. B updated toPID3003007/novovm, A to
+PID32592/LocalService, exact pinned programs/loaded AOEM, original DB/custody and
+head/height unchanged. Independently authenticated StatusB70ms/A28ms returned the
+original state root. Read actual per-host public receipts and [C/D steps](CD-UPDATE.md).
+No new diagnostic object or observer, no claim of four-host completion or resource
+failure closure. C/D have not yet supplied this version's actual update receipts.
+
+B initially had405MB free. Five explicitly validated obsolete upload tar files
+(8fed/e7/883c/ddd/1ef) were removed, freeing about1.8GB; installed releases, original
+database/credentials/journal and failure evidence were untouched. The original
+cleanup command ended nonzero on a trailing CR after completing deletion; a
+separate readback confirmed all five absent and2.2GB available. Preserve that
+failure, do not rerun cleanup. These upload files were deleted, not moved to trash.
+The Linux updater's first local invocation on Windows failed on unavailable pwd;
+its correct Linux run passed17 tests. Windows original process barriers passed13.
+Only version/hash/path bindings changed, no product or updater policy changed.
 
 A fetched and fast-forwarded actual D receipt cae04350. D independently checked
 the received archive size/SHA256; it has not extracted or run it. User reports
@@ -84,6 +102,7 @@ ran on D, so C-drive cleanup is no longer a packaging prerequisite.
    for that missing acceptance; sender DONE, receiver integrity/time/custody and
    both relay circuit/path forwarding must be independently correlated.
 
-C/D may copy and hash the new ZIP now; **do not update or open observers yet**.
-No node, network setting, key, cache or ledger was changed in this qualification.
+C is dispatched to update now; D waits for C health. Neither starts an observer.
+Qualification itself changed no node; the subsequently approved B/A rollout is
+recorded above. Original keys, cache and ledger remain unchanged.
 C's historical AV is not declared fixed by dependency migration or local tests.

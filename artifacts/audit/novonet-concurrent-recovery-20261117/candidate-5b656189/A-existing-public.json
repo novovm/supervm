@@ -1,0 +1,32 @@
+{
+  "start": "existing",
+  "node_sha256": "4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038",
+  "execution_failures": 0,
+  "height": 1,
+  "status": "EXISTING_RUNNING_HEALTHY_NOT_DELIVERY",
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "pid": 32592,
+  "initialize": false,
+  "actual_aoem": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-5b656189-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "progress": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\novovm-common-5b656189-20261117/logs/progress.json",
+  "manifest_sha256": "6bf12700acb241fb2cc802057f04f53d883c5dbb8eddfd79f57221adf1638cd3",
+  "custody_unchanged": true,
+  "source": "5b656189784c854ac356aae77610c931b9f2189d",
+  "head": null,
+  "utc": "2026-11-17T15:48:18.5165302Z",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+  "sid": "S-1-5-19",
+  "config": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\novovm-common-5b656189-20261117/run.json",
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.74",
+      "LocalPort": 42051,
+      "OwningProcess": 32592
+    },
+    {
+      "LocalAddress": "192.168.71.74",
+      "LocalPort": 41051,
+      "OwningProcess": 32592
+    }
+  ]
+}

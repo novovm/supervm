@@ -1,5 +1,17 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 23:49 A: approved5b B/A existing updates passed; C dispatched
+
+After explicit version approval, original B updater switched2880455→3003007;
+A original LocalService owner switched22576→32592. Actual programs/mapped AOEM,
+original DB existing/custody/head/height/listeners passed; authenticated queries
+B70ms/A28ms return original root. Exact-source Full44092874774 remains SUCCESS.
+[Original receipts, cleanup/failure records and C dispatch](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/CD-UPDATE.md).
+C now uses its already-received5b ZIP and qualified LocalService existing owner;
+D waits for actual C health. No new observer/object, old accepted baseline rerun,
+init or key replacement. C historical AV and missing true in-flight concurrency
+remain separate; this update does not claim their resolution.
+
 ## 2026-11-17 23:33 A: exact5b Full success; C/D packages reported ready
 
 A independently confirmed Full44092874774 completed SUCCESS at15:29:41Z, exact
