@@ -1,0 +1,407 @@
+{
+  "utc": "2026-11-17T13:05:12.1769958Z",
+  "logs": [
+    {
+      "sha256": "f46b9959e8afc2565e71e0ac40ce466f6e82a4aa87afaaf1600db590d21a3b67",
+      "name": "time-migration-linux-build.jsonl",
+      "bytes": 395656
+    },
+    {
+      "sha256": "7d8f82fe5ad807f24846ff9795e07839157f61ad66378b30592b8d90500ee542",
+      "name": "time-migration-linux-build.stderr",
+      "bytes": 1839
+    },
+    {
+      "sha256": "5e289198c69a6d3c548b46ede46709f730e6171eb66f5654954de61233189752",
+      "name": "time-migration-linux-clippy.stderr",
+      "bytes": 2641
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-linux-clippy.stdout",
+      "bytes": 0
+    },
+    {
+      "sha256": "cf205dbb8cea84897b488abcc281bf96698d5e94b1096b16657b4caba9082a22",
+      "name": "time-migration-linux-exit.txt",
+      "bytes": 7
+    },
+    {
+      "sha256": "32aa48ffe089ff8e0ca43feeaca0b6d61277aacce0e65c805d2f409cce218c9e",
+      "name": "time-migration-linux-novovm_node-0.stderr",
+      "bytes": 3363
+    },
+    {
+      "sha256": "6f88a645491e28e7fa3b19108fb8b8e004e86ec0530d1cd7bacbbe8b678f8b74",
+      "name": "time-migration-linux-novovm_node-0.stdout",
+      "bytes": 1900
+    },
+    {
+      "sha256": "b40248a73cfe16dcc6fd1a04698b4cf8bc782b0d5c1adc5680a65d8672eff664",
+      "name": "time-migration-linux-novovm_node-1.stderr",
+      "bytes": 10722
+    },
+    {
+      "sha256": "0cf5ff1d1eca63d7e260d0bf05d8ce12f0680f48364adc322398ed27a530a0f4",
+      "name": "time-migration-linux-novovm_node-1.stdout",
+      "bytes": 40113
+    },
+    {
+      "sha256": "19eaf43821a7660ec323a87c8457bf74823beb296c39f5e01aa8a683aa50f061",
+      "name": "time-migration-linux-qualified-exit.txt",
+      "bytes": 7
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-linux-qualified-novovm_governance_observability-0.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "f5f50b8f29d11e26cde3b79f4b14003a26b5e30deb2fa0022e3a37fda8a6ae5d",
+      "name": "time-migration-linux-qualified-novovm_governance_observability-0.stdout",
+      "bytes": 379
+    },
+    {
+      "sha256": "152fca4d0835043668a3cb947876fa881f05227e1e9d37c393424affb11a859e",
+      "name": "time-migration-linux-qualified-novovm_network-0.stderr",
+      "bytes": 198
+    },
+    {
+      "sha256": "98a7cbac02c3ff51a8fd5549c24ad8bb1a2c246ee9623bf9210d9ec9168822e9",
+      "name": "time-migration-linux-qualified-novovm_network-0.stdout",
+      "bytes": 7454
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-linux-qualified-novovm_network-1.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "c6fc2b99b603b3c4e1dd33132cd5ab2964adc2b4212d3599f6ad4909ac26a9a2",
+      "name": "time-migration-linux-qualified-novovm_network-1.stdout",
+      "bytes": 3760
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-linux-qualified-novovm_node-0.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "bad5dcf1563f43db8cdd38279fd5668f48d86f2b3391b33521c55a49e277d89a",
+      "name": "time-migration-linux-qualified-novovm_node-0.stdout",
+      "bytes": 1451
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-linux-qualified-novovm_node-1.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "2ce2df1f36e68d04769aeed01471b6456782071580f6119eb780a7d7ec0eede7",
+      "name": "time-migration-linux-qualified-novovm_node-1.stdout",
+      "bytes": 767
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-linux-qualified-novovm_rollout_policy-0.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "c5234840403a6497b47e88b8f53b5d7ac4cf0d27a5a65d5243f86acb62718776",
+      "name": "time-migration-linux-qualified-novovm_rollout_policy-0.stdout",
+      "bytes": 210
+    },
+    {
+      "sha256": "8c792e4a62512f8ff6320fe318d0ffa73ecff32cae986a67d807b1ea6d096053",
+      "name": "time-migration-linux-timestamps.stderr",
+      "bytes": 1099
+    },
+    {
+      "sha256": "41bc474d2b5100e9b472fafa0d4d8af4a1e64f99003eab2d541ddda07f10e9bb",
+      "name": "time-migration-linux-timestamps.stdout",
+      "bytes": 345
+    },
+    {
+      "sha256": "ae5e5f99b8392de74fdc048240dc2909e40c93bc0658386daf86c34bf6c7c487",
+      "name": "time-migration-root-audit.json",
+      "bytes": 7995
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-root-audit.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "2186b0cf298f15f76a4a24ebdf5acfb6b09570b1f353032e7b9b339122805f19",
+      "name": "time-migration-root-deny.stderr",
+      "bytes": 164280
+    },
+    {
+      "sha256": "f1a0fca39d4280363937aabd77783990ea6480bd9ca257816de3b68fc8efa845",
+      "name": "time-migration-root-deny.stdout",
+      "bytes": 48
+    },
+    {
+      "sha256": "99e10ec1e08817c8be36a74537d0e0c3c3e66b5a7c24e48e8aa0c4a7c8a8acba",
+      "name": "time-migration-runtime-audit.json",
+      "bytes": 4099
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-runtime-audit.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "383f69595ddad85c517727cb9be4ac86ba3b13ebf12343cabac35ec9cda5e8a5",
+      "name": "time-migration-runtime-deny.stderr",
+      "bytes": 34283
+    },
+    {
+      "sha256": "f1a0fca39d4280363937aabd77783990ea6480bd9ca257816de3b68fc8efa845",
+      "name": "time-migration-runtime-deny.stdout",
+      "bytes": 48
+    },
+    {
+      "sha256": "5e58a002d4bb2c8c14f8cee3c6cf900f5d818cc206a8c992fa06b5dc314e3da9",
+      "name": "time-migration-time-callers.txt",
+      "bytes": 1840
+    },
+    {
+      "sha256": "c79f88b954090c6731c88a572bbad86fb54e875ec1a0ba78f4ceed643b54cbab",
+      "name": "time-migration-windows-build.jsonl",
+      "bytes": 449313
+    },
+    {
+      "sha256": "9b2f6afe35f47efd1e8770658be6b38c6c7417e64197173e2c7f5987078b9f2b",
+      "name": "time-migration-windows-build.stderr",
+      "bytes": 2932
+    },
+    {
+      "sha256": "81fb5ab83fd62c007230309ac56b3ee5df0e73f7c4bd4e449b9f51c0449646be",
+      "name": "time-migration-windows-clippy.stderr",
+      "bytes": 3530
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-clippy.stdout",
+      "bytes": 0
+    },
+    {
+      "sha256": "efe1686c5548e0a471503662393c99d090676e496f963d478cc754757f3dd11e",
+      "name": "time-migration-windows-novovm_node-0.stderr",
+      "bytes": 3379
+    },
+    {
+      "sha256": "c43f3cde227ef7a391ff2417da7f622e994af26adaca7663dcc1786e23f7082d",
+      "name": "time-migration-windows-novovm_node-0.stdout",
+      "bytes": 1900
+    },
+    {
+      "sha256": "4b2c9403c74abf8b5b1e0374b63f3a76b42a9f54400e5bd01cc7ab9b59e9d18b",
+      "name": "time-migration-windows-novovm_node-1.stderr",
+      "bytes": 10819
+    },
+    {
+      "sha256": "91a412375cec79143d5b324fe8e37b99a110b3feabd138a3fc616137f8e18c49",
+      "name": "time-migration-windows-novovm_node-1.stdout",
+      "bytes": 40122
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-novovm_rollout_policy-0.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "2f972260737baed1c51e67b55349cfd060f3c443fc0f6b3541d7c2fef0a6e6e0",
+      "name": "time-migration-windows-novovm_rollout_policy-0.stdout",
+      "bytes": 210
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-qualified-novovm_governance_observability-0.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "f5f50b8f29d11e26cde3b79f4b14003a26b5e30deb2fa0022e3a37fda8a6ae5d",
+      "name": "time-migration-windows-qualified-novovm_governance_observability-0.stdout",
+      "bytes": 379
+    },
+    {
+      "sha256": "64e6c375d9f1823aa8ac3b516dcbe5a6ff570a8c4680313adc7ac786603f3cba",
+      "name": "time-migration-windows-qualified-novovm_network-0.stderr",
+      "bytes": 193
+    },
+    {
+      "sha256": "320df4ad04aefdd567142cc90fa314bf73b4fe8d649e685f58a42505bb898227",
+      "name": "time-migration-windows-qualified-novovm_network-0.stdout",
+      "bytes": 7454
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-qualified-novovm_network-1.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "562ebb30b5e5a499ed3913a76acf103b8344c47e31ea6a55db61c60225a3b50f",
+      "name": "time-migration-windows-qualified-novovm_network-1.stdout",
+      "bytes": 3760
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-qualified-novovm_node-0.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "8121bfd4cb011890683e868f88c674d82f903f95edaa1c322fab0f3291ff5921",
+      "name": "time-migration-windows-qualified-novovm_node-0.stdout",
+      "bytes": 1451
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-qualified-novovm_node-1.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "cd9da4090578f985a6a20eca968b98d791c1b103c9e9a925649201f45b18be98",
+      "name": "time-migration-windows-qualified-novovm_node-1.stdout",
+      "bytes": 767
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-qualified-novovm_rollout_policy-0.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "2f972260737baed1c51e67b55349cfd060f3c443fc0f6b3541d7c2fef0a6e6e0",
+      "name": "time-migration-windows-qualified-novovm_rollout_policy-0.stdout",
+      "bytes": 210
+    },
+    {
+      "sha256": "876d598bf6773304b1cbed8280438fbbbb219bd80edde1fe5ba509137125da8a",
+      "name": "time-migration-windows-qualified-result.json",
+      "bytes": 1619
+    },
+    {
+      "sha256": "aab8dcad964f5925544588cbf54e16f4337db13bf6c7e16f8cb9b1f40af76083",
+      "name": "time-migration-windows-result.json",
+      "bytes": 690
+    },
+    {
+      "sha256": "cf1873276b6c5632791c7bbbb76999b523e5afe7e2b8cfa8e84c8c0f69b7cbae",
+      "name": "time-migration-windows-route-build.stderr",
+      "bytes": 752
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-route-build.stdout",
+      "bytes": 0
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-route-build2.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-route-build2.stdout",
+      "bytes": 0
+    },
+    {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "name": "time-migration-windows-route.stderr",
+      "bytes": 0
+    },
+    {
+      "sha256": "12aa4d43bf0bb2067876c5463d958f58ae5087def832c1ad9a39874e64b62fed",
+      "name": "time-migration-windows-route.stdout",
+      "bytes": 69
+    },
+    {
+      "sha256": "90a22f81d5a172ec2a828e82d29c0a5031f30c6fa7e23efc05272eeb0b20fdc6",
+      "name": "time-migration-windows-timestamps.stderr",
+      "bytes": 1244
+    },
+    {
+      "sha256": "ae654b83eb3535d6eacff5ab081979c303061130ecaa02b63e2e1e506f8db5ed",
+      "name": "time-migration-windows-timestamps.stdout",
+      "bytes": 345
+    },
+    {
+      "sha256": "53b8a065d522060907480226c6b3d609aa15b651952ec75b2388d3757b87561e",
+      "name": "time-migration-wmi-features.txt",
+      "bytes": 2920
+    }
+  ],
+  "windows": {
+    "started_utc": "2026-11-17T12:57:24.7367279Z",
+    "exit_code": 0,
+    "checks": [
+      {
+        "name": "time-migration-windows-qualified-novovm_node-0",
+        "summary": [
+          "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.00s"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "time-migration-windows-qualified-novovm_node-1",
+        "summary": [
+          "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1832 filtered out; finished in 0.00s"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "time-migration-windows-qualified-novovm_governance_observability-0",
+        "summary": [
+          "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "time-migration-windows-qualified-novovm_rollout_policy-0",
+        "summary": [
+          "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "time-migration-windows-qualified-novovm_network-0",
+        "summary": [
+          "test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 1259 filtered out; finished in 98.33s"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "time-migration-windows-qualified-novovm_network-1",
+        "summary": [
+          "test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 1297 filtered out; finished in 0.00s"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "finished_utc": "2026-11-17T13:04:32.0911663Z"
+  },
+  "linux": "exit=0",
+  "root_audit_exit": 0,
+  "runtime_audit_exit": 0,
+  "root_deny_exit": 0,
+  "runtime_deny_exit": 0,
+  "qualified_each_platform": {
+    "native_owner": 13,
+    "carrier": 72,
+    "resources": 34,
+    "soak": 15,
+    "duty": 7,
+    "governance": 3,
+    "rollout": 1,
+    "timestamp": 2
+  },
+  "initial_extra_selector_each_platform": {
+    "passed": 76,
+    "failed": 25,
+    "classification": "legacy Host refused; retained; no gate/production compatibility opt-in changed"
+  },
+  "full": "new-source Full not yet dispatched",
+  "package_qualified": false,
+  "deployed": false
+}

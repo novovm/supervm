@@ -1,0 +1,39 @@
+
+running 34 tests
+test service_concurrency::request_rate::tests::changed_work_and_idle_gaps_invalidate_a_marginal_comparison ... ok
+test service_concurrency::request_rate::tests::cooldown_boundary_and_watch_only_traffic_do_not_manufacture_a_slope ... ok
+test service_concurrency::request_rate::tests::default_rate_requires_two_busy_successful_windows_and_can_cross128 ... ok
+test service_concurrency::request_rate::tests::failures_network_pressure_and_single_execution_outlier_do_not_grow_or_cut_rate ... ok
+test service_concurrency::request_rate::tests::flat_throughput_with_queue_growth_rolls_back_one_probe_then_cools_down ... ok
+test service_concurrency::request_rate::tests::payload_size_or_counter_restart_cannot_roll_back_the_old_workload_probe ... ok
+test service_concurrency::request_rate::tests::real_resource_pressure_reduces_admission_without_needing_failures ... ok
+test service_concurrency::tests::aggregate_transport_lease_preserves_text_and_typical_image_memory ... ok
+test service_concurrency::tests::authenticated_udp_demand_requires_real_work_before_execution_growth ... ok
+test service_concurrency::tests::cancelled_network_operation_does_not_infer_cpu_pressure ... ok
+test service_concurrency::tests::completed_overlap_remains_saturation_evidence_for_slow_work ... ok
+test service_concurrency::tests::completed_replies_release_execution_before_ack_without_double_completion ... ok
+test service_concurrency::tests::completed_reply_memory_remains_bounded_through_pressure_shrink ... ok
+test service_concurrency::tests::connection_capacity_tracks_resources_and_preserves_active_leases ... ok
+test service_concurrency::tests::demand_requires_success_and_pressure_reduces_new_work ... ok
+test service_concurrency::tests::execution_backoff_vetoes_wire_growth_without_halving_bandwidth ... ok
+test service_concurrency::tests::execution_measurement_finishes_before_owner_observation ... ok
+test service_concurrency::tests::idle_watches_cover_admitted_connections_without_consuming_data_slots ... ok
+test service_concurrency::tests::isolated_slow_request_does_not_infer_concurrency_pressure ... ok
+test service_concurrency::tests::low_memory_watches_leave_small_requests_and_receipts_usable ... ok
+test service_concurrency::tests::native_wire_allowance_follows_cost_pressure_and_actual_refusals ... ok
+test service_concurrency::tests::normal_memory_recovery_restores_baseline_without_remote_completions ... ok
+test service_concurrency::tests::outbound_payloads_share_memory_but_not_local_latency_feedback ... ok
+test service_concurrency::tests::platform_pressure_backs_off_without_saturated_or_slow_work ... ok
+test service_concurrency::tests::policy_and_queue_waits_do_not_reduce_execution_feedback ... ok
+test service_concurrency::tests::queued_body_is_accounted_without_execution_or_false_rejection ... ok
+test service_concurrency::tests::queued_large_body_preserves_small_work_and_survives_shrink_without_new_admission ... ok
+test service_concurrency::tests::rejection_counters_separate_admission_and_store_causes ... ok
+test service_concurrency::tests::saturation_after_future_completion_does_not_change_its_feedback ... ok
+test service_concurrency::tests::shrink_does_not_revoke_active_and_returned_permits_are_withheld ... ok
+test service_concurrency::tests::slow_execution_does_not_shrink_authenticated_connection_capacity ... ok
+test service_concurrency::tests::waiting_work_keeps_admission_memory_and_cancellation_semantics ... ok
+test service_concurrency::tests::watch_completion_releases_subscription_but_retains_reply_memory ... ok
+test service_concurrency::tests::watch_memory_cap_and_pressure_shrink_preserve_existing_permits ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 1297 filtered out; finished in 0.00s
+

@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{Context, Result};
-use chrono::Utc;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::mainline_soak::{
     MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1, MAINLINE_SOAK_REPORT_SCHEMA_V1,
@@ -96,7 +96,7 @@ pub fn default_mainline_soak_24h_report_path_v1() -> PathBuf {
 
 #[must_use]
 pub fn default_mainline_duty_report_markdown_path_v1() -> PathBuf {
-    let date = Utc::now().format("%Y-%m-%d").to_string();
+    let date = OffsetDateTime::now_utc().date().to_string();
     PathBuf::from(format!("artifacts/mainline/mainline-duty-report-{date}.md"))
 }
 
@@ -491,7 +491,7 @@ pub fn load_mainline_duty_input_from_paths_v1(
     let six_hour = parse_soak_digest_v1(&soak_6h_raw, "6h");
     let twenty_four_hour = parse_soak_digest_v1(&soak_24h_raw, "24h");
     Ok(MainlineDutyReportInputV1 {
-        generated_utc: Utc::now().to_rfc3339(),
+        generated_utc: OffsetDateTime::now_utc().format(&Rfc3339)?,
         owner,
         workflow_run_url,
         nightly_overall_pass,

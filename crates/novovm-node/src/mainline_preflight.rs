@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
-use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 use std::path::Path;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 pub const MAINLINE_GATE_LOCKSET_V1: &str = "check_novovm_network+check_novovm_node+test_scheduler_gate_matrix+test_manual_route_env_lock_matrix+test_l2_l1_export_equivalence_batch_vs_replay+test_l2_l1_export_equivalence_batch_vs_watch+test_l2_l1_anchor_fingerprint_stable+test_mainline_status_freshness_gate_contract_is_frozen+test_discovery_membership_freshness_contract_default_is_frozen+test_discovery_membership_gossip_json_supports_single_and_vec_message+test_discovery_source_governance_contract_is_frozen+test_discovery_source_breakdown_contract_is_frozen+test_discovery_membership_priority_contract_is_frozen+test_cross_node_runtime_membership_closed_loop+test_cross_node_runtime_membership_cross_region_is_not_admitted+test_cross_node_runtime_membership_newer_unavailable_dominates_older_healthy+test_cross_node_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_cross_node_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_runtime_membership_can_affect_l3_route_selection_across_batch_replay_watch+test_operator_forced_still_dominates_route_selection_across_batch_replay_watch+test_pruned_dynamic_relays_no_longer_affect_selection_across_batch_replay_watch+test_concurrent_runtime_membership_order_keeps_selection_view_stable+test_stale_runtime_membership_prunes_discovered_relay_after_refresh+test_cross_node_gossip_membership_order_keeps_selection_view_stable+test_cross_node_gossip_membership_respects_operator_forced_selection+test_runtime_membership_unavailable_update_prunes_existing_discovered_relay+test_v2_matrix_a_order_perturbation_consistency+test_v2_matrix_b_multi_source_conflict_consistency+test_v2_matrix_c_weak_network_disturbance_consistency+test_v2_matrix_d_multi_region_view_consistency+test_v2_stage2a_large_scale_distributed_adjudication_consistency+test_v2_stage2b_weak_network_robustness_consistency+test_v2_stage2c_multi_region_real_route_consistency+test_v2_stage3a_convergence_recovery_consistency+test_v2_stage3b_convergence_time_recovery_budget_consistency+test_relay_path_tests+test_mainline_soak_evidence+test_mainline_soak_cli+test_mainline_duty_report_evidence+test_common_candidate_execution_plan+test_native_candidate_workspace+test_native_nonce_identity_v2+test_native_nonce_checkpoint_bundle+test_native_nonce_upgrade_staging+test_native_nonce_upgrade_authorization+test_native_nonce_source_qc+test_native_seal_new_view+test_native_seal_new_view_admission+test_native_transport_source_binding+test_native_collector_evidence+test_queue_replay_smoke";
 pub const REQUIRED_GATE_KEYS_IN_ORDER: [&str; 51] = [
@@ -151,7 +151,7 @@ pub fn run_preflight(repo_root: &Path) -> Result<PreflightOutcome> {
         "status.generated_utc_missing",
         "mainline gate payload missing generated_utc",
     )?;
-    let generated_time = DateTime::parse_from_rfc3339(generated_utc).map_err(|_| {
+    let generated_time = OffsetDateTime::parse(generated_utc, &Rfc3339).map_err(|_| {
         anyhow::anyhow!(
             "mainline gate contract failed [status.generated_utc_missing]: invalid generated_utc format: '{}'",
             generated_utc
@@ -175,8 +175,8 @@ pub fn run_preflight(repo_root: &Path) -> Result<PreflightOutcome> {
         max_age_seconds = parsed;
     }
 
-    let age_seconds = (Utc::now() - generated_time.with_timezone(&Utc))
-        .num_seconds()
+    let age_seconds = (OffsetDateTime::now_utc() - generated_time)
+        .whole_seconds()
         .max(0);
     if age_seconds > max_age_seconds {
         return contract_bail(
@@ -358,7 +358,7 @@ pub fn run_preflight(repo_root: &Path) -> Result<PreflightOutcome> {
     }
 
     let mut status_for_write = status.clone();
-    let checked_utc = Utc::now().to_rfc3339();
+    let checked_utc = OffsetDateTime::now_utc().format(&Rfc3339)?;
     let preflight_block = json!({
         "schema": "supervm-mainline-preflight/v1",
         "pass": true,
@@ -390,4 +390,56 @@ pub fn run_preflight(repo_root: &Path) -> Result<PreflightOutcome> {
         age_seconds,
         max_age_seconds,
     })
+}
+
+#[cfg(test)]
+mod timestamp_migration_tests {
+    use super::*;
+
+    #[test]
+    fn existing_status_formats_reach_the_original_gate_validation() {
+        for suffix in ["Z", "+00:00"] {
+            let dir = std::env::temp_dir().join(format!(
+                "novovm-timestamp-migration-{}-{}",
+                std::process::id(),
+                OffsetDateTime::now_utc().unix_timestamp_nanos()
+            ));
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::create_dir(dir.join("artifacts")).unwrap();
+            let stamp = OffsetDateTime::now_utc().format(&Rfc3339).unwrap();
+            let stamp = format!("{}{suffix}", stamp.trim_end_matches('Z'));
+            std::fs::write(
+                dir.join("artifacts/mainline-status.json"),
+                json!({"schema":"supervm-mainline-status/v2", "generated_utc":stamp}).to_string(),
+            )
+            .unwrap();
+            let err = run_preflight(&dir).err().unwrap().to_string();
+            assert!(err.contains("gate.object_missing"), "{err}");
+            for (stamp, error) in [
+                ("2026-02-30T12:00:00Z", "status.generated_utc_missing"),
+                ("2000-01-01T00:00:00+00:00", "freshness.expired"),
+            ] {
+                std::fs::write(
+                    dir.join("artifacts/mainline-status.json"),
+                    json!({"schema":"supervm-mainline-status/v2", "generated_utc":stamp})
+                        .to_string(),
+                )
+                .unwrap();
+                let err = run_preflight(&dir).err().unwrap().to_string();
+                assert!(err.contains(error), "{err}");
+            }
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn timestamp_offsets_fractional_seconds_and_invalid_dates() {
+        let utc = OffsetDateTime::parse("2026-11-17T12:30:00.123456789Z", &Rfc3339).unwrap();
+        let local = OffsetDateTime::parse("2026-11-17T20:30:00.123456789+08:00", &Rfc3339).unwrap();
+        assert_eq!(utc, local);
+        assert_eq!((utc - local).whole_seconds(), 0);
+        for invalid in ["2026-02-30T12:00:00Z", "2026-11-17", "not-a-time"] {
+            assert!(OffsetDateTime::parse(invalid, &Rfc3339).is_err());
+        }
+    }
 }

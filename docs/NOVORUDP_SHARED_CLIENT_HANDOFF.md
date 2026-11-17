@@ -1,5 +1,22 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 21:07 A: approved chrono migration locally qualified; freeze corrected eight-slot candidate
+
+User approved chrono and the Iroh/netwatch/WMI dependency migration without relaxing gates.
+Root product graph now has no chrono: original report/preflight callers use existing time0.3.53;
+original netwatch0.19.3 sources retain WMI0.18.4 route queries with only unused default datetime
+features disabled. Original Windows WMI query actually passed. Windows/Linux each147 selected
+tests, strict Clippy(lib/tests/bins), formatting and root/runtime Audit/Deny passed. Initial overly
+broad mainline selector76pass/25legacy-Host-refusals per OS remains recorded; no compatibility
+mode enabled, no CI selector/assertion/ignore changed. [Exact migration and raw evidence](../artifacts/audit/novonet-concurrent-recovery-20261117/capacity8/time-migration/README.md).
+
+Next: one corrected-source Full, then new original fixed packages/qualification. Earlier e666
+Full security failure is not overwritten; assembled e666 packages are not relabeled. No A/B/C/D
+update/new object/new observer in this migration. C owns Android/NOVOCHAT; this is not a phone
+qualification. Other consuming Cargo roots must carry reviewed path patches explicitly.
+Resume unfinished recovery-object and true in-flight concurrency only after candidate and actual
+host readiness; accepted direct/single/double delivery baselines are not repeated.
+
 ## 2026-11-17 20:25 A: eight-slot local pass; Full security / chrono migration decision
 
 Eight-slot original-owner implementation/source e666a6fb is synchronized, Windows/Linux local groups13/72/34 plus final stress1 and strict Clippy passed. One exact-source Full44079683535 started; actual security job134026939952 failed root Cargo Audit on libz-sys1.1.31 / RUSTSEC-2026-0544. Cargo regenerated the minimal root-lock patch to1.1.33, root/runtime local Audit now pass and both actual native-node dependency trees are unchanged. Root Deny then independently rejects chrono unmaintained / RUSTSEC-2026-0543 (no patched version); root bans/licenses/sources and separate runtime Deny pass. No new ignore or policy relaxation. Chrono includes own node/governance/rollout tools and Iroh→netwatch→WMI, not an EVM-only blocker. Its migration or a policy exception is beyond the eight-slot parameter qualification and requires direction. [Actual originals, correction, remaining scope and recommended next work](../artifacts/audit/novonet-concurrent-recovery-20261117/capacity8/ci-first/README.md).

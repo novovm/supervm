@@ -1,0 +1,15 @@
+error[E0463]: can't find crate for `tokio_macros` which `tokio` depends on
+ --> D:\WorksArea\SUPERVM\target\aoem-latest-57090b6b-20261117/qualify_original_netwatch.rs:2:19
+  |
+2 |     let runtime = tokio::runtime::Builder::new_current_thread()
+  |                   ^^^^^ can't find crate
+
+error[E0463]: can't find crate for `pin_project_internal` which `netwatch` depends on
+ --> D:\WorksArea\SUPERVM\target\aoem-latest-57090b6b-20261117/qualify_original_netwatch.rs:6:34
+  |
+6 |     let route = runtime.block_on(netwatch::interfaces::default_route_interface())
+  |                                  ^^^^^^^^ can't find crate
+
+error: aborting due to 2 previous errors
+
+For more information about this error, try `rustc --explain E0463`.

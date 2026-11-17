@@ -1,12 +1,12 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::Path;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[derive(Debug)]
 struct Args {
@@ -202,7 +202,7 @@ pub fn run_with_args(raw_args: &[String]) -> Result<()> {
     let mut state = Map::new();
     state.insert(
         "generated_at_utc".to_string(),
-        Value::String(Utc::now().to_rfc3339()),
+        Value::String(OffsetDateTime::now_utc().format(&Rfc3339)?),
     );
     state.insert(
         "input_file".to_string(),

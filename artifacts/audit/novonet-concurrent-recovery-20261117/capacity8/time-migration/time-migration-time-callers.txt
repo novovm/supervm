@@ -1,0 +1,25 @@
+time v0.3.53
+├── netwatch v0.19.3 (D:\WorksArea\SUPERVM\vendor\netwatch)
+│   └── iroh v1.3.0 (D:\WorksArea\SUPERVM\vendor\iroh)
+│       └── novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+│           ├── novovm-bench v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-bench)
+│           ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│           ├── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+│           │   ├── novovm-bench v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-bench)
+│           │   ├── novovm-evm-gateway v0.1.0 (D:\WorksArea\SUPERVM\crates\gateways\evm-gateway)
+│           │   └── novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+│           └── novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+│               ├── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+│               └── novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+├── novovm-governance-observability v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-governance-observability)
+│   ├── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+│   └── novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+├── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+├── novovm-rollout-policy v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-rollout-policy)
+├── rcgen v0.12.1
+│   └── novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node) (*)
+│   [dev-dependencies]
+│   ├── novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network) (*)
+│   └── novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay) (*)
+└── yasna v0.5.2
+    └── rcgen v0.12.1 (*)

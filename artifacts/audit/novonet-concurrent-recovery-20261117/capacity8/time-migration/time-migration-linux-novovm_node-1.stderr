@@ -1,0 +1,76 @@
+
+thread 'mainline_query::tests::mainline_query_cut_c_pq_required_mldsa87_fails_closed_until_pq_wire' (1565) panicked at crates/novovm-node/src/mainline_query.rs:12511:9:
+unexpected PQ fail-closed error: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'mainline_query::tests::mainline_query_cut_c_pq_required_non_pq_key_rejected' (1630) panicked at crates/novovm-node/src/mainline_query.rs:12546:9:
+unexpected PQ fail-closed error: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_cut_c_privacy_required_with_confidential_path_succeeds' (1693) panicked at crates/novovm-node/src/mainline_query.rs:5770:10:
+nov_swap should return a product-facing result: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_cut_c_privacy_required_without_privacy_path_rejected' (1756) panicked at crates/novovm-node/src/mainline_query.rs:5770:10:
+nov_swap should return a product-facing result: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_cut_c_standard_ed25519_allows_execution' (1819) panicked at crates/novovm-node/src/mainline_query.rs:5770:10:
+nov_swap should return a product-facing result: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_live_mapped_asset_auto_heal_product_smoke' (1885) panicked at crates/novovm-node/src/mainline_query.rs:5176:10:
+ua_createUca should succeed for mainline smoke: legacy Host execution is disabled: Host semantic mutation and persistence; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_live_mapped_asset_m2_credit_product_smoke' (1902) panicked at crates/novovm-node/src/mainline_query.rs:14474:14:
+mainline env test lock poisoned: PoisonError { .. }
+
+thread 'mainline_query::tests::mainline_query_m2_bridge_risk_status_blocks_unsafe_m2' (1903) panicked at crates/novovm-node/src/mainline_query.rs:14209:10:
+nov_buyAsset should return a failed receipt when NETH M2 risk is blocked: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_m2_fee_asset_auto_requires_privacy_path' (2215) panicked at crates/novovm-node/src/mainline_query.rs:5818:14:
+nov_swap should return a product-facing result: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_m2_fee_asset_confidential_path_executes' (2278) panicked at crates/novovm-node/src/mainline_query.rs:5818:14:
+nov_swap should return a product-facing result: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_mapped_asset_shadow_lifecycle_product_smoke' (2341) panicked at crates/novovm-node/src/mainline_query.rs:5176:10:
+ua_createUca should succeed for mainline smoke: legacy Host execution is disabled: Host semantic mutation and persistence; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_mapped_finality_attestation_policy_product_smoke' (2358) panicked at crates/novovm-node/src/mainline_query.rs:15022:14:
+mainline env test lock poisoned: PoisonError { .. }
+
+thread 'mainline_query::tests::mainline_query_mapped_finality_source_policy_product_smoke' (2359) panicked at crates/novovm-node/src/mainline_query.rs:14839:14:
+mainline env test lock poisoned: PoisonError { .. }
+
+thread 'mainline_query::tests::mainline_query_mapped_lock_contract_policy_product_smoke' (2360) panicked at crates/novovm-node/src/mainline_query.rs:14700:14:
+mainline env test lock poisoned: PoisonError { .. }
+
+thread 'mainline_query::tests::mainline_query_mapped_min_confirmations_policy_product_smoke' (2361) panicked at crates/novovm-node/src/mainline_query.rs:15290:14:
+mainline env test lock poisoned: PoisonError { .. }
+
+thread 'mainline_query::tests::mainline_query_neth_to_nov_swap_executes_via_real_product_entry' (2363) panicked at crates/novovm-node/src/mainline_query.rs:12252:10:
+nov_swap should succeed through mainline query: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_nov_swap_normalizes_subject_to_explicit_direct_signer_account_id' (2364) panicked at crates/novovm-node/src/mainline_query.rs:12336:10:
+nov_swap should normalize subject through mainline query: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_nov_swap_reports_risk_rejection_on_real_product_entry' (2365) panicked at crates/novovm-node/src/mainline_query.rs:15750:10:
+nov_swap should return blocked receipt: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_protocol_clearing_price_and_asset_purchase_product_smoke' (2366) panicked at crates/novovm-node/src/mainline_query.rs:13571:10:
+nov_buyAsset should use protocol P_redeem through mainline query: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_redeem_open_vault_and_asset_balance_flow_through_real_entry' (2367) panicked at crates/novovm-node/src/mainline_query.rs:12851:10:
+nov_redeem should succeed through mainline query: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_treasury_deposit_buy_asset_product_smoke' (2368) panicked at crates/novovm-node/src/mainline_query.rs:13272:10:
+nov_depositReserve should succeed through mainline query: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_treasury_governance_write_product_smoke' (2369) panicked at crates/novovm-node/src/mainline_query.rs:13678:14:
+disabled governance should return failed native receipt: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'mainline_query::tests::mainline_query_treasury_reserve_proof_product_smoke_enforces_cap' (2370) panicked at crates/novovm-node/src/mainline_query.rs:13097:10:
+nov_buyAsset should succeed while proof cap covers reserve: legacy Host execution is disabled: raw ingress immediate Host dispatch; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'unified_account_surface::tests::unified_account_surface_account_asset_views_execute_via_real_mainline_entry' (2470) panicked at crates/novovm-node/src/unified_account_surface.rs:6368:35:
+ua_createUca should succeed: legacy Host execution is disabled: Host semantic mutation and persistence; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path
+
+thread 'unified_account_surface::tests::unified_account_surface_executes_via_real_mainline_entry' (2487) panicked at crates/novovm-node/src/unified_account_surface.rs:6368:35:
+ua_createUca should succeed: legacy Host execution is disabled: Host semantic mutation and persistence; NOVOVM_ALLOW_LEGACY_HOST_EXECUTION=1 is an operator-only compatibility/test opt-in, not production approval; use the authenticated pending ingress and reviewed AOEM candidate execution path

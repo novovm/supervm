@@ -1,0 +1,4 @@
+*.stdout -text -whitespace
+*.stderr -text -whitespace
+*.txt -text -whitespace
+time-migration-*.json -text -whitespace

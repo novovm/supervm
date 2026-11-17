@@ -1,9 +1,9 @@
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[path = "../mainline_preflight.rs"]
 mod mainline_preflight;
@@ -1058,7 +1058,7 @@ fn main() -> Result<()> {
 
     let status = MainlineStatus {
         schema: "supervm-mainline-status/v2",
-        generated_utc: Utc::now().to_rfc3339(),
+        generated_utc: OffsetDateTime::now_utc().format(&Rfc3339)?,
         gate,
         layers: MainlineLayers {
             l1: 100,
@@ -1081,7 +1081,7 @@ fn main() -> Result<()> {
 
     let delivery = MainlineDeliveryContract {
         schema: "supervm-mainline-delivery/v1",
-        generated_utc: Utc::now().to_rfc3339(),
+        generated_utc: OffsetDateTime::now_utc().format(&Rfc3339)?,
         milestone: "M23",
         gate_entry: "cargo run -p novovm-node --bin supervm-mainline-gate",
         status_source: "artifacts/mainline-status.json",

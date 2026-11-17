@@ -1,0 +1,1314 @@
+
+running 101 tests
+test mainline_canonical::tests::append_mainline_canonical_batch_marks_pending_tx_included_canonical ... ok
+test mainline_canonical::tests::append_mainline_canonical_batch_persists_store ... ok
+test mainline_canonical::tests::derive_mainline_eth_block_access_list_by_hash_returns_persisted_payload ... ok
+test mainline_canonical::tests::derive_mainline_eth_block_contexts_chain_parent_hashes_and_numbers ... ok
+test mainline_canonical::tests::derive_mainline_eth_fullnode_chain_view_projects_canonical_block_context ... ok
+test mainline_canonical::tests::load_mainline_canonical_store_defaults_missing_block_access_list_hash_to_none ... ok
+test mainline_duty_report::tests::legacy_or_missing_schema_cannot_be_promoted_to_green ... ok
+test mainline_duty_report::tests::level_is_red_when_nightly_failed ... ok
+test mainline_duty_report::tests::level_is_yellow_when_metric_near_limit ... ok
+test mainline_duty_report::tests::nightly_requires_both_distinct_complete_profiles ... ok
+test mainline_duty_report::tests::pass_boolean_cannot_override_violations_or_missing_progress ... ok
+test mainline_duty_report::tests::smoke_idle_wrong_profile_and_false_duration_evidence_are_rejected ... ok
+test mainline_duty_report::tests::v2_full_workload_reports_can_be_green_and_preserve_sampled_rate ... ok
+test mainline_query::tests::block_context_to_eth_json_emits_block_access_list_hash_when_present ... ok
+test mainline_query::tests::eth_block_number_returns_head_view ... ok
+test mainline_query::tests::eth_end_to_end_adapter_canonical_query_parity_with_geth_baseline_v1 ... ok
+test mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_from_files_v1 ... {
+  "schema": "supervm-e2e-geth-parity-batch-report/v1",
+  "sampleDir": "D:\\WorksArea\\SUPERVM\\crates\\novovm-node\\tests\\fixtures\\geth-parity",
+  "sampleCount": 11,
+  "totalMismatchCount": 0,
+  "failedSamples": [],
+  "reports": [
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "adapter-e2e-default",
+      "chainId": 99160716,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-blob-tx-failure",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-blob-tx-success",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-create-contract-with-access-list",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-deploy-fail-revert",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-deploy-success-with-logs",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-dynamic-tx-failure",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-legacy-with-logs",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-reorg-dual-tx",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-type2-intrinsic-gas-low",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-type2-priority-over-max-fee",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    }
+  ]
+}
+ok
+test mainline_query::tests::eth_end_to_end_geth_sample_batch_parity_report_v1 ... {
+  "schema": "supervm-e2e-geth-parity-report/v1",
+  "chainId": 99160715,
+  "sections": {
+    "block": {
+      "checked": 10,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "receipt": {
+      "checked": 21,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "logs": {
+      "checked": 6,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "typedTxFailure": {
+      "checked": 6,
+      "mismatchCount": 0,
+      "mismatches": []
+    }
+  },
+  "result": {
+    "parity": true,
+    "totalMismatchCount": 0
+  }
+}
+ok
+test mainline_query::tests::eth_get_block_by_hash_returns_formal_block_view ... ok
+test mainline_query::tests::eth_get_block_by_number_emits_persisted_block_access_list_hash ... ok
+test mainline_query::tests::eth_get_block_by_number_returns_formal_block_view ... ok
+test mainline_query::tests::eth_get_block_by_number_sanitizes_failed_receipt_bloom_and_contract_address ... ok
+test mainline_query::tests::eth_get_block_returns_projected_root_fields_for_observable_diff_v2 ... ok
+test mainline_query::tests::eth_get_logs_filters_by_address_and_topic ... ok
+test mainline_query::tests::eth_get_logs_returns_empty_for_failed_receipts_without_logs ... ok
+test mainline_query::tests::eth_get_transaction_receipt_returns_canonical_receipt ... ok
+test mainline_query::tests::eth_get_transaction_receipt_returns_failed_call_semantics ... ok
+test mainline_query::tests::eth_get_transaction_receipt_returns_failed_deploy_semantics ... ok
+test mainline_query::tests::eth_queries_include_authoritative_native_lifecycle_metadata_when_tracked ... ok
+test mainline_query::tests::eth_queries_mark_noncanonical_blocks_when_authoritative_hash_differs ... ok
+test mainline_query::tests::eth_queries_switch_lifecycle_immediately_when_reorg_view_changes_v1 ... ok
+test mainline_query::tests::eth_success_receipt_log_and_block_views_are_consistent_v1 ... ok
+test mainline_query::tests::eth_syncing_uses_formal_chain_view_and_runtime_gap ... ok
+test mainline_query::tests::evm_protocol_observable_equivalence_geth_real_block_diff_gate_v2b ... {
+  "schema": "supervm-e2e-geth-real-block-diff-report/v2b",
+  "sample": "eth_getBlockByHash-hash-latest-1-fullTx",
+  "geth": {
+    "blockHash": "0xedb9ccf3a85f67c095ad48abfb0fa09d47179bb0f902078d289042d12428aca5",
+    "number": "0x9",
+    "transactionsRoot": "0x0767ed8359337dc6a8fdc77fe52db611bed1be87aac73c4556b1bf1dd3d190a5",
+    "receiptsRoot": "0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2",
+    "stateRoot": "0x78b2b19ef1a0276dbbc23a875dbf60ae5d10dafa0017098473c4871abd3e7b5c",
+    "gasUsed": "0x5208",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "supervm": {
+    "blockHash": "0x4e06d8bd31344ba28a7854e487ed8d9626f2f90a93b55938f1ee7ca09c1950db",
+    "number": "0x9",
+    "transactionsRoot": "0x0767ed8359337dc6a8fdc77fe52db611bed1be87aac73c4556b1bf1dd3d190a5",
+    "receiptsRoot": "0x056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2",
+    "stateRoot": "0x78b2b19ef1a0276dbbc23a875dbf60ae5d10dafa0017098473c4871abd3e7b5c",
+    "gasUsed": "0x5208",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "recomputed": {
+    "gethTransactionsRootFromFullTx": "0x0767ed8359337dc6a8fdc77fe52db611bed1be87aac73c4556b1bf1dd3d190a5",
+    "gethTransactionsRootRecomputedMatchesFixture": true
+  },
+  "result": {
+    "matchedFields": [
+      "number",
+      "gasUsed",
+      "logsBloom",
+      "transactionsRoot",
+      "receiptsRoot",
+      "stateRoot"
+    ],
+    "knownGapCount": 0,
+    "knownGaps": [],
+    "requiresRawTxRlpForFullTransactionsRootEquivalence": false
+  }
+}
+ok
+test mainline_query::tests::evm_protocol_observable_equivalence_geth_rpc_blackbox_projection_gate_v2 ... {
+  "schema": "supervm-e2e-geth-parity-report/v1",
+  "chainId": 99160715,
+  "sections": {
+    "block": {
+      "checked": 10,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "receipt": {
+      "checked": 21,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "logs": {
+      "checked": 6,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "typedTxFailure": {
+      "checked": 6,
+      "mismatchCount": 0,
+      "mismatches": []
+    }
+  },
+  "result": {
+    "parity": true,
+    "totalMismatchCount": 0
+  }
+}
+{
+  "schema": "supervm-e2e-geth-parity-batch-report/v1",
+  "sampleDir": "D:\\WorksArea\\SUPERVM\\crates\\novovm-node\\tests\\fixtures\\geth-parity",
+  "sampleCount": 11,
+  "totalMismatchCount": 0,
+  "failedSamples": [],
+  "reports": [
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "adapter-e2e-default",
+      "chainId": 99160716,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-blob-tx-failure",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-blob-tx-success",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-create-contract-with-access-list",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-deploy-fail-revert",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-deploy-success-with-logs",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-dynamic-tx-failure",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-legacy-with-logs",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-reorg-dual-tx",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-type2-intrinsic-gas-low",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-type2-priority-over-max-fee",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    }
+  ]
+}
+ok
+test mainline_query::tests::evm_protocol_observable_equivalence_geth_rpc_fixture_gate_v1 ... {
+  "schema": "supervm-e2e-geth-parity-report/v1",
+  "chainId": 99160715,
+  "sections": {
+    "block": {
+      "checked": 10,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "receipt": {
+      "checked": 21,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "logs": {
+      "checked": 6,
+      "mismatchCount": 0,
+      "mismatches": []
+    },
+    "typedTxFailure": {
+      "checked": 6,
+      "mismatchCount": 0,
+      "mismatches": []
+    }
+  },
+  "result": {
+    "parity": true,
+    "totalMismatchCount": 0
+  }
+}
+{
+  "schema": "supervm-e2e-geth-parity-batch-report/v1",
+  "sampleDir": "D:\\WorksArea\\SUPERVM\\crates\\novovm-node\\tests\\fixtures\\geth-parity",
+  "sampleCount": 11,
+  "totalMismatchCount": 0,
+  "failedSamples": [],
+  "reports": [
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "adapter-e2e-default",
+      "chainId": 99160716,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-blob-tx-failure",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-blob-tx-success",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-create-contract-with-access-list",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-deploy-fail-revert",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-deploy-success-with-logs",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-dynamic-tx-failure",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-legacy-with-logs",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-reorg-dual-tx",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-type2-intrinsic-gas-low",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    },
+    {
+      "schema": "supervm-e2e-geth-parity-report/v1",
+      "sample": "geth-type2-priority-over-max-fee",
+      "chainId": 1,
+      "sections": {
+        "block": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "receipt": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "logs": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "typedTxFailure": {
+          "mismatchCount": 0,
+          "mismatches": []
+        },
+        "observableProjection": {
+          "mismatchCount": 0,
+          "mismatches": []
+        }
+      },
+      "result": {
+        "parity": true,
+        "totalMismatchCount": 0
+      }
+    }
+  ]
+}
+ok
+test mainline_query::tests::governance_queries_do_not_require_canonical_store_path ... ok
+test mainline_query::tests::mainline_query_aoem_semantic_ingress_status_reports_required_gate ... ok
+test mainline_query::tests::mainline_query_cut_c_pq_required_mldsa87_fails_closed_until_pq_wire ... FAILED
+test mainline_query::tests::mainline_query_cut_c_pq_required_non_pq_key_rejected ... FAILED
+test mainline_query::tests::mainline_query_cut_c_privacy_required_with_confidential_path_succeeds ... FAILED
+test mainline_query::tests::mainline_query_cut_c_privacy_required_without_privacy_path_rejected ... FAILED
+test mainline_query::tests::mainline_query_cut_c_standard_ed25519_allows_execution ... FAILED
+test mainline_query::tests::mainline_query_governance_mldsa87_external_vote_executes_through_real_entry ... ok
+test mainline_query::tests::mainline_query_governance_mldsa87_invalid_signature_rejected_on_execute ... ok
+test mainline_query::tests::mainline_query_governance_submit_vote_execute_flow_through_real_entry ... ok
+test mainline_query::tests::mainline_query_live_mapped_asset_auto_heal_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_live_mapped_asset_m2_credit_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_m2_bridge_risk_status_blocks_unsafe_m2 ... FAILED
+test mainline_query::tests::mainline_query_m2_bridge_risk_status_product_smoke ... ok
+test mainline_query::tests::mainline_query_m2_fee_asset_auto_requires_privacy_path ... FAILED
+test mainline_query::tests::mainline_query_m2_fee_asset_confidential_path_executes ... FAILED
+test mainline_query::tests::mainline_query_mapped_asset_shadow_lifecycle_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_mapped_finality_attestation_policy_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_mapped_finality_source_policy_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_mapped_lock_contract_policy_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_mapped_min_confirmations_policy_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_native_execution_store_backend_status_reports_rocksdb_mode ... ok
+test mainline_query::tests::mainline_query_neth_to_nov_swap_executes_via_real_product_entry ... FAILED
+test mainline_query::tests::mainline_query_nov_swap_normalizes_subject_to_explicit_direct_signer_account_id ... FAILED
+test mainline_query::tests::mainline_query_nov_swap_reports_risk_rejection_on_real_product_entry ... FAILED
+test mainline_query::tests::mainline_query_protocol_clearing_price_and_asset_purchase_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_redeem_open_vault_and_asset_balance_flow_through_real_entry ... FAILED
+test mainline_query::tests::mainline_query_treasury_deposit_buy_asset_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_treasury_governance_write_product_smoke ... FAILED
+test mainline_query::tests::mainline_query_treasury_reserve_proof_product_smoke_enforces_cap ... FAILED
+test mainline_query::tests::native_execution_queries_do_not_require_canonical_store_path ... ok
+test mainline_query::tests::privacy_audit_policy_locks_m2_query_surface ... ok
+test mainline_query::tests::privacy_capability_status_caller_claims_never_enable_proof_queries ... ok
+test mainline_query::tests::privacy_capability_status_environment_claims_do_not_enable_proof_queries ... ok
+test mainline_query::tests::privacy_capability_status_reports_ringct_zk_and_mldsa_boundaries ... ok
+test mainline_query::tests::privacy_capability_status_without_capabilities_is_read_gate_only ... ok
+test mainline_query::tests::recognizes_mainline_governance_query_methods ... ok
+test mainline_query::tests::recognizes_mainline_native_execution_query_methods ... ok
+test mainline_query::tests::recognizes_mainline_unified_account_query_methods ... ok
+test mainline_query::tests::runtime_query_pending_tx_by_hash_falls_back_to_tombstone_after_cleanup ... ok
+test mainline_query::tests::runtime_query_returns_formal_native_worker_snapshot ... ok
+test mainline_query::tests::supervm_get_eth_canonical_block_access_list_by_hash_returns_payload ... ok
+test mainline_query::tests::supervm_get_eth_canonical_block_access_list_by_number_reports_missing_payload ... ok
+test mainline_query::tests::sync_degradation_reports_broadcast_no_available_peer ... ok
+test mainline_query::tests::sync_degradation_reports_broadcast_repeated_failure ... ok
+test mainline_query::tests::sync_degradation_reports_execution_budget_pressure ... ok
+test mainline_query::tests::sync_degradation_reports_pending_cleanup_pressure ... ok
+test mainline_soak::tests::beginning_end_and_all_missing_samples_fail_closed ... ok
+test mainline_soak::tests::complete_observed_window_is_required_for_duration_qualification ... ok
+test mainline_soak::tests::finite_read_error_budget_does_not_allow_long_sampling_gaps ... ok
+test mainline_soak::tests::idle_heartbeat_is_accepted_only_with_explicit_idle_scope ... ok
+test mainline_soak::tests::intermediate_cumulative_reset_cannot_hide_behind_positive_end_delta ... ok
+test mainline_soak::tests::invalid_source_domains_and_timestamps_are_hard_failures ... ok
+test mainline_soak::tests::per_round_body_gauges_can_decrease_and_are_not_cumulative_deltas ... ok
+test mainline_soak::tests::repeating_a_fresh_baseline_never_proves_new_work ... ok
+test mainline_soak::tests::replayed_pre_run_rounds_cannot_supply_progress ... ok
+test mainline_soak::tests::soak_evaluation_flags_threshold_violations ... ok
+test mainline_soak::tests::soak_metrics_capture_reason_distribution_and_oscillation ... ok
+test mainline_soak::tests::stale_snapshot_audit_reproduction_cannot_pass ... ok
+test mainline_soak::tests::tolerated_duplicate_does_not_double_count_a_round ... ok
+test mainline_soak::tests::unsafe_or_impossible_sampling_configuration_is_rejected ... ok
+test mainline_soak::tests::wall_clock_jump_cannot_upgrade_short_smoke_to_long_soak ... ok
+test unified_account_surface::tests::mainline_query_recognizes_unified_account_methods ... ok
+test unified_account_surface::tests::unified_account_surface_account_asset_views_execute_via_real_mainline_entry ... FAILED
+test unified_account_surface::tests::unified_account_surface_executes_via_real_mainline_entry ... FAILED
+
+failures:
+
+failures:
+    mainline_query::tests::mainline_query_cut_c_pq_required_mldsa87_fails_closed_until_pq_wire
+    mainline_query::tests::mainline_query_cut_c_pq_required_non_pq_key_rejected
+    mainline_query::tests::mainline_query_cut_c_privacy_required_with_confidential_path_succeeds
+    mainline_query::tests::mainline_query_cut_c_privacy_required_without_privacy_path_rejected
+    mainline_query::tests::mainline_query_cut_c_standard_ed25519_allows_execution
+    mainline_query::tests::mainline_query_live_mapped_asset_auto_heal_product_smoke
+    mainline_query::tests::mainline_query_live_mapped_asset_m2_credit_product_smoke
+    mainline_query::tests::mainline_query_m2_bridge_risk_status_blocks_unsafe_m2
+    mainline_query::tests::mainline_query_m2_fee_asset_auto_requires_privacy_path
+    mainline_query::tests::mainline_query_m2_fee_asset_confidential_path_executes
+    mainline_query::tests::mainline_query_mapped_asset_shadow_lifecycle_product_smoke
+    mainline_query::tests::mainline_query_mapped_finality_attestation_policy_product_smoke
+    mainline_query::tests::mainline_query_mapped_finality_source_policy_product_smoke
+    mainline_query::tests::mainline_query_mapped_lock_contract_policy_product_smoke
+    mainline_query::tests::mainline_query_mapped_min_confirmations_policy_product_smoke
+    mainline_query::tests::mainline_query_neth_to_nov_swap_executes_via_real_product_entry
+    mainline_query::tests::mainline_query_nov_swap_normalizes_subject_to_explicit_direct_signer_account_id
+    mainline_query::tests::mainline_query_nov_swap_reports_risk_rejection_on_real_product_entry
+    mainline_query::tests::mainline_query_protocol_clearing_price_and_asset_purchase_product_smoke
+    mainline_query::tests::mainline_query_redeem_open_vault_and_asset_balance_flow_through_real_entry
+    mainline_query::tests::mainline_query_treasury_deposit_buy_asset_product_smoke
+    mainline_query::tests::mainline_query_treasury_governance_write_product_smoke
+    mainline_query::tests::mainline_query_treasury_reserve_proof_product_smoke_enforces_cap
+    unified_account_surface::tests::unified_account_surface_account_asset_views_execute_via_real_mainline_entry
+    unified_account_surface::tests::unified_account_surface_executes_via_real_mainline_entry
+
+test result: FAILED. 76 passed; 25 failed; 0 ignored; 0 measured; 1738 filtered out; finished in 1.58s
+

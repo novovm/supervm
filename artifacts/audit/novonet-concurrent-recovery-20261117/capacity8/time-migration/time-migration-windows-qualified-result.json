@@ -1,0 +1,49 @@
+{
+  "started_utc": "2026-11-17T12:57:24.7367279Z",
+  "exit_code": 0,
+  "checks": [
+    {
+      "name": "time-migration-windows-qualified-novovm_node-0",
+      "summary": [
+        "test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.00s"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "time-migration-windows-qualified-novovm_node-1",
+      "summary": [
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1832 filtered out; finished in 0.00s"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "time-migration-windows-qualified-novovm_governance_observability-0",
+      "summary": [
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "time-migration-windows-qualified-novovm_rollout_policy-0",
+      "summary": [
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "time-migration-windows-qualified-novovm_network-0",
+      "summary": [
+        "test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 1259 filtered out; finished in 98.33s"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "time-migration-windows-qualified-novovm_network-1",
+      "summary": [
+        "test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 1297 filtered out; finished in 0.00s"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "finished_utc": "2026-11-17T13:04:32.0911663Z"
+}

@@ -1,0 +1,8 @@
+
+running 3 tests
+test metrics::tests::governance_assessment_flags_expected_warnings_and_signals ... ok
+test metrics::tests::phase4_decision_reports_shadow_bottleneck_under_thin_conversion ... ok
+test metrics::tests::phase4_decision_turns_go_when_quantitative_criteria_are_met ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

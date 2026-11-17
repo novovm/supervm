@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use novovm_network::{
     default_eth_fullnode_native_worker_runtime_snapshot_path_v1,
     load_eth_fullnode_native_worker_runtime_snapshot_from_path_v1,
@@ -13,6 +12,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 pub const MAINLINE_SOAK_REPORT_SCHEMA_V1: &str = "supervm-mainline-soak-report/v2";
 pub const MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1: &str =
@@ -964,7 +964,9 @@ fn finish_soak_report_v2(
     };
     MainlineSoakReportV1 {
         schema: MAINLINE_SOAK_REPORT_SCHEMA_V1,
-        generated_utc: Utc::now().to_rfc3339(),
+        generated_utc: OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .expect("system UTC must fit RFC 3339"),
         profile: config.profile.clone(),
         mode: policy.mode,
         validation_scope,

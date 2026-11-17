@@ -1,0 +1,20 @@
+
+running 15 tests
+test mainline_soak::tests::beginning_end_and_all_missing_samples_fail_closed ... ok
+test mainline_soak::tests::complete_observed_window_is_required_for_duration_qualification ... ok
+test mainline_soak::tests::finite_read_error_budget_does_not_allow_long_sampling_gaps ... ok
+test mainline_soak::tests::idle_heartbeat_is_accepted_only_with_explicit_idle_scope ... ok
+test mainline_soak::tests::intermediate_cumulative_reset_cannot_hide_behind_positive_end_delta ... ok
+test mainline_soak::tests::invalid_source_domains_and_timestamps_are_hard_failures ... ok
+test mainline_soak::tests::per_round_body_gauges_can_decrease_and_are_not_cumulative_deltas ... ok
+test mainline_soak::tests::repeating_a_fresh_baseline_never_proves_new_work ... ok
+test mainline_soak::tests::replayed_pre_run_rounds_cannot_supply_progress ... ok
+test mainline_soak::tests::soak_evaluation_flags_threshold_violations ... ok
+test mainline_soak::tests::soak_metrics_capture_reason_distribution_and_oscillation ... ok
+test mainline_soak::tests::stale_snapshot_audit_reproduction_cannot_pass ... ok
+test mainline_soak::tests::tolerated_duplicate_does_not_double_count_a_round ... ok
+test mainline_soak::tests::unsafe_or_impossible_sampling_configuration_is_rejected ... ok
+test mainline_soak::tests::wall_clock_jump_cannot_upgrade_short_smoke_to_long_soak ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 1816 filtered out; finished in 0.03s
+

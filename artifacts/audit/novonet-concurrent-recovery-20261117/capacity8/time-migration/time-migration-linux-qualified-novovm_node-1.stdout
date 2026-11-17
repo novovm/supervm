@@ -1,0 +1,12 @@
+
+running 7 tests
+test mainline_duty_report::tests::legacy_or_missing_schema_cannot_be_promoted_to_green ... ok
+test mainline_duty_report::tests::level_is_red_when_nightly_failed ... ok
+test mainline_duty_report::tests::level_is_yellow_when_metric_near_limit ... ok
+test mainline_duty_report::tests::nightly_requires_both_distinct_complete_profiles ... ok
+test mainline_duty_report::tests::pass_boolean_cannot_override_violations_or_missing_progress ... ok
+test mainline_duty_report::tests::smoke_idle_wrong_profile_and_false_duration_evidence_are_rejected ... ok
+test mainline_duty_report::tests::v2_full_workload_reports_can_be_green_and_preserve_sampled_rate ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 1824 filtered out; finished in 0.02s
+

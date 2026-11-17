@@ -1,0 +1,67 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking windows-sys v0.61.2
+    Checking time v0.3.53
+    Checking windows-sys v0.52.0
+    Checking aoem-bindings v0.1.0 (D:\WorksArea\SUPERVM\crates\aoem-bindings)
+    Checking novovm-protocol v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-protocol)
+    Checking socket2 v0.6.3
+    Checking mio v1.2.0
+    Checking schannel v0.1.29
+    Checking tokio v1.51.6
+    Checking rustls-platform-verifier v0.7.1
+    Checking ipconfig v0.3.4
+    Checking noq-udp v1.3.0
+    Checking netdev v0.45.1 (D:\WorksArea\SUPERVM\vendor\netdev)
+    Checking wmi v0.18.4
+   Compiling novovm-storage-budget v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-storage-budget)
+    Checking web30-core v0.1.0 (D:\WorksArea\SUPERVM\vendor\web30-core)
+    Checking tokio-util v0.7.19
+    Checking tokio-rustls v0.26.6
+    Checking hyper v1.12.0
+    Checking n0-future v0.3.2
+    Checking tower v0.5.3
+    Checking tower-http v0.6.11
+    Checking hyper-util v0.1.21
+    Checking tokio-stream v0.1.19
+    Checking noq v1.3.0
+    Checking hyper-rustls v0.27.10
+    Checking reqwest v0.13.5
+    Checking n0-watcher v1.0.0
+    Checking tokio-websockets v0.13.3
+    Checking n0-dns-resolver v0.1.0
+    Checking netwatch v0.19.3 (D:\WorksArea\SUPERVM\vendor\netwatch)
+    Checking backon v1.6.0
+    Checking tempfile v3.27.0
+    Checking iroh-dns v1.3.0
+    Checking atomicwrites v0.4.4
+    Checking rustls-native-certs v0.8.4
+    Checking novovm-udp-batch v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-udp-batch)
+    Checking iroh-relay v1.3.0
+    Checking yasna v0.5.2
+    Checking rcgen v0.12.1
+    Checking novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+    Checking iroh v1.3.0 (D:\WorksArea\SUPERVM\vendor\iroh)
+    Checking native-tls v0.2.18
+    Checking novovm-adapter-api v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-api)
+    Checking lettre v0.11.22
+    Checking novovm-exec v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-exec)
+    Checking novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+    Checking novovm-adapter-evm-core v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\core)
+    Checking novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+    Checking novovm-asas-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\asas)
+    Checking windows-service v0.8.1
+    Checking novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+    Checking novovm-governance-observability v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-governance-observability)
+    Checking anstyle-wincon v3.0.11
+    Checking anstyle-query v1.1.5
+    Checking anstream v1.0.0
+    Checking clap_builder v4.6.0
+    Checking clap v4.6.0
+    Checking novovm-rollout-policy v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-rollout-policy)
+    Checking novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+    Checking novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `release` profile [optimized] target(s) in 1m 19s

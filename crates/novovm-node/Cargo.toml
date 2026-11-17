@@ -42,7 +42,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "fs", "io-util"]
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order", "raw_value"] }
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+time = { version = "0.3.53", features = ["formatting", "parsing"] }
 tiny_http = "0.12"
 rocksdb = { version = "0.22", default-features = false }
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "gzip"] }

@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{Context, Result};
-use chrono::Utc;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use time::OffsetDateTime;
 
 use crate::events::{GovernanceEvent, GovernanceEventEnvelope};
 
@@ -28,7 +28,7 @@ pub fn default_governance_events_path() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    let date = Utc::now().format("%Y-%m-%d");
+    let date = OffsetDateTime::now_utc().date();
     default_governance_events_dir().join(format!(
         "{}{}{}",
         GOVERNANCE_EVENT_FILE_PREFIX, date, GOVERNANCE_EVENT_FILE_SUFFIX

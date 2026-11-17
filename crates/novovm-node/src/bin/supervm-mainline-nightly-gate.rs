@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 use anyhow::{bail, Context, Result};
-use chrono::Utc;
 use novovm_network::load_eth_fullnode_native_worker_runtime_snapshot_from_path_v1;
 use novovm_node::mainline_soak::{
     apply_mainline_soak_evidence_env_overrides_v2, apply_mainline_soak_threshold_env_overrides_v1,
@@ -14,6 +13,7 @@ use novovm_node::mainline_soak::{
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 fn string_env_nonempty(name: &str) -> Option<String> {
     std::env::var(name).ok().and_then(|raw| {
@@ -269,7 +269,7 @@ fn main() -> Result<()> {
 
     let nightly_report = MainlineNightlySoakGateReportV1 {
         schema: MAINLINE_NIGHTLY_SOAK_GATE_REPORT_SCHEMA_V1,
-        generated_utc: Utc::now().to_rfc3339(),
+        generated_utc: OffsetDateTime::now_utc().format(&Rfc3339)?,
         chain_id,
         snapshot_path: snapshot_path.display().to_string(),
         run_mainline_gate,
