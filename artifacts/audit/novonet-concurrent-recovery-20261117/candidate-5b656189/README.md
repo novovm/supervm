@@ -1,5 +1,24 @@
 # Fixed eight-slot / dependency-repair candidate 5b656189
 
+## CURRENT 2026-11-18 00:26: all four updated; unfinished recovery-object observation
+
+D actual e05c1cfd receipt confirms PID34148/LocalService, exact5b EXE/mapped AOEM
+and manifest, original DB existing/custody/state and listeners, controller exit0.
+A authenticated D37ms at16:21:25Z, original root/height1. Earlier cancelled UAC is
+retained as pre-entry failure, not startup failure. Raw originals: D-existing/
+and D-authenticated-status/. B/A/C/D update-health is complete, not relay acceptance.
+
+[Current C/D observation instructions](CD-UPDATE.md) reuse original Watch-Relay
+with fixed5b bindings. Sequence34/readiness20/reader23/transient-restore6 local
+checks pass. A32592/B3003007 real preflights idle; no new object or outage yet.
+Only unfinished recovered-route delivery is next. The original failed automatic
+restore and unproven in-flight concurrency remain; no accepted object is resent.
+prior-circuit-after-restoration.json is the hash-pinned original19:05 observation,
+not new-process evidence. Its provenance and the later existing upgrade are checked
+separately by the original coordinator. No new program package or Full is required.
+One local reader smoke-command quoting error occurred before reading state; the
+correct PowerShell7 invocation and all listed tests subsequently passed.
+
 ## CURRENT 2026-11-18 00:01: C existing update accepted; D dispatched
 
 Actual C receipt7a40624a confirms PID42764/LocalService, exact5b EXE and mapped

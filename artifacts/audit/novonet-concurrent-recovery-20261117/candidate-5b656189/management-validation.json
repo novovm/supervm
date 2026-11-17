@@ -1,0 +1,27 @@
+{
+  "date_beijing": "2026-11-18",
+  "scope": "Original observer/coordinator fixed deployment bindings; not product or real object acceptance",
+  "local_checks": {
+    "relay_sequence_observer": 34,
+    "relay_readiness": 20,
+    "relay_observation_reader": 23,
+    "transient_restore": 6
+  },
+  "all_listed_checks_passed": true,
+  "A_preflight": {
+    "utc": "2026-11-17T16:25:54.2202485Z",
+    "pid": 32592,
+    "diagnostic_active": false,
+    "execution_failures": 0,
+    "relay_circuits": 0
+  },
+  "B_preflight_original": "B-relay-preflight.json",
+  "historical_circuit_close_sha256": "3aabb9264f356c7562a2b93c1800c7b58e375b43036d83c46f7c1f2fc8508a1e",
+  "historical_circuit_close_source": "target/novonet-recovered-object-db667aa4-20261117-1905/A-original-circuit-after-restoration.json",
+  "historical_circuit_matched_original_interrupted_route": true,
+  "reader_smoke_invocation_failure": "PowerShell command quoting emitted a standalone backslash command; invocation exited 1 before state read. Correct PowerShell7 read and listed regressions passed subsequently.",
+  "node_updated_this_turn": false,
+  "object_sent": false,
+  "automatic_restore_pass": false,
+  "concurrent_inflight_pass": false
+}

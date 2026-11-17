@@ -75,4 +75,33 @@ $terminalSessions=@($sessionHex);. $runReceiver
 if(!$receiverTerminal){throw 'Actual expected receiver session not terminal'};$checks++
 $ExpectedOrigin='';$terminalSessions=@();. $runReceiver
 if(!$receiverTerminal){throw 'Legacy receiver terminal behavior changed'};$checks++
+$binding=$ast.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if($CommonCapacity8)')},$true)
+if($null-eq $binding){throw 'Actual capacity-eight binding missing'}
+$bind=[scriptblock]::Create($binding.Extent.Text)
+$CommonCapacity8=$true;$Source='5b656189784c854ac356aae77610c931b9f2189d';$NodeSha256='4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038';$WorkName='novovm-common-5b656189-20261117'
+$HostId='C';. $bind
+if($exe -cne 'C:\ProgramData\NOVOVM\releases\novovm-common-5b656189-C-20261117\bin\novovm-node.exe' -or $file -cne 'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common5b-C-20261117\progress.json'){throw 'C actual binding differs'};$checks++
+$HostId='D';. $bind
+if($exe -cne 'C:\ProgramData\NOVOVM\releases\novovm-common-5b656189-windows-x86_64\bin\novovm-node.exe' -or $file -cne 'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-5b656189-20261117\logs\progress.json'){throw 'D actual binding differs'};$checks++
+foreach($field in @('Source','NodeSha256','WorkName')){
+ $savedValue=Get-Variable $field -ValueOnly;Set-Variable $field 'wrong';$rejected=$false
+ try{. $bind}catch{$rejected=$true}finally{Set-Variable $field $savedValue}
+ if(!$rejected){throw "Wrong $field accepted"};$checks++
+}
+$upgradeGuard=$coordinatorAst.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if($upgrade.source')},$true)
+if($null-eq $upgradeGuard){throw 'Actual existing-upgrade continuation guard missing'}
+$checkUpgrade=[scriptblock]::Create($upgradeGuard.Extent.Text)
+$receiptRoot="$PSScriptRoot/../../artifacts/audit/novonet-concurrent-recovery-20261117"
+$upgrade=Get-Content "$receiptRoot/candidate-5b656189/B-existing-public.json" -Raw|ConvertFrom-Json
+$restored=Get-Content "$receiptRoot/candidate-db667aa4/live-1828/B-original-owner-restored.json" -Raw|ConvertFrom-Json
+$currentB=[pscustomobject]@{pid=$upgrade.pid};$source='5b656189784c854ac356aae77610c931b9f2189d'
+. $checkUpgrade;$checks++
+$currentB.pid++;$rejected=$false;try{. $checkUpgrade}catch{$rejected=$true}
+if(!$rejected){throw 'Wrong current B PID accepted'};$checks++;$currentB.pid=$upgrade.pid
+$upgrade.old_exit.pid++;$rejected=$false;try{. $checkUpgrade}catch{$rejected=$true}
+if(!$rejected){throw 'Unrelated old B owner accepted'};$checks++;$upgrade.old_exit.pid--
+$upgrade.custody_unchanged=$false;$rejected=$false;try{. $checkUpgrade}catch{$rejected=$true}
+if(!$rejected){throw 'Changed custody accepted'};$checks++;$upgrade.custody_unchanged=$true
+$upgrade.initialize_executed=$true;$rejected=$false;try{. $checkUpgrade}catch{$rejected=$true}
+if(!$rejected){throw 'Initialized replacement accepted'};$checks++
 Write-Output "PASS $checks sequence-observer checks; no node, clock or network mutation"

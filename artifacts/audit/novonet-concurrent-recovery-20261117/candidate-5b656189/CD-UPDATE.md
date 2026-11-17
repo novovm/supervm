@@ -1,4 +1,41 @@
-# CURRENT 2026-11-18 00:01: C update authenticated; D execute existing update now
+# CURRENT 2026-11-18 00:26: D authenticated; C/D observe unfinished recovered object
+
+A fetched D success e05c1cfd, retaining the earlier cancelled UAC as a pre-entry
+failure. Actual D PID34148/LocalService, exact installed EXE/mapped AOEM/manifest,
+original DB existing/custody/head/height/listeners passed; controller exit0.
+A authenticated D at16:21:25Z in37ms, original height1/root. All four5b updates
+and independent queries are accepted; no new object, concurrency or recovery pass.
+
+**C/D now each start one original read-only Watch-Relay observer** with its adjacent
+Read-RelayProgress.ps1, using the already-qualified hidden independent administrator
+PowerShell7 wrapper and a NEW EvidenceRoot. Confirm any previous same-purpose
+observer ended; if still alive return PID/creation/command instead of duplicating.
+Do not update/restart nodes, recopy packages, rerun crash/direct tests or send objects.
+
+```powershell
+$binding=Get-Content '<repo>/artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/recovery-observer-args.json' -Raw|ConvertFrom-Json
+& '<repo>/artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1' -HostId C -Source $binding.source -NodeSha256 $binding.node_sha256 -WorkName $binding.work_name -CommonCapacity8 -TerminalCircuitCount 1 -MaximumWaitSeconds 7200 -ExpectedOrigin $binding.expected_origin -ExpectedPath @($binding.expected_path) -EvidenceRoot '<fresh-local-root>'
+```
+
+Use HostId D on D. Immediately push real ready.json/liveness.json, observer
+PID/creation/command, actual node PID and result/error/collector-exit presence to
+this directory's C-recovery-observer/ or D-recovery-observer/. Do not wait for
+completion or two hours before returning READY. Keep all raw relay snapshots,
+including opaque-hop entries without Object/Session. Failure: preserve exact error;
+never manufacture READY or silently restart a node.
+
+Only fixed deployment bindings changed in the original observer; original64
+snapshots/one-second sampling/two-hour bounded wait and route-bound stop remain.
+Management regressions: sequence34, readiness20, reader23, transient restore6
+passed. A32592/B3003007 actual preflights are idle/healthy. A is currently elevated.
+Coordinator binds5b and correlates the original B restoration to its actual
+existing upgrade; the hash-pinned prior circuit-close snapshot remains historical,
+not recreated in the new process. After both fresh READYs, send only the unfinished
+fresh A→B→C→D object, with a new authenticated session/circuit. No second B outage
+or resend of accepted pair. Original failed automatic/five-second restore remains
+failed; true in-flight concurrency is separate and still pending.
+
+## Historical 00:01: C update authenticated; D dispatched
 
 A fetched actual C receipt commit7a40624a. C is PID42764/LocalService, started
 2026-11-17T15:55:16Z with original DB existing, exact5b Node/mapped AOEM/manifest
@@ -83,7 +120,7 @@ recopy matching archives, ask again for stop permission or start observers yet.
    under `C-existing/`. No private configuration or keys. A separately authenticates
    C before releasing D. Package qualification is not live host health or delivery.
 
-## D: dispatched now after C authenticated health
+## D: completed and independently authenticated; do not repeat
 
 Follow the same fixed pins and original LocalService owner with HostIdD,
 ports41053/42053. Release:

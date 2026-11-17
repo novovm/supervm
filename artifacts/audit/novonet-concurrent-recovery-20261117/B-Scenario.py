@@ -1,4 +1,4 @@
-"""Fixed db667 management actions; only original CLI/unit, no network socket."""
+"""Fixed 5b management actions; only original CLI/unit, no network socket."""
 import argparse
 import hashlib
 import importlib.util
@@ -14,10 +14,10 @@ import time
 if not __debug__:
     raise SystemExit('Safety assertions require non-optimized Python')
 
-UNIT = 'novovm-B-db667aa4-network-20261117.service'
-RELEASE = Path('/opt/novovm/releases/novovm-common-db667aa4-aoem570-linux-x86_64')
-WORK = Path('/var/lib/novovm/selfrun/91129655606029/B/novovm-common-db667aa4-20261117')
-OUT = Path('/home/ecs-user/novonet-concurrent-db667aa4-20261117/evidence')
+UNIT = 'novovm-B-5b656189-network-20261117.service'
+RELEASE = Path('/opt/novovm/releases/novovm-common-5b656189-aoem570-linux-x86_64')
+WORK = Path('/var/lib/novovm/selfrun/91129655606029/B/novovm-common-5b656189-20261117')
+OUT = Path('/home/ecs-user/novonet-concurrent-5b656189-20261118/evidence')
 IDS = ['b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43',
        '4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f',
        '1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a',
@@ -53,8 +53,8 @@ def owner():
     pid = int(subprocess.check_output(['systemctl', 'show', UNIT, '-p', 'MainPID', '--value']))
     assert pid > 1 and Path(f'/proc/{pid}').stat().st_uid == 996, 'wrong B account'
     assert Path(os.readlink(f'/proc/{pid}/exe')) == RELEASE / 'bin/novovm-node'
-    assert digest(RELEASE / 'bin/novovm-node') == '81bf52b5d50a5d2549c7b78c41eff3f86955e06d686ff5f5f9dacd088539892a'
-    assert digest(RELEASE / 'bin/novovmctl') == 'ee05a11e15cd6e723c0a3a2405fe67718a7caf0af26fa447f03ba57742e58f4c'
+    assert digest(RELEASE / 'bin/novovm-node') == '241c614efab1ffa84dda7712579360655dfe1e482ec0cca451f4c735ed29b03d'
+    assert digest(RELEASE / 'bin/novovmctl') == 'bb29415abc3b62a7e5db8a009e53b0b525237a83c595828d34c8e8d2afbc1c23'
     fields = dict(v.split('=', 1) for v in shlex.split(subprocess.check_output(
         ['systemctl', 'show', UNIT, '-p', 'Environment', '--value'], text=True)) if '=' in v)
     assert fields['NOVOVM_NATIVE_EXECUTION_START'] == 'existing'
@@ -204,7 +204,7 @@ def main():
             resume_wall = time.time()
             if stopped:
                 import pwd
-                deployment = Path('/home/ecs-user/novovm-common-db667aa4-20261117/Deploy-B.py')
+                deployment = Path('/home/ecs-user/novovm-common-5b656189-20261117/Deploy-B.py')
                 spec = importlib.util.spec_from_file_location('fixed_existing', deployment)
                 fixed = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(fixed)

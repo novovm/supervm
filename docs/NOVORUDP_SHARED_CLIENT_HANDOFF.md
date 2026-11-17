@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 00:26 A: D5b signed off; four-host update health complete
+
+A pulled D e05c1cfd actual update (PID34148/LocalService, controller0, fixed
+EXE/mapped AOEM/manifest and original DB existing), independently authenticated
+D37ms/original root/height1. Earlier cancelled UAC is retained. Four hosts now
+qualified at5b; no new object/recovery/concurrency success is claimed.
+[Original receipts and fresh C/D observer dispatch](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/CD-UPDATE.md).
+Original observer/coordinator deployment bindings now match actual5b paths;
+83 local management checks pass, A/B live preflights healthy/idle. C/D start one
+route-bound observer for the unfinished recovered object only. No node update,
+package copy, old test rerun or second B outage. Old circuit evidence is historical;
+new session/circuit and both-hop/receiver evidence are still required. True
+in-flight concurrency and original failed automatic restore remain separate.
+
 ## 2026-11-18 00:01 A: C5b receipt accepted and authenticated; D dispatched
 
 A fetched C's actual7a40624a receipt: PID42764/LocalService, fixed5b Node/mapped

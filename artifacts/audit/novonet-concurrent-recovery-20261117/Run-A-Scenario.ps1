@@ -8,15 +8,15 @@ $PSNativeCommandUseErrorActionPreference=$false
 $repo='D:\WorksArea\SUPERVM'
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Read-RelayProgress.ps1"
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Assert-RelayReadiness.ps1"
-$source='db667aa420477e76766352c8efd7fea83fdb6eac'
-$nodePin='442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825'
-$release='C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-windows-x86_64'
-$work='C:\ProgramData\NOVOVM\selfrun\91129655606029\A\novovm-common-db667aa4-20261117'
+$source='5b656189784c854ac356aae77610c931b9f2189d'
+$nodePin='4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038'
+$release='C:\ProgramData\NOVOVM\releases\novovm-common-5b656189-windows-x86_64'
+$work='C:\ProgramData\NOVOVM\selfrun\91129655606029\A\novovm-common-5b656189-20261117'
 $out=[IO.Path]::GetFullPath($EvidenceRoot)
 if(Test-Path -LiteralPath $out){throw 'Preserve previous attempt; no repeated workload'}
 $nodes=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'"|Where-Object ExecutablePath -IEQ "$release\bin\novovm-node.exe")
 if($nodes.Count-ne 1 -or (Invoke-CimMethod $nodes[0] -MethodName GetOwnerSid).Sid-cne 'S-1-5-19'){throw 'Wrong original A owner'}
-foreach($pin in @(@('novovm-node.exe',$nodePin),@('novovmctl.exe','b49c87fadef7e04da76ed8b2226c609858e308185ee205916dd86e39161ca4d6'))){if((Get-FileHash "$release/bin/$($pin[0])").Hash.ToLowerInvariant()-cne $pin[1]){throw 'A fixed program differs'}}
+foreach($pin in @(@('novovm-node.exe',$nodePin),@('novovmctl.exe','de39d4f88cc794306f48a0ce5404fb97030edafa111867583b6a5ccfbe63134c'))){if((Get-FileHash "$release/bin/$($pin[0])").Hash.ToLowerInvariant()-cne $pin[1]){throw 'A fixed program differs'}}
 foreach($pair in @(@('C',$CReadyFile),@('D',$DReadyFile))){
  $parent=Split-Path -Parent $pair[1];$ready=Get-Content -Raw -LiteralPath $pair[1]|ConvertFrom-Json
  $live=Get-Content -Raw -LiteralPath "$parent/liveness.json"|ConvertFrom-Json
@@ -41,7 +41,7 @@ if(($ids-join ',')-cne ($pins-join ',')){throw 'Fixed original identities differ
 New-Item -ItemType Directory -Path $out|Out-Null
 Copy-Item -LiteralPath $CReadyFile -Destination "$out/C-ready.json"
 Copy-Item -LiteralPath $DReadyFile -Destination "$out/D-ready.json"
-$bFile='/home/ecs-user/novonet-concurrent-db667aa4-20261117/B-Scenario.py'
+$bFile='/home/ecs-user/novonet-concurrent-5b656189-20261118/B-Scenario.py'
 $bPin=(Get-FileHash -LiteralPath "$PSScriptRoot/B-Scenario.py").Hash.ToLowerInvariant()
 $bCommand="echo '$bPin  $bFile' | sha256sum -c - >/dev/null && sudo -n python3 $bFile"
 function B([string]$Action,[string]$Extra=''){
@@ -151,20 +151,26 @@ try{
   $two=Get-Content "$previous/concurrency-origin-result.json" -Raw|ConvertFrom-Json
   $restored=Get-Content "$previous/B-original-owner-restored.json" -Raw|ConvertFrom-Json
   $currentB=Get-Content "$out/B-preflight.json" -Raw|ConvertFrom-Json
-  if($failure.error-cne 'B interrupt failed; no blind retry' -or !$two.two_sender_DONE -or $restored.source-cne $source -or $restored.start-cne 'existing' -or !$restored.config_unchanged -or !$restored.network_unchanged -or !$restored.custody_unchanged -or (Test-Path "$previous/recovery-origin-result.json")){throw 'Not the exact interrupted/restored unfinished attempt'}
-  if($currentB.pid-ne $restored.pid){throw 'Restored B owner changed; preserve actual state'}
+  if($failure.error-cne 'B interrupt failed; no blind retry' -or !$two.two_sender_DONE -or $restored.source-cne 'db667aa420477e76766352c8efd7fea83fdb6eac' -or $restored.start-cne 'existing' -or !$restored.config_unchanged -or !$restored.network_unchanged -or !$restored.custody_unchanged -or (Test-Path "$previous/recovery-origin-result.json")){throw 'Not the exact interrupted/restored unfinished attempt'}
+  # The approved existing upgrade replaced both processes. Correlate its actual
+  # receipt; never require old volatile circuit state in a new process.
+  $upgrade=Get-Content "$PSScriptRoot/candidate-5b656189/B-existing-public.json" -Raw|ConvertFrom-Json
+  if($upgrade.source-cne $source -or $upgrade.old_exit.pid-ne $restored.pid -or $currentB.pid-ne $upgrade.pid -or $upgrade.start-cne 'existing' -or $upgrade.initialize_executed -or !$upgrade.custody_unchanged -or $upgrade.after_progress.execution_failures-ne 0 -or $upgrade.after_progress.recovery_in_progress){throw 'Actual restored-to-upgraded B chain differs'}
   $prior=Get-Content "$previous/before-B-interruption-ready.json" -Raw|ConvertFrom-Json
   $oldRoutes=@($prior.transport.relay_circuits|Where-Object{$_.route.role-ceq 'origin' -and $null-ne $_.native_session -and $null-eq $_.stream_dropped_us})
   if($oldRoutes.Count-ne 1){throw 'Original interrupted route ambiguous'}
   $oldCircuit=Hex $oldRoutes[0].route.circuit;$oldSession=Hex $oldRoutes[0].native_session
   $p=P;Save (PublicA $p) 'A-original-circuit-after-restoration'
-  $closed=@($p.native_network_probe.transport.relay_circuits|Where-Object{(Hex $_.route.circuit)-ceq $oldCircuit})
+  $historicalPath="$PSScriptRoot/candidate-5b656189/prior-circuit-after-restoration.json"
+  if((Get-FileHash $historicalPath).Hash.ToLowerInvariant()-cne '3aabb9264f356c7562a2b93c1800c7b58e375b43036d83c46f7c1f2fc8508a1e'){throw 'Historical circuit evidence differs'}
+  $historical=Get-Content $historicalPath -Raw|ConvertFrom-Json
+  $closed=@($historical.transport.relay_circuits|Where-Object{(Hex $_.route.circuit)-ceq $oldCircuit})
   if($closed.Count-ne 1 -or $null-eq $closed[0].stream_dropped_us -or $p.novonet.diagnostic_relay.active){throw 'Original interruption/expired reservation not established'}
   $recovered=ArmA 'after-B-recovery' 3 @(1,2)
   if($recovered.session-ceq $oldSession -or $recovered.circuit-ceq $oldCircuit){throw 'Interrupted session/circuit reused'}
   Invoke-OriginalNativeProbe 'after-B-recovery-send' @('send-relay','--from',$recovered.arm)
   $recoveryDone=WaitADone $recovered
-  Save ([ordered]@{new_session=$recovered.session;new_circuit=$recovered.circuit;old_session=$oldSession;old_circuit=$oldCircuit;new_object=(Hex $recoveryDone.object);sender_DONE=$true;original_reserved_route_interrupted=$true;automatic_restore_attempt_failed=$true;original_owner_restored_separately=$true;planned_five_second_downtime_achieved=$false;old_object_resumed=$false;prior_attempt=$previous;C_D_receiver_and_forwarding_evidence_pending=$true}) 'recovery-origin-result'
+  Save ([ordered]@{new_session=$recovered.session;new_circuit=$recovered.circuit;old_session=$oldSession;old_circuit=$oldCircuit;new_object=(Hex $recoveryDone.object);sender_DONE=$true;original_reserved_route_interrupted=$true;automatic_restore_attempt_failed=$true;original_owner_restored_separately=$true;approved_existing_upgrade_after_restore=$true;old_circuit_evidence_is_historical=$true;planned_five_second_downtime_achieved=$false;old_object_resumed=$false;prior_attempt=$previous;C_D_receiver_and_forwarding_evidence_pending=$true}) 'recovery-origin-result'
   $completed=$true
   Save @{status='RECOVERED_FRESH_OBJECT_ORIGIN_DONE_C_D_AUDIT_PENDING';utc=[DateTime]::UtcNow.ToString('o');completed_objects_resent=$false;second_outage=$false;automatic_restore_pass=$false} 'result'
   return

@@ -10,6 +10,7 @@ param(
     [ValidateRange(1800,7200)][int]$MaximumWaitSeconds=1800,
     [switch]$Common95,
     [switch]$CommonRoleFix,
+    [switch]$CommonCapacity8,
     [ValidateRange(1,4)][int]$TerminalCircuitCount=1,
     [ValidatePattern('^novovm-mldsa65:[a-f0-9]{64}$')][string]$ExpectedOrigin,
     [string[]]$ExpectedPath=@()
@@ -20,8 +21,8 @@ Set-StrictMode -Version Latest
 if([bool]$ExpectedOrigin -ne ($ExpectedPath.Count -gt 0)){throw 'Expected route requires origin and path together'}
 if(@($ExpectedPath|Where-Object {$_ -cnotmatch '^novovm-mldsa65:[a-f0-9]{64}$'}).Count){throw 'Invalid expected route peer'}
 $short=$Source.Substring(0,8)
-if($Common95 -and $CommonRoleFix){throw 'Conflicting fixed deployment bindings'}
-if(!$Common95 -and !$CommonRoleFix -and !$WorkName.StartsWith("novonet-observation-$short-")){throw 'Work/source mismatch'}
+if(@($Common95,$CommonRoleFix,$CommonCapacity8|Where-Object {$_}).Count -gt 1){throw 'Conflicting fixed deployment bindings'}
+if(!$Common95 -and !$CommonRoleFix -and !$CommonCapacity8 -and !$WorkName.StartsWith("novonet-observation-$short-")){throw 'Work/source mismatch'}
 $exe="C:\ProgramData\NOVOVM\releases\novonet-observation-$short-windows-x86_64\bin\novovm-node.exe"
 $file="C:\ProgramData\NOVOVM\selfrun\91129655606029\$HostId\$WorkName\logs\progress.json"
 if($Common95){
@@ -34,6 +35,11 @@ if($CommonRoleFix){
     if($Source -cne 'db667aa420477e76766352c8efd7fea83fdb6eac' -or $NodeSha256 -cne '442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825' -or $WorkName -cne 'novovm-common-db667aa4-20261117'){throw 'RoleFix fixed program differs'}
     $exe=if($HostId -eq 'C'){'C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-C-20261117\bin\novovm-node.exe'}else{'C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-windows-x86_64\bin\novovm-node.exe'}
     $file=if($HostId -eq 'C'){'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-CommonDb667-C-20261117\progress.json'}else{'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-db667aa4-20261117\logs\progress.json'}
+}
+if($CommonCapacity8){
+    if($Source -cne '5b656189784c854ac356aae77610c931b9f2189d' -or $NodeSha256 -cne '4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038' -or $WorkName -cne 'novovm-common-5b656189-20261117'){throw 'Capacity8 fixed program differs'}
+    $exe=if($HostId -eq 'C'){'C:\ProgramData\NOVOVM\releases\novovm-common-5b656189-C-20261117\bin\novovm-node.exe'}else{'C:\ProgramData\NOVOVM\releases\novovm-common-5b656189-windows-x86_64\bin\novovm-node.exe'}
+    $file=if($HostId -eq 'C'){'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common5b-C-20261117\progress.json'}else{'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-5b656189-20261117\logs\progress.json'}
 }
 $out=[IO.Path]::GetFullPath($EvidenceRoot)
 if(Test-Path -LiteralPath $out){throw 'Fresh evidence root required'}
