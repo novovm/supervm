@@ -20,7 +20,7 @@ $file="C:\ProgramData\NOVOVM\selfrun\91129655606029\$HostId\$WorkName\logs\progr
 if($Common95){
     if($Source -cne '95ec9c2eced988c5798d549971354ef8722367b7' -or $NodeSha256 -cne '754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7' -or $WorkName -cne 'novovm-common-95ec9c2e-20261117'){throw 'Common95 fixed program differs'}
     # Deployment bindings only: C retained its qualified LocalService launch root.
-    $exe='C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-windows-x86_64\bin\novovm-node.exe'
+    $exe=if($HostId -eq 'C'){'C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-C-20261117\bin\novovm-node.exe'}else{'C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-windows-x86_64\bin\novovm-node.exe'}
     $file=if($HostId -eq 'C'){'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common95-C-20261117\progress.json'}else{'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-95ec9c2e-20261117\logs\progress.json'}
 }
 $out=[IO.Path]::GetFullPath($EvidenceRoot)

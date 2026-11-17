@@ -1,0 +1,11 @@
+{
+  "status": "C_RELAY_OBSERVER_ARMED",
+  "observer_version": 3,
+  "observer_pid": 26308,
+  "source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "node_sha256": "754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7",
+  "pid": 38500,
+  "utc": "2026-11-17T04:13:05.8283294Z",
+  "read_only": true,
+  "maximum_wait_seconds": 7200
+}
