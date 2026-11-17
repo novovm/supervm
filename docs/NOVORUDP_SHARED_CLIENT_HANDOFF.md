@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 A:55cafb07 packages fixed; one matching Full running, no deployment
+
+Original-owner monotonic diagnostic release source55cafb07 is pushed. Full
+44136917939 dispatched exactly once and head verified; still IN_PROGRESS.
+Both original packages passed member/archive hashes, actual bundled AOEM/identity,
+Windows cold recovery1/1 and Linux package-context network/recovery17/17.
+[Fixed pins, actual logs and B→A original-owner plan](../artifacts/audit/novonet-diagnostic-release-20261118/candidate-55cafb07/README.md).
+Adapters require actual exact Full success before update. No node is on55 yet.
+Only A/B origins require the local envelope; C/D stay qualified5b receivers and
+forwarders, no duplicate package/upgrade or fresh window before sender health.
+B disk preparation removed only two hash-verified idle db667/5b uploaded tarballs,
+not installed programs/data/keys; copies remain on A. No accepted live test or
+object repeated; missing actual overlap remains the only paired-workload target.
+
 ## 2026-11-18 A: original-owner diagnostic monotonic release implemented locally
 
 The actual1s command-read phase defect is fixed inside original Control: original

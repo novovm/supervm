@@ -6,23 +6,27 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference=$false
 $repo='D:\WorksArea\SUPERVM'
+if(!$ConcurrentOnly){throw 'This fixed handoff runs only the missing concurrency workload; no repeated recovery or outage'}
 if($ConcurrentOnly -and $ContinueRestoredAttempt){throw 'Conflicting remaining workloads'}
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Read-RelayProgress.ps1"
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Assert-RelayReadiness.ps1"
-$source='5b656189784c854ac356aae77610c931b9f2189d'
-$nodePin='4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038'
-$release='C:\ProgramData\NOVOVM\releases\novovm-common-5b656189-windows-x86_64'
-$work='C:\ProgramData\NOVOVM\selfrun\91129655606029\A\novovm-common-5b656189-20261117'
+$source='55cafb072ad83921f4a1ed5ea19a71941700d056'
+$nodePin='9e0dc313325d6b805735b490b0d3fe475c0746b2ef7e8cbc46e291b3f1bf0476'
+# The release envelope is LOCAL to the two new sender owners. C/D retain5b.
+$observerSource='5b656189784c854ac356aae77610c931b9f2189d'
+$observerNodePin='4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038'
+$release='C:\ProgramData\NOVOVM\releases\novovm-common-55cafb07-windows-x86_64'
+$work='C:\ProgramData\NOVOVM\selfrun\91129655606029\A\novovm-common-55cafb07-20261118'
 $out=[IO.Path]::GetFullPath($EvidenceRoot)
 if(Test-Path -LiteralPath $out){throw 'Preserve previous attempt; no repeated workload'}
 $nodes=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'"|Where-Object ExecutablePath -IEQ "$release\bin\novovm-node.exe")
 if($nodes.Count-ne 1 -or (Invoke-CimMethod $nodes[0] -MethodName GetOwnerSid).Sid-cne 'S-1-5-19'){throw 'Wrong original A owner'}
-foreach($pin in @(@('novovm-node.exe',$nodePin),@('novovmctl.exe','de39d4f88cc794306f48a0ce5404fb97030edafa111867583b6a5ccfbe63134c'))){if((Get-FileHash "$release/bin/$($pin[0])").Hash.ToLowerInvariant()-cne $pin[1]){throw 'A fixed program differs'}}
+foreach($pin in @(@('novovm-node.exe',$nodePin),@('novovmctl.exe','52310b5bf6f0afb0014546c60e20ccf22b72bb1c8ea0ecdf56e6f3f0fa23952f'))){if((Get-FileHash "$release/bin/$($pin[0])").Hash.ToLowerInvariant()-cne $pin[1]){throw 'A fixed program differs'}}
 foreach($pair in @(@('C',$CReadyFile),@('D',$DReadyFile))){
  $parent=Split-Path -Parent $pair[1];$ready=Get-Content -Raw -LiteralPath $pair[1]|ConvertFrom-Json
  $live=Get-Content -Raw -LiteralPath "$parent/liveness.json"|ConvertFrom-Json
  foreach($terminal in @('error.json','result.json','collector-exit.json')){if(Test-Path -LiteralPath "$parent/$terminal"){throw 'Observer already ended'}}
- Assert-RelayReadiness $ready $live $pair[0] $source $nodePin
+ Assert-RelayReadiness $ready $live $pair[0] $observerSource $observerNodePin
  $requiredCircuitCount=if($ContinueRestoredAttempt){1}elseif($ConcurrentOnly){2}else{4}
  if($ready.terminal_circuit_count-ne $requiredCircuitCount){throw 'Observer circuit scope differs from actual remaining workload'}
  if($ContinueRestoredAttempt){
@@ -42,7 +46,7 @@ if(($ids-join ',')-cne ($pins-join ',')){throw 'Fixed original identities differ
 New-Item -ItemType Directory -Path $out|Out-Null
 Copy-Item -LiteralPath $CReadyFile -Destination "$out/C-ready.json"
 Copy-Item -LiteralPath $DReadyFile -Destination "$out/D-ready.json"
-$bFile='/home/ecs-user/novonet-concurrent-5b656189-inflight-20261118/B-Scenario.py'
+$bFile='/home/ecs-user/novonet-concurrent-55cafb07-inflight-20261118/B-Scenario.py'
 $bPin=(Get-FileHash -LiteralPath "$PSScriptRoot/B-Scenario.py").Hash.ToLowerInvariant()
 $bCommand="echo '$bPin  $bFile' | sha256sum -c - >/dev/null && sudo -n python3 $bFile"
 function B([string]$Action,[string]$Extra=''){

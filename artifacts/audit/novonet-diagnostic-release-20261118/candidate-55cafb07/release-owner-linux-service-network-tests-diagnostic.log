@@ -1,0 +1,9 @@
+
+running 4 tests
+test native_pipeline::service::network::tests::diagnostic::concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done ... ok
+test native_pipeline::service::network::tests::diagnostic::constrained_double_relay_probe_real_hop_done_does_not_replace_business_routes ... ok
+test native_pipeline::service::network::tests::diagnostic::constrained_relay_probe_real_hop_done_does_not_replace_business_routes ... ok
+test native_pipeline::service::network::tests::diagnostic::three_installed_native_carriers_and_crossed_relays_share_eight_slot_owner ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1831 filtered out; finished in 9.53s
+

@@ -1,0 +1,21 @@
+{
+  "source": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "payload_count": 92,
+  "all_members_verified": true,
+  "test_sha256": "31d53c3f133aec61aa3daa04a40fd264468403fca9d4372dfc443a9257f37b59",
+  "installed": false,
+  "four_host_acceptance": false,
+  "test_build_source": "precommit bytes checked against55cafb07",
+  "rust_source_unchanged_since_test_build": true,
+  "node_sha256": "b399dd87c267b42bdeb009d54a757a9967ac04061a73675817c48fd4d9bea144",
+  "ctl_sha256": "3d4ec0aaccfa5bf0aa5ee5e70866f3331b14b8b428fee554970251e3d05a9e4a",
+  "client_sha256": "544742fe79efbcd43b58dbff73742694d194c0e09c34ea236fc56df8b2cc9d3f",
+  "core_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "manifest_sha256": "2668d55abab1b28d1a54bbcad630be2227380d386c9dca1ed31e4467fdea9a41",
+  "native_recovery_exit": 0,
+  "archive_bytes": 376001532,
+  "archive_sha256": "8f32999912698755df8c72d0e6b49ddeb385098151742164ca1da14e4e592acf",
+  "archive_name": "novovm-common-55cafb07-aoem570-linux-x86_64.tar.gz",
+  "archive_members": 95,
+  "all_archive_members_verified": true
+}
