@@ -1,0 +1,7 @@
+{
+  "command": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -File \"D:\\WEB3_AI\\SUPERVM\\target\\d-5b-recovery-observer-20261118\\run-original.ps1\"",
+  "created_utc": "2026-11-17T16:31:37.5517500Z",
+  "pid": 40736,
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\d-5b-recovery-observer-20261118\\observation",
+  "launcher_pid": 45584
+}

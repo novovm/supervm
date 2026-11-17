@@ -1,0 +1,10 @@
+{
+  "binding_sha256": "b00920e37a2984c95ca608616e375a726478ec9c96113afb628573df49bd0d2c",
+  "expected_path_passed_as_array": true,
+  "maximum_wait_seconds": 7200,
+  "original_observer_path": "D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Watch-Relay.ps1",
+  "invoker_path": "D:\\WEB3_AI\\SUPERVM\\target\\d-5b-recovery-observer-20261118/run-original.ps1",
+  "invoker_sha256": "5e45d7811d91b88a781f8612401eed4c7034642bb436fec9d0377d52b2665af7",
+  "common_capacity8": true,
+  "terminal_circuit_count": 1
+}
