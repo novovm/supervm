@@ -1,0 +1,5 @@
+Exception: D:\WorksArea\SUPERVM\artifacts\audit\novonet-concurrent-recovery-20261117\Run-A-Scenario.ps1:57
+Line |
+  57 |   if($exit.Count-ne 1 -or $exit[0]-ne 0){throw "B $Action failed"}
+     |                                          ~~~~~~~~~~~~~~~~~~~~~~~~
+     | B arm failed

@@ -60,23 +60,25 @@ function FinishBJob($Job,[string]$Action){
 function P {Read-RelayProgress -Path "$work/logs/progress.json" -EvidenceRoot $out}
 function Save($Value,[string]$File){$Value|ConvertTo-Json -Depth 65|Set-Content -LiteralPath "$out/$File.json" -Encoding utf8}
 function PublicA($p){[ordered]@{utc=[DateTime]::UtcNow.ToString('o');pid=$nodes[0].ProcessId;diagnostic=$p.novonet.diagnostic_relay;transport=$p.native_network_probe.transport;execution_failures=$p.execution_failures}}
-function Cli([string]$Label,[string[]]$Arguments){
+function Invoke-OriginalNativeProbe([string]$Label,[string[]]$Arguments){
  & "$release/bin/novovmctl.exe" native-network-probe @Arguments --output $command 1> "$out/$Label-cli.json" 2> "$out/$Label-cli.stderr"
  if($LASTEXITCODE-ne 0){throw "A $Label local command failed; no resend"}
 }
 function ArmA([string]$Label,[int]$Target,[int[]]$Via){
  $p=P
  if($p.novonet.diagnostic_relay.active){throw 'A diagnostic still occupied'}
+ $rejectedBefore=$p.novonet.probe_control.rejected_commands
  if(Test-Path -LiteralPath $command){Copy-Item -LiteralPath $command -Destination "$out/$Label-prior-control.nvprobe"}
  $nonce=Hex ([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
  $cliArgs=@('prepare','--sender',$ids[0],'--recipient',$ids[$Target],'--nonce',$nonce)
  foreach($v in $Via){$cliArgs+=@('--via',$ids[$v])}
  $armedTick=[Diagnostics.Stopwatch]::GetTimestamp()
- Cli $Label $cliArgs
+ Invoke-OriginalNativeProbe $Label $cliArgs
  $arm="$out/$Label-arm.nvprobe";Copy-Item -LiteralPath $command -Destination $arm
  $clock=[Diagnostics.Stopwatch]::StartNew()
  do {
   $p=P;$r=$p.novonet.diagnostic_relay.reservation
+  if($p.novonet.probe_control.rejected_commands-gt $rejectedBefore){Save (PublicA $p) "$Label-owner-rejected";throw "A original owner rejected new reservation: $($p.novonet.probe_control.last)"}
   if($null-ne $r -and (Hex $r.nonce)-ceq $nonce -and $r.ready){
    $session=@($p.native_network_probe.transport.relay_circuits|Where-Object{$_.route.role-ceq 'origin' -and $null-ne $_.native_session -and $null-eq $_.stream_dropped_us})
    if($session.Count-ne 1){throw 'A nonunique actual authenticated route'}
@@ -145,7 +147,7 @@ try{
  $bJob=BJob 'send-at' "--wall-ms $bTarget"
  $deadline=[Diagnostics.Stopwatch]::GetTimestamp()+[long](($target-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())/1000*[Diagnostics.Stopwatch]::Frequency)
  while([Diagnostics.Stopwatch]::GetTimestamp()-lt $deadline){Start-Sleep -Milliseconds 1}
- Cli 'concurrent-A-send' @('send-relay','--from',$first.arm)
+ Invoke-OriginalNativeProbe 'concurrent-A-send' @('send-relay','--from',$first.arm)
  $aDone=WaitADone $first
  $bDone=FinishBJob $bJob 'send-at';$bJob=$null
  Save $bDone 'B-concurrent-result'
@@ -164,11 +166,11 @@ try{
  $p=P;Save (PublicA $p) 'A-after-B-interruption'
  $old=@($p.native_network_probe.transport.relay_circuits|Where-Object{(Hex $_.route.circuit)-ceq $fault.circuit})
  if($old.Count-ne 1 -or $null-eq $old[0].stream_dropped_us){throw 'Original circuit interruption not observed; do not claim recovery'}
- Cli 'cancel-interrupted-reservation' @('cancel','--from',$fault.arm)
+ Invoke-OriginalNativeProbe 'cancel-interrupted-reservation' @('cancel','--from',$fault.arm)
  WaitLease $fault
  $recovered=ArmA 'after-B-recovery' 3 @(1,2)
  if($recovered.session-ceq $fault.session -or $recovered.circuit-ceq $fault.circuit){throw 'Old interrupted session/circuit reused'}
- Cli 'after-B-recovery-send' @('send-relay','--from',$recovered.arm)
+ Invoke-OriginalNativeProbe 'after-B-recovery-send' @('send-relay','--from',$recovered.arm)
  $recoveryDone=WaitADone $recovered
  Save ([ordered]@{new_session=$recovered.session;new_circuit=$recovered.circuit;old_session=$fault.session;old_circuit=$fault.circuit;new_object=(Hex $recoveryDone.object);sender_DONE=$true;original_reserved_route_interrupted=$true;inflight_old_object_automatic_resume_tested=$false;scope='Original B unit stop/existing restart, circuit loss, reauthentication and one fresh object; not old-object resurrection';C_D_receiver_and_forwarding_evidence_pending=$true;resend=$false}) 'recovery-origin-result'
  $completed=$true
@@ -179,7 +181,7 @@ try{
 }finally{
  if(!$completed){
   foreach($attempt in @($first,$fault,$recovered)|Where-Object{$null-ne $_}){
-   try{Cli "$($attempt.label)-cancel-on-stop" @('cancel','--from',$attempt.arm)}catch{Save @{error=$_.Exception.Message} "$($attempt.label)-cancel-error"}
+   try{Invoke-OriginalNativeProbe "$($attempt.label)-cancel-on-stop" @('cancel','--from',$attempt.arm)}catch{Save @{error=$_.Exception.Message} "$($attempt.label)-cancel-error"}
   }
  }
 }

@@ -1,0 +1,43 @@
+{
+  "initial_test_fixture_failures": "2 OS2 failures before signed advert publication; ordering corrected, not claimed as root-cause red tests",
+  "status": "LOCAL_ROLE_FIX_PASS_NOT_FOUR_HOST",
+  "linux_strict_clippy_exit": 0,
+  "linux_concurrent_regression": {
+    "passed": 1,
+    "failed": 0
+  },
+  "runtime_files": [
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/network/relay.rs",
+      "sha256": "807c7385c7cfa1ac6d080f2ff97446a9c3f10c32c09921b210464d5894c9f6bc"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/network/diagnostic.rs",
+      "sha256": "d62d050f039dde1342d8ced9757da7e971b4fbbd2abfdc777a5459dbe4b3ba4b"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/network/tests/diagnostic.rs",
+      "sha256": "6f79f3dc0af9fd7ef25974d8407eed5d4c84e1246a859909f542ba812183ff18"
+    }
+  ],
+  "windows_endpoint_guard": {
+    "passed": 1,
+    "failed": 0
+  },
+  "four_host_live_acceptance": false,
+  "utc": "2026-11-17T07:11:55.9327164Z",
+  "AOEM_changed": false,
+  "connection_bandwidth_or_protocol_timeout_increased": false,
+  "component_crypto_fixture": true,
+  "base_head": "da597f19af11236c6b4921efe1f958a835555e94",
+  "windows_concurrent_regression": {
+    "passed": 1,
+    "failed": 0
+  },
+  "linux_endpoint_guard": {
+    "passed": 1,
+    "failed": 0
+  },
+  "new_candidate_frozen": false,
+  "windows_strict_clippy_exit": 0
+}

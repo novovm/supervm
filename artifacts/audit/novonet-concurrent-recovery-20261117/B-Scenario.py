@@ -74,7 +74,8 @@ def owner():
 
 def snapshot(p):
     return dict(wall_ms=time.time_ns() // 1000000, monotonic_ns=time.monotonic_ns(),
-                diagnostic=p['novonet']['diagnostic_relay'], transport=p['native_network_probe']['transport'])
+                diagnostic=p['novonet']['diagnostic_relay'], probe_control=p['novonet']['probe_control'],
+                transport=p['native_network_probe']['transport'])
 
 
 def cli(action, *args):
@@ -109,6 +110,7 @@ def main():
         OUT.mkdir(parents=True, exist_ok=True)
         slot = WORK / 'commands/control.nvprobe'
         nonce = secrets.token_hex(32)
+        rejected_before = p['novonet']['probe_control']['rejected_commands']
         record('before-arm.json', dict(pid=pid, nonce=nonce, **snapshot(p)))
         if slot.exists():
             assert slot.is_file() and not slot.is_symlink() and slot.stat().st_size in (409, 441, 377), 'unexpected B command slot'
@@ -118,6 +120,9 @@ def main():
         deadline = time.monotonic() + 35
         while time.monotonic() < deadline:
             p = progress()
+            if p['novonet']['probe_control']['rejected_commands'] > rejected_before:
+                record('arm-rejected-by-original-owner.json', snapshot(p))
+                raise RuntimeError('original B owner rejected new reservation: ' + p['novonet']['probe_control']['last'])
             r = p['novonet']['diagnostic_relay']['reservation']
             if r and bytes(r['nonce']).hex() == nonce and r['ready']:
                 result = dict(pid=pid, nonce=nonce, **snapshot(p))

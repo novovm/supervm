@@ -1,0 +1,146 @@
+{
+  "A_authenticated_circuit": "57bd3416fefa1ffd903509140533b60d",
+  "status": "PREPARATION_BLOCKED_BY_DIAGNOSTIC_ROLE_EXCLUSION",
+  "A_route": [
+    "A",
+    "B",
+    "D",
+    "C"
+  ],
+  "fix_scope": "Endpoint single-flight remains; forwarding keeps original HopBudget, Iroh limit and 60s diagnostic lease",
+  "B_old_timeout_is_not_this_nonce": true,
+  "new_test_objects_sent": 0,
+  "B_unit_stopped": false,
+  "recovery_pass": false,
+  "B_retained_previous_nonce": "cd51653bd762b8cfb32b6d3a12b7719c1185051c37a5b8437df3876746c51a98",
+  "concurrency_pass": false,
+  "source_cause": "relay::incoming acquires diagnostic endpoint Occupancy before determining opaque forwarding role",
+  "B_new_rejected_nonce": "4c6f4be3274537347281256aebe0a8923234da54d9301c364701fe3200155ac7",
+  "A_nonce": "ab510ca1b6b435705551d2ddbd898bfea36260be7b0a5a9d62eb54313127a219",
+  "C_D_original_hashes_verified": 8,
+  "B_control": {
+    "enabled": true,
+    "accepted_commands": 1,
+    "rejected_commands": 1,
+    "last": "diagnostic already reserved",
+    "scope": "local commands; never business or transport completion"
+  },
+  "C_D": [
+    {
+      "matched_snapshots": [
+        {
+          "role": "target",
+          "route_digest": "ce99374fb62d9e95ab6e74e989714925687c9b60402b542feaa061528e4977f8",
+          "downstream_ready_us": 16674710487,
+          "failed_writes": [
+            0,
+            0
+          ],
+          "forwarded": [
+            {
+              "packets": 0,
+              "bytes": 0
+            },
+            {
+              "packets": 0,
+              "bytes": 0
+            }
+          ],
+          "cursor": 2,
+          "file": "relay-02.json",
+          "session": "ed7225d0f1c28765c583edbce2b1992d"
+        },
+        {
+          "role": "target",
+          "route_digest": "ce99374fb62d9e95ab6e74e989714925687c9b60402b542feaa061528e4977f8",
+          "downstream_ready_us": 16674710487,
+          "failed_writes": [
+            0,
+            0
+          ],
+          "forwarded": [
+            {
+              "packets": 0,
+              "bytes": 0
+            },
+            {
+              "packets": 0,
+              "bytes": 0
+            }
+          ],
+          "cursor": 2,
+          "file": "relay-03.json",
+          "session": "ed7225d0f1c28765c583edbce2b1992d"
+        }
+      ],
+      "current_probe_control": {
+        "enabled": true,
+        "accepted_commands": 0,
+        "rejected_commands": 0,
+        "last": null,
+        "scope": "local commands; never business or transport completion"
+      },
+      "current_diagnostic_active": false,
+      "host": "C"
+    },
+    {
+      "matched_snapshots": [
+        {
+          "role": "relay",
+          "route_digest": "ce99374fb62d9e95ab6e74e989714925687c9b60402b542feaa061528e4977f8",
+          "downstream_ready_us": 10220818102,
+          "failed_writes": [
+            0,
+            0
+          ],
+          "forwarded": [
+            {
+              "packets": 8,
+              "bytes": 8592
+            },
+            {
+              "packets": 8,
+              "bytes": 8656
+            }
+          ],
+          "cursor": 1,
+          "file": "relay-02.json",
+          "session": null
+        },
+        {
+          "role": "relay",
+          "route_digest": "ce99374fb62d9e95ab6e74e989714925687c9b60402b542feaa061528e4977f8",
+          "downstream_ready_us": 10220818102,
+          "failed_writes": [
+            0,
+            0
+          ],
+          "forwarded": [
+            {
+              "packets": 8,
+              "bytes": 8592
+            },
+            {
+              "packets": 8,
+              "bytes": 8656
+            }
+          ],
+          "cursor": 1,
+          "file": "relay-03.json",
+          "session": null
+        }
+      ],
+      "current_probe_control": {
+        "enabled": true,
+        "accepted_commands": 0,
+        "rejected_commands": 0,
+        "last": null,
+        "scope": "local commands; never business or transport completion"
+      },
+      "current_diagnostic_active": false,
+      "host": "D"
+    }
+  ],
+  "B_new_nonce_admitted": false,
+  "B_original_control_reason": "diagnostic already reserved"
+}

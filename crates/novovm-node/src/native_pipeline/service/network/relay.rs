@@ -120,7 +120,8 @@ pub(super) async fn incoming(
         HopStream::accept_contexts(stream, &identity, &contexts, ingress.budget.clone()),
     )
     .await??;
-    let _diagnostic_occupancy = if hop.route().context() == diagnostic::context(pins) {
+    let is_diagnostic = hop.route().context() == diagnostic::context(pins);
+    let _diagnostic_occupancy = if is_diagnostic {
         ensure!(
             (2..=3).contains(&hop.route().path().len())
                 && keys.iter().any(|k| k.as_slice() == hop.route().origin())
@@ -131,7 +132,15 @@ pub(super) async fn incoming(
                     .all(|k| k.as_slice() == identity.public_key() || keys.contains(k)),
             "diagnostic route must contain one or two known relays and one known target"
         );
-        Some(diagnostic::Occupancy::acquire(&ingress.diagnostic)?)
+        // Endpoint single-flight is independent of opaque forwarding. Each
+        // forwarder is already charged to the SAME shared HopBudget and Iroh
+        // connection allowance; taking the endpoint lock here serialized every
+        // overlapping diagnostic route even when those budgets had capacity.
+        if hop.route().next().is_none() {
+            Some(diagnostic::Occupancy::acquire(&ingress.diagnostic)?)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -159,7 +168,7 @@ pub(super) async fn incoming(
             .await
         })
         .await??;
-        return if _diagnostic_occupancy.is_some() {
+        return if is_diagnostic {
             tokio::time::timeout(
                 Duration::from_secs(60),
                 hop::bridge(&mut hop, &mut downstream),

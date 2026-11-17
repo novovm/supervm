@@ -36,6 +36,9 @@ if(!$ast.Extent.Text.Contains('$saved -lt 64')){throw 'Snapshot budget changed'}
 $coordinator="$PSScriptRoot/../../artifacts/audit/novonet-concurrent-recovery-20261117/Run-A-Scenario.ps1"
 $coordinatorAst=[Management.Automation.Language.Parser]::ParseFile($coordinator,[ref]$tokens,[ref]$errors)
 if($errors.Count){throw 'Actual coordinator parse failed'};$checks++
+foreach($f in $coordinatorAst.FindAll({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst]},$true)){
+ if(Get-Alias -Name $f.Name -ErrorAction SilentlyContinue){throw "Coordinator function shadowed by PowerShell alias: $($f.Name)"}
+};$checks++
 $start=$coordinatorAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text-eq '$overlapStart'},$true)
 $end=$coordinatorAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text-eq '$overlapEnd'},$true)
 $overlap=[scriptblock]::Create($start.Extent.Text+"`n"+$end.Extent.Text)

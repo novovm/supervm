@@ -13,6 +13,196 @@ fn constrained_double_relay_probe_real_hop_done_does_not_replace_business_routes
     run_constrained_relay(2)
 }
 
+#[test]
+fn concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done() -> Result<()> {
+    let mut peers = Pair::configured(false, true, 4)?;
+    let mut configs = peers
+        .drivers
+        .iter()
+        .map(|d| d.config.clone())
+        .collect::<Vec<_>>();
+    let records = configs
+        .iter()
+        .map(|c| c.public_record_file.clone())
+        .collect::<Vec<_>>();
+    for (side, config) in configs.iter_mut().enumerate() {
+        config.relay_forwarding = true;
+        config.probe_control_file = Some(config.public_record_file.with_extension("nvprobe"));
+        config.discovery = false;
+        config.discovery_seeds.clear();
+        config.peer_records = records
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != side)
+            .map(|(_, path)| path.clone())
+            .collect();
+    }
+    let observers = (0..4)
+        .map(|_| Arc::new(NativeTransferDiagnosticsV1::new()))
+        .collect::<Vec<_>>();
+    peers.restart_drivers(configs, Some(&observers))?;
+    let ids = (1..=4).map(|i| [i as u8; 32]).collect::<Vec<_>>();
+    for (side, driver) in peers.drivers.iter().enumerate() {
+        driver.diagnostic.lock().unwrap().identities = Some((
+            ids[side],
+            ids.iter()
+                .enumerate()
+                .filter(|(i, _)| *i != side)
+                .map(|(_, id)| *id)
+                .collect(),
+        ));
+        for view in driver.views.lock().unwrap().iter_mut() {
+            view.fallback = false;
+        }
+    }
+    let ready_by = Instant::now() + Duration::from_secs(30);
+    while peers
+        .drivers
+        .iter()
+        .any(|d| d.observation()["diagnostic_relay"]["verified_locator_count"] != 3)
+    {
+        peers.pump()?;
+        ensure!(
+            Instant::now() < ready_by,
+            "concurrent fixture locators missing"
+        );
+    }
+    for driver in &peers.drivers {
+        let record = read_document::<PeerSignedRelayRecordV1>(&driver.config.public_record_file)?;
+        assert_eq!(record.endpoints[0].max_sessions, 4);
+        assert_eq!(record.endpoints[0].max_bytes_per_minute, 128 * 1024);
+    }
+    // Each original node is exactly one endpoint and one opaque forwarder.
+    // In particular B must accept its own reservation while forwarding for A.
+    let routes = [(0, 2, vec![ids[1], ids[3]]), (1, 3, vec![ids[0], ids[2]])];
+    let mut probes = Vec::new();
+    for (index, (sender, target, via)) in routes.iter().enumerate() {
+        let wall = wall_ms()?;
+        let probe = NetworkProbe {
+            nonce: [91 + index as u8; 32],
+            sender: ids[*sender],
+            recipient: ids[*target],
+            issued_at_ms: wall,
+            expires_at_ms: wall + 10000,
+        };
+        peers.drivers[*sender]
+            .diagnostic
+            .lock()
+            .unwrap()
+            .command(
+                ProbeCommand::RelayArm(probe.clone(), via.clone()),
+                wall,
+                Instant::now(),
+            )
+            .with_context(|| {
+                format!("endpoint {sender} blocked by an independent forwarding role")
+            })?;
+        probes.push(probe);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while peers.drivers[*sender].observation()["diagnostic_relay"]["reservation"]["ready"]
+            != true
+        {
+            peers.pump()?;
+            ensure!(
+                Instant::now() < deadline,
+                "concurrent original route {sender} not ready"
+            );
+        }
+    }
+    for ((sender, _, via), probe) in routes.iter().zip(probes.iter_mut()) {
+        probe.issued_at_ms = wall_ms()?;
+        probe.expires_at_ms = probe.issued_at_ms + 10000;
+        peers.drivers[*sender].diagnostic.lock().unwrap().command(
+            ProbeCommand::RelaySend(probe.clone(), via.clone()),
+            probe.issued_at_ms,
+            Instant::now(),
+        )?;
+    }
+    let find = |driver: &Driver, name: &str, nonce: &[u8; 32]| {
+        driver.observation()["diagnostic_relay"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["event"] == name && e["probe"]["nonce"] == serde_json::json!(nonce))
+            .cloned()
+    };
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        peers.pump()?;
+        if routes
+            .iter()
+            .zip(&probes)
+            .all(|((sender, target, _), probe)| {
+                find(
+                    &peers.drivers[*sender],
+                    "relay_probe_object_done",
+                    &probe.nonce,
+                )
+                .is_some()
+                    && find(
+                        &peers.drivers[*target],
+                        "relay_probe_received_integrity_verified",
+                        &probe.nonce,
+                    )
+                    .is_some()
+            })
+        {
+            break;
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "concurrent original dual-end results missing"
+        );
+    }
+    let mut endpoint_sessions = Vec::new();
+    for ((sender, target, _), probe) in routes.iter().zip(&probes) {
+        let sent = find(
+            &peers.drivers[*sender],
+            "relay_probe_object_done",
+            &probe.nonce,
+        )
+        .unwrap();
+        let received = find(
+            &peers.drivers[*target],
+            "relay_probe_received_integrity_verified",
+            &probe.nonce,
+        )
+        .unwrap();
+        assert_eq!(sent["object"], received["object"]);
+        assert_eq!(sent["session"], received["session"]);
+        assert_eq!(sent["probe"], received["probe"]);
+        endpoint_sessions.push(sent["session"].clone());
+    }
+    assert_ne!(endpoint_sessions[0], endpoint_sessions[1]);
+    for (side, observer) in observers.iter().enumerate() {
+        let evidence = observer
+            .snapshot()
+            .context("concurrent native evidence missing")?;
+        let forwarded = evidence
+            .relay_circuits
+            .iter()
+            .filter(|c| c.route.role == "relay")
+            .collect::<Vec<_>>();
+        assert_eq!(
+            forwarded.len(),
+            1,
+            "node {side} must retain one independent forwarding role"
+        );
+        assert!(forwarded[0]
+            .forwarded
+            .iter()
+            .all(|direction| direction.packets > 0 && direction.bytes > 0));
+        assert_eq!(forwarded[0].failed_writes, [0, 0]);
+        assert_eq!(
+            peers.drivers[side].observation()["installed_bound_peer_routes"],
+            0
+        );
+    }
+    assert_eq!(peers.replaced_sends, 0);
+    peers.close()?;
+    Ok(())
+}
+
 fn run_constrained_relay(relay_count: usize) -> Result<()> {
     let count = relay_count + 2;
     let target = count - 1;

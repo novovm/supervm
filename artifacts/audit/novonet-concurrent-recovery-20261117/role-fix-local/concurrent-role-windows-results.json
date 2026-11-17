@@ -1,0 +1,12 @@
+[
+  {
+    "exit_code": 0,
+    "filter": "concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done",
+    "test_sha256": "5508f153097f4d5798aa53ae09a8d6587b74fa0784f6a0130b6b608519468c1d"
+  },
+  {
+    "exit_code": 0,
+    "filter": "relay_diagnostic_history_cancel_expiry_and_occupancy_are_bounded",
+    "test_sha256": "5508f153097f4d5798aa53ae09a8d6587b74fa0784f6a0130b6b608519468c1d"
+  }
+]

@@ -49,6 +49,7 @@ pub(super) struct State {
     pub identities: Option<(Hash, Vec<Hash>)>,
     pub verified_locators: usize,
     request: Option<Request>,
+    // One local diagnostic endpoint; opaque forwarding uses the shared HopBudget.
     busy: bool,
     seen: VecDeque<((Hash, Hash), Instant)>,
     events: VecDeque<serde_json::Value>,
