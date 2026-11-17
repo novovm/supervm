@@ -1,4 +1,23 @@
-# CURRENT 2026-11-18 00:26: D authenticated; C/D observe unfinished recovered object
+# CURRENT 2026-11-18 00:35: object sent; return SAME observer originals only
+
+A pulled fresh C/D READY through799b3e5d and executed original continuation once.
+Object2239b3c22fc30a7ba5b29f649d93271639ed439e93e6adb1cecd7cd275de9412,
+Session54868614a4c0ecda6864b04af6dad539,
+Circuit55ff173d2812e03d6dc892f067620355, A→B→C→D.
+A admitted00:34:08.537 and Object DONE00:34:08.791 Beijing; coordinator exit0 at
+00:34:12.326. B same-circuit downstream ready and9/9forwarded, failed writes0/0.
+[Original A/B evidence](live-recovery-0034/README.md).
+
+**C/D only return current SAME observer outputs**: ALL relay-*.json, SHA256,
+result/error/collector-exit presence and stdout/stderr under C-recovery-observer/
+and D-recovery-observer/. C correlate actual forwarding by Circuit/Route; D
+correlate final object/session custody/integrity/time. Opaque relay no Object or
+native_session is normal; do not filter snapshots by those fields. No new
+observer, resend, node restart/update, package copy or second B outage. No match
+must be returned honestly. Sender DONE is not yet dual-end acceptance. Missing
+true concurrency and historical automatic/five-second restore failure remain.
+
+## Historical 00:26: D authenticated; C/D observer dispatch (already armed)
 
 A fetched D success e05c1cfd, retaining the earlier cancelled UAC as a pre-entry
 failure. Actual D PID34148/LocalService, exact installed EXE/mapped AOEM/manifest,

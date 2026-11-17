@@ -1,0 +1,17 @@
+{
+  "new_session": "54868614a4c0ecda6864b04af6dad539",
+  "new_circuit": "55ff173d2812e03d6dc892f067620355",
+  "old_session": "cc0c77210313adcc79d0cb2e806da5f7",
+  "old_circuit": "e405f669ded4a84d9adf81f25fabccf4",
+  "new_object": "2239b3c22fc30a7ba5b29f649d93271639ed439e93e6adb1cecd7cd275de9412",
+  "sender_DONE": true,
+  "original_reserved_route_interrupted": true,
+  "automatic_restore_attempt_failed": true,
+  "original_owner_restored_separately": true,
+  "approved_existing_upgrade_after_restore": true,
+  "old_circuit_evidence_is_historical": true,
+  "planned_five_second_downtime_achieved": false,
+  "old_object_resumed": false,
+  "prior_attempt": "D:\\WorksArea\\SUPERVM\\artifacts\\audit\\novonet-concurrent-recovery-20261117\\candidate-db667aa4\\live-1828",
+  "C_D_receiver_and_forwarding_evidence_pending": true
+}

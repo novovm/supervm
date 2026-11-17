@@ -1,0 +1,102 @@
+[
+  {
+    "file": "A-original-circuit-after-restoration.json",
+    "bytes": 672088,
+    "sha256": "df327b69563d27898f88c3673fdbbd99cf71f9bdcf571f835c15a20a436d6e0a"
+  },
+  {
+    "file": "after-B-recovery-after.json",
+    "bytes": 717175,
+    "sha256": "9c4c830d76798757a89b50cd439312959bf005800308a075da9c8a30c921f3a8"
+  },
+  {
+    "file": "after-B-recovery-arm.nvprobe",
+    "bytes": 441,
+    "sha256": "123939125392453ba979db7fc57a041acaf92f4207b643e97e614d8ebd141a6f"
+  },
+  {
+    "file": "after-B-recovery-cli.json",
+    "bytes": 2815,
+    "sha256": "3d76ad7103d9eadcc95af8d97af0ef1ac09bc6134aeee52e75a103f8181ecbc4"
+  },
+  {
+    "file": "after-B-recovery-cli.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "after-B-recovery-ready.json",
+    "bytes": 691207,
+    "sha256": "cff641c924646de50e25ec1c7ec58e6c48be66e1e4a97f1b5ac8a123e27cfab9"
+  },
+  {
+    "file": "after-B-recovery-send-cli.json",
+    "bytes": 2815,
+    "sha256": "88f41243e5c0d499cd42e7343fb397b9462f2b757d7e2e41c88a8c6b0ab3921a"
+  },
+  {
+    "file": "after-B-recovery-send-cli.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "B-after-snapshot.json",
+    "bytes": 393872,
+    "sha256": "1b0333db8b8f91490ee067a6f718aaa8198a8d744c3f80065f050ef638cf911c"
+  },
+  {
+    "file": "B-after-snapshot.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "B-preflight.json",
+    "bytes": 678779,
+    "sha256": "8ef6199789535c59c85ae3eb0c02219294a5a12a75ddd16f2850e445bae01c03"
+  },
+  {
+    "file": "B-preflight.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "B-Scenario.executed.py",
+    "bytes": 12588,
+    "sha256": "43203df8ff5e75e4814df2fbb06e82aeb0402559ed8abebb6c7557fad3f744a6"
+  },
+  {
+    "file": "C-ready.json",
+    "bytes": 781,
+    "sha256": "9e4730ca12ae0d7ba044d97edfc70a778371bfbc426dfc89bdd633be383be4dc"
+  },
+  {
+    "file": "D-ready.json",
+    "bytes": 781,
+    "sha256": "6770fb587108dca0716cfcd2b818ed61f4b4b39296460c5e075612107aa71698"
+  },
+  {
+    "file": "novonet-recovery-5b656189-live-20261118-0034-controller-exit.json",
+    "bytes": 161,
+    "sha256": "1f4b615154182838d72dc75c79817fa3fde7373bef244f01458cc02904a0ed44"
+  },
+  {
+    "file": "novonet-recovery-5b656189-live-20261118-0034-controller.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "novonet-recovery-5b656189-live-20261118-0034-controller.stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "recovery-origin-result.json",
+    "bytes": 842,
+    "sha256": "0924fff1e3b746d050999d2a65f80592224c5ebc66b06981df3dd55da67e3e30"
+  },
+  {
+    "file": "result.json",
+    "bytes": 217,
+    "sha256": "50c784347b07c22c1d90c0ebb82331f78244678d9591f454760199f58fafbac3"
+  }
+]
