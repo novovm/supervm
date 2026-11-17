@@ -1,4 +1,10 @@
-# CURRENT15:09: role-exclusion defect fixed locally; new fixed candidate required
+# CURRENT16:53: fixed db667 Full/packages passed, B/A updated; C next
+
+Runtime `db667aa4` exact Full44037306356 passed. Both original fixed packagers, actual runtime KATs/native cold recovery, Windows91-payload/94-archive-file and Linux92-payload/95-archive-file verification passed. B newPID2840424 and A22576 are original-database existing/unchanged custody; A authenticated B60ms and A31ms at original height1/state root. **Concurrent delivery and relay interruption/recovery have not run/passed.** The failed common95 preparation is not retried unchanged.
+
+C/D new ZIP receipt is confirmed. **C now updates using its qualified local LocalService owner; D waits for C health.** [Fixed candidate, actual B/A receipts and C dispatch](candidate-db667aa4/README.md), [CD-UPDATE](candidate-db667aa4/CD-UPDATE.md). Existing observer/coordinator management bindings are now version-pinned to db667, local sequence15/reader23/readiness20 checks passed; no new Rust/AOEM change or second Full for these deployment bindings. Do not reuse old95 READYs or rearm before all updated owners pass health. Later sections are retained original failure/plan, not current instructions to run old programs.
+
+## Earlier15:09 root fix (completed; original failure retained)
 
 The actual run pulled C/D6cd131cb READYs and did not pass. First the coordinator name `Cli` resolved to PowerShell's built-in Clear-Item alias before A's native CLI was invoked. The exact failure and B's prepare-only side effect were preserved; no fixed test object or B stop occurred. The coordinator helper is now named `Invoke-OriginalNativeProbe`, with an actual alias-precedence regression. The second attempt reached A's real authenticated A→B→D→C route, but B's new nonce `4c6f4be3274537347281256aebe0a8923234da54d9301c364701fe3200155ac7` was refused by the original owner (`accepted_commands1`, `rejected_commands1`, `diagnostic already reserved`). The retained B reservation/20s timeout belonged to earlier nonce `cd51653bd762b8cfb32b6d3a12b7719c1185051c37a5b8437df3876746c51a98`, not the new command. Do not misclassify the old timeout as the current failure or retry the workload unchanged.
 

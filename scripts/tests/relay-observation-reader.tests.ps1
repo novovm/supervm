@@ -53,6 +53,22 @@ $Source='95ec9c2eced988c5798d549971354ef8722367b7';$NodeSha256='0'*64
 try{. $applyBinding;throw 'UNEXPECTED_ACCEPT'}catch{if($_.Exception.Message -notlike '*fixed program differs*'){throw}};$checks++
 $Common95=$false;$exe='legacy-exe';$file='legacy-progress';. $applyBinding
 if($exe -cne 'legacy-exe' -or $file -cne 'legacy-progress'){throw 'Legacy binding changed'};$checks++
+$roleBinding=$observerAst.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if($CommonRoleFix)')},$true)
+if($null -eq $roleBinding){throw 'Missing fixed role-fix deployment binding'}
+$applyRoleBinding=[scriptblock]::Create($roleBinding.Extent.Text)
+$CommonRoleFix=$true;$Source='db667aa420477e76766352c8efd7fea83fdb6eac';$NodeSha256='442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825';$WorkName='novovm-common-db667aa4-20261117'
+foreach($HostId in @('C','D')){
+    . $applyRoleBinding
+    $expectedExe=if($HostId -eq 'C'){'C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-C-20261117\bin\novovm-node.exe'}else{'C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-windows-x86_64\bin\novovm-node.exe'}
+    $expectedFile=if($HostId -eq 'C'){'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-CommonDb667-C-20261117\progress.json'}else{'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-db667aa4-20261117\logs\progress.json'}
+    if($exe -cne $expectedExe -or $file -cne $expectedFile){throw 'Wrong role-fix owner binding'};$checks++
+}
+$Source='0'*40
+try{. $applyRoleBinding;throw 'UNEXPECTED_ACCEPT'}catch{if($_.Exception.Message -notlike '*fixed program differs*'){throw}};$checks++
+$Source='db667aa420477e76766352c8efd7fea83fdb6eac';$NodeSha256='0'*64
+try{. $applyRoleBinding;throw 'UNEXPECTED_ACCEPT'}catch{if($_.Exception.Message -notlike '*fixed program differs*'){throw}};$checks++
+$CommonRoleFix=$false;$exe='legacy-exe';$file='legacy-progress';. $applyRoleBinding
+if($exe -cne 'legacy-exe' -or $file -cne 'legacy-progress'){throw 'Inactive role-fix binding changed paths'};$checks++
 $file=Join-Path $root 'progress.json'
 [IO.File]::WriteAllText($file,('x'*(4MB+1)))
 try {Read-RelayProgress $file $root|Out-Null;throw 'UNEXPECTED_ACCEPT'}catch{if($_.Exception.Message -notlike '*Invalid observation*'){throw}};$checks++

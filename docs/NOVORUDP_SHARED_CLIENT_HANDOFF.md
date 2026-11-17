@@ -1,5 +1,11 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 16:53 A: db667 Full passed; B/A switched, C next
+
+Actual common95 concurrent preparation was blocked by the original owner locking opaque forwarding as endpoint occupancy; no new diagnostic object or B interruption occurred. Minimal original-owner fix `db667aa420477e76766352c8efd7fea83fdb6eac` passed Windows/Linux role/endpoint regressions and strict Clippy, exact Full44037306356, both fixed packages/actual runtime KAT/native cold recovery and complete archives. Normal production routing, auth, original4-session/128KiB budget, diagnostic60s lease, AOEM and ledger remain unchanged.
+
+B is now db667 PID2840424/UID996, A PID22576/LocalService, original DB existing/custody unchanged. A authenticated B60ms and A31ms, original height1/state root unchanged. C/D new ZIP receipts confirmed. **C now follows [the exact candidate existing-update dispatch](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/CD-UPDATE.md); D waits C health.** No new observer/window, old crash test, repeated direct test or package recopy. Source sync and this successful update/health do not establish concurrent/recovery acceptance. Prior single-object double relay remains accepted independently. Original failure/attempts and all candidate/actual host evidence are [here](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/README.md).
+
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
 15:09最新：已签收C/D当前原记录da597f19并核8份快照SHA；本轮没有发新诊断对象、没有停B。

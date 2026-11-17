@@ -1,0 +1,19 @@
+{
+  "source": "db667aa420477e76766352c8efd7fea83fdb6eac",
+  "payload_count": 92,
+  "all_members_verified": true,
+  "test_sha256": "254db8d57545ded3542566d691cacbbcaa4754263423b2597625d85b9c829eed",
+  "installed": false,
+  "four_host_acceptance": false,
+  "node_sha256": "81bf52b5d50a5d2549c7b78c41eff3f86955e06d686ff5f5f9dacd088539892a",
+  "ctl_sha256": "ee05a11e15cd6e723c0a3a2405fe67718a7caf0af26fa447f03ba57742e58f4c",
+  "client_sha256": "4b590a15187286224143583c6b8da67a8d96a98aca4165a99407f514011f464d",
+  "core_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "manifest_sha256": "44c935bc54df8756a3acb1f27bdf163de04952e416ca8dbc47bd4479da1ff670",
+  "native_recovery_exit": 0,
+  "archive_bytes": 375967156,
+  "archive_sha256": "21b697c9e74a41914d3b0e3fd628f3e1b7b38c0c27f47968701626cd9d13dcb7",
+  "archive_name": "novovm-common-db667aa4-aoem570-linux-x86_64.tar.gz",
+  "archive_members": 95,
+  "all_archive_members_verified": true
+}

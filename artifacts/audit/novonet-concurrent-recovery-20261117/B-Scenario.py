@@ -1,4 +1,4 @@
-"""Fixed common95 management actions; only original CLI/unit, no network socket."""
+"""Fixed db667 management actions; only original CLI/unit, no network socket."""
 import argparse
 import hashlib
 import json
@@ -13,10 +13,10 @@ import time
 if not __debug__:
     raise SystemExit('Safety assertions require non-optimized Python')
 
-UNIT = 'novovm-B-common95-network-20261117.service'
-RELEASE = Path('/opt/novovm/releases/novovm-common-95ec9c2e-aoem570-linux-x86_64')
-WORK = Path('/var/lib/novovm/selfrun/91129655606029/B/novovm-common-95ec9c2e-20261117')
-OUT = Path('/home/ecs-user/novonet-concurrent-recovery-20261117/evidence')
+UNIT = 'novovm-B-db667aa4-network-20261117.service'
+RELEASE = Path('/opt/novovm/releases/novovm-common-db667aa4-aoem570-linux-x86_64')
+WORK = Path('/var/lib/novovm/selfrun/91129655606029/B/novovm-common-db667aa4-20261117')
+OUT = Path('/home/ecs-user/novonet-concurrent-db667aa4-20261117/evidence')
 IDS = ['b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43',
        '4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f',
        '1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a',
@@ -52,7 +52,7 @@ def owner():
     pid = int(subprocess.check_output(['systemctl', 'show', UNIT, '-p', 'MainPID', '--value']))
     assert pid > 1 and Path(f'/proc/{pid}').stat().st_uid == 996, 'wrong B account'
     assert Path(os.readlink(f'/proc/{pid}/exe')) == RELEASE / 'bin/novovm-node'
-    assert digest(RELEASE / 'bin/novovm-node') == 'e709c0d78776492b0e04f28cb817ae83f73e3f4642ccda67b27838feb448b0a4'
+    assert digest(RELEASE / 'bin/novovm-node') == '81bf52b5d50a5d2549c7b78c41eff3f86955e06d686ff5f5f9dacd088539892a'
     assert digest(RELEASE / 'bin/novovmctl') == 'ee05a11e15cd6e723c0a3a2405fe67718a7caf0af26fa447f03ba57742e58f4c'
     fields = dict(v.split('=', 1) for v in shlex.split(subprocess.check_output(
         ['systemctl', 'show', UNIT, '-p', 'Environment', '--value'], text=True)) if '=' in v)

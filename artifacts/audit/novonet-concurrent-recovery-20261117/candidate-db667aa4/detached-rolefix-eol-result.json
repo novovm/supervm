@@ -1,0 +1,7 @@
+{
+  "content_differences": "CRLF/LF only verified before any write",
+  "files": 12,
+  "head": "db667aa420477e76766352c8efd7fea83fdb6eac",
+  "scope": "Detached build snapshot only; main checkout untouched",
+  "original_bytes_preserved": "D:\\WorksArea\\SUPERVM\\target\\aoem-latest-57090b6b-20261117/detached-rolefix-eol-originals"
+}

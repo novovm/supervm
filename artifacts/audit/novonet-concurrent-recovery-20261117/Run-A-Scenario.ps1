@@ -8,15 +8,15 @@ $PSNativeCommandUseErrorActionPreference=$false
 $repo='D:\WorksArea\SUPERVM'
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Read-RelayProgress.ps1"
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Assert-RelayReadiness.ps1"
-$source='95ec9c2eced988c5798d549971354ef8722367b7'
-$nodePin='754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7'
-$release='C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-windows-x86_64'
-$work='C:\ProgramData\NOVOVM\selfrun\91129655606029\A\novovm-common-95ec9c2e-20261117'
+$source='db667aa420477e76766352c8efd7fea83fdb6eac'
+$nodePin='442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825'
+$release='C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-windows-x86_64'
+$work='C:\ProgramData\NOVOVM\selfrun\91129655606029\A\novovm-common-db667aa4-20261117'
 $out=[IO.Path]::GetFullPath($EvidenceRoot)
 if(Test-Path -LiteralPath $out){throw 'Preserve previous attempt; no repeated workload'}
 $nodes=@(Get-CimInstance Win32_Process -Filter "Name='novovm-node.exe'"|Where-Object ExecutablePath -IEQ "$release\bin\novovm-node.exe")
 if($nodes.Count-ne 1 -or (Invoke-CimMethod $nodes[0] -MethodName GetOwnerSid).Sid-cne 'S-1-5-19'){throw 'Wrong original A owner'}
-foreach($pin in @(@('novovm-node.exe',$nodePin),@('novovmctl.exe','6d5c03dcd89c8b3c6c82fa87700208a7d92a4b6196984ff867dbc9252c008248'))){if((Get-FileHash "$release/bin/$($pin[0])").Hash.ToLowerInvariant()-cne $pin[1]){throw 'A fixed program differs'}}
+foreach($pin in @(@('novovm-node.exe',$nodePin),@('novovmctl.exe','b49c87fadef7e04da76ed8b2226c609858e308185ee205916dd86e39161ca4d6'))){if((Get-FileHash "$release/bin/$($pin[0])").Hash.ToLowerInvariant()-cne $pin[1]){throw 'A fixed program differs'}}
 foreach($pair in @(@('C',$CReadyFile),@('D',$DReadyFile))){
  $parent=Split-Path -Parent $pair[1];$ready=Get-Content -Raw -LiteralPath $pair[1]|ConvertFrom-Json
  $live=Get-Content -Raw -LiteralPath "$parent/liveness.json"|ConvertFrom-Json
@@ -35,7 +35,7 @@ if(($ids-join ',')-cne ($pins-join ',')){throw 'Fixed original identities differ
 New-Item -ItemType Directory -Path $out|Out-Null
 Copy-Item -LiteralPath $CReadyFile -Destination "$out/C-ready.json"
 Copy-Item -LiteralPath $DReadyFile -Destination "$out/D-ready.json"
-$bFile='/home/ecs-user/novonet-concurrent-recovery-20261117/B-Scenario.py'
+$bFile='/home/ecs-user/novonet-concurrent-db667aa4-20261117/B-Scenario.py'
 $bPin=(Get-FileHash -LiteralPath "$PSScriptRoot/B-Scenario.py").Hash.ToLowerInvariant()
 $bCommand="echo '$bPin  $bFile' | sha256sum -c - >/dev/null && sudo -n python3 $bFile"
 function B([string]$Action,[string]$Extra=''){

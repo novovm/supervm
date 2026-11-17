@@ -1,0 +1,8 @@
+
+running 1 test
+test native_pipeline::service::network::tests::all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates ... NOVONET outbound peer=0 turn=0 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=0 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1829 filtered out; finished in 25.59s
+

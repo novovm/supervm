@@ -1,0 +1,19 @@
+{
+  "pid": 2840424,
+  "uid": 996,
+  "source": "db667aa420477e76766352c8efd7fea83fdb6eac",
+  "node_sha256": "81bf52b5d50a5d2549c7b78c41eff3f86955e06d686ff5f5f9dacd088539892a",
+  "aoem_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "database": "/var/lib/novovm/selfrun/91129655606029/B/chain-state",
+  "start": "existing",
+  "initialize_executed": false,
+  "custody_unchanged": true,
+  "other_services_unchanged": true,
+  "listeners": "UNCONN 0      0      0.0.0.0:42050 0.0.0.0:* users:((\"novovm-node\",pid=2840424,fd=18))\nUNCONN 0      0      0.0.0.0:41050 0.0.0.0:* users:((\"novovm-node\",pid=2840424,fd=3)) \n",
+  "old_exit": {
+    "pid": 2621117,
+    "start_ticks": "297481741",
+    "signal": "SIGTERM",
+    "scope": "interrupted original-database recovery; not certified graceful drain"
+  }
+}

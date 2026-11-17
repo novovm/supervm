@@ -1,0 +1,5 @@
+Exception: D:\WorksArea\SUPERVM\artifacts\audit\novonet-concurrent-recovery-20261117\candidate-db667aa4\Switch-A.ps1:80
+Line |
+  80 |  … StringComparison]::OrdinalIgnoreCase)){throw 'Member escaped'};Assert …
+     |                                           ~~~~~~~~~~~~~~~~~~~~~~
+     | Member escaped

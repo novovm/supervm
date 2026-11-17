@@ -1,0 +1,15 @@
+{
+  "library_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "ctl_sha256": "b49c87fadef7e04da76ed8b2226c609858e308185ee205916dd86e39161ca4d6",
+  "source": "db667aa420477e76766352c8efd7fea83fdb6eac",
+  "installed": false,
+  "four_host_acceptance": false,
+  "all_members_verified": true,
+  "native_recovery_exit": 0,
+  "utc": "2026-11-17T08:14:11.3368253Z",
+  "member_count": 91,
+  "current_test_sha256": "5508f153097f4d5798aa53ae09a8d6587b74fa0784f6a0130b6b608519468c1d",
+  "manifest_sha256": "8c340c7d27318bede380ff07812584971601058d20eef48e7da6712058324d7e",
+  "client_sha256": "99dc33a60e176e08ffd0655f39e2f1a0d1c7e906f4ac02866b15cec4530f32d2",
+  "node_sha256": "442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825"
+}

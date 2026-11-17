@@ -1,4 +1,14 @@
-# CURRENT: fixed role-occupancy candidate; receipt only, no update yet
+# CURRENT16:53: B/A updated and healthy; C existing update dispatched, D waits
+
+Exact-source Full44037306356 **completed successfully**. Both fixed platform packages, actual CTL/runtime KATs, actual new Node/AOEM native cold recovery and all archive members passed. B old2621117 exited by exact SIGTERM; new2840424/novovm UID996 uses original database existing, unchanged custody and actual pinned mapped SO. A old34208 precisely stopped; new22576/LocalService uses original database existing, unchanged custody and actual pinned mapped DLL. Authentication queries: B60ms, A31ms, both original height1/root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. This is update/health acceptance, not concurrent delivery or recovery acceptance.
+
+**C now:** follow [CD-UPDATE.md](CD-UPDATE.md) using the already-received db667 whole ZIP and your qualified local LocalService owner. D keeps running, no new observer yet. Stop permission is already granted; do not wait for another permission request or run old crash tests. Original observer/coordinator bindings now pin this new runtime; local reader23+readiness20+sequence15 checks passed. Later receipt-only text is historical, superseded by this dispatch.
+
+Linux archive: `novovm-common-db667aa4-aoem570-linux-x86_64.tar.gz`,375967156bytes, SHA256 `21b697c9e74a41914d3b0e3fd628f3e1b7b38c0c27f47968701626cd9d13dcb7`; all92 payloads/95 archive files verified. Node `81bf52b5d50a5d2549c7b78c41eff3f86955e06d686ff5f5f9dacd088539892a`; AOEM `21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231`; release manifest `44c935bc54df8756a3acb1f27bdf163de04952e416ca8dbc47bd4479da1ff670`. Native-fs network qualification15 cases and actual new package native cold recovery1 passed, original failed staging evidence retained.
+
+Packaging notes, not live protocol faults: Linux initial clean-worktree gate stopped before build;12 historical audit files in the detached build snapshot differed only CRLF/LF. Original bytes were retained, all committed-blob identities verified and index refreshed, main checkout untouched; original clean gate then passed. Initial local Python checksum-index check used a different case sort; corrected to original manifest ordering before runtime tests. A's first updater stopped before any staging/termination at a mixed slash containment comparison; normalized the package root and reran only that preflight/cutover, retaining original stderr. Neither was a node crash or a relaxed guard. A copied/preserved only the completed old diagnostic control after exact old owner exit before deleting that one local command; no database/cache/key deletion.
+
+## Earlier receipt-only dispatch (completed)
 
 Runtime source: `db667aa420477e76766352c8efd7fea83fdb6eac`. It fixes the actual original-owner `diagnostic already reserved` refusal by keeping endpoint single-flight exclusion separate from original budgeted opaque forwarding. No connection, byte-budget, authentication, protocol timeout, AOEM, ledger or consensus change. See the parent README and original failed evidence.
 

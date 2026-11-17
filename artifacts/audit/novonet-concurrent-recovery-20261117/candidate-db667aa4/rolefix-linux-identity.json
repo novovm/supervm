@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "command": "native-identity",
+  "timestamp_unix_ms": 1794904213514,
+  "host": "unknown-host",
+  "data": {
+    "action": "qualify-runtime",
+    "qualification": "ml-dsa-65-native-verification-owner",
+    "algorithm": "ML-DSA-65",
+    "signature_suite": 65,
+    "library": "/mnt/c/Users/leadb/.codex/worktrees/novonet-fixed-linux-build/SUPERVM/artifacts/product-overlay/novovm-common-db667aa4-aoem570-linux-x86_64/aoem/linux/core/bin/libaoem_ffi.so",
+    "library_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+    "verification_qualified": true,
+    "scalar_verification_kat_passed": true,
+    "unified_semantic_verification_kat_passed": true,
+    "mixed_batch_verification_kat_passed": true,
+    "primitive_sign_interface_size_checked": true,
+    "signing_tested": false,
+    "keygen_tested": false,
+    "protected_key_created": false,
+    "custody_accessed": false,
+    "database_created": false,
+    "service_started": false,
+    "whole_node_post_quantum_qualified": false
+  }
+}
