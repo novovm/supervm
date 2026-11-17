@@ -1,0 +1,10 @@
+
+running 5 tests
+test native_pipeline::service::network::diagnostic::tests::double_relay_commands_bind_order_and_reject_loops_truncation_and_route_changes ... ok
+test native_pipeline::service::network::diagnostic::tests::relay_diagnostic_commands_are_bounded_and_do_not_authorize_business ... ok
+test native_pipeline::service::network::diagnostic::tests::relay_diagnostic_history_cancel_expiry_and_occupancy_are_bounded ... ok
+test native_pipeline::service::network::diagnostic::tests::relay_diagnostic_receiver_rejects_business_wrong_peer_and_duplicate ... ok
+test native_pipeline::service::network::diagnostic::tests::relay_diagnostic_time_reply_jitter_preserves_rate_deadline_and_bounds ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1826 filtered out; finished in 0.02s
+

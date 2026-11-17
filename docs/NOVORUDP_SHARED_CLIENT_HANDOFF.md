@@ -1,5 +1,17 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 A: fixed5b eight-slot packages qualified, exact Full pending
+
+Chrono/netwatch/WMI migration and affected local gates are complete. Windows/Linux
+original packages at5b656189 have verified archive members, original AOEM pins,
+runtime identity verification and native-state cold recovery; Linux also17/17
+selected package-context network tests. Full44092874774 matches5b; security,
+Node and process recovery passed, Rust/Windows owner gates still running at this
+record. [Fixed hashes, evidence and next existing plan](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/README.md).
+C/D copy/hash only, no update/observer yet. No actual node changed, unfinished
+recovered object and true overlapping concurrency remain unpassed. Keep original
+failures; this documentation does not generate a different program candidate.
+
 ## 2026-11-17 A: corrected candidate Full security passed; ASAS test cleanup race fixed
 
 Full44089528662 exactly matches6d2c3e7d and its Rust security checks passed. Node

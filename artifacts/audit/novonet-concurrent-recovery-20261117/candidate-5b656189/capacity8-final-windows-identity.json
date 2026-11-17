@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "command": "native-identity",
+  "timestamp_unix_ms": 1794922736273,
+  "host": "AOEM-A1",
+  "data": {
+    "action": "qualify-runtime",
+    "qualification": "ml-dsa-65-native-verification-owner",
+    "algorithm": "ML-DSA-65",
+    "signature_suite": 65,
+    "library": "\\\\?\\D:\\WorksArea\\SUPERVM\\artifacts\\product-overlay\\novovm-common-5b656189-aoem570-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+    "library_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+    "verification_qualified": true,
+    "scalar_verification_kat_passed": true,
+    "unified_semantic_verification_kat_passed": true,
+    "mixed_batch_verification_kat_passed": true,
+    "primitive_sign_interface_size_checked": true,
+    "signing_tested": false,
+    "keygen_tested": false,
+    "protected_key_created": false,
+    "custody_accessed": false,
+    "database_created": false,
+    "service_started": false,
+    "whole_node_post_quantum_qualified": false
+  }
+}

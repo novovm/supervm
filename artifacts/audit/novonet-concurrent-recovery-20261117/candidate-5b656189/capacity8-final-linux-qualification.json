@@ -1,0 +1,21 @@
+{
+  "source": "5b656189784c854ac356aae77610c931b9f2189d",
+  "payload_count": 92,
+  "all_members_verified": true,
+  "test_sha256": "25966758235651c7f4181aa95899defca24020a4cc941a944a5bafc7fab3b09c",
+  "installed": false,
+  "four_host_acceptance": false,
+  "test_build_source": "6d2c3e7d001b9d1c6635f07eb8b9a30bc1e3b4cd",
+  "rust_source_unchanged_since_test_build": true,
+  "node_sha256": "241c614efab1ffa84dda7712579360655dfe1e482ec0cca451f4c735ed29b03d",
+  "ctl_sha256": "bb29415abc3b62a7e5db8a009e53b0b525237a83c595828d34c8e8d2afbc1c23",
+  "client_sha256": "cf7880f612fbab812ffe1de10ff884053284359636d64e71ce25e89fe9b6a039",
+  "core_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "manifest_sha256": "85fd73d09e793c0e47e0c8da747866d2c675088bc01e985bbd16027bc4da76e5",
+  "native_recovery_exit": 0,
+  "archive_bytes": 375954281,
+  "archive_sha256": "73c79dd02796a22441b40527c97b3cda25bae9667007871dc8451e545a54bc02",
+  "archive_name": "novovm-common-5b656189-aoem570-linux-x86_64.tar.gz",
+  "archive_members": 95,
+  "all_archive_members_verified": true
+}

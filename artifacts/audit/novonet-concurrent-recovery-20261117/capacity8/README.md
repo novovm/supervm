@@ -1,5 +1,13 @@
 # Main-node shared Carrier capacity candidate (2026-11-17)
 
+## CURRENT21:45: migration and fixed packages qualified; final Full pending
+
+The approved chrono migration is complete without suppressing Audit/Deny. Fixed
+Windows/Linux5b656189 programs and archives passed member/runtime/recovery checks.
+Exact Full44092874774 is still running, not passed. [Current candidate and hashes](../candidate-5b656189/README.md).
+No nodes changed or new object sent; C/D may copy/hash only, no old-window retry.
+The20:25 section below is historical and no longer requests a migration decision.
+
 ## CURRENT20:25: local code passed; security/dependency decision blocks qualification
 
 One exact-source Full44079683535 for e666a6fb has a failed root Audit job (libz-sys). The generated lock-only patch to1.1.33 passes local root/runtime Audit; runtime Deny also passes, but root Deny now exposes chrono unmaintained with no patched version. No ignore, rollout or second manual Full. [Actual outcomes and migration-scope decision](ci-first/README.md). Both original e666 packagers assembled outputs only, not qualified archives. The local-only next-step narrative below predates this newly observed security gate and does not authorize rerunning an already-known-red Full or deploying e666.

@@ -1,0 +1,6 @@
+{
+  "error": "Release packaging requires a clean Git worktree so binaries and git_commit describe the same source. Commit or remove local changes first.",
+  "status": "FAILED",
+  "source": "5b656189784c854ac356aae77610c931b9f2189d",
+  "utc": "2026-11-17T13:34:07.8250688Z"
+}

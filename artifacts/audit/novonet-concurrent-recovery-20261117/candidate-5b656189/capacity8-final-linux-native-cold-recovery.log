@@ -1,0 +1,7 @@
+
+running 1 test
+test native_pipeline::consensus::tests::native_product_rpc::application::queries::native_only_genesis_transactions_queries_and_cold_recovery ... native-only artifacts=/mnt/d/WorksArea/SUPERVM/target/native-product-rpc/native-only-2987-1794923008753507567
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1830 filtered out; finished in 3.54s
+

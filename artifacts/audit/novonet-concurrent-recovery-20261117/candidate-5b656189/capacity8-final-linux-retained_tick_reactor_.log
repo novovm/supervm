@@ -1,0 +1,10 @@
+
+running 3 tests
+test native_pipeline::service::network::tests::retained_tick_reactor_reauthenticates_after_peer_owner_restart_without_reopening_native_owner ... NOVONET inbound local=novovm-mldsa65:3ee4ee13b73bd69df2b478517d52203b78b5af0f766b6e0dcc79a7379be2eb31 failed: carrier stream IO failed: connection lost: closed by peer: scope finished (code 0): connection lost: closed by peer: scope finished (code 0)
+ok
+test native_pipeline::service::network::tests::retained_tick_reactor_rejects_wrong_chain_selection_before_native_handoff ... NOVONET inbound local=novovm-mldsa65:3ee4ee13b73bd69df2b478517d52203b78b5af0f766b6e0dcc79a7379be2eb31 failed: native service selection or fixed chain pins rejected
+ok
+test native_pipeline::service::network::tests::retained_tick_reactor_uses_backup_only_when_requested_and_delivers_original_binary_messages ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 1828 filtered out; finished in 2.89s
+
