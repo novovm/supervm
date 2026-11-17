@@ -3,6 +3,13 @@
 Program source55cafb072ad83921f4a1ed5ea19a71941700d056 is pushed. Exactly one
 Full44136917939 was dispatched with the matching head SHA. Latest observation
 is IN_PROGRESS, not successful. No node has been updated to this candidate.
+B upload completed and server SHA256 matches the qualified archive; original
+updater and fixed adapter were also checked. B old3003007 remains active. See
+B-upload-public.json. All required jobs except Rust have completed successfully.
+The current Rust historical multi-process recovery step started17:49:46Z;
+the preceding successful5b Full's same step took14m31s. In-progress job logs API
+returned404, not a product-test failure. No job was cancelled/retriggered, no gate
+was waived and no new node/process/object was launched while awaiting Full.
 
 Both original packages are qualified locally: all manifest payloads and archive
 members checked, original AOEM FullMax checksum/ML-DSA runtime qualification,

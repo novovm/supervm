@@ -1,0 +1,15 @@
+{
+  "source": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "archive": "/home/ecs-user/novovm-common-55cafb07-20261118/novovm-common-55cafb07-aoem570-linux-x86_64.tar.gz",
+  "bytes": 376001532,
+  "remote_sha256": "8f32999912698755df8c72d0e6b49ddeb385098151742164ca1da14e4e592acf",
+  "matches_qualified_archive": true,
+  "transfer_exit": 0,
+  "original_updater_sha256": "276c919eb3197fb8c6233a21d5706f21d05353b4ad7ba79d43b720de7842b81b",
+  "fixed_adapter_sha256": "d3367dc359af72485be03c9a7865881b39604dfca924015388b6eb3f3d6bfb05",
+  "old_running_pid_at_staging": 3003007,
+  "old_unit_active": true,
+  "new_unit_started": false,
+  "installed": false,
+  "full_success_required_before_original_update": true
+}
