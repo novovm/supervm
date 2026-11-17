@@ -1,13 +1,12 @@
 {
-  "node_restarted": false,
+  "utc": "2026-11-17T16:36:27.337614+00:00",
   "observer_pid": 35672,
-  "error_present": false,
   "node_pid": 42764,
-  "collector_exit_present": false,
-  "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File \"D:\\WEB3_AI\\SUPERVM\\target\\c-5b-recovery-observer-20261118-01\\Launch.ps1\"",
-  "observer_running": true,
-  "result_present": false,
-  "utc": "2026-11-17T16:31:26.1776941Z",
-  "created_utc": "2026-11-17T16:30:49.4253900Z",
-  "fixed_args": "candidate-5b656189/recovery-observer-args.json"
+  "observer_running": false,
+  "snapshots": 3,
+  "result_present": true,
+  "error_present": false,
+  "collector_exit_present": true,
+  "collector_exit_code": 0,
+  "new_observer_started": false
 }
