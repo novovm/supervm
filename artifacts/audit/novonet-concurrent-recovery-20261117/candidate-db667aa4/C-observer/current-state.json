@@ -1,0 +1,12 @@
+{
+  "utc": "2026-11-17T10:26:52.1348278Z",
+  "observer_running": true,
+  "earlier_blocker_resolved_by_user_authorized_restart": true,
+  "exit_present": false,
+  "error_present": false,
+  "observer_pid": 39028,
+  "node_pid": 7384,
+  "created_utc": "2026-11-17T10:26:11.9501360Z",
+  "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File \"D:\\WEB3_AI\\SUPERVM\\target\\c-db667-relay-20261117-01\\Launch.ps1\"",
+  "result_present": false
+}

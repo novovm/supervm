@@ -1,0 +1,6 @@
+{
+  "command": "$ErrorActionPreference='Stop'\n$code=0\ntry {\n & 'D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Watch-Relay.ps1' -HostId C -Source db667aa420477e76766352c8efd7fea83fdb6eac -NodeSha256 442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825 -WorkName novovm-common-db667aa4-20261117 -CommonRoleFix -TerminalCircuitCount 4 -MaximumWaitSeconds 7200 -EvidenceRoot 'D:\\WEB3_AI\\SUPERVM\\target\\c-db667-relay-20261117-01\\evidence'\n} catch { $code=1;Write-Error $_ -ErrorAction Continue }\nfinally { @{utc=[DateTime]::UtcNow.ToString('o');pid=$PID;exit_code=$code}|ConvertTo-Json|Set-Content 'D:\\WEB3_AI\\SUPERVM\\target\\c-db667-relay-20261117-01\\collector-exit.json' -Encoding utf8 }\nexit $code",
+  "created_utc": "2026-11-17T10:26:11.9501368Z",
+  "evidence": "D:\\WEB3_AI\\SUPERVM\\target\\c-db667-relay-20261117-01\\evidence",
+  "pid": 39028
+}
