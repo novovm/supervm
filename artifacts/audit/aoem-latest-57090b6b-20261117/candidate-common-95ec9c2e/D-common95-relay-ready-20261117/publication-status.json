@@ -1,0 +1,19 @@
+{
+  "snapshot_count": 0,
+  "terminal_files": [
+    {
+      "exists": false,
+      "file": "result.json"
+    },
+    {
+      "exists": false,
+      "file": "error.json"
+    }
+  ],
+  "observer_pid": 51148,
+  "launcher_error_present": false,
+  "liveness_utc": "2026-11-17T04:11:26.6761109Z",
+  "utc": "2026-11-17T04:11:28.0806044Z",
+  "collector_exit_present": false,
+  "observer_running": true
+}
