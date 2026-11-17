@@ -1,0 +1,31 @@
+{
+  "utc": "2026-11-17T05:13:50.6285214Z",
+  "observer_pid": 26308,
+  "process_present": false,
+  "exit_code": "not captured by launch entry",
+  "result_present": true,
+  "error_present": false,
+  "snapshots": 3,
+  "matching_object_id_snapshots": 0,
+  "matching_native_session_snapshots": 0,
+  "match_method": "exact hexadecimal strings and exact JSON byte arrays recursively",
+  "requested_object_id": "e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d",
+  "requested_native_session": "b960c007c82275a45ee5c45f75705aab",
+  "relay_role_observed": true,
+  "forwarded_packets": [
+    9,
+    9
+  ],
+  "forwarded_bytes": [
+    9380,
+    9044
+  ],
+  "failed_writes": [
+    0,
+    0
+  ],
+  "native_session_in_circuit": null,
+  "association_to_requested_object": "unproven",
+  "matched_relay_files": [],
+  "original_snapshots_local": "D:\\WEB3_AI\\SUPERVM\\target\\c-common95-relay-20261117-01"
+}
