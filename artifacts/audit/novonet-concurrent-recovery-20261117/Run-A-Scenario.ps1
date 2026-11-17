@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 #Requires -RunAsAdministrator
 # One bounded real-host workload; only existing CLI, owner observations and B unit.
-param([Parameter(Mandatory)][string]$CReadyFile,[Parameter(Mandatory)][string]$DReadyFile,[Parameter(Mandatory)][string]$EvidenceRoot)
+param([Parameter(Mandatory)][string]$CReadyFile,[Parameter(Mandatory)][string]$DReadyFile,[Parameter(Mandatory)][string]$EvidenceRoot,[string]$ContinueRestoredAttempt)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference=$false
@@ -22,7 +22,13 @@ foreach($pair in @(@('C',$CReadyFile),@('D',$DReadyFile))){
  $live=Get-Content -Raw -LiteralPath "$parent/liveness.json"|ConvertFrom-Json
  foreach($terminal in @('error.json','result.json','collector-exit.json')){if(Test-Path -LiteralPath "$parent/$terminal"){throw 'Observer already ended'}}
  Assert-RelayReadiness $ready $live $pair[0] $source $nodePin
- if($ready.terminal_circuit_count-ne 4){throw 'Four-circuit existing observer sequence required'}
+ $requiredCircuitCount=if($ContinueRestoredAttempt){1}else{4}
+ if($ready.terminal_circuit_count-ne $requiredCircuitCount){throw 'Observer circuit scope differs from actual remaining workload'}
+ if($ContinueRestoredAttempt){
+  $expectedOrigin='novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3'
+  $expectedPath=@('novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f','novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2','novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946')
+  if($ready.expected_origin-cne $expectedOrigin -or (@($ready.expected_path)-join ',')-cne ($expectedPath-join ',')){throw 'Recovered-route observer is not bound to A-B-C-D'}
+ }
 }
 $config=Get-Content -Raw -LiteralPath "$work/run.json"|ConvertFrom-Json
 $net=Get-Content -Raw -LiteralPath $config.novonet_config_file|ConvertFrom-Json
@@ -137,6 +143,32 @@ function ClockSample([string]$Label){
 $bJob=$null;$first=$null;$fault=$null;$recovered=$null;$completed=$false
 try{
  Save (B 'preflight') 'B-preflight'
+ if($ContinueRestoredAttempt){
+  # Continue only the unfinished fresh-route delivery, never the two completed
+  # objects or a second outage. Retain the failed automatic restoration verdict.
+  $previous=[IO.Path]::GetFullPath($ContinueRestoredAttempt)
+  $failure=Get-Content "$previous/error.json" -Raw|ConvertFrom-Json
+  $two=Get-Content "$previous/concurrency-origin-result.json" -Raw|ConvertFrom-Json
+  $restored=Get-Content "$previous/B-original-owner-restored.json" -Raw|ConvertFrom-Json
+  $currentB=Get-Content "$out/B-preflight.json" -Raw|ConvertFrom-Json
+  if($failure.error-cne 'B interrupt failed; no blind retry' -or !$two.two_sender_DONE -or $restored.source-cne $source -or $restored.start-cne 'existing' -or !$restored.config_unchanged -or !$restored.network_unchanged -or !$restored.custody_unchanged -or (Test-Path "$previous/recovery-origin-result.json")){throw 'Not the exact interrupted/restored unfinished attempt'}
+  if($currentB.pid-ne $restored.pid){throw 'Restored B owner changed; preserve actual state'}
+  $prior=Get-Content "$previous/before-B-interruption-ready.json" -Raw|ConvertFrom-Json
+  $oldRoutes=@($prior.transport.relay_circuits|Where-Object{$_.route.role-ceq 'origin' -and $null-ne $_.native_session -and $null-eq $_.stream_dropped_us})
+  if($oldRoutes.Count-ne 1){throw 'Original interrupted route ambiguous'}
+  $oldCircuit=Hex $oldRoutes[0].route.circuit;$oldSession=Hex $oldRoutes[0].native_session
+  $p=P;Save (PublicA $p) 'A-original-circuit-after-restoration'
+  $closed=@($p.native_network_probe.transport.relay_circuits|Where-Object{(Hex $_.route.circuit)-ceq $oldCircuit})
+  if($closed.Count-ne 1 -or $null-eq $closed[0].stream_dropped_us -or $p.novonet.diagnostic_relay.active){throw 'Original interruption/expired reservation not established'}
+  $recovered=ArmA 'after-B-recovery' 3 @(1,2)
+  if($recovered.session-ceq $oldSession -or $recovered.circuit-ceq $oldCircuit){throw 'Interrupted session/circuit reused'}
+  Invoke-OriginalNativeProbe 'after-B-recovery-send' @('send-relay','--from',$recovered.arm)
+  $recoveryDone=WaitADone $recovered
+  Save ([ordered]@{new_session=$recovered.session;new_circuit=$recovered.circuit;old_session=$oldSession;old_circuit=$oldCircuit;new_object=(Hex $recoveryDone.object);sender_DONE=$true;original_reserved_route_interrupted=$true;automatic_restore_attempt_failed=$true;original_owner_restored_separately=$true;planned_five_second_downtime_achieved=$false;old_object_resumed=$false;prior_attempt=$previous;C_D_receiver_and_forwarding_evidence_pending=$true}) 'recovery-origin-result'
+  $completed=$true
+  Save @{status='RECOVERED_FRESH_OBJECT_ORIGIN_DONE_C_D_AUDIT_PENDING';utc=[DateTime]::UtcNow.ToString('o');completed_objects_resent=$false;second_outage=$false;automatic_restore_pass=$false} 'result'
+  return
+ }
  $timing=ClockSample 'management-clock-before'
  $bJob=BJob 'arm'
  # Two distinct native owners, two recipient owners; no node exceeds its one-flight diagnostic limit.

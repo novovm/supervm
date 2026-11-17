@@ -1,4 +1,10 @@
-# CURRENT18:16: four same-version updates accepted; live sequence observation dispatched
+# CURRENT18:55: two real crossed deliveries accepted; concurrency/recovery not closed
+
+Actual db667 pair: sender DONE + unique target integrity/time/hash/full-fragment evidence and both actual relays/adjacent authenticated bindings independently matched;20 observer original hashes and15 snapshots verified. **No simultaneous in-flight overlap**, so not a concurrency pass. B stop succeeded but its transient `--collect` unit was gone on `systemctl start`; automatic restoration failed. B is now restored same program/config/network/custody/original existing DB through the original launch owner, newPID2880455/Status63ms. Management lifecycle correction tested6 cases on each platform; original runtime/Full unchanged. [Actual originals and independent result](candidate-db667aa4/live-1828/README.md).
+
+Old C/D observers exited early due four closed circuits including non-workload routes, not timeout. [Current dispatch](candidate-db667aa4/CD-UPDATE.md) is one route-bound original observer each for the **only unfinished recovered-object delivery**; no pair resend, second outage, accepted baseline replay, new collector, package or Full. Original observer stop scope fixed with67 local reader/readiness/sequence checks. C's fresh AV and authorized restart remain a separate unresolved stability fact, not hidden or diagnosed as hardware.
+
+## Earlier18:16 first observer dispatch (closed)
 
 A pulled actual D success9f9aeeb8 and independently authenticated D48ms, original height1/root unchanged. All four db667 update/health gates are accepted; no concurrent or relay-recovery real-host verdict yet. C/D now open one fresh original CommonRoleFix4-circuit/2-hour/64-snapshot observer each and **immediately** push real READY/liveness/process metadata, keep the same window for the continuous workload. [Current exact dispatch](candidate-db667aa4/CD-UPDATE.md). A22576/B2840424 remain healthy/diagnostic idle at10:16:02Z; A elevated/coordinator ready. No repeated baseline, update, new diagnostic tool, Full or packet sends before fresh READY verification.
 

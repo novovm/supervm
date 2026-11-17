@@ -1,0 +1,18 @@
+{
+  "B_admitted_wall_ms": 1794911354629,
+  "B_minus_A_offset_ms": [
+    640.0,
+    653.0
+  ],
+  "B_done_wall_ms": 1794911354681,
+  "scope": "Conditional on measured local management clock bounds; not authorization or canonical chain time",
+  "A_done_wall_ms": 1794911354373,
+  "A_admitted_wall_ms": 1794911354278,
+  "A_duration_ms": 95,
+  "two_sender_DONE": true,
+  "verdict": "TWO_SENDER_DONE_NOT_CONCURRENT_INFLIGHT",
+  "B_duration_ms": 52,
+  "receiver_and_forwarding_still_pending": true,
+  "minimum_gap_B_done_to_A_admitted_ms": 237.0,
+  "native_object_concurrency_pass": false
+}

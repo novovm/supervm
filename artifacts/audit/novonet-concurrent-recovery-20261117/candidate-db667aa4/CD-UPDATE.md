@@ -1,4 +1,23 @@
-# CURRENT18:16: D accepted; C/D one fresh concurrent/recovery observer now
+# CURRENT18:55: two crossed deliveries accepted; observe only the unfinished recovered object
+
+A pulled all C/D originals throughd584b261, independently verified20 declared file hashes and15 raw snapshots. Both actual crossed objects have sender DONE, unique target integrity/time acceptance,1/1-fragment/hash verification/no duplicates and both real relays9/9packets with zero failed writes; all three adjacent authenticated bindings match. **They did not overlap in flight** under the measured clock bounds, so concurrent-object acceptance is NOT passed. [Independent actual correlation and original failed run](live-1828/README.md).
+
+B's original `systemd-run --collect` unit was removed after the controlled stop; coordinator `systemctl start` failed. A has restored same db667/original config/network/keys/database existing once through the original launch owner, newPID2880455, authenticated Status63ms/original root. Automatic/five-second restoration remains failed; the management-only recovery entry now recreates the transient unit through that original owner. Six lifecycle regressions pass Windows/Linux. No new Node/AOEM package or Full. C's new AV and authorized same-version restart7384 are retained, not claimed fixed.
+
+**C/D old observers are CLOSED**, exit0 at10:30:56Z/10:31:14Z. They hit4 closed circuits including unrelated A→C→B / A→D→B attempts; they cannot capture the remaining object. Do not refresh or reuse those READYs. Their original files remain untouched. The original Watch-Relay now accepts an exact origin/path solely for its **stop condition** and receiver-session correlation; it still saves ALL original new circuits/events, with original64 snapshots/1-second sampling/7200s standby/freshness. New local sequence24+reader23+readiness20 checks pass, including unrelated route/session rejection and unchanged unfiltered behavior. This is not a network path selector or new collector.
+
+**C and D now each start one original observer only for the still-unsent recovery object**. Confirm the old observer is ended; no node restart/update, package copying, old crash/direct test or object send. Use the same hidden independent administrator PowerShell7 wrapper pattern with stdout/stderr and real exit retained, a NEW local EvidenceRoot, adjacent original Read-RelayProgress. Load the fixed PUBLIC routing expectation from this directory rather than typing technical identities:
+
+```powershell
+$binding=Get-Content '<repo>/artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/recovery-observer-args.json' -Raw|ConvertFrom-Json
+& '<repo>/artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1' -HostId C -Source $binding.source -NodeSha256 $binding.node_sha256 -WorkName $binding.work_name -CommonRoleFix -TerminalCircuitCount 1 -MaximumWaitSeconds 7200 -ExpectedOrigin $binding.expected_origin -ExpectedPath @($binding.expected_path) -EvidenceRoot '<fresh-local-root>'
+```
+
+Use HostId D on D. Preserve all old originals, no filtering raw snapshot output. **Immediately** push real ready/liveness (including expected_origin/path), observer PID/creation/command, actual node PID and result/error/collector-exit presence into `C-recovery-observer/` / `D-recovery-observer/`. Do not wait for a terminal or two-hour timeout. If the actual current owner is unavailable/unhealthy, return the precise blocker, no invented READY or blind restart.
+
+A is elevated and the original coordinator's guarded continuation is ready: after fresh bound readiness it verifies B's restored PID, the already-closed old circuit/no active reservation, prepares a different authenticated A→B→C→D session/circuit and sends **one new object only**. It does not resend the completed pair or trigger a second outage. Original automatic restore/five-second failures and missing true concurrency remain recorded. This window is for unfinished recovery work, not a rerun of accepted baselines.
+
+## Earlier18:16 four-owner signoff / first window (completed and closed)
 
 A fetched and fast-forwarded actual D success9f9aeeb8 (after retained pre-entry UAC cancellation1afe5cb6). D reports new56148/LocalService, controller exit0, exact installed Node/loaded AOEM/manifest pins, original database existing/custody/head/height unchanged, recovery false/failures0, original41053/42053 and no owner exit/error or control file. A independently authenticated D48ms at10:15:01Z, original height1/root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. No update repeat. B/A/C/D same-version update and respective health gates are accepted, not object/recovery acceptance.
 

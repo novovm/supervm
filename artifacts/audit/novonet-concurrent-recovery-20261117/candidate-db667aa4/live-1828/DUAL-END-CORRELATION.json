@@ -1,0 +1,110 @@
+{
+  "C_crash_root_cause_fixed": false,
+  "raw_snapshot_count": 15,
+  "native_udp_multihop": false,
+  "business_receipt": false,
+  "utc": "2026-11-17T10:54:55.9149894Z",
+  "returned_original_hashes_verified": 20,
+  "automatic_B_restore_pass": false,
+  "status": "TWO_CROSSED_DELIVERIES_DUAL_END_PASS_NOT_INFLIGHT_CONCURRENCY",
+  "recovered_fresh_object_sent": false,
+  "inflight_concurrency_pass": false,
+  "flows": [
+    {
+      "object": "528a2ae9174fa5d4dc89b1d1023e28e07f5422e6b0468234e0012c8783a5706a",
+      "route_digest": "9a5a051e0bdf0b894b2323a81e8cd497da0cc97b2211b7f42b91c4b518182bba",
+      "sender_DONE": true,
+      "native_transfer_tag": "fce6c6924106d3b97aaffa9ae1251c7db14c6f41b1970cfa2524877a4440f608",
+      "receiver_transport_done_us": null,
+      "native_hash_verified": true,
+      "three_adjacent_bindings": [
+        "99c2f793b26c6a9c73d4e8beec3b827c163d2bbaae3382831f41998f57acef07",
+        "0172395223e0279745be4f4ab95cd87dc15f58ec9e933263a18b005e55bdf63b",
+        "10a823e3eb6ba6b002ac86b83bca8bcf25b4683966d5550ff578fb480929a6c5"
+      ],
+      "path": [
+        "A",
+        "B",
+        "D",
+        "C"
+      ],
+      "native_fragments": "1/1",
+      "business_receipt": false,
+      "circuit": "7a04952558722e4461dc0d4be9ef9e36",
+      "receiver_integrity_time_accepted": true,
+      "relay2": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "relay1": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "session": "c4a9452ffaad9c2ab4c1321034691bf8",
+      "failed_writes": [
+        0,
+        0
+      ]
+    },
+    {
+      "object": "dacc8cf0e64e261b37bef2b6f246e466debf73d0a276ae48ca01035e94551b34",
+      "route_digest": "0f8d47d3321a36c3dd4508508e24eca55d5bd3574f0e597eebfd866c825fbaa2",
+      "sender_DONE": true,
+      "native_transfer_tag": "04ce133865535ae13f4b5fd2ff1df73770617ade3142fbbd0bd05a5e43f9eb8b",
+      "receiver_transport_done_us": null,
+      "native_hash_verified": true,
+      "three_adjacent_bindings": [
+        "006418334ba0ce1ae4e95f44cfa2d987b7c8408d933fcf35085b574f6e22e046",
+        "5001d471c277f740bbe0d49f08aa4c9c11d64f75a7956cb40468cfbefc5a77fe",
+        "654884778a961f1f711419a4102fbd3c9a3628302a774492ef8d2c0c7d3926a2"
+      ],
+      "path": [
+        "B",
+        "A",
+        "C",
+        "D"
+      ],
+      "native_fragments": "1/1",
+      "business_receipt": false,
+      "circuit": "af188fd2a5b1d7b09c09ad3954a37202",
+      "receiver_integrity_time_accepted": true,
+      "relay2": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "relay1": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "session": "cad7f1818f501775790b91b8ff088c03",
+      "failed_writes": [
+        0,
+        0
+      ]
+    }
+  ]
+}

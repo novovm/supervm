@@ -1,5 +1,11 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 18:55 A: crossed deliveries accepted, no overlap; original B owner restored
+
+A independently matched20 returned file hashes/15 raw C/D snapshots, both actual crossed-route objects' sender DONE + target integrity/time/full-fragment/hash and all actual relays/three adjacent bindings. In-flight intervals do not overlap; **not concurrent acceptance**. B controlled stop exposed the original management helper assuming a persistent unit: `systemd-run --collect` removed it before `systemctl start`. Original failure retained; same fixed Node/AOEM/config/network/custody/original DB restored via original launch owner, new2880455, authenticated Status63ms/original root. Automatic/five-second recovery is not passed. Original management recreation fixed/tested6 cases Windows/Linux; no new runtime/Full. C's new AV and authorized restart7384 are retained, not explained or fixed here.
+
+Both old observers exited0 early from closed circuits including unrelated routes. [Only unfinished recovery-object observation now](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/CD-UPDATE.md): existing observer stop condition/receiver session bound to the exact recovery route, all raw output preserved, original limits;67 local checks pass. New real READY/liveness under C/D-recovery-observer, then original guarded A continuation sends one new recovered-route object without resending the completed pair or a second outage. [Actual original evidence and independent result](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/live-1828/README.md). No direct/single/double baseline rerun, packet collector, new architecture or business/finality claim.
+
 ## 2026-11-17 18:16 A: D db667 accepted; one concurrent/recovery window dispatched
 
 A fetched actual D success9f9aeeb8 (retaining earlier pre-entry cancelled UAC separately), checked reported56148/LocalService, fixed Node/loaded AOEM/manifest, original DB existing/custody/head/listeners and no exit/error. A's fixed client independently authenticated D48ms at10:15:01Z, original height1/root unchanged. All four same-version update/respective authenticated health gates are accepted; concurrent objects and B interruption/recovery still pending.

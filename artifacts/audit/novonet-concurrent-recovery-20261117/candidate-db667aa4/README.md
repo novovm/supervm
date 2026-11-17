@@ -1,4 +1,12 @@
-# CURRENT18:16: four db667 updates accepted; D query48ms; one fresh observation round
+# CURRENT18:55: actual crossed dual-end delivery passed, not concurrent; recovery owner restored
+
+A ran the actual db667 workload using fresh C/D readiness. Two objects on A→B→D→C / B→A→C→D now have independently verified sender DONE, final target integrity/time/1-of-1-fragment/hash and both actual relays, matching three adjacent bindings.20 declared observer file hashes/15 raw snapshots verified. **Their in-flight intervals did not overlap** (minimum237ms separation under measured offset bounds), so no concurrency pass.
+
+The B controlled stop exposed a management lifecycle bug: original `--collect` transient unit disappeared, so `systemctl start` failed. B was restored once via its original launch owner, same fixed program/config/network/custody/original existing DB, new2880455; authenticated Status63ms passed. Automatic/five-second restoration remains failed; corrected original-owner recreation and six Windows/Linux management-contract checks pass without a runtime/package/Full change. [Original run, actual independent correlation and boundaries](live-1828/README.md).
+
+Old C/D observers already exited0 early from four closed circuits including unrelated routes. **Do not reuse them.** [Current dispatch](CD-UPDATE.md) binds only the original observer's stop condition to the unfinished A→B→C→D recovery route, preserves all raw output and unchanged resource/freshness limits. New readiness goes under C-recovery-observer / D-recovery-observer. A then sends one different recovered-route object only, no completed-object resend or second outage. C's new AV/authorized restart is retained and not fixed by this network work.
+
+## Earlier18:16 first observation (closed)
 
 A pulled actual D success9f9aeeb8, checked reported56148/LocalService, exact Node/loaded AOEM/manifest and original existing/custody/listener/head health; original cancelled elevation remains recorded as pre-entry, not a node failure. A independently authenticated D48ms at10:15:01Z, original height1/root unchanged. Original query/exit/stderr/health are under `D-existing/`. All four same-version updates/respective authentication health gates are accepted; no object concurrency or B interruption/recovery pass yet.
 

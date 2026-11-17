@@ -1,0 +1,9 @@
+Failed to start novovm-B-db667aa4-network-20261117.service: Unit novovm-B-db667aa4-network-20261117.service not found.
+Traceback (most recent call last):
+  File "/home/ecs-user/novonet-concurrent-db667aa4-20261117/B-Scenario.py", line 202, in <module>
+    main()
+  File "/home/ecs-user/novonet-concurrent-db667aa4-20261117/B-Scenario.py", line 182, in main
+    subprocess.run(['systemctl', 'start', UNIT], check=True, timeout=35)
+  File "/usr/lib/python3.12/subprocess.py", line 571, in run
+    raise CalledProcessError(retcode, process.args,
+subprocess.CalledProcessError: Command '['systemctl', 'start', 'novovm-B-db667aa4-network-20261117.service']' returned non-zero exit status 5.

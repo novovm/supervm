@@ -1,0 +1,19 @@
+{
+  "old_pid": 2840424,
+  "pid": 2880455,
+  "source": "db667aa420477e76766352c8efd7fea83fdb6eac",
+  "start": "existing",
+  "config_unchanged": true,
+  "network_unchanged": true,
+  "custody_unchanged": true,
+  "projection": {
+    "chain_id": 91129655606029,
+    "current_height": 1,
+    "head": null
+  },
+  "node_sha256": "81bf52b5d50a5d2549c7b78c41eff3f86955e06d686ff5f5f9dacd088539892a",
+  "aoem_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+  "method": "original systemd-run launch recreated collected transient unit",
+  "prior_logs": "/var/lib/novovm/selfrun/91129655606029/B/novovm-common-db667aa4-20261117/logs-before-interruption-1828",
+  "object_sent": false
+}

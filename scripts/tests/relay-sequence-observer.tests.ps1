@@ -49,4 +49,30 @@ $bStart=@(@{wall_ms=1700});$bEnd=@(@{wall_ms=1750});. $overlap
 if($overlapEnd-gt $overlapStart){throw 'Serial delivery incorrectly counted concurrent'};$checks++
 $bStart=@(@{wall_ms=1550});$bEnd=@(@{wall_ms=1650});$lo=0;$hi=1000;. $overlap
 if($overlapEnd-gt $overlapStart){throw 'Uncertain timing incorrectly counted concurrent'};$checks++
+$routeFunction=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name-eq 'Test-ExpectedRelayRoute'},$true)
+if($null-eq $routeFunction){throw 'Expected-route terminal predicate missing'}
+. ([scriptblock]::Create($routeFunction.Extent.Text))
+$origin='novovm-mldsa65:'+('a'*64);$pathPeers=@('novovm-mldsa65:'+('b'*64),'novovm-mldsa65:'+('c'*64),'novovm-mldsa65:'+('d'*64))
+$route=[pscustomobject]@{origin=$origin;path=$pathPeers}
+if(!(Test-ExpectedRelayRoute $route $origin $pathPeers)){throw 'Actual requested route rejected'};$checks++
+if(Test-ExpectedRelayRoute $route ('novovm-mldsa65:'+('e'*64)) $pathPeers){throw 'Wrong origin terminates observer'};$checks++
+if(Test-ExpectedRelayRoute $route $origin @($pathPeers[0],$pathPeers[2],$pathPeers[1])){throw 'Wrong path order terminates observer'};$checks++
+if(Test-ExpectedRelayRoute $route $origin @($pathPeers[0],$pathPeers[1])){throw 'Truncated path terminates observer'};$checks++
+if(!(Test-ExpectedRelayRoute $route '' @())){throw 'Legacy unfiltered stop decision changed'};$checks++
+$select=$ast.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text-eq '$terminalCircuits'},$true)
+$runSelect=[scriptblock]::Create($select.Extent.Text)
+$ExpectedOrigin=$origin;$ExpectedPath=$pathPeers
+$circuits=@(@{route=$route;stream_dropped_us=$null},@{route=@{origin=$origin;path=@($pathPeers[2],$pathPeers[0])};stream_dropped_us=1})
+. $runSelect
+if($terminalCircuits.Count-ne 1 -or @($terminalCircuits|Where-Object {$null-ne $_.stream_dropped_us}).Count-ne 0 -or $circuits.Count-ne 2){throw 'Unrelated closed circuit counted or raw circuits filtered'};$checks++
+$receiverAssignment=$ast.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text-eq '$receiverTerminal'},$true)
+$runReceiver=[scriptblock]::Create($receiverAssignment.Extent.Text)
+$session=[byte[]](1..16);$sessionHex=[Convert]::ToHexString($session).ToLowerInvariant()
+$p.novonet.diagnostic_relay.events=@(@{event='relay_probe_received_integrity_verified';probe=@{nonce=[byte[]]::new(32)};session=$session})
+$terminalSessions=@('0'*32);. $runReceiver
+if($receiverTerminal){throw 'Unrelated receiver session terminates expected route'};$checks++
+$terminalSessions=@($sessionHex);. $runReceiver
+if(!$receiverTerminal){throw 'Actual expected receiver session not terminal'};$checks++
+$ExpectedOrigin='';$terminalSessions=@();. $runReceiver
+if(!$receiverTerminal){throw 'Legacy receiver terminal behavior changed'};$checks++
 Write-Output "PASS $checks sequence-observer checks; no node, clock or network mutation"

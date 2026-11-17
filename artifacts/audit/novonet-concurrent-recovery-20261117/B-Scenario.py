@@ -1,6 +1,7 @@
 """Fixed db667 management actions; only original CLI/unit, no network socket."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -85,6 +86,27 @@ def cli(action, *args):
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     record(action + '-cli.json', dict(exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr))
     result.check_returncode()
+
+
+def restore_original_owner(lifecycle, before):
+    """Recreate the collected transient unit with the original launch contract."""
+    lifecycle.no_node_or_listener()
+    lifecycle.check_package(RELEASE)
+    assert digest(WORK / 'run.json') == before['config_sha256']
+    assert digest(WORK / 'network.json') == before['network_sha256']
+    config, network = lifecycle.read(WORK / 'run.json'), lifecycle.read(WORK / 'network.json')
+    keys = lifecycle.custody(config, network)
+    logs = lifecycle.no_redirect(WORK / 'logs')
+    prior = lifecycle.state_projection(lifecycle.read(logs / 'progress.json'))
+    saved = lifecycle.no_redirect(WORK / f"logs-before-interruption-{before['pid']}")
+    assert not saved.exists(), 'Preserve previous restore; never repeat it blindly'
+    logs.rename(saved)
+    lifecycle.make_directory(logs, lifecycle.uid, 0o700)
+    new_pid = lifecycle.launch(UNIT, RELEASE, WORK / 'run.json', logs, continuous=True)
+    lifecycle.identity(new_pid, RELEASE / 'bin/novovm-node')
+    assert lifecycle.custody(config, network) == keys
+    return dict(pid=new_pid, prior_projection=prior, prior_logs=str(saved),
+                method='original systemd-run recreation of collected transient unit')
 
 
 def main():
@@ -177,9 +199,19 @@ def main():
             record('stopped.json', dict(old_pid=pid, wall_ms=time.time_ns() // 1000000))
             time.sleep(5)
         finally:
-            # Same existing-mode unit is always restored, even if fault observation fails.
+            # --collect removes the transient unit after stop. systemctl start
+            # cannot recreate it; reuse its reviewed original launch owner.
             resume_wall = time.time()
-            subprocess.run(['systemctl', 'start', UNIT], check=True, timeout=35)
+            if stopped:
+                import pwd
+                deployment = Path('/home/ecs-user/novovm-common-db667aa4-20261117/Deploy-B.py')
+                spec = importlib.util.spec_from_file_location('fixed_existing', deployment)
+                fixed = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(fixed)
+                account = pwd.getpwnam('novovm')
+                fixed.owner.uid, fixed.owner.gid = account.pw_uid, account.pw_gid
+                restoration = restore_original_owner(fixed.owner, before)
+                record('restoration-launch.json', restoration)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             try:

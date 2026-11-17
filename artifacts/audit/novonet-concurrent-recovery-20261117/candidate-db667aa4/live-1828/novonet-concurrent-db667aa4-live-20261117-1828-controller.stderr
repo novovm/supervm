@@ -1,0 +1,5 @@
+Exception: D:\WorksArea\SUPERVM\artifacts\audit\novonet-concurrent-recovery-20261117\Run-A-Scenario.ps1:43
+Line |
+  43 |   if($LASTEXITCODE-ne 0){throw "B $Action failed; no blind retry"}
+     |                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | B interrupt failed; no blind retry

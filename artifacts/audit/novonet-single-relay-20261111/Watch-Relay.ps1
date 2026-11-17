@@ -10,11 +10,15 @@ param(
     [ValidateRange(1800,7200)][int]$MaximumWaitSeconds=1800,
     [switch]$Common95,
     [switch]$CommonRoleFix,
-    [ValidateRange(1,4)][int]$TerminalCircuitCount=1
+    [ValidateRange(1,4)][int]$TerminalCircuitCount=1,
+    [ValidatePattern('^novovm-mldsa65:[a-f0-9]{64}$')][string]$ExpectedOrigin,
+    [string[]]$ExpectedPath=@()
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . "$PSScriptRoot/Read-RelayProgress.ps1"
+if([bool]$ExpectedOrigin -ne ($ExpectedPath.Count -gt 0)){throw 'Expected route requires origin and path together'}
+if(@($ExpectedPath|Where-Object {$_ -cnotmatch '^novovm-mldsa65:[a-f0-9]{64}$'}).Count){throw 'Invalid expected route peer'}
 $short=$Source.Substring(0,8)
 if($Common95 -and $CommonRoleFix){throw 'Conflicting fixed deployment bindings'}
 if(!$Common95 -and !$CommonRoleFix -and !$WorkName.StartsWith("novonet-observation-$short-")){throw 'Work/source mismatch'}
@@ -41,6 +45,10 @@ function Read-Progress {
 }
 function CircuitKey($Circuit){[Convert]::ToHexString([byte[]]$Circuit.route.circuit).ToLowerInvariant()}
 function ProbeKey($Event){[Convert]::ToHexString([byte[]]$Event.probe.nonce).ToLowerInvariant()}
+function Test-ExpectedRelayRoute($Route,[string]$Origin,[string[]]$Path){
+    if(!$Origin){return $true}
+    return $Route.origin -ceq $Origin -and (@($Route.path)-join ',') -ceq ($Path-join ',')
+}
 New-Item -ItemType Directory -Path $out|Out-Null
 try {$baseline=Read-Progress}
 catch {
@@ -55,7 +63,7 @@ function Save-Liveness([bool]$Active) {
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $saved=0
 Save-Liveness $true
-[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";observer_version=3;observer_pid=$PID;source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=$MaximumWaitSeconds;terminal_circuit_count=$TerminalCircuitCount}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
+[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";observer_version=3;observer_pid=$PID;source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=$MaximumWaitSeconds;terminal_circuit_count=$TerminalCircuitCount;expected_origin=$ExpectedOrigin;expected_path=$ExpectedPath}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
 Write-Output "${HostId}_RELAY_OBSERVER_ARMED: $out; leave this bounded collector running"
 $saved=0;$terminalAt=$null;$previous=$null
 try {
@@ -75,8 +83,12 @@ try {
                 [ordered]@{utc=[DateTime]::UtcNow.ToString('o');elapsed_ms=$clock.ElapsedMilliseconds;data=$data}|ConvertTo-Json -Depth 65|Set-Content (Join-Path $out ('relay-{0:D2}.json' -f $saved)) -Encoding utf8
                 $saved++;$previous=$encoded
             }
-            $receiverTerminal=@($p.novonet.diagnostic_relay.events|Where-Object {$_.event -in @('relay_probe_received_integrity_verified','relay_probe_rejected_time') -and $null -ne $_.probe -and (ProbeKey $_) -notin $oldNonces}).Count -gt 0
-            $closedCount=@($circuits|Where-Object {$null -ne $_.stream_dropped_us}).Count
+            # Retain ALL original snapshots. Only the stop decision is bound to
+            # the requested actual route; unrelated circuits must not end it.
+            $terminalCircuits=@($circuits|Where-Object {Test-ExpectedRelayRoute $_.route $ExpectedOrigin $ExpectedPath})
+            $terminalSessions=@($terminalCircuits|Where-Object {$null -ne $_.native_session}|ForEach-Object {[Convert]::ToHexString([byte[]]$_.native_session).ToLowerInvariant()})
+            $receiverTerminal=@($p.novonet.diagnostic_relay.events|Where-Object {$_.event -in @('relay_probe_received_integrity_verified','relay_probe_rejected_time') -and $null -ne $_.probe -and (ProbeKey $_) -notin $oldNonces -and (!$ExpectedOrigin -or ($null -ne $_.session -and [Convert]::ToHexString([byte[]]$_.session).ToLowerInvariant() -in $terminalSessions))}).Count -gt 0
+            $closedCount=@($terminalCircuits|Where-Object {$null -ne $_.stream_dropped_us}).Count
             $terminal=if($TerminalCircuitCount -gt 1){$closedCount -ge $TerminalCircuitCount}else{($HostId -eq 'D' -and $receiverTerminal) -or ($HostId -eq 'C' -and $closedCount -gt 0)}
             if($null -eq $terminalAt -and $terminal){$terminalAt=$clock.ElapsedMilliseconds}
             if($null -ne $terminalAt -and $clock.ElapsedMilliseconds-$terminalAt -ge 3000){break}

@@ -1,0 +1,10 @@
+{
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "elapsed_ms": 63,
+  "automatic_restore_failed": true,
+  "status": "RESTORED_B_AUTHENTICATED_STATUS_PASS",
+  "utc": "2026-11-17T10:41:10.1218567Z",
+  "object_sent": false,
+  "exit_code": 0,
+  "pid": 2880455
+}
