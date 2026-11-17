@@ -1,0 +1,24 @@
+{
+  "status": "C_DB667_OBSERVER_BLOCKED_NODE_EXITED",
+  "utc": "2026-11-17T10:21:08.0932514Z",
+  "node_pid": 45220,
+  "node_exit_utc": "2026-11-17T09:36:56.8241363Z",
+  "node_exit_code_hex": "0xC0000005",
+  "forced_by_controller": false,
+  "automatic_restart": false,
+  "active_node_count": 0,
+  "observer_started": false,
+  "ready_present": false,
+  "last_progress_mtime_utc": "2026-11-17T09:36:41.2004542Z",
+  "stderr_bytes": 0,
+  "dumps_retained_locally": [
+    {
+      "bytes": 228840128,
+      "sha256": "16612f19fcc9cd820683f6c5e3c81988a22ecd9e007d660339d6dad05f3903ad",
+      "name": "novovm-node.exe.45220.dmp",
+      "modified_utc": "2026-11-17T09:36:55.9446230Z"
+    }
+  ],
+  "task_result": 0,
+  "task_result_is_not_node_exit_code": true
+}
