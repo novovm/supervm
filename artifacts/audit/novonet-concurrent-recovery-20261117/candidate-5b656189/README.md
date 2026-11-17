@@ -1,6 +1,19 @@
 # Fixed eight-slot / dependency-repair candidate 5b656189
 
-## CURRENT23:49: B/A existing updates healthy; C dispatched, D waits
+## CURRENT 2026-11-18 00:01: C existing update accepted; D dispatched
+
+Actual C receipt7a40624a confirms PID42764/LocalService, exact5b EXE and mapped
+AOEM/manifest, original DB existing and unchanged identity/head/height. Recovery
+is false and execution failures0. A independently authenticated C in40ms at
+2026-11-17T16:01:01Z, returning the original height1/state root. Raw C update and
+A query records are in C-existing/ and C-authenticated-status/. Old PID7384 exit-1
+is preserved without claiming graceful drain or determining its cause.
+
+D is now released for the same approved existing update; follow [C/D steps](CD-UPDATE.md).
+C remains running. No observer or object was started; four-host5b health, recovered
+object delivery and actual in-flight concurrency are not yet accepted.
+
+## Historical23:49: B/A existing updates healthy; C dispatched, D waited
 
 User confirmed this fixed-version four-host existing rollout and subsequent
 missing recovery/concurrency acceptance. B updated toPID3003007/novovm, A to

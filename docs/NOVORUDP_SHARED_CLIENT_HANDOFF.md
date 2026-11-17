@@ -1,5 +1,17 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 00:01 A: C5b receipt accepted and authenticated; D dispatched
+
+A fetched C's actual7a40624a receipt: PID42764/LocalService, fixed5b Node/mapped
+AOEM/manifest, original DB existing, unchanged identity/head/height, failures0
+and recovery=false. A independently authenticated C in40ms at16:01:01Z, matching
+the original height1/state root. Old PID7384 exit-1 is retained without claiming
+graceful drain or a crash cause. [Raw receipts and D current instructions](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/CD-UPDATE.md).
+D now performs the already-approved5b existing update using its received package
+and qualified owner; C keeps running. No package recopy, new Full, observer or test
+object. A must authenticate actual D health next. Missing recovered delivery and
+true overlapping concurrency remain separate; old accepted tests are not rerun.
+
 ## 2026-11-17 23:49 A: approved5b B/A existing updates passed; C dispatched
 
 After explicit version approval, original B updater switched2880455→3003007;

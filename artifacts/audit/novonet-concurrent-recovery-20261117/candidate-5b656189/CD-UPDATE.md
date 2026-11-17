@@ -1,4 +1,21 @@
-# CURRENT23:49: B/A healthy at5b; C execute existing update now, D waits for C
+# CURRENT 2026-11-18 00:01: C update authenticated; D execute existing update now
+
+A fetched actual C receipt commit7a40624a. C is PID42764/LocalService, started
+2026-11-17T15:55:16Z with original DB existing, exact5b Node/mapped AOEM/manifest
+pins, unchanged identity/head/height/network, recovery=false and failures0.
+Original C PID7384 exit-1 is retained, not reported as graceful exit or a diagnosed
+crash. A independently queried C at16:01:01Z: authenticated Status40ms, height1
+and original state root. See C-existing/ and C-authenticated-status/ raw results.
+No object was sent; this is host health, not relay/concurrency acceptance.
+
+**D now executes the D steps below once**, using the already-received5b ZIP and
+D's qualified LocalService existing owner. No new stop approval, package recopy,
+initialization, old crash tests or observer. Return D_5B_EXISTING_READY_FOR_A_QUERY
+and actual public PID/account/hash/state/config/progress/control results under
+D-existing/. Preserve exact failure and stop if any required check fails. C keeps
+running; A will independently authenticate D before opening any observer window.
+
+## Historical 23:49: B/A healthy at5b; C dispatched, D waited for C
 
 B original updater prepared all92 payloads and actual AOEM KATs, precisely
 terminated2880455 by SIGTERM and started3003007/novovm with original DB existing,
@@ -30,7 +47,7 @@ recopy matching archives, ask again for stop permission or start observers yet.
 - release-manifest6bf12700acb241fb2cc802057f04f53d883c5dbb8eddfd79f57221adf1638cd3.
 -91 manifest payloads,94 archive files including metadata, all independently verified.
 
-## C: dispatched now after B/A actual health
+## C: completed and independently authenticated; do not repeat
 
 1. Inspect the actual current db667 task/kernel PID/creation/EXE, LocalService
    account, config/progress/control paths, loaded AOEM, original DB and ports.
@@ -66,7 +83,7 @@ recopy matching archives, ask again for stop permission or start observers yet.
    under `C-existing/`. No private configuration or keys. A separately authenticates
    C before releasing D. Package qualification is not live host health or delivery.
 
-## D: wait for C authenticated health dispatch
+## D: dispatched now after C authenticated health
 
 Follow the same fixed pins and original LocalService owner with HostIdD,
 ports41053/42053. Release:
