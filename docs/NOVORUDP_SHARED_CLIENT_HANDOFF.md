@@ -2,6 +2,14 @@
 
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
+12:14最新：A已读C/D9501a49d新鲜READY及心跳，实际发送唯一A→B→C→D对象，
+原发送端12:14:43.971 DONE、控制器退出0；B同circuit实际双向转发9包/9380字节及
+9包/9044字节、写失败0/0。C/D只回现有观察器结果、匹配快照和退出，不重开/重发。
+对象e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d，
+Session b960c007c82275a45ee5c45f75705aab；C转发与D完整性/时间/最终接管尚待回证。
+[实际A/B记录和关联边界](../artifacts/audit/aoem-latest-57090b6b-20261117/candidate-common-95ec9c2e/double-relay-20261117-1214/README.md)。
+不是原生UDP多跳、资产业务回执或共识最终性通过，不用A DONE覆盖D验收。
+
 11:52最新：A已下拉D `93291988`，签收PID23340/LocalService原库existing，实际新EXE、
 已加载AOEM和manifest匹配；A→D认证34ms，height1及原A/B/C同状态根，健康检查通过。
 四端新版升级已完成，尚未发送双中继对象。A/B各3个已验证locator，A已提权、原一次性

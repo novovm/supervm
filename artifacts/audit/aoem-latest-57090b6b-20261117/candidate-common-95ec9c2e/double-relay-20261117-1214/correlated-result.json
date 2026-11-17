@@ -1,0 +1,62 @@
+{
+  "C_forwarding": "pending original observer result",
+  "D_integrity_time_and_final_custody": "pending original observer result",
+  "status": "A_DONE_AND_B_FORWARDING_VERIFIED_C_D_PENDING",
+  "business_receipt": false,
+  "sender_timeline": [
+    {
+      "event": "relay_diagnostic_dial",
+      "session": null,
+      "object": null,
+      "utc": "2026-11-17T04:14:39.8420000+00:00"
+    },
+    {
+      "event": "relay_probe_admitted",
+      "session": "b960c007c82275a45ee5c45f75705aab",
+      "object": "e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d",
+      "utc": "2026-11-17T04:14:43.8570000+00:00"
+    },
+    {
+      "event": "relay_probe_object_done",
+      "session": "b960c007c82275a45ee5c45f75705aab",
+      "object": "e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d",
+      "utc": "2026-11-17T04:14:43.9710000+00:00"
+    }
+  ],
+  "route_digest": "82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14",
+  "native_session": "b960c007c82275a45ee5c45f75705aab",
+  "consensus_finality": false,
+  "sender_exit_code": 0,
+  "object_id": "e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d",
+  "B": {
+    "cursor": 0,
+    "role": "relay",
+    "downstream_authenticated_ready": true,
+    "failed_writes": [
+      0,
+      0
+    ],
+    "pid": 2621117,
+    "forwarded": [
+      {
+        "packets": 9,
+        "bytes": 9380
+      },
+      {
+        "packets": 9,
+        "bytes": 9044
+      }
+    ]
+  },
+  "double_relay_acceptance": false,
+  "sender_done": true,
+  "circuit_id": "457c502773ba39993a584d68cbbf1515",
+  "ordered_route": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "transport_scope": "Authenticated Iroh hop-stream relay carrying original native object channel; not native UDP multihop",
+  "resend": false
+}

@@ -42,7 +42,8 @@ $applyBinding=[scriptblock]::Create($binding.Extent.Text)
 $Common95=$true;$Source='95ec9c2eced988c5798d549971354ef8722367b7';$NodeSha256='754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7';$WorkName='novovm-common-95ec9c2e-20261117'
 foreach($HostId in @('C','D')){
     . $applyBinding
-    if($exe -ne 'C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-windows-x86_64\bin\novovm-node.exe'){throw 'Wrong common executable'}
+    $expectedExe=if($HostId -eq 'C'){'C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-C-20261117\bin\novovm-node.exe'}else{'C:\ProgramData\NOVOVM\releases\novovm-common-95ec9c2e-windows-x86_64\bin\novovm-node.exe'}
+    if($exe -cne $expectedExe){throw 'Wrong actual common executable'}
     $expectedFile=if($HostId -eq 'C'){'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common95-C-20261117\progress.json'}else{'C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-95ec9c2e-20261117\logs\progress.json'}
     if($file -cne $expectedFile){throw 'Wrong current receiver progress binding'};$checks++
 }

@@ -1,4 +1,12 @@
-# CURRENT 11:52: four common95 owners accepted; C/D arm original relay observers
+# CURRENT 12:14: object sent once, A DONE/B forwarding verified; return existing C/D evidence
+
+A pulled actual C/D READY/liveness through9501a49d, verified fresh valid windows and refreshed B's original owner; no extra UAC was needed. A sent **one** ordered A→B→C→D fixed object. Original sender event DONE at Beijing12:14:43.971, controller exit0/observed12:14:47.787. B actual same-circuit relay forwarding is verified (9packets/9380bytes and9packets/9044bytes, failed writes0/0).
+
+**C/D now only return the same existing observers'** result/error, matching relay snapshots, terminal/exit records and stdout/stderr. Do not restart/replace observers, resend, update or restart nodes. Object `e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d`; native session `b960c007c82275a45ee5c45f75705aab`; circuit `457c502773ba39993a584d68cbbf1515`; route digest `82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14`. C must show actual cursor1 forwarding; D must show final custody/integrity/time acceptance and matching native session/object. If absent or rejected, return that original evidence honestly; A DONE does not substitute for it.
+
+[Original A/B evidence and derived correlation](double-relay-20261117-1214/README.md). C fixed executable path from its actual deployment was corrected by C9501a49d in the existing observer; A accepted that deployment-only binding and updated its path regression (18/18). No product package or protocol changed. Double-relay acceptance remains pending C/D; no asset/finality claim.
+
+## Earlier11:52 observer dispatch (already executed; do not rearm)
 
 A pulled D through `93291988` and verified the actual common95 owner receipt. At `2026-11-17T03:49:09Z`, A's new installed native client authenticated D in **34ms**, height1, recovery/projection-failure false, and original A/B/C state root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. D EXE, actually loaded AOEM and release manifest match the fixed package; PID23340/LocalService, original database existing and identities unchanged. Original status reply/stderr/exit and health receipt are alongside this file. All four new-package updates are accepted, not yet double-relay delivery.
 

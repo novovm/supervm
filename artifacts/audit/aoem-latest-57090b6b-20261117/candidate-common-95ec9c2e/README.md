@@ -1,4 +1,6 @@
-# CURRENT 2026-11-17: four owners updated; relay observers next
+# CURRENT 2026-11-17: actual double-relay object sent; C/D evidence pending
+
+12:14: A sent one original A→B→C→D fixed object, sender DONE and controller exit0. B matching authenticated circuit/actual forwarding verified, no failed writes. C/D return only their existing observer output, no rearm/resend/restart. [Original A/B evidence and exact IDs](double-relay-20261117-1214/README.md). Complete double-relay acceptance is pending C forwarding and D final custody/integrity/time evidence; not a native UDP-multihop or business/finality claim.
 
 11:52: D receipt93291988 accepted and A→D authenticated Status34ms passed, original A/B/C state root/height1 unchanged. All four actual owners now use the qualified common95 package; no double-relay object yet. A/B original discovery reports three verified locators. C/D each arm one original observer with fixed common95 path binding per [CURRENT instructions](CD-UPDATE.md), publish real READY/liveness immediately; no new ZIP, update, old-crash or direct-object test. A is already elevated and prepares one ordered double-relay send after actual readiness.
 
