@@ -17,7 +17,7 @@ if not __debug__:
 UNIT = 'novovm-B-5b656189-network-20261117.service'
 RELEASE = Path('/opt/novovm/releases/novovm-common-5b656189-aoem570-linux-x86_64')
 WORK = Path('/var/lib/novovm/selfrun/91129655606029/B/novovm-common-5b656189-20261117')
-OUT = Path('/home/ecs-user/novonet-concurrent-5b656189-20261118/evidence')
+OUT = Path('/home/ecs-user/novonet-concurrent-5b656189-inflight-20261118/evidence')
 IDS = ['b5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43',
        '4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f',
        '1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a',
@@ -79,10 +79,10 @@ def snapshot(p):
                 transport=p['native_network_probe']['transport'])
 
 
-def cli(action, *args):
+def cli(action, *args, output=None):
     record(action + '-started.json', dict(wall_ms=time.time_ns() // 1000000))
     command = [str(RELEASE / 'bin/novovmctl'), 'native-network-probe', action, *args,
-               '--output', str(WORK / 'commands/control.nvprobe')]
+               '--output', str(output or WORK / 'commands/control.nvprobe')]
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     record(action + '-cli.json', dict(exit_code=result.returncode, stdout=result.stdout, stderr=result.stderr))
     result.check_returncode()
@@ -158,10 +158,18 @@ def main():
         ready = json.loads((OUT / 'ready.json').read_text())
         r = p['novonet']['diagnostic_relay']['reservation']
         assert r and bytes(r['nonce']).hex() == ready['nonce'] and r['ready']
+        staged = WORK / 'commands' / ('concurrent-' + ready['nonce'] + '.nvprobe')
+        assert not staged.exists(), 'preserve prior staged command'
+        cli('send-relay', '--from', str(OUT / 'arm.nvprobe'), output=staged)
+        staged_hash, staged_at = digest(staged), time.monotonic()
+        assert args.wall_ms > time.time_ns() // 1000000, 'missed publication target; no send'
         deadline = time.monotonic() + (args.wall_ms - time.time_ns() // 1000000) / 1000
         while time.monotonic() < deadline:
             time.sleep(min(.002, max(0, deadline - time.monotonic())))
-        cli('send-relay', '--from', str(OUT / 'arm.nvprobe'))
+        assert time.monotonic() - staged_at < 6 and digest(staged) == staged_hash
+        os.replace(staged, WORK / 'commands/control.nvprobe')
+        record('command-published.json', dict(wall_ms=time.time_ns() // 1000000,
+                                             original_cli_staged_command_sha256=staged_hash))
         record('published.json', dict(pid=pid, **snapshot(progress())))
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:

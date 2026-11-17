@@ -1,11 +1,12 @@
 #Requires -Version 7.0
 #Requires -RunAsAdministrator
 # One bounded real-host workload; only existing CLI, owner observations and B unit.
-param([Parameter(Mandatory)][string]$CReadyFile,[Parameter(Mandatory)][string]$DReadyFile,[Parameter(Mandatory)][string]$EvidenceRoot,[string]$ContinueRestoredAttempt)
+param([Parameter(Mandatory)][string]$CReadyFile,[Parameter(Mandatory)][string]$DReadyFile,[Parameter(Mandatory)][string]$EvidenceRoot,[string]$ContinueRestoredAttempt,[switch]$ConcurrentOnly)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference=$false
 $repo='D:\WorksArea\SUPERVM'
+if($ConcurrentOnly -and $ContinueRestoredAttempt){throw 'Conflicting remaining workloads'}
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Read-RelayProgress.ps1"
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Assert-RelayReadiness.ps1"
 $source='5b656189784c854ac356aae77610c931b9f2189d'
@@ -22,7 +23,7 @@ foreach($pair in @(@('C',$CReadyFile),@('D',$DReadyFile))){
  $live=Get-Content -Raw -LiteralPath "$parent/liveness.json"|ConvertFrom-Json
  foreach($terminal in @('error.json','result.json','collector-exit.json')){if(Test-Path -LiteralPath "$parent/$terminal"){throw 'Observer already ended'}}
  Assert-RelayReadiness $ready $live $pair[0] $source $nodePin
- $requiredCircuitCount=if($ContinueRestoredAttempt){1}else{4}
+ $requiredCircuitCount=if($ContinueRestoredAttempt){1}elseif($ConcurrentOnly){2}else{4}
  if($ready.terminal_circuit_count-ne $requiredCircuitCount){throw 'Observer circuit scope differs from actual remaining workload'}
  if($ContinueRestoredAttempt){
   $expectedOrigin='novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3'
@@ -41,7 +42,7 @@ if(($ids-join ',')-cne ($pins-join ',')){throw 'Fixed original identities differ
 New-Item -ItemType Directory -Path $out|Out-Null
 Copy-Item -LiteralPath $CReadyFile -Destination "$out/C-ready.json"
 Copy-Item -LiteralPath $DReadyFile -Destination "$out/D-ready.json"
-$bFile='/home/ecs-user/novonet-concurrent-5b656189-20261118/B-Scenario.py'
+$bFile='/home/ecs-user/novonet-concurrent-5b656189-inflight-20261118/B-Scenario.py'
 $bPin=(Get-FileHash -LiteralPath "$PSScriptRoot/B-Scenario.py").Hash.ToLowerInvariant()
 $bCommand="echo '$bPin  $bFile' | sha256sum -c - >/dev/null && sudo -n python3 $bFile"
 function B([string]$Action,[string]$Extra=''){
@@ -180,12 +181,21 @@ try{
  # Two distinct native owners, two recipient owners; no node exceeds its one-flight diagnostic limit.
  $first=ArmA 'concurrent-A' 2 @(1,3)
  $bReady=FinishBJob $bJob 'arm';$bJob=$null
+ # Generate once with the original CLI; delay only publication, never extend TTL.
+ $staged=Join-Path (Split-Path $command) ('concurrent-'+$first.nonce+'.nvprobe')
+ if(Test-Path $staged){throw 'Preserve prior staged command'}
+ & "$release/bin/novovmctl.exe" native-network-probe send-relay --from $first.arm --output $staged 1> "$out/concurrent-A-staged-cli.json" 2> "$out/concurrent-A-staged-cli.stderr"
+ if($LASTEXITCODE-ne 0){throw 'Original staged CLI failed'}
+ $stagedHash=(Get-FileHash $staged).Hash.ToLowerInvariant()
+ $stagedAt=[Diagnostics.Stopwatch]::GetTimestamp()
  $target=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+4000
  $bTarget=[long][Math]::Round($target+($timing.lo+$timing.hi)/2)
  $bJob=BJob 'send-at' "--wall-ms $bTarget"
  $deadline=[Diagnostics.Stopwatch]::GetTimestamp()+[long](($target-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())/1000*[Diagnostics.Stopwatch]::Frequency)
  while([Diagnostics.Stopwatch]::GetTimestamp()-lt $deadline){Start-Sleep -Milliseconds 1}
- Invoke-OriginalNativeProbe 'concurrent-A-send' @('send-relay','--from',$first.arm)
+ if([Diagnostics.Stopwatch]::GetElapsedTime($stagedAt).TotalSeconds-gt 6 -or (Get-FileHash $staged).Hash.ToLowerInvariant()-cne $stagedHash){throw 'Staged original command stale or changed; no publish'}
+ [IO.File]::Move($staged,$command,$true)
+ Save @{wall_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();original_cli_staged_command_sha256=$stagedHash;network_send_claim=$false} 'concurrent-A-command-published'
  $aDone=WaitADone $first
  $bDone=FinishBJob $bJob 'send-at';$bJob=$null
  Save $bDone 'B-concurrent-result'
@@ -198,6 +208,11 @@ try{
  $overlapStart=[Math]::Max([double]$aStart[0].wall_ms,[double]$bStart[0].wall_ms-$lo)
  $overlapEnd=[Math]::Min([double]$aDone.wall_ms,[double]$bEnd[0].wall_ms-$hi)
  Save ([ordered]@{two_sender_DONE=$true;management_offset_interval_ms=@($lo,$hi);guaranteed_overlap_ms=[Math]::Max(0,$overlapEnd-$overlapStart);concurrent_inflight_proven=($overlapEnd-gt $overlapStart);scope='Two actual original objects; no serial-as-concurrent claim; timing via authenticated management channel, never authorization';A_object=(Hex $aDone.object);A_session=(Hex $aDone.session);B_object=(Hex $bEnd[0].object);B_session=(Hex $bEnd[0].session);receiver_and_hop_evidence_pending=$true}) 'concurrency-origin-result'
+ if($ConcurrentOnly){
+  $completed=$true
+  Save @{status='CONCURRENT_ONLY_TWO_ORIGIN_DONE_RECEIVER_AUDIT_PENDING';concurrent_inflight_proven=($overlapEnd-gt $overlapStart);outage_performed=$false;recovered_object_repeated=$false;utc=[DateTime]::UtcNow.ToString('o')} 'result'
+  return
+ }
  WaitLease $first
  $fault=ArmA 'before-B-interruption' 3 @(1,2)
  Save (B 'interrupt') 'B-interrupted-and-existing-restored'

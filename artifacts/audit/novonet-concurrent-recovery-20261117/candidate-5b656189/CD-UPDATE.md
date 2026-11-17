@@ -1,4 +1,37 @@
-# CURRENT 2026-11-18: recovered fresh-object dual-end delivery accepted; no C/D action
+# CURRENT 2026-11-18 00:45: true in-flight concurrency only; arm C/D once
+
+Recovered fresh-object acceptance below is complete; do not repeat it or stop B.
+User now requests only two distinct overlapping original-object deliveries.
+C/D each start ONE original read-only Watch-Relay.ps1 with adjacent reader using
+their qualified hidden independent administrator PowerShell7 wrapper, a new
+EvidenceRoot, and these fixed arguments (HostId D on D):
+
+```powershell
+-HostId C -Source 5b656189784c854ac356aae77610c931b9f2189d -NodeSha256 4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038 -WorkName novovm-common-5b656189-20261117 -CommonCapacity8 -TerminalCircuitCount 2 -MaximumWaitSeconds 7200 -EvidenceRoot '<fresh-local-root>'
+```
+
+Do NOT pass ExpectedOrigin/ExpectedPath: this window observes BOTH actual routes
+A→B→D→C and B→A→C→D. All original new-circuit snapshots are retained. Each node
+has only one originating object and one target; original diagnostic ceilings remain.
+Verify the previous recovered-object observer has exited, preserve old evidence,
+do not start duplicates. Immediately push actual ready.json/liveness.json,
+observer PID/creation/command, current node PID and result/error/exit presence
+to C-inflight-observer/ or D-inflight-observer/. Do not wait for terminal/two hours
+to return READY. No node restart/update, object send or package copy on C/D.
+
+A original coordinator now has -ConcurrentOnly, which terminates before any
+outage/recovery branch. Only management publication timing changed: both original
+CLIs create one expiring send command at a staging path beside the original control
+slot, hash checked and atomically published at a common measured deadline. No bytes
+or TTL are rewritten/extended, no object delay is added inside the network. An old
+staged command or missed/stale deadline fails without publication. The underlying
+10s validity,60s reservation and all connection/byte/authentication rules remain.
+Actual admission→DONE conservative overlap, not publication timing, decides success.
+If measured overlap is absent, preserve both actual outcomes, do not claim or auto-retry.
+38sequence+20readiness+23reader+6restore checks pass; B3003007 preflight idle.
+No new package or Full. Two fresh READYs permit one paired workload, no blind resend.
+
+## Historical: recovered fresh-object dual-end delivery accepted
 
 A independently checked C d4d84886 and D56d84292:15 original hashes/lengths,
 5 raw snapshots; A DONE + unique D object/session integrity/time acceptance,

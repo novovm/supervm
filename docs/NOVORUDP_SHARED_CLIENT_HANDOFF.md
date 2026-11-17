@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 00:45 A: remaining true in-flight concurrency dispatch
+
+User requested actual overlapping objects only, not completed recovered/direct/
+single/double tests. Original coordinator now -ConcurrentOnly exits before any B
+outage. Original expiring CLI-generated command bytes are staged/hash-checked and
+atomically published on a common management deadline to remove CLI startup jitter;
+no TTL/network/asset change, measured admission→DONE bounds alone decide overlap.
+87local management checks pass; B actual3003007 preflight idle. No Full/rebuild.
+[C/D one fresh two-circuit observation window](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/CD-UPDATE.md).
+C/D immediately return real READY/liveness and terminal-file presence under
+C-inflight-observer/D-inflight-observer, no node restart/update/send. A pairs new
+A→B→D→C and B→A→C→D objects once; dual-end custody and both hop evidence remain
+required. No overlap or delivery pass yet; old accepted sequential pair not reused.
+
 ## 2026-11-18 A: recovered fresh-object actual dual-end delivery accepted
 
 A pulled C d4d84886/D56d84292, verified15 original file hashes/lengths and5 raw

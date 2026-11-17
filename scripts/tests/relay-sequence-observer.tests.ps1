@@ -104,4 +104,14 @@ $upgrade.custody_unchanged=$false;$rejected=$false;try{. $checkUpgrade}catch{$re
 if(!$rejected){throw 'Changed custody accepted'};$checks++;$upgrade.custody_unchanged=$true
 $upgrade.initialize_executed=$true;$rejected=$false;try{. $checkUpgrade}catch{$rejected=$true}
 if(!$rejected){throw 'Initialized replacement accepted'};$checks++
+$countAssignment=$coordinatorAst.Find({param($n) $n -is [Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text-eq '$requiredCircuitCount'},$true)
+$chooseCount=[scriptblock]::Create($countAssignment.Extent.Text)
+$ContinueRestoredAttempt='';$ConcurrentOnly=$true;. $chooseCount
+if($requiredCircuitCount-ne 2){throw 'Concurrent-only observer scope differs'};$checks++
+$ConcurrentOnly=$false;. $chooseCount
+if($requiredCircuitCount-ne 4){throw 'Legacy sequence scope changed'};$checks++
+$ContinueRestoredAttempt='prior';. $chooseCount
+if($requiredCircuitCount-ne 1){throw 'Recovered-only scope changed'};$checks++
+$only=$coordinatorAst.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if($ConcurrentOnly){')},$true)
+if($null-eq $only -or !$only.Extent.Text.Contains('return') -or $only.Extent.StartOffset-gt $coordinatorAst.Extent.Text.IndexOf('Save (B ''interrupt'')')){throw 'Concurrent-only can fall through into B outage'};$checks++
 Write-Output "PASS $checks sequence-observer checks; no node, clock or network mutation"
