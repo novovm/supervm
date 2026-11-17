@@ -1,0 +1,7 @@
+Exception: D:\WEB3_AI\SUPERVM\target\d-common95-controller-20261117\run.ps1:10
+Line |
+  10 |   if($code){throw 'Read-only D preflight rejected; no update called'}
+     |             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Read-only D preflight rejected; no update called
+
+

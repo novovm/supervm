@@ -1,0 +1,6 @@
+{
+  "update_called": false,
+  "expected_from_A": "7b50ae0c70ba039dce93ae44b8d18b541e77d3c4ff45e95eedf60c3a0d29d5cd",
+  "raw_sha256": "f97c690cc30603f19e2b6c4c5b4016c1760018bfab92762076a31d5800f901a5",
+  "normalized_lf_sha256": "7b50ae0c70ba039dce93ae44b8d18b541e77d3c4ff45e95eedf60c3a0d29d5cd"
+}
