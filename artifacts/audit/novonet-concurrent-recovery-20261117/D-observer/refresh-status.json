@@ -1,0 +1,16 @@
+{
+  "utc": "2026-11-17T06:44:29.3960746Z",
+  "evidence_root_unchanged": true,
+  "liveness_utc": "2026-11-17T06:44:28.8698398Z",
+  "collector_exit_present": false,
+  "node_pid": 23340,
+  "error_present": false,
+  "launcher_error_present": false,
+  "new_observer_started": false,
+  "snapshots": 4,
+  "observer_created_utc": "2026-11-17T06:22:37.0892130Z",
+  "observer_pid": 40456,
+  "duplicate_request_received": true,
+  "result_present": false,
+  "active": true
+}
