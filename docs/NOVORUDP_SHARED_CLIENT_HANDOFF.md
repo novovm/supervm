@@ -1,5 +1,11 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 18:16 A: D db667 accepted; one concurrent/recovery window dispatched
+
+A fetched actual D success9f9aeeb8 (retaining earlier pre-entry cancelled UAC separately), checked reported56148/LocalService, fixed Node/loaded AOEM/manifest, original DB existing/custody/head/listeners and no exit/error. A's fixed client independently authenticated D48ms at10:15:01Z, original height1/root unchanged. All four same-version update/respective authenticated health gates are accepted; concurrent objects and B interruption/recovery still pending.
+
+**C/D now each launch one fresh original version-bound sequence observer, immediately return actual READY/liveness/process metadata, keep it across the one continuous workload**, per [current exact dispatch](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/CD-UPDATE.md). No new package/Full, node re-update, old crash or accepted single-object/direct replay. A/B owners healthy/idle at10:16:02Z, A elevated/coordinator ready. [Actual D receipt and independent query](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/D-existing/). Sender DONE, each actual relay and final target custody/integrity remain independent from Status and eventual business/finality.
+
 ## 2026-11-17 17:32 A: C db667 accepted, D existing update dispatched
 
 A fetched/fast-forwarded actual C receipt9b27a904: C reports PID45220/LocalService, exact db667 Node/loaded AOEM/manifest, original DB existing/custody/head/height, healthy original listeners and no unexpected command/exit. At09:31:51Z A's fixed new client independently authenticated C44ms, original height1/root unchanged. C's config/progress paths match the existing tested CommonRoleFix observation binding; no new tool/window needed. [Actual receipt and independent query](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-db667aa4/C-existing/).

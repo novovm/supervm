@@ -1,4 +1,20 @@
-# CURRENT17:32: C accepted; D existing update now
+# CURRENT18:16: D accepted; C/D one fresh concurrent/recovery observer now
+
+A fetched and fast-forwarded actual D success9f9aeeb8 (after retained pre-entry UAC cancellation1afe5cb6). D reports new56148/LocalService, controller exit0, exact installed Node/loaded AOEM/manifest pins, original database existing/custody/head/height unchanged, recovery false/failures0, original41053/42053 and no owner exit/error or control file. A independently authenticated D48ms at10:15:01Z, original height1/root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. No update repeat. B/A/C/D same-version update and respective health gates are accepted, not object/recovery acceptance.
+
+**C and D now:** keep the nodes unchanged. Each start **one original** `artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1` with its adjacent `Read-RelayProgress.ps1` as a hidden independent administrator PowerShell7 process. Verify the prior same-purpose observer actually ended; if still running, return its PID/creation/command rather than starting a duplicate. Preserve its old evidence. Use a new local EvidenceRoot, retain stdout/stderr and the actual process exit in a wrapper; do not wait for the observer to finish before returning READY.
+
+```powershell
+-HostId C -Source db667aa420477e76766352c8efd7fea83fdb6eac -NodeSha256 442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825 -WorkName novovm-common-db667aa4-20261117 -CommonRoleFix -TerminalCircuitCount 4 -MaximumWaitSeconds 7200 -EvidenceRoot '<fresh-local-root>'
+```
+
+Use HostId D on D. These are the original observer and original64-snapshot,1-second sampling,2-hour maximum standby/freshness bounds; no new collector, runtime config, protocol timeout or quota. Actual C executable/progress paths match C's returned binding; actual D paths match D's returned binding. The reader must observe the fresh original healthy owner rather than reusing old95 READYs or the earlier historical PID.
+
+**Immediately push real `ready.json`, fresh `liveness.json`, observer PID/creation/command, current node PID, and whether result/error/collector-exit exist**, under `candidate-db667aa4/C-observer/` or `D-observer/`. Return C_RELAY_OBSERVER_ARMED / D_RELAY_OBSERVER_ARMED only if actually alive with fresh progress. If not ready, preserve exact error and stop, no hidden node restart. Keep the same observer alive across this single workload; do not wait for four terminal circuits before returning readiness. No object sends on C/D, no re-update, old crash test or repeated direct baseline.
+
+A is elevated and its existing version-bound coordinator is ready; no extra A UAC is currently pending. At10:16:02Z A22576/B2840424 original owners were idle, failures0, diagnostic accepted/rejected0/0, no objects or B interruption. With both fresh READY/liveness receipts A executes one continuous workload: crossed A→B→D→C and B→A→C→D original objects with conservative actual overlap, then exact new B unit5-second interruption/existing recovery, new authenticated circuit/session and a fresh recovered object. Do not delay for new package/CI/design work. Old direct/single/double one-object samples are not repeated; actual relay forwarding, final receiver custody/integrity and sender DONE remain separately required.
+
+## Earlier17:32 C signoff / D update (completed)
 
 A fetched and fast-forwarded C's actual receipt `9b27a904`. C reports db667 PID45220/LocalService, exact Node/loaded AOEM/release-manifest pins, original DB existing, unchanged identity/head/height, failures0/recovery false,41052/42052 and no unexpected control or exit. Actual config/progress match the already-tested CommonRoleFix observer paths; no observer adaptation or new window is needed now. At09:31:51Z, A's fixed new client independently authenticated C in **44ms**, original height1/state root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`. C's reported package/owner facts and A's independent authenticated status remain separate evidence.
 
@@ -20,8 +36,8 @@ Do not start an observer yet. A signs the real receipt and performs one new-vers
 
 Then use the same qualified local-owner steps, HostId D, original ports41053/42053. Expected old common95 PID23340 is historical, not a stop target without inspection. New release `C:\ProgramData\NOVOVM\releases\novovm-common-db667aa4-windows-x86_64`; work `C:\ProgramData\NOVOVM\selfrun\91129655606029\D\novovm-common-db667aa4-20261117`, config `run.json`, progress `logs\progress.json`. Return **D_DB667_EXISTING_READY_FOR_A_QUERY** under `D-existing/`. Same fixed pins and no observer until A signs actual health.
 
-## After four updated healthy owners
+## Current observer invocation details (dispatched by CURRENT above)
 
-One fresh original `Watch-Relay.ps1` per C/D, `-CommonRoleFix -Source db667aa420477e76766352c8efd7fea83fdb6eac -NodeSha256 442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825 -WorkName novovm-common-db667aa4-20261117 -TerminalCircuitCount 4 -MaximumWaitSeconds 7200`, actual HostId/new EvidenceRoot; immediately publish real READY/liveness/PID. **Not dispatched yet.** A's existing coordinator and B management helper are version-bound; old common95 READYs are not usable. A remains elevated, no extra UAC needed currently.
+One fresh original `Watch-Relay.ps1` per C/D, `-CommonRoleFix -Source db667aa420477e76766352c8efd7fea83fdb6eac -NodeSha256 442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825 -WorkName novovm-common-db667aa4-20261117 -TerminalCircuitCount 4 -MaximumWaitSeconds 7200`, actual HostId/new EvidenceRoot; immediately publish real READY/liveness/PID. A's existing coordinator and B management helper are version-bound; old common95 READYs are not usable. A remains elevated, no extra UAC needed currently.
 
 Planned one workload: actual crossed A→B→D→C and B→A→C→D objects with conservative real in-flight overlap, then exact new B unit5s interruption/existing recovery, circuit/session change/reauthentication and one new recovered-route object. Record actual hop forwarding and receiver integrity/custody separately from sender DONE; no claim of old object resurrection, native UDP multihop, business receipt or finality. Do not rerun the accepted one-object direct/single/double tests.

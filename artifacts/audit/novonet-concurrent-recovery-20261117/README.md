@@ -1,4 +1,8 @@
-# CURRENT17:32: B/A/C updated and healthy; D now updates
+# CURRENT18:16: four same-version updates accepted; live sequence observation dispatched
+
+A pulled actual D success9f9aeeb8 and independently authenticated D48ms, original height1/root unchanged. All four db667 update/health gates are accepted; no concurrent or relay-recovery real-host verdict yet. C/D now open one fresh original CommonRoleFix4-circuit/2-hour/64-snapshot observer each and **immediately** push real READY/liveness/process metadata, keep the same window for the continuous workload. [Current exact dispatch](candidate-db667aa4/CD-UPDATE.md). A22576/B2840424 remain healthy/diagnostic idle at10:16:02Z; A elevated/coordinator ready. No repeated baseline, update, new diagnostic tool, Full or packet sends before fresh READY verification.
+
+## Earlier17:32 C signoff / D dispatch (completed)
 
 A pulled actual C receipt9b27a904: reported PID45220/LocalService and fixed package/original existing-state checks passed. A independently authenticated C44ms, original height1/state root unchanged. **D is now released for the same qualified existing update** using the already-received db667 whole ZIP; [current dispatch](candidate-db667aa4/CD-UPDATE.md). C stays running, no new observer yet. No direct/single/double one-object replay. Concurrent objects and B interruption/recovery remain unexecuted, not passed.
 

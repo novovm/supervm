@@ -1,4 +1,10 @@
-# CURRENT17:32: C receipt accepted and A→C44ms passed; D now updates
+# CURRENT18:16: four db667 updates accepted; D query48ms; one fresh observation round
+
+A pulled actual D success9f9aeeb8, checked reported56148/LocalService, exact Node/loaded AOEM/manifest and original existing/custody/listener/head health; original cancelled elevation remains recorded as pre-entry, not a node failure. A independently authenticated D48ms at10:15:01Z, original height1/root unchanged. Original query/exit/stderr/health are under `D-existing/`. All four same-version updates/respective authentication health gates are accepted; no object concurrency or B interruption/recovery pass yet.
+
+**C/D now start one fresh original version-bound sequence observer**, immediately publish actual READY/liveness/node and observer process metadata under `C-observer/` / `D-observer/`, keep it alive across the one continuous workload. [Exact current invocation and boundaries](CD-UPDATE.md). No re-update, package recopy, old crash/direct/single/double baseline. A/B original owners checked idle10:16:02Z, no new diagnostic commands/objects or B stop; A elevated, coordinator ready. No new Full or program build for this evidence-only dispatch.
+
+## Earlier17:32 C signoff (completed)
 
 A fetched actual C receipt9b27a904 and checked its reported original LocalService PID45220, fixed EXE/loaded AOEM/manifest hashes and original existing/custody/head/listener state. A's new fixed native client independently authenticated C44ms at09:31:51Z, original height1/state root unchanged. Original query/exit/stderr/health are under `C-existing/`. **D now follows [CD-UPDATE.md](CD-UPDATE.md)** with its already-received db667 ZIP and original LocalService owner; C remains running, no observers yet. Do not repeat C update, package copying, old crash or accepted direct-object tests. Concurrent and relay-recovery real-host verdicts remain pending.
 

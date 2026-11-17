@@ -1,0 +1,24 @@
+{
+  "utc": "2026-11-17T10:16:02.6370116Z",
+  "A_pid": 22576,
+  "A_execution_failures": 0,
+  "A_diagnostic_active": false,
+  "A_probe_control": {
+    "enabled": true,
+    "accepted_commands": 0,
+    "rejected_commands": 0,
+    "last": null,
+    "scope": "local commands; never business or transport completion"
+  },
+  "B_pid": 2840424,
+  "B_diagnostic_active": false,
+  "B_probe_control": {
+    "enabled": true,
+    "accepted_commands": 0,
+    "rejected_commands": 0,
+    "last": null,
+    "scope": "local commands; never business or transport completion"
+  },
+  "object_sent": false,
+  "B_interruption_executed": false
+}
