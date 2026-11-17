@@ -1,5 +1,15 @@
 # Original recovered-route fresh object: sender DONE, receiver audit pending
 
+## C original forwarding received and independently checked
+
+A pulled C d4d84886 and verified all8 returned file lengths/SHA256, including
+all3 original relay snapshots. Final exact circuit55ff173d2812e03d6dc892f067620355
+has matching route digest/origin/path, C relay cursor1, downstream ready and
+forwarded9/9packets (9380/9044bytes), failed writes0/0. B downstream binding equals
+C inbound binding f6669e214b9c4543a8ac655ef6bf39c0304ea5edada22156970c8551fa52a0c.
+C collector exited0 after terminal observation. D originals remain pending; no
+dual-end acceptance is claimed yet. Do not reopen C or resend the object.
+
 A fetched C/D READYs through799b3e5d. C observer35672/node42764 and D
 observer40736/node34148 were active, matching exact5b and A-B-C-D route with
 fresh heartbeats and no terminal files. Original readiness checks accepted them.
