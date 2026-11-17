@@ -1,5 +1,11 @@
 # CURRENT: no new db667 observer/send; capacity-eight candidate validation
 
+23:33: final5b Full44092874774 is SUCCESS at the exact program SHA. Both fixed
+packages qualified; D actual receive/hash receiptcae04350 pulled, C/D readiness
+reported by user. [Final qualification and next scope](../candidate-5b656189/README.md).
+Do not retry old db667 capacity-four delivery or recopy matching archives.
+No update/observer dispatch until fixed-version existing rollout is confirmed.
+
 21:45 update: dependency migration and both fixed5b656189 packages are qualified;
 exact Full44092874774 remains running. [Current candidate](../candidate-5b656189/README.md).
 C/D only copy/hash the new5b ZIP if not already received. No update or observer

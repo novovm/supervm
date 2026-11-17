@@ -1,5 +1,16 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-17 23:33 A: exact5b Full success; C/D packages reported ready
+
+A independently confirmed Full44092874774 completed SUCCESS at15:29:41Z, exact
+head5b656189. Original final run/jobs are preserved with the qualified packages.
+A fetched/fast-forwarded D's actual cae04350 size/hash-only receipt; user reports
+C/D ready, no separate C Git receipt present at this check. No node was updated,
+no new observer/object launched. [Final gates and existing-update plan](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/README.md).
+Maximum-eight was approved as candidate validation; confirm this fixed version's
+four-host existing rollout before executing B→A→C→D. No repeat Full, package copy
+or accepted direct/single/double-object baseline is required.
+
 ## 2026-11-17 A: fixed5b eight-slot packages qualified, exact Full pending
 
 Chrono/netwatch/WMI migration and affected local gates are complete. Windows/Linux

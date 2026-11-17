@@ -1,6 +1,15 @@
 # Fixed eight-slot / dependency-repair candidate 5b656189
 
-## CURRENT: packages qualified; Full still running; NOT deployed
+## CURRENT23:33: exact Full and packages qualified; NOT deployed
+
+A fetched and fast-forwarded actual D receipt cae04350. D independently checked
+the received archive size/SHA256; it has not extracted or run it. User reports
+C/D both ready; no separate C receipt was present in the fetched main at this
+check. Do not ask either host to recopy an already-matching package.
+
+C-drive cleanup was user-performed; current free space is about20GB. The earlier
+named e666 package directory still exists, so A does not claim it was deleted.
+No further cleanup is needed to qualify these already-frozen artifacts.
 
 Program source `5b656189784c854ac356aae77610c931b9f2189d` includes the approved
 native ServiceConcurrencyV1 maximum-eight qualification, libz-sys repair and
@@ -10,9 +19,12 @@ ledger or consensus rule changed. WMI 0.18.4 and Iroh 1.3.0 are retained; the
 reviewed netwatch 0.19.3 patch removes only unused WMI chrono feature activation.
 
 Exact-source Full: https://github.com/novovm/supervm/actions/runs/44092874774
-At this record, Rust security, Node checks and original process recovery passed;
-Rust checks and Windows original owners remain running. This is NOT Full success.
-Older Full failures remain failures. No new manual run is required for this record.
+The original Full completed SUCCESS at2026-11-17T15:29:41Z, with exact head SHA
+5b656189. A independently fetched its final run and job records: full-final.json
+and full-final-jobs.json. All required jobs, including Rust, security, original
+process recovery and Windows owners, passed. The workflow's conditional PR-only
+job is recorded as skipped, not claimed executed. Older Full failures remain
+failures. No rerun or new Full is required for this documentation.
 
 ## Fixed artifacts
 
@@ -58,7 +70,7 @@ ran on D, so C-drive cleanup is no longer a packaging prerequisite.
 
 ## Next, without repeating accepted samples
 
-1. Read this existing Full's final result; any failed required gate stops rollout.
+1. Full and fixed-package qualification are complete; do not rebuild or rerun.
 2. Confirm this fixed version's deployment scope, then reuse original B→A→C→D
    existing update owners. Inspect real process, loaded library, original DB,
    identity/head, listeners and authentication per host, not historical PIDs.

@@ -1,5 +1,13 @@
 # Main-node shared Carrier capacity candidate (2026-11-17)
 
+## CURRENT23:33: exact5b Full SUCCESS, fixed packages qualified
+
+Full44092874774 completed successfully at15:29:41Z on exact5b656189. Original
+final run/jobs and actual package pins are in [candidate-5b656189](../candidate-5b656189/README.md).
+C/D packages reported ready; D actual receiptcae04350 pulled and verified.
+No deployment/object execution yet; confirm fixed-version existing rollout,
+then continue only the missing recovery/concurrency acceptance. Older statuses below are historical.
+
 ## CURRENT21:45: migration and fixed packages qualified; final Full pending
 
 The approved chrono migration is complete without suppressing Audit/Deny. Fixed
