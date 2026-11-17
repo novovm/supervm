@@ -1,0 +1,16 @@
+{
+  "node_pid": 34148,
+  "final_liveness_utc": "2026-11-17T16:34:14.596266Z",
+  "raw_snapshot_filter_used": false,
+  "utc": "2026-11-17T16:37:54.4837996Z",
+  "node_mutated": false,
+  "new_observer_started": false,
+  "all_raw_snapshot_count": 2,
+  "collector_exit_present": true,
+  "invocation_error_present": false,
+  "active": false,
+  "error_present": false,
+  "observer_pid": 40736,
+  "launcher_error_present": false,
+  "result_present": true
+}
