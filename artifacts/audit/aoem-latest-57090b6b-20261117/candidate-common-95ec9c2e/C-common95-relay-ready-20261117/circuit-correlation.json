@@ -1,0 +1,78 @@
+{
+  "method": "exact circuit and route digest bytes; no object/session required at relay",
+  "matches": [
+    {
+      "file": "relay-00.json",
+      "utc": "2026-11-17T04:14:42.3790599Z",
+      "role": "relay",
+      "cursor": 1,
+      "circuit": "457c502773ba39993a584d68cbbf1515",
+      "route_digest": "82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14",
+      "native_session": null,
+      "forwarded": [
+        {
+          "packets": 8,
+          "bytes": 8592
+        },
+        {
+          "packets": 8,
+          "bytes": 8656
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": null
+    },
+    {
+      "file": "relay-01.json",
+      "utc": "2026-11-17T04:14:48.0327754Z",
+      "role": "relay",
+      "cursor": 1,
+      "circuit": "457c502773ba39993a584d68cbbf1515",
+      "route_digest": "82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14",
+      "native_session": null,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": 8570821519
+    },
+    {
+      "file": "relay-02.json",
+      "utc": "2026-11-17T04:14:52.3362979Z",
+      "role": "relay",
+      "cursor": 1,
+      "circuit": "457c502773ba39993a584d68cbbf1515",
+      "route_digest": "82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14",
+      "native_session": null,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": 8570821519
+    }
+  ],
+  "raw_snapshots": 3
+}

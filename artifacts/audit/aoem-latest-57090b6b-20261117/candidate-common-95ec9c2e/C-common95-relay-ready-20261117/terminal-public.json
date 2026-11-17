@@ -25,7 +25,11 @@
     0
   ],
   "native_session_in_circuit": null,
-  "association_to_requested_object": "unproven",
-  "matched_relay_files": [],
+  "association_to_requested_object": "circuit/route correlation established in all three original snapshots; endpoint object/session verified separately by A/D",
+  "matched_relay_files": [
+    "relay-00.json",
+    "relay-01.json",
+    "relay-02.json"
+  ],
   "original_snapshots_local": "D:\\WEB3_AI\\SUPERVM\\target\\c-common95-relay-20261117-01"
 }
