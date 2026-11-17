@@ -1,0 +1,13 @@
+{
+  "exit_code": 1,
+  "started_utc": "2026-11-17T11:35:05.8718416Z",
+  "checks": [
+    {
+      "name": "capacity8-windows-node-tests",
+      "exit_code": 0,
+      "result": "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1826 filtered out; finished in 262.83s"
+    }
+  ],
+  "error": "capacity8-windows-network-tests failed or selected zero tests; exit=101",
+  "finished_utc": "2026-11-17T11:44:21.5227089Z"
+}

@@ -1,4 +1,8 @@
-# CURRENT18:55: two real crossed deliveries accepted; concurrency/recovery not closed
+# CURRENT: shared Carrier capacity-eight candidate; no unchanged retry
+
+The fresh route-bound recovery attempt19:05 failed **before sending an object**. B authenticated ingress but the original shared-four Carrier gate refused downstream admission (`carrier connection limit: no permits available`), with three resident bound connections. No second B outage or completed-pair resend. User now approved **maximum-eight candidate validation through existing ServiceConcurrencyV1**, not immediate deployment. SDK default four, signed relay sessions four,128KiB/min, auth/timeouts/ledger unchanged. Windows/Linux local groups13/72/34 and final new-case1 each plus strict Clippy passed; first fixture/Clippy failures retained. Next one frozen-source Full and original whole packages; no new package/Full/real-host pass yet. [Original failure, minimal fix and exact remaining gates](capacity8/README.md). C/D do not rearm or retry unchanged db667; preserve their existing bounded observations.
+
+## Earlier18:55: two real crossed deliveries accepted; concurrency/recovery not closed
 
 Actual db667 pair: sender DONE + unique target integrity/time/hash/full-fragment evidence and both actual relays/adjacent authenticated bindings independently matched;20 observer original hashes and15 snapshots verified. **No simultaneous in-flight overlap**, so not a concurrency pass. B stop succeeded but its transient `--collect` unit was gone on `systemctl start`; automatic restoration failed. B is now restored same program/config/network/custody/original existing DB through the original launch owner, newPID2880455/Status63ms. Management lifecycle correction tested6 cases on each platform; original runtime/Full unchanged. [Actual originals and independent result](candidate-db667aa4/live-1828/README.md).
 

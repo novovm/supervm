@@ -1,0 +1,16 @@
+NOVONET outbound peer=0 turn=0 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=0 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=0 adopted=false failed: carrier connect unavailable: timed out: timed out: timed out: timed out: timed out: timed out
+NOVONET inbound local=novovm-mldsa65:3ee4ee13b73bd69df2b478517d52203b78b5af0f766b6e0dcc79a7379be2eb31 failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=1 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=0 adopted=false failed: carrier connect unavailable: timed out: timed out: timed out: timed out: timed out: timed out
+NOVONET inbound local=novovm-mldsa65:ffa2e09407865cd717cff1cb58fd37cda79e48405b2e660a5deac3c8d0cad440 failed: carrier connect unavailable: timed out: timed out: timed out: timed out: timed out: timed out
+NOVONET outbound peer=0 turn=1 adopted=false failed: carrier stream IO failed: connection lost: closed by peer: scope finished (code 0): connection lost: closed by peer: scope finished (code 0)
+NOVONET outbound peer=0 turn=2 adopted=false failed: carrier connect unavailable: timed out: timed out: timed out: timed out: timed out: timed out
+NOVONET inbound local=novovm-mldsa65:b5ef6828501f41178016dbd8d5d2b0aedbf355bd737bc8ecae0236122399942c failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=3 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET inbound local=novovm-mldsa65:3ee4ee13b73bd69df2b478517d52203b78b5af0f766b6e0dcc79a7379be2eb31 failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=0 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET outbound peer=0 turn=0 adopted=true failed: carrier stream IO failed: connection lost: closed by peer: frame operation cancelled (code 1): connection lost: closed by peer: frame operation cancelled (code 1)
+NOVONET inbound local=novovm-mldsa65:3ee4ee13b73bd69df2b478517d52203b78b5af0f766b6e0dcc79a7379be2eb31 failed: carrier stream IO failed: connection lost: closed by peer: scope finished (code 0): connection lost: closed by peer: scope finished (code 0)
+NOVONET inbound local=novovm-mldsa65:3ee4ee13b73bd69df2b478517d52203b78b5af0f766b6e0dcc79a7379be2eb31 failed: native service selection or fixed chain pins rejected

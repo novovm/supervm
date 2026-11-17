@@ -463,6 +463,7 @@ pub struct IrohConfigV1 {
     inbound_observer: Option<InboundObserver>,
     multiplex_stream_budget: usize,
     service_concurrency: Option<Arc<ServiceConcurrencyV1>>,
+    connection_ceiling: Option<usize>,
 }
 
 impl IrohConfigV1 {
@@ -501,6 +502,7 @@ impl IrohConfigV1 {
             inbound_observer: None,
             multiplex_stream_budget: IROH_MAX_MULTIPLEX_STREAMS_V1,
             service_concurrency: None,
+            connection_ceiling: None,
         })
     }
 
@@ -508,6 +510,19 @@ impl IrohConfigV1 {
     pub fn with_service_concurrency(mut self, controller: Arc<ServiceConcurrencyV1>) -> Self {
         self.service_concurrency = Some(controller);
         self
+    }
+
+    /// Explicit local owner bound on the existing shared resource controller.
+    /// No controller still uses the compatibility default of four connections.
+    pub fn with_connection_ceiling(mut self, ceiling: usize) -> Result<Self> {
+        ensure!(
+            ceiling > 0
+                && u32::try_from(ceiling).is_ok()
+                && ceiling <= tokio::sync::Semaphore::MAX_PERMITS,
+            "invalid carrier connection ceiling"
+        );
+        self.connection_ceiling = Some(ceiling);
+        Ok(self)
     }
 
     /// Local resource budget for explicitly selected service streams. This does
@@ -680,6 +695,7 @@ pub struct IrohEndpointOwnerV1 {
     inbound_observer: Option<InboundObserver>,
     multiplex_stream_budget: usize,
     service_concurrency: Option<Arc<ServiceConcurrencyV1>>,
+    connection_ceiling: Option<usize>,
 }
 
 impl IrohEndpointOwnerV1 {
@@ -743,10 +759,12 @@ impl IrohEndpointOwnerV1 {
             bind_address: config.bind_address,
             relay_only: config.relay_only,
             connections: AdaptiveAdmissionV1::new(
-                IROH_MAX_CONNECTIONS_V1,
+                IROH_MAX_CONNECTIONS_V1.min(config.connection_ceiling.unwrap_or(usize::MAX)),
                 config.service_concurrency.clone(),
                 AdmissionKind::Connections,
-                tokio::sync::Semaphore::MAX_PERMITS,
+                config
+                    .connection_ceiling
+                    .unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
             ),
             accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
             reuse: Arc::new(reuse::Pool::default()),
@@ -756,6 +774,7 @@ impl IrohEndpointOwnerV1 {
             inbound_observer: config.inbound_observer,
             multiplex_stream_budget: config.multiplex_stream_budget,
             service_concurrency: config.service_concurrency.clone(),
+            connection_ceiling: config.connection_ceiling,
         })
     }
 
@@ -778,6 +797,7 @@ impl IrohEndpointOwnerV1 {
             && self.bind_address == config.bind_address
             && self.relay_only == config.relay_only
             && self.multiplex_stream_budget == config.multiplex_stream_budget
+            && self.connection_ceiling == config.connection_ceiling
             && match (&self.service_concurrency, &config.service_concurrency) {
                 (None, None) => true,
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -1200,10 +1220,12 @@ where
         relays: config.relays,
         relay_only: config.relay_only,
         connections: AdaptiveAdmissionV1::new(
-            IROH_MAX_CONNECTIONS_V1,
+            IROH_MAX_CONNECTIONS_V1.min(config.connection_ceiling.unwrap_or(usize::MAX)),
             config.service_concurrency.clone(),
             AdmissionKind::Connections,
-            tokio::sync::Semaphore::MAX_PERMITS,
+            config
+                .connection_ceiling
+                .unwrap_or(tokio::sync::Semaphore::MAX_PERMITS),
         ),
         accept_consumer: Arc::new(tokio::sync::Mutex::new(())),
         listener_budget,
@@ -1249,6 +1271,12 @@ where
 }
 
 impl IrohScopeV1 {
+    /// Current admission target, not free permits or application authority.
+    /// Existing leases survive a resource-pressure reduction.
+    pub fn connection_capacity(&self) -> usize {
+        self.connections.limit()
+    }
+
     pub fn service_concurrency(&self) -> Option<Arc<ServiceConcurrencyV1>> {
         self.service_concurrency.clone()
     }
@@ -2288,6 +2316,106 @@ mod tests {
     pub(super) static SERIAL: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
     include!("iroh_inbound_tests.rs");
+
+    #[test]
+    fn explicit_connection_ceiling_preserves_sdk_default_and_active_pressure_leases() -> Result<()>
+    {
+        use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+        assert!(IrohConfigV1::new(&[], "127.0.0.1".parse()?)?
+            .with_connection_ceiling(0)
+            .is_err());
+        let legacy = AdaptiveAdmissionV1::new(
+            IROH_MAX_CONNECTIONS_V1,
+            None,
+            AdmissionKind::Connections,
+            usize::MAX,
+        );
+        assert_eq!(legacy.limit(), 4);
+        let normal = ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            // Keep this CPU-pressure case above the independent memory bound.
+            available_memory_bytes: 1024 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        };
+        let controller = ServiceConcurrencyV1::new(normal);
+        let old =
+            AdaptiveAdmissionV1::new(4, Some(controller.clone()), AdmissionKind::Connections, 4);
+        let mut old_leases = Vec::new();
+        for _ in 0..4 {
+            old_leases.push(old.clone().try_acquire_owned()?);
+        }
+        assert!(
+            old.clone().try_acquire_owned().is_err(),
+            "three resident routes plus ingress leave no downstream slot at four"
+        );
+        drop(old_leases);
+        let gate =
+            AdaptiveAdmissionV1::new(4, Some(controller.clone()), AdmissionKind::Connections, 8);
+        assert_eq!(gate.limit(), 8);
+        let mut leases = Vec::new();
+        for _ in 0..8 {
+            leases.push(gate.clone().try_acquire_owned()?);
+        }
+        assert!(
+            gate.clone().try_acquire_owned().is_err(),
+            "ninth connection escaped owner ceiling"
+        );
+        controller.update_resources(ResourceSnapshotV1 {
+            pressure: ResourcePressureV1::Severe,
+            ..normal
+        });
+        assert_eq!(gate.limit(), 4);
+        assert!(gate.clone().try_acquire_owned().is_err());
+        for _ in 0..5 {
+            leases.pop();
+        }
+        let recovered_slot = gate.clone().try_acquire_owned()?;
+        assert!(gate.clone().try_acquire_owned().is_err());
+        drop(recovered_slot);
+        drop(leases);
+        controller.update_resources(normal);
+        let all = (0..8)
+            .map(|_| gate.clone().try_acquire_owned())
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(all.len(), 8);
+        assert!(gate.try_acquire_owned().is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn configured_connection_ceiling_is_part_of_original_endpoint_owner_policy() -> Result<()>
+    {
+        use crate::service_concurrency::{ResourcePressureV1, ResourceSnapshotV1};
+        let _serial = SERIAL.acquire().await?;
+        let controller = ServiceConcurrencyV1::new(ResourceSnapshotV1 {
+            cpu_parallelism: 2,
+            available_memory_bytes: 512 * 1024 * 1024,
+            pressure: ResourcePressureV1::Normal,
+        });
+        let config = || {
+            IrohConfigV1::new(&[], "127.0.0.1".parse().unwrap())
+                .unwrap()
+                .with_service_concurrency(controller.clone())
+        };
+        let owner =
+            IrohEndpointOwnerV1::bind(config().with_connection_ceiling(8)?, || Ok(())).await?;
+        assert!(owner.matches_config(&config().with_connection_ceiling(8)?));
+        assert!(!owner.matches_config(&config().with_connection_ceiling(4)?));
+        assert!(!owner.matches_config(&config()));
+        owner
+            .with_continuous_service_v4(
+                || Ok(()),
+                |scope| {
+                    Box::pin(async move {
+                        assert_eq!(scope.connection_capacity(), 8);
+                        Ok(())
+                    })
+                },
+            )
+            .await?;
+        owner.close().await?;
+        Ok(())
+    }
 
     #[test]
     fn stream_diagnostics_preserve_typed_cause_without_granting_retry() {

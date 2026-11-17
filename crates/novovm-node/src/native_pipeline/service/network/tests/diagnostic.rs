@@ -15,6 +15,15 @@ fn constrained_double_relay_probe_real_hop_done_does_not_replace_business_routes
 
 #[test]
 fn concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done() -> Result<()> {
+    run_crossed_routes(false)
+}
+
+#[test]
+fn three_installed_native_carriers_and_crossed_relays_share_eight_slot_owner() -> Result<()> {
+    run_crossed_routes(true)
+}
+
+fn run_crossed_routes(business_routes: bool) -> Result<()> {
     let mut peers = Pair::configured(false, true, 4)?;
     let mut configs = peers
         .drivers
@@ -41,6 +50,17 @@ fn concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done()
         .map(|_| Arc::new(NativeTransferDiagnosticsV1::new()))
         .collect::<Vec<_>>();
     peers.restart_drivers(configs, Some(&observers))?;
+    if business_routes {
+        for driver in &peers.drivers {
+            driver.resources.update_resources(
+                novovm_network::service_concurrency::ResourceSnapshotV1 {
+                    cpu_parallelism: 2,
+                    available_memory_bytes: 512 * 1024 * 1024,
+                    pressure: novovm_network::service_concurrency::ResourcePressureV1::Normal,
+                },
+            );
+        }
+    }
     let ids = (1..=4).map(|i| [i as u8; 32]).collect::<Vec<_>>();
     for (side, driver) in peers.drivers.iter().enumerate() {
         driver.diagnostic.lock().unwrap().identities = Some((
@@ -72,6 +92,36 @@ fn concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done()
         assert_eq!(record.endpoints[0].max_sessions, 4);
         assert_eq!(record.endpoints[0].max_bytes_per_minute, 128 * 1024);
     }
+    if business_routes {
+        peers.allow_fallback();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while peers
+            .drivers
+            .iter()
+            .any(|d| d.observation()["installed_bound_peer_routes"] != 3)
+        {
+            peers.pump()?;
+            ensure!(
+                Instant::now() < deadline,
+                "three actual native carrier routes not installed"
+            );
+        }
+        for driver in &peers.drivers {
+            assert_eq!(
+                driver.observation()["carrier_resources"]["effective_connection_limit"],
+                8
+            );
+        }
+    }
+    let original_sessions = peers
+        .channels
+        .iter()
+        .map(|channel| {
+            (0..3)
+                .map(|peer| channel.session_id(peer))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     // Each original node is exactly one endpoint and one opaque forwarder.
     // In particular B must accept its own reservation while forwarding for A.
     let routes = [(0, 2, vec![ids[1], ids[3]]), (1, 3, vec![ids[0], ids[2]])];
@@ -195,8 +245,11 @@ fn concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done()
         assert_eq!(forwarded[0].failed_writes, [0, 0]);
         assert_eq!(
             peers.drivers[side].observation()["installed_bound_peer_routes"],
-            0
+            if business_routes { 3 } else { 0 }
         );
+        for (peer, original_session) in original_sessions[side].iter().enumerate() {
+            assert_eq!(peers.channels[side].session_id(peer), *original_session);
+        }
     }
     assert_eq!(peers.replaced_sends, 0);
     peers.close()?;

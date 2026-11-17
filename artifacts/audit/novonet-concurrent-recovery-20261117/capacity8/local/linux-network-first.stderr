@@ -1,0 +1,11 @@
+
+thread 'iroh_transport::tests::explicit_connection_ceiling_preserves_sdk_default_and_active_pressure_leases' (2086) panicked at crates/novovm-network/src/iroh_transport.rs:2366:9:
+assertion `left == right` failed
+  left: 3
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+STOP fixture server bound: 3.502069ms
+STOP fixture client bound: 3.968727ms
+STOP fixture server received: 5.140721ms
+STOP fixture client stopped: 5.670627ms
+STOP fixture server observed: 6.134301ms

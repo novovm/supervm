@@ -1,0 +1,3 @@
+# Original observations and harness output retain their measured bytes.
+failed-1905/*.json -text whitespace=cr-at-eol
+local/** -text -whitespace

@@ -23,6 +23,7 @@ use novovm_network::{
     },
     product_overlay::TransportIdentity,
     product_service_lease::{IrohServiceEndpointV1, SelfOwnedTrustV1, ServiceLeaseBookV1},
+    service_concurrency::ServiceConcurrencyV1,
 };
 mod diagnostic;
 mod discovery;
@@ -54,6 +55,8 @@ const OBJECT_ENTRY: &[u8; 8] = b"NVNETOB1";
 const DISCOVERY_ENTRY: &[u8; 8] = b"NVNETDS1";
 const RELAY_BYTES_PER_MINUTE: u64 =
     novovm_network::discovery_control::NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE;
+// Approved native-node candidate ceiling; the SDK compatibility default stays4.
+const CARRIER_CONNECTION_CEILING: usize = 8;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -249,6 +252,7 @@ pub struct Driver {
     finished: bool,
     activated: bool,
     failures: Arc<NetworkFailures>,
+    resources: Arc<ServiceConcurrencyV1>,
 }
 impl Driver {
     pub fn new(config: Config, node: &mut ResidentNode) -> Result<Self> {
@@ -306,6 +310,7 @@ impl Driver {
         let stop = Arc::new(AtomicBool::new(false));
         let failures = Arc::new(NetworkFailures::default());
         let diagnostic = Arc::new(Mutex::new(diagnostic::State::default()));
+        let resources = ServiceConcurrencyV1::from_host();
         // One result per configured connection, not a business/data send queue.
         let (sender, connected) = mpsc::sync_channel(keys.len());
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -322,6 +327,7 @@ impl Driver {
             failures.clone(),
             observer,
             diagnostic.clone(),
+            resources.clone(),
         ));
         let next_udp_probe = vec![
             started;
@@ -345,6 +351,7 @@ impl Driver {
             finished: false,
             activated: false,
             failures,
+            resources,
         })
     }
     pub fn step(&mut self, node: &mut NativeLifecycle, now: Instant) -> Result<()> {
@@ -438,6 +445,7 @@ impl Driver {
         result
     }
     pub fn observation(&self) -> serde_json::Value {
+        let resources = self.resources.snapshot();
         let bound = self
             .views
             .lock()
@@ -450,6 +458,9 @@ impl Driver {
             })
             .ok();
         serde_json::json!({"default":"native_novorudp","fallback":"iroh","installed_bound_peer_routes":bound,
+            "carrier_resources": {"connection_ceiling":CARRIER_CONNECTION_CEILING,
+                "effective_connection_limit":resources.connection_limit.min(CARRIER_CONNECTION_CEILING),
+                "admission_rejections":resources.connection_admission_rejections},
             "probe_control":self.probe_control.as_ref().map(|control| control.observation()),
             "diagnostic_relay":self.diagnostic.try_lock().ok().map(|s|s.observation()),
             "peer_discovery_rpc":self.config.discovery,
@@ -525,9 +536,13 @@ async fn run(
     failures: Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
     diagnostic: diagnostic::Shared,
+    resources: Arc<ServiceConcurrencyV1>,
 ) -> Result<()> {
     let check_stop = stop.clone();
-    let mut carrier = config.carrier()?;
+    let mut carrier = config
+        .carrier()?
+        .with_service_concurrency(resources.clone())
+        .with_connection_ceiling(CARRIER_CONNECTION_CEILING)?;
     // Same opt-in as the original delivery observer; no telemetry on normal IO.
     failures
         .carrier
@@ -604,6 +619,9 @@ async fn serve<'a>(
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
     diagnostic: diagnostic::Shared,
 ) -> Result<()> {
+    let resources = scope
+        .service_concurrency()
+        .context("native Carrier resource owner missing")?;
     let mut books = (0..keys.len())
         .map(|_| None)
         .collect::<Vec<Option<ServiceLeaseBookV1>>>();
@@ -671,6 +689,7 @@ async fn serve<'a>(
             diagnostic::stopped(&diagnostic);
         }
         if now >= refresh {
+            resources.refresh_host();
             let wall = wall_ms()?;
             if let Some(discovery) = &mut discovery {
                 if discovery.rotate_if_due(now)? {
@@ -942,7 +961,7 @@ async fn serve<'a>(
             }
             match accepting.as_mut().poll(cx) {
                 Poll::Ready(Ok(stream)) => {
-                    if incoming.len() < novovm_network::iroh_transport::IROH_MAX_CONNECTIONS_V1 {
+                    if incoming.len() < scope.connection_capacity() {
                         incoming.push(Box::pin(incoming_connection(
                             stream.into(),
                             identity.clone(),

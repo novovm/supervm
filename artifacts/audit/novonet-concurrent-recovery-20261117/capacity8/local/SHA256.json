@@ -1,0 +1,157 @@
+[
+  {
+    "sha256": "4f4c753c420e1e171f08dfc12041f3bf781684ed34d049df08be55b951d33461",
+    "name": "capacity8-linux-final-clippy.log",
+    "bytes": 718
+  },
+  {
+    "sha256": "19eaf43821a7660ec323a87c8457bf74823beb296c39f5e01aa8a683aa50f061",
+    "name": "capacity8-linux-final-exit.txt",
+    "bytes": 7
+  },
+  {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "name": "capacity8-linux-final-node-tests.stderr",
+    "bytes": 0
+  },
+  {
+    "sha256": "42607e62483e8fb64884d8165360edba6c76af1f1ab73bc99d9f9d260822fcd8",
+    "name": "capacity8-linux-final-node-tests.stdout",
+    "bytes": 255
+  },
+  {
+    "sha256": "7d1e03ea39b9fc914392c4ac35c2ac71545df613c152f6d31db6cfff794fec65",
+    "name": "capacity8-windows-final-clippy.stderr",
+    "bytes": 710
+  },
+  {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "name": "capacity8-windows-final-clippy.stdout",
+    "bytes": 0
+  },
+  {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "name": "capacity8-windows-final-node-tests.stderr",
+    "bytes": 0
+  },
+  {
+    "sha256": "c699626b165009369bdab8f04d889af2c942044e400020e65f4eea39d7a1bb19",
+    "name": "capacity8-windows-final-node-tests.stdout",
+    "bytes": 255
+  },
+  {
+    "sha256": "eb5cfb125ab4cb6873621312ceda730498a2cc0aa4d803ba1b5e40b2feeff819",
+    "name": "capacity8-windows-final-result.json",
+    "bytes": 214
+  },
+  {
+    "sha256": "5b7f6dfbf76ae4d5939e2927e4461b3e212c80563367f4e7414f2e0ef5172844",
+    "name": "linux-clippy-first.log",
+    "bytes": 2310
+  },
+  {
+    "sha256": "cf205dbb8cea84897b488abcc281bf96698d5e94b1096b16657b4caba9082a22",
+    "name": "linux-first-exit.txt",
+    "bytes": 7
+  },
+  {
+    "sha256": "3d688d0aa50d0ea913ec2f0aa84a037b0dcdbebc75dc5771f29537c86f04e528",
+    "name": "linux-network-first.stderr",
+    "bytes": 510
+  },
+  {
+    "sha256": "134f68918cc687a7c217f96879da4a94ff3eb6576489a793c0649b6503c5c79a",
+    "name": "linux-network-first.stdout",
+    "bytes": 7588
+  },
+  {
+    "sha256": "dc78d39039360d3eb551d56e5d477080f127bc6b461597a91b353711463a9448",
+    "name": "linux-network.stderr",
+    "bytes": 198
+  },
+  {
+    "sha256": "f9b167fa6eddee7ac6d218b2c05005a9fce6359ceaba2ea03078a8a082d4ead9",
+    "name": "linux-network.stdout",
+    "bytes": 7454
+  },
+  {
+    "sha256": "32aa48ffe089ff8e0ca43feeaca0b6d61277aacce0e65c805d2f409cce218c9e",
+    "name": "linux-node.stderr",
+    "bytes": 3363
+  },
+  {
+    "sha256": "02a0a7fada68722cbfb1f0b066294095decc4c5d0421bc2e495a9d2300349e2e",
+    "name": "linux-node.stdout",
+    "bytes": 1900
+  },
+  {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "name": "linux-resources.stderr",
+    "bytes": 0
+  },
+  {
+    "sha256": "c6fc2b99b603b3c4e1dd33132cd5ab2964adc2b4212d3599f6ad4909ac26a9a2",
+    "name": "linux-resources.stdout",
+    "bytes": 3760
+  },
+  {
+    "sha256": "6bf3b34481d00fefe4b62a7ccc110336b84ab8c5606e7b0b1582498452e5cab9",
+    "name": "result.json",
+    "bytes": 2408
+  },
+  {
+    "sha256": "595d9d7e09f36eb973e647be4e3aae8705d252048ffed435f9963037eea28c65",
+    "name": "windows-before-clippy-fix.json",
+    "bytes": 759
+  },
+  {
+    "sha256": "d174b1002cc595ddb58cd10af8db9a8e9e846fdedd4c67ebdc0d4651754efc19",
+    "name": "windows-clippy-first.stderr",
+    "bytes": 1562
+  },
+  {
+    "sha256": "8a46bd11acd4dbf5c62afff3185260448fe3a618ca583f6825f5b882e246c286",
+    "name": "windows-first-result.json",
+    "bytes": 436
+  },
+  {
+    "sha256": "fdc96e3bfac426a3624abbc90cc93a544a040676ae353566505fcf95980cdde0",
+    "name": "windows-network-first.stderr",
+    "bytes": 512
+  },
+  {
+    "sha256": "9151492181225fd1c5a50fdc15482477c34bc637dbc8ae4a00e74acb63efba9d",
+    "name": "windows-network-first.stdout",
+    "bytes": 7588
+  },
+  {
+    "sha256": "48a8ade7ec407cb45d22a20e26b0e3c59c897b5659fe23e059417108b8c4565c",
+    "name": "windows-network.stderr",
+    "bytes": 193
+  },
+  {
+    "sha256": "02106bca887ea11938dac82a64a296ada4e2669abeeb5d6a0ae425d4e75a6a2b",
+    "name": "windows-network.stdout",
+    "bytes": 7454
+  },
+  {
+    "sha256": "efe1686c5548e0a471503662393c99d090676e496f963d478cc754757f3dd11e",
+    "name": "windows-node.stderr",
+    "bytes": 3379
+  },
+  {
+    "sha256": "5f85a5d00e0da6003a6fc8cdb35f671debaf41fa72c66ad5aa55d7f74412785c",
+    "name": "windows-node.stdout",
+    "bytes": 1900
+  },
+  {
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "name": "windows-resources.stderr",
+    "bytes": 0
+  },
+  {
+    "sha256": "562ebb30b5e5a499ed3913a76acf103b8344c47e31ea6a55db61c60225a3b50f",
+    "name": "windows-resources.stdout",
+    "bytes": 3760
+  }
+]

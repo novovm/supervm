@@ -1,0 +1,18 @@
+
+running 13 tests
+test native_pipeline::service::network::tests::all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordinates ... ok
+test native_pipeline::service::network::tests::cold_private_only_checkpoint_keeps_authenticated_seed_as_dial_hint ... ok
+test native_pipeline::service::network::tests::diagnostic::concurrent_endpoint_and_relay_roles_keep_original_budgets_and_dual_end_done ... ok
+test native_pipeline::service::network::tests::diagnostic::constrained_double_relay_probe_real_hop_done_does_not_replace_business_routes ... ok
+test native_pipeline::service::network::tests::diagnostic::constrained_relay_probe_real_hop_done_does_not_replace_business_routes ... ok
+test native_pipeline::service::network::tests::diagnostic::three_installed_native_carriers_and_crossed_relays_share_eight_slot_owner ... ok
+test native_pipeline::service::network::tests::hop::actual_single_relay_fixed_probe_objects_done_and_reauthenticate ... ok
+test native_pipeline::service::network::tests::hop::actual_two_relay_native_objects_use_both_physical_hops_and_complete_concurrent_work ... ok
+test native_pipeline::service::network::tests::native_owner_discovers_peers_through_shared_rpc_then_delivers_original_objects ... ok
+test native_pipeline::service::network::tests::network_failure_observation_retains_first_last_without_blocking_or_unbounded_history ... ok
+test native_pipeline::service::network::tests::retained_tick_reactor_reauthenticates_after_peer_owner_restart_without_reopening_native_owner ... ok
+test native_pipeline::service::network::tests::retained_tick_reactor_rejects_wrong_chain_selection_before_native_handoff ... ok
+test native_pipeline::service::network::tests::retained_tick_reactor_uses_backup_only_when_requested_and_delivers_original_binary_messages ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 1826 filtered out; finished in 262.83s
+

@@ -1,0 +1,80 @@
+{
+  "status": "LOCAL_PASS_NOT_FULL_PACKAGE_DEPLOYMENT_OR_REAL_HOST_ACCEPTANCE",
+  "base_head": "1a558102b7067430b0df7a0b7f0ee83caaa8dff2",
+  "utc": "2026-11-17T12:02:19.1357036Z",
+  "groups": [
+    {
+      "platform": "windows",
+      "passed": 13,
+      "failed": 0,
+      "group": "node"
+    },
+    {
+      "platform": "windows",
+      "passed": 72,
+      "failed": 0,
+      "group": "network"
+    },
+    {
+      "platform": "windows",
+      "passed": 34,
+      "failed": 0,
+      "group": "resources"
+    },
+    {
+      "platform": "linux",
+      "passed": 13,
+      "failed": 0,
+      "group": "node"
+    },
+    {
+      "platform": "linux",
+      "passed": 72,
+      "failed": 0,
+      "group": "network"
+    },
+    {
+      "platform": "linux",
+      "passed": 34,
+      "failed": 0,
+      "group": "resources"
+    }
+  ],
+  "final_new_case": {
+    "windows": 1,
+    "linux": 1
+  },
+  "strict_clippy_exit": {
+    "windows": 0,
+    "linux": 0
+  },
+  "runtime_files": [
+    {
+      "path": "crates/novovm-network/src/iroh_transport.rs",
+      "sha256": "a5c5fb517ce04596dab459b160170b5b62ded14b48245d32ef4d8d834db5f68d"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/network.rs",
+      "sha256": "e69911f776d3ebf77d91f22cfd4b6d984c7be7fda8e107317295d6b8eb6d9fc2"
+    },
+    {
+      "path": "crates/novovm-node/src/native_pipeline/service/network/tests/diagnostic.rs",
+      "sha256": "ce7122f6bf2849d1ab3ac4146c4fbd4b6a112a477e8bb2de9124979d48d9d0b2"
+    }
+  ],
+  "windows_final_harness_sha256": "32706e61ced75e8398c2160f38148592019cbb512b90d847f3dcf8dce463e57b",
+  "linux_final_harness": "3a881333cd9b87b6df20bc058746f0394e229797f83b5cf92b421322a92235bb  /mnt/d/WorksArea/SUPERVM/target/novonet-linux-current/x86_64-unknown-linux-gnu/release/deps/novovm_node-1769dba96bf6a930",
+  "fixture_correction": "Only cfg(test) memory sample and assertion-loop style changed after original13-case groups; final new case and strict Clippy revalidated; raw first failures retained",
+  "policy": {
+    "signed_relay_sessions": 4,
+    "relay_bytes_per_minute": 131072,
+    "AOEM_or_ledger_changed": false,
+    "sdk_default": 4,
+    "native_carrier_ceiling": 8,
+    "authentication_changed": false,
+    "timeouts_changed": false
+  },
+  "deployed": false,
+  "four_host_acceptance": false,
+  "full_passed": false
+}

@@ -1,0 +1,45 @@
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+    Checking bitflags v2.11.0
+    Checking tower-http v0.6.11
+    Checking simple-dns v0.12.0 (/mnt/d/WorksArea/SUPERVM/vendor/simple-dns)
+    Checking reqwest v0.13.5
+    Checking netlink-packet-route v0.33.0
+    Checking n0-dns-resolver v0.1.0
+    Checking iroh-dns v1.3.0
+    Checking netlink-packet-route v0.31.0
+    Checking netdev v0.46.3
+   Compiling novovm-storage-budget v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-storage-budget)
+    Checking iroh-relay v1.3.0
+    Checking netwatch v0.19.3
+    Checking rusqlite v0.41.0
+    Checking iroh v1.3.0 (/mnt/d/WorksArea/SUPERVM/vendor/iroh)
+    Checking openssl v0.10.80
+    Checking native-tls v0.2.18
+    Checking lettre v0.11.22
+    Checking linux-raw-sys v0.12.1
+    Checking rustix v1.1.6
+    Checking tempfile v3.27.0
+    Checking novovm-network v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-network)
+    Checking novovm-relay v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-relay)
+    Checking novovm-node v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-node)
+error: the loop variable `peer` is used to index `original_sessions`
+   --> crates/novovm-node/src/native_pipeline/service/network/tests/diagnostic.rs:250:21
+    |
+250 | ...in 0..3 {
+    |       ^^^^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.94.0/index.html#needless_range_loop
+    = note: `-D clippy::needless-range-loop` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::needless_range_loop)]`
+help: consider using an iterator and enumerate()
+    |
+250 -         for peer in 0..3 {
+250 +         for (peer, <item>) in original_sessions.iter().enumerate().take(3) {
+    |
+
+error: could not compile `novovm-node` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

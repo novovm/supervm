@@ -1,0 +1,5 @@
+STOP fixture server bound: 3.936921ms
+STOP fixture client bound: 4.603465ms
+STOP fixture server received: 5.864424ms
+STOP fixture client stopped: 6.412031ms
+STOP fixture server observed: 6.830812ms

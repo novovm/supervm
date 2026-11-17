@@ -1,0 +1,82 @@
+
+running 72 tests
+test duplex::product_relay_wire::iroh_envelope_tests::borrowed_preflight_rejects_bad_lengths_and_utf8_before_ownership ... ok
+test duplex::product_relay_wire::iroh_envelope_tests::codec_does_not_claim_identity_session_or_ciphertext_authentication ... ok
+test duplex::product_relay_wire::iroh_envelope_tests::exact_carrier_limit_succeeds_but_larger_envelopes_fail ... ok
+test duplex::product_relay_wire::iroh_envelope_tests::maximum_control_ciphertext_reuses_exact_binary_data_bytes ... ok
+test duplex::product_relay_wire::iroh_envelope_tests::only_binary_data_is_accepted_without_fallback_or_trailing_bytes ... ok
+test iroh_transport::idle_tests::idle_cancel_remains_terminal ... ok
+test iroh_transport::idle_tests::idle_partial_frame_keeps_original_budget_and_cannot_be_revived ... ok
+test iroh_transport::multiplex::tests::configured_budget_preserves_default_and_rejects_invalid_bounds ... ok
+test iroh_transport::multiplex::tests::configured_eight_stream_budget_preserves_binding_and_owner_admission ... ok
+test iroh_transport::multiplex::tests::stream_binding_budget_owner_drop_and_normal_sibling_completion ... ok
+test iroh_transport::native_frames::tests::native_quic_oversize_cancel_and_revoke_are_terminal ... ok
+test iroh_transport::native_frames::tests::native_quic_partial_frame_has_fixed_deadline ... ok
+test iroh_transport::reuse::tests::cancellation_closes_borrowed_connection_and_idle_owner_revocation_rejects ... ok
+test iroh_transport::reuse::tests::fresh_operations_reuse_transport_but_not_deadlines_or_purpose ... ok
+test iroh_transport::reuse::tests::rejected_operation_clears_finished_connections_and_new_authority_cannot_reuse_them ... ok
+test iroh_transport::tests::active_admission_bounds_inbound_and_outbound_and_releases_on_drop ... ok
+test iroh_transport::tests::bounded_drain_joins_local_drivers_without_waiting_for_unreachable_peer ... ok
+test iroh_transport::tests::cancelled_endpoint_close_releases_socket_before_runtime_exit ... ok
+test iroh_transport::tests::cancelling_a_partial_frame_prevents_stream_reuse ... ok
+test iroh_transport::tests::cancelling_split_partial_read_permanently_invalidates_writer_and_parent ... ok
+test iroh_transport::tests::completed_close_waits_for_operating_system_socket_release ... ok
+test iroh_transport::tests::concurrent_known_and_unknown_accepts_fail_without_consuming_each_others_peers ... ok
+test iroh_transport::tests::configured_connection_ceiling_is_part_of_original_endpoint_owner_policy ... ok
+test iroh_transport::tests::continuous_dial_timeout_is_transport_failure_not_owner_expiry ... ok
+test iroh_transport::tests::continuous_owner_close_interrupts_wait_and_releases_socket ... ok
+test iroh_transport::tests::denied_scope_never_enters_network_operation ... ok
+test iroh_transport::tests::draining_endpoint_refuses_new_handshake_before_any_offer ... ok
+test iroh_transport::tests::expired_scope_preserves_callback_rejection_before_local_timer ... ok
+test iroh_transport::tests::explicit_connection_ceiling_preserves_sdk_default_and_active_pressure_leases ... FAILED
+test iroh_transport::tests::finite_scope_deadline_is_typed_without_reclassifying_security_errors ... ok
+test iroh_transport::tests::fixed_connection_diagnostics_do_not_grant_retries_or_match_text ... ok
+test iroh_transport::tests::handshake_refusal_does_not_include_protocol_or_application_rejection ... ok
+test iroh_transport::tests::inbound_delayed_handshake_does_not_consume_first_stream_budget ... ok
+test iroh_transport::tests::inbound_diagnostic_cancelled_stream_setup_releases_real_connection ... ok
+test iroh_transport::tests::inbound_diagnostic_peer_close_during_stream_setup_is_failed_not_deadline ... ok
+test iroh_transport::tests::inbound_diagnostic_persistent_owner_keeps_callback_across_listener_operations ... ok
+test iroh_transport::tests::inbound_diagnostic_pre_handshake_close_is_remote_transport_code_twelve ... ok
+test iroh_transport::tests::inbound_diagnostic_stream_deadline_has_real_post_tls_close ... ok
+test iroh_transport::tests::inbound_diagnostic_wrong_alpn_reports_real_tls_failure ... ok
+test iroh_transport::tests::inbound_diagnostic_wrong_pin_is_not_a_setup_deadline ... ok
+test iroh_transport::tests::inbound_peer_that_never_opens_a_stream_is_closed_at_setup_deadline ... ok
+test iroh_transport::tests::inbound_unknown_endpoint_has_the_same_tls_binding_without_a_client_bootstrap ... ok
+test iroh_transport::tests::known_endpoint_accept_still_closes_a_different_tls_peer ... ok
+test iroh_transport::tests::listener_cannot_dial_or_extend_an_admitted_stream ... ok
+test iroh_transport::tests::listener_requires_owned_identity_and_keeps_client_scope_bound ... ok
+test iroh_transport::tests::peer_cannot_supply_an_unapproved_relay ... ok
+test iroh_transport::tests::persistent_endpoint_cancelled_close_does_not_claim_barrier_or_release_admission ... ok
+test iroh_transport::tests::persistent_endpoint_close_interrupts_active_scope_before_os_barrier ... ok
+test iroh_transport::tests::persistent_endpoint_deadline_cancels_real_dial_without_reviving_old_control ... ok
+test iroh_transport::tests::persistent_endpoint_nested_connections_keep_control_alive_and_bind_independently ... ok
+test iroh_transport::tests::persistent_endpoint_owner_revocation_is_terminal_and_config_is_exact ... ok
+test iroh_transport::tests::persistent_endpoint_rejects_a_different_runtime_without_closing_the_owner ... ok
+test iroh_transport::tests::persistent_endpoint_revocation_at_bind_completion_releases_the_actual_socket ... ok
+test iroh_transport::tests::persistent_endpoint_shares_accept_consumer_across_operations ... ok
+test iroh_transport::tests::persistent_network_change_preserves_socket_and_active_stream ... ok
+test iroh_transport::tests::persistent_network_change_rejects_expired_operation_and_revoked_owner ... ok
+test iroh_transport::tests::persistent_operation_preserves_first_error_and_checks_late_success ... ok
+test iroh_transport::tests::protocol_diagnostics_keep_only_fixed_codes_and_never_mark_retry ... ok
+test iroh_transport::tests::real_quic_disconnect_marks_only_actual_stream_io_failure ... ok
+test iroh_transport::tests::real_quic_oversized_frame_and_trailing_bytes_are_not_io_failures ... ok
+test iroh_transport::tests::real_quic_peer_stop_is_explicit_stream_interruption ... ok
+test iroh_transport::tests::relay_only_has_no_bound_ip_socket_and_filters_direct_candidates_before_dial ... ok
+test iroh_transport::tests::relay_only_online_wait_is_revoked_and_releases_its_endpoint_admission ... ok
+test iroh_transport::tests::relay_only_requires_relays_and_rejects_ip_binding_in_both_orders ... ok
+test iroh_transport::tests::reliable_frames_and_tls_binding_match_on_real_quic ... ok
+test iroh_transport::tests::revoke_pending_operation_releases_its_udp_port ... ok
+test iroh_transport::tests::split_frame_bounds_reject_without_io_and_revocation_is_permanent ... ok
+test iroh_transport::tests::split_real_quic_exchanges_large_frames_simultaneously_and_finishes ... ok
+test iroh_transport::tests::stream_diagnostics_preserve_typed_cause_without_granting_retry ... ok
+test iroh_transport::tests::temporary_operation_preserves_first_error_and_checks_late_success ... ok
+test iroh_transport::tests::unapproved_relay_syntax_is_rejected ... ok
+test product_service_lease::native_endpoint::tests::native_only_uses_original_trust_checkpoint_and_no_iroh_placeholder ... ok
+
+failures:
+
+failures:
+    iroh_transport::tests::explicit_connection_ceiling_preserves_sdk_default_and_active_pressure_leases
+
+test result: FAILED. 71 passed; 1 failed; 0 ignored; 0 measured; 1256 filtered out; finished in 97.76s
+

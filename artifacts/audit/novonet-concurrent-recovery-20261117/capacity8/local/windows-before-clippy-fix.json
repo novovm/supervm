@@ -1,0 +1,23 @@
+{
+  "exit_code": 1,
+  "started_utc": "2026-11-17T11:46:36.8666948Z",
+  "checks": [
+    {
+      "reason": "Only cfg(test) network pressure fixture changed after this run",
+      "retained": true,
+      "name": "original-node-13"
+    },
+    {
+      "name": "capacity8-windows-network-tests",
+      "exit_code": 0,
+      "result": "test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 1259 filtered out; finished in 98.37s"
+    },
+    {
+      "name": "capacity8-windows-resources-tests",
+      "exit_code": 0,
+      "result": "test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 1297 filtered out; finished in 0.00s"
+    }
+  ],
+  "error": "Windows strict Clippy failed",
+  "finished_utc": "2026-11-17T11:51:58.2202879Z"
+}

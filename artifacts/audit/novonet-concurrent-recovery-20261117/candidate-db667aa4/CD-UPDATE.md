@@ -1,4 +1,8 @@
-# CURRENT18:55: two crossed deliveries accepted; observe only the unfinished recovered object
+# CURRENT: no new db667 observer/send; capacity-eight candidate validation
+
+The fresh recovery-only observers were received. The19:05 original-owner attempt failed before any new object: B retained three bound business routes, accepted inbound relay, then refused the downstream connection at the shared-four gate. No second B stop, completed-pair resend or new object. User approved maximum-eight **candidate validation** using existing ServiceConcurrencyV1; SDK default four, signed relay sessions four,128KiB/min and all auth/timeouts/ledger remain unchanged. [Original failure and candidate gates](../capacity8/README.md). C/D preserve their current bounded observer outputs; do not rearm/retry db667, update nodes or copy a nonexistent new package. New version-bound instructions follow qualification and deployment confirmation, not these historical instructions.
+
+## Earlier18:55: two crossed deliveries accepted; observe only the unfinished recovered object
 
 A pulled all C/D originals throughd584b261, independently verified20 declared file hashes and15 raw snapshots. Both actual crossed objects have sender DONE, unique target integrity/time acceptance,1/1-fragment/hash verification/no duplicates and both real relays9/9packets with zero failed writes; all three adjacent authenticated bindings match. **They did not overlap in flight** under the measured clock bounds, so concurrent-object acceptance is NOT passed. [Independent actual correlation and original failed run](live-1828/README.md).
 

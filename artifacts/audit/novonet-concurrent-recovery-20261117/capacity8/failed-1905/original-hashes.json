@@ -1,0 +1,26 @@
+[
+  {
+    "name": "after-B-recovery-first-failure.json",
+    "bytes": 762980,
+    "sha256": "f77d5cde1d62c5c4434ed6e3b9013adb45064ea4704d39ae8646c7cd27f6ab1e",
+    "local_original": "D:\\WorksArea\\SUPERVM\\target\\novonet-recovered-object-db667aa4-20261117-1905\\after-B-recovery-first-failure.json"
+  },
+  {
+    "name": "B-after-failed-route.json",
+    "bytes": 424225,
+    "sha256": "fa4e0c03a01fdb30d20bcb90aa7deba2297a53b66ee609eac944264ece02c080",
+    "local_original": "D:\\WorksArea\\SUPERVM\\target\\novonet-recovered-object-db667aa4-20261117-1905\\B-after-failed-route.json"
+  },
+  {
+    "name": "B-current-carrier-public.json",
+    "bytes": 8897,
+    "sha256": "e7d4abbff7d4aec3ef97d655d11f3733a6234bed406842468529a7803ccf2807",
+    "local_original": "D:\\WorksArea\\SUPERVM\\target\\novonet-recovered-object-db667aa4-20261117-1905\\B-current-carrier-public.json"
+  },
+  {
+    "name": "error.json",
+    "bytes": 150,
+    "sha256": "2b1c5439dc67905ffa68df5dff0ed84696886159c2106181299d4dc8cb91b85f",
+    "local_original": "D:\\WorksArea\\SUPERVM\\target\\novonet-recovered-object-db667aa4-20261117-1905\\error.json"
+  }
+]
