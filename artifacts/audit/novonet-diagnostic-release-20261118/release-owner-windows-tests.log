@@ -1,0 +1,22 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling web30-core v0.1.0 (D:\WorksArea\SUPERVM\vendor\web30-core)
+   Compiling novovm-adapter-novovm v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-adapter-novovm)
+   Compiling novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+   Compiling novovm-adapter-evm-plugin v0.1.0 (D:\WorksArea\SUPERVM\crates\plugins\evm\plugin)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+    Finished `release` profile [optimized] target(s) in 5m 37s
+     Running unittests src\lib.rs (C:\Users\leadb\AppData\Local\NOVOVM\build-2b97fc8e-windows\x86_64-pc-windows-msvc\release\deps\novovm_node-c2c9eb2b285b1898.exe)
+
+running 5 tests
+test native_pipeline::service::network::probe::tests::scheduled_release_rejects_late_jump_reverse_and_unbounded_lead ... ok
+test native_pipeline::service::network::probe::tests::scheduled_release_ignores_read_phase_and_fires_once_on_monotonic_due ... ok
+test native_pipeline::service::network::probe::tests::scheduled_release_consumed_cancel_replacement_and_duplicate_do_not_rearm ... ok
+test native_pipeline::consensus::native_lifecycle::probe::tests::scheduled_probe_envelope_preserves_original_bytes_and_rejects_other_commands ... ok
+test native_block_seal::tests::native_block_seal_newview::native_seal_new_view_admission_only_scheduled_leader_can_propose ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 1838 filtered out; finished in 0.10s
+

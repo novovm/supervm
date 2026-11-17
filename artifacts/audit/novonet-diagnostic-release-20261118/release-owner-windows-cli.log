@@ -1,0 +1,22 @@
+warning: D:\WorksArea\SUPERVM\crates\novovm-node\Cargo.toml: file `D:\WorksArea\SUPERVM\crates\novovm-node\src\bin\supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling netwatch v0.19.3 (D:\WorksArea\SUPERVM\vendor\netwatch)
+   Compiling novovm-consensus v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-consensus)
+   Compiling iroh v1.3.0 (D:\WorksArea\SUPERVM\vendor\iroh)
+   Compiling novovm-network v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-network)
+   Compiling novovm-relay v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-relay)
+   Compiling novovm-node v0.1.0 (D:\WorksArea\SUPERVM\crates\novovm-node)
+   Compiling novovmctl v0.1.0 (D:\WorksArea\SUPERVM\crates\novovmctl)
+    Finished `release` profile [optimized] target(s) in 4m 09s
+     Running unittests src\main.rs (C:\Users\leadb\AppData\Local\NOVOVM\build-2b97fc8e-windows\x86_64-pc-windows-msvc\release\deps\novovmctl-54a3f036a1690318.exe)
+
+running 3 tests
+test commands::native_network_probe::tests::repeated_via_cli_preserves_order_and_rejects_excess_relays ... ok
+test commands::native_network_probe::tests::scheduled_cli_publishes_original_send_envelope_and_cancel_remains_compatible ... ok
+test commands::native_network_probe::tests::local_probe_publish_refuses_other_files_and_reuses_only_valid_commands ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 70 filtered out; finished in 0.04s
+

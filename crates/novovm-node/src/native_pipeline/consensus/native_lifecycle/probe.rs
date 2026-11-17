@@ -18,6 +18,41 @@ fn wall_ms() -> u64 {
 pub const COMMAND_BYTES: usize = 9 + super::super::transport::probe::WIRE_BYTES;
 pub const RELAY_COMMAND_BYTES: usize = COMMAND_BYTES + 32;
 pub const DOUBLE_RELAY_COMMAND_BYTES: usize = RELAY_COMMAND_BYTES + 32;
+/// Local-only envelope; the inner native object and relay wire stay unchanged.
+pub const RELEASE_COMMAND_BYTES: usize = DOUBLE_RELAY_COMMAND_BYTES + 16;
+pub struct ProbeRelease {
+    pub command: ProbeCommand,
+    pub at_ms: u64,
+}
+impl ProbeRelease {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        let ProbeCommand::RelaySend(probe, _) = &self.command else {
+            anyhow::bail!("scheduled release requires relay send");
+        };
+        probe.validate()?;
+        ensure!(
+            self.at_ms > probe.issued_at_ms && self.at_ms < probe.expires_at_ms,
+            "release outside original probe validity"
+        );
+        let mut bytes = b"NVPROBR1".to_vec();
+        bytes.extend_from_slice(&self.at_ms.to_be_bytes());
+        bytes.extend_from_slice(&self.command.encode()?);
+        Ok(bytes)
+    }
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        ensure!(
+            (bytes.len() == RELAY_COMMAND_BYTES + 16 || bytes.len() == RELEASE_COMMAND_BYTES)
+                && &bytes[..8] == b"NVPROBR1",
+            "invalid bounded release command"
+        );
+        let release = Self {
+            command: ProbeCommand::decode(&bytes[16..])?,
+            at_ms: u64::from_be_bytes(bytes[8..16].try_into()?),
+        };
+        release.encode()?;
+        Ok(release)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum ProbeCommand {

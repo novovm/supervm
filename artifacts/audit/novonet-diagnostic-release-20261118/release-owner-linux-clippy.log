@@ -1,0 +1,13 @@
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling novovm-storage-budget v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-storage-budget)
+    Checking netwatch v0.19.3 (/mnt/d/WorksArea/SUPERVM/vendor/netwatch)
+    Checking iroh v1.3.0 (/mnt/d/WorksArea/SUPERVM/vendor/iroh)
+    Checking novovm-network v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-network)
+    Checking novovm-relay v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-relay)
+    Checking novovm-node v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-node)
+    Checking novovmctl v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovmctl)
+    Finished `release` profile [optimized] target(s) in 1m 23s

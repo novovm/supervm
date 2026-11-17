@@ -181,21 +181,12 @@ try{
  # Two distinct native owners, two recipient owners; no node exceeds its one-flight diagnostic limit.
  $first=ArmA 'concurrent-A' 2 @(1,3)
  $bReady=FinishBJob $bJob 'arm';$bJob=$null
- # Generate once with the original CLI; delay only publication, never extend TTL.
- $staged=Join-Path (Split-Path $command) ('concurrent-'+$first.nonce+'.nvprobe')
- if(Test-Path $staged){throw 'Preserve prior staged command'}
- & "$release/bin/novovmctl.exe" native-network-probe send-relay --from $first.arm --output $staged 1> "$out/concurrent-A-staged-cli.json" 2> "$out/concurrent-A-staged-cli.stderr"
- if($LASTEXITCODE-ne 0){throw 'Original staged CLI failed'}
- $stagedHash=(Get-FileHash $staged).Hash.ToLowerInvariant()
- $stagedAt=[Diagnostics.Stopwatch]::GetTimestamp()
+ # Both original owners read ahead, then release in their existing tick using
+ # a local monotonic mapping. No externally timed file move or TTL rewrite.
  $target=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+4000
  $bTarget=[long][Math]::Round($target+($timing.lo+$timing.hi)/2)
  $bJob=BJob 'send-at' "--wall-ms $bTarget"
- $deadline=[Diagnostics.Stopwatch]::GetTimestamp()+[long](($target-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())/1000*[Diagnostics.Stopwatch]::Frequency)
- while([Diagnostics.Stopwatch]::GetTimestamp()-lt $deadline){Start-Sleep -Milliseconds 1}
- if([Diagnostics.Stopwatch]::GetElapsedTime($stagedAt).TotalSeconds-gt 6 -or (Get-FileHash $staged).Hash.ToLowerInvariant()-cne $stagedHash){throw 'Staged original command stale or changed; no publish'}
- [IO.File]::Move($staged,$command,$true)
- Save @{wall_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();original_cli_staged_command_sha256=$stagedHash;network_send_claim=$false} 'concurrent-A-command-published'
+ Invoke-OriginalNativeProbe 'concurrent-A-scheduled-send' @('send-relay','--from',$first.arm,'--release-at-ms',([string]$target))
  $aDone=WaitADone $first
  $bDone=FinishBJob $bJob 'send-at';$bJob=$null
  Save $bDone 'B-concurrent-result'

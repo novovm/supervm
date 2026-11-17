@@ -3,7 +3,8 @@ use crate::{error::CtlError, output};
 use clap::{Args, Subcommand};
 use novovm_node::native_pipeline::consensus::{
     native_lifecycle::probe::{
-        ProbeCommand, COMMAND_BYTES, DOUBLE_RELAY_COMMAND_BYTES, RELAY_COMMAND_BYTES,
+        ProbeCommand, ProbeRelease, COMMAND_BYTES, DOUBLE_RELAY_COMMAND_BYTES, RELAY_COMMAND_BYTES,
+        RELEASE_COMMAND_BYTES,
     },
     transport::{probe::MAX_LIFETIME_MS, NetworkProbe},
 };
@@ -48,6 +49,9 @@ pub enum Command {
         from: PathBuf,
         #[arg(long)]
         output: PathBuf,
+        /// Local owner release time, not a network or authorization timestamp.
+        #[arg(long)]
+        release_at_ms: Option<u64>,
     },
 }
 fn hash(value: &str) -> Result<[u8; 32], CtlError> {
@@ -73,6 +77,8 @@ fn read(path: &Path) -> Result<ProbeCommand, CtlError> {
             COMMAND_BYTES as u64,
             RELAY_COMMAND_BYTES as u64,
             DOUBLE_RELAY_COMMAND_BYTES as u64,
+            (RELAY_COMMAND_BYTES + 16) as u64,
+            RELEASE_COMMAND_BYTES as u64,
         ]
         .contains(&meta.len())
     {
@@ -80,16 +86,27 @@ fn read(path: &Path) -> Result<ProbeCommand, CtlError> {
             "not a bounded probe command file".into(),
         ));
     }
-    let mut bytes = Vec::with_capacity(DOUBLE_RELAY_COMMAND_BYTES + 1);
+    let mut bytes = Vec::with_capacity(RELEASE_COMMAND_BYTES + 1);
     std::fs::File::open(path)
         .and_then(|file| {
-            file.take((DOUBLE_RELAY_COMMAND_BYTES + 1) as u64)
+            file.take((RELEASE_COMMAND_BYTES + 1) as u64)
                 .read_to_end(&mut bytes)
         })
         .map_err(|e| CtlError::FileReadFailed(e.to_string()))?;
-    ProbeCommand::decode(&bytes).map_err(|e| CtlError::InvalidArgument(e.to_string()))
+    if bytes.starts_with(b"NVPROBR1") {
+        ProbeRelease::decode(&bytes).map(|release| release.command)
+    } else {
+        ProbeCommand::decode(&bytes)
+    }
+    .map_err(|e| CtlError::InvalidArgument(e.to_string()))
 }
 fn publish(path: &Path, command: &ProbeCommand) -> Result<(), CtlError> {
+    let bytes = command
+        .encode()
+        .map_err(|e| CtlError::InvalidArgument(e.to_string()))?;
+    publish_bytes(path, &bytes)
+}
+fn publish_bytes(path: &Path, bytes: &[u8]) -> Result<(), CtlError> {
     if !path.is_absolute() || path.extension().and_then(|s| s.to_str()) != Some("nvprobe") {
         return Err(CtlError::InvalidArgument(
             "absolute .nvprobe command path required".into(),
@@ -102,16 +119,13 @@ fn publish(path: &Path, command: &ProbeCommand) -> Result<(), CtlError> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(CtlError::FileReadFailed(e.to_string())),
     }
-    let bytes = command
-        .encode()
-        .map_err(|e| CtlError::InvalidArgument(e.to_string()))?;
     let stage = path.with_extension(format!("nvprobe.{}.pending", std::process::id()));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&stage)
         .map_err(|e| CtlError::FileWriteFailed(e.to_string()))?;
-    file.write_all(&bytes)
+    file.write_all(bytes)
         .and_then(|_| file.sync_all())
         .map_err(|e| CtlError::FileWriteFailed(e.to_string()))?;
     drop(file);
@@ -119,6 +133,7 @@ fn publish(path: &Path, command: &ProbeCommand) -> Result<(), CtlError> {
 }
 pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
     let result = (|| {
+        let mut release_at = None;
         let (command, path) = match args.command {
             Command::Prepare {
                 sender,
@@ -182,7 +197,11 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
                 };
                 (command, output)
             }
-            Command::SendRelay { from, output } => {
+            Command::SendRelay {
+                from,
+                output,
+                release_at_ms,
+            } => {
                 let ProbeCommand::RelayArm(mut probe, via) = read(&from)? else {
                     return Err(CtlError::InvalidArgument(
                         "original relay arm required".into(),
@@ -198,10 +217,31 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
                     .issued_at_ms
                     .checked_add(MAX_LIFETIME_MS)
                     .ok_or_else(|| CtlError::InvalidArgument("clock overflow".into()))?;
+                if let Some(at) = release_at_ms {
+                    let lead = at
+                        .checked_sub(probe.issued_at_ms)
+                        .ok_or_else(|| CtlError::InvalidArgument("release already late".into()))?;
+                    if !(100..=5000).contains(&lead) {
+                        return Err(CtlError::InvalidArgument(
+                            "release lead must be100..5000ms".into(),
+                        ));
+                    }
+                    release_at = Some(at);
+                }
                 (ProbeCommand::RelaySend(probe, via), output)
             }
         };
-        publish(&path, &command)?;
+        if let Some(at_ms) = release_at {
+            let bytes = ProbeRelease {
+                command: command.clone(),
+                at_ms,
+            }
+            .encode()
+            .map_err(|e| CtlError::InvalidArgument(e.to_string()))?;
+            publish_bytes(&path, &bytes)?;
+        } else {
+            publish(&path, &command)?;
+        }
         let probe = match &command {
             ProbeCommand::Start(p) | ProbeCommand::Cancel(p) => p,
             ProbeCommand::RelayArm(p, _)
@@ -211,7 +251,7 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
         output::print_success_json(
             "native-network-probe",
             &serde_json::json!({
-                "scope":"local_binary_command_only","path":path,"bytes":command.encode().map_err(|e| CtlError::InvalidArgument(e.to_string()))?.len(),
+                "scope":"local_binary_command_only","path":path,"bytes":command.encode().map_err(|e| CtlError::InvalidArgument(e.to_string()))?.len()+if release_at.is_some(){16}else{0},"release_at_ms":release_at,
                 "relay":match &command { ProbeCommand::RelayArm(_, via) | ProbeCommand::RelaySend(_, via) | ProbeCommand::RelayCancel(_, via) => via.first(), _ => None },
                 "relays":match &command { ProbeCommand::RelayArm(_, via) | ProbeCommand::RelaySend(_, via) | ProbeCommand::RelayCancel(_, via) => Some(via), _ => None },
                 "nonce":probe.nonce,"sender_validator_id":probe.sender,"recipient_validator_id":probe.recipient,
@@ -230,6 +270,62 @@ pub fn run(args: NativeNetworkProbeArgs) -> Result<(), CtlError> {
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn scheduled_cli_publishes_original_send_envelope_and_cancel_remains_compatible(
+    ) -> Result<(), CtlError> {
+        let root = std::env::temp_dir().join(format!(
+            "probe-release-cli-{}-{}",
+            std::process::id(),
+            output::now_unix_ms()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let arm = root.join("arm.nvprobe");
+        let slot = root.join("control.nvprobe");
+        let probe = NetworkProbe {
+            nonce: [1; 32],
+            sender: [2; 32],
+            recipient: [3; 32],
+            issued_at_ms: 1,
+            expires_at_ms: 2,
+        };
+        publish(&arm, &ProbeCommand::RelayArm(probe, vec![[4; 32], [5; 32]]))?;
+        let release_at = output::now_unix_ms() + 4000;
+        run(NativeNetworkProbeArgs {
+            command: Command::SendRelay {
+                from: arm,
+                output: slot.clone(),
+                release_at_ms: Some(release_at),
+            },
+        })?;
+        let bytes = std::fs::read(&slot).unwrap();
+        let release = ProbeRelease::decode(&bytes).unwrap();
+        assert_eq!(release.at_ms, release_at);
+        assert_eq!(bytes.len(), RELEASE_COMMAND_BYTES);
+        let ProbeCommand::RelaySend(probe, via) = read(&slot)? else {
+            panic!("wrong command")
+        };
+        assert_eq!(probe.expires_at_ms - probe.issued_at_ms, MAX_LIFETIME_MS);
+        assert_eq!(via, vec![[4; 32], [5; 32]]);
+        run(NativeNetworkProbeArgs {
+            command: Command::Cancel {
+                from: slot.clone(),
+                output: slot.clone(),
+            },
+        })?;
+        assert!(matches!(read(&slot)?, ProbeCommand::RelayCancel(..)));
+        let before = std::fs::read(&slot).unwrap();
+        assert!(run(NativeNetworkProbeArgs {
+            command: Command::SendRelay {
+                from: slot.clone(),
+                output: slot.clone(),
+                release_at_ms: Some(1)
+            }
+        })
+        .is_err());
+        assert_eq!(std::fs::read(&slot).unwrap(), before);
+        Ok(())
+    }
 
     #[test]
     fn repeated_via_cli_preserves_order_and_rejects_excess_relays() -> Result<(), CtlError> {

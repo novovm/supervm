@@ -1,0 +1,21 @@
+warning: /mnt/d/WorksArea/SUPERVM/crates/novovm-node/Cargo.toml: file `/mnt/d/WorksArea/SUPERVM/crates/novovm-node/src/bin/supervm-native-pipeline-cross-machine-udp-soak.rs` found to be present in multiple build targets:
+  * `bin` target `supervm-native-pipeline-cross-machine-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-fault-udp-soak`
+  * `bin` target `supervm-native-pipeline-cross-machine-sustained-soak`
+  * `bin` target `supervm-native-pipeline-memory-bisect-gate`
+   Compiling web30-core v0.1.0 (/mnt/d/WorksArea/SUPERVM/vendor/web30-core)
+   Compiling novovm-adapter-novovm v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-adapter-novovm)
+   Compiling novovm-consensus v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-consensus)
+   Compiling novovm-adapter-evm-plugin v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/plugins/evm/plugin)
+   Compiling novovm-node v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovm-node)
+   Compiling novovmctl v0.1.0 (/mnt/d/WorksArea/SUPERVM/crates/novovmctl)
+    Finished `release` profile [optimized] target(s) in 1m 53s
+     Running unittests src/main.rs (target/novonet-linux-current/x86_64-unknown-linux-gnu/release/deps/novovmctl-c330086284f53dc0)
+
+running 3 tests
+test commands::native_network_probe::tests::repeated_via_cli_preserves_order_and_rejects_excess_relays ... ok
+test commands::native_network_probe::tests::scheduled_cli_publishes_original_send_envelope_and_cancel_remains_compatible ... ok
+test commands::native_network_probe::tests::local_probe_publish_refuses_other_files_and_reuses_only_valid_commands ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.04s
+

@@ -1,5 +1,21 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 A: original-owner diagnostic monotonic release implemented locally
+
+The actual1s command-read phase defect is fixed inside original Control: original
+CLI --release-at-ms emits one bounded local-only relay-send envelope; Control
+reads it ahead, maps through ClockAnchorV1 once and releases in original tick,
+without extra socket/task or faster filesystem polling. Original State still
+checks ready identity/route/nonce/lease/TTL; cancel/replacement/replay/late/jump
+cases fail without renewed lifetime. Normal network frames/quotas unchanged.
+[Scope and actual local evidence](../artifacts/audit/novonet-diagnostic-release-20261118/README.md).
+Both platforms scheduled5/control4/diagnostic5/CLI3 groups passed (overlaps noted),
+strict Clippy passed;87original management checks passed. No new runtime deployment
+or in-flight pass. Freeze source for one Full and original two-platform packages;
+then only A/B need new local release owner. C/D5b remain compatible receivers/
+forwarders, no repeated package upgrade or old live test. Wait for qualified
+sender program before fresh C/D concurrency window, not another timing lottery.
+
 ## 2026-11-18 A: paired dual-end delivery accepted, concurrency still unproven
 
 A pulled C d2cf9b56/D4c618286;15 original length/hash checks and5 raw snapshots

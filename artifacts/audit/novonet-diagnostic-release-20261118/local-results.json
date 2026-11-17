@@ -1,0 +1,25 @@
+{
+  "date_beijing": "2026-11-18",
+  "scope": "Actual local release-target validation, not live-host or candidate Full acceptance",
+  "windows_target": "x86_64-pc-windows-msvc",
+  "linux_target": "x86_64-unknown-linux-gnu",
+  "each_platform_groups": {
+    "scheduled_filter": {"passed": 5, "failed": 0, "new_release_tests": 4, "other_existing_test": 1},
+    "original_control": {"passed": 4, "failed": 0, "overlaps_scheduled_tests": 3},
+    "original_diagnostic_constraints": {"passed": 5, "failed": 0},
+    "original_cli_file_publication": {"passed": 3, "failed": 0},
+    "strict_clippy": {"exit_code": 0, "warnings_denied": true, "scope": "node/ctl lib, bins, tests with node iroh-transport"}
+  },
+  "management_checks": {"sequence": 38, "readiness": 20, "reader": 23, "transient_restore": 6},
+  "rust_format_check": true,
+  "git_diff_check": true,
+  "prior_attempts": [
+    {"kind": "untargeted Windows cargo check", "status": "stopped exact local compile tree to reuse explicit release cache", "cargo_exit": 1, "passed": false},
+    {"kind": "inline WSL invocation", "status": "shell quoting syntax failure before tests", "passed": false},
+    {"kind": "untargeted Linux test build", "status": "stopped exact local compile process group to reuse explicit target cache", "tool_exit": 1, "passed": false}
+  ],
+  "existing_node_stopped": false,
+  "cloud_CI_cancelled": false,
+  "new_fixed_package_qualified": false,
+  "concurrent_inflight_live_pass": false
+}

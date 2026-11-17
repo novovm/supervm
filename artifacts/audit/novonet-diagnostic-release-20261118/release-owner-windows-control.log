@@ -1,0 +1,9 @@
+
+running 4 tests
+test native_pipeline::service::network::probe::tests::original_reactor_reads_one_fixed_probe_command_without_replay ... ok
+test native_pipeline::service::network::probe::tests::scheduled_release_consumed_cancel_replacement_and_duplicate_do_not_rearm ... ok
+test native_pipeline::service::network::probe::tests::scheduled_release_ignores_read_phase_and_fires_once_on_monotonic_due ... ok
+test native_pipeline::service::network::probe::tests::scheduled_release_rejects_late_jump_reverse_and_unbounded_lead ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1839 filtered out; finished in 0.09s
+

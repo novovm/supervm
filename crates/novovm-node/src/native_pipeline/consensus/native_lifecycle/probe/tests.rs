@@ -52,6 +52,60 @@ fn probe_command_is_fixed_binary_and_rejects_arbitrary_content() -> Result<()> {
 }
 
 #[test]
+fn scheduled_probe_envelope_preserves_original_bytes_and_rejects_other_commands() -> Result<()> {
+    let probe = NetworkProbe {
+        nonce: [1; 32],
+        sender: [2; 32],
+        recipient: [3; 32],
+        issued_at_ms: 1000,
+        expires_at_ms: 11000,
+    };
+    for via in [vec![[4; 32]], vec![[4; 32], [5; 32]]] {
+        let command = ProbeCommand::RelaySend(probe.clone(), via);
+        let original = command.encode()?;
+        let encoded = ProbeRelease {
+            command,
+            at_ms: 5000,
+        }
+        .encode()?;
+        assert_eq!(&encoded[16..], original);
+        assert!(
+            ProbeCommand::decode(&encoded).is_err(),
+            "old owner must fail closed"
+        );
+        assert_eq!(ProbeRelease::decode(&encoded)?.encode()?, encoded);
+        for len in 0..encoded.len() {
+            assert!(ProbeRelease::decode(&encoded[..len]).is_err());
+        }
+        let mut bad = encoded.clone();
+        bad[0] ^= 1;
+        assert!(ProbeRelease::decode(&bad).is_err());
+    }
+    for command in [
+        ProbeCommand::Start(probe.clone()),
+        ProbeCommand::Cancel(probe.clone()),
+        ProbeCommand::RelayArm(probe.clone(), vec![[4; 32]]),
+        ProbeCommand::RelayCancel(probe.clone(), vec![[4; 32]]),
+    ] {
+        assert!(ProbeRelease {
+            command,
+            at_ms: 5000
+        }
+        .encode()
+        .is_err());
+    }
+    for at_ms in [999, 1000, 11000, u64::MAX] {
+        assert!(ProbeRelease {
+            command: ProbeCommand::RelaySend(probe.clone(), vec![[4; 32]]),
+            at_ms
+        }
+        .encode()
+        .is_err());
+    }
+    Ok(())
+}
+
+#[test]
 #[ignore = "real AOEM and four original local UDP owners; not physical four-host acceptance"]
 fn adaptive_time_original_owner_skew_jump_and_replay() -> Result<()> {
     with_delivery_nodes_for_test(|nodes, _, _, pipelines| {

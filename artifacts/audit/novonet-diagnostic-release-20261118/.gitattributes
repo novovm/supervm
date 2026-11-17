@@ -1,0 +1,3 @@
+*.log -text whitespace=-blank-at-eof,cr-at-eol
+*.json -text
+*.stderr -text
