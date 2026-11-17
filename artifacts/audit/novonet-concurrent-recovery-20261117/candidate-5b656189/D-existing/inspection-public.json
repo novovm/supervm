@@ -1,0 +1,41 @@
+{
+  "diagnostic_active": false,
+  "height": 1,
+  "active": [
+    {
+      "ProcessId": 56148,
+      "ExecutablePath": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-db667aa4-windows-x86_64\\bin\\novovm-node.exe",
+      "CreationDate": "2026-11-17T18:12:26.489997+08:00"
+    }
+  ],
+  "recovery": false,
+  "restart_count": 0,
+  "utc": "2026-11-17T16:12:34.2232344Z",
+  "progress_time": "2026-11-17T16:12:33.3387152Z",
+  "task_sid": "LOCAL SERVICE",
+  "control": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
+  "task_result": 267009,
+  "trigger_count": 0,
+  "control_present": false,
+  "ports": [
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 42053,
+      "OwningProcess": 56148
+    },
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 41053,
+      "OwningProcess": 56148
+    }
+  ],
+  "task_state": "Running",
+  "projection_error": null,
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\chain-state",
+  "execution_failures": 0,
+  "udp": "192.168.71.59:41053",
+  "exit_record": null,
+  "kernel_exited": [],
+  "head": null,
+  "task_action": "-NoProfile -ExecutionPolicy RemoteSigned -File C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\novovm-common-db667aa4-20261117\\Start-Owner.ps1 -Owner"
+}

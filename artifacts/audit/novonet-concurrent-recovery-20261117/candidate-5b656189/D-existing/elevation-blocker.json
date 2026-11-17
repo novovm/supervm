@@ -1,0 +1,11 @@
+{
+  "stage": "Start-Process -Verb RunAs: one-shot 5b existing update",
+  "launch_result": "cancelled",
+  "reported_error": "This command cannot be run due to the error: An error occurred trying to start process 'C:\\Program Files\\PowerShell\\7\\pwsh.exe' with working directory 'D:\\WEB3_AI\\SUPERVM'. 操作已被用户取消。",
+  "update_invoked_record_present": false,
+  "update_exit_record_present": false,
+  "old_owner_stopped_by_this_attempt": false,
+  "new_owner_started_by_this_attempt": false,
+  "ready_claimed": false,
+  "automatic_retry": false
+}

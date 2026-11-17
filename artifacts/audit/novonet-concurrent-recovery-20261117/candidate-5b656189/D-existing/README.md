@@ -1,0 +1,9 @@
+# D 5b update blocked before entry: elevation cancelled, NOT READY
+
+D synchronized main c535c923 and read CURRENT2026-11-18 00:01. Original fixed ZIP162938236bytes/SHA256618728e3f9b02c291af21e74343ac1a985d83370071d5818b840246b6c18c77e rechecked. Independently extracted into target/d-5b-package-20261118 with path/symlink safety checks. Fixed manifest6bf12700acb241fb2cc802057f04f53d883c5dbb8eddfd79f57221adf1638cd3 and all91 payload lengths/hashes passed. No package executable or test was run during this preparation.
+
+Administrator read-only inspection at2026-11-17T16:12:34Z (2026-11-18 00:12:34 Beijing) confirmed actual old db667 PID56148/LocalService, original task Running, current progress fresh, original DB/height1/head null, recovery false/failures0/projection error null,41053/42053 owned by that PID. No control file, exit record or active diagnostic. Task result267009 describes a running task, not a node exit. Public inspection is adjacent, not full private config.
+
+Subsequent Start-Process elevation for the one-shot update returned Windows error: operation cancelled by user. The update wrapper never entered: no update-invoked.json or update-exit.json. Thus this attempt did not stop db667, install/start5b, initialize, rekey, open another DB owner, run an observer or send an object. Not a5b startup failure. D_5B_EXISTING_READY_FOR_A_QUERY cannot be claimed. Preserve this result and stop without automatic retry.
+
+Local prepared qualified-owner adaptation: D:\WEB3_AI\SUPERVM\target\d-5b-controller-20261118\Switch-D.ps1 and run-once.ps1, parsed but uninvoked. Original received ZIP/extracted payloads remain; no recopy/rebuild/initialization needed. Requires a renewed operator-confirmed elevation before executing the approved update; do not rerun inspection as an old crash test or start the old package first. Actual old PID/state must still be checked at entry. A's independent5b query is pending a successful update.
