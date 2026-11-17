@@ -1,0 +1,19 @@
+{
+  "terminal_files": [
+    {
+      "exists": false,
+      "file": "result.json"
+    },
+    {
+      "exists": false,
+      "file": "error.json"
+    }
+  ],
+  "collector_exit_present": false,
+  "observer_restarted": false,
+  "observer_running": true,
+  "node_mutated": false,
+  "observer_pid": 40456,
+  "observer_created_utc": "2026-11-17T06:22:37.0892130Z",
+  "utc": "2026-11-17T06:22:38.7404835Z"
+}
