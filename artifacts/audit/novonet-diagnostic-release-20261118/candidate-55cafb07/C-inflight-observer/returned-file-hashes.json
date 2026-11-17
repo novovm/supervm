@@ -1,0 +1,37 @@
+[
+  {
+    "file": "relay-00.json",
+    "bytes": 762562,
+    "sha256": "0281f2a17c897f2248a7445b9900c6ebe5c4d45be7110f735742b99a35a391df"
+  },
+  {
+    "file": "relay-01.json",
+    "bytes": 758041,
+    "sha256": "4ffaa4e8f23d62a02a65737d8304e42a972520a3a173dc4ddab586eb635a2c45"
+  },
+  {
+    "file": "liveness.json",
+    "bytes": 243,
+    "sha256": "f5b3013a76885876479d8b9b8d5b761bc1cb51541b19e0de0420859e883cb64d"
+  },
+  {
+    "file": "result.json",
+    "bytes": 262,
+    "sha256": "9c503ee22691de7fa1786b685927c0dbd924e50da7cb2a84259a709f35914bf9"
+  },
+  {
+    "file": "collector-exit.json",
+    "bytes": 83,
+    "sha256": "f01498a6e31d2f31f84844fff256d76448f5aa4d861a2041a6e3dc0dc459b7ab"
+  },
+  {
+    "file": "observer.stdout",
+    "bytes": 133,
+    "sha256": "bd77531459044b25c34124877e9b4b390b9c0815af0ffc3ddedcead93a57a125"
+  },
+  {
+    "file": "observer.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]

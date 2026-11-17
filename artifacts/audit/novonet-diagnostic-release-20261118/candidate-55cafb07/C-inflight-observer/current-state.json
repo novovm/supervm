@@ -1,17 +1,19 @@
 {
-  "utc": "2026-11-17T22:59:11.1186904Z",
+  "utc": "2026-11-17T23:09:53.0112173Z",
   "observer_pid": 26924,
   "observer_created_utc": "2026-11-17T22:58:48.3808350Z",
   "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File \"D:\\WEB3_AI\\SUPERVM\\target\\c-55-inflight-observer-20261118-01\\Launch.ps1\"",
   "node_pid": 6160,
   "node_created_utc": "2026-11-17T22:58:14.2208220Z",
   "node_version": "5b656189",
-  "observer_running": true,
+  "observer_running": false,
   "node_restart_count_this_turn": 1,
   "previous_exit_preserved": true,
   "previous_dump_sha256": "15bb68ea3f0dfd4da208d2b7b5b74ef01e507cdc7138d536182c9776690d0e4b",
-  "result_present": false,
+  "result_present": true,
   "error_present": false,
-  "collector_exit_present": false,
-  "node_exit_present": false
+  "collector_exit_present": true,
+  "node_exit_present": false,
+  "snapshots": 2,
+  "collector_exit_code": 0
 }
