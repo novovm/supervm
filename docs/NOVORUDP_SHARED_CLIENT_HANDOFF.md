@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 A: live paired in-flight relay delivery accepted
+
+C/D original returns `1f71d312`/`aa7c7e15` verified: 14 file hashes/lengths,
+four raw snapshots, both collectors exit 0. Both actual original objects have
+unique sender DONE and receiver integrity/time events. On A→B→D→C and
+B→A→C→D all adjacent authenticated bindings match, both relays per path
+forwarded 9/9 packets with 0/0 failed writes, and receiver transfers verify 1/1
+fragment and hash with zero duplicates. Using all six clock sample outer
+bounds, the actual in-flight windows overlap by at least 13 ms.
+[Independent acceptance and exact object/session/circuit evidence](../artifacts/audit/novonet-diagnostic-release-20261118/candidate-55cafb07/live-inflight-0709/DUAL-END-CORRELATION.json).
+A/B are on `55cafb07`; C/D stayed on `5b656189`. No audit restart or resend,
+no old test repeated. This is diagnostic relay delivery, not native UDP
+multihop, asset finality or automatic five-second restore acceptance.
+
 ## 2026-11-18 06:42 A: exact55 Full SUCCESS; B/A updated and healthy
 
 A independently verified Full44136917939 completed SUCCESS on exact55cafb07,

@@ -1,0 +1,91 @@
+{
+  "scope": "Original concurrent diagnostics only; not business receipt, finality or native UDP multihop",
+  "origin_program": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "observer_program": "5b656189784c854ac356aae77610c931b9f2189d",
+  "original_files_sha256_verified": 14,
+  "raw_snapshot_counts": {
+    "C": 2,
+    "D": 2
+  },
+  "observer_exit_codes": [
+    0,
+    0
+  ],
+  "management_clock_all_samples_outer_interval_ms": [
+    975.0,
+    993.0
+  ],
+  "guaranteed_inflight_overlap_ms": 13.0,
+  "concurrent_inflight_accepted": true,
+  "deliveries": [
+    {
+      "path": "A->B->D->C",
+      "object": "48ed56cdd148d618306cbb8e143d147b902d546a51583846b12dfb06b7ab13d4",
+      "session": "a94dc09c3066b5ea2e8217e41951f731",
+      "circuit": "e8a5a23244447fc2276ff491ac139453",
+      "route_digest": "88cbccc2039a467eec6675769b02c649cc88339856087822867636e2a66eeb2f",
+      "origin_DONE": true,
+      "receiver_integrity_event_unique": true,
+      "adjacent_bindings_matched": 3,
+      "per_relay_forwarded_packets": [
+        9,
+        9
+      ],
+      "per_relay_failed_writes": [
+        0,
+        0
+      ],
+      "transfer_tag": "148244bc37f01926276ad4d69742923446b0dc08abb3fb5adbdcdd9baf036d37",
+      "verified_fragments": [
+        1,
+        1
+      ],
+      "duplicates": 0,
+      "peer_time_interval": [
+        1794956983642,
+        1794956983876
+      ],
+      "original_validity": [
+        1794956979766,
+        1794956989766
+      ]
+    },
+    {
+      "path": "B->A->C->D",
+      "object": "9d8b03fb2d62625a44429bafd42aa30c5411d2ce8600ae3aa092e80552ac4719",
+      "session": "df8fd9ffe50d6b457a76bec9749261d0",
+      "circuit": "2453a0b41a07c04c03fc4f6be72ec023",
+      "route_digest": "cf70159b3e49ed568fa8039a3dc90733798166ac35387d7a332f9d064b556d7f",
+      "origin_DONE": true,
+      "receiver_integrity_event_unique": true,
+      "adjacent_bindings_matched": 3,
+      "per_relay_forwarded_packets": [
+        9,
+        9
+      ],
+      "per_relay_failed_writes": [
+        0,
+        0
+      ],
+      "transfer_tag": "29b37b5ae70c42d8aaa1dde5feb5a94e11d1ca2862a129ce87925410e14a9e3f",
+      "verified_fragments": [
+        1,
+        1
+      ],
+      "duplicates": 0,
+      "peer_time_interval": [
+        1794956984473,
+        1794956984856
+      ],
+      "original_validity": [
+        1794956981649,
+        1794956991649
+      ]
+    }
+  ],
+  "C_original_receipt_sha": "1f71d3126f41b3d15c166ba4dacb5873720c4eb8",
+  "D_original_receipt_sha": "aa7c7e15bb90739fce1c48dcdfc9942cea81143c",
+  "origin_original_receipt_sha": "ec95e1eb1b7251dcee5cde44d2050f7b86fb02ec",
+  "origin_original_files_sha256_verified": 25,
+  "node_restart_resend_or_old_object_rerun_during_execution_and_audit": false
+}

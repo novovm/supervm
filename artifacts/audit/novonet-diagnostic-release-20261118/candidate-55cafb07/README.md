@@ -1,6 +1,31 @@
 # Fixed diagnostic-release candidate55cafb07
 
-## CURRENT2026-11-18 07:09: observed in-flight overlap; return existing observer evidence
+## CURRENT 2026-11-18: live paired in-flight relay delivery accepted
+
+Pulled C originals at `1f71d312` and D originals at `aa7c7e15`. Independent
+read-only audit verified 14 C/D file lengths/SHA256 (including four raw
+snapshots) and 25 origin file lengths/SHA256. Both collectors exited 0.
+The actual two-object admission→DONE windows overlap by at least **13 ms**,
+including the outer bounds of all six management clock samples.
+
+- A→B→D→C: A sender DONE; B and D both forwarded 9/9 packets with 0/0 failed
+  writes; C uniquely verified the matching receiver object and session.
+- B→A→C→D: B sender DONE; A and C both forwarded 9/9 packets with 0/0 failed
+  writes; D uniquely verified the matching receiver object and session.
+
+All three adjacent authenticated bindings per route match. Both receiver
+transfer tags match, 1/1 fragments and object hash verified, zero duplicate
+data/repair, and authenticated peer time stays inside the original validity.
+[Independent acceptance receipt](live-inflight-0709/DUAL-END-CORRELATION.json).
+
+This closes only scheduled concurrent relay-object acceptance for A/B
+`55cafb07` and C/D `5b656189`. No restart, resend or old test rerun during
+execution/audit; the earlier C readiness recovery is separately recorded.
+It does not certify native UDP multihop, business receipt/consensus finality,
+or rewrite the historical automatic five-second restoration failure. No more
+observer action for this sample.
+
+## Historical 07:09: observed in-flight overlap; originals requested (returned)
 
 C/D fresh matching heartbeats at87e76506 passed. A ran ConcurrentOnly once with
 55 origins and 5b observers, controller exit0. Two new original objects have
