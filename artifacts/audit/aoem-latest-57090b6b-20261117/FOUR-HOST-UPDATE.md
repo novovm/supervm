@@ -1,5 +1,9 @@
 # CURRENT: new common node + latest AOEM, then real double relay
 
+## SUPERSEDING 09:55: C updated and authenticated; D executes now
+
+A pulled C receipts through42de31f7. C PID38500/LocalService has the fixed common95 EXE, actually loaded AOEM and manifest hashes, original database existing and unchanged identity. Its earlier unavailable E-drive package was resolved by a local copied ZIP. A's new native client authenticated C once in400ms with height1 and the unchanged A/B public state root, no recovery/projection failure. C's local projection-equality field remains unproven locally; A's current authenticated projection is separate evidence. C stays running, D now performs the already-approved same-package local-owner existing update under [CURRENT instructions](candidate-common-95ec9c2e/CD-UPDATE.md). No observer, new object, old-crash or repeated direct-object test this round.
+
 ## SUPERSEDING 07:34: B/A are updated and healthy; C is next
 
 Full43952963989 passed on fixed program1eb. Linux/Windows new packages qualified. B was updated first (PID2621117), then A recovered with the new EXE (PID34208), both original database/identity existing. Authenticated Status B68ms/A30ms passed. C/D whole-program ZIPs received; [C's current local-owner update instructions](candidate-common-95ec9c2e/CD-UPDATE.md) now apply. D waits for C health. Do not repeat old crash or direct object tests; no new double-relay object has been sent. Earlier stopped/pending states below are historical, not current blockers.

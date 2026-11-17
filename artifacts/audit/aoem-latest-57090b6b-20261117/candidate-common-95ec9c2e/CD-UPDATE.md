@@ -1,4 +1,16 @@
-# CURRENT: C now; D waits for C health
+# CURRENT 09:55: C healthy; D executes approved common95 existing update
+
+2026-11-17 09:55 Beijing. A pulled C's actual receipts through `42de31f7`. The earlier E-drive/package-unavailable report `d5a0172c` was superseded by C's successful local-copy/start receipt; do not ask for another ZIP or rerun C's update.
+
+- C actual PID38500, LocalService, task `NOVOVM-Common95-C-20261117`, original database `existing`, unchanged identity hashes, loaded EXE/DLL/release-manifest hashes match the fixed common95 package. Listeners41052/42052, recovery false, execution failures0. C did not independently establish state-projection equality in its local receipt; A does not rewrite that claim.
+- A's new installed native client completed one authenticated C Status at `2026-11-17T01:55:25Z` in **400ms**, current height1, recovery/projection-failure false and state root `f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333`, matching the original A/B public projection. This establishes that current query projection, not historic ledger equivalence, object DONE or finality. Original reply/stderr/exit and public health receipt are alongside this file.
+- C config: `C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common95-C-20261117\run.json`; progress: same directory `progress.json`. C stays running; no observer yet.
+
+**D acts now**, with the whole95 ZIP already received: use D's own current LocalService existing-start owner, verify the fixed package/hashes below, precisely stop the actual old node if necessary, and bind the new EXE plus matching AOEM/manifest/profile/sidecars together. Preserve D's original database, identity, network configuration and discovery cache. Continuous integration lifetime only; no initialization, old-package restart, LOCK deletion, crash rerun, observer or object send. Do not run the A-only cutover or obsolete package-pinned updaters. The detailed local-owner checks below apply with HostId D and ports41053/42053.
+
+Return **D_COMMON95_EXISTING_READY_FOR_A_QUERY**, UTC, actual PID/task/account, EXE/loaded-DLL/release-manifest hashes, original DB path/existing result, identity/state projection checks, listeners, and exact current config/progress paths. On failure preserve the precise error and stop, rather than retrying an old entry. A reads the actual result and authenticates D once, then proceeds to the original double-relay owners. No repeat permission or package copy is needed.
+
+## Earlier C dispatch (completed; retained for deployment details)
 
 2026-11-17 07:34 Beijing. User already approved all four common-version `existing` upgrades. Both C/D Windows ZIP receipts are confirmed by the user. No new stop approval, package copy, old crash test, new transport or observer window is required.
 
@@ -13,7 +25,7 @@
 
 Public actual receipts live alongside this document. Do not wait for an A/B health record that is already provided here; do not restart their old packages.
 
-## C: execute the approved local existing update once
+## C: approved local existing update (completed)
 
 Use the received **whole-program95 ZIP**,210181917bytes, SHA256 `39eba348fed675f853a0c4bdf60f6b4bae789fb99cc04fc89c4614a99285932c`. Full pins and archive-member qualification: [README](README.md). It is not the AOEM-only ZIP.
 
@@ -27,7 +39,7 @@ Return **C_COMMON95_EXISTING_READY_FOR_A_QUERY** with actual exit/result, UTC, n
 
 A will read the real receipt and perform one new-version authenticated C health query; this is not a repeated direct object test. D stays on its current node meanwhile.
 
-## D: prepared, not dispatched yet
+## D: execution details (now dispatched by the CURRENT section)
 
 Retain the copied95 whole-program ZIP. After C health and A's next dispatch, perform the same local-owner operation with D's original database/account/identity and41053/42053, then return **D_COMMON95_EXISTING_READY_FOR_A_QUERY** with the same fields. Do not run C-specific recovery flags or A's hardcoded cutover script. D's independently qualified59 AOEM bundle is retained; using this common production-equivalent570 bundle is not a rollback to old a254/966 runtime code.
 

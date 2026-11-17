@@ -2,6 +2,13 @@
 
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
+09:55最新：A已下拉并签收C `42de31f7` 的新整包existing回执，PID38500/LocalService，
+实际EXE、已加载AOEM及manifest哈希匹配；此前E盘包不可用已被后续成功回执覆盖。
+A→C新版本认证Status400ms，height1、原A/B同状态根、非恢复且无投影错误；不是DONE/最终性。
+C保持运行，现在直接派D执行同整包原库existing更新，回真实PID/哈希和config/progress路径，
+不重传包、不复跑C更新/旧崩溃/直连对象，也暂不开观察器。具体动作以
+[当前D更新交接](../artifacts/audit/aoem-latest-57090b6b-20261117/candidate-common-95ec9c2e/CD-UPDATE.md)为准。
+
 07:34最新：Full43952963989最终全绿（程序1eb）；Linux/Windows新包资格通过。已先B后A
 以原库existing实际更新，新PID为B2621117/A34208，实际加载新AOEM，身份与状态投影未变；
 认证Status B68ms/A30ms通过。C/D整包已收，当前只派C执行本机既有owner更新，D待C健康；

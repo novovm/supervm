@@ -1,0 +1,17 @@
+{
+  "client_source": "95ec9c2eced988c5798d549971354ef8722367b7",
+  "chain_id": 91129655606029,
+  "host": "C",
+  "status": "AUTHENTICATED_STATUS_PASS",
+  "utc": "2026-11-17T01:55:25.3333840Z",
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "current_height": 1,
+  "client_sha256": "58b2f729b396bdfcfaf499215195d0ba3994858287694fdefa8a50b4fe130e98",
+  "recovering": false,
+  "independently_verified_finality": false,
+  "relay_acceptance": false,
+  "object_sent": false,
+  "elapsed_ms": 400,
+  "projection_failed": false,
+  "business_receipt": false
+}

@@ -1,4 +1,6 @@
-# CURRENT 2026-11-17: common Windows candidate ready for receipt, not yet deployed
+# CURRENT 2026-11-17: B/A/C updated; D update dispatched
+
+09:55: C receipt42de31f7 verified against fixed EXE/loaded-AOEM/manifest hashes, PID38500 LocalService, original database existing. A→C authenticated Status400ms, height1, same original A/B public state root and healthy projection. D now executes the approved same-package existing update; C stays running. [CURRENT D instructions](CD-UPDATE.md). Do not treat older receipt-only or pending descriptions below as current actions. No double-relay object or finality acceptance yet.
 
 ## SUPERSEDING 07:34: Full green, B/A updated; C dispatched next
 
