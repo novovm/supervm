@@ -1,0 +1,132 @@
+[
+  {
+    "file": "B-arm.json",
+    "bytes": 425527,
+    "sha256": "d5599f1e706b22c1b46849084ed161977a98d723f859b96130f8601408031db5"
+  },
+  {
+    "file": "B-arm.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "B-command-published.json",
+    "bytes": 138,
+    "sha256": "36cd7ec2b64d83fe89821a55cd3242a834abd2a826040861aaec9f0d1e2d73c4"
+  },
+  {
+    "file": "B-concurrent-result.json",
+    "bytes": 740620,
+    "sha256": "5d288627398024086c203dd08859e5da92cb93f9a34011e6ea4acc31cb930458"
+  },
+  {
+    "file": "B-preflight.json",
+    "bytes": 655283,
+    "sha256": "e69de48ce38738d295b1f7580cf1137982d3d6f267408eadb2bc5f7c99500cee"
+  },
+  {
+    "file": "B-preflight.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "B-send-at.json",
+    "bytes": 431008,
+    "sha256": "2511d25980ebdb1f67cfceace0e0b14319d4fb8a9fc8df18096dcf84ef7fdd83"
+  },
+  {
+    "file": "B-send-at.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "C-ready.json",
+    "bytes": 435,
+    "sha256": "9962dff2e0c8032a921383b0f9f4cb67810aaa7013e49a51f83370d1a4827179"
+  },
+  {
+    "file": "concurrency-origin-result.json",
+    "bytes": 627,
+    "sha256": "61be9c0e730059c3dcb26d7bc3a05a806fd5d588be440b3dd560c12ccdb19996"
+  },
+  {
+    "file": "concurrent-A-after.json",
+    "bytes": 724664,
+    "sha256": "eeb174c1d2cf9472fa2ff186d0c38c14793713f99ccf6890192a6993d7acb86e"
+  },
+  {
+    "file": "concurrent-A-arm.nvprobe",
+    "bytes": 441,
+    "sha256": "7b98da9cad3a10f59c4c7dad558ddc7724811a3e78f65402232db7532b1be0ae"
+  },
+  {
+    "file": "concurrent-A-cli.json",
+    "bytes": 2815,
+    "sha256": "cfde01a0df268fbf5f4aa807ce3d574aaf0112d94468ce508d0c099ee75b8d42"
+  },
+  {
+    "file": "concurrent-A-cli.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "concurrent-A-command-published.json",
+    "bytes": 175,
+    "sha256": "062c9e87bb36a393b352e536308a8155502d7c1f64a2a8a3194f75ef3eb6bfe7"
+  },
+  {
+    "file": "concurrent-A-prior-control.nvprobe",
+    "bytes": 441,
+    "sha256": "cfacb0b9648beca766f4734d1aa40669d63886650dfa6ae54134e05c6489830a"
+  },
+  {
+    "file": "concurrent-A-ready.json",
+    "bytes": 730808,
+    "sha256": "30d7765b19535a9c7379306d04e2d732dca878248ce700171ccc94f8bc303150"
+  },
+  {
+    "file": "concurrent-A-staged-cli.json",
+    "bytes": 2883,
+    "sha256": "3a54179338ef1336bab1da101a1148e528f00709ffdc4ebb468f9726a50d79f9"
+  },
+  {
+    "file": "concurrent-A-staged-cli.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "D-ready.json",
+    "bytes": 435,
+    "sha256": "3e863599151415cc98188de24fc332c4c1c5ad23b1d56f2a506e1fb6c87db927"
+  },
+  {
+    "file": "management-clock-after.json",
+    "bytes": 212,
+    "sha256": "178be98f9d07b2c30c8b88b11616dda618a33c2e36c390faee5f0f121a65cb74"
+  },
+  {
+    "file": "management-clock-before.json",
+    "bytes": 213,
+    "sha256": "8e6ed1d3c2db79fc36bd6f8e93ce34c2d3782c74292fe1836c030029ca118661"
+  },
+  {
+    "file": "novonet-inflight-5b656189-live-20261118-0052-controller-exit.json",
+    "bytes": 161,
+    "sha256": "bc6c93beb18e3302c46a52f46b44750affe8ca44d87d80c7a5de36d7cceb974f"
+  },
+  {
+    "file": "novonet-inflight-5b656189-live-20261118-0052-controller.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "novonet-inflight-5b656189-live-20261118-0052-controller.stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "file": "result.json",
+    "bytes": 227,
+    "sha256": "93c0917fef6910a3965f7a90615bcad89a95048fefc71e2e1dd6b9852faccea1"
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "concurrent_inflight_proven": false,
+  "utc": "2026-11-17T16:52:05.9647028Z",
+  "outage_performed": false,
+  "recovered_object_repeated": false,
+  "status": "CONCURRENT_ONLY_TWO_ORIGIN_DONE_RECEIVER_AUDIT_PENDING"
+}

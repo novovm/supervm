@@ -1,4 +1,25 @@
-# CURRENT 2026-11-18 00:45: true in-flight concurrency only; arm C/D once
+# CURRENT 2026-11-18 00:55: paired objects DONE, no overlap; return same originals
+
+A ran ConcurrentOnly once using fresh C/D READYd35e4eed. Two original sender
+DONEs, controller0, no B outage/recovered-object repeat. Actual conservative
+overlap0; B starts at least461ms after A DONE. Near-simultaneous command publication
+cannot align original once-per-second Control::poll phases: actual admission
+latencies87ms/602ms against41/42ms object lifetimes. This is NOT concurrency pass.
+[Original failed-overlap sample and source-grounded timing](live-inflight-0052/README.md).
+
+C/D now only return SAME C-inflight-observer/D-inflight-observer originals:
+all relay-*.json, hashes/lengths, result/error/collector-exit and stdout/stderr;
+if alive return current originals/liveness without waiting. C receives A object
+ebb48a05c4e57c7db319d336decd9014aae78821c762f2956b12c9cc6befc589,
+Sessionbe68e3543249f73571d901ce97dc0781, and relays B object
+0b6ce6deac7baf19087132c31cdf9cf42e31fec97919e2b49ede280c1e867e5f,
+Session2006a82a71e890675d2f1e116ab64e43. D receives B and relays A. Do not filter
+opaque forwarding by Object/Session. No new observer/object, node restart/update,
+package copy, repeated baseline or timing-lottery retry. Missing overlap needs
+original-owner diagnostic coordination fix and qualification, not quota/TTL/size
+inflation. Receiver delivery/hop acceptance remains separately pending originals.
+
+## Historical 00:45: paired observation dispatch (already armed/executed)
 
 Recovered fresh-object acceptance below is complete; do not repeat it or stop B.
 User now requests only two distinct overlapping original-object deliveries.

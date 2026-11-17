@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 00:55 A: two actual DONEs; in-flight overlap remains failed
+
+Original ConcurrentOnly workload ran once after actual C/D READYd35e4eed,
+controller0; no outage or accepted-object repeat. Both sender DONE, but conservative
+overlap0: B admission at least461ms after A DONE. Original Control::poll reads
+every1s; near-simultaneous command publications were accepted87/602ms later,
+while objects lasted41/42ms. No serial-as-concurrent claim or automatic retry.
+[Raw negative sample, exact objects and clock bounds](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/live-inflight-0052/README.md).
+C/D return SAME observer originals only to complete independent receiver/hop audit.
+Next missing fix is bounded diagnostic release coordination in original owner,
+not another network/observer, payload padding, production TTL/quota relaxation or
+repeated file-poll lottery. No unqualified program update. Prior actual recovered
+fresh-object delivery remains accepted and is not rerun.
+
 ## 2026-11-18 00:45 A: remaining true in-flight concurrency dispatch
 
 User requested actual overlapping objects only, not completed recovered/direct/

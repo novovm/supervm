@@ -1,0 +1,14 @@
+{
+  "status": "D_RELAY_OBSERVER_ARMED",
+  "observer_version": 3,
+  "observer_pid": 57340,
+  "source": "5b656189784c854ac356aae77610c931b9f2189d",
+  "node_sha256": "4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038",
+  "pid": 34148,
+  "utc": "2026-11-17T16:48:58.2604610Z",
+  "read_only": true,
+  "maximum_wait_seconds": 7200,
+  "terminal_circuit_count": 2,
+  "expected_origin": "",
+  "expected_path": []
+}
