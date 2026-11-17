@@ -1,0 +1,7 @@
+{
+  "launcher_pid": 32280,
+  "pid": 50540,
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\d-db667-observer-20261117\\observation",
+  "created_utc": "2026-11-17T10:20:43.7852390Z",
+  "command": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -File \"D:\\WEB3_AI\\SUPERVM\\artifacts\\audit\\novonet-single-relay-20261111\\Watch-Relay.ps1\" -HostId D -Source db667aa420477e76766352c8efd7fea83fdb6eac -NodeSha256 442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825 -WorkName novovm-common-db667aa4-20261117 -CommonRoleFix -TerminalCircuitCount 4 -EvidenceRoot \"D:\\WEB3_AI\\SUPERVM\\target\\d-db667-observer-20261117\\observation\" -MaximumWaitSeconds 7200"
+}

@@ -1,0 +1,14 @@
+{
+  "observer_created_utc": "2026-11-17T10:20:43.7852390Z",
+  "utc": "2026-11-17T10:21:25.7426328Z",
+  "snapshots": 0,
+  "launcher_error_present": false,
+  "observer_running": true,
+  "error_present": false,
+  "startup_error_present": false,
+  "liveness_utc": "2026-11-17T10:21:24.2543199Z",
+  "observer_pid": 50540,
+  "result_present": false,
+  "node_pid": 56148,
+  "collector_exit_present": false
+}
