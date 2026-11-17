@@ -1,0 +1,19 @@
+{
+  "observer_pid": 57340,
+  "collector_exit_present": false,
+  "observer_restarted": false,
+  "terminal_files": [
+    {
+      "exists": false,
+      "file": "result.json"
+    },
+    {
+      "exists": false,
+      "file": "error.json"
+    }
+  ],
+  "observer_running": true,
+  "node_mutated": false,
+  "utc": "2026-11-17T16:48:58.4817282Z",
+  "observer_created_utc": "2026-11-17T16:48:56.5784740Z"
+}

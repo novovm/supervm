@@ -1,0 +1,7 @@
+{
+  "launcher_pid": 40964,
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\d-5b-inflight-observer-20261118\\observation",
+  "pid": 57340,
+  "command": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -File \"D:\\WEB3_AI\\SUPERVM\\target\\d-5b-inflight-observer-20261118\\run-original.ps1\"",
+  "created_utc": "2026-11-17T16:48:56.5784740Z"
+}
