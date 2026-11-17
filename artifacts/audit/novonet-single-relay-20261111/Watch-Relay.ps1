@@ -8,7 +8,8 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^(novonet-observation|novovm-common)-[a-f0-9]{8}-[0-9]{8}$')][string]$WorkName,
     [Parameter(Mandatory)][string]$EvidenceRoot,
     [ValidateRange(1800,7200)][int]$MaximumWaitSeconds=1800,
-    [switch]$Common95
+    [switch]$Common95,
+    [ValidateRange(1,4)][int]$TerminalCircuitCount=1
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -47,7 +48,7 @@ function Save-Liveness([bool]$Active) {
 $clock=[Diagnostics.Stopwatch]::StartNew()
 $saved=0
 Save-Liveness $true
-[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";observer_version=3;observer_pid=$PID;source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=$MaximumWaitSeconds}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
+[ordered]@{status="${HostId}_RELAY_OBSERVER_ARMED";observer_version=3;observer_pid=$PID;source=$Source;node_sha256=$NodeSha256;pid=$nodes[0].ProcessId;utc=[DateTime]::UtcNow.ToString('o');read_only=$true;maximum_wait_seconds=$MaximumWaitSeconds;terminal_circuit_count=$TerminalCircuitCount}|ConvertTo-Json|Set-Content "$out/ready.json" -Encoding utf8
 Write-Output "${HostId}_RELAY_OBSERVER_ARMED: $out; leave this bounded collector running"
 $saved=0;$terminalAt=$null;$previous=$null
 try {
@@ -58,13 +59,19 @@ try {
         if($circuits.Count){
             $data=[ordered]@{host=$HostId;source=$Source;pid=$nodes[0].ProcessId;chain_id=$p.chain_id;current_height=$p.current_height;execution_failures=$p.execution_failures;diagnostic_relay=$p.novonet.diagnostic_relay;relay_circuits=$circuits;transport=$p.native_network_probe.transport;business_receipt=$false}
             $encoded=$data|ConvertTo-Json -Depth 60 -Compress
+            if($TerminalCircuitCount -gt 1){
+                # Do not spend the same64-snapshot budget on unrelated elapsed
+                # counters while the original60s reservation cools down.
+                $encoded=[ordered]@{circuits=$circuits;events=@($p.novonet.diagnostic_relay.events|Where-Object {$null -ne $_.probe -and (ProbeKey $_) -notin $oldNonces})}|ConvertTo-Json -Depth 60 -Compress
+            }
             if($encoded -cne $previous){
                 [ordered]@{utc=[DateTime]::UtcNow.ToString('o');elapsed_ms=$clock.ElapsedMilliseconds;data=$data}|ConvertTo-Json -Depth 65|Set-Content (Join-Path $out ('relay-{0:D2}.json' -f $saved)) -Encoding utf8
                 $saved++;$previous=$encoded
             }
             $receiverTerminal=@($p.novonet.diagnostic_relay.events|Where-Object {$_.event -in @('relay_probe_received_integrity_verified','relay_probe_rejected_time') -and $null -ne $_.probe -and (ProbeKey $_) -notin $oldNonces}).Count -gt 0
-            $closed=@($circuits|Where-Object {$null -ne $_.stream_dropped_us}).Count -gt 0
-            if($null -eq $terminalAt -and (($HostId -eq 'D' -and $receiverTerminal) -or ($HostId -eq 'C' -and $closed))){$terminalAt=$clock.ElapsedMilliseconds}
+            $closedCount=@($circuits|Where-Object {$null -ne $_.stream_dropped_us}).Count
+            $terminal=if($TerminalCircuitCount -gt 1){$closedCount -ge $TerminalCircuitCount}else{($HostId -eq 'D' -and $receiverTerminal) -or ($HostId -eq 'C' -and $closedCount -gt 0)}
+            if($null -eq $terminalAt -and $terminal){$terminalAt=$clock.ElapsedMilliseconds}
             if($null -ne $terminalAt -and $clock.ElapsedMilliseconds-$terminalAt -ge 3000){break}
         }
         # At most64 one-second snapshots cover the full60-second diagnostic

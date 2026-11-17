@@ -1,0 +1,22 @@
+{
+  "B_management_helper_sha256": "7d747ef0e145db31c25545709f33fce7fb8f69e71a6f2ac27797556b56962c58",
+  "B_pid": 2621117,
+  "recovery_real_acceptance": false,
+  "observer_reader_tests": 18,
+  "status": "PREPARED_NOT_EXECUTED",
+  "new_full_dispatched": false,
+  "B_unit_interrupted": false,
+  "concurrency_real_acceptance": false,
+  "readiness_tests": 20,
+  "B_node_ctl_loaded_AOEM_identity_existing_guards": "passed actual script",
+  "runtime_updated": false,
+  "new_native_objects_sent": 0,
+  "actual_clock_management_stream_preflight": "3 authenticated management samples; no protocol or system time change",
+  "coordinator_parse": "pass",
+  "python_compile": "pass",
+  "sequence_overlap_guard_tests": 14,
+  "B_owner_preflight_exit": 0,
+  "B_diagnostic_active": false,
+  "utc": "2026-11-17T06:06:17.7078442Z",
+  "B_verified_locator_count": 3
+}

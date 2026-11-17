@@ -1,0 +1,39 @@
+# CURRENT: one concurrent/recovery workload; existing common95 owners, no update
+
+User authorized real concurrent-object delivery and relay interruption/recovery, without rerunning already-accepted direct/single/double single-object tests. Program remains fixed common95/Full1eb, Windows AOEM570/Linux equivalent. No Rust, protocol, signature, timeout, quota, cache, identity, database or candidate-package change is required for this diagnostic workload.
+
+## Actual scope and original-owner audit
+
+Original diagnostic `State` admits one outbound reservation/flight per node; incoming target occupancy is also bounded. This workload does **not** raise that limit or call serial sends concurrent. Two original sender owners A/B use different final recipients C/D, while opaque forwarding retains its existing independent owner. Concurrent constrained paths are **A→B→D→C** and **B→A→C→D**. Both are new multi-flow cases, not repeats of the accepted single-object route.
+
+Each sender prepares its own original authenticated diagnostic circuit/time reference, then publishes one fixed `NetworkProbe` through its original `novovmctl native-network-probe` and control-file owner. At most one object per sender, no new network socket/service or alternate NativeObjectLink. A schedules the two CLI publications using a bounded3-sample round-trip on the existing authenticated SSH management channel. These readings coordinate diagnostics only; they never become protocol/authorization time or change either system clock. SSH setup time is excluded from the sample. A preserves the offset interval and requires conservative **actual admission→DONE in-flight interval overlap**. Two DONEs with no proven overlap are **inconclusive concurrency**, not a pass and not automatically resent.
+
+Then the existing60-second A reservation is allowed to expire normally. A prepares a **new** A→B→C→D circuit, publishes no object on it, and stops only B unit `novovm-B-common95-network-20261117.service`. Its exact PID/executable/UID/config/domain/database-existing mode are checked first. B stays down5seconds, then the same unit is started in a `finally` recovery path, with the same EXE/SO/config/original database/keys. No other B service or firewall/routing/VPN setting is touched. Only this workload's saved, completed local diagnostic command may be removed after the exact old PID has exited, avoiding a stale local command after restart; originals are copied first. No database, journal or discovery cache is removed.
+
+A must observe the old circuit close; it cancels only that reservation and waits its original lease. A new reservation must establish a **different circuit/session** and authenticate the restored route before one new fixed object is sent. This validates **relay process interruption, original existing recovery, reauthentication and fresh-object delivery**, not automatic resumption/resurrection of the same previously-admitted object. Original pre/post counters belong to different PID epochs and are preserved; new-owner zero counters do not erase old failures.
+
+Evidence needed: both concurrent sender admissions/DONEs and strict in-flight overlap, separate final C/D custody/integrity/time outcomes, actual per-circuit relay forwarding, B exact stop/start/loaded-library and fresh-progress evidence, old circuit loss and distinct new authenticated session, recovered-object sender DONE and D final acceptance. Status, route planning and transport ACK are not substitutes. Non-business diagnostic only; not native UDP multihop, throughput, asset receipt, consensus/finality or public-release qualification.
+
+## Preparation actually checked, not a live test pass
+
+A remains elevated; B PID2621117 original common95 owner passed actual preflight (existing, UID996, fixed node/CTL/loaded SO, height1/head null, failures0, three verified locators, original command path and forwarding). The B helper is copied and hash-verified at `/home/ecs-user/novonet-concurrent-recovery-20261117/B-Scenario.py`; no native probe or unit interruption has run yet. A tested only the actual bounded SSH management timing path: best sample offset interval B−A `[526,539]ms`, RTT11.3231ms. This is a past scheduling preflight, not protocol time trust or evidence of object concurrency. Fresh samples are taken during the workload.
+
+Local checks: original reader18, original readiness20, sequence/overlap guards14 passed; coordinator parses, Python compiles, CLI `--help` works. Actual stream preflight used3 management readings, no node restart, object send or system-clock change. These checks do not count as live concurrent/recovery acceptance. No new Full/candidate rebuild is needed for observation/orchestration-only changes; no existing CI is cancelled.
+
+## C/D: one fresh original observer each; immediately return real READY
+
+Synchronize this commit, confirm the prior same-purpose observer has finished (do not kill by name), leave node owners unchanged. In administrator PowerShell7 start the original `artifacts/audit/novonet-single-relay-20261111/Watch-Relay.ps1` with adjacent unchanged `Read-RelayProgress.ps1`, hidden independent process, stdout/stderr and process exit retained. Use HostId C or D:
+
+```powershell
+-HostId C -Source 95ec9c2eced988c5798d549971354ef8722367b7 -NodeSha256 754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7 -WorkName novovm-common-95ec9c2e-20261117 -Common95 -TerminalCircuitCount 4 -MaximumWaitSeconds 7200 -EvidenceRoot '<fresh-local-evidence-root>'
+```
+
+This is the original reader/observer, not a new diagnostic daemon. Fixed actual C/D paths and LocalService/hash checks remain. `TerminalCircuitCount4` retains observation across two concurrent circuits, one interrupted circuit and one recovered circuit; the original two-hour standby,64-snapshot bound,1second sampling and15second fresh-progress checks remain. In sequence mode only the comparison fingerprint ignores unrelated elapsed/transport counters, so waiting out original reservation leases cannot exhaust64 captures; full original public snapshots are still saved for actual circuit/nonce-event changes. Default single-sample behavior is unchanged. Every circuit loss is counted from actual original records, not synthesized by the observer.
+
+Immediately push actual ready.json + current liveness.json, observer PID/creation time, node PID and terminal-file presence under this directory **C-observer/** or **D-observer/**. Do not wait for2hours or first terminal; no new ZIP/update/UAC on A, old crash/direct tests, object sends or node changes. If preparation fails, return the exact error and stop rather than retrying obsolete paths. Keep original snapshots even when they lack end-to-end Object ID/session; opaque relays correlate by Circuit/Route/hop bindings.
+
+## A execution after fresh C/D receipts (not executed during preparation)
+
+Run `Run-A-Scenario.ps1` in the already-elevated A context with actual C/D ready paths and a new EvidenceRoot. It guards both observers before any native command, validates fixed A/B owners and identities, prepares both flows concurrently, publishes once per flow, records strict concurrency timing, then carries out the single exact B interruption/restoration and one fresh recovered object. It never reruns a successful single-object baseline. Any actual identity/state or send failure is preserved without a blind send/start retry. Recovery restoration of the exact B unit is attempted even if fault observation fails.
+
+After the workload, C/D return **all original** relay snapshots + hashes, result/error, exit/stdout/stderr from those same observers. Do not filter solely by Object ID/session and do not rearm/restart/resend to fill evidence. A then correlates the separate flow nonces, circuit/route, all hop bindings and final target outcomes. Both concurrent and recovery verdicts remain pending until their own actual evidence is complete.

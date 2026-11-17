@@ -2,6 +2,16 @@
 
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
+14:05当前下一项：用户批准并发对象与B中继断开恢复实网，既有一条双中继验收不重跑。
+复用原单飞诊断owner：A/B各一对象、不同最终接收者，实际路由A→B→D→C与B→A→C→D；
+以原admitted→DONE区间及管理通道实测偏差界确认在途重叠，无重叠不能记并发通过。
+随后仅B原unit停5秒、原库existing启动，检查旧circuit断开、新Session重认证和新对象交付；
+不冒称同一旧在途对象自动续传。原预约60秒照常等待，不改限额/TTL/身份，也不换包/新Full。
+52项本地观察/时序/新鲜度检查及A/B管理预检已过，**并发/恢复实网尚未执行或通过**。
+C/D仅需同一新鲜观察窗口，各用原Watch-Relay加TerminalCircuitCount4，64快照/2小时上限
+不增加，立即回真实READY/liveness；之后A一次执行整个工作包，不再逐项等新窗口。
+[唯一执行交接](../artifacts/audit/novonet-concurrent-recovery-20261117/README.md)。
+
 13:36最终签收：A已下拉C原始快照4f2404c9，独立核对C/D共14份原文件SHA；
 C同Circuit/Route的cursor1实际8/8→9/9包、9380/9044字节、写失败0/0，B cursor0
 同计数且无写失败；A–B、B–C、C–D三段认证绑定逐段吻合。A发送端DONE/退出0与
