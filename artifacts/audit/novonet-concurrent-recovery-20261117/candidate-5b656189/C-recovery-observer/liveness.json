@@ -1,0 +1,11 @@
+{
+  "host": "C",
+  "observer_version": 3,
+  "observer_pid": 35672,
+  "node_pid": 42764,
+  "utc": "2026-11-17T16:31:25.6156333Z",
+  "elapsed_seconds": 33.9023443,
+  "maximum_wait_seconds": 7200,
+  "active": true,
+  "snapshots": 0
+}
