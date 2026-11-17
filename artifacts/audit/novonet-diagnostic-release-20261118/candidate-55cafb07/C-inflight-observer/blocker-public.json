@@ -1,0 +1,23 @@
+{
+  "exit_code_hex": "0xC0000005",
+  "status": "C_55_OBSERVER_BLOCKED_5B_NODE_EXITED",
+  "dumps_retained_locally": [
+    {
+      "bytes": 241533224,
+      "sha256": "15bb68ea3f0dfd4da208d2b7b5b74ef01e507cdc7138d536182c9776690d0e4b",
+      "modified_utc": "2026-11-17T17:25:58.2945232Z",
+      "name": "novovm-node.exe.42764.dmp"
+    }
+  ],
+  "prior_observer_exit_code": 0,
+  "node_source": "5b656189784c854ac356aae77610c931b9f2189d",
+  "active_node_count": 0,
+  "exit_utc": "2026-11-17T17:26:00.3318432Z",
+  "forced_by_controller": false,
+  "utc": "2026-11-17T22:56:41.0654927Z",
+  "node_restarted": false,
+  "ready_present": false,
+  "node_pid": 42764,
+  "prior_observer_exit_utc": "2026-11-17T16:52:07.7999258Z",
+  "observer_started": false
+}
