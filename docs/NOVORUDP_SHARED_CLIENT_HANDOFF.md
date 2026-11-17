@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-18 A: recovered fresh-object actual dual-end delivery accepted
+
+A pulled C d4d84886/D56d84292, verified15 original file hashes/lengths and5 raw
+snapshots. Same Object2239b3c2…/Session54868614…/Circuit55ff173d… has original
+sender DONE and unique target custody/integrity/time acceptance,1/1verified
+fragments/hash/zero duplicates. All3 adjacent authenticated bindings match;
+B/C both9/9forwarded and0failed writes. Both collectors exit0.
+[Independent final correlation and raw evidence](../artifacts/audit/novonet-concurrent-recovery-20261117/candidate-5b656189/live-recovery-0034/README.md).
+C/D no more action for this item. Fresh route/object after separate restoration
+and5b existing upgrade is accepted, NOT automatic/five-second restoration or
+old-object resumption. Actual in-flight concurrency remains next; no rerun of
+accepted direct/single/double/recovered object. Iroh hop streams are not nativeUDP
+multihop; no asset receipt/consensus finality is claimed.
+
 ## 2026-11-18 00:35 A: recovered-route fresh object sender DONE; C/D originals pending
 
 A pulled fresh actual C/D READY799b3e5d and ran original guarded continuation

@@ -1,4 +1,20 @@
-# CURRENT 2026-11-18 00:35: object sent; return SAME observer originals only
+# CURRENT 2026-11-18: recovered fresh-object dual-end delivery accepted; no C/D action
+
+A independently checked C d4d84886 and D56d84292:15 original hashes/lengths,
+5 raw snapshots; A DONE + unique D object/session integrity/time acceptance,
+all3 adjacent authenticated bindings match and both B/C relays9/9forwarded,
+failed writes0/0. D original1/1fragment/hash verification, zero duplicates,
+whole peer-time interval within original validity; both collectors exit0.
+[Final independent correlation](live-recovery-0034/DUAL-END-CORRELATION.json).
+
+This unfinished fresh recovered-route object is complete. C/D do not reopen
+observers, resend, restart, update or collect again. Next missing item is true
+in-flight concurrency with distinct objects and measured conservative overlap;
+no concurrency pass is inferred from this one-object result or the old serial pair.
+Original automatic/five-second restore remains failed, not rewritten by the
+separately restored/upgraded owners. No asset/finality/nativeUDP-multihop claim.
+
+## Historical 00:35: object sent; same observer originals requested (now received)
 
 A pulled fresh C/D READY through799b3e5d and executed original continuation once.
 Object2239b3c22fc30a7ba5b29f649d93271639ed439e93e6adb1cecd7cd275de9412,

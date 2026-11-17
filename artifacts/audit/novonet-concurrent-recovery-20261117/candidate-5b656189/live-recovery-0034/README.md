@@ -1,4 +1,21 @@
-# Original recovered-route fresh object: sender DONE, receiver audit pending
+# Original recovered-route fresh object: dual-end delivery accepted
+
+## Final independent dual-end correlation
+
+A pulled D56d84292 as well as C d4d84886, verified15 original file lengths/SHA256
+and inspected all5 raw snapshots. Same Circuit/Route across A/B/C/D, all3 adjacent
+authenticated bindings match. Both B/C actual forwarders9/9packets,0/0failed writes.
+D target cursor2 has the exact native session and one unique same-object integrity
+event. Independently derived transfer tag matches raw1/1fragment completion/hash
+verification, zero duplicate data/repair. Peer time interval is entirely inside
+the unchanged original validity. Both collectors exited0.
+[Independent correlation](DUAL-END-CORRELATION.json).
+
+Accepted: new authenticated route/session delivering one fresh object after the
+separate original restoration and approved5b existing upgrades. Not accepted:
+automatic/five-second restoration, interrupted old-object resume, actual in-flight
+concurrency, nativeUDP multihop, asset business receipt or consensus finality.
+No further C/D collection/restart/object resend is needed for this completed item.
 
 ## C original forwarding received and independently checked
 
@@ -32,8 +49,8 @@ existing-upgrade receipts; it did not stop B again or resend the completed pair.
 
 Raw A observations/CLI/READY/exit and B preflight/post-snapshot/executed helper
 are retained with independent file hashes. No protected config or private key.
-C actual relay and D complete custody/integrity/time acceptance still require
-their SAME observers' original snapshots. Sender DONE alone is not dual-end
+C actual relay and D complete custody/integrity/time were pending at send time;
+their SAME observers' originals are now verified above. Sender DONE alone is not dual-end
 acceptance, asset Business Receipt or finality. Fresh object after separately
 restored/upgraded owners is not automatic five-second recovery or old-object
 resumption. The historical automatic restore failure and missing actual in-flight
