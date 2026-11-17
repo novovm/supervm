@@ -1,0 +1,28 @@
+{
+  "status": "C_COMMON95_EXISTING_READY_FOR_A_QUERY",
+  "observed_utc": "2026-11-17T01:52:35.2426503Z",
+  "pid": 38500,
+  "account": "NT AUTHORITY\\LOCAL SERVICE",
+  "task": "NOVOVM-Common95-C-20261117",
+  "node_sha256": "754eb3f50ab6111ec494d30b00af52e8dbee43038f54e0a1c313e8579bfc6bf7",
+  "aoem_loaded_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "release_manifest_sha256": "82e5229ed041af942e0333597ce1fbfcca6f9f66f69dd4bb598d69b5c0e66ea8",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "start": "existing",
+  "identity_hashes_unchanged": true,
+  "current_height": 1,
+  "head": null,
+  "recovery_in_progress": false,
+  "execution_failures": 0,
+  "ticks": 14855,
+  "listeners": [
+    41052,
+    42052
+  ],
+  "config_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common95-C-20261117\\run.json",
+  "progress_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common95-C-20261117\\progress.json",
+  "observer_started": false,
+  "initialization": false,
+  "state_projection_equality": "not independently established",
+  "local_package_copy": "D:\\WEB3_AI\\SUPERVM\\target\\c-common95-20261117\\incoming\\novovm-common-95ec9c2e-windows-x86_64.zip"
+}
