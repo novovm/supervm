@@ -1,6 +1,24 @@
 # Fixed diagnostic-release candidate55cafb07
 
-## CURRENT2026-11-18 06:42: Full passed; B/A existing health passed; C/D arm once
+## CURRENT2026-11-18 07:09: observed in-flight overlap; return existing observer evidence
+
+C/D fresh matching heartbeats at87e76506 passed. A ran ConcurrentOnly once with
+55 origins and 5b observers, controller exit0. Two new original objects have
+sender DONE. The selected clock interval proves18ms overlap; using the outer
+interval of all six timing samples still proves13ms. B and A as first-hop
+forwarders each show9/9 packets and0/0 failed writes. No outage or old object
+repetition. [Raw origin and timing records](live-inflight-0709/TIMING-CORRELATION.json).
+
+C/D only return existing observer PID26924/42256 raw relay-*.json, hashes/lengths,
+stdout/stderr and terminal result/error/exit under the existing observer folders.
+Do not filter opaque forwarding by Object/Session, rearm, restart or resend.
+C receives A object48ed56cdd148d618306cbb8e143d147b902d546a51583846b12dfb06b7ab13d4
+sessiona94dc09c3066b5ea2e8217e41951f731 and forwards B circuit2453a0b41a07c04c03fc4f6be72ec023.
+D receives B object9d8b03fb2d62625a44429bafd42aa30c5411d2ce8600ae3aa092e80552ac4719
+sessiondf8fd9ffe50d6b457a76bec9749261d0 and forwards A circuite8a5a23244447fc2276ff491ac139453.
+Final receiver/hop acceptance still requires independent checks of those originals.
+
+## Historical 06:42: Full passed; B/A existing health passed; C/D arm once (executed)
 
 Full44136917939 completed SUCCESS at18:50:24Z on exact55cafb07:17 jobs success,
 one conditional PR-only observation skipped. Original final run/jobs are adjacent.

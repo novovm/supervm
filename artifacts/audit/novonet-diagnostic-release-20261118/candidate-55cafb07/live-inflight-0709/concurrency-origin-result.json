@@ -1,0 +1,15 @@
+{
+  "two_sender_DONE": true,
+  "management_offset_interval_ms": [
+    976.0,
+    989.0
+  ],
+  "guaranteed_overlap_ms": 18,
+  "concurrent_inflight_proven": true,
+  "scope": "Two actual original objects; no serial-as-concurrent claim; timing via authenticated management channel, never authorization",
+  "A_object": "48ed56cdd148d618306cbb8e143d147b902d546a51583846b12dfb06b7ab13d4",
+  "A_session": "a94dc09c3066b5ea2e8217e41951f731",
+  "B_object": "9d8b03fb2d62625a44429bafd42aa30c5411d2ce8600ae3aa092e80552ac4719",
+  "B_session": "df8fd9ffe50d6b457a76bec9749261d0",
+  "receiver_and_hop_evidence_pending": true
+}

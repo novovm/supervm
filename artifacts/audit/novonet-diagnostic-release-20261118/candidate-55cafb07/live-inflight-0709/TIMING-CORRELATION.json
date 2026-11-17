@@ -1,0 +1,36 @@
+{
+  "program_origins": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "program_C_D": "5b656189784c854ac356aae77610c931b9f2189d",
+  "ready_head": "87e76506",
+  "controller_exit_code": 0,
+  "A": {
+    "path": "A->B->D->C",
+    "object": "48ed56cdd148d618306cbb8e143d147b902d546a51583846b12dfb06b7ab13d4",
+    "session": "a94dc09c3066b5ea2e8217e41951f731",
+    "circuit": "e8a5a23244447fc2276ff491ac139453",
+    "route_digest": "88cbccc2039a467eec6675769b02c649cc88339856087822867636e2a66eeb2f",
+    "admitted_wall_ms": 1794956983743,
+    "done_wall_ms": 1794956983780,
+    "first_hop_B_forwarded_packets": [9, 9],
+    "first_hop_B_failed_writes": [0, 0]
+  },
+  "B": {
+    "path": "B->A->C->D",
+    "object": "9d8b03fb2d62625a44429bafd42aa30c5411d2ce8600ae3aa092e80552ac4719",
+    "session": "df8fd9ffe50d6b457a76bec9749261d0",
+    "circuit": "2453a0b41a07c04c03fc4f6be72ec023",
+    "route_digest": "cf70159b3e49ed568fa8039a3dc90733798166ac35387d7a332f9d064b556d7f",
+    "admitted_wall_ms": 1794956984726,
+    "done_wall_ms": 1794956984757,
+    "first_hop_A_forwarded_packets": [9, 9],
+    "first_hop_A_failed_writes": [0, 0]
+  },
+  "clock_offset_B_minus_A_selected_interval_ms": [976, 989],
+  "overlap_using_selected_interval_ms": 18,
+  "clock_offset_B_minus_A_all_six_samples_outer_interval_ms": [975, 993],
+  "overlap_using_outer_interval_ms": 13,
+  "actual_inflight_overlap_proven": true,
+  "two_origin_DONE": true,
+  "receiver_and_second_hop_audit_pending": true,
+  "repeated_object_or_outage": false
+}
