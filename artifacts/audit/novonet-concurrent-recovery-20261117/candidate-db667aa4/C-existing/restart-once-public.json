@@ -1,0 +1,27 @@
+{
+  "status": "C_DB667_RESTARTED_ONCE_READY_FOR_A_QUERY",
+  "utc": "2026-11-17T10:24:38.0612626Z",
+  "user_authorized_restart": true,
+  "pid": 7384,
+  "created_utc": "2026-11-17T10:23:38.9889961Z",
+  "account": "NT AUTHORITY\\LOCAL SERVICE",
+  "node_sha256": "442afbc0e5c5aad9f2f952b5dbff9a08021556114c07a7698c65acf629273825",
+  "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "config_sha256": "5d7e4c22162a836272939b1c844453e5bf5312e0f2f7dde79ab2d2df004d13a0",
+  "start": "existing",
+  "ticks": 92326,
+  "height": 1,
+  "head": null,
+  "recovery_in_progress": false,
+  "execution_failures": 0,
+  "udp_ports": [
+    42052,
+    41052
+  ],
+  "config_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-CommonDb667-C-20261117\\run.json",
+  "progress_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-CommonDb667-C-20261117\\progress.json",
+  "prior_crash_preserved": true,
+  "root_cause_fixed": false,
+  "automatic_restart": false,
+  "observer_started": false
+}
