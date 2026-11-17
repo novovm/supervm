@@ -1,0 +1,35 @@
+{
+  "status": "A_B_D_CORRELATED_C_RAW_SNAPSHOTS_PENDING",
+  "audited_utc": "2026-11-17T05:18:44.5387772Z",
+  "original_D_hashes_verified": 8,
+  "D_matching_raw_snapshots": [
+    "relay-00.json",
+    "relay-01.json",
+    "relay-02.json"
+  ],
+  "object_id": "e36af9089c38c9ec19835255934f04aa308ebc84c0bf42051bfa39a6026fcd5d",
+  "native_session": "b960c007c82275a45ee5c45f75705aab",
+  "circuit_id": "457c502773ba39993a584d68cbbf1515",
+  "route_digest": "82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14",
+  "sender_done": true,
+  "B_forwarding_verified": true,
+  "D_original_target_pid": 23340,
+  "D_target_cursor": 2,
+  "D_received_integrity_and_time_accepted": true,
+  "D_unique_reception_event_ms": 1794888884453,
+  "D_peer_time_interval": [
+    1794888883915,
+    1794888884042
+  ],
+  "original_issued_at_ms": 1794888883122,
+  "original_expires_at_ms": 1794888893122,
+  "derived_transfer_tag": "eff7e10e711114f9dcdd685cbb80049fd2d8eb9d0e6989e8c5bda03eda3da57c",
+  "D_fragments": 1,
+  "D_total_fragments": 1,
+  "D_verified_us": 2114581660,
+  "D_receiver_transport_done_us": null,
+  "D_business_receipt": false,
+  "C_raw_circuit_forwarding_audit": "pending existing 3 snapshots; opaque relay need not contain object/session",
+  "complete_double_relay_acceptance": false,
+  "resend": false
+}

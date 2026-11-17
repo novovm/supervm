@@ -2,6 +2,14 @@
 
 ## 2026-11-17 CURRENT：四机新版联调，旧崩溃调查暂停
 
+13:19最新：A已读C/D6556e0c6；D的8份原文件哈希、3原始快照独立核验，
+同对象/Session/Circuit最终接收完整、hash验证及原有效期内时间验收通过，观察器退出0。
+A DONE、B转发、D接管已关联；C只推派生摘要（9/9包、写失败0/0），未推3原始快照。
+密文中继不应要求端到端Object ID/Session可见；C只补已有relay-*.json及SHA，按
+Circuit/Route/cursor1核对，不新采集、不重发、不重启、不开发工具。D无需操作。
+完整逐跳验收仍待C原文件；不伪造D receiver DONE时间或Business Receipt/最终性。
+[当前证据结论](../artifacts/audit/aoem-latest-57090b6b-20261117/candidate-common-95ec9c2e/double-relay-20261117-1214/README.md)。
+
 12:14最新：A已读C/D9501a49d新鲜READY及心跳，实际发送唯一A→B→C→D对象，
 原发送端12:14:43.971 DONE、控制器退出0；B同circuit实际双向转发9包/9380字节及
 9包/9044字节、写失败0/0。C/D只回现有观察器结果、匹配快照和退出，不重开/重发。

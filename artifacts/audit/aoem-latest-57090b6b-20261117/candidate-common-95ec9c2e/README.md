@@ -1,4 +1,6 @@
-# CURRENT 2026-11-17: actual double-relay object sent; C/D evidence pending
+# CURRENT 2026-11-17: A/B/D correlated; C original-file audit pending
+
+13:19: A independently verified D's8 original-file hashes and3 target snapshots: exact same object/session/circuit, complete/hash-verified reception and authenticated interval within the original lifetime. A sender DONE/B forwarding/D receiver custody/integrity/time outcome correlate. C uploaded only a terminal summary; only return its3 already-existing raw relay snapshots/hashes for circuit/cursor1 forwarding audit. Opaque relay Object ID/session absence is not a failure. No new capture, object, observer, node restart or tool; D complete/no action. [Actual evidence and limits](double-relay-20261117-1214/README.md).
 
 12:14: A sent one original A→B→C→D fixed object, sender DONE and controller exit0. B matching authenticated circuit/actual forwarding verified, no failed writes. C/D return only their existing observer output, no rearm/resend/restart. [Original A/B evidence and exact IDs](double-relay-20261117-1214/README.md). Complete double-relay acceptance is pending C forwarding and D final custody/integrity/time evidence; not a native UDP-multihop or business/finality claim.
 

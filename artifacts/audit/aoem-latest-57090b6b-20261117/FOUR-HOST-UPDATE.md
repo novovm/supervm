@@ -1,5 +1,9 @@
 # CURRENT: new common node + latest AOEM, then real double relay
 
+## SUPERSEDING13:19: D original reception accepted; C existing raw snapshots only
+
+A pulled6556e0c6 and independently verified D's8 original-file hashes/3 snapshots against exact object/session/circuit/digest, unique integrity/time accepted event and original transfer tag/full1/1fragment/hash record. A DONE/B forwarding/D receiver acceptance now correlate. C's terminal summary has9/9packets,9380/9044bytes,writes0/0 but no3 raw snapshots uploaded; opaque relays do not need to expose end-to-end object/session. Only C returns those existing files/hashes, no rearm/resend/tool or node action. Complete per-hop acceptance awaits that original C audit. [Current evidence](candidate-common-95ec9c2e/double-relay-20261117-1214/README.md).
+
 ## SUPERSEDING 12:14: actual double-relay send completed; C/D evidence pending
 
 One original A→B→C→D fixed object was sent after real fresh observer and original-owner route checks. A original Object DONE12:14:43.971/controller exit0; B authenticated same-circuit relay forwards9packets/9380bytes and9packets/9044bytes, failed writes0/0. No resend, rearm, update, direct-object test or new Full. C/D now return their existing observer output; complete double-relay acceptance remains pending C forwarding and D integrity/time/final custody. [Actual evidence](candidate-common-95ec9c2e/double-relay-20261117-1214/README.md).

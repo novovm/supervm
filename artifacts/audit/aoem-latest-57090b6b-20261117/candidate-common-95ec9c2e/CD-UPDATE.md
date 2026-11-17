@@ -1,4 +1,12 @@
-# CURRENT 12:14: object sent once, A DONE/B forwarding verified; return existing C/D evidence
+# CURRENT 13:19: A/B/D verified; C returns only 3 existing raw relay snapshots
+
+A pulled C/D through6556e0c6. D's8 original-file hashes and3 raw target snapshots are independently verified: same object/session/circuit/digest, unique integrity-verified receiver event, full authenticated time interval inside original lifetime and matching1/1-fragment/hash-verified transfer. D observer exited0, terminal_observed=true; D is complete for this diagnostic reception. Do not rearm D or fabricate a D-side transport_done_us (null), business receipt or finality.
+
+**Only C now:** upload the3 already-existing `relay-*.json` from `D:\WEB3_AI\SUPERVM\target\c-common95-relay-20261117-01`, their SHA256s and existing result/stdout/stderr to the same C READY directory. Return all3 even if no Object ID/session is visible. Opaque forwarding is associated by **Circuit `457c502773ba39993a584d68cbbf1515` and Route digest `82ead291e70fd94915b90e0dc1591617826b32a64c1860e52b25ba7936521c14`**, role relay/cursor1 and actual forward counters. C's null native_session and zero Object-ID search matches are not by themselves a failure. Its summary reports9/9packets,9380/9044bytes, writes0/0 but cannot replace raw per-hop evidence. Do not start any new collection, observer, test object, node update/restart or tool. C did not capture the observer process exit code; preserve that unknown.
+
+[A independent D audit and actual evidence boundary](double-relay-20261117-1214/README.md). Complete double-relay per-hop signoff waits only for C's existing raw files, not another network attempt.
+
+## Earlier12:14 sender result (do not resend)
 
 A pulled actual C/D READY/liveness through9501a49d, verified fresh valid windows and refreshed B's original owner; no extra UAC was needed. A sent **one** ordered A→B→C→D fixed object. Original sender event DONE at Beijing12:14:43.971, controller exit0/observed12:14:47.787. B actual same-circuit relay forwarding is verified (9packets/9380bytes and9packets/9044bytes, failed writes0/0).
 
