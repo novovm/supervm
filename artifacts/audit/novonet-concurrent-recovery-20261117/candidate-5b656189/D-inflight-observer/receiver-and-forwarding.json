@@ -1,0 +1,173 @@
+{
+  "new_observer_started": false,
+  "node_pid": 34148,
+  "B_session": "2006a82a71e890675d2f1e116ab64e43",
+  "circuits": [
+    {
+      "circuit": "bfef7d3eff8d06e5e3b34e3105dfd509",
+      "route_digest": "b070d42bd0bdb3ac7f7b6fa9313145fb5756482d480be588a9dea6ac5d26470b",
+      "stream_dropped_us": 2086137091,
+      "role": "relay",
+      "path": [
+        "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f",
+        "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946",
+        "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2"
+      ],
+      "origin": "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3",
+      "native_session": null,
+      "failed_writes": [
+        0,
+        0
+      ],
+      "cursor": 1,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ]
+    },
+    {
+      "circuit": "158b1b1f563306b76338e16ce49d130f",
+      "route_digest": "b6021e57dd4d0aecdb89cb3f1daa6f659e64604efb1777db49138308089cfff5",
+      "stream_dropped_us": 2086650165,
+      "role": "target",
+      "path": [
+        "novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3",
+        "novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2",
+        "novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946"
+      ],
+      "origin": "novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f",
+      "native_session": "2006a82a71e890675d2f1e116ab64e43",
+      "failed_writes": [
+        0,
+        0
+      ],
+      "cursor": 2,
+      "forwarded": [
+        {
+          "packets": 0,
+          "bytes": 0
+        },
+        {
+          "packets": 0,
+          "bytes": 0
+        }
+      ]
+    }
+  ],
+  "B_transfer_tag": "5df85146a8bd205c217e7ee8e25d6abdf0682b5f8d662bbd9c0eb165ff3655ff",
+  "timing_evidence": "../live-inflight-0052/TIMING-CORRELATION.json",
+  "B_receiver_event": "relay_probe_received_integrity_verified",
+  "resend": false,
+  "B_time_window_accepted": true,
+  "B_receiver_utc": "2026-11-17T16:52:01.3510000+00:00",
+  "A_session": "be68e3543249f73571d901ce97dc0781",
+  "B_peer_time_interval": [
+    1794934321046,
+    1794934321593
+  ],
+  "observer_pid": 57340,
+  "B_object": "0b6ce6deac7baf19087132c31cdf9cf42e31fec97919e2b49ede280c1e867e5f",
+  "business_finality": false,
+  "B_expires_at_ms": 1794934327678,
+  "opaque_relay_object_binding": "A must correlate Circuit/Route/hop bindings; local relay has no Object/Session visibility",
+  "B_transfer": {
+    "tag": [
+      93,
+      248,
+      81,
+      70,
+      168,
+      189,
+      32,
+      92,
+      33,
+      126,
+      126,
+      232,
+      226,
+      93,
+      106,
+      189,
+      240,
+      104,
+      43,
+      95,
+      141,
+      102,
+      43,
+      189,
+      156,
+      14,
+      177,
+      101,
+      255,
+      54,
+      85,
+      255
+    ],
+    "first_seen_us": 2084608684,
+    "last_progress_us": 2084608690,
+    "transport_done_us": null,
+    "response_validated_us": null,
+    "fragments": 1,
+    "assemblies_started": 1,
+    "assembly_start_observed": true,
+    "duplicate_data": 0,
+    "duplicate_repair": 0,
+    "completed_history_hits": 0,
+    "total_fragments": 1,
+    "first_fragment_us": 2084608684,
+    "last_fragment_us": 2084608684,
+    "fragments_complete_us": 2084608684,
+    "last_fragment_index": 0,
+    "repair_fragments": 0,
+    "hash_chunks": 1,
+    "first_hash_us": 2084608687,
+    "last_hash_us": 2084608687,
+    "send_admitted_us": null,
+    "send_attempts_observed": 0,
+    "send_terminal_us": null,
+    "send_terminal_state": null,
+    "send": null,
+    "feedback_sent": {
+      "packets": 1,
+      "first_us": 2084610606,
+      "last_us": 2084610606,
+      "max_gap_us": 0,
+      "omitted_windows": 0,
+      "windows": [
+        {
+          "at_us": 2084610606,
+          "epoch": 4,
+          "missing": 0,
+          "first_missing": null
+        }
+      ]
+    },
+    "feedback_received": {
+      "packets": 0,
+      "first_us": null,
+      "last_us": null,
+      "max_gap_us": 0,
+      "omitted_windows": 0,
+      "windows": []
+    },
+    "acknowledged_best": 0,
+    "verified_us": 2084608690,
+    "work_entered_us": null,
+    "work_finished_us": null,
+    "stored_receipt_created_us": null,
+    "response_queued_us": null,
+    "response_tag": null
+  },
+  "A_object": "ebb48a05c4e57c7db319d336decd9014aae78821c762f2956b12c9cc6befc589",
+  "B_issued_at_ms": 1794934317678,
+  "concurrent_inflight_proven": false,
+  "scope": "derived final-snapshot correlation only; all raw snapshots returned without Object/Session filtering"
+}
