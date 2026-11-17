@@ -1,0 +1,44 @@
+[
+  {
+    "file": "relay-00.json",
+    "bytes": 822687,
+    "sha256": "50ee97ff49c5813e10ad212b7c1e50c4d74de663d4b061a06e600772d1fab456",
+    "original_bytes_preserved": true
+  },
+  {
+    "file": "relay-01.json",
+    "bytes": 828150,
+    "sha256": "9915f486d8222a52a4693bfa14bceef6849a36d5fc9a4af582b97bdabf8c0d8c",
+    "original_bytes_preserved": true
+  },
+  {
+    "file": "liveness.json",
+    "bytes": 245,
+    "sha256": "9386f15f65a3d91737c7ab25b86666901e552762bfe14ef944e48b2ee1ffede3",
+    "original_bytes_preserved": true
+  },
+  {
+    "file": "result.json",
+    "bytes": 262,
+    "sha256": "0d508e27687e3fd1af30358f3d0f4ee91994dbb501ae6975d37e59dfcad0c47e",
+    "original_bytes_preserved": true
+  },
+  {
+    "file": "collector-exit.json",
+    "bytes": 92,
+    "sha256": "573455a44e77b9b0036b79ddc1586af5f9b865695f3a8c9ccf8fdf3db853ae36",
+    "original_bytes_preserved": true
+  },
+  {
+    "file": "observer.stdout",
+    "bytes": 141,
+    "sha256": "0a6c44b1351d8b2bfa30ab9029d25acf0e7fca48a55fe0e638ed9576a1fe204f",
+    "original_bytes_preserved": true
+  },
+  {
+    "file": "observer.stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "original_bytes_preserved": true
+  }
+]
