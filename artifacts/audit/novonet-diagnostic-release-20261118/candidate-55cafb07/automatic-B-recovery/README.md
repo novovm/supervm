@@ -1,6 +1,35 @@
 # B original relay automatic recovery
 
-## Current — C existing restart observed, but live Status is not healthy
+## Current — repeated C stall localized to status JSON construction
+
+C receipt `0e1c473e` confirms the same live PID 22324 stopped publishing at
+09:39:26 BJT (`ticks=1134583`); observer 24620 exited 1 with
+`Stale progress` at 09:39:42. C captured ~5 s of CPU evidence on TID
+27572: 4415 samples, 4413 with stacks. The 12 top stacks account for
+2292 samples and share the same caller chain.
+
+Independent offline correlation on the exact Windows 5b EXE
+(SHA256 `4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038`):
+the hot RVAs lie in SIMD table probing in the function at
+`0xb7a140`; embedded source locations identify `hashbrown 0.17.1`
+and `indexmap 2.14.2`. The caller instruction at `0x82153a`
+(stack return `0x82153f`) inserts the literal key `reads_started`.
+That identifies construction of the `archive_work` status object at
+`service/rpc.rs:1486–1489` of 5b, inside the original main tick's
+`product.status()` call, before JSON encoding or progress file output.
+No stale or rebuilt PDB was used. The sampled execution is not in the
+AOEM DLL; the status field is a counter, not an archive operation.
+
+This is localization of the hang, not proof of a library bug, invalid
+map metadata origin, prior access-violation cause, or hardware fault.
+The next engineering work is to verify the status construction path and
+keep diagnostic formatting from being able to stop node progress, without
+changing JSON consumers' contract, signed/canonical formats, or the
+original NOVONET/ledger owners. Do not call an isolated workaround a
+root-cause fix. No new C restart or CPU capture needed for this correlation.
+B recovery and the new delivery remain unexecuted.
+
+## C existing restart observed, but live Status was not healthy
 
 C receipt `e079596e` preserves the old stalled-node and observer evidence.
 It records a targeted stop of PID 19196 followed by the same fixed 5b
