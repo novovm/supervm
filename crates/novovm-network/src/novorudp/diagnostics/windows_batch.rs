@@ -13,7 +13,7 @@ const NAMES: [&str; 5] = [
     "result_check",
 ];
 
-#[derive(Default, Serialize)]
+#[derive(Clone, Default, Serialize)]
 struct Totals {
     calls: u64,
     requested_datagrams: u64,
@@ -194,10 +194,17 @@ fn elapsed(start: Option<Instant>) -> Option<u64> {
     start.map(|s| s.elapsed().as_nanos().min(u64::MAX as u128) as u64)
 }
 
-pub(super) fn snapshot() -> serde_json::Value {
-    STATS.with(|stats| {
+pub(super) fn capture() -> impl Fn() -> serde_json::Value + Send {
+    let (totals, samples_seen, rows) = STATS.with(|stats| {
         let stats = stats.borrow();
-        let mut rows = stats.rows.iter().flatten().copied().collect::<Vec<_>>();
+        (
+            stats.totals.clone(),
+            stats.samples_seen,
+            stats.rows.iter().flatten().copied().collect::<Vec<_>>(),
+        )
+    });
+    move || {
+        let mut rows = rows.clone();
         rows.sort_unstable_by_key(|r| r.call);
         let phases = NAMES.iter().enumerate().map(|(index, name)| {
             let mut values = rows.iter().filter_map(|r| r.phase_ns[index]).collect::<Vec<_>>();
@@ -208,12 +215,12 @@ pub(super) fn snapshot() -> serde_json::Value {
         }).collect::<std::collections::BTreeMap<_, _>>();
         serde_json::json!({
             "scope":"current poll thread; original exclusive Windows segmented batch owner only; nonempty UDP batches; counts all profiled attempts, durations every 61st SAME batch. Independent intervals, not CPU time. Validation, bookkeeping, buffer drop and other gaps remain in total/residual. Vec allocation requests/capacity are not global allocator events. Socket acceptance is not peer delivery. No timing or counters when IO profiling disabled.",
-            "capacity":CAPACITY,"sample_every_calls":61,"samples_seen":stats.samples_seen,
-            "omitted_samples":stats.samples_seen.saturating_sub(rows.len() as u64),
+            "capacity":CAPACITY,"sample_every_calls":61,"samples_seen":samples_seen,
+            "omitted_samples":samples_seen.saturating_sub(rows.len() as u64),
             "quantile_scope":"retained joint samples only, nearest rank; last 1024 if ring wraps; unreached/unsampled is null",
-            "phase_order":NAMES,"totals":stats.totals,"phases":phases,"samples":rows
+            "phase_order":NAMES,"totals":totals,"phases":phases,"samples":rows
         })
-    })
+    }
 }
 
 #[cfg(test)]
@@ -228,7 +235,7 @@ mod tests {
                 o.setup_done();
                 finish(Some(o), &Ok(1));
             }
-            let view = snapshot();
+            let view = capture()();
             assert_eq!(view["samples_seen"], CAPACITY + 1);
             assert_eq!(view["omitted_samples"], 1);
             assert_eq!(view["samples"].as_array().unwrap().len(), CAPACITY);

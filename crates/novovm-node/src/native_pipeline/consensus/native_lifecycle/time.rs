@@ -226,17 +226,18 @@ impl NativeLifecycle {
             reference.interval(clock.instant())?,
         ))
     }
-    pub(super) fn network_time_observation(&self) -> serde_json::Value {
+    pub(super) fn network_time_snapshot(&self) -> impl serde::Serialize + Send + use<> {
+        use crate::native_pipeline::report::record;
         let now = Instant::now();
-        serde_json::json!({
-            "scope":"session-relative peer-clock consistency, not trusted UTC or chain authorization",
-            "peers":self.time_peers.iter().enumerate().map(|(peer, state)| {
-                serde_json::json!({"peer":self.peers[peer], "session":state.session,
-                    "relative_ready":state.reference.interval(now).is_ok(),
-                    "accepted_samples":state.accepted_samples,"rejected_samples":state.rejected_samples,
-                    "inflight":state.flights.len()})
+        record! {
+            scope: "session-relative peer-clock consistency, not trusted UTC or chain authorization",
+            peers: self.time_peers.iter().enumerate().map(|(peer, state)| {
+                record! {peer: self.peers[peer], session: state.session,
+                    relative_ready: state.reference.interval(now).is_ok(),
+                    accepted_samples: state.accepted_samples,rejected_samples: state.rejected_samples,
+                    inflight: state.flights.len()}
             }).collect::<Vec<_>>()
-        })
+        }
     }
 }
 

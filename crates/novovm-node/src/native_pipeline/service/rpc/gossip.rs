@@ -53,11 +53,12 @@ impl RepairHints {
             .find(|peer| available[*peer] && self.counts[*peer] != 0)
     }
 
-    pub(super) fn status(&self) -> Value {
-        json!({"omitted_recipient_inputs": self.counts.iter().sum::<usize>(),
-            "repair_batches_reserved": self.accepted_batches,
-            "repair_inputs_reserved": self.reserved_inputs,
-            "scope":"local omitted-recipient repair; inputs count shared rows, not peer copies; not remote or durable receipt"})
+    pub(super) fn status_snapshot(&self) -> impl serde::Serialize + Send + use<> {
+        use crate::native_pipeline::report::record;
+        record! {omitted_recipient_inputs:  self.counts.iter().sum::<usize>(),
+        repair_batches_reserved:  self.accepted_batches,
+        repair_inputs_reserved:  self.reserved_inputs,
+        scope: "local omitted-recipient repair; inputs count shared rows, not peer copies; not remote or durable receipt"}
     }
 }
 

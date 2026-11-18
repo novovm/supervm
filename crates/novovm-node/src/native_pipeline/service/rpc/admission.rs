@@ -197,37 +197,44 @@ impl AdmissionState {
         complete_body || cached_boundary
     }
 
+    pub(super) fn status_snapshot(&self) -> impl serde::Serialize + Send + use<> {
+        use crate::native_pipeline::report::record;
+        record! {owner: "same_resident_aoem_compute_session",
+        http_waiting: self.http.len(),signature_batch_pending: self.work.is_some(),
+        uca_authority_pending: self.uca.is_some(),
+        application_authority_pending: self.work.as_ref().is_some_and(|work| matches!(work.phase, Phase::Application(_))),
+        signature_completed_waiting_for_authority: self.work.as_ref().is_some_and(|work| matches!(work.phase, Phase::Completed(_))),
+        next_signature_submitted_while_capture: self.next_signature_submitted_while_capture,
+        signature_completed_while_capture: self.signature_completed_while_capture,
+        max_retained_stage_slots: self.max_retained_stage_slots,
+        submitted_batches: self.submitted_batches,completed_batches: self.completed_batches,
+        checked_rows: self.checked_rows,rejected_rows: self.rejected_rows,
+        cancelled_http: self.cancelled_http,
+        control_polls_while_checking: self.control_polls_while_checking,
+        backpressured_polls: self.backpressured_polls,
+        checked_source_returns: self.source_returns,checked_source_resumes: self.source_resumes,
+        uca_state_capture: record! {
+            batches: self.uca_capture.batches,
+            declared_keys: self.uca_capture.declaration_keys,
+            unique_keys: self.uca_capture.unique_keys,
+            io_requests: self.uca_capture.io_requests,
+            seed_nodes: self.uca_capture.seed_nodes,
+            poll_turns: self.uca_capture.poll_turns,
+            local_steps: self.uca_capture.local_steps,
+            io_nodes: self.uca_capture.io_nodes,
+            parent_restarts: self.uca_capture.parent_restarts,
+            elapsed_us: self.uca_capture.elapsed_us,
+            max_elapsed_us: self.uca_capture.max_elapsed_us,
+            timing_enabled: crate::native_pipeline::profile::enabled(),
+            scope: "completed, failed or parent-restarted capture attempts; active attempt excluded; clock only with PROFILE_STAGES; not authorization consumption or disk-operation count"
+        },
+        scope: "local signature checks, not unique transactions or finality"}
+    }
+
+    #[cfg(test)]
     pub(super) fn status(&self) -> Value {
-        json!({"owner":"same_resident_aoem_compute_session",
-            "http_waiting":self.http.len(),"signature_batch_pending":self.work.is_some(),
-            "uca_authority_pending":self.uca.is_some(),
-            "application_authority_pending":self.work.as_ref().is_some_and(|work| matches!(work.phase, Phase::Application(_))),
-            "signature_completed_waiting_for_authority":self.work.as_ref().is_some_and(|work| matches!(work.phase, Phase::Completed(_))),
-            "next_signature_submitted_while_capture":self.next_signature_submitted_while_capture,
-            "signature_completed_while_capture":self.signature_completed_while_capture,
-            "max_retained_stage_slots":self.max_retained_stage_slots,
-            "submitted_batches":self.submitted_batches,"completed_batches":self.completed_batches,
-            "checked_rows":self.checked_rows,"rejected_rows":self.rejected_rows,
-            "cancelled_http":self.cancelled_http,
-            "control_polls_while_checking":self.control_polls_while_checking,
-            "backpressured_polls":self.backpressured_polls,
-            "checked_source_returns":self.source_returns,"checked_source_resumes":self.source_resumes,
-            "uca_state_capture":{
-                "batches":self.uca_capture.batches,
-                "declared_keys":self.uca_capture.declaration_keys,
-                "unique_keys":self.uca_capture.unique_keys,
-                "io_requests":self.uca_capture.io_requests,
-                "seed_nodes":self.uca_capture.seed_nodes,
-                "poll_turns":self.uca_capture.poll_turns,
-                "local_steps":self.uca_capture.local_steps,
-                "io_nodes":self.uca_capture.io_nodes,
-                "parent_restarts":self.uca_capture.parent_restarts,
-                "elapsed_us":self.uca_capture.elapsed_us,
-                "max_elapsed_us":self.uca_capture.max_elapsed_us,
-                "timing_enabled":crate::native_pipeline::profile::enabled(),
-                "scope":"completed, failed or parent-restarted capture attempts; active attempt excluded; clock only with PROFILE_STAGES; not authorization consumption or disk-operation count"
-            },
-            "scope":"local signature checks, not unique transactions or finality"})
+        serde_json::to_value(self.status_snapshot())
+            .expect("admission status consists of JSON fields")
     }
 }
 

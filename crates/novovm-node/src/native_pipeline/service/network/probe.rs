@@ -171,8 +171,11 @@ impl Control {
             }
         }
     }
-    pub(super) fn observation(&self) -> serde_json::Value {
-        serde_json::json!({"enabled":true,"accepted_commands":self.accepted,"rejected_commands":self.rejected,"last":self.last,"release_pending":self.release.is_some(),"scope":"local commands; never business or transport completion"})
+    pub(super) fn report_snapshot(&self) -> impl Serialize + Send + use<> {
+        use crate::native_pipeline::report::record;
+        record! { enabled: true, accepted_commands: self.accepted, rejected_commands: self.rejected,
+        last: self.last.clone(), release_pending: self.release.is_some(),
+        scope: "local commands; never business or transport completion" }
     }
 }
 

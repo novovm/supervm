@@ -739,7 +739,7 @@ fn native_only_genesis_transactions_queries_and_cold_recovery() -> Result<()> {
         fs::write(path, serde_json::to_vec_pretty(&config)?)?;
     }
     for i in 0..4 {
-        nodes.start(i, "create")?;
+        nodes.start_with_progress(i, "create", (i == 0).then_some(100))?;
     }
     let mut clients = (0..4)
         .map(|i| connect(&nodes, i, set.clone()))
@@ -764,6 +764,39 @@ fn native_only_genesis_transactions_queries_and_cold_recovery() -> Result<()> {
     );
     let initial = ready(&mut nodes, &mut clients)?;
     ensure!(initial.iter().all(|s| s.height == 0), "not fresh genesis");
+    let progress = nodes.directory.join("create-0.progress.json");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut first_tick = None;
+    loop {
+        if let Ok(Some(report)) =
+            fs::read(&progress).map(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        {
+            let tick = report["ticks"]
+                .as_u64()
+                .context("progress ticks must be numeric")?;
+            ensure!(
+                report["entry"] == "original_native_execution_tick"
+                    && report["archive_work"]["reads_started"].is_u64()
+                    && report["archive_work"]["verified_material_reused"].is_u64()
+                    && report["archive_work"]["scope"].is_string(),
+                "progress report JSON contract differs"
+            );
+            if first_tick.is_some_and(|first| tick > first) {
+                break;
+            }
+            first_tick.get_or_insert(tick);
+        }
+        nodes.alive()?;
+        ensure!(
+            Instant::now() < deadline,
+            "original progress file did not advance"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    ensure!(
+        status(&mut clients[0])?.height == 0,
+        "authenticated Status unavailable during reports"
+    );
     balances(&mut clients, &[], [0, 0])?;
     ensure!(
         matches!(

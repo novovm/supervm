@@ -562,13 +562,20 @@ impl NativeLifecycle {
         }
     }
     pub fn network_probe_observation(&self) -> Option<serde_json::Value> {
+        self.network_probe_snapshot().map(|snapshot| {
+            serde_json::to_value(snapshot).expect("network probe consists of JSON fields")
+        })
+    }
+
+    pub fn network_probe_snapshot(&self) -> Option<impl serde::Serialize + Send + use<>> {
+        use crate::native_pipeline::report::record;
         let state = self.probe.as_ref()?;
-        Some(
-            serde_json::json!({"enabled":true,"scope":"diagnostic only; original Object DONE is bounded custody, never business acceptance or finality",
-            "max_active":1,"max_events":HISTORY,"evicted_events":state.evicted,
-            "events":state.observations,"transport":self.channel.probe_observation(),
-            "protocol_time":self.network_time_observation()}),
-        )
+        Some(record! {
+            enabled: true, scope: "diagnostic only; original Object DONE is bounded custody, never business acceptance or finality",
+            max_active: 1, max_events: HISTORY, evicted_events: state.evicted,
+            events: state.observations.clone(), transport: self.channel.probe_observation(),
+            protocol_time: self.network_time_snapshot(),
+        })
     }
 }
 

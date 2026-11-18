@@ -42523,6 +42523,8 @@ fn run_native_execution_tick_node_mode_v1(
         "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
         5_000,
     )?;
+    use novovm_node::native_pipeline::progress_report::{ProgressReporter, ProgressSnapshot};
+    let progress_reporter = configured_product.then(ProgressReporter::new).transpose()?;
     let novorudp_expected_raw = novorudp_child_expected_total_raw_env_v1();
     let novorudp_expected_tx_count = u64_env_alias_allow_zero(
         &[
@@ -42610,15 +42612,20 @@ fn run_native_execution_tick_node_mode_v1(
         // product.poll must not publish a status without its NOVONET snapshot.
         let progress_report_due =
             last_progress_report_at.elapsed() >= Duration::from_millis(progress_report_interval_ms);
+        let report = progress_reporter.as_ref().filter(|writer| {
+            progress_report_due && (verbose || progress_report_path.is_some()) && writer.available()
+        });
         #[cfg(feature = "iroh-transport")]
-        let novonet_observation = if progress_report_due {
+        let novonet_observation = if report.is_some() {
             udp_drive
                 .as_ref()
                 .and_then(|drive| drive.novonet.as_ref())
-                .map(|network| network.observation())
+                .map(|network| network.report_snapshot())
         } else {
             None
         };
+        #[cfg(not(feature = "iroh-transport"))]
+        let novonet_observation: Option<()> = None;
         if let Some(product) = udp_drive.as_mut().and_then(|drive| drive.product.as_mut()) {
             // This is the original tick's receive owner. Reuse the reviewed
             // admission/projection and protocol drivers; do NOT call the old
@@ -42631,39 +42638,14 @@ fn run_native_execution_tick_node_mode_v1(
             }
             ticks = ticks.saturating_add(1);
             if progress_report_due {
-                use novovm_node::native_pipeline::service::rpc::{observe_tick, TickStage};
-                let mut status = observe_tick(TickStage::Status, || product.status());
-                #[cfg(feature = "iroh-transport")]
-                if let Some(observation) = novonet_observation {
-                    status["novonet"] = observation;
-                }
-                status["entry"] = serde_json::json!("original_native_execution_tick");
-                status["ticks"] = serde_json::json!(ticks);
-                if let Some(path) = &progress_report_path {
-                    let saved = (|| -> Result<()> {
-                        let encoded =
-                            observe_tick(TickStage::Encode, || serde_json::to_vec_pretty(&status))?;
-                        observe_tick(TickStage::Write, || -> Result<()> {
-                            if let Some(parent) =
-                                path.parent().filter(|p| !p.as_os_str().is_empty())
-                            {
-                                fs::create_dir_all(parent)?;
-                            }
-                            fs::write(path, encoded)?;
-                            Ok(())
-                        })?;
-                        Ok(())
-                    })();
-                    if let Err(error) = saved {
-                        let product = udp_drive.as_mut().unwrap().product.take().unwrap();
-                        let drain = product.node.shutdown();
-                        return Err(error.context(format!(
-                            "progress report failed; original tick drained: {drain:?}"
-                        )));
-                    }
-                }
-                if verbose {
-                    observe_tick(TickStage::Output, || println!("{}", status));
+                if let Some(writer) = report {
+                    use novovm_node::native_pipeline::service::rpc::{observe_tick, TickStage};
+                    let snapshot = observe_tick(TickStage::Status, || product.status_snapshot());
+                    writer.submit(
+                        ProgressSnapshot::new(snapshot, novonet_observation, ticks),
+                        progress_report_path.clone(),
+                        verbose,
+                    );
                 }
                 last_progress_report_at = Instant::now();
             }
@@ -42932,21 +42914,14 @@ fn run_native_execution_tick_node_mode_v1(
     #[cfg(not(feature = "iroh-transport"))]
     let network_drain: Result<Option<()>> = Ok(None);
     if let Some(product) = udp_drive.as_mut().and_then(|drive| drive.product.take()) {
-        let mut status = product.status();
-        status["entry"] = serde_json::json!("original_native_execution_tick");
-        status["ticks"] = serde_json::json!(ticks);
+        let status = ProgressSnapshot::new(product.status_snapshot(), None::<()>, ticks);
         let drain = product.node.shutdown();
-        if let Some(path) =
-            string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH")
-        {
-            let path = PathBuf::from(path);
-            if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                fs::create_dir_all(parent)?;
-            }
-            fs::write(path, serde_json::to_vec_pretty(&status)?)?;
-        }
-        println!("{}", status);
-        return network_drain.and(drain);
+        let path = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_PIPELINE_SUMMARY_REPORT_PATH")
+            .map(PathBuf::from);
+        let summary = progress_reporter
+            .expect("configured product has a reporter")
+            .finish(status, path);
+        return network_drain.and(drain).and(summary);
     }
 
     let mut summary = aggregate.to_json();

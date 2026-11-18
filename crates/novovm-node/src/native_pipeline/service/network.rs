@@ -225,13 +225,23 @@ impl NetworkFailures {
         }
         details.last = Some(detail);
     }
+    #[cfg(test)]
     fn observation(&self) -> serde_json::Value {
-        match self.details.try_lock() {
-            Ok(details) => serde_json::json!({"available":true,"first":details.first,
-                "last":details.last,"omitted":self.omitted.load(Ordering::Relaxed)}),
-            Err(_) => serde_json::json!({"available":false,
-                "omitted":self.omitted.load(Ordering::Relaxed)}),
-        }
+        serde_json::to_value(self.report_snapshot()).unwrap()
+    }
+    fn report_snapshot(&self) -> impl Serialize + Send + use<> {
+        let details = self
+            .details
+            .try_lock()
+            .ok()
+            .map(|d| (d.first.clone(), d.last.clone()));
+        let omitted = self.omitted.load(Ordering::Relaxed);
+        crate::native_pipeline::report::Deferred(move || match &details {
+            Some((first, last)) => {
+                serde_json::json!({"available":true,"first":first,"last":last,"omitted":omitted})
+            }
+            None => serde_json::json!({"available":false,"omitted":omitted}),
+        })
     }
 }
 
@@ -444,11 +454,16 @@ impl Driver {
         self.finished = finished;
         result
     }
+    #[cfg(test)]
     pub fn observation(&self) -> serde_json::Value {
+        serde_json::to_value(self.report_snapshot()).unwrap()
+    }
+    pub fn report_snapshot(&self) -> impl Serialize + Send + use<> {
+        use crate::native_pipeline::report::record;
         let resources = self.resources.snapshot();
         let bound = self
             .views
-            .lock()
+            .try_lock()
             .map(|views| {
                 if self.closed || self.finished {
                     0
@@ -457,17 +472,20 @@ impl Driver {
                 }
             })
             .ok();
-        serde_json::json!({"default":"native_novorudp","fallback":"iroh","installed_bound_peer_routes":bound,
-            "carrier_resources": {"connection_ceiling":CARRIER_CONNECTION_CEILING,
-                "effective_connection_limit":resources.connection_limit.min(CARRIER_CONNECTION_CEILING),
-                "admission_rejections":resources.connection_admission_rejections},
-            "probe_control":self.probe_control.as_ref().map(|control| control.observation()),
-            "diagnostic_relay":self.diagnostic.try_lock().ok().map(|s|s.observation()),
-            "peer_discovery_rpc":self.config.discovery,
-            "connection_failures":self.failures.count.load(Ordering::Relaxed),
-            "failure_details":self.failures.observation(),
-            "carrier_observation":self.failures.carrier.report(),
-            "global_auto_discovery":false,"native_multihop_accepted":false})
+        record! { default: "native_novorudp", fallback: "iroh", installed_bound_peer_routes: bound,
+            carrier_resources: record! {
+                connection_ceiling: CARRIER_CONNECTION_CEILING,
+                effective_connection_limit: resources.connection_limit.min(CARRIER_CONNECTION_CEILING),
+                admission_rejections: resources.connection_admission_rejections,
+            },
+            probe_control: self.probe_control.as_ref().map(|control| control.report_snapshot()),
+            diagnostic_relay: self.diagnostic.try_lock().ok().map(|s| s.report_snapshot()),
+            peer_discovery_rpc: self.config.discovery,
+            connection_failures: self.failures.count.load(Ordering::Relaxed),
+            failure_details: self.failures.report_snapshot(),
+            carrier_observation: self.failures.carrier.report_snapshot(),
+            global_auto_discovery: false, native_multihop_accepted: false,
+        }
     }
     pub fn close(&mut self) -> Result<()> {
         if self.closed || self.finished || !self.activated {

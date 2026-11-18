@@ -1,6 +1,46 @@
 # B original relay automatic recovery
 
-## Current — repeated C stall localized to status JSON construction
+## Current — isolated the original tick's progress writer; no deployment
+
+The original tick now captures owned, diagnostic-only status fields. The
+hot `archive_work` object is serialized from typed fields instead of being
+built through a mutable ordered JSON map. The original same-tick status
+and NOVONET observations stay in the same snapshot; contended diagnostic
+locks are not waited on. The separate writer owns JSON encoding, file
+output and verbose stdout only. Periodic snapshots cannot queue behind a
+busy writer; skipped reports do not imply node failure. Formatting and
+I/O errors are reported without shutting down the live tick. Shutdown
+drains the original owners first, then allows a bounded final report.
+An indefinitely stuck writer can still leave the diagnostic file stale
+but cannot make the live tick wait for it or grow its queue.
+
+No change to signed/canonical formats, native Status wire replies,
+transport policy, budgets, AOEM, database or custody. No dependency or
+lockfile change. This removes the demonstrated blocking relationship;
+it does not establish the origin of the old table state or the prior AV.
+
+Local Windows and Linux release checks: strict Clippy on the original
+node library/binary, two report-writer regressions per platform (blocked
+serializer; format and write failure), four existing relay component
+regressions per platform, and the original four-process diagnostic tick,
+authenticated Status and existing-database cold recovery test per platform.
+The process test checks advancing progress and unchanged archive fields
+before and after real authenticated Status; it is not a four-host run.
+Linux initial launcher attempts (incorrect WSL argument transport) did not
+execute the product test; the subsequent corrected invocation passed.
+
+Root/runtime cargo audit and deny passed with the unchanged policy.
+Runtime deny's online fetch failed twice (TLS handshake); its offline scan
+used the exact same fresh advisory commit
+`233155b4025b854c68a4b199c0e32d7fd53291a2` fetched by cargo audit, with
+advisories, bans, licenses and sources all checked. Existing allowed
+warnings were not suppressed.
+
+The fixed source requires its own Full CI run and package qualification.
+Do not update C, arm a new real-host observer, trigger B recovery or send
+an object based on these local results alone.
+
+## Historical repeated C stall localized to status JSON construction
 
 C receipt `0e1c473e` confirms the same live PID 22324 stopped publishing at
 09:39:26 BJT (`ticks=1134583`); observer 24620 exited 1 with

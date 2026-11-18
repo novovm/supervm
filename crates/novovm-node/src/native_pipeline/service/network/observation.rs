@@ -35,12 +35,17 @@ impl CarrierObservations {
             "elapsed_ms":event.elapsed_ms})
         });
     }
+    #[cfg(test)]
     pub(super) fn report(&self) -> serde_json::Value {
-        let events = self.events.try_lock().ok();
-        serde_json::json!({"enabled":self.enabled.load(Ordering::Relaxed),
-            "available":events.is_some(), "events":events.as_deref(),
-            "omitted":self.omitted.load(Ordering::Relaxed),
-            "attempt_scope":"process_local_per_direction_not_wire_id"})
+        serde_json::to_value(self.report_snapshot()).unwrap()
+    }
+    pub(super) fn report_snapshot(&self) -> impl Serialize + Send + use<> {
+        use crate::native_pipeline::report::record;
+        let events = self.events.try_lock().ok().map(|events| events.clone());
+        record! { enabled: self.enabled.load(Ordering::Relaxed),
+        available: events.is_some(), events: events,
+        omitted: self.omitted.load(Ordering::Relaxed),
+        attempt_scope: "process_local_per_direction_not_wire_id" }
     }
     pub(super) fn start<'a>(
         &'a self,

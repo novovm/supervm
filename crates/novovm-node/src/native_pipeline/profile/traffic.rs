@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeMap};
 
-#[derive(Default, Serialize)]
+#[derive(Clone, Default, Serialize)]
 struct Totals {
     attempts: u64,
     object_bytes: u64,
@@ -61,12 +61,15 @@ pub(crate) fn completed(
         }
     });
 }
-pub(crate) fn snapshot() -> Value {
+pub(crate) fn report_snapshot() -> impl serde::Serialize + Send {
+    use crate::native_pipeline::report::record;
     LEDGER.with(|l| {
         let l = l.borrow();
-        json!({"scope":"terminal attempts only; pending jobs excluded; writes are not peer delivery; payload equality is not proof a reply was unnecessary",
-            "purpose_bits":{"realtime":1,"archive":2},
-            "wire_columns":["initial_packets","initial_bytes","repair_packets","repair_bytes","probe_packets","probe_bytes"],
-            "totals":l.totals,"bodies":l.bodies,"omitted_bodies":l.omitted_bodies})
+        record! {
+            scope: "terminal attempts only; pending jobs excluded; writes are not peer delivery; payload equality is not proof a reply was unnecessary",
+            purpose_bits: record! { realtime: 1, archive: 2 },
+            wire_columns: ["initial_packets","initial_bytes","repair_packets","repair_bytes","probe_packets","probe_bytes"],
+            totals: l.totals.clone(), bodies: l.bodies.clone(), omitted_bodies: l.omitted_bodies,
+        }
     })
 }

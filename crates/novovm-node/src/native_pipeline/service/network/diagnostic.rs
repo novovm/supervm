@@ -59,12 +59,15 @@ impl State {
     pub fn enabled(&self) -> bool {
         self.identities.is_some()
     }
-    pub fn observation(&self) -> serde_json::Value {
-        serde_json::json!({"enabled":self.enabled(), "active":self.busy,"verified_locator_count":self.verified_locators,
-            "reservation":self.request.as_ref().map(|r| serde_json::json!({
-                "nonce":r.probe.nonce,"via":r.via.first(),"relays":r.via,"recipient":r.probe.recipient,
-                "started":r.started,"ready":r.ready,"send_requested":r.sent,
-                "cancelled":r.cancelled})),"events":self.events,"evicted":self.evicted})
+    pub fn report_snapshot(&self) -> impl Serialize + Send + use<> {
+        use crate::native_pipeline::report::record;
+        record! { enabled: self.enabled(), active: self.busy, verified_locator_count: self.verified_locators,
+            reservation: self.request.as_ref().map(|r| record! {
+                nonce: r.probe.nonce, via: r.via.first().copied(), relays: r.via.clone(), recipient: r.probe.recipient,
+                started: r.started, ready: r.ready, send_requested: r.sent, cancelled: r.cancelled,
+            }),
+            events: self.events.clone(), evicted: self.evicted,
+        }
     }
     pub fn command(&mut self, command: ProbeCommand, wall: u64, now: Instant) -> Result<Hash> {
         let (probe, via) = match &command {

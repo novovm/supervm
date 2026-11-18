@@ -1902,7 +1902,7 @@ pub fn snapshot_network_runtime_receiver_queue_v1(
 ) -> Option<NetworkRuntimeReceiverQueueV1> {
     let guard = NETWORK_RUNTIME_RECEIVER_DECODE_ATTRIBUTION
         .get()?
-        .lock()
+        .try_lock()
         .ok()?;
     let state = guard.get(&chain_id)?;
     Some(NetworkRuntimeReceiverQueueV1 {

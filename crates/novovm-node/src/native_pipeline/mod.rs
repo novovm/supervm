@@ -12,6 +12,8 @@ pub mod ingress;
 pub mod persistence;
 pub mod pipeline;
 pub(crate) mod profile;
+pub mod progress_report;
 pub mod proof;
+pub(crate) mod report;
 pub mod service;
 pub mod state;

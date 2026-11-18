@@ -31,6 +31,15 @@ struct ProductNodes {
 
 impl ProductNodes {
     fn start(&mut self, index: usize, mode: &str) -> Result<()> {
+        self.start_with_progress(index, mode, None)
+    }
+
+    fn start_with_progress(
+        &mut self,
+        index: usize,
+        mode: &str,
+        interval_ms: Option<u64>,
+    ) -> Result<()> {
         ensure!(self.processes[index].is_none(), "test node already running");
         let config: Value = serde_json::from_slice(&fs::read(&self.configs[index])?)?;
         // Independent restarts must not overwrite the interrupted recovery's
@@ -74,10 +83,18 @@ impl ProductNodes {
                 .env("NOVOVM_NATIVE_EXECUTION_TICK_MAX_TICKS", "0")
                 .env("NOVOVM_NATIVE_PIPELINE_TRANSPORT", "novorudp")
                 .env("NOVOVM_NATIVE_EXECUTION_PIPELINE_UDP_ENABLED", "1");
-            if std::env::var("NOVOVM_NATIVE_LOAD_DIAGNOSTICS").as_deref() == Ok("1") {
+            if interval_ms.is_some()
+                || std::env::var("NOVOVM_NATIVE_LOAD_DIAGNOSTICS").as_deref() == Ok("1")
+            {
                 command.env(
                     "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_PATH",
                     self.directory.join(format!("{mode}-{index}.progress.json")),
+                );
+            }
+            if let Some(interval_ms) = interval_ms {
+                command.env(
+                    "NOVOVM_NATIVE_EXECUTION_PIPELINE_PROGRESS_REPORT_INTERVAL_MS",
+                    interval_ms.to_string(),
                 );
             }
         } else {

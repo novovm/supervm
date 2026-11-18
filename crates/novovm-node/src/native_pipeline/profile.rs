@@ -61,6 +61,7 @@ struct CriticalRecord {
     fragment: Option<[u8; 32]>,
 }
 
+#[derive(Clone)]
 struct CriticalBuffer {
     records: VecDeque<CriticalRecord>,
     dropped: u64,
@@ -533,32 +534,65 @@ impl Drop for Span {
         }
     }
 }
-pub(crate) fn snapshot() -> Value {
-    let phases: serde_json::Map<String, Value> = if enabled() {
+pub(crate) fn report_snapshot() -> impl serde::Serialize + Send {
+    let enabled = enabled();
+    let critical_enabled = critical_enabled();
+    let delivery_enabled = delivery_enabled();
+    let asset_enabled = asset_enabled();
+    let phases = if enabled {
         NAMES
             .iter()
             .zip(&COUNTERS)
             .map(|(name, c)| {
                 (
-                    (*name).to_owned(),
-                    json!({
-                        "calls": c.calls.load(Ordering::Relaxed),
-                        "wall_ns": c.ns.load(Ordering::Relaxed),
-                        "max_wall_ns": c.max_ns.load(Ordering::Relaxed),
-                    }),
+                    *name,
+                    c.calls.load(Ordering::Relaxed),
+                    c.ns.load(Ordering::Relaxed),
+                    c.max_ns.load(Ordering::Relaxed),
                 )
             })
-            .collect()
+            .collect::<Vec<_>>()
     } else {
-        Default::default()
+        Vec::new()
     };
-    let integer = if enabled() {
-        INTEGER.lock().ok().and_then(|v| v.clone())
+    let integer = if enabled {
+        INTEGER.try_lock().ok().and_then(|v| v.clone())
     } else {
         None
     };
-    let critical = if critical_enabled() {
-        CRITICAL.lock().ok().map(|buffer| {
+    let critical = if critical_enabled {
+        CRITICAL.try_lock().ok().map(|v| v.clone())
+    } else {
+        None
+    };
+    let delivery = if delivery_enabled {
+        DELIVERY.try_lock().ok().map(|v| v.clone())
+    } else {
+        None
+    };
+    let delivery_contended = DELIVERY_CONTENDED.load(Ordering::Relaxed);
+    let control = if enabled && critical_enabled {
+        CONTROL.try_lock().ok().map(|v| v.clone())
+    } else {
+        None
+    };
+    let asset = if asset_enabled {
+        ASSET.try_lock().ok().map(|v| v.clone())
+    } else {
+        None
+    };
+    crate::native_pipeline::report::Deferred(move || {
+        let phases: serde_json::Map<String, Value> = phases
+            .iter()
+            .map(|(name, calls, wall_ns, max_wall_ns)| {
+                (
+                    (*name).to_owned(),
+                    json!({"calls":calls,"wall_ns":wall_ns,"max_wall_ns":max_wall_ns}),
+                )
+            })
+            .collect();
+        let critical = if critical_enabled {
+            critical.as_ref().map(|buffer| {
             json!({
                 "enabled":true,
                 "process_id":std::process::id(),
@@ -578,14 +612,14 @@ pub(crate) fn snapshot() -> Value {
                     "fragment":hash(record.fragment),
                 })).collect::<Vec<_>>()
             })
-        }).unwrap_or_else(|| json!({"enabled":true,"capacity":CRITICAL_EVENTS,"unavailable":"lock poisoned"}))
-    } else {
-        json!({"enabled":false,"capacity":CRITICAL_EVENTS,"dropped":0,"events":[]})
-    };
-    let delivery = if delivery_enabled() {
-        DELIVERY.try_lock().ok().map(|buffer| json!({
+        }).unwrap_or_else(|| json!({"enabled":true,"capacity":CRITICAL_EVENTS,"unavailable":"lock unavailable"}))
+        } else {
+            json!({"enabled":false,"capacity":CRITICAL_EVENTS,"dropped":0,"events":[]})
+        };
+        let delivery = if delivery_enabled {
+            delivery.as_ref().map(|buffer| json!({
             "enabled":true, "capacity":CRITICAL_EVENTS, "evicted":buffer.dropped,
-            "contended_events":DELIVERY_CONTENDED.load(Ordering::Relaxed),
+            "contended_events":delivery_contended,
             "scope":"bounded latest local ownership/transport events; purpose bits 1=realtime 2=recovery; height 0=not carried; transport DONE is not finality",
             "events":buffer.records.iter().map(|record| json!({
                 "seq":record.seq, "elapsed_ns":record.elapsed_ns,
@@ -593,12 +627,12 @@ pub(crate) fn snapshot() -> Value {
                 "height":record.height, "purposes":record.round,
                 "peer":hash(record.value), "fragment":hash(record.body)
             })).collect::<Vec<_>>()
-        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
-    } else {
-        json!({"enabled":false,"capacity":CRITICAL_EVENTS,"events":[]})
-    };
-    let control = if enabled() && critical_enabled() {
-        CONTROL.lock().ok().map(|buffer| json!({
+        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock unavailable"}))
+        } else {
+            json!({"enabled":false,"capacity":CRITICAL_EVENTS,"events":[]})
+        };
+        let control = if enabled && critical_enabled {
+            control.as_ref().map(|buffer| json!({
             "enabled":true, "capacity":CRITICAL_EVENTS, "evicted":buffer.dropped,
             "scope":"latest synchronous work and IO intervals >=1ms; elapsed_ns is interval end; start=end-duration_ns; IO period includes IO, IO gap excludes previous IO; neither is CPU idle; fragment and body are distinct identifiers",
             "events":buffer.records.iter().map(|record| json!({
@@ -606,20 +640,21 @@ pub(crate) fn snapshot() -> Value {
                 "wall_unix_us":record.wall_unix_us,"event":record.event,"height":record.height,
                 "body":hash(record.body),"fragment":hash(record.fragment)
             })).collect::<Vec<_>>()
-        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
-    } else {
-        json!({"enabled":false,"events":[]})
-    };
-    let asset = if asset_enabled() {
-        ASSET.lock().ok().map(|buffer| json!({
+        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock unavailable"}))
+        } else {
+            json!({"enabled":false,"events":[]})
+        };
+        let asset = if asset_enabled {
+            asset.as_ref().map(|buffer| json!({
             "enabled":true,"capacity":ASSET_EVENTS,"evicted":buffer.1,
             "scope":"local source_ref is only the live Arc address, never global identity or authority; correlate its lifetime with scope/fragment/row; sampled row IDs have first byte zero; batch counts and ordered-ID digests cover full inputs; diagnostic metadata is not signature evidence",
             "events":buffer.0
-        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock poisoned"}))
-    } else {
-        json!({"enabled":false,"events":[]})
-    };
-    json!({"enabled":enabled(),"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control,"asset_ingress":asset})
+        })).unwrap_or_else(|| json!({"enabled":true,"unavailable":"lock unavailable"}))
+        } else {
+            json!({"enabled":false,"events":[]})
+        };
+        json!({"enabled":enabled,"scope":"process lifetime inclusive wall time; overlapping/nested phases; non-atomic snapshot; not CPU time or consensus evidence", "phases":phases,"integer_resource":integer,"critical_path":critical,"native_delivery":delivery,"control_work":control,"asset_ingress":asset})
+    })
 }
 
 #[cfg(test)]

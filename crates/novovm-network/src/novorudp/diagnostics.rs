@@ -122,7 +122,7 @@ struct StreamTraffic {
     // Data / Repair / ACK / other. No Host stream or business policy here.
     counts: [[PacketBytes; 4]; 14],
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct IoTraffic {
     streams: [Option<StreamTraffic>; 16],
     overflow: StreamTraffic,
@@ -265,20 +265,39 @@ fn io_sampling_is_bounded_nested_and_thread_local() {
     .unwrap();
 }
 pub fn native_io_cost_snapshot() -> Option<serde_json::Value> {
-    io_cost_enabled().then(|| IO_COSTS.with(|costs| {
+    native_io_cost_report_snapshot().map(|snapshot| {
+        serde_json::to_value(snapshot).expect("native IO report consists of JSON fields")
+    })
+}
+
+struct NativeIoCostReport<F>(F);
+
+impl<F: Fn() -> serde_json::Value> Serialize for NativeIoCostReport<F> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (self.0)().serialize(serializer)
+    }
+}
+
+pub fn native_io_cost_report_snapshot() -> Option<impl Serialize + Send> {
+    io_cost_enabled().then(|| {
+        let costs = IO_COSTS.with(|costs| *costs.borrow());
+        let traffic = IO_TRAFFIC.with(|traffic| traffic.borrow().clone());
         #[cfg(windows)]
-        let windows_batch = windows_batch::snapshot();
-        #[cfg(not(windows))]
-        let windows_batch = serde_json::Value::Null;
-        let costs = costs.borrow();
-        let phases: std::collections::BTreeMap<_, _> = IO_NAMES.iter().zip(costs.iter()).collect();
-        serde_json::json!({
-            "scope": "current poll thread; lifetime inclusive sampled wall time; nested phases are not additive; not CPU time",
-            "sample_every_calls": 61, "phases": phases,
-            "traffic": IO_TRAFFIC.with(|t| t.borrow().snapshot()),
-            "windows_batch_submit": windows_batch
+        let windows_batch = windows_batch::capture();
+        NativeIoCostReport(move || {
+            #[cfg(windows)]
+            let batch = windows_batch();
+            #[cfg(not(windows))]
+            let batch = serde_json::Value::Null;
+            let phases: std::collections::BTreeMap<_, _> = IO_NAMES.iter().zip(costs.iter()).collect();
+            serde_json::json!({
+                "scope": "current poll thread; lifetime inclusive sampled wall time; nested phases are not additive; not CPU time",
+                "sample_every_calls": 61, "phases": phases,
+                "traffic": traffic.snapshot(),
+                "windows_batch_submit": batch
+            })
         })
-    }))
+    })
 }
 
 #[derive(Clone, Copy, Debug, thiserror::Error)]

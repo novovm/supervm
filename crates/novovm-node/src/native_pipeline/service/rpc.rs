@@ -22,6 +22,7 @@ use crate::native_pipeline::ingress::wire::{decode_transfer_view_v3, TransferVie
 use crate::native_pipeline::persistence::io::IoTicket;
 use crate::native_pipeline::persistence::packet::{ReceiptProjection, ReceiptView};
 use crate::native_pipeline::pipeline::{AdmissionInput, AdmittedTransfer};
+use crate::native_pipeline::report::record;
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -419,6 +420,26 @@ struct GossipOffer {
 /// Derived query/admission projection only. Rebuilt from verified archive on
 /// restart; never saved as a second authoritative state/head. A full cache does
 /// not drop accepted input or manufacture finality.
+#[derive(serde::Serialize)]
+struct StatusSections<Base, Probe, Io, Traffic, Polls, Receives, Queue, Tail> {
+    #[serde(flatten)]
+    base: Base,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_network_probe: Option<Probe>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_io_costs: Option<Io>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_delivery_traffic: Option<Traffic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_send_polls: Option<Polls>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_receive_totals: Option<Receives>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_receiver_queue: Option<Queue>,
+    #[serde(flatten)]
+    tail: Tail,
+}
+
 pub struct RpcLifecycle {
     pub node: ResidentNode,
     batch_size: usize,
@@ -1419,6 +1440,10 @@ impl RpcLifecycle {
     }
 
     pub fn status(&self) -> Value {
+        serde_json::to_value(self.status_snapshot()).expect("status snapshots contain JSON fields")
+    }
+
+    pub fn status_snapshot(&self) -> impl serde::Serialize + Send + use<> {
         let core = &self.node.controller;
         let (strict_verified_rows, reused_rows) = self.node.pipeline.signature_counts();
         let backend = match self.node.pipeline.execution_backend() {
@@ -1429,76 +1454,76 @@ impl RpcLifecycle {
                 "aoem_integer_complete_effect_composition"
             }
         };
-        let mut status = json!({"profile":self.node.profile,"experimental":true,
-            "core":"novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
-            "transport":"native_novorudp_apfl","consensus":"novovm-consensus/round_bft/journal",
-            "chain_id":self.node.template.chain_id,"head":core.head(),
-            "current_height":core.context().height,"round":core.round(),
-            "scheduled_proposer":self.node.validators.leader(core.context().height,core.round()).ok().map(|h|hex(&h)),
-            "local_proposer":core.is_local_leader().ok(),"recovery_in_progress":core.is_recovering(),
-            "pending":self.pending.len(),"pending_bytes":self.pending_bytes,
-            "rpc_indexed_height":self.indexed_height,"projection_error":self.projection_error,
-            "warm_projection_blocks":self.warm_projection_blocks,
-            "archive_projection_blocks":self.archive_projection_blocks,
-            "executed_batches":core.executed(),"durable_decisions":core.head().map_or(0,|h|h.height),
-            "execution_failures":core.rejected_execution(),"execution_backend":backend,
-            "execution_integer_rows_total":core.integer_execution().0,
-            "execution_integer_plans_total":core.integer_execution().1,
-            "execution_apfl_view_transactions_total":core.apfl_execution_rows(),
-            "requested_bodies":core.requested_bodies,"served_bodies":core.served_bodies,
-            "native_pending_deliveries":core.pending_deliveries(),"native_rejected_messages":core.rejected_messages,
-            "native_expired_sends":core.expired_sends,
-            "successor_overlap_active":true,"business_proof_required":false,"business_proof_verified":false,
-            "mempool_gossip":true,"gossip_delivery":"bounded_native_custody_not_durable_admission",
-            "gossip_repair":self.gossip_repair.status(),"gossip_verified_inputs":self.gossip_verified,
-            "gossip_rejected_inputs":self.gossip_rejected,"authentication_cache_hits":self.authentication_cache_hits,
-            "rpc_authentication":self.admission.status(),"pending_survives_restart":false,
-            "receipt_query_scope":"recent 65536 entries or explicit verified archive height",
-            "historical_receipt_queries":self.history.len()});
-        status["pending_retained_payload_bytes"] =
-            json!(self.pending_retention.bytes - self.pending_retention.metadata_bytes);
-        status["pending_retained_authentication_bytes"] =
-            json!(self.pending_retention.metadata_bytes);
-        status["pending_retained_total_bytes"] = json!(self.pending_retention.bytes);
-        status["pending_retained_apfl_owners"] = json!(self.pending_retention.owners.len());
         let (asset_prepared_at_startup, asset_startup_us) = self.node.pipeline.signature_startup();
-        status["signature_work"] = json!({"strict_verified_rows":strict_verified_rows,
-            "reused_rows":reused_rows,"uca_batch_calls":self.node.pipeline.signature_batch_calls(),
-            "asset_prepared_at_startup":asset_prepared_at_startup,"asset_startup_us":asset_startup_us,
-            "scope":"local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"});
-        status["stage_profile"] = crate::native_pipeline::profile::snapshot();
-        if let Some(probe) = core.network_probe_observation() {
-            status["native_network_probe"] = probe;
-        }
-        if let Some(costs) = novovm_network::novorudp::diagnostics::native_io_cost_snapshot() {
-            status["native_io_costs"] = costs;
-            status["native_delivery_traffic"] =
-                crate::native_pipeline::profile::traffic::snapshot();
-        }
-        if crate::native_pipeline::profile::asset_enabled() {
-            status["native_send_polls"] = json!(core.send_poll_evidence());
-            status["native_receive_totals"] = json!(core.receive_totals());
-            status["native_receiver_queue"] =
-                json!(novovm_network::snapshot_network_runtime_receiver_queue_v1(
-                    self.node.template.chain_id
-                ));
-        }
-        status["archive_work"] = json!({
-            "reads_started":core.archive_reads_started,
-            "verified_material_reused":core.archive_cache_reused,
-            "scope":"original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"});
+        let costs = novovm_network::novorudp::diagnostics::native_io_cost_report_snapshot();
+        let assets = crate::native_pipeline::profile::asset_enabled();
         let [auth, started, before_parent, promoted, discarded] = core.successor_metrics();
-        status["successor"] = json!({"authentication_started":auth,"execution_started":started,
-            "completed_before_parent":before_parent,"promoted":promoted,"discarded":discarded,
-            "early_body_enqueued_peer_obligations":core.successor_body_enqueued,
-            "early_body_enqueued_bytes":core.successor_body_bytes,
-            "scope":"same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"});
-        status["asset_body_references"] = json!({
-            "received":core.body_references_received,
-            "exact_body_reused":core.body_references_reused,
-            "full_body_requests_enqueued":core.body_reference_full_requests,
-            "scope":"original body lane and pool; logical reuse/request counts, not finality or actual wire bytes"});
-        status
+        StatusSections {
+            base: record! {profile: self.node.profile.clone(),experimental: true,
+            core: "novovm-node/native_pipeline -> novovm-exec/resident -> AOEM",
+            transport: "native_novorudp_apfl",consensus: "novovm-consensus/round_bft/journal",
+            chain_id: self.node.template.chain_id,head: core.head(),
+            current_height: core.context().height,round: core.round(),
+            scheduled_proposer: self.node.validators.leader(core.context().height,core.round()).ok().map(|h|hex(&h)),
+            local_proposer: core.is_local_leader().ok(),recovery_in_progress: core.is_recovering(),
+            pending: self.pending.len(),pending_bytes: self.pending_bytes,
+            rpc_indexed_height: self.indexed_height,projection_error: self.projection_error.clone(),
+            warm_projection_blocks: self.warm_projection_blocks,
+            archive_projection_blocks: self.archive_projection_blocks,
+            executed_batches: core.executed(),durable_decisions: core.head().map_or(0,|h|h.height),
+            execution_failures: core.rejected_execution(),execution_backend: backend,
+            execution_integer_rows_total: core.integer_execution().0,
+            execution_integer_plans_total: core.integer_execution().1,
+            execution_apfl_view_transactions_total: core.apfl_execution_rows(),
+            requested_bodies: core.requested_bodies,served_bodies: core.served_bodies,
+            native_pending_deliveries: core.pending_deliveries(),native_rejected_messages: core.rejected_messages,
+            native_expired_sends: core.expired_sends,
+            successor_overlap_active: true,business_proof_required: false,business_proof_verified: false,
+            mempool_gossip: true,gossip_delivery: "bounded_native_custody_not_durable_admission",
+            gossip_repair: self.gossip_repair.status_snapshot(),gossip_verified_inputs: self.gossip_verified,
+            gossip_rejected_inputs: self.gossip_rejected,authentication_cache_hits: self.authentication_cache_hits,
+            rpc_authentication: self.admission.status_snapshot(),pending_survives_restart: false,
+            receipt_query_scope: "recent 65536 entries or explicit verified archive height",
+            historical_receipt_queries: self.history.len(),
+                pending_retained_payload_bytes: self.pending_retention.bytes - self.pending_retention.metadata_bytes,
+                pending_retained_authentication_bytes: self.pending_retention.metadata_bytes,
+                pending_retained_total_bytes: self.pending_retention.bytes,
+                pending_retained_apfl_owners: self.pending_retention.owners.len(),
+                signature_work: record! {strict_verified_rows: strict_verified_rows,
+            reused_rows: reused_rows,uca_batch_calls: self.node.pipeline.signature_batch_calls(),
+            asset_prepared_at_startup: asset_prepared_at_startup,asset_startup_us: asset_startup_us,
+            scope: "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"},
+                stage_profile: crate::native_pipeline::profile::report_snapshot(),
+            },
+            native_network_probe: core.network_probe_snapshot(),
+            native_delivery_traffic: costs
+                .as_ref()
+                .map(|_| crate::native_pipeline::profile::traffic::report_snapshot()),
+            native_io_costs: costs,
+            native_send_polls: assets.then(|| core.send_poll_evidence()),
+            native_receive_totals: assets.then(|| core.receive_totals()),
+            native_receiver_queue: assets.then(|| {
+                novovm_network::snapshot_network_runtime_receiver_queue_v1(
+                    self.node.template.chain_id,
+                )
+            }),
+            tail: record! {
+                archive_work: record! {
+            reads_started: core.archive_reads_started,
+            verified_material_reused: core.archive_cache_reused,
+            scope: "original archive read starts and same-context verified reply reuse; per-peer delivery remains independent, not wire completion"},
+                successor: record! {authentication_started: auth,execution_started: started,
+            completed_before_parent: before_parent,promoted: promoted,discarded: discarded,
+            early_body_enqueued_peer_obligations: core.successor_body_enqueued,
+            early_body_enqueued_bytes: core.successor_body_bytes,
+            scope: "same local-or-remote successor owner; early body counters are logical peer enqueue obligations/bytes, not wire delivery or retransmission"},
+                asset_body_references: record! {
+            received: core.body_references_received,
+            exact_body_reused: core.body_references_reused,
+            full_body_requests_enqueued: core.body_reference_full_requests,
+            scope: "original body lane and pool; logical reuse/request counts, not finality or actual wire bytes"},
+            },
+        }
     }
 
     pub fn handle(&mut self, request: Value) -> Value {
