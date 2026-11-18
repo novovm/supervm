@@ -1,6 +1,30 @@
 # B original relay automatic recovery
 
-## Current — C original owner is alive but progress is stalled
+## Current — C main thread waits on a CPU-active in-process thread
+
+C reports WCT main TID 21796 waiting for same-process TID 26884 in the
+unchanged node PID 19196. WCT covered 18 threads and reported no cycle.
+In ~5.67 s main CPU advanced 0 ms and process CPU 5141 ms. In a separate
+~3 s sample, TID 26884 advanced 2625 ms, matching the process increment.
+Both original UDP ports (41052/42052) still belong to PID 19196, and tick
+135019 / mtime `2026-11-18T00:20:17.280Z` remained frozen. Bound sockets
+do not establish current packet processing. This is not a proved deadlock,
+spin loop, crash, or AOEM/transport defect; the CPU-active function is
+still unidentified.
+
+C next: one ~5 s local CPU stack sample using existing WPR/WPA, if the
+original process/thread are unchanged and no competing recording exists.
+Return only sampled stacks/counts for PID 19196 / TID 26884, or module + RVA
+if symbols are missing. Keep the raw trace local; do not attach a debugger,
+upload memory, restart, or open a new relay observer. A independently
+verified fixed 5b node EXE and loaded-library identities against the staged
+package: CodeView PDB keys are `DC41A3E9-D467-434F-8C82-803EFE9D186F/1`
+(node) and `C70ED2BA-B219-43B8-86C4-1073C19A7D67/1` (AOEM).
+No match in the 38 locally enumerated A PDB candidates; don't substitute
+an older or newly rebuilt PDB. B's recovery test and object send are
+still unexecuted.
+
+## C live process and stalled progress samples
 
 C reports the same 5b node PID 19196 and creation time in both samples:
 19 threads, scheduler state `Running`, and unchanged progress
