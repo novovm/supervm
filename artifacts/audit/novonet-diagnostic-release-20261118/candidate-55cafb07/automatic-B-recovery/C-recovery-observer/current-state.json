@@ -1,17 +1,19 @@
 {
-  "utc": "2026-11-18T00:19:49.8166047Z",
+  "utc": "2026-11-18T00:20:32.6445485+00:00",
   "observer_pid": 28548,
-  "observer_created_utc": "2026-11-18T00:19:23.8601580Z",
+  "observer_created_utc": "2026-11-18T00:19:23.860158Z",
   "command_line": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File \"D:\\WEB3_AI\\SUPERVM\\target\\c-55-automatic-b-recovery-observer-20261118-01\\Launch.ps1\"",
   "node_pid": 19196,
-  "node_created_utc": "2026-11-18T00:18:51.7569400Z",
+  "node_created_utc": "2026-11-18T00:18:51.75694Z",
   "node_version": "5b656189",
-  "observer_running": true,
+  "observer_running": false,
   "node_restart_count_this_turn": 1,
   "previous_exit_preserved": true,
   "previous_dump_sha256": "bbbc061a2b9c9178fc2fddf2f13008f2f0f7f76f3a147da3a8a4f1c80cbaad65",
   "result_present": false,
-  "error_present": false,
-  "collector_exit_present": false,
-  "node_exit_present": false
+  "error_present": true,
+  "collector_exit_present": true,
+  "node_exit_present": false,
+  "snapshots": 0,
+  "collector_exit_code": 1
 }

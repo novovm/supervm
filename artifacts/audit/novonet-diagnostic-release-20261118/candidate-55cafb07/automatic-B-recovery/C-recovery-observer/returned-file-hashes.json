@@ -1,0 +1,27 @@
+[
+  {
+    "file": "liveness.json",
+    "bytes": 243,
+    "sha256": "8e8212c8dfb84432dfe5536b0929b1ca56e2116150c417f96c4fcd5379c4cb8f"
+  },
+  {
+    "file": "error.json",
+    "bytes": 112,
+    "sha256": "0f04222e3d93faa028084ac9dc19b912a73bb68b68ccaf76fa2e1abb111f0a56"
+  },
+  {
+    "file": "collector-exit.json",
+    "bytes": 83,
+    "sha256": "fd8f0c37c649014fba97323ed3f2dc0ad6c30a24a76002fbdc5af07cf453db27"
+  },
+  {
+    "file": "observer.stdout",
+    "bytes": 145,
+    "sha256": "bc755aeb2c818bcab9cf6cd4718c437b54885e30f44ed3586e8266e97245b83a"
+  },
+  {
+    "file": "observer.stderr",
+    "bytes": 27,
+    "sha256": "224ba7b6fedfef93478d4e703db8d86c88f8262cc6f4176542e61ab5d7f5f4d9"
+  }
+]
