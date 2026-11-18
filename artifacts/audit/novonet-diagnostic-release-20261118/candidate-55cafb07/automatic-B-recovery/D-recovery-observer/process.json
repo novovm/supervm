@@ -1,0 +1,7 @@
+{
+  "launcher_pid": 20232,
+  "created_utc": "2026-11-18T00:17:35.1963790Z",
+  "pid": 53576,
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\d-55-auto-B-recovery-observer-20261118\\observation",
+  "command": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -File \"D:\\WEB3_AI\\SUPERVM\\target\\d-55-auto-B-recovery-observer-20261118\\run-original.ps1\""
+}

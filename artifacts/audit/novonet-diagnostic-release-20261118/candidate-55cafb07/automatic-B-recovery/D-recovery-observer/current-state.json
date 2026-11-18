@@ -1,0 +1,15 @@
+{
+  "utc": "2026-11-18T00:18:07.1707453Z",
+  "observer_pid": 53576,
+  "observer_created_utc": "2026-11-18T00:17:35.196379Z",
+  "observer_running": true,
+  "node_pid": 34148,
+  "node_created_utc": "2026-11-17T16:17:16.6075800Z",
+  "liveness_utc": "2026-11-18T00:18:07.044441Z",
+  "result_present": false,
+  "error_present": false,
+  "collector_exit_present": false,
+  "launcher_error_present": false,
+  "invocation_error_present": false,
+  "node_mutated": false
+}
