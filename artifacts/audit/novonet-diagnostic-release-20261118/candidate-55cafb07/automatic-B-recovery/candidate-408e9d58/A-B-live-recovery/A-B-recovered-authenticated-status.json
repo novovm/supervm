@@ -1,0 +1,11 @@
+{
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "host": "B",
+  "height": 1,
+  "utc": "2026-11-18T13:30:42.5258597Z",
+  "business_receipt": false,
+  "status": "AUTHENTICATED_STATUS_PASS",
+  "source": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "object_sent": false,
+  "elapsed_ms": 69
+}

@@ -1,0 +1,15 @@
+{
+  "old_circuit": "3887375bbfd8ad0359d54cd84a4d8bb4",
+  "old_session": "8276f4da1f5e1fc9ba8d1d71a9b1f9bc",
+  "new_object": "9f5cfb4ffe1a8a3a0a16e289d04e0bea0389488fb15e075d979a68a939af260f",
+  "new_circuit": "2e2b74fce46b59cedf4e4dec25c72db2",
+  "new_session": "2139389cd441096ebb9e53ebe190d6bc",
+  "sender_DONE": true,
+  "original_circuit_lost": true,
+  "fresh_route_reauthenticated": true,
+  "process_downtime_ms": 5009.551,
+  "exit_to_health_observed_ms": 8399.785,
+  "manual_start_issued": false,
+  "C_D_evidence_pending": true,
+  "old_object_resent": false
+}
