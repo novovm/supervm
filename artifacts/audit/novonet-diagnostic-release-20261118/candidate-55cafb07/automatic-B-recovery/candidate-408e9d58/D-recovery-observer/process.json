@@ -1,0 +1,8 @@
+{
+  "pid": 24100,
+  "created_utc": "2026-11-18T13:27:56.0685200Z",
+  "node_pid": 34148,
+  "node_created_utc": "2026-11-17T16:17:16.6075800Z",
+  "command": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -File D:\\WEB3_AI\\SUPERVM\\target\\d-408e-handoff-observer-20261118.ps1 -Root D:\\WEB3_AI\\SUPERVM\\target\\d-408e-observer-20261118-r1",
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\d-408e-observer-20261118-r1\\observation"
+}

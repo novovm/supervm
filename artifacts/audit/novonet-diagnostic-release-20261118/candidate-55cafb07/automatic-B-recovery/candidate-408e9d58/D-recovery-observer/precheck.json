@@ -1,0 +1,19 @@
+{
+  "host": "D",
+  "utc": "2026-11-18T13:28:02.0962831Z",
+  "node_pid": 34148,
+  "node_created_utc": "2026-11-17T16:17:16.6075800Z",
+  "node_sha256": "4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038",
+  "previous_observer_pid": 53576,
+  "previous_observer_exit_code": 0,
+  "previous_observer_exit_utc": "2026-11-18T02:17:38.1102722Z",
+  "first_progress_utc": "2026-11-18T13:27:56.3043090Z",
+  "second_progress_utc": "2026-11-18T13:28:01.3199786Z",
+  "chain_id": 91129655606029,
+  "height": 1,
+  "execution_failures": 0,
+  "recovery_in_progress": false,
+  "watch_sha256": "cb1d5eba38d986dc916412e7605fa4e2abf5852df64dd33f5188bacf7205abe7",
+  "reader_sha256": "12f7ba022d4d5d8debabed8fa7e59ab8616bfc2e9f664953e7f38f04fa581125",
+  "read_only": true
+}
