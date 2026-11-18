@@ -1,0 +1,16 @@
+{
+  "source": "1281d8b838843de120431a23daea37cc8906b68d",
+  "lettre": "0.11.24",
+  "email_encoding": "0.4.3",
+  "cargo_audit_version": "0.22.2",
+  "cargo_deny_version": "0.20.2",
+  "local_audit_advisory_db_head_after_online_runs": "472a4c9a785030434f15d7da84964d60fbe789ab",
+  "policy_changed": false,
+  "checks": [
+    {"gate": "root-audit", "exit_code": 0, "log_sha256": "ca78f0422371ab25f359f0add077a2a7fbaae3239a95a0ea00a84e073c2bd154"},
+    {"gate": "runtime-audit-first-attempt", "exit_code": 1, "reason": "advisory database fetch failed", "log_sha256": "ce5285e19c6577b3fc45047f1bb80babbbdb2e158db44008cfdb0b4477920ee1"},
+    {"gate": "runtime-audit-online-retry", "exit_code": 0, "log_sha256": "92d3ff4e848d27b46edb0a58e5561bd9e45fe80270804e8397bb514fee4c7e64"},
+    {"gate": "root-deny", "exit_code": 0, "log_sha256": "37adddace0e1fdc338530ea8dfd2e9068f09fde87dc62828503739dbbd732769"},
+    {"gate": "runtime-deny", "exit_code": 0, "log_sha256": "8f12dbeab711b5c63f8ffa676fa69af4b949c208c09527e0707e2f4d33dbdbf6"}
+  ]
+}
