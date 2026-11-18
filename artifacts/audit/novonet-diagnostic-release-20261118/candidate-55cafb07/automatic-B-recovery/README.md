@@ -1,6 +1,29 @@
 # B original relay automatic recovery
 
-## Current — C observation ended before route setup; check the original node
+## Current — C original owner is alive but progress is stalled
+
+C reports the same 5b node PID 19196 and creation time in both samples:
+19 threads, scheduler state `Running`, and unchanged progress
+tick 135019 / mtime `2026-11-18T00:20:17.280Z` at
+`00:36:52.557Z` and `00:36:59.702Z`. No new exit event, result or
+PID-matching dump was found, and node stderr had zero bytes. No restart.
+The last progress mtime is 15.36 s before the observer's error.
+
+Source review at C's actual 5b656189: NOVONET stepping, the product poll
+that serves native Status, and synchronous progress status/encoding/file
+output all run on the same original tick thread. The stale report and A's
+earlier Status timeout are consistent with this tick not serving requests,
+but do not establish whether it is blocked in networking, a product stage,
+observation/output, or another operation. An independent network fault is
+not ruled out. Process liveness does not establish tick health.
+
+C next: record the original PID's visible wait chain, two main-thread
+CPU/wait-state samples, and whether its original UDP ports are still bound
+to that PID. No attach, restart, dump publication or new observer for this
+check. B/D remain untouched; the automatic restart trigger and object
+send are still unexecuted.
+
+## Earlier C/D observer and query correlation
 
 Pulled C `db2beb19` and D `a0bdd4e7`. Verified all five returned C file
 lengths and SHA256 digests. C observer PID 28548 exited 1 at 08:20:32 BJT
