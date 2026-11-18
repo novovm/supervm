@@ -1,0 +1,113 @@
+{
+  "pid": 22324,
+  "tid": 27572,
+  "total": 4415,
+  "withoutStack": 2,
+  "first": "2026-11-18T01:52:09.1823976Z",
+  "last": "2026-11-18T01:52:14.1815972Z",
+  "all_trace_stack_count": 4557,
+  "all_trace_first_stack": "2026-11-18T01:52:09.1823976Z",
+  "all_trace_last_stack": "2026-11-18T01:52:14.4058016Z",
+  "grouped_stack_samples": 4413,
+  "top_stacks": [
+    {
+      "count": 203,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a2f3 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 202,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a1e9 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 199,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a2e1 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 197,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a1f3 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 195,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a2c0 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 193,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a1e1 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 192,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a1d6 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 188,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a2c5 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 182,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a2e6 \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 182,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a30e \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 181,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a1ef \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    },
+    {
+      "count": 178,
+      "stack_leaf_first": "novovm-node.exe\u002B0xb7a1dc \u003C- novovm-node.exe\u002B0x82153f \u003C- novovm-node.exe\u002B0x16fac5 \u003C- novovm-node.exe\u002B0x8ae4c \u003C- novovm-node.exe\u002B0x19dd27 \u003C- novovm-node.exe\u002B0x196fb2 \u003C- novovm-node.exe\u002B0x1e6fc88 \u003C- kernel32.dll\u002B0x2dda7 \u003C- ntdll.dll\u002B0xc9c5c"
+    }
+  ],
+  "top_instruction_pointers": [
+    {
+      "count": 203,
+      "frame": "novovm-node.exe\u002B0xb7a2f3"
+    },
+    {
+      "count": 202,
+      "frame": "novovm-node.exe\u002B0xb7a1e9"
+    },
+    {
+      "count": 199,
+      "frame": "novovm-node.exe\u002B0xb7a2e1"
+    },
+    {
+      "count": 196,
+      "frame": "novovm-node.exe\u002B0xb7a1f3"
+    },
+    {
+      "count": 195,
+      "frame": "novovm-node.exe\u002B0xb7a2c0"
+    },
+    {
+      "count": 193,
+      "frame": "novovm-node.exe\u002B0xb7a1e1"
+    },
+    {
+      "count": 192,
+      "frame": "novovm-node.exe\u002B0xb7a1d6"
+    },
+    {
+      "count": 188,
+      "frame": "novovm-node.exe\u002B0xb7a2c5"
+    },
+    {
+      "count": 182,
+      "frame": "novovm-node.exe\u002B0xb7a2e6"
+    },
+    {
+      "count": 182,
+      "frame": "novovm-node.exe\u002B0xb7a30e"
+    },
+    {
+      "count": 181,
+      "frame": "novovm-node.exe\u002B0xb7a1ef"
+    },
+    {
+      "count": 179,
+      "frame": "novovm-node.exe\u002B0xb7a1dc"
+    }
+  ],
+  "distinct_stacks": 99
+}
