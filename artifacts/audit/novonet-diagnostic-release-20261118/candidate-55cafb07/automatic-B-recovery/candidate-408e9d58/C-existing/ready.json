@@ -1,0 +1,48 @@
+{
+  "state": "C_408E_EXISTING_READY_FOR_A_QUERY",
+  "utc": "2026-11-18T09:11:00.6142588Z",
+  "host_id": "C",
+  "source": "408e9d5810aac52fc4e3069d71810d9f164b02dc",
+  "pid": 19964,
+  "created_utc": "2026-11-18T08:49:45.8682014Z",
+  "account": "NT AUTHORITY\\LOCAL SERVICE",
+  "account_sid": "S-1-5-19",
+  "exe_sha256": "56919a303ba809b8fe123ac897f21d5d5096875b4fb0b62940333b2029a6f2fa",
+  "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "manifest_sha256": "bd07b8dc7a084128ceeb9da5673f8c3d2f9a81eeb33d9874c6cf82bbaadcefec",
+  "start": "existing",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common408e-C-20261118\\run.json",
+  "progress": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common408e-C-20261118\\progress.json",
+  "control": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
+  "chain_id": null,
+  "height_at_start": null,
+  "head_at_start": null,
+  "original_identity_preserved": true,
+  "udp_listeners": [
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 42052,
+      "OwningProcess": 19964
+    },
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 41052,
+      "OwningProcess": 19964
+    }
+  ],
+  "first_sample_utc": "2026-11-18T08:51:30.1608518Z",
+  "last_sample_utc": "2026-11-18T09:06:32.0740809Z",
+  "duration_seconds": 901.913,
+  "samples": 31,
+  "max_sample_interval_seconds": 30.0,
+  "first_ticks": 165875,
+  "last_ticks": 1609193,
+  "max_progress_age_seconds": 4.978,
+  "archive_work_types_ok": true,
+  "execution_failures": 0,
+  "result_file_present": false,
+  "automatic_restart": false,
+  "a_authenticated_query_passed": null,
+  "relay_observer_started": false
+}
