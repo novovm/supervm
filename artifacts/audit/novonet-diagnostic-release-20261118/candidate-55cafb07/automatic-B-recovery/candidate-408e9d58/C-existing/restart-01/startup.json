@@ -1,0 +1,42 @@
+{
+  "state": "C_408E_EXISTING_RESTARTED",
+  "utc": "2026-11-18T12:15:18.2863334Z",
+  "host_id": "C",
+  "source": "408e9d5810aac52fc4e3069d71810d9f164b02dc",
+  "pid": 25544,
+  "created_utc": "2026-11-18T12:15:07.4610184Z",
+  "account_sid": "S-1-5-19",
+  "task": "NOVOVM-408e-C-20261118",
+  "start": "existing",
+  "automatic_restart": false,
+  "exe": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-408e9d58-C-20261118\\bin\\novovm-node.exe",
+  "exe_sha256": "56919a303ba809b8fe123ac897f21d5d5096875b4fb0b62940333b2029a6f2fa",
+  "loaded_aoem": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-408e9d58-C-20261118\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "manifest_sha256": "bd07b8dc7a084128ceeb9da5673f8c3d2f9a81eeb33d9874c6cf82bbaadcefec",
+  "original_database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "original_identity_sha256": "610885e9dc34eaa2c979a95e55bebde247d8f40e23f071f727a7fbf0b4c50e4a",
+  "config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common408e-C-20261118\\run.json",
+  "progress": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common408e-C-20261118\\progress.json",
+  "control": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
+  "udp_listeners": [
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 42052,
+      "OwningProcess": 25544
+    },
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 41052,
+      "OwningProcess": 25544
+    }
+  ],
+  "chain_id": 91129655606029,
+  "height": 1,
+  "head": null,
+  "ticks": 20863,
+  "recovery_in_progress": false,
+  "execution_failures": 0,
+  "prior_pid": 19964,
+  "sustained_health": false
+}
