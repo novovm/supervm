@@ -35,7 +35,7 @@
   "last_sample_utc": "2026-11-18T09:06:32.0740809Z",
   "duration_seconds": 901.913,
   "samples": 31,
-  "max_sample_interval_seconds": 30.0,
+  "max_sample_interval_seconds": 30.237,
   "first_ticks": 165875,
   "last_ticks": 1609193,
   "max_progress_age_seconds": 4.978,
