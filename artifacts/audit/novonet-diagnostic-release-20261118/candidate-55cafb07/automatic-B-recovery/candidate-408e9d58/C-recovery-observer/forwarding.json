@@ -1,0 +1,184 @@
+{
+  "host": "C",
+  "observer_pid": 5264,
+  "observer_created_utc": "2026-11-18T12:30:58.6847636Z",
+  "node_pid": 25544,
+  "source": "408e9d5810aac52fc4e3069d71810d9f164b02dc",
+  "status": "C_SECOND_RELAY_FORWARDING_OBSERVED",
+  "route": "A -> B -> C -> D",
+  "target_circuit": "2e2b74fce46b59cedf4e4dec25c72db2",
+  "route_digest": "b3d04da668d6d933145b41ddaf48671605d355cd8eacda2a276a1ef9d4a26fc7",
+  "old_empty_circuit": "3887375bbfd8ad0359d54cd84a4d8bb4",
+  "native_session_from_sender": "2139389cd441096ebb9e53ebe190d6bc",
+  "object_from_sender": "9f5cfb4ffe1a8a3a0a16e289d04e0bea0389488fb15e075d979a68a939af260f",
+  "target_native_session_at_c": null,
+  "raw_snapshot_count": 4,
+  "target_circuit_files": [
+    "relay-02.json",
+    "relay-03.json"
+  ],
+  "old_empty_circuit_files": [
+    "relay-00.json",
+    "relay-01.json",
+    "relay-02.json",
+    "relay-03.json"
+  ],
+  "local_circuit_observations": [
+    {
+      "file": "relay-00.json",
+      "utc": "2026-11-18T13:30:02.6287307Z",
+      "circuit": "3887375bbfd8ad0359d54cd84a4d8bb4",
+      "route_digest": "7a3293104ec0610d549159a374bfebe9f9f0f3c02ce1a755c54d61dddaee1a7b",
+      "role": "relay",
+      "cursor": 1,
+      "native_session": null,
+      "downstream_ready_us": 4491921321,
+      "forwarded": [
+        {
+          "packets": 8,
+          "bytes": 8592
+        },
+        {
+          "packets": 8,
+          "bytes": 8656
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": null
+    },
+    {
+      "file": "relay-01.json",
+      "utc": "2026-11-18T13:30:22.1497096Z",
+      "circuit": "3887375bbfd8ad0359d54cd84a4d8bb4",
+      "route_digest": "7a3293104ec0610d549159a374bfebe9f9f0f3c02ce1a755c54d61dddaee1a7b",
+      "role": "relay",
+      "cursor": 1,
+      "native_session": null,
+      "downstream_ready_us": 4491921321,
+      "forwarded": [
+        {
+          "packets": 8,
+          "bytes": 8592
+        },
+        {
+          "packets": 8,
+          "bytes": 8656
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": 4512016235
+    },
+    {
+      "file": "relay-02.json",
+      "utc": "2026-11-18T13:31:57.0927585Z",
+      "circuit": "3887375bbfd8ad0359d54cd84a4d8bb4",
+      "route_digest": "7a3293104ec0610d549159a374bfebe9f9f0f3c02ce1a755c54d61dddaee1a7b",
+      "role": "relay",
+      "cursor": 1,
+      "native_session": null,
+      "downstream_ready_us": 4491921321,
+      "forwarded": [
+        {
+          "packets": 8,
+          "bytes": 8592
+        },
+        {
+          "packets": 8,
+          "bytes": 8656
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": 4512016235
+    },
+    {
+      "file": "relay-02.json",
+      "utc": "2026-11-18T13:31:57.0927585Z",
+      "circuit": "2e2b74fce46b59cedf4e4dec25c72db2",
+      "route_digest": "b3d04da668d6d933145b41ddaf48671605d355cd8eacda2a276a1ef9d4a26fc7",
+      "role": "relay",
+      "cursor": 1,
+      "native_session": null,
+      "downstream_ready_us": 4603905713,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": null
+    },
+    {
+      "file": "relay-03.json",
+      "utc": "2026-11-18T13:32:02.5664168Z",
+      "circuit": "3887375bbfd8ad0359d54cd84a4d8bb4",
+      "route_digest": "7a3293104ec0610d549159a374bfebe9f9f0f3c02ce1a755c54d61dddaee1a7b",
+      "role": "relay",
+      "cursor": 1,
+      "native_session": null,
+      "downstream_ready_us": 4491921321,
+      "forwarded": [
+        {
+          "packets": 8,
+          "bytes": 8592
+        },
+        {
+          "packets": 8,
+          "bytes": 8656
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": 4512016235
+    },
+    {
+      "file": "relay-03.json",
+      "utc": "2026-11-18T13:32:02.5664168Z",
+      "circuit": "2e2b74fce46b59cedf4e4dec25c72db2",
+      "route_digest": "b3d04da668d6d933145b41ddaf48671605d355cd8eacda2a276a1ef9d4a26fc7",
+      "role": "relay",
+      "cursor": 1,
+      "native_session": null,
+      "downstream_ready_us": 4603905713,
+      "forwarded": [
+        {
+          "packets": 9,
+          "bytes": 9380
+        },
+        {
+          "packets": 9,
+          "bytes": 9044
+        }
+      ],
+      "failed_writes": [
+        0,
+        0
+      ],
+      "stream_dropped_us": 4608771500
+    }
+  ],
+  "terminal_observed": true,
+  "collector_exit_code": 0,
+  "observer_error_file_present": false,
+  "observer_stderr_bytes": 0,
+  "destination_acceptance_verifier": "D",
+  "destination_acceptance_asserted_by_c": false
+}
