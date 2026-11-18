@@ -1,6 +1,6 @@
 {
-  "status": "C_SSH_READY_FOR_A_LAN_VERIFICATION",
-  "utc": "2026-11-18T05:49:55.5159042+00:00",
+  "status": "C_SSH_SERVER_ACCEPTS_A_PUBLIC_KEY_OFFER",
+  "utc": "2026-11-18T06:32:49.8415773+00:00",
   "host_role": "C",
   "computer": "KING-LENOVO",
   "address": "192.168.71.125",
@@ -10,5 +10,7 @@
   "ed25519_host_fingerprint": "SHA256:/TMezn/XdqFoA4R/+eKe+GQGNiGVTfCwAC/koGDXK8Q",
   "sshd": "Running",
   "remote_login_verified": false,
-  "next_action_for_A": "Verify the ED25519 host fingerprint, then authenticate from the LAN using the corresponding key already held on A."
+  "next_action_for_A": "Retry with the exact matching private identity selected explicitly, IdentitiesOnly=yes, and verbose logging. Keep the private key local to A. Return only the offered fingerprint, key offer acceptance/signing status, and login result.",
+  "authorization_probe": "C sshd responded Server accepts key for leadb and the exact enrolled A public key in a local public-key-only probe. This probe had no private key and could not sign.",
+  "A_previous_attempt": "C OpenSSH Operational shows 192.168.71.74 reached preauth as leadb. The connection reset before completed authentication and no offered-key fingerprint was logged at INFO."
 }
