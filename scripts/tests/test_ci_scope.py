@@ -110,6 +110,23 @@ class ScopeTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, job):
                         ci.validate_results(missing)
 
+    def test_rocksdb_header_compatibility_is_linux_only_and_preserves_native_gate(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))
+        native = jobs["native_transport_qualification"]
+        flag = "CXXFLAGS_x86_64_unknown_linux_gnu=-include cstdint"
+        self.assertEqual(workflow.count(flag), 1)
+        self.assertIn("os: [ubuntu-latest, windows-latest]", native)
+        self.assertIn("if: needs.detect.outputs.full == 'true'", native)
+        step = native.split("- name: Supply cstdint for the bundled RocksDB Linux build", 1)[1]
+        compatibility, build = step.split("- name: Build the actual native authentication executable", 1)
+        self.assertIn("if: runner.os == 'Linux'", compatibility)
+        self.assertIn(f"run: echo '{flag}' >> \"$GITHUB_ENV\"", compatibility)
+        self.assertIn("cargo build -p novovm-node --bin novovm-product-nat --locked", build)
+        self.assertIn("cargo test -p novovmctl --test native_identity_cli --locked -- --include-ignored --test-threads=1 --nocapture", build)
+        self.assertIn("Actual original startup authority pins and durable cold reopen", build)
+        self.assertIn("Actual original relay service and custody owners", build)
+
     def test_current_native_recovery_keeps_real_process_gates_and_fail_closed_aggregation(self):
         workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         jobs = dict(re.findall(r"^  (\w+):\n(.*?)(?=^  \w+:\n|\Z)", workflow, re.M | re.S))

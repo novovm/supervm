@@ -927,6 +927,12 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.94.0 --profile minimal --component rustfmt --component clippy
       - uses: Swatinem/rust-cache@v2
+      # GCC 15 no longer supplies fixed-width integer types through incidental
+      # libstdc++ includes. Keep the pinned bundled RocksDB and test it on Linux.
+      - name: Supply cstdint for the bundled RocksDB Linux build
+        if: runner.os == 'Linux'
+        shell: bash
+        run: echo 'CXXFLAGS_x86_64_unknown_linux_gnu=-include cstdint' >> "$GITHUB_ENV"
       - name: Build the actual native authentication executable
         shell: pwsh
         run: |
