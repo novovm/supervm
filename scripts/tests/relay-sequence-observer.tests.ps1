@@ -88,6 +88,17 @@ foreach($field in @('Source','NodeSha256','WorkName')){
  try{. $bind}catch{$rejected=$true}finally{Set-Variable $field $savedValue}
  if(!$rejected){throw "Wrong $field accepted"};$checks++
 }
+$binding=$ast.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if($CommonProgressWriter)')},$true)
+if($null-eq $binding){throw 'Actual progress-writer binding missing'}
+$bind=[scriptblock]::Create($binding.Extent.Text)
+$CommonProgressWriter=$true;$Source='408e9d5810aac52fc4e3069d71810d9f164b02dc';$NodeSha256='56919a303ba809b8fe123ac897f21d5d5096875b4fb0b62940333b2029a6f2fa';$WorkName='novovm-common-408e9d58-20261118'
+$HostId='C';. $bind
+if($exe-cne 'C:\ProgramData\NOVOVM\releases\novovm-common-408e9d58-C-20261118\bin\novovm-node.exe' -or $file-cne 'C:\Windows\ServiceProfiles\LocalService\AppData\Local\NOVOVM-Common408e-C-20261118\progress.json'){throw 'Progress-writer C actual binding differs'};$checks++
+foreach($field in @('HostId','Source','NodeSha256','WorkName')){
+ $savedValue=Get-Variable $field -ValueOnly;Set-Variable $field 'wrong';$rejected=$false
+ try{. $bind}catch{$rejected=$true}finally{Set-Variable $field $savedValue}
+ if(!$rejected){throw "Wrong progress-writer $field accepted"};$checks++
+}
 $upgradeGuard=$coordinatorAst.Find({param($n) $n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if($upgrade.source')},$true)
 if($null-eq $upgradeGuard){throw 'Actual existing-upgrade continuation guard missing'}
 $checkUpgrade=[scriptblock]::Create($upgradeGuard.Extent.Text)

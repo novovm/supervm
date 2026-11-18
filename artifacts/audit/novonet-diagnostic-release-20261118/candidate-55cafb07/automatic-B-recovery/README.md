@@ -1,5 +1,9 @@
 # B original relay automatic recovery
 
+Current deployment handoff: [C-only 408e9d58 existing update](candidate-408e9d58/C-UPDATE.md).
+Full and Windows package qualification passed. B remains active and is not
+interrupted until C's live health has passed and both new observers are ready.
+
 ## Current — isolated the original tick's progress writer; no deployment
 
 The original tick now captures owned, diagnostic-only status fields. The
