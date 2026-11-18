@@ -1,6 +1,43 @@
 # B original relay automatic recovery
 
-## Current — arm C/D observers once
+## Current — pre-outage path blocked; preserve the same observers
+
+Pulled the C/D readiness receipts through `43b41baf`; C observer 28548 was
+bound to the recovered node PID 19196, D observer 53576 to node PID 34148.
+Original readiness validation passed on both. C's earlier exit and its
+separate `existing` restart remain recorded in the C directory.
+
+The 08:21 Beijing pre-outage empty route did not complete. B authenticated
+the incoming A hop, did not observe downstream ready, and closed the new
+circuits below without forwarding an object. A recorded
+`carrier stream IO failed: connection lost: closed by peer: scope finished (code 0)`.
+B showed no Carrier admission rejections at the readback. This localizes the
+block to downstream setup from B, but does not distinguish B→C from C→D.
+
+| B circuit | Authenticated to close | Downstream ready | Forwarded packets |
+| --- | ---: | --- | --- |
+| `87dd3954749e70c583b7322f826709fe` | 15005.223 ms | no | 0 / 0 |
+| `b2ebc0a61d9ef7c45d3ba1dd7363f722` | 15006.062 ms | no | 0 / 0 |
+
+Controller exit 1, before invoking the B trigger. B remained active at
+PID 3167799 with zero restarts; no B process gap, post-restart authentication,
+object send or DONE was measured. No rerun of the concurrency sample.
+
+C/D: keep the same observers. Return any existing raw snapshots and hashes,
+latest heartbeat and terminal file presence, including an explicit no-match
+if applicable. No new observer, node restart or send. A corroborates any C
+inbound and C→D setup observations against those two circuits before moving
+the B recovery attempt forward.
+
+A originals are locally preserved under
+`target/novonet-B-auto-55cafb07-live-20261118`:
+
+- `before-B-auto-exit-first-failure.json`: `fe9a7261845daae4904e83a6087c3c68b804af8740a8d2e30250628f337d48f8`
+- `B-preflight.json`: `ce14cab7d12e48dc45ac9dcf42ab2bdef79a1479945394e9cf98fdc9db534726`
+- `B-after-preflight-failure.json`: `504bdfe3ec80644d9c538401e178f3d4b3ec78b7515d0035105b29f1d872c9d0`
+- `B-carrier-owner-projection.json`: `b97db31633cf2f8e324eb0e50a8c89569267bc12a96900640785bc171aa1b9d5`
+
+## Observer handoff (executed)
 
 B's original 55cafb07 transient service had `Restart=no`. The current boot's
 targeted runtime drop-in is now loaded: `Restart=always`, `RestartSec=5s`,
