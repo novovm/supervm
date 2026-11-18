@@ -1,0 +1,4 @@
+
+thread 'novovm-progress-report' (8596) panicked at /rustc/4a4ef493e3a1488c6e321570238084b38948f6db/library\alloc\src\raw_vec\mod.rs:28:5:
+capacity overflow
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
