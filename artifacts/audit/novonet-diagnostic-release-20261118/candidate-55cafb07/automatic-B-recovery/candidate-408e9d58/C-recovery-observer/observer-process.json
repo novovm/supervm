@@ -1,0 +1,49 @@
+{
+  "state": "C_408E_RESTART_RECOVERY_OBSERVER_READY",
+  "utc": "2026-11-18T12:31:00.3712698Z",
+  "host_id": "C",
+  "source": "408e9d5810aac52fc4e3069d71810d9f164b02dc",
+  "node_pid": 25544,
+  "node_created_utc": "2026-11-18T12:15:07.4610184Z",
+  "node_account_sid": "S-1-5-19",
+  "observer_pid": 5264,
+  "observer_created_utc": "2026-11-18T12:30:58.6847636Z",
+  "observer_command": "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\" -NoProfile -NonInteractive -File \"D:\\WEB3_AI\\SUPERVM\\target\\c-408e-automatic-b-recovery-observer-20261118-01\\Launch.ps1\"",
+  "evidence_root": "D:\\WEB3_AI\\SUPERVM\\target\\c-408e-automatic-b-recovery-observer-20261118-01\\evidence",
+  "terminal_files": {
+    "result_json": false,
+    "error_json": false,
+    "collector_exit_json": false
+  },
+  "terminal_circuit_count": 2,
+  "maximum_wait_seconds": 7200,
+  "node_start": "existing",
+  "runtime_health": {
+    "passed": true,
+    "pid": 25544,
+    "created_utc": "2026-11-18T12:15:07.4610184Z",
+    "first_utc": "2026-11-18T12:15:52.5659195Z",
+    "last_utc": "2026-11-18T12:30:54.556866Z",
+    "duration_seconds": 901.991,
+    "max_sample_interval_seconds": 30.246,
+    "sample_count": 31,
+    "first_ticks": 66929,
+    "last_ticks": 1507381,
+    "progress_mtime_utc": "2026-11-18T12:30:53.191285Z",
+    "udp_listeners": [
+      {
+        "LocalAddress": "192.168.71.125",
+        "LocalPort": 42052,
+        "OwningProcess": 25544
+      },
+      {
+        "LocalAddress": "192.168.71.125",
+        "LocalPort": 41052,
+        "OwningProcess": 25544
+      }
+    ],
+    "result_present": false
+  },
+  "current_pid_authenticated_from_a": null,
+  "supersedes_blocked_pid": 19964
+}

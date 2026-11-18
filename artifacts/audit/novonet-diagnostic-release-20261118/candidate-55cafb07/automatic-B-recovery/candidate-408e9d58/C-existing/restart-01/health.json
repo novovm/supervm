@@ -1,0 +1,26 @@
+{
+  "passed": true,
+  "pid": 25544,
+  "created_utc": "2026-11-18T12:15:07.4610184Z",
+  "first_utc": "2026-11-18T12:15:52.5659195Z",
+  "last_utc": "2026-11-18T12:30:54.5568660Z",
+  "duration_seconds": 901.991,
+  "max_sample_interval_seconds": 30.246,
+  "sample_count": 31,
+  "first_ticks": 66929,
+  "last_ticks": 1507381,
+  "progress_mtime_utc": "2026-11-18T12:30:53.1912850Z",
+  "udp_listeners": [
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 42052,
+      "OwningProcess": 25544
+    },
+    {
+      "LocalAddress": "192.168.71.125",
+      "LocalPort": 41052,
+      "OwningProcess": 25544
+    }
+  ],
+  "result_present": false
+}

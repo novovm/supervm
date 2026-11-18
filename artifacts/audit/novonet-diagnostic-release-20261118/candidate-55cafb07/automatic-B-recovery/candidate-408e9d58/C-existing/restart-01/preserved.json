@@ -1,0 +1,17 @@
+{
+  "pid": 19964,
+  "dump_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\NOVOVM-Full-C-20261114T074716Z\\novovm-node.exe.19964.dmp",
+  "dump_backup": "D:\\WEB3_AI\\SUPERVM\\target\\c-common-408e9d58-20261118\\restart-01\\previous-19964\\novovm-node.exe.19964.dmp",
+  "dump_bytes": 246235449,
+  "dump_sha256": "1cd6a1ac2afee4b1e1e2d4a560035f64944cf7ceb59bda61c48224d84d1d827f",
+  "records_archive": "D:\\WEB3_AI\\SUPERVM\\target\\c-common-408e9d58-20261118\\restart-01\\previous-19964",
+  "original_work_archive": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common408e-C-20261118\\prior-19964",
+  "record_sha256": {
+    "started.json": "b4943cb90c0d8dc8af580219132eb2dbfe4dcfb3a7e7dc6724af1cd70d2384fd",
+    "loaded-runtime.json": "7bc76361ac294bb20fa3bfab33f8ba4830db0af3ece9b37d6ff7ef41f8327452",
+    "result.json": "75244ae73a37414ff82df5c955a4374beaff3469e4bc8a8cab6e5ebf13d00842",
+    "progress.json": "9a063820f0a05d1beefb9fbea84fa6259a3a8cd1a5bb84a31b89517ff3306306",
+    "node.stdout": "0982ff53dc0718d8acc2bed1d808a99d641eb46131af75f919279fefd29d29ff",
+    "node.stderr": "69570f810057c730465c083ed9cb6a84deb4a5748591e87e176475d3a6ec660f"
+  }
+}
