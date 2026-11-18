@@ -1,13 +1,12 @@
 #Requires -Version 7.0
 #Requires -RunAsAdministrator
 # One bounded real-host workload; only existing CLI, owner observations and B unit.
-param([Parameter(Mandatory)][string]$CReadyFile,[Parameter(Mandatory)][string]$DReadyFile,[Parameter(Mandatory)][string]$EvidenceRoot,[string]$ContinueRestoredAttempt,[switch]$ConcurrentOnly)
+param([Parameter(Mandatory)][string]$CReadyFile,[Parameter(Mandatory)][string]$DReadyFile,[Parameter(Mandatory)][string]$EvidenceRoot,[string]$ContinueRestoredAttempt,[switch]$ConcurrentOnly,[switch]$AutomaticRecoveryOnly)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $PSNativeCommandUseErrorActionPreference=$false
 $repo='D:\WorksArea\SUPERVM'
-if(!$ConcurrentOnly){throw 'This fixed handoff runs only the missing concurrency workload; no repeated recovery or outage'}
-if($ConcurrentOnly -and $ContinueRestoredAttempt){throw 'Conflicting remaining workloads'}
+if($AutomaticRecoveryOnly -eq $ConcurrentOnly -or $ContinueRestoredAttempt){throw 'Choose one bounded live workload; historical continuation is closed'}
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Read-RelayProgress.ps1"
 . "$repo/artifacts/audit/novonet-single-relay-20261111/Assert-RelayReadiness.ps1"
 $source='55cafb072ad83921f4a1ed5ea19a71941700d056'
@@ -27,9 +26,9 @@ foreach($pair in @(@('C',$CReadyFile),@('D',$DReadyFile))){
  $live=Get-Content -Raw -LiteralPath "$parent/liveness.json"|ConvertFrom-Json
  foreach($terminal in @('error.json','result.json','collector-exit.json')){if(Test-Path -LiteralPath "$parent/$terminal"){throw 'Observer already ended'}}
  Assert-RelayReadiness $ready $live $pair[0] $observerSource $observerNodePin
- $requiredCircuitCount=if($ContinueRestoredAttempt){1}elseif($ConcurrentOnly){2}else{4}
+ $requiredCircuitCount=if($AutomaticRecoveryOnly -or $ConcurrentOnly){2}elseif($ContinueRestoredAttempt){1}else{4}
  if($ready.terminal_circuit_count-ne $requiredCircuitCount){throw 'Observer circuit scope differs from actual remaining workload'}
- if($ContinueRestoredAttempt){
+ if($AutomaticRecoveryOnly -or $ContinueRestoredAttempt){
   $expectedOrigin='novovm-mldsa65:6144e3de68011031592a7f66422b077989e643b7281b8904384b6cf1c321d5b3'
   $expectedPath=@('novovm-mldsa65:3a44e06e371273a050641a80d9103ac4d357954aabc5336072cfb72864b4cf8f','novovm-mldsa65:516fc66162a3caa1d0153da9c42b5bbae9eae1e8bdcfb097b70aaa4ee97dd9f2','novovm-mldsa65:49ba6bfc9206a0bc5fcb93e83975c10d10a228dbf7cd9bf4a2d909ca7df0d946')
   if($ready.expected_origin-cne $expectedOrigin -or (@($ready.expected_path)-join ',')-cne ($expectedPath-join ',')){throw 'Recovered-route observer is not bound to A-B-C-D'}
@@ -46,6 +45,10 @@ if(($ids-join ',')-cne ($pins-join ',')){throw 'Fixed original identities differ
 New-Item -ItemType Directory -Path $out|Out-Null
 Copy-Item -LiteralPath $CReadyFile -Destination "$out/C-ready.json"
 Copy-Item -LiteralPath $DReadyFile -Destination "$out/D-ready.json"
+if($AutomaticRecoveryOnly){
+ Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $CReadyFile) 'liveness.json') -Destination "$out/C-liveness-at-start.json"
+ Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $DReadyFile) 'liveness.json') -Destination "$out/D-liveness-at-start.json"
+}
 $bFile='/home/ecs-user/novonet-concurrent-55cafb07-inflight-20261118/B-Scenario.py'
 $bPin=(Get-FileHash -LiteralPath "$PSScriptRoot/B-Scenario.py").Hash.ToLowerInvariant()
 $bCommand="echo '$bPin  $bFile' | sha256sum -c - >/dev/null && sudo -n python3 $bFile"
@@ -148,6 +151,36 @@ function ClockSample([string]$Label){
 $bJob=$null;$first=$null;$fault=$null;$recovered=$null;$completed=$false
 try{
  Save (B 'preflight') 'B-preflight'
+ if($AutomaticRecoveryOnly){
+  $autoPin=(Get-FileHash -LiteralPath "$PSScriptRoot/B-AutoRecover.py").Hash.ToLowerInvariant()
+  $autoFile='/home/ecs-user/novonet-concurrent-55cafb07-inflight-20261118/B-AutoRecover.py'
+  $remote="echo '$autoPin  $autoFile' | sha256sum -c - >/dev/null && echo '$bPin  $bFile' | sha256sum -c - >/dev/null && sudo -n python3 -B $autoFile trigger"
+  $fault=ArmA 'before-B-auto-exit' 3 @(1,2)
+  & ssh.exe -F 'C:\Users\leadb\.ssh\validator-B.conf' -o BatchMode=yes -o ConnectTimeout=10 validator-B $remote 1> "$out/B-automatic-recovery.json" 2> "$out/B-automatic-recovery.stderr"
+  if($LASTEXITCODE-ne 0){throw 'Automatic B existing restart not verified; preserve B evidence; do not retry'}
+  $restored=Get-Content -Raw -LiteralPath "$out/B-automatic-recovery.json"|ConvertFrom-Json
+  if($restored.automatic_restart_count_delta-ne 1 -or $restored.manual_start_issued -or $restored.start-cne 'existing' -or $restored.pid-eq $restored.old_pid){throw 'Original systemd transition unproven'}
+  $observation=[Diagnostics.Stopwatch]::StartNew()
+  do{
+   $p=P
+   $old=@($p.native_network_probe.transport.relay_circuits|Where-Object{(Hex $_.route.circuit)-ceq $fault.circuit})
+   if($old.Count-eq 1 -and $null-ne $old[0].stream_dropped_us){break}
+   Start-Sleep -Milliseconds 100
+  }while($observation.Elapsed.TotalSeconds-lt 5)
+  Save (PublicA $p) 'A-after-B-automatic-restart'
+  if($old.Count-ne 1 -or $null-eq $old[0].stream_dropped_us){throw 'Original circuit loss not observed; no object send'}
+  Invoke-OriginalNativeProbe 'cancel-old-auto-recovery-reservation' @('cancel','--from',$fault.arm)
+  WaitLease $fault
+  $recovered=ArmA 'after-B-automatic-restart' 3 @(1,2)
+  if($recovered.session-ceq $fault.session -or $recovered.circuit-ceq $fault.circuit){throw 'Old circuit/session reused'}
+  Invoke-OriginalNativeProbe 'after-B-automatic-restart-send' @('send-relay','--from',$recovered.arm)
+  $recoveryDone=WaitADone $recovered
+  Save (B 'snapshot') 'B-after-recovery-forwarding'
+  Save ([ordered]@{old_circuit=$fault.circuit;old_session=$fault.session;new_object=(Hex $recoveryDone.object);new_circuit=$recovered.circuit;new_session=$recovered.session;sender_DONE=$true;original_circuit_lost=$true;fresh_route_reauthenticated=$true;process_downtime_ms=$restored.process_downtime_ms;exit_to_health_observed_ms=$restored.exit_to_health_observed_ms;manual_start_issued=$false;C_D_evidence_pending=$true;old_object_resent=$false}) 'auto-recovery-origin-result'
+  $completed=$true
+  Save @{status='AUTO_RECOVERY_ORIGIN_DONE_RECEIVER_AUDIT_PENDING';concurrency_repeated=$false;utc=[DateTime]::UtcNow.ToString('o')} 'result'
+  return
+ }
  if($ContinueRestoredAttempt){
   # Continue only the unfinished fresh-route delivery, never the two completed
   # objects or a second outage. Retain the failed automatic restoration verdict.

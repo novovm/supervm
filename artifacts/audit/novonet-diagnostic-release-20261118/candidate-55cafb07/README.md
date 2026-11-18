@@ -1,5 +1,9 @@
 # Fixed diagnostic-release candidate55cafb07
 
+Current next item: [B original relay automatic recovery](automatic-B-recovery/README.md).
+The target policy is loaded without restarting B; the new live acceptance is
+separate from the completed concurrent delivery below.
+
 ## CURRENT 2026-11-18: live paired in-flight relay delivery accepted
 
 Pulled C originals at `1f71d312` and D originals at `aa7c7e15`. Independent
