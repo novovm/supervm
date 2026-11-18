@@ -1,0 +1,11 @@
+{
+  "business_receipt": false,
+  "host": "C",
+  "utc": "2026-11-18T09:47:34.6238772Z",
+  "source": "55cafb072ad83921f4a1ed5ea19a71941700d056",
+  "elapsed_ms": 131,
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "height": 1,
+  "status": "AUTHENTICATED_STATUS_PASS",
+  "object_sent": false
+}
