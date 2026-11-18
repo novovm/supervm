@@ -26,6 +26,90 @@ fn warm_time(nodes: &mut [NativeLifecycle], pipelines: &[CandidatePipeline]) -> 
 }
 
 #[test]
+#[ignore = "real AOEM and authenticated local lifecycle; exercises queued receiver state, not real Iroh failover"]
+fn pending_carrier_probe_keeps_original_expiry_and_time_generation() -> Result<()> {
+    use novovm_network::network_time::coordination::MEASUREMENT_LIFETIME;
+    with_delivery_nodes_for_test(|nodes, _, _, pipelines| {
+        warm_time(nodes, pipelines)?;
+        let node = &mut nodes[0];
+        let peer = 0;
+        let now = Instant::now();
+        node.enable_network_probe(now);
+        let transport = node.channel.probe_transport(peer);
+        assert!(transport.session_id.is_some());
+        let generation = node.time_peers[peer].reference.generation();
+        let wall = wall_ms();
+        let probe = NetworkProbe {
+            nonce: [91; 32],
+            sender: node.peers[peer],
+            recipient: node.progress.local_validator(),
+            issued_at_ms: wall - 1000,
+            expires_at_ms: wall + 5000,
+        };
+        let state = node.probe.as_mut().unwrap();
+        // Model the already-retained handoff as time samples finish. The
+        // actual original reference, identities and session are not mocked.
+        for (i, (expires, deadline, generation)) in [
+            (probe.expires_at_ms, now + MEASUREMENT_LIFETIME, generation),
+            (wall - 500, now + MEASUREMENT_LIFETIME, generation),
+            (probe.expires_at_ms, now, generation),
+            (
+                probe.expires_at_ms,
+                now + MEASUREMENT_LIFETIME,
+                generation.wrapping_sub(1),
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            state.pending_time.push(PendingTimeReceipt {
+                peer,
+                probe: NetworkProbe {
+                    nonce: [91 + i as u8; 32],
+                    expires_at_ms: expires,
+                    ..probe.clone()
+                },
+                object: [i as u8; 32],
+                ready: None,
+                deadline,
+                generation,
+                transport,
+            });
+        }
+        node.poll_network_probe_time(now);
+        assert_eq!(node.probe.as_ref().unwrap().pending_time.len(), 1);
+        node.poll_network_probe_time(Instant::now());
+        let state = node.probe.as_ref().unwrap();
+        assert!(state.pending_time.is_empty());
+        for (id, reason) in [
+            (1, "validity_window_rejected"),
+            (2, "reference_wait_elapsed"),
+            (3, "reference_invalidated"),
+        ] {
+            let event = state
+                .observations
+                .iter()
+                .find(|o| o.object_id == [id; 32])
+                .unwrap();
+            assert_eq!(
+                event.event,
+                "probe_rejected_time_untrusted_or_outside_validity"
+            );
+            assert_eq!(event.peer_time_reason, Some(reason));
+        }
+        let accepted = state
+            .observations
+            .iter()
+            .find(|o| o.object_id == [0; 32])
+            .unwrap();
+        assert_eq!(accepted.event, "probe_received_integrity_verified");
+        let (lower, upper) = accepted.peer_time_interval_ms.unwrap();
+        assert!(lower >= probe.issued_at_ms && upper < probe.expires_at_ms);
+        Ok(())
+    })
+}
+
+#[test]
 fn probe_command_is_fixed_binary_and_rejects_arbitrary_content() -> Result<()> {
     let probe = NetworkProbe {
         nonce: [1; 32],

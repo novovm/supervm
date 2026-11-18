@@ -1,5 +1,48 @@
 # A→D live Iroh fallback and NovoRUDP recovery
 
+## D return and first failure
+
+[D's original projection](D-receiver/D-receiver-raw.json), commit `b6cfdd9f`,
+matched A's nonce, Object ID, Session ID, timestamps and the authenticated
+Carrier binding for the first object. The original owner recorded the
+sender DONE, then D recorded `probe_rejected_time_untrusted_or_outside_validity`
+without an interval. The 5b receiver used the same event for a missing
+session time reference and a rejected validity window. Its snapshot was
+exported after the session changed again. A's later `relative_ready=true`
+belongs to A only (and is after DONE); it cannot establish the time state
+at D on arrival. On A, initial native admission preceded carrier admission
+by 141 ms, with carrier DONE a further 22 ms later. D recorded a direct
+reject, not a pending-boundary event. Missing samples is consistent with
+the short handoff but is not retrospectively proven. For the second object D recorded native
+`probe_pending_time_boundary` then `probe_received_integrity_verified` on
+the same new `native_udp` session as A. D's delayed export contains no
+independent fragment rows for either object.
+
+The follow-on fixes the observed receiver design gap in the original
+diagnostic owner. A first-reference warm-up on an authenticated bound
+carrier may retain the already-authenticated object metadata only within
+the original four-slot pending limit and the existing two-second measurement
+lifetime. The normal authenticated measurements continue independently of
+the object. Final acceptance requires the same session and time generation,
+a fully established reference, and the original unmodified validity bounds.
+A valid window is clipped to the retained monotonic limit; a failed window,
+clock invalidation, expired wait, or replay does not become a retry. A
+structured `peer_time_reason` distinguishes these outcomes without changing
+wire messages, asset rules, the transport DONE meaning, or network budgets.
+
+Windows release `cargo check`, strict Clippy with the Iroh and test
+targets, and the new original-lifecycle pending receipt test passed. The
+test exercises established same-session acceptance, original expiry,
+local wait expiry and generation invalidation. It uses the local fixture
+and does not repeat or certify the A/D network experiment.
+
+The original two objects are never resent. Only after candidate
+qualification, the live follow-up may update D's original owner to the
+fixed build, verify D existing/health, and send one **new** probe over the
+Iroh fallback from A. No B stop and no second native UDP object. Capture
+the D-side event and fragment proof immediately, then verify cleanup of
+the A/D-only rule window. This is not a release or updated live result.
+
 ## D: return the existing receiver evidence only
 
 Keep the current 5b node running. From an administrator PowerShell 7 on D,

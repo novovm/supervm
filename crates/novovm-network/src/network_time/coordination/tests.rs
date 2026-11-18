@@ -47,11 +47,17 @@ fn insufficient_samples_and_uncertain_boundary_fail_closed() {
     let mut state = PeerTimeReferenceV1::default();
     let start = Instant::now();
     sample(&mut state, start, 0, 444, 1);
-    assert!(state.interval(start + Duration::from_millis(10)).is_err());
+    assert!(state
+        .interval(start + Duration::from_millis(10))
+        .unwrap_err()
+        .is::<InsufficientTimeSamplesV1>());
     let (mut state, start) = ready(444);
     let now = start + Duration::from_millis(700);
     let (_, upper) = state.interval(now).unwrap();
-    assert!(state.validity_deadline(1, upper, now).is_err());
+    assert!(!state
+        .validity_deadline(1, upper, now)
+        .unwrap_err()
+        .is::<InsufficientTimeSamplesV1>());
 }
 #[test]
 fn session_domain_peer_and_direction_bindings_are_distinct() {

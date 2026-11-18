@@ -167,7 +167,8 @@ struct PendingTimeReceipt {
     peer: usize,
     probe: NetworkProbe,
     object: Hash,
-    ready: Instant,
+    // None until this new carrier session completes its normal time exchange.
+    ready: Option<Instant>,
     deadline: Instant,
     generation: u64,
     transport: ProbeTransport,
@@ -187,6 +188,8 @@ struct Observation {
     wall_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     peer_time_interval_ms: Option<(u64, u64)>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    peer_time_reason: Option<&'static str>,
 }
 pub(super) struct ProbeState {
     active: Option<Flight>,
@@ -250,6 +253,7 @@ impl ProbeState {
             transport,
             wall_ms: wall_ms(),
             peer_time_interval_ms: None,
+            peer_time_reason: None,
         });
     }
 }
@@ -465,7 +469,12 @@ impl NativeLifecycle {
         object: Hash,
         now: Instant,
     ) {
-        let validity = self.peer_validity_window(peer, probe.issued_at_ms, probe.expires_at_ms);
+        use super::time::ProbeTimeCheck;
+        use novovm_network::{
+            network_time::coordination::MEASUREMENT_LIFETIME, novorudp::carrier::NativeRoute,
+        };
+        let transport = self.channel.probe_transport(peer);
+        let validity = self.probe_time_check(peer, probe.issued_at_ms, probe.expires_at_ms);
         let Some(state) = &mut self.probe else {
             self.rejected_messages += 1;
             return;
@@ -475,6 +484,7 @@ impl NativeLifecycle {
             state.receive_window = now;
             state.receive_count = 0;
         }
+        let mut detail = (None, None);
         let event = if probe.sender != self.peers[peer]
             || probe.recipient != self.progress.local_validator()
         {
@@ -495,59 +505,151 @@ impl NativeLifecycle {
                 (probe.sender, probe.nonce),
                 now + Duration::from_millis(super::super::transport::probe::MAX_LIFETIME_MS),
             ));
-            match &validity {
-                Ok((ready, deadline, generation, _)) if *ready > now => {
-                    if state.pending_time.len() >= 4 {
-                        "probe_rejected_rate_or_quota"
+            let pending = match validity {
+                ProbeTimeCheck::Valid {
+                    ready,
+                    deadline,
+                    generation,
+                    interval,
+                } => {
+                    detail.1 = Some(interval);
+                    (ready > now).then_some((Some(ready), deadline, generation))
+                }
+                ProbeTimeCheck::WarmingUp { generation }
+                    if matches!(transport.route, Some(NativeRoute::Carrier(_))) =>
+                {
+                    detail.0 = Some("reference_warming_up");
+                    Some((None, now + MEASUREMENT_LIFETIME, generation))
+                }
+                ProbeTimeCheck::WarmingUp { .. } => {
+                    detail.0 = Some("reference_warming_up");
+                    None
+                }
+                ProbeTimeCheck::Reject { reason, interval } => {
+                    detail = (Some(reason), interval);
+                    None
+                }
+            };
+            if let Some((ready, deadline, generation)) = pending {
+                if state.pending_time.len() >= 4 {
+                    "probe_rejected_rate_or_quota"
+                } else {
+                    state.pending_time.push(PendingTimeReceipt {
+                        peer,
+                        probe: probe.clone(),
+                        object,
+                        ready,
+                        deadline,
+                        generation,
+                        transport,
+                    });
+                    if ready.is_none() {
+                        "probe_pending_time_reference"
                     } else {
-                        state.pending_time.push(PendingTimeReceipt {
-                            peer,
-                            probe: probe.clone(),
-                            object,
-                            ready: *ready,
-                            deadline: *deadline,
-                            generation: *generation,
-                            transport: self.channel.probe_transport(peer),
-                        });
                         "probe_pending_time_boundary"
                     }
                 }
-                Ok(_) => "probe_received_integrity_verified",
-                Err(_) => "probe_rejected_time_untrusted_or_outside_validity",
+            } else if detail.0.is_some() {
+                "probe_rejected_time_untrusted_or_outside_validity"
+            } else {
+                "probe_received_integrity_verified"
             }
         };
-        state.note(
+        state.note(event, object, probe, self.peers[peer], transport);
+        let observation = state.observations.back_mut().expect("just recorded");
+        (
+            observation.peer_time_reason,
+            observation.peer_time_interval_ms,
+        ) = detail;
+        if !matches!(
             event,
-            object,
-            probe,
-            self.peers[peer],
-            self.channel.probe_transport(peer),
-        );
-        if let Some(observation) = state.observations.back_mut() {
-            observation.peer_time_interval_ms = validity.ok().map(|(_, _, _, interval)| interval);
-        }
-        if event != "probe_received_integrity_verified" && event != "probe_pending_time_boundary" {
+            "probe_received_integrity_verified"
+                | "probe_pending_time_boundary"
+                | "probe_pending_time_reference"
+        ) {
             self.rejected_messages += 1;
         }
     }
     pub(super) fn poll_network_probe_time(&mut self, now: Instant) {
-        let Some(state) = &mut self.probe else { return };
+        use super::time::ProbeTimeCheck;
         let mut index = 0;
-        while index < state.pending_time.len() {
-            let pending = &state.pending_time[index];
-            let reference = &self.time_peers[pending.peer].reference;
-            let invalid = reference.generation() != pending.generation
-                || reference.interval(now).is_err()
-                || self.channel.probe_transport(pending.peer).session_id
-                    != pending.transport.session_id;
-            let event = if invalid || now >= pending.deadline {
-                "probe_rejected_time_untrusted_or_outside_validity"
-            } else if now < pending.ready {
-                index += 1;
-                continue;
+        while let Some(pending) = self.probe.as_ref().and_then(|s| s.pending_time.get(index)) {
+            let (peer, generation, limit) = (pending.peer, pending.generation, pending.deadline);
+            let reference = &self.time_peers[peer].reference;
+            let same_session =
+                self.channel.probe_transport(peer).session_id == pending.transport.session_id;
+            let mut interval = None;
+            let reason = if !same_session || reference.generation() != generation {
+                Some("reference_invalidated")
+            } else if now >= limit {
+                Some(if pending.ready.is_none() {
+                    "reference_wait_elapsed"
+                } else {
+                    "validity_deadline_elapsed"
+                })
+            } else if let Some(ready) = pending.ready {
+                match reference.interval(now) {
+                    Ok(_) if now < ready => {
+                        index += 1;
+                        continue;
+                    }
+                    Ok(bounds)
+                        if bounds.0 >= pending.probe.issued_at_ms
+                            && bounds.1 < pending.probe.expires_at_ms =>
+                    {
+                        interval = Some(bounds);
+                        None
+                    }
+                    Ok(bounds) => {
+                        interval = Some(bounds);
+                        Some("validity_window_rejected")
+                    }
+                    Err(_) => Some("reference_unavailable"),
+                }
             } else {
-                "probe_received_integrity_verified"
+                let (issued, expires) = (pending.probe.issued_at_ms, pending.probe.expires_at_ms);
+                match self.probe_time_check(peer, issued, expires) {
+                    ProbeTimeCheck::WarmingUp { generation: g } if g == generation => {
+                        index += 1;
+                        continue;
+                    }
+                    ProbeTimeCheck::Valid {
+                        ready,
+                        deadline,
+                        generation: g,
+                        interval: bounds,
+                    } if g == generation => {
+                        // Normal time exchange, same session/generation. Never extend
+                        // either this admission limit or the original validity window.
+                        let deadline = limit.min(deadline);
+                        if ready < deadline {
+                            let pending =
+                                &mut self.probe.as_mut().expect("pending probe").pending_time
+                                    [index];
+                            pending.ready = Some(ready);
+                            pending.deadline = deadline;
+                            index += 1;
+                            continue;
+                        }
+                        interval = Some(bounds);
+                        Some("validity_window_rejected")
+                    }
+                    ProbeTimeCheck::Reject {
+                        reason,
+                        interval: bounds,
+                    } => {
+                        interval = bounds;
+                        Some(reason)
+                    }
+                    _ => Some("reference_invalidated"),
+                }
             };
+            let event = if reason.is_none() {
+                "probe_received_integrity_verified"
+            } else {
+                "probe_rejected_time_untrusted_or_outside_validity"
+            };
+            let state = self.probe.as_mut().expect("pending probe");
             let pending = state.pending_time.remove(index);
             state.note(
                 event,
@@ -556,7 +658,12 @@ impl NativeLifecycle {
                 self.peers[pending.peer],
                 pending.transport,
             );
-            if event != "probe_received_integrity_verified" {
+            let observation = state.observations.back_mut().expect("just recorded");
+            (
+                observation.peer_time_reason,
+                observation.peer_time_interval_ms,
+            ) = (reason, interval);
+            if reason.is_some() {
                 self.rejected_messages += 1;
             }
         }

@@ -15,6 +15,10 @@ pub const REQUIRED_SAMPLES: usize = 3;
 const MAX_POLL_GAP: Duration = Duration::from_secs(2);
 const CLOCK_JUMP_MS: u64 = 50;
 
+#[derive(Debug, thiserror::Error)]
+#[error("TIME_UNTRUSTED: insufficient samples")]
+pub struct InsufficientTimeSamplesV1;
+
 /// Includes fixed chain/genesis/protocol commitment and both authenticated
 /// identities, not an address. Role ordering is request source then target.
 pub fn context(
@@ -228,7 +232,7 @@ impl PeerTimeReferenceV1 {
     pub fn interval(&self, now: Instant) -> Result<(u64, u64)> {
         ensure!(
             self.samples.len() == REQUIRED_SAMPLES,
-            "TIME_UNTRUSTED: insufficient samples"
+            InsufficientTimeSamplesV1
         );
         // Hull, not midpoint or voting. Do not turn repeated measurements into
         // an unjustifiably narrow uncertainty interval.

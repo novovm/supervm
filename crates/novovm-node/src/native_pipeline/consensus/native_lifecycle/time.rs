@@ -3,7 +3,8 @@
 use super::*;
 use novovm_network::network_time::{
     coordination::{
-        self, PeerTimeReferenceV1, TimeExchangeV1, MEASUREMENT_LIFETIME, SAMPLE_INTERVAL,
+        self, InsufficientTimeSamplesV1, PeerTimeReferenceV1, TimeExchangeV1, MEASUREMENT_LIFETIME,
+        SAMPLE_INTERVAL,
     },
     ClockAnchorV1,
 };
@@ -20,8 +21,25 @@ pub(super) struct TimePeer {
     accepted_samples: u64,
     rejected_samples: u64,
     session: Option<[u8; 16]>,
+    established_on_session: bool,
     flights: Vec<Flight>,
     next_reply: Option<Instant>,
+}
+
+pub(super) enum ProbeTimeCheck {
+    WarmingUp {
+        generation: u64,
+    },
+    Valid {
+        ready: Instant,
+        deadline: Instant,
+        generation: u64,
+        interval: (u64, u64),
+    },
+    Reject {
+        reason: &'static str,
+        interval: Option<(u64, u64)>,
+    },
 }
 impl TimePeer {
     pub(super) fn deadline(&self, object: Hash) -> Option<Instant> {
@@ -93,6 +111,7 @@ impl NativeLifecycle {
             if changed {
                 self.time_peers[peer].reference.invalidate();
                 self.time_peers[peer].session = session;
+                self.time_peers[peer].established_on_session = false;
             }
             let expired: Vec<_> = self.time_peers[peer]
                 .flights
@@ -160,6 +179,7 @@ impl NativeLifecycle {
             let result = state.reference.accept(message, clock);
             if result.is_ok() {
                 state.accepted_samples = state.accepted_samples.saturating_add(1);
+                state.established_on_session |= state.reference.interval(now).is_ok();
             } else {
                 state.rejected_samples = state.rejected_samples.saturating_add(1);
             }
@@ -206,25 +226,43 @@ impl NativeLifecycle {
         }
         true
     }
-    pub(super) fn peer_validity_window(
+    pub(super) fn probe_time_check(
         &mut self,
         peer: usize,
         issued: u64,
         expires: u64,
-    ) -> Result<(Instant, Instant, u64, (u64, u64))> {
-        let clock = self.time_clock()?;
-        let context = self
-            .time_context(peer, false)
-            .context("time session unavailable")?;
-        let reference = &mut self.time_peers[peer].reference;
+    ) -> ProbeTimeCheck {
+        let unavailable = ProbeTimeCheck::Reject {
+            reason: "reference_unavailable",
+            interval: None,
+        };
+        let (Ok(clock), Some(context)) = (self.time_clock(), self.time_context(peer, false)) else {
+            return unavailable;
+        };
+        let state = &mut self.time_peers[peer];
+        let reference = &mut state.reference;
         reference.observe(context, clock);
-        let (ready, deadline) = reference.validity_window(issued, expires, clock.instant())?;
-        Ok((
-            ready,
-            deadline,
-            reference.generation(),
-            reference.interval(clock.instant())?,
-        ))
+        let now = clock.instant();
+        let generation = reference.generation();
+        let interval = match reference.interval(now) {
+            Ok(interval) => interval,
+            Err(err) if err.is::<InsufficientTimeSamplesV1>() && !state.established_on_session => {
+                return ProbeTimeCheck::WarmingUp { generation };
+            }
+            Err(_) => return unavailable,
+        };
+        match reference.validity_window(issued, expires, now) {
+            Ok((ready, deadline)) => ProbeTimeCheck::Valid {
+                ready,
+                deadline,
+                generation,
+                interval,
+            },
+            Err(_) => ProbeTimeCheck::Reject {
+                reason: "validity_window_rejected",
+                interval: Some(interval),
+            },
+        }
     }
     pub(super) fn network_time_snapshot(&self) -> impl serde::Serialize + Send + use<> {
         use crate::native_pipeline::report::record;
