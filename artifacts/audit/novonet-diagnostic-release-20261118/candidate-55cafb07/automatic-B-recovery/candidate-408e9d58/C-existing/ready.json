@@ -15,8 +15,8 @@
   "config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common408e-C-20261118\\run.json",
   "progress": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common408e-C-20261118\\progress.json",
   "control": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
-  "chain_id": null,
-  "height_at_start": null,
+  "chain_id": 91129655606029,
+  "height_at_start": 1,
   "head_at_start": null,
   "original_identity_preserved": true,
   "udp_listeners": [
