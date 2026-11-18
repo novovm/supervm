@@ -1,5 +1,26 @@
 # B automatic existing recovery — A/B receipt
 
+## Final acceptance — B automatic recovery and one post-recovery object
+
+Independently checked the [C](../C-recovery-observer/relay-03.json) and
+[D](../D-recovery-observer/relay-03.json) raw snapshots from `a1070979`
+and `a026b4dc`, plus the locally preserved A/B originals. All 18 returned
+file hashes matched. The same circuit and route digest existed at all
+four hosts, with three matching adjacent authenticated bindings and the
+same endpoint native session and object. B and C each forwarded 9/9
+packets with zero failed writes. A emitted a single sender DONE and D
+recorded unique final integrity acceptance, 1/1 fragments, no duplicate
+data or repair, and authenticated peer-time inside the original validity.
+Both collectors terminated normally. See [the final receipt](FINAL-ACCEPTANCE.json).
+
+The measured process restart does not establish exact old-circuit drop
+detection latency: the first five-second observation missed the closure
+and issued cleanup. This acceptance does not cover asset receipts,
+consensus, host reboot, or native UDP multihop. The audit issued no stop,
+restart, resend or test run.
+
+## Original A/B receipt before C/D return
+
 Started from the current C/D observer evidence at `7f9841a8`: C node
 25544 / observer 5264 and D node 34148 / observer 24100. The fresh A→C
 authenticated Status was 40 ms, with original chain height and state root.

@@ -1,0 +1,89 @@
+{
+  "status": "B_AUTOMATIC_EXISTING_RECOVERY_DOUBLE_RELAY_ACCEPTED",
+  "route": [
+    "A",
+    "B",
+    "C",
+    "D"
+  ],
+  "object": "9f5cfb4ffe1a8a3a0a16e289d04e0bea0389488fb15e075d979a68a939af260f",
+  "native_session": "2139389cd441096ebb9e53ebe190d6bc",
+  "circuit": "2e2b74fce46b59cedf4e4dec25c72db2",
+  "route_digest": "b3d04da668d6d933145b41ddaf48671605d355cd8eacda2a276a1ef9d4a26fc7",
+  "origin_DONE_utc": "2026-11-18T13:31:53.5930000+00:00",
+  "sender_DONE": true,
+  "receiver_integrity_verified_utc": "2026-11-18T13:31:54.8350000+00:00",
+  "receiver_complete_custody": true,
+  "verified_fragments": [
+    1,
+    1
+  ],
+  "duplicate_data": 0,
+  "duplicate_repair": 0,
+  "authenticated_adjacent_bindings": 3,
+  "relays": [
+    {
+      "host": "B",
+      "packets": [
+        9,
+        9
+      ],
+      "bytes": [
+        9380,
+        9044
+      ],
+      "failed_writes": [
+        0,
+        0
+      ]
+    },
+    {
+      "host": "C",
+      "packets": [
+        9,
+        9
+      ],
+      "bytes": [
+        9380,
+        9044
+      ],
+      "failed_writes": [
+        0,
+        0
+      ]
+    }
+  ],
+  "receiver_peer_time_interval_ms": [
+    1795008713541,
+    1795008713611
+  ],
+  "original_validity_ms": [
+    1795008712705,
+    1795008722705
+  ],
+  "collector_exit_codes": [
+    0,
+    0
+  ],
+  "raw_files_sha256_verified": {
+    "D": 9,
+    "C": 9
+  },
+  "terminal_snapshots": {
+    "D": {
+      "utc": "2026-11-18T13:31:58.2109716Z",
+      "file": "relay-03.json",
+      "sha256": "60ec52a00e09a4b9fb79805126ddd720d69068e9e0abdc357a475203f6ffbc34"
+    },
+    "C": {
+      "utc": "2026-11-18T13:32:02.5664168Z",
+      "file": "relay-03.json",
+      "sha256": "5f7371b6ccdb53a499adda8f2dea302f25d768abe6fbbee4403eb481ec77b93a"
+    }
+  },
+  "B_process_downtime_ms": 5009.551,
+  "B_exit_to_health_observed_ms": 8399.785,
+  "business_receipt": false,
+  "new_send_during_audit": false,
+  "B_stop_during_audit": false
+}
