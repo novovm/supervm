@@ -1,0 +1,14 @@
+{
+  "status": "C_SSH_READY_FOR_A_LAN_VERIFICATION",
+  "utc": "2026-11-18T05:49:55.5159042+00:00",
+  "host_role": "C",
+  "computer": "KING-LENOVO",
+  "address": "192.168.71.125",
+  "port": 22,
+  "login": "leadb",
+  "authorized_A_public_key_fingerprint": "SHA256:AGW6zJLlR5F8pQ08NnEyjtSY4erV8HxjZ7TRA9pgPP8",
+  "ed25519_host_fingerprint": "SHA256:/TMezn/XdqFoA4R/+eKe+GQGNiGVTfCwAC/koGDXK8Q",
+  "sshd": "Running",
+  "remote_login_verified": false,
+  "next_action_for_A": "Verify the ED25519 host fingerprint, then authenticate from the LAN using the corresponding key already held on A."
+}
