@@ -1,6 +1,28 @@
 # B original relay automatic recovery
 
-## Current — pre-outage path blocked; preserve the same observers
+## Current — C observation ended before route setup; check the original node
+
+Pulled C `db2beb19` and D `a0bdd4e7`. Verified all five returned C file
+lengths and SHA256 digests. C observer PID 28548 exited 1 at 08:20:32 BJT
+with `Stale progress` and zero snapshots. This precedes B's first empty-circuit
+authentication (approximately 08:21:01 BJT) by 29 seconds. D observer PID
+53576 was still active at 08:33:37 BJT with zero snapshots and no terminal
+files. D recorded no matching circuit; the missing C view does not prove
+that B→C was never attempted or distinguish B→C from C→D.
+
+A's one current authenticated Status query to C timed out after 30.14 s,
+exit 1 (`native query deadline; no fresh node observation`). This is separate
+from the earlier historical C crash; no new C exit is proven by these
+observations. B still has PID 3167799 and zero restarts. No object was sent.
+
+C next: use the existing original node and original progress path for a
+read-only check of live PID/owner, two UTC/mtime/tick samples, and any
+matching new exit event or stderr. Do not reset the stale threshold, reopen
+the observer or restart the node before identifying the actual state. D has
+no new action. B remains untouched until a healthy observable empty route
+can be confirmed.
+
+## Pre-outage failure — historical run evidence
 
 Pulled the C/D readiness receipts through `43b41baf`; C observer 28548 was
 bound to the recovered node PID 19196, D observer 53576 to node PID 34148.
