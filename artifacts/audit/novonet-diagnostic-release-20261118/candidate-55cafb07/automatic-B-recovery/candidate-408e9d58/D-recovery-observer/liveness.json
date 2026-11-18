@@ -3,9 +3,9 @@
   "observer_version": 3,
   "observer_pid": 24100,
   "node_pid": 34148,
-  "utc": "2026-11-18T13:28:49.8054383Z",
-  "elapsed_seconds": 46.853269,
+  "utc": "2026-11-18T13:32:02.5078224Z",
+  "elapsed_seconds": 239.5576518,
   "maximum_wait_seconds": 7200,
-  "active": true,
-  "snapshots": 0
+  "active": false,
+  "snapshots": 4
 }

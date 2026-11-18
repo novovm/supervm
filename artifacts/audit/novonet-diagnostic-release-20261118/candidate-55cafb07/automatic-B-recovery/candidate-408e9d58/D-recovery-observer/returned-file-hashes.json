@@ -1,0 +1,52 @@
+{
+  "host": "D",
+  "observer_pid": 24100,
+  "algorithm": "SHA256",
+  "files": [
+    {
+      "file": "relay-00.json",
+      "sha256": "3017807a39650184d61ebaed5db0fa16bb3b6ec13c2be2b886ae3f009dcec7d5",
+      "bytes": 870220
+    },
+    {
+      "file": "relay-01.json",
+      "sha256": "663ab1e6739f2bf5426e790ca82f15b86cfdadc435c0daf62c0630420600503f",
+      "bytes": 873771
+    },
+    {
+      "file": "relay-02.json",
+      "sha256": "99d5be47a863fde8af7deaf6819e7e36e2ee951222a8fd29f6172a956e419c90",
+      "bytes": 874180
+    },
+    {
+      "file": "relay-03.json",
+      "sha256": "60ec52a00e09a4b9fb79805126ddd720d69068e9e0abdc357a475203f6ffbc34",
+      "bytes": 886313
+    },
+    {
+      "file": "liveness.json",
+      "sha256": "9ece07034b73c90f6d22b2348e468a9d21a56ceb81b2cc0589f35863a05675af",
+      "bytes": 244
+    },
+    {
+      "file": "result.json",
+      "sha256": "a29ae13b251add83964f04d818ebbe9e0bc2dc2df804cbdf2dfb328cc4021c1f",
+      "bytes": 262
+    },
+    {
+      "file": "collector-exit.json",
+      "sha256": "44fbdff56e1a7d13bb13de93aa25523dc75127baa97dcb2909246b5f0f2df99d",
+      "bytes": 92
+    },
+    {
+      "file": "observer.stdout",
+      "sha256": "190c1784c4754ad28a408732cbaaa2cd0dc4f33ff12322add2de08f91a8b4e1e",
+      "bytes": 129
+    },
+    {
+      "file": "observer.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  ]
+}

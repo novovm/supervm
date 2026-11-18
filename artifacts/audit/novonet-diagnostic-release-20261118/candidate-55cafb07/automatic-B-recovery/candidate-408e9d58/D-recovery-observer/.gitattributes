@@ -1,0 +1,2 @@
+observer.stdout -text whitespace=cr-at-eol
+observer.stderr -text whitespace=cr-at-eol

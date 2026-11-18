@@ -1,0 +1,51 @@
+{
+  "host": "D",
+  "observer_pid": 24100,
+  "observer_created_utc": "2026-11-18T13:27:56.06852Z",
+  "node_pid": 34148,
+  "original_node_still_running": true,
+  "observer_running": false,
+  "final_liveness_utc": "2026-11-18T13:32:02.5078224Z",
+  "collector_exit_utc": "2026-11-18T13:32:02.5085126Z",
+  "collector_exit_code": 0,
+  "result_present": true,
+  "error_present": false,
+  "launcher_error_present": false,
+  "terminal_observed": true,
+  "snapshots": {
+    "relay-00.json": [
+      "3887375bbfd8ad0359d54cd84a4d8bb4"
+    ],
+    "relay-01.json": [
+      "3887375bbfd8ad0359d54cd84a4d8bb4"
+    ],
+    "relay-02.json": [
+      "3887375bbfd8ad0359d54cd84a4d8bb4",
+      "2e2b74fce46b59cedf4e4dec25c72db2"
+    ],
+    "relay-03.json": [
+      "3887375bbfd8ad0359d54cd84a4d8bb4",
+      "2e2b74fce46b59cedf4e4dec25c72db2"
+    ]
+  },
+  "circuit": "2e2b74fce46b59cedf4e4dec25c72db2",
+  "native_session": "2139389cd441096ebb9e53ebe190d6bc",
+  "object": "9f5cfb4ffe1a8a3a0a16e289d04e0bea0389488fb15e075d979a68a939af260f",
+  "receiver_matches": [
+    {
+      "file": "relay-03.json",
+      "event": "relay_probe_received_integrity_verified",
+      "wall_ms": 1795008714835,
+      "issued_at_ms": 1795008712705,
+      "expires_at_ms": 1795008722705,
+      "peer_time_interval_ms": [
+        1795008713541,
+        1795008713611
+      ],
+      "route_digest": "b3d04da668d6d933145b41ddaf48671605d355cd8eacda2a276a1ef9d4a26fc7",
+      "route_role": "target",
+      "route_cursor": 2
+    }
+  ],
+  "business_receipt": false
+}
