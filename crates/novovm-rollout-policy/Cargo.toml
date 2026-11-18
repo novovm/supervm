@@ -12,7 +12,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 time = { version = "0.3.53", features = ["formatting", "parsing"] }
 ureq = { version = "=3.4.2", default-features = false, features = ["rustls", "gzip"] }
-lettre = "0.11.22"
+lettre = "0.11.24"
 
 [[bin]]
 name = "novovm-rollout-policy"
