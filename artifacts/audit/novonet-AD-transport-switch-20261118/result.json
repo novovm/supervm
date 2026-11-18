@@ -1,0 +1,16 @@
+{
+  "status": "BOTH_SENDER_DONE_RECEIVER_AUDIT_PENDING",
+  "A_pid": 16528,
+  "commands_submitted": 2,
+  "prior_native_session": "726d3ecc12bfd91ab7de7b0d35df4011",
+  "restored": true,
+  "B_mutated": false,
+  "node_restarted": false,
+  "isolation_started_utc": "2026-11-18T13:58:12.8136970Z",
+  "fallback_object": "8b736dc3d1da071305cb755ebe9aadfde2c1950b4f2253df0a8c71e3412161c2",
+  "fallback_session": "236652bf1c12aea83ebb7ceb0158ac3e",
+  "isolation_removed_utc": "2026-11-18T13:58:17.8468069Z",
+  "native_object": "f8948354fc2bde2ab65fe09e283327bc9a1f199da5c003d0c37762bcd0fc32c2",
+  "native_session": "4003b8743c8527735eec3f215a4be367",
+  "finished_utc": "2026-11-18T13:58:27.4025057Z"
+}
