@@ -1,0 +1,9 @@
+{
+  "pid": 19196,
+  "created_utc": "2026-11-18T00:18:51.7569406Z",
+  "last_progress_utc": "2026-11-18T00:20:17.2803496Z",
+  "ticks": 135019,
+  "stop_requested_utc": "2026-11-18T01:27:55.2492222+00:00",
+  "reason": "Stalled progress and authenticated Status timeout. User prioritized live integration.",
+  "forced_stop_requested": true
+}

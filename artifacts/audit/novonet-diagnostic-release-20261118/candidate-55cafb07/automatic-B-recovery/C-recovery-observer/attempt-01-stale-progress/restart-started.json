@@ -1,0 +1,11 @@
+{
+  "start": "existing",
+  "config_sha256": "d5bfcb7c296938282c47d9d0387e1fefe0e7282403ecea56b22b48e0401c9015",
+  "utc": "2026-11-18T00:18:51.7675004Z",
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "exe_sha256": "4b0d03e8ad7a5a93051cee2672d38aa9a4ec8c0cb99669ae89af62b8eeef4038",
+  "pid": 19196,
+  "automatic_restart": false,
+  "account": "S-1-5-19",
+  "created_utc": "2026-11-18T00:18:51.7569406Z"
+}
