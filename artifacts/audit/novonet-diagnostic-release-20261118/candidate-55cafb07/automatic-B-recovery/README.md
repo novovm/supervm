@@ -1,6 +1,27 @@
 # B original relay automatic recovery
 
-## Current — C main thread waits on a CPU-active in-process thread
+## Current — C existing restart observed, but live Status is not healthy
+
+C receipt `e079596e` preserves the old stalled-node and observer evidence.
+It records a targeted stop of PID 19196 followed by the same fixed 5b
+LocalService owner, the same config hash and `existing` start of PID
+22324 at 09:27:57 BJT. The new observer PID 24620 reported a heartbeat at
+09:29:32 BJT. This proves launch and early observation, not sustained health.
+
+A's one independent query after that restart (09:47:33–09:48:03 BJT) exited
+1 with `native query deadline; no fresh node observation`. It has a separate
+raw result directory; the earlier query failure was not overwritten.
+Neither observer heartbeat on Git was fresh enough at the time; C was last
+reported at 09:29 and D at 08:33. B still has original PID 3167799 with zero
+restarts. No new empty-route attempt, B outage or object send was issued.
+
+C: report current PID 22324 progress/ticks and observer terminal status.
+If the same live process has stalled again, take the short local CPU stack
+sample on the *current* hot thread before any restart; do not reuse the
+old TID. If ticks are advancing, retain that distinction and report fresh
+evidence instead. A's Status timeout alone does not prove a repeat stall.
+
+## Previous C stall — main thread waits on a CPU-active in-process thread
 
 C reports WCT main TID 21796 waiting for same-process TID 26884 in the
 unchanged node PID 19196. WCT covered 18 threads and reported no cycle.
