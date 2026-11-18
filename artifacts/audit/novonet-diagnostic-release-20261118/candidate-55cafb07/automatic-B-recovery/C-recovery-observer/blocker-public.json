@@ -1,0 +1,26 @@
+{
+  "status": "C_AUTOMATIC_B_RECOVERY_OBSERVER_BLOCKED_NODE_EXITED",
+  "handoff": "cf3f6782",
+  "observed_utc": "2026-11-18T00:17:20.3348329Z",
+  "node_pid": 6160,
+  "node_version": "5b656189",
+  "active_node_count": 0,
+  "node_exit_utc": "2026-11-17T23:17:19.2397550+00:00",
+  "node_exit_hex": "0xC0000005",
+  "forced_by_controller": false,
+  "prior_observer_pid": 26924,
+  "prior_observer_exit_utc": "2026-11-17T23:09:53.0116354+00:00",
+  "prior_observer_exit_code": 0,
+  "progress_mtime_utc": "2026-11-17T23:17:09.9477908Z",
+  "observer_started": false,
+  "ready_present": false,
+  "liveness_present": false,
+  "node_restarted": false,
+  "local_dump": [
+    {
+      "file": "novovm-node.exe.6160.dmp",
+      "bytes": 239006060,
+      "sha256": "bbbc061a2b9c9178fc2fddf2f13008f2f0f7f76f3a147da3a8a4f1c80cbaad65"
+    }
+  ]
+}
