@@ -1,0 +1,9 @@
+{
+  "utc": "2026-11-19T03:27:57.1680472Z",
+  "control_present": false,
+  "node_pid": 56804,
+  "aoem_manifest_sha256": "99bb2346ba31f812028cff4c4da9dce1209f09f979f5f399ec01cb4871c1bf38",
+  "owner_exit_present": false,
+  "owner_error_present": false,
+  "old_pid": 34148
+}
