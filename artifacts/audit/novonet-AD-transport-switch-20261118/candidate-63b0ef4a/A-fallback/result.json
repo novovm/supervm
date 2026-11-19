@@ -1,0 +1,14 @@
+{
+  "status": "IROH_SENDER_DONE_RECEIVER_AUDIT_PENDING",
+  "A_pid": 7004,
+  "commands_submitted": 1,
+  "prior_native_session": "69a772236a9f6cdf295e25b0c5470c74",
+  "restored": true,
+  "B_mutated": false,
+  "node_restarted": false,
+  "isolation_started_utc": "2026-11-19T09:14:02.5295327Z",
+  "fallback_object": "fcdc488891fd82f9c6288e26ee07e6a499ee372759cda23874beeb823a3bc996",
+  "fallback_session": "04735632aa719ffe2ec2489ee6861e3b",
+  "isolation_removed_utc": "2026-11-19T09:14:04.9240631Z",
+  "finished_utc": "2026-11-19T09:14:11.5500168Z"
+}

@@ -1,0 +1,113 @@
+[
+  {
+    "utc": "2026-11-19T09:14:02.1287685Z",
+    "ticks": 1688091,
+    "session": "69a772236a9f6cdf295e25b0c5470c74",
+    "ready": true,
+    "session_inflight": 0,
+    "session_flow": {
+      "requests": {
+        "queue_attempted": 275,
+        "queued": 275,
+        "admitted": 275,
+        "expired_before_admission": 0,
+        "transport_done": 275,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 278,
+        "accepted": 248,
+        "rejected": 0,
+        "reply_rate_limited": 30
+      },
+      "responses": {
+        "queue_attempted": 248,
+        "queued": 248,
+        "admitted": 248,
+        "expired_before_admission": 0,
+        "transport_done": 248,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 249,
+        "accepted": 249,
+        "rejected": 0,
+        "reply_rate_limited": 0
+      }
+    }
+  },
+  {
+    "utc": "2026-11-19T09:14:04.1525808Z",
+    "ticks": 1699573,
+    "session": "04735632aa719ffe2ec2489ee6861e3b",
+    "ready": false,
+    "session_inflight": 0,
+    "session_flow": {
+      "requests": {
+        "queue_attempted": 2,
+        "queued": 2,
+        "admitted": 2,
+        "expired_before_admission": 0,
+        "transport_done": 2,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 2,
+        "accepted": 1,
+        "rejected": 0,
+        "reply_rate_limited": 1
+      },
+      "responses": {
+        "queue_attempted": 1,
+        "queued": 1,
+        "admitted": 1,
+        "expired_before_admission": 0,
+        "transport_done": 1,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 1,
+        "accepted": 1,
+        "rejected": 0,
+        "reply_rate_limited": 0
+      }
+    }
+  },
+  {
+    "utc": "2026-11-19T09:14:09.0857262Z",
+    "ticks": 1707727,
+    "session": "345767d3e39ee6b3cf436b9196248570",
+    "ready": false,
+    "session_inflight": 0,
+    "session_flow": {
+      "requests": {
+        "queue_attempted": 2,
+        "queued": 2,
+        "admitted": 2,
+        "expired_before_admission": 0,
+        "transport_done": 2,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 2,
+        "accepted": 2,
+        "rejected": 0,
+        "reply_rate_limited": 0
+      },
+      "responses": {
+        "queue_attempted": 2,
+        "queued": 2,
+        "admitted": 2,
+        "expired_before_admission": 0,
+        "transport_done": 2,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 2,
+        "accepted": 2,
+        "rejected": 0,
+        "reply_rate_limited": 0
+      }
+    }
+  }
+]
