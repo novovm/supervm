@@ -1,0 +1,19 @@
+{
+  "source": "654b99916e80004e2df999c6d393ed7b94bec49b",
+  "target": "x86_64-pc-windows-msvc",
+  "path": "C:\\Users\\leadb\\AppData\\Local\\NOVOVM\\candidate-common-654b9991-20261119\\novovm-common-654b9991-windows-x86_64.zip",
+  "bytes": 162894278,
+  "sha256": "62be16398634206c7e460c1ac4d62d1605f474f9590fa23e1a3da6b298d45709",
+  "verified_zip_members": 94,
+  "verified_manifest_members": 91,
+  "verified_aoem_members": 40,
+  "manifest_sha256": "9f79214bcae9b23af7a71b6a1b45a182eb25763be555d4e6c6211f93fe070102",
+  "node_sha256": "04a0e0b174bc9de1fa7cd71eb8aff54b06ad670fa0b407c0e75394e46a7e3ee4",
+  "ctl_sha256": "15dbd4acb20ee2a9efaa363f189db93721b74c5998c2a9b7f089f0ad67d56593",
+  "client_sha256": "774bc76c79c1d678274f5f47122eb023720bb8720b650ba9572f9cc4e11346a3",
+  "library_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "packed_native_identity": "pass",
+  "cold_recovery_exit": 0,
+  "test_binary_sha256": "763d62fb3e86239ea87b47c3383d18410ea103960f9a0292a3ebe8c6d93f4da1",
+  "installed": false
+}
