@@ -1,0 +1,20 @@
+{
+  "observer_pid": 28892,
+  "node_created_utc": "2026-11-19T03:27:56.666035Z",
+  "host": "D",
+  "poll_seconds": 2,
+  "expires_utc": "2026-11-19T03:52:48.8852871Z",
+  "utc": "2026-11-19T03:37:53.3261077Z",
+  "status": "D_1281_IROH_RECEIVER_READY",
+  "node_pid": 56804,
+  "observer_created_utc": "2026-11-19T03:37:48.5502476Z",
+  "health": {
+    "height": 1,
+    "execution_failures": 0,
+    "recovery_in_progress": false,
+    "ticks_now": 1365704,
+    "ticks_before": 1353171
+  },
+  "progress_mtime_utc": "2026-11-19T03:37:51.9410770Z",
+  "read_only": true
+}
