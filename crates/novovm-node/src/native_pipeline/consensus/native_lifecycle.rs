@@ -566,11 +566,12 @@ impl NativeLifecycle {
                     continue;
                 }
                 attempted[lane] = true;
+                let time_deadline = self.time_peers[peer].deadline(delivery.prepared.fragment_id());
                 let admitted = if let Some(deadline) = self
                     .probe
                     .as_ref()
                     .and_then(|state| state.deadline(delivery.prepared.fragment_id()))
-                    .or_else(|| self.time_peers[peer].deadline(delivery.prepared.fragment_id()))
+                    .or(time_deadline)
                 {
                     self.channel
                         .try_send_probe(peer, &delivery.prepared, now, deadline)?
@@ -579,6 +580,9 @@ impl NativeLifecycle {
                 };
                 if admitted {
                     delivery.admitted = true;
+                    if time_deadline.is_some() {
+                        self.time_peers[peer].note_admission(delivery.prepared.fragment_id());
+                    }
                     if let Some(probe) = &mut self.probe {
                         probe.admitted(
                             delivery.prepared.fragment_id(),

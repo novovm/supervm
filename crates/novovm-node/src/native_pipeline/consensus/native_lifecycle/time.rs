@@ -13,6 +13,40 @@ use novovm_network::novorudp::object_link::NativeSendCompletion;
 struct Flight {
     id: Hash,
     deadline: Instant,
+    session: Option<[u8; 16]>,
+    response: bool,
+}
+
+#[derive(Clone, Copy, Default, serde::Serialize)]
+struct TimeFlow {
+    queue_attempted: u64,
+    queued: u64,
+    admitted: u64,
+    expired_before_admission: u64,
+    transport_done: u64,
+    transport_expired: u64,
+    transport_cancelled: u64,
+    transport_session_replaced: u64,
+    received: u64,
+    accepted: u64,
+    rejected: u64,
+    reply_rate_limited: u64,
+}
+
+#[derive(Clone, Copy, Default, serde::Serialize)]
+struct TimeSessionFlow {
+    requests: TimeFlow,
+    responses: TimeFlow,
+}
+
+impl TimeSessionFlow {
+    fn direction(&mut self, response: bool) -> &mut TimeFlow {
+        if response {
+            &mut self.responses
+        } else {
+            &mut self.requests
+        }
+    }
 }
 
 #[derive(Default)]
@@ -24,6 +58,7 @@ pub(super) struct TimePeer {
     established_on_session: bool,
     flights: Vec<Flight>,
     next_reply: Option<Instant>,
+    flow: TimeSessionFlow,
 }
 
 pub(super) enum ProbeTimeCheck {
@@ -42,6 +77,30 @@ pub(super) enum ProbeTimeCheck {
     },
 }
 impl TimePeer {
+    fn observe_session(&mut self, session: Option<[u8; 16]>) -> bool {
+        if self.session == session {
+            return false;
+        }
+        self.reference.invalidate();
+        self.session = session;
+        self.established_on_session = false;
+        self.flow = TimeSessionFlow::default();
+        true
+    }
+
+    fn flight_flow(&mut self, id: Hash) -> Option<&mut TimeFlow> {
+        let flight = self.flights.iter().find(|f| f.id == id)?;
+        // The original transport can return stale handles after rebind.
+        (self.session.is_some() && flight.session == self.session)
+            .then(|| self.flow.direction(flight.response))
+    }
+
+    pub(super) fn note_admission(&mut self, id: Hash) {
+        if let Some(flow) = self.flight_flow(id) {
+            flow.admitted = flow.admitted.saturating_add(1);
+        }
+    }
+
     pub(super) fn deadline(&self, object: Hash) -> Option<Instant> {
         self.flights
             .iter()
@@ -85,6 +144,10 @@ impl NativeLifecycle {
         message: TimeExchangeV1,
         now: Instant,
     ) -> Result<bool> {
+        let response = message.response;
+        let state = &mut self.time_peers[peer];
+        let flow = state.flow.direction(response);
+        flow.queue_attempted = flow.queue_attempted.saturating_add(1);
         // One request plus one response at most, charged to existing auxiliary
         // capacity. Never consume the reserved consensus-control allocation.
         if self.time_peers[peer].flights.len() >= 2 {
@@ -95,9 +158,14 @@ impl NativeLifecycle {
         if !self.enqueue(peer, prepared) {
             return Ok(false);
         }
-        self.time_peers[peer].flights.push(Flight {
+        let state = &mut self.time_peers[peer];
+        let flow = state.flow.direction(response);
+        flow.queued = flow.queued.saturating_add(1);
+        state.flights.push(Flight {
             id,
             deadline: now + MEASUREMENT_LIFETIME,
+            session: state.session,
+            response,
         });
         Ok(true)
     }
@@ -107,12 +175,7 @@ impl NativeLifecycle {
     pub(super) fn retire_network_time(&mut self, now: Instant) {
         for peer in 0..self.peers.len() {
             let session = self.channel.probe_transport(peer).session_id;
-            let changed = self.time_peers[peer].session != session;
-            if changed {
-                self.time_peers[peer].reference.invalidate();
-                self.time_peers[peer].session = session;
-                self.time_peers[peer].established_on_session = false;
-            }
+            let changed = self.time_peers[peer].observe_session(session);
             let expired: Vec<_> = self.time_peers[peer]
                 .flights
                 .iter()
@@ -131,7 +194,12 @@ impl NativeLifecycle {
                             .remove(index)
                             .expect("located time delivery");
                         self.bytes[peer] -= delivery.prepared.byte_len();
-                        self.time_peers[peer].flights.retain(|f| f.id != id);
+                        let state = &mut self.time_peers[peer];
+                        if let Some(flow) = state.flight_flow(id) {
+                            flow.expired_before_admission =
+                                flow.expired_before_admission.saturating_add(1);
+                        }
+                        state.flights.retain(|f| f.id != id);
                     }
                 }
             }
@@ -173,28 +241,41 @@ impl NativeLifecycle {
         let context = self
             .time_context(peer, false)
             .context("time session unavailable")?;
+        let flow = self.time_peers[peer].flow.direction(message.response);
+        flow.received = flow.received.saturating_add(1);
         self.time_peers[peer].reference.observe(context, clock);
         if message.response {
             let state = &mut self.time_peers[peer];
             let result = state.reference.accept(message, clock);
             if result.is_ok() {
                 state.accepted_samples = state.accepted_samples.saturating_add(1);
+                state.flow.responses.accepted = state.flow.responses.accepted.saturating_add(1);
                 state.established_on_session |= state.reference.interval(now).is_ok();
             } else {
                 state.rejected_samples = state.rejected_samples.saturating_add(1);
+                state.flow.responses.rejected = state.flow.responses.rejected.saturating_add(1);
             }
             result
         } else {
-            ensure!(
-                self.time_peers[peer]
-                    .next_reply
-                    .is_none_or(|next| now >= next),
-                "time reply rate limited"
-            );
+            if self.time_peers[peer]
+                .next_reply
+                .is_some_and(|next| now < next)
+            {
+                let flow = &mut self.time_peers[peer].flow.requests;
+                flow.reply_rate_limited = flow.reply_rate_limited.saturating_add(1);
+                anyhow::bail!("time reply rate limited");
+            }
             let expected = self
                 .time_context(peer, true)
                 .context("time session unavailable")?;
-            let response = message.reply(expected, clock)?;
+            let response = message.reply(expected, clock);
+            let flow = &mut self.time_peers[peer].flow.requests;
+            if response.is_ok() {
+                flow.accepted = flow.accepted.saturating_add(1);
+            } else {
+                flow.rejected = flow.rejected.saturating_add(1);
+            }
+            let response = response?;
             self.time_peers[peer].next_reply = Some(now + SAMPLE_INTERVAL);
             ensure!(
                 self.queue_network_time(peer, response, now)?,
@@ -213,6 +294,16 @@ impl NativeLifecycle {
         }
         if completed.state == ObjectSendState::Sending {
             return false;
+        }
+        if let Some(flow) = state.flight_flow(id) {
+            let counter = match completed.state {
+                ObjectSendState::Delivered => &mut flow.transport_done,
+                ObjectSendState::Expired => &mut flow.transport_expired,
+                ObjectSendState::SessionReplaced => &mut flow.transport_session_replaced,
+                ObjectSendState::Cancelled => &mut flow.transport_cancelled,
+                ObjectSendState::Sending => unreachable!("nonterminal time completion"),
+            };
+            *counter = counter.saturating_add(1);
         }
         state.flights.retain(|f| f.id != id);
         if let Some(index) = self.deliveries[completed.peer]
@@ -273,7 +364,10 @@ impl NativeLifecycle {
                 record! {peer: self.peers[peer], session: state.session,
                     relative_ready: state.reference.interval(now).is_ok(),
                     accepted_samples: state.accepted_samples,rejected_samples: state.rejected_samples,
-                    inflight: state.flights.len()}
+                    inflight: state.flights.len(),
+                    session_inflight: state.flights.iter().filter(|flight|
+                        state.session.is_some() && flight.session == state.session).count(),
+                    session_flow: state.flow}
             }).collect::<Vec<_>>()
         }
     }
@@ -283,6 +377,38 @@ impl NativeLifecycle {
 mod tests {
     use super::*;
     use crate::native_pipeline::consensus::tests::progress_integration::with_delivery_nodes_for_test;
+
+    #[test]
+    fn time_flow_is_partitioned_and_discards_stale_flight_updates() {
+        let now = Instant::now();
+        let mut state = TimePeer::default();
+        let old = Some([1; 16]);
+        let current = Some([2; 16]);
+        assert!(state.observe_session(old));
+        let request = Hash::from([3; 32]);
+        let response = Hash::from([4; 32]);
+        for (id, reply) in [(request, false), (response, true)] {
+            state.flights.push(Flight {
+                id,
+                deadline: now,
+                session: old,
+                response: reply,
+            });
+        }
+        state.accepted_samples = 5;
+        state.note_admission(request);
+        assert!(!state.observe_session(old));
+        assert_eq!(state.flow.requests.admitted, 1);
+        assert_eq!(state.flow.responses.admitted, 0);
+        assert!(state.observe_session(current));
+        state.note_admission(response);
+        assert!(state.flight_flow(request).is_none());
+        assert!(state.flight_flow(response).is_none());
+        let snapshot = serde_json::to_value(state.flow).unwrap();
+        assert_eq!(snapshot["requests"]["admitted"], 0);
+        assert_eq!(snapshot["responses"]["admitted"], 0);
+        assert_eq!(state.accepted_samples, 5);
+    }
 
     #[test]
     #[ignore = "real AOEM and original UDP lifecycle; not physical four-host acceptance"]
@@ -305,6 +431,7 @@ mod tests {
             };
             // Deterministic queue age; no sleep, enlarged TTL or mocked send.
             assert!(node.queue_network_time(peer, request.clone(), now - MEASUREMENT_LIFETIME)?);
+            assert_eq!(node.time_peers[peer].flow.requests.queued, 1);
             let expired_id = node.time_peers[peer].flights[0].id;
             assert!(node.enqueue(peer, prepared));
             assert!(node.bytes[peer] > consensus_bytes);
