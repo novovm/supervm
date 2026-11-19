@@ -31,8 +31,29 @@ show successful convergence on the same Iroh session after the object had
 already been rejected, but do not locate the third response within the
 wait window or prove that rate limiting caused the rejection.
 
-Follow-up: validate the ordering of the original owner’s cold-session
-measurement and pending delivery, including the interaction between reply
-pacing and the existing readiness deadline. First reproduce the timing in
-a local regression; do not rerun this live object, revive a rejected
-object, widen a timeout, or relax identity, expiry or replay policy.
+## Local follow-up: keep a slightly early reply until its send turn
+
+The original sender spaces challenges from the issue time, while the
+receiver previously dropped requests arriving before its reply pacing
+boundary. A small decrease in path delay can therefore drop a legal
+challenge. Its requester can remain waiting for that response until the
+existing measurement deadline. The captured rate-limit events are
+consistent with this defect, but the live records do not prove it was the
+only contributor to the failure.
+
+The original bounded delivery queue now holds one validated reply per
+peer until the existing pacing boundary. Actual admission advances the
+unchanged pacing guard, including across session replacements. Deferred
+replies do not occupy a send turn before they are due; other existing
+delivery can continue. There is no added queue capacity, message, timeout,
+or authentication exception. The original handoff timestamp means queued
+time stays inside the measured uncertainty. A session replacement or
+expiry still retires the reply. The progress projection adds
+`reply_deferred`; `reply_rate_limited` now counts an occupied reply slot.
+
+Windows strict Clippy with `iroh-transport` passed. Five targeted tests
+passed: bounded reply deferral/admission, expiry before I/O, pending Carrier
+probe expiry/generation, clock skew/jump/replay, and session counter
+isolation. The first test uses the original local sender and a
+deterministic pacing boundary; this is not physical Iroh acceptance.
+No new Full, package, deployment, or live probe was run for this fix.

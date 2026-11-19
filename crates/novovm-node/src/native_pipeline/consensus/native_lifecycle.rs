@@ -553,6 +553,9 @@ impl NativeLifecycle {
                         && !delivery.retiring
                         && delivery.prepared.lane() == 0
                         && Some(delivery.prepared.fragment_id()) != probe_object
+                        && self.time_peers[peer]
+                            .send_window(delivery.prepared.fragment_id())
+                            .is_none_or(|(not_before, _)| now >= not_before)
                 });
             for delivery in self.deliveries[peer]
                 .iter_mut()
@@ -565,13 +568,17 @@ impl NativeLifecycle {
                 if attempted[lane] {
                     continue;
                 }
+                let time_window =
+                    self.time_peers[peer].send_window(delivery.prepared.fragment_id());
+                if time_window.is_some_and(|(not_before, _)| now < not_before) {
+                    continue;
+                }
                 attempted[lane] = true;
-                let time_deadline = self.time_peers[peer].deadline(delivery.prepared.fragment_id());
                 let admitted = if let Some(deadline) = self
                     .probe
                     .as_ref()
                     .and_then(|state| state.deadline(delivery.prepared.fragment_id()))
-                    .or(time_deadline)
+                    .or(time_window.map(|(_, deadline)| deadline))
                 {
                     self.channel
                         .try_send_probe(peer, &delivery.prepared, now, deadline)?
@@ -580,8 +587,8 @@ impl NativeLifecycle {
                 };
                 if admitted {
                     delivery.admitted = true;
-                    if time_deadline.is_some() {
-                        self.time_peers[peer].note_admission(delivery.prepared.fragment_id());
+                    if time_window.is_some() {
+                        self.time_peers[peer].note_admission(delivery.prepared.fragment_id(), now);
                     }
                     if let Some(probe) = &mut self.probe {
                         probe.admitted(

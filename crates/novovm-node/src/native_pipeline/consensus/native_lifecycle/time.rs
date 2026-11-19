@@ -12,6 +12,7 @@ use novovm_network::novorudp::object_link::NativeSendCompletion;
 
 struct Flight {
     id: Hash,
+    not_before: Instant,
     deadline: Instant,
     session: Option<[u8; 16]>,
     response: bool,
@@ -30,6 +31,7 @@ struct TimeFlow {
     received: u64,
     accepted: u64,
     rejected: u64,
+    reply_deferred: u64,
     reply_rate_limited: u64,
 }
 
@@ -95,17 +97,22 @@ impl TimePeer {
             .then(|| self.flow.direction(flight.response))
     }
 
-    pub(super) fn note_admission(&mut self, id: Hash) {
+    pub(super) fn note_admission(&mut self, id: Hash, now: Instant) {
+        let response = self.flights.iter().any(|f| f.id == id && f.response);
         if let Some(flow) = self.flight_flow(id) {
             flow.admitted = flow.admitted.saturating_add(1);
+            if response {
+                // Keep the per-peer pacing guard across session changes.
+                self.next_reply = Some(now + SAMPLE_INTERVAL);
+            }
         }
     }
 
-    pub(super) fn deadline(&self, object: Hash) -> Option<Instant> {
+    pub(super) fn send_window(&self, object: Hash) -> Option<(Instant, Instant)> {
         self.flights
             .iter()
             .find(|f| f.id == object)
-            .map(|f| f.deadline)
+            .map(|f| (f.not_before, f.deadline))
     }
 }
 impl NativeLifecycle {
@@ -150,7 +157,16 @@ impl NativeLifecycle {
         flow.queue_attempted = flow.queue_attempted.saturating_add(1);
         // One request plus one response at most, charged to existing auxiliary
         // capacity. Never consume the reserved consensus-control allocation.
-        if self.time_peers[peer].flights.len() >= 2 {
+        if state.flights.len() >= 2 || state.flights.iter().any(|f| f.response == response) {
+            return Ok(false);
+        }
+        let not_before = if response {
+            state.next_reply.unwrap_or(now).max(now)
+        } else {
+            now
+        };
+        let deadline = now + MEASUREMENT_LIFETIME;
+        if not_before >= deadline {
             return Ok(false);
         }
         let prepared = self.channel.prepare(&Message::NetworkTime(message))?;
@@ -163,10 +179,15 @@ impl NativeLifecycle {
         flow.queued = flow.queued.saturating_add(1);
         state.flights.push(Flight {
             id,
-            deadline: now + MEASUREMENT_LIFETIME,
+            not_before,
+            deadline,
             session: state.session,
             response,
         });
+        if not_before > now {
+            state.flow.requests.reply_deferred =
+                state.flow.requests.reply_deferred.saturating_add(1);
+        }
         Ok(true)
     }
     // I/O may run while assembly/execution is waiting. Retire stale auxiliary
@@ -236,7 +257,15 @@ impl NativeLifecycle {
         peer: usize,
         message: &TimeExchangeV1,
     ) -> Result<()> {
-        let clock = self.time_clock()?;
+        self.receive_network_time_at(peer, message, self.time_clock()?)
+    }
+
+    fn receive_network_time_at(
+        &mut self,
+        peer: usize,
+        message: &TimeExchangeV1,
+        clock: ClockAnchorV1,
+    ) -> Result<()> {
         let now = clock.instant();
         let context = self
             .time_context(peer, false)
@@ -257,14 +286,6 @@ impl NativeLifecycle {
             }
             result
         } else {
-            if self.time_peers[peer]
-                .next_reply
-                .is_some_and(|next| now < next)
-            {
-                let flow = &mut self.time_peers[peer].flow.requests;
-                flow.reply_rate_limited = flow.reply_rate_limited.saturating_add(1);
-                anyhow::bail!("time reply rate limited");
-            }
             let expected = self
                 .time_context(peer, true)
                 .context("time session unavailable")?;
@@ -276,7 +297,15 @@ impl NativeLifecycle {
                 flow.rejected = flow.rejected.saturating_add(1);
             }
             let response = response?;
-            self.time_peers[peer].next_reply = Some(now + SAMPLE_INTERVAL);
+            // Arrival spacing may be shorter than the sender's issue spacing.
+            // Keep one response in the existing bounded queue instead of
+            // dropping it. The original timestamp keeps the queueing delay in
+            // measured uncertainty; pacing does not extend its expiry.
+            if self.time_peers[peer].flights.iter().any(|f| f.response) {
+                let flow = &mut self.time_peers[peer].flow.requests;
+                flow.reply_rate_limited = flow.reply_rate_limited.saturating_add(1);
+                anyhow::bail!("time reply slot occupied");
+            }
             ensure!(
                 self.queue_network_time(peer, response, now)?,
                 "time reply backpressure"
@@ -379,6 +408,63 @@ mod tests {
     use crate::native_pipeline::consensus::tests::progress_integration::with_delivery_nodes_for_test;
 
     #[test]
+    #[ignore = "real AOEM and original local UDP lifecycle; not physical Iroh acceptance"]
+    fn early_time_reply_waits_in_bounded_original_sender() -> Result<()> {
+        with_delivery_nodes_for_test(|nodes, leader, _, _| {
+            let node = &mut nodes[leader];
+            let peer = 0;
+            let now = Instant::now();
+            let clock = ClockAnchorV1::from_parts(10_000, now);
+            node.retire_network_time(now);
+            let expected = node.time_context(peer, true).context("test session")?;
+            let ready = now + Duration::from_millis(5);
+            node.time_peers[peer].next_reply = Some(ready);
+            let request = TimeExchangeV1 {
+                response: false,
+                context: expected,
+                challenge: [8; 32],
+                receive_ms: 0,
+                send_ms: 0,
+                residence_ns: 0,
+            };
+            let mut invalid = request.clone();
+            invalid.context[0] ^= 1;
+            assert!(node.receive_network_time_at(peer, &invalid, clock).is_err());
+            assert!(node.time_peers[peer].flights.is_empty());
+
+            node.receive_network_time_at(peer, &request, clock)?;
+            let flight = &node.time_peers[peer].flights[0];
+            let id = flight.id;
+            assert_eq!(flight.not_before, ready);
+            assert_eq!(flight.deadline, now + MEASUREMENT_LIFETIME);
+            let second = TimeExchangeV1 {
+                challenge: [9; 32],
+                ..request
+            };
+            assert!(node.receive_network_time_at(peer, &second, clock).is_err());
+            assert_eq!(node.time_peers[peer].flights.len(), 1);
+            assert_eq!(node.time_peers[peer].flow.requests.reply_deferred, 1);
+            assert_eq!(node.time_peers[peer].flow.requests.reply_rate_limited, 1);
+
+            node.poll_io(clock.wall_ms(), now)?;
+            assert!(node.deliveries[peer]
+                .iter()
+                .any(|d| d.prepared.fragment_id() == id && !d.admitted));
+            node.poll_io(clock.at(ready)?, ready)?;
+            assert!(node.deliveries[peer]
+                .iter()
+                .any(|d| d.prepared.fragment_id() == id && d.admitted));
+            assert_eq!(
+                node.time_peers[peer].next_reply,
+                Some(ready + SAMPLE_INTERVAL)
+            );
+            node.poll_io(12_000, now + MEASUREMENT_LIFETIME)?;
+            assert!(node.time_peers[peer].flights.is_empty());
+            Ok(())
+        })
+    }
+
+    #[test]
     fn time_flow_is_partitioned_and_discards_stale_flight_updates() {
         let now = Instant::now();
         let mut state = TimePeer::default();
@@ -390,18 +476,19 @@ mod tests {
         for (id, reply) in [(request, false), (response, true)] {
             state.flights.push(Flight {
                 id,
+                not_before: now,
                 deadline: now,
                 session: old,
                 response: reply,
             });
         }
         state.accepted_samples = 5;
-        state.note_admission(request);
+        state.note_admission(request, now);
         assert!(!state.observe_session(old));
         assert_eq!(state.flow.requests.admitted, 1);
         assert_eq!(state.flow.responses.admitted, 0);
         assert!(state.observe_session(current));
-        state.note_admission(response);
+        state.note_admission(response, now);
         assert!(state.flight_flow(request).is_none());
         assert!(state.flight_flow(response).is_none());
         let snapshot = serde_json::to_value(state.flow).unwrap();
