@@ -1,0 +1,26 @@
+{
+  "source": "63b0ef4a5b372eaafdbf6c10a4032d5ebe0bbded",
+  "status": "A_63B0_EXISTING_AUTHENTICATED_STATUS_PASS",
+  "cutover_utc": "2026-11-19T08:47:58.8430155Z",
+  "old_pid": 16528,
+  "pid": 7004,
+  "owner_sid": "S-1-5-19",
+  "start": "existing",
+  "initialize": false,
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\A\\chain-state",
+  "node_sha256": "06fdd2b25e7c2e6391886debd2c59a601ef791f4dee3f1746e43688d300eca97",
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "manifest_sha256": "d45f042a6a999baa04422b08b06953d67abcb6abd3214bf1435bf5c697599771",
+  "custody_unchanged": true,
+  "listeners": ["192.168.71.74:41051", "192.168.71.74:42051"],
+  "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333",
+  "height": 1,
+  "authenticated_status_elapsed_ms": 31,
+  "progress_samples": [
+    {"mtime_utc": "2026-11-19T08:48:43.5779126Z", "ticks": 50250},
+    {"mtime_utc": "2026-11-19T08:48:48.5804487Z", "ticks": 55831}
+  ],
+  "execution_failures": 0,
+  "object_sent": false,
+  "B_mutated": false
+}
