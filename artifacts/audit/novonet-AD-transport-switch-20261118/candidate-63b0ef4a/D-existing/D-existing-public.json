@@ -1,0 +1,40 @@
+{
+  "source": "63b0ef4a5b372eaafdbf6c10a4032d5ebe0bbded",
+  "pid": 34780,
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\chain-state",
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 42053,
+      "OwningProcess": 34780
+    },
+    {
+      "LocalAddress": "192.168.71.59",
+      "LocalPort": 41053,
+      "OwningProcess": 34780
+    }
+  ],
+  "config": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\novovm-common-63b0ef4a-20261119/run.json",
+  "task": "NOVOVM-D-63b0ef4a-Existing-20261119",
+  "height": 1,
+  "initialize": false,
+  "start": "existing",
+  "head": null,
+  "created_utc": "2026-11-19T08:31:02.8673780Z",
+  "sid": "S-1-5-19",
+  "exe": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-63b0ef4a-windows-x86_64\\bin\\novovm-node.exe",
+  "utc": "2026-11-19T08:31:03.3908148Z",
+  "status": "D_63B0_EXISTING_READY_FOR_A_QUERY",
+  "node_sha256": "06fdd2b25e7c2e6391886debd2c59a601ef791f4dee3f1746e43688d300eca97",
+  "recovery_in_progress": false,
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "state_projection_unchanged": true,
+  "projection_error": null,
+  "control": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
+  "account": "NT AUTHORITY\\LOCAL SERVICE",
+  "progress": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\D\\novovm-common-63b0ef4a-20261119/logs/progress.json",
+  "execution_failures": 0,
+  "custody_unchanged": true,
+  "manifest_sha256": "d45f042a6a999baa04422b08b06953d67abcb6abd3214bf1435bf5c697599771",
+  "actual_aoem": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-63b0ef4a-windows-x86_64\\aoem\\windows\\core\\bin\\aoem_ffi.dll"
+}
