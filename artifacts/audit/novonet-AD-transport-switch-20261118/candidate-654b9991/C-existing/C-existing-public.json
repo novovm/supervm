@@ -1,0 +1,94 @@
+{
+  "status": "C_654B_EXISTING_READY_FOR_A_QUERY",
+  "host": "C",
+  "source": "654b99916e80004e2df999c6d393ed7b94bec49b",
+  "pid": 28204,
+  "created_utc": "2026-11-20T07:47:22.6879682Z",
+  "account_sid": "S-1-5-19",
+  "task": "NOVOVM-C-654b9991-Existing-20261120",
+  "start": "existing",
+  "initialize": false,
+  "node_sha256": "04a0e0b174bc9de1fa7cd71eb8aff54b06ad670fa0b407c0e75394e46a7e3ee4",
+  "loaded_aoem": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-654b9991-C-20261120\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "manifest_sha256": "9f79214bcae9b23af7a71b6a1b45a182eb25763be555d4e6c6211f93fe070102",
+  "archive_bytes": 162894278,
+  "archive_sha256": "62be16398634206c7e460c1ac4d62d1605f474f9590fa23e1a3da6b298d45709",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "identity_sha256": "610885e9dc34eaa2c979a95e55bebde247d8f40e23f071f727a7fbf0b4c50e4a",
+  "config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common654b-C-20261120\\run.json",
+  "network_config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common654b-C-20261120\\network-current-lan.json",
+  "progress": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common654b-C-20261120\\progress.json",
+  "control": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
+  "udp_listeners": [
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 42052,
+      "OwningProcess": 28204
+    },
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 41052,
+      "OwningProcess": 28204
+    }
+  ],
+  "progress_samples": [
+    {
+      "utc": "2026-11-20T07:47:34.2816143Z",
+      "progress_mtime_utc": "2026-11-20T07:47:33.1244886Z",
+      "ticks": 8979,
+      "chain_id": 91129655606029,
+      "height": 1,
+      "head": null,
+      "execution_failures": 0,
+      "recovery_in_progress": false
+    },
+    {
+      "utc": "2026-11-20T07:47:40.3083665Z",
+      "progress_mtime_utc": "2026-11-20T07:47:38.1264489Z",
+      "ticks": 13615,
+      "chain_id": 91129655606029,
+      "height": 1,
+      "head": null,
+      "execution_failures": 0,
+      "recovery_in_progress": false
+    }
+  ],
+  "first_bind_failure": {
+    "elapsed_seconds": 1.1556976,
+    "automatic_restart": false,
+    "error": null,
+    "reason": "node_exited",
+    "utc": "2026-11-20T07:45:27.6853602Z",
+    "exit_code": 1,
+    "forced_by_controller": false,
+    "pid": 11080
+  },
+  "first_bind_error": 10049,
+  "old_lan_address": "192.168.71.125",
+  "current_lan_address": "192.168.71.73",
+  "previous_owner": {
+    "pid": 25544,
+    "created_utc": "2026-11-18T12:15:07.4610184Z",
+    "node_live": false,
+    "udp_ports_present": false,
+    "task_state": "Ready",
+    "last_ticks": 65597425,
+    "progress_mtime_utc": "2026-11-18T22:23:27.6604177Z",
+    "exit_record": {
+      "reason": "node_exited",
+      "automatic_restart": false,
+      "forced_by_controller": false,
+      "elapsed_seconds": 36510.4599896,
+      "utc": "2026-11-18T22:23:37.7039807Z",
+      "pid": 25544,
+      "exit_code": -1073740940,
+      "error": null
+    },
+    "exit_hex": "0xC0000374",
+    "dump_path": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\CrashDumps\\NOVOVM-Full-C-20261114T074716Z\\novovm-node.exe.25544.dmp",
+    "dump_bytes": 249246795,
+    "dump_sha256": "b6e8bc19ec3debdecfe4366de5aa6222497c861d531f0f9023c2c6ef413ebd67"
+  },
+  "remote_authentication_checked": false
+}
