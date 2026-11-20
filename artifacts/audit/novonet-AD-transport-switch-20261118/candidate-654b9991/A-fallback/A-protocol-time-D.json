@@ -1,0 +1,158 @@
+[
+  {
+    "utc": "2026-11-20T02:55:07.5064159Z",
+    "ticks": 4192679,
+    "session": "b329ae99d373bc50268c849fc48c8119",
+    "ready": true,
+    "session_inflight": 0,
+    "session_flow": {
+      "requests": {
+        "queue_attempted": 45,
+        "queued": 45,
+        "admitted": 45,
+        "expired_before_admission": 0,
+        "transport_done": 45,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 45,
+        "accepted": 45,
+        "rejected": 0,
+        "reply_deferred": 7,
+        "reply_rate_limited": 0
+      },
+      "responses": {
+        "queue_attempted": 45,
+        "queued": 45,
+        "admitted": 45,
+        "expired_before_admission": 0,
+        "transport_done": 45,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 45,
+        "accepted": 45,
+        "rejected": 0,
+        "reply_deferred": 0,
+        "reply_rate_limited": 0
+      }
+    }
+  },
+  {
+    "utc": "2026-11-20T02:55:08.7919520Z",
+    "ticks": 4200514,
+    "session": "b329ae99d373bc50268c849fc48c8119",
+    "ready": true,
+    "session_inflight": 0,
+    "session_flow": {
+      "requests": {
+        "queue_attempted": 45,
+        "queued": 45,
+        "admitted": 45,
+        "expired_before_admission": 0,
+        "transport_done": 45,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 45,
+        "accepted": 45,
+        "rejected": 0,
+        "reply_deferred": 7,
+        "reply_rate_limited": 0
+      },
+      "responses": {
+        "queue_attempted": 45,
+        "queued": 45,
+        "admitted": 45,
+        "expired_before_admission": 0,
+        "transport_done": 45,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 45,
+        "accepted": 45,
+        "rejected": 0,
+        "reply_deferred": 0,
+        "reply_rate_limited": 0
+      }
+    }
+  },
+  {
+    "utc": "2026-11-20T02:55:13.4052179Z",
+    "ticks": 4212019,
+    "session": "186bfa0798f975d81d5e0607592fae68",
+    "ready": true,
+    "session_inflight": 0,
+    "session_flow": {
+      "requests": {
+        "queue_attempted": 3,
+        "queued": 3,
+        "admitted": 3,
+        "expired_before_admission": 0,
+        "transport_done": 3,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "reply_deferred": 2,
+        "reply_rate_limited": 0
+      },
+      "responses": {
+        "queue_attempted": 3,
+        "queued": 3,
+        "admitted": 3,
+        "expired_before_admission": 0,
+        "transport_done": 3,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "reply_deferred": 0,
+        "reply_rate_limited": 0
+      }
+    }
+  },
+  {
+    "utc": "2026-11-20T02:55:18.5593231Z",
+    "ticks": 4219672,
+    "session": "25c30899e07f7ac7d57c32cf21a8f44d",
+    "ready": true,
+    "session_inflight": 0,
+    "session_flow": {
+      "requests": {
+        "queue_attempted": 3,
+        "queued": 3,
+        "admitted": 3,
+        "expired_before_admission": 0,
+        "transport_done": 3,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "reply_deferred": 0,
+        "reply_rate_limited": 0
+      },
+      "responses": {
+        "queue_attempted": 3,
+        "queued": 3,
+        "admitted": 3,
+        "expired_before_admission": 0,
+        "transport_done": 3,
+        "transport_expired": 0,
+        "transport_cancelled": 0,
+        "transport_session_replaced": 0,
+        "received": 3,
+        "accepted": 3,
+        "rejected": 0,
+        "reply_deferred": 0,
+        "reply_rate_limited": 0
+      }
+    }
+  }
+]
