@@ -1,5 +1,22 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-21 validator-C Android 无 VPN 换址验收协调
+
+按[共享传输策略](NOVONET_TRANSPORT_POLICY_V1.md#2026-11-21-共享抗封抗审查与节点原生-apfl-信箱)
+验收各节点原生 APFL 信箱。C 负责 Android 消费签名入口和 Wi-Fi／蜂窝双机验收。四机既有
+验证者服务保持原运行状态，复用现有节点前先对照当前签名信箱能力、对外地址与备用入口。
+已通过的链上认证查询和诊断对象转发分别保留原验收范围。
+
+validator-C 已只读核对 B 原 `novonet-mailbox.service` 和公开声明，运行模式为
+`native+carrier`，声明含原生 UDP 与 V8 TCP。mobile-A 用 Wi-Fi、mobile-B 用蜂窝
+分别连通声明中的 TCP 地址，测试期默认网络无 VPN。当前证据为 TCP 可达。
+首选节点公网地址和端口的受控变更、独立声明恢复路径及 Android 业务回执仍待联调。
+B 的原生 UDP 和 V8 TCP 公告使用同一公网 IP，当前 Iroh 声明没有另一个全球可路由直连
+地址，也没有公布转发服务。整个 IP 失效的验收需要另一个仍可达的已批准声明来源。
+通过网络出口访问公网内容已列入共同目标，使用场景与原有 APFL 业务分别验收。
+客户端已接原签名 UDP 地址变更通知并验证缓存冷重开，见
+[NOVOCHAT e125c9a](https://github.com/XujueKing/NOVOCHAT/commit/e125c9a)。
+
 ## 2026-11-20 C 回传：mobile-B v110 旧 L4 已进入排空
 
 NOVOCHAT [4b0edda](https://github.com/XujueKing/NOVOCHAT/commit/4b0edda402789810c364d5f2edbbbe89ef439c26)
