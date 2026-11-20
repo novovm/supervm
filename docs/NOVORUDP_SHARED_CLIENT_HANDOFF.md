@@ -1,5 +1,19 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：手机持久寄存证明接入
+
+NOVOCHAT [51edb51](https://github.com/XujueKing/NOVOCHAT/commit/51edb5192cc0029422c3e08b4c8f359ac6aaf4e1)
+已推送。原文字、媒体和待交回执的续发读回同一份加密日志中的 ML-DSA-65
+寄存证明。重复寄存保持首份有效证明。两种本地证明表容量在原事务内迁移，
+不更换加密密钥、密文或服务义务。历史寄存投影仍可离线读取。
+L4 联系人声明已使用共享只读验签器和完整服务公钥。
+
+实际 AOEM 与 SQLite 隔离回归 5 项通过，隔离严格 Clippy 通过。Android
+从 20 降到 16 项编译错误。Windows 完整网络测试仍未编过，库 6 项、库测试
+182 项错误。设备 L4 持钥、消息与控制会话身份及联系人缓存兼容仍待接续。
+[实施边界与原始证据](https://github.com/XujueKing/NOVOCHAT/blob/51edb51/docs/implementation/MAILBOX_PERSISTENCE_MIGRATION_2026-11-20.md)。
+本轮为客户端增量。四节点、手机现有版本和数据保持，生产收费关闭。
+
 ## 2026-11-20 C回到手机端：邮箱通信钥及直接节点回执迁接
 
 用户说明A/B/C/D就绪，C继续独立NOVOCHAT，不操作四机节点。NOVOCHAT
