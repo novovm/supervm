@@ -82,3 +82,23 @@ implementation gate is a journal/pacemaker regression for authenticated
 recovery across this gap, preserving existing signer, context, lock and
 three-vote finality requirements. Do not treat a bound increase, unsigned
 status, or an operator-chosen round as a recovery proof.
+
+## Isolated journal and pacemaker regression
+
+`resident_round_gap_verified_witness_is_ack_gated_and_not_finality`
+reproduces the 294 → 580 gap on the existing journal and pacemaker, using
+an in-memory ACK backend and four fixture identities. Ordinary admission
+at round 294 rejects both round-580 votes and the pacemaker remains idle.
+An independently verified two-signer, exact-round witness, assembled by
+a separate fixture collector at round 516, advances the journal only
+after the matching persistence ACK; reopening retains round 580. The
+transition emits no signed message and records neither a decision nor a
+new head. Two round-580 votes plus one round-581 vote do not form QC;
+three round-580 nil precommits form a nil quorum, not block finality.
+
+Windows locked release consensus library: 184 passed, including all 8
+journal tests; rustfmt check passed. This exercises the existing consumer,
+not a deployed wire route, a real disk ACK, AOEM execution or transaction
+finality. The next missing step is a bounded authenticated intake for
+exact-round evidence outside the ordinary 64-round vote window. No live
+nodes were changed and the original transfer was not resubmitted.

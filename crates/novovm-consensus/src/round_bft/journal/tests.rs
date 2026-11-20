@@ -167,8 +167,18 @@ fn fixture() -> (
     SigningKey,
 ) {
     let key = SigningKey::from_bytes(&[7; 32]);
-    let member = Validator::new(key.verifying_key().to_bytes(), 1).unwrap();
-    let set = Arc::new(ValidatorSet::new_for_test(71, 1, 1, vec![member]).unwrap());
+    let (backend, context, parent, set) = fixture_with_keys(std::slice::from_ref(&key));
+    (backend, context, parent, set, key)
+}
+
+fn fixture_with_keys(
+    keys: &[SigningKey],
+) -> (Backend, ConsensusContext, ParentPoint, Arc<ValidatorSet>) {
+    let members = keys
+        .iter()
+        .map(|key| Validator::new(key.verifying_key().to_bytes(), 1).unwrap())
+        .collect();
+    let set = Arc::new(ValidatorSet::new_for_test(71, 1, 1, members).unwrap());
     let context = ConsensusContext {
         chain_id: 71,
         genesis_config_commitment: [1; 32],
@@ -198,7 +208,7 @@ fn fixture() -> (
         queued: RefCell::default(),
         accept: Cell::new(true),
     };
-    (backend, context, parent, set, key)
+    (backend, context, parent, set)
 }
 
 fn open(
@@ -215,6 +225,121 @@ fn open(
         }
     }
     anyhow::bail!("bounded fixture opening did not complete")
+}
+
+#[test]
+fn resident_round_gap_verified_witness_is_ack_gated_and_not_finality() -> Result<()> {
+    use crate::round_bft::{
+        collector::{CollectorLimits, VoteCollector},
+        pacemaker::{Pacemaker, TimeoutPolicy, TimerAction},
+        wire::Phase,
+    };
+    use std::time::{Duration, Instant};
+
+    let keys: Vec<_> = (1..=4).map(|i| SigningKey::from_bytes(&[i; 32])).collect();
+    let (backend, context, parent, set) = fixture_with_keys(&keys);
+    let mut journal = open(&backend, context, parent, &set, &keys[2])?;
+    let collector = |round| {
+        VoteCollector::new(
+            context,
+            set.clone(),
+            round,
+            CollectorLimits {
+                max_retained_rounds: 2,
+                max_future_round_span: 64,
+                max_votes: 28,
+            },
+        )
+    };
+    let policy = TimeoutPolicy {
+        propose: Duration::from_secs(5),
+        prevote: Duration::from_secs(5),
+        precommit: Duration::from_secs(5),
+        round_increment: Duration::from_secs(1),
+    };
+    let mut pacemaker = Pacemaker::new(policy)?;
+    let now = Instant::now();
+    let vote = |signer: usize, round| {
+        Vote::sign(context, round, Phase::Precommit, None, &set, &keys[signer])
+    };
+    // Build the older journal through real, bounded catch-up transitions.
+    for target in [64, 128, 192, 256, 294] {
+        let mut votes = collector(journal.round())?;
+        votes.insert(&vote(0, target)?)?;
+        votes.insert(&vote(1, target)?)?;
+        assert_eq!(
+            pacemaker.poll(&mut journal, &votes, now)?,
+            TimerAction::CatchUp(target)
+        );
+        assert!(journal.enqueue_pending(&backend)?);
+        backend.complete(false);
+        assert!(matches!(journal.poll(&backend)?, Some(None)));
+        assert_eq!(journal.round(), target);
+    }
+    drop(journal);
+    let mut journal = open(&backend, context, parent, &set, &keys[2])?;
+    let mut lagged = collector(294)?;
+    let a = vote(0, 580)?;
+    let b = vote(1, 580)?;
+    assert!(lagged.insert(&a).is_err());
+    assert!(lagged.insert(&b).is_err());
+    assert_eq!(
+        pacemaker.poll(&mut journal, &lagged, now)?,
+        TimerAction::Idle
+    );
+    assert!(!journal.is_pending());
+
+    // Isolate the existing journal consumer. The live transport does NOT
+    // provide this constructed, independently qualified witness today.
+    let mut qualified = collector(516)?;
+    qualified.insert(&a)?;
+    qualified.insert(&b)?;
+    let witness = qualified
+        .catch_up()
+        .expect("two distinct same-round signers");
+    journal.catch_up(&witness)?;
+    assert_eq!(journal.round(), 294);
+    assert_eq!(
+        pacemaker.poll(&mut journal, &lagged, now)?,
+        TimerAction::Pending
+    );
+    assert!(journal.enqueue_pending(&backend)?);
+    backend.complete(false);
+    assert_eq!(journal.round(), 294);
+    assert!(matches!(journal.poll(&backend)?, Some(None)));
+    assert_eq!(journal.round(), 580);
+    assert!(journal.last_durable_message().is_none());
+    assert!(journal.decided().is_none());
+    assert!(journal.head().is_none());
+
+    drop(journal);
+    let mut journal = open(&backend, context, parent, &set, &keys[2])?;
+    assert_eq!(journal.round(), 580);
+    assert!(journal.head().is_none());
+    let mut votes = collector(580)?;
+    votes.insert(&a)?;
+    votes.insert(&b)?;
+    votes.insert(&vote(3, 581)?)?;
+    assert!(!votes.timeout_eligible(580, Phase::Precommit));
+    assert!(votes.quorum(580, Phase::Precommit, None)?.is_none());
+    assert_eq!(
+        pacemaker.poll(&mut journal, &votes, now)?,
+        TimerAction::Idle
+    );
+    votes.insert(&vote(3, 580)?)?;
+    assert!(votes.timeout_eligible(580, Phase::Precommit));
+    assert_eq!(
+        votes
+            .quorum(580, Phase::Precommit, None)?
+            .unwrap()
+            .signed_weight(),
+        3
+    );
+    assert!(
+        journal.decided().is_none(),
+        "nil quorum is not block finality"
+    );
+    Ok(())
 }
 
 #[test]
