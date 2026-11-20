@@ -146,3 +146,24 @@ same binary witness to real authenticated NativeChannels, and admits it
 at round 294 without a QC or an immediate round change. The separate
 journal regression exercises the ACK boundary. These do not prove a
 live node's recovery-request lifecycle or the original transfer's receipt.
+
+## Isolated native lifecycle recovery and reopen
+
+`native_far_round_request_catches_up_and_reopens_existing_store`
+uses the original four-channel loopback fixture and real AOEM stores in
+an isolated temporary directory. Fixture signers establish acknowledged
+rounds 294 and 580 using ordinary in-window votes. The test then polls
+only the original active lifecycles; it does not construct or inject a
+recovery request or far-round witness. It requires the lagging lifecycle
+to reach round 580 with the same context, no decided head and no new
+execution, then shuts down the isolated stores and reopens the lagging
+one in `Existing` mode with its same identity. The reopened journal must
+retain round 580 with no durable signed message or decided head.
+
+Windows locked release result: 1/1 passed (test runtime 0.85 s), with
+the real AOEM DLL SHA-256
+`f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`,
+matching the verified Windows candidate library. This is local UDP and a
+clean isolated store shutdown/reopen, not process-kill or four-machine
+acceptance. No resident process/database was touched, and the original
+transfer was not resubmitted.

@@ -102,6 +102,16 @@ fn fixture_with(
             std::process::id(),
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
         ));
+    fixture_at(&directory, backend, codec, initialize, configure)
+}
+
+fn fixture_at(
+    directory: &Path,
+    backend: ExecutionBackend,
+    codec: transport::DecodeLimits,
+    initialize: impl Fn(&Path) -> Result<Hash>,
+    configure: impl Fn(&Path) -> Result<PipelineConfig>,
+) -> Result<Fixture> {
     let paths: Vec<_> = (0..4)
         .map(|i| directory.join(format!("node-{i}")))
         .collect();

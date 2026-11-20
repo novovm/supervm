@@ -16,7 +16,10 @@ struct NativeFixture {
 
 impl NativeFixture {
     fn new(inflight: usize) -> Result<Self> {
-        let mut base = fixture(ExecutionBackend::CpuCallbacks)?;
+        Self::from_base(fixture(ExecutionBackend::CpuCallbacks)?, inflight)
+    }
+
+    fn from_base(mut base: Fixture, inflight: usize) -> Result<Self> {
         let mut nodes = Vec::new();
         for (i, (driver, channel)) in std::mem::take(&mut base.drivers)
             .into_iter()
@@ -137,6 +140,96 @@ impl NativeFixture {
         );
         Ok(())
     }
+}
+
+#[test]
+#[ignore = "real AOEM; native sockets and isolated stores, not cross-machine finality"]
+fn native_far_round_request_catches_up_and_reopens_existing_store() -> Result<()> {
+    use crate::native_pipeline::consensus::wire::Phase;
+    use novovm_consensus::round_bft::test_vectors::sign_vote;
+
+    let scratch = std::env::temp_dir().join(format!(
+        "novovm-far-round-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    let mut f = NativeFixture::from_base(
+        fixture_at(
+            &scratch,
+            ExecutionBackend::CpuCallbacks,
+            codec(),
+            initialize,
+            pipeline_config,
+        )?,
+        1,
+    )?;
+    let responder = 0;
+    let lagged = 1;
+    // Only establish test preconditions here, with ordinary signed, in-window
+    // votes and the actual AOEM ACK path. No far witness or request is injected.
+    for (node, goal) in [(responder, 580), (lagged, 294)] {
+        while f.nodes[node].progress.round() < goal {
+            let next = (f.nodes[node].progress.round() + 32).min(goal);
+            for signer in [2, 3] {
+                let vote = sign_vote(
+                    f.base.genesis,
+                    next,
+                    Phase::Precommit,
+                    None,
+                    &f.base.set,
+                    &f.base.keys[signer],
+                )?;
+                f.nodes[node]
+                    .progress
+                    .receive(f.base.ids[signer], &Message::Vote(vote))?;
+            }
+            let deadline = Instant::now() + DEADLINE;
+            while f.nodes[node].progress.round() < next {
+                ensure!(
+                    Instant::now() < deadline,
+                    "preparation journal ACK timed out"
+                );
+                f.nodes[node]
+                    .progress
+                    .poll(&f.base.services.0[node], Instant::now())?;
+                std::thread::yield_now();
+            }
+            ensure!(f.nodes[node].progress.round() == next);
+        }
+    }
+
+    // From here, only the original lifecycle is polled. The two fixture
+    // signers obey the ordinary vote rule above but do not run consensus here.
+    f.until(
+        &[responder, lagged],
+        "automatic recovery request and witness",
+        |nodes| nodes[lagged].progress.round() == 580,
+    )?;
+    ensure!(f.nodes[lagged].progress.context() == f.base.genesis);
+    ensure!(f
+        .nodes
+        .iter()
+        .all(|node| node.progress.head().is_none() && node.executed() == 0));
+    ensure!(f.nodes[responder].progress.round() == 580);
+
+    drop(f.nodes);
+    f.base.services.shutdown()?;
+    let store =
+        CandidatePipeline::start(pipeline_config(&f.base.paths[lagged])?, OpenMode::Existing)?;
+    let reopened = open_journal(
+        ValidatorJournal::open(
+            &store,
+            f.base.genesis,
+            f.base.anchor,
+            f.base.set.clone(),
+            f.base.keys[lagged].clone(),
+        )?,
+        &store,
+    )?;
+    ensure!(reopened.round() == 580 && reopened.head().is_none());
+    ensure!(reopened.context() == f.base.genesis && reopened.last_durable_message().is_none());
+    drop(reopened);
+    store.shutdown()
 }
 
 fn body(parent: ParentPoint, height: u64) -> Result<Arc<Message>> {
