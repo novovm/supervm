@@ -1,5 +1,13 @@
 # Agent Highest Law
 
+## 2026-11-20 手机主线接续状态
+
+C消费85de114d并推送NOVOCHAT151a191：邮箱握手接App原ML-DSA通信owner，6处直接
+节点寄存回执绑定slot/完整钥和原对象后验签；chat signer继续E2EE历史用途。core245
+通过/1原忽略、隔离29次执行通过（27不同测试）、Clippy通过；Android仍20项编译
+错误、无新主APK/双机验收。C继续L4/持久证明/控制身份，不操作四机节点，不等A代修
+App；保留身份历史与费用关闭。详见docs/NOVORUDP_SHARED_CLIENT_HANDOFF.md顶部。
+
 ## 2026-11-15 ASAS原生L3应用插件（用户确认）
 
 ASAS直接植入NOVOVM，唯一业务源码plugins/asas/service、原生宿主crates/plugins/asas；
