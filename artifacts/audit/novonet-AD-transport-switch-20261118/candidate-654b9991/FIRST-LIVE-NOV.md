@@ -190,3 +190,25 @@ project toolchain still active, root and runtime `cargo audit` and
 `cargo deny check advisories bans licenses sources` all exited zero;
 existing allowed warnings remain. This is local evidence, not a
 replacement for the failed GitHub job.
+
+Both frozen archives are in
+`C:\Users\leadb\AppData\Local\NOVOVM\candidate-common-1b6808f6-20261120`.
+Neither may be installed on the basis of this record.
+
+| Archive | Bytes | SHA-256 | Archive files / manifest members |
+| --- | ---: | --- | ---: |
+| `novovm-common-1b6808f6-windows-x86_64.zip` | 162907197 | `89d8264fbfc855d291af9d8ca56748c63169c28ea4571eb38230bcd3e03ec22f` | 94 / 91 |
+| `novovm-common-1b6808f6-linux-x86_64.tar.gz` | 376080450 | `9d10e7800570714a7af543e5383831829f8924254492c7c92cab5b6ba965d767` | 95 / 92 |
+
+- Windows node: `9d145d6e3a0f58e6fa0bea90a2815c53713c7e299d9483cc88a6afb3a92d88a5`
+  (AOEM `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`,
+  manifest `ca76f253968cfafb1913e5d30eed67e20e298ae1b308e792a73bccb067de21c2`).
+- Linux node: `5e5cefa16f47fbabe9fb8b9b9caa07039588b1518b3309528159a24836f67e64`
+  (AOEM `21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231`,
+  manifest `4fb0eda25a8684432de11ab3e8311dc4b3ee8cc07020a7260864cdb5f2479461`).
+
+Every archive file matched the published package tree, both manifest
+checksum lists passed, and the packaged ML-DSA runtime qualification
+passed on Windows and Linux/WSL. No packaged-node cold reopen, resident
+update, or further Full was performed. The archive manifests continue
+to identify the actual build source, not the later CI-only repair.
