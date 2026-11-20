@@ -1,5 +1,14 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：Android L4 持钥与发布通过库检查
+
+NOVOCHAT [78ed42e](https://github.com/XujueKing/NOVOCHAT/commit/78ed42e1c53da94c332fd2122545c77cfbbe0635)
+已推送。新版 L4 通过原 Keystore 材料保护独立 ML-DSA-65 服务钥，重开沿用同钥，
+发布和持久服务状态复用共享 SDK。旧 L4 目录缺新版封装时拒绝启动，原寄存数据
+保留。Android arm64 Rust 库从 10 项错误到通过，实际 AOEM 封装回归、定向
+严格 Clippy 和 168 项 Kotlin 测试通过。主 App 启动尚待接现有通信持钥入口，
+旧 L4 义务迁移和双机仍待验收。本轮未生成或安装 APK，只更新客户端代码和交接。
+
 ## 2026-11-20 C 回传：V3 联系人控制和数据握手
 
 NOVOCHAT [c0f0c8c](https://github.com/XujueKing/NOVOCHAT/commit/c0f0c8c1c727be19d3bd7b46b9554d410dda9d05)
