@@ -537,9 +537,15 @@ class RuntimeCandidateTests(unittest.TestCase):
 
     def run_helper(self, platform="linux-x86_64", *extra, env=None):
         (self.root / "manifest.json").write_text(json.dumps(self.manifest), encoding="utf-8")
-        return subprocess.run([self.pwsh, "-NoProfile", "-File", str(self.helper),
+        # The fixture needs only local files and does not use a console or
+        # PowerShell's optional startup/update services on the hosted runner.
+        child_env = dict(os.environ if env is None else env,
+                         POWERSHELL_TELEMETRY_OPTOUT="1", POWERSHELL_UPDATECHECK="Off")
+        return subprocess.run([self.pwsh, "-NoLogo", "-NoProfile", "-NonInteractive",
+                               "-File", str(self.helper),
                                "-CandidateRoot", str(self.root), "-Platform", platform, *extra],
-                              capture_output=True, text=True, encoding="utf-8", env=env, timeout=20)
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              encoding="utf-8", env=child_env, timeout=20)
 
     def test_pins_both_platforms_without_claiming_runtime_qualification(self):
         for platform in self.manifest["platforms"]:

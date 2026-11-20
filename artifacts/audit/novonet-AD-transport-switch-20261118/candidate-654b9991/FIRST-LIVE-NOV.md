@@ -248,3 +248,21 @@ and cold reopen verified. Raw local report SHA-256:
 `db2c5ac654d53068a60af4ce0b449f53a6fda4077ddc2b4d7c6445eff9f111f3`.
 This does not reproduce or resolve the CI failure. Do not waive that
 gate or deploy based on this isolated pass.
+
+### Full preflight interruption
+
+[Full #44781287625](https://github.com/novovm/supervm/actions/runs/44781287625)
+at `a92def99` did not reach any product gate. The
+[scope self-test log](https://github.com/novovm/supervm/actions/jobs/136444339445)
+shows the first PowerShell fixture invocation exceeding its 20-second
+subprocess bound on Ubuntu 26.04. It was the Windows
+`-GitHubEnvironment` case with tiny fixture files; later Windows
+fixture checks passed. The runner did not record the internal stage
+that stalled, so the evidence does not identify an external service
+or a failing runtime checksum.
+
+The scope harness now starts the same helper without a logo, profile,
+interactive input, optional startup telemetry or update notifications.
+It still runs and checks both platforms, valid pins and exported
+aliases, and all negative cases, with the same 20-second limit. The
+production helper and product code are unchanged.
