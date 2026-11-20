@@ -1,5 +1,12 @@
 # 654b9991 release candidate — verified evidence and remaining live gaps
 
+**Public release blocker — fee policy.** The fixed minimum of 0.002 NOV is
+for the current closed test chain; do not ship or silently inherit it in
+public release. Close this only after checking the effective release
+configuration and passing a small-transfer proportional-fee regression
+with the approved policy. The test-chain policy is unchanged. See the
+[economics baseline](../../../../docs/NOVOVM-ECONOMICS/NOV-ECONOMICS-DESIGN-AND-FORMULA-REFERENCE-2026-11-05.md).
+
 Source `654b99916e80004e2df999c6d393ed7b94bec49b`. [Full attempt 2](https://github.com/novovm/supervm/actions/runs/44501473176/attempts/2)
 has a successful aggregate gate. The native-process evidence artifact
 14518886447 from the same run was inspected, not rerun.
