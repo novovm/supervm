@@ -1,5 +1,15 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：联系人任务持钥与 V3 发现
+
+NOVOCHAT [1a7e0a5](https://github.com/XujueKing/NOVOCHAT/commit/1a7e0a5a5950f92d4d4fcc1a0a6ff1e611282954)
+已推送。Android 受保护发现为每次任务生成独立 ML-DSA-65 密钥，原生持钥
+保留到任务结束。当前联系人授权、身份代次、任务和父持钥会话继续约束借用。
+V3 使用原 4 KiB 发现报文、修订高水位、期限和条件 ACK 递送完整公钥。
+Windows 实际 AOEM 持钥回归 11 项及定向严格 Clippy 通过。Android 全量库仍有原
+16 项编译错误，V3 公钥尚未提交给控制和数据握手，未安装 APK 或操作四机节点。
+本轮 SUPERVM 只同步交接。控制和数据握手的消费端接线继续由 C 负责。
+
 ## 2026-11-20 C 回传：手机持久寄存证明接入
 
 NOVOCHAT [51edb51](https://github.com/XujueKing/NOVOCHAT/commit/51edb5192cc0029422c3e08b4c8f359ac6aaf4e1)
