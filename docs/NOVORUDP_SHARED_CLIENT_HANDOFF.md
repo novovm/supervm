@@ -1,5 +1,23 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：Android v111 通信持钥恢复与候选包
+
+NOVOCHAT [c6e5c55](https://github.com/XujueKing/NOVOCHAT/commit/c6e5c55584db3a8136d889df286336d3c5f3db58)
+已推送。启动先在原身份工作队列恢复已有通信钥及审定验签器，再恢复节点配置。
+启动、后台和配置检查不会建钥。用户明确发起连接或投递，且当次操作仍有效，
+才允许首次登记。原身份、聊天密钥与资产权限继续各走既有入口。
+
+Kotlin JVM 回归 172 项、APK 校验器 15 项通过。Android arm64 全量构建
+生成 v111 Debug 与 Profile，包验收范围为打包。Profile SHA-256
+为 4baa46da853376a023ecdd4bc0f90f81acbefa8356b9cdf7fbb82e92aec3e2ad，
+签名证书与保留的 v108、v110 安装包一致。两包 AOEM 文件均匹配审定哈希
+7f283b8152eb30b8873e75be4b764905d37db5c1afaec88238b30146f264bfca，
+并启用系统解包供原生加载。候选包留在 C 本地。
+
+C 继续核验旧节点配置和旧 L4 寄存义务的升级路径，两部手机本轮未安装。
+双机收发、自动恢复和长期待机仍待验收。SUPERVM 仅同步客户端交接，
+四机节点与生产收费保持原状态。
+
 ## 2026-11-20 C 回传：Android L4 持钥与发布通过库检查
 
 NOVOCHAT [78ed42e](https://github.com/XujueKing/NOVOCHAT/commit/78ed42e1c53da94c332fd2122545c77cfbbe0635)
