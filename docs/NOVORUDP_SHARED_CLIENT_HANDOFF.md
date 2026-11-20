@@ -1,5 +1,46 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：手机持久寄存证明接入
+
+NOVOCHAT [51edb51](https://github.com/XujueKing/NOVOCHAT/commit/51edb5192cc0029422c3e08b4c8f359ac6aaf4e1)
+已推送。原文字、媒体和待交回执的续发读回同一份加密日志中的 ML-DSA-65
+寄存证明。重复寄存保持首份有效证明。两种本地证明表容量在原事务内迁移，
+不更换加密密钥、密文或服务义务。历史寄存投影仍可离线读取。
+L4 联系人声明已使用共享只读验签器和完整服务公钥。
+
+实际 AOEM 与 SQLite 隔离回归 5 项通过，隔离严格 Clippy 通过。Android
+从 20 降到 16 项编译错误。Windows 完整网络测试仍未编过，库 6 项、库测试
+182 项错误。设备 L4 持钥、消息与控制会话身份及联系人缓存兼容仍待接续。
+[实施边界与原始证据](https://github.com/XujueKing/NOVOCHAT/blob/51edb51/docs/implementation/MAILBOX_PERSISTENCE_MIGRATION_2026-11-20.md)。
+本轮为客户端增量。四节点、手机现有版本和数据保持，生产收费关闭。
+
+## 2026-11-20 C回到手机端：邮箱通信钥及直接节点回执迁接
+
+用户说明A/B/C/D就绪，C继续独立NOVOCHAT，不操作四机节点。NOVOCHAT
+[151a191](https://github.com/XujueKing/NOVOCHAT/commit/151a191f2216fb94984c9b772f123a3a7502494d)
+已推送：邮箱/通知/发件及原native驱动显式消费App原持钥owner的ML-DSA通信身份；
+chat signer保留既有E2EE/历史用途，不转为通信或资产钥。完整服务钥与slot分离，
+L4 Offer保留完整钥；6处直接Stored检查绑定已选slot和原对象后调用原ML-DSA验签。
+不把节点寄存当设备送达，offline持久证明回读及L4持久服务owner仍待迁接。
+
+本轮核对并消费85de114d输入：新增UCA应用编码/查询/签验、原NativeObjectLink可选
+应用lane、Iroh显式上限/诊断及typed时间不足；这些不等于手机已登录UCA。三处guard
+新增直接依赖ASAS/netwatch路径，复用上游WMI无chrono补丁；24项发布版netwatch源码
+与build.rs逐字节一致。没有启用ASAS、另写应用RPC或共享协议，dirty/diff门禁保留。
+
+实际默认core245通过/1原有忽略；6隔离target共29次通过（27个不同测试，2个服务钥
+回归重复执行），严格Clippy通过。新增两项寄存回归用真实AOEM+SQLite，覆盖重复/
+重开及错服务/slot/对象/密文/期限/签名拒绝；TCP loopback只记本地fixture。
+完整Android46→20项错误、exit101，App0warning，原共享purpose_keys有2条unused
+参数warning。完整App网络回归未编译通过，未生成/安装主聊天APK，未做双机验收。
+
+[实施范围、剩余缺口](https://github.com/XujueKing/NOVOCHAT/blob/151a191/docs/implementation/MAILBOX_COMMUNICATION_MIGRATION_2026-11-20.md)；
+[原始输出、20项清单、命令及7项提交后hash](https://github.com/XujueKing/NOVOCHAT/tree/151a191/docs/implementation/evidence/mailbox-communication-20261120)。
+原身份/历史/附件/已安装v110及v108回退材料保留，正式资产/生产收费关闭；Flutter/
+Kotlin未改动未重跑，旧结果不扩充。C下一项L4持久owner、联系人声明verifier、持久
+寄存证明和消息/控制会话身份；全部编译/迁接回归通过后才构建和安装手机候选。
+A继续节点主线不重复写App；这是Git通知，不代表A已签收，不执行旧节点CURRENT。
+
 ## 2026-11-18 A: live paired in-flight relay delivery accepted
 
 C/D original returns `1f71d312`/`aa7c7e15` verified: 14 file hashes/lengths,
