@@ -338,6 +338,61 @@ fn weighted_thresholds_are_strict_and_count_weight_not_signer_count() {
 }
 
 #[test]
+fn resident_round_split_requires_admissible_exact_round_evidence() {
+    let f = Fixture::new(&[1; 4]);
+    let collector_at = |round| {
+        VoteCollector::new(
+            f.context,
+            Arc::clone(&f.set),
+            round,
+            CollectorLimits {
+                max_retained_rounds: 2,
+                max_future_round_span: 64,
+                max_votes: 28,
+            },
+        )
+        .unwrap()
+    };
+    // Model the observed height-1 split, not a claim about actual live votes.
+    let a = f.vote(0, 580, Phase::Precommit, None);
+    let b = f.vote(1, 580, Phase::Precommit, None);
+    let d = f.vote(3, 581, Phase::Precommit, None);
+    for vote in [&a, &b, &d] {
+        vote.verify(&f.set).unwrap();
+    }
+
+    let mut lagged = collector_at(294);
+    for vote in [&a, &b, &d] {
+        rejected(
+            lagged.insert(vote),
+            "collector vote exceeds future-round span",
+        );
+    }
+    assert!(lagged.catch_up().is_none());
+
+    let mut ahead = collector_at(580);
+    for vote in [&a, &b, &d] {
+        ahead.insert(vote).unwrap();
+    }
+    assert_eq!(ahead.phase_weight(580, Phase::Precommit), 2);
+    assert!(!ahead.timeout_eligible(580, Phase::Precommit));
+    assert!(ahead.catch_up().is_none());
+
+    let mut within_span = collector_at(516);
+    within_span.insert(&a).unwrap();
+    assert!(within_span.catch_up().is_none());
+    within_span.insert(&b).unwrap();
+    let witness = within_span.catch_up().unwrap();
+    assert_eq!(witness.round(), 580);
+    assert_eq!(witness.signed_weight(), 2);
+    assert_eq!(within_span.current_round(), 516);
+    assert!(within_span
+        .quorum(580, Phase::Precommit, None)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn high_round_catch_up_deduplicates_phases_and_rejects_cross_round_fragments() {
     let f = Fixture::new(&[1; 4]);
     let mut collector = f.collector();

@@ -63,3 +63,22 @@ progress and empty A stdout/stderr do not expose phase timers, retained
 vote weights or the reason for a rejected vote. Next capture those from
 the existing owner without reopening or resetting the live journal, or
 reproduce the observed round split in an isolated regression.
+
+## Isolated collector reproduction
+
+The new `resident_round_split_requires_admissible_exact_round_evidence`
+test models the observed round numbers with four isolated fixture
+validators and the resident collector bounds (64 future rounds, 28 vote
+entries). Independently valid fixture votes at 580/581 are rejected by the
+collector at 294. Two round-580 precommits plus one from 581 do not
+qualify the round-580 phase timeout; the lone 581 vote is not a catch-up
+witness. At round 516, two round-580 signers do form a catch-up witness at
+the inclusive boundary, without finality or a state transition merely
+from collecting the witness. All 22 collector tests passed locally.
+
+This reproduces an admission and quorum constraint, not the exact
+historical live vote set. It changes no runtime behavior. The next
+implementation gate is a journal/pacemaker regression for authenticated
+recovery across this gap, preserving existing signer, context, lock and
+three-vote finality requirements. Do not treat a bound increase, unsigned
+status, or an operator-chosen round as a recovery proof.
