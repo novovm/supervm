@@ -1,5 +1,17 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：v110 旧数据升级门槛
+
+NOVOCHAT [788f5e7](https://github.com/XujueKing/NOVOCHAT/commit/788f5e790626d927cad220322d71af6cb8e88e5a)
+将旧节点缓存扩容延后到首笔有效更新，与新密文在同一事务提交。只读恢复和
+重复确认保留 schema 1。缓存 5 项、实际 AOEM 服务配置及 L4 持钥 6 项通过，
+Android arm64 库检查通过。旧节点签名规则仍需独立确认新版信任来源。
+
+20:14 北京时间，mobile-B 原 v110 的 L4 原库只读核对有 14 个未到期信箱授权、
+7 个未领取且未到期的对象，仍允许新接单。旧 L4 须先保全领取路径和既有义务，
+本轮不覆盖安装。mobile-A 未连接。候选 APK 和回退包留在本机，手机版本、
+身份、历史、四机节点和生产收费保持原状态。客户端交接由 C 继续。
+
 ## 2026-11-20 C 回传：Android v111 通信持钥恢复与候选包
 
 NOVOCHAT [c6e5c55](https://github.com/XujueKing/NOVOCHAT/commit/c6e5c55584db3a8136d889df286336d3c5f3db58)
