@@ -381,7 +381,7 @@ impl Vote {
         })
     }
 
-    fn verify_signature(&self, set: &ValidatorSet) -> Result<()> {
+    pub(super) fn verify_signature(&self, set: &ValidatorSet) -> Result<()> {
         self.validate_shape()?;
         self.context.validate(set)?;
         let member = set

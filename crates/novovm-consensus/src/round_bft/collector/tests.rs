@@ -338,6 +338,52 @@ fn weighted_thresholds_are_strict_and_count_weight_not_signer_count() {
 }
 
 #[test]
+fn far_round_witness_admission_is_atomic_and_keeps_ordinary_slots() {
+    let f = Fixture::new(&[1; 4]);
+    let mut collector = f.collector();
+    let a = f.vote(0, 580, Phase::Precommit, None);
+    let b = f.vote(1, 580, Phase::Prevote, Some(A));
+    let mut bad_signature = b.clone();
+    bad_signature.signature[0] ^= 1;
+    let mut other_context = b.clone();
+    other_context.context.genesis_config_commitment = [52; 32];
+    let d = f.vote(3, 581, Phase::Precommit, None);
+    let current = f.vote(2, 0, Phase::Prevote, Some(A));
+    let near = f.vote(2, 8, Phase::Prevote, Some(A));
+    collector.insert(&current).unwrap();
+    collector.insert(&near).unwrap();
+    for invalid in [
+        vec![],
+        vec![a.clone(); 5],
+        vec![a.clone()],
+        vec![a.clone(), a.clone()],
+        vec![a.clone(), d.clone()],
+        vec![a.clone(), other_context],
+        vec![a.clone(), bad_signature],
+        vec![near],
+    ] {
+        assert!(collector.admit_far_round_witness(&invalid).is_err());
+        assert!(collector.catch_up().is_none());
+        assert_eq!(collector.vote_count(), 2);
+    }
+    let witness = [a.clone(), b.clone()];
+    collector.admit_far_round_witness(&witness).unwrap();
+    assert!(collector.admit_far_round_witness(&witness).is_err());
+    assert!(collector.admit_far_round_witness(&[d]).is_err());
+    assert_eq!(collector.catch_up().unwrap().round(), 580);
+    assert_eq!(collector.catch_up().unwrap().signed_weight(), 2);
+    assert_eq!(collector.current_round(), 0);
+    assert_eq!(collector.vote_count(), 4);
+    assert_eq!(collector.future_tip_count(), 1);
+    assert_eq!(collector.phase_weight(0, Phase::Prevote), 1);
+    assert!(collector.insert(&a).is_err());
+    assert!(collector
+        .quorum(580, Phase::Prevote, Some(A))
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn resident_round_split_requires_admissible_exact_round_evidence() {
     let f = Fixture::new(&[1; 4]);
     let collector_at = |round| {

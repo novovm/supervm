@@ -385,6 +385,54 @@ impl VoteCollector {
         self.catch_up.clone()
     }
 
+    /// Admit a complete far-round witness into the existing pinned slot. Do
+    /// not retain individual far votes or relax ordinary vote admission.
+    pub fn admit_far_round_witness(&mut self, votes: &[Vote]) -> Result<()> {
+        ensure!(
+            !votes.is_empty() && votes.len() <= self.set.members().len(),
+            "invalid catch-up witness size"
+        );
+        let round = votes[0].round;
+        ensure!(
+            round.saturating_sub(self.current_round) > self.limits.max_future_round_span,
+            "catch-up witness is not outside the ordinary window"
+        );
+        ensure!(
+            self.catch_up
+                .as_ref()
+                .is_none_or(|proof| round > proof.round),
+            "catch-up witness does not advance pinned evidence"
+        );
+        let mut unique = BTreeMap::new();
+        for vote in votes {
+            ensure!(
+                vote.context == self.context && vote.round == round,
+                "catch-up witness mixes contexts or rounds"
+            );
+            ensure!(
+                unique.insert(vote.validator_id, vote).is_none(),
+                "catch-up witness repeats a validator"
+            );
+        }
+        let mut signed_weight = 0;
+        for vote in unique.values() {
+            vote.verify_signature(&self.set)?;
+            signed_weight += self.weight(&vote.validator_id);
+        }
+        ensure!(
+            signed_weight > self.set.total_weight() / 3,
+            "catch-up witness lacks sufficient distinct validator weight"
+        );
+        self.catch_up = Some(CatchUpEvidence {
+            context: self.context,
+            round,
+            signed_weight,
+            votes: unique.into_values().cloned().collect(),
+        });
+        self.recount();
+        Ok(())
+    }
+
     fn refresh_catch_up(&mut self) {
         let threshold = self.set.total_weight() / 3 + 1;
         let mut by_round: BTreeMap<u64, BTreeMap<Hash, &Vote>> = BTreeMap::new();

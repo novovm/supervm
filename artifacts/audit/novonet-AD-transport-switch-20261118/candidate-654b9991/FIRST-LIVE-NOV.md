@@ -102,3 +102,20 @@ not a deployed wire route, a real disk ACK, AOEM execution or transaction
 finality. The next missing step is a bounded authenticated intake for
 exact-round evidence outside the ordinary 64-round vote window. No live
 nodes were changed and the original transfer was not resubmitted.
+
+## Bounded far-round witness admission (consensus owner)
+
+The collector now admits a complete far-round witness against the exact
+local context, with at most one signature per validator, a single future
+round, and strictly over one-third of the configured validator weight.
+Admission is atomic and reuses the existing pinned witness slot; invalid
+or stale evidence does not replace it. Individual far votes still fail
+the ordinary window check. The 294 → 580 regression now drives the real
+collector → pacemaker → journal path, with the same simulated durable ACK
+and unchanged finality rules. Windows locked release consensus library:
+185 passed; strict Clippy passed.
+
+No native message producer, decoder, or node dispatch is connected to
+this admission yet. The next gate is qualified binary witness delivery
+over the existing consensus channel, followed by an isolated node-level
+verification. This is not a fix already active on the four hosts.

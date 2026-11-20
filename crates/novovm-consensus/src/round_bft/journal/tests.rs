@@ -289,15 +289,11 @@ fn resident_round_gap_verified_witness_is_ack_gated_and_not_finality() -> Result
     );
     assert!(!journal.is_pending());
 
-    // Isolate the existing journal consumer. The live transport does NOT
-    // provide this constructed, independently qualified witness today.
-    let mut qualified = collector(516)?;
-    qualified.insert(&a)?;
-    qualified.insert(&b)?;
-    let witness = qualified
-        .catch_up()
-        .expect("two distinct same-round signers");
-    journal.catch_up(&witness)?;
+    lagged.admit_far_round_witness(&[a.clone(), b.clone()])?;
+    assert_eq!(
+        pacemaker.poll(&mut journal, &lagged, now)?,
+        TimerAction::CatchUp(580)
+    );
     assert_eq!(journal.round(), 294);
     assert_eq!(
         pacemaker.poll(&mut journal, &lagged, now)?,
