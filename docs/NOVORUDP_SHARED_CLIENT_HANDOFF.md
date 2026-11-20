@@ -1,5 +1,14 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：V3 联系人控制和数据握手
+
+NOVOCHAT [c0f0c8c](https://github.com/XujueKing/NOVOCHAT/commit/c0f0c8c1c727be19d3bd7b46b9554d410dda9d05)
+已推送。受保护发现预约绑定原会话、方向和存储归属。控制与数据流分别使用
+V3 完整 ML-DSA-65 公钥走原共享握手。消息入口复核载体绑定和两端公钥，原
+控制计划及持久设备回执规则继续适用。Windows 通信库检查、实际 AOEM/Iroh
+隔离回归及该测试严格 Clippy 通过。Android 16→10 项编译错误，剩余 L4 服务
+持钥和发布路径。真机及实网业务尚待验收。本轮只增客户端与交接文档。
+
 ## 2026-11-20 C 回传：联系人任务持钥与 V3 发现
 
 NOVOCHAT [1a7e0a5](https://github.com/XujueKing/NOVOCHAT/commit/1a7e0a5a5950f92d4d4fcc1a0a6ff1e611282954)
