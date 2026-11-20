@@ -41,3 +41,25 @@ constraints to check on the pacemaker/catch-up path, not proof of a
 specific rejected vote. Preserve the live journal and use signed-round
 and timer evidence to locate the first failed stage; do not lower the
 three-signature gate, clear rounds, restart B, or replay the transfer.
+
+## 10:43 UTC read-only follow-up
+
+Authenticated receipt queries on A/B/C/D all still returned `Received`,
+indexed height 0. Status still showed rounds 580/580/294/581, one pending
+input and zero APFL rows on each. A ticked from 36,399,734 to 36,904,159
+between these captures. A's later progress had `executed_batches=1` but
+`durable_decisions=0`; the aggregate batch counter is not tied to this
+hash and does not prove this transfer executed.
+
+Code review: the existing collector requires >1/3 distinct validator
+weight **in one exact future round** for catch-up (two equal-weight
+validators here). Ordinary vote admission applies the 64-round bound
+before evidence is collected. Thus a round-580/581 vote cannot enter C's
+round-294 collector by that path, even with a valid signature. This is
+a code constraint for votes in those rounds, not proof C received such
+a vote. The pacemaker checks acknowledged journal state and starts
+phase waits from qualifying same-round vote weights. The present public
+progress and empty A stdout/stderr do not expose phase timers, retained
+vote weights or the reason for a rejected vote. Next capture those from
+the existing owner without reopening or resetting the live journal, or
+reproduce the observed round split in an isolated regression.
