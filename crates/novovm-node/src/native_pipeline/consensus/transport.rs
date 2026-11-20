@@ -53,6 +53,8 @@ pub enum Message {
         body_id: Hash,
     },
     Vote(Vote),
+    /// Same-round signed evidence for catch-up only; not a decision QC.
+    FarRoundWitness(Vec<Vote>),
     Decision {
         proposal: Proposal,
         certificate: Quorum,
@@ -221,6 +223,7 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::AssetBodyReference { .. } => 20,
         Message::NetworkProbe(_) => 21,
         Message::NetworkTime(_) => 22,
+        Message::FarRoundWitness(_) => 23,
     });
     match message {
         Message::Body {
@@ -240,6 +243,21 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
             out.extend_from_slice(body_id);
         }
         Message::Vote(vote) => append_blob(&mut out, &wire::encode_vote(vote)?, limits)?,
+        Message::FarRoundWitness(votes) => {
+            ensure!(
+                (1..=wire::MAX_VALIDATORS).contains(&votes.len()),
+                "invalid far-round vote count"
+            );
+            let (vote_bytes, _, _) = wire::evidence_wire_bounds(1)?;
+            ensure!(
+                PREFIX_BYTES + 2 + votes.len() * vote_bytes <= limits.message_bytes,
+                "far-round witness exceeds byte budget"
+            );
+            out.extend_from_slice(&(votes.len() as u16).to_be_bytes());
+            for vote in votes {
+                out.extend_from_slice(&wire::encode_vote(vote)?);
+            }
+        }
         Message::Decision {
             proposal,
             certificate,
@@ -347,7 +365,7 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
     );
     match bytes[10] {
         1 | 7 | 11 | 12 | 14 | 17..=20 => Ok(1),
-        2..=6 | 8 | 10 | 16 | 21 | 22 => Ok(0),
+        2..=6 | 8 | 10 | 16 | 21..=23 => Ok(0),
         9 | 13 | 15 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
@@ -454,6 +472,19 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
                 reader.take(novovm_network::network_time::coordination::EXCHANGE_BYTES)?,
             )?,
         ),
+        23 => {
+            let count = usize::from(reader.u16()?);
+            let (vote_bytes, _, _) = wire::evidence_wire_bounds(1)?;
+            ensure!(
+                (1..=wire::MAX_VALIDATORS).contains(&count)
+                    && reader.remaining() == count * vote_bytes,
+                "invalid far-round witness length"
+            );
+            let votes = (0..count)
+                .map(|_| wire::decode_vote(reader.take(vote_bytes)?))
+                .collect::<Result<Vec<_>>>()?;
+            Message::FarRoundWitness(votes)
+        }
         _ => anyhow::bail!("unknown host network message kind"),
     };
     ensure!(

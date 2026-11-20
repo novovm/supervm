@@ -727,6 +727,57 @@ type SeparatedMaterial = (
     VoteContext,
 );
 
+#[test]
+fn far_round_witness_survives_native_udp_and_respects_vote_window() -> Result<()> {
+    use novovm_consensus::round_bft::collector::{CollectorLimits, VoteCollector};
+
+    let (keys, _, domain, context) = separated_material()?;
+    let mut votes = keys[..2]
+        .iter()
+        .map(|key| {
+            test_vectors::sign_vote(
+                context,
+                580,
+                Phase::Precommit,
+                None,
+                &domain.validators,
+                key,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    votes.sort_by_key(|vote| vote.validator_id);
+    let limits = CollectorLimits {
+        max_retained_rounds: 2,
+        max_future_round_span: 64,
+        max_votes: 28,
+    };
+    let mut sender = VoteCollector::new(context, domain.validators.clone(), 580, limits)?;
+    sender.insert(&votes[0])?;
+    assert!(sender.current_far_round_reply().is_none());
+    sender.insert(&votes[1])?;
+    let message = transport::Message::FarRoundWitness(sender.current_far_round_reply().unwrap());
+    let mut mesh = Mesh::new(&keys, domain.clone())?;
+    let frame = transport::encode(&message, codec())?;
+    assert_eq!(transport::message_lane(&frame)?, 0);
+    assert!(transport::decode(&frame[..frame.len() - 1], codec()).is_err());
+    assert!(mesh.channels[0]
+        .prepare(&transport::Message::FarRoundWitness(vec![votes[0].clone()]))
+        .is_err());
+    let received = mesh.broadcast(0, &message)?;
+    let mut collector = VoteCollector::new(context, domain.validators.clone(), 294, limits)?;
+    assert!(collector.insert(&votes[0]).is_err());
+    let super::message_evidence::VerifiedEvidence::FarRoundWitness(verified) =
+        mesh.channels[2].qualify_control_for_test(&received[2])?
+    else {
+        anyhow::bail!("witness lost qualification");
+    };
+    collector.admit_verified_far_round_witness(&verified)?;
+    assert_eq!(collector.catch_up().unwrap().round(), 580);
+    assert_eq!(collector.current_round(), 294);
+    assert!(collector.quorum(580, Phase::Precommit, None)?.is_none());
+    Ok(())
+}
+
 pub(crate) fn separated_material() -> Result<SeparatedMaterial> {
     let signing = (101..105)
         .map(|seed| FixtureSigningKey::from_bytes(&[seed; 32]))

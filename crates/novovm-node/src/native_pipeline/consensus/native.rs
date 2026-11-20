@@ -72,6 +72,9 @@ fn message_window(message: &transport::Message) -> Option<(u64, Option<u64>)> {
             Some((proposal.context.height, Some(proposal.round)))
         }
         transport::Message::Vote(vote) => Some((vote.context.height, Some(vote.round))),
+        transport::Message::FarRoundWitness(votes) => votes
+            .first()
+            .map(|vote| (vote.context.height, Some(vote.round))),
         transport::Message::Decision { proposal, .. } => Some((proposal.context.height, None)),
         transport::Message::Body { context, .. }
         | transport::Message::ApflBody { context, .. }

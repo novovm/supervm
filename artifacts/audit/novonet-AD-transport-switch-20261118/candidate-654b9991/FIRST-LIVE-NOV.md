@@ -119,3 +119,30 @@ No native message producer, decoder, or node dispatch is connected to
 this admission yet. The next gate is qualified binary witness delivery
 over the existing consensus channel, followed by an isolated node-level
 verification. This is not a fix already active on the four hosts.
+
+## Native far-round proof transport
+
+The existing authenticated consensus control channel now carries a
+dedicated binary witness (tag 23), with a checked signer count and exact
+frame length before allocating the vote list. The channel verifies sorted
+distinct signers, exact context/round, threshold and signatures; the
+stateful collector reuses those verified votes, checks its exact live
+context and ordinary span, and stages catch-up through the original
+pacemaker and journal.
+
+An existing exact-parent recovery request can receive a proof drawn from
+the responder's currently acknowledged round. No proof is advertised
+without the required signed weight. Replies share the original auxiliary
+send budget and are paced per peer; they do not occupy the reserved
+proposal/vote/decision outbox. No new requests, listener, or authorization
+path is introduced. Old decoders do not understand tag 23. Neither
+network DONE nor a witness is block finality. Existing transaction and
+journal state are untouched; four-host recovery remains unverified.
+
+Windows locked release: 185 consensus, 36 transport codec, and 17 native
+channel tests passed; strict Clippy passed for both crates. The new
+loopback UDP case assembles two current-round signatures, delivers the
+same binary witness to real authenticated NativeChannels, and admits it
+at round 294 without a QC or an immediate round change. The separate
+journal regression exercises the ACK boundary. These do not prove a
+live node's recovery-request lifecycle or the original transfer's receipt.

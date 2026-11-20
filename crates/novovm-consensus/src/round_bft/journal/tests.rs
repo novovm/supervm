@@ -289,7 +289,7 @@ fn resident_round_gap_verified_witness_is_ack_gated_and_not_finality() -> Result
     );
     assert!(!journal.is_pending());
 
-    lagged.admit_far_round_witness(&[a.clone(), b.clone()])?;
+    lagged.admit_verified_far_round_witness(&[a.verify(&set)?, b.verify(&set)?])?;
     assert_eq!(
         pacemaker.poll(&mut journal, &lagged, now)?,
         TimerAction::CatchUp(580)

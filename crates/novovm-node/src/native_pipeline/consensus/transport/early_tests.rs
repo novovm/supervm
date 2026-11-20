@@ -546,6 +546,7 @@ fn legacy_encode(message: &Message) -> Vec<u8> {
         }
         Message::NetworkProbe(_)
         | Message::NetworkTime(_)
+        | Message::FarRoundWitness(_)
         | Message::EarlyBody { .. }
         | Message::BindBody { .. }
         | Message::Transactions { .. }

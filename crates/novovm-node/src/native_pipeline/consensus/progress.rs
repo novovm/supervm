@@ -274,6 +274,14 @@ impl RoundProgress {
     pub fn round(&self) -> u64 {
         self.journal.round()
     }
+    pub(super) fn current_far_round_reply(&self) -> Option<Message> {
+        if self.is_frozen() || self.collector.current_round() != self.round() {
+            return None;
+        }
+        self.collector
+            .current_far_round_reply()
+            .map(Message::FarRoundWitness)
+    }
     pub fn step(&self) -> TimeoutStep {
         self.journal.step()
     }
@@ -442,6 +450,9 @@ impl RoundProgress {
         );
         evidence.ensure_matches(message, &self.domain)?;
         match (message, evidence) {
+            (Message::FarRoundWitness(_), VerifiedEvidence::FarRoundWitness(votes)) => {
+                self.collector.admit_verified_far_round_witness(&votes)?;
+            }
             (Message::Vote(vote), VerifiedEvidence::Vote(verified)) => {
                 if vote.context == self.context() {
                     self.collector.insert_verified(&verified)?;

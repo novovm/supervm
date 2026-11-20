@@ -802,6 +802,9 @@ impl NativeLifecycle {
                                 Message::Proposal { proposal, .. }
                                 | Message::Decision { proposal, .. } => proposal.context.height,
                                 Message::Vote(vote) => vote.context.height,
+                                Message::FarRoundWitness(votes) => {
+                                    votes.first().map_or(0, |vote| vote.context.height)
+                                }
                                 Message::RequestDecision { context } => context.height,
                                 Message::Body { context, .. }
                                 | Message::ApflBody { context, .. }
@@ -906,7 +909,10 @@ impl NativeLifecycle {
                         Message::RequestDecision { context } => {
                             self.request_archive(peer, *context)?;
                         }
-                        Message::Proposal { .. } | Message::Vote(_) | Message::Decision { .. } => {
+                        Message::Proposal { .. }
+                        | Message::Vote(_)
+                        | Message::Decision { .. }
+                        | Message::FarRoundWitness(_) => {
                             if self
                                 .progress
                                 .receive_verified(
@@ -969,6 +975,7 @@ impl NativeLifecycle {
             }
         }
         self.poll_archives(pipeline)?;
+        self.poll_far_round_reply(now);
         self.request_decisions(now)?;
         let missing = self.bodies.requests(&self.progress);
         self.requested

@@ -23,6 +23,7 @@ pub enum VerifiedEvidence {
         valid_quorum: Option<VerifiedQuorum>,
     },
     Vote(VerifiedVote),
+    FarRoundWitness(Vec<VerifiedVote>),
     Decision {
         proposal: VerifiedProposal,
         certificate: VerifiedQuorum,
@@ -37,6 +38,19 @@ impl VerifiedEvidence {
     /// remain checked before the stateful consensus owner sees the message.
     pub(super) fn ensure_matches(&self, message: &Message, config: &MessageDomain) -> Result<()> {
         match (message, self) {
+            (Message::FarRoundWitness(votes), Self::FarRoundWitness(verified)) => {
+                ensure!(
+                    votes.len() == verified.len(),
+                    "qualified far-round witness count mismatch"
+                );
+                for (vote, evidence) in votes.iter().zip(verified) {
+                    evidence.ensure_verified_by(&config.validators)?;
+                    ensure!(
+                        evidence.vote() == vote,
+                        "qualified far-round vote payload mismatch"
+                    );
+                }
+            }
             (Message::Vote(vote), Self::Vote(verified)) => {
                 verified.ensure_verified_by(&config.validators)?;
                 ensure!(verified.vote() == vote, "qualified vote payload mismatch");
@@ -162,6 +176,40 @@ fn fixed_binding(
 
 pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvidence> {
     match message {
+        Message::FarRoundWitness(votes) => {
+            ensure!(
+                (1..=config.validators.members().len()).contains(&votes.len()),
+                "invalid far-round signer count"
+            );
+            let first = &votes[0];
+            fixed_context(&first.context, config)?;
+            ensure!(
+                votes
+                    .iter()
+                    .all(|v| v.context == first.context && v.round == first.round)
+                    && votes
+                        .windows(2)
+                        .all(|v| v[0].validator_id < v[1].validator_id),
+                "far-round votes must have exact context, round and ordered distinct signers"
+            );
+            let weight = votes.iter().try_fold(0, |total, vote| {
+                let member = config
+                    .validators
+                    .member(&vote.validator_id)
+                    .ok_or_else(|| anyhow::anyhow!("far-round signer is not a validator"))?;
+                Ok::<_, anyhow::Error>(total + member.weight())
+            })?;
+            ensure!(
+                weight > config.validators.total_weight() / 3,
+                "insufficient authenticated far-round witness weight"
+            );
+            Ok(VerifiedEvidence::FarRoundWitness(
+                votes
+                    .iter()
+                    .map(|vote| vote.verify(&config.validators))
+                    .collect::<Result<_>>()?,
+            ))
+        }
         Message::NetworkTime(time) => {
             time.encode()?;
             // The original fragment domain and pinned authenticated transport

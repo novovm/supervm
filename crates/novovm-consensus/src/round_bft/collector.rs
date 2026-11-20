@@ -388,11 +388,23 @@ impl VoteCollector {
     /// Admit a complete far-round witness into the existing pinned slot. Do
     /// not retain individual far votes or relax ordinary vote admission.
     pub fn admit_far_round_witness(&mut self, votes: &[Vote]) -> Result<()> {
+        self.admit_far_round_witness_with(votes.iter().map(|vote| (vote, None)))
+    }
+
+    pub fn admit_verified_far_round_witness(&mut self, votes: &[VerifiedVote]) -> Result<()> {
+        self.admit_far_round_witness_with(votes.iter().map(|vote| (vote.vote(), Some(vote))))
+    }
+
+    fn admit_far_round_witness_with<'a>(
+        &mut self,
+        mut votes: impl ExactSizeIterator<Item = (&'a Vote, Option<&'a VerifiedVote>)>,
+    ) -> Result<()> {
         ensure!(
-            !votes.is_empty() && votes.len() <= self.set.members().len(),
+            (1..=self.set.members().len()).contains(&votes.len()),
             "invalid catch-up witness size"
         );
-        let round = votes[0].round;
+        let first = votes.next().context("empty catch-up witness")?;
+        let round = first.0.round;
         ensure!(
             round.saturating_sub(self.current_round) > self.limits.max_future_round_span,
             "catch-up witness is not outside the ordinary window"
@@ -404,19 +416,23 @@ impl VoteCollector {
             "catch-up witness does not advance pinned evidence"
         );
         let mut unique = BTreeMap::new();
-        for vote in votes {
+        for (vote, verified) in std::iter::once(first).chain(votes) {
             ensure!(
                 vote.context == self.context && vote.round == round,
                 "catch-up witness mixes contexts or rounds"
             );
             ensure!(
-                unique.insert(vote.validator_id, vote).is_none(),
+                unique.insert(vote.validator_id, (vote, verified)).is_none(),
                 "catch-up witness repeats a validator"
             );
         }
         let mut signed_weight = 0;
-        for vote in unique.values() {
-            vote.verify_signature(&self.set)?;
+        for (vote, verified) in unique.values() {
+            if let Some(verified) = verified {
+                verified.ensure_verified_by(&self.set)?;
+            } else {
+                vote.verify_signature(&self.set)?;
+            }
             signed_weight += self.weight(&vote.validator_id);
         }
         ensure!(
@@ -427,10 +443,32 @@ impl VoteCollector {
             context: self.context,
             round,
             signed_weight,
-            votes: unique.into_values().cloned().collect(),
+            votes: unique.into_values().map(|(vote, _)| vote.clone()).collect(),
         });
         self.recount();
         Ok(())
+    }
+
+    /// Serve only already-verified votes from the acknowledged current round.
+    pub fn current_far_round_reply(&self) -> Option<Vec<Vote>> {
+        if self.current_round <= self.limits.max_future_round_span {
+            return None;
+        }
+        let round = self.rounds.get(&self.current_round)?;
+        let mut by_signer = BTreeMap::new();
+        for (id, vote) in round.precommits.iter().chain(&round.prevotes) {
+            by_signer.entry(*id).or_insert(vote);
+        }
+        let mut weight = 0;
+        let mut votes = Vec::new();
+        for (id, vote) in by_signer {
+            weight += self.weight(&id);
+            votes.push(vote.clone());
+            if weight > self.set.total_weight() / 3 {
+                return Some(votes);
+            }
+        }
+        None
     }
 
     fn refresh_catch_up(&mut self) {
