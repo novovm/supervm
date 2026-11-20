@@ -1,0 +1,21 @@
+{
+  "expires_utc": "2026-11-20T03:05:30.2078109Z",
+  "host": "D",
+  "utc": "2026-11-20T02:50:36.5748078Z",
+  "read_only": true,
+  "observer_created_utc": "2026-11-20T02:50:29.9318607Z",
+  "poll_seconds": 2,
+  "progress_mtime_utc": "2026-11-20T02:50:34.6295453Z",
+  "node_pid": 300,
+  "health": {
+    "recovery_in_progress": false,
+    "ticks_now": 6684,
+    "execution_failures": 0,
+    "height": 1,
+    "ticks_before": 1
+  },
+  "protocol_time_session_flow_capture": true,
+  "observer_pid": 30288,
+  "node_created_utc": "2026-11-20T02:50:29.472206Z",
+  "status": "D_654b_IROH_RECEIVER_READY"
+}

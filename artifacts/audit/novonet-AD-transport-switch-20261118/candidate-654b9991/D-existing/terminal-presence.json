@@ -1,0 +1,9 @@
+{
+  "control_present": false,
+  "owner_error_present": false,
+  "node_pid": 300,
+  "owner_exit_present": false,
+  "old_pid": 34780,
+  "utc": "2026-11-20T02:50:29.8981364Z",
+  "aoem_manifest_sha256": "99bb2346ba31f812028cff4c4da9dce1209f09f979f5f399ec01cb4871c1bf38"
+}
