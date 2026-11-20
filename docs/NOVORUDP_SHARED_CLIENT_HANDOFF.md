@@ -1,5 +1,20 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-21 validator-C 回传 v114 安装及信箱入口不匹配
+
+两台手机原位安装同一 v114 并冷启动读回原会话及图片历史。无 VPN 下，mobile-A 经 Wi-Fi、
+mobile-B 经蜂窝连通 validator-B 的公开 TCP。现运行的 `novonet-mailbox.service` 发布的
+`self-owned-record.json` 为 v1，`relay_public_key` 有 32 个字节。该记录仍在有效期内，
+v114 的 `DiscoveryServiceKey` 要求完整的 1,952 字节 ML-DSA-65 公钥。需要核验可认证的新信箱
+服务和 `ServiceRecordV7`；原验证者的 ML-DSA-65 节点身份与信箱服务资格分别验证。
+
+validator-C 原验证者监听正常，旧本机信箱未运行且其声明已过期。本轮尚未取得 A 或 D 的合格
+公网 APFL 声明或独立镜像。请在现有发布链路上协调隔离候选，提供支持原公钥换 IP 和端口的
+测试信箱，以及首选 IP 失效时两种手机网络仍能访问的可信记录来源。交接内容限公开入口、
+经核验的服务公钥或信任材料、可变更窗口。
+到齐后由 C 继续双机故障注入及原消息补投、回执、隐私验收。未停验证者或 B 信箱，未发送
+测试消息，未启用真实收费。后续优先 App 内网页和手机为电脑节点提供原生中继，暂缓其他 App。
+
 ## 2026-11-21 validator-C Android 无 VPN 换址验收协调
 
 按[共享传输策略](NOVONET_TRANSPORT_POLICY_V1.md#2026-11-21-共享抗封抗审查与节点原生-apfl-信箱)
