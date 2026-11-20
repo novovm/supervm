@@ -238,3 +238,13 @@ regression. The fixture now reports the failing client index, session
 and link counters, and only scalar progress from the restarted process.
 No readiness deadline, vote policy, runtime behavior, or deployment
 gate was changed.
+
+One targeted WSL debug run at `ae517bc2` passed (203.56 s), with the
+same CI AOEM hash but a locally built node. The fixture chose validator
+index 3 rather than CI's index 2. The restarted process reached and
+indexed height 40; all four then finalized at height 41 with 1,064
+receipts, credited NOV respend, original signing outbox preservation,
+and cold reopen verified. Raw local report SHA-256:
+`db2c5ac654d53068a60af4ce0b449f53a6fda4077ddc2b4d7c6445eff9f111f3`.
+This does not reproduce or resolve the CI failure. Do not waive that
+gate or deploy based on this isolated pass.
