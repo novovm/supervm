@@ -266,3 +266,47 @@ interactive input, optional startup telemetry or update notifications.
 It still runs and checks both platforms, valid pins and exported
 aliases, and all negative cases, with the same 20-second limit. The
 production helper and product code are unchanged.
+
+### 1b6808f6 serial existing rollout — B and A complete; C next; hold D
+
+The operator authorized the B→A→C→D rollout after
+[Full #44782842058](https://github.com/novovm/supervm/actions/runs/44782842058)
+at `c5bae5d3c935362bacb7d88072c2e77aceabd187` succeeded, including
+NUAS original-store recovery, credited NOV respend and the final gate.
+Compared with frozen source `1b6808f6`, the only Rust differences are
+test modules and a cfg(test) client accessor. CI/test and documentation
+changes do not alter product code or dependency locks. Both frozen
+archive SHA-256s were rechecked; the manifests still name the original
+build SHA. This is the internal authorized rollout, not public release.
+
+- B: PID 571511, UID 996, original `chain-state` opened in `existing`,
+  original custody confirmed, expected Node/AOEM mapped, ports
+  41050/42050 owned, authenticated Status 69 ms, height 0/current 1,
+  round 580 and projection/recovery healthy. Root was nearly full;
+  artifact and new release are on `/data`; the original database was
+  not moved. The scoped unit still uses `Restart=always`; other service
+  PIDs are unchanged. No old releases were removed.
+- A: after the previous host reboot its old demand-only task was
+  stopped. New PID 18888, LocalService, original database and identity
+  bindings, expected executable and mapped AOEM hashes, original
+  41051/42051 listeners, ticks 67567→74102, zero execution failures,
+  authenticated Status 33 ms, height 0/current 1, round 580. The
+  operator-side postcheck fell over a PowerShell variable name collision
+  after startup; independent read-only checks above passed without relaunch.
+- Original transaction `2d0436f0893d5a6e1e996470a2fd223b3b256a11a6240e39418078e9be9a5f3d`:
+  B and A `NotRecent`, C and D `Received`, all indexed height 0 after
+  B/A startup. The mempool does not survive restart; `NotRecent` is
+  not a finalized failure, `Received` is not a durable receipt.
+  No submission was repeated.
+
+**C only:** use the Windows ZIP in the archive table above. Verify the
+archive and manifest, then use C's original LocalService existing-state
+owner with its current config and real listener address. Do not initialize,
+change identity, or replay any object/transaction. Before stopping C, A
+must still see D retaining the original hash. Return the new PID,
+actual executable and loaded AOEM/manifest hashes, original state/key
+binding result, two increasing ticks samples, and public listener
+addresses for A's separate authenticated check. No SSH management from
+A was available on C/D. **D stays running:** do not cut it over until an
+updated node proves it has retained the original hash or there is
+durable finality evidence. No new source/package is needed for C.
