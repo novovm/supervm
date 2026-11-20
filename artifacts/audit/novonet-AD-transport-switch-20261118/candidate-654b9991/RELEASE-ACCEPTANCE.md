@@ -48,7 +48,25 @@ has a successful aggregate gate. The native-process evidence artifact
   `native-only-22872-1795146403069263700/report.json` SHA256:
   `14f7ea04490cc7eebe5858efedd90a8020625316210510e1ee14a439b2e2cfa4`.
 
-Still open: current C authenticated health; longer same-candidate live
+## C follow-up — 2026-11-20
+
+[C's cutover receipt](C-existing/C-existing-public.json) at `2ab9bfd0`
+matches the candidate ZIP, node, loaded AOEM and manifest pins. PID 28204
+uses the original identity and database in `existing` mode. The first
+attempt failed with Windows bind error 10049 on the old local address;
+the replacement listener is `192.168.71.73:41052/42052`. The old exit
+and dump remain accounted for in C's receipt.
+
+At 07:50:37.6339969 UTC A used the pinned native client and original C
+identity, substituting only the new peer address in a private query
+configuration. The authenticated Status at `192.168.71.73:41052`
+returned in 205 ms, current height 1, indexed height 0, no recovery or
+projection failure, and the same state root reported above. The live A
+node still has the old C address in its configured peer list. This
+client query does not prove the resident validators have converged on a
+usable path to C after the address change.
+
+Still open: resident validator reachability to C; longer same-candidate live
 stability evidence; finality of a fresh authorized transaction on the
 resident deployment, including signed QC and matching durable receipt.
 The isolated runs did not verify an independent business proof or certify
