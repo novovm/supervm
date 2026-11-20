@@ -167,3 +167,26 @@ matching the verified Windows candidate library. This is local UDP and a
 clean isolated store shutdown/reopen, not process-kill or four-machine
 acceptance. No resident process/database was touched, and the original
 transfer was not resubmitted.
+
+## Far-round candidate qualification
+
+The frozen build source is `1b6808f6b93f43a8bd5d20a9da8e56759d75723d`.
+Its only change from the isolated-test source `b93655e3` is the
+NOVOCHAT handoff document. [Full #44735067787](https://github.com/novovm/supervm/actions/runs/44735067787)
+was dispatched once and its actual head SHA was verified.
+
+The [Rust security job](https://github.com/novovm/supervm/actions/runs/44735067787/job/136284530809)
+failed while installing host tools: the unpinned resolution selected
+`cargo-deny 0.22.0`, which requires Rust 1.95 or newer, under the
+project's pinned Rust 1.94. Cargo Audit and Cargo Deny were both skipped
+by that job; neither can be treated as passing. The CI-only repair pins
+`cargo-audit 0.23.0` and `cargo-deny 0.22.0` and uses the job's already
+installed stable toolchain only to install those host tools. Product
+Rust, dependency locks and all four security checks remain unchanged.
+The original Full is not an eligible deployment gate.
+
+Local install with stable succeeded for both pinned tools. With the
+project toolchain still active, root and runtime `cargo audit` and
+`cargo deny check advisories bans licenses sources` all exited zero;
+existing allowed warnings remain. This is local evidence, not a
+replacement for the failed GitHub job.

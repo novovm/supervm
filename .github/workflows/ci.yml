@@ -787,8 +787,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo install cargo-audit --locked
-          cargo install cargo-deny --locked
+          # These are host tools. Keep the product compiler pinned by
+          # rust-toolchain.toml; the security job already installs stable.
+          cargo +stable install cargo-audit --version 0.23.0 --locked
+          cargo +stable install cargo-deny --version 0.22.0 --locked
 
       - name: Cargo audit
         shell: bash
