@@ -61,7 +61,12 @@ pub(super) fn wait_height(
         nodes.alive()?;
         let values = clients
             .iter_mut()
-            .map(|client| recovery_status(nodes, client, deadline))
+            .enumerate()
+            .map(|(index, client)| {
+                recovery_status(nodes, client, deadline).with_context(|| {
+                    format!("recovery Status client_index={index} target_height={height}")
+                })
+            })
             .collect::<Result<Vec<_>>>()?;
         ensure!(
             values.iter().all(|value| value.height <= height),

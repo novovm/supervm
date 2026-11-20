@@ -542,11 +542,33 @@ fn native_uca_process_late_validator_interrupted_catchup_respend_and_cold_recove
         let (pinned_key, pinned_outbox, crash) =
             recovery::interrupted_archive(&nodes, missing, interrupted, target.height, &set)?;
         evidence["catchup_crash"] = crash;
-        nodes.start(missing, "existing")?;
+        nodes.start_with_progress(missing, "existing", Some(1000))?;
         evidence["interrupted_restart_process_id"] =
             json!(nodes.processes[missing].as_ref().unwrap().id());
         clients.push(connect(&nodes, missing, set.clone())?);
-        recovery::wait_height(&mut nodes, &mut clients, target.height)?;
+        if let Err(error) = recovery::wait_height(&mut nodes, &mut clients, target.height) {
+            let path = nodes
+                .directory
+                .join(format!("existing-{missing}.progress.json"));
+            // Keep only scalar process progress, not the full node report.
+            evidence["interrupted_restart_progress"] = match fs::read(&path) {
+                Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                    Ok(progress) => json!({
+                        "available": true,
+                        "ticks": progress["ticks"],
+                        "current_height": progress["current_height"],
+                        "finalized_height": progress["head"]["height"],
+                        "indexed_height": progress["rpc_indexed_height"],
+                        "round": progress["round"],
+                        "recovery_in_progress": progress["recovery_in_progress"],
+                        "execution_failures": progress["execution_failures"],
+                    }),
+                    Err(error) => json!({"available": false, "parse_error": error.to_string()}),
+                },
+                Err(error) => json!({"available": false, "read_error": error.to_string()}),
+            };
+            return Err(error.context("NUAS interrupted replay after existing restart"));
+        }
         ensure!(
             receipts(&mut nodes, &mut clients, &hashes)? == final_receipts,
             "NUAS catch-up receipts differ"

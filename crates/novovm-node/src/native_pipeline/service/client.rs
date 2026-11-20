@@ -224,6 +224,11 @@ impl NativeApplicationClient {
         self.link.poll(wall_ms, now, quantum)
     }
 
+    #[cfg(test)]
+    pub(crate) fn has_native_session_for_test(&self) -> bool {
+        self.link.session_id(0).is_some()
+    }
+
     /// One outstanding read per client; independent of transaction admission.
     /// Replies commit to the complete session, generation and exact selector.
     pub fn prepare_query(&mut self, query: Query) -> Result<PreparedQuery> {

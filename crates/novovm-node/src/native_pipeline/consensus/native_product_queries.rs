@@ -39,6 +39,8 @@ fn query_until(
     let started = Instant::now();
     let mut sent = false;
     let mut poll_max_us = 0u128;
+    let mut session_seen = client.has_native_session_for_test();
+    let mut link_counts = [0usize; 6];
     // Bounded diagnostic counters only; no delivery outcome changes retries.
     let mut completions = [0u64; 5];
     loop {
@@ -47,7 +49,7 @@ fn query_until(
         if now >= deadline {
             client.abandon_query(&request)?;
             return Err(anyhow::Error::new(QueryTimeout(selector)).context(format!(
-                "query transport: elapsed_ms={} sent={sent} poll_max_us={poll_max_us} completions[sending,delivered,expired,session_replaced,cancelled]={completions:?}",
+                "query transport: elapsed_ms={} sent={sent} session_seen={session_seen} poll_max_us={poll_max_us} link[session_changes,rejected,backpressured,handshake_send_failures,receive_errors,send_failures]={link_counts:?} completions[sending,delivered,expired,session_replaced,cancelled]={completions:?}",
                 started.elapsed().as_millis(),
             )));
         }
@@ -58,6 +60,17 @@ fn query_until(
             64,
         )?;
         poll_max_us = poll_max_us.max(poll_started.elapsed().as_micros());
+        session_seen |= client.has_native_session_for_test();
+        for (total, current) in link_counts.iter_mut().zip([
+            report.session_changes.len(),
+            report.rejected,
+            report.backpressured,
+            report.handshake_send_failures,
+            report.receive_errors,
+            report.send_failures,
+        ]) {
+            *total = total.saturating_add(current);
+        }
         for completion in report.completed {
             let index = match completion.state {
                 ObjectSendState::Sending => 0,

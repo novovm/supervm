@@ -212,3 +212,29 @@ checksum lists passed, and the packaged ML-DSA runtime qualification
 passed on Windows and Linux/WSL. No packaged-node cold reopen, resident
 update, or further Full was performed. The archive manifests continue
 to identify the actual build source, not the later CI-only repair.
+
+### NUAS interrupted-restart gate
+
+[Full #44754870150](https://github.com/novovm/supervm/actions/runs/44754870150)
+passed Audit, Deny, Rust and both native ML-DSA platform jobs. Its
+[original-process recovery job](https://github.com/novovm/supervm/actions/jobs/136352171364)
+passed six general recovery cases but failed the NUAS case; both summary
+gates then failed. The recovered fixture first reached durable height 1
+with three QC signatures, below target height 40. It was interrupted and
+the same store was started in `existing`. The last Status attempt reported
+`sent=false`, no transport completions, and readiness deadline
+exhaustion. The restarted process printed the original tick startup line
+and stderr was empty. This neither identifies the failed client nor
+establishes recovery progress, and the credited NOV respend was not run.
+
+The archived reports from #44735067787 (NUAS pass, 350072 ms) and
+#44754870150 (NUAS fail, 305618 ms) record the identical node SHA-256
+`89b2f4dbf4520b8aaf9ab8a3255eef12af0c5ab98d49fd46787c231c220f50f9`
+and AOEM SHA-256
+`d73e4a2f1ec42f75e7b2356c10779330b1dc902113d290275042d3bf8a06bc33`.
+This is a non-deterministic outcome for the same reported binaries,
+not evidence that the CI tool installation change caused a product
+regression. The fixture now reports the failing client index, session
+and link counters, and only scalar progress from the restarted process.
+No readiness deadline, vote policy, runtime behavior, or deployment
+gate was changed.
