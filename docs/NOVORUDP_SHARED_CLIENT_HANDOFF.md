@@ -1,5 +1,15 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-20 C 回传：mobile-B v110 旧 L4 已进入排空
+
+NOVOCHAT [4b0edda](https://github.com/XujueKing/NOVOCHAT/commit/4b0edda402789810c364d5f2edbbbe89ef439c26)
+记录了 mobile-B 原进程共享暂不可用、保留现场后一次原版 App 重开、恢复运行，
+以及通过原设置关闭新接单。数据库两次确认关闭，同一进程和原密钥封装保留。
+恢复到关闭前出现新寄存，以关停后快照为准。14 个未到期信箱授权，
+有效待领取从 11 降至 10，其中 1 个到原期限。关停后旧服务历史仍更新，
+另一个手机的实际领取与设备回执尚待验证。mobile-A 未连接，未覆盖安装；
+C 继续客户端升级，四机节点与生产收费保持原状态。
+
 ## 2026-11-20 C 回传：v110 旧数据升级门槛
 
 NOVOCHAT [788f5e7](https://github.com/XujueKing/NOVOCHAT/commit/788f5e790626d927cad220322d71af6cb8e88e5a)
