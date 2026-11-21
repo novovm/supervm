@@ -164,6 +164,10 @@ impl NativeObjectSender {
     pub(crate) fn traffic(&self) -> Option<diagnostics::NativeObjectTraffic> {
         self.traffic
     }
+    pub(super) fn initial_send_complete(&self) -> bool {
+        self.initial == self.body.frame_count()
+    }
+
     pub fn status(&self) -> ObjectSendState {
         self.terminal
     }

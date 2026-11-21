@@ -182,14 +182,17 @@ fn supplied_udp_io_transfers_objects_acks_and_preserves_backpressure_and_cancell
     let mut client = link(client)?;
     let mut server = link(server)?;
     let body = message(11)?;
+    client.observe_initial_send(body.id());
     assert!(client.try_send(0, 17, &body, Instant::now())?);
     a.blocked.store(true, Ordering::Relaxed);
     let report = client.poll(1000, Instant::now(), 8)?;
     assert_eq!(report.data_sent, 0);
+    assert_eq!(report.observed_initial_send, None);
     assert!(report.completed.is_empty());
     assert_eq!(client.outbound_usage(17)?, (1, 4096));
     a.blocked.store(false, Ordering::Relaxed);
     let (mut received, mut delivered, mut acknowledgements) = (false, false, 0);
+    let mut observed_send = false;
     let start = Instant::now();
     while !(received && delivered) {
         ensure!(
@@ -197,7 +200,13 @@ fn supplied_udp_io_transfers_objects_acks_and_preserves_backpressure_and_cancell
             "IO seam object stalled"
         );
         let now = Instant::now();
-        for done in client.poll(1000, now, 8)?.completed {
+        let report = client.poll(1000, now, 8)?;
+        if let Some(id) = report.observed_initial_send {
+            assert_eq!(id, body.id());
+            assert!(!observed_send);
+            observed_send = true;
+        }
+        for done in report.completed {
             assert_eq!(done.state, ObjectSendState::Delivered);
             assert!(Arc::ptr_eq(&done.body, &body));
             delivered = true;
@@ -211,7 +220,7 @@ fn supplied_udp_io_transfers_objects_acks_and_preserves_backpressure_and_cancell
         }
         std::thread::yield_now();
     }
-    assert!(acknowledgements > 0);
+    assert!(acknowledgements > 0 && observed_send);
     assert_eq!(client.outbound_usage(17)?, (0, 0));
     let cancel = NativeSendCancellation::default();
     let cancelled = message(12)?;

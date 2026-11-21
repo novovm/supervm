@@ -17,6 +17,9 @@ use crate::native_pipeline::{
 use anyhow::{ensure, Context, Result};
 pub(crate) use ingress::{CheckedTransactionSource, TransactionOrigin, TransactionSource};
 use novovm_network::novorudp::{object_link::NativeSendLimits, object_sender::ObjectSendState};
+use novovm_protocol::native_query::{
+    CandidateObservation, ProposalDispatch, SignedProposalObservation,
+};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
@@ -67,6 +70,16 @@ struct Delivery {
     auxiliary: bool,
     height: u64,
 }
+// The exact local proposal object, at most one slot. This is an observation
+// of the original send owner, not an input to retries or consensus.
+struct ProposalDispatchEvidence {
+    height: u64,
+    round: u64,
+    value: Hash,
+    fragment: Hash,
+    state: ProposalDispatch,
+}
+
 struct Fanout {
     prepared: PreparedMessage,
     pending: Vec<bool>,
@@ -105,6 +118,7 @@ pub struct NativeLifecycle {
     transaction_session: Hash,
     transaction_sequence: u64,
     outbox: Option<Fanout>,
+    proposal_dispatch: Option<ProposalDispatchEvidence>,
     successor_outbox: Option<(Hash, Fanout)>,
     successor_announced: Option<Hash>,
     requested:
@@ -253,6 +267,7 @@ impl NativeLifecycle {
             transaction_session: rand::random(),
             transaction_sequence: 0,
             outbox: None,
+            proposal_dispatch: None,
             successor_outbox: None,
             successor_announced: None,
             requested: BTreeMap::new(),
@@ -446,6 +461,40 @@ impl NativeLifecycle {
         let report = self.channel.poll_io(wall_ms, now, 64)?;
         self.accept_io_report(report, now)
     }
+    pub(crate) fn current_local_proposal(
+        &self,
+        hash: Hash,
+    ) -> Result<Option<CandidateObservation>> {
+        self.progress
+            .current_local_candidate(hash)
+            .map(|(value, body_id, proposal)| {
+                let signed_proposal = if let Some(proposal) = proposal {
+                    let dispatch = self
+                        .proposal_dispatch
+                        .as_ref()
+                        .filter(|record| {
+                            record.height == proposal.context.height
+                                && record.round == proposal.round
+                                && record.value == proposal.value
+                        })
+                        .map_or(ProposalDispatch::Unobserved, |record| record.state);
+                    Some(SignedProposalObservation {
+                        proposer: proposal.proposer_id,
+                        wire: super::wire::encode_proposal(proposal)?,
+                        dispatch,
+                    })
+                } else {
+                    None
+                };
+                Ok(CandidateObservation {
+                    value,
+                    body_id,
+                    signed_proposal,
+                })
+            })
+            .transpose()
+    }
+
     fn accept_io_report(
         &mut self,
         report: novovm_network::novorudp::object_link::NativeLinkPoll,
@@ -453,6 +502,12 @@ impl NativeLifecycle {
     ) -> Result<()> {
         self.retire_network_time(now);
         self.rejected_messages += report.rejected as u64;
+        if let Some(record) = self.proposal_dispatch.as_mut().filter(|record| {
+            report.observed_initial_send == Some(record.fragment)
+                && record.state != ProposalDispatch::Delivered
+        }) {
+            record.state = ProposalDispatch::Sent;
+        }
         for completed in report.completed {
             if self.complete_network_time(&completed) {
                 continue;
@@ -470,6 +525,15 @@ impl NativeLifecycle {
                 .context("native completion lost its retained input")?;
             ensure!(queue[index].admitted, "completion without native admission");
             let delivery = &queue[index];
+            if completed.state == ObjectSendState::Delivered {
+                if let Some(record) = self
+                    .proposal_dispatch
+                    .as_mut()
+                    .filter(|record| record.fragment == completed.body.id())
+                {
+                    record.state = ProposalDispatch::Delivered;
+                }
+            }
             crate::native_pipeline::profile::traffic::completed(
                 &completed,
                 delivery.prepared.height().unwrap_or(0),
@@ -587,6 +651,12 @@ impl NativeLifecycle {
                 };
                 if admitted {
                     delivery.admitted = true;
+                    if let Some(record) = self.proposal_dispatch.as_mut().filter(|record| {
+                        record.fragment == delivery.prepared.fragment_id()
+                            && record.state == ProposalDispatch::Prepared
+                    }) {
+                        record.state = ProposalDispatch::Admitted;
+                    }
                     if time_window.is_some() {
                         self.time_peers[peer].note_admission(delivery.prepared.fragment_id(), now);
                     }
@@ -957,8 +1027,26 @@ impl NativeLifecycle {
         self.progress.poll_after_receive(pipeline, now)?;
         if let Some(message) = self.progress.pending_message() {
             if self.outbox.is_none() {
+                let prepared = self.channel.prepare(message)?;
+                if let Message::Proposal { proposal, .. } = message {
+                    let fragment = prepared.fragment_id();
+                    if self
+                        .proposal_dispatch
+                        .as_ref()
+                        .is_none_or(|record| record.fragment != fragment)
+                    {
+                        self.channel.observe_initial_send(fragment);
+                        self.proposal_dispatch = Some(ProposalDispatchEvidence {
+                            height: proposal.context.height,
+                            round: proposal.round,
+                            value: proposal.value,
+                            fragment,
+                            state: ProposalDispatch::Prepared,
+                        });
+                    }
+                }
                 self.outbox = Some(Fanout {
-                    prepared: self.channel.prepare(message)?,
+                    prepared,
                     pending: vec![true; self.peers.len()],
                 });
             }

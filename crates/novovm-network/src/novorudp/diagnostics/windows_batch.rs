@@ -279,7 +279,7 @@ mod tests {
                 Some(setup_failure),
                 &Err(io::ErrorKind::PermissionDenied.into()),
             );
-            let view = snapshot();
+            let view = capture()();
             assert_eq!(view["totals"]["calls"], 4);
             assert_eq!(view["totals"]["failed_batches"], 4);
             assert_eq!(view["totals"]["would_block"], 1);

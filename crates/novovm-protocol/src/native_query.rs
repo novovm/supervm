@@ -18,6 +18,10 @@ const MAGIC_V2: &[u8; 8] = b"NVQUERY2";
 const MAGIC_V4: &[u8; 8] = b"NVQUERY4";
 const MAGIC_IDENTITY_V7: &[u8; 8] = b"NVQUERY7";
 const MAGIC_APPLICATION_V8: &[u8; 8] = b"NVQUERY8";
+const MAGIC_PROPOSAL_V9: &[u8; 8] = b"NVQUERY9";
+const MAX_PROPOSAL_REPLY_BYTES: usize = 4096;
+// Room for the canonical ML-DSA-65 round-BFT proposal, including its prefix.
+const MAX_SIGNED_PROPOSAL_BYTES: usize = 3840;
 const MAGIC_RESPONSE_V6: &[u8; 8] = b"NVQUERY6";
 pub type Hash = [u8; 32];
 
@@ -179,6 +183,12 @@ pub enum Query {
     /// Current published application authority, never a device login proof.
     UcaApplicationGrant {
         selector: crate::uca_application::ApplicationGrantSelectorV1,
+    },
+    /// Current local consensus evidence for exactly one transaction.
+    ConsensusProposal {
+        height: u64,
+        round: u64,
+        hash: Hash,
     },
 }
 
@@ -352,6 +362,86 @@ pub struct Balance {
     pub state_root: Hash,
     pub height: u64,
 }
+/// Stages of the existing outbound proposal object on this process.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProposalDispatch {
+    Unobserved,
+    Prepared,
+    /// The transport took custody. Wire transmission remains unconfirmed.
+    Admitted,
+    /// All initial proposal fragments were written by the original sender.
+    Sent,
+    /// A peer returned authenticated transport completion for the proposal.
+    Delivered,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedProposalObservation {
+    pub proposer: Hash,
+    /// Canonical original round-BFT proposal bytes, including its signature.
+    #[serde(with = "signed_proposal_bytes")]
+    pub wire: Vec<u8>,
+    pub dispatch: ProposalDispatch,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CandidateObservation {
+    pub value: Hash,
+    pub body_id: Hash,
+    pub signed_proposal: Option<SignedProposalObservation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalObservation {
+    pub in_pending_pool: bool,
+    /// Last selection gate at this position. This is a batch-level reason.
+    #[serde(deserialize_with = "decode_selection_gate")]
+    pub selection_gate: Option<String>,
+    /// Only present when the local offer for this exact position is retained.
+    pub in_local_offer: Option<bool>,
+    pub candidate: Option<CandidateObservation>,
+}
+
+mod signed_proposal_bytes {
+    use super::*;
+
+    pub(super) fn serialize<S: serde::Serializer>(
+        wire: &[u8],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        if wire.is_empty() || wire.len() > MAX_SIGNED_PROPOSAL_BYTES {
+            return Err(serde::ser::Error::custom("invalid signed proposal length"));
+        }
+        serializer.serialize_bytes(wire)
+    }
+
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let wire = <&[u8]>::deserialize(d)?;
+        if wire.is_empty() || wire.len() > MAX_SIGNED_PROPOSAL_BYTES {
+            return Err(serde::de::Error::custom("invalid signed proposal length"));
+        }
+        Ok(wire.to_vec())
+    }
+}
+
+fn decode_selection_gate<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<String>, D::Error> {
+    let gate = Option::<&str>::deserialize(d)?;
+    if gate.is_some_and(|reason| reason.len() > 64) {
+        return Err(serde::de::Error::custom("invalid selection gate length"));
+    }
+    Ok(gate.map(str::to_owned))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConsensusProposalStatus {
+    pub current_height: u64,
+    pub current_round: u64,
+    /// The node retains a current-position view, not a history.
+    pub observation: Option<ProposalObservation>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueryError {
     Busy,
@@ -374,6 +464,7 @@ pub enum Answer {
     AssetSpendState(AssetState),
     UcaIdentity(IdentityStateV1),
     UcaApplicationGrant(ApplicationGrantStateV1),
+    ConsensusProposal(ConsensusProposalStatus),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -420,6 +511,16 @@ fn is_identity(frame: &Frame) -> bool {
 fn is_application(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::UcaApplicationGrant { .. })
 }
+fn is_proposal(query: &Query) -> bool {
+    matches!(query, Query::ConsensusProposal { .. })
+}
+fn reply_limit(query: &Query) -> usize {
+    match query {
+        Query::Receipts { .. } => MAX_BYTES,
+        Query::ConsensusProposal { .. } => MAX_PROPOSAL_REPLY_BYTES,
+        _ => MAX_V1_BYTES,
+    }
+}
 fn valid_request(request: &Request) -> bool {
     if request.session == [0; 32] || request.sequence == 0 {
         return false;
@@ -434,6 +535,11 @@ fn valid_request(request: &Request) -> bool {
     }
     if let Query::UcaApplicationGrant { selector } = &request.query {
         if selector.validate().is_err() {
+            return false;
+        }
+    }
+    if let Query::ConsensusProposal { height, hash, .. } = &request.query {
+        if *height == 0 || *hash == [0; 32] {
             return false;
         }
     }
@@ -469,6 +575,24 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
                     && view.expires_at_height > view.not_before_height
             }
         },
+        (Query::ConsensusProposal { height, round, .. }, Answer::ConsensusProposal(status)) => {
+            status.current_height > 0
+                && status.observation.is_some()
+                    == (*height == status.current_height && *round == status.current_round)
+                && status.observation.as_ref().is_none_or(|observation| {
+                    observation
+                        .selection_gate
+                        .as_ref()
+                        .is_none_or(|gate| gate.len() <= 64)
+                        && observation.candidate.as_ref().is_none_or(|candidate| {
+                            candidate.value != [0; 32]
+                                && candidate.body_id != [0; 32]
+                                && candidate.signed_proposal.as_ref().is_none_or(|proposal| {
+                                    proposal.proposer != [0; 32] && !proposal.wire.is_empty()
+                                })
+                        })
+                })
+        }
         (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
             hashes.len() == states.len()
         }
@@ -479,9 +603,19 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     if !valid(&frame) {
         return Err("invalid native query binding");
     }
+    let response = matches!(frame, Frame::Response(_));
     let batch = is_batch(&frame);
-    let mut bytes = if matches!(frame, Frame::Response(_)) {
+    let limit = if response {
+        reply_limit(&request(&frame).query)
+    } else if batch {
+        MAX_BYTES
+    } else {
+        MAX_V1_BYTES
+    };
+    let mut bytes = if response {
         MAGIC_RESPONSE_V6
+    } else if is_proposal(&request(&frame).query) {
+        MAGIC_PROPOSAL_V9
     } else if is_application(&frame) {
         MAGIC_APPLICATION_V8
     } else if is_identity(&frame) {
@@ -505,7 +639,7 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     }
     .map_err(|_| "native query encode")?;
     bytes.extend(encoded);
-    if bytes.len() > if batch { MAX_BYTES } else { MAX_V1_BYTES } {
+    if bytes.len() > limit {
         return Err("native query size");
     }
     Ok(bytes)
@@ -514,11 +648,12 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     let uca = bytes.starts_with(MAGIC_V4);
     let identity = bytes.starts_with(MAGIC_IDENTITY_V7);
     let application = bytes.starts_with(MAGIC_APPLICATION_V8);
+    let proposal = bytes.starts_with(MAGIC_PROPOSAL_V9);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
         true
-    } else if uca || identity || application {
+    } else if uca || identity || application || proposal {
         false
     } else {
         return Err("native query header/size");
@@ -536,6 +671,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
         || is_uca(&frame) != uca
         || is_identity(&frame) != identity
         || is_application(&frame) != application
+        || is_proposal(&request(&frame).query) != proposal
     {
         return Err("native query trailing bytes/binding");
     }
@@ -563,11 +699,7 @@ pub fn decode_response(bytes: &[u8], expected: &Request) -> Result<Option<Respon
     {
         return Ok(None);
     }
-    let limit = if matches!(expected.query, Query::Receipts { .. }) {
-        MAX_BYTES
-    } else {
-        MAX_V1_BYTES
-    };
+    let limit = reply_limit(&expected.query);
     if bytes.len() > limit || !answer_matches(expected, &response.answer) {
         return Err("native query response size/answer binding");
     }
@@ -1172,6 +1304,74 @@ mod tests {
         let mut unknown = encode(Frame::Request(batch_request(1))).unwrap();
         unknown[7] = b'3';
         assert!(decode(&unknown).is_err());
+    }
+
+    #[test]
+    fn consensus_proposal_query_bounds_and_binds_exact_position_and_hash() {
+        let request = Request {
+            session: [1; 32],
+            sequence: 1,
+            query: Query::ConsensusProposal {
+                height: 1,
+                round: 580,
+                hash: [2; 32],
+            },
+        };
+        let mut frame = encode(Frame::Request(request.clone())).unwrap();
+        assert!(frame.starts_with(MAGIC_PROPOSAL_V9));
+        assert_eq!(decode(&frame), Ok(Frame::Request(request.clone())));
+        frame[..8].copy_from_slice(MAGIC_V1);
+        assert!(decode(&frame).is_err());
+
+        let make_reply = |current_round, wire_len| Response {
+            request: request.clone(),
+            answer: Answer::ConsensusProposal(ConsensusProposalStatus {
+                current_height: 1,
+                current_round,
+                observation: Some(ProposalObservation {
+                    in_pending_pool: true,
+                    selection_gate: Some("body_owner_accepted".into()),
+                    in_local_offer: Some(true),
+                    candidate: Some(CandidateObservation {
+                        value: [3; 32],
+                        body_id: [4; 32],
+                        signed_proposal: Some(SignedProposalObservation {
+                            proposer: [5; 32],
+                            wire: vec![7; wire_len],
+                            dispatch: ProposalDispatch::Sent,
+                        }),
+                    }),
+                }),
+            }),
+        };
+        let reply = make_reply(580, 3587);
+        let bytes = encode(Frame::Response(reply.clone())).unwrap();
+        assert!(bytes.len() > MAX_V1_BYTES);
+        assert_eq!(decode_response(&bytes, &request), Ok(Some(reply)));
+        for (round, hash) in [(581, [2; 32]), (580, [8; 32])] {
+            let other = Request {
+                query: Query::ConsensusProposal {
+                    height: 1,
+                    round,
+                    hash,
+                },
+                ..request.clone()
+            };
+            assert_eq!(decode_response(&bytes, &other), Ok(None));
+        }
+        assert!(encode(Frame::Response(make_reply(581, 3587))).is_err());
+        assert!(encode(Frame::Response(make_reply(580, MAX_PROPOSAL_REPLY_BYTES))).is_err());
+        for (height, hash) in [(0, [2; 32]), (1, [0; 32])] {
+            let invalid = Request {
+                query: Query::ConsensusProposal {
+                    height,
+                    round: 580,
+                    hash,
+                },
+                ..request.clone()
+            };
+            assert!(encode(Frame::Request(invalid)).is_err());
+        }
     }
 
     #[test]

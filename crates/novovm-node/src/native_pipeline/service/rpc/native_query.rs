@@ -1,7 +1,9 @@
 //! Native binary reads of the existing verified projection and AOEM state owner.
 //! No JSON conversion, new authoritative store, or transport-finality inference.
 use super::*;
-use novovm_protocol::native_query::{Answer, Query, QueryError, Response, Status};
+use novovm_protocol::native_query::{
+    Answer, ConsensusProposalStatus, ProposalObservation, Query, QueryError, Response, Status,
+};
 mod identity;
 mod uca;
 pub(super) use uca::{UcaBatchStateRead, UcaCaptureStats, UcaQueries, UcaReadResult};
@@ -64,6 +66,45 @@ impl RpcLifecycle {
         }
     }
 
+    pub(super) fn consensus_proposal_status(
+        &self,
+        height: u64,
+        round: u64,
+        hash: Hash,
+    ) -> Result<Answer> {
+        let core = &self.node.controller;
+        let current_height = core.context().height;
+        let current_round = core.round();
+        let matches = |position: Position| {
+            position.height == height
+                && position.round == round
+                && position.parent == core.parent()
+                && position.source.is_none()
+        };
+        let observation = if (height, round) == (current_height, current_round) {
+            Some(ProposalObservation {
+                in_pending_pool: self.pending.contains_key(&hash),
+                selection_gate: self
+                    .selection_diagnostic
+                    .filter(|s| matches(s.position))
+                    .map(|s| s.reason.to_owned()),
+                in_local_offer: self
+                    .offer
+                    .as_ref()
+                    .filter(|offer| matches(offer.position))
+                    .map(|offer| offer.hashes.contains(&hash)),
+                candidate: core.current_local_proposal(hash)?,
+            })
+        } else {
+            None
+        };
+        Ok(Answer::ConsensusProposal(ConsensusProposalStatus {
+            current_height,
+            current_round,
+            observation,
+        }))
+    }
+
     /// At most one request/turn; bounded replies share the original socket.
     /// During recovery only status is observable, never an unverified head's
     /// balance/receipt projection. Balance None means pending, NOT zero/absence.
@@ -82,6 +123,13 @@ impl RpcLifecycle {
         } else {
             match &request.query {
                 Query::Status => unreachable!(),
+                Query::ConsensusProposal {
+                    height,
+                    round,
+                    hash,
+                } => self
+                    .consensus_proposal_status(*height, *round, *hash)
+                    .unwrap_or(Answer::Error(QueryError::Unavailable)),
                 Query::Receipt { hash } if self.application_receipts.contains_key(hash) => {
                     // Binary receipt v1 has asset nonce/fee fields, not NUAR.
                     Answer::Error(QueryError::Unavailable)

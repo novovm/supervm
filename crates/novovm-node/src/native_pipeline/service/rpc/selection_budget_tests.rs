@@ -773,11 +773,11 @@ fn actual_asset_no_ready_wait_preserves_progress_until_nonce_bridge_arrives() ->
             }
         }
         assert!(rpc.selection_wait.is_none());
-        let (_, body) = rpc
+        let offer = rpc
             .offer
             .as_ref()
             .context("nonce bridge did not resume body selection")?;
-        let Message::AssetBody { batch, .. } = body.as_ref() else {
+        let Message::AssetBody { batch, .. } = offer.message.as_ref() else {
             anyhow::bail!("unexpected selected body contract");
         };
         assert_eq!(
@@ -786,6 +786,32 @@ fn actual_asset_no_ready_wait_preserves_progress_until_nonce_bridge_arrives() ->
             "the original finite window does not reorder older future rows"
         );
         assert!(batch.view(0)?.matches_signed(&signed[0])?);
+        let hash = offer.hashes[0];
+        use novovm_protocol::native_query::Answer;
+        let observation = |height, round, hash| -> Result<_> {
+            let Answer::ConsensusProposal(status) =
+                rpc.consensus_proposal_status(height, round, hash)?
+            else {
+                anyhow::bail!("wrong native proposal query answer")
+            };
+            Ok(status.observation)
+        };
+        let (height, round) = (offer.position.height, offer.position.round);
+        let selected = observation(height, round, hash)?.context("current selection missing")?;
+        assert!(selected.in_pending_pool);
+        assert_eq!(
+            selected.selection_gate.as_deref(),
+            Some("body_owner_accepted")
+        );
+        assert_eq!(selected.in_local_offer, Some(true));
+        assert!(selected.candidate.is_none());
+        assert_eq!(
+            observation(height, round, [0xff; 32])?
+                .unwrap()
+                .in_local_offer,
+            Some(false)
+        );
+        assert!(observation(height, round + 1, hash)?.is_none());
         assert_eq!(
             rpc.pending.len(),
             4,

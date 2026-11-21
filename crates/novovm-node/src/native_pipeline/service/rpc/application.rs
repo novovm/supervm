@@ -549,7 +549,11 @@ impl RpcLifecycle {
             raw_transactions: self.selected_application_raw(&selection.selected)?,
         });
         if self.node.controller.offer(&message)? {
-            self.offer = Some((position, message));
+            self.offer = Some(LocalOffer {
+                position,
+                message,
+                hashes: selection.selected,
+            });
             self.offered = Some(position);
             self.prefer_application = false;
             self.ingress_batch_boundary = false;

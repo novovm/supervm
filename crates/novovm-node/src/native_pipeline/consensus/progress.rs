@@ -296,6 +296,38 @@ impl RoundProgress {
             == self.local_validator())
     }
 
+    /// Read the existing candidate pool and self-verified proposal for this
+    /// round. Match the exact transaction against the executed packet.
+    pub(super) fn current_local_candidate(
+        &self,
+        hash: Hash,
+    ) -> Option<(Hash, Hash, Option<&super::wire::Proposal>)> {
+        let contains = |candidate: &Candidate| {
+            candidate
+                .candidate
+                .packet()
+                .receipt_projection()
+                .iter()
+                .any(|receipt| receipt.tx_hash == hash)
+        };
+        if let Some(offer) = self.offers.get(&(self.local_validator(), false)) {
+            let proposal = offer.proposal.proposal();
+            if proposal.context == self.context()
+                && proposal.round == self.round()
+                && self.candidates.get(&proposal.value).is_some_and(contains)
+            {
+                return Some((proposal.value, offer.body_id, Some(proposal)));
+            }
+        }
+        self.candidates.iter().find_map(|(value, candidate)| {
+            (candidate.local_round == Some(self.round()) && contains(candidate)).then_some((
+                *value,
+                candidate.body_id,
+                None,
+            ))
+        })
+    }
+
     /// Assembly-side export of ORIGINAL input, never a remote execution permit.
     /// Also serves replayed candidates whose input was recovered from the same
     /// storage owner. Do not recompute business results to answer a body request.

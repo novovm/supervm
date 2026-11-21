@@ -5,10 +5,20 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    ensure!((2..=3).contains(&args.len()),
-        "usage: novovm-native-client <client-config.json> status | <query|submit> <request.nvquery|signed-batch.nuapfl>");
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash>";
+    ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
-    let report = operator::run(Path::new(&args[0]), action, args.get(2).map(Path::new))?;
+    let config = Path::new(&args[0]);
+    let report = if action == "consensus-proposal" {
+        ensure!(args.len() == 5, "{USAGE}");
+        let height = args[2].to_str().context("non-UTF8 height")?.parse()?;
+        let round = args[3].to_str().context("non-UTF8 round")?.parse()?;
+        let hash = args[4].to_str().context("non-UTF8 transaction hash")?;
+        operator::consensus_proposal(config, height, round, hash)?
+    } else {
+        ensure!((2..=3).contains(&args.len()), "{USAGE}");
+        operator::run(config, action, args.get(2).map(Path::new))?
+    };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
 }

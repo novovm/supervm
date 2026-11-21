@@ -52,6 +52,7 @@ cargo metadata --no-deps --format-version 1
 ```text
 novovm-native-client client.json status
 novovm-native-client client.json query request.nvquery
+novovm-native-client client.json consensus-proposal HEIGHT ROUND TX_HASH
 novovm-native-client client.json submit signed-batch.nuapfl
 ```
 
@@ -59,6 +60,14 @@ novovm-native-client client.json submit signed-batch.nuapfl
 - `query` 消费原SDK `native_query::encode(Frame::Request(...))` 的二进制文件。
   支持现有Receipt、UcaSpendState等选择器，不发明另一套JSON查询格式。文件里的旧
   session/sequence不会复用；原客户端重新生成关联。Response文件不可当作Request。
+- `consensus-proposal` 使用原认证查询通道，按完整交易哈希查询服务端的当前高度和
+  轮次。返回待处理池成员状态、该位置最后一条资产选批门状态、该交易是否在仍保留的
+  本地候选批，以及原共识 owner 中匹配的本地候选值、body ID 和 canonical 签名提案。
+  `Prepared` 表示出站消息已准备，`Admitted` 表示原传输接管，`Sent` 表示已写出
+  全部初始分片，`Delivered` 表示收到至少一个对端的原认证传输完成确认。
+  `Unobserved` 表示当前进程没有该提案的发送记录。候选和提案来自现有 owner，
+  离开当前高度或轮次后 `observation` 为 `null`。这个查询不补写历史观测，
+  不触发签名、投票、重发或最终确认。
 - `submit` 只接受原 `UcaSpendBatch::encode()` 的NUAPFL01，里面须已有真实签名及
   原账户定位提示；不接受旧V3或JSON交易，不在CLI中补签/授权。接收节点仍独立验签
   和验权。CLI上限64行/512KiB是本地操作预算，不是主链协议容量或TPS上限。

@@ -243,6 +243,30 @@ fn answer_view(answer: Answer) -> Value {
     use native_query::AssetState;
     match answer {
         Answer::Status(status) => json!({"Status":status}),
+        Answer::ConsensusProposal(status) => {
+            use crate::native_pipeline::service::rpc::hex;
+            let observation = status.observation.map(|observed| {
+                json!({
+                    "in_pending_pool": observed.in_pending_pool,
+                    "selection_gate": observed.selection_gate,
+                    "in_local_offer": observed.in_local_offer,
+                    "candidate": observed.candidate.map(|candidate| json!({
+                        "value": hex(&candidate.value),
+                        "body_id": hex(&candidate.body_id),
+                        "signed_proposal": candidate.signed_proposal.map(|proposal| json!({
+                            "proposer": hex(&proposal.proposer),
+                            "wire_hex": hex(&proposal.wire),
+                            "dispatch": proposal.dispatch
+                        }))
+                    }))
+                })
+            });
+            json!({"ConsensusProposal": {
+                "current_height": status.current_height,
+                "current_round": status.current_round,
+                "observation": observation
+            }})
+        }
         Answer::UcaIdentity(state) => json!({"UcaIdentity":state}),
         Answer::UcaApplicationGrant(state) => json!({"UcaApplicationGrant":state}),
         Answer::Error(error) => json!({"Error":error}),
@@ -308,7 +332,33 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
 /// Read-only local files; submit is an explicit network write of already-signed
 /// input. A timeout leaves business outcome UNKNOWN: keep the signed original.
 pub fn run(config_path: &Path, action: &str, input: Option<&Path>) -> Result<Value> {
-    let operation = operation(action, input)?; // Reject malformed input before opening a socket.
+    run_operation(config_path, operation(action, input)?)
+}
+
+pub fn consensus_proposal(
+    config_path: &Path,
+    height: u64,
+    round: u64,
+    hash: &str,
+) -> Result<Value> {
+    let hash: [u8; 32] = crate::native_pipeline::service::config::decode_hex(hash)?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("expected a 32-byte transaction hash"))?;
+    ensure!(
+        height > 0 && hash != [0; 32],
+        "invalid consensus query coordinates"
+    );
+    run_operation(
+        config_path,
+        Operation::Query(Query::ConsensusProposal {
+            height,
+            round,
+            hash,
+        }),
+    )
+}
+
+fn run_operation(config_path: &Path, operation: Operation) -> Result<Value> {
     let config_path = config_path.canonicalize()?;
     let config = read_client_config(&config_path)?;
     let (identity, domain) = config.identity(config_path.parent().context("config directory")?)?;
@@ -339,8 +389,20 @@ pub fn run(config_path: &Path, action: &str, input: Option<&Path>) -> Result<Val
                     if let Answer::Status(status) = &reply.answer {
                         ensure!(!status.projection_failed, "node archive projection failed");
                     }
-                    break json!({"kind":"node_observation", "answer":answer_view(reply.answer),
+                    let mut view = json!({"kind":"node_observation", "answer":answer_view(reply.answer),
                         "independently_verified_finality":false});
+                    if let Query::ConsensusProposal {
+                        height,
+                        round,
+                        hash,
+                    } = reply.request.query
+                    {
+                        view["selector"] = json!({
+                            "height":height, "round":round,
+                            "tx_hash":crate::native_pipeline::service::rpc::hex(&hash)
+                        });
+                    }
+                    break view;
                 }
                 std::thread::sleep(Duration::from_millis(1));
             }

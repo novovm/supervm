@@ -409,6 +409,12 @@ struct SelectionDiagnostic {
     pending: usize,
 }
 
+struct LocalOffer {
+    position: Position,
+    message: Arc<Message>,
+    hashes: Vec<Hash>,
+}
+
 struct GossipOffer {
     hashes: Vec<Hash>,
     message: Arc<Message>,
@@ -464,7 +470,7 @@ pub struct RpcLifecycle {
     warm_projection_blocks: u64,
     archive_projection_blocks: u64,
     archive: Option<ArchiveRead>,
-    offer: Option<(Position, Arc<Message>)>,
+    offer: Option<LocalOffer>,
     offered: Option<Position>,
     gossip_order: VecDeque<Hash>,
     gossip_queued: BTreeSet<Hash>,
@@ -689,7 +695,11 @@ impl RpcLifecycle {
             self.record_selection_gate("position_offered", Some(position), 0, None, None);
             return Ok(());
         }
-        if self.offer.as_ref().is_none_or(|(old, _)| *old != position) {
+        if self
+            .offer
+            .as_ref()
+            .is_none_or(|old| old.position != position)
+        {
             let empty_next = BTreeMap::new();
             let next = successor
                 .as_ref()
@@ -913,9 +923,13 @@ impl RpcLifecycle {
                     }
                 }
             }
-            self.offer = Some((position, Arc::new(body)));
+            self.offer = Some(LocalOffer {
+                position,
+                message: Arc::new(body),
+                hashes: selected,
+            });
         }
-        let message = &self.offer.as_ref().expect("prepared native body").1;
+        let message = &self.offer.as_ref().expect("prepared native body").message;
         let admitted = admitted_for_body(message, &self.pending)?;
         let accepted =
             match (&successor, admitted) {
@@ -950,7 +964,7 @@ impl RpcLifecycle {
                 "body_owner_backpressure"
             },
             Some(position),
-            match self.offer.as_ref().map(|(_, message)| message.as_ref()) {
+            match self.offer.as_ref().map(|offer| offer.message.as_ref()) {
                 Some(Message::AssetBody { batch, .. }) => batch.len(),
                 _ => 0,
             },
@@ -968,7 +982,7 @@ impl RpcLifecycle {
         budget_full: Option<bool>,
         nonce_after: Option<&BTreeMap<Hash, u64>>,
     ) {
-        if !crate::native_pipeline::profile::asset_enabled() || !self.is_uca() {
+        if !self.is_uca() {
             return;
         }
         let position = position.unwrap_or(Position {
@@ -993,6 +1007,9 @@ impl RpcLifecycle {
             return;
         }
         self.selection_diagnostic = Some(state);
+        if !crate::native_pipeline::profile::asset_enabled() {
+            return;
+        }
         // Only a changed, enabled nonce-wait observation may inspect this
         // existing bounded window. Do not recreate ordered selection or infer
         // later rows' expected nonce from an unadvanced parent nonce.

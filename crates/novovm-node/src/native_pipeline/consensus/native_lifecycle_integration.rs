@@ -262,6 +262,13 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
             .position(|id| *id == set.leader(height, 0).unwrap())
             .unwrap();
         let laggard = (leader + 1) % 4;
+        let Message::ApflBody { batch, .. } = body.as_ref() else {
+            unreachable!("fixture uses an APFL body")
+        };
+        let hash = batch.row(0)?.canonical_tx_hash()?;
+        assert!(nodes[leader].current_local_proposal(hash)?.is_none());
+        let mut proposed_value = None;
+        let mut sent = false;
         if height == 1 {
             let mut bounded = CandidateBodies::new(
                 &services.0[leader],
@@ -370,6 +377,60 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
                 }
                 ensure!(!node.is_frozen(), "healthy lifecycle froze");
             }
+            let node = &nodes[leader];
+            assert!(node.current_local_proposal([0xff; 32])?.is_none());
+            if let Some(observed) = node.current_local_proposal(hash)? {
+                if let Some(signed) = &observed.signed_proposal {
+                    use crate::native_pipeline::consensus::wire::decode_proposal;
+                    use novovm_protocol::native_query::ProposalDispatch;
+                    let proposal = decode_proposal(&signed.wire)?;
+                    proposal.verify(&set)?;
+                    assert_eq!(proposal.value, observed.value);
+                    assert_eq!(proposal.proposer_id, ids[leader]);
+                    assert_eq!(proposal.context.height, height);
+                    assert_eq!(proposal.round, 0);
+                    assert_eq!(signed.proposer, ids[leader]);
+                    if proposed_value.is_none() {
+                        use novovm_protocol::native_query::{
+                            self, Answer, ConsensusProposalStatus, Frame, ProposalObservation,
+                            Query, Request, Response,
+                        };
+                        let request = Request {
+                            session: [1; 32],
+                            sequence: 1,
+                            query: Query::ConsensusProposal {
+                                height,
+                                round: 0,
+                                hash,
+                            },
+                        };
+                        let reply = Response {
+                            request: request.clone(),
+                            answer: Answer::ConsensusProposal(ConsensusProposalStatus {
+                                current_height: height,
+                                current_round: 0,
+                                observation: Some(ProposalObservation {
+                                    in_pending_pool: true,
+                                    selection_gate: Some("body_owner_accepted".into()),
+                                    in_local_offer: Some(true),
+                                    candidate: Some(observed.clone()),
+                                }),
+                            }),
+                        };
+                        let bytes = native_query::encode(Frame::Response(reply.clone()))
+                            .map_err(anyhow::Error::msg)?;
+                        assert_eq!(
+                            native_query::decode_response(&bytes, &request),
+                            Ok(Some(reply))
+                        );
+                    }
+                    proposed_value = Some(observed.value);
+                    sent |= matches!(
+                        signed.dispatch,
+                        ProposalDispatch::Sent | ProposalDispatch::Delivered
+                    );
+                }
+            }
             if nodes.iter().all(|n| {
                 n.progress.head().is_some_and(|h| h.height == height)
                     && n.progress.context().height == height + 1
@@ -379,6 +440,9 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
             std::thread::yield_now();
         }
         let head = nodes[0].progress.head().unwrap();
+        assert_eq!(proposed_value, Some(head.block_hash));
+        assert!(sent, "no exact local proposal send was observed");
+        assert!(nodes[leader].current_local_proposal(hash)?.is_none());
         ensure!(
             nodes.iter().all(|n| n.progress.head() == Some(head)),
             "different published heads"

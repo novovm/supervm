@@ -142,6 +142,10 @@ impl UdpTransport {
 
 impl AuthenticatedUdpIngressV1 {
     /// The original link's bounded local observer; no second ingress owner.
+    pub fn observe_initial_send(&mut self, object: [u8; 32]) {
+        self.link.observe_initial_send(object);
+    }
+
     pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
         self.link.set_diagnostics_v1(observer);
     }

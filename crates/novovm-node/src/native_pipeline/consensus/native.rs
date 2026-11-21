@@ -734,6 +734,14 @@ impl NativeChannel {
             ChannelLink::Objects(link) => link.request_udp_recovery_v1(peer, wall_ms, now),
         }
     }
+    pub(super) fn observe_initial_send(&mut self, object: [u8; 32]) {
+        match &mut self.link {
+            ChannelLink::Original(link) => link.observe_initial_send(object),
+            #[cfg(test)]
+            ChannelLink::Objects(link) => link.observe_initial_send(object),
+        }
+    }
+
     pub fn poll_io(
         &mut self,
         wall_ms: u64,

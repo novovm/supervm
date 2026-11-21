@@ -604,7 +604,7 @@ impl RpcLifecycle {
             ensure!(self.admission.uca.as_ref().unwrap().rows.len() == authority_rows);
             std::thread::yield_now();
         }
-        let Message::AssetBody { batch, .. } = self.offer.as_ref().unwrap().1.as_ref() else {
+        let Message::AssetBody { batch, .. } = self.offer.as_ref().unwrap().message.as_ref() else {
             anyhow::bail!("asset pool selected a different contract");
         };
         ensure!(batch.len() == original_batch_size);

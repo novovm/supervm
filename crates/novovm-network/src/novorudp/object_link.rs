@@ -190,6 +190,8 @@ pub struct NativeLinkPoll {
     pub duplicate_fragments: usize,
     pub feedback_sent: usize,
     pub data_sent: usize,
+    /// Exact object whose initial send finished during this poll, if requested.
+    pub observed_initial_send: Option<[u8; 32]>,
     pub handshake_send_failures: usize,
     pub receive_errors: usize,
     pub send_failures: usize,
@@ -210,6 +212,7 @@ pub struct NativeObjectLink {
     jobs: BTreeMap<JobKey, NativeObjectSender>,
     order: VecDeque<JobKey>,
     cancellations: BTreeMap<JobKey, NativeSendCancellation>,
+    observed_send: Option<[u8; 32]>,
     feedback_turn: usize,
     epoch: u64,
     policy: NativeSendPolicy,
@@ -286,6 +289,7 @@ impl NativeObjectLink {
             jobs: BTreeMap::new(),
             order: VecDeque::new(),
             cancellations: BTreeMap::new(),
+            observed_send: None,
             feedback_turn: 0,
             epoch: 0,
             policy,
@@ -295,6 +299,10 @@ impl NativeObjectLink {
         })
     }
     /// Explicit local test observer. It cannot change peer/session or IO state.
+    pub fn observe_initial_send(&mut self, object: [u8; 32]) {
+        self.observed_send = Some(object);
+    }
+
     pub fn set_diagnostics_v1(&mut self, observer: Arc<NativeTransferDiagnosticsV1>) {
         self.endpoint.set_recovery_diagnostics_v1(observer.clone());
         self.diagnostics = Some(observer);
@@ -947,6 +955,9 @@ impl NativeObjectLink {
                         progress,
                         now,
                     );
+                }
+                if self.observed_send == Some(key.2) && sender.initial_send_complete() {
+                    report.observed_initial_send = self.observed_send.take();
                 }
                 match sent {
                     Ok(sent) => report.data_sent += sent,
