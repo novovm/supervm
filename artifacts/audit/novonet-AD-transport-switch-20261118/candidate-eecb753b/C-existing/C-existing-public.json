@@ -1,0 +1,87 @@
+{
+  "host": "C",
+  "source_sha": "eecb753bb874936c6783ae7c8e10f728acc1b48c",
+  "proposal_query_source_sha": "16cae4d7d5945621d8299f961b1a68c2d439d7ae",
+  "pid": 12148,
+  "process_created_utc": "2026-11-21T07:25:23.7517238Z",
+  "account": "LOCAL SERVICE",
+  "account_sid": "S-1-5-19",
+  "task": "NOVOVM-C-eecb753b-Existing-20261121",
+  "start_mode": "existing",
+  "original_localservice_entry_reused": true,
+  "original_database_and_identity_preserved": true,
+  "automatic_restart": false,
+  "initialize": false,
+  "archive": "novovm-common-eecb753b-windows-x86_64.zip",
+  "archive_bytes": 158647064,
+  "archive_sha256": "33ab6ef987baa596a5e927e06047a247faf7badd4f5578c76e5a3393f14be676",
+  "manifest_sha256": "42c9411a5b37d8041040596dccd5b8958fab18fcb56c0b67fc0aff2d6c376f43",
+  "node_sha256": "c92da513575e027218bdf28c414ef5437b7ed6d7ef70f660860397c22d0e8999",
+  "client_sha256": "a5d81e609d971ec538527abbfd3b011816dc695dce661e6ecd31bef22293910a",
+  "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "loaded_aoem_verified_utc": "2026-11-21T07:25:34.0025515Z",
+  "initial_c_progress_samples": [
+    {
+      "observed_utc": "2026-11-21T07:26:52.3071295Z",
+      "mtime_utc": "2026-11-21T07:26:49.153184Z",
+      "ticks": 120214,
+      "height": 1,
+      "round": 580,
+      "head": null,
+      "pending": 0,
+      "pending_survives_restart": false,
+      "recovery_in_progress": false,
+      "rpc_indexed_height": 0,
+      "executed_batches": 0,
+      "durable_decisions": 0,
+      "execution_failures": 0,
+      "apfl_execution_rows": 0,
+      "execution_backend": "aoem_semantic_v2_cpu_callbacks"
+    },
+    {
+      "observed_utc": "2026-11-21T07:26:57.3875889Z",
+      "mtime_utc": "2026-11-21T07:26:54.1752985Z",
+      "ticks": 126817,
+      "height": 1,
+      "round": 580,
+      "head": null,
+      "pending": 0,
+      "pending_survives_restart": false,
+      "recovery_in_progress": false,
+      "rpc_indexed_height": 0,
+      "executed_batches": 0,
+      "durable_decisions": 0,
+      "execution_failures": 0,
+      "apfl_execution_rows": 0,
+      "execution_backend": "aoem_semantic_v2_cpu_callbacks"
+    }
+  ],
+  "latest_c_local_observation": {
+    "utc": "2026-11-21T11:27:08.7839679Z",
+    "pid": 12148,
+    "owner_sid": "S-1-5-19",
+    "process_running": true,
+    "udp": [
+      {
+        "LocalAddress": "192.168.71.73",
+        "LocalPort": 42052
+      },
+      {
+        "LocalAddress": "192.168.71.73",
+        "LocalPort": 41052
+      }
+    ],
+    "progress_mtime_utc": "2026-11-21T11:27:08.4151663Z",
+    "ticks": 21223104,
+    "height": 1,
+    "round": 580,
+    "pending": 0,
+    "index_height": 0,
+    "head": null,
+    "exit_present": false,
+    "exit": null
+  },
+  "transaction_sha256": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "a_authenticated_query_observed": false,
+  "transaction_resubmitted": false
+}
