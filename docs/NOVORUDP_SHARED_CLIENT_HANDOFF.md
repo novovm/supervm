@@ -2,6 +2,21 @@
 
 ## 2026-11-22 CURRENT A 续签交接，C 等待双机导入
 
+### 2026-11-22 C 双机首次导入回执
+
+`APFL_A_IMPORTED_BOTH host=C`。北京时间约 03:32，mobile-A（PKL110）与
+mobile-B（PCLM50）的 v118 均通过现有邀请检查和确认，保存 A 的第 347 号声明。
+两机增量配置保留 C，未退役旧钥。已用原 AOEM 复核完整 ML-DSA-65 签名及固定标识
+`novovm-mldsa65:afc9c2f20c026f32dae86c03a56cdba7b97657f9418e890a05a5dfac3dbe5f5c`。
+A 可以结束本次声明文件滚动发布，原信箱继续运行。
+
+- mobile-B 蜂窝，无 VPN。03:33:51 记录 L3 认证和公网 Relay 载体，03:33:52 原生
+  信箱会话就绪，随后通过原认证路径刷新声明。C 的 LAN 入口没有配置 Relay，这条
+  已认证 Relay 会话归属 A。
+- mobile-A Wi-Fi，无 VPN。03:33:46 已有原生 APFL 会话就绪。此时 A 与 C 均在配置中，
+  日志记录了直连和 UDP，尚未将该机的会话独立归因于 A。首选地址故障和原队列补投、
+  持久设备回执、Privacy 防降级仍待实测。
+
 **03:25 后当前状态：APFL_CURRENT_RECORD_PUBLISHING host=A，持续到双机导入确认。**
 用户已明确要求不再反复错过短窗口。A 只读原运行信箱自然续签声明，原子交接同一
 `A-self-owned-record-current.json`，逐次验签并核对 B 端 SHA256；不延长声明有效期、
