@@ -310,3 +310,29 @@ addresses for A's separate authenticated check. No SSH management from
 A was available on C/D. **D stays running:** do not cut it over until an
 updated node proves it has retained the original hash or there is
 durable finality evidence. No new source/package is needed for C.
+
+## Read-only finality evidence closeout (2026-11-21)
+
+The original transaction was observed as `Received` on all four hosts
+before the rollout. In the last authenticated sweep at 10:32 China time,
+only D still reported `Received` and one pending input; A/B/C reported
+`NotRecent` and zero pending inputs. All four returned finalized and
+receipt-indexed height 0. `Received` is not durable admission.
+
+D's [archived read-only report](D-round-580-581-read.json), added by
+`a2df9e08`, records PID 300 on `654b9991`, current height 1, round 581,
+no head, receipt index 0, and zero execution errors at 10:40 China time.
+Its stdout and stderr were both empty. This confirms the local status but
+adds no transaction-to-proposal link or vote evidence. A/B's retained
+round-580 progress has no matching per-proposal record. C reported that
+its last retained pre-upgrade progress sample was at round 294. The
+scheduled round-580 proposer identity does not prove a proposal was sent.
+
+Verdict: receipt is established; the earliest missing link is inclusion
+of this transaction in a specific proposal at height 1, round 580 or 581.
+This is an evidence gap, not a proven failure at proposal, voting, or QC.
+Distinct prevote/precommit counts are unknown, not zero. No three-signature
+QC or durable final business receipt was established for this hash.
+Finality acceptance remains open. No repeat capture, consensus source
+change, node stop or upgrade, or transaction resubmission was performed.
+D remains on the existing runtime; its cutover gate was not met.
