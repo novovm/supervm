@@ -1,0 +1,140 @@
+{
+  "host": "C",
+  "pid": 30764,
+  "source": "1b6808f6b93f43a8bd5d20a9da8e56759d75723d",
+  "source_exe_sha256": "9d145d6e3a0f58e6fa0bea90a2815c53713c7e299d9483cc88a6afb3a92d88a5",
+  "process_start": "existing",
+  "account_sid": "S-1-5-19",
+  "launcher_exit": {
+    "reason": "node_exited",
+    "elapsed_seconds": 8059.5357285,
+    "pid": 30764,
+    "forced_by_controller": false,
+    "automatic_restart": false,
+    "utc": "2026-11-21T04:26:23.2016739Z",
+    "exit_code": 255,
+    "error": null
+  },
+  "wer": {
+    "application_error_record_id": 548444,
+    "wer_record_ids": [
+      548445,
+      548446
+    ],
+    "event_name": "APPCRASH",
+    "fatal": true,
+    "event_report_id": "33f6a753-f0eb-45ae-90af-31b74202f7af",
+    "archived_report_id": "7c483051-771d-481a-aaad-207792be3861",
+    "exception_code": "0xC0000005",
+    "exception_module": "novovm-node.exe",
+    "exception_rva": "0x23F4C0"
+  },
+  "full_dump": {
+    "thread_id": 16532,
+    "flags": "0x221826",
+    "exception_address": "0x00007ff701f3f4c0",
+    "exception_information": [
+      "0x0",
+      "0x000001d4a8190060"
+    ],
+    "access": "read",
+    "access_bytes": 16,
+    "instruction": "movdqu xmm8,xmmword ptr [r11+rcx]",
+    "machine_code": "f3 45 0f 6f 04 0b",
+    "rcx": "0x000001d4a8190020",
+    "r11": "0x40",
+    "target_region_state": "MEM_FREE",
+    "target_region_state_code": "0x10000",
+    "target_region_base": "0x0000003c38a00000",
+    "target_region_end_exclusive": "0x000001f5b8010000",
+    "target_present_in_memory64": false,
+    "node_stack_rvas": [
+      "0x23f4c0",
+      "0x1ba4dc",
+      "0x1a4585",
+      "0x2467c5",
+      "0x18917c",
+      "0x20cc4f",
+      "0x215607",
+      "0x119fbdb",
+      "0x846a48",
+      "0x1e364a8"
+    ],
+    "pdb_guid": "ABE46920-A3C6-4ECF-B603-202B9DF3D85D",
+    "pdb_age": 1,
+    "matching_pdb_found": false
+  },
+  "finding": "Fatal read access violation while loading a 16-byte SIMD operand from a free virtual-address range. The launcher recorded process exit 255 separately. The path assigning 255 and the first origin of the invalid address are unverified.",
+  "last_progress": {
+    "mtime_utc": "2026-11-21T04:26:13.7260121Z",
+    "chain_id": 91129655606029,
+    "height": 1,
+    "round": 580,
+    "local_proposer": true,
+    "head": null,
+    "pending": 1,
+    "receipt_index_height": 0,
+    "apfl_execution_rows": 0,
+    "durable_decisions": 0,
+    "execution_failures": 0,
+    "ticks": 11524448,
+    "asset_ingress_enabled": false,
+    "critical_path_enabled": false
+  },
+  "evidence_archive_local_name": "NOVOVM-Preserved-C-30764-20261121",
+  "originals_retained": true,
+  "verified_copy_files": [
+    {
+      "file": "novovm-node.exe.30764.dmp",
+      "bytes": 251025771,
+      "sha256": "036f4472f5b4eb73f243f630ae4e41a058945ee7d5da7547835f82415e764171"
+    },
+    {
+      "file": "Report.wer",
+      "bytes": 61090,
+      "sha256": "ae88cf6ad71ed69562eea9144b92f7be5662ac1a93d14e28fe5e06b1a0a13129"
+    },
+    {
+      "file": "started.json",
+      "bytes": 454,
+      "sha256": "07102cbd4c143043f1632cac0ea14d7e370f6b823388fa66b18cba466162abfa"
+    },
+    {
+      "file": "result.json",
+      "bytes": 232,
+      "sha256": "53bd6ddadd643a97fb5986425b576aa658bce25628e59e5f88ef4684bb51b15a"
+    },
+    {
+      "file": "loaded-runtime.json",
+      "bytes": 275,
+      "sha256": "883ac80188ead5fbb84c82ac083e9f864461dff888c85e1f1d46c691477c44b9"
+    },
+    {
+      "file": "node.stdout",
+      "bytes": 133,
+      "sha256": "0982ff53dc0718d8acc2bed1d808a99d641eb46131af75f919279fefd29d29ff"
+    },
+    {
+      "file": "node.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "file": "progress.json",
+      "bytes": 1548492,
+      "sha256": "2760b25e0144d440a4bd17ac552166545b0aef08294f534a664473ff756a7528"
+    }
+  ],
+  "proposal_query_source_commit": "16cae4d7d5945621d8299f961b1a68c2d439d7ae",
+  "proposal_query_validation": [
+    "Windows release strict Clippy for novovm-node and novovm-native-client with iroh-transport",
+    "21 native_query protocol tests",
+    "original UDP send/backpressure/cancellation test",
+    "original four-node three-height CPU lifecycle and signed-proposal observation",
+    "native UCA selection wait and exact-hash query test",
+    "Windows batch error accounting regression"
+  ],
+  "deployed": false,
+  "node_restarted": false,
+  "transaction_replayed": false
+}
