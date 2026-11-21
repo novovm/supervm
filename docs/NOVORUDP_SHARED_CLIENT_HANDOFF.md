@@ -10,6 +10,14 @@ Relay/DNS；不再把手工公网端口映射作为必要前置。需 C 回传�
 ML-DSA-65 通信用途公钥后，安装并启用同一信箱，再交接正式声明。此时仍为
 `APFL_BACKUP_PENDING host=A`，原验证者未动，D 未操作，两笔交易未重发。
 
+C 已从两台正在运行 v118 的设备只读取通信用途公钥，每把 1,952 字节；与 C 已验收的
+信箱准入表精确匹配。已生成仅含 `allowed_clients` 的本地交接 JSON
+`NOVOCHAT-v118-APFL-allowed-clients-20261121.json`，经四机原文件交接交给 A。
+公开 Git 记录仅确认 `APFL_CLIENT_PINS_EXPORT_READY host=C`；完整数组留在交接文件。
+A 实际收到后，使用该数组安装、启用同一 UDP＋V8 信箱，并交接其未过期签名服务记录和
+已核验中继配置。C 用保留 C 节点的增量信任配置进行蜂窝／Wi-Fi 分别认证。A 下载签收、
+信箱启用及双机认证的状态仍为待确认。
+
 三机复用同一主线。首次安装能力已接入原 Windows 用户会话安装器，使用各机自己的
 配置、密钥及 APFL 信箱存储。直接按 [Windows 首次接入](NOVOVM_RENDEZVOUS_ENTRY.md#windows-新节点接入原生-apfl-信箱)
 使用统一 Windows 包，满足公网路径的机器先接成备用节点。部署后向 C 交接当前有效的
