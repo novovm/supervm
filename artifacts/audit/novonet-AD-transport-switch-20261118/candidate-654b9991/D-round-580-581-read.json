@@ -1,0 +1,104 @@
+{
+  "pid": 300,
+  "source": "654b99916e80004e2df999c6d393ed7b94bec49b",
+  "utc": "2026-11-21T02:40:21.7219702Z",
+  "progress_mtime_utc": "2026-11-21T02:40:20.4775258Z",
+  "progress_keys": [
+    "profile",
+    "experimental",
+    "core",
+    "transport",
+    "consensus",
+    "chain_id",
+    "head",
+    "current_height",
+    "round",
+    "scheduled_proposer",
+    "local_proposer",
+    "recovery_in_progress",
+    "pending",
+    "pending_bytes",
+    "rpc_indexed_height",
+    "projection_error",
+    "warm_projection_blocks",
+    "archive_projection_blocks",
+    "executed_batches",
+    "durable_decisions",
+    "execution_failures",
+    "execution_backend",
+    "execution_integer_rows_total",
+    "execution_integer_plans_total",
+    "execution_apfl_view_transactions_total",
+    "requested_bodies",
+    "served_bodies",
+    "native_pending_deliveries",
+    "native_rejected_messages",
+    "native_expired_sends",
+    "successor_overlap_active",
+    "business_proof_required",
+    "business_proof_verified",
+    "mempool_gossip",
+    "gossip_delivery",
+    "gossip_repair",
+    "gossip_verified_inputs",
+    "gossip_rejected_inputs",
+    "authentication_cache_hits",
+    "rpc_authentication",
+    "pending_survives_restart",
+    "receipt_query_scope",
+    "historical_receipt_queries",
+    "pending_retained_payload_bytes",
+    "pending_retained_authentication_bytes",
+    "pending_retained_total_bytes",
+    "pending_retained_apfl_owners",
+    "signature_work",
+    "stage_profile",
+    "native_network_probe",
+    "archive_work",
+    "successor",
+    "asset_body_references",
+    "novonet",
+    "entry",
+    "ticks"
+  ],
+  "progress": {
+    "consensus": "novovm-consensus/round_bft/journal",
+    "head": null,
+    "current_height": 1,
+    "round": 581,
+    "recovery_in_progress": false,
+    "rpc_indexed_height": 0,
+    "execution_failures": 0,
+    "ticks": 378912476
+  },
+  "files": [
+    {
+      "Name": "node.stderr",
+      "Length": 0
+    },
+    {
+      "Name": "node.stdout",
+      "Length": 0
+    },
+    {
+      "Name": "progress.json",
+      "Length": 1523321
+    }
+  ],
+  "logs": [
+    {
+      "file": "node.stderr",
+      "matches": [],
+      "mtime_utc": "2026-11-20T02:50:28.9927654Z",
+      "truncated": false,
+      "bytes": 0
+    },
+    {
+      "file": "node.stdout",
+      "matches": [],
+      "mtime_utc": "2026-11-20T02:50:28.9905152Z",
+      "truncated": false,
+      "bytes": 0
+    }
+  ]
+}
