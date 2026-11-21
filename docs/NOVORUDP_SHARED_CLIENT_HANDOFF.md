@@ -10,7 +10,9 @@
 阿里云原 `novonet-mailbox.service` 的活动 SQLite 库已完成同机在线备份。快照
 为 1,679,360 字节，`quick_check` 通过，包含全部 16 个当时未过期、未领取对象。
 快照仅保存在云端受限目录。原 v2 进程保持 active、enabled；原库、封存身份和寄存义务
-继续由它承担。V3 处于既有单元的切换准备阶段。Linux 现有 owner 入口无法把 V2 寄存
+继续由它承担。V3 已基于原单元准备受限 drop-in，`systemd-analyze verify` 通过；
+配置仍留在云端受限准备目录，未装入 systemd，现有单元无 drop-in。Linux 现有
+owner 入口无法把 V2 寄存
 凭证改绑到新 ML-DSA-65 公钥，需等原对象履约完毕或有可验证的按原授权接续机制再切换。
 手机 B→A 原对象属于手机 L4 寄存，单独验收。
 
