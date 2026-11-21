@@ -446,13 +446,36 @@ fn actual_native_proportional_fee_respend_and_cold_recovery() -> Result<()> {
 
 type GossipServiceCheck = fn(&mut [rpc::RpcLifecycle], &[SignedAssetSpendV3]) -> Result<()>;
 
+enum AdmissionFixtureCheck {
+    Gossip(GossipServiceCheck),
+    ColdPendingRecovery,
+}
+
+#[test]
+#[ignore = "real AOEM and original cold store plus native receipt query; run alone"]
+fn existing_pending_recovery_admits_same_signed_batch_after_cold_open() -> Result<()> {
+    run_native_uca_service_fixture_with(
+        false,
+        Some(AdmissionFixtureCheck::ColdPendingRecovery),
+        None,
+        false,
+        false,
+    )
+}
+
 pub(super) fn with_uca_gossip_service_fixture(check: GossipServiceCheck) -> Result<()> {
-    run_native_uca_service_fixture_with(false, Some(check), None, false, false)
+    run_native_uca_service_fixture_with(
+        false,
+        Some(AdmissionFixtureCheck::Gossip(check)),
+        None,
+        false,
+        false,
+    )
 }
 
 fn run_native_uca_service_fixture_with(
     pool_pressure: bool,
-    gossip_check: Option<GossipServiceCheck>,
+    gossip_check: Option<AdmissionFixtureCheck>,
     amount_policy: Option<DirectNovFeePolicy>,
     learn_routes: bool,
     identity_only: bool,
@@ -469,7 +492,7 @@ fn run_native_uca_service_fixture_with(
 
 fn run_native_uca_service_fixture_with_versioned(
     pool_pressure: bool,
-    gossip_check: Option<GossipServiceCheck>,
+    gossip_check: Option<AdmissionFixtureCheck>,
     amount_policy: Option<DirectNovFeePolicy>,
     learn_routes: bool,
     identity_only: bool,
@@ -855,7 +878,62 @@ fn run_native_uca_service_fixture_with_versioned(
         prefix.push(signer.sign(next, &keys[2].0, &keys[2].1)?);
     }
     prefix.push(transfer.clone()); // Entire final chunk is an exact cache hit.
-    if let Some(check) = gossip_check {
+    if matches!(
+        &gossip_check,
+        Some(AdmissionFixtureCheck::ColdPendingRecovery)
+    ) {
+        let batch = make_batch(std::slice::from_ref(&transfer))?.encode()?;
+        let path = directory.join("cold-pending.nuapfl");
+        std::fs::write(&path, &batch)?;
+        let pin = Sha256::digest(&batch).into();
+        assert!(rpc::PendingAssetRecovery::load(StartMode::CreateNew, &path, pin).is_err());
+        assert!(rpc::PendingAssetRecovery::load(StartMode::Existing, &path, [0; 32]).is_err());
+        for node in nodes {
+            node.node.shutdown()?;
+        }
+        let mut reopened = start(&configs[..1], StartMode::Existing)?;
+        let mut observer = connect(
+            &configs[0],
+            reopened[0].node.validators.clone(),
+            client_identity.clone(),
+        )?;
+        let hash = Sha256::digest(transfer.intent.signing_bytes()?).into();
+        assert!(matches!(
+            query(&mut reopened, &mut observer, Query::Receipt { hash })?,
+            Answer::Receipt {
+                state: ReceiptState::NotRecent,
+                ..
+            }
+        ));
+        reopened.pop().unwrap().node.shutdown()?;
+        let mut reopened = start(&configs[..1], StartMode::Existing)?;
+        let mut observer = connect(
+            &configs[0],
+            reopened[0].node.validators.clone(),
+            client_identity,
+        )?;
+        let report = reopened[0].restore_pending_assets(rpc::PendingAssetRecovery::load(
+            StartMode::Existing,
+            &path,
+            pin,
+        )?)?;
+        assert_eq!(
+            report["recovered_pending_hashes"],
+            serde_json::json!([rpc::hex(&hash)])
+        );
+        assert_eq!(report["finalized"], false);
+        assert!(matches!(
+            query(&mut reopened, &mut observer, Query::Receipt { hash })?,
+            Answer::Receipt {
+                state: ReceiptState::Received,
+                indexed_height: 0
+            }
+        ));
+        assert_eq!(std::fs::read(&path)?, batch);
+        reopened.pop().unwrap().node.shutdown()?;
+        return Ok(());
+    }
+    if let Some(AdmissionFixtureCheck::Gossip(check)) = gossip_check {
         let mut signed = vec![transfer.clone(), prefix[0].clone()];
         for nonce in 2..4 {
             let mut next = intent(0, 1, 1, 1)?;

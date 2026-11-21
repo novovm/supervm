@@ -98,6 +98,8 @@ mod admission;
 mod admitted_tests;
 mod application;
 mod gossip;
+mod pending_recovery;
+pub use pending_recovery::PendingAssetRecovery;
 mod history;
 mod native_query;
 mod nonce_cache;

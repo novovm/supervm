@@ -34082,7 +34082,7 @@ struct NativeExecutionPipelineUdpDriveV1 {
 impl NativeExecutionPipelineUdpDriveV1 {
     fn from_env(chain_id: u64) -> Result<Option<Self>> {
         if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG") {
-            use novovm_node::native_pipeline::service::rpc::RpcLifecycle;
+            use novovm_node::native_pipeline::service::rpc::{PendingAssetRecovery, RpcLifecycle};
             use novovm_node::native_pipeline::service::{
                 config::ORIGINAL_PROFILE, ResidentConfig, ResidentNode, StartMode,
             };
@@ -34108,6 +34108,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 Some("existing") => StartMode::Existing,
                 _ => bail!("explicit NOVOVM_NATIVE_EXECUTION_START=create|existing required"),
             };
+            let pending_recovery = PendingAssetRecovery::from_env(mode)?;
             let local_node = NodeId(u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE",
                 9_990_001,
@@ -34124,17 +34125,29 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 .as_ref()
                 .map(|path| novovm_node::native_pipeline::service::network::Config::load(path))
                 .transpose()?;
-            #[allow(unused_mut)]
-            let mut node = ResidentNode::start_on_transport(config, mode, transport)?;
+            let node = ResidentNode::start_on_transport(config, mode, transport)?;
+            let mut product = RpcLifecycle::new(node, batch_size)?;
+            if let Some(recovery) = pending_recovery {
+                match product.restore_pending_assets(recovery) {
+                    Ok(report) => println!("native_pending_recovery: {report}"),
+                    Err(error) => {
+                        let drain = product.node.shutdown();
+                        return Err(error.context(format!(
+                            "pending recovery failed; original node drained: {drain:?}"
+                        )));
+                    }
+                }
+            }
             #[cfg(feature = "iroh-transport")]
             let novonet = match network_config {
                 Some(config) => {
                     match novovm_node::native_pipeline::service::network::Driver::new(
-                        config, &mut node,
+                        config,
+                        &mut product.node,
                     ) {
                         Ok(driver) => Some(driver),
                         Err(error) => {
-                            let drain = node.shutdown();
+                            let drain = product.node.shutdown();
                             return Err(error.context(format!(
                                 "NOVONET setup rejected; original node drained: {drain:?}"
                             )));
@@ -34147,7 +34160,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 chain_id,
                 local_node,
                 transport: None,
-                product: Some(RpcLifecycle::new(node, batch_size)?),
+                product: Some(product),
                 #[cfg(feature = "iroh-transport")]
                 novonet,
                 peers: Vec::new(),

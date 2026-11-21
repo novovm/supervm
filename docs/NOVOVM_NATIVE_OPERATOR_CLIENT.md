@@ -98,6 +98,24 @@ novovm-native-client client.json submit signed-batch.nuapfl
 哈希在升级接收端真实入池或已最终确认，不能只看握手、请求或启动成功。此工作不重发
 两笔交易、不更新 D，不将一次本地补拉测试计为四机最终性验收。
 
+### 原 `existing` 启动接回已保全的签名批
+
+原 `native_execution_tick` 支持一次显式启动恢复：只在 `NOVOVM_NATIVE_EXECUTION_START=existing`
+时，成对指定 `NOVOVM_NATIVE_PENDING_RECOVERY_FILE`（绝对路径）和
+`NOVOVM_NATIVE_PENDING_RECOVERY_SHA256`（64位十六进制整文件哈希）。配置文件由原服务账户
+只读，最多一个 128 KiB、16 行的规范 NUAPFL 批。无配置则启动行为不变。恢复必须先打开原库
+并具有本地可用的父状态；如果共识尚需恢复、索引追赶超时、文件摘要不符或有任一行未被原池
+接纳，则失败关闭，不启动正常网络循环。启动不重签、不调用客户端 `submit`、不触发首次广播。
+同一签名行由原 AOEM 验签、当前父状态权限、nonce 和去重校验；启动输出
+`native_pending_recovery` 和 `recovered_pending_hashes` 表示本地在池，不是持久最终回执。
+保留输入文件，不自动删除；验收完成后由运维清除一次性启动配置，避免在后续正常启动再次导入。
+
+受控切换顺序（不授权部署）：A/B 先以认证查询确认仍持有目标哈希，保持 B 在线；只对 A
+用上述原库 `existing` 恢复，核对包、原身份、原库和启动输出，再以原生认证查询确认同一哈希
+为 `Received` 或已取得最终回执。A 保持在线，随后获批才切 C，确认 C 在新认证会话上从 A
+自动补拉同一哈希，不给 C 配恢复文件。只有两个独立节点保有同一哈希或已核验持久化最终
+回执，才可考虑切 B。任何条件不满足则停在当前步骤；D 不停、不更新。
+
 ## 各设备现在可以做什么
 
 用户已确认A本机、B阿里云、C手机调试笔记本、D Linux AI主机为候选，E/F手机不计入
