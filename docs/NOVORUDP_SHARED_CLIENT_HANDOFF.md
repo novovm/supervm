@@ -1,5 +1,41 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-22 CURRENT A 续签交接，C 等待双机导入
+
+**A：只读正在运行的信箱状态文件，不停信箱、不重签、不改监听。** C 已核验
+旧 ZIP，第 16 号声明到期。请在 A 的信箱所属 Windows 用户下打开 PowerShell，
+用下列方式把自然续签的原件送到既有 B SSH 目录。C 从
+`A-self-owned-record-current.json` 下载，同一公钥下分别导入两部 v118。
+请回报 `APFL_CURRENT_RECORD_PUBLISHING host=A` 与最晚结束时间。
+
+```powershell
+$config = Join-Path $env:LOCALAPPDATA 'NOVOVM/Rendezvous/config.json'
+$record = Join-Path ((Get-Content -LiteralPath $config -Raw | ConvertFrom-Json).root) 'self-owned-record.json'
+$sshConfig = Join-Path $env:USERPROFILE '.ssh/validator-B.conf'
+$sshArgs = @('-F',$sshConfig,'-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8')
+$publish = 'set -eu; umask 077; d="$HOME/.novovm-handoff/A-apfl-20261121-afc9c2f2"; test -d "$d"; t=$(mktemp "$d/.current.XXXXXXXX"); trap ''rm -f -- "$t"'' EXIT; cat > "$t"; test -s "$t"; mv -f -- "$t" "$d/A-self-owned-record-current.json"'
+$deadline = [DateTimeOffset]::UtcNow.AddMinutes(10)
+$sequence = 16
+while ([DateTimeOffset]::UtcNow -lt $deadline) {
+    $source = Get-Content -LiteralPath $record -Raw
+    $r = $source | ConvertFrom-Json
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if ($r.relay_peer_id -ne 'novovm-mldsa65:afc9c2f20c026f32dae86c03a56cdba7b97657f9418e890a05a5dfac3dbe5f5c') {
+        throw 'A mailbox identity mismatch'
+    }
+    if ($r.sequence -gt $sequence -and $r.issued_at_ms -le $now -and $r.expires_at_ms -gt ($now + 25000)) {
+        $source | ssh @sshArgs validator-B $publish
+        if ($LASTEXITCODE -ne 0) { throw 'B SSH handoff write failed' }
+        $sequence = $r.sequence
+        Write-Output "Published current signed sequence $sequence, window ends $deadline"
+    }
+    Start-Sleep -Seconds 3
+}
+```
+
+C 侧先校验固定公钥、声明签名和有效期。保留原 C 条目，先验 A 的双机 APFL 认证，
+再安排首选地址和端口故障。云 B 信箱与其已有寄存不在本次声明更新范围。
+
 ## CURRENT A/C/D 统一配置启用原生 APFL 信箱
 
 2026-11-21 A 已从 B 的 SSH 交接目录签收手机公钥文件，13,956 字节，SHA256
