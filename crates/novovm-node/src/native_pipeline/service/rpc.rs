@@ -596,6 +596,7 @@ impl RpcLifecycle {
                 crate::native_pipeline::profile::Phase::Gossip,
             );
             self.poll_gossip()?;
+            self.poll_pending_asset_pull(now)?;
         }
         if self.projection_error.is_some() || self.node.controller.is_recovering() {
             self.record_selection_gate(

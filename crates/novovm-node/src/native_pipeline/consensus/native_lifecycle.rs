@@ -117,6 +117,7 @@ pub struct NativeLifecycle {
     transaction_turn: usize,
     transaction_session: Hash,
     transaction_sequence: u64,
+    asset_pull: asset_pull::PullState,
     outbox: Option<Fanout>,
     proposal_dispatch: Option<ProposalDispatchEvidence>,
     successor_outbox: Option<(Hash, Fanout)>,
@@ -266,6 +267,7 @@ impl NativeLifecycle {
             transaction_turn: 0,
             transaction_session: rand::random(),
             transaction_sequence: 0,
+            asset_pull: asset_pull::PullState::new(count),
             outbox: None,
             proposal_dispatch: None,
             successor_outbox: None,
@@ -979,6 +981,13 @@ impl NativeLifecycle {
                         Message::RequestDecision { context } => {
                             self.request_archive(peer, *context)?;
                         }
+                        Message::PullPendingAssets { session } => {
+                            if self.channel.session_id(peer) == Some(*session) {
+                                self.asset_pull.peers[peer].remember(*session, now);
+                            } else {
+                                self.rejected_messages += 1;
+                            }
+                        }
                         Message::Proposal { .. }
                         | Message::Vote(_)
                         | Message::Decision { .. }
@@ -1103,6 +1112,7 @@ impl NativeLifecycle {
     }
 }
 
+mod asset_pull;
 mod ingress;
 mod recovery;
 mod successor;

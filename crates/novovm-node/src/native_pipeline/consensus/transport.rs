@@ -120,6 +120,10 @@ pub enum Message {
         scope: TransactionsScope,
         batch: Arc<novovm_protocol::uca_spend_batch::AssetSpendBatchV3>,
     },
+    /// One bounded pending-input window on the existing authenticated peer lane.
+    PullPendingAssets {
+        session: [u8; 16],
+    },
     /// Ordered pool locators for an exact v2 body (tag 20), not a candidate or
     /// signature proof. Reconstructed rows must match the full body commitment.
     AssetBodyReference {
@@ -224,6 +228,7 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::NetworkProbe(_) => 21,
         Message::NetworkTime(_) => 22,
         Message::FarRoundWitness(_) => 23,
+        Message::PullPendingAssets { .. } => 24,
     });
     match message {
         Message::Body {
@@ -316,6 +321,10 @@ pub fn encode(message: &Message, limits: DecodeLimits) -> Result<Vec<u8>> {
         Message::AssetTransactions { scope, batch } => {
             uca::append_transactions(&mut out, scope, batch, limits)?;
         }
+        Message::PullPendingAssets { session } => {
+            ensure!(*session != [0; 16], "empty pending pull session");
+            out.extend_from_slice(session);
+        }
         Message::NetworkProbe(probe) => probe.append(&mut out)?,
         Message::NetworkTime(time) => out.extend_from_slice(&time.encode()?),
         Message::AssetBodyReference {
@@ -366,7 +375,7 @@ pub(crate) fn message_lane(bytes: &[u8]) -> Result<usize> {
     match bytes[10] {
         1 | 7 | 11 | 12 | 14 | 17..=20 => Ok(1),
         2..=6 | 8 | 10 | 16 | 21..=23 => Ok(0),
-        9 | 13 | 15 => Ok(2),
+        9 | 13 | 15 | 24 => Ok(2),
         _ => anyhow::bail!("unknown host network message kind"),
     }
 }
@@ -484,6 +493,11 @@ pub fn decode(bytes: &[u8], limits: DecodeLimits) -> Result<Message> {
                 .map(|_| wire::decode_vote(reader.take(vote_bytes)?))
                 .collect::<Result<Vec<_>>>()?;
             Message::FarRoundWitness(votes)
+        }
+        24 => {
+            let session: [u8; 16] = reader.take(16)?.try_into()?;
+            ensure!(session != [0; 16], "empty pending pull session");
+            Message::PullPendingAssets { session }
         }
         _ => anyhow::bail!("unknown host network message kind"),
     };

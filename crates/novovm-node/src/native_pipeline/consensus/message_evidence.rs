@@ -216,6 +216,9 @@ pub fn verify(message: &Message, config: &MessageDomain) -> Result<VerifiedEvide
             // precede this; lifecycle checks exact directional session context.
             Ok(VerifiedEvidence::None)
         }
+        // This extension is authorized by the pinned validator link and the
+        // exact live session checked in NativeLifecycle, not by a vote.
+        Message::PullPendingAssets { .. } => Ok(VerifiedEvidence::None),
         Message::NetworkProbe(probe) => {
             probe.validate()?;
             ensure!(

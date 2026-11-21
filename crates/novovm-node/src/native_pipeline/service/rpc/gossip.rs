@@ -1,6 +1,6 @@
-//! Repair only recipients omitted at local fanout admission. No new wire,
-//! payload queue, delivery promise or signing permission. A hint lives exactly
-//! as long as its original entry in the existing bounded, non-durable pool.
+//! Repair omitted fanout recipients and answer session-bound asset pull hints
+//! from the original bounded, non-durable pool. No new payload owner or
+//! signing permission.
 use super::*;
 
 pub(super) struct RepairHints {
@@ -126,6 +126,55 @@ fn repair_recipients(missing: u64, available: &[bool]) -> Vec<bool> {
 }
 
 impl RpcLifecycle {
+    pub(super) fn poll_pending_asset_pull(&mut self, now: Instant) -> Result<()> {
+        if !self.is_uca() || self.projection_error.is_some() {
+            return Ok(());
+        }
+        let Some(peer) = self.node.controller.poll_pending_asset_pull(now)? else {
+            return Ok(());
+        };
+        // A bounded prefix restores a small backlog without scanning an entire
+        // live pool or turning a reconnect into an unbounded broadcast.
+        const SCAN_LIMIT: usize = 128;
+        const ROW_LIMIT: usize = 16;
+        const BYTE_LIMIT: usize = 128 * 1024;
+        let mut hashes = Vec::new();
+        let mut remaining = self.input_body_limit().min(BYTE_LIMIT);
+        for hash in self.order.iter().take(SCAN_LIMIT) {
+            if hashes.len() == self.batch_size.min(ROW_LIMIT) {
+                break;
+            }
+            let Some(entry) = self.pending.get(hash) else {
+                continue;
+            };
+            if !matches!(entry.input, AdmissionInput::Uca { .. }) || entry.canonical_len > remaining
+            {
+                continue;
+            }
+            remaining -= entry.canonical_len;
+            hashes.push(*hash);
+        }
+        if hashes.is_empty() {
+            self.node.controller.finish_pending_asset_pull(peer, now);
+            return Ok(());
+        }
+        let batch = self.selected_uca_batch(&hashes)?;
+        let message = self.node.controller.uca_transactions_message(batch)?;
+        let mut requested = self.node.controller.transactions_available_recipients();
+        for (index, request) in requested.iter_mut().enumerate() {
+            *request = index == peer;
+        }
+        if self
+            .node
+            .controller
+            .try_submit_transactions_to(&message, &requested)?
+            .is_some()
+        {
+            self.node.controller.finish_pending_asset_pull(peer, now);
+        }
+        Ok(())
+    }
+
     pub(super) fn poll_gossip(&mut self) -> Result<()> {
         if self.projection_error.is_some() {
             return Ok(());
@@ -338,6 +387,61 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "real signed asset pool, actual native authentication and UDP; run alone"]
+    fn pending_pull_recovers_same_signed_asset_without_fanout() -> Result<()> {
+        super::super::super::uca_native_tests::with_uca_gossip_service_fixture(|nodes, signed| {
+            use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
+            let raw = signed[0].encode()?;
+            let hash = uca::hash(&signed[0])?;
+            let batch = Arc::new(AssetSpendBatchV3::from_raw(
+                std::slice::from_ref(&raw),
+                AssetSpendBatchLimitsV3 {
+                    transactions: 1,
+                    transaction_bytes: 8192,
+                    body_bytes: 8192,
+                },
+            )?);
+            nodes[0].incoming_from_client = false;
+            nodes[0].incoming =
+                Some((nodes[0].node.controller.uca_transactions_message(batch)?, 0));
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while !nodes[0].pending.contains_key(&hash) {
+                ensure!(
+                    Instant::now() < deadline,
+                    "source did not authenticate retained input"
+                );
+                nodes[0].poll_admission()?;
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            assert!(!nodes[1].pending.contains_key(&hash));
+            assert_eq!(nodes[0].pending[&hash].gossip_missing, 0);
+            assert!(nodes[0].gossip_order.is_empty());
+
+            // No client submission or new-fanout repair. Drive the real native
+            // channels, the pull turn and the same receiving admission owner.
+            while !nodes[1].pending.contains_key(&hash) {
+                let now = Instant::now();
+                ensure!(
+                    now < deadline,
+                    "recipient did not recover the original hash"
+                );
+                for node in nodes.iter_mut() {
+                    node.node.poll(now)?;
+                    node.poll_pending_asset_pull(now)?;
+                    node.poll_admission()?;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let restored = nodes[1].selected_uca_batch(&[hash])?;
+            assert_eq!(restored.raw_transaction(0)?, raw);
+            assert_eq!(nodes[1].pending.len(), 1);
+            assert!(nodes[1].gossip_order.is_empty());
+            assert_eq!(nodes[0].pending[&hash].gossip_missing, 0);
+            Ok(())
+        })
     }
 
     #[test]

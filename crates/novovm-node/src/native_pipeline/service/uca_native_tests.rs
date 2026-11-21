@@ -491,8 +491,12 @@ fn run_native_uca_service_fixture_with_versioned(
     #[cfg(unix)]
     let evidence_root = std::env::temp_dir().join("novovm-uca-native-services");
     #[cfg(not(unix))]
-    let evidence_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/runtime-rebuild/consensus-tests/uca-native-services");
+    let evidence_root = std::env::var_os("NOVOVM_UCA_TEST_EVIDENCE_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../target/runtime-rebuild/consensus-tests/uca-native-services")
+        });
     let directory = evidence_root.join(format!(
         "{}-{}",
         std::process::id(),
