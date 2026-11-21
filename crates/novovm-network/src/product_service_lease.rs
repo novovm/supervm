@@ -246,6 +246,7 @@ pub struct ServiceLeaseBookV1 {
     persisted: Vec<u8>,
     failed: bool,
     prior_endorsement: Option<String>,
+    retired: Vec<self_owned::RetiredServiceRecords>,
 }
 
 #[derive(Clone)]
@@ -287,6 +288,7 @@ impl ServiceLeaseBookV1 {
             persisted: Vec::new(),
             failed: false,
             prior_endorsement: None,
+            retired: Vec::new(),
         })
     }
     pub fn sources(&self) -> Vec<BootstrapSourceV1> {

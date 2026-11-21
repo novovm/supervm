@@ -118,6 +118,7 @@ impl ServiceLeaseBookV1 {
             persisted: Vec::new(),
             failed: false,
             prior_endorsement: None,
+            retired: Vec::new(),
         };
         ensure!(
             result.checkpoint()? == bytes,
@@ -160,6 +161,7 @@ impl ServiceLeaseBookV1 {
                     &tombstones,
                     self.clock,
                     &self.prior_endorsement,
+                    &self.retired,
                 )?,
             };
             if let Err(error) = owner.commit(&self.persisted, &next) {

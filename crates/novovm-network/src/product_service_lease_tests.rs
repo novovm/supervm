@@ -77,6 +77,7 @@ fn mldsa_json_capacity_covers_bounded_sources_revocations_and_retained_history()
         persisted: Vec::new(),
         failed: false,
         prior_endorsement: None,
+        retired: Vec::new(),
     };
     let endorsed = book.checkpoint()?;
     assert!(endorsed.len() < MAX_SERVICE_CHECKPOINT_BYTES);
@@ -160,6 +161,69 @@ fn self_owned_policy_update_keeps_floors_revocations_and_prior_history() -> Resu
         old.prepare_self_owned_migration(own_trust(), vec![record(2, 10, 3000, 40_000)], 3000)?;
     let updated = migrated.prepare_self_owned_policy_update(own_trust(), vec![], 3001)?;
     assert_eq!(updated.prior_endorsement, migrated.prior_endorsement);
+    Ok(())
+}
+
+#[test]
+fn self_owned_rotation_replaces_full_inventory_without_reauthorizing_old_records() -> Result<()> {
+    let mut trust = own_trust();
+    let old_pin = key(2).public_key().to_vec();
+    let kept = key(5).public_key().to_vec();
+    let new_pin = key(6).public_key().to_vec();
+    trust.node_pins.insert(kept.clone());
+    let old_record = record(2, 9, 3000, 40_000);
+    let kept_record = record(5, 8, 3000, 40_000);
+    let old = ServiceLeaseBookV1::new_self_owned(
+        trust.clone(),
+        vec![old_record.clone(), kept_record],
+        3000,
+        key(90),
+    )?;
+    let saved = old.checkpoint()?;
+    let mut rotated_trust = trust.clone();
+    rotated_trust.node_pins.remove(&old_pin);
+    rotated_trust.node_pins.insert(new_pin.clone());
+    let record_new = record(6, 1, 3001, 40_000);
+    assert!(old
+        .prepare_self_owned_policy_update(rotated_trust.clone(), vec![record_new.clone()], 3001)
+        .is_err());
+    assert!(old
+        .prepare_self_owned_policy_rotation(
+            rotated_trust.clone(),
+            vec![],
+            std::slice::from_ref(&old_pin),
+            3001,
+        )
+        .is_err());
+    let next = old.prepare_self_owned_policy_rotation(
+        rotated_trust.clone(),
+        vec![record_new],
+        std::slice::from_ref(&old_pin),
+        3001,
+    )?;
+    assert_eq!(old.checkpoint()?, saved);
+    let bytes = next.checkpoint()?;
+    let mut restored =
+        ServiceLeaseBookV1::restore_self_owned(rotated_trust.clone(), &bytes, 3002, key(90))?;
+    assert!(restored.tombstones.contains(&old_pin));
+    let history: serde_json::Value = serde_json::from_slice(&bytes)?;
+    assert_eq!(
+        history["retired"][0]["current"],
+        serde_json::to_value(old_record)?
+    );
+    assert_eq!(restored.entries[&kept].current.sequence, 8);
+    assert!(!restored
+        .routes(3002)?
+        .iter()
+        .any(|route| route.relay_public_key == old_pin));
+    assert!(restored
+        .prepare_self_owned_policy_rotation(
+            trust,
+            vec![record(2, 10, 3002, 40_000)],
+            &[new_pin],
+            3002,
+        )
+        .is_err());
     Ok(())
 }
 
