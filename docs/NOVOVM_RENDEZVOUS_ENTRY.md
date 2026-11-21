@@ -36,6 +36,37 @@ A、C、D 使用同一份 SUPERVM 源码和统一 Windows 发布包。包内的
 两次并发布同钥签名声明。安装策略断言和 Windows 组包清单检查通过。A/D 任务计划的
 实际运行和公网手机认证需在对应机器启用后验收。
 
+## NAT 后主机复用原生 UDP 与 V8 中继备用
+
+不具备公网入站映射时，不必把手工端口转发作为首次安装的必要前置。
+现有同一 owner 在原生监听存在且显式选择 V8 时，进入 `native+carrier`，
+共用原节点身份、信箱库、签名记录和资源预算。配置须使用已核验的显式 Relay
+及 DNS；空 `relays` 不会自动选择公共服务。直接 UDP 地址仅公告其实际可达范围，
+不能将另一只 NAT 探测 socket 的映射填作信箱地址。
+
+首次安装时先省略 `-Start`，在准备好的独立信箱 owner 上执行原命令：
+
+```powershell
+& $mailboxBinary --set-self-owned-native-carrier $nodeConfig v8
+Start-ScheduledTask -TaskName ('NOVOVM-Rendezvous-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+```
+
+此处只启动当前用户的新信箱任务，不操作验证者服务。启动后核对同一签名声明内的
+原生与 V8 候选，再用既有客户端验签并认证。中继传输可达不等于 APFL 会话认证，
+外部 Relay 也不等于自营公网入口或匿名路径。手机仍须按自身 Privacy 策略验收。
+
+原有 `mailbox_native_peer_probe` 增加无需手机公钥的有界传输前置：
+
+```text
+mailbox_native_peer_probe carrier-reachability APPROVED_RELAY DNS_IP
+```
+
+两端使用原 `IrohConfigV1::with_relay_only` 和 `with_iroh_scope_v1`，关闭 IP 直连，
+45 秒内核对双方传输公钥、实际 relay 路径及随机挑战往返。没有信箱操作、持久钥、
+路由器修改或验证者控制。两端同机，证明该主机的公网中继传输能力，不替代异机/蜂窝
+或 ML-DSA 服务认证。2026-11-21 A 使用原已配置 Relay 实测 PASS，9,535 ms；
+手机公钥尚未交接，信箱未安装启动、签名声明及手机验收仍待完成。
+
 ## 2026-10-18 原 Windows owner 的显式 Carrier V8 选择
 
 同一个命令新增 `v7`、`v8`，`on` 仍表示 V7，`off` 同时关闭 V7/V8：

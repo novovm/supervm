@@ -1,15 +1,130 @@
 //! Bounded remote probe using the existing native SDK drivers from
 //! novovm-relay's rendezvous_dual_owner_tests and native owner tests.
-//! No server startup, key generation, relay, new codec or retry scheduler.
+//! No mailbox server startup, persistent key generation, relay server, new
+//! codec or retry scheduler.
 //! Run with --features iroh-transport,tls-transport.
 //! Arguments: RECORD EXPECTED_PEER_ID udp|tls AOEM_LIB AOEM_SHA256 CHAIN_ID
 //! TRANSPORT_KEY_PATHS_JSON [CLIENTS ROUNDS PLAINTEXT_BYTES].
 //! Load mode is UDP only; preparation/window checks are excluded from load rates.
 //! Only random probe ciphertext/capabilities are created, with a five-minute TTL.
 //! This verifies service custody, NOT Android delivery or a DeviceReceipt.
+//! Separate transport-only preflight (no custody operation):
+//! carrier-reachability APPROVED_RELAY DNS_IP.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("carrier-reachability") {
+        return carrier_reachability::run(&args).await;
+    }
     probe::run().await
+}
+
+// Transport-only preflight for a NATed host before phone admission is available.
+// Both original SDK endpoints disable IP transports, so a successful exchange
+// must cross the explicitly supplied public relay. This is not mailbox or
+// off-host/mobile acceptance and does not create persistent identities/state.
+mod carrier_reachability {
+    use anyhow::{ensure, Context, Result};
+    use novovm_network::iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1};
+    use std::time::{Duration, Instant};
+
+    pub async fn run(args: &[String]) -> Result<()> {
+        ensure!(
+            args.len() == 4,
+            "usage: mailbox_native_peer_probe carrier-reachability APPROVED_RELAY DNS_IP"
+        );
+        let config = IrohConfigV1::new(&[args[2].clone()], args[3].parse()?)?.with_relay_only()?;
+        let server_config =
+            IrohConfigV1::new(&[args[2].clone()], args[3].parse()?)?.with_relay_only()?;
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let (address_tx, address_rx) = tokio::sync::oneshot::channel();
+        let (client_tx, client_rx) = tokio::sync::oneshot::channel();
+        let challenge: [u8; 32] = rand::random();
+        let started = Instant::now();
+        let server = with_iroh_scope_v1(
+            server_config,
+            IrohControlV1::new(deadline, || Ok(()))?,
+            move |scope| {
+                Box::pin(async move {
+                    scope.online().await?;
+                    let address = scope.address()?;
+                    ensure!(
+                        address.direct.is_empty() && !address.relays.is_empty(),
+                        "relay-only server address required"
+                    );
+                    address_tx
+                        .send(address)
+                        .map_err(|_| anyhow::anyhow!("probe address receiver closed"))?;
+                    let expected = client_rx.await.context("probe client key missing")?;
+                    let mut stream = scope.accept(expected).await?;
+                    ensure!(
+                        stream.remote_endpoint_key()? == expected,
+                        "probe client transport pin differs"
+                    );
+                    ensure!(
+                        stream.selected_path()? == "relay",
+                        "probe server did not use relay"
+                    );
+                    ensure!(
+                        stream.read_frame().await? == challenge,
+                        "probe challenge differs"
+                    );
+                    stream.write_frame(&challenge).await?;
+                    stream.finish().await?;
+                    Ok(())
+                })
+            },
+        );
+        let client = with_iroh_scope_v1(
+            config,
+            IrohControlV1::new(deadline, || Ok(()))?,
+            move |scope| {
+                Box::pin(async move {
+                    scope.online().await?;
+                    let local = scope.address()?;
+                    ensure!(local.direct.is_empty(), "probe client IP transport enabled");
+                    client_tx
+                        .send(local.endpoint_key)
+                        .map_err(|_| anyhow::anyhow!("probe client key receiver closed"))?;
+                    let address = address_rx.await.context("probe server address missing")?;
+                    let mut stream = scope.connect(&address).await?;
+                    ensure!(
+                        stream.remote_endpoint_key()? == address.endpoint_key,
+                        "probe server transport pin differs"
+                    );
+                    ensure!(
+                        stream.selected_path()? == "relay",
+                        "probe client did not use relay"
+                    );
+                    stream.write_frame(&challenge).await?;
+                    ensure!(
+                        stream.read_frame().await? == challenge,
+                        "probe echo differs"
+                    );
+                    stream.finish().await?;
+                    Ok(())
+                })
+            },
+        );
+        tokio::time::timeout_at(deadline.into(), async {
+            tokio::try_join!(server, client)?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("public relay reachability deadline")??;
+        println!(
+            "{}",
+            serde_json::json!({
+                "result":"PASS", "scope":"transport_only_public_relay_roundtrip",
+                "selected_path":"relay", "ip_transports_enabled":false,
+                "same_host_endpoints":true, "transport_peer_pins_verified":true,
+                "mailbox_authenticated":false, "mldsa_service_authenticated":false,
+                "android_acceptance":false, "persistent_state_created":false,
+                "elapsed_ms":started.elapsed().as_millis()
+            })
+        );
+        Ok(())
+    }
 }
 
 mod probe {

@@ -2,6 +2,14 @@
 
 ## CURRENT A/C/D 统一配置启用原生 APFL 信箱
 
+2026-11-21 A 已用现有 NOVONET 端点完成公网 Relay 的有界传输前置：两端关闭 IP
+直连，实选 `relay`，核对传输对端公钥与随机挑战往返，9,535 ms，PASS。探测两端
+同机，不是手机跨网、ML-DSA 服务认证或 APFL 信箱验收；未生成持久身份/签名声明。
+A 的安装计划改用原 owner `native+carrier` V8，保留 LAN 原生 UDP，并复用原显式
+Relay/DNS；不再把手工公网端口映射作为必要前置。需 C 回传两部 v118 的完整现有
+ML-DSA-65 通信用途公钥后，安装并启用同一信箱，再交接正式声明。此时仍为
+`APFL_BACKUP_PENDING host=A`，原验证者未动，D 未操作，两笔交易未重发。
+
 三机复用同一主线。首次安装能力已接入原 Windows 用户会话安装器，使用各机自己的
 配置、密钥及 APFL 信箱存储。直接按 [Windows 首次接入](NOVOVM_RENDEZVOUS_ENTRY.md#windows-新节点接入原生-apfl-信箱)
 使用统一 Windows 包，满足公网路径的机器先接成备用节点。部署后向 C 交接当前有效的
