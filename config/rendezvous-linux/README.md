@@ -14,21 +14,25 @@ cargo build --release -p novovm-relay --bin novovm-rendezvous-service --features
 
 The first-install helper is
 [`scripts/linux/install-owned-mailbox.sh`](../../scripts/linux/install-owned-mailbox.sh).
-Stage the verified Linux executable, this unit and three operator-created
+Stage the verified Linux `novovm-rendezvous-service` and `novovmctl` executables,
+this unit and three operator-created
 public configuration files together. Do not put private keys in staging:
 
-- `node.json`: existing version 2 owner configuration, root
-  `/var/lib/novonet-mailbox`, original authorized client public keys,
-  `relays: []`, `relay_only: false`, unused QUIC bind `0.0.0.0:43173`.
+- `node.json`: version 3, root `/var/lib/novonet-mailbox`, approved complete
+  ML-DSA-65 client public keys, explicit transport `chain_id`, reviewed absolute
+  `library` and `library_sha256`, `transport_identity_path` set to
+  `/var/lib/novonet-mailbox/transport.sealed`, `relays: []`, `relay_only: false`,
+  and the configured QUIC bind `0.0.0.0:43173`.
 - `native.json`: existing version 1 native listener, bind `0.0.0.0:43171`,
   actual public advertised address, bounded connections and byte budget.
 - `tls.json`: existing version 1 TLS listener, bind `0.0.0.0:43172`,
   actual public advertised address, `native_mailbox_v8: true`.
 
-The helper refuses existing service paths/accounts rather than reprovisioning
-an existing identity. It generates a host-protected wrapping credential using
-systemd, runs the existing owner configuration commands under the dedicated
-service user, then starts the unit. Node signing/storage/transport keys remain
+The helper checks the v3 configuration and refuses an existing installation.
+It generates a host-protected wrapping credential using systemd, provisions
+the ML-DSA-65 transport identity with `novovmctl` under the dedicated service
+user, then configures the owner and enables the original systemd unit.
+Node signing/storage/transport keys remain
 inside the existing encrypted file format; Linux uses `.sealed`, Windows
 retains `.dpapi`. The Linux process accepts only a private 32-byte `owner-key`
 file supplied via `CREDENTIALS_DIRECTORY`. systemd may retain root ownership
@@ -56,6 +60,14 @@ systemctl disable --now novonet-mailbox.service
 Stopping preserves identity and ciphertext. Never delete state as a rollback.
 For binary updates, keep the previous release and use a deliberate stopped-owner
 switch of `current`; do not rerun the first-install helper.
+
+An existing version 2 owner uses a different service key. Its pending objects
+and signed receipts stay bound to that owner's identity. Prepare the ML-DSA-65
+owner without binding production listener ports. Before switching the original
+unit, account for each live custody obligation by confirmed delivery, expiry,
+or a verified protocol handoff. Retain the previous database, sealed custody
+and service history. Activate the new owner on the original managed unit and
+verify its public record, epoch renewal and application authentication.
 
 Each phone still needs an explicit trusted-node update and its own external
 relay isolation. Server `direct-only` alone does not disable phone relays.
