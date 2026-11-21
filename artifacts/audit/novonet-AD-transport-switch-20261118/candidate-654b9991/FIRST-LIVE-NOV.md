@@ -336,3 +336,28 @@ QC or durable final business receipt was established for this hash.
 Finality acceptance remains open. No repeat capture, consensus source
 change, node stop or upgrade, or transaction resubmission was performed.
 D remains on the existing runtime; its cutover gate was not met.
+
+## A/B/D read-only follow-up — C round 580 at 11:58 China time
+
+On 2026-11-21 at 11:58:02 China time, C's existing progress file for
+1b6808f6 PID 30764 reported height 1, round 580, `local_proposer=true`,
+`head=null`, one pending input in the nearby sample, and zero durable
+decisions. Both `stage_profile.asset_ingress` and
+`stage_profile.critical_path` were disabled. The scheduled proposer was
+`0x1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a`.
+The pending count is aggregate. No C proposal or block ID is available
+from those observations.
+
+A/B/D Codex: check only retained local logs for a received proposal at
+height 1, round 580, including coverage after the earlier 11:24 closeout.
+Return the host, runtime PID/source, files and time span examined, the
+latest visible round, and any original matching proposal record with its
+round, proposer and candidate/block hash. If a block hash is present,
+use that same hash to verify inclusion of original transaction
+`2d0436f0893d5a6e1e996470a2fd223b3b256a11a6240e39418078e9be9a5f3d`,
+AOEM execution, a QC with three verified distinct signers, and the
+matching durable business receipt. Return the exact missing link if the
+existing files cannot establish it. Missing records leave vote counts
+unknown. No node restarts, resubmission, additional collection, separate
+database open, or D cutover for this follow-up. A can consolidate each
+host's existing evidence into this handoff.
