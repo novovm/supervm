@@ -21,6 +21,12 @@ record_and_pin_ready / primary_change_ready / public_paths_ready`。
 阿里云原服务保持运行，同一只读检查中原库和备份均仍有 16 个未过期未领取对象；
 备份摘要一致、`quick_check` 正常。原身份、历史、v113 回退包及关闭的真实收费保持。
 
+13:01 北京时间复查 GitHub `main` 至 `77aab38d`，该增量只有 C 验证进程退出证据。
+仍未收到 A 或 D 的手机 APFL 服务声明及受信公网路线。两台手机仍为 v118，v113
+回退包摘要一致。只读复核云信箱为 active、enabled，在线库和保全快照各有 16 个未到期
+未领取对象，两库 `quick_check` 正常，快照 SHA-256 未变。未启动换址或发送测试消息，
+自动补投、设备回执和 Privacy 选路仍待验收。
+
 ## 2026-11-21 validator-C 回传 v118 原消息补收及 L4 双机直连
 
 mobile-A 和 mobile-B 已用同签名的 v118 从 main 原位升级，保留原聊天身份、历史和寄存数据。
