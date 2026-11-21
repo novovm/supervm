@@ -1,5 +1,41 @@
 # 自有寻址服务可执行入口
 
+## Windows 新节点接入原生 APFL 信箱
+
+A、C、D 使用同一份 SUPERVM 源码和统一 Windows 发布包。包内的
+`novovm-rendezvous-service.exe` 和原 Windows 安装器负责信箱，验证者原服务继续按
+各机的配置运行。这里使用当前 Windows 用户的 DPAPI 和原任务计划，登录后常驻。
+
+在首次启用的机器上，从包内 `config/mailbox-node.json.example` 和
+`config/mailbox-native.json.example` 生成两份本机配置。填写实际链 ID、
+已核验 AOEM 库及哈希、获准的完整 ML-DSA-65 通信用途公钥、独立信箱状态目录和
+实际可达的 UDP 地址。传输用途钥放在该目录内的 `transport.sealed`，安装器本机生成。
+两台机器各持自己的钥，沿用各自的网络与手机准入配置。监听端口可由系统分配，
+公网公告须与实际 NAT 或公网入口一致。
+
+在准备好的配置和经发布清单独立核对的哈希上，使用包内同一入口：
+
+```powershell
+& "$release/resources/scripts/windows/install-novovm-rendezvous.ps1" -UserSession -Action Install `
+  -SourceBinary "$release/bin/novovm-rendezvous-service.exe" -ExpectedSha256 $mailboxSha256 `
+  -ControlBinary "$release/bin/novovmctl.exe" -ExpectedControlSha256 $controlSha256 `
+  -Configuration $nodeConfig -NativeMailboxListener $nativeConfig -Start
+```
+
+首次准备保存固定的信箱配置与监听，生成并封装独立用途钥。准备阶段不绑定端口；
+计划任务第一次启动才绑定并发布签名的 `self-owned-record.json`。已准备但尚未启动的同一
+配置可以续接。已有活动信箱沿原身份、日志和配置升级，省略首次准备参数；若要修改已有
+监听，使用原 owner 的离线维护入口。已经激活的历史缺失时会停止，不生成替代密钥或重建历史。
+
+这一入口不会配置 Windows 防火墙、NAT 或云安全组。部署后核对实际进程、UDP 监听和
+`status.json`，再从客户端验签并建立 APFL 会话。可用的公网备用路径需在首选入口失效时
+仍可达。用户会话安装不会接管 Linux 云信箱或更改收费设置。
+
+本机验证覆盖 Windows owner 的 32 项回归，其中新流程用原生 UDP 进行寄存、领取、
+验证回执及同钥重启。另以核验的 AOEM 和实际 Windows EXE 检查离线准备、原位重开
+两次并发布同钥签名声明。安装策略断言和 Windows 组包清单检查通过。A/D 任务计划的
+实际运行和公网手机认证需在对应机器启用后验收。
+
 ## 2026-10-18 原 Windows owner 的显式 Carrier V8 选择
 
 同一个命令新增 `v7`、`v8`，`on` 仍表示 V7，`off` 同时关闭 V7/V8：

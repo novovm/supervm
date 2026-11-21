@@ -1,5 +1,10 @@
 # NOVOVM 产品目标与交付主线
 
+## 当前 A/C/D 共用原生 APFL 信箱安装入口
+
+[Windows 首次接入](NOVOVM_RENDEZVOUS_ENTRY.md#windows-新节点接入原生-apfl-信箱)已写入统一发布包。
+各机同步同一主线并按本机配置启用。拿到公网备用入口的签名声明后，由 C 完成双机验收。
+
 ## 当前给 validator-A：核对 A/D 的手机 APFL 备用入口
 
 [执行与回执格式](NOVORUDP_SHARED_CLIENT_HANDOFF.md#current-给-validator-a-的一条任务确认一台可用的手机-apfl-备用入口)。

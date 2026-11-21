@@ -292,6 +292,9 @@ foreach ($name in @('relay', 'peer-sender', 'peer-receiver', 'native-nat', 'mail
 }
 $natExample = Get-Content -LiteralPath (Join-Path $output 'config/native-nat.json.example') -Raw | ConvertFrom-Json
 $mailboxExample = Get-Content -LiteralPath (Join-Path $output 'config/mailbox-node.json.example') -Raw | ConvertFrom-Json
+if ($windowsPackage -and $mailboxExample.transport_identity_path -ne "$($mailboxExample.root)/transport.sealed") {
+  throw 'Windows first installation must put its transport key inside the private mailbox owner root'
+}
 if ($natExample.version -ne 2 -or $natExample.peer_public_key -ne 'REVIEW_REPLACE_WITH_FULL_1952_BYTE_MLDSA65_PUBLIC_KEY_ARRAY' -or
     $mailboxExample.version -ne 3 -or $mailboxExample.allowed_clients.Count -ne 0 -or
     $manifest.compatibility_tools.delivery_journal_schema -ne 'novovm-product-delivery-journal/v1') {

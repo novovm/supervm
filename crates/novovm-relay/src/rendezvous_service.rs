@@ -201,6 +201,28 @@ mod windows {
         );
         let path = PathBuf::from(&args[1]);
         ensure!(path.is_absolute(), "absolute configuration path required");
+        if args[0] == "--prepare-self-owned-native" || args[0] == "--check-self-owned-native" {
+            use super::rendezvous_self_owned_owner::{Config, NativeListenerConfig, Owner};
+            ensure!(
+                args.len() == 3,
+                "native mailbox requires CONFIG LISTENER_JSON"
+            );
+            let listener = PathBuf::from(&args[2]);
+            ensure!(
+                listener.is_absolute(),
+                "absolute listener settings path required"
+            );
+            let config = Config::load(&path)?;
+            let listener = NativeListenerConfig::load(&listener)?;
+            ensure!(
+                !config.relay_only,
+                "native listener conflicts with relay-only policy"
+            );
+            if args[0] == "--prepare-self-owned-native" {
+                Owner::prepare_native(config, listener)?;
+            }
+            return Ok(());
+        }
         if args[0] == "--set-self-owned-storage" {
             use super::rendezvous_self_owned_owner::{Config, Owner};
             ensure!(

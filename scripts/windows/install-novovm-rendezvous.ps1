@@ -7,13 +7,22 @@ param(
     [string]$SourceBinary,
     [string]$ExpectedSha256,
     [string]$Configuration,
-    [switch]$UserSession
+    [switch]$UserSession,
+    [string]$NativeMailboxListener,
+    [string]$ControlBinary,
+    [string]$ExpectedControlSha256,
+    [switch]$Start
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($UserSession) {
-    & (Join-Path $PSScriptRoot 'rendezvous-user-install.ps1') -Action $Action -SourceBinary $SourceBinary -ExpectedSha256 $ExpectedSha256 -Configuration $Configuration
+    $arguments = @{} + $PSBoundParameters
+    $null = $arguments.Remove('UserSession')
+    & (Join-Path $PSScriptRoot 'rendezvous-user-install.ps1') @arguments
     return
+}
+if ($NativeMailboxListener -or $ControlBinary -or $ExpectedControlSha256 -or $Start) {
+    throw 'Native mailbox preparation and immediate start use -UserSession.'
 }
 $serviceName = 'NOVOVMRendezvous'
 $account = 'NT SERVICE\NOVOVMRendezvous'

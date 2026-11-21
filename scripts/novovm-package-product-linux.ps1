@@ -349,6 +349,7 @@ try {
     "NOVOVM_PURPOSE_IDENTITY_PREPARATION.md",
     "NOVOVM_DELIVERY_ALIGNMENT.md",
     "NOVONET_TRANSPORT_POLICY_V1.md",
+    "NOVOVM_RENDEZVOUS_ENTRY.md",
     "NOVOVM_MAINNET_OPERATOR_PRIMER.zh-CN.txt",
     "NOVOVM_JULY_MAIN_INTEGRATION_MAP.md",
     "NOVOVM_PRODUCT_DURABLE_RECIPIENT_ACK_DELIVERY_JOURNAL_V1.md",
@@ -827,6 +828,9 @@ remain in the host; no NOVOVM-specific business logic is added to AOEM.
         Replace('/var/lib/novovm-relay', 'C:/ProgramData/NOVOVM/Relay/state').
         Replace('/var/lib/novovm', 'C:/ProgramData/NOVOVM/Node/state').
         Replace('libaoem_ffi.so', 'aoem_ffi.dll')
+      if ($template.Name -eq 'mailbox-node.json.example') {
+        $content = $content.Replace('/Mailbox/config/transport.sealed', '/Mailbox/state/transport.sealed')
+      }
       [IO.File]::WriteAllText($template.FullName, $content, [Text.UTF8Encoding]::new($false))
     }
     @'
@@ -845,6 +849,10 @@ The relay installer only installs the original relay binary/firewall binding;
 it is not a new process supervisor. The rendezvous SCM/user-session adapters
 retain their original distinct ownership and custody requirements. Do not run
 them against an existing installation without an approved exact upgrade plan.
+For a new native APFL mailbox use install-novovm-rendezvous.ps1 with
+-UserSession -Action Install -NativeMailboxListener and both verified binary
+hashes. The adapter can prepare protected local custody before its first bind
+and start the existing task with -Start. See docs/NOVOVM_RENDEZVOUS_ENTRY.md.
 
 All config examples remain unconfigured. Replace REVIEW_APPROVED_CHAIN_ID,
 REVIEW_FIXED_RELEASE and full 1952-byte public-key-array placeholders with the

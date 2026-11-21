@@ -256,6 +256,10 @@ struct Policy {
     tls_listener: Option<TlsListenerConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_listener: Option<NativeListenerConfig>,
+    // Enrollment may prepare a native listener without binding it. Only that
+    // protected authorization permits a later ordinary first start.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    prepared_native_start: bool,
     // Explicit signed NVMBOX07 capability on the existing Iroh carrier. Older
     // protected policies remain disabled until the local owner opts in.
     #[serde(default)]
@@ -375,13 +379,33 @@ impl Owner {
     /// Creation or migration are explicit local owner actions. Ordinary start
     /// never creates replacement keys, resets a journal, or infers new trust.
     pub fn open(config: Config, create_policy: bool, legacy: Option<LegacyConfig>) -> Result<Self> {
+        Self::open_config(config, create_policy, legacy, None)
+    }
+
+    #[cfg(windows)]
+    pub fn prepare_native(config: Config, listener: NativeListenerConfig) -> Result<()> {
+        listener.validate()?;
+        ensure!(
+            !config.relay_only,
+            "native listener conflicts with relay-only policy"
+        );
+        drop(Self::open_config(config, true, None, Some(listener))?);
+        Ok(())
+    }
+
+    fn open_config(
+        config: Config,
+        create_policy: bool,
+        legacy: Option<LegacyConfig>,
+        first_native_listener: Option<NativeListenerConfig>,
+    ) -> Result<Self> {
         let key = crate::transport_identity::load_transport_identity(
             &config.transport_identity_path,
             config.chain_id,
             &config.library,
             &config.library_sha256,
         )?;
-        Self::open_with_identity(config, create_policy, legacy, key)
+        Self::open_with_identity(config, create_policy, legacy, key, first_native_listener)
     }
 
     fn open_with_identity(
@@ -389,6 +413,7 @@ impl Owner {
         create_policy: bool,
         legacy: Option<LegacyConfig>,
         key: TransportIdentity,
+        first_native_listener: Option<NativeListenerConfig>,
     ) -> Result<Self> {
         let root = &config.root;
         #[cfg(target_os = "linux")]
@@ -417,6 +442,10 @@ impl Owner {
             .map_err(|_| anyhow::anyhow!("owner already running"))?;
         let custody = root.join(POLICY_FILE);
         if create_policy && !custody.try_exists()? {
+            ensure!(
+                !config.allowed_clients.contains(key.public_key()),
+                "custody identity separation"
+            );
             let (sequence_floor, legacy_owner_checkpoint) = if let Some(old) = &legacy {
                 #[cfg(target_os = "linux")]
                 {
@@ -486,7 +515,8 @@ impl Owner {
                 shared_storage_limit_mib: None,
                 carrier_mode: None,
                 tls_listener: None,
-                native_listener: None,
+                prepared_native_start: first_native_listener.is_some(),
+                native_listener: first_native_listener.clone(),
                 native_carrier_mailbox_v7: false,
                 native_carrier_mailbox_v8: false,
                 node_pin: key.public_key().to_vec(),
@@ -514,6 +544,12 @@ impl Owner {
         let transport = Zeroizing::new(<[u8; 32]>::try_from(&protected[8..40])?);
         let policy: Policy = serde_json::from_slice(&protected[40..])?;
         ensure!(policy.config == config, "protected local policy differs");
+        if let Some(listener) = &first_native_listener {
+            ensure!(
+                policy.prepared_native_start && policy.native_listener.as_ref() == Some(listener),
+                "existing owner needs explicit listener maintenance"
+            );
+        }
         #[cfg(target_os = "linux")]
         ensure!(
             policy.legacy.is_none() && policy.legacy_owner_checkpoint.is_none(),
@@ -558,23 +594,26 @@ impl Owner {
         );
         // Check corruption and policy BEFORE binding any transport.
         let path = root.join("service.journal");
+        let mut transition = create_policy;
         if path.try_exists()? {
             let (_file, bytes) = ServiceLeaseFileV1::open(&path, storage.clone())?;
             restore_service_history(&policy, create_policy, &key, &bytes, now_ms()?)?;
         } else {
             ensure!(
-                create_policy
+                (create_policy
+                    || (policy.prepared_native_start && policy.native_listener.is_some()))
                     && policy.legacy.is_none()
                     && !root.join("self-owned-activation.started").try_exists()?,
                 "missing enrolled service history"
             );
+            transition = true;
         }
         Ok(Self {
             policy,
             key,
             storage,
             transport,
-            transition: create_policy,
+            transition,
             _lock: Arc::new(lock),
         })
     }
@@ -1507,7 +1546,7 @@ mod tests {
             .map(|i| component_key(i).public_key().to_vec())
             .collect();
         let key = component_key(71);
-        let owner = Owner::open_with_identity(config.clone(), true, None, key.clone())?;
+        let owner = Owner::open_with_identity(config.clone(), true, None, key.clone(), None)?;
         let policy = serde_json::to_vec(&owner.policy)?;
         let plaintext = read_custody(&config.root.join(POLICY_FILE))?;
         assert_eq!(plaintext.len(), 40 + policy.len());
@@ -1537,7 +1576,7 @@ mod tests {
             now_ms()? + 90_000,
         )?);
         drop(owner);
-        let reopened = Owner::open_with_identity(config, false, None, key)?;
+        let reopened = Owner::open_with_identity(config, false, None, key, None)?;
         assert_eq!(reopened.policy.config.allowed_clients.len(), 16);
         assert_eq!(serde_json::to_vec(&reopened.policy)?, policy);
         Ok(())
@@ -1573,7 +1612,8 @@ mod tests {
             Ok(Self(config))
         }
         fn provision(&self) -> Result<Owner> {
-            let owner = Owner::open_with_identity(self.0.clone(), true, None, component_key(71))?;
+            let owner =
+                Owner::open_with_identity(self.0.clone(), true, None, component_key(71), None)?;
             let mut route = settings();
             route.advertised.set_port(1);
             let endpoint = NativeMailboxEndpointV7 {
@@ -1586,7 +1626,7 @@ mod tests {
             Ok(owner)
         }
         fn open(&self) -> Result<Owner> {
-            Owner::open_with_identity(self.0.clone(), false, None, component_key(71))
+            Owner::open_with_identity(self.0.clone(), false, None, component_key(71), None)
         }
     }
     impl Drop for Fixture {
@@ -1602,6 +1642,41 @@ mod tests {
             max_connections: Some(4),
             max_bytes_per_minute: Some(64 * 1024 * 1024),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepared_native_owner_activates_once_without_replacing_custody() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let root = &fixture.0.root;
+        let prepare = |listener| {
+            Owner::open_with_identity(
+                fixture.0.clone(),
+                true,
+                None,
+                component_key(71),
+                Some(listener),
+            )
+        };
+        drop(prepare(settings())?);
+        let policy = std::fs::read(root.join(POLICY_FILE))?;
+        assert!(!root.join("service.journal").exists());
+        assert!(!root.join("self-owned-record.json").exists());
+        drop(prepare(settings())?);
+        let mut different = settings();
+        different.advertised.set_port(40001);
+        assert!(prepare(different).is_err());
+        assert_eq!(std::fs::read(root.join(POLICY_FILE))?, policy);
+
+        let expires = (now_ms()? / 1000) as i64 + 600;
+        let (first, sequence) = exchange(&fixture, None, expires).await?;
+        let (second, next) = exchange(&fixture, Some(&first), expires).await?;
+        assert!(next > sequence);
+        assert_eq!(first.signature, second.signature);
+        assert_eq!(std::fs::read(root.join(POLICY_FILE))?, policy);
+        std::fs::remove_file(root.join("service.journal"))?;
+        assert!(fixture.open().is_err());
+        assert!(prepare(settings()).is_err());
+        Ok(())
     }
 
     #[test]
