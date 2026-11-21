@@ -1,5 +1,10 @@
 # NOVOVM 产品目标与交付主线
 
+## 当前给 validator-A：核对 A/D 的手机 APFL 备用入口
+
+[执行与回执格式](NOVORUDP_SHARED_CLIENT_HANDOFF.md#current-给-validator-a-的一条任务确认一台可用的手机-apfl-备用入口)。
+A 先查 A，必要时请 D 核对。可用、待核对或没有现成服务都回报，C 负责双机验收。
+
 ## 2026-11-15 ASAS 授权接原服务发布，四服务授权/撤销/冷恢复已实测
 
 应用授权和原资产业务现共用原候选流水线、AOEM 计算所有者、状态树、投票 journal 与
