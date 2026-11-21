@@ -1,0 +1,81 @@
+{
+  "status": "C_1B6808F6_EXISTING_READY_FOR_A_QUERY",
+  "host": "C",
+  "source": "1b6808f6b93f43a8bd5d20a9da8e56759d75723d",
+  "handoff": "5a6c59c4",
+  "utc": "2026-11-21T02:12:21.4585758Z",
+  "pid": 30764,
+  "created_utc": "2026-11-21T02:12:04.5509180Z",
+  "account": "NT AUTHORITY\\LOCAL SERVICE",
+  "account_sid": "S-1-5-19",
+  "task": "NOVOVM-C-1b6808f6-Existing-20261121",
+  "start": "existing",
+  "initialize": false,
+  "automatic_restart": false,
+  "exe": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-1b6808f6-C-20261121\\bin\\novovm-node.exe",
+  "exe_sha256": "9d145d6e3a0f58e6fa0bea90a2815c53713c7e299d9483cc88a6afb3a92d88a5",
+  "mapped_aoem": "C:\\ProgramData\\NOVOVM\\releases\\novovm-common-1b6808f6-C-20261121\\aoem\\windows\\core\\bin\\aoem_ffi.dll",
+  "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "manifest_sha256": "ca76f253968cfafb1913e5d30eed67e20e298ae1b308e792a73bccb067de21c2",
+  "archive_bytes": 162907197,
+  "archive_sha256": "89d8264fbfc855d291af9d8ca56748c63169c28ea4571eb38230bcd3e03ec22f",
+  "verified_manifest_members": 91,
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "original_identity_and_network_config_preserved": true,
+  "transport_public_key_sha256": "610885e9dc34eaa2c979a95e55bebde247d8f40e23f071f727a7fbf0b4c50e4a",
+  "config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common1b6808f6-C-20261121\\run.json",
+  "network_config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common654b-C-20261120\\network-current-lan.json",
+  "progress": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-Common1b6808f6-C-20261121\\progress.json",
+  "control": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\novonet-observation-a25452f4-20261112\\commands\\control.nvprobe",
+  "listeners": [
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 42052,
+      "OwningProcess": 30764
+    },
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 41052,
+      "OwningProcess": 30764
+    }
+  ],
+  "progress_samples": [
+    {
+      "utc": "2026-11-21T02:12:15.3463026Z",
+      "mtime_utc": "2026-11-21T02:12:14.8611492Z",
+      "ticks": 16204,
+      "height": 1,
+      "head": null,
+      "indexed_height": 0,
+      "chain_id": 91129655606029,
+      "execution_failures": 0,
+      "recovery_in_progress": false
+    },
+    {
+      "utc": "2026-11-21T02:12:21.3671156Z",
+      "mtime_utc": "2026-11-21T02:12:19.8654982Z",
+      "ticks": 23131,
+      "height": 1,
+      "head": null,
+      "indexed_height": 0,
+      "chain_id": 91129655606029,
+      "execution_failures": 0,
+      "recovery_in_progress": false
+    }
+  ],
+  "prior_exit": {
+    "elapsed_seconds": 47836.1318489,
+    "utc": "2026-11-20T21:04:40.1035494Z",
+    "exit_code": 255,
+    "forced_by_controller": false,
+    "reason": "node_exited",
+    "pid": 28204,
+    "error": null,
+    "automatic_restart": false
+  },
+  "prior_exit_archive": "D:\\WEB3_AI\\SUPERVM\\target\\c-common-1b6808f6-20261121\\prior-654b-28204",
+  "prior_owner_already_exited": true,
+  "authentication_verified_by_a": null,
+  "transaction_replayed": false,
+  "d_cutover": false
+}
