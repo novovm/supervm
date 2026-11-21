@@ -361,3 +361,39 @@ existing files cannot establish it. Missing records leave vote counts
 unknown. No node restarts, resubmission, additional collection, separate
 database open, or D cutover for this follow-up. A can consolidate each
 host's existing evidence into this handoff.
+
+## Current C owner: new transaction read boundary
+
+The previous A/B/D request names the original transaction
+`2d0436f0…9a5f3d`. Its search and evidence remain scoped to that hash.
+The current transaction is `68d83d0b…9bd6cd4` (abbreviated in the operator
+report). A reports that its authenticated read at 12:05 China time on
+2026-11-21 returned `Received` from C, current height 1, round 580,
+one pending transaction, zero APFL execution rows, and receipt-index
+height 0. C's 11:58 progress identified the local scheduled proposer
+for that round. These observations establish ingress and scheduling;
+they leave selection, candidate registration and proposal transmission
+undetermined for the new hash.
+
+C checked the running 1b6808f6 PID 30764, the matching executable hash,
+and the interfaces in that exact package/source. No supported
+no-restart read exposes the original consensus owner's current
+selection gate, unfinalized candidate ID, or signed proposal:
+
+- [Native Query and Status](https://github.com/novovm/supervm/blob/1b6808f6/crates/novovm-protocol/src/native_query.rs#L157)
+  expose chain head and counters plus the transaction receipt query.
+  [The current Status handler](https://github.com/novovm/supervm/blob/1b6808f6/crates/novovm-node/src/native_pipeline/service/rpc/native_query.rs#L50)
+  derives its block hash from the published parent.
+- The live owner uses the original UDP path and has no RPC listener.
+  The packaged lifecycle reads cover deployed state and existing logs;
+  the diagnostic probe commands do not query consensus candidate state.
+- [Selection diagnostics](https://github.com/novovm/supervm/blob/1b6808f6/crates/novovm-node/src/native_pipeline/service/rpc.rs#L963)
+  and [candidate registration events](https://github.com/novovm/supervm/blob/1b6808f6/crates/novovm-node/src/native_pipeline/consensus/progress.rs#L416)
+  feed [profile buffers with process-cached enable flags](https://github.com/novovm/supervm/blob/1b6808f6/crates/novovm-node/src/native_pipeline/profile.rs#L120).
+  The live snapshot reported both relevant traces disabled.
+
+No candidate or block ID has been established for the new transaction.
+AOEM execution, three-signature QC and durable receipt remain
+unverified. A later trace or repeated read of the same snapshot
+cannot establish the missing historical events. No node restart,
+resubmission, extra collection or database reopen was performed.
