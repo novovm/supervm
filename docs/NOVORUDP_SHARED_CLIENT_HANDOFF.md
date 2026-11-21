@@ -2,6 +2,19 @@
 
 ## CURRENT A/C/D 统一配置启用原生 APFL 信箱
 
+2026-11-21 A 已从 B 的 SSH 交接目录签收手机公钥文件，13,956 字节，SHA256
+`489f99e71b2d83725e533c18e67a316c15e1d906363a1412b5bf20141f393b1a`，两把完整钥均为
+1,952 字节且互不相同。A 独立信箱已沿原用户会话任务启动，实际为 `native+carrier`，
+服务公钥标识 `novovm-mldsa65:afc9c2f20c026f32dae86c03a56cdba7b97657f9418e890a05a5dfac3dbe5f5c`。
+完整声明和 Relay 配置经原 B SSH 受限交接，未提交公开 Git。最新声明独立验签通过，
+篡改签名拒绝；声明端点强制 Relay 传输连接通过（首次30秒超时，后续复测成功），
+尚不是手机 APFL 认证。任务注册已修复同一 Windows 账户的 SID/名称表示问题；
+固定 AOEM 程序树仅增加当前账户读取执行权限，内容哈希不变。新信箱 UDP 规则仅限
+新程序及两个监听端口，验证者 PID/启动时间保持，D 未动、两笔交易未重发。
+`owner_ready=true / record_and_pin_ready=true / phone_wifi_cellular_authenticated=pending`；
+C 需保留原 C 信任条目，增量导入 A，并分别回传 Wi-Fi/蜂窝认证、原队列及 Privacy 结果。
+声明会续签，静态副本过期后只能按原认证元数据刷新路径取得当前声明，不授予过期权限。
+
 2026-11-21 A 已用现有 NOVONET 端点完成公网 Relay 的有界传输前置：两端关闭 IP
 直连，实选 `relay`，核对传输对端公钥与随机挑战往返，9,535 ms，PASS。探测两端
 同机，不是手机跨网、ML-DSA 服务认证或 APFL 信箱验收；未生成持久身份/签名声明。

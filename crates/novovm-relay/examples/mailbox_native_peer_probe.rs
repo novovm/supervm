@@ -16,7 +16,94 @@ async fn main() -> anyhow::Result<()> {
     if args.get(1).map(String::as_str) == Some("carrier-reachability") {
         return carrier_reachability::run(&args).await;
     }
+    if args.get(1).map(String::as_str) == Some("inspect-record") {
+        return inspect_record(&args).await;
+    }
     probe::run().await
+}
+
+async fn inspect_record(args: &[String]) -> anyhow::Result<()> {
+    use anyhow::ensure;
+    use novovm_network::{
+        product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
+        product_overlay::peer_id_from_mldsa65_public_key_v1,
+        product_rendezvous_daemon::now_ms,
+    };
+    use std::{io::Read, path::Path};
+    ensure!(args.len() == 6 || args.len() == 8, "usage: mailbox_native_peer_probe inspect-record RECORD EXPECTED_PEER_ID AOEM_LIB AOEM_SHA256 [APPROVED_RELAY DNS_IP]");
+    let mut bytes = Vec::new();
+    std::fs::File::open(&args[2])?
+        .take(32769)
+        .read_to_end(&mut bytes)?;
+    ensure!(bytes.len() <= 32768, "record too large");
+    let record: PeerSignedRelayRecordV1 = serde_json::from_slice(&bytes)?;
+    ensure!(
+        record.relay_peer_id == args[3]
+            && peer_id_from_mldsa65_public_key_v1(&record.relay_public_key) == args[3],
+        "record differs from approved ML-DSA peer identity"
+    );
+    let verifier =
+        novovm_relay::transport_identity::load_transport_verifier(Path::new(&args[4]), &args[5])?;
+    validate_relay_record_v1(&record, now_ms()?, &verifier)?;
+    let relay_transport_verified = if args.len() == 8 {
+        use novovm_network::{
+            iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
+            product_service_lease::{IrohServiceEndpointV1, NativeCarrierMailboxEndpointV8},
+        };
+        use std::time::{Duration, Instant};
+        ensure!(
+            NativeCarrierMailboxEndpointV8::from_record(&record)?.is_some(),
+            "native V8 carrier not advertised"
+        );
+        let route = IrohServiceEndpointV1::from_record(&record)?;
+        ensure!(
+            !route.address.relays.is_empty()
+                && route.address.relays.iter().all(|relay| relay == &args[6]),
+            "signed record lacks the approved relay route"
+        );
+        let config = IrohConfigV1::new(&[args[6].clone()], args[7].parse()?)?.with_relay_only()?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let signed = record.clone();
+        tokio::time::timeout_at(
+            deadline.into(),
+            with_iroh_scope_v1(
+                config,
+                IrohControlV1::new(deadline, || Ok(()))?,
+                move |scope| {
+                    Box::pin(async move {
+                        scope.online().await?;
+                        eprintln!("signed_record_probe: relay_online");
+                        validate_relay_record_v1(&signed, now_ms()?, &verifier)?;
+                        let stream = scope
+                            .connect_observed(&route.address, |phase| {
+                                eprintln!("signed_record_probe: {phase:?}");
+                            })
+                            .await?;
+                        ensure!(
+                            stream.remote_endpoint_key()? == route.address.endpoint_key
+                                && stream.selected_path()? == "relay",
+                            "signed transport peer/relay mismatch"
+                        );
+                        // No mailbox command, client offer, or phone key is used.
+                        Ok(())
+                    })
+                },
+            ),
+        )
+        .await??;
+        true
+    } else {
+        false
+    };
+    println!(
+        "{}",
+        serde_json::json!({"result":"PASS", "scope":"current_signed_record_only", "peer_id":record.relay_peer_id, "sequence":record.sequence,
+        "issued_at_ms":record.issued_at_ms, "expires_at_ms":record.expires_at_ms,
+        "public_key_bytes":record.relay_public_key.len(), "signature_bytes":record.signature.len(),
+        "relay_transport_verified":relay_transport_verified,
+        "mailbox_authenticated":false, "android_acceptance":false})
+    );
+    Ok(())
 }
 
 // Transport-only preflight for a NATed host before phone admission is available.

@@ -65,7 +65,18 @@ mailbox_native_peer_probe carrier-reachability APPROVED_RELAY DNS_IP
 45 秒内核对双方传输公钥、实际 relay 路径及随机挑战往返。没有信箱操作、持久钥、
 路由器修改或验证者控制。两端同机，证明该主机的公网中继传输能力，不替代异机/蜂窝
 或 ML-DSA 服务认证。2026-11-21 A 使用原已配置 Relay 实测 PASS，9,535 ms；
-手机公钥尚未交接，信箱未安装启动、签名声明及手机验收仍待完成。
+该前置执行时手机公钥尚未交接、信箱尚未启用；当前启用和手机验收状态见共享交接。
+
+现有探针还支持只读验签及可选的声明端点 Relay 连接检查，不需要客户端私钥：
+
+```text
+mailbox_native_peer_probe inspect-record RECORD EXPECTED_PEER_ID AOEM_LIB AOEM_SHA256 [APPROVED_RELAY DNS_IP]
+```
+
+严格核对完整 ML-DSA 公钥标识、签名及当前有效期。可选检查要求签名记录已包含
+指定 Relay 及 V8 能力，关闭探测端 IP 直连，核对实际 Relay 和声明中的传输端点钥；
+不发送手机 Offer 或信箱操作，不替代原 APFL/设备认证。用户会话任务的账户必须能读取
+固定 AOEM 程序库；不要为此给程序目录写权限或给信箱任务提升运行级别。
 
 ## 2026-10-18 原 Windows owner 的显式 Carrier V8 选择
 

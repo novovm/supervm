@@ -14,6 +14,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$accountName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $name = 'NOVOVM-Rendezvous-' + $sid
 $directory = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NOVOVM\Rendezvous'
 $program = Join-Path $directory 'novovm-rendezvous-service.exe'
@@ -198,8 +199,10 @@ Move-Item -LiteralPath $pending -Destination $program -Force
     stateRoot=$config.root;sha256=$ExpectedSha256.ToLowerInvariant()} | ConvertTo-Json |
     Set-Content -LiteralPath $manifestPath -Encoding UTF8
 $actionDefinition = New-ScheduledTaskAction -Execute $program -Argument $arguments -WorkingDirectory $directory
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $sid
-$principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Limited
+# Keep SID-based ownership checks above; Task Scheduler's logon trigger on
+# Windows can reject a SID UserId while accepting its resolved account name.
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $accountName
+$principal = New-ScheduledTaskPrincipal -UserId $accountName -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName $name -TaskPath '\' -Action $actionDefinition -Trigger $trigger -Principal $principal -Settings $settings -Description 'NOVOVM self-owned communications, original user DPAPI; no ledger or VPN changes.' -Force | Out-Null
 if ($Start) {
