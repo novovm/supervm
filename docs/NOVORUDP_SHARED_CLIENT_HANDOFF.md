@@ -1,5 +1,25 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-22 CURRENT D 的原生 APFL owner 接入前置
+
+D 已确认同步 `a0978a2c`，回报当前未找到现役 V8/APFL 进程、当前用户的 Rendezvous
+配置或连接 B 的 SSH 配置。历史交接只确认 A、C 各自装过 APFL，A 安装记录明确当时
+未操作 D。本轮没有已核验的 D 原 owner 配置路径。先完成以下检查和交接，再进入下节验签顺序。
+
+1. D 只读核对原 `NOVOVM-Rendezvous-*` 计划任务的运行账户和配置参数，以及
+   `novovm-rendezvous-service.exe` 的进程、用户任务和 Windows 服务配置。标准用户安装
+   入口为 `%LOCALAPPDATA%/NOVOVM/Rendezvous/config.json`。如果找到原 owner，按该
+   配置的 `root` 读取有效声明，以原身份提交可独立核对的绑定。如果仍无 owner，
+   在 Git 回 `D_V8_OWNER_ABSENT`，附检查范围。验证者用途钥不能作为信箱用途钥。
+2. 首次部署使用[原 Windows 安装入口](NOVOVM_RENDEZVOUS_ENTRY.md#windows-新节点接入原生-apfl-信箱)。
+   预先核对原包的 `novovmctl`、AOEM 库、手机准入、D 独立信箱目录和可达载体。C 已将
+   本文下节的现役 Windows x64 版二进制放入原四机文件交接目录，供 D 按原 SHA-256 核验。
+   确认首次部署后，由 D 的安装账户在本机生成并封存服务用途钥。已有资料一律保留，
+   验证者服务、数据库和身份保持原状。实际启动、验签和公钥绑定通过后才回 READY。
+3. 文件可经原四机受控交接渠道交 C。D 提交原始签名声明、完整公钥及其独立核对来源，
+   Git 只记录回执、指纹和文件摘要。C 核验后通过已经实连的 B SSH 交接目录转交给 A。
+   D 可沿同一渠道领取已验签的 A 第二跳。D 无需取得 B 的登录密钥。
+
 ## 2026-11-22 CURRENT 私密 APFL 三角色现役验签交接
 
 路径为 **validator-D 首跳 → validator-A 第二跳 → validator-C 终点**。
