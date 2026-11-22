@@ -1,0 +1,18 @@
+{
+  "status": "D_V8_BINDING_READY",
+  "host": "D",
+  "owner_pid": 29860,
+  "probe_seen_commit": "76dd76d0",
+  "receiver": "C pinned TLS 64280",
+  "sequence": 406,
+  "expires_utc": "2026-11-22T15:55:33.886Z",
+  "sha256": "28a983881dcce0c8b50fc98063863e627c03f63200bcdce9b815e743814c8f8b",
+  "http_status": 201,
+  "receiver_verified_sha256": "28a983881dcce0c8b50fc98063863e627c03f63200bcdce9b815e743814c8f8b",
+  "public_key_sha256": "b2f3f787661fd53303e503694218362cc3a9f5beba443f3cee52a941dfbac5aa",
+  "independent_binding_source": "Original D native-identity inspect previously received and byte-matched by C",
+  "verification_basis": "C handoff defines HTTP201 plus identical SHA256 as original signature verifier acceptance",
+  "owner_restarted": false,
+  "keys_changed": false,
+  "private_first_hop_published": false
+}
