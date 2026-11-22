@@ -1,0 +1,16 @@
+{
+  "status": "D_ROLLING_PRIVATE_APFL_HANDOFF_RUNNING",
+  "owner_pid": 56632,
+  "validator_pid": 300,
+  "first_verified_A_sequence": 1630,
+  "first_uploaded_D_sequence": 468,
+  "first_D_sha256": "32e6d06f129bad5b2e30abcb15c57296b501da38867f15ba92590d26908cd561",
+  "first_receiver_http": 201,
+  "first_utc": "2026-11-23T00:55:06.7590135+08:00",
+  "last_round": 2,
+  "deadline_utc": "2026-11-23T01:03:50+08:00",
+  "method": "Original verifier, atomic File.Replace with explicit retained backup; only new valid D sequences uploaded",
+  "initial_attempt_error": "PowerShell null backup marshalled as empty path; preserved locally, corrected without owner restart",
+  "declarations_in_git": false,
+  "keys_changed": false
+}
