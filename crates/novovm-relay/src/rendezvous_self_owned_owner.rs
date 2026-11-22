@@ -242,6 +242,77 @@ fn storage_limits(limit_mib: Option<u64>) -> Result<novovm_network::mailbox_stor
     }
 }
 
+#[cfg(feature = "tls-transport")]
+pub fn verify_private_apfl_announcement(config: &Path, record: &Path, pin: &Path) -> Result<()> {
+    use novovm_network::{
+        product_rendezvous_owned::PrivateApflAnnouncement, relay::hop::private::PrivateHopRole,
+    };
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Pin {
+        scope: [u8; 32],
+        identity: Vec<u8>,
+    }
+    let config = Config::load(config)?;
+    let trusted: Pin = serde_json::from_slice(&read_bounded(pin, 16 * 1024)?)?;
+    let declaration: PrivateApflAnnouncement =
+        serde_json::from_slice(&read_bounded(record, 128 * 1024)?)?;
+    let verifier = crate::transport_identity::load_transport_verifier(
+        &config.library,
+        &config.library_sha256,
+    )?;
+    let (_, hop) = declaration.verify(&trusted.identity, trusted.scope, now_ms()?, &verifier)?;
+    let role = match hop.role() {
+        PrivateHopRole::Forwarder => "forwarder",
+        PrivateHopRole::Terminal => "terminal",
+    };
+    println!(
+        "private-apfl verified role={role} sequence={}",
+        declaration.record.sequence
+    );
+    Ok(())
+}
+
+#[cfg(feature = "tls-transport")]
+fn private_apfl_ingress(
+    root: &Path,
+    native_v8: bool,
+) -> Result<Option<novovm_network::product_rendezvous_owned::PrivateApflIngress>> {
+    use novovm_network::product_rendezvous_owned::{PrivateApflIngress, PrivateApflSuccessor};
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Settings {
+        scope: [u8; 32],
+        predecessors: BTreeSet<Vec<u8>>,
+        successor: Option<Vec<u8>>,
+        max_wire_bytes_per_minute: u64,
+    }
+    let path = root.join("private-apfl-policy.json");
+    check_path(&path)?;
+    if !path.try_exists()? {
+        return Ok(None);
+    }
+    ensure!(native_v8, "private APFL requires native+carrier V8");
+    let settings: Settings = serde_json::from_slice(&read_bounded(&path, 512 * 1024)?)?;
+    let successor = settings.successor.map(|identity| {
+        let path = root.join("private-apfl-next.json");
+        PrivateApflSuccessor {
+            identity,
+            declaration: Box::new(move || {
+                Ok(serde_json::from_slice(&read_bounded(&path, 128 * 1024)?)?)
+            }),
+        }
+    });
+    let publication = root.join("private-apfl-record.json");
+    Ok(Some(PrivateApflIngress::new(
+        settings.scope,
+        settings.predecessors,
+        successor,
+        settings.max_wire_bytes_per_minute,
+        move |record| atomic(&publication, &serde_json::to_vec(record)?),
+    )?))
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Policy {
@@ -943,6 +1014,8 @@ impl Owner {
         let native_settings = self.policy.native_listener.clone();
         let native_selected = native_settings.is_some();
         let dual_selected = native_selected && self.native_carrier_mailbox_v8();
+        #[cfg(feature = "tls-transport")]
+        let private_apfl = private_apfl_ingress(&config.root, dual_selected)?;
         let relay_services_enabled =
             (!native_selected || dual_selected) && !effective_relays(&self.policy).is_empty();
         let key = self.key.clone();
@@ -1123,6 +1196,7 @@ impl Owner {
                     mailbox,
                     native,
                     tls,
+                    private_apfl,
                     activate,
                     publish,
                 ),

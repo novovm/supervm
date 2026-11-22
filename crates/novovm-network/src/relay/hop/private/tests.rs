@@ -271,6 +271,199 @@ async fn private_apfl_v8_registers_stores_fetches_and_consumes_original_object()
     roundtrip(true).await
 }
 
+#[cfg(feature = "tls-transport")]
+#[tokio::test]
+async fn original_apfl_owner_publishes_and_dispatches_each_private_role() -> Result<()> {
+    use crate::product_rendezvous_owned::{PrivateApflAnnouncement, PrivateApflSuccessor};
+    use tokio::sync::watch;
+
+    let _permit = crate::SERVICE_TEST_SERIAL.acquire().await?;
+    let [client, first, second, terminal] =
+        [11, 12, 13, 14].map(|byte| TransportIdentity::from_bytes(&[byte; 32]));
+    let (first_publish, mut first_ready) = watch::channel(None);
+    let (second_publish, mut second_ready) = watch::channel(None);
+    let (terminal_publish, mut terminal_ready) = watch::channel(None);
+    let first_next = second_ready.clone();
+    let second_next = terminal_ready.clone();
+    let next = |identity: &TransportIdentity,
+                watch: watch::Receiver<Option<PrivateApflAnnouncement>>| {
+        PrivateApflSuccessor {
+            identity: identity.public_key().to_vec(),
+            declaration: Box::new(move || {
+                watch.borrow().clone().context("fixture successor missing")
+            }),
+        }
+    };
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let first_run = Box::pin(real_private_owner(
+        first.clone(),
+        client.public_key().to_vec(),
+        client.public_key().to_vec(),
+        Some(next(&second, first_next)),
+        first_publish,
+        stop.clone(),
+    ));
+    let second_run = Box::pin(real_private_owner(
+        second.clone(),
+        client.public_key().to_vec(),
+        first.public_key().to_vec(),
+        Some(next(&terminal, second_next)),
+        second_publish,
+        stop.clone(),
+    ));
+    let terminal_run = Box::pin(real_private_owner(
+        terminal.clone(),
+        client.public_key().to_vec(),
+        second.public_key().to_vec(),
+        None,
+        terminal_publish,
+        stop.clone(),
+    ));
+    let client_run = async {
+        first_ready.changed().await?;
+        second_ready.changed().await?;
+        terminal_ready.changed().await?;
+        let now = wall()?;
+        let verify = |published: &watch::Receiver<Option<PrivateApflAnnouncement>>,
+                      key: &TransportIdentity| {
+            published
+                .borrow()
+                .as_ref()
+                .context("fixture publication missing")?
+                .verify(key.public_key(), SCOPE, now, &client)
+        };
+        let (address, a) = verify(&first_ready, &first)?;
+        let (_, b) = verify(&second_ready, &second)?;
+        let (_, c) = verify(&terminal_ready, &terminal)?;
+        assert!(verify(&first_ready, &second).is_err());
+        let route = PrivateRoute::new(client.public_key(), [&a, &b, &c], now)?;
+        let owner = IrohEndpointOwnerV1::bind(config()?, || Ok(())).await?;
+        owner
+            .with_continuous_service_v4(
+                || Ok(()),
+                |scope| {
+                    Box::pin(async move {
+                        let circuit = PrivateCircuit::connect(
+                            scope.connect(&address).await?.into(),
+                            &client,
+                            route,
+                            None,
+                        )
+                        .await?;
+                        apfl_roundtrip(circuit, &client, terminal.public_key().to_vec()).await
+                    })
+                },
+            )
+            .await?;
+        owner.close().await?;
+        Ok::<(), anyhow::Error>(())
+    };
+    tokio::time::timeout(Duration::from_secs(30), async {
+        tokio::select! {
+            outcome = client_run => outcome,
+            outcome = async { tokio::try_join!(first_run, second_run, terminal_run) } => {
+                outcome?;
+                anyhow::bail!("private APFL owner group ended before the client")
+            }
+        }
+    })
+    .await??;
+    Ok(())
+}
+
+#[cfg(feature = "tls-transport")]
+async fn real_private_owner(
+    identity: TransportIdentity,
+    client: Vec<u8>,
+    previous: Vec<u8>,
+    successor: Option<crate::product_rendezvous_owned::PrivateApflSuccessor>,
+    publish: tokio::sync::watch::Sender<
+        Option<crate::product_rendezvous_owned::PrivateApflAnnouncement>,
+    >,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
+    use crate::product_rendezvous_owned::{
+        run_self_owned_node_with_native_tls_v8, NativeMailboxListenerV7, PrivateApflIngress,
+    };
+    use crate::product_service_lease::{
+        SelfOwnedTrustV1, ServiceLeaseBookV1, ServiceLeaseFileV1, ServiceLeaseHostV1,
+    };
+    let ingress = PrivateApflIngress::new(
+        SCOPE,
+        [previous].into(),
+        successor,
+        512 * 1024,
+        move |record| {
+            publish.send_replace(Some(record.clone()));
+            Ok(())
+        },
+    )?;
+    let dir = tempfile::tempdir()?;
+    let resources = ServiceConcurrencyV1::from_host();
+    let listen = "127.0.0.1:0".parse()?;
+    let native = NativeMailboxListenerV7::bind_adaptive(
+        listen,
+        listen,
+        identity.clone(),
+        stop.clone(),
+        2 * 1024 * 1024,
+        resources.clone(),
+    )?;
+    let store = Arc::new(MailboxServiceV1::new(
+        MailboxStore::open(dir.path().join("mailbox.sqlite"), Default::default())?,
+        identity.clone(),
+    ));
+    let _device = store.register_endpoint_delivery_v1(
+        [71; 32],
+        [72; 32],
+        Arc::new(|request| {
+            Box::pin(async move {
+                Ok(EndpointDeliveryResultV1::Delivered {
+                    receipt_object: [76; 32],
+                    receipt_expires: request.expires,
+                    receipt: b"opaque fixture device reply".to_vec(),
+                })
+            })
+        }),
+    )?;
+    let signer = identity.clone();
+    let id = format!("private-owner-{}", identity.public_key()[0]);
+    let journal = dir.path().join("authority.bin");
+    Box::pin(run_self_owned_node_with_native_tls_v8(
+        config()?
+            .with_owned_service_identity(Zeroizing::new(
+                Sha256::digest(identity.public_key()).into(),
+            ))?
+            .with_service_concurrency(resources),
+        identity,
+        [client].into(),
+        stop,
+        store,
+        native,
+        None,
+        Some(ingress),
+        move |endpoint, expiry| {
+            let now = wall()?;
+            let record =
+                sign_relay_record_v1(&signer, &id, vec![endpoint.endpoint()?], now, expiry, 1)?;
+            let trust = SelfOwnedTrustV1 {
+                version: 2,
+                node_pins: [signer.public_key().to_vec()].into(),
+            };
+            let mut book =
+                ServiceLeaseBookV1::new_self_owned(trust, vec![record], now, signer.clone())?;
+            let checkpoint = book.checkpoint()?;
+            let file = ServiceLeaseFileV1::create(&journal, Zeroizing::new([91; 32]), &checkpoint)?;
+            book.attach_persistence(file, &checkpoint)?;
+            let host = Arc::new(ServiceLeaseHostV1::new(signer, book)?);
+            host.rotate_native_carrier_mailbox_bulk_v1(true, now, expiry)?;
+            Ok(host)
+        },
+        |_| Ok(()),
+    ))
+    .await
+}
+
 async fn roundtrip(apfl: bool) -> Result<()> {
     let _permit = crate::SERVICE_TEST_SERIAL.acquire().await?;
     let Circuit {

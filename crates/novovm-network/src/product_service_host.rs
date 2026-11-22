@@ -1073,6 +1073,25 @@ async fn dispatch_self_owned_node<T>(
     Option<crate::network_time::ClockAnchorV1>,
 )> {
     let request = stream.read_frame().await?;
+    dispatch_self_owned_node_frame(
+        stream, request, select, continuous, native_v7, native_v8, allow_v8,
+    )
+    .await
+}
+
+pub(crate) async fn dispatch_self_owned_node_frame<T>(
+    stream: &mut CarrierStreamV1<'_>,
+    request: Vec<u8>,
+    select: impl FnOnce() -> Result<(ServiceLeaseOfferV2, T)>,
+    continuous: impl FnOnce() -> Result<()>,
+    native_v7: impl FnOnce() -> Result<()>,
+    native_v8: impl FnOnce() -> Result<()>,
+    allow_v8: bool,
+) -> Result<(
+    NodeServiceV1,
+    Option<T>,
+    Option<crate::network_time::ClockAnchorV1>,
+)> {
     let anchor = if request.as_slice() == MAILBOX_REQUEST_V8 && allow_v8 {
         crate::network_time::ClockAnchorV1::capture().ok()
     } else {

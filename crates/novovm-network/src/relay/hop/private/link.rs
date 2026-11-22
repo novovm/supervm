@@ -194,15 +194,27 @@ impl<'a> PrivateHopLink<'a> {
     /// The enclosing carrier owner consumes PRIVATE_HOP_ENTRY and supplies its
     /// own pinned admission list and existing shared byte budget.
     pub async fn accept(
-        mut stream: CarrierStreamV1<'a>,
+        stream: CarrierStreamV1<'a>,
         identity: &TransportIdentity,
         key: &PrivateHopKey,
         allowed_previous: &[Vec<u8>],
         budget: HopBudget,
     ) -> Result<(Self, OpenedPrivateHop)> {
+        Self::accept_rotating(stream, identity, key, None, allowed_previous, budget).await
+    }
+
+    pub(crate) async fn accept_rotating(
+        mut stream: CarrierStreamV1<'a>,
+        identity: &TransportIdentity,
+        current: &PrivateHopKey,
+        previous: Option<&PrivateHopKey>,
+        allowed_previous: &[Vec<u8>],
+        budget: HopBudget,
+    ) -> Result<(Self, OpenedPrivateHop)> {
         ensure!(
             !stream.is_private()
-                && key.identity == identity.public_key()
+                && current.identity == identity.public_key()
+                && previous.is_none_or(|key| key.identity == current.identity)
                 && !allowed_previous.is_empty(),
             "private hop local identity or admission missing"
         );
@@ -227,7 +239,10 @@ impl<'a> PrivateHopLink<'a> {
             forward: None,
         };
         let layer = hop.read().await?;
-        let opened = key.open(&hop.peer, &layer, wall()?)?;
+        let now = wall()?;
+        let opened = current
+            .open(&hop.peer, &layer, now)
+            .or_else(|error| previous.map_or(Err(error), |key| key.open(&hop.peer, &layer, now)))?;
         hop.shared.digest = commitment(&layer);
         if let OpenedPrivateHop::Forward { next, sealed } = &opened {
             hop.forward = Some((next.clone(), commitment(sealed)));

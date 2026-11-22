@@ -461,3 +461,24 @@ relay-only 与原生直接监听不兼容，需先明确选择 automatic。
 本地独立进程与 UDP 验证不等于现场部署、跨 CGNAT 或 Android 原生上线。
 原生公告刷新到手机、自动公网可达路径、多独立信箱及累计 peer 身份容量回收
 仍需接线与验收；该入口不凭绑定成功宣称蜂窝可达。未修改 VPN、路由和防火墙。
+## 私密 APFL 接入
+
+同一个 `novovm-rendezvous-service` 的 native+carrier V8 运行者可在原 owner 目录启用
+`private-apfl-policy.json`。协议配置为 `scope`（32 字节数组）、`predecessors`（已批准的
+完整 ML-DSA-65 公钥数组）、`successor`（完整 ML-DSA-65 公钥，终点使用 null）和
+`max_wire_bytes_per_minute`。链路角色固定为首跳、第二跳和终点，各角色由其服务所有者
+配置自己的前驱和后继。终点的 APFL 业务鉴权继续使用既有 `allowed_clients`。
+
+原监听器按既有发布周期原子更新 `private-apfl-record.json`。文件携带原签名 V8 定位记录
+及本地服务身份签发的私密角色、scope、短期建链公钥与租期。轮换时上一把建链密钥只在
+其原截止时间前接收新建链。转发节点从 `private-apfl-next.json` 读取最近的后继声明，按
+本机配置固定的后继公钥验签；本轮文件由原签名交接通道更新。签名声明过期或缺失时拒绝
+私密转发，原 V8 服务的普通监听和寄存功能仍沿既有入口处理。
+
+在实际节点和手机客户端启用前，使用本机既有受审计的 AOEM 校验配置及独立审定的公钥
+固定值校验公告。PIN 文件包含 `scope` 和 `identity` 两个字节数组。公钥固定值从已批准
+的节点身份取得，不能从待验文件自行提取并信任。
+
+```text
+novovm-rendezvous-service --verify-private-apfl-announcement CONFIG RECORD PIN
+```

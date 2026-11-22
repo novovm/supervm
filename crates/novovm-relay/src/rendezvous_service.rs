@@ -163,6 +163,21 @@ mod windows {
     }
     pub fn main() -> Result<()> {
         let args: Vec<_> = std::env::args_os().skip(1).collect();
+        #[cfg(feature = "tls-transport")]
+        if args
+            .first()
+            .is_some_and(|arg| arg == "--verify-private-apfl-announcement")
+        {
+            ensure!(
+                args.len() == 4,
+                "usage: --verify-private-apfl-announcement CONFIG RECORD PIN"
+            );
+            return crate::rendezvous_self_owned_owner::verify_private_apfl_announcement(
+                PathBuf::from(&args[1]).as_path(),
+                PathBuf::from(&args[2]).as_path(),
+                PathBuf::from(&args[3]).as_path(),
+            );
+        }
         if args.len() == 1 && args[0] == "--configure-recovery" {
             use windows_service::service::{
                 ServiceAccess, ServiceAction, ServiceActionType, ServiceFailureActions,

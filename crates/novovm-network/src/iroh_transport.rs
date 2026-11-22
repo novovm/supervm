@@ -1403,12 +1403,35 @@ impl IrohScopeV1 {
         peer: &IrohAddressV1,
         observe: impl Fn(IrohConnectProgressV1) + Send + Sync,
     ) -> Result<IrohStreamV1<'_>> {
+        self.connect_observed_inner(peer, observe, false).await
+    }
+
+    // Only the private APFL dispatcher calls this after authenticating the
+    // predecessor and verifying the locally pinned successor's declaration.
+    #[cfg(feature = "mailbox-seal")]
+    pub(crate) async fn connect_private_successor(
+        &self,
+        peer: &IrohAddressV1,
+    ) -> Result<IrohStreamV1<'_>> {
+        ensure!(
+            self.listener_budget.is_some(),
+            "private forwarding requires the original listener"
+        );
+        self.connect_observed_inner(peer, |_| {}, true).await
+    }
+
+    async fn connect_observed_inner(
+        &self,
+        peer: &IrohAddressV1,
+        observe: impl Fn(IrohConnectProgressV1) + Send + Sync,
+        private_successor: bool,
+    ) -> Result<IrohStreamV1<'_>> {
         use futures_util::StreamExt;
         use iroh::Watcher;
         use IrohConnectProgressV1::*;
         observe(Started);
         ensure!(
-            self.listener_budget.is_none(),
+            self.listener_budget.is_none() || private_successor,
             "service listener cannot initiate connections"
         );
         let address = self.peer_address(peer)?;

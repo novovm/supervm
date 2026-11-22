@@ -144,6 +144,12 @@ pub struct VerifiedPrivateHop {
     declaration: PrivateHopDeclaration,
 }
 
+impl VerifiedPrivateHop {
+    pub fn role(&self) -> PrivateHopRole {
+        self.declaration.role
+    }
+}
+
 fn valid_identity(key: &[u8]) -> bool {
     key.len() == MLDSA65_PUBLIC_KEY_BYTES && key.iter().any(|byte| *byte != 0)
 }

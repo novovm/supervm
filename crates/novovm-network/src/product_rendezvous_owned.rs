@@ -66,6 +66,11 @@ mod native;
 #[cfg(all(test, feature = "mailbox-seal"))]
 pub(crate) use native::mailbox_link_with_resources;
 pub use native::{NativeMailboxListenerV7, NativeMailboxResourcesUnavailableV1};
+#[cfg(feature = "mailbox-seal")]
+#[path = "product_rendezvous_private.rs"]
+mod private;
+#[cfg(feature = "mailbox-seal")]
+pub use private::{PrivateApflAnnouncement, PrivateApflIngress, PrivateApflSuccessor};
 
 /// One already-confirmed private terminal circuit on the existing APFL owner.
 /// The caller supplies the owner's current offer, rendezvous generation and
@@ -328,6 +333,8 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
         mailbox: Some(mailbox),
         max_connections,
         native,
+        #[cfg(feature = "mailbox-seal")]
+        private: None,
         #[cfg(feature = "tls-transport")]
         tls: None,
     }
@@ -374,10 +381,15 @@ pub async fn run_self_owned_node_with_native_tls_v8(
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     native: NativeMailboxListenerV7,
     tls: Option<TlsMailboxListenerV1>,
+    #[cfg(feature = "mailbox-seal")] private: Option<PrivateApflIngress>,
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
     let mut node = native_node(key, clients, stop, mailbox, native)?;
+    #[cfg(feature = "mailbox-seal")]
+    {
+        node.private = private;
+    }
     if let Some(tls) = tls {
         // Neither configured resource ceiling is silently raised by composing
         // listeners. Active connections share the same semaphore in Node::serve.
@@ -519,6 +531,8 @@ struct Node {
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     max_connections: usize,
     native: Option<NativeMailboxListenerV7>,
+    #[cfg(feature = "mailbox-seal")]
+    private: Option<PrivateApflIngress>,
     #[cfg(feature = "tls-transport")]
     tls: Option<TlsMailboxListenerV1>,
 }
@@ -567,6 +581,8 @@ impl Node {
             mailbox,
             max_connections,
             native: None,
+            #[cfg(feature = "mailbox-seal")]
+            private: None,
             #[cfg(feature = "tls-transport")]
             tls: None,
         })
@@ -585,6 +601,8 @@ impl Node {
             mailbox,
             max_connections,
             native,
+            #[cfg(feature = "mailbox-seal")]
+            private,
             #[cfg(feature = "tls-transport")]
             tls,
         } = self;
@@ -680,6 +698,10 @@ impl Node {
             }
         }
         publish(&first)?;
+        #[cfg(feature = "mailbox-seal")]
+        if let Some(private) = &private {
+            private.publish_for(&key, &first, now_ms()?)?;
+        }
         let slots = AdaptiveAdmissionV1::new(
             max_connections,
             concurrency.clone(),
@@ -802,6 +824,10 @@ impl Node {
                             }
                         }
                         publish(&record)?;
+                        #[cfg(feature = "mailbox-seal")]
+                        if let Some(private) = &private {
+                            private.publish_for(&key, &record, now_ms()?)?;
+                        }
                         rotate_at = now + Duration::from_secs(60);
                     }
                     host.check_route(endpoint.address.endpoint_key, endpoint.instance, now_ms()?)?;
@@ -827,6 +853,10 @@ impl Node {
                                 }
                             }
                             publish(&record)?;
+                            #[cfg(feature = "mailbox-seal")]
+                            if let Some(private) = &private {
+                                private.publish_for(&key, &record, now_ms()?)?;
+                            }
                         }
                         result => { result?; break; }
                     }
@@ -848,19 +878,72 @@ impl Node {
                         let transport = endpoint.address.endpoint_key;
                         let native_stop = stop.clone();
                         let concurrency = concurrency.clone();
+                        #[cfg(feature = "mailbox-seal")]
+                        let private = private.as_ref();
                         active.push(async move {
                             let permit = Arc::new(permit);
                             let mut stream: CarrierStreamV1<'_> = stream.into();
                             loop {
                                 let admitted_at = Instant::now();
-                                    let (kind, selected, clock) = tokio::time::timeout(Duration::from_secs(3), serve_self_owned_node_selected_v8(&mut stream, || {
+                                let selector_deadline = (admitted_at + Duration::from_secs(3)).into();
+                                let request = tokio::time::timeout_at(selector_deadline, stream.read_frame()).await??;
+                                #[cfg(feature = "mailbox-seal")]
+                                if request == crate::relay::hop::private::PRIVATE_HOP_ENTRY {
+                                    use crate::relay::hop::private::{OpenedPrivateHop, PrivateCircuit};
+                                    let private = private.ok_or_else(|| anyhow::anyhow!("private APFL is disabled"))?;
+                                    let authority = || {
+                                        ensure!(!native_stop.load(Ordering::Acquire), "private APFL owner stopped");
+                                        host.check_continuous_native_carrier_v8(transport, now_ms()?)
+                                    };
+                                    authority()?;
+                                    let deadline = (admitted_at + Duration::from_secs(30)).into();
+                                    let epochs = private.epochs()?;
+                                    let (mut hop, opened) = tokio::time::timeout_at(deadline,
+                                        private.accept(stream, key, &epochs)).await??;
+                                    match opened {
+                                        OpenedPrivateHop::Forward { next, sealed } => {
+                                            let mut downstream = tokio::time::timeout_at(deadline,
+                                                private.connect(scope, key, &next, &sealed, now_ms()?)).await??;
+                                            let until_revoked = async {
+                                                loop {
+                                                    authority()?;
+                                                    tokio::time::sleep(Duration::from_millis(500)).await;
+                                                }
+                                            };
+                                            tokio::pin!(until_revoked);
+                                            return tokio::select! {
+                                                result = &mut until_revoked => result,
+                                                result = hop.forward(&mut downstream) => result,
+                                            };
+                                        }
+                                        OpenedPrivateHop::Terminal(_) => {
+                                            let circuit = tokio::time::timeout_at(deadline,
+                                                PrivateCircuit::accept(hop, opened)).await??;
+                                            return Box::pin(serve_private_apfl_v8(
+                                                circuit,
+                                                key,
+                                                clients.as_deref().ok_or_else(|| anyhow::anyhow!("private APFL requires pinned clients"))?,
+                                                mailbox.as_deref().ok_or_else(|| anyhow::anyhow!("private APFL requires the original mailbox"))?,
+                                                native_stop.clone(),
+                                                permit,
+                                                concurrency.ok_or_else(|| anyhow::anyhow!("private APFL requires shared resource owner"))?,
+                                                || {
+                                                    let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
+                                                    Ok((host.offer_until(now_ms()?, current.expires_ms)?, current.store.clone()))
+                                                },
+                                                authority,
+                                            )).await;
+                                        }
+                                    }
+                                }
+                                    let (kind, selected, clock) = tokio::time::timeout_at(selector_deadline, crate::product_service_lease::dispatch_self_owned_node_frame(&mut stream, request, || {
                                         let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
                                         let offer = host.offer_until(now_ms()?, current.expires_ms)?;
                                         let until = offer.lease.as_ref().map_or(0, |lease| lease.expires_at_ms);
                                         Ok((offer, (current.store.clone(), until)))
                                     }, || host.check_continuous_peer_v4(transport, now_ms()?),
                                     || host.check_continuous_native_carrier_v7(transport, now_ms()?),
-                                    || host.check_continuous_native_carrier_v8(transport, now_ms()?))).await??;
+                                    || host.check_continuous_native_carrier_v8(transport, now_ms()?), true)).await??;
                                 if matches!(kind, NodeServiceV1::MailboxNative | NodeServiceV1::MailboxNativeV8) {
                                     let mailbox = mailbox.as_ref().ok_or_else(||anyhow::anyhow!("mailbox contribution disabled"))?;
                                     let handshake = if kind == NodeServiceV1::MailboxNativeV8 {

@@ -635,6 +635,7 @@ pub use crate::product_service_file::{
 #[path = "product_service_host.rs"]
 mod host;
 pub(crate) use host::accept_mailbox_multiplex_lane;
+pub(crate) use host::dispatch_self_owned_node_frame;
 pub use host::{
     accept_service_offer_with_activation_v2, request_mailbox_continuous_v4,
     request_mailbox_continuous_v6, request_mailbox_multiplex_lane_v5,
