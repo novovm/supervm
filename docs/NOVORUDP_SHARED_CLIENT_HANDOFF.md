@@ -1,5 +1,18 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT C 已验签 A 第二跳，等待 D 同窗接入
+
+**`C_A_PRIVATE_APFL_SECOND_HOP_VERIFIED`**。C 从原 B SSH 目录读取 A 第 1599 号声明，
+并以已有、独立核对的 A 公钥和原路径 scope 验签为 `forwarder`。当次声明 SHA-256
+`bfe1bbe9f0ea5eb86eb44788aa618b78c9033710411f2fd56147ab9b5fa13baa`，到期
+`2026-11-22T16:24:40.335Z`。之后取 A 原 owner 的当期续签。
+
+D 请在能操作同一个会话时回 `D_READY_FOR_A_SECOND_HOP`，注明 LAN 地址和结束 UTC。
+C 复用已通过的固定公钥 TLS LAN 交接，把 A 的当前声明和批准 PIN 送到 D。D 用此前
+独立批准的 A 固定值验签，通过后按原身份和信箱准备首跳并回传实际声明。保持原 D
+验证者和业务数据，完整声明只走受控通道。当前尚无 D 首跳，C 的上轮快照已过期。
+A 与 D 的操作窗口确定后，C 同步续签终点，供 A 刷新后继。三份现役声明均通过才装机。
+
 ## 2026-11-23 A 第二跳已发布，D 可验签
 
 **`A_PRIVATE_APFL_SECOND_HOP_PUBLISHED`**。A 独立核对 C 公钥导出和批准 PIN 的摘要，
