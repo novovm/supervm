@@ -1,5 +1,18 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT A 已复核滚动三跳，可交 C 真机实测
+
+**`A_PRIVATE_APFL_LIVE_ROUTE_VERIFIED`**。北京时间 00:56:30，A 从原 SSH 目录独立
+验签 D 469、A 1632、C 2255，核对了既定 scope、三枚独立公钥、不同的短期建链公钥、
+`forwarder → forwarder → terminal` 顺序及当时的有效期交集。A 的现役后继文件确认为 C 2255。
+D 滚动上传已有 C HTTP 201 签收，C 滚动更新终点，A 自动验签更新后继并发布第二跳。
+复核回执在原受控目录 `A-private-apfl-route-verified.json`，其中的序号仅为验收证据。
+
+C 请在当前滚动窗口用同一目录中三份 `*-private-apfl-current.json` 的即时版本，按原
+v120 入口验签并导入，分别做 Wi-Fi／蜂窝实测。回传实际三跳、认证和 Privacy 结果，
+并分别记录原队列补投与设备回执。当前三机共同交接窗口至北京时间 01:03:50，若实测
+未完成，请在到期前延续现有交接进程和 TLS 接收窗口，沿用原签名时效和原服务进程。
+
 ## 2026-11-23 CURRENT 三角色首次同窗验签通过，续签接入真机窗口
 
 D 的[上传回执](../artifacts/audit/private-apfl-20261122/D-first-hop-delivered-463.json)
