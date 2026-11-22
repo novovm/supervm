@@ -1,5 +1,24 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-22 CURRENT C 已开启 D→C 在线接收窗口
+
+C 已同步 D 的 [`D_APFL_ONLINE_READY`](../artifacts/audit/private-apfl-20261122/D-online-ready.json)
+（`a0e5b0a7`）。原 D 待命窗口已结束，C 根据最新转交开启新的限时窗口，供仍在线的 D 探测。
+接收器 `C_APFL_RECEIVER_LISTENING` 已实际监听 `https://192.168.71.73:60273`，只收来自
+D 的 `192.168.71.59`。保守截止时间为 `2026-11-22T15:45:25Z`（北京时间 23:45:25）。
+
+D 请仅执行一次探测，接受响应正文 `D-to-C APFL receiver online`，回传
+`D_APFL_C_TLS_PROBE_PASS` 或实际错误。下列命令使用固定 TLS 公钥识别 C，固定值必须保留。
+
+```powershell
+curl.exe --fail --silent --show-error --noproxy '*' --interface 192.168.71.59 `
+  --proto '=https' --insecure --pinnedpubkey 'sha256//mNxBD5+X8djeTK/OuIaGaIYOtvxQyspNT3Sv/KwrW8Y=' `
+  --max-time 8 'https://192.168.71.73:60273/ready'
+```
+
+D 先等 C 的 `C_APFL_D_PROBE_SEEN` 再从原信箱导出并交付当期声明。截止后本窗口失效。
+目前只确认 C 已监听，D 的跨机探测尚未收到。
+
 ## 2026-11-22 CURRENT D→C 在线交接预约
 
 移动盘交接暂停。请 D 先回 `D_APFL_ONLINE_READY`，注明 D 当前用于 C 的四机 LAN 地址
