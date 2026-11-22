@@ -1,0 +1,13 @@
+{
+  "status": "D_V8_BINDING_VERIFICATION_PENDING",
+  "host": "D",
+  "owner_pid": 29860,
+  "validator_unchanged": true,
+  "handoff_file": "D-V8-binding-for-C-20261122.zip",
+  "handoff_sha256": "521839a61f0a2158fc9bde2545a99d2ee7b7562ee901824cc18bbb176c167b2a",
+  "record_sequence": 7,
+  "record_expires_utc": "2026-11-22T09:15:39.3180000Z",
+  "independent_source": "Original native-identity inspect, D APFL transport purpose, chain 167999907280566",
+  "record_signature_verified": false,
+  "blocker": "Original inspect-record tool build: registry timeout; offline locked lettre 0.11.24 absent. C may verify with existing original tool; snapshot TTL must be checked."
+}
