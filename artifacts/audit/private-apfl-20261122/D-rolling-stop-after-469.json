@@ -1,0 +1,22 @@
+{
+  "status": "D_OWNER_RENEWING_HANDOFF_STOPPED",
+  "owner_pid": 56632,
+  "latest_observed_D_sequence": 477,
+  "latest_observed_D_expires_utc": "2026-11-22T17:04:38.372Z",
+  "last_C_accepted_D_sequence": 469,
+  "last_C_accept_utc": "2026-11-22T16:55:22.7254392Z",
+  "last_A_verified_sequence": 1631,
+  "failed_round": 5,
+  "failed_D_sequence": 470,
+  "local_D_verifier_exit": 0,
+  "local_D_role": "forwarder",
+  "upload_http_status": 422,
+  "curl_exit": 22,
+  "response_body_available": false,
+  "cause": "C rejected upload; exact rejection reason not captured because curl --fail suppressed error body",
+  "rolling_process_exit": 1,
+  "window_end_utc": "2026-11-22T17:03:50Z",
+  "owner_restarted": false,
+  "keys_changed": false,
+  "next": "Coordinate new pinned TLS window; preserve HTTP error bodies for next upload; no service restart"
+}
