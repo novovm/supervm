@@ -1,10 +1,23 @@
 # 原生客户端共享传输交接（2026-10-16）
 
-## 2026-11-22 CURRENT D 的原生 APFL owner 接入前置
+## 2026-11-22 CURRENT D 的原生 APFL 公钥绑定待验签
+
+D 的[安装回执](../artifacts/audit/private-apfl-20261122/D-binding-pending.json)（`e8b19448`）
+记录 D 已启动自己的 V8 信箱，原验证者保持现状。当前状态为
+`D_V8_BINDING_VERIFICATION_PENDING`。原四机文件渠道待交 `D-V8-binding-for-C-20261122.zip`，
+SHA-256 `521839a61f0a2158fc9bde2545a99d2ee7b7562ee901824cc18bbb176c167b2a`。
+其中第 7 号声明已过期，只留作历史材料。独立公钥来源仍以原 transport 用途的身份检查为准。
+
+D 可先交绑定包并保留原版。待 C 确认接收后，D 从同一运行 owner 导出有效期内的
+`self-owned-record.json`，沿原受控文件渠道交 C，Git 回传其序号、到期 UTC 和 SHA-256。
+C 使用原 `inspect-record` 核对独立公钥、签名和时效，通过后转交 A。在 A 准备验签时，C
+从现役终点同步刷新声明。A 发布第二跳，D 再验签发布首跳。
+
+## 2026-11-22 D 的原生 APFL 首次接入
 
 D 已回传 [`D_V8_OWNER_ABSENT`](../artifacts/audit/private-apfl-20261122/D-owner-absent.json)
 （`ffee33bc`）。管理员核对任务、服务、进程及全部已注册用户的标准配置目录，四项均为零。
-D 进入首次部署前置，原验证者保持现状。现阶段等待 D 首次部署的实际结果，尚未有公钥绑定。
+D 据此进入首次部署，后续实际结果见上节。
 
 C 已备好 `D-V8-APFL-first-enrollment-inputs-20261122.zip`，7,708,170 字节，SHA-256
 `0851fd1bb59bd0ec514f656bb148b05855f376a5a527f6e65c3e65b67cf1899f`。包内为现役同版
