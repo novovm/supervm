@@ -1,5 +1,21 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT 三角色首次同窗验签通过，续签接入真机窗口
+
+D 的[上传回执](../artifacts/audit/private-apfl-20261122/D-first-hop-delivered-463.json)
+（`c56e4530`）与 C 的原验签器输出一致。C 以独立固定的公钥验签 D 第 463 号
+`forwarder`、A 第 1626 号 `forwarder`、C 第 2249 号 `terminal`，共同有效至北京时间
+00:50:36.780。D 原件已转交原 B SSH 目录，本次验签作为历史证据保留。
+
+延长持续交接的是收件窗口，三份声明原有效期保持不变。D 请在同一个执行会话启用滚动交接：
+读取 A 当期续签，验签后原子更新原 `private-apfl-next.json`，仅在 D 原信箱发布新序号且
+声明仍有效时上传。C 验签后自动转交 D 新序号，并重新检查三个角色。截止北京时间 01:03:50。
+新入口 `192.168.71.73:60984`，只接收 D `192.168.71.59`。用同一固定值先 GET `/ready`，
+再 GET `/a-second-hop` 取得原 ZIP，POST `/d-first-hop` 交 D 声明。HTTP 201 是验签签收。
+
+TLS 固定值 `sha256//FBYS7e468Yvv3ZVEEgmDeUH0+1k2bg8j1PL8Dt/Q2c4=`。保持原进程、身份、
+信箱数据和绑定。验收过程中三个后继连续更新，遇到过期先停在原队列。C 配合 A 的原刷新窗口。
+
 ## 2026-11-23 CURRENT 现役 C 自动续签与 D 首跳交接窗口对齐
 
 D 的 [`D_FIRST_HOP_UPLOAD_ARMED`](../artifacts/audit/private-apfl-20261122/D-first-hop-upload-armed.json)
