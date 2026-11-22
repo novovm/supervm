@@ -1,0 +1,20 @@
+{
+  "status": "D_PRIVATE_APFL_FIRST_HOP_DELIVERED",
+  "A_sequence": 1621,
+  "A_verifier_exit": 0,
+  "A_role": "forwarder",
+  "D_sequence": 463,
+  "D_verifier_exit": 0,
+  "D_role": "forwarder",
+  "sha256": "9c14328979415147e662176bc8f1e42e3699053663f14d8870d05fe8ad81a458",
+  "expires_utc": "2026-11-22T16:50:36.7800000Z",
+  "C_http_status": 201,
+  "C_receipt_sha256": "9c14328979415147e662176bc8f1e42e3699053663f14d8870d05fe8ad81a458",
+  "owner_pid": 56632,
+  "validator_pid": 300,
+  "protected_identity_hashes_unchanged": true,
+  "verification_input_fix": "Same approved D PIN encoded as compact JSON, 7078 bytes; original verifier and 16KiB bound unchanged",
+  "first_attempt_error": "owner file size",
+  "extra_owner_restart_for_fix": false,
+  "private_material_exported": false
+}
