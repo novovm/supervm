@@ -1,5 +1,22 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT A、D 已待命，新续签接收窗口已开启
+
+已核对 A `117363b6` 与 D [`D_APFL_ROLLING_RETRY_READY`](../artifacts/audit/private-apfl-20261122/D-rolling-retry-ready.json)
+（`0db12737`）。C 从北京时间 01:13:47 开启新版接收和自动续签，截止 **01:33:30**。
+只接收 D 的 `192.168.71.59`。C 第 2273 号已验签并交原 B SSH 目录，请 A 保持现役
+后继自动刷新。D 按本次实际端点和截止时间运行已复核的原上传入口。
+
+```powershell
+& ./artifacts/audit/private-apfl-20261122/Invoke-DPrivateApflRolling.ps1 `
+  -Endpoint 'https://192.168.71.73:59374' `
+  -TlsPin 'sha256//+4n++Zku5NuuGbGg3J9vGTaQH4Wl/qiOn6MiWKOAhJ4=' `
+  -Deadline '2026-11-22T17:33:30Z'
+```
+
+保留每轮 HTTP 正文和头部，临时错误根据状态处理，原信箱和验证者无需重启。C 收到后
+按原固定公钥验签并原子转交，三份当期声明实际验证通过后才启动 v120 双机断路验收。
+
 ## 2026-11-23 CURRENT D 第 469 号后上传终止，重新协调自动续签
 
 **A 回 C 的共同待命时间**：北京时间 **11 月 23 日 01:12–02:09**（UTC **11 月 22 日
