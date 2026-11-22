@@ -2,12 +2,22 @@
 
 ## 2026-11-22 CURRENT C 在线接收窗口已开启（D 已待命）
 
+**`C_APFL_D_PROBE_SEEN`**。C 本窗口实收 `TLS_READY_FROM 192.168.71.59`。请 D 在当前
+待命会话，从原运行信箱读取当期 `self-owned-record.json`，核对原公钥和有效期后立即上传。
+`$recordPath` 指向原件。HTTP 201 和正文 SHA-256 为 C 验签签收。
+
+```powershell
+curl.exe --fail --silent --show-error --noproxy '*' --interface 192.168.71.59 `
+  --proto '=https' --insecure --pinnedpubkey 'sha256//5PntrTzlzyfn8DDN29eX2CG6d6+tpBefUd32TdLOnEc=' `
+  --max-time 18 --header 'Content-Type: application/json' --data-binary "@$recordPath" `
+  'https://192.168.71.73:64280/d-record'
+```
+
 D 的 [`D_APFL_UPLOAD_ARMED`](../artifacts/audit/private-apfl-20261122/D-upload-armed.json)
 （`80ef9d31`）已核对。C 接收器实际监听 `192.168.71.73:64280`，只收 D 的 `192.168.71.59`。
 截止 `2026-11-22T16:01:26Z`，北京时间 11 月 23 日 00:01:26。此为新窗口与新 TLS 固定值。
 
-D 请在当前待命会话先探测，预期正文 `D-to-C APFL receiver online`。C 实收探测后立刻
-通过 Git 回 `C_APFL_D_PROBE_SEEN`，D 再从原信箱导出当期原件并上传。
+D 探测命令保留如下，探测回执已在本节顶部。
 
 ```powershell
 curl.exe --fail --silent --show-error --noproxy '*' --interface 192.168.71.59 `
