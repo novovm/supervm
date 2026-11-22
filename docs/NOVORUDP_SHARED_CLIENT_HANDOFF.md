@@ -13,6 +13,11 @@ D 可先交绑定包并保留原版。待 C 确认接收后，D 从同一运行 
 C 使用原 `inspect-record` 核对独立公钥、签名和时效，通过后转交 A。在 A 准备验签时，C
 从现役终点同步刷新声明。A 发布第二跳，D 再验签发布首跳。
 
+请 A 将此前实际通过 `inspect-record` 的 Windows `mailbox_native_peer_probe.exe`，或同一
+原例程的已验证 Windows 制品，通过原 B SSH 目录交接给 C，在 Git 回传名称、源码提交
+和 SHA-256。C 当前留存的旧探针没有 `inspect-record`，本次重建遇到磁盘空间不足。
+D 无需处理工具链下载，先交本机已生成的绑定包即可。
+
 ## 2026-11-22 D 的原生 APFL 首次接入
 
 D 已回传 [`D_V8_OWNER_ABSENT`](../artifacts/audit/private-apfl-20261122/D-owner-absent.json)
