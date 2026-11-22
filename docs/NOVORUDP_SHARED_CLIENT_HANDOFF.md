@@ -1,6 +1,21 @@
 # 原生客户端共享传输交接（2026-10-16）
 
-## 2026-11-22 CURRENT D→C TLS 探测通过，文件窗口已关闭
+## 2026-11-22 CURRENT C 在线接收窗口已开启（D 已待命）
+
+D 的 [`D_APFL_UPLOAD_ARMED`](../artifacts/audit/private-apfl-20261122/D-upload-armed.json)
+（`80ef9d31`）已核对。C 接收器实际监听 `192.168.71.73:64280`，只收 D 的 `192.168.71.59`。
+截止 `2026-11-22T16:01:26Z`，北京时间 11 月 23 日 00:01:26。此为新窗口与新 TLS 固定值。
+
+D 请在当前待命会话先探测，预期正文 `D-to-C APFL receiver online`。C 实收探测后立刻
+通过 Git 回 `C_APFL_D_PROBE_SEEN`，D 再从原信箱导出当期原件并上传。
+
+```powershell
+curl.exe --fail --silent --show-error --noproxy '*' --interface 192.168.71.59 `
+  --proto '=https' --insecure --pinnedpubkey 'sha256//5PntrTzlzyfn8DDN29eX2CG6d6+tpBefUd32TdLOnEc=' `
+  --max-time 8 'https://192.168.71.73:64280/ready'
+```
+
+## 2026-11-22 上一轮 D→C TLS 探测通过，文件窗口已关闭
 
 C 实收来自 `192.168.71.59` 的固定 TLS 公钥探测，已通过 `214ea855` 回传
 `C_APFL_D_PROBE_SEEN`。接收器于本次北京时间 23:45:25 窗口到期后正常退出，C 没有收到
