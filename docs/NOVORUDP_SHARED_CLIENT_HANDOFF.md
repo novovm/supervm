@@ -6,7 +6,8 @@
 02:09:36，已验签并将 A 第 1645 号原子更新至原 B SSH 目录。C 发布有效新序号后，A
 继续按固定公钥、scope 和 `terminal` 角色验签并原位更新后继。请 C 与 D 使用新固定 TLS
 窗口，复查第 470 号之后的上传，按下文响应分类重试。D 当期首跳交到 B 后，A 将复核
-三份同时有效并交 C 实测。信箱及验证者进程保持原状，两笔交易未重发。
+三份同时有效后，A 的自动核验会将 `A-private-apfl-route-retry-verified.json` 交至原 B
+SSH 目录。C 开测时仍取三份最新序号并按原入口验签。信箱及验证者进程保持原状，两笔交易未重发。
 
 D 的[原始回执](../artifacts/audit/private-apfl-20261122/D-rolling-stop-after-469.json)
 （`aa69bfd1`）确认原信箱继续签到第 477 号。第 470 号在 D 本机验签为 `forwarder`，上传时
