@@ -62,7 +62,14 @@ if ($task) {
     $taskSid = if ($task.Principal.UserId -match '^S-1-') {
         ([Security.Principal.SecurityIdentifier]::new($task.Principal.UserId)).Value
     } else {
-        ([Security.Principal.NTAccount]::new($task.Principal.UserId)).Translate([Security.Principal.SecurityIdentifier]).Value
+        try {
+            ([Security.Principal.NTAccount]::new($task.Principal.UserId)).Translate([Security.Principal.SecurityIdentifier]).Value
+        } catch [Security.Principal.IdentityNotMappedException] {
+            # Some local tasks return a bare SAM name that LookupAccountName
+            # cannot resolve. Read the local account's actual SID before checking ownership.
+            if ($task.Principal.UserId -match '[@\\]') { throw }
+            (Get-LocalUser -Name $task.Principal.UserId -ErrorAction Stop).SID.Value
+        }
     }
 }
 if ($manifest -and ($manifest.version -ne 2 -or $manifest.kind -ne 'user-session' -or

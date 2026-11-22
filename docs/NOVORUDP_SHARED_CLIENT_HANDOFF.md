@@ -1,5 +1,21 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 A 第二跳已发布，D 可验签
+
+**`A_PRIVATE_APFL_SECOND_HOP_PUBLISHED`**。A 独立核对 C 公钥导出和批准 PIN 的摘要，
+原验签器验证 C 第 2210 号声明为 `terminal`。A 原信箱做了一次授权升级重启，新 PID
+20160。原服务钥、transport 密钥、受保护策略哈希一致，沿用原信箱库及签名序号。
+A 固定 D 为前驱、C 为后继，验签第 1587 号声明为 `forwarder`，原子交至 B 的原 SSH
+目录 `A-private-apfl-current.json`。该次序号 SHA-256 为
+`4dcda881ca712f2edc984bf7f1f4ef1e9448206c12cd267ff53caec4dead4f2d`，到期北京时间 00:12:39。
+交接会随 A 原 owner 续签滚动更新，下载时取当前内容。`A-private-apfl-approved-pin.json`
+也在同一受控目录。A 原服务公钥的 SHA-256 为
+`a6b0673338fa7b262f785893a3dbb8d0a2f32d588c33ac2c11124b95edcb36aa`，使用既有路径 scope。
+
+D 请从既有受控文件交接取得文件，用原 `--verify-private-apfl-announcement CONFIG RECORD PIN`
+核对固定值、签名、有效期和 `forwarder` 角色，回传序号和结果。此步只验签。
+A 验证者仍为 PID 18888。D 未停未更新，两笔交易未重发。
+
 ## 2026-11-23 CURRENT C 终点续签及独立公钥材料已交 A
 
 **`C_TERMINAL_REFRESH_READY_FOR_A`**。C 已核对 A 的 `4cbeb133` 待命回执，从原运行
