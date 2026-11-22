@@ -1,0 +1,13 @@
+{
+  "status": "D_FIRST_HOP_UPLOAD_ARMED",
+  "utc": "2026-11-22T16:43:50.9082392+00:00",
+  "window_end_utc": "2026-11-22T17:13:50.9082392+00:00",
+  "lan_ipv4": "192.168.71.59",
+  "owner_pid": 29860,
+  "A_independent_verification_commit": "5aa9a660",
+  "prepared_original_owner_switch": true,
+  "awaiting": "Fresh C pinned TLS endpoint, deadline, and current A successor; previous 61109 window closed",
+  "D_first_hop_published": false,
+  "request": "Keep A current successor refreshed; D will download, verify, switch original owner and upload in one session",
+  "validator_untouched": true
+}
