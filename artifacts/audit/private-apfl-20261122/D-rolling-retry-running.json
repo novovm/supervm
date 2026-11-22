@@ -1,0 +1,16 @@
+{
+  "status": "D_APFL_ROLLING_RETRY_RUNNING",
+  "owner_pid": 56632,
+  "validator_pid": 300,
+  "first_accepted_D_sequence": 493,
+  "first_verified_A_sequence": 1655,
+  "sha256": "804fa3fc2ef3b73cc6af1612e05486319c14991e5d419c0f7a2cb352b1b423f4",
+  "C_http": 201,
+  "first_accept_utc": "2026-11-23T01:19:53.8373664+08:00",
+  "latest_round": 2,
+  "deadline_utc": "2026-11-23T01:33:30+08:00",
+  "endpoint": "https://192.168.71.73:59374",
+  "original_processes_unchanged": true,
+  "automatic_lease_wait_enabled": true,
+  "error_response_retention_enabled": true
+}
