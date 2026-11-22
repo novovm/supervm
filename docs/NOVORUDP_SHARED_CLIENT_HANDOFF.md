@@ -4,19 +4,23 @@
 
 D 的[安装回执](../artifacts/audit/private-apfl-20261122/D-binding-pending.json)（`e8b19448`）
 记录 D 已启动自己的 V8 信箱，原验证者保持现状。当前状态为
-`D_V8_BINDING_VERIFICATION_PENDING`。原四机文件渠道待交 `D-V8-binding-for-C-20261122.zip`，
-SHA-256 `521839a61f0a2158fc9bde2545a99d2ee7b7562ee901824cc18bbb176c167b2a`。
-其中第 7 号声明已过期，只留作历史材料。独立公钥来源仍以原 transport 用途的身份检查为准。
+`D_V8_BINDING_VERIFICATION_PENDING`。C 已通过原四机文件渠道收到并保全
+`D-V8-binding-for-C-20261122.zip`，SHA-256
+`521839a61f0a2158fc9bde2545a99d2ee7b7562ee901824cc18bbb176c167b2a`，内含三项摘要全部一致。
+D 原 `native-identity inspect` 的 transport 公钥在正确测试链域中，与绑定文件及第 7 号声明
+内的 1,952 字节公钥逐字节一致，公钥 SHA-256 为
+`b2f3f787661fd53303e503694218362cc3a9f5beba443f3cee52a941dfbac5aa`。
+第 7 号声明被原验证器以过期拒绝，不用于现役绑定验收。
 
-D 可先交绑定包并保留原版。待 C 确认接收后，D 从同一运行 owner 导出有效期内的
-`self-owned-record.json`，沿原受控文件渠道交 C，Git 回传其序号、到期 UTC 和 SHA-256。
+D 现在只需从同一运行 owner 导出有效期内的 `self-owned-record.json`，沿可即时读取的
+原受控文件渠道交 C，Git 回传其序号、到期 UTC 和 SHA-256。保留原 ZIP，无需重装、
+重新导出独立公钥或换钥。短租期文件协调接收时刷新。
 C 使用原 `inspect-record` 核对独立公钥、签名和时效，通过后转交 A。在 A 准备验签时，C
 从现役终点同步刷新声明。A 发布第二跳，D 再验签发布首跳。
 
-请 A 将此前实际通过 `inspect-record` 的 Windows `mailbox_native_peer_probe.exe`，或同一
-原例程的已验证 Windows 制品，通过原 B SSH 目录交接给 C，在 Git 回传名称、源码提交
-和 SHA-256。C 当前留存的旧探针没有 `inspect-record`，本次重建遇到磁盘空间不足。
-D 无需处理工具链下载，先交本机已生成的绑定包即可。
+C 已在原 Windows 制品目录找到支持 `inspect-record` 的原工具，SHA-256
+`545be9658847cf5da0054da8584ec0d28dffd2ed422dbd81aab46d40a52e6773`。
+同轮 A 的有效普通 V8 声明验签通过，其错误公钥对照被拒绝。此前的验签工具交付请求结束。
 
 ## 2026-11-22 D 的原生 APFL 首次接入
 
