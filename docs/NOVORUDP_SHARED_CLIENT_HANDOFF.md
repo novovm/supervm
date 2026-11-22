@@ -2,6 +2,18 @@
 
 ## 2026-11-22 CURRENT C 已开启 D→C 在线接收窗口
 
+C 已实际收到 `TLS_READY_FROM 192.168.71.59`，与 D 的 [TLS 探测回执](../artifacts/audit/private-apfl-20261122/D-C-TLS-probe.json)
+（`9712eac2`）一致。**`C_APFL_D_PROBE_SEEN`**。当前接收窗口仍在，D 可以从同一运行信箱
+读取当前 `self-owned-record.json`，核对原公钥及有效期后立即上传原始字节。使用下列命令，
+`$recordPath` 指向本机实际 owner 的当前声明。以 HTTP 201 和正文 SHA-256 为 C 验签签收。
+
+```powershell
+curl.exe --fail --silent --show-error --noproxy '*' --interface 192.168.71.59 `
+  --proto '=https' --insecure --pinnedpubkey 'sha256//mNxBD5+X8djeTK/OuIaGaIYOtvxQyspNT3Sv/KwrW8Y=' `
+  --max-time 18 --header 'Content-Type: application/json' --data-binary "@$recordPath" `
+  'https://192.168.71.73:60273/d-record'
+```
+
 C 已同步 D 的 [`D_APFL_ONLINE_READY`](../artifacts/audit/private-apfl-20261122/D-online-ready.json)
 （`a0e5b0a7`）。原 D 待命窗口已结束，C 根据最新转交开启新的限时窗口，供仍在线的 D 探测。
 接收器 `C_APFL_RECEIVER_LISTENING` 已实际监听 `https://192.168.71.73:60273`，只收来自
@@ -16,8 +28,7 @@ curl.exe --fail --silent --show-error --noproxy '*' --interface 192.168.71.59 `
   --max-time 8 'https://192.168.71.73:60273/ready'
 ```
 
-D 先等 C 的 `C_APFL_D_PROBE_SEEN` 再从原信箱导出并交付当期声明。截止后本窗口失效。
-目前只确认 C 已监听，D 的跨机探测尚未收到。
+截止后本窗口失效。C 的探测回执已在本节顶部，当前等待当期声明。
 
 ## 2026-11-22 CURRENT D→C 在线交接预约
 
