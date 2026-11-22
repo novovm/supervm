@@ -1,0 +1,10 @@
+{
+  "status": "D_APFL_C_TLS_PROBE_PASS",
+  "utc": "2026-11-22T15:53:05.2030675+00:00",
+  "receiver": "https://192.168.71.73:64280",
+  "tls_pin": "sha256//5PntrTzlzyfn8DDN29eX2CG6d6+tpBefUd32TdLOnEc=",
+  "deadline_utc": "2026-11-22T16:01:26.0000000+00:00",
+  "source": "192.168.71.59",
+  "response": "D-to-C APFL receiver online",
+  "signed_record_uploaded": false
+}
