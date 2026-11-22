@@ -1,0 +1,17 @@
+{
+  "status": "D_READY_FOR_A_SECOND_HOP",
+  "host": "D",
+  "lan_ipv4": "192.168.71.59",
+  "window_start_utc": "2026-11-22T16:30:15.9897377+00:00",
+  "window_end_utc": "2026-11-22T17:00:15.9897377+00:00",
+  "owner_pid": 29860,
+  "owner_phase": "serving",
+  "expected_A_public_key_sha256": "a6b0673338fa7b262f785893a3dbb8d0a2f32d588c33ac2c11124b95edcb36aa",
+  "expected_scope": "e753cd5b82899694f6994f583ba826dbc6be5869672d6fd814cfedbcc62b80db",
+  "scope": "Ready for coordinated pinned TLS transfer from C; validate current A second hop against previously approved pin before first-hop publication",
+  "A_second_hop_received": false,
+  "A_second_hop_verified": false,
+  "D_first_hop_published": false,
+  "owner_restarted": false,
+  "keys_changed": false
+}
