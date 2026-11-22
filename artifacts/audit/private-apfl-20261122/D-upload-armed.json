@@ -1,0 +1,15 @@
+{
+  "status": "D_APFL_UPLOAD_ARMED",
+  "utc": "2026-11-22T15:50:42.1122064+00:00",
+  "window_end_utc": "2026-11-22T16:20:42.1122064+00:00",
+  "host": "D",
+  "lan_ipv4": "192.168.71.59",
+  "owner_pid": 29860,
+  "scope": "Ready for new C endpoint and pin; probe, sync C receipt, then export and immediately upload in same coordinated session",
+  "previous_receiver_window": "closed",
+  "previous_endpoint_and_pin_reused": false,
+  "current_record_exported": false,
+  "current_record_uploaded": false,
+  "owner_restarted": false,
+  "keys_changed": false
+}
