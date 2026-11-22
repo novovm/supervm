@@ -1,0 +1,13 @@
+{
+  "status": "D_A_PRIVATE_APFL_SECOND_HOP_VERIFIED",
+  "sequence": 1615,
+  "expires_at_ms": 1795365642525,
+  "sha256": "3f1076828b3173899aea6b7571e8eab3c22423c860cf6025ee1ae2a87955ad3d",
+  "approved_A_pin_matches_prior_input": true,
+  "A_public_key_sha256": "a6b0673338fa7b262f785893a3dbb8d0a2f32d588c33ac2c11124b95edcb36aa",
+  "verifier": "original --verify-private-apfl-announcement",
+  "verifier_exit": 0,
+  "receiver": "C pinned TLS 61109",
+  "D_owner_pid": 29860,
+  "D_first_hop_published": false
+}
