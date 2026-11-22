@@ -34,6 +34,8 @@ const DATA: &[u8; 8] = b"NVHDATA1";
 const MAX_INNER: usize = 12 * 1024;
 const MAX_PATH: usize = 3;
 mod e2e;
+#[cfg(feature = "mailbox-seal")]
+pub mod private;
 pub use e2e::VerifiedRelaySession;
 #[cfg(test)]
 mod tests;

@@ -50,7 +50,7 @@ impl MailboxSecretV1 {
             MAX_OBJECT_PLAINTEXT,
         )
     }
-    fn open_bounded(
+    pub(crate) fn open_bounded(
         &self,
         sealed: &[u8],
         aad: &[u8],
@@ -94,7 +94,7 @@ pub fn seal_mailbox_object_v2(public: [u8; 32], plaintext: &[u8], aad: &[u8]) ->
         MAX_OBJECT_PLAINTEXT,
     )
 }
-fn seal_bounded(
+pub(crate) fn seal_bounded(
     public: [u8; 32],
     plaintext: &[u8],
     aad: &[u8],
