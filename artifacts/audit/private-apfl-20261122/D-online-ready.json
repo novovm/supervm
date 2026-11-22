@@ -1,0 +1,18 @@
+{
+  "status": "D_APFL_ONLINE_READY",
+  "host": "D",
+  "lan_ipv4": "192.168.71.59",
+  "window_start_utc": "2026-11-22T14:36:36.5110083+00:00",
+  "window_end_utc": "2026-11-22T15:06:36.5110083+00:00",
+  "owner_pid": 29860,
+  "owner_phase": "serving",
+  "carrier_mode": "native+carrier",
+  "binary_sha256": "7724864f13f676c65eb1c165009d353337d35cfe41304d5b652c6693d77d2e53",
+  "scope": "Ready to receive C endpoint and TLS pin, probe first, await C receipt confirmation, then export current record",
+  "C_endpoint_received": false,
+  "C_tls_pin_received": false,
+  "D_to_C_probe_passed": false,
+  "current_record_exported": false,
+  "owner_restarted": false,
+  "keys_changed": false
+}
