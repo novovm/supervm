@@ -1,0 +1,11 @@
+{
+  "status": "D_V8_OWNER_ABSENT",
+  "host": "D",
+  "utc": "2026-11-22T08:30:12.1707064Z",
+  "scope": "All scheduled tasks and Windows services; running rendezvous/mailbox processes; standard config path in all registered Windows user profiles; no state or identity changes",
+  "tasks": 0,
+  "services": 0,
+  "processes": 0,
+  "standard_configs": 0,
+  "validator_untouched": true
+}
