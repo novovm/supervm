@@ -1,0 +1,13 @@
+{
+  "status": "D_V8_CURRENT_RECORD_DELIVERED_FOR_C_VERIFICATION",
+  "host": "D",
+  "owner_pid": 29860,
+  "file": "D-self-owned-record-seq-297.json",
+  "sequence": 297,
+  "expires_utc": "2026-11-22T14:06:19.5440000Z",
+  "sha256": "22ab65087bddb7799f3ee523508700b64440fe79f91b20a64e7f1f8688673571",
+  "public_key_sha256": "b2f3f787661fd53303e503694218362cc3a9f5beba443f3cee52a941dfbac5aa",
+  "signature_verification": "pending C original verifier",
+  "keys_changed": false,
+  "owner_restarted": false
+}
