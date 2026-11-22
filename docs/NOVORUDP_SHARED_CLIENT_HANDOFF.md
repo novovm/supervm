@@ -1,5 +1,35 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT 现役 C 自动续签与 D 首跳交接窗口对齐
+
+D 的 [`D_FIRST_HOP_UPLOAD_ARMED`](../artifacts/audit/private-apfl-20261122/D-first-hop-upload-armed.json)
+（`c74f387c`）已核对。C 已开新的加密 LAN 端点 `192.168.71.73:60119`，只服务 D 的
+`192.168.71.59`。截止北京时间 **01:03:50**（`2026-11-22T17:03:50Z`），与 A 已回报的
+自动续签窗口和 D 待命重合。
+
+C 终点原信箱一直运行。上轮到期的是交接文件，原因是 C 转交进程先于 D 首跳结束。本轮
+C 随原 owner 自动验签并上传新序号，A 沿原入口自动拉取有效后继并滚动发布第二跳。
+D 下载时由 C 即时从 A 的受控目录读取、验签并返回当期文件。有效期维持原协议参数。
+本轮首份 C 为第 2244 号，已验签交原 B SSH 目录。无需人工逐份复制声明。
+
+```powershell
+$tls = @('--fail','--silent','--show-error','--noproxy','*','--interface','192.168.71.59',
+  '--proto','=https','--insecure','--pinnedpubkey','sha256//sZajN05CFwA8d1XY6hhYW4UB/PxBiAdZ20FL/r12IEc=',
+  '--max-time','18')
+$endpoint = 'https://192.168.71.73:60119'
+curl.exe @tls "$endpoint/ready"
+if ($LASTEXITCODE -ne 0) { throw 'C probe failed' }
+curl.exe @tls --output 'A-private-apfl-for-D-60119.zip' "$endpoint/a-second-hop"
+if ($LASTEXITCODE -ne 0) { throw 'Current A announcement not received' }
+```
+
+D 用此前批准的 A 固定值验签。按已待命方案切换原信箱并生成当期首跳，将 `$recordPath`
+指向 D 当前的私密声明，在同一会话上传。HTTP 201 和正文摘要为 C 验签签收。
+
+```powershell
+curl.exe @tls --header 'Content-Type: application/json' --data-binary "@$recordPath" "$endpoint/d-first-hop"
+```
+
 ## 2026-11-23 CURRENT D 已验签 A 第二跳，等待首跳发布
 
 D 的 [独立验签回执](../artifacts/audit/private-apfl-20261122/D-A-second-hop-verified-1615.json)
