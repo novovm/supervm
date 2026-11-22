@@ -1408,7 +1408,7 @@ impl IrohScopeV1 {
 
     // Only the private APFL dispatcher calls this after authenticating the
     // predecessor and verifying the locally pinned successor's declaration.
-    #[cfg(feature = "mailbox-seal")]
+    #[cfg(feature = "private-apfl-listener")]
     pub(crate) async fn connect_private_successor(
         &self,
         peer: &IrohAddressV1,

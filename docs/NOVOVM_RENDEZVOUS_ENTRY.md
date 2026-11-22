@@ -463,6 +463,10 @@ relay-only 与原生直接监听不兼容，需先明确选择 automatic。
 仍需接线与验收；该入口不凭绑定成功宣称蜂窝可达。未修改 VPN、路由和防火墙。
 ## 私密 APFL 接入
 
+私密监听与公告发布由 `novovm-relay` 的 `tls-transport` 启用
+`novovm-network/private-apfl-listener`。移动 SDK 编译声明验签及私密载体客户端，
+本机 APFL 普通信箱和 L4 的既有功能继续使用原特性。
+
 同一个 `novovm-rendezvous-service` 的 native+carrier V8 运行者可在原 owner 目录启用
 `private-apfl-policy.json`。协议配置为 `scope`（32 字节数组）、`predecessors`（已批准的
 完整 ML-DSA-65 公钥数组）、`successor`（完整 ML-DSA-65 公钥，终点使用 null）和

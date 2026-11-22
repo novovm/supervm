@@ -11,6 +11,7 @@ default = []
 iroh-transport = ["dep:iroh", "dep:futures-util"]
 tls-transport = ["dep:tokio-rustls", "dep:curve25519-dalek", "tokio/net"]
 mailbox-seal = ["dep:hpke", "dep:rand09"]
+private-apfl-listener = ["iroh-transport", "mailbox-seal"]
 
 [dependencies]
 futures-util = { version = "0.3", optional = true }

@@ -1,21 +1,25 @@
 //! Private APFL admission and announcements for the original service owner.
+#[cfg(feature = "private-apfl-listener")]
 use crate::{
     carrier_stream::CarrierStreamV1,
-    iroh_transport::{IrohAddressV1, IrohScopeV1},
+    iroh_transport::IrohScopeV1,
     novorudp::wire_budget::NativeWireBudget,
-    product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
-    product_overlay::{TransportIdentity, TransportVerifier, MLDSA65_PUBLIC_KEY_BYTES},
-    product_service_lease::NativeCarrierMailboxEndpointV8,
+    product_overlay::{TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES},
     relay::hop::{
-        private::{
-            OpenedPrivateHop, PrivateHopDeclaration, PrivateHopKey, PrivateHopLink, PrivateHopRole,
-            VerifiedPrivateHop,
-        },
+        private::{OpenedPrivateHop, PrivateHopKey, PrivateHopLink, PrivateHopRole},
         HopBudget,
     },
 };
+use crate::{
+    iroh_transport::IrohAddressV1,
+    product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
+    product_overlay::TransportVerifier,
+    product_service_lease::NativeCarrierMailboxEndpointV8,
+    relay::hop::private::{PrivateHopDeclaration, VerifiedPrivateHop},
+};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "private-apfl-listener")]
 use std::{
     collections::BTreeSet,
     sync::{Arc, Mutex},
@@ -50,11 +54,13 @@ impl PrivateApflAnnouncement {
     }
 }
 
+#[cfg(feature = "private-apfl-listener")]
 pub struct PrivateApflSuccessor {
     pub identity: Vec<u8>,
     pub declaration: Box<dyn Fn() -> Result<PrivateApflAnnouncement> + Send + Sync>,
 }
 
+#[cfg(feature = "private-apfl-listener")]
 pub struct PrivateApflIngress {
     scope: [u8; 32],
     predecessors: Vec<Vec<u8>>,
@@ -64,6 +70,7 @@ pub struct PrivateApflIngress {
     publish: Box<dyn Fn(&PrivateApflAnnouncement) -> Result<()> + Send + Sync>,
 }
 
+#[cfg(feature = "private-apfl-listener")]
 impl PrivateApflIngress {
     pub fn new(
         scope: [u8; 32],

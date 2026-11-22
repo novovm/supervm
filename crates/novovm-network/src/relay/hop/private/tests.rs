@@ -271,7 +271,7 @@ async fn private_apfl_v8_registers_stores_fetches_and_consumes_original_object()
     roundtrip(true).await
 }
 
-#[cfg(feature = "tls-transport")]
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
 #[tokio::test]
 async fn original_apfl_owner_publishes_and_dispatches_each_private_role() -> Result<()> {
     use crate::product_rendezvous_owned::{PrivateApflAnnouncement, PrivateApflSuccessor};
@@ -371,7 +371,7 @@ async fn original_apfl_owner_publishes_and_dispatches_each_private_role() -> Res
     Ok(())
 }
 
-#[cfg(feature = "tls-transport")]
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
 async fn real_private_owner(
     identity: TransportIdentity,
     client: Vec<u8>,

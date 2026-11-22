@@ -89,6 +89,7 @@ impl<'a> PrivateCircuit<'a> {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "private-apfl-listener"))]
     pub(crate) fn check_terminal(&self) -> Result<()> {
         ensure!(!self.endpoint.initiator, "APFL requires a terminal circuit");
         self.check_live()

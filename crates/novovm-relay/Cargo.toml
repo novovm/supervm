@@ -8,7 +8,7 @@ description = "Standalone deployment of the existing SuperVM opaque relay runtim
 [features]
 default = []
 iroh-transport = ["novovm-network/iroh-transport", "dep:futures-util"]
-tls-transport = ["iroh-transport", "novovm-network/tls-transport", "novovm-network/mailbox-seal", "dep:hkdf"]
+tls-transport = ["iroh-transport", "novovm-network/tls-transport", "novovm-network/private-apfl-listener", "dep:hkdf"]
 
 [dependencies]
 futures-util = { version = "0.3", optional = true }

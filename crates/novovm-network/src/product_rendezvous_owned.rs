@@ -70,12 +70,17 @@ pub use native::{NativeMailboxListenerV7, NativeMailboxResourcesUnavailableV1};
 #[path = "product_rendezvous_private.rs"]
 mod private;
 #[cfg(feature = "mailbox-seal")]
-pub use private::{PrivateApflAnnouncement, PrivateApflIngress, PrivateApflSuccessor};
+pub use private::PrivateApflAnnouncement;
+#[cfg(feature = "private-apfl-listener")]
+pub use private::{PrivateApflIngress, PrivateApflSuccessor};
 
 /// One already-confirmed private terminal circuit on the existing APFL owner.
 /// The caller supplies the owner's current offer, rendezvous generation and
 /// admission permit. The sealed circuit does not create mailbox authority.
-#[cfg(feature = "mailbox-seal")]
+#[cfg(all(
+    feature = "mailbox-seal",
+    any(test, feature = "private-apfl-listener")
+))]
 #[allow(clippy::too_many_arguments)]
 pub async fn serve_private_apfl_v8(
     circuit: crate::relay::hop::private::PrivateCircuit<'_>,
@@ -333,7 +338,7 @@ pub async fn run_self_owned_mailbox_on_endpoint_with_native_v7(
         mailbox: Some(mailbox),
         max_connections,
         native,
-        #[cfg(feature = "mailbox-seal")]
+        #[cfg(feature = "private-apfl-listener")]
         private: None,
         #[cfg(feature = "tls-transport")]
         tls: None,
@@ -381,12 +386,12 @@ pub async fn run_self_owned_node_with_native_tls_v8(
     mailbox: Arc<crate::mailbox_rpc::MailboxServiceV1>,
     native: NativeMailboxListenerV7,
     tls: Option<TlsMailboxListenerV1>,
-    #[cfg(feature = "mailbox-seal")] private: Option<PrivateApflIngress>,
+    #[cfg(feature = "private-apfl-listener")] private: Option<PrivateApflIngress>,
     activate: impl FnOnce(&IrohServiceEndpointV1, u64) -> Result<Arc<ServiceLeaseHostV1>> + 'static,
     publish: impl Fn(&PeerSignedRelayRecordV1) -> Result<()> + 'static,
 ) -> Result<()> {
     let mut node = native_node(key, clients, stop, mailbox, native)?;
-    #[cfg(feature = "mailbox-seal")]
+    #[cfg(feature = "private-apfl-listener")]
     {
         node.private = private;
     }
@@ -531,7 +536,7 @@ struct Node {
     mailbox: Option<Arc<crate::mailbox_rpc::MailboxServiceV1>>,
     max_connections: usize,
     native: Option<NativeMailboxListenerV7>,
-    #[cfg(feature = "mailbox-seal")]
+    #[cfg(feature = "private-apfl-listener")]
     private: Option<PrivateApflIngress>,
     #[cfg(feature = "tls-transport")]
     tls: Option<TlsMailboxListenerV1>,
@@ -581,7 +586,7 @@ impl Node {
             mailbox,
             max_connections,
             native: None,
-            #[cfg(feature = "mailbox-seal")]
+            #[cfg(feature = "private-apfl-listener")]
             private: None,
             #[cfg(feature = "tls-transport")]
             tls: None,
@@ -601,7 +606,7 @@ impl Node {
             mailbox,
             max_connections,
             native,
-            #[cfg(feature = "mailbox-seal")]
+            #[cfg(feature = "private-apfl-listener")]
             private,
             #[cfg(feature = "tls-transport")]
             tls,
@@ -698,7 +703,7 @@ impl Node {
             }
         }
         publish(&first)?;
-        #[cfg(feature = "mailbox-seal")]
+        #[cfg(feature = "private-apfl-listener")]
         if let Some(private) = &private {
             private.publish_for(&key, &first, now_ms()?)?;
         }
@@ -824,7 +829,7 @@ impl Node {
                             }
                         }
                         publish(&record)?;
-                        #[cfg(feature = "mailbox-seal")]
+                        #[cfg(feature = "private-apfl-listener")]
                         if let Some(private) = &private {
                             private.publish_for(&key, &record, now_ms()?)?;
                         }
@@ -853,7 +858,7 @@ impl Node {
                                 }
                             }
                             publish(&record)?;
-                            #[cfg(feature = "mailbox-seal")]
+                            #[cfg(feature = "private-apfl-listener")]
                             if let Some(private) = &private {
                                 private.publish_for(&key, &record, now_ms()?)?;
                             }
@@ -878,7 +883,7 @@ impl Node {
                         let transport = endpoint.address.endpoint_key;
                         let native_stop = stop.clone();
                         let concurrency = concurrency.clone();
-                        #[cfg(feature = "mailbox-seal")]
+                        #[cfg(feature = "private-apfl-listener")]
                         let private = private.as_ref();
                         active.push(async move {
                             let permit = Arc::new(permit);
@@ -887,7 +892,7 @@ impl Node {
                                 let admitted_at = Instant::now();
                                 let selector_deadline = (admitted_at + Duration::from_secs(3)).into();
                                 let request = tokio::time::timeout_at(selector_deadline, stream.read_frame()).await??;
-                                #[cfg(feature = "mailbox-seal")]
+                                #[cfg(feature = "private-apfl-listener")]
                                 if request == crate::relay::hop::private::PRIVATE_HOP_ENTRY {
                                     use crate::relay::hop::private::{OpenedPrivateHop, PrivateCircuit};
                                     let private = private.ok_or_else(|| anyhow::anyhow!("private APFL is disabled"))?;
