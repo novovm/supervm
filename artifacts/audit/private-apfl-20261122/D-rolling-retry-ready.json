@@ -1,0 +1,20 @@
+{
+  "status": "D_APFL_ROLLING_RETRY_READY",
+  "utc": "2026-11-22T17:12:49.8998654+00:00",
+  "window_end_utc": "2026-11-22T18:02:49.8998654+00:00",
+  "lan_ipv4": "192.168.71.59",
+  "owner_pid": 56632,
+  "validator_pid": 300,
+  "script": "Invoke-DPrivateApflRolling.ps1",
+  "handling": {
+    "409/410": "Wait for new original owner sequence",
+    "425": "Retry-After, recheck original expiry",
+    "503": "Wait and fetch A current continuation again",
+    "422": "Stop, retain response body and headers"
+  },
+  "success": "Only HTTP201 plus matching SHA256 advances accepted sequence",
+  "tests": "Parser plus four Retry-After unit cases passed",
+  "awaiting": "New C endpoint, TLS pin, deadline",
+  "owner_restarted": false,
+  "lease_duration_changed": false
+}
