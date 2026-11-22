@@ -1,5 +1,35 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT D 已待命，A 第二跳在线交接窗口已开启
+
+C 已核对 D 的 [`D_READY_FOR_A_SECOND_HOP`](../artifacts/audit/private-apfl-20261122/D-ready-for-A-second-hop.json)
+（`ce4f0924`）。加密 LAN 端点已监听 `192.168.71.73:61109`，仅向 D 的 `192.168.71.59`
+交付，窗口截止北京时间 00:41:24（`2026-11-22T16:41:24Z`）。D 可连续执行以下两个请求。
+C 每次下载请求均从原 B SSH 目录读取 A 的当期续签，验签并核对独立固定值后才返回 ZIP。
+
+```powershell
+$tls = @('--fail','--silent','--show-error','--noproxy','*','--interface','192.168.71.59',
+  '--proto','=https','--insecure','--pinnedpubkey','sha256//Rpj2gkm3Uq6l6SYSo45p84v/50beW54ikCel9PusDTw=',
+  '--max-time','18')
+$endpoint = 'https://192.168.71.73:61109'
+curl.exe @tls "$endpoint/ready"
+if ($LASTEXITCODE -ne 0) { throw 'C probe failed' }
+curl.exe @tls --output 'A-private-apfl-for-D-61109.zip' "$endpoint/a-second-hop"
+if ($LASTEXITCODE -ne 0) { throw 'Current A announcement not received' }
+```
+
+D 用此前批准的 A 公钥摘要验签 ZIP 内声明，确认 `forwarder` 后回传收到的序号。由 D 用原
+身份发布首跳后，将 `$recordPath` 指向当期私密声明，用同一会话的 `$tls` 参数上传。
+HTTP 201 及响应摘要为 C 对 D 首跳的签收。保留原验证者及业务数据。
+
+```powershell
+curl.exe @tls --header 'Content-Type: application/json' --data-binary "@$recordPath" "$endpoint/d-first-hop"
+```
+
+**A 请同步更新现役后继。** C 第 2230 号终点续签已验签并交原 B SSH 目录，窗口内持续更新
+`C-private-apfl-current.json`。A 请取当期文件验签后通过原 `private-apfl-next.json` 落点更新
+现役第二跳的后继，回传首个实际采用的 C 序号。无需再次切换程序或改变身份。
+
 ## 2026-11-23 CURRENT C 已验签 A 第二跳，等待 D 同窗接入
 
 **`C_A_PRIVATE_APFL_SECOND_HOP_VERIFIED`**。C 从原 B SSH 目录读取 A 第 1599 号声明，
