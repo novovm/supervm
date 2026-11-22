@@ -19,6 +19,7 @@ use zeroize::Zeroizing;
 
 mod link;
 pub use link::{PrivateCircuit, PrivateHopLink, PRIVATE_HOP_ENTRY};
+pub(crate) use link::{PrivateReadHalf, PrivateWriteHalf};
 #[cfg(test)]
 mod tests;
 
@@ -374,14 +375,20 @@ pub struct PrivateEndpoint {
     received: u64,
     initiator: bool,
     ready: bool,
+    binding_seed: Zeroizing<[u8; 96]>,
 }
 
 impl PrivateEndpoint {
     fn new(seed: &[u8; 32], scope: [u8; 32], initiator: bool) -> Result<Self> {
         let mut keys = Zeroizing::new([0; 64]);
-        Hkdf::<Sha256>::new(Some(&scope), seed)
+        let keys_owner = Hkdf::<Sha256>::new(Some(&scope), seed);
+        keys_owner
             .expand(RECORD_INFO, keys.as_mut())
             .map_err(|_| anyhow::anyhow!("private record key length"))?;
+        let mut binding_seed = Zeroizing::new([0; 96]);
+        keys_owner
+            .expand(b"novonet.hop.private.binding.v1\0", binding_seed.as_mut())
+            .map_err(|_| anyhow::anyhow!("private channel binding key length"))?;
         let (forward, reverse) = keys.split_at(32);
         let (send, receive) = if initiator {
             (forward, reverse)
@@ -395,6 +402,7 @@ impl PrivateEndpoint {
             received: 0,
             initiator,
             ready: false,
+            binding_seed,
         })
     }
 
@@ -432,36 +440,42 @@ impl PrivateEndpoint {
     }
 
     fn seal(&mut self, bytes: &[u8]) -> Result<Vec<u8>> {
+        Self::seal_record(&self.send, &mut self.sent, bytes)
+    }
+
+    fn open(&mut self, bytes: &[u8]) -> Result<Vec<u8>> {
+        Self::open_record(&self.receive, &mut self.received, bytes)
+    }
+
+    fn seal_record(cipher: &ChaCha20Poly1305, sent: &mut u64, bytes: &[u8]) -> Result<Vec<u8>> {
         ensure!(
             !bytes.is_empty() && bytes.len() <= MAX_PRIVATE_RECORD,
             "private record plaintext length"
         );
-        let next = self
-            .sent
+        let next = sent
             .checked_add(1)
             .context("private send sequence exhausted")?;
         let mut data = bytes.to_vec();
-        self.send
-            .encrypt_in_place(&nonce(self.sent), RECORD_INFO, &mut data)
+        cipher
+            .encrypt_in_place(&nonce(*sent), RECORD_INFO, &mut data)
             .map_err(|_| anyhow::anyhow!("private record sealing failed"))?;
-        self.sent = next;
+        *sent = next;
         Ok(data)
     }
 
-    fn open(&mut self, bytes: &[u8]) -> Result<Vec<u8>> {
+    fn open_record(cipher: &ChaCha20Poly1305, received: &mut u64, bytes: &[u8]) -> Result<Vec<u8>> {
         ensure!(
             bytes.len() > TAG_LEN && bytes.len() <= MAX_INNER,
             "private record ciphertext length"
         );
-        let next = self
-            .received
+        let next = received
             .checked_add(1)
             .context("private receive sequence exhausted")?;
         let mut data = bytes.to_vec();
-        self.receive
-            .decrypt_in_place(&nonce(self.received), RECORD_INFO, &mut data)
+        cipher
+            .decrypt_in_place(&nonce(*received), RECORD_INFO, &mut data)
             .map_err(|_| anyhow::anyhow!("private record authentication failed"))?;
-        self.received = next;
+        *received = next;
         Ok(data)
     }
 }

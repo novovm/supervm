@@ -8,6 +8,7 @@ use crate::relay::hop::{
     TransportIdentity, DATA, MAX_INNER,
 };
 use anyhow::{ensure, Result};
+use chacha20poly1305::ChaCha20Poly1305;
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
 
@@ -65,6 +66,84 @@ impl<'a> PrivateCircuit<'a> {
     pub async fn write_frame(&mut self, payload: &[u8]) -> Result<()> {
         self.link.write_record(&self.endpoint.send(payload)?).await
     }
+
+    pub(crate) fn binding(&self) -> Result<crate::transport_binding::VerifiedTransportBinding> {
+        self.check_live()?;
+        let seed = &*self.endpoint.binding_seed;
+        Ok(
+            crate::transport_binding::VerifiedTransportBinding::from_private_circuit(
+                seed[..32].try_into()?,
+                seed[32..64].try_into()?,
+                seed[64..].try_into()?,
+                self.endpoint.initiator,
+            )?,
+        )
+    }
+
+    pub(crate) fn check_live(&self) -> Result<()> {
+        ensure!(
+            self.endpoint.ready && self.link.ready,
+            "private circuit not confirmed"
+        );
+        self.link.stream.selected_path()?;
+        Ok(())
+    }
+
+    pub(crate) fn check_terminal(&self) -> Result<()> {
+        ensure!(!self.endpoint.initiator, "APFL requires a terminal circuit");
+        self.check_live()
+    }
+
+    pub(crate) fn split(&mut self) -> Result<(PrivateWriteHalf<'_>, PrivateReadHalf<'_>)> {
+        self.check_live()?;
+        let (write, read) = self.link.split()?;
+        Ok((
+            PrivateWriteHalf {
+                write,
+                cipher: &self.endpoint.send,
+                counter: &mut self.endpoint.sent,
+            },
+            PrivateReadHalf {
+                read,
+                cipher: &self.endpoint.receive,
+                counter: &mut self.endpoint.received,
+            },
+        ))
+    }
+
+    pub(crate) async fn finish(&mut self) -> Result<()> {
+        self.link.stream.finish().await
+    }
+}
+
+pub(crate) struct PrivateWriteHalf<'a> {
+    write: HopWriteHalf<'a>,
+    cipher: &'a ChaCha20Poly1305,
+    counter: &'a mut u64,
+}
+
+impl PrivateWriteHalf<'_> {
+    pub(crate) async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
+        self.write
+            .write_frame(&PrivateEndpoint::seal_record(
+                self.cipher,
+                self.counter,
+                data,
+            )?)
+            .await
+    }
+}
+
+pub(crate) struct PrivateReadHalf<'a> {
+    read: HopReadHalf<'a>,
+    cipher: &'a ChaCha20Poly1305,
+    counter: &'a mut u64,
+}
+
+impl PrivateReadHalf<'_> {
+    pub(crate) async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        PrivateEndpoint::open_record(self.cipher, self.counter, &self.read.read_frame().await?)
+    }
 }
 
 impl<'a> PrivateHopLink<'a> {
@@ -76,7 +155,10 @@ impl<'a> PrivateHopLink<'a> {
         budget: Option<HopBudget>,
     ) -> Result<Self> {
         ensure!(
-            layer.len() <= MAX_INNER && layer.starts_with(LAYER) && next != identity.public_key(),
+            !stream.is_private()
+                && layer.len() <= MAX_INNER
+                && layer.starts_with(LAYER)
+                && next != identity.public_key(),
             "private outgoing hop setup rejected"
         );
         stream.write_frame(PRIVATE_HOP_ENTRY).await?;
@@ -119,7 +201,9 @@ impl<'a> PrivateHopLink<'a> {
         budget: HopBudget,
     ) -> Result<(Self, OpenedPrivateHop)> {
         ensure!(
-            key.identity == identity.public_key() && !allowed_previous.is_empty(),
+            !stream.is_private()
+                && key.identity == identity.public_key()
+                && !allowed_previous.is_empty(),
             "private hop local identity or admission missing"
         );
         let (channel, peer) = authenticate_structured_service_client_observed(

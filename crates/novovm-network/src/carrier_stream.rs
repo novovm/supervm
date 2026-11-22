@@ -4,6 +4,8 @@
 
 #[cfg(feature = "iroh-transport")]
 use crate::iroh_transport::{IrohReadHalfV1, IrohStreamIoFailureV1, IrohStreamV1, IrohWriteHalfV1};
+#[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+use crate::relay::hop::private::{PrivateCircuit, PrivateReadHalf, PrivateWriteHalf};
 #[cfg(feature = "tls-transport")]
 use crate::tls_transport::{TlsReadHalfV1, TlsStreamIoFailureV1, TlsStreamV1, TlsWriteHalfV1};
 use crate::transport_binding::VerifiedTransportBinding;
@@ -29,9 +31,16 @@ impl<'scope> CarrierMultiplexV1<'scope> {
 }
 
 impl<'scope> CarrierStreamV1<'scope> {
+    #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+    pub(crate) fn is_private(&self) -> bool {
+        matches!(self.inner, Stream::Private(_))
+    }
+
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn supports_multiplex_v1(&self) -> bool {
         match &self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => false,
             Stream::Iroh(_) => true,
             #[cfg(feature = "tls-transport")]
             Stream::Tls(_) => false,
@@ -41,6 +50,8 @@ impl<'scope> CarrierStreamV1<'scope> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn multiplex_v1(&mut self) -> anyhow::Result<CarrierMultiplexV1<'scope>> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => Ok(CarrierMultiplexV1(stream.multiplex_v1()?)),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(_) => anyhow::bail!("carrier has no multiplex service"),
@@ -50,6 +61,8 @@ impl<'scope> CarrierStreamV1<'scope> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn is_multiplexed(&self) -> bool {
         match &self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => false,
             Stream::Iroh(stream) => stream.is_multiplexed(),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(_) => false,
@@ -60,6 +73,8 @@ impl<'scope> CarrierStreamV1<'scope> {
     /// stream after the previous one finished. TLS-only streams cannot do this.
     pub async fn next_inbound(self) -> anyhow::Result<Self> {
         match self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => Ok(stream.next_inbound().await?.into()),
             #[cfg(feature = "tls-transport")]
@@ -69,6 +84,8 @@ impl<'scope> CarrierStreamV1<'scope> {
 }
 
 enum Stream<'scope> {
+    #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+    Private(Box<PrivateCircuit<'scope>>),
     #[cfg(feature = "iroh-transport")]
     Iroh(Box<IrohStreamV1<'scope>>),
     #[cfg(feature = "tls-transport")]
@@ -93,11 +110,22 @@ impl<'scope> From<TlsStreamV1<'scope>> for CarrierStreamV1<'scope> {
     }
 }
 
+#[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+impl<'scope> From<PrivateCircuit<'scope>> for CarrierStreamV1<'scope> {
+    fn from(circuit: PrivateCircuit<'scope>) -> Self {
+        Self {
+            inner: Stream::Private(Box::new(circuit)),
+        }
+    }
+}
+
 pub struct CarrierWriteHalfV1<'stream> {
     inner: WriteHalf<'stream>,
 }
 
 enum WriteHalf<'stream> {
+    #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+    Private(Box<PrivateWriteHalf<'stream>>),
     #[cfg(feature = "iroh-transport")]
     Iroh(IrohWriteHalfV1<'stream>),
     #[cfg(feature = "tls-transport")]
@@ -109,6 +137,8 @@ pub struct CarrierReadHalfV1<'stream> {
 }
 
 enum ReadHalf<'stream> {
+    #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+    Private(Box<PrivateReadHalf<'stream>>),
     #[cfg(feature = "iroh-transport")]
     Iroh(IrohReadHalfV1<'stream>),
     #[cfg(feature = "tls-transport")]
@@ -119,6 +149,8 @@ impl CarrierStreamV1<'_> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn admit_continuous_service_v4(&mut self) -> anyhow::Result<()> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => stream.admit_continuous_service_v4(),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(stream) => stream.admit_continuous_service_v4(),
@@ -128,6 +160,8 @@ impl CarrierStreamV1<'_> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn begin_service_request_v4(&mut self) -> anyhow::Result<()> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => stream.begin_service_request_v4(),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(stream) => stream.begin_service_request_v4(),
@@ -137,6 +171,8 @@ impl CarrierStreamV1<'_> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn complete_service_request_v6(&mut self) -> anyhow::Result<()> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => stream.complete_service_request_v6(),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(stream) => stream.complete_service_request_v6(),
@@ -146,6 +182,8 @@ impl CarrierStreamV1<'_> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn service_request_deadline_v6(&mut self) -> anyhow::Result<std::time::Instant> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => stream.service_request_deadline_v6(),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(stream) => stream.service_request_deadline_v6(),
@@ -155,6 +193,8 @@ impl CarrierStreamV1<'_> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) async fn read_idle_service_frame_v6(&mut self) -> anyhow::Result<Vec<u8>> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => stream.read_idle_service_frame_v6().await,
             #[cfg(feature = "tls-transport")]
             Stream::Tls(stream) => stream.read_idle_service_frame_v6().await,
@@ -167,6 +207,8 @@ impl CarrierStreamV1<'_> {
         deadline: std::time::Instant,
     ) -> anyhow::Result<()> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => stream.admit_service_window(deadline),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(_) => anyhow::bail!("carrier has no owned service window"),
@@ -175,6 +217,8 @@ impl CarrierStreamV1<'_> {
 
     pub fn binding(&self) -> anyhow::Result<VerifiedTransportBinding> {
         match &self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(stream) => stream.binding(),
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => stream.binding(),
             #[cfg(feature = "tls-transport")]
@@ -184,6 +228,8 @@ impl CarrierStreamV1<'_> {
 
     pub fn remote_endpoint_key(&self) -> anyhow::Result<[u8; 32]> {
         match &self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(stream) => Ok(stream.binding()?.native_route_material().0),
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => stream.remote_endpoint_key(),
             #[cfg(feature = "tls-transport")]
@@ -194,6 +240,11 @@ impl CarrierStreamV1<'_> {
     /// This is the underlying carrier's observation, not a privacy credential.
     pub fn selected_path(&self) -> anyhow::Result<&'static str> {
         match &self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(stream) => {
+                stream.check_live()?;
+                Ok("private_circuit")
+            }
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => stream.selected_path(),
             #[cfg(feature = "tls-transport")]
@@ -204,6 +255,8 @@ impl CarrierStreamV1<'_> {
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn selected_rtt(&self) -> Option<(&'static str, std::time::Duration)> {
         match &self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => None,
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => stream.selected_rtt(),
             #[cfg(feature = "tls-transport")]
@@ -213,6 +266,8 @@ impl CarrierStreamV1<'_> {
 
     pub async fn write_frame(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(stream) => Box::pin(stream.write_frame(bytes)).await,
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => stream.write_frame(bytes).await,
             #[cfg(feature = "tls-transport")]
@@ -222,6 +277,8 @@ impl CarrierStreamV1<'_> {
 
     pub async fn read_frame(&mut self) -> anyhow::Result<Vec<u8>> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(stream) => Box::pin(stream.read_frame()).await,
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => stream.read_frame().await,
             #[cfg(feature = "tls-transport")]
@@ -231,6 +288,8 @@ impl CarrierStreamV1<'_> {
 
     pub fn split_io(&mut self) -> anyhow::Result<(CarrierWriteHalfV1<'_>, CarrierReadHalfV1<'_>)> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => {
                 let (write, read) = stream.split_io()?;
@@ -263,6 +322,18 @@ impl CarrierStreamV1<'_> {
         &mut self,
     ) -> anyhow::Result<(CarrierWriteHalfV1<'_>, CarrierReadHalfV1<'_>)> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(stream) => {
+                let (write, read) = stream.split()?;
+                Ok((
+                    CarrierWriteHalfV1 {
+                        inner: WriteHalf::Private(Box::new(write)),
+                    },
+                    CarrierReadHalfV1 {
+                        inner: ReadHalf::Private(Box::new(read)),
+                    },
+                ))
+            }
             Stream::Iroh(stream) => {
                 let (write, read) = stream.split_native_continuous_v7()?;
                 Ok((
@@ -297,6 +368,8 @@ impl CarrierStreamV1<'_> {
         &mut self,
     ) -> anyhow::Result<(CarrierWriteHalfV1<'_>, CarrierReadHalfV1<'_>)> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(_) => anyhow::bail!("operation unavailable on private APFL circuit"),
             Stream::Iroh(stream) => {
                 let (write, read) = stream.split_relay_continuous()?;
                 Ok((
@@ -315,6 +388,8 @@ impl CarrierStreamV1<'_> {
 
     pub async fn finish(&mut self) -> anyhow::Result<()> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            Stream::Private(circuit) => Box::pin(circuit.finish()).await,
             #[cfg(feature = "iroh-transport")]
             Stream::Iroh(stream) => stream.finish().await,
             #[cfg(feature = "tls-transport")]
@@ -326,6 +401,8 @@ impl CarrierStreamV1<'_> {
 impl CarrierWriteHalfV1<'_> {
     pub(crate) fn selected_rtt(&self) -> Option<(&'static str, std::time::Duration)> {
         match &self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            WriteHalf::Private(_) => None,
             #[cfg(feature = "iroh-transport")]
             WriteHalf::Iroh(write) => write.selected_rtt(),
             #[cfg(feature = "tls-transport")]
@@ -335,6 +412,8 @@ impl CarrierWriteHalfV1<'_> {
 
     pub async fn write_frame(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            WriteHalf::Private(write) => Box::pin(write.write_frame(bytes)).await,
             #[cfg(feature = "iroh-transport")]
             WriteHalf::Iroh(write) => write.write_frame(bytes).await,
             #[cfg(feature = "tls-transport")]
@@ -346,6 +425,8 @@ impl CarrierWriteHalfV1<'_> {
 impl CarrierReadHalfV1<'_> {
     pub async fn read_frame(&mut self) -> anyhow::Result<Vec<u8>> {
         match &mut self.inner {
+            #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+            ReadHalf::Private(read) => Box::pin(read.read_frame()).await,
             #[cfg(feature = "iroh-transport")]
             ReadHalf::Iroh(read) => read.read_frame().await,
             #[cfg(feature = "tls-transport")]

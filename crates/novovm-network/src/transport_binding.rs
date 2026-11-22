@@ -118,6 +118,38 @@ pub struct VerifiedTransportBinding {
 }
 
 impl VerifiedTransportBinding {
+    /// Locally derived only after the sealed circuit confirmed its terminal.
+    /// These per-circuit endpoint identifiers are confined to the sealed
+    /// stream. The independent ML-DSA handshake must still verify both roles.
+    #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+    pub(crate) fn from_private_circuit(
+        initiator_seed: &[u8; 32],
+        responder_seed: &[u8; 32],
+        secret: &[u8; 32],
+        local_is_initiator: bool,
+    ) -> Result<Self> {
+        let endpoint = |seed| {
+            ed25519_dalek::SigningKey::from_bytes(seed)
+                .verifying_key()
+                .to_bytes()
+        };
+        let initiator_endpoint = endpoint(initiator_seed);
+        let responder_endpoint = endpoint(responder_seed);
+        if initiator_endpoint == responder_endpoint || *secret == [0; 32] {
+            return Err(TransportBindingErrorV1::BindingMismatch);
+        }
+        let mut hash = domain_hash(b"novovm.bound-carrier.private-circuit.v1");
+        hash.update(initiator_endpoint);
+        hash.update(responder_endpoint);
+        hash.update(secret);
+        Ok(Self {
+            initiator_endpoint,
+            responder_endpoint,
+            connection_binding: hash.finalize().into(),
+            local_is_initiator,
+        })
+    }
+
     /// Local evidence for the native carrier source key. This is not a node
     /// identity or a signed native handshake binding; the carrier owner must
     /// still bind the expected node and its actual authenticated session.

@@ -1079,6 +1079,16 @@ async fn dispatch_self_owned_node<T>(
         None
     };
     let kind = self_owned_node_service(&request, allow_v8)?;
+    #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
+    if stream.is_private() {
+        ensure!(
+            matches!(
+                kind,
+                NodeServiceV1::Rendezvous | NodeServiceV1::MailboxNativeV8
+            ),
+            "private circuit requires APFL discovery or mailbox V8"
+        );
+    }
     match kind {
         NodeServiceV1::MailboxNativeV8 => {
             native_v8()?;

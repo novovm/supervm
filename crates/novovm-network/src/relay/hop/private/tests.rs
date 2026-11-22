@@ -1,9 +1,7 @@
 use super::*;
 use crate::{
     carrier_stream::CarrierStreamV1,
-    iroh_transport::{
-        with_iroh_scope_v1, IrohAddressV1, IrohConfigV1, IrohControlV1, IrohEndpointOwnerV1,
-    },
+    iroh_transport::{IrohAddressV1, IrohConfigV1, IrohEndpointOwnerV1},
     novorudp::wire_budget::NativeWireBudget,
     relay::hop::{wall, HopBudget},
 };
@@ -12,6 +10,22 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::oneshot;
+
+use crate::{
+    bound_session::peer_time::authenticate_mailbox_native_v8,
+    duplex::HandshakeReplayCacheV1,
+    endpoint_delivery::EndpointDeliveryResultV1,
+    mailbox_rpc::{MailboxReplyV1, MailboxRequestV1, MailboxServiceV1},
+    mailbox_store::MailboxStore,
+    mailbox_structured::{native_requests::NativeMailboxDriver, STREAM},
+    novorudp::carrier_io::NativeCarrierPump,
+    product_directory::{sign_relay_record_v1, validate_relay_record_v1},
+    product_rendezvous_owned::{mailbox_link_with_resources, serve_private_apfl_v8},
+    product_service_lease::{IrohServiceEndpointV1, NativeCarrierMailboxEndpointV8},
+    service_concurrency::ServiceConcurrencyV1,
+};
+use futures_util::FutureExt;
+use sha2::Digest;
 
 const SCOPE: [u8; 32] = [9; 32];
 
@@ -184,13 +198,11 @@ fn config() -> Result<IrohConfigV1> {
     IrohConfigV1::new(&[], "127.0.0.1".parse()?)?.with_bind_address("127.0.0.1:0".parse()?)
 }
 
-fn control() -> Result<IrohControlV1> {
-    IrohControlV1::new(Instant::now() + Duration::from_secs(25), || Ok(()))
-}
-
 fn budget() -> Result<HopBudget> {
+    // One forwarder meters both links and both directions of the retained
+    // object round trip, including handshakes, framing and control traffic.
     Ok(Arc::new(Mutex::new(NativeWireBudget::new(
-        192 * 1024,
+        512 * 1024,
         Instant::now(),
     )?)))
 }
@@ -239,7 +251,7 @@ async fn forwarder(
                     tokio::select! {
                         biased;
                         stopped = stop => { stopped?; Ok(()) },
-                        result = upstream.forward(&mut downstream) => result,
+                        result = upstream.forward(&mut downstream) => result.context("private fixture forwarder"),
                     }
                 })
             },
@@ -251,6 +263,15 @@ async fn forwarder(
 
 #[tokio::test]
 async fn isolated_records_cross_two_authenticated_forwarders_on_real_carriers() -> Result<()> {
+    roundtrip(false).await
+}
+
+#[tokio::test]
+async fn private_apfl_v8_registers_stores_fetches_and_consumes_original_object() -> Result<()> {
+    roundtrip(true).await
+}
+
+async fn roundtrip(apfl: bool) -> Result<()> {
     let _permit = crate::SERVICE_TEST_SERIAL.acquire().await?;
     let Circuit {
         identity: [client, first, second, terminal],
@@ -282,54 +303,290 @@ async fn isolated_records_cross_two_authenticated_forwarders_on_real_carriers() 
         terminal_in,
         second_stop,
     );
-    let terminal_run = with_iroh_scope_v1(config()?, control()?, move |scope| {
-        Box::pin(async move {
-            address_terminal
-                .send(scope.address()?)
-                .map_err(|_| anyhow::anyhow!("terminal address cancelled"))?;
-            let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
-            assert_eq!(stream.read_frame().await?, *PRIVATE_HOP_ENTRY);
-            let (link, role) = PrivateHopLink::accept(
-                stream,
-                &terminal,
-                &terminal_key,
-                &[second.public_key().to_vec()],
-                budget()?,
-            )
-            .await?;
-            let mut circuit = PrivateCircuit::accept(link, role).await?;
-            assert_eq!(circuit.read_frame().await?, b"original request");
-            circuit.write_frame(b"original response").await?;
-            assert_eq!(circuit.read_frame().await?, b"end");
-            received
-                .send(())
-                .map_err(|_| anyhow::anyhow!("terminal observer cancelled"))?;
-            terminal_stop.await?;
-            Ok(())
-        })
-    });
-    let client_run = with_iroh_scope_v1(config()?, control()?, move |scope| {
-        Box::pin(async move {
-            let mut circuit = PrivateCircuit::connect(
-                scope.connect(&first_in.await?).await?.into(),
-                &client,
-                route,
-                None,
-            )
-            .await?;
-            circuit.write_frame(b"original request").await?;
-            assert_eq!(circuit.read_frame().await?, b"original response");
-            circuit.write_frame(b"end").await?;
-            terminal_done.await?;
-            stop_first.send(()).unwrap();
-            stop_second.send(()).unwrap();
-            stop_terminal.send(()).unwrap();
-            Ok(())
-        })
-    });
+    let terminal_dir = tempfile::tempdir()?;
+    let terminal_owner = IrohEndpointOwnerV1::bind(config()?, || Ok(())).await?;
+    let client_owner = IrohEndpointOwnerV1::bind(config()?, || Ok(())).await?;
+    let terminal_client = client.public_key().to_vec();
+    let node = terminal.public_key().to_vec();
+    let terminal_run = terminal_owner.with_continuous_service_v4(
+        || Ok(()),
+        move |scope| {
+            Box::pin(async move {
+                address_terminal
+                    .send(scope.address()?)
+                    .map_err(|_| anyhow::anyhow!("terminal address cancelled"))?;
+                let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
+                assert_eq!(stream.read_frame().await?, *PRIVATE_HOP_ENTRY);
+                let (link, role) = PrivateHopLink::accept(
+                    stream,
+                    &terminal,
+                    &terminal_key,
+                    &[second.public_key().to_vec()],
+                    budget()?,
+                )
+                .await?;
+                let mut circuit = PrivateCircuit::accept(link, role).await?;
+                if apfl {
+                    let service = MailboxServiceV1::new(
+                        MailboxStore::open(
+                            terminal_dir.path().join("private.db"),
+                            Default::default(),
+                        )?,
+                        terminal.clone(),
+                    );
+                    let endpoint = NativeCarrierMailboxEndpointV8 {
+                        iroh: IrohServiceEndpointV1 {
+                            instance: [39; 32],
+                            address: scope.address()?,
+                        },
+                    };
+                    let now = wall()?;
+                    service.update_native_record_v8(sign_relay_record_v1(
+                        &terminal,
+                        "private-apfl-fixture",
+                        vec![endpoint.endpoint()?],
+                        now,
+                        now + 90_000,
+                        1,
+                    )?)?;
+                    let _device = service.register_endpoint_delivery_v1(
+                        [71; 32],
+                        [72; 32],
+                        Arc::new(|request| {
+                            Box::pin(async move {
+                                assert_eq!(request.object, [75; 32]);
+                                assert_eq!(request.ciphertext, b"device ciphertext");
+                                Ok(EndpointDeliveryResultV1::Delivered {
+                                    receipt_object: [76; 32],
+                                    receipt_expires: request.expires,
+                                    receipt: b"opaque fixture device reply".to_vec(),
+                                })
+                            })
+                        }),
+                    )?;
+                    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let permit =
+                        Arc::new(Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?);
+                    let clients = [terminal_client];
+                    let result = serve_private_apfl_v8(
+                        circuit,
+                        &terminal,
+                        &clients,
+                        &service,
+                        stop,
+                        permit,
+                        ServiceConcurrencyV1::from_host(),
+                        || anyhow::bail!("V8 mailbox fixture is not a discovery request"),
+                        || Ok(()),
+                    );
+                    return tokio::select! {
+                        biased;
+                        stopped = terminal_stop => { stopped?; Ok(()) },
+                        outcome = result => outcome,
+                    };
+                }
+                assert_eq!(circuit.read_frame().await?, b"original request");
+                circuit.write_frame(b"original response").await?;
+                assert_eq!(circuit.read_frame().await?, b"end");
+                received
+                    .send(())
+                    .map_err(|_| anyhow::anyhow!("terminal observer cancelled"))?;
+                terminal_stop.await?;
+                Ok(())
+            })
+        },
+    );
+    let client_run = client_owner.with_continuous_service_v4(
+        || Ok(()),
+        move |scope| {
+            Box::pin(async move {
+                let mut circuit = PrivateCircuit::connect(
+                    scope.connect(&first_in.await?).await?.into(),
+                    &client,
+                    route,
+                    None,
+                )
+                .await?;
+                if apfl {
+                    apfl_roundtrip(circuit, &client, node).await?;
+                } else {
+                    circuit.write_frame(b"original request").await?;
+                    assert_eq!(circuit.read_frame().await?, b"original response");
+                    circuit.write_frame(b"end").await?;
+                    terminal_done.await?;
+                }
+                stop_first.send(()).unwrap();
+                stop_second.send(()).unwrap();
+                stop_terminal.send(()).unwrap();
+                Ok(())
+            })
+        },
+    );
     tokio::time::timeout(Duration::from_secs(30), async {
         tokio::try_join!(first_run, second_run, terminal_run, client_run)
     })
     .await??;
+    terminal_owner.close().await?;
+    client_owner.close().await?;
     Ok(())
+}
+
+async fn apfl_roundtrip(
+    circuit: PrivateCircuit<'_>,
+    client: &TransportIdentity,
+    node: Vec<u8>,
+) -> Result<()> {
+    let mut stream = CarrierStreamV1::from(circuit);
+    let (channel, _) = authenticate_mailbox_native_v8(
+        &mut stream,
+        client,
+        node.clone(),
+        Instant::now() + Duration::from_secs(20),
+        &mut HandshakeReplayCacheV1::new(8),
+        &mut |_, _| Ok(()),
+    )
+    .await?;
+    let (endpoint, mut pump) =
+        NativeCarrierPump::attach_continuous_v7(&mut stream, channel, vec![STREAM])?;
+    let resources = ServiceConcurrencyV1::from_host();
+    let permit = resources
+        .try_reserve_transport()
+        .context("fixture transport admission")?;
+    let mut link = mailbox_link_with_resources(endpoint, true, Some(&resources), Some(&permit))?;
+    let (mut driver, mailbox) =
+        NativeMailboxDriver::attach_adaptive(&mut link, 0, node.clone(), resources)?;
+    let expires = i64::try_from(wall()? / 1000)? + 300;
+    let (box_id, write, read, object) = ([71; 32], [72; 32], [73; 32], [74; 32]);
+    let bytes: Vec<u8> = (0..40 * 1024).map(|index| (index % 251) as u8).collect();
+    let digest: [u8; 32] = Sha256::digest(&bytes).into();
+    let work = async {
+        let run = |request| {
+            mailbox.request(
+                0,
+                vec![request],
+                Instant::now() + Duration::from_secs(5),
+                Arc::new(|| Ok(())),
+            )
+        };
+        let discovery = run(MailboxRequestV1::ServiceRecordV7).await?;
+        let [MailboxReplyV1::ServiceRecordV7 { record }] = discovery.as_slice() else {
+            anyhow::bail!("private APFL signed locator missing");
+        };
+        assert_eq!(record.relay_public_key, node);
+        validate_relay_record_v1(record, wall()?, client)?;
+        assert!(NativeCarrierMailboxEndpointV8::from_record(record)?.is_some());
+        assert!(matches!(
+            run(MailboxRequestV1::Register {
+                mailbox: box_id,
+                write,
+                read,
+                expires
+            })
+            .await?
+            .as_slice(),
+            [MailboxReplyV1::Registered]
+        ));
+        let stored = run(MailboxRequestV1::Put {
+            mailbox: box_id,
+            write,
+            object,
+            ciphertext: bytes.clone(),
+            expires,
+        })
+        .await?;
+        let [MailboxReplyV1::Stored(receipt)] = stored.as_slice() else {
+            anyhow::bail!("private APFL custody missing");
+        };
+        receipt.verify(&node, box_id, object, &bytes, expires, client)?;
+        let got = run(MailboxRequestV1::Fetch {
+            mailbox: box_id,
+            read,
+        })
+        .await?;
+        let [MailboxReplyV1::Object {
+            object: from_node,
+            ciphertext,
+            digest: observed,
+            expires: until,
+        }] = got.as_slice()
+        else {
+            anyhow::bail!("private APFL retained object missing");
+        };
+        assert_eq!(
+            (from_node, ciphertext, observed, until),
+            (&object, &bytes, &digest, &expires)
+        );
+        assert!(matches!(
+            run(MailboxRequestV1::Consume {
+                mailbox: box_id,
+                read,
+                object,
+                digest
+            })
+            .await?
+            .as_slice(),
+            [MailboxReplyV1::Consumed]
+        ));
+        assert!(matches!(
+            run(MailboxRequestV1::Fetch {
+                mailbox: box_id,
+                read
+            })
+            .await?
+            .as_slice(),
+            [MailboxReplyV1::Empty]
+        ));
+        let delivery = run(MailboxRequestV1::EndpointDeliverV1 {
+            mailbox: box_id,
+            write,
+            object: [75; 32],
+            ciphertext: b"device ciphertext".to_vec(),
+            expires,
+        })
+        .await?;
+        let [MailboxReplyV1::EndpointDeliveredV1 {
+            object,
+            receipt_object,
+            receipt_expires,
+            receipt,
+        }] = delivery.as_slice()
+        else {
+            anyhow::bail!("private APFL device reply missing");
+        };
+        assert_eq!(
+            (
+                *object,
+                *receipt_object,
+                *receipt_expires,
+                receipt.as_slice()
+            ),
+            (
+                [75; 32],
+                [76; 32],
+                expires,
+                b"opaque fixture device reply".as_slice()
+            )
+        );
+        Ok(())
+    };
+    tokio::pin!(work);
+    loop {
+        if let Some(progress) = pump.progress().now_or_never() {
+            progress?;
+        }
+        driver.progress(&mut link, Instant::now())?;
+        let progress = link.poll(wall()?, Instant::now(), 64)?;
+        for done in progress.completed {
+            driver.transport_complete(&done);
+        }
+        while let Some(body) = link.poll_complete(STREAM, Instant::now(), 64)? {
+            driver.receive(&link, body, Instant::now())?;
+        }
+        tokio::select! {
+            biased;
+            result = &mut work => return result,
+            progress = pump.progress() => progress?,
+            _ = tokio::time::sleep(Duration::from_millis(5)) => {}
+        }
+    }
 }

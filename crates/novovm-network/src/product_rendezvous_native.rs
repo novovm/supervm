@@ -187,7 +187,7 @@ impl Admission {
 fn mailbox_link(endpoint: NativeEndpoint, reliable_carrier: bool) -> Result<NativeObjectLink> {
     mailbox_link_with_resources(endpoint, reliable_carrier, None, None)
 }
-fn mailbox_link_with_resources(
+pub(crate) fn mailbox_link_with_resources(
     endpoint: NativeEndpoint,
     reliable_carrier: bool,
     concurrency: Option<&Arc<ServiceConcurrencyV1>>,

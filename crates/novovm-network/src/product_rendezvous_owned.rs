@@ -63,7 +63,95 @@ fn adaptive_listener_rejects_missing_or_different_owner_controller() {
 }
 #[path = "product_rendezvous_native.rs"]
 mod native;
+#[cfg(all(test, feature = "mailbox-seal"))]
+pub(crate) use native::mailbox_link_with_resources;
 pub use native::{NativeMailboxListenerV7, NativeMailboxResourcesUnavailableV1};
+
+/// One already-confirmed private terminal circuit on the existing APFL owner.
+/// The caller supplies the owner's current offer, rendezvous generation and
+/// admission permit. The sealed circuit does not create mailbox authority.
+#[cfg(feature = "mailbox-seal")]
+#[allow(clippy::too_many_arguments)]
+pub async fn serve_private_apfl_v8(
+    circuit: crate::relay::hop::private::PrivateCircuit<'_>,
+    identity: &TransportIdentity,
+    clients: &[Vec<u8>],
+    service: &crate::mailbox_rpc::MailboxServiceV1,
+    stop: Arc<AtomicBool>,
+    permit: Arc<tokio::sync::OwnedSemaphorePermit>,
+    concurrency: Arc<crate::service_concurrency::ServiceConcurrencyV1>,
+    offer: impl FnOnce() -> Result<(
+        crate::product_service_lease::ServiceLeaseOfferV2,
+        Arc<Mutex<RendezvousStoreV1>>,
+    )>,
+    authority: impl Fn() -> Result<()> + Copy + Sync,
+) -> Result<()> {
+    ensure!(
+        !clients.is_empty(),
+        "private APFL requires the owner's pinned client policy"
+    );
+    let check = || {
+        ensure!(!stop.load(Ordering::Acquire), "private APFL owner stopped");
+        authority()
+    };
+    circuit.check_terminal()?;
+    check()?;
+    let mut stream = CarrierStreamV1::from(circuit);
+    let start = Instant::now();
+    let deny = || anyhow::bail!("private APFL does not admit older mailbox selectors");
+    let (kind, store, clock) = tokio::time::timeout(
+        Duration::from_secs(3),
+        serve_self_owned_node_selected_v8(
+            &mut stream,
+            || {
+                check()?;
+                offer()
+            },
+            deny,
+            deny,
+            check,
+        ),
+    )
+    .await??;
+    match kind {
+        NodeServiceV1::MailboxNativeV8 => {
+            native::serve_carrier(
+                &mut stream,
+                identity,
+                ServicePeerPolicyV1::Pinned(clients),
+                service,
+                stop.clone(),
+                permit,
+                Some(concurrency),
+                check,
+                native::NativeCarrierHandshake::SessionClockV8 {
+                    received: clock,
+                    deadline: start + Duration::from_secs(30),
+                },
+            )
+            .await
+        }
+        NodeServiceV1::Rendezvous => {
+            let store =
+                store.ok_or_else(|| anyhow::anyhow!("private rendezvous generation missing"))?;
+            // Keep the original finite discovery window and owner clock. No
+            // socket or second rendezvous table is acquired for this circuit.
+            tokio::time::timeout_at(
+                (start + Duration::from_secs(30)).into(),
+                crate::discovery_control::serve_rendezvous_observed(
+                    &mut stream,
+                    identity,
+                    clients,
+                    store,
+                    &mut |_, _| check(),
+                ),
+            )
+            .await??;
+            check()
+        }
+        _ => anyhow::bail!("private APFL selector rejected"),
+    }
+}
 #[cfg(feature = "tls-transport")]
 #[path = "product_rendezvous_tls.rs"]
 mod tls;
