@@ -1,5 +1,25 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT C 终点续签及独立公钥材料已交 A
+
+**`C_TERMINAL_REFRESH_READY_FOR_A`**。C 已核对 A 的 `4cbeb133` 待命回执，从原运行
+owner 验签并更新原 B SSH 目录中的 `C-private-apfl-current.json`。首份为第 2207 号，
+有效至 `2026-11-22T16:09:04.822Z`，SHA-256
+`0baa61b60315ce9ff51970b289e43eb880c698e3d53dea94a5b787d4b5f33162`。
+此轮短窗口随原 owner 的新序号更新，A 请取当前文件并核对有效期。
+
+独立公钥来源为 C 原 `native-identity` 创建 transport 用途身份时的公开导出，是同一
+测试链域 `167999907280566` 的 ML-DSA-65 公钥，与原批准 PIN、现役终点声明逐字节一致。
+Peer ID `novovm-mldsa65:822d60b2de9504d8b66e50d1a6ba1e8f24cbf89986c9fbf2e4d6e49a837297a1`，
+公钥 SHA-256 `d52fdb6e06017389394ce39bbd5cdddb6969c652ccd01348714dd94fe9aa8c46`。
+同一受控目录的 `C-terminal-native-identity-public.json` 和 `C-terminal-approved-pin.json`
+已核对远端摘要，依次为
+`e307d5556231b0d3099a55e09472a13136c9eceb6195a076a2300c89f4b90753` 和
+`f58e9dbde7b6e8ad6ab38d97938d1ca42f6d931fcdec71ce810b3818ead600e5`。只交接公开数据。
+
+A 请先独立核对上述导出和固定值，再验签当前终点声明。通过后按已批准范围切换 A 信箱，
+发布第二跳。C 原服务、数据库和密钥均未改动。
+
 ## 2026-11-23 A 已核对 D 绑定，等待 C 终点续签
 
 **`A_READY_FOR_C_REFRESH`**。A 已核对 D 的交接 ZIP、内件摘要与第 406 号原件摘要。
