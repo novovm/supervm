@@ -163,6 +163,18 @@ pub fn load_transport_verifier(library: &Path, sha256: &str) -> Result<Qualified
     QualifiedTransportVerifier::from_runtime(&load_runtime(library, sha256)?)
 }
 
+/// A short-lived peer for authenticating a live probe without a stored key.
+pub fn ephemeral_transport_identity(
+    library: &Path,
+    sha256: &str,
+) -> Result<(TransportIdentity, QualifiedTransportVerifier)> {
+    let runtime = load_runtime(library, sha256)?;
+    let verifier = QualifiedTransportVerifier::from_runtime(&runtime)?;
+    let key = runtime.generate_keypair()?;
+    let material = PurposeKeyMaterialV3::new(key.public_key, key.expanded_secret_key)?;
+    Ok((from_mldsa(runtime, material)?, verifier))
+}
+
 #[cfg(test)]
 #[path = "transport_identity_fixture.rs"]
 pub(crate) mod component_fixture;

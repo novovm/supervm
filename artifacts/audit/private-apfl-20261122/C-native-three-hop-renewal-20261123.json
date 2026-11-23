@@ -1,0 +1,27 @@
+{
+  "status": "C_APFL_NATIVE_THREE_HOP_RENEWAL_LAN_PASSED",
+  "utc_begin": "2026-11-23T09:28:45.7934123+00:00",
+  "utc_end": "2026-11-23T09:28:48.8235224+00:00",
+  "elapsed_ms": 3030,
+  "exit_code": 0,
+  "origin": "validator-C LAN client, ephemeral ML-DSA-65 transport identity",
+  "probe_sha256": "2b7e63e0c929e1e27d0bdb179b30e91520d650ae1e499c6273680a8830324438",
+  "D_historical_hint": 1439,
+  "D_historical_hint_for_locator_only": true,
+  "records": [
+    { "host": "D", "role": "forwarder", "sequence": 1462, "expires_at_ms": 1795426168920 },
+    { "host": "A", "role": "forwarder", "sequence": 2624, "expires_at_ms": 1795426185697 },
+    { "host": "C", "role": "terminal", "sequence": 3247, "expires_at_ms": 1795426162816 }
+  ],
+  "verified": ["pinned role keys", "scope", "signatures", "validity", "role order"],
+  "wrong_first_pin_control": { "exit_code": 1, "reason": "private APFL renewal pin mismatch", "network_dialed": false },
+  "C_owner_pid_after": 15136,
+  "C_original_mailboxes": 14,
+  "C_original_envelopes": 6,
+  "C_mailbox_row_digests_unchanged": true,
+  "mobile_authentication_verified": false,
+  "public_cellular_reachability_verified": false,
+  "second_independent_first_hop_verified": false,
+  "original_messages_resent": false,
+  "billing_enabled": false
+}

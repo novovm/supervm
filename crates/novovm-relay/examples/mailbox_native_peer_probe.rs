@@ -10,6 +10,8 @@
 //! This verifies service custody, NOT Android delivery or a DeviceReceipt.
 //! Separate transport-only preflight (no custody operation):
 //! carrier-reachability APPROVED_RELAY DNS_IP.
+//! Read-only private-path renewal with an ephemeral communication identity:
+//! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -19,7 +21,87 @@ async fn main() -> anyhow::Result<()> {
     if args.get(1).map(String::as_str) == Some("inspect-record") {
         return inspect_record(&args).await;
     }
+    if args.get(1).map(String::as_str) == Some("renew-private-path") {
+        return renew_private_path(&args).await;
+    }
     probe::run().await
+}
+
+async fn renew_private_path(args: &[String]) -> anyhow::Result<()> {
+    use anyhow::{ensure, Context};
+    use novovm_network::{
+        iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
+        product_rendezvous_daemon::now_ms,
+        product_rendezvous_owned::{renew_private_apfl_path, PrivateApflAnnouncement},
+        relay::hop::private::PrivateHopRole,
+    };
+    use novovm_relay::transport_identity::ephemeral_transport_identity;
+    use std::{
+        net::{Ipv4Addr, SocketAddrV4},
+        path::Path,
+        time::{Duration, Instant},
+    };
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct TrustedPath {
+        scope: [u8; 32],
+        pins: [Vec<u8>; 3],
+    }
+
+    ensure!(args.len() == 8, "usage: renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP");
+    let seed: PrivateApflAnnouncement = serde_json::from_slice(&std::fs::read(&args[2])?)?;
+    let trust: TrustedPath = serde_json::from_slice(&std::fs::read(&args[3])?)?;
+    let library = Path::new(&args[4]);
+    let (identity, verifier) = ephemeral_transport_identity(library, &args[5])?;
+    let mut locator = seed.verify_bootstrap_hint(
+        &trust.pins[0],
+        trust.scope,
+        PrivateHopRole::Forwarder,
+        now_ms()?,
+        &verifier,
+    )?;
+    let first: SocketAddrV4 = args[6].parse()?;
+    let local: Ipv4Addr = args[7].parse()?;
+    ensure!(
+        first.ip().is_private() && local.is_private(),
+        "LAN addresses required"
+    );
+    ensure!(
+        locator.direct.contains(&first.into()),
+        "approved LAN address missing from signed locator"
+    );
+    locator.direct = vec![first.into()];
+    locator.relays.clear();
+    let config = IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
+        .with_bind_address(SocketAddrV4::new(local, 0).into())?;
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let response = tokio::time::timeout_at(
+        deadline.into(),
+        with_iroh_scope_v1(
+            config,
+            IrohControlV1::new(deadline, || Ok(()))?,
+            move |scope| {
+                Box::pin(async move {
+                    renew_private_apfl_path(scope, &locator, &identity, &trust.pins, trust.scope)
+                        .await
+                })
+            },
+        ),
+    )
+    .await
+    .context("private APFL renewal probe deadline")??;
+    let records = response.map(|announcement| {
+        serde_json::json!({
+            "sequence": announcement.record.sequence,
+            "expires_at_ms": announcement.record.expires_at_ms,
+        })
+    });
+    println!(
+        "{}",
+        serde_json::json!({"result":"PASS", "scope":"native_renewal_only", "records":records})
+    );
+    Ok(())
 }
 
 async fn inspect_record(args: &[String]) -> anyhow::Result<()> {
