@@ -1,0 +1,65 @@
+{
+  "checked_beijing": "2026-11-23T18:15:14+08:00",
+  "owner": "validator-A",
+  "B_owner_source": "05d22008c83913fd1db9325229d9f351bd6e61f3",
+  "preceding_C_handoff": "ed00b0c3",
+  "B_public_address": "47.103.59.206:43273",
+  "B_public_peer_id": "novovm-mldsa65:731c11c763413a6b83ca3d79ad2edccf7389524f095022b66fb6ec9c7c1b3a91",
+  "B_pin_sha256": "5f33ef12919a5cb60d80d3178696822e48c9e115865dd1dc45aec62efd71dad8",
+  "probe_sha256": "99595d066ddb988111c7ab409fdd58287fa13255cda9347d58945b7d8bf20f45",
+  "carrier": {
+    "result": "PASS",
+    "signed_V8_peer": true,
+    "first_hop_relay_candidates": 0,
+    "selected_path": "direct",
+    "QUIC": true,
+    "declaration_sequence": 38
+  },
+  "native_renewal": {
+    "result": "PASS",
+    "first_hop": "direct only",
+    "protocol": "NVPHREN1",
+    "records": [
+      {
+        "role": "B forwarder",
+        "sequence": 39,
+        "expires_at_ms": 1795428948770
+      },
+      {
+        "role": "A forwarder",
+        "sequence": 2675,
+        "expires_at_ms": 1795428933055
+      },
+      {
+        "role": "C terminal",
+        "sequence": 3293,
+        "expires_at_ms": 1795428928615
+      }
+    ],
+    "verified": [
+      "pinned distinct ML-DSA-65 role keys",
+      "scope",
+      "signatures",
+      "role order",
+      "overlapping validity"
+    ],
+    "B_adopted_A_sequence": 2675,
+    "A_adopted_C_sequence": 3293
+  },
+  "ssh_handoff": {
+    "directory": "/home/ecs-user/.novovm-handoff/B-first-hop-05d22008",
+    "rolling_verified_declaration": "B-private-apfl-current.json",
+    "public_pin": "B-first-hop-pin.json",
+    "public_identity": "B-native-identity-public.json",
+    "receipt": "B-A-C-public-direct-receipt-20261123.json"
+  },
+  "unchanged_pids": {
+    "A_owner": 27576,
+    "A_original_validator": 18888,
+    "B_V8_owner": 2733654,
+    "B_original_V2": 913371
+  },
+  "D_operated": false,
+  "transactions_resent": false,
+  "mobile_wifi_cellular_verified": false
+}

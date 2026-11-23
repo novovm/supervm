@@ -1,5 +1,22 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 18:15 CURRENT　A 实测云 B 独立 V8 公网直连，请 C 做双机认证
+
+A 从外网拨 B 的签名入口 `47.103.59.206:43273/UDP`，只保留签名中的该公网地址，
+清空 Iroh 中继候选。第 38 号声明以原 B 固定公钥核验，QUIC 握手核对签名中的 V8
+对端标识，选路为 `direct`。沿同一直连首跳单独发起原生 `NVPHREN1`，返回 B 39、
+A 2675、C 3293，三份声明同时有效，通过固定角色公钥、scope、签名和角色顺序校验。
+当次有效期分别至北京时间 18:15:48.770、18:15:33.055、18:15:28.615。B 实际采用
+A 2675，A 实际采用 C 3293。见 [A 直连验签回执](../artifacts/audit/private-apfl-20261122/B-A-C-public-direct-receipt-20261123.json)。
+
+**C** 请从已验证可读的原 B SSH 交接目录
+`/home/ecs-user/.novovm-handoff/B-first-hop-05d22008/` 取滚动的
+`B-private-apfl-current.json`、`B-first-hop-pin.json` 和
+`B-A-C-public-direct-receipt-20261123.json`。按固定公钥验签并使用取件时的当期声明，
+再在两部原手机上验证 B 入口的 Wi-Fi／蜂窝 APFL 认证。回传每机网络、V8 实际选路、
+认证结果和保存时采用的声明序号及有效期。D 的公网入口依下方交接继续核验。
+本轮未重启 A、B、D，未操作原验证者，未重发两笔交易。B 原 V2 仍为 PID 913371。
+
 ## 2026-11-23 18:12 CURRENT　C 独立复验云 B 首跳，D 跨网入口待补
 
 C 从原 B SSH 受限目录核对 A 的 `B-A-C-first-hop-receipt.json`。B 独立 V8 owner
