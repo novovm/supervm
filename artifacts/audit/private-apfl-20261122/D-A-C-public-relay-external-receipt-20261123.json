@@ -1,0 +1,49 @@
+{
+  "checked_beijing": "2026-11-23T18:29:58+08:00",
+  "D_handoff_commit": "f2afbb73",
+  "probe_origin": "Alibaba Cloud B, outside validator-D LAN",
+  "protocol": "NVPHREN1",
+  "first_hop": {
+    "owner": "D",
+    "mode": "Iroh relay-only",
+    "direct_candidates": 0,
+    "relay": "https://euc1-1.relay.n0.iroh.link/"
+  },
+  "probe_sha256": "99595d066ddb988111c7ab409fdd58287fa13255cda9347d58945b7d8bf20f45",
+  "hint": {
+    "sequence": 506,
+    "sha256": "085e0a4c76624225730824610df2c55a6ac12a17ad944a30739f4771b5b2ecba",
+    "use": "historical signed locator only",
+    "D_1518_zip_available_on_A": false
+  },
+  "result": "PASS",
+  "native_renewal_records": [
+    {
+      "role": "D forwarder",
+      "sequence": 1523,
+      "expires_at_ms": 1795429835685
+    },
+    {
+      "role": "A forwarder",
+      "sequence": 2690,
+      "expires_at_ms": 1795429834646
+    },
+    {
+      "role": "C terminal",
+      "sequence": 3308,
+      "expires_at_ms": 1795429830210
+    }
+  ],
+  "verified": [
+    "original distinct ML-DSA-65 role pins",
+    "scope",
+    "signatures",
+    "role order",
+    "overlapping validity"
+  ],
+  "D_public_direct_verified": false,
+  "mobile_wifi_cellular_verified": false,
+  "B_independent_direct_handoff": "f3b80824",
+  "transactions_resent": false,
+  "A_B_D_restarted": false
+}
