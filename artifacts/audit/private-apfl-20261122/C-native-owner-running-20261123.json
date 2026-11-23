@@ -1,0 +1,21 @@
+{
+  "status": "C_APFL_NATIVE_OWNER_RUNNING",
+  "utc": "2026-11-23T09:16:31.8351278+00:00",
+  "A_receipt": "85bd34a8",
+  "candidate_source": "c529cdbe",
+  "previous_owner_pid": 26068,
+  "owner_pid": 3196,
+  "binary_sha256": "3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1",
+  "original_keys_and_config_unchanged": true,
+  "original_database_reopened": true,
+  "sqlite_quick_check": "ok",
+  "sqlite_before": { "mailboxes": 14, "envelopes": 6 },
+  "sqlite_after": { "mailboxes": 14, "envelopes": 6 },
+  "original_mailbox_rows_and_digests_unchanged": true,
+  "udp_ports": [53570, 53571],
+  "private_role": "terminal",
+  "sequence": 3236,
+  "public_key_verified_with_original_pin": true,
+  "autonomous_mailbox_policy_changed": false,
+  "native_end_to_end_renewal": "pending live origin proof"
+}
