@@ -229,15 +229,31 @@ impl PrivateApflIngress {
         identity: &TransportIdentity,
         authority: impl Fn() -> Result<()>,
     ) -> Result<()> {
+        use std::time::Instant;
+        let budget = self.renewal_budget.as_ref().unwrap_or(&self.budget);
+        if let Some(owner) = &self.origin_admission {
+            owner.authenticate_at(Instant::now())?;
+        }
         let mut link = PrivateHopLink::accept_metadata(
             stream,
             identity,
-            &self.predecessors,
+            self.adjacent_policy(),
             RENEW,
-            self.budget.clone(),
+            budget.clone(),
         )
         .await?;
-        authority()?;
+        // A read-only lookup uses its own wire budget and does not occupy a
+        // device's business lease. Otherwise a healthy open circuit would
+        // prevent that same device from refreshing its next address.
+        let authenticated = link.authenticated_peer().to_vec();
+        let check = || {
+            authority()?;
+            if let Some(owner) = &self.origin_admission {
+                owner.check_authenticated_at(&authenticated, Instant::now())?;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        check()?;
         let request = link.read_record().await?;
         ensure!(
             !request.is_empty() && request.len().is_multiple_of(32) && request.len() <= DEPTH * 32,
@@ -252,6 +268,16 @@ impl PrivateApflIngress {
             self.successor.is_some() == (depth > 1),
             "renewal chain length differs"
         );
+        if self.origin_admission.is_some() {
+            ensure!(
+                depth == DEPTH
+                    || self
+                        .predecessors
+                        .iter()
+                        .any(|key| key == link.authenticated_peer()),
+                "origin renewal requires the complete path"
+            );
+        }
         let reply = slots.remove(0);
         let mut downstream = Vec::new();
         if let Some(next) = &self.successor {
@@ -268,10 +294,10 @@ impl PrivateApflIngress {
                 identity,
                 &next.identity,
                 &slots,
-                Some(self.budget.clone()),
+                Some(budget.clone()),
             )
             .await?;
-            authority()?;
+            check()?;
             let adjacent = open(
                 &results[0],
                 &local,
@@ -291,7 +317,7 @@ impl PrivateApflIngress {
             self.remember_successor(next, &adjacent, &seed)?;
             downstream = results;
         }
-        authority()?;
+        check()?;
         let current = self
             .publication
             .lock()
@@ -315,7 +341,7 @@ impl PrivateApflIngress {
             link.write_record(&u32::try_from(item.len())?.to_be_bytes())
                 .await?;
             for chunk in item.chunks(CHUNK) {
-                authority()?;
+                check()?;
                 link.write_record(chunk).await?;
             }
         }
@@ -323,7 +349,7 @@ impl PrivateApflIngress {
             link.read_record().await? == DONE,
             "renewal completion differs"
         );
-        authority()?;
+        check()?;
         link.finish_metadata()
             .await
             .context("renewal peer completion")

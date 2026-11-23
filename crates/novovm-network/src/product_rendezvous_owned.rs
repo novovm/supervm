@@ -925,7 +925,7 @@ impl Node {
                                     authority()?;
                                     let deadline = (admitted_at + Duration::from_secs(30)).into();
                                     let epochs = private.epochs()?;
-                                    let (mut hop, opened) = tokio::time::timeout_at(deadline,
+                                    let (mut hop, opened, admission) = tokio::time::timeout_at(deadline,
                                         private.accept(stream, key, &epochs)).await??;
                                     match opened {
                                         OpenedPrivateHop::Forward { next, sealed } => {
@@ -934,6 +934,9 @@ impl Node {
                                             let until_revoked = async {
                                                 loop {
                                                     authority()?;
+                                                    if let Some(grant) = &admission {
+                                                        grant.check_at(Instant::now())?;
+                                                    }
                                                     tokio::time::sleep(Duration::from_millis(500)).await;
                                                 }
                                             };

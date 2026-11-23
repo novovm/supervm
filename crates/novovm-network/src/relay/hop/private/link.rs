@@ -183,14 +183,14 @@ impl<'a> PrivateHopLink<'a> {
     pub(crate) async fn accept_metadata(
         mut stream: CarrierStreamV1<'a>,
         identity: &TransportIdentity,
-        pins: &[Vec<u8>],
+        policy: ServicePeerPolicyV1<'_>,
         selector: &[u8; 8],
         budget: HopBudget,
     ) -> Result<Self> {
         let (channel, peer) = authenticate_structured_service_client_observed(
             &mut stream,
             identity,
-            ServicePeerPolicyV1::Pinned(pins),
+            policy,
             &mut HandshakeReplayCacheV1::new(8),
             &mut |_, _| Ok(()),
         )
@@ -262,7 +262,15 @@ impl<'a> PrivateHopLink<'a> {
         allowed_previous: &[Vec<u8>],
         budget: HopBudget,
     ) -> Result<(Self, OpenedPrivateHop)> {
-        Self::accept_rotating(stream, identity, key, None, allowed_previous, budget).await
+        Self::accept_rotating(
+            stream,
+            identity,
+            key,
+            None,
+            ServicePeerPolicyV1::Pinned(allowed_previous),
+            budget,
+        )
+        .await
     }
 
     pub(crate) async fn accept_rotating(
@@ -270,20 +278,19 @@ impl<'a> PrivateHopLink<'a> {
         identity: &TransportIdentity,
         current: &PrivateHopKey,
         previous: Option<&PrivateHopKey>,
-        allowed_previous: &[Vec<u8>],
+        policy: ServicePeerPolicyV1<'_>,
         budget: HopBudget,
     ) -> Result<(Self, OpenedPrivateHop)> {
         ensure!(
             !stream.is_private()
                 && current.identity == identity.public_key()
-                && previous.is_none_or(|key| key.identity == current.identity)
-                && !allowed_previous.is_empty(),
+                && previous.is_none_or(|key| key.identity == current.identity),
             "private hop local identity or admission missing"
         );
         let (channel, peer) = authenticate_structured_service_client_observed(
             &mut stream,
             identity,
-            ServicePeerPolicyV1::Pinned(allowed_previous),
+            policy,
             &mut HandshakeReplayCacheV1::new(8),
             &mut |_, _| Ok(()),
         )
@@ -310,6 +317,11 @@ impl<'a> PrivateHopLink<'a> {
             hop.forward = Some((next.clone(), commitment(sealed)));
         }
         Ok((hop, opened))
+    }
+
+    #[cfg(feature = "private-apfl-listener")]
+    pub(crate) fn authenticated_peer(&self) -> &[u8] {
+        &self.peer
     }
 
     async fn confirm_terminal(&mut self) -> Result<()> {

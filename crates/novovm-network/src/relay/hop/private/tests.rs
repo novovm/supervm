@@ -302,12 +302,19 @@ async fn private_apfl_renewal_and_bulk_obey_the_same_owner_budget() -> Result<()
 }
 
 #[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
+#[tokio::test]
+async fn private_apfl_unknown_device_renews_and_delivers_via_original_owners() -> Result<()> {
+    original_owner_with_renewal(OwnerRun::Autonomous).await
+}
+
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
 #[derive(Clone, Copy)]
 enum OwnerRun {
     ExistingBulk,
     RenewSmall,
     RenewBulk,
     RepeatRenewal,
+    Autonomous,
 }
 
 #[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
@@ -355,14 +362,21 @@ async fn original_owner_with_renewal(run: OwnerRun) -> Result<()> {
     };
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let budgets = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let autonomous = matches!(run, OwnerRun::Autonomous);
+    let allowed_client = if autonomous {
+        second.public_key()
+    } else {
+        client.public_key()
+    };
     let first_run = Box::pin(real_private_owner(
         first.clone(),
-        client.public_key().to_vec(),
+        allowed_client.to_vec(),
         client.public_key().to_vec(),
         Some(next(&second, first_next)),
         first_publish,
         stop.clone(),
         budgets.clone(),
+        autonomous,
     ));
     let second_run = Box::pin(real_private_owner(
         second.clone(),
@@ -372,15 +386,17 @@ async fn original_owner_with_renewal(run: OwnerRun) -> Result<()> {
         second_publish,
         stop.clone(),
         budgets.clone(),
+        false,
     ));
     let terminal_run = Box::pin(real_private_owner(
         terminal.clone(),
-        client.public_key().to_vec(),
+        allowed_client.to_vec(),
         second.public_key().to_vec(),
         None,
         terminal_publish,
         stop.clone(),
         budgets.clone(),
+        autonomous,
     ));
     let client_run = async {
         first_ready.changed().await?;
@@ -486,8 +502,8 @@ async fn original_owner_with_renewal(run: OwnerRun) -> Result<()> {
                         )
                         .await
                         .context("normal circuit establishment after renewal")?;
-                        let bytes = if matches!(run, OwnerRun::RenewSmall) { 1024 } else { 40 * 1024 };
-                        let delivery = apfl_roundtrip(circuit, &client, terminal.public_key().to_vec(), bytes, false).await;
+                        let bytes = if matches!(run, OwnerRun::RenewSmall | OwnerRun::Autonomous) { 1024 } else { 40 * 1024 };
+                        let delivery = apfl_roundtrip(circuit, &client, terminal.public_key().to_vec(), bytes, autonomous).await;
                         if matches!(run, OwnerRun::RenewBulk) && delivery.is_err() {
                             // A remote transport close alone is not evidence of a rate limit.
                             let usage: Vec<_> = budgets.lock().unwrap().iter().map(|b: &HopBudget|
@@ -529,16 +545,23 @@ async fn real_private_owner(
     >,
     stop: Arc<std::sync::atomic::AtomicBool>,
     budgets: Arc<std::sync::Mutex<Vec<HopBudget>>>,
+    autonomous: bool,
 ) -> Result<()> {
     use crate::product_rendezvous_owned::{
         run_self_owned_node_with_native_tls_v8, NativeMailboxListenerV7, PrivateApflIngress,
+        PrivateMailboxAdmission, PrivateMailboxAdmissionConfig,
     };
     use crate::product_service_lease::{
         SelfOwnedTrustV1, ServiceLeaseBookV1, ServiceLeaseFileV1, ServiceLeaseHostV1,
     };
+    let origin = autonomous && successor.is_some();
     let ingress = PrivateApflIngress::new(
         SCOPE,
-        [previous].into(),
+        if origin {
+            Default::default()
+        } else {
+            [previous].into()
+        },
         successor,
         512 * 1024,
         move |record| {
@@ -546,8 +569,26 @@ async fn real_private_owner(
             Ok(())
         },
     )?;
-    budgets.lock().unwrap().push(ingress.observed_wire_budget());
     let dir = tempfile::tempdir()?;
+    let database = dir.path().join("mailbox.sqlite");
+    let mailbox_store = MailboxStore::open(&database, Default::default())?;
+    let ingress = if autonomous {
+        let admission = PrivateMailboxAdmission::new(PrivateMailboxAdmissionConfig {
+            session_seconds: 30,
+            requests_per_minute: 64,
+            tracked_devices: 4,
+            denied_clients: Default::default(),
+        })?
+        .with_storage(&database, || Ok(Default::default()))?;
+        if origin {
+            ingress.with_autonomous_origin(admission, 128 * 1024)?
+        } else {
+            ingress.with_autonomous_mailbox(admission)?
+        }
+    } else {
+        ingress
+    };
+    budgets.lock().unwrap().push(ingress.observed_wire_budget());
     let resources = ServiceConcurrencyV1::from_host();
     let listen = "127.0.0.1:0".parse()?;
     let native = NativeMailboxListenerV7::bind_adaptive(
@@ -558,10 +599,7 @@ async fn real_private_owner(
         2 * 1024 * 1024,
         resources.clone(),
     )?;
-    let store = Arc::new(MailboxServiceV1::new(
-        MailboxStore::open(dir.path().join("mailbox.sqlite"), Default::default())?,
-        identity.clone(),
-    ));
+    let store = Arc::new(MailboxServiceV1::new(mailbox_store, identity.clone()));
     let _device = store.register_endpoint_delivery_v1(
         [71; 32],
         [72; 32],

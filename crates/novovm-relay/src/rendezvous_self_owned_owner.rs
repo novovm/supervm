@@ -280,8 +280,15 @@ fn private_apfl_ingress(
     explicit_storage_limit_mib: Option<u64>,
 ) -> Result<Option<novovm_network::product_rendezvous_owned::PrivateApflIngress>> {
     use novovm_network::product_rendezvous_owned::{
-        PrivateApflIngress, PrivateApflSuccessor, PrivateMailboxAdmissionConfig,
+        PrivateApflIngress, PrivateApflSuccessor, PrivateMailboxAdmission,
+        PrivateMailboxAdmissionConfig,
     };
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Origin {
+        admission: PrivateMailboxAdmissionConfig,
+        renewal_bytes_per_minute: u64,
+    }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Settings {
@@ -291,6 +298,8 @@ fn private_apfl_ingress(
         max_wire_bytes_per_minute: u64,
         #[serde(default)]
         autonomous_mailbox: Option<PrivateMailboxAdmissionConfig>,
+        #[serde(default)]
+        autonomous_origin: Option<Origin>,
     }
     let path = root.join("private-apfl-policy.json");
     check_path(&path)?;
@@ -299,6 +308,25 @@ fn private_apfl_ingress(
     }
     ensure!(native_v8, "private APFL requires native+carrier V8");
     let settings: Settings = serde_json::from_slice(&read_bounded(&path, 512 * 1024)?)?;
+    let durable_admission = |config| {
+        let database = root.join("mailbox.sqlite");
+        check_path(&database)?;
+        let revocations = root.join("private-apfl-revocations.json");
+        PrivateMailboxAdmission::new(config)?.with_storage(&database, move || {
+            check_path(&revocations)?;
+            if !revocations.try_exists()? {
+                return Ok(BTreeSet::new());
+            }
+            Ok(serde_json::from_slice(&read_bounded(
+                &revocations,
+                8 * 1024 * 1024,
+            )?)?)
+        })
+    };
+    ensure!(
+        settings.autonomous_mailbox.is_none() || settings.autonomous_origin.is_none(),
+        "APFL origin and terminal admission require distinct service owners"
+    );
     let successor = settings.successor.map(|identity| {
         let path = root.join("private-apfl-next.json");
         let cache = path.clone();
@@ -323,7 +351,15 @@ fn private_apfl_ingress(
             explicit_storage_limit_mib.is_some(),
             "autonomous mailbox requires a provider storage limit"
         );
-        ingress.with_autonomous_mailbox(admission)?
+        ingress.with_autonomous_mailbox(durable_admission(admission)?)?
+    } else {
+        ingress
+    };
+    let ingress = if let Some(origin) = settings.autonomous_origin {
+        ingress.with_autonomous_origin(
+            durable_admission(origin.admission)?,
+            origin.renewal_bytes_per_minute,
+        )?
     } else {
         ingress
     };
@@ -1031,12 +1067,6 @@ impl Owner {
         let native_settings = self.policy.native_listener.clone();
         let native_selected = native_settings.is_some();
         let dual_selected = native_selected && self.native_carrier_mailbox_v8();
-        #[cfg(feature = "tls-transport")]
-        let private_apfl = private_apfl_ingress(
-            &config.root,
-            dual_selected,
-            self.policy.shared_storage_limit_mib,
-        )?;
         let relay_services_enabled =
             (!native_selected || dual_selected) && !effective_relays(&self.policy).is_empty();
         let key = self.key.clone();
@@ -1073,6 +1103,12 @@ impl Owner {
             Ok(mailbox)
         })()
         .context(FailureStage::MailboxOpen)?;
+        #[cfg(feature = "tls-transport")]
+        let private_apfl = private_apfl_ingress(
+            &config.root,
+            dual_selected,
+            self.policy.shared_storage_limit_mib,
+        )?;
         let mailbox_status = mailbox.clone();
         let publish = move |record: &novovm_network::product_directory::PeerSignedRelayRecordV1| {
             (|| -> Result<()> {

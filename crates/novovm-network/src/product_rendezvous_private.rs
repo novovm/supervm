@@ -1,6 +1,7 @@
 //! Private APFL admission and announcements for the original service owner.
 #[cfg(feature = "private-apfl-listener")]
 use crate::{
+    bound_session::ServicePeerPolicyV1,
     carrier_stream::CarrierStreamV1,
     iroh_transport::IrohScopeV1,
     novorudp::wire_budget::NativeWireBudget,
@@ -114,7 +115,9 @@ pub struct PrivateApflIngress {
     predecessors: Vec<Vec<u8>>,
     successor: Option<PrivateApflSuccessor>,
     mailbox_admission: Option<super::PrivateMailboxAdmission>,
+    origin_admission: Option<super::PrivateMailboxAdmission>,
     budget: HopBudget,
+    renewal_budget: Option<HopBudget>,
     publication: Mutex<Option<PrivateApflAnnouncement>>,
     successor_update: Mutex<()>,
     epochs: Mutex<Option<(Arc<PrivateHopKey>, Option<Arc<PrivateHopKey>>)>>,
@@ -134,7 +137,7 @@ impl PrivateApflIngress {
             |key: &[u8]| key.len() == MLDSA65_PUBLIC_KEY_BYTES && key.iter().any(|b| *b != 0);
         ensure!(
             scope != [0; 32]
-                && (1..=16).contains(&predecessors.len())
+                && predecessors.len() <= 16
                 && predecessors.iter().all(|key| valid_pin(key))
                 && successor.as_ref().is_none_or(|pin| {
                     valid_pin(&pin.identity) && !predecessors.contains(&pin.identity)
@@ -146,6 +149,8 @@ impl PrivateApflIngress {
             predecessors: predecessors.into_iter().collect(),
             successor,
             mailbox_admission: None,
+            origin_admission: None,
+            renewal_budget: None,
             budget: Arc::new(Mutex::new(NativeWireBudget::new(
                 max_wire_bytes_per_minute,
                 Instant::now(),
@@ -159,14 +164,50 @@ impl PrivateApflIngress {
 
     pub fn with_autonomous_mailbox(
         mut self,
-        config: super::PrivateMailboxAdmissionConfig,
+        admission: super::PrivateMailboxAdmission,
     ) -> Result<Self> {
         ensure!(
             self.successor.is_none(),
             "autonomous mailbox admission belongs to the terminal"
         );
-        self.mailbox_admission = Some(super::PrivateMailboxAdmission::new(config)?);
+        self.mailbox_admission = Some(admission);
         Ok(self)
+    }
+
+    pub fn with_autonomous_origin(
+        mut self,
+        admission: super::PrivateMailboxAdmission,
+        renewal_bytes_per_minute: u64,
+    ) -> Result<Self> {
+        ensure!(
+            self.successor.is_some(),
+            "autonomous origin requires a forwarding owner"
+        );
+        let now = Instant::now();
+        let renewal = NativeWireBudget::new(renewal_bytes_per_minute, now)?;
+        {
+            let mut budget = self
+                .budget
+                .lock()
+                .map_err(|_| anyhow::anyhow!("APFL byte budget unavailable"))?;
+            let business = budget
+                .usage(now)
+                .limit
+                .checked_sub(renewal_bytes_per_minute)
+                .context("APFL renewal share exceeds owner byte budget")?;
+            budget.set_limit(business, now)?;
+        }
+        self.origin_admission = Some(admission);
+        self.renewal_budget = Some(Arc::new(Mutex::new(renewal)));
+        Ok(self)
+    }
+
+    fn adjacent_policy(&self) -> ServicePeerPolicyV1<'_> {
+        if self.origin_admission.is_some() {
+            ServicePeerPolicyV1::AnyAuthenticated
+        } else {
+            ServicePeerPolicyV1::Pinned(&self.predecessors)
+        }
     }
 
     pub(super) fn mailbox_admission(&self) -> Option<&super::PrivateMailboxAdmission> {
@@ -182,6 +223,7 @@ impl PrivateApflIngress {
         ensure!(
             record.relay_public_key == key.public_key()
                 && NativeCarrierMailboxEndpointV8::from_record(record)?.is_some()
+                && (!self.predecessors.is_empty() || self.origin_admission.is_some())
                 && !self.predecessors.iter().any(|pin| pin == key.public_key())
                 && self
                     .successor
@@ -231,21 +273,39 @@ impl PrivateApflIngress {
             .context("private APFL not announced")
     }
 
-    pub(super) async fn accept<'a>(
-        &self,
+    pub(super) async fn accept<'a, 'owner>(
+        &'owner self,
         stream: CarrierStreamV1<'a>,
         key: &TransportIdentity,
         epochs: &(Arc<PrivateHopKey>, Option<Arc<PrivateHopKey>>),
-    ) -> Result<(PrivateHopLink<'a>, OpenedPrivateHop)> {
-        PrivateHopLink::accept_rotating(
+    ) -> Result<(
+        PrivateHopLink<'a>,
+        OpenedPrivateHop,
+        Option<super::admission::PrivateMailboxGrant<'owner>>,
+    )> {
+        if let Some(owner) = &self.origin_admission {
+            owner.authenticate_at(Instant::now())?;
+        }
+        let (link, opened) = PrivateHopLink::accept_rotating(
             stream,
             key,
             &epochs.0,
             epochs.1.as_deref(),
-            &self.predecessors,
+            self.adjacent_policy(),
             self.budget.clone(),
         )
-        .await
+        .await?;
+        let grant = self
+            .origin_admission
+            .as_ref()
+            .map(|owner| {
+                let now = Instant::now();
+                let grant = owner.grant_at(link.authenticated_peer(), now)?;
+                grant.charge_at(1, now)?;
+                Ok::<_, anyhow::Error>(grant)
+            })
+            .transpose()?;
+        Ok((link, opened, grant))
     }
 
     pub(super) async fn connect<'a>(

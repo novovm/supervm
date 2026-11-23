@@ -305,6 +305,9 @@ pub(super) async fn serve_carrier(
         authority()
     };
     check()?;
+    if let Some(owner) = admission {
+        owner.authenticate_at(Instant::now())?;
+    }
     let (mut channel, peer) = match handshake {
         NativeCarrierHandshake::UtcV7 => {
             authenticate_structured_service_client_observed(
