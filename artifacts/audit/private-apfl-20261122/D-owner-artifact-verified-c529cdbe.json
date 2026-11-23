@@ -1,0 +1,13 @@
+{
+  "status": "D_APFL_OWNER_ARTIFACT_VERIFIED",
+  "utc": "2026-11-23T07:02:26.9242680+00:00",
+  "filename": "novovm-rendezvous-service-win64-3a0f0efe46f3.exe",
+  "bytes": 19236352,
+  "sha256": "3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1",
+  "copied_to_D_fixed_disk": true,
+  "candidate_source": "c529cdbe",
+  "deployed": false,
+  "reason": "Latest 54360c8a limits current window to existing-version file renewal; new A successor intake window not yet published",
+  "owner_restarted": false,
+  "validator_modified": false
+}
