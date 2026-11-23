@@ -1,5 +1,16 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 23:32 CURRENT　补齐原 APFL owner 的续签失败阶段
+
+C 在原私密 APFL 流程增加 `APFL_RENEWAL_FAILED` 记录。每个 owner 最多五秒一次，
+记录 UTC 毫秒、固定阶段和超时类别。认证、读取请求、加载后继、拨后继、后继交互、
+验签及回送各有阶段。不输出地址、身份公钥、原始错误文本或消息数据。
+沿用原超时、信任、报文及失败处理。
+
+Windows 已通过 `cargo check --locked --offline -p novovm-network --lib --features private-apfl-listener`。
+现役 B 尚未部署本变更。下一次受控复测以单次 B 入口续签的 UTC 窗口比对 B、A、C，
+记录实际出现的本机失败阶段。若没有对应记录，继续保留未归因结论。
+
 ## 2026-11-23 23:24 CURRENT　A 回传 B 续签关闭窗口的现有日志
 
 A 核对北京时间 23:19:20–23:19:38。云 B 原 V8 owner PID 2733654 仍为 active，
