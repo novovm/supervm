@@ -1,0 +1,26 @@
+{
+  "status": "C_APFL_B_A_C_PUBLIC_RELAY_RENEWAL_PASSED",
+  "utc_begin": "2026-11-23T10:12:11.0079536+00:00",
+  "utc_end": "2026-11-23T10:12:30.2874450+00:00",
+  "exit_code": 0,
+  "probe_sha256": "a74e64e9da53ee7aadce4864b48ec5cab1a75dbc9c5d7cc771b0d41b792be7dc",
+  "first_hop_transport": "explicit Iroh relay-only, with IP transport disabled at C",
+  "first_hop_signed_relay": "https://euc1-1.relay.n0.iroh.link/",
+  "B_candidate_sha256_from_A_receipt": "e60738241fb4554d029506cfefd2c727fb72cbce7d08b72ae373e536e078f1e0",
+  "B_first_hint_sequence": 34,
+  "B_owner_pid_observed_via_ssh": 2733654,
+  "B_original_v2_pid_observed_via_ssh": 913371,
+  "records": [
+    { "host": "B", "role": "forwarder", "sequence": 37, "expires_at_ms": 1795428828570 },
+    { "host": "A", "role": "forwarder", "sequence": 2673, "expires_at_ms": 1795428812651 },
+    { "host": "C", "role": "terminal", "sequence": 3291, "expires_at_ms": 1795428808418 }
+  ],
+  "prior_run": { "exit_code": 1, "result": "deadline elapsed with the LAN-only owner-configured resolver" },
+  "resolver_confirmation": "Physical Ethernet configured resolver returned the public carrier address. Only the probe's resolver input changed.",
+  "D_A_C_lan_recheck": { "exit_code": 0, "D_sequence": 1506, "A_sequence": 2673, "C_sequence": 3291 },
+  "B_public_direct_udp_verified": false,
+  "D_public_carrier_verified": false,
+  "terminal_autonomous_admission_verified": false,
+  "handset_acceptance_verified": false,
+  "billing_enabled": false
+}

@@ -12,6 +12,7 @@
 //! carrier-reachability APPROVED_RELAY DNS_IP.
 //! Read-only private-path renewal with an ephemeral communication identity:
 //! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP.
+//! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 APPROVED_RELAY DNS_IP.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -49,7 +50,7 @@ async fn renew_private_path(args: &[String]) -> anyhow::Result<()> {
         pins: [Vec<u8>; 3],
     }
 
-    ensure!(args.len() == 8, "usage: renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP");
+    ensure!(args.len() == 8, "usage: renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP | APPROVED_RELAY DNS_IP");
     let seed: PrivateApflAnnouncement = serde_json::from_slice(&std::fs::read(&args[2])?)?;
     let trust: TrustedPath = serde_json::from_slice(&std::fs::read(&args[3])?)?;
     let library = Path::new(&args[4]);
@@ -61,20 +62,31 @@ async fn renew_private_path(args: &[String]) -> anyhow::Result<()> {
         now_ms()?,
         &verifier,
     )?;
-    let first: SocketAddrV4 = args[6].parse()?;
-    let local: Ipv4Addr = args[7].parse()?;
-    ensure!(
-        first.ip().is_private() && local.is_private(),
-        "LAN addresses required"
-    );
-    ensure!(
-        locator.direct.contains(&first.into()),
-        "approved LAN address missing from signed locator"
-    );
-    locator.direct = vec![first.into()];
-    locator.relays.clear();
-    let config = IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
-        .with_bind_address(SocketAddrV4::new(local, 0).into())?;
+    let relay_only = args[6].starts_with("https://");
+    let config = if relay_only {
+        ensure!(
+            locator.relays.contains(&args[6]),
+            "approved relay missing from signed locator"
+        );
+        locator.direct.clear();
+        locator.relays.retain(|relay| relay == &args[6]);
+        IrohConfigV1::new(&locator.relays, args[7].parse()?)?.with_relay_only()?
+    } else {
+        let first: SocketAddrV4 = args[6].parse()?;
+        let local: Ipv4Addr = args[7].parse()?;
+        ensure!(
+            first.ip().is_private() && local.is_private(),
+            "LAN addresses required"
+        );
+        ensure!(
+            locator.direct.contains(&first.into()),
+            "approved LAN address missing from signed locator"
+        );
+        locator.direct = vec![first.into()];
+        locator.relays.clear();
+        IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
+            .with_bind_address(SocketAddrV4::new(local, 0).into())?
+    };
     let deadline = Instant::now() + Duration::from_secs(45);
     let response = tokio::time::timeout_at(
         deadline.into(),
@@ -83,6 +95,9 @@ async fn renew_private_path(args: &[String]) -> anyhow::Result<()> {
             IrohControlV1::new(deadline, || Ok(()))?,
             move |scope| {
                 Box::pin(async move {
+                    if relay_only {
+                        scope.online().await.context("approved relay unavailable")?;
+                    }
                     renew_private_apfl_path(scope, &locator, &identity, &trust.pins, trust.scope)
                         .await
                 })
