@@ -7,6 +7,12 @@ C 核对了 A `754c5c77` 和 D `59ad74e4`。D 的现役进程在回执中仍是�
 D 专用加密 LAN 下载，按北京时间 **14:41:50** 前取用。正确 TLS 固定值的整文件
 读取和 SHA256 已在 C 自检，错误固定值拒绝。D 实收另等回执。
 
+同一个候选也已存入原 B SSH 受限交接目录，远端字节数和 SHA256 逐项读回一致。
+已有受限 SSH 配置的 A 或 D 可从
+`/home/ecs-user/.novovm-handoff/A-apfl-20261121-afc9c2f2/novovm-rendezvous-service-win64-3a0f0efe46f3.exe`
+读取。该副本供 LAN 窗口结束后取件。候选已在 C 用原公钥和原 AOEM 读验证第
+3066 号终点声明。证据只覆盖原声明验证，未切换 C 或 B 信箱。
+
 ```powershell
 $candidate = Join-Path $env:TEMP 'novovm-rendezvous-service-win64-3a0f0efe46f3.exe'
 $expected = '3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1'
