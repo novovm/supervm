@@ -1,0 +1,30 @@
+{
+  "source": "3f83ccfb",
+  "checked_beijing": "2026-11-23T23:10:09.2253618+08:00",
+  "A_pid": 27576,
+  "A_validator_pid": 18888,
+  "C_previous_sequence": 3333,
+  "C_received_sequence": 3552,
+  "C_adopted_sequence": 3552,
+  "C_adopted_expires_beijing": "2026-11-23T23:11:35.606+08:00",
+  "C_adopted_sha256": "60d4c7ad80c3fa454fc1172af3aaa17811a166c9b58cfb592b7761cb4da5a232",
+  "verifier": "private-apfl verified role=terminal sequence=3552",
+  "C_latest_verified_cache_sequence": 3555,
+  "C_latest_verified_cache_expires_at_ms": 1795446876000,
+  "A_to_C_V8_direct": {
+    "result": "PASS",
+    "C_signed_sequence": 3553
+  },
+  "B_public_V8_direct": {
+    "B_signed_sequence": 338,
+    "publisher_timer": "active",
+    "result": "PASS",
+    "B_owner_pid": 2733654,
+    "old_B_V2_pid": 913371
+  },
+  "B_cached_A_sequence": 2973,
+  "B_direct_full_renewal": "FAIL: renewal response closed by peer: scope finished (code 0)",
+  "D_relay_full_renewal": "FAIL: renewal response closed by peer: scope finished (code 0)",
+  "A_B_D_restarted": false,
+  "original_transactions_resent": false
+}
