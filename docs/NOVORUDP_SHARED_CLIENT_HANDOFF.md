@@ -14,6 +14,12 @@ scope、角色和时间。历史提示仅用于获取同一公钥的当期续签
 共享终点只验入口切换。终点离线领取需另有独立密文副本证据。旧信箱数据和云 B
 快照继续保全，不通过重新发消息获得验收回执。
 
+C 已从共享源码 `c529cdbe` 构建 Windows release owner。固定盘候选位于
+`%LOCALAPPDATA%/NOVOVM/apfl-owner-c529cdbe/novovm-rendezvous-service-win64-3a0f0efe46f3.exe`，
+大小 19,236,352 字节，SHA256
+`3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1`。
+这是 C 本机编译和哈希回执。A、D 仍需取得制品、核验各自原 owner 配置和实际签名路径。
+
 ## 2026-11-23 A 续签就绪，等待 C、D 确认新实测窗口
 
 北京时间 13:48 已确认 A 现役信箱的第 2402 号声明验签后写入原 B SSH 目录。
