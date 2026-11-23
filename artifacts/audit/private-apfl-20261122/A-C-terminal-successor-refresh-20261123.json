@@ -1,0 +1,53 @@
+{
+  "based_on_C_commit": "f9572c40",
+  "checked_beijing": "2026-11-23T18:41:54.4645976+08:00",
+  "A_pid": 27576,
+  "A_original_validator_pid": 18888,
+  "C_previous_sequence": 3312,
+  "C_received_sequence": 3323,
+  "C_adopted_sequence": 3323,
+  "C_adopted_expires_at_ms": 1795430574767,
+  "C_adopted_expires_beijing": "2026-11-23T18:42:54.767+08:00",
+  "C_adopted_sha256": "ca10a761f9960e94d7fa90f8bf8390f78cb527a769b96bd8020f5cd175d15aec",
+  "verifier": "private-apfl verified role=terminal sequence=3323",
+  "B_direct_native_renewal": {
+    "records": [
+      {
+        "expires_at_ms": 1795430572570,
+        "sequence": 66
+      },
+      {
+        "expires_at_ms": 1795430615856,
+        "sequence": 2703
+      },
+      {
+        "expires_at_ms": 1795430574767,
+        "sequence": 3323
+      }
+    ],
+    "result": "PASS",
+    "scope": "native_renewal_only"
+  },
+  "D_relay_native_renewal": {
+    "records": [
+      {
+        "expires_at_ms": 1795430617279,
+        "sequence": 1536
+      },
+      {
+        "expires_at_ms": 1795430615856,
+        "sequence": 2703
+      },
+      {
+        "expires_at_ms": 1795430634768,
+        "sequence": 3324
+      }
+    ],
+    "result": "PASS",
+    "scope": "native_renewal_only"
+  },
+  "C_native_cache_sequence": 3324,
+  "C_native_cache_expires_beijing": "2026-11-23T18:43:54.7680000+08:00",
+  "C_native_cache_verifier": "private-apfl verified role=terminal sequence=3324",
+  "mobile_or_business_authentication_verified": false
+}
