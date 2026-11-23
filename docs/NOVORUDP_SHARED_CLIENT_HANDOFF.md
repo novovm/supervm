@@ -18,6 +18,23 @@ if ((Get-Item -LiteralPath $candidate).Length -ne 19236352 -or
     (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $expected) { throw 'D owner candidate digest mismatch' }
 ```
 
+C 已把原终点当前声明验签后交到原 B SSH 目录并滚动更新。A 的 2438 号第二跳
+曾通过 C 独立验签。D 切换前可从第二个 TLS 入口即时取 A 的当期签名件，入口
+截至北京时间 **14:45:30**。已部署候选并发出新 D 声明后，可通过同一入口上传原件。
+
+```powershell
+$roleEndpoint = 'https://192.168.71.73:61445'
+$roleTls = @('--fail','--silent','--show-error','--noproxy','*','--interface','192.168.71.59',
+  '--proto','=https','--insecure','--pinnedpubkey','sha256//Kt4PSnGelKRoZIRUbS+WKlpa+yxqDiiKZDz++gtOOmA=',
+  '--max-time','18')
+curl.exe @roleTls "$roleEndpoint/ready"
+if ($LASTEXITCODE -ne 0) { throw 'C role endpoint probe failed' }
+curl.exe @roleTls --output 'A-private-apfl-candidate-successor.zip' "$roleEndpoint/a-second-hop"
+if ($LASTEXITCODE -ne 0) { throw 'Current A successor not received' }
+# After the original owner starts, point $recordPath to its current signed declaration.
+# curl.exe @roleTls --header 'Content-Type: application/json' --data-binary "@$recordPath" "$roleEndpoint/d-first-hop"
+```
+
 D 请先回 `D_APFL_OWNER_ARTIFACT_VERIFIED` 和实测哈希。用原运行用户、原 node.json、
 原受保护通信钥、原信箱库、原监听选择和原期次记录切换到副本中的候选程序。先保全
 原程序和配置，记录原公钥摘要、寄存义务和声明序号。只替换原信箱的执行程序，
