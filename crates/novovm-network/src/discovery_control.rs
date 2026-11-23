@@ -15,7 +15,7 @@ use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use std::{
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 // Historical deployed wire constants remain exact; ownership moved to NOVOVM.
@@ -605,7 +605,7 @@ where
         channel,
         owner,
         store,
-        false,
+        None,
         lookup_delay,
         delay_observer,
     )
@@ -619,10 +619,21 @@ pub async fn serve_authenticated_node_locators_v1(
     stream: &mut CarrierStreamV1<'_>,
     channel: BoundSecureChannelV1,
     store: Arc<Mutex<RendezvousStoreV1>>,
+    domain: (u64, [u8; 32], [u8; 32]),
+    verifier: &dyn crate::product_overlay::TransportVerifier,
 ) -> Result<Vec<u8>> {
     channel.verify_transport_binding(&stream.binding()?)?;
     let owner = channel.remote_identity_public_key().to_vec();
-    serve_finished_rpc(stream, channel, owner, store, true, None, &mut |_| Ok(())).await
+    serve_finished_rpc(
+        stream,
+        channel,
+        owner,
+        store,
+        Some((domain, verifier)),
+        None,
+        &mut |_| Ok(()),
+    )
+    .await
 }
 
 pub fn node_owner_id_v1(public_key: &[u8]) -> Result<[u8; 32]> {
@@ -642,7 +653,10 @@ async fn serve_finished_rpc<D>(
     mut channel: BoundSecureChannelV1,
     owner: Vec<u8>,
     store: Arc<Mutex<RendezvousStoreV1>>,
-    node_locators: bool,
+    locator_authority: Option<(
+        (u64, [u8; 32], [u8; 32]),
+        &dyn crate::product_overlay::TransportVerifier,
+    )>,
     mut lookup_delay: Option<Duration>,
     delay_observer: &mut D,
 ) -> Result<Vec<u8>>
@@ -652,9 +666,33 @@ where
     // The existing ephemeral store indexes an opaque owner, not a public key.
     // Bind that stable index to the authenticated ML-DSA identity, never a hint.
     let owner_id = node_owner_id_v1(&owner)?;
+    let node_locators = locator_authority.is_some();
     let offset = u64::from(node_locators);
     for sequence in (1 + offset)..=(MAX_REQUESTS + offset) {
         let request = receive(stream, &mut channel, sequence, REQUEST).await?;
+        let mut locator = None;
+        if let Some((domain, verifier)) = locator_authority {
+            if request.kind == NODE_PUT
+                && request.slot == [0; 32]
+                && request.revision > 0
+                && (1..=30_000).contains(&request.ttl_ms)
+            {
+                let wall: u64 = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)?
+                    .as_millis()
+                    .try_into()?;
+                if let Ok(record) =
+                    decode_node_locator_v1(&request.body, &owner, domain, wall, verifier)
+                {
+                    locator = Some((
+                        record.sequence,
+                        request
+                            .ttl_ms
+                            .min((record.expires_at_ms - wall).min(30_000) as u32),
+                    ));
+                }
+            }
+        }
         if request.kind == GET
             && request.revision == 0
             && request.ttl_ms == 0
@@ -717,17 +755,34 @@ where
                     if (request.kind == NODE_PUT) == node_locators
                         && (!node_locators || request.slot == [0; 32])
                         && request.revision > 0
-                        && (1..=30_000).contains(&request.ttl_ms) =>
+                        && (1..=30_000).contains(&request.ttl_ms)
+                        && (!node_locators || locator.is_some()) =>
                 {
                     let ttl = Duration::from_millis(u64::from(request.ttl_ms));
-                    let stored = if node_locators {
-                        store.put_node_locator_v1(
-                            owner_id,
-                            request.revision,
-                            ttl,
-                            request.body,
-                            now,
-                        )
+                    let stored = if let Some((sequence, ttl_ms)) = locator {
+                        // Existing public entries in this instance have already
+                        // passed the signed codec. The unsigned RPC revision cannot
+                        // roll their signed sequence back or overwrite an equal
+                        // sequence with different signed content.
+                        let prior = store.node_locator_v1(owner_id, now)?;
+                        if prior.as_ref().is_some_and(|prior| {
+                            let prior_sequence = node_locator::signed_sequence(&prior.ciphertext);
+                            prior_sequence.is_none_or(|prior_sequence| {
+                                prior_sequence > sequence
+                                    || (prior_sequence == sequence
+                                        && prior.ciphertext != request.body)
+                            })
+                        }) {
+                            Err(crate::opaque_rendezvous::RendezvousErrorV1::InvalidRecord)
+                        } else {
+                            store.put_node_locator_v1(
+                                owner_id,
+                                request.revision,
+                                Duration::from_millis(u64::from(ttl_ms)),
+                                request.body,
+                                now,
+                            )
+                        }
                     } else {
                         store.put(
                             owner_id,
@@ -827,6 +882,7 @@ mod tests {
         let client_pin = client_identity.public_key().to_vec();
         let node_pin = node_identity.public_key().to_vec();
         let instance = [113; 32];
+        let domain = (7, [8; 32], [9; 32]);
         let deadline = Instant::now() + Duration::from_secs(10);
         let store = Arc::new(Mutex::new(RendezvousStoreV1::new(instance, deadline)?));
         let owner = node_owner_id_v1(&client_pin)?;
@@ -870,10 +926,16 @@ mod tests {
                             &channel.seal_novorudp_frame(&frame)?,
                         )?)
                         .await?;
-                    let result =
-                        serve_authenticated_node_locators_v1(&mut stream, channel, store).await;
-                    // Last request is a forbidden owner override. Its rejection must
-                    // not become a receipt; the client then discards that session.
+                    let result = serve_authenticated_node_locators_v1(
+                        &mut stream,
+                        channel,
+                        store,
+                        domain,
+                        &node_identity,
+                    )
+                    .await;
+                    // The final request is a signed sequence rollback. The
+                    // rejected request must not replace the original locator.
                     ensure!(result.is_err());
                     Ok(())
                 })
@@ -884,7 +946,8 @@ mod tests {
             IrohControlV1::new(deadline, || Ok(()))?,
             move |scope| {
                 Box::pin(async move {
-                    client_tx.send(scope.address()?).unwrap();
+                    let address = scope.address()?;
+                    client_tx.send(address.clone()).unwrap();
                     let mut stream: CarrierStreamV1<'_> =
                         scope.connect(&node_rx.await?).await?.into();
                     let mut channel =
@@ -922,24 +985,42 @@ mod tests {
                     )?;
                     ensure!(client.get(owner).await.is_err());
                     ensure!(client.ack(owner, 1, private.digest).await.is_err());
-                    client.put_node_locator_v1(1, 5000, vec![21; 64]).await?;
+                    let now =
+                        u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+                    let endpoint =
+                        crate::product_service_lease::IrohServiceEndpointV1 { instance, address }
+                            .endpoint()?;
+                    let signed = crate::product_directory::sign_relay_record_v1(
+                        &client_identity,
+                        native_locator_id_v1(domain),
+                        vec![endpoint.clone()],
+                        now,
+                        now + 5000,
+                        11,
+                    )?;
+                    let published = encode_node_locator_v1(&signed, domain)?;
+                    client
+                        .put_node_locator_v1(1, 5000, published.clone())
+                        .await?;
                     ensure!(
                         client
                             .get_node_locator_v1(client_identity.public_key())
                             .await?
                             .context("public record absent")?
                             .ciphertext
-                            == vec![21; 64]
+                            == published
                     );
                     ensure!(client.get_node_locator_v1(&node_pin).await?.is_none());
+                    let stale = crate::product_directory::sign_relay_record_v1(
+                        &client_identity,
+                        native_locator_id_v1(domain),
+                        vec![endpoint],
+                        now,
+                        now + 5000,
+                        10,
+                    )?;
                     ensure!(client
-                        .request(
-                            NODE_PUT,
-                            node_owner_id_v1(&node_pin)?,
-                            2,
-                            5000,
-                            vec![22; 64]
-                        )
+                        .put_node_locator_v1(2, 5000, encode_node_locator_v1(&stale, domain)?)
                         .await
                         .is_err());
                     ensure!(client.failed);
@@ -962,8 +1043,8 @@ mod tests {
             store
                 .node_locator_v1(owner, Instant::now())?
                 .context("publisher record lost")?
-                .ciphertext
-                == vec![21; 64]
+                .revision
+                == 1
         );
         ensure!(store.stats(Instant::now())?.live_records == 2);
         Ok(())

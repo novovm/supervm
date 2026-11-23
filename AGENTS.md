@@ -1,5 +1,7 @@
 # Agent Highest Law
 
+NOVONET 自主入网与 NOVOCHAT 隐私规则以[统一隐私网络架构](docs/NOVONET_UNIFIED_PRIVACY_ARCHITECTURE.md)为准。旧版自主通信与私密 APFL 在同一 main 上融合，通讯执行按联系人授权和统一隐私要求选择路径。
+
 ## 2026-11-21 最高法条：唯一正式产品主线，发布前直接迭代
 
 用户明确：整个开发系统只维护一套正式产品代码和一套实际运行环境，以 `main` 为唯一

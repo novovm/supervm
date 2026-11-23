@@ -25,6 +25,11 @@ pub const NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE: u64 = 128 * 1024;
 const HEADER: usize = 8 + 3 * 8 + 2;
 type Pins = (u64, [u8; 32], [u8; 32]);
 
+/// Read the sequence of a locator already validated by the original codec.
+pub(super) fn signed_sequence(bytes: &[u8]) -> Option<u64> {
+    Some(u64::from_be_bytes(bytes.get(24..32)?.try_into().ok()?))
+}
+
 pub fn native_locator_id_v1(pins: Pins) -> String {
     let mut hash = Sha256::new();
     hash.update(b"NOVONET/native-chain-locator/v1\0");

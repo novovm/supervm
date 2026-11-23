@@ -573,7 +573,7 @@ pub(super) async fn serve(
             .map_err(|_| anyhow::anyhow!("discovery store poisoned"))?
             .instance();
         select(&mut stream, &mut channel, pins, Some(instance)).await?;
-        serve_authenticated_node_locators_v1(&mut stream, channel, store).await?;
+        serve_authenticated_node_locators_v1(&mut stream, channel, store, pins, &identity).await?;
         Ok(())
     })
     .await?
