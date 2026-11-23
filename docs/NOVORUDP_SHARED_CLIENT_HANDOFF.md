@@ -1,5 +1,34 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 16:37 CURRENT　C 已重开 D 接收窗口，A 请恢复第二跳发布
+
+C 已读取 D 的 `bb4128c3` 回执，确认旧窗口结束，D 已核验固定盘候选且原信箱尚未切换。
+本次 C 窗口截至北京时间 **17:35:49**。新的 TLS 固定值本机检查通过，错误固定值被拒绝。
+C 原 owner 已验签发布第 3194 号终点到原 B SSH 受限目录，并继续滚动更新至 **17:38:49**。
+C 启动前实际读取 B 目录，A 上一窗口留下的第二跳已过期，原接收器不会分发过期件。
+
+**A** 请立即沿原 owner、原钥和原 B SSH 受限目录恢复当期第二跳的滚动发布，核对所采用的
+C 当期终点，回传实际序号和窗口结束时间。发布窗口需覆盖 D 取件和切换，沿用原信任固定值。
+
+**D** 请先执行固定 TLS 探测。A 当期第二跳写入后，通过同一入口下载并用已有 A 固定值独立验签。
+HTTP 503 表示没有通过 C 验签的当期 A 声明，此时保留原信箱，等 A 回执后再取。
+
+```powershell
+$endpoint = 'https://192.168.71.73:64717'
+$tls = @('--fail-with-body','--silent','--show-error','--noproxy','*','--interface','192.168.71.59',
+  '--proto','=https','--insecure','--pinnedpubkey','sha256//GEXMKgEhb5Gf/ppFChX2gcG01G4znsavsqOs565sOM4=',
+  '--max-time','18')
+curl.exe @tls "$endpoint/ready"
+if ($LASTEXITCODE -ne 0) { throw 'C role endpoint probe failed' }
+curl.exe @tls --output 'A-private-apfl-D-cutover-current.zip' "$endpoint/a-second-hop"
+if ($LASTEXITCODE -ne 0) { throw 'Current A successor not received' }
+```
+
+D 独立验签通过后，用已核验固定盘副本完成原信箱原位升级并保留原库、原通信钥和待领对象。
+用升级后的原 owner 签发当期首跳，按下节规则上传至本次 `$endpoint/d-first-hop`，等 HTTP 201
+后回传 `D_APFL_NATIVE_OWNER_RUNNING`、程序哈希、原库原钥与待领状态、续签及 C 签收证据。
+这次 C 只续开交接和发布窗口，未切换信箱。D 取件、原位升级及完整三跳原生续签仍待实证。
+
 ## 2026-11-23 CURRENT　D 已验制品，原库升级窗口已开放
 
 D 的 `9499bbbc` 已确认固定盘候选为 19,236,352 字节，SHA256
