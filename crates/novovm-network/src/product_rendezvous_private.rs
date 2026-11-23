@@ -200,6 +200,11 @@ impl PrivateApflIngress {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn observed_wire_budget(&self) -> HopBudget {
+        self.budget.clone()
+    }
+
     pub(super) fn epochs(&self) -> Result<(Arc<PrivateHopKey>, Option<Arc<PrivateHopKey>>)> {
         self.epochs
             .lock()

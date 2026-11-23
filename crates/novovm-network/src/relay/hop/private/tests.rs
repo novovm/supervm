@@ -274,17 +274,38 @@ async fn private_apfl_v8_registers_stores_fetches_and_consumes_original_object()
 #[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
 #[tokio::test]
 async fn original_apfl_owner_publishes_and_dispatches_each_private_role() -> Result<()> {
-    original_owner_with_renewal(false).await
+    original_owner_with_renewal(OwnerRun::ExistingBulk).await
 }
 
 #[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
 #[tokio::test]
 async fn private_apfl_repeats_metadata_renewal_without_external_updates() -> Result<()> {
-    original_owner_with_renewal(true).await
+    original_owner_with_renewal(OwnerRun::RepeatRenewal).await
 }
 
 #[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
-async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
+#[tokio::test]
+async fn private_apfl_renewal_then_small_object_custody_and_receipt() -> Result<()> {
+    original_owner_with_renewal(OwnerRun::RenewSmall).await
+}
+
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
+#[tokio::test]
+async fn private_apfl_renewal_and_bulk_obey_the_same_owner_budget() -> Result<()> {
+    original_owner_with_renewal(OwnerRun::RenewBulk).await
+}
+
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
+#[derive(Clone, Copy)]
+enum OwnerRun {
+    ExistingBulk,
+    RenewSmall,
+    RenewBulk,
+    RepeatRenewal,
+}
+
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
+async fn original_owner_with_renewal(run: OwnerRun) -> Result<()> {
     use crate::product_rendezvous_owned::{PrivateApflAnnouncement, PrivateApflSuccessor};
     use tokio::sync::watch;
 
@@ -327,6 +348,7 @@ async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
         }
     };
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let budgets = Arc::new(std::sync::Mutex::new(Vec::new()));
     let first_run = Box::pin(real_private_owner(
         first.clone(),
         client.public_key().to_vec(),
@@ -334,6 +356,7 @@ async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
         Some(next(&second, first_next)),
         first_publish,
         stop.clone(),
+        budgets.clone(),
     ));
     let second_run = Box::pin(real_private_owner(
         second.clone(),
@@ -342,6 +365,7 @@ async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
         Some(next(&terminal, second_next)),
         second_publish,
         stop.clone(),
+        budgets.clone(),
     ));
     let terminal_run = Box::pin(real_private_owner(
         terminal.clone(),
@@ -350,6 +374,7 @@ async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
         None,
         terminal_publish,
         stop.clone(),
+        budgets.clone(),
     ));
     let client_run = async {
         first_ready.changed().await?;
@@ -416,9 +441,14 @@ async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
                         use crate::product_rendezvous_owned::renew_private_apfl_path;
                         let renew =
                             || renew_private_apfl_path(scope, &address, &client, &pins, SCOPE);
-                        let declarations = renew().await.context("initial metadata renewal")?;
-                        seed_available.store(false, std::sync::atomic::Ordering::Relaxed);
-                        if repeated_metadata {
+                        let declarations = if matches!(run, OwnerRun::ExistingBulk) {
+                            [first_ready, second_ready, terminal_ready].map(|r| r.borrow().clone().expect("observed owner publication"))
+                        } else {
+                            let declarations = renew().await.context("initial metadata renewal")?;
+                            seed_available.store(false, std::sync::atomic::Ordering::Relaxed);
+                            declarations
+                        };
+                        if matches!(run, OwnerRun::RepeatRenewal) {
                             assert!(renew_private_apfl_path(
                                 scope, &address, &client, &pins, [37; 32]
                             )
@@ -450,9 +480,18 @@ async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
                         )
                         .await
                         .context("normal circuit establishment after renewal")?;
-                        apfl_roundtrip(circuit, &client, terminal.public_key().to_vec())
-                            .await
-                            .context("existing V8 object and receipt after renewal")
+                        let bytes = if matches!(run, OwnerRun::RenewSmall) { 1024 } else { 40 * 1024 };
+                        let delivery = apfl_roundtrip(circuit, &client, terminal.public_key().to_vec(), bytes).await;
+                        if matches!(run, OwnerRun::RenewBulk) && delivery.is_err() {
+                            // A remote transport close alone is not evidence of a rate limit.
+                            let usage: Vec<_> = budgets.lock().unwrap().iter().map(|b: &HopBudget|
+                                b.lock().unwrap().usage(Instant::now())).collect();
+                            ensure!(usage.iter().any(|u| u.receive_dropped > 0 || u.send_deferred > 0),
+                                    "large delivery failed without owner budget exhaustion: {delivery:?}");
+                            ensure!(usage.iter().all(|u| u.limit == 512 * 1024 && u.used <= u.limit));
+                            return Ok(());
+                        }
+                        delivery.context("existing V8 object and receipt")
                     })
                 },
             )
@@ -483,6 +522,7 @@ async fn real_private_owner(
         Option<crate::product_rendezvous_owned::PrivateApflAnnouncement>,
     >,
     stop: Arc<std::sync::atomic::AtomicBool>,
+    budgets: Arc<std::sync::Mutex<Vec<HopBudget>>>,
 ) -> Result<()> {
     use crate::product_rendezvous_owned::{
         run_self_owned_node_with_native_tls_v8, NativeMailboxListenerV7, PrivateApflIngress,
@@ -500,6 +540,7 @@ async fn real_private_owner(
             Ok(())
         },
     )?;
+    budgets.lock().unwrap().push(ingress.observed_wire_budget());
     let dir = tempfile::tempdir()?;
     let resources = ServiceConcurrencyV1::from_host();
     let listen = "127.0.0.1:0".parse()?;
@@ -703,7 +744,7 @@ async fn roundtrip(apfl: bool) -> Result<()> {
                 )
                 .await?;
                 if apfl {
-                    apfl_roundtrip(circuit, &client, node).await?;
+                    apfl_roundtrip(circuit, &client, node, 40 * 1024).await?;
                 } else {
                     circuit.write_frame(b"original request").await?;
                     assert_eq!(circuit.read_frame().await?, b"original response");
@@ -730,6 +771,7 @@ async fn apfl_roundtrip(
     circuit: PrivateCircuit<'_>,
     client: &TransportIdentity,
     node: Vec<u8>,
+    object_bytes: usize,
 ) -> Result<()> {
     let mut stream = CarrierStreamV1::from(circuit);
     let (channel, _) = authenticate_mailbox_native_v8(
@@ -752,7 +794,7 @@ async fn apfl_roundtrip(
         NativeMailboxDriver::attach_adaptive(&mut link, 0, node.clone(), resources)?;
     let expires = i64::try_from(wall()? / 1000)? + 300;
     let (box_id, write, read, object) = ([71; 32], [72; 32], [73; 32], [74; 32]);
-    let bytes: Vec<u8> = (0..40 * 1024).map(|index| (index % 251) as u8).collect();
+    let bytes: Vec<u8> = (0..object_bytes).map(|index| (index % 251) as u8).collect();
     let digest: [u8; 32] = Sha256::digest(&bytes).into();
     let work = async {
         let run = |request| {
