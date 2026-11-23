@@ -1,0 +1,16 @@
+{
+  "status": "D_CURRENT_OWNER_VERSION_REPORTED",
+  "utc": "2026-11-23T05:48:27.4295880+00:00",
+  "owner_pid": 56632,
+  "binary_sha256": "7724864f13f676c65eb1c165009d353337d35cfe41304d5b652c6693d77d2e53",
+  "current_private_sequence": 1240,
+  "private_record_valid_now": true,
+  "native_renewal_93bc6371_deployed": false,
+  "autonomous_admission_5007e525_deployed": false,
+  "previous_rolling_result": "WINDOW_ENDED",
+  "previous_last_accepted_D": 506,
+  "previous_last_A": 1668,
+  "source_synced": "5007e525",
+  "deployment_performed": false,
+  "next": "Provide approved native-renewal owner artifact and configuration handoff; preserve same owner identity and pending custody"
+}
