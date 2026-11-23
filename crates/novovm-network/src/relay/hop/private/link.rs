@@ -148,6 +148,67 @@ impl PrivateReadHalf<'_> {
 }
 
 impl<'a> PrivateHopLink<'a> {
+    pub(crate) async fn connect_metadata(
+        mut stream: CarrierStreamV1<'a>,
+        identity: &TransportIdentity,
+        pin: &[u8],
+        selector: &[u8; 8],
+        budget: Option<HopBudget>,
+    ) -> Result<Self> {
+        stream.write_frame(selector).await?;
+        let channel = authenticate_structured_bound_session_observed(
+            &mut stream,
+            identity,
+            pin.to_vec(),
+            true,
+            &mut HandshakeReplayCacheV1::new(8),
+            &mut |_, _| Ok(()),
+        )
+        .await?;
+        channel.verify_transport_binding(&stream.binding()?)?;
+        Ok(Self {
+            stream,
+            shared: Shared {
+                channel: Arc::new(Mutex::new(channel)),
+                digest: commitment(selector),
+                budget,
+            },
+            peer: pin.to_vec(),
+            ready: true,
+            forward: None,
+        })
+    }
+
+    #[cfg(feature = "private-apfl-listener")]
+    pub(crate) async fn accept_metadata(
+        mut stream: CarrierStreamV1<'a>,
+        identity: &TransportIdentity,
+        pins: &[Vec<u8>],
+        selector: &[u8; 8],
+        budget: HopBudget,
+    ) -> Result<Self> {
+        let (channel, peer) = authenticate_structured_service_client_observed(
+            &mut stream,
+            identity,
+            ServicePeerPolicyV1::Pinned(pins),
+            &mut HandshakeReplayCacheV1::new(8),
+            &mut |_, _| Ok(()),
+        )
+        .await?;
+        channel.verify_transport_binding(&stream.binding()?)?;
+        Ok(Self {
+            stream,
+            shared: Shared {
+                channel: Arc::new(Mutex::new(channel)),
+                digest: commitment(selector),
+                budget: Some(budget),
+            },
+            peer,
+            ready: true,
+            forward: None,
+        })
+    }
+
     pub async fn connect(
         mut stream: CarrierStreamV1<'a>,
         identity: &TransportIdentity,
@@ -266,12 +327,16 @@ impl<'a> PrivateHopLink<'a> {
         Ok(())
     }
 
-    async fn read_record(&mut self) -> Result<Vec<u8>> {
+    pub(crate) async fn finish_metadata(&mut self) -> Result<()> {
+        self.stream.finish().await
+    }
+
+    pub(crate) async fn read_record(&mut self) -> Result<Vec<u8>> {
         ensure!(self.ready, "private adjacent link not confirmed");
         self.read().await
     }
 
-    async fn write_record(&mut self, bytes: &[u8]) -> Result<()> {
+    pub(crate) async fn write_record(&mut self, bytes: &[u8]) -> Result<()> {
         ensure!(self.ready, "private adjacent link not confirmed");
         self.write(bytes).await
     }

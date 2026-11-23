@@ -296,11 +296,13 @@ fn private_apfl_ingress(
     let settings: Settings = serde_json::from_slice(&read_bounded(&path, 512 * 1024)?)?;
     let successor = settings.successor.map(|identity| {
         let path = root.join("private-apfl-next.json");
+        let cache = path.clone();
         PrivateApflSuccessor {
             identity,
             declaration: Box::new(move || {
                 Ok(serde_json::from_slice(&read_bounded(&path, 128 * 1024)?)?)
             }),
+            persist: Box::new(move |record| atomic(&cache, &serde_json::to_vec(record)?)),
         }
     });
     let publication = root.join("private-apfl-record.json");

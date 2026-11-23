@@ -86,6 +86,10 @@ impl PrivateHopDeclaration {
         now: u64,
         verifier: &dyn TransportVerifier,
     ) -> Result<VerifiedPrivateHop> {
+        Self::decode_wire(bytes)?.verify(pinned_identity, scope, now, verifier)
+    }
+
+    pub(crate) fn decode_wire(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() == KEY_WIRE.len() + KEY_FIELDS + MLDSA65_SIGNATURE_BYTES
                 && bytes.starts_with(KEY_WIRE),
@@ -97,15 +101,14 @@ impl PrivateHopDeclaration {
             2 => PrivateHopRole::Terminal,
             _ => anyhow::bail!("private hop announcement role"),
         };
-        Self {
+        Ok(Self {
             scope: bytes[..32].try_into()?,
             role,
             encryption_key: bytes[33..65].try_into()?,
             issued_ms: u64::from_be_bytes(bytes[65..73].try_into()?),
             expires_ms: u64::from_be_bytes(bytes[73..81].try_into()?),
             signature: bytes[KEY_FIELDS..].to_vec(),
-        }
-        .verify(pinned_identity, scope, now, verifier)
+        })
     }
 
     pub fn verify(

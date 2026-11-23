@@ -33,7 +33,53 @@ pub struct PrivateApflAnnouncement {
     pub declaration: Vec<u8>,
 }
 
+#[path = "product_rendezvous_private_renewal.rs"]
+mod renewal;
+pub use renewal::renew_private_apfl_path;
+#[cfg(feature = "private-apfl-listener")]
+pub(super) use renewal::RENEW;
+
 impl PrivateApflAnnouncement {
+    /// Continuity between two statements from an independently pinned owner.
+    /// Call verify() separately on the new statement at the current clock.
+    /// Locator and hop epoch have separate signing domains and lifetimes.
+    pub fn check_renewal(&self, next: &Self) -> Result<()> {
+        ensure!(
+            self.record.relay_public_key == next.record.relay_public_key
+                && next.record.issued_at_ms >= self.record.issued_at_ms
+                && (next.record.sequence > self.record.sequence
+                    || (next.record == self.record && next.declaration == self.declaration)),
+            "private APFL locator rollback or equivocation"
+        );
+        let old = PrivateHopDeclaration::decode_wire(&self.declaration)?;
+        let new = PrivateHopDeclaration::decode_wire(&next.declaration)?;
+        ensure!(
+            old.scope == new.scope
+                && old.role == new.role
+                && (new.issued_ms > old.issued_ms || next.declaration == self.declaration),
+            "private APFL hop epoch rollback or equivocation"
+        );
+        Ok(())
+    }
+
+    /// Authentic historical address for a fresh pinned metadata handshake only.
+    /// Business traffic still requires verify() at the current clock.
+    pub fn renewal_address(
+        &self,
+        pin: &[u8],
+        verifier: &dyn TransportVerifier,
+    ) -> Result<IrohAddressV1> {
+        ensure!(
+            self.record.relay_public_key == pin,
+            "private APFL renewal pin mismatch"
+        );
+        crate::product_directory::verify_relay_record_authenticity_v1(&self.record, verifier)?;
+        Ok(NativeCarrierMailboxEndpointV8::from_record(&self.record)?
+            .context("private APFL renewal needs a signed V8 locator")?
+            .iroh
+            .address)
+    }
+
     pub fn verify(
         &self,
         identity: &[u8],
@@ -58,6 +104,8 @@ impl PrivateApflAnnouncement {
 pub struct PrivateApflSuccessor {
     pub identity: Vec<u8>,
     pub declaration: Box<dyn Fn() -> Result<PrivateApflAnnouncement> + Send + Sync>,
+    /// Original owner atomically retains only a verified adjacent successor.
+    pub persist: Box<dyn Fn(&PrivateApflAnnouncement) -> Result<()> + Send + Sync>,
 }
 
 #[cfg(feature = "private-apfl-listener")]
@@ -66,6 +114,8 @@ pub struct PrivateApflIngress {
     predecessors: Vec<Vec<u8>>,
     successor: Option<PrivateApflSuccessor>,
     budget: HopBudget,
+    publication: Mutex<Option<PrivateApflAnnouncement>>,
+    successor_update: Mutex<()>,
     epochs: Mutex<Option<(Arc<PrivateHopKey>, Option<Arc<PrivateHopKey>>)>>,
     publish: Box<dyn Fn(&PrivateApflAnnouncement) -> Result<()> + Send + Sync>,
 }
@@ -99,6 +149,8 @@ impl PrivateApflIngress {
                 Instant::now(),
             )?)),
             epochs: Mutex::new(None),
+            publication: Mutex::new(None),
+            successor_update: Mutex::new(()),
             publish: Box::new(publish),
         })
     }
@@ -136,10 +188,16 @@ impl PrivateApflIngress {
             *epochs = Some((current, previous));
         }
         let (current, _) = epochs.as_ref().context("private APFL key epoch missing")?;
-        (self.publish)(&PrivateApflAnnouncement {
+        let active = PrivateApflAnnouncement {
             record: record.clone(),
             declaration: current.declaration().encode()?,
-        })
+        };
+        (self.publish)(&active)?;
+        *self
+            .publication
+            .lock()
+            .map_err(|_| anyhow::anyhow!("private APFL publication unavailable"))? = Some(active);
+        Ok(())
     }
 
     pub(super) fn epochs(&self) -> Result<(Arc<PrivateHopKey>, Option<Arc<PrivateHopKey>>)> {

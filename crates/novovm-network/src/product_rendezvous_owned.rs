@@ -70,7 +70,7 @@ pub use native::{NativeMailboxListenerV7, NativeMailboxResourcesUnavailableV1};
 #[path = "product_rendezvous_private.rs"]
 mod private;
 #[cfg(feature = "mailbox-seal")]
-pub use private::PrivateApflAnnouncement;
+pub use private::{renew_private_apfl_path, PrivateApflAnnouncement};
 #[cfg(feature = "private-apfl-listener")]
 pub use private::{PrivateApflIngress, PrivateApflSuccessor};
 
@@ -867,7 +867,10 @@ impl Node {
                     }
                 }
                 result = &mut extra_serving => { result?; anyhow::bail!("TLS mailbox listener ended"); }
-                Some(_) = active.next(), if !active.is_empty() => {}
+                Some(_outcome) = active.next(), if !active.is_empty() => {
+                    #[cfg(test)]
+                    if let Err(error) = _outcome { eprintln!("private owner operation completed with error: {error:#}"); }
+                }
                 accepted = &mut incoming, if active.len() < slots.limit() => {
                     incoming = Box::pin(scope.accept_inbound());
                     if let Ok(stream) = accepted {
@@ -892,6 +895,19 @@ impl Node {
                                 let admitted_at = Instant::now();
                                 let selector_deadline = (admitted_at + Duration::from_secs(3)).into();
                                 let request = tokio::time::timeout_at(selector_deadline, stream.read_frame()).await??;
+                                #[cfg(feature = "private-apfl-listener")]
+                                if request == private::RENEW {
+                                    let private = private.ok_or_else(|| anyhow::anyhow!("private APFL is disabled"))?;
+                                    let authority = || {
+                                        ensure!(!native_stop.load(Ordering::Acquire), "private APFL owner stopped");
+                                        host.check_continuous_native_carrier_v8(transport, now_ms()?)
+                                    };
+                                    authority()?;
+                                    return tokio::time::timeout_at(
+                                        (admitted_at + Duration::from_secs(30)).into(),
+                                        private.serve_renewal(stream, scope, key, authority),
+                                    ).await?;
+                                }
                                 #[cfg(feature = "private-apfl-listener")]
                                 if request == crate::relay::hop::private::PRIVATE_HOP_ENTRY {
                                     use crate::relay::hop::private::{OpenedPrivateHop, PrivateCircuit};

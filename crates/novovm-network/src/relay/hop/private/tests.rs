@@ -274,6 +274,17 @@ async fn private_apfl_v8_registers_stores_fetches_and_consumes_original_object()
 #[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
 #[tokio::test]
 async fn original_apfl_owner_publishes_and_dispatches_each_private_role() -> Result<()> {
+    original_owner_with_renewal(false).await
+}
+
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
+#[tokio::test]
+async fn private_apfl_repeats_metadata_renewal_without_external_updates() -> Result<()> {
+    original_owner_with_renewal(true).await
+}
+
+#[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
+async fn original_owner_with_renewal(repeated_metadata: bool) -> Result<()> {
     use crate::product_rendezvous_owned::{PrivateApflAnnouncement, PrivateApflSuccessor};
     use tokio::sync::watch;
 
@@ -283,14 +294,35 @@ async fn original_apfl_owner_publishes_and_dispatches_each_private_role() -> Res
     let (first_publish, mut first_ready) = watch::channel(None);
     let (second_publish, mut second_ready) = watch::channel(None);
     let (terminal_publish, mut terminal_ready) = watch::channel(None);
+    let seed_available = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let first_next = second_ready.clone();
     let second_next = terminal_ready.clone();
     let next = |identity: &TransportIdentity,
                 watch: watch::Receiver<Option<PrivateApflAnnouncement>>| {
+        let available = seed_available.clone();
+        let local = Arc::new(std::sync::Mutex::new(None::<PrivateApflAnnouncement>));
+        let read = local.clone();
         PrivateApflSuccessor {
             identity: identity.public_key().to_vec(),
             declaration: Box::new(move || {
-                watch.borrow().clone().context("fixture successor missing")
+                let mut current = read.lock().unwrap();
+                if let Some(record) = current.as_ref() {
+                    return Ok(record.clone());
+                }
+                ensure!(
+                    available.load(std::sync::atomic::Ordering::Relaxed),
+                    "initial seed removed"
+                );
+                let seed = watch
+                    .borrow()
+                    .clone()
+                    .context("fixture successor missing")?;
+                *current = Some(seed.clone());
+                Ok(seed)
+            }),
+            persist: Box::new(move |record| {
+                *local.lock().unwrap() = Some(record.clone());
+                Ok(())
             }),
         }
     };
@@ -332,25 +364,95 @@ async fn original_apfl_owner_publishes_and_dispatches_each_private_role() -> Res
                 .context("fixture publication missing")?
                 .verify(key.public_key(), SCOPE, now, &client)
         };
-        let (address, a) = verify(&first_ready, &first)?;
-        let (_, b) = verify(&second_ready, &second)?;
-        let (_, c) = verify(&terminal_ready, &terminal)?;
+        let (address, _) = verify(&first_ready, &first)?;
+        let original = first_ready
+            .borrow()
+            .clone()
+            .context("missing signed locator")?;
+        let newer_epoch = PrivateHopKey::issue(&first, SCOPE, PrivateHopRole::Forwarder, now + 1)?;
+        let sign_next = |sequence, declaration| -> Result<PrivateApflAnnouncement> {
+            Ok(PrivateApflAnnouncement {
+                record: sign_relay_record_v1(
+                    &first,
+                    &original.record.record_id,
+                    original.record.endpoints.clone(),
+                    now,
+                    original.record.expires_at_ms,
+                    sequence,
+                )?,
+                declaration,
+            })
+        };
+        let rotated = sign_next(
+            original.record.sequence + 1,
+            newer_epoch.declaration().encode()?,
+        )?;
+        original.check_renewal(&rotated)?;
+        let reused = sign_next(original.record.sequence + 2, rotated.declaration.clone())?;
+        rotated.check_renewal(&reused)?;
+        let rolled = sign_next(original.record.sequence + 3, original.declaration.clone())?;
+        // Both signatures and time windows still verify separately.
+        rolled.verify(first.public_key(), SCOPE, now + 1, &client)?;
+        assert!(reused.check_renewal(&rolled).is_err());
+        let conflict = PrivateHopKey::issue(&first, SCOPE, PrivateHopRole::Forwarder, now + 1)?;
+        let changed = sign_next(
+            original.record.sequence + 4,
+            conflict.declaration().encode()?,
+        )?;
+        changed.verify(first.public_key(), SCOPE, now + 1, &client)?;
+        assert!(rotated.check_renewal(&changed).is_err());
+        let pins = [
+            first.public_key().to_vec(),
+            second.public_key().to_vec(),
+            terminal.public_key().to_vec(),
+        ];
         assert!(verify(&first_ready, &second).is_err());
-        let route = PrivateRoute::new(client.public_key(), [&a, &b, &c], now)?;
         let owner = IrohEndpointOwnerV1::bind(config()?, || Ok(())).await?;
         owner
             .with_continuous_service_v4(
                 || Ok(()),
                 |scope| {
                     Box::pin(async move {
+                        use crate::product_rendezvous_owned::renew_private_apfl_path;
+                        let renew =
+                            || renew_private_apfl_path(scope, &address, &client, &pins, SCOPE);
+                        let declarations = renew().await.context("initial metadata renewal")?;
+                        seed_available.store(false, std::sync::atomic::Ordering::Relaxed);
+                        if repeated_metadata {
+                            assert!(renew_private_apfl_path(
+                                scope, &address, &client, &pins, [37; 32]
+                            )
+                            .await
+                            .is_err());
+                            let repeated = renew()
+                                .await
+                                .context("metadata renewal from retained seeds")?;
+                            for (previous, next) in declarations.iter().zip(&repeated) {
+                                previous.check_renewal(next)?;
+                            }
+                            return Ok(());
+                        }
+                        let now = wall()?;
+                        let mut hops = Vec::new();
+                        for (i, signed) in declarations.iter().enumerate() {
+                            hops.push(signed.verify(&pins[i], SCOPE, now, &client)?.1);
+                        }
+                        let route = PrivateRoute::new(
+                            client.public_key(),
+                            [&hops[0], &hops[1], &hops[2]],
+                            now,
+                        )?;
                         let circuit = PrivateCircuit::connect(
                             scope.connect(&address).await?.into(),
                             &client,
                             route,
                             None,
                         )
-                        .await?;
-                        apfl_roundtrip(circuit, &client, terminal.public_key().to_vec()).await
+                        .await
+                        .context("normal circuit establishment after renewal")?;
+                        apfl_roundtrip(circuit, &client, terminal.public_key().to_vec())
+                            .await
+                            .context("existing V8 object and receipt after renewal")
                     })
                 },
             )
