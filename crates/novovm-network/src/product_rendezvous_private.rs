@@ -113,6 +113,7 @@ pub struct PrivateApflIngress {
     scope: [u8; 32],
     predecessors: Vec<Vec<u8>>,
     successor: Option<PrivateApflSuccessor>,
+    mailbox_admission: Option<super::PrivateMailboxAdmission>,
     budget: HopBudget,
     publication: Mutex<Option<PrivateApflAnnouncement>>,
     successor_update: Mutex<()>,
@@ -144,6 +145,7 @@ impl PrivateApflIngress {
             scope,
             predecessors: predecessors.into_iter().collect(),
             successor,
+            mailbox_admission: None,
             budget: Arc::new(Mutex::new(NativeWireBudget::new(
                 max_wire_bytes_per_minute,
                 Instant::now(),
@@ -153,6 +155,22 @@ impl PrivateApflIngress {
             successor_update: Mutex::new(()),
             publish: Box::new(publish),
         })
+    }
+
+    pub fn with_autonomous_mailbox(
+        mut self,
+        config: super::PrivateMailboxAdmissionConfig,
+    ) -> Result<Self> {
+        ensure!(
+            self.successor.is_none(),
+            "autonomous mailbox admission belongs to the terminal"
+        );
+        self.mailbox_admission = Some(super::PrivateMailboxAdmission::new(config)?);
+        Ok(self)
+    }
+
+    pub(super) fn mailbox_admission(&self) -> Option<&super::PrivateMailboxAdmission> {
+        self.mailbox_admission.as_ref()
     }
 
     pub(super) fn publish_for(

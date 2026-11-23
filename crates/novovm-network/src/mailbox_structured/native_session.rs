@@ -940,6 +940,10 @@ pub struct MailboxWork {
     deadline: Instant,
 }
 impl MailboxWork {
+    pub(crate) fn admission_cost(&self) -> usize {
+        self.rows.max(1)
+    }
+
     pub(crate) fn deadline(&self) -> Instant {
         self.deadline
     }

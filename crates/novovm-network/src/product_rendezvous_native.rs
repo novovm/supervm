@@ -294,6 +294,7 @@ pub(super) async fn serve_carrier(
     concurrency: Option<Arc<ServiceConcurrencyV1>>,
     authority: impl Fn() -> Result<()> + Copy + Sync,
     handshake: NativeCarrierHandshake,
+    admission: Option<&super::admission::PrivateMailboxAdmission>,
 ) -> Result<()> {
     ensure!(
         key.public_key().to_vec() == service.identity_public_key(),
@@ -304,7 +305,7 @@ pub(super) async fn serve_carrier(
         authority()
     };
     check()?;
-    let (mut channel, _) = match handshake {
+    let (mut channel, peer) = match handshake {
         NativeCarrierHandshake::UtcV7 => {
             authenticate_structured_service_client_observed(
                 stream,
@@ -326,6 +327,16 @@ pub(super) async fn serve_carrier(
             )
             .await?
         }
+    };
+    let grant = admission
+        .map(|owner| owner.grant_at(&peer, Instant::now()))
+        .transpose()?;
+    let check = || {
+        check()?;
+        if let Some(grant) = &grant {
+            grant.check_at(Instant::now())?;
+        }
+        Ok(())
     };
     if let NativeCarrierHandshake::SessionClockV8 { received, deadline } = handshake {
         send_peer_time_v8(stream, &mut channel, received, deadline, check).await?;
@@ -349,6 +360,7 @@ pub(super) async fn serve_carrier(
         Admission::Carrier(permit),
         concurrency,
         check,
+        grant.as_ref(),
     )
     .await
 }
@@ -648,11 +660,13 @@ impl NativeMailboxListenerV7 {
             concurrency,
             authority,
             application,
+            None,
         )
         .await
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn serve_link(
     link: NativeObjectLink,
     readiness: Readiness<'_>,
@@ -661,6 +675,7 @@ async fn serve_link(
     admission: Admission,
     concurrency: Option<Arc<ServiceConcurrencyV1>>,
     authority: impl Fn() -> Result<()> + Copy,
+    grant: Option<&super::admission::PrivateMailboxGrant<'_>>,
 ) -> Result<()> {
     serve_link_with_application(
         link,
@@ -671,6 +686,7 @@ async fn serve_link(
         concurrency,
         authority,
         None,
+        grant,
     )
     .await
 }
@@ -685,6 +701,7 @@ async fn serve_link_with_application(
     concurrency: Option<Arc<ServiceConcurrencyV1>>,
     authority: impl Fn() -> Result<()> + Copy,
     mut application: Option<NativeApplicationDispatcherV1>,
+    grant: Option<&super::admission::PrivateMailboxGrant<'_>>,
 ) -> Result<()> {
     ensure!(
         link.local_identity() == service.identity_public_key(),
@@ -904,10 +921,13 @@ async fn serve_link_with_application(
                             entry.insert(server);
                         }
                     }
-                    servers
+                    let work = servers
                         .get_mut(&peer)
-                        .and_then(|server| server.admit(&link, body, now, authority).ok())
-                        .map(|work| (peer, work, None, None))
+                        .and_then(|server| server.admit(&link, body, now, authority).ok());
+                    if let (Some(grant), Some(work)) = (grant, &work) {
+                        grant.charge_at(work.admission_cost(), now)?;
+                    }
+                    work.map(|work| (peer, work, None, None))
                 }
                 None => None,
             }

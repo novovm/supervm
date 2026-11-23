@@ -130,6 +130,7 @@ async fn drained_network_hash_progress_starts_real_work_without_idle_timer() -> 
         },
         None,
         || Ok(()),
+        None,
     ));
     assert!(futures_util::poll!(owner.as_mut()).is_pending());
     let timings = serde_json::to_value(service.timing_snapshot_v1())?;

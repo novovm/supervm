@@ -61,8 +61,11 @@ fn adaptive_listener_rejects_missing_or_different_owner_controller() {
     assert!(check_shared_controller(Some(&a), Some(&a)).is_ok());
     assert!(check_shared_controller(Some(&a), None).is_ok());
 }
+#[path = "product_rendezvous_admission.rs"]
+mod admission;
 #[path = "product_rendezvous_native.rs"]
 mod native;
+pub use admission::{PrivateMailboxAdmission, PrivateMailboxAdmissionConfig};
 #[cfg(all(test, feature = "mailbox-seal"))]
 pub(crate) use native::mailbox_link_with_resources;
 pub use native::{NativeMailboxListenerV7, NativeMailboxResourcesUnavailableV1};
@@ -77,15 +80,13 @@ pub use private::{PrivateApflIngress, PrivateApflSuccessor};
 /// One already-confirmed private terminal circuit on the existing APFL owner.
 /// The caller supplies the owner's current offer, rendezvous generation and
 /// admission permit. The sealed circuit does not create mailbox authority.
-#[cfg(all(
-    feature = "mailbox-seal",
-    any(test, feature = "private-apfl-listener")
-))]
+#[cfg(all(feature = "mailbox-seal", any(test, feature = "private-apfl-listener")))]
 #[allow(clippy::too_many_arguments)]
 pub async fn serve_private_apfl_v8(
     circuit: crate::relay::hop::private::PrivateCircuit<'_>,
     identity: &TransportIdentity,
     clients: &[Vec<u8>],
+    admission: Option<&PrivateMailboxAdmission>,
     service: &crate::mailbox_rpc::MailboxServiceV1,
     stop: Arc<AtomicBool>,
     permit: Arc<tokio::sync::OwnedSemaphorePermit>,
@@ -98,7 +99,7 @@ pub async fn serve_private_apfl_v8(
 ) -> Result<()> {
     ensure!(
         !clients.is_empty(),
-        "private APFL requires the owner's pinned client policy"
+        "private APFL requires the owner's existing rendezvous policy"
     );
     let check = || {
         ensure!(!stop.load(Ordering::Acquire), "private APFL owner stopped");
@@ -128,7 +129,11 @@ pub async fn serve_private_apfl_v8(
             native::serve_carrier(
                 &mut stream,
                 identity,
-                ServicePeerPolicyV1::Pinned(clients),
+                if admission.is_some() {
+                    ServicePeerPolicyV1::AnyAuthenticated
+                } else {
+                    ServicePeerPolicyV1::Pinned(clients)
+                },
                 service,
                 stop.clone(),
                 permit,
@@ -138,6 +143,7 @@ pub async fn serve_private_apfl_v8(
                     received: clock,
                     deadline: start + Duration::from_secs(30),
                 },
+                admission,
             )
             .await
         }
@@ -944,6 +950,7 @@ impl Node {
                                                 circuit,
                                                 key,
                                                 clients.as_deref().ok_or_else(|| anyhow::anyhow!("private APFL requires pinned clients"))?,
+                                                private.mailbox_admission(),
                                                 mailbox.as_deref().ok_or_else(|| anyhow::anyhow!("private APFL requires the original mailbox"))?,
                                                 native_stop.clone(),
                                                 permit,
@@ -974,7 +981,7 @@ impl Node {
                                         &mut stream, key, mailbox_policy, mailbox, native_stop, permit, concurrency,
                                         || if kind == NodeServiceV1::MailboxNativeV8 {
                                             host.check_continuous_native_carrier_v8(transport, now_ms()?)
-                                        } else { host.check_continuous_native_carrier_v7(transport, now_ms()?) }, handshake,
+                                        } else { host.check_continuous_native_carrier_v7(transport, now_ms()?) }, handshake, None,
                                     ).await;
                                 }
                                 if kind == NodeServiceV1::MailboxPrefetch {

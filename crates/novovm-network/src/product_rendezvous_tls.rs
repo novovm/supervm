@@ -183,6 +183,7 @@ impl TlsMailboxListenerV1 {
                                 native::NativeCarrierHandshake::SessionClockV8 {
                                     received: clock, deadline: admitted_at + Duration::from_secs(30),
                                 },
+                                None,
                             ).await;
                         }
                         ensure!(kind == NodeServiceV1::MailboxPrefetch, "TLS listener requires NVMBOX06");

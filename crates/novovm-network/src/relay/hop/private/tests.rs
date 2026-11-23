@@ -263,12 +263,18 @@ async fn forwarder(
 
 #[tokio::test]
 async fn isolated_records_cross_two_authenticated_forwarders_on_real_carriers() -> Result<()> {
-    roundtrip(false).await
+    roundtrip(false, false).await
 }
 
 #[tokio::test]
 async fn private_apfl_v8_registers_stores_fetches_and_consumes_original_object() -> Result<()> {
-    roundtrip(true).await
+    roundtrip(true, false).await
+}
+
+#[tokio::test]
+async fn private_apfl_terminal_grants_unlisted_proved_device_but_keeps_capabilities() -> Result<()>
+{
+    roundtrip(true, true).await
 }
 
 #[cfg(all(feature = "tls-transport", feature = "private-apfl-listener"))]
@@ -481,7 +487,7 @@ async fn original_owner_with_renewal(run: OwnerRun) -> Result<()> {
                         .await
                         .context("normal circuit establishment after renewal")?;
                         let bytes = if matches!(run, OwnerRun::RenewSmall) { 1024 } else { 40 * 1024 };
-                        let delivery = apfl_roundtrip(circuit, &client, terminal.public_key().to_vec(), bytes).await;
+                        let delivery = apfl_roundtrip(circuit, &client, terminal.public_key().to_vec(), bytes, false).await;
                         if matches!(run, OwnerRun::RenewBulk) && delivery.is_err() {
                             // A remote transport close alone is not evidence of a rate limit.
                             let usage: Vec<_> = budgets.lock().unwrap().iter().map(|b: &HopBudget|
@@ -607,7 +613,7 @@ async fn real_private_owner(
     .await
 }
 
-async fn roundtrip(apfl: bool) -> Result<()> {
+async fn roundtrip(apfl: bool, autonomous_terminal: bool) -> Result<()> {
     let _permit = crate::SERVICE_TEST_SERIAL.acquire().await?;
     let Circuit {
         identity: [client, first, second, terminal],
@@ -703,11 +709,29 @@ async fn roundtrip(apfl: bool) -> Result<()> {
                     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let permit =
                         Arc::new(Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned()?);
-                    let clients = [terminal_client];
+                    use crate::product_rendezvous_owned::{
+                        PrivateMailboxAdmission, PrivateMailboxAdmissionConfig,
+                    };
+                    let admission = autonomous_terminal
+                        .then(|| {
+                            PrivateMailboxAdmission::new(PrivateMailboxAdmissionConfig {
+                                session_seconds: 30,
+                                requests_per_minute: 64,
+                                tracked_devices: 1,
+                                denied_clients: Default::default(),
+                            })
+                        })
+                        .transpose()?;
+                    let clients = [if autonomous_terminal {
+                        second.public_key().to_vec()
+                    } else {
+                        terminal_client
+                    }];
                     let result = serve_private_apfl_v8(
                         circuit,
                         &terminal,
                         &clients,
+                        admission.as_ref(),
                         &service,
                         stop,
                         permit,
@@ -744,7 +768,7 @@ async fn roundtrip(apfl: bool) -> Result<()> {
                 )
                 .await?;
                 if apfl {
-                    apfl_roundtrip(circuit, &client, node, 40 * 1024).await?;
+                    apfl_roundtrip(circuit, &client, node, 40 * 1024, autonomous_terminal).await?;
                 } else {
                     circuit.write_frame(b"original request").await?;
                     assert_eq!(circuit.read_frame().await?, b"original response");
@@ -772,6 +796,7 @@ async fn apfl_roundtrip(
     client: &TransportIdentity,
     node: Vec<u8>,
     object_bytes: usize,
+    check_wrong_capability: bool,
 ) -> Result<()> {
     let mut stream = CarrierStreamV1::from(circuit);
     let (channel, _) = authenticate_mailbox_native_v8(
@@ -835,6 +860,17 @@ async fn apfl_roundtrip(
             anyhow::bail!("private APFL custody missing");
         };
         receipt.verify(&node, box_id, object, &bytes, expires, client)?;
+        if check_wrong_capability {
+            assert!(matches!(
+                run(MailboxRequestV1::Fetch {
+                    mailbox: box_id,
+                    read: [99; 32]
+                })
+                .await?
+                .as_slice(),
+                [MailboxReplyV1::Rejected(_)]
+            ));
+        }
         let got = run(MailboxRequestV1::Fetch {
             mailbox: box_id,
             read,

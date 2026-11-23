@@ -277,8 +277,11 @@ pub fn verify_private_apfl_announcement(config: &Path, record: &Path, pin: &Path
 fn private_apfl_ingress(
     root: &Path,
     native_v8: bool,
+    explicit_storage_limit_mib: Option<u64>,
 ) -> Result<Option<novovm_network::product_rendezvous_owned::PrivateApflIngress>> {
-    use novovm_network::product_rendezvous_owned::{PrivateApflIngress, PrivateApflSuccessor};
+    use novovm_network::product_rendezvous_owned::{
+        PrivateApflIngress, PrivateApflSuccessor, PrivateMailboxAdmissionConfig,
+    };
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Settings {
@@ -286,6 +289,8 @@ fn private_apfl_ingress(
         predecessors: BTreeSet<Vec<u8>>,
         successor: Option<Vec<u8>>,
         max_wire_bytes_per_minute: u64,
+        #[serde(default)]
+        autonomous_mailbox: Option<PrivateMailboxAdmissionConfig>,
     }
     let path = root.join("private-apfl-policy.json");
     check_path(&path)?;
@@ -306,13 +311,23 @@ fn private_apfl_ingress(
         }
     });
     let publication = root.join("private-apfl-record.json");
-    Ok(Some(PrivateApflIngress::new(
+    let ingress = PrivateApflIngress::new(
         settings.scope,
         settings.predecessors,
         successor,
         settings.max_wire_bytes_per_minute,
         move |record| atomic(&publication, &serde_json::to_vec(record)?),
-    )?))
+    )?;
+    let ingress = if let Some(admission) = settings.autonomous_mailbox {
+        ensure!(
+            explicit_storage_limit_mib.is_some(),
+            "autonomous mailbox requires a provider storage limit"
+        );
+        ingress.with_autonomous_mailbox(admission)?
+    } else {
+        ingress
+    };
+    Ok(Some(ingress))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1017,7 +1032,11 @@ impl Owner {
         let native_selected = native_settings.is_some();
         let dual_selected = native_selected && self.native_carrier_mailbox_v8();
         #[cfg(feature = "tls-transport")]
-        let private_apfl = private_apfl_ingress(&config.root, dual_selected)?;
+        let private_apfl = private_apfl_ingress(
+            &config.root,
+            dual_selected,
+            self.policy.shared_storage_limit_mib,
+        )?;
         let relay_services_enabled =
             (!native_selected || dual_selected) && !effective_relays(&self.policy).is_empty();
         let key = self.key.clone();
