@@ -1,0 +1,54 @@
+{
+  "checked_beijing": "2026-11-23T23:37:46+08:00",
+  "B_active_binary_source": "b569f8cdf616f8bc9800e6674a674777963e0143",
+  "B_active_binary_sha256": "1ff5c87089ec05ae48ed474e37f4fcfcec8c5d2f0b12011191a5170357011208",
+  "shared_main_diagnostics_source": "35856ace",
+  "B_owner_pid_before": 2733654,
+  "B_owner_pid_after": 2916130,
+  "B_original_V2_pid": 913371,
+  "A_owner_pid": 27576,
+  "A_original_validator_pid": 18888,
+  "B_configuration_and_custody_hashes_unchanged": true,
+  "B_mailbox_db_quick_check": "ok",
+  "direct_carrier_post_startup": {
+    "result": "PASS",
+    "sequence": 363
+  },
+  "observed_renewal_errors": [
+    {
+      "at_beijing": "23:35:31",
+      "stage": "successor_connect",
+      "timed_out": false
+    },
+    {
+      "at_beijing": "23:36:03",
+      "stage": "successor_connect",
+      "timed_out": false
+    },
+    {
+      "at_beijing": "23:36:47",
+      "stage": "successor_connect",
+      "timed_out": false
+    }
+  ],
+  "two_successful_warm_direct_probes": {
+    "elapsed_ms": [
+      10056,
+      10876
+    ],
+    "sequences": [
+      364,
+      2997,
+      3579
+    ]
+  },
+  "independent_cloud_B_to_A_relay_carrier": {
+    "result": "PASS",
+    "A_sequence": 2997
+  },
+  "original_close_window_attribution": "not established retroactively",
+  "successor_connect_exact_error": "not emitted",
+  "diagnostics_only": true,
+  "changed_timeouts": false,
+  "transactions_resent": false
+}

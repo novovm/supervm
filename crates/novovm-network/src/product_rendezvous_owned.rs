@@ -753,6 +753,8 @@ impl Node {
             expires_ms,
         }));
         let mut rotate_at = Instant::now() + Duration::from_secs(60);
+        #[cfg(feature = "private-apfl-listener")]
+        let renewal_last_observed = Mutex::new(None::<Instant>);
         let mut active = FuturesUnordered::new();
         let mut incoming = Box::pin(scope.accept_inbound());
         // Poll store maintenance alongside client futures. Awaiting sweep in
@@ -894,6 +896,8 @@ impl Node {
                         let concurrency = concurrency.clone();
                         #[cfg(feature = "private-apfl-listener")]
                         let private = private.as_ref();
+                        #[cfg(feature = "private-apfl-listener")]
+                        let renewal_last_observed = &renewal_last_observed;
                         active.push(async move {
                             let permit = Arc::new(permit);
                             let mut stream: CarrierStreamV1<'_> = stream.into();
@@ -903,28 +907,38 @@ impl Node {
                                 let request = tokio::time::timeout_at(selector_deadline, stream.read_frame()).await??;
                                 #[cfg(feature = "private-apfl-listener")]
                                 if request == private::RENEW {
-                                    let private = private.ok_or_else(|| anyhow::anyhow!("private APFL is disabled"))?;
                                     let authority = || {
                                         ensure!(!native_stop.load(Ordering::Acquire), "private APFL owner stopped");
                                         host.check_continuous_native_carrier_v8(transport, now_ms()?)
                                     };
-                                    let mut stage = "local_authority";
-                                    let result = tokio::time::timeout_at(
-                                        (admitted_at + Duration::from_secs(30)).into(),
-                                        private.serve_renewal(stream, scope, key, authority, &mut stage),
-                                    ).await;
-                                    match result {
-                                        Ok(result) => {
-                                            if result.is_err() {
-                                                private.report_renewal_failure(stage, false);
+                                    let mut phase = "owner_authority";
+                                    let result = async {
+                                        let private = private.ok_or_else(|| anyhow::anyhow!("private APFL is disabled"))?;
+                                        authority()?;
+                                        tokio::time::timeout_at(
+                                            (admitted_at + Duration::from_secs(30)).into(),
+                                            private.serve_renewal(stream, scope, key, &mut phase, authority),
+                                        ).await?
+                                    }.await;
+                                    // Preserve the original error and cleanup. Log only the
+                                    // local phase, at most once every five seconds per owner.
+                                    if let Err(error) = &result {
+                                        let observe = renewal_last_observed.lock().is_ok_and(|mut last| {
+                                            let now = Instant::now();
+                                            if last.is_some_and(|at| now.duration_since(at) < Duration::from_secs(5)) {
+                                                return false;
                                             }
-                                            return result;
-                                        }
-                                        Err(error) => {
-                                            private.report_renewal_failure(stage, true);
-                                            return Err(error.into());
+                                            *last = Some(now);
+                                            true
+                                        });
+                                        if observe {
+                                            use std::io::Write as _;
+                                            let kind = if error.is::<tokio::time::error::Elapsed>() { "deadline" } else { "error" };
+                                            let utc_ms = now_ms().unwrap_or_default();
+                                            let _ = writeln!(std::io::stderr().lock(), "APFL_RENEWAL_FAILED utc_ms={utc_ms} phase={phase} kind={kind}");
                                         }
                                     }
+                                    return result;
                                 }
                                 #[cfg(feature = "private-apfl-listener")]
                                 if request == crate::relay::hop::private::PRIVATE_HOP_ENTRY {

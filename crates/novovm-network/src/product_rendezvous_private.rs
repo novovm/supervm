@@ -140,7 +140,6 @@ pub struct PrivateApflIngress {
     origin_admission: Option<super::PrivateMailboxAdmission>,
     budget: HopBudget,
     renewal_budget: Option<HopBudget>,
-    last_renewal_failure: Mutex<Option<Instant>>,
     publication: Mutex<Option<PrivateApflAnnouncement>>,
     successor_update: Mutex<()>,
     epochs: Mutex<Option<(Arc<PrivateHopKey>, Option<Arc<PrivateHopKey>>)>>,
@@ -174,7 +173,6 @@ impl PrivateApflIngress {
             mailbox_admission: None,
             origin_admission: None,
             renewal_budget: None,
-            last_renewal_failure: Mutex::new(None),
             budget: Arc::new(Mutex::new(NativeWireBudget::new(
                 max_wire_bytes_per_minute,
                 Instant::now(),
