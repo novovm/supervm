@@ -1,0 +1,25 @@
+{
+  "status": "C_APFL_D_A_C_PUBLIC_RELAY_RENEWAL_PASSED",
+  "D_report": "f2afbb73",
+  "seed_source": "native LAN renewal from the independently pinned D owner",
+  "D_current_seed_sequence": 1523,
+  "D_carrier_key_sha256": "5567308dadeb35803016c7efb40be0184ff7b1672d293cbbac321f114dae02ce",
+  "utc_begin": "2026-11-23T10:29:19.774281+00:00",
+  "utc_end": "2026-11-23T10:29:40.434892+00:00",
+  "elapsed_ms": 20661,
+  "exit_code": 0,
+  "client_location": "validator-C host on the D LAN, first-hop IP transport disabled in the probe",
+  "path": "C client via signed public Iroh relay to D, then original A and C owners",
+  "first_hop_relay": "https://euc1-1.relay.n0.iroh.link/",
+  "records": [
+    { "host": "D", "role": "forwarder", "sequence": 1523, "expires_at_ms": 1795429835685 },
+    { "host": "A", "role": "forwarder", "sequence": 2690, "expires_at_ms": 1795429834646 },
+    { "host": "C", "role": "terminal", "sequence": 3308, "expires_at_ms": 1795429830210 }
+  ],
+  "B_distinct_direct_transport_A_receipt": "f3b80824",
+  "D_public_direct_udp_verified": false,
+  "external_handset_verified": false,
+  "terminal_business_admission_verified": false,
+  "node_restarted_by_C": false,
+  "billing_enabled": false
+}

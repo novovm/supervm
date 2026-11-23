@@ -13,6 +13,7 @@
 //! Read-only private-path renewal with an ephemeral communication identity:
 //! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP.
 //! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 APPROVED_RELAY DNS_IP.
+//! Append a new output filename to retain the independently verified first-hop announcement.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().collect();
@@ -50,7 +51,7 @@ async fn renew_private_path(args: &[String]) -> anyhow::Result<()> {
         pins: [Vec<u8>; 3],
     }
 
-    ensure!(args.len() == 8, "usage: renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP | APPROVED_RELAY DNS_IP");
+    ensure!((8..=9).contains(&args.len()), "usage: renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 (FIRST_LAN_ADDR LOCAL_IP | APPROVED_RELAY DNS_IP) [VERIFIED_FIRST_RECORD]");
     let seed: PrivateApflAnnouncement = serde_json::from_slice(&std::fs::read(&args[2])?)?;
     let trust: TrustedPath = serde_json::from_slice(&std::fs::read(&args[3])?)?;
     let library = Path::new(&args[4]);
@@ -106,6 +107,13 @@ async fn renew_private_path(args: &[String]) -> anyhow::Result<()> {
     )
     .await
     .context("private APFL renewal probe deadline")??;
+    if let Some(output) = args.get(8) {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)?;
+        serde_json::to_writer(file, &response[0])?;
+    }
     let records = response.map(|announcement| {
         serde_json::json!({
             "sequence": announcement.record.sequence,
