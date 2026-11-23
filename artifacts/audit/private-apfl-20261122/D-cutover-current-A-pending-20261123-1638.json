@@ -1,0 +1,13 @@
+{
+  "status": "D_APFL_PINNED_TLS_READY_WAITING_FOR_A_CURRENT_ANNOUNCEMENT",
+  "checked_at_beijing": "2026-11-23T16:38:43+08:00",
+  "handoff_commit": "9eba554b",
+  "window_deadline_beijing": "2026-11-23T17:35:49+08:00",
+  "pinned_tls_probe_http": 200,
+  "pinned_tls_probe_body": "D-to-C APFL receiver online",
+  "A_download_http": 503,
+  "A_download_body": "No current independently verified A announcement",
+  "A_download_curl_exit": 22,
+  "owner_replaced_or_stopped": false,
+  "request_to_A": "Resume current second-hop publication through the original controlled handoff. D has reached C and is waiting for the independently verified current A declaration before cutover."
+}
