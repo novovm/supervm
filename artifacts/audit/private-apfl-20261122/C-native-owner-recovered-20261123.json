@@ -1,0 +1,18 @@
+{
+  "status": "C_APFL_NATIVE_OWNER_RECOVERED_AFTER_DISK_FULL",
+  "utc": "2026-11-23T09:22:53.5693283+00:00",
+  "cutover_receipt": "19a0b83a",
+  "previous_owner_pid": 3196,
+  "owner_pid": 15136,
+  "binary_sha256": "3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1",
+  "sequence": 3242,
+  "udp_ports": [49432, 49433],
+  "mailboxes": 14,
+  "envelopes": 6,
+  "original_mailbox_rows_and_digests_unchanged": true,
+  "original_keys_and_config_unchanged": true,
+  "sqlite_quick_check": "ok",
+  "failure": "Concurrent probe build exhausted the system drive; owner exited with SQLite error 13 at TransportRun",
+  "recovery": "Moved only recent compiler artifacts and restarted the same new owner on its existing database",
+  "native_end_to_end_renewal": "not run; diagnostic build stopped on disk space"
+}
