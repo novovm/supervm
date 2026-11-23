@@ -1,0 +1,39 @@
+{
+  "original_database_open": true,
+  "autonomous_origin_limits": {
+    "requests_per_minute": 128,
+    "tracked_devices": 128,
+    "session_seconds": 60
+  },
+  "renewal_bytes_per_minute": 1048576,
+  "C_curl_exit": 0,
+  "original_protected_files_unchanged": true,
+  "original_config_unchanged": true,
+  "mailbox_summary": {
+    "quick_check": "ok",
+    "tables": {
+      "mailboxes": {
+        "rows": 0,
+        "content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "envelopes": {
+        "rows": 0,
+        "content_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "status": "D_APFL_NATIVE_OWNER_RUNNING",
+  "total_wire_bytes_per_minute": 67108864,
+  "owner_pid": 55536,
+  "D_sequence": 1439,
+  "public_key_sha256": "b2f3f787661fd53303e503694218362cc3a9f5beba443f3cee52a941dfbac5aa",
+  "validator_pid": 300,
+  "program_sha256": "3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1",
+  "native_end_to_end_renewal": "NOT_YET_VERIFIED",
+  "original_mailbox_rows_unchanged": true,
+  "account": "ASUS",
+  "utc": "2026-11-23T17:04:57.0927791+08:00",
+  "D_record_sha256": "fdb3d2c789ab2bd9c51610acfae020b6a8ba603b6952c38666af72eb760bf92f",
+  "A_sequence": 2598,
+  "C_http": "201"
+}
