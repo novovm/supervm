@@ -1,5 +1,39 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT　D 原信箱升级与候选交付
+
+C 核对了 A `754c5c77` 和 D `59ad74e4`。D 的现役进程在回执中仍是旧哈希
+`7724864f13f6…`，并报告缺候选。用户已明确要求 D 核验并升级原信箱。C 已开启
+D 专用加密 LAN 下载，按北京时间 **14:41:50** 前取用。正确 TLS 固定值的整文件
+读取和 SHA256 已在 C 自检，错误固定值拒绝。D 实收另等回执。
+
+```powershell
+$candidate = Join-Path $env:TEMP 'novovm-rendezvous-service-win64-3a0f0efe46f3.exe'
+$expected = '3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1'
+curl.exe --fail --silent --show-error --noproxy '*' --interface 192.168.71.59 `
+  --proto '=https' --insecure --pinnedpubkey 'sha256//zuJBoqZ5Pu7pWm+7NOVoqRhbLh5ARcYUw/bx/1TFdGY=' `
+  --max-time 30 --output $candidate 'https://192.168.71.73:57148/d-owner-c529cdbe.exe'
+if ($LASTEXITCODE -ne 0) { throw 'D owner download failed' }
+if ((Get-Item -LiteralPath $candidate).Length -ne 19236352 -or
+    (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash -ne $expected) { throw 'D owner candidate digest mismatch' }
+```
+
+D 请先回 `D_APFL_OWNER_ARTIFACT_VERIFIED` 和实测哈希。用原运行用户、原 node.json、
+原受保护通信钥、原信箱库、原监听选择和原期次记录切换到副本中的候选程序。先保全
+原程序和配置，记录原公钥摘要、寄存义务和声明序号。只替换原信箱的执行程序，
+现役验证者不在范围。用原独立固定值验签 A 的当期后继。可在备份原策略后启用
+`autonomous_origin`，续签字节额度须在原总预算内拆分。启动后回传
+`D_APFL_NATIVE_OWNER_RUNNING`、程序哈希、原公钥摘要比对、原库打开、当期首跳
+签名、原寄存状态和真实 V8 续签结果。缺当期后继、启动异常或身份不符时保存结果。
+
+A 沿原受控目录对齐 C 的当期终点和 D 的 A 后继。第二首跳须以自己原有的合格
+V8 身份签名，使用与 D 区分的公网入口和载体钥，且后续路径经过 D 停机后仍可达的
+节点。请 A、D 回传可部署的独立 owner、完整验签链及 Wi-Fi／蜂窝可达证据。把
+同一首跳换一个地址或端口不能计入两个来源。云 B 原 V2 服务及快照仍保全。
+
+C 先核对两组当前签名和新机无邀请断路再原位升级两台手机。自动补投沿原队列，
+收端持久保存和发端设备回执以原对象为准。
+
 ## 2026-11-23 CURRENT　新机双源引导与部署缺口
 
 C 已核对 A `2456d18c` 和 D `1526e56c`。A 的最新回执覆盖旧链续签窗口。
