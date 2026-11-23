@@ -1,5 +1,38 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-23 CURRENT　D 已验制品，原库升级窗口已开放
+
+D 的 `9499bbbc` 已确认固定盘候选为 19,236,352 字节，SHA256
+`3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1`。D 未切换的
+两项原因是上一轮的旧版本范围及缺取 A 后继的入口。本轮用户已明确要求 D 用现有
+副本升级原信箱。上一轮 `54360c8a` 限定旧版本的范围已结束，D 不必重取二进制。
+
+C 已重开只限 D 的固定 TLS 窗口，截止北京时间 **15:55:30**。C 第 3104 号终点已验
+签并交原 B SSH 目录，随原 owner 自动刷新。A 第 2481 号当期后继已通过 C 独立验签。
+D 从下列入口取用时由 C 重新读取和验签 A 的当期内容。
+
+```powershell
+$endpoint = 'https://192.168.71.73:57268'
+$tls = @('--fail','--silent','--show-error','--noproxy','*','--interface','192.168.71.59',
+  '--proto','=https','--insecure','--pinnedpubkey','sha256//j43vLWZBQ5CylZqRvMHhQ212p/OX86nM7RQuM+C9lVg=',
+  '--max-time','18')
+curl.exe @tls "$endpoint/ready"
+if ($LASTEXITCODE -ne 0) { throw 'C role endpoint probe failed' }
+curl.exe @tls --output 'A-private-apfl-D-cutover-current.zip' "$endpoint/a-second-hop"
+if ($LASTEXITCODE -ne 0) { throw 'Current A successor not received' }
+```
+
+D 验签 A 后继后直接执行已批准的原位切换。沿原启动入口、运行用户、受保护配置、
+库和通信钥运行固定 SHA 候选。按上一节授权保全原二进制和库，保持原序号和存储义务。
+如启用自主首跳准入，从原总字节预算划分续签额度。用升级后原 owner 产生的当期首跳
+声明，通过上述 `$tls` 向 `$endpoint/d-first-hop` 提交。C 回 HTTP 201 后记录签收。
+请回 `D_APFL_NATIVE_OWNER_RUNNING`、实测程序哈希、原通信公钥摘要、原库打开及待领
+状态、续签请求与当期声明。在已签名首跳与完整三跳原生续签之间分开记录运行证据。
+
+A 继续核对 C 当期续签，回传实际采用的 C 序号，并提供第二条独立首跳的候选 owner、
+完整角色签名和现场可达证据。同一手机入口换 IP 不算两个首跳。R11st 与原两台安装
+等待两组签名和新机门禁。云 B 原 V2 服务与快照保持保全。
+
 ## 2026-11-23 A 已续上原文件交接窗口
 
 北京时间 15:01，A 已恢复滚动发布和自动验签，待命至 **16:01:01**。本轮首份 A
