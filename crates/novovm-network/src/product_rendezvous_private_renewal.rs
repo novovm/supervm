@@ -201,6 +201,22 @@ pub async fn renew_private_apfl_path(
 
 #[cfg(feature = "private-apfl-listener")]
 impl PrivateApflIngress {
+    pub(in crate::product_rendezvous_owned) fn report_renewal_failure(
+        &self,
+        stage: &'static str,
+        timed_out: bool,
+    ) {
+        let Ok(mut last) = self.last_renewal_failure.lock() else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        if last.is_some_and(|previous| now.duration_since(previous) < Duration::from_secs(5)) {
+            return;
+        }
+        *last = Some(now);
+        eprintln!("private APFL renewal failed stage={stage} timed_out={timed_out}");
+    }
+
     fn remember_successor(
         &self,
         successor: &PrivateApflSuccessor,
@@ -228,8 +244,11 @@ impl PrivateApflIngress {
         scope: &IrohScopeV1,
         identity: &TransportIdentity,
         authority: impl Fn() -> Result<()>,
+        stage: &mut &'static str,
     ) -> Result<()> {
         use std::time::Instant;
+        authority()?;
+        *stage = "predecessor_authentication";
         let budget = self.renewal_budget.as_ref().unwrap_or(&self.budget);
         if let Some(owner) = &self.origin_admission {
             owner.authenticate_at(Instant::now())?;
@@ -253,6 +272,7 @@ impl PrivateApflIngress {
             }
             Ok::<_, anyhow::Error>(())
         };
+        *stage = "request";
         check()?;
         let request = link.read_record().await?;
         ensure!(
@@ -281,6 +301,7 @@ impl PrivateApflIngress {
         let reply = slots.remove(0);
         let mut downstream = Vec::new();
         if let Some(next) = &self.successor {
+            *stage = "successor_locator";
             let original = slots[0];
             // Only the immediate successor is opened and retained locally.
             // Every more distant result travels upstream as opaque HPKE bytes.
@@ -288,7 +309,9 @@ impl PrivateApflIngress {
             slots[0] = local.public_key();
             let seed = (next.declaration)()?;
             let address = seed.renewal_address(&next.identity, identity)?;
+            *stage = "successor_connect";
             let stream = scope.connect_private_successor(&address).await?;
+            *stage = "successor_exchange";
             let mut results = query(
                 stream.into(),
                 identity,
@@ -297,6 +320,7 @@ impl PrivateApflIngress {
                 Some(budget.clone()),
             )
             .await?;
+            *stage = "successor_verification";
             check()?;
             let adjacent = open(
                 &results[0],
@@ -314,9 +338,11 @@ impl PrivateApflIngress {
                 depth - 1,
                 &encode(&adjacent)?,
             )?;
+            *stage = "successor_cache";
             self.remember_successor(next, &adjacent, &seed)?;
             downstream = results;
         }
+        *stage = "local_publication";
         check()?;
         let current = self
             .publication
@@ -337,6 +363,7 @@ impl PrivateApflIngress {
             depth,
             &encode(&current)?,
         )?;
+        *stage = "predecessor_response";
         for item in std::iter::once(own).chain(downstream) {
             link.write_record(&u32::try_from(item.len())?.to_be_bytes())
                 .await?;
@@ -345,6 +372,7 @@ impl PrivateApflIngress {
                 link.write_record(chunk).await?;
             }
         }
+        *stage = "predecessor_completion";
         ensure!(
             link.read_record().await? == DONE,
             "renewal completion differs"

@@ -908,11 +908,23 @@ impl Node {
                                         ensure!(!native_stop.load(Ordering::Acquire), "private APFL owner stopped");
                                         host.check_continuous_native_carrier_v8(transport, now_ms()?)
                                     };
-                                    authority()?;
-                                    return tokio::time::timeout_at(
+                                    let mut stage = "local_authority";
+                                    let result = tokio::time::timeout_at(
                                         (admitted_at + Duration::from_secs(30)).into(),
-                                        private.serve_renewal(stream, scope, key, authority),
-                                    ).await?;
+                                        private.serve_renewal(stream, scope, key, authority, &mut stage),
+                                    ).await;
+                                    match result {
+                                        Ok(result) => {
+                                            if result.is_err() {
+                                                private.report_renewal_failure(stage, false);
+                                            }
+                                            return result;
+                                        }
+                                        Err(error) => {
+                                            private.report_renewal_failure(stage, true);
+                                            return Err(error.into());
+                                        }
+                                    }
                                 }
                                 #[cfg(feature = "private-apfl-listener")]
                                 if request == crate::relay::hop::private::PRIVATE_HOP_ENTRY {
