@@ -1,0 +1,47 @@
+{
+  "checked_beijing": "2026-11-23T23:24:07+08:00",
+  "source_handoff": "acb1f19a",
+  "requested_window_beijing": [
+    "2026-11-23T23:19:20+08:00",
+    "2026-11-23T23:19:38+08:00"
+  ],
+  "client_close_beijing": "2026-11-23T23:19:37.510+08:00",
+  "client_observation": "renewal response closed by peer: scope finished (code 0)",
+  "B_owner": {
+    "unit": "novonet-apfl-first-hop.service",
+    "pid": 2733654,
+    "active": true,
+    "NRestarts": 0,
+    "runtime_source": "05d22008",
+    "binary_sha256": "e60738241fb4554d029506cfefd2c727fb72cbce7d08b72ae373e536e078f1e0",
+    "unit_journal_entries_in_window": 0,
+    "pid_journal_entries_in_window": 0
+  },
+  "B_publisher": {
+    "verified_before": {
+      "sequence": 343,
+      "time_beijing": "23:18:57"
+    },
+    "completed_in_window_beijing": "23:19:26",
+    "verified_after": {
+      "sequence": 344,
+      "time_beijing": "23:20:01"
+    },
+    "records_correlate_client_request": false
+  },
+  "observability": {
+    "service_journal": "service lease journal, not a per-request APFL log",
+    "owner_dispatch": "Production binary does not log the per-stream outcome; source prints the outcome under cfg(test).",
+    "close_reason": "Generic Iroh stream cleanup close reason"
+  },
+  "conclusion": {
+    "B_local_rejection": "unobserved",
+    "B_to_A_failure": "unobserved",
+    "A_or_C_returned_close": "unobserved",
+    "attributed_stage": null
+  },
+  "restarted_any_service": false,
+  "changed_timeouts": false,
+  "new_business_objects": false,
+  "transactions_resent": false
+}
