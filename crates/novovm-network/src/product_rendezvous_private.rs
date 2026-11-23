@@ -7,7 +7,7 @@ use crate::{
     novorudp::wire_budget::NativeWireBudget,
     product_overlay::{TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES},
     relay::hop::{
-        private::{OpenedPrivateHop, PrivateHopKey, PrivateHopLink, PrivateHopRole},
+        private::{OpenedPrivateHop, PrivateHopKey, PrivateHopLink},
         HopBudget,
     },
 };
@@ -16,7 +16,7 @@ use crate::{
     product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
     product_overlay::TransportVerifier,
     product_service_lease::NativeCarrierMailboxEndpointV8,
-    relay::hop::private::{PrivateHopDeclaration, VerifiedPrivateHop},
+    relay::hop::private::{PrivateHopDeclaration, PrivateHopRole, VerifiedPrivateHop},
 };
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -98,6 +98,28 @@ impl PrivateApflAnnouncement {
         let hop =
             PrivateHopDeclaration::verify_wire(&self.declaration, identity, scope, now, verifier)?;
         Ok((endpoint.iroh.address, hop))
+    }
+
+    /// Authenticate an APK-approved discovery hint, including its original
+    /// role. Even an expired hint can locate the same peer for fresh signed
+    /// metadata. This API intentionally cannot yield a VerifiedPrivateHop.
+    pub fn verify_bootstrap_hint(
+        &self,
+        identity: &[u8],
+        scope: [u8; 32],
+        role: PrivateHopRole,
+        now: u64,
+        verifier: &dyn TransportVerifier,
+    ) -> Result<IrohAddressV1> {
+        let hint = self.renewal_address(identity, verifier)?;
+        let declaration = PrivateHopDeclaration::decode_wire(&self.declaration)?;
+        ensure!(
+            self.record.issued_at_ms <= now && declaration.issued_ms <= now,
+            "private APFL bootstrap hint issued in the future"
+        );
+        let hop = declaration.verify(identity, scope, declaration.issued_ms, verifier)?;
+        ensure!(hop.role() == role, "private APFL bootstrap role differs");
+        Ok(hint)
     }
 }
 

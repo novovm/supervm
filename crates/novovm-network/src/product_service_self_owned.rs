@@ -189,6 +189,27 @@ impl ServiceLeaseBookV1 {
         now: u64,
         verifier: impl TransportVerifier + 'static,
     ) -> Result<Self> {
+        Self::initialize_self_owned(trust, records, now, verifier, false)
+    }
+
+    /// Only for a trusted distribution's initial dial hints. Historic inputs
+    /// authenticate a new service offer, never extend an old lease.
+    pub fn new_self_owned_bootstrap(
+        trust: SelfOwnedTrustV1,
+        records: Vec<PeerSignedRelayRecordV1>,
+        now: u64,
+        verifier: impl TransportVerifier + 'static,
+    ) -> Result<Self> {
+        Self::initialize_self_owned(trust, records, now, verifier, true)
+    }
+
+    fn initialize_self_owned(
+        trust: SelfOwnedTrustV1,
+        records: Vec<PeerSignedRelayRecordV1>,
+        now: u64,
+        verifier: impl TransportVerifier + 'static,
+        historical: bool,
+    ) -> Result<Self> {
         trust.validate()?;
         ensure!(
             records.len() == trust.node_pins.len(),
@@ -196,7 +217,14 @@ impl ServiceLeaseBookV1 {
         );
         let mut entries = BTreeMap::new();
         for record in records {
-            verify_service_record(&record, now, MAX_BOOTSTRAP_LEASE_MS, &verifier)?;
+            if historical {
+                ensure!(
+                    record.issued_at_ms <= now,
+                    "self-owned bootstrap from the future"
+                );
+            }
+            let verify_at = if historical { record.issued_at_ms } else { now };
+            verify_service_record(&record, verify_at, MAX_BOOTSTRAP_LEASE_MS, &verifier)?;
             ensure!(
                 trust.node_pins.contains(&record.relay_public_key),
                 "unconfirmed self-owned node"
