@@ -11,9 +11,9 @@
 //! Separate transport-only preflight (no custody operation):
 //! carrier-reachability APPROVED_RELAY DNS_IP.
 //! Read-only private-path renewal with an ephemeral communication identity:
-//! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_LAN_ADDR LOCAL_IP.
+//! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 FIRST_SIGNED_ADDR LOCAL_IP.
 //! renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 APPROVED_RELAY DNS_IP.
-//! Append a new output filename to retain the independently verified first-hop announcement.
+//! Append a new first-hop output filename and optionally a second filename for the full verified chain.
 //! check-private-admission takes the same inputs and authenticates the V8 terminal,
 //! then requests its signed service record without writing to any mailbox.
 #[tokio::main(flavor = "current_thread")]
@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
 async fn renew_private_path(args: &[String], check_admission: bool) -> anyhow::Result<()> {
     use anyhow::{ensure, Context};
     use novovm_network::{
-        iroh_transport::{with_iroh_scope_v1, IrohConfigV1, IrohControlV1},
+        iroh_transport::{IrohConfigV1, IrohEndpointOwnerV1},
         product_rendezvous_daemon::now_ms,
         product_rendezvous_owned::{renew_private_apfl_path, PrivateApflAnnouncement},
         relay::hop::private::{PrivateCircuit, PrivateHopRole, PrivateRoute},
@@ -55,7 +55,7 @@ async fn renew_private_path(args: &[String], check_admission: bool) -> anyhow::R
         pins: [Vec<u8>; 3],
     }
 
-    ensure!((8..=9).contains(&args.len()), "usage: renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 (FIRST_LAN_ADDR LOCAL_IP | APPROVED_RELAY DNS_IP) [VERIFIED_FIRST_RECORD]");
+    ensure!((8..=10).contains(&args.len()), "usage: renew-private-path FIRST_HINT TRUSTED_PINS AOEM_LIB AOEM_SHA256 (FIRST_SIGNED_ADDR LOCAL_IP | APPROVED_RELAY DNS_IP) [VERIFIED_FIRST_RECORD [VERIFIED_CHAIN]]");
     let seed: PrivateApflAnnouncement = serde_json::from_slice(&std::fs::read(&args[2])?)?;
     let trust: TrustedPath = serde_json::from_slice(&std::fs::read(&args[3])?)?;
     let library = Path::new(&args[4]);
@@ -80,12 +80,12 @@ async fn renew_private_path(args: &[String], check_admission: bool) -> anyhow::R
         let first: SocketAddrV4 = args[6].parse()?;
         let local: Ipv4Addr = args[7].parse()?;
         ensure!(
-            first.ip().is_private() && local.is_private(),
-            "LAN addresses required"
+            local.is_private(),
+            "local private interface address required"
         );
         ensure!(
             locator.direct.contains(&first.into()),
-            "approved LAN address missing from signed locator"
+            "approved address missing from signed locator"
         );
         locator.direct = vec![first.into()];
         locator.relays.clear();
@@ -93,69 +93,72 @@ async fn renew_private_path(args: &[String], check_admission: bool) -> anyhow::R
             .with_bind_address(SocketAddrV4::new(local, 0).into())?
     };
     let deadline = Instant::now() + Duration::from_secs(45);
-    let (response, admitted_key) = tokio::time::timeout_at(
-        deadline.into(),
-        with_iroh_scope_v1(
-            config,
-            IrohControlV1::new(deadline, || Ok(()))?,
-            move |scope| {
-                Box::pin(async move {
-                    if relay_only {
-                        scope.online().await.context("approved relay unavailable")?;
-                    }
-                    let response = renew_private_apfl_path(
-                        scope,
-                        &locator,
-                        &identity,
-                        &trust.pins,
-                        trust.scope,
-                    )
-                    .await
-                    .context("private path renewal")?;
-                    let admitted_key = if check_admission {
-                        let now = now_ms()?;
-                        let (fresh_first, first) =
-                            response[0].verify(&trust.pins[0], trust.scope, now, &identity)?;
-                        let (_, second) =
-                            response[1].verify(&trust.pins[1], trust.scope, now, &identity)?;
-                        let (terminal_address, terminal) =
-                            response[2].verify(&trust.pins[2], trust.scope, now, &identity)?;
-                        ensure!(
-                            fresh_first.endpoint_key == locator.endpoint_key,
-                            "first carrier changed during renewal"
-                        );
-                        let route = PrivateRoute::new(
-                            identity.public_key(),
-                            [&first, &second, &terminal],
-                            now,
-                        )?;
-                        let circuit = PrivateCircuit::connect(
-                            scope.connect(&locator).await?.into(),
+    let (response, admitted_key) = tokio::time::timeout_at(deadline.into(), async {
+        let owner = IrohEndpointOwnerV1::bind(config, || Ok(())).await?;
+        let result = owner
+            .with_continuous_service_v4(
+                || Ok(()),
+                move |scope| {
+                    Box::pin(async move {
+                        if relay_only {
+                            scope.online().await.context("approved relay unavailable")?;
+                        }
+                        let response = renew_private_apfl_path(
+                            scope,
+                            &locator,
                             &identity,
-                            route,
-                            None,
+                            &trust.pins,
+                            trust.scope,
                         )
                         .await
-                        .context("private circuit establishment")?;
-                        let mut stream =
-                            novovm_network::carrier_stream::CarrierStreamV1::from(circuit);
-                        probe::check_private_admission(
-                            &mut stream,
-                            &identity,
-                            &trust.pins[2],
-                            terminal_address.endpoint_key,
-                        )
-                        .await?;
-                        use sha2::{Digest, Sha256};
-                        Some(format!("{:x}", Sha256::digest(identity.public_key())))
-                    } else {
-                        None
-                    };
-                    Ok::<_, anyhow::Error>((response, admitted_key))
-                })
-            },
-        ),
-    )
+                        .context("private path renewal")?;
+                        let admitted_key = if check_admission {
+                            let now = now_ms()?;
+                            let (fresh_first, first) =
+                                response[0].verify(&trust.pins[0], trust.scope, now, &identity)?;
+                            let (_, second) =
+                                response[1].verify(&trust.pins[1], trust.scope, now, &identity)?;
+                            let (terminal_address, terminal) =
+                                response[2].verify(&trust.pins[2], trust.scope, now, &identity)?;
+                            ensure!(
+                                fresh_first.endpoint_key == locator.endpoint_key,
+                                "first carrier changed during renewal"
+                            );
+                            let route = PrivateRoute::new(
+                                identity.public_key(),
+                                [&first, &second, &terminal],
+                                now,
+                            )?;
+                            let circuit = PrivateCircuit::connect(
+                                scope.connect(&locator).await?.into(),
+                                &identity,
+                                route,
+                                None,
+                            )
+                            .await
+                            .context("private circuit establishment")?;
+                            let mut stream =
+                                novovm_network::carrier_stream::CarrierStreamV1::from(circuit);
+                            probe::check_private_admission(
+                                &mut stream,
+                                &identity,
+                                &trust.pins[2],
+                                terminal_address.endpoint_key,
+                            )
+                            .await?;
+                            use sha2::{Digest, Sha256};
+                            Some(format!("{:x}", Sha256::digest(identity.public_key())))
+                        } else {
+                            None
+                        };
+                        Ok::<_, anyhow::Error>((response, admitted_key))
+                    })
+                },
+            )
+            .await;
+        owner.close().await?;
+        result
+    })
     .await
     .context("private APFL renewal probe deadline")??;
     if let Some(output) = args.get(8) {
@@ -164,6 +167,13 @@ async fn renew_private_path(args: &[String], check_admission: bool) -> anyhow::R
             .create_new(true)
             .open(output)?;
         serde_json::to_writer(file, &response[0])?;
+    }
+    if let Some(output) = args.get(9) {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output)?;
+        serde_json::to_writer(file, &response)?;
     }
     let records = response.map(|announcement| {
         serde_json::json!({
