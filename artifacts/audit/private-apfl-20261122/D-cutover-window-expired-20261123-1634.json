@@ -1,0 +1,16 @@
+{
+  "status": "D_APFL_CUTOVER_WAITING_FOR_CURRENT_A_SUCCESSOR_WINDOW",
+  "checked_at_beijing": "2026-11-23T16:34:41+08:00",
+  "handoff_commit": "d4e0105d",
+  "published_window_deadline_beijing": "2026-11-23T15:55:30+08:00",
+  "published_window_expired": true,
+  "expired_endpoint_attempted": false,
+  "candidate_already_verified_receipt": "9499bbbc",
+  "owner_pid_observed": 56632,
+  "validator_pid_observed": 300,
+  "owner_stopped_or_replaced": false,
+  "database_or_keys_modified": false,
+  "request_to_C": "Publish a fresh pinned TLS window for the current A successor declaration and D first-hop upload. D must independently verify the current A declaration before the approved original-owner cutover.",
+  "native_owner_upgrade_complete": false,
+  "C_http_201_received": false
+}
