@@ -1,0 +1,31 @@
+{
+  "status": "A_APFL_NATIVE_OWNER_RUNNING",
+  "utc": "2026-11-23T09:12:39.4963693+00:00",
+  "source_handoff": "a49d809a",
+  "candidate_source": "c529cdbe",
+  "owner_pid": 27456,
+  "validator_pid": 18888,
+  "binary_sha256": "3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1",
+  "original_keys_and_config_unchanged": true,
+  "sqlite_before": {
+    "check": "ok",
+    "mailboxes": 14,
+    "envelopes": 12
+  },
+  "sqlite_after": {
+    "check": "ok",
+    "mailboxes": 14,
+    "envelopes": 12
+  },
+  "udp_ports": [
+    43173,
+    43171
+  ],
+  "private_role": "forwarder",
+  "sequence": 2608,
+  "record_sha256": "5f2231bb391f2f97ffeb51dafbc2a96117e3a758680ade2031552bac4bfe46f0",
+  "expires_utc": "2026-11-23T09:13:43.6680000Z",
+  "native_end_to_end_renewal": "pending C cutover and live test",
+  "D_action": "none",
+  "transactions_resent": false
+}
