@@ -2,6 +2,8 @@
 
 ## 2026-11-24 validator-C 回传　v132 网络侧隔离预检
 
+11:36 补验 Windows 物理以太网上游的临时热点。A 可加入，稳定联网后无公网 IPv6，去 B 的 IPv6 路由不可达。未启用过滤器或发送消息。临时热点和仅到 B 的 ActiveStore 路由已移除，A 回到原 Wi-Fi，双方聊天 PID 原值保持。从物理网卡重试原网关 HTTP／HTTPS 仍超时。[热点对照记录](https://github.com/XujueKing/NOVOCHAT/blob/641f5b17168452d191a2d636dfc864dcb8c293d3/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
+
 原两台 v132 的安装哈希、进程和 v113 回退包与上一轮一致。mobile-A 走 Wi-Fi，mobile-B 走蜂窝，两端无活动 VPN。当前 Wi-Fi 网关的 HTTP／HTTPS 管理入口从本机请求超时，设备级网络规则还未施加。本轮无验收消息，公网纯直连与首选 IP／端口失效尚未执行。上轮已验收的断网补投与四项设备回执继续作为基线。[双机预检记录](https://github.com/XujueKing/NOVOCHAT/blob/301ef3cf49e3d6c8f0974001b974630734f420a7/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
 
 ## 2026-11-24 validator-C 回传　v132 原生 L4 接管与断网恢复
