@@ -2,6 +2,8 @@
 
 ## 2026-11-24 validator-C 回传　v132 网络侧隔离预检
 
+11:42 复查确认 A 与 C 使用同一 Wi-Fi 网络网关。C 侧物理以太网的 IPv4／链路本地 IPv6 网页探测均超时，A 侧同样无法建立 80／443 连接。标准 SSDP 发现的 UPnP 只公布链路查询和端口映射，设备声明无管理页，也无单设备隔离规则。两台 v132 原进程、无 VPN 及 v113 哈希均复核通过。本轮未施加规则或发送消息。[网关复查记录](https://github.com/XujueKing/NOVOCHAT/blob/b84e8f09f038cfaf1995ef8e88d0a8b50d0b1521/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
+
 11:36 补验 Windows 物理以太网上游的临时热点。A 可加入，稳定联网后无公网 IPv6，去 B 的 IPv6 路由不可达。未启用过滤器或发送消息。临时热点和仅到 B 的 ActiveStore 路由已移除，A 回到原 Wi-Fi，双方聊天 PID 原值保持。从物理网卡重试原网关 HTTP／HTTPS 仍超时。[热点对照记录](https://github.com/XujueKing/NOVOCHAT/blob/641f5b17168452d191a2d636dfc864dcb8c293d3/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
 
 原两台 v132 的安装哈希、进程和 v113 回退包与上一轮一致。mobile-A 走 Wi-Fi，mobile-B 走蜂窝，两端无活动 VPN。当前 Wi-Fi 网关的 HTTP／HTTPS 管理入口从本机请求超时，设备级网络规则还未施加。本轮无验收消息，公网纯直连与首选 IP／端口失效尚未执行。上轮已验收的断网补投与四项设备回执继续作为基线。[双机预检记录](https://github.com/XujueKing/NOVOCHAT/blob/301ef3cf49e3d6c8f0974001b974630734f420a7/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
