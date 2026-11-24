@@ -873,7 +873,12 @@ node through the original Windows SCM, not a replacement daemon or sc wrapper.
 The config/NOVOVMNativeNode.json.example descriptor is NOT executable as-is:
 bind the approved native config, explicit runtime account and protected paths,
 rename it to the exact service name plus .json and pin it in the original
-deployment manifest. Install is demand-only and does not start the service.
+deployment manifest. Install does not start the service. The descriptor
+defaults to demand startup. Set "start_type": "automatic" explicitly for a
+resident validator. SCM restarts the native existing-state entry after the
+first and second consecutive failures (5 and 15 seconds), with no action
+from the third failure and a one-day failure-counter reset interval. Windows
+applies the recovery flag for reported service errors after the next boot.
 Password-free built-in/virtual account creation is separate from the ability to
 decrypt purpose materials: current-user DPAPI keys do not become service-account
 keys. Existing named-account services require exact owner adoption. Windows
