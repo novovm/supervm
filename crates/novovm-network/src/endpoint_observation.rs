@@ -1,95 +1,14 @@
 //! Authenticated endpoint observation on the existing NovoRUDP data stream.
 use crate::novorudp::{
     carrier::NativeRoute,
-    endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer, NativeReceivedFrame},
+    endpoint::{NativeEndpoint, NativePeer, NativeReceivedFrame},
     NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
 };
-use crate::product_overlay::TransportIdentity;
-use anyhow::ensure;
 use anyhow::{bail, Result};
 use rand::{rngs::OsRng, RngCore};
-use std::{
-    net::{IpAddr, SocketAddr, UdpSocket},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::net::{IpAddr, SocketAddr};
 
-const OBSERVATION_BUDGET: Duration = Duration::from_secs(3);
-pub(crate) const OBSERVATION_LIFETIME_MS: u64 = 80_000;
-
-/// Temporarily borrow the original bound socket before the mailbox loop takes
-/// ownership. None of these sessions survive this call or carry mailbox work.
-pub(crate) async fn observe_bound_socket_v2(
-    socket: &UdpSocket,
-    identity: TransportIdentity,
-    peers: Vec<NativePeer>,
-    max_bytes_per_minute: u64,
-    authority: impl Fn() -> Result<()>,
-) -> Result<Option<SocketAddr>> {
-    ensure!(
-        peers.len() == 2,
-        "two independently pinned observers required"
-    );
-    ensure!(
-        peers[0].key != peers[1].key && peers[0].address.ip() != peers[1].address.ip(),
-        "observer identities and IPs must differ"
-    );
-    let start = Instant::now();
-    let clock = || -> Result<u64> {
-        Ok(SystemTime::now()
-            .duration_since(UNIX_EPOCH)?
-            .as_millis()
-            .try_into()?)
-    };
-    authority()?;
-    let mut endpoint = NativeEndpoint::connect_clients(
-        socket.try_clone()?,
-        identity,
-        peers,
-        NativeHandshakeBudget {
-            lifetime: OBSERVATION_BUDGET,
-            retry: Duration::from_millis(350),
-        },
-        clock()?,
-        start,
-    )?;
-    endpoint.set_wire_budget_v1(max_bytes_per_minute, start)?;
-    let probes = [
-        EndpointObservationProbeV2::default(),
-        EndpointObservationProbeV2::default(),
-    ];
-    let mut sent = [None, None];
-    let mut address = [None, None];
-    while start.elapsed() < OBSERVATION_BUDGET {
-        authority()?;
-        for frame in endpoint.poll(clock()?, Instant::now(), 16)?.frames {
-            let peer = frame.peer();
-            if let Some(session) = sent[peer] {
-                if endpoint.session_id(peer) == Some(session) {
-                    address[peer] = probes[peer]
-                        .observed(&frame, peer, session)
-                        .filter(|address| is_public_observed_endpoint_v2(*address))
-                        .or(address[peer]);
-                }
-            }
-        }
-        if let [Some(first), Some(second)] = address {
-            authority()?;
-            // Destination-dependent mappings are not reusable signed routes.
-            return Ok((first == second).then_some(first));
-        }
-        for peer in 0..2 {
-            if let Some(session) = endpoint.session_id(peer) {
-                if sent[peer].is_none()
-                    && endpoint.try_send(peer, &probes[peer].request(session))?
-                {
-                    sent[peer] = Some(session);
-                }
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(15)).await;
-    }
-    Ok(None)
-}
+pub type ObservationSourcesV2 = std::sync::Arc<dyn Fn() -> Vec<NativePeer> + Send + Sync>;
 
 pub const ENDPOINT_OBSERVATION_STREAM: u64 = 1;
 const MAGIC: &[u8; 8] = b"NVNATP02";
@@ -243,7 +162,11 @@ pub fn decode_address(bytes: &[u8]) -> Result<SocketAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_identity::key;
+    use crate::{novorudp::endpoint::NativeHandshakeBudget, test_identity::key};
+    use std::{
+        net::UdpSocket,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn observer_returns_the_authenticated_socket_port_and_rejects_another_challenge() -> Result<()>

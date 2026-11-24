@@ -298,6 +298,13 @@ impl NativeObjectLink {
             diagnostics: None,
         })
     }
+    pub(crate) fn observe_listener_mapping(
+        &mut self,
+        peers: crate::endpoint_observation::ObservationSourcesV2,
+    ) -> Result<super::endpoint::observer_refresh::Observation> {
+        self.endpoint.observe_listener_mapping(peers, Instant::now())
+    }
+
     /// Explicit local test observer. It cannot change peer/session or IO state.
     pub fn observe_initial_send(&mut self, object: [u8; 32]) {
         self.observed_send = Some(object);

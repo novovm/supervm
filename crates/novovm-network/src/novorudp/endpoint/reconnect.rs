@@ -285,6 +285,7 @@ impl NativeEndpoint {
         use crate::product_overlay::handshake_wire::{decode, HandshakeMessage};
         self.expire_reconnects(now);
         let peer = &self.peers[&index];
+        ensure!(!peer.observation_only, "observation peer cannot accept inbound work");
         let (identity, budget) = if peer.configured_key.is_some() {
             let policy = self
                 .configured

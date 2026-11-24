@@ -102,7 +102,7 @@ async fn udp_runtime_failure_withdraws_locator_and_preserves_live_carrier() -> R
         },
     )?;
     let listener = NativeMailboxListenerV7 {
-        observed: None,
+        observation: None,
         link: mailbox_link(endpoint, false)?,
         readiness,
         connection_ceiling: route.max_connections,

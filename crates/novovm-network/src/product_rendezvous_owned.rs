@@ -644,24 +644,16 @@ impl Node {
         let expires_ms = now_ms()?
             .checked_add(90_000)
             .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
-        let minimum_observation_expiry = now_ms()?.saturating_add(65_000);
-        let observed = native
-            .as_ref()
-            .and_then(NativeMailboxListenerV7::observed_address)
-            .filter(|(_, expiry)| *expiry >= minimum_observation_expiry);
-        let expires_ms = observed.map_or(expires_ms, |(_, expiry)| expires_ms.min(expiry));
         let host = activate(&endpoint, expires_ms)?;
         let native_adaptive = native.as_ref().is_some_and(|n| n.concurrency().is_some());
         let native_wire_ceiling = native
             .as_ref()
             .and_then(NativeMailboxListenerV7::wire_ceiling);
         let native_bound = native.as_ref().map(|listener| listener.route().address);
+        let native_observation = native.as_ref().and_then(NativeMailboxListenerV7::observation);
         let mut native_route = native.as_ref().map(NativeMailboxListenerV7::current_route);
         if let Some(route) = &mut native_route {
             route.max_connections = route.max_connections.min(max_connections as u16);
-            if let Some((address, _)) = observed {
-                route.address = address;
-            }
         }
         #[cfg(feature = "tls-transport")]
         let tls_route = tls.as_ref().map(|listener| {
@@ -791,6 +783,32 @@ impl Node {
                     if stop.load(Ordering::Acquire) { break; }
                     if let Some(c) = &concurrency { c.refresh_host(); }
                     let now = Instant::now();
+                    let wall_ms = now_ms()?;
+                    let observed = native_observation.as_ref().and_then(|observation| {
+                        observation.current(wall_ms.saturating_add(1_000), now + Duration::from_secs(1))
+                    });
+                    if let (Some(route), Some(local)) = (&mut native_route, native_bound) {
+                        let desired = observed.map_or(local, |mapping| mapping.address);
+                        if route.address != desired {
+                            route.address = desired;
+                            let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
+                            let expiry = observed.map_or(current.expires_ms, |mapping| {
+                                current.expires_ms.min(mapping.expires_ms)
+                            });
+                            let record = host.rotate_native_mailbox_v7(Some(route), wall_ms, expiry)?;
+                            let service = mailbox.as_ref().ok_or_else(|| anyhow::anyhow!("native mailbox missing"))?;
+                            if NativeCarrierMailboxEndpointV8::from_record(&record)?.is_some() {
+                                service.update_native_record_v8(record.clone())?;
+                            } else {
+                                service.update_native_record_v7(record.clone())?;
+                            }
+                            publish(&record)?;
+                            #[cfg(feature = "private-apfl-listener")]
+                            if let Some(private) = &private {
+                                private.publish_for(&key, &record, wall_ms)?;
+                            }
+                        }
+                    }
                     if now >= rotate_at {
                         // The listener survives network changes. Re-signing its
                         // startup snapshot would preserve stale NAT/interface
@@ -817,9 +835,6 @@ impl Node {
                             let capacity = snapshot.inbound_connections().min(max_connections) as u16;
                             if native_adaptive {
                                 if let Some(route) = &mut native_route {
-                                    if let Some(address) = native_bound {
-                                        route.address = address;
-                                    }
                                     route.max_connections = capacity;
                                     if snapshot.wire_bytes_per_minute != 0 {
                                         route.max_bytes_per_minute = snapshot.wire_bytes_per_minute.min(native_wire_ceiling.unwrap_or(u64::MAX));
@@ -834,8 +849,10 @@ impl Node {
                             });
                             #[cfg(not(feature = "tls-transport"))]
                             let tls_route = None;
+                            let signed_expiry = observed.filter(|_| native_route.is_some())
+                                .map_or(expiry, |mapping| expiry.min(mapping.expires_ms));
                             host.rotate_self_owned_resources_v1(&endpoint, tls_route.as_ref(),
-                                native_route.as_ref(), capacity, now_ms()?, expiry)?
+                                native_route.as_ref(), capacity, now_ms()?, signed_expiry)?
                         } else {
                             host.rotate_self_owned(&endpoint, now_ms()?, expiry)?
                         };

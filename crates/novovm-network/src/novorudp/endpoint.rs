@@ -60,6 +60,7 @@ struct Peer {
     // Only bind[_shared] installs this pinned identity. An open client never
     // becomes a configured peer merely by using its key or source address.
     configured_key: Option<Vec<u8>>,
+    observation_only: bool,
     handshake: Option<NativeHandshake>,
     session: Option<NativeUdpSession>,
     streams: Option<BTreeSet<u64>>,
@@ -196,6 +197,8 @@ pub struct NativeEndpoint {
     wire_budget: Option<NativeWireBudget>,
     traffic_started: bool,
     endpoint_observer: bool,
+    observer_refresh: Option<observer_refresh::Refresh>,
+    observation_peer: Option<usize>,
     recovery_diagnostics: Option<Arc<NativeTransferDiagnosticsV1>>,
     continuation: handshake_continuation::Receiver,
 }
@@ -319,6 +322,7 @@ impl NativeEndpoint {
                 Peer {
                     id,
                     configured_key: None,
+                    observation_only: false,
                     handshake: None,
                     session: Some(session),
                     streams: Some(streams.into_iter().collect()),
@@ -336,6 +340,8 @@ impl NativeEndpoint {
             wire_budget: None,
             traffic_started: false,
             endpoint_observer: false,
+            observer_refresh: None,
+            observation_peer: None,
             recovery_diagnostics: None,
             continuation: handshake_continuation::Receiver::new(Instant::now()),
         })
@@ -397,6 +403,8 @@ impl NativeEndpoint {
             wire_budget: None,
             traffic_started: false,
             endpoint_observer: false,
+            observer_refresh: None,
+            observation_peer: None,
             recovery_diagnostics: None,
             continuation: handshake_continuation::Receiver::new(Instant::now()),
         };
@@ -471,6 +479,7 @@ impl NativeEndpoint {
                 Peer {
                     id: id.into(),
                     configured_key: Some(peer.key),
+                    observation_only: false,
                     handshake: Some(handshake),
                     session: None,
                     streams: None,
@@ -515,6 +524,8 @@ impl NativeEndpoint {
             wire_budget: None,
             traffic_started: false,
             endpoint_observer: false,
+            observer_refresh: None,
+            observation_peer: None,
             recovery_diagnostics: None,
             continuation,
         })
@@ -636,6 +647,7 @@ impl NativeEndpoint {
                 Peer {
                     id: id.into(),
                     configured_key: None,
+                    observation_only: false,
                     handshake: Some(handshake),
                     session: None,
                     streams: None,
@@ -675,6 +687,8 @@ impl NativeEndpoint {
             wire_budget: None,
             traffic_started: false,
             endpoint_observer: false,
+            observer_refresh: None,
+            observation_peer: None,
             recovery_diagnostics: None,
             continuation,
         })
@@ -703,7 +717,7 @@ impl NativeEndpoint {
         {
             return self.prepare_reconnect(index, source, wire, wall_ms, now);
         }
-        let full = self.peers.len() >= open.limit;
+        let full = self.peer_count() >= open.limit;
         self.waiting_clients
             .retain(|p| p.reconnect.as_ref().is_some_and(|r| now < r.deadline));
         if let Some(peer) = self
@@ -764,6 +778,7 @@ impl NativeEndpoint {
         let peer = Peer {
             id: id.into(),
             configured_key: None,
+            observation_only: false,
             handshake,
             session,
             streams: Some(open.streams.clone()),
@@ -795,7 +810,7 @@ impl NativeEndpoint {
             && self
                 .open
                 .as_ref()
-                .is_some_and(|open| self.peers.len() < open.limit)
+                .is_some_and(|open| self.peer_count() < open.limit)
         {
             let peer = self.waiting_clients.pop_front().expect("waiting client");
             let source = peer
@@ -822,7 +837,7 @@ impl NativeEndpoint {
     ) -> Option<NativeClientAdmissionSnapshotV1> {
         let open = self.open.as_ref()?;
         Some(NativeClientAdmissionSnapshotV1 {
-            peer_count: self.peers.len(),
+            peer_count: self.peer_count(),
             capacity: open.limit,
             authenticated_waiting: self.waiting_count(now) > 0,
         })
@@ -831,7 +846,7 @@ impl NativeEndpoint {
     pub(crate) fn needs_client_capacity(&self, now: Instant) -> bool {
         // Room for every verified waiting client, retired in one owner turn.
         self.open.as_ref().is_some_and(|open| {
-            self.peers.len().saturating_add(self.waiting_count(now)) > open.limit
+            self.peer_count().saturating_add(self.waiting_count(now)) > open.limit
         })
     }
     /// Configure once, before any poll/send. Reconnects and sessions cannot reset
@@ -873,11 +888,11 @@ impl NativeEndpoint {
         self.open.is_some()
     }
     pub fn peer_count(&self) -> usize {
-        self.peers.len()
+        self.peers.len() - usize::from(self.observation_peer.is_some())
     }
     /// Live handles can be sparse after dynamic client retirement.
     pub fn peer_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        self.peers.keys().copied()
+        self.peers.iter().filter_map(|(&index, peer)| (!peer.observation_only).then_some(index))
     }
     pub(crate) fn update_client_capacity(&mut self, capacity: usize) -> Result<bool> {
         ensure!(capacity > 0, "zero native client capacity");
@@ -895,6 +910,7 @@ impl NativeEndpoint {
             .iter()
             .filter_map(|(&index, peer)| {
                 (peer.configured_key.is_none()
+                    && !peer.observation_only
                     && peer.streams.is_some()
                     && peer.reconnect.as_ref().is_none_or(|r| now >= r.deadline)
                     && now.saturating_duration_since(peer.last_authenticated) >= idle_for)
@@ -907,7 +923,7 @@ impl NativeEndpoint {
     pub(crate) fn retire_client(&mut self, index: usize) -> Result<NativePeerRetirement> {
         let peer = self.peers.get(&index).context("unknown native peer")?;
         ensure!(
-            self.open.is_some() && peer.configured_key.is_none() && peer.streams.is_some(),
+            self.open.is_some() && !peer.observation_only && peer.configured_key.is_none() && peer.streams.is_some(),
             "only dynamic clients may retire"
         );
         let retired = NativePeerRetirement {
@@ -1345,6 +1361,10 @@ impl NativeEndpoint {
         result
             .frames
             .retain(|frame| self.session_id(frame.peer) == Some(frame.frame.session_id));
+        if let Some(mut refresh) = self.observer_refresh.take() {
+            refresh.poll(self, &mut result.frames, wall_ms, now);
+            self.observer_refresh = Some(refresh);
+        }
         if self.endpoint_observer {
             let mut remaining = 4;
             result.frames.retain(|frame| {
@@ -1622,6 +1642,7 @@ impl NativeEndpoint {
 #[cfg(test)]
 mod multiplex_tests;
 mod reconnect;
+pub(crate) mod observer_refresh;
 #[cfg(test)]
 mod tests;
 

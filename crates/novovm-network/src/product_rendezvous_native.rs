@@ -1,6 +1,7 @@
 //! Native mailbox transport borrowed by the existing node owner. No task spawn,
 //! runtime, new store or parallel service protocol. Watch work is polled beside
 //! packet progress, so it cannot hold the transport receive loop hostage.
+use crate::endpoint_observation::ObservationSourcesV2;
 use crate::native_application::{NativeApplicationDispatcherV1, NativeApplicationRouteV1};
 use crate::product_overlay::TransportIdentity;
 use crate::service_concurrency::{
@@ -26,7 +27,7 @@ use crate::{
     novorudp::{
         carrier::NativeCarrierIoFailure,
         carrier_io::NativeCarrierPump,
-        endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
+        endpoint::{observer_refresh::Observation, NativeEndpoint, NativeHandshakeBudget},
         fragments::ReassemblyLimits,
         object_link::{NativeLaneConfig, NativeObjectLink, NativeSendLimits, NativeSendPolicy},
         NovoRudpPacingProfile, NovoRudpWindowConfig,
@@ -372,7 +373,7 @@ pub struct NativeMailboxListenerV7 {
     link: NativeObjectLink,
     readiness: tokio::net::UdpSocket,
     route: NativeMailboxEndpointV7,
-    observed: Option<(SocketAddr, u64)>,
+    observation: Option<Observation>,
     stop: Arc<AtomicBool>,
     concurrency: Option<Arc<ServiceConcurrencyV1>>,
     connection_ceiling: u16,
@@ -444,60 +445,19 @@ impl NativeMailboxListenerV7 {
         Ok(listener)
     }
 
-    /// Learn a candidate from two authenticated observers using the allocated
-    /// mailbox port. The existing listener takes over the same socket.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn bind_adaptive_observed_v2(
+    /// Add periodic address observation to the original adaptive mailbox owner.
+    pub fn bind_adaptive_observed_v2(
         listen: SocketAddr,
         key: TransportIdentity,
         stop: Arc<AtomicBool>,
         max_bytes_per_minute: u64,
         concurrency: Arc<ServiceConcurrencyV1>,
-        peers: Vec<NativePeer>,
-        authority: impl Fn() -> Result<()>,
+        peers: ObservationSourcesV2,
     ) -> Result<Self> {
-        authority()?;
-        let socket = UdpSocket::bind(listen)?;
-        let mut observed = None;
-        if !stop.load(Ordering::Acquire) && peers.len() == 2 {
-            if let Some(_permit) = concurrency.try_reserve_transport() {
-                let check = || {
-                    ensure!(!stop.load(Ordering::Acquire), "service stopped by owner");
-                    authority()
-                };
-                let sample = crate::endpoint_observation::observe_bound_socket_v2(
-                    &socket,
-                    key.clone(),
-                    peers,
-                    max_bytes_per_minute,
-                    check,
-                )
-                .await
-                .ok()
-                .flatten();
-                check()?;
-                if let Some(sample) = sample.filter(|sample| sample.is_ipv4() == listen.is_ipv4()) {
-                    let expires = now_ms()?
-                        .checked_add(crate::endpoint_observation::OBSERVATION_LIFETIME_MS)
-                        .context("endpoint observation clock exhausted")?;
-                    observed = Some((sample, expires));
-                }
-            }
-        }
-        authority()?;
-        ensure!(!stop.load(Ordering::Acquire), "service stopped by owner");
-        let mut listener = Self::bind_socket_with_application(
-            socket,
-            listen,
-            key,
-            stop,
-            u16::MAX,
-            max_bytes_per_minute,
-            Some(concurrency),
-            None,
+        let mut listener = Self::bind_adaptive(
+            listen, listen, key, stop, max_bytes_per_minute, concurrency,
         )?;
-        listener.wire_ceiling = None;
-        listener.observed = observed;
+        listener.observation = Some(listener.link.observe_listener_mapping(peers)?);
         Ok(listener)
     }
 
@@ -581,29 +541,6 @@ impl NativeMailboxListenerV7 {
     #[allow(clippy::too_many_arguments)]
     fn bind_with_application(
         listen: SocketAddr,
-        advertised: SocketAddr,
-        key: TransportIdentity,
-        stop: Arc<AtomicBool>,
-        max_connections: u16,
-        max_bytes_per_minute: u64,
-        concurrency: Option<Arc<ServiceConcurrencyV1>>,
-        application: Option<NativeApplicationRouteV1>,
-    ) -> Result<Self> {
-        Self::bind_socket_with_application(
-            UdpSocket::bind(listen)?,
-            advertised,
-            key,
-            stop,
-            max_connections,
-            max_bytes_per_minute,
-            concurrency,
-            application,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn bind_socket_with_application(
-        socket: UdpSocket,
         mut advertised: SocketAddr,
         key: TransportIdentity,
         stop: Arc<AtomicBool>,
@@ -613,6 +550,7 @@ impl NativeMailboxListenerV7 {
         application: Option<NativeApplicationRouteV1>,
     ) -> Result<Self> {
         ensure!(max_connections > 0, "native connection bounds");
+        let socket = UdpSocket::bind(listen)?;
         socket.set_nonblocking(true)?;
         if advertised.port() == 0 {
             advertised.set_port(socket.local_addr()?.port());
@@ -667,7 +605,7 @@ impl NativeMailboxListenerV7 {
             link,
             readiness,
             route,
-            observed: None,
+            observation: None,
             stop,
             concurrency,
             connection_ceiling: max_connections,
@@ -710,8 +648,8 @@ impl NativeMailboxListenerV7 {
         route
     }
 
-    pub(super) fn observed_address(&self) -> Option<(SocketAddr, u64)> {
-        self.observed
+    pub(super) fn observation(&self) -> Option<Observation> {
+        self.observation.clone()
     }
 
     pub(super) fn admission_ceiling(&self) -> usize {
