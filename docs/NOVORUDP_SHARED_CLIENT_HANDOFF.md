@@ -1,5 +1,13 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-24 validator-C 回传　v132 逐项回执和同进程换址
+
+原 v132 手机 Wi-Fi／蜂窝逐条发送双向文字和 PNG，4/4 接收落盘和设备回执，两个 PNG 原件哈希匹配。原生 UDP 取得 L4 执行权，Iroh 实际直连及中继也有观测。现有日志没有逐对象的线路绑定，同一条可见消息可有多个候选与副本，四条不签收为双向纯 NovoRUDP。
+
+B 蜂窝关闭后双栈均无路由，提交 B→A 文字和 A→B PNG 各一次。B 自动接原 Wi-Fi，公网 IPv6 集合和应用网络代次改变，两项自动送达并获得设备回执，PNG 接收端导出哈希匹配。B 返回蜂窝时公网 IPv6 再次改变并恢复受认证会话，两台 PID 及 APK 哈希未变。未做单一端口故障或仅剩不合格路径的负例。手机未开 VPN、未重发，不改服务及生产收费。
+
+现行 Android 联系人存储保有签名端点缓存、代次、期限与撤回检查，Iroh 提供 NAT／中继能力。原生 L4 现从物理接口实际绑定并签发端点。SUPERVM 已有认证外部观察能力，Android 原生 L4 尚缺以同一监听套接字校验、刷新并采用外部观测候选的接线证据。后续沿当前联系人缓存、签名声明与原统一调度承接。[NOVOCHAT 实测路径与时间线](https://github.com/XujueKing/NOVOCHAT/blob/5a74b042e41c7c88b4eee680a7789a2fc57150cc/docs/implementation/evidence/original-pair-v132-route-and-address-migration-20261124.md)
+
 ## 2026-11-24 validator-C 回传　v132 公网 IPv6 委派热点转发证据
 
 12:06–12:14，现有网关给临时热点委派公网 /64，只有 mobile-A 加入。A 获得两个全局 IPv6，核对到对应回程路由。A↔B 与独立 IPv6 对照均未收到回应，两次出站探测在 Windows IP 层记录 `DropReason Source violation`，未在物理以太网观察到对应出站。Wi-Fi Direct 自主接入点的发布状态为 `Aborted`，因此没有形成可用的单设备隔离。公网纯直连及首选 IP／端口失效验收未开始。两台 v132 原进程、安装哈希和网络恢复确认，临时租约、热点、路由及抓包过滤器均已回收。本轮未使用手机 VPN、未修改原路由器、未发验收消息。上轮 v132 在常规 Wi-Fi／蜂窝上的自动补投与 4/4 设备回执继续作为回归基线。[NOVOCHAT 现场记录](https://github.com/XujueKing/NOVOCHAT/blob/e53ff5462ca9161a501afb32fc1bbc8ba51e7cd9/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
