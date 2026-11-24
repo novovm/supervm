@@ -257,12 +257,13 @@ mod tests {
         let observer = key(2);
         let start = Instant::now();
         let wall_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+        let lifetime = Duration::from_secs(3);
         let budget = NativeHandshakeBudget {
-            lifetime: Duration::from_secs(3),
+            lifetime,
             retry: Duration::from_millis(40),
         };
         let mut server =
-            NativeEndpoint::listen_clients(remote, observer.clone(), 2, vec![7], budget)?;
+            NativeEndpoint::listen_clients(remote, observer.clone(), 2, vec![7], budget.clone())?;
         server.enable_endpoint_observer_v2()?;
         let mut client = NativeEndpoint::connect_client(
             socket.try_clone()?,
@@ -278,7 +279,7 @@ mod tests {
         let probe = EndpointObservationProbeV2::default();
         let different = EndpointObservationProbeV2::default();
         let mut sent = false;
-        while start.elapsed() < budget.lifetime {
+        while start.elapsed() < lifetime {
             let now = Instant::now();
             let wall = wall_ms + start.elapsed().as_millis() as u64;
             assert!(server.poll(wall, now, 16)?.frames.is_empty());
