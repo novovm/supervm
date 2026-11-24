@@ -206,6 +206,9 @@ try {
   )
   # One original package, using the real crate/feature contracts. These are
   # service adapters, not another network, account or execution implementation.
+  # The Windows SCM planner validates the node's original resident config.
+  # It must accept the same optional NOVONET fallback as the packaged node.
+  $ctlFeatures = if ($windowsPackage) { @('iroh-transport') } else { @() }
   $buildContracts = @($nodeBins | ForEach-Object {
     # Compile the qualified backup into the original node; configuration still
     # defaults to UDP. Other tools retain their own existing feature contracts.
@@ -214,7 +217,7 @@ try {
   }) + @(
     [PSCustomObject]@{ package = 'novovm-relay'; binary = 'novovm-rendezvous-service'; features = @('iroh-transport', 'tls-transport'); default_features = $true },
     [PSCustomObject]@{ package = 'novovm-relay'; binary = 'supervm-relay'; features = @('iroh-transport', 'tls-transport'); default_features = $true },
-    [PSCustomObject]@{ package = 'novovmctl'; binary = 'novovmctl'; features = @(); default_features = $true }
+    [PSCustomObject]@{ package = 'novovmctl'; binary = 'novovmctl'; features = @($ctlFeatures); default_features = $true }
   )
   $bins = @($buildContracts | ForEach-Object binary)
   $metadataOutput = @(cargo metadata --locked --no-deps --format-version 1)

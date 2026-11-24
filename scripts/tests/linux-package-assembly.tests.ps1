@@ -207,8 +207,12 @@ $nodeContract = @($manifest.build_contracts | Where-Object binary -eq 'novovm-no
 if ($nodeContract.package -ne 'novovm-node' -or $nodeContract.features -notcontains 'iroh-transport') {
   throw 'Original node package must include its explicit NOVONET fallback feature'
 }
-if (@($manifest.build_contracts | Where-Object binary -eq 'novovmctl')[0].package -ne 'novovmctl') {
+$ctlContract = @($manifest.build_contracts | Where-Object binary -eq 'novovmctl')[0]
+if ($ctlContract.package -ne 'novovmctl') {
   throw 'Existing management binary must be built from its original crate'
+}
+if ($windowsPackage -and ($ctlContract.cargo_features -notcontains 'iroh-transport')) {
+  throw 'Windows SCM planner must validate the packaged node fallback configuration'
 }
 foreach ($entry in $manifest.artifacts) {
   if ($entry.path.Contains('\') -or [IO.Path]::IsPathRooted($entry.path)) { throw 'Nonportable checksum path' }
