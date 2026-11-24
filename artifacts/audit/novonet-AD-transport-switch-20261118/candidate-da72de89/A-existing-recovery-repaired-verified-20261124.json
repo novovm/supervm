@@ -1,0 +1,41 @@
+{
+  "status": "A_existing_recovery_authenticated",
+  "repair_source": "90fceb2af4d3c0687ba69aae4584f41824b0ee33",
+  "common_base": "da72de891c11e7113e35cc273b32839123035054",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "A": {
+    "start": "existing",
+    "task": "Running",
+    "pid": 30756,
+    "sid": "S-1-5-19",
+    "original_database_identity_and_head_verified": true,
+    "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+    "node_sha256": "b72b754039dbad175d96c0255daf7137a9db5c2a1a2b3ef409ffc004670e1d12",
+    "consensus_recovering": false,
+    "consensus_height": 1,
+    "execution_failures": 0,
+    "pinned_batch_sha256": "df61bc10005fe204947723c1ac3c361dc2e36e61a07b8b877b758dad7e912bd7",
+    "one_time_recovery_start_observed": true,
+    "one_time_recovery_argument_cleared": true,
+    "receipt_started_after_import_code_gate": true,
+    "stdout_recovery_line_observed": false
+  },
+  "native_authenticated_receipts": {
+    "A": {
+      "utc": "2026-11-24T15:25:48.2974375+00:00",
+      "state": "Received",
+      "indexed_height": 0,
+      "key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b"
+    },
+    "B": {
+      "utc": "2026-11-24T15:25:48.4785993+00:00",
+      "state": "Received",
+      "indexed_height": 0,
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d"
+    }
+  },
+  "C_cutover": false,
+  "B_cutover": false,
+  "D_changed": false,
+  "transactions_resent": false
+}
