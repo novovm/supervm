@@ -316,6 +316,8 @@ struct WindowsNodeUnit {
     schema_version: u32,
     config: PathBuf,
     account_name: String,
+    #[serde(default)]
+    start_type: windows_scm::StartType,
 }
 
 fn windows_node_spec(service: &Service) -> Result<windows_scm::NodeServiceSpec, CtlError> {
@@ -333,6 +335,7 @@ fn windows_node_spec(service: &Service) -> Result<windows_scm::NodeServiceSpec, 
         binary: service.binary.clone(),
         config: unit.config,
         account_name: unit.account_name,
+        start_type: unit.start_type,
     };
     spec.validate()?;
     Ok(spec)
@@ -372,7 +375,7 @@ fn run_windows(
         }
     }
     let operations: Vec<_> = specs.iter().filter(|_| matches!(action, "install" | "start" | "stop"))
-        .map(|spec| serde_json::json!({"manager":"windows_scm","action":action,"service":spec.name,"binary":spec.binary,"arguments":spec.launch_arguments().iter().map(|v| v.to_string_lossy().into_owned()).collect::<Vec<_>>(),"account_name":spec.account_name,"start_type":"demand"}))
+        .map(|spec| serde_json::json!({"manager":"windows_scm","action":action,"service":spec.name,"binary":spec.binary,"arguments":spec.launch_arguments().iter().map(|v| v.to_string_lossy().into_owned()).collect::<Vec<_>>(),"account_name":spec.account_name,"start_type":spec.start_type,"recovery_policy":spec.recovery_policy(),"start_mode":"existing"}))
         .collect();
     let reports: Vec<_> = if action == "health" {
         selected.iter().map(|service| serde_json::json!({"service":service.name,"health":service.health.as_ref().map(health::inspect)})).collect()
@@ -388,7 +391,7 @@ fn run_windows(
         "service_settlement":"not_connected","manager_mutates_data_directly":false,
         "credentials_provisioned":false,"custody_verified":false,
         "signature_contract":signature_contract_report(),
-        "note":"SCM install is demand-only and does not start, initialize a database or create/decrypt purpose keys. Plan is offline; status is not finality or economic acceptance. No implicit account, legacy fallback or automatic rollback."
+        "note":"SCM installs the pinned start and recovery policy without starting the service, initializing a database or creating/decrypting purpose keys. Windows enables recovery for reported failures after the next boot. Plan is offline. Status reports SCM configuration and process state."
     }))
 }
 
@@ -1406,7 +1409,28 @@ mod tests {
         assert_eq!(plan["service_observations"], serde_json::json!([]));
         assert_eq!(plan["operations"][0]["arguments"][0], "--service");
         assert_eq!(plan["operations"][0]["arguments"][2], "--service-name");
+        assert_eq!(plan["operations"][0]["start_type"], "demand");
+        assert!(plan["operations"][0]["recovery_policy"].is_null());
         assert_eq!(plan["custody_verified"], false);
+
+        let unit_file = &f.service().unit_file;
+        let mut unit: serde_json::Value = read_json(unit_file, MAX_UNIT).unwrap();
+        unit["start_type"] = serde_json::json!("automatic");
+        fs::write(unit_file, serde_json::to_vec(&unit).unwrap()).unwrap();
+        let automatic = run_windows(&args, &f.deployment, &release, &[f.service()]).unwrap();
+        assert_eq!(automatic["applied"], false);
+        assert_eq!(automatic["service_observations"], serde_json::json!([]));
+        let op = &automatic["operations"][0];
+        assert_eq!(op["arguments"], plan["operations"][0]["arguments"]);
+        assert_eq!(op["start_mode"], "existing");
+        assert_eq!(op["start_type"], "automatic");
+        assert_eq!(
+            op["recovery_policy"]["restart_delays_ms"],
+            serde_json::json!([5_000, 15_000])
+        );
+        unit["start_type"] = serde_json::json!("disabled");
+        fs::write(unit_file, serde_json::to_vec(&unit).unwrap()).unwrap();
+        assert!(windows_node_spec(f.service()).is_err());
     }
 
     #[test]

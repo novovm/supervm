@@ -1,17 +1,30 @@
 //! Native SCM adapter for the existing node, not a process supervisor.
 use super::bad;
 use crate::error::CtlError;
+use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use serde_json::json;
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+const RESTART_DELAYS_MS: [u64; 2] = [5_000, 15_000];
+const FAILURE_RESET_SECONDS: u64 = 86_400;
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum StartType {
+    #[default]
+    Demand,
+    Automatic,
+}
+
 pub(super) struct NodeServiceSpec {
     pub name: String,
     pub binary: PathBuf,
     pub config: PathBuf,
     pub account_name: String,
+    pub start_type: StartType,
 }
 
 impl NodeServiceSpec {
@@ -50,6 +63,16 @@ impl NodeServiceSpec {
             "--service-name".into(),
             self.name.clone().into(),
         ]
+    }
+
+    pub fn recovery_policy(&self) -> Option<Value> {
+        (self.start_type == StartType::Automatic).then(|| {
+            serde_json::json!({
+                "restart_delays_ms": RESTART_DELAYS_MS,
+                "reset_period_seconds": FAILURE_RESET_SECONDS,
+                "restart_on_non_crash_failure": true
+            })
+        })
     }
 
     #[cfg(any(windows, test))]
@@ -96,18 +119,18 @@ fn verify_owned_config(
     command_line: &str,
     account_name: Option<&str>,
     own_process: bool,
-    demand_start: bool,
+    start_type: Option<StartType>,
     has_dependencies: bool,
 ) -> Result<(), CtlError> {
     if command_line != spec.command_line()?
         || account_name
             .is_none_or(|a| canonical_account(a) != canonical_account(&spec.account_name))
         || !own_process
-        || !demand_start
+        || start_type != Some(spec.start_type)
         || has_dependencies
     {
         return Err(bad(
-            "SCM ownership differs from pinned node binary, argv, account or demand-start contract",
+            "SCM ownership differs from pinned node binary, argv, account or startup contract",
         ));
     }
     Ok(())
@@ -118,13 +141,52 @@ mod platform {
     use super::*;
     use std::time::{Duration, Instant};
     use windows_service::service::{
-        Service, ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceState,
-        ServiceType,
+        Service, ServiceAccess, ServiceAction, ServiceActionType, ServiceErrorControl,
+        ServiceFailureActions, ServiceFailureResetPeriod, ServiceInfo, ServiceStartType,
+        ServiceState, ServiceType,
     };
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
 
     fn failure(error: windows_service::Error) -> CtlError {
         CtlError::IntegrationFailed(format!("SCM operation failed: {error}"))
+    }
+
+    pub(super) fn restart_actions() -> ServiceFailureActions {
+        let mut actions: Vec<_> = RESTART_DELAYS_MS
+            .map(|delay| ServiceAction {
+                action_type: ServiceActionType::Restart,
+                delay: Duration::from_millis(delay),
+            })
+            .into();
+        // SCM repeats the last action for subsequent failures.
+        actions.push(ServiceAction {
+            action_type: ServiceActionType::None,
+            delay: Duration::ZERO,
+        });
+        ServiceFailureActions {
+            reset_period: ServiceFailureResetPeriod::After(Duration::from_secs(
+                FAILURE_RESET_SECONDS,
+            )),
+            reboot_msg: None,
+            command: None,
+            actions: Some(actions),
+        }
+    }
+
+    pub(super) fn verify_recovery(
+        actual: &ServiceFailureActions,
+        includes_reported_failures: bool,
+    ) -> Result<(), CtlError> {
+        let expected = restart_actions();
+        if actual.reset_period != expected.reset_period
+            || actual.actions != expected.actions
+            || !includes_reported_failures
+        {
+            return Err(bad(
+                "SCM failure recovery differs from pinned startup policy",
+            ));
+        }
+        Ok(())
     }
 
     fn inspect(service: &Service, spec: &NodeServiceSpec) -> Result<Value, CtlError> {
@@ -137,13 +199,48 @@ mod platform {
                 .ok_or_else(|| bad("SCM returned non-UTF8 command line"))?,
             config.account_name.as_deref().and_then(|a| a.to_str()),
             config.service_type == ServiceType::OWN_PROCESS,
-            config.start_type == ServiceStartType::OnDemand,
+            match config.start_type {
+                ServiceStartType::OnDemand => Some(StartType::Demand),
+                ServiceStartType::AutoStart => Some(StartType::Automatic),
+                _ => None,
+            },
             !config.dependencies.is_empty(),
         )?;
+        if spec.start_type == StartType::Automatic {
+            verify_recovery(
+                &service.get_failure_actions().map_err(failure)?,
+                service
+                    .get_failure_actions_on_non_crash_failures()
+                    .map_err(failure)?,
+            )?;
+        }
         let status = service.query_status().map_err(failure)?;
         Ok(
-            json!({"service":spec.name,"manager":"windows_scm","state":format!("{:?}",status.current_state),"ownership_checked":true,"health_verified":false,"custody_verified":false}),
+            json!({"service":spec.name,"manager":"windows_scm","state":format!("{:?}",status.current_state),"start_type":spec.start_type,"recovery_policy":spec.recovery_policy(),"ownership_checked":true,"health_verified":false,"custody_verified":false}),
         )
+    }
+
+    fn configure_automatic(
+        service: &Service,
+        spec: &NodeServiceSpec,
+        mut info: ServiceInfo,
+    ) -> Result<(), CtlError> {
+        service
+            .update_failure_actions(restart_actions())
+            .map_err(failure)?;
+        service
+            .set_failure_actions_on_non_crash_failures(true)
+            .map_err(failure)?;
+        verify_recovery(
+            &service.get_failure_actions().map_err(failure)?,
+            service
+                .get_failure_actions_on_non_crash_failures()
+                .map_err(failure)?,
+        )?;
+        info.start_type = ServiceStartType::AutoStart;
+        service.change_config(&info).map_err(failure)?;
+        inspect(service, spec)?;
+        Ok(())
     }
 
     pub(super) fn preflight(spec: &NodeServiceSpec, installing: bool) -> Result<Value, CtlError> {
@@ -190,25 +287,39 @@ mod platform {
         };
         let manager = ServiceManager::local_computer(None::<&str>, access).map_err(failure)?;
         if action == "install" {
-            manager
-                .create_service(
-                    &ServiceInfo {
-                        name: spec.name.clone().into(),
-                        display_name: spec.name.clone().into(),
-                        service_type: ServiceType::OWN_PROCESS,
-                        start_type: ServiceStartType::OnDemand,
-                        error_control: ServiceErrorControl::Normal,
-                        executable_path: spec.binary.clone(),
-                        launch_arguments: spec.launch_arguments(),
-                        dependencies: Vec::new(),
-                        account_name: Some(canonical_account(&spec.account_name).into()),
-                        account_password: None,
-                    },
-                    ServiceAccess::QUERY_CONFIG | ServiceAccess::QUERY_STATUS,
-                )
-                .map_err(failure)?;
+            let account = canonical_account(&spec.account_name);
+            let info = ServiceInfo {
+                name: spec.name.clone().into(),
+                display_name: spec.name.clone().into(),
+                service_type: ServiceType::OWN_PROCESS,
+                start_type: ServiceStartType::OnDemand,
+                error_control: ServiceErrorControl::Normal,
+                executable_path: spec.binary.clone(),
+                launch_arguments: spec.launch_arguments(),
+                dependencies: Vec::new(),
+                account_name: Some(account.into()),
+                account_password: None,
+            };
+            let automatic = spec.start_type == StartType::Automatic;
+            let mut access = ServiceAccess::QUERY_CONFIG | ServiceAccess::QUERY_STATUS;
+            if automatic {
+                access |=
+                    ServiceAccess::CHANGE_CONFIG | ServiceAccess::START | ServiceAccess::DELETE;
+            }
+            let service = manager.create_service(&info, access).map_err(failure)?;
+            if automatic {
+                configure_automatic(&service, spec, info).map_err(|error| {
+                    match service.delete() {
+                        Ok(()) => error,
+                        Err(cleanup) => bad(format!(
+                            "{error}; failed to remove incomplete new SCM service {}: {cleanup}",
+                            spec.name
+                        )),
+                    }
+                })?;
+            }
             return Ok(
-                json!({"service":spec.name,"action":"install","created":true,"started":false,"auto_start":false,"custody_verified":false}),
+                json!({"service":spec.name,"action":"install","created":true,"started":false,"auto_start":automatic,"start_type":spec.start_type,"recovery_policy":spec.recovery_policy(),"custody_verified":false}),
             );
         }
         let request_access = ServiceAccess::QUERY_CONFIG
@@ -283,6 +394,7 @@ mod tests {
             binary: std::env::temp_dir().join("release with spaces/novovm-node.exe"),
             config: std::env::temp_dir().join("node state/native.json"),
             account_name: "NT AUTHORITY\\LocalService".into(),
+            start_type: StartType::Demand,
         }
     }
     #[test]
@@ -303,25 +415,70 @@ mod tests {
     }
     #[test]
     fn adoption_checks_actual_command_account_and_service_type() {
-        let s = spec();
+        let mut s = spec();
         let cmd = s.command_line().unwrap();
-        assert!(verify_owned_config(&s, &cmd, Some("LocalService"), true, true, false).is_ok());
-        for (command, account, own, demand, deps) in [
+        for start_type in [StartType::Demand, StartType::Automatic] {
+            s.start_type = start_type;
+            assert!(verify_owned_config(
+                &s,
+                &cmd,
+                Some("LocalService"),
+                true,
+                Some(start_type),
+                false
+            )
+            .is_ok());
+            assert!(
+                verify_owned_config(&s, &cmd, Some("LocalService"), true, None, false).is_err()
+            );
+        }
+        let automatic = Some(StartType::Automatic);
+        for (command, account, own, start, deps) in [
             (
                 format!("{cmd} --create"),
                 Some("LocalService"),
                 true,
-                true,
+                automatic,
                 false,
             ),
-            (cmd.clone(), Some("NetworkService"), true, true, false),
-            (cmd.clone(), None, true, true, false),
-            (cmd.clone(), Some("LocalService"), false, true, false),
-            (cmd.clone(), Some("LocalService"), true, false, false),
-            (cmd.clone(), Some("LocalService"), true, true, true),
+            (cmd.clone(), Some("NetworkService"), true, automatic, false),
+            (cmd.clone(), None, true, automatic, false),
+            (cmd.clone(), Some("LocalService"), false, automatic, false),
+            (
+                cmd.clone(),
+                Some("LocalService"),
+                true,
+                Some(StartType::Demand),
+                false,
+            ),
+            (cmd.clone(), Some("LocalService"), true, automatic, true),
         ] {
-            assert!(verify_owned_config(&s, &command, account, own, demand, deps).is_err());
+            assert!(verify_owned_config(&s, &command, account, own, start, deps).is_err());
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recovery_restarts_twice_and_rejects_policy_drift() {
+        use std::time::Duration;
+        use windows_service::service::{ServiceActionType, ServiceFailureResetPeriod};
+
+        let mut policy = platform::restart_actions();
+        let actions = policy.actions.as_ref().unwrap();
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[0].action_type, ServiceActionType::Restart);
+        assert_eq!(actions[0].delay, Duration::from_secs(5));
+        assert_eq!(actions[1].action_type, ServiceActionType::Restart);
+        assert_eq!(actions[1].delay, Duration::from_secs(15));
+        assert_eq!(actions[2].action_type, ServiceActionType::None);
+        assert_eq!(
+            policy.reset_period,
+            ServiceFailureResetPeriod::After(Duration::from_secs(86_400))
+        );
+        assert!(platform::verify_recovery(&policy, true).is_ok());
+        assert!(platform::verify_recovery(&policy, false).is_err());
+        policy.actions.as_mut().unwrap().pop();
+        assert!(platform::verify_recovery(&policy, true).is_err());
     }
     #[test]
     fn no_implicit_or_password_account_is_created() {
