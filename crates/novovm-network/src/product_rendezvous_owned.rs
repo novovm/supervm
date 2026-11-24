@@ -755,6 +755,7 @@ impl Node {
             expires_ms,
         }));
         let mut rotate_at = Instant::now() + Duration::from_secs(60);
+        let mut signed_expires_ms = first.expires_at_ms;
         #[cfg(feature = "private-apfl-listener")]
         let renewal_last_observed = Mutex::new(None::<Instant>);
         let mut active = FuturesUnordered::new();
@@ -788,13 +789,16 @@ impl Node {
                         observation.current(wall_ms.saturating_add(1_000), now + Duration::from_secs(1))
                     });
                     if let (Some(route), Some(local)) = (&mut native_route, native_bound) {
+                        let observed = observed.filter(|mapping| mapping.address != local);
                         let desired = observed.map_or(local, |mapping| mapping.address);
-                        if route.address != desired {
+                        let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
+                        let expiry = observed.map_or(current.expires_ms, |mapping| {
+                            current.expires_ms.min(mapping.expires_ms)
+                        });
+                        if route.address != desired
+                            || (signed_expires_ms <= wall_ms.saturating_add(5_000) && expiry > signed_expires_ms)
+                        {
                             route.address = desired;
-                            let current = generation.lock().map_err(|_| anyhow::anyhow!("generation unavailable"))?;
-                            let expiry = observed.map_or(current.expires_ms, |mapping| {
-                                current.expires_ms.min(mapping.expires_ms)
-                            });
                             let record = host.rotate_native_mailbox_v7(Some(route), wall_ms, expiry)?;
                             let service = mailbox.as_ref().ok_or_else(|| anyhow::anyhow!("native mailbox missing"))?;
                             if NativeCarrierMailboxEndpointV8::from_record(&record)?.is_some() {
@@ -803,6 +807,7 @@ impl Node {
                                 service.update_native_record_v7(record.clone())?;
                             }
                             publish(&record)?;
+                            signed_expires_ms = record.expires_at_ms;
                             #[cfg(feature = "private-apfl-listener")]
                             if let Some(private) = &private {
                                 private.publish_for(&key, &record, wall_ms)?;
@@ -849,8 +854,9 @@ impl Node {
                             });
                             #[cfg(not(feature = "tls-transport"))]
                             let tls_route = None;
-                            let signed_expiry = observed.filter(|_| native_route.is_some())
-                                .map_or(expiry, |mapping| expiry.min(mapping.expires_ms));
+                            let signed_expiry = observed.filter(|mapping| {
+                                native_route.is_some() && native_bound != Some(mapping.address)
+                            }).map_or(expiry, |mapping| expiry.min(mapping.expires_ms));
                             host.rotate_self_owned_resources_v1(&endpoint, tls_route.as_ref(),
                                 native_route.as_ref(), capacity, now_ms()?, signed_expiry)?
                         } else {
@@ -867,6 +873,7 @@ impl Node {
                             }
                         }
                         publish(&record)?;
+                        signed_expires_ms = record.expires_at_ms;
                         #[cfg(feature = "private-apfl-listener")]
                         if let Some(private) = &private {
                             private.publish_for(&key, &record, now_ms()?)?;
