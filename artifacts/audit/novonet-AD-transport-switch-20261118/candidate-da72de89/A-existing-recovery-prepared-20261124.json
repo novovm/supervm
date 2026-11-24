@@ -1,0 +1,101 @@
+{
+  "status": "prepared_offline_not_applied",
+  "handoff_commit": "fae20823a11f010468111e8275dbcae40eb4dc09",
+  "candidate_commit": "da72de891c11e7113e35cc273b32839123035054",
+  "native_authenticated_read_only": {
+    "A-status": {
+      "utc": "2026-11-24T22:08:19.0993248+08:00",
+      "exit_code": 0,
+      "endpoint_key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "current_height": 1,
+      "committed_height": 0,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333"
+    },
+    "A-first-live": {
+      "utc": "2026-11-24T22:08:19.2622103+08:00",
+      "exit_code": 0,
+      "endpoint_key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "state": "NotRecent",
+      "indexed_height": 0
+    },
+    "A-independent": {
+      "utc": "2026-11-24T22:08:19.3849148+08:00",
+      "exit_code": 0,
+      "endpoint_key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "state": "Received",
+      "indexed_height": 0
+    },
+    "B-status": {
+      "utc": "2026-11-24T22:08:19.5086005+08:00",
+      "exit_code": 0,
+      "endpoint_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "current_height": 1,
+      "committed_height": 0,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333"
+    },
+    "B-first-live": {
+      "utc": "2026-11-24T22:08:19.6754931+08:00",
+      "exit_code": 0,
+      "endpoint_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "state": "NotRecent",
+      "indexed_height": 0
+    },
+    "B-independent": {
+      "utc": "2026-11-24T22:08:19.8461888+08:00",
+      "exit_code": 0,
+      "endpoint_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "state": "Received",
+      "indexed_height": 0
+    }
+  },
+  "original_batches": {
+    "independent": {
+      "bytes": 5610,
+      "file": "independent-signed.nuapfl",
+      "sha256": "df61bc10005fe204947723c1ac3c361dc2e36e61a07b8b877b758dad7e912bd7",
+      "verified_on_A": true,
+      "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4"
+    },
+    "first_live": {
+      "bytes": 5610,
+      "file": "first-live-signed.nuapfl",
+      "sha256": "21cc0751a0331bdefc18cac64e9663a5a2c51d2addf370438c3b8b79609c8eb0",
+      "verified_on_A": true,
+      "transaction": "2d0436f0893d5a6e1e996470a2fd223b3b256a11a6240e39418078e9be9a5f3d"
+    },
+    "B_result": "No matching file in inspected paths"
+  },
+  "windows_candidate": {
+    "archive_sha256": "49657f70273ee3070d8a439e172bb75d00e80dcf44e911e7d02b569dee337c72",
+    "release_manifest_sha256": "670c9a77d426b50585a2433befa9b81b012b8b20004e5815ed5ae4ddacdff698",
+    "member_hashes_verified": 92,
+    "node_sha256": "e42b490a7cb2a34c18b3fd83369788187b42578ad0ecbcf6dd7583dea6232f68",
+    "native_client_sha256": "f2eacb06f1c7fd9dadcd40651e66a60dbf4d49833323bb10aa90e4e7f1538fc4",
+    "aoem_dll_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa"
+  },
+  "A_existing": {
+    "original_run_sha256": "8610311d128875e04b473ddc846975cf4f05b138e943bd433b5351321f3a4ab1",
+    "prepared_run_changes": [
+      "library"
+    ],
+    "keeps_existing_database_identity_and_network": true,
+    "recovery_target": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+    "uses_pinned_local_original_batch": true,
+    "local_service_explicit_batch_read_acl": false,
+    "hold_before_start": [
+      "Obtain A cutover approval and reconfirm B is online and holds the exact transaction.",
+      "Verify LocalService can read the pinned original batch. No matching direct allow entry is present.",
+      "Apply the verified candidate program, intended private config and matching executable-scoped UDP rule only during approved cutover.",
+      "Verify native_pending_recovery and the authenticated receipt for the exact hash. Remove one-time recovery variables before a later normal start."
+    ]
+  },
+  "A_and_B_original_nodes_running_at_check": true,
+  "candidate_deployed": false,
+  "transaction_resent": false
+}
