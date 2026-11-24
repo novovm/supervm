@@ -1,0 +1,39 @@
+{
+  "result": "A_TO_C_ORIGINAL_PIN_AUTHENTICATED",
+  "checked_utc": "2026-11-24T17:54:33.9141079+00:00",
+  "source_handoff": "d5133db907e87ffb8de07a5ae8a47d388e9c19d6",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "original_endpoint": "192.168.71.125:41052",
+  "original_endpoint_answered": false,
+  "authenticated_endpoint": "192.168.71.73:41052",
+  "original_C_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+  "temporary_query_config_change": "node.address only",
+  "status": {
+    "current_height": 1,
+    "round": 580,
+    "indexed_height": 0,
+    "pending": 1,
+    "recovering": false
+  },
+  "transaction_receipt": {
+    "state": "Received",
+    "indexed_height": 0
+  },
+  "consensus_proposal": {
+    "current_height": 1,
+    "current_round": 580,
+    "observation": {
+      "in_pending_pool": true,
+      "selection_gate": "successor_unavailable",
+      "in_local_offer": true,
+      "candidate": {
+        "value": "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926",
+        "body_id": "0x8038112267cb0468eee912d12ab181a15cf5038b6b9add6da26ebf828c9f7ba7",
+        "signed_proposal": null
+      }
+    }
+  },
+  "independently_verified_finality": false,
+  "transaction_A_to_C_source_attribution": "unknown",
+  "transaction_resubmitted": false
+}
