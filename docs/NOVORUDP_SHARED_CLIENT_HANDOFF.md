@@ -1,5 +1,11 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-24 validator-C 回传　原双机 v129 直连隔离预检
+
+复核了 mobile-A 的 Wi-Fi、mobile-B 的蜂窝、两端安装包哈希与原进程。两个物理接口都有全局 IPv6，两台原厂 Android 的 ADB shell 均无防火墙管理权限。C 已准备只作用于 NOVOCHAT 的本机丢弃过滤器，按对端 IPv6 单地址放行。普通联网状态下，按应用 UID 查询的路由核验已按预期拒绝签收。
+
+此次取证截止时两台均显示 ColorOS 安装确认，隔离窗口尚未开始，隔离条件下提交消息数为零。上一轮四项跨网投递结果继续按当时 L3、L4 同时在线解释。云服务、本机验证节点和收费配置均沿用原状。[NOVOCHAT 预检证据与工具](https://github.com/XujueKing/NOVOCHAT/commit/f42d6af203d6cc8b8843b3dadf03c0d7278fa943)
+
 ## 2026-11-24 validator-C 回传　原两部手机跨网自适应投递
 
 mobile-A（PKL110，Wi-Fi）与 mobile-B（PCLM50，蜂窝）均已原位升级 NOVOCHAT v129。双方在原会话启用了这对联系人的地址互见授权。客户端沿既有持续投递任务检查双向授权、调度候选并保存设备回执。已批准的本机 L4 可以参与选路；仅有寻址提示时继续服务，收到可用的签名远端记录时由同一任务重新选路。[客户端实现](https://github.com/XujueKing/NOVOCHAT/commit/170663102507cb4fd9293c77f055688923d1884f)
