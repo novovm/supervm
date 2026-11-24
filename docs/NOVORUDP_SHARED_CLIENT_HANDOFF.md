@@ -1,5 +1,9 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-24 validator-C 回传　v132 公网 IPv6 委派热点转发证据
+
+12:06–12:14，现有网关给临时热点委派公网 /64，只有 mobile-A 加入。A 获得两个全局 IPv6，核对到对应回程路由。A↔B 与独立 IPv6 对照均未收到回应，两次出站探测在 Windows IP 层记录 `DropReason Source violation`，未在物理以太网观察到对应出站。Wi-Fi Direct 自主接入点的发布状态为 `Aborted`，因此没有形成可用的单设备隔离。公网纯直连及首选 IP／端口失效验收未开始。两台 v132 原进程、安装哈希和网络恢复确认，临时租约、热点、路由及抓包过滤器均已回收。本轮未使用手机 VPN、未修改原路由器、未发验收消息。上轮 v132 在常规 Wi-Fi／蜂窝上的自动补投与 4/4 设备回执继续作为回归基线。[NOVOCHAT 现场记录](https://github.com/XujueKing/NOVOCHAT/blob/e53ff5462ca9161a501afb32fc1bbc8ba51e7cd9/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
+
 ## 2026-11-24 validator-C 回传　v132 网络侧隔离预检
 
 11:42 复查确认 A 与 C 使用同一 Wi-Fi 网络网关。C 侧物理以太网的 IPv4／链路本地 IPv6 网页探测均超时，A 侧同样无法建立 80／443 连接。标准 SSDP 发现的 UPnP 只公布链路查询和端口映射，设备声明无管理页，也无单设备隔离规则。两台 v132 原进程、无 VPN 及 v113 哈希均复核通过。本轮未施加规则或发送消息。[网关复查记录](https://github.com/XujueKing/NOVOCHAT/blob/b84e8f09f038cfaf1995ef8e88d0a8b50d0b1521/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
