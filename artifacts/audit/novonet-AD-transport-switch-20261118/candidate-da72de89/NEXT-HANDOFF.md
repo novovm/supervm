@@ -12,6 +12,13 @@
 - Windows ZIP `novovm-common-da72de89-windows-x86_64.zip`，159,288,717 字节，SHA256 `49657f70273ee3070d8a439e172bb75d00e80dcf44e911e7d02b569dee337c72`。
 - Linux 包 `novovm-common-da72de89-linux-x86_64.tar.gz`，389,066,859 字节，SHA256 `a725401b06416fedea7de71020d854230542361b49ec0a3cce0960134004dc52`。
 
+## 当前接续交给 C
+
+A 已在原库和原身份上以 `existing` 运行修复版 `90fceb2a`。北京时间 23:25，A、B 的原生认证查询均确认同一笔 `68d83d0b…9bd6cd4` 为 `Received`，回执索引高度为 0。A 的单次导入参数已从后续启动配置移除。 [A 修复验收回执](A-existing-recovery-repaired-verified-20261124.json) · [初次启动失败回执](A-existing-recovery-failed-20261124.json)
+
+C 在自己的 Windows 主机按已核验计划用原 LocalService、原库和原身份启动 `existing`。从在线 A 拉取同一哈希，回传 C 的原生认证回执和实际来源证据。正式收费保持关闭，两笔交易不补发。C 验证失败时保留现状，B 继续在线，D 维持现有运行。
+
+
 ## A 接续准备，B 保持在线
 
 目标交易 `68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4`。已有认证回执显示 A、B 均为 `Received`，高度 1、第 580 轮、回执索引高度 0。已核验的原签名批保存在 A，文件 `independent-signed.nuapfl`，5,610 字节，SHA256 `df61bc10005fe204947723c1ac3c361dc2e36e61a07b8b877b758dad7e912bd7`。B 在已查路径未找到对应文件。原始签名批及密钥留在 A。 [A 回执](../candidate-eecb753b/A-original-transaction.json) · [B 回执](../candidate-eecb753b/B-original-transaction.json)

@@ -550,10 +550,7 @@ impl RpcLifecycle {
         })
     }
 
-    pub fn poll(&mut self, now: Instant) -> Result<()> {
-        let _span = crate::native_pipeline::profile::span(
-            crate::native_pipeline::profile::Phase::Lifecycle,
-        );
+    fn poll_consensus(&mut self, now: Instant) -> Result<()> {
         if let Some((source, reference)) = self.node.controller.take_asset_body_reference()? {
             let Message::AssetBodyReference { transactions, .. } = reference.as_ref() else {
                 unreachable!("typed asset reference handoff");
@@ -578,7 +575,14 @@ impl RpcLifecycle {
                 )?;
             }
         }
-        self.node.poll(now)?;
+        self.node.poll(now)
+    }
+
+    pub fn poll(&mut self, now: Instant) -> Result<()> {
+        let _span = crate::native_pipeline::profile::span(
+            crate::native_pipeline::profile::Phase::Lifecycle,
+        );
+        self.poll_consensus(now)?;
         self.poll_balances()?;
         if self.projection_error.is_none() {
             let _span = crate::native_pipeline::profile::span(

@@ -1,0 +1,27 @@
+{
+  "source": "da72de891c11e7113e35cc273b32839123035054",
+  "status": "A_existing_recovery_stopped_at_startup",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "A": {
+    "start": "existing",
+    "owner_sid": "S-1-5-19",
+    "launch_count": 1,
+    "exit_utc": "2026-11-24T14:28:57.8785774+00:00",
+    "exit_code": 1,
+    "startup_error": "pending recovery needs a ready local UCA parent",
+    "startup_drain": "Ok(())",
+    "original_and_candidate_stopped_at_check": true,
+    "original_batch_retained": true,
+    "original_batch_bytes": 5610,
+    "original_batch_sha256": "df61bc10005fe204947723c1ac3c361dc2e36e61a07b8b877b758dad7e912bd7"
+  },
+  "B_native_authenticated": {
+    "indexed_height": 0,
+    "utc": "2026-11-24T14:29:30.7744837+00:00",
+    "state": "Received"
+  },
+  "C_cutover": false,
+  "B_cutover": false,
+  "D_changed": false,
+  "transactions_resent": false
+}
