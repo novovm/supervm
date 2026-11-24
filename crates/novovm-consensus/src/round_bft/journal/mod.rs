@@ -133,6 +133,25 @@ pub enum TimeoutStep {
     Precommit,
 }
 
+/// Metadata about a staged transition. The signed message remains private until ACK.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingTransitionKind {
+    Proposal { round: u64, value: Hash },
+    Prevote,
+    Precommit,
+    Decision,
+    AdvanceRound { round: u64 },
+    AdvanceHeight { height: u64 },
+    StateOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingTransition {
+    pub kind: PendingTransitionKind,
+    /// A write ticket exists and its acknowledgement has not been consumed.
+    pub submitted: bool,
+}
+
 #[derive(Clone)]
 struct Snapshot {
     state: State,
@@ -320,6 +339,39 @@ impl<B: JournalBackend> ValidatorJournal<B> {
     pub fn is_pending(&self) -> bool {
         self.pending.is_some()
     }
+    pub fn pending_transition(&self) -> Option<PendingTransition> {
+        let pending = self.pending.as_ref()?;
+        let kind = match &pending.message {
+            Some(DurableMessage::Proposal(proposal)) => PendingTransitionKind::Proposal {
+                round: proposal.round,
+                value: proposal.value,
+            },
+            Some(DurableMessage::Vote(vote)) => match vote.phase {
+                wire::Phase::Prevote => PendingTransitionKind::Prevote,
+                wire::Phase::Precommit => PendingTransitionKind::Precommit,
+            },
+            Some(DurableMessage::Decision { .. }) => PendingTransitionKind::Decision,
+            None => {
+                let next = &pending.snapshot.state;
+                if next.context().height != self.identity.context.height {
+                    PendingTransitionKind::AdvanceHeight {
+                        height: next.context().height,
+                    }
+                } else if next.round() != self.round() {
+                    PendingTransitionKind::AdvanceRound {
+                        round: next.round(),
+                    }
+                } else {
+                    PendingTransitionKind::StateOnly
+                }
+            }
+        };
+        Some(PendingTransition {
+            kind,
+            submitted: pending.applying.is_some(),
+        })
+    }
+
     pub fn valid_certificate(&self) -> Option<&Quorum> {
         self.snapshot.witness.as_ref()
     }

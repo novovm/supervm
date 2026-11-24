@@ -34,7 +34,7 @@ mod split;
 #[path = "native_successor_integration.rs"]
 mod successor;
 
-fn progress(
+pub(super) fn progress(
     journal: ValidatorJournal,
     pipeline: &CandidatePipeline,
     set: Arc<ValidatorSet>,

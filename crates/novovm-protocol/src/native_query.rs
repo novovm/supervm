@@ -190,6 +190,30 @@ pub enum Query {
         round: u64,
         hash: Hash,
     },
+    /// Same selector, with the serving owner's current signing progress.
+    ConsensusProposalProgress {
+        height: u64,
+        round: u64,
+        hash: Hash,
+    },
+}
+
+impl Query {
+    pub fn proposal_selector(&self) -> Option<(u64, u64, Hash)> {
+        match *self {
+            Self::ConsensusProposal {
+                height,
+                round,
+                hash,
+            }
+            | Self::ConsensusProposalProgress {
+                height,
+                round,
+                hash,
+            } => Some((height, round, hash)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -443,6 +467,49 @@ pub struct ConsensusProposalStatus {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProposalStep {
+    Propose,
+    Prevote,
+    Precommit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProposalJournalAction {
+    Proposal { round: u64, value: Hash },
+    Prevote,
+    Precommit,
+    Decision,
+    AdvanceRound { round: u64 },
+    AdvanceHeight { height: u64 },
+    StateOnly,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalJournalTransition {
+    pub action: ProposalJournalAction,
+    /// False means staged before obtaining a write ticket. True means the
+    /// owner has not consumed the acknowledgement for the submitted write.
+    pub submitted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalPrevoteQc {
+    pub round: u64,
+    pub value: Hash,
+    /// The original proposal path can look up this exact value in its candidate set.
+    pub candidate_ready: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProposalProgress {
+    pub step: ProposalStep,
+    pub pending_journal: Option<ProposalJournalTransition>,
+    pub proposed_round: Option<u64>,
+    /// The journal's retained, verified valid-value prevote QC.
+    pub prevote_qc: Option<ProposalPrevoteQc>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueryError {
     Busy,
     Unavailable,
@@ -465,6 +532,10 @@ pub enum Answer {
     UcaIdentity(IdentityStateV1),
     UcaApplicationGrant(ApplicationGrantStateV1),
     ConsensusProposal(ConsensusProposalStatus),
+    ConsensusProposalProgress {
+        status: ConsensusProposalStatus,
+        progress: Option<ProposalProgress>,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -512,12 +583,14 @@ fn is_application(frame: &Frame) -> bool {
     matches!(request(frame).query, Query::UcaApplicationGrant { .. })
 }
 fn is_proposal(query: &Query) -> bool {
-    matches!(query, Query::ConsensusProposal { .. })
+    query.proposal_selector().is_some()
 }
 fn reply_limit(query: &Query) -> usize {
     match query {
         Query::Receipts { .. } => MAX_BYTES,
-        Query::ConsensusProposal { .. } => MAX_PROPOSAL_REPLY_BYTES,
+        Query::ConsensusProposal { .. } | Query::ConsensusProposalProgress { .. } => {
+            MAX_PROPOSAL_REPLY_BYTES
+        }
         _ => MAX_V1_BYTES,
     }
 }
@@ -538,8 +611,8 @@ fn valid_request(request: &Request) -> bool {
             return false;
         }
     }
-    if let Query::ConsensusProposal { height, hash, .. } = &request.query {
-        if *height == 0 || *hash == [0; 32] {
+    if let Some((height, _, hash)) = request.query.proposal_selector() {
+        if height == 0 || hash == [0; 32] {
             return false;
         }
     }
@@ -576,22 +649,14 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
             }
         },
         (Query::ConsensusProposal { height, round, .. }, Answer::ConsensusProposal(status)) => {
-            status.current_height > 0
-                && status.observation.is_some()
-                    == (*height == status.current_height && *round == status.current_round)
-                && status.observation.as_ref().is_none_or(|observation| {
-                    observation
-                        .selection_gate
-                        .as_ref()
-                        .is_none_or(|gate| gate.len() <= 64)
-                        && observation.candidate.as_ref().is_none_or(|candidate| {
-                            candidate.value != [0; 32]
-                                && candidate.body_id != [0; 32]
-                                && candidate.signed_proposal.as_ref().is_none_or(|proposal| {
-                                    proposal.proposer != [0; 32] && !proposal.wire.is_empty()
-                                })
-                        })
-                })
+            proposal_status_matches(*height, *round, status)
+        }
+        (
+            Query::ConsensusProposalProgress { height, round, .. },
+            Answer::ConsensusProposalProgress { status, progress },
+        ) => {
+            progress.is_some() == status.observation.is_some()
+                && proposal_status_matches(*height, *round, status)
         }
         (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
             hashes.len() == states.len()
@@ -599,6 +664,25 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
         _ => false,
     }
 }
+fn proposal_status_matches(height: u64, round: u64, status: &ConsensusProposalStatus) -> bool {
+    status.current_height > 0
+        && status.observation.is_some()
+            == (height == status.current_height && round == status.current_round)
+        && status.observation.as_ref().is_none_or(|observation| {
+            observation
+                .selection_gate
+                .as_ref()
+                .is_none_or(|gate| gate.len() <= 64)
+                && observation.candidate.as_ref().is_none_or(|candidate| {
+                    candidate.value != [0; 32]
+                        && candidate.body_id != [0; 32]
+                        && candidate.signed_proposal.as_ref().is_none_or(|proposal| {
+                            proposal.proposer != [0; 32] && !proposal.wire.is_empty()
+                        })
+                })
+        })
+}
+
 pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     if !valid(&frame) {
         return Err("invalid native query binding");
@@ -1304,6 +1388,113 @@ mod tests {
         let mut unknown = encode(Frame::Request(batch_request(1))).unwrap();
         unknown[7] = b'3';
         assert!(decode(&unknown).is_err());
+    }
+
+    #[test]
+    fn consensus_proposal_progress_keeps_legacy_binding_and_reply_budget() {
+        let query = Query::ConsensusProposalProgress {
+            height: 1,
+            round: u64::MAX,
+            hash: [2; 32],
+        };
+        let request = Request {
+            session: [1; 32],
+            sequence: u64::MAX,
+            query,
+        };
+        let request_frame = Frame::Request(request.clone());
+        assert_eq!(
+            decode(&encode(request_frame.clone()).unwrap()),
+            Ok(request_frame)
+        );
+        let status = ConsensusProposalStatus {
+            current_height: 1,
+            current_round: u64::MAX,
+            observation: Some(ProposalObservation {
+                in_pending_pool: true,
+                selection_gate: Some("a".repeat(64)),
+                in_local_offer: Some(true),
+                candidate: Some(CandidateObservation {
+                    value: [3; 32],
+                    body_id: [4; 32],
+                    signed_proposal: Some(SignedProposalObservation {
+                        proposer: [5; 32],
+                        // Canonical signed proposal wire size with headroom.
+                        wire: vec![7; 3587],
+                        dispatch: ProposalDispatch::Sent,
+                    }),
+                }),
+            }),
+        };
+        let progress = ProposalProgress {
+            step: ProposalStep::Propose,
+            pending_journal: Some(ProposalJournalTransition {
+                action: ProposalJournalAction::Proposal {
+                    round: u64::MAX,
+                    value: [6; 32],
+                },
+                submitted: true,
+            }),
+            proposed_round: Some(u64::MAX),
+            prevote_qc: Some(ProposalPrevoteQc {
+                round: u64::MAX - 1,
+                value: [8; 32],
+                candidate_ready: false,
+            }),
+        };
+        let reply = Response {
+            request: request.clone(),
+            answer: Answer::ConsensusProposalProgress {
+                status: status.clone(),
+                progress: Some(progress),
+            },
+        };
+        let bytes = encode(Frame::Response(reply.clone())).unwrap();
+        assert!(bytes.len() <= MAX_PROPOSAL_REPLY_BYTES);
+        assert_eq!(decode_response(&bytes, &request), Ok(Some(reply.clone())));
+        let legacy = Request {
+            query: Query::ConsensusProposal {
+                height: 1,
+                round: u64::MAX,
+                hash: [2; 32],
+            },
+            ..request.clone()
+        };
+        assert_eq!(decode_response(&bytes, &legacy), Ok(None));
+        assert!(encode(Frame::Response(Response {
+            request: legacy.clone(),
+            ..reply
+        }))
+        .is_err());
+        assert!(encode(Frame::Response(Response {
+            request: request.clone(),
+            answer: Answer::ConsensusProposalProgress {
+                status: status.clone(),
+                progress: None,
+            },
+        }))
+        .is_err());
+        let legacy_reply = Response {
+            request: legacy.clone(),
+            answer: Answer::ConsensusProposal(status.clone()),
+        };
+        let bytes = encode(Frame::Response(legacy_reply.clone())).unwrap();
+        assert_eq!(decode_response(&bytes, &legacy), Ok(Some(legacy_reply)));
+        assert_eq!(decode_response(&bytes, &request), Ok(None));
+
+        let stale = Response {
+            request: request.clone(),
+            answer: Answer::ConsensusProposalProgress {
+                status: ConsensusProposalStatus {
+                    current_round: 0,
+                    observation: None,
+                    ..status
+                },
+                progress: None,
+            },
+        };
+        let bytes = encode(Frame::Response(stale.clone())).unwrap();
+        assert_eq!(decode_response(&bytes, &request), Ok(Some(stale)));
     }
 
     #[test]

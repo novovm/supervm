@@ -18,7 +18,7 @@ use anyhow::{ensure, Context, Result};
 pub(crate) use ingress::{CheckedTransactionSource, TransactionOrigin, TransactionSource};
 use novovm_network::novorudp::{object_link::NativeSendLimits, object_sender::ObjectSendState};
 use novovm_protocol::native_query::{
-    CandidateObservation, ProposalDispatch, SignedProposalObservation,
+    CandidateObservation, ProposalDispatch, ProposalProgress, SignedProposalObservation,
 };
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -463,6 +463,10 @@ impl NativeLifecycle {
         let report = self.channel.poll_io(wall_ms, now, 64)?;
         self.accept_io_report(report, now)
     }
+    pub(crate) fn proposal_progress(&self) -> ProposalProgress {
+        self.progress.proposal_progress()
+    }
+
     pub(crate) fn current_local_proposal(
         &self,
         hash: Hash,

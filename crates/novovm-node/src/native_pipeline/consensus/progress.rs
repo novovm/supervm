@@ -18,7 +18,11 @@ use super::wire::{
 use super::{DurableMessage, TimeoutStep, ValidatorJournal};
 use crate::native_pipeline::pipeline::{CandidatePipeline, DurableCandidate};
 use anyhow::{ensure, Context, Result};
-use novovm_consensus::round_bft::journal::backend::JournalBackend;
+use novovm_consensus::round_bft::journal::{backend::JournalBackend, PendingTransitionKind};
+use novovm_protocol::native_query::{
+    ProposalJournalAction, ProposalJournalTransition, ProposalPrevoteQc, ProposalProgress,
+    ProposalStep,
+};
 use std::{
     collections::{BTreeMap, VecDeque},
     sync::Arc,
@@ -294,6 +298,48 @@ impl RoundProgress {
             .validators
             .leader(self.context().height, self.round())?
             == self.local_validator())
+    }
+
+    pub(super) fn proposal_progress(&self) -> ProposalProgress {
+        let pending_journal = self.journal.pending_transition().map(|transition| {
+            let action = match transition.kind {
+                PendingTransitionKind::Proposal { round, value } => {
+                    ProposalJournalAction::Proposal { round, value }
+                }
+                PendingTransitionKind::Prevote => ProposalJournalAction::Prevote,
+                PendingTransitionKind::Precommit => ProposalJournalAction::Precommit,
+                PendingTransitionKind::Decision => ProposalJournalAction::Decision,
+                PendingTransitionKind::AdvanceRound { round } => {
+                    ProposalJournalAction::AdvanceRound { round }
+                }
+                PendingTransitionKind::AdvanceHeight { height } => {
+                    ProposalJournalAction::AdvanceHeight { height }
+                }
+                PendingTransitionKind::StateOnly => ProposalJournalAction::StateOnly,
+            };
+            ProposalJournalTransition {
+                action,
+                submitted: transition.submitted,
+            }
+        });
+        let prevote_qc = self.journal.verified_valid_certificate().and_then(|qc| {
+            let value = qc.value()?;
+            Some(ProposalPrevoteQc {
+                round: qc.round(),
+                value,
+                candidate_ready: self.candidates.contains_key(&value),
+            })
+        });
+        ProposalProgress {
+            step: match self.step() {
+                TimeoutStep::Propose => ProposalStep::Propose,
+                TimeoutStep::Prevote => ProposalStep::Prevote,
+                TimeoutStep::Precommit => ProposalStep::Precommit,
+            },
+            pending_journal,
+            proposed_round: self.proposed_round,
+            prevote_qc,
+        }
     }
 
     /// Read the existing candidate pool and self-verified proposal for this

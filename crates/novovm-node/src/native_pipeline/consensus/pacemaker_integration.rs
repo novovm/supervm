@@ -392,9 +392,22 @@ fn real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery() -> Result
         votes.advance_round(1)?;
         let candidate = execute(pipeline, root, 0)?;
         journal.propose(&candidate, None)?;
+        let staged = journal
+            .pending_transition()
+            .context("proposal not staged")?;
+        assert!(!staged.submitted);
+        assert!(journal.last_durable_message().is_none());
         let DurableMessage::Proposal(proposal) = complete(&mut journal, pipeline)? else {
             bail!("local leader did not durably propose")
         };
+        assert_eq!(
+            staged.kind,
+            novovm_consensus::round_bft::journal::PendingTransitionKind::Proposal {
+                round: 1,
+                value: proposal.value,
+            }
+        );
+        assert!(journal.pending_transition().is_none());
         locked_value = proposal.value;
         let proposal = proposal.verify(&set)?;
         journal.accept_proposal(&proposal, &candidate, None)?;
@@ -547,6 +560,31 @@ fn real_aoem_pacemaker_quorum_timers_ack_and_locked_catchup_recovery() -> Result
         assert_eq!(
             wire::encode_quorum(journal.valid_certificate().unwrap())?,
             witness
+        );
+        // The projection starts from a cold owner's retained evidence before
+        // that owner has resolved or registered the corresponding body.
+        drop(journal);
+        let journal = open_journal(
+            ValidatorJournal::open(
+                pipeline,
+                context,
+                parent,
+                Arc::clone(&set),
+                component_validator_key(local),
+            )?,
+            pipeline,
+        )?;
+        let progress = super::progress_integration::progress(journal, pipeline, set.clone())?;
+        let observed = progress.proposal_progress();
+        assert!(observed.pending_journal.is_none());
+        let qc = observed
+            .prevote_qc
+            .context("read-only view lost the retained QC")?;
+        assert_eq!(qc.round, 1);
+        assert_eq!(qc.value, locked_value);
+        assert!(
+            !qc.candidate_ready,
+            "a retained QC must not imply local execution"
         );
     }
     services.shutdown()?;

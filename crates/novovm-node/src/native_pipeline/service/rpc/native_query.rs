@@ -71,6 +71,7 @@ impl RpcLifecycle {
         height: u64,
         round: u64,
         hash: Hash,
+        include_progress: bool,
     ) -> Result<Answer> {
         let core = &self.node.controller;
         let current_height = core.context().height;
@@ -98,11 +99,22 @@ impl RpcLifecycle {
         } else {
             None
         };
-        Ok(Answer::ConsensusProposal(ConsensusProposalStatus {
+        let status = ConsensusProposalStatus {
             current_height,
             current_round,
             observation,
-        }))
+        };
+        Ok(if include_progress {
+            Answer::ConsensusProposalProgress {
+                progress: status
+                    .observation
+                    .as_ref()
+                    .map(|_| core.proposal_progress()),
+                status,
+            }
+        } else {
+            Answer::ConsensusProposal(status)
+        })
     }
 
     /// At most one request/turn; bounded replies share the original socket.
@@ -127,8 +139,18 @@ impl RpcLifecycle {
                     height,
                     round,
                     hash,
+                }
+                | Query::ConsensusProposalProgress {
+                    height,
+                    round,
+                    hash,
                 } => self
-                    .consensus_proposal_status(*height, *round, *hash)
+                    .consensus_proposal_status(
+                        *height,
+                        *round,
+                        *hash,
+                        matches!(&request.query, Query::ConsensusProposalProgress { .. }),
+                    )
                     .unwrap_or(Answer::Error(QueryError::Unavailable)),
                 Query::Receipt { hash } if self.application_receipts.contains_key(hash) => {
                     // Binary receipt v1 has asset nonce/fee fields, not NUAR.

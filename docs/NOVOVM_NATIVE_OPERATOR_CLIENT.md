@@ -66,8 +66,21 @@ novovm-native-client client.json submit signed-batch.nuapfl
   `Prepared` 表示出站消息已准备，`Admitted` 表示原传输接管，`Sent` 表示已写出
   全部初始分片，`Delivered` 表示收到至少一个对端的原认证传输完成确认。
   `Unobserved` 表示当前进程没有该提案的发送记录。候选和提案来自现有 owner，
-  离开当前高度或轮次后 `observation` 为 `null`。这个查询不补写历史观测，
+  离开当前高度或轮次后 `observation` 为 `null`。扩展查询需要支持该请求的节点；
+  查询旧节点时可在交易哈希后加 `--legacy`，使用原报文并省略 `progress`。
+  这个查询不补写历史观测，
   不触发签名、投票、重发或最终确认。
+  - `progress.step` 是 journal 已确认的当前步，`proposed_round` 是共识 owner
+    已回读的本地提案轮次。两者都属于节点当前高度、轮次。
+  - `progress.pending_journal` 显示待确认转换。若 `action.Proposal` 的轮次和
+    值与查询候选一致，提案已在 owner 内完成签名。`submitted=false` 表示尚无
+    写入票据，`submitted=true` 表示写入已提交且 owner 仍未消费确认。原签名提案
+    字节仍由持久确认后原有的查询路径返回。待确认转换属于节点当前状态，可能关联
+    另一候选或其他共识操作。
+  - `progress.prevote_qc` 给出 journal 已验证的有效值证书轮次和值。
+    `candidate_ready` 表示原签名分支能从本地候选集合找到该值；没有证书时字段为
+    `null`。若既没有匹配的签名提案也没有匹配的待确认提案，应结合 step、
+    `proposed_round` 和证书候选判断，当前快照无法还原历史签名活动。
 - `submit` 只接受原 `UcaSpendBatch::encode()` 的NUAPFL01，里面须已有真实签名及
   原账户定位提示；不接受旧V3或JSON交易，不在CLI中补签/授权。接收节点仍独立验签
   和验权。CLI上限64行/512KiB是本地操作预算，不是主链协议容量或TPS上限。
