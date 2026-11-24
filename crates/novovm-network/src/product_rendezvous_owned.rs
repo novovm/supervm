@@ -795,8 +795,10 @@ impl Node {
                         let expiry = observed.map_or(current.expires_ms, |mapping| {
                             current.expires_ms.min(mapping.expires_ms)
                         });
-                        if route.address != desired
-                            || (signed_expires_ms <= wall_ms.saturating_add(5_000) && expiry > signed_expires_ms)
+                        if now < rotate_at && expiry > wall_ms
+                            && (route.address != desired
+                                || (signed_expires_ms <= wall_ms.saturating_add(5_000)
+                                    && expiry > signed_expires_ms))
                         {
                             route.address = desired;
                             let record = host.rotate_native_mailbox_v7(Some(route), wall_ms, expiry)?;
@@ -839,7 +841,8 @@ impl Node {
                             let snapshot = c.snapshot();
                             let capacity = snapshot.inbound_connections().min(max_connections) as u16;
                             if native_adaptive {
-                                if let Some(route) = &mut native_route {
+                                if let (Some(route), Some(local)) = (&mut native_route, native_bound) {
+                                    route.address = observed.map_or(local, |mapping| mapping.address);
                                     route.max_connections = capacity;
                                     if snapshot.wire_bytes_per_minute != 0 {
                                         route.max_bytes_per_minute = snapshot.wire_bytes_per_minute.min(native_wire_ceiling.unwrap_or(u64::MAX));
