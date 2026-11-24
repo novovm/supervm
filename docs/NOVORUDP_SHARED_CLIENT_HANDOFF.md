@@ -1,5 +1,9 @@
 # 原生客户端共享传输交接（2026-10-16）
 
+## 2026-11-24 validator-C 回传　v132 网络侧隔离预检
+
+原两台 v132 的安装哈希、进程和 v113 回退包与上一轮一致。mobile-A 走 Wi-Fi，mobile-B 走蜂窝，两端无活动 VPN。当前 Wi-Fi 网关的 HTTP／HTTPS 管理入口从本机请求超时，设备级网络规则还未施加。本轮无验收消息，公网纯直连与首选 IP／端口失效尚未执行。上轮已验收的断网补投与四项设备回执继续作为基线。[双机预检记录](https://github.com/XujueKing/NOVOCHAT/blob/301ef3cf49e3d6c8f0974001b974630734f420a7/docs/implementation/evidence/original-pair-v132-network-isolation-preflight-20261124.md)
+
 ## 2026-11-24 validator-C 回传　v132 原生 L4 接管与断网恢复
 
 v130 双机在真实 Wi-Fi／蜂窝上恢复投递。A 的原生 UDP 曾在首个信箱控制请求尚未成功时让现有载体让位，随后日志反复记录联系人信箱注册请求超时。NOVOCHAT 在原 L4 调度中将让位推迟到该请求成功，并在取得同一业务执行权前后重新核对当期签名声明和联系人授权。消息、持钥和回执走现有执行链。
