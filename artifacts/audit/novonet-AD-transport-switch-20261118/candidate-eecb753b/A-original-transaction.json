@@ -1,0 +1,31 @@
+{
+  "host": "validator-A",
+  "query_utc": "2026-11-24T05:01:43Z",
+  "transaction_hash": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "runtime": {
+    "pid": 18888,
+    "source": "1b6808f6",
+    "exe_sha256": "9d145d6e3a0f58e6fa0bea90a2815c53713c7e299d9483cc88a6afb3a92d88a5"
+  },
+  "authenticated_status": {
+    "current_height": 1,
+    "round": 580,
+    "finalized_height": 0,
+    "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333"
+  },
+  "receipt": { "state": "Received", "indexed_height": 0 },
+  "signed_batch_custody": {
+    "status": "preserved_on_A",
+    "file_name": "independent-signed.nuapfl",
+    "bytes": 5610,
+    "sha256": "df61bc10005fe204947723c1ac3c361dc2e36e61a07b8b877b758dad7e912bd7",
+    "rows": 1,
+    "signatures_for_row": 1,
+    "nonce": 0,
+    "verification": "Current file digest matches November 21 offline native NUAPFL decode and AOEM signature verification."
+  },
+  "finality_verified": false,
+  "node_restarted": false,
+  "node_updated": false,
+  "transaction_resubmitted": false
+}
