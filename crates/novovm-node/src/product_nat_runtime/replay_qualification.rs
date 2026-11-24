@@ -56,29 +56,20 @@ fn exchange(
     output: &Path,
     name: &str,
 ) -> Result<Exchange> {
-    let mut nonce = [0; 16];
-    OsRng.fill_bytes(&mut nonce);
-    let object = u64::from_be_bytes(nonce[..8].try_into()?);
+    let probe = EndpointObservationProbeV2::default();
     let expected_peer = peer_id_from_mldsa65_public_key_v1(&config.peer_public_key);
     let deadline = Instant::now() + Duration::from_millis(config.timeout_ms);
     let mut submission = None;
     while Instant::now() < deadline {
         let polled = endpoint.poll(now_ms_v1(), Instant::now(), 64)?;
         for received in polled.frames {
-            let frame = received.frame();
-            if received.peer_id() == expected_peer
-                && frame.kind == NovoRudpTransportFrameKindV0::Data
-                && frame.stream_id == STREAM
-                && frame.object_id == object
-                && frame.payload.starts_with(MAGIC)
-                && frame.payload.get(8) == Some(&2)
-                && frame.payload.get(9..25) == Some(nonce.as_slice())
-            {
-                let (session, submitted_ms) = submission.context("reply before request")?;
-                ensure!(
-                    frame.session_id == session,
-                    "reply belongs to another session"
-                );
+            let Some((session, submitted_ms)) = submission else {
+                continue;
+            };
+            if received.peer_id() != expected_peer {
+                continue;
+            }
+            if let Some(observed) = probe.observed(&received, 0, session) {
                 let wire = io
                     .captured
                     .lock()
@@ -93,7 +84,7 @@ fn exchange(
                 fs::write(output.join(&wire_file), &wire)?;
                 let result = Exchange {
                     session_id: session,
-                    observed_endpoint: decode_address(&frame.payload[25..])?.to_string(),
+                    observed_endpoint: observed.to_string(),
                     wire_file,
                     wire_sha256: format!("{:x}", Sha256::digest(&wire)),
                     wire_bytes: wire.len(),
@@ -109,18 +100,7 @@ fn exchange(
         }
         if submission.is_none() {
             if let Some(session) = endpoint.session_id(0) {
-                let mut payload = MAGIC.to_vec();
-                payload.push(1);
-                payload.extend_from_slice(&nonce);
-                let frame = NovoRudpTransportFrameV0::new(
-                    NovoRudpTransportFrameKindV0::Data,
-                    session,
-                    STREAM,
-                    object,
-                    0,
-                    0,
-                    payload,
-                );
+                let frame = probe.request(session);
                 // Arm only this original application send, never handshake poll.
                 io.armed.store(true, Ordering::Relaxed);
                 let sent = endpoint.try_send(0, &frame);
