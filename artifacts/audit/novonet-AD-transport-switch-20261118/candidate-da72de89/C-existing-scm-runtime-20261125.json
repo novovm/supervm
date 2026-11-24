@@ -1,0 +1,58 @@
+{
+  "observed_utc": "2026-11-24T16:31:16.7896287Z",
+  "service": "NOVOVM-Native-Validator-C",
+  "state": "Running",
+  "start_mode_scm": "Auto",
+  "runtime_pid": 39896,
+  "created_utc": "2026-11-24T16:30:43.1236190Z",
+  "account_sid": "S-1-5-19",
+  "node_sha256": "e42b490a7cb2a34c18b3fd83369788187b42578ad0ecbcf6dd7583dea6232f68",
+  "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "manifest_sha256": "670c9a77d426b50585a2433befa9b81b012b8b20004e5815ed5ae4ddacdff698",
+  "tcp_health_not_used": true,
+  "udp": [
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 42052,
+      "OwningProcess": 39896
+    },
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 41052,
+      "OwningProcess": 39896
+    }
+  ],
+  "requested_utc": "2026-11-24T16:30:41.7711789Z",
+  "resumed_original_state": true,
+  "base_source": "da72de891c11e7113e35cc273b32839123035054",
+  "startup_existing": true,
+  "no_local_pending_batch": true,
+  "transaction_resubmitted": false,
+  "remote_authenticated_query_observed": false,
+  "status": "C_EXISTING_SCM_RUNNING_A_QUERY_PENDING",
+  "handoff_source": "99fe9ff18c2a2088538d23ddd891da7b0cdace99",
+  "transaction_hash": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "config": "C:\\Windows\\ServiceProfiles\\LocalService\\AppData\\Local\\NOVOVM-CommonDa72de89-C-20261125\\run.json",
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "firewall_rule": "NOVOVM-da72de89-C-SCM-20261125",
+  "source_attribution_verified": false,
+  "recovery_delays_ms": [
+    5000,
+    15000
+  ],
+  "query_handoff": {
+    "execution_host": "validator-A",
+    "target": "192.168.71.73:41052",
+    "client": "da72de89 novovm-native-client.exe",
+    "client_sha256": "f2eacb06f1c7fd9dadcd40651e66a60dbf4d49833323bb10aa90e4e7f1538fc4",
+    "steps": [
+      "Use the existing C query configuration and approved client identity from A. Authenticate and record Status.current_height and Status.round.",
+      "Query the original transaction hash by native Receipt and use consensus-proposal at the returned position. Include the actual authenticated result and any evidence that A supplied the same hash to C. Missing source evidence remains unknown.",
+      "If a signed proposal containing the original hash exists, follow the same block to verified AOEM execution, three distinct valid QC signatures and a durable business receipt. Keep all nodes running in their current deployments and do not resubmit either transaction."
+    ],
+    "latest_authorized_actions": [
+      "C original existing start",
+      "read-only transaction verification"
+    ]
+  }
+}
