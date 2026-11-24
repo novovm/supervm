@@ -1,0 +1,64 @@
+{
+  "source": "9bf396b3",
+  "B_SSH": "original strict host-key connection succeeded; original instance uptime over 41 days",
+  "A": {
+    "pid_before": 27576,
+    "pid_after": 8456,
+    "validator_pid": 18888,
+    "platform": "Windows",
+    "binary_sha256": "8676c9d5f812ceea7239919161774ab7c6e81942c74d616cbbccfca0f048bb0f",
+    "mailbox_integrity": "ok",
+    "original_mailbox_and_envelope_digests_unchanged": true,
+    "original_key_and_config_hashes_unchanged": true,
+    "mailboxes": 14,
+    "envelopes": 25,
+    "pin_sha256": "a6b0673338fa7b262f785893a3dbb8d0a2f32d588c33ac2c11124b95edcb36aa",
+    "signed_sequence": 4239,
+    "signed_native_address_family": "IPv4",
+    "reachability": "LAN; physical gateway WAN is in RFC 6598 shared address space",
+    "global_ipv6_or_default_route_observed": false,
+    "live_native_challenge": {
+      "result": "PASS",
+      "scope": "local A LAN, ephemeral ML-DSA-65 test identity",
+      "elapsed_ms": 134
+    }
+  },
+  "B": {
+    "pid_before": 2916130,
+    "pid_after": 3454681,
+    "original_V2_pid": 913371,
+    "platform": "Linux",
+    "binary_sha256": "10b7f0f7dcd730995b171a83f9820661cf8a8f05ced9778accb60c29c8e176a4",
+    "mailbox_integrity": "ok",
+    "original_key_and_config_hashes_unchanged": true,
+    "pin_sha256": "96e69ec8f06aa9274a48f6688b46bb9d88f02590b221d5d40fc61067cb64ec7c",
+    "signed_sequence": 1605,
+    "signed_native_address_family": "IPv4",
+    "global_ipv6_or_default_route_observed": false,
+    "public_native_udp_packet_reached_host": true,
+    "live_native_challenge": {
+      "result": "PASS",
+      "scope": "public IPv4 from A, ephemeral ML-DSA-65 test identity",
+      "elapsed_ms": 178,
+      "pin_nonce_and_session_matched": true
+    }
+  },
+  "B_direct_private_APFL_post_upgrade": {
+    "result": "PASS",
+    "sequences": [
+      1606,
+      4240,
+      4818
+    ]
+  },
+  "existing_authorized_phone_challenge_verified": false,
+  "qualified_two_public_observers": false,
+  "private_handoff": {
+    "B_SSH_directory": "/home/ecs-user/.novovm-handoff/NVNATP02-9bf396b3",
+    "receipt": "A-B-NVNATP02-private-receipt-20261124.json",
+    "receipt_sha256": "1022b65317025a10805054e3153ebf8b166cc2c1033bd5bd52c2e73a24c918ee",
+    "B_rolling_declaration": "/home/ecs-user/.novovm-handoff/B-first-hop-05d22008/B-private-apfl-current.json"
+  },
+  "D_operated": false,
+  "original_transactions_resent": false
+}

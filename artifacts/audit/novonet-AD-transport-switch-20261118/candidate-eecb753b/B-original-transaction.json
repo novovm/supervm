@@ -1,0 +1,59 @@
+{
+  "host": "validator-B",
+  "query_utc": "2026-11-24T13:15:05Z",
+  "runtime": {
+    "pid": 571511,
+    "source": "1b6808f6",
+    "exe_sha256": "5e5cefa16f47fbabe9fb8b9b9caa07039588b1518b3309528159a24836f67e64",
+    "active_verified_via_existing_ssh": true
+  },
+  "authenticated_query": {
+    "native_client": "existing 1b6808f6 release client on A",
+    "public_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+    "current_height": 1,
+    "round": 580,
+    "committed_height": 0,
+    "indexed_height": 0,
+    "pending": 1,
+    "state_root": "f6186d40260aa18e84b01101d56ca3e918aff799ef41d927aeab554495f56333"
+  },
+  "transaction_hash": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "receipt": {
+    "state": "Received",
+    "indexed_height": 0
+  },
+  "other_original_receipt": {
+    "transaction_hash": "2d0436f0893d5a6e1e996470a2fd223b3b256a11a6240e39418078e9be9a5f3d",
+    "state": "NotRecent",
+    "indexed_height": 0
+  },
+  "signed_batch_custody": {
+    "status": "not located in checked B paths",
+    "checked_paths": [
+      "/var/lib/novovm",
+      "/etc/novovm",
+      "B release and candidate paths under /data",
+      "B operator and root home directories"
+    ],
+    "matching_nuapfl_files": 0,
+    "matching_file_sha256": 0,
+    "active_native_pending_recovery_file_configured": false,
+    "A_retained_file_digests": [
+      {
+        "file_name": "independent-signed.nuapfl",
+        "bytes": 5610,
+        "sha256": "df61bc10005fe204947723c1ac3c361dc2e36e61a07b8b877b758dad7e912bd7"
+      },
+      {
+        "file_name": "first-live-signed.nuapfl",
+        "bytes": 5610,
+        "sha256": "21cc0751a0331bdefc18cac64e9663a5a2c51d2addf370438c3b8b79609c8eb0"
+      }
+    ]
+  },
+  "finality_verified": false,
+  "node_restarted": false,
+  "node_updated": false,
+  "transactions_resubmitted": false,
+  "original_signed_bytes_transferred": false
+}

@@ -1,0 +1,16 @@
+{
+  "status": "A_COMMON_DA72DE89_WINDOWS_ZIP_RECEIVED_HASH_VERIFIED_NOT_DEPLOYED",
+  "host": "validator-A",
+  "checked_beijing": "2026-11-24T21:12:23+08:00",
+  "source": "da72de89",
+  "platform": "windows-x86_64",
+  "filename": "novovm-common-da72de89-windows-x86_64.zip",
+  "bytes": 159288717,
+  "sha256": "49657f70273ee3070d8a439e172bb75d00e80dcf44e911e7d02b569dee337c72",
+  "usb_source_size_and_hash_verified": true,
+  "local_copy_size_and_hash_verified": true,
+  "D_independent_handoff": "064a387a",
+  "archive_extracted_or_executed": false,
+  "linux_package_verified": false,
+  "deployed": false
+}
