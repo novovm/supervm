@@ -912,11 +912,15 @@ fn run_native_uca_service_fixture_with_versioned(
             reopened[0].node.validators.clone(),
             client_identity,
         )?;
-        let report = reopened[0].restore_pending_assets(rpc::PendingAssetRecovery::load(
+        let mut recovery = Some(rpc::PendingAssetRecovery::load(
             StartMode::Existing,
             &path,
             pin,
-        )?)?;
+        )?);
+        let report = reopened[0]
+            .poll_pending_asset_recovery(&mut recovery, Instant::now())?
+            .context("empty cold store must not need another replay tick")?;
+        assert!(recovery.is_none());
         assert_eq!(
             report["recovered_pending_hashes"],
             serde_json::json!([rpc::hex(&hash)])

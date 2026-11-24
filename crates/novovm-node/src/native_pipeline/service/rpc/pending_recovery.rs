@@ -8,12 +8,14 @@ use std::io::Read;
 const MAX_BYTES: usize = 128 * 1024;
 const MAX_ROWS: usize = 16;
 const WAIT: Duration = Duration::from_secs(30);
+const REPLAY_WAIT: Duration = Duration::from_secs(120);
 
 /// A single operator-pinned, bounded copy of an original signed native batch.
 /// Never opens or changes the database, signs, or grants spending permission.
 pub struct PendingAssetRecovery {
     batch: Arc<AssetSpendBatchV3>,
     digest: Hash,
+    replay_deadline: Instant,
 }
 
 impl PendingAssetRecovery {
@@ -79,18 +81,41 @@ impl PendingAssetRecovery {
         Ok(Self {
             batch: Arc::new(batch),
             digest,
+            replay_deadline: Instant::now() + REPLAY_WAIT,
         })
     }
 }
 
 impl RpcLifecycle {
-    /// Before the first native/network poll, run the normal admission owner
-    /// against the recovered parent. No startup data becomes an execution fact.
-    pub fn restore_pending_assets(&mut self, recovery: PendingAssetRecovery) -> Result<Value> {
+    /// Advance cold consensus replay before opening the volatile admission pool.
+    /// The caller retains the pinned batch while replay needs another tick.
+    pub fn poll_pending_asset_recovery(
+        &mut self,
+        recovery: &mut Option<PendingAssetRecovery>,
+        now: Instant,
+    ) -> Result<Option<Value>> {
         ensure!(
-            self.is_uca() && !self.node.controller.is_recovering(),
-            "pending recovery needs a ready local UCA parent"
+            self.is_uca(),
+            "pending recovery requires the native UCA profile"
         );
+        if self.node.controller.is_recovering() {
+            ensure!(
+                now < recovery
+                    .as_ref()
+                    .context("pending recovery batch missing")?
+                    .replay_deadline,
+                "pending recovery timed out waiting for cold consensus replay"
+            );
+            self.poll_consensus(now)?;
+            if self.node.controller.is_recovering() {
+                return Ok(None);
+            }
+        }
+        let recovery = recovery.take().context("pending recovery batch missing")?;
+        self.restore_pending_assets(recovery).map(Some)
+    }
+
+    fn restore_pending_assets(&mut self, recovery: PendingAssetRecovery) -> Result<Value> {
         ensure!(
             self.incoming.is_none()
                 && self.pending.is_empty()

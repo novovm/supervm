@@ -34070,6 +34070,7 @@ struct NativeExecutionPipelineUdpDriveV1 {
     local_node: NodeId,
     transport: Option<UdpTransport>,
     product: Option<novovm_node::native_pipeline::service::rpc::RpcLifecycle>,
+    pending_recovery: Option<novovm_node::native_pipeline::service::rpc::PendingAssetRecovery>,
     #[cfg(feature = "iroh-transport")]
     novonet: Option<novovm_node::native_pipeline::service::network::Driver>,
     peers: Vec<NodeId>,
@@ -34126,18 +34127,10 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 .map(|path| novovm_node::native_pipeline::service::network::Config::load(path))
                 .transpose()?;
             let node = ResidentNode::start_on_transport(config, mode, transport)?;
-            let mut product = RpcLifecycle::new(node, batch_size)?;
-            if let Some(recovery) = pending_recovery {
-                match product.restore_pending_assets(recovery) {
-                    Ok(report) => println!("native_pending_recovery: {report}"),
-                    Err(error) => {
-                        let drain = product.node.shutdown();
-                        return Err(error.context(format!(
-                            "pending recovery failed; original node drained: {drain:?}"
-                        )));
-                    }
-                }
+            if pending_recovery.is_some() && node.controller.is_recovering() {
+                println!("native_pending_recovery_wait: cold consensus replay");
             }
+            let mut product = RpcLifecycle::new(node, batch_size)?;
             #[cfg(feature = "iroh-transport")]
             let novonet = match network_config {
                 Some(config) => {
@@ -34161,6 +34154,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 local_node,
                 transport: None,
                 product: Some(product),
+                pending_recovery,
                 #[cfg(feature = "iroh-transport")]
                 novonet,
                 peers: Vec::new(),
@@ -34203,6 +34197,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
             local_node,
             transport: Some(transport),
             product: None,
+            pending_recovery: None,
             #[cfg(feature = "iroh-transport")]
             novonet: None,
             peers,
@@ -41893,6 +41888,7 @@ mod native_execution_pipeline_tests {
             local_node: local,
             transport: Some(local_transport),
             product: None,
+            pending_recovery: None,
             #[cfg(feature = "iroh-transport")]
             novonet: None,
             peers: vec![remote],
@@ -42588,12 +42584,14 @@ fn run_native_execution_tick_node_mode_v1(
                 .is_some_and(|drive| drive.product.is_some()),
             "SCM service requires the original authenticated native owner"
         );
-        if let Err(error) = control.ready() {
-            let product = udp_drive.as_mut().unwrap().product.take().unwrap();
-            let drain = product.node.shutdown();
-            return Err(error.context(format!(
-                "SCM readiness failed; original tick drained: {drain:?}"
-            )));
+        if udp_drive.as_ref().unwrap().pending_recovery.is_none() {
+            if let Err(error) = control.ready() {
+                let product = udp_drive.as_mut().unwrap().product.take().unwrap();
+                let drain = product.node.shutdown();
+                return Err(error.context(format!(
+                    "SCM readiness failed; original tick drained: {drain:?}"
+                )));
+            }
         }
     }
     if configured_product {
@@ -42639,13 +42637,30 @@ fn run_native_execution_tick_node_mode_v1(
         };
         #[cfg(not(feature = "iroh-transport"))]
         let novonet_observation: Option<()> = None;
-        if let Some(product) = udp_drive.as_mut().and_then(|drive| drive.product.as_mut()) {
+        if let Some(drive) = udp_drive.as_mut().filter(|drive| drive.product.is_some()) {
+            let product = drive.product.as_mut().unwrap();
             // This is the original tick's receive owner. Reuse the reviewed
             // admission/projection and protocol drivers; do NOT call the old
             // raw pending executor or its progress-derived ledger closure.
             let before = novovm_node::native_pipeline::service::rpc::control_progress(product);
-            if let Err(error) = product.poll(Instant::now()) {
-                let product = udp_drive.as_mut().unwrap().product.take().unwrap();
+            let now = Instant::now();
+            let outcome = if drive.pending_recovery.is_some() {
+                product
+                    .poll_pending_asset_recovery(&mut drive.pending_recovery, now)
+                    .and_then(|report| {
+                        if let Some(report) = report {
+                            println!("native_pending_recovery: {report}");
+                            if let Some(control) = &service_control {
+                                control.ready().context("SCM readiness failed")?;
+                            }
+                        }
+                        Ok(())
+                    })
+            } else {
+                product.poll(now)
+            };
+            if let Err(error) = outcome {
+                let product = drive.product.take().unwrap();
                 let drain = product.node.shutdown();
                 return Err(error.context(format!("original tick stopped; drain={drain:?}")));
             }
