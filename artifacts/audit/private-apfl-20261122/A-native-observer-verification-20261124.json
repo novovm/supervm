@@ -1,0 +1,27 @@
+{
+  "checked_beijing": "2026-11-24T13:36:44.1080145+08:00",
+  "C_request_commit": "9ae31acd",
+  "owner_pid": 27576,
+  "validator_pid": 18888,
+  "running_source": "c529cdbe",
+  "running_binary_sha256": "3a0f0efe46f3106afaf01b096cd9c44fa700d1e69e3d21991e8a99191ca759c1",
+  "signed_peer_id": "novovm-mldsa65:afc9c2f20c026f32dae86c03a56cdba7b97657f9418e890a05a5dfac3dbe5f5c",
+  "full_mldsa65_public_key_sha256": "a6b0673338fa7b262f785893a3dbb8d0a2f32d588c33ac2c11124b95edcb36aa",
+  "signed_sequence": 3835,
+  "signed_expiry_beijing": "2026-11-24T13:37:50.455+08:00",
+  "statement_sha256": "fab0c2c741fc6f9dc48a0b15db4b9fc46f42d43232532c4a9cb6d3349fe31aa7",
+  "signature_verification": "private-apfl verified role=forwarder sequence=3835",
+  "udp_listener_ports": [
+    43171,
+    43173
+  ],
+  "native_udp_address_family": "IPv4",
+  "native_udp_address_class": "RFC1918 LAN",
+  "signed_public_native_udp": false,
+  "NVNATP02_in_running_build": false,
+  "authorized_challenge": "not run: no signed public native UDP locator and no NVNATP02 handler",
+  "qualified_public_observers_from_A": 0,
+  "latest_C_followup_commit": "784f36b8",
+  "B_last_verified_V8_build": "b569f8cd",
+  "B_current_runtime_observer_evidence": "unverified: original SSH banner timed out before authentication; no current native UDP declaration or authorized challenge receipt"
+}
