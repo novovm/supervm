@@ -1,0 +1,26 @@
+{
+  "host": "validator-B",
+  "received_beijing": "2026-11-24T21:57:18.1502302+08:00",
+  "built_by": "validator-A, WSL Ubuntu 24.04",
+  "packager": "scripts/novovm-package-product-linux.ps1",
+  "verification": {
+    "source": "da72de891c11e7113e35cc273b32839123035054",
+    "target": "x86_64-unknown-linux-gnu",
+    "archive_bytes": 389066859,
+    "archive_sha256": "a725401b06416fedea7de71020d854230542361b49ec0a3cce0960134004dc52",
+    "manifest_sha256": "46ac1368f004479d860e1e63f552374f09e572213d7b7b2fdddd7f995ed5c73a",
+    "member_hashes_and_sizes_verified": 93,
+    "binary_contracts_verified": 10,
+    "additional_manifest_files_verified": 3,
+    "aoem_core_sha256": "21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231",
+    "deployed": false
+  },
+  "A_B_independent_stream_checks_match": true,
+  "B_staged_archive": "/data/novovm-candidate-da72de89-20261124/novovm-common-da72de89-linux-x86_64.tar.gz",
+  "B_original_validator_pid": 571511,
+  "B_original_V2_pid": 913371,
+  "B_package_extracted_or_executed": false,
+  "nodes_restarted_or_updated": false,
+  "original_transactions_resubmitted": false,
+  "transaction_preservation_reference": "11fbe51f"
+}
