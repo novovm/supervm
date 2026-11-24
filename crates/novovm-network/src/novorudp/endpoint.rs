@@ -195,6 +195,7 @@ pub struct NativeEndpoint {
     configured: Option<ConfiguredAdmission>,
     wire_budget: Option<NativeWireBudget>,
     traffic_started: bool,
+    endpoint_observer: bool,
     recovery_diagnostics: Option<Arc<NativeTransferDiagnosticsV1>>,
     continuation: handshake_continuation::Receiver,
 }
@@ -334,6 +335,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            endpoint_observer: false,
             recovery_diagnostics: None,
             continuation: handshake_continuation::Receiver::new(Instant::now()),
         })
@@ -394,6 +396,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            endpoint_observer: false,
             recovery_diagnostics: None,
             continuation: handshake_continuation::Receiver::new(Instant::now()),
         };
@@ -511,6 +514,7 @@ impl NativeEndpoint {
             }),
             wire_budget: None,
             traffic_started: false,
+            endpoint_observer: false,
             recovery_diagnostics: None,
             continuation,
         })
@@ -670,6 +674,7 @@ impl NativeEndpoint {
             configured: None,
             wire_budget: None,
             traffic_started: false,
+            endpoint_observer: false,
             recovery_diagnostics: None,
             continuation,
         })
@@ -851,6 +856,14 @@ impl NativeEndpoint {
             .as_mut()
             .context("native wire budget not configured")?
             .set_limit(bytes_per_minute, now)
+    }
+
+    pub(crate) fn enable_endpoint_observer_v2(&mut self) -> Result<()> {
+        ensure!(!self.traffic_started, "observer requires the listener before IO");
+        let open = self.open.as_mut().context("observer requires native client admission")?;
+        open.streams.insert(crate::endpoint_observation::ENDPOINT_OBSERVATION_STREAM);
+        self.endpoint_observer = true;
+        Ok(())
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {
@@ -1332,6 +1345,23 @@ impl NativeEndpoint {
         result
             .frames
             .retain(|frame| self.session_id(frame.peer) == Some(frame.frame.session_id));
+        if self.endpoint_observer {
+            let mut remaining = 4;
+            result.frames.retain(|frame| {
+                if frame.frame.stream_id != crate::endpoint_observation::ENDPOINT_OBSERVATION_STREAM {
+                    return true;
+                }
+                if remaining > 0 {
+                    if let Some((_, reply)) = crate::endpoint_observation::observation_reply_v2(self, frame) {
+                        remaining -= 1;
+                        // The observation describes this authenticated client's
+                        // own source only and uses the original wire budget.
+                        let _ = self.try_send(frame.peer, &reply);
+                    }
+                }
+                false
+            });
+        }
         Ok(result)
     }
 

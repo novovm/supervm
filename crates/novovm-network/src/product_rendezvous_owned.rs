@@ -644,14 +644,24 @@ impl Node {
         let expires_ms = now_ms()?
             .checked_add(90_000)
             .ok_or_else(|| anyhow::anyhow!("service clock exhausted"))?;
+        let minimum_observation_expiry = now_ms()?.saturating_add(65_000);
+        let observed = native
+            .as_ref()
+            .and_then(NativeMailboxListenerV7::observed_address)
+            .filter(|(_, expiry)| *expiry >= minimum_observation_expiry);
+        let expires_ms = observed.map_or(expires_ms, |(_, expiry)| expires_ms.min(expiry));
         let host = activate(&endpoint, expires_ms)?;
         let native_adaptive = native.as_ref().is_some_and(|n| n.concurrency().is_some());
         let native_wire_ceiling = native
             .as_ref()
             .and_then(NativeMailboxListenerV7::wire_ceiling);
+        let native_bound = native.as_ref().map(|listener| listener.route().address);
         let mut native_route = native.as_ref().map(NativeMailboxListenerV7::current_route);
         if let Some(route) = &mut native_route {
             route.max_connections = route.max_connections.min(max_connections as u16);
+            if let Some((address, _)) = observed {
+                route.address = address;
+            }
         }
         #[cfg(feature = "tls-transport")]
         let tls_route = tls.as_ref().map(|listener| {
@@ -807,6 +817,9 @@ impl Node {
                             let capacity = snapshot.inbound_connections().min(max_connections) as u16;
                             if native_adaptive {
                                 if let Some(route) = &mut native_route {
+                                    if let Some(address) = native_bound {
+                                        route.address = address;
+                                    }
                                     route.max_connections = capacity;
                                     if snapshot.wire_bytes_per_minute != 0 {
                                         route.max_bytes_per_minute = snapshot.wire_bytes_per_minute.min(native_wire_ceiling.unwrap_or(u64::MAX));

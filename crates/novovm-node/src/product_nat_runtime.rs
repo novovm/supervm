@@ -1,27 +1,33 @@
 //! Network-only qualification on the original NativeEndpoint. No chain store,
 //! second UDP codec, raw identity loader or signature-suite fallback.
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
+#[cfg(test)]
+use anyhow::bail;
 use novovm_network::{
+    endpoint_observation::{
+        observation_reply_v2, EndpointObservationProbeV2, ENDPOINT_OBSERVATION_STREAM as STREAM,
+    },
     novorudp::{
-        carrier::NativeRoute,
         endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
-        NovoRudpTransportFrameKindV0, NovoRudpTransportFrameV0,
+        NovoRudpTransportFrameV0,
     },
     product_overlay::{
         peer_id_from_mldsa65_public_key_v1, TransportIdentity, MLDSA65_PUBLIC_KEY_BYTES,
     },
 };
-use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    net::{IpAddr, SocketAddr, UdpSocket},
+    net::{SocketAddr, UdpSocket},
     path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-const STREAM: u64 = 1;
-const MAGIC: &[u8; 8] = b"NVNATP02";
+#[cfg(test)]
+use novovm_network::{
+    endpoint_observation::{decode_address, encode_address},
+    novorudp::{carrier::NativeRoute, NovoRudpTransportFrameKindV0},
+};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -241,9 +247,7 @@ fn run_with_identity(
     if server && !config.learn_authenticated_peer_routes {
         endpoint.enable_client_reconnect_v1()?;
     }
-    let mut nonce = [0; 16];
-    OsRng.fill_bytes(&mut nonce);
-    let object = u64::from_be_bytes(nonce[..8].try_into()?);
+    let probe = EndpointObservationProbeV2::default();
     let expected_peer = peer_id_from_mldsa65_public_key_v1(&config.peer_public_key);
     let mut report = ProductNatRuntimeReportV1 {
         accepted: false,
@@ -279,44 +283,20 @@ fn run_with_identity(
             if received.peer_id() != expected_peer {
                 continue;
             }
-            let frame = received.frame();
-            if frame.stream_id != STREAM
-                || frame.kind != NovoRudpTransportFrameKindV0::Data
-                || !frame.payload.starts_with(MAGIC)
-            {
+            let peer = received.peer();
+            let Some(session) = endpoint.session_id(peer) else {
                 continue;
-            }
-            if server && frame.payload.len() == 25 && frame.payload[8] == 1 {
-                report.authenticated_requests += 1;
-                let peer = received.peer();
-                let NativeRoute::Udp(source) = endpoint.peer_route(peer)? else {
-                    bail!("probe is not on UDP");
-                };
-                let mut payload = frame.payload.clone();
-                payload[8] = 2;
-                encode_address(source, &mut payload);
-                pending_reply = Some((
-                    peer,
-                    NovoRudpTransportFrameV0::new(
-                        NovoRudpTransportFrameKindV0::Data,
-                        frame.session_id,
-                        STREAM,
-                        frame.object_id,
-                        frame.sequence,
-                        0,
-                        payload,
-                    ),
-                ));
-                report.session_id = endpoint.session_id(peer);
-                report.observed_endpoint = Some(source.to_string());
-            } else if !server
-                && frame.payload.get(8) == Some(&2)
-                && frame.object_id == object
-                && frame.payload.get(9..25) == Some(nonce.as_slice())
-            {
-                let observed = decode_address(&frame.payload[25..])?;
+            };
+            if server {
+                if let Some((source, reply)) = observation_reply_v2(&endpoint, &received) {
+                    report.authenticated_requests += 1;
+                    report.session_id = Some(session);
+                    report.observed_endpoint = Some(source.to_string());
+                    pending_reply = Some((peer, reply));
+                }
+            } else if let Some(observed) = probe.observed(&received, 0, session) {
                 report.observed_endpoint = Some(observed.to_string());
-                report.session_id = endpoint.session_id(received.peer());
+                report.session_id = Some(session);
                 report.authenticated_exchanges = 1;
                 report.round_trip_confirmed = true;
                 report.accepted = true;
@@ -333,21 +313,7 @@ fn run_with_identity(
         }
         if !server && !sent {
             if let Some(session) = endpoint.session_id(0) {
-                let mut payload = MAGIC.to_vec();
-                payload.push(1);
-                payload.extend_from_slice(&nonce);
-                sent = endpoint.try_send(
-                    0,
-                    &NovoRudpTransportFrameV0::new(
-                        NovoRudpTransportFrameKindV0::Data,
-                        session,
-                        STREAM,
-                        object,
-                        0,
-                        0,
-                        payload,
-                    ),
-                )?;
+                sent = endpoint.try_send(0, &probe.request(session))?;
             }
         }
         if !server && report.accepted {
@@ -366,34 +332,6 @@ fn run_with_identity(
         "native authenticated probe did not complete; retain failure report"
     );
     Ok(report)
-}
-
-fn encode_address(address: SocketAddr, out: &mut Vec<u8>) {
-    match address.ip() {
-        IpAddr::V4(ip) => {
-            out.push(4);
-            out.extend_from_slice(&ip.octets());
-        }
-        IpAddr::V6(ip) => {
-            out.push(6);
-            out.extend_from_slice(&ip.octets());
-        }
-    }
-    out.extend_from_slice(&address.port().to_be_bytes());
-}
-
-fn decode_address(bytes: &[u8]) -> Result<SocketAddr> {
-    let ip = match bytes {
-        [4, a, b, c, d, _, _] => IpAddr::V4([*a, *b, *c, *d].into()),
-        value if value.len() == 19 && value[0] == 6 => {
-            IpAddr::V6(<[u8; 16]>::try_from(&value[1..17])?.into())
-        }
-        _ => bail!("invalid authenticated observed endpoint"),
-    };
-    Ok(SocketAddr::new(
-        ip,
-        u16::from_be_bytes(bytes[bytes.len() - 2..].try_into()?),
-    ))
 }
 
 fn default_timeout_ms_v1() -> u64 {

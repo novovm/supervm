@@ -19,6 +19,7 @@ pub mod discovery_control;
 pub mod duplex;
 #[cfg(feature = "iroh-transport")]
 pub mod endpoint_delivery;
+pub mod endpoint_observation;
 pub mod eth_chain_config;
 pub mod eth_fullnode;
 pub mod eth_rlpx;
