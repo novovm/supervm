@@ -5,16 +5,23 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy]";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     let config = Path::new(&args[0]);
     let report = if action == "consensus-proposal" {
-        ensure!(args.len() == 5, "{USAGE}");
+        ensure!(
+            args.len() == 5 || args.len() == 6 && args[5] == "--legacy",
+            "{USAGE}"
+        );
         let height = args[2].to_str().context("non-UTF8 height")?.parse()?;
         let round = args[3].to_str().context("non-UTF8 round")?.parse()?;
         let hash = args[4].to_str().context("non-UTF8 transaction hash")?;
-        operator::consensus_proposal(config, height, round, hash)?
+        if args.len() == 6 {
+            operator::consensus_proposal_legacy(config, height, round, hash)?
+        } else {
+            operator::consensus_proposal(config, height, round, hash)?
+        }
     } else {
         ensure!((2..=3).contains(&args.len()), "{USAGE}");
         operator::run(config, action, args.get(2).map(Path::new))?

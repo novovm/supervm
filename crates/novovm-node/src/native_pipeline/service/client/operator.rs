@@ -238,35 +238,63 @@ fn receipt_view(state: native_query::ReceiptState) -> Value {
     }
 }
 
+fn proposal_view(
+    status: native_query::ConsensusProposalStatus,
+    progress: Option<native_query::ProposalProgress>,
+) -> Value {
+    use crate::native_pipeline::service::rpc::hex;
+    let observation = status.observation.map(|observed| {
+        let mut view = json!({
+            "in_pending_pool": observed.in_pending_pool,
+            "selection_gate": observed.selection_gate,
+            "in_local_offer": observed.in_local_offer,
+            "candidate": observed.candidate.map(|candidate| json!({
+                "value": hex(&candidate.value),
+                "body_id": hex(&candidate.body_id),
+                "signed_proposal": candidate.signed_proposal.map(|proposal| json!({
+                    "proposer": hex(&proposal.proposer),
+                    "wire_hex": hex(&proposal.wire),
+                    "dispatch": proposal.dispatch
+                }))
+            }))
+        });
+        if let Some(progress) = progress {
+            let pending_journal = progress.pending_journal.map(|transition| {
+                let action = match transition.action {
+                    native_query::ProposalJournalAction::Proposal { round, value } => {
+                        json!({"Proposal": {"round": round, "value": hex(&value)}})
+                    }
+                    action => json!(action),
+                };
+                json!({"action": action, "submitted": transition.submitted})
+            });
+            view["progress"] = json!({
+                "step": progress.step,
+                "pending_journal": pending_journal,
+                "proposed_round": progress.proposed_round,
+                "prevote_qc": progress.prevote_qc.map(|qc| json!({
+                    "round": qc.round,
+                    "value": hex(&qc.value),
+                    "candidate_ready": qc.candidate_ready
+                }))
+            });
+        }
+        view
+    });
+    json!({"ConsensusProposal": {
+        "current_height": status.current_height,
+        "current_round": status.current_round,
+        "observation": observation
+    }})
+}
+
 // Local presentation only. Never round or narrow monetary u128s through f64/u64.
 fn answer_view(answer: Answer) -> Value {
     use native_query::AssetState;
     match answer {
         Answer::Status(status) => json!({"Status":status}),
-        Answer::ConsensusProposal(status) => {
-            use crate::native_pipeline::service::rpc::hex;
-            let observation = status.observation.map(|observed| {
-                json!({
-                    "in_pending_pool": observed.in_pending_pool,
-                    "selection_gate": observed.selection_gate,
-                    "in_local_offer": observed.in_local_offer,
-                    "candidate": observed.candidate.map(|candidate| json!({
-                        "value": hex(&candidate.value),
-                        "body_id": hex(&candidate.body_id),
-                        "signed_proposal": candidate.signed_proposal.map(|proposal| json!({
-                            "proposer": hex(&proposal.proposer),
-                            "wire_hex": hex(&proposal.wire),
-                            "dispatch": proposal.dispatch
-                        }))
-                    }))
-                })
-            });
-            json!({"ConsensusProposal": {
-                "current_height": status.current_height,
-                "current_round": status.current_round,
-                "observation": observation
-            }})
-        }
+        Answer::ConsensusProposal(status) => proposal_view(status, None),
+        Answer::ConsensusProposalProgress { status, progress } => proposal_view(status, progress),
         Answer::UcaIdentity(state) => json!({"UcaIdentity":state}),
         Answer::UcaApplicationGrant(state) => json!({"UcaApplicationGrant":state}),
         Answer::Error(error) => json!({"Error":error}),
@@ -341,6 +369,25 @@ pub fn consensus_proposal(
     round: u64,
     hash: &str,
 ) -> Result<Value> {
+    proposal_query(config_path, height, round, hash, true)
+}
+
+pub fn consensus_proposal_legacy(
+    config_path: &Path,
+    height: u64,
+    round: u64,
+    hash: &str,
+) -> Result<Value> {
+    proposal_query(config_path, height, round, hash, false)
+}
+
+fn proposal_query(
+    config_path: &Path,
+    height: u64,
+    round: u64,
+    hash: &str,
+    include_progress: bool,
+) -> Result<Value> {
     let hash: [u8; 32] = crate::native_pipeline::service::config::decode_hex(hash)?
         .try_into()
         .map_err(|_| anyhow::anyhow!("expected a 32-byte transaction hash"))?;
@@ -348,14 +395,20 @@ pub fn consensus_proposal(
         height > 0 && hash != [0; 32],
         "invalid consensus query coordinates"
     );
-    run_operation(
-        config_path,
-        Operation::Query(Query::ConsensusProposal {
+    let query = if include_progress {
+        Query::ConsensusProposalProgress {
             height,
             round,
             hash,
-        }),
-    )
+        }
+    } else {
+        Query::ConsensusProposal {
+            height,
+            round,
+            hash,
+        }
+    };
+    run_operation(config_path, Operation::Query(query))
 }
 
 fn run_operation(config_path: &Path, operation: Operation) -> Result<Value> {
@@ -391,12 +444,7 @@ fn run_operation(config_path: &Path, operation: Operation) -> Result<Value> {
                     }
                     let mut view = json!({"kind":"node_observation", "answer":answer_view(reply.answer),
                         "independently_verified_finality":false});
-                    if let Query::ConsensusProposal {
-                        height,
-                        round,
-                        hash,
-                    } = reply.request.query
-                    {
+                    if let Some((height, round, hash)) = reply.request.query.proposal_selector() {
                         view["selector"] = json!({
                             "height":height, "round":round,
                             "tx_hash":crate::native_pipeline::service::rpc::hex(&hash)

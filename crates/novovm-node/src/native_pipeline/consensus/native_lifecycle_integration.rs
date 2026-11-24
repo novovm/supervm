@@ -232,6 +232,7 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
             codec(),
         )?);
     }
+    use novovm_protocol::native_query::{ProposalJournalAction, ProposalStep};
     let start = Instant::now();
     let mut final_head = None;
     for height in 1..=3 {
@@ -267,6 +268,13 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
         };
         let hash = batch.row(0)?.canonical_tx_hash()?;
         assert!(nodes[leader].current_local_proposal(hash)?.is_none());
+        let initial_progress = nodes[leader].proposal_progress();
+        assert_eq!(initial_progress.step, ProposalStep::Propose);
+        assert!(initial_progress.pending_journal.is_none());
+        assert!(initial_progress.proposed_round.is_none());
+        assert!(initial_progress.prevote_qc.is_none());
+        let mut awaiting_proposal_ack = false;
+        let mut saw_prevote_qc = false;
         let mut proposed_value = None;
         let mut sent = false;
         if height == 1 {
@@ -378,9 +386,29 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
                 ensure!(!node.is_frozen(), "healthy lifecycle froze");
             }
             let node = &nodes[leader];
+            let progress = node.proposal_progress();
+            if node.progress.context().height == height {
+                if let Some(qc) = progress.prevote_qc {
+                    assert_eq!(qc.round, 0);
+                    assert_eq!(Some(qc.value), proposed_value);
+                    assert!(qc.candidate_ready);
+                    saw_prevote_qc = true;
+                }
+            }
             assert!(node.current_local_proposal([0xff; 32])?.is_none());
             if let Some(observed) = node.current_local_proposal(hash)? {
+                if let Some(transition) = progress.pending_journal {
+                    if let ProposalJournalAction::Proposal { round, value } = transition.action {
+                        assert_eq!(round, 0);
+                        assert_eq!(value, observed.value);
+                        assert_eq!(progress.step, ProposalStep::Propose);
+                        assert!(progress.proposed_round.is_none());
+                        assert!(observed.signed_proposal.is_none());
+                        awaiting_proposal_ack |= transition.submitted;
+                    }
+                }
                 if let Some(signed) = &observed.signed_proposal {
+                    assert_eq!(progress.proposed_round, Some(0));
                     use crate::native_pipeline::consensus::wire::decode_proposal;
                     use novovm_protocol::native_query::ProposalDispatch;
                     let proposal = decode_proposal(&signed.wire)?;
@@ -398,7 +426,7 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
                         let request = Request {
                             session: [1; 32],
                             sequence: 1,
-                            query: Query::ConsensusProposal {
+                            query: Query::ConsensusProposalProgress {
                                 height,
                                 round: 0,
                                 hash,
@@ -406,16 +434,19 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
                         };
                         let reply = Response {
                             request: request.clone(),
-                            answer: Answer::ConsensusProposal(ConsensusProposalStatus {
-                                current_height: height,
-                                current_round: 0,
-                                observation: Some(ProposalObservation {
-                                    in_pending_pool: true,
-                                    selection_gate: Some("body_owner_accepted".into()),
-                                    in_local_offer: Some(true),
-                                    candidate: Some(observed.clone()),
-                                }),
-                            }),
+                            answer: Answer::ConsensusProposalProgress {
+                                status: ConsensusProposalStatus {
+                                    current_height: height,
+                                    current_round: 0,
+                                    observation: Some(ProposalObservation {
+                                        in_pending_pool: true,
+                                        selection_gate: Some("body_owner_accepted".into()),
+                                        in_local_offer: Some(true),
+                                        candidate: Some(observed.clone()),
+                                    }),
+                                },
+                                progress: Some(progress),
+                            },
                         };
                         let bytes = native_query::encode(Frame::Response(reply.clone()))
                             .map_err(anyhow::Error::msg)?;
@@ -441,6 +472,14 @@ fn run_lifecycle(backend: ExecutionBackend) -> Result<()> {
         }
         let head = nodes[0].progress.head().unwrap();
         assert_eq!(proposed_value, Some(head.block_hash));
+        assert!(
+            awaiting_proposal_ack,
+            "no private signed proposal awaiting ACK was observed"
+        );
+        assert!(
+            saw_prevote_qc,
+            "no valid-value prevote QC with its candidate was observed"
+        );
         assert!(sent, "no exact local proposal send was observed");
         assert!(nodes[leader].current_local_proposal(hash)?.is_none());
         ensure!(

@@ -789,11 +789,12 @@ fn actual_asset_no_ready_wait_preserves_progress_until_nonce_bridge_arrives() ->
         let hash = offer.hashes[0];
         use novovm_protocol::native_query::Answer;
         let observation = |height, round, hash| -> Result<_> {
-            let Answer::ConsensusProposal(status) =
-                rpc.consensus_proposal_status(height, round, hash)?
+            let Answer::ConsensusProposalProgress { status, progress } =
+                rpc.consensus_proposal_status(height, round, hash, true)?
             else {
                 anyhow::bail!("wrong native proposal query answer")
             };
+            assert_eq!(status.observation.is_some(), progress.is_some());
             Ok(status.observation)
         };
         let (height, round) = (offer.position.height, offer.position.round);
