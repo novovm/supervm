@@ -1,0 +1,59 @@
+{
+  "request": "0f54119a",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "client_sha256": "b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16",
+  "nodes": {
+    "A": {
+      "original_node_key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "status": {
+        "utc": "2026-11-25T15:54:14.2850011+00:00",
+        "exit": 0,
+        "answer": {
+          "current_height": 1,
+          "round": 581,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "query": {
+        "utc": "2026-11-25T15:54:14.4571897+00:00",
+        "exit": 0,
+        "answer": {
+          "state": "Received",
+          "indexed_height": 0
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "B": {
+      "original_node_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "status": {
+        "utc": "2026-11-25T15:54:14.6589031+00:00",
+        "exit": 0,
+        "answer": {
+          "current_height": 1,
+          "round": 580,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "query": {
+        "utc": "2026-11-25T15:54:14.8441254+00:00",
+        "exit": 0,
+        "answer": {
+          "state": "Received",
+          "indexed_height": 0
+        },
+        "independently_verified_finality": false
+      }
+    }
+  },
+  "independent_online_custody": [
+    "A",
+    "B"
+  ],
+  "original_transaction_resent": false,
+  "node_runtime_changed": false
+}
