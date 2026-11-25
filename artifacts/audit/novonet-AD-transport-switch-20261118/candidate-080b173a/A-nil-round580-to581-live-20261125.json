@@ -1,0 +1,529 @@
+{
+  "status": "A_LIVE_ROUND_581",
+  "handoff": "98a99390",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "source": "8cf76761552a55ab85a85660ae8475d8c1c71834",
+  "A_cutover": {
+    "source": "8cf76761552a55ab85a85660ae8475d8c1c71834",
+    "A_pid": 35976,
+    "old_pid": 27908,
+    "start": "existing",
+    "owner_sid": "S-1-5-19",
+    "original_run_sha256": "a1405058f45dd55706070021f78301eb0aee42a059d2173e9cc4303850d078a3",
+    "aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+    "node_sha256": "ad1bf2f25246eadaf181038f7910fd464b6e63b9ef522f2349b80176e772c9b2",
+    "signature_verification_utc": "2026-11-25T10:06:09.8358939+00:00",
+    "verified_at_utc": "2026-11-25T10:07:22.2006764+00:00",
+    "imported_nil_precommit": {
+      "certificate_sha256": "0xf5614fada23e812106dde96b770f2f120f2f68cdac62bc2e58e97bd03200f363",
+      "height": 1,
+      "round": 580,
+      "verified_precommit_weight": 3
+    },
+    "diagnostic_at_start": {
+      "local_progress": {
+        "height": 1,
+        "round": 580,
+        "step": "Precommit",
+        "pending_journal": null,
+        "proposed_round": null,
+        "prevote_qc": null,
+        "outbox_pending": false,
+        "recovering": false,
+        "frozen": false,
+        "total_validator_weight": 4,
+        "quorum_weight": 3,
+        "pacemaker_last_poll_age_us": 112,
+        "prevote": {
+          "verified_weight": 2,
+          "phase_quorum": false,
+          "timer_eligible": false,
+          "timer_armed": false,
+          "timer_elapsed": null,
+          "remaining_us": null,
+          "signers": [
+            {
+              "signer": "0x1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "value": null,
+              "weight": 1
+            },
+            {
+              "signer": "0xb5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+              "value": null,
+              "weight": 1
+            }
+          ],
+          "omitted_signers": 0,
+          "value_weights": [
+            {
+              "value": null,
+              "weight": 2
+            }
+          ],
+          "omitted_value_weight": 0
+        },
+        "precommit": {
+          "verified_weight": 3,
+          "phase_quorum": true,
+          "timer_eligible": true,
+          "timer_armed": true,
+          "timer_elapsed": false,
+          "remaining_us": 534987473,
+          "signers": [
+            {
+              "signer": "0x4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+              "value": null,
+              "weight": 1
+            },
+            {
+              "signer": "0xb5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+              "value": null,
+              "weight": 1
+            },
+            {
+              "signer": "0xd90f5145f324790d6cef7b592d25747d0fb21958327eaeeb2367c800d74a8f90",
+              "value": null,
+              "weight": 1
+            }
+          ],
+          "omitted_signers": 0,
+          "value_weights": [
+            {
+              "value": null,
+              "weight": 3
+            }
+          ],
+          "omitted_value_weight": 0
+        }
+      },
+      "configured_peers": [
+        {
+          "validator": "0x4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+          "session_established": true,
+          "current_route": {
+            "kind": "udp",
+            "endpoint": "47.103.59.206:41050"
+          },
+          "last_authenticated_age_us": 55881
+        },
+        {
+          "validator": "0x1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+          "session_established": true,
+          "current_route": {
+            "kind": "udp",
+            "endpoint": "192.168.71.73:41052"
+          },
+          "last_authenticated_age_us": 61791
+        },
+        {
+          "validator": "0xd90f5145f324790d6cef7b592d25747d0fb21958327eaeeb2367c800d74a8f90",
+          "session_established": true,
+          "current_route": {
+            "kind": "bound_carrier"
+          },
+          "last_authenticated_age_us": 7121
+        }
+      ],
+      "omitted_peers": 0,
+      "recovery_vote_fragments": {
+        "prevote": "0xdeae63af1c0057f4913d95f5b49dfd2cab5475e9a7e07c3c8e6cf3f64205b38f",
+        "precommit": "0xba1fbb81903ee6c5581c9c43f1cc63b6287d536c69bc26a9aa8f304d36bdc4b6"
+      }
+    },
+    "report_completion_check": "read back independently after correcting optional 0x SHA256 prefix handling",
+    "B_C_D_changed": false,
+    "transactions_resent": false
+  },
+  "A_timer_armed": {
+    "utc": "2026-11-25T10:07:25.8139839+00:00",
+    "ticks": 108279,
+    "startup": {
+      "certificate_sha256": "0xf5614fada23e812106dde96b770f2f120f2f68cdac62bc2e58e97bd03200f363",
+      "height": 1,
+      "round": 580,
+      "verified_precommit_weight": 3
+    },
+    "precommit": {
+      "verified_weight": 3,
+      "phase_quorum": true,
+      "timer_eligible": true,
+      "timer_armed": true,
+      "timer_elapsed": false,
+      "remaining_us": 529986823,
+      "signers": [
+        {
+          "signer": "0x4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+          "value": null,
+          "weight": 1
+        },
+        {
+          "signer": "0xb5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+          "value": null,
+          "weight": 1
+        },
+        {
+          "signer": "0xd90f5145f324790d6cef7b592d25747d0fb21958327eaeeb2367c800d74a8f90",
+          "value": null,
+          "weight": 1
+        }
+      ],
+      "omitted_signers": 0,
+      "value_weights": [
+        {
+          "value": null,
+          "weight": 3
+        }
+      ],
+      "omitted_value_weight": 0
+    }
+  },
+  "A_acknowledged_round": {
+    "utc": "2026-11-25T10:16:16.7586896+00:00",
+    "ticks": 1215440,
+    "startup": {
+      "certificate_sha256": "0xf5614fada23e812106dde96b770f2f120f2f68cdac62bc2e58e97bd03200f363",
+      "height": 1,
+      "round": 580,
+      "verified_precommit_weight": 3
+    },
+    "position": {
+      "height": 1,
+      "round": 581,
+      "step": "Propose",
+      "pending_journal": null,
+      "proposed_round": null,
+      "prevote_qc": null,
+      "outbox_pending": false,
+      "recovering": false,
+      "frozen": false,
+      "total_validator_weight": 4,
+      "quorum_weight": 3,
+      "pacemaker_last_poll_age_us": 55,
+      "prevote": {
+        "verified_weight": 0,
+        "phase_quorum": false,
+        "timer_eligible": false,
+        "timer_armed": false,
+        "timer_elapsed": null,
+        "remaining_us": null,
+        "signers": [],
+        "omitted_signers": 0,
+        "value_weights": [],
+        "omitted_value_weight": 0
+      },
+      "precommit": {
+        "verified_weight": 0,
+        "phase_quorum": false,
+        "timer_eligible": false,
+        "timer_armed": false,
+        "timer_elapsed": null,
+        "remaining_us": null,
+        "signers": [],
+        "omitted_signers": 0,
+        "value_weights": [],
+        "omitted_value_weight": 0
+      }
+    },
+    "head": null,
+    "indexed_height": 0
+  },
+  "A_native_status": {
+    "utc": "2026-11-25T10:16:16.8983690+00:00",
+    "key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+    "result": {
+      "kind": "node_observation",
+      "answer": {
+        "Status": {
+          "height": 0,
+          "block_hash": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "state_root": [
+            246,
+            24,
+            109,
+            64,
+            38,
+            10,
+            161,
+            142,
+            132,
+            176,
+            17,
+            1,
+            213,
+            108,
+            163,
+            233,
+            24,
+            175,
+            247,
+            153,
+            239,
+            65,
+            217,
+            39,
+            174,
+            171,
+            85,
+            68,
+            149,
+            245,
+            99,
+            51
+          ],
+          "receipt_batch_commitment": [
+            108,
+            1,
+            210,
+            37,
+            63,
+            88,
+            34,
+            56,
+            93,
+            141,
+            200,
+            41,
+            143,
+            27,
+            244,
+            120,
+            231,
+            250,
+            98,
+            29,
+            170,
+            117,
+            44,
+            254,
+            218,
+            46,
+            49,
+            141,
+            160,
+            239,
+            231,
+            44
+          ],
+          "state_version": 0,
+          "indexed_height": 0,
+          "current_height": 1,
+          "round": 581,
+          "recovering": false,
+          "projection_failed": false,
+          "pending": 1,
+          "apfl_rows": 0,
+          "integer_rows": 0,
+          "integer_plans": 0,
+          "rejected_inputs": 0
+        }
+      },
+      "independently_verified_finality": false
+    }
+  },
+  "A_original_transaction": {
+    "utc": "2026-11-25T10:16:17.0426510+00:00",
+    "key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+    "result": {
+      "kind": "node_observation",
+      "answer": {
+        "Receipt": {
+          "state": "Received",
+          "indexed_height": 0
+        }
+      },
+      "independently_verified_finality": false
+    }
+  },
+  "B_original_transaction": {
+    "utc": "2026-11-25T10:16:17.2058879+00:00",
+    "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+    "result": {
+      "kind": "node_observation",
+      "answer": {
+        "Receipt": {
+          "state": "Received",
+          "indexed_height": 0
+        }
+      },
+      "independently_verified_finality": false
+    }
+  },
+  "B_authenticated_during_wait": [
+    {
+      "utc": "2026-11-25T10:07:26.0081592+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:08:21.6614522+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:09:17.7607882+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:10:13.4430238+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:11:09.1315061+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:12:04.8072057+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:13:00.5951065+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:13:56.2428514+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:14:52.0150034+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    {
+      "utc": "2026-11-25T10:15:47.7338173+00:00",
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "result": {
+        "kind": "node_observation",
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    }
+  ],
+  "one_time_recovery_start_action_cleared": true,
+  "B_C_D_changed": false,
+  "transactions_resent": false
+}
