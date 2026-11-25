@@ -1,0 +1,85 @@
+{
+  "handoff": "81786acee2b0b4fd7ac2e27a251db9f477019993",
+  "source": "080b173a7d5e1eba397fa09b3aaf50ce775ce909",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "A_query_client_sha256": "ccee892091101b8c228d7505f38b630e11a3368ae1f183a6e610a0f01ee2d83f",
+  "matches_C_release_client": false,
+  "client_origin": "locally built from identical 080b173a product source; release artifact hash differs",
+  "C": {
+    "endpoint": "192.168.71.73:41052",
+    "authenticated_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+    "attempts": [
+      {
+        "status_utc": "2026-11-25T01:56:32.5147250+00:00",
+        "proposal_utc": "2026-11-25T01:56:32.8597703+00:00",
+        "height": 1,
+        "round": 580,
+        "proposal_height": 1,
+        "proposal_round": 580
+      }
+    ],
+    "status_utc": "2026-11-25T01:56:32.5147250+00:00",
+    "status": {
+      "current_height": 1,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "recovering": false
+    },
+    "receipt_utc": "2026-11-25T01:56:32.6886746+00:00",
+    "receipt": {
+      "state": "Received",
+      "indexed_height": 0
+    },
+    "independently_verified_finality": false,
+    "proposal_utc": "2026-11-25T01:56:32.8597703+00:00",
+    "proposal": {
+      "current_height": 1,
+      "current_round": 580,
+      "observation": {
+        "in_pending_pool": true,
+        "selection_gate": "successor_unavailable",
+        "in_local_offer": true,
+        "candidate": {
+          "value": "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926",
+          "body_id": "0x8038112267cb0468eee912d12ab181a15cf5038b6b9add6da26ebf828c9f7ba7",
+          "signed_proposal": null
+        },
+        "progress": {
+          "step": "Prevote",
+          "pending_journal": null,
+          "proposed_round": null,
+          "prevote_qc": null
+        }
+      }
+    }
+  },
+  "B": {
+    "authenticated_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+    "status_utc": "2026-11-25T01:56:33.0658161+00:00",
+    "status": {
+      "current_height": 1,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "recovering": false
+    },
+    "receipt_utc": "2026-11-25T01:56:33.2547600+00:00",
+    "receipt": {
+      "state": "Received",
+      "indexed_height": 0
+    }
+  },
+  "transaction_resubmitted": false,
+  "diagnostic": {
+    "current_round_local_candidate_present": true,
+    "pending_proposal_journal_transition_observed": false,
+    "published_signed_proposal_for_transaction_observed": false,
+    "prevote_qc_observed": false,
+    "phase_weight_and_armed_timers_exposed_by_this_query": false,
+    "A_static_C_peer_address": "192.168.71.125:41052",
+    "C_authenticated_operator_address": "192.168.71.73:41052",
+    "live_consensus_route_for_C_confirmed": false,
+    "next_evidence": "At height 1 round 580, check verified prevote and precommit signer weights, timer eligibility, and actual consensus vote delivery. A static C address differs from the C query address; runtime route and its effect on vote delivery still need evidence."
+  }
+}
