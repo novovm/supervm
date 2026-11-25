@@ -1,0 +1,77 @@
+{
+  "handoff": "81786acee2b0b4fd7ac2e27a251db9f477019993",
+  "source": "080b173a7d5e1eba397fa09b3aaf50ce775ce909",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "A_query_client_sha256": "b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16",
+  "matches_C_release_client": true,
+  "client_origin": "verified C release client",
+  "C": {
+    "endpoint": "192.168.71.73:41052",
+    "authenticated_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+    "attempts": [
+      {
+        "status_utc": "2026-11-25T02:01:41.6997389+00:00",
+        "proposal_utc": "2026-11-25T02:01:42.0154669+00:00",
+        "height": 1,
+        "round": 580,
+        "proposal_height": 1,
+        "proposal_round": 580
+      }
+    ],
+    "status_utc": "2026-11-25T02:01:41.6997389+00:00",
+    "status": {
+      "current_height": 1,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "recovering": false
+    },
+    "receipt_utc": "2026-11-25T02:01:41.8598586+00:00",
+    "receipt": {
+      "state": "Received",
+      "indexed_height": 0
+    },
+    "independently_verified_finality": false,
+    "proposal_utc": "2026-11-25T02:01:42.0154669+00:00",
+    "proposal": {
+      "current_height": 1,
+      "current_round": 580,
+      "observation": {
+        "in_pending_pool": true,
+        "selection_gate": "successor_unavailable",
+        "in_local_offer": true,
+        "candidate": {
+          "value": "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926",
+          "body_id": "0x8038112267cb0468eee912d12ab181a15cf5038b6b9add6da26ebf828c9f7ba7",
+          "signed_proposal": null
+        },
+        "progress": {
+          "step": "Prevote",
+          "pending_journal": null,
+          "proposed_round": null,
+          "prevote_qc": null
+        }
+      }
+    }
+  },
+  "B": {
+    "authenticated_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+    "status_utc": "2026-11-25T02:01:42.1997772+00:00",
+    "status": {
+      "current_height": 1,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "recovering": false
+    },
+    "receipt_utc": "2026-11-25T02:01:42.3856105+00:00",
+    "receipt": {
+      "state": "Received",
+      "indexed_height": 0
+    }
+  },
+  "transaction_resubmitted": false,
+  "download_handoff": "7609ff02",
+  "downloaded_client_bytes": 7419392,
+  "prior_same_source_observation": "15038676"
+}
