@@ -34071,6 +34071,8 @@ struct NativeExecutionPipelineUdpDriveV1 {
     transport: Option<UdpTransport>,
     product: Option<novovm_node::native_pipeline::service::rpc::RpcLifecycle>,
     pending_recovery: Option<novovm_node::native_pipeline::service::rpc::PendingAssetRecovery>,
+    nil_precommit_recovery:
+        Option<novovm_node::native_pipeline::service::rpc::NilPrecommitRecovery>,
     #[cfg(feature = "iroh-transport")]
     novonet: Option<novovm_node::native_pipeline::service::network::Driver>,
     peers: Vec<NodeId>,
@@ -34083,7 +34085,9 @@ struct NativeExecutionPipelineUdpDriveV1 {
 impl NativeExecutionPipelineUdpDriveV1 {
     fn from_env(chain_id: u64) -> Result<Option<Self>> {
         if let Some(path) = string_env_nonempty("NOVOVM_NATIVE_EXECUTION_CONFIG") {
-            use novovm_node::native_pipeline::service::rpc::{PendingAssetRecovery, RpcLifecycle};
+            use novovm_node::native_pipeline::service::rpc::{
+                NilPrecommitRecovery, PendingAssetRecovery, RpcLifecycle,
+            };
             use novovm_node::native_pipeline::service::{
                 config::ORIGINAL_PROFILE, ResidentConfig, ResidentNode, StartMode,
             };
@@ -34110,6 +34114,8 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 _ => bail!("explicit NOVOVM_NATIVE_EXECUTION_START=create|existing required"),
             };
             let pending_recovery = PendingAssetRecovery::from_env(mode)?;
+            let nil_precommit_recovery =
+                NilPrecommitRecovery::from_env(mode, config.genesis.validators.len())?;
             let local_node = NodeId(u64_env_allow_zero(
                 "NOVOVM_NATIVE_EXECUTION_PIPELINE_LOCAL_NODE",
                 9_990_001,
@@ -34155,6 +34161,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
                 transport: None,
                 product: Some(product),
                 pending_recovery,
+                nil_precommit_recovery,
                 #[cfg(feature = "iroh-transport")]
                 novonet,
                 peers: Vec::new(),
@@ -34198,6 +34205,7 @@ impl NativeExecutionPipelineUdpDriveV1 {
             transport: Some(transport),
             product: None,
             pending_recovery: None,
+            nil_precommit_recovery: None,
             #[cfg(feature = "iroh-transport")]
             novonet: None,
             peers,
@@ -41889,6 +41897,7 @@ mod native_execution_pipeline_tests {
             transport: Some(local_transport),
             product: None,
             pending_recovery: None,
+            nil_precommit_recovery: None,
             #[cfg(feature = "iroh-transport")]
             novonet: None,
             peers: vec![remote],
@@ -42584,7 +42593,8 @@ fn run_native_execution_tick_node_mode_v1(
                 .is_some_and(|drive| drive.product.is_some()),
             "SCM service requires the original authenticated native owner"
         );
-        if udp_drive.as_ref().unwrap().pending_recovery.is_none() {
+        let drive = udp_drive.as_ref().unwrap();
+        if drive.pending_recovery.is_none() && drive.nil_precommit_recovery.is_none() {
             if let Err(error) = control.ready() {
                 let product = udp_drive.as_mut().unwrap().product.take().unwrap();
                 let drain = product.node.shutdown();
@@ -42644,21 +42654,38 @@ fn run_native_execution_tick_node_mode_v1(
             // raw pending executor or its progress-derived ledger closure.
             let before = novovm_node::native_pipeline::service::rpc::control_progress(product);
             let now = Instant::now();
+            let startup_recovery =
+                drive.pending_recovery.is_some() || drive.nil_precommit_recovery.is_some();
             let outcome = if drive.pending_recovery.is_some() {
                 product
                     .poll_pending_asset_recovery(&mut drive.pending_recovery, now)
-                    .and_then(|report| {
+                    .map(|report| {
                         if let Some(report) = report {
                             println!("native_pending_recovery: {report}");
-                            if let Some(control) = &service_control {
-                                control.ready().context("SCM readiness failed")?;
-                            }
                         }
-                        Ok(())
+                    })
+            } else if drive.nil_precommit_recovery.is_some() {
+                product
+                    .poll_nil_precommit_recovery(&mut drive.nil_precommit_recovery, now)
+                    .map(|report| {
+                        if let Some(report) = report {
+                            println!("native_nil_precommit_recovery: {report}");
+                        }
                     })
             } else {
                 product.poll(now)
             };
+            let outcome = outcome.and_then(|()| {
+                if startup_recovery
+                    && drive.pending_recovery.is_none()
+                    && drive.nil_precommit_recovery.is_none()
+                {
+                    if let Some(control) = &service_control {
+                        control.ready().context("SCM readiness failed")?;
+                    }
+                }
+                Ok(())
+            });
             if let Err(error) = outcome {
                 let product = drive.product.take().unwrap();
                 let drain = product.node.shutdown();

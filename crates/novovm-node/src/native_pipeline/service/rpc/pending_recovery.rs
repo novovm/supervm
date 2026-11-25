@@ -1,5 +1,8 @@
 //! Explicit local `existing` recovery. No client submission or fresh fanout.
 use super::*;
+use novovm_consensus::round_bft::wire::{
+    decode_quorum, encode_quorum, evidence_wire_bounds, Quorum,
+};
 use novovm_protocol::uca_spend::MAX_SIGNED_SPEND_BYTES;
 use novovm_protocol::uca_spend_batch::{AssetSpendBatchLimitsV3, AssetSpendBatchV3};
 use sha2::{Digest, Sha256};
@@ -9,6 +12,85 @@ const MAX_BYTES: usize = 128 * 1024;
 const MAX_ROWS: usize = 16;
 const WAIT: Duration = Duration::from_secs(30);
 const REPLAY_WAIT: Duration = Duration::from_secs(120);
+
+pub struct NilPrecommitRecovery {
+    quorum: Quorum,
+    digest: Hash,
+    replay_deadline: Instant,
+}
+
+impl NilPrecommitRecovery {
+    pub fn from_env(mode: StartMode, validators: usize) -> Result<Option<Self>> {
+        let Some((file, digest)) = recovery_pin(
+            "NOVOVM_NATIVE_NIL_PRECOMMIT_FILE",
+            "NOVOVM_NATIVE_NIL_PRECOMMIT_SHA256",
+        )?
+        else {
+            return Ok(None);
+        };
+        ensure!(
+            mode == StartMode::Existing,
+            "nil precommit recovery requires START=existing"
+        );
+        let (_, _, bound) = evidence_wire_bounds(validators)?;
+        let bytes = read_pinned_recovery(Path::new(&file), digest, bound)?;
+        let quorum = decode_quorum(&bytes)?;
+        ensure!(
+            encode_quorum(&quorum)? == bytes,
+            "noncanonical nil precommit certificate"
+        );
+        ensure!(
+            quorum.votes[0].phase == novovm_consensus::round_bft::wire::Phase::Precommit
+                && quorum.votes[0].value.is_none(),
+            "startup recovery requires a nil Precommit certificate"
+        );
+        Ok(Some(Self {
+            quorum,
+            digest,
+            replay_deadline: Instant::now() + REPLAY_WAIT,
+        }))
+    }
+}
+
+fn recovery_pin(file_var: &str, pin_var: &str) -> Result<Option<(std::ffi::OsString, Hash)>> {
+    match (std::env::var_os(file_var), std::env::var_os(pin_var)) {
+        (None, None) => Ok(None),
+        (Some(file), Some(pin)) => {
+            let pin = pin.to_str().context("invalid recovery SHA256 text")?;
+            ensure!(
+                pin.len() == 64,
+                "expected 64 hex characters for recovery SHA256"
+            );
+            let mut digest = [0; 32];
+            for (dst, pair) in digest.iter_mut().zip(pin.as_bytes().chunks_exact(2)) {
+                *dst = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
+            }
+            Ok(Some((file, digest)))
+        }
+        _ => anyhow::bail!("startup recovery requires both {file_var} and {pin_var}"),
+    }
+}
+
+fn read_pinned_recovery(path: &Path, digest: Hash, bound: usize) -> Result<Vec<u8>> {
+    ensure!(
+        path.is_absolute(),
+        "pending recovery requires an absolute file path"
+    );
+    let metadata = std::fs::symlink_metadata(path).context("inspect pending recovery file")?;
+    ensure!(
+        metadata.is_file() && metadata.len() <= bound as u64,
+        "pending recovery requires one bounded regular file"
+    );
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take((bound + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= bound && <[u8; 32]>::from(Sha256::digest(&bytes)) == digest,
+        "pending recovery file SHA256 or byte limit mismatch"
+    );
+    Ok(bytes)
+}
 
 /// A single operator-pinned, bounded copy of an original signed native batch.
 /// Never opens or changes the database, signs, or grants spending permission.
@@ -20,24 +102,12 @@ pub struct PendingAssetRecovery {
 
 impl PendingAssetRecovery {
     pub fn from_env(mode: StartMode) -> Result<Option<Self>> {
-        let file = std::env::var_os("NOVOVM_NATIVE_PENDING_RECOVERY_FILE");
-        let pin = std::env::var_os("NOVOVM_NATIVE_PENDING_RECOVERY_SHA256");
-        match (file, pin) {
-            (None, None) => Ok(None),
-            (Some(file), Some(pin)) => {
-                let pin = pin.to_str().context("invalid recovery SHA256 text")?;
-                ensure!(
-                    pin.len() == 64,
-                    "expected 64 hex characters for recovery SHA256"
-                );
-                let mut digest = [0; 32];
-                for (dst, pair) in digest.iter_mut().zip(pin.as_bytes().chunks_exact(2)) {
-                    *dst = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
-                }
-                Ok(Some(Self::load(mode, Path::new(&file), digest)?))
-            }
-            _ => anyhow::bail!("pending recovery requires both file and SHA256"),
-        }
+        recovery_pin(
+            "NOVOVM_NATIVE_PENDING_RECOVERY_FILE",
+            "NOVOVM_NATIVE_PENDING_RECOVERY_SHA256",
+        )?
+        .map(|(file, digest)| Self::load(mode, Path::new(&file), digest))
+        .transpose()
     }
 
     pub(in crate::native_pipeline::service) fn load(
@@ -49,23 +119,7 @@ impl PendingAssetRecovery {
             mode == StartMode::Existing,
             "pending recovery requires START=existing"
         );
-        ensure!(
-            path.is_absolute(),
-            "pending recovery requires an absolute file path"
-        );
-        let metadata = std::fs::symlink_metadata(path).context("inspect pending recovery file")?;
-        ensure!(
-            metadata.is_file() && metadata.len() <= MAX_BYTES as u64,
-            "pending recovery requires one bounded regular file"
-        );
-        let mut bytes = Vec::new();
-        std::fs::File::open(path)?
-            .take((MAX_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)?;
-        ensure!(
-            bytes.len() <= MAX_BYTES && <[u8; 32]>::from(Sha256::digest(&bytes)) == digest,
-            "pending recovery file SHA256 or byte limit mismatch"
-        );
+        let bytes = read_pinned_recovery(path, digest, MAX_BYTES)?;
         let batch = AssetSpendBatchV3::decode(
             &bytes,
             AssetSpendBatchLimitsV3 {
@@ -87,6 +141,41 @@ impl PendingAssetRecovery {
 }
 
 impl RpcLifecycle {
+    pub fn poll_nil_precommit_recovery(
+        &mut self,
+        recovery: &mut Option<NilPrecommitRecovery>,
+        now: Instant,
+    ) -> Result<Option<Value>> {
+        if self.node.controller.is_recovering() {
+            ensure!(
+                now < recovery
+                    .as_ref()
+                    .context("nil precommit certificate missing")?
+                    .replay_deadline,
+                "nil precommit recovery timed out waiting for cold consensus replay"
+            );
+            self.poll_consensus(now)?;
+            if self.node.controller.is_recovering() {
+                return Ok(None);
+            }
+        }
+        let recovery = recovery
+            .take()
+            .context("nil precommit certificate missing")?;
+        let weight = self
+            .node
+            .controller
+            .progress
+            .recover_nil_precommit(&recovery.quorum)?;
+        let report = json!({
+            "certificate_sha256": hex(&recovery.digest),
+            "height": self.node.controller.context().height,
+            "round": self.node.controller.round(),
+            "verified_precommit_weight": weight
+        });
+        self.startup_nil_precommit = Some(report.clone());
+        Ok(Some(report))
+    }
     /// Advance cold consensus replay before opening the volatile admission pool.
     /// The caller retains the pinned batch while replay needs another tick.
     pub fn poll_pending_asset_recovery(

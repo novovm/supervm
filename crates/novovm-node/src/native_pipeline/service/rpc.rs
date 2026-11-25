@@ -99,7 +99,7 @@ mod admitted_tests;
 mod application;
 mod gossip;
 mod pending_recovery;
-pub use pending_recovery::PendingAssetRecovery;
+pub use pending_recovery::{NilPrecommitRecovery, PendingAssetRecovery};
 mod history;
 mod native_query;
 mod nonce_cache;
@@ -450,6 +450,7 @@ struct StatusSections<Base, Probe, Io, Traffic, Polls, Receives, Queue, Tail> {
 
 pub struct RpcLifecycle {
     pub node: ResidentNode,
+    startup_nil_precommit: Option<Value>,
     batch_size: usize,
     pending: BTreeMap<Hash, Pending>,
     order: VecDeque<Hash>,
@@ -509,6 +510,7 @@ impl RpcLifecycle {
         }
         Ok(Self {
             node,
+            startup_nil_precommit: None,
             batch_size,
             pending: BTreeMap::new(),
             order: VecDeque::new(),
@@ -1519,6 +1521,7 @@ impl RpcLifecycle {
             scope: "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"},
                 stage_profile: crate::native_pipeline::profile::report_snapshot(),
                 consensus_diagnostic: core.consensus_diagnostic(Instant::now()),
+                startup_nil_precommit: self.startup_nil_precommit.clone(),
             },
             native_network_probe: core.network_probe_snapshot(),
             native_delivery_traffic: costs

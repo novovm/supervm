@@ -12,7 +12,7 @@ use super::pacemaker::{Pacemaker, TimeoutPolicy};
 use super::statement::ParentPoint;
 use super::transport::Message;
 use super::wire::{
-    Context as VoteContext, Hash, Phase, ValidatorSet, VerifiedProposal, VerifiedQuorum,
+    Context as VoteContext, Hash, Phase, Quorum, ValidatorSet, VerifiedProposal, VerifiedQuorum,
     VerifiedVote, Vote,
 };
 use super::{DurableMessage, TimeoutStep, ValidatorJournal};
@@ -295,6 +295,29 @@ impl RoundProgress {
             .current_phase_votes(phase)
             .find(|(vote, _)| vote.validator_id == self.local_validator())
             .map(|(vote, _)| vote.clone())
+    }
+
+    pub(crate) fn recover_nil_precommit(&mut self, quorum: &Quorum) -> Result<u64> {
+        ensure!(
+            !self.is_frozen() && !self.is_recovering() && !self.journal.is_pending(),
+            "nil precommit recovery requires a ready local journal"
+        );
+        let set = &self.domain.validators;
+        let proof = quorum.verify(set)?;
+        ensure!(
+            proof.context() == &self.context()
+                && proof.round() == self.round()
+                && proof.phase() == Phase::Precommit
+                && proof.value().is_none(),
+            "nil precommit recovery certificate does not match the acknowledged position"
+        );
+        let votes = quorum
+            .votes
+            .iter()
+            .map(|vote| vote.verify(set))
+            .collect::<Result<Vec<_>>>()?;
+        self.collector.recover_verified_current_votes(&votes)?;
+        Ok(proof.signed_weight())
     }
     pub fn step(&self) -> TimeoutStep {
         self.journal.step()

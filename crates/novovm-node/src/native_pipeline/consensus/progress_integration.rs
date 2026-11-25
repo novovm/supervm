@@ -73,6 +73,59 @@ fn native_progress_algebraic_three_heights_with_unresolved_restart() -> Result<(
     run(ExecutionBackend::AoemIntegerV7)
 }
 
+#[test]
+#[ignore = "real AOEM journal; exercise exact nil recovery through the original round timer and ACK"]
+fn native_nil_precommit_recovery_requires_quorum_and_advances_only_after_ack() -> Result<()> {
+    use novovm_consensus::round_bft::{test_vectors::sign_vote, wire::Quorum};
+
+    let mut f = fixture(ExecutionBackend::CpuCallbacks)?;
+    let journal = &mut f.drivers[0];
+    let pipeline = &f.services.0[0];
+    let round = journal.round();
+    let certificate = |at_round| {
+        Quorum::from_votes(
+            &f.set,
+            f.keys[..3]
+                .iter()
+                .map(|key| sign_vote(f.genesis, at_round, Phase::Precommit, None, &f.set, key))
+                .collect::<Result<_>>()?,
+        )
+    };
+    let exact = certificate(round)?;
+    ensure!(journal
+        .recover_nil_precommit(&certificate(round + 1)?)
+        .is_err());
+    ensure!(journal
+        .recover_nil_precommit(&Quorum {
+            votes: exact.votes[..2].to_vec()
+        })
+        .is_err());
+    ensure!(journal.recover_nil_precommit(&exact)? == 3);
+    ensure!(journal.recover_nil_precommit(&exact)? == 3);
+    let now = Instant::now();
+    journal.poll_after_receive(pipeline, now)?;
+    let snapshot = journal.consensus_diagnostic(now);
+    ensure!(snapshot["precommit"]["verified_weight"] == 3);
+    ensure!(snapshot["precommit"]["timer_armed"] == true);
+    journal.poll_after_receive(pipeline, now + Duration::from_secs(6))?;
+    ensure!(
+        journal.round() == round,
+        "unacknowledged round was published"
+    );
+    let deadline = Instant::now() + DEADLINE;
+    while journal.round() == round {
+        ensure!(Instant::now() < deadline, "original journal ACK timed out");
+        journal.poll_acknowledgements(pipeline)?;
+        std::thread::yield_now();
+    }
+    ensure!(journal.round() == round + 1 && journal.head().is_none());
+    ensure!(
+        journal.pending_message().is_none(),
+        "nil recovery emitted a vote"
+    );
+    Ok(())
+}
+
 struct Fixture {
     paths: Vec<PathBuf>,
     keys: Vec<novovm_consensus::round_bft::test_vectors::FixtureSigningKey>,
