@@ -577,6 +577,7 @@ async fn real_private_owner(
             session_seconds: 30,
             requests_per_minute: 64,
             tracked_devices: 4,
+            max_device_sessions: 1,
             denied_clients: Default::default(),
         })?
         .with_storage(&database, || Ok(Default::default()))?;
@@ -756,6 +757,7 @@ async fn roundtrip(apfl: bool, autonomous_terminal: bool) -> Result<()> {
                                 session_seconds: 30,
                                 requests_per_minute: 64,
                                 tracked_devices: 1,
+                                max_device_sessions: 1,
                                 denied_clients: Default::default(),
                             })
                         })

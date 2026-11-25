@@ -11,6 +11,12 @@ use std::{
 };
 
 const WINDOW: Duration = Duration::from_secs(60);
+const MAX_DEVICE_SESSIONS: u16 = 16;
+
+fn default_device_sessions() -> u16 {
+    4
+}
+
 const REVOCATION_POLL: Duration = Duration::from_millis(500);
 type DeviceId = [u8; 32];
 type RevocationSource = Box<dyn Fn() -> Result<BTreeSet<Vec<u8>>> + Send + Sync>;
@@ -21,6 +27,8 @@ pub struct PrivateMailboxAdmissionConfig {
     pub session_seconds: u16,
     pub requests_per_minute: u16,
     pub tracked_devices: u16,
+    #[serde(default = "default_device_sessions")]
+    pub max_device_sessions: u16,
     #[serde(default)]
     pub denied_clients: BTreeSet<Vec<u8>>,
 }
@@ -35,7 +43,7 @@ struct Device {
     until: Instant,
     until_ms: i64,
     remaining: usize,
-    active: bool,
+    active_sessions: u16,
 }
 
 struct State {
@@ -90,6 +98,7 @@ impl PrivateMailboxAdmission {
             (1..=60).contains(&config.session_seconds)
                 && (1..=1024).contains(&config.requests_per_minute)
                 && (1..=1024).contains(&config.tracked_devices)
+                && (1..=MAX_DEVICE_SESSIONS).contains(&config.max_device_sessions)
                 && config.denied_clients.len() <= 1024
                 && config.denied_clients.iter().all(|pin| valid_key(pin)),
             "invalid autonomous mailbox admission limits"
@@ -172,7 +181,7 @@ impl PrivateMailboxAdmission {
                     until_ms,
                     until: state.clock.0 + duration,
                     remaining: usize::from(remaining),
-                    active: false,
+                    active_sessions: 0,
                 };
                 if slot == [0; 32] {
                     state.attempts = Some(device);
@@ -258,7 +267,7 @@ impl PrivateMailboxAdmission {
                     .checked_add(60_000)
                     .context("admission window overflow")?,
                 remaining: maximum,
-                active: false,
+                active_sessions: 0,
             },
         };
         let result = attempts
@@ -297,14 +306,14 @@ impl PrivateMailboxAdmission {
         let expired = state
             .devices
             .values()
-            .any(|device| !device.active && device.until <= now);
+            .any(|device| device.active_sessions == 0 && device.until <= now);
         if expired {
             if let Some(db) = &state.db {
                 db.execute("DELETE FROM apfl_admission_v1 WHERE until_ms<=?1", [now_ms])?;
             }
         }
         let devices = &mut state.devices;
-        devices.retain(|_, device| device.active || device.until > now);
+        devices.retain(|_, device| device.active_sessions > 0 || device.until > now);
         ensure!(
             devices.contains_key(&slot) || devices.len() < usize::from(self.config.tracked_devices),
             "autonomous mailbox admission capacity exhausted"
@@ -315,13 +324,15 @@ impl PrivateMailboxAdmission {
                 .checked_add(60_000)
                 .context("admission window overflow")?,
             remaining: usize::from(self.config.requests_per_minute),
-            active: false,
+            active_sessions: 0,
         });
         ensure!(
-            !device.active && device.until > now && device.remaining > 0,
-            "device already active or its mailbox quota is exhausted"
+            device.active_sessions < self.config.max_device_sessions
+                && device.until > now
+                && device.remaining > 0,
+            "device mailbox session or request quota exhausted"
         );
-        device.active = true;
+        device.active_sessions += 1;
         Ok(PrivateMailboxGrant {
             owner: self,
             slot,
@@ -378,7 +389,7 @@ impl Drop for PrivateMailboxGrant<'_> {
     fn drop(&mut self) {
         if let Ok(mut state) = self.owner.state.lock() {
             if let Some(device) = state.devices.get_mut(&self.slot) {
-                device.active = false;
+                device.active_sessions = device.active_sessions.saturating_sub(1);
             }
         }
     }
@@ -406,6 +417,7 @@ mod tests {
                 session_seconds: 30,
                 requests_per_minute: 2,
                 tracked_devices: 2,
+                max_device_sessions: 1,
                 denied_clients: Default::default(),
             })?
             .with_storage(&path, move || Ok(source.lock().unwrap().clone()))
@@ -434,6 +446,30 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_circuits_share_the_device_budget_and_release_one_seat() -> Result<()> {
+        let pin = vec![1; MLDSA65_PUBLIC_KEY_BYTES];
+        let owner = PrivateMailboxAdmission::new(serde_json::from_str(
+            r#"{"session_seconds":30,"requests_per_minute":8,"tracked_devices":1}"#,
+        )?)?;
+        let now = Instant::now();
+        let first = owner.grant_at(&pin, now)?;
+        let second = owner.grant_at(&pin, now)?;
+        let third = owner.grant_at(&pin, now)?;
+        let fourth = owner.grant_at(&pin, now)?;
+        assert!(owner.grant_at(&pin, now).is_err());
+        first.charge_at(3, now)?;
+        second.charge_at(2, now)?;
+        third.charge_at(1, now)?;
+        drop(first);
+        let replacement = owner.grant_at(&pin, now)?;
+        assert!(owner.grant_at(&pin, now).is_err());
+        replacement.charge_at(2, now)?;
+        assert!(fourth.charge_at(1, now).is_err());
+        assert!(owner.grant_at(&pin, now).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn autonomous_mailbox_grant_limits_reconnects_and_excludes_denied_keys() -> Result<()> {
         let first = vec![1; MLDSA65_PUBLIC_KEY_BYTES];
         let second = vec![2; MLDSA65_PUBLIC_KEY_BYTES];
@@ -442,6 +478,7 @@ mod tests {
             session_seconds: 20,
             requests_per_minute: 5,
             tracked_devices: 1,
+            max_device_sessions: 1,
             denied_clients: [denied.clone()].into(),
         })?;
         let now = Instant::now();

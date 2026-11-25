@@ -33,7 +33,7 @@ NOVONET 只维护一条自适应通信执行链。NOVOCHAT 执行同一套隐私
 
 公开发现允许任何符合协议的节点签名发布自己的服务声明。私密转发和信箱使用另有服务边界。现有接入优先复用 ML-DSA-65 会话绑定认证、新鲜挑战和防重放机制，由服务按用途验证具体权限并签发有限的会话授权。会话授权绑定请求方、服务及用途，明确期限、请求限额、资源预算及撤销。密文的读、写、领取和回执仍需各自的能力验证。在线重试、换钥、重复调用和耗尽配额进入同一资源所有者处理。已有自管客户配置继续作为可选的站点策略，公开候选发现不使用人工登记名单。
 
-已有的 APFL V8 私密终点支持提供者选择 `autonomous_mailbox`。该项写在原 owner 的 `private-apfl-policy.json`，包含 `session_seconds`、`requests_per_minute`、`tracked_devices` 和可选的 `denied_clients`。自主终点须先由本机 owner 设置明确的存储上限，并继续使用原连接、字节和事务预算。会话在原 V8 握手完成后获发，绑定该次 Finished 会话，无可转移凭证。请求按批次中的业务项扣减，容量协商计一项。相同公钥只占用一个活动会话，重连复用当前一分钟内的剩余次数。到期或额度不足时，终点终止此流。原信箱的读写能力、去重和回执规则继续执行。
+已有的 APFL V8 私密终点支持提供者选择 `autonomous_mailbox`。该项写在原 owner 的 `private-apfl-policy.json`，包含 `session_seconds`、`requests_per_minute`、`tracked_devices` 以及可选的 `max_device_sessions` 和 `denied_clients`。自主终点须先由本机 owner 设置明确的存储上限，并继续使用原连接、字节和事务预算。会话在原 V8 握手完成后获发，绑定该次 Finished 会话，无可转移凭证。请求按批次中的业务项扣减，容量协商计一项。相同公钥可在 `max_device_sessions` 上限内同时建立会话，默认 4 路，可设置 1 至 16 路。设备的所有会话和重连共用同一分钟请求额度。到期或额度不足时，终点终止此流。原信箱的读写能力、去重和回执规则继续执行。
 
 转发 owner 可以在同一份策略设置 `autonomous_origin`。其 `admission` 字段沿用自主终点的上限字段。`renewal_bytes_per_minute` 从既有 `max_wire_bytes_per_minute` 划出首跳续签预算，原业务预算为扣除后的余额。启用后，首跳接受未预登记设备的持钥证明，只连接本机批准的原后继。后续节点保持相邻签名验证，终点按自己的服务策略和信箱能力裁决。续签使用独立字节预算，在业务会话仍活跃时可取得新声明。
 
