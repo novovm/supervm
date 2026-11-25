@@ -1,0 +1,302 @@
+{
+  "request": "9f223abf",
+  "observation_utc": "2026-11-25T15:31:57.4654596+00:00",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "query_client_sha256": "b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16",
+  "authenticated_nodes": {
+    "A": {
+      "key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "endpoint": "192.168.71.74:41051",
+      "status": {
+        "utc": "2026-11-25T15:31:27.2631795+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 581,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T15:31:27.3961801+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "B": {
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "endpoint": "47.103.59.206:41050",
+      "status": {
+        "utc": "2026-11-25T15:31:27.5984695+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 580,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T15:31:27.7684805+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "C": {
+      "key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+      "endpoint": "192.168.71.73:41052",
+      "status": {
+        "utc": "2026-11-25T15:31:27.9790253+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 580,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T15:31:28.1321493+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "D": {
+      "key_sha256": "cac6c513f90eb836466ed6a6a175c2c091736192634c536099dd10dfb96cbb96",
+      "endpoint": "192.168.71.59:41053",
+      "status": {
+        "utc": "2026-11-25T15:31:28.3031008+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 581,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 2,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T15:31:28.4377988+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    }
+  },
+  "C_native_proposal": {
+    "endpoint": "192.168.71.73:41052",
+    "authenticated_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+    "attempts": [
+      {
+        "status_utc": "2026-11-25T15:31:28.8983362+00:00",
+        "proposal_utc": "2026-11-25T15:31:29.1921298+00:00",
+        "height": 1,
+        "round": 580,
+        "proposal_height": 1,
+        "proposal_round": 580
+      }
+    ],
+    "status_utc": "2026-11-25T15:31:28.8983362+00:00",
+    "status": {
+      "current_height": 1,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "recovering": false
+    },
+    "receipt_utc": "2026-11-25T15:31:29.0343084+00:00",
+    "receipt": {
+      "state": "Received",
+      "indexed_height": 0
+    },
+    "independently_verified_finality": false,
+    "proposal_utc": "2026-11-25T15:31:29.1921298+00:00",
+    "proposal": {
+      "current_height": 1,
+      "current_round": 580,
+      "observation": {
+        "in_pending_pool": true,
+        "selection_gate": "successor_unavailable",
+        "in_local_offer": true,
+        "candidate": {
+          "value": "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926",
+          "body_id": "0x8038112267cb0468eee912d12ab181a15cf5038b6b9add6da26ebf828c9f7ba7",
+          "signed_proposal": null
+        },
+        "progress": {
+          "step": "Prevote",
+          "pending_journal": null,
+          "proposed_round": null,
+          "prevote_qc": null
+        }
+      }
+    }
+  },
+  "A_581_consensus": {
+    "local_progress": {
+      "height": 1,
+      "round": 581,
+      "step": "Prevote",
+      "pending_journal": null,
+      "proposed_round": null,
+      "prevote_qc": null,
+      "outbox_pending": false,
+      "recovering": false,
+      "frozen": false,
+      "total_validator_weight": 4,
+      "quorum_weight": 3,
+      "pacemaker_last_poll_age_us": 74,
+      "prevote": {
+        "verified_weight": 1,
+        "phase_quorum": false,
+        "timer_eligible": false,
+        "timer_armed": false,
+        "timer_elapsed": null,
+        "remaining_us": null,
+        "signers": [
+          {
+            "signer": "0xb5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+            "value": null,
+            "weight": 1
+          }
+        ],
+        "omitted_signers": 0,
+        "value_weights": [
+          {
+            "value": null,
+            "weight": 1
+          }
+        ],
+        "omitted_value_weight": 0
+      },
+      "precommit": {
+        "verified_weight": 0,
+        "phase_quorum": false,
+        "timer_eligible": false,
+        "timer_armed": false,
+        "timer_elapsed": null,
+        "remaining_us": null,
+        "signers": [],
+        "omitted_signers": 0,
+        "value_weights": [],
+        "omitted_value_weight": 0
+      }
+    },
+    "configured_peers": [
+      {
+        "validator": "0x4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+        "session_established": true,
+        "current_route": {
+          "kind": "udp",
+          "endpoint": "47.103.59.206:41050"
+        },
+        "last_authenticated_age_us": 4153
+      },
+      {
+        "validator": "0x1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+        "session_established": true,
+        "current_route": {
+          "kind": "udp",
+          "endpoint": "192.168.71.73:41052"
+        },
+        "last_authenticated_age_us": 4153
+      },
+      {
+        "validator": "0xd90f5145f324790d6cef7b592d25747d0fb21958327eaeeb2367c800d74a8f90",
+        "session_established": true,
+        "current_route": {
+          "kind": "bound_carrier"
+        },
+        "last_authenticated_age_us": 2148
+      },
+      {
+        "validator": null,
+        "session_established": true,
+        "current_route": {
+          "kind": "udp",
+          "endpoint": "192.168.71.74:54928"
+        },
+        "last_authenticated_age_us": 27302857
+      }
+    ],
+    "omitted_peers": 0,
+    "recovery_vote_fragments": {
+      "prevote": "0x30fb524ef16626448f46c2775b72c375ad1221eb54549d4842edb0a278b9e5bd",
+      "precommit": null
+    }
+  },
+  "A_581_original_prevote_delivery": [
+    {
+      "validator": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+      "ring_count": 10,
+      "latest": {
+        "seq": 782710,
+        "elapsed_ns": 19520315968200,
+        "wall_unix_us": 1795620710369611,
+        "event": "delivered",
+        "height": 1,
+        "purposes": 2,
+        "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+        "fragment": "30fb524ef16626448f46c2775b72c375ad1221eb54549d4842edb0a278b9e5bd"
+      }
+    },
+    {
+      "validator": "4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+      "ring_count": 10,
+      "latest": {
+        "seq": 782711,
+        "elapsed_ns": 19520324697600,
+        "wall_unix_us": 1795620710378340,
+        "event": "delivered",
+        "height": 1,
+        "purposes": 2,
+        "peer": "4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+        "fragment": "30fb524ef16626448f46c2775b72c375ad1221eb54549d4842edb0a278b9e5bd"
+      }
+    },
+    {
+      "validator": "d90f5145f324790d6cef7b592d25747d0fb21958327eaeeb2367c800d74a8f90",
+      "ring_count": 10,
+      "latest": {
+        "seq": 782712,
+        "elapsed_ns": 19520352324700,
+        "wall_unix_us": 1795620710405967,
+        "event": "delivered",
+        "height": 1,
+        "purposes": 2,
+        "peer": "d90f5145f324790d6cef7b592d25747d0fb21958327eaeeb2367c800d74a8f90",
+        "fragment": "30fb524ef16626448f46c2775b72c375ad1221eb54549d4842edb0a278b9e5bd"
+      }
+    }
+  ],
+  "delivery_scope": "Exact A 581 nil Prevote object transport completion. Does not establish foreign verified collector admission.",
+  "final_transaction_receipt_observed": false,
+  "node_runtime_or_configuration_changed": false,
+  "transactions_resent": false
+}
