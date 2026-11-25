@@ -4,6 +4,8 @@ import path from 'node:path';
 import { saveJson } from '../storage';
 import { CodexProcess, type CodexProfile } from './process';
 
+class LoginLinkPermissionError extends Error {}
+
 export async function configureCodex(options: { directory: string; executable: string; loginHome: string; model: string; projectIds: string[] }) {
   if (!options.projectIds.length || options.projectIds.length > 100 || options.projectIds.some(id => !/^[a-f0-9]{64}$/.test(id)))
     throw Error('Explicit 64-hex B project IDs required; A never resolves B workspace paths');
@@ -18,7 +20,17 @@ export async function configureCodex(options: { directory: string; executable: s
   if (await realpath(home) === await realpath(options.loginHome)) throw Error('ASAS and the original Codex home must remain separate');
   const destination = path.join(home, 'auth.json');
   try { if (await realpath(destination) !== source) throw Error('ASAS already references a different login; do not replace it implicitly'); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; await symlink(source, destination, 'file'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    try { await symlink(source, destination, 'file'); }
+    catch (linkError) {
+      const code = (linkError as NodeJS.ErrnoException).code;
+      if (process.platform === 'win32' && (code === 'EPERM' || code === 'EACCES')) {
+        throw new LoginLinkPermissionError('Windows refused the Codex login file link. Run setup under the approved provider account with permission to create file symbolic links.');
+      }
+      throw linkError;
+    }
+  }
   const cache = await readFile(path.join(options.loginHome, 'models_cache.json'));
   if (cache.length > 8 * 1024 * 1024) throw Error('Native model catalog exceeds limit');
   const metadata = JSON.parse(cache.toString('utf8')).models?.find((model: { slug: string }) => model.slug === options.model);
@@ -63,5 +75,8 @@ if (require.main === module) {
     return configureCodex({ directory: get('--directory'), executable: get('--executable'), loginHome: get('--login-home'), model: get('--model'), projectIds });
   };
   void main()
-    .then(result => console.log(JSON.stringify(result)), () => { console.error('Codex configuration failed; no login browser or model fallback was used'); process.exitCode = 1; });
+    .then(result => console.log(JSON.stringify(result)), error => {
+      console.error(error instanceof LoginLinkPermissionError ? error.message : 'Codex configuration failed; no login browser or model fallback was used');
+      process.exitCode = 1;
+    });
 }
