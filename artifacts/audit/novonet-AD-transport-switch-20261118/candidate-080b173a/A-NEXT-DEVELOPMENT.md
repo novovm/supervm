@@ -1,6 +1,36 @@
 # A 接手 C 提案签名定位
 
-C 已于北京时间 09:39 完成一次切换。09:43 复核 Windows SCM 服务仍在运行，PID 24256，LocalService，原身份及原库 existing，已校验在用 Node/AOEM 和 UDP 41052/42052。切换前 A 认证确认 A、B 均持有同一笔原交易，状态为 Received。切换后的 A 认证查询仍待回传。C 启动事实和 Client 哈希见 [C 切换回执](C-080b173a-SCM-runtime.json)，切换前副本见 [A/B 认证回执](A-pre-C-cutover-custody-20261125.json)。
+C 已于北京时间 09:39 完成一次切换。09:43 复核 Windows SCM 服务仍在运行，PID 24256，LocalService，原身份及原库 existing，已校验在用 Node/AOEM 和 UDP 41052/42052。切换前 A 认证确认 A、B 均持有同一笔原交易，状态为 Received。A 已用同源码自编译 Client 认证查询 C。高度 1、轮次 580 返回 Prevote，待确认 journal、proposed_round、prevote QC 和原交易的 signed_proposal 均为 null。该 Client 与发布包字节不同，现已提供配套二进制供复核。实际共识路由、签票权重和计时器仍待取证。见 [A 切换后回执](A-to-C-signing-progress-20261125.json)。C 启动事实和 Client 哈希见 [C 切换回执](C-080b173a-SCM-runtime.json)，切换前副本见 [A/B 认证回执](A-pre-C-cutover-custody-20261125.json)。
+
+## Windows 文件下载
+
+从 B 的既有受限 SSH 入口 `validator-B` 取件。A 执行切换后认证查询只需要单独的配套 Client。需要完整 Node/Client/AOEM 时再取 ZIP。取件和查询分别使用既有 B SSH 与 A 原有 C 查询配置。
+
+| 文件 | 字节 | SHA-256 |
+|---|---:|---|
+| `novovm-native-client-080b173a.exe` | 7,419,392 | `b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16` |
+| `novovm-common-080b173a-windows-x86_64.zip` | 157,938,697 | `9d4072dc384c6b946c5fcd6d913d7fa9f0fd5ec8aca62c10d1f0cd94411427ee` |
+
+在 A 的 PowerShell 执行：
+
+```powershell
+$sshConfig = Join-Path $env:USERPROFILE '.ssh/validator-B.conf'
+$scpArgs = @('-F', $sshConfig, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes')
+$drop = 'validator-B:/data/novovm-candidate-da72de89-20261124/windows-080b173a-C-handoff'
+$client = Join-Path $PWD 'novovm-native-client-080b173a.exe'
+$zip = Join-Path $PWD 'novovm-common-080b173a-windows-x86_64.zip'
+
+scp.exe @scpArgs "$drop/novovm-native-client-080b173a.exe" $client
+if ($LASTEXITCODE -ne 0 -or (Get-FileHash -LiteralPath $client -Algorithm SHA256).Hash -ne 'b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16') {
+    throw 'Windows Client download or SHA-256 verification failed.'
+}
+
+# 仅在需要整包时运行以下命令。
+scp.exe @scpArgs "$drop/novovm-common-080b173a-windows-x86_64.zip" $zip
+if ($LASTEXITCODE -ne 0 -or (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne '9d4072dc384c6b946c5fcd6d913d7fa9f0fd5ec8aca62c10d1f0cd94411427ee') {
+    throw 'Windows ZIP download or SHA-256 verification failed.'
+}
+```
 
 ## 先获取认证现场
 
