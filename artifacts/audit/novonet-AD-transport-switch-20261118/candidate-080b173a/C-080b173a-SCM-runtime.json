@@ -1,0 +1,54 @@
+{
+  "source_commit": "080b173a7d5e1eba397fa09b3aaf50ce775ce909",
+  "A_custody_receipt": "8bc4136c",
+  "observed_utc": "2026-11-25T01:39:11.4231901Z",
+  "start_requested_utc": "2026-11-25T01:38:56.3743514Z",
+  "process_created_utc": "2026-11-25T01:39:01.4104Z",
+  "service": "NOVOVM-Native-Validator-C",
+  "state": "Running",
+  "previous_pid": 39896,
+  "runtime_pid": 24256,
+  "account_sid": "S-1-5-19",
+  "start_type": "automatic",
+  "startup_existing": true,
+  "database": "C:\\ProgramData\\NOVOVM\\selfrun\\91129655606029\\C\\chain-state",
+  "original_identity_inputs_unchanged": true,
+  "recovery_policy": {
+    "restart_delays_ms": [
+      5000,
+      15000
+    ],
+    "reset_period_seconds": 86400,
+    "restart_on_non_crash_failure": true
+  },
+  "archive_sha256": "9d4072dc384c6b946c5fcd6d913d7fa9f0fd5ec8aca62c10d1f0cd94411427ee",
+  "manifest_sha256": "8daefec8c6728411f9e7e6eb4a83d2b0c7aad2ed1905776290d85e5ae5f66812",
+  "node_sha256": "0a5fe94e6d191567f570e6e6754583110ff37804668eadcc9ce5c11eda83c0d3",
+  "client_sha256": "b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16",
+  "loaded_aoem_sha256": "f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa",
+  "udp": [
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 42052,
+      "OwningProcess": 24256
+    },
+    {
+      "LocalAddress": "192.168.71.73",
+      "LocalPort": 41052,
+      "OwningProcess": 24256
+    }
+  ],
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "transaction_resubmitted": false,
+  "remote_authenticated_query_received": false,
+  "query_for_A": {
+    "endpoint": "192.168.71.73:41052",
+    "original_C_pinned_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+    "steps": [
+      "Use the verified 080b173a Client and existing A query identity to authenticate C status and query the original transaction Receipt.",
+      "Run consensus-proposal with the height and round from that new authenticated Status and the exact original hash. If the position changes, take fresh Status and retry as a read-only query.",
+      "Return step, pending_journal action and submitted state, proposed_round, prevote_qc including candidate_ready, candidate value, and signed_proposal. Also recheck B online via authenticated status. Keep the original transaction untouched."
+    ],
+    "client_sha256": "b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16"
+  }
+}
