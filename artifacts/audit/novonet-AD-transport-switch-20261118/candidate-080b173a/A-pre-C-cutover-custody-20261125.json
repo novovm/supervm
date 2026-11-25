@@ -1,0 +1,89 @@
+{
+  "status": "pre_C_cutover_native_read_only",
+  "C_request": "13cfe16aa",
+  "client_sha256": "f2eacb06f1c7fd9dadcd40651e66a60dbf4d49833323bb10aa90e4e7f1538fc4",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "nodes": {
+    "A": {
+      "node": "A",
+      "pinned_key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "endpoint": "192.168.71.74:41051",
+      "status": {
+        "utc": "2026-11-25T01:30:54.7882542+00:00",
+        "exit": 0,
+        "answer": {
+          "current_height": 1,
+          "round": 580,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "query": {
+        "utc": "2026-11-25T01:30:54.9275778+00:00",
+        "exit": 0,
+        "answer": {
+          "state": "Received",
+          "indexed_height": 0
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "B": {
+      "node": "B",
+      "pinned_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "endpoint": "47.103.59.206:41050",
+      "status": {
+        "utc": "2026-11-25T01:30:55.1413421+00:00",
+        "exit": 0,
+        "answer": {
+          "current_height": 1,
+          "round": 580,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "query": {
+        "utc": "2026-11-25T01:30:55.3108376+00:00",
+        "exit": 0,
+        "answer": {
+          "state": "Received",
+          "indexed_height": 0
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "C": {
+      "node": "C",
+      "pinned_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+      "endpoint": "192.168.71.73:41052",
+      "status": {
+        "utc": "2026-11-25T01:30:55.4814206+00:00",
+        "exit": 0,
+        "answer": {
+          "current_height": 1,
+          "round": 580,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "query": {
+        "utc": "2026-11-25T01:30:55.6246239+00:00",
+        "exit": 0,
+        "answer": {
+          "state": "Received",
+          "indexed_height": 0
+        },
+        "independently_verified_finality": false
+      }
+    }
+  },
+  "independent_online_custody_nodes": [
+    "A",
+    "B"
+  ],
+  "A_B_C_D_changed": false,
+  "transactions_resent": false
+}
