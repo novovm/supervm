@@ -1,0 +1,275 @@
+{
+  "source_handoff": "64200bb0",
+  "query_client_sha256": "b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "authenticated_nodes": {
+    "A": {
+      "key_sha256": "a36a4ba2a9bd22f9b4095370072cf9f7f684ac17a92435c25b96e9f45a8bf98b",
+      "endpoint": "192.168.71.74:41051",
+      "status": {
+        "utc": "2026-11-25T03:21:42.0337559+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 580,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T03:21:42.1714528+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "B": {
+      "key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+      "endpoint": "47.103.59.206:41050",
+      "status": {
+        "utc": "2026-11-25T03:21:42.3702066+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 580,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T03:21:42.5462176+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "C": {
+      "key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+      "endpoint": "192.168.71.73:41052",
+      "status": {
+        "utc": "2026-11-25T03:21:42.7242651+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 580,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 1,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T03:21:42.8660770+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      }
+    },
+    "D": {
+      "key_sha256": "cac6c513f90eb836466ed6a6a175c2c091736192634c536099dd10dfb96cbb96",
+      "endpoint": "192.168.71.59:41053",
+      "status": {
+        "utc": "2026-11-25T03:21:43.0253587+00:00",
+        "status": {
+          "current_height": 1,
+          "round": 581,
+          "height": 0,
+          "indexed_height": 0,
+          "pending": 2,
+          "recovering": false
+        }
+      },
+      "receipt": {
+        "utc": "2026-11-25T03:21:43.1575774+00:00",
+        "exit": 0,
+        "answer": {
+          "Receipt": {
+            "state": "Received",
+            "indexed_height": 0
+          }
+        },
+        "independently_verified_finality": false
+      },
+      "historical_580_proposal_query": {
+        "utc": "2026-11-25T03:22:13.2521667+00:00",
+        "exit": 1,
+        "diagnostic": "Error: native query deadline; no fresh node observation"
+      },
+      "current_proposal_query": {
+        "utc": "2026-11-25T03:22:43.3863266+00:00",
+        "exit": 1,
+        "diagnostic": "Error: native query deadline; no fresh node observation"
+      }
+    }
+  },
+  "progress_utc": "2026-11-25T03:22:43.4873973+00:00",
+  "A_original_collector_and_routes": {
+    "local_progress": {
+      "height": 1,
+      "round": 580,
+      "step": "Precommit",
+      "pending_journal": null,
+      "proposed_round": null,
+      "prevote_qc": null,
+      "outbox_pending": false,
+      "recovering": false,
+      "frozen": false,
+      "total_validator_weight": 4,
+      "quorum_weight": 3,
+      "pacemaker_last_poll_age_us": 68,
+      "prevote": {
+        "verified_weight": 2,
+        "phase_quorum": false,
+        "timer_eligible": false,
+        "timer_armed": false,
+        "timer_elapsed": null,
+        "remaining_us": null,
+        "signers": [
+          {
+            "signer": "0x1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+            "value": null,
+            "weight": 1
+          },
+          {
+            "signer": "0xb5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+            "value": null,
+            "weight": 1
+          }
+        ],
+        "omitted_signers": 0,
+        "value_weights": [
+          {
+            "value": null,
+            "weight": 2
+          }
+        ],
+        "omitted_value_weight": 0
+      },
+      "precommit": {
+        "verified_weight": 2,
+        "phase_quorum": false,
+        "timer_eligible": false,
+        "timer_armed": false,
+        "timer_elapsed": null,
+        "remaining_us": null,
+        "signers": [
+          {
+            "signer": "0x4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+            "value": null,
+            "weight": 1
+          },
+          {
+            "signer": "0xb5d25773baaf82e8c109d41782a15ac3e45b57562f9bb023c8c1cab63d6acc43",
+            "value": null,
+            "weight": 1
+          }
+        ],
+        "omitted_signers": 0,
+        "value_weights": [
+          {
+            "value": null,
+            "weight": 2
+          }
+        ],
+        "omitted_value_weight": 0
+      }
+    },
+    "configured_peers": [
+      {
+        "validator": "0x4cecd4ba4092c821333501687e7a363d829d544c1a203ea2390d76e8b2a5627f",
+        "session_established": true,
+        "current_route": {
+          "kind": "udp",
+          "endpoint": "47.103.59.206:41050"
+        },
+        "last_authenticated_age_us": 189092
+      },
+      {
+        "validator": "0x1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+        "session_established": true,
+        "current_route": {
+          "kind": "udp",
+          "endpoint": "192.168.71.73:41052"
+        },
+        "last_authenticated_age_us": 43437
+      },
+      {
+        "validator": "0xd90f5145f324790d6cef7b592d25747d0fb21958327eaeeb2367c800d74a8f90",
+        "session_established": true,
+        "current_route": {
+          "kind": "bound_carrier"
+        },
+        "last_authenticated_age_us": 173393
+      },
+      {
+        "validator": null,
+        "session_established": true,
+        "current_route": {
+          "kind": "udp",
+          "endpoint": "192.168.71.74:55107"
+        },
+        "last_authenticated_age_us": 57855498
+      }
+    ],
+    "omitted_peers": 0,
+    "recovery_vote_fragments": {
+      "prevote": "0xdeae63af1c0057f4913d95f5b49dfd2cab5475e9a7e07c3c8e6cf3f64205b38f",
+      "precommit": "0xba1fbb81903ee6c5581c9c43f1cc63b6287d536c69bc26a9aa8f304d36bdc4b6"
+    }
+  },
+  "D_peer_path_observed_by_A": {
+    "protocol_time_ready": true,
+    "accepted_samples": 269,
+    "object_events_by_kind": [
+      {
+        "Name": "admitted",
+        "Count": 215
+      },
+      {
+        "Name": "delivered",
+        "Count": 216
+      },
+      {
+        "Name": "realtime_owned",
+        "Count": 197
+      },
+      {
+        "Name": "received",
+        "Count": 2
+      },
+      {
+        "Name": "recovery_owned",
+        "Count": 18
+      }
+    ],
+    "exact_vote_round_and_phase_exposed_in_raw_transport_events": false
+  },
+  "A_round580_missing": {
+    "Prevote": [
+      "B",
+      "D"
+    ],
+    "Precommit": [
+      "C",
+      "D"
+    ]
+  },
+  "no_runtime_changes": true,
+  "transactions_resent": false
+}
