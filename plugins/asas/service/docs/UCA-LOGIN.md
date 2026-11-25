@@ -103,3 +103,10 @@ revocation and revision changes; the same suite passed with actual AOEM ML-DSA
 signatures. Grant observations in these tests are fixtures, not live chain data.
 ACODE type checks, public-metadata/config tests and 280/668-pixel login UI checks
 passed. No remote A deployment or dual-host engine acceptance is claimed.
+
+## 2026-11-26 validator-C / validator-F handoff
+
+- `validator-C` is the ASAS provider. Its Windows host built the pinned-query client, Rendezvous and Node Worker. Official Claude Code and Codex reported authenticated local accounts and returned model catalogs. The existing node is running. ASAS startup, published-grant login and remote coding are pending.
+- The current Windows session cannot read the running `validator-C` service configuration or create the Codex login file symlink. The existing service operator should confirm the original NOVONET owner to use, the approved native read-only profile, and the public service key and endpoint. The provider-account operator should complete the Codex link with the existing credential owner and verify access under the runtime account.
+- `validator-F` runs ACODE and owns the project tools. Its session can return the authenticated device node ID, public ML-DSA-65 device key and canonical project digest now. After receiving the provider pin and approved chain/genesis, it can return `--uca-scope` for the exact grant. Send public values through the existing authorized handoff channel. Keep private profiles, identities and engine credentials on their owning host.
+- The UCA grant owner publishes the matching ASAS grant. The provider verifies the published revision using its pinned read-only SDK profile. Acceptance requires a native UCA login from `validator-F` and a separate task through each official engine, with edit/build/test receipts produced on `validator-F`.
