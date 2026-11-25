@@ -467,6 +467,39 @@ impl NativeLifecycle {
         self.progress.proposal_progress()
     }
 
+    pub(crate) fn consensus_diagnostic(&self, now: Instant) -> serde_json::Value {
+        use crate::native_pipeline::service::rpc::hex;
+        use serde_json::json;
+
+        const PEER_LIMIT: usize = 16;
+        let peer_count = self.channel.peer_count();
+        let peers: Vec<_> = (0..peer_count.min(PEER_LIMIT)).map(|peer| {
+            let row = json!({
+                "validator": self.channel.validator_for_peer(peer).ok().as_ref().map(|id| hex(id)),
+                "session_established": self.channel.session_id(peer).is_some()
+            });
+            #[cfg(feature = "iroh-transport")]
+            let row = {
+                use novovm_network::novorudp::carrier::NativeRoute;
+                let mut row = row;
+                row["current_route"] = match self.channel.peer_route(peer).ok() {
+                    Some(NativeRoute::Udp(address)) => json!({"kind": "udp", "endpoint": address}),
+                    Some(NativeRoute::Carrier(_)) => json!({"kind": "bound_carrier"}),
+                    None => serde_json::Value::Null,
+                };
+                row["last_authenticated_age_us"] = json!(self.channel.peer_last_authenticated(peer)
+                    .map(|at| now.saturating_duration_since(at).as_micros() as u64));
+                row
+            };
+            row
+        }).collect();
+        json!({
+            "local_progress": self.progress.consensus_diagnostic(now),
+            "configured_peers": peers,
+            "omitted_peers": peer_count.saturating_sub(PEER_LIMIT)
+        })
+    }
+
     pub(crate) fn current_local_proposal(
         &self,
         hash: Hash,

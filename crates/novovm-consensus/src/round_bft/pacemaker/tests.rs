@@ -79,6 +79,16 @@ fn qualification_starts_once_and_repeated_votes_do_not_extend_deadline() {
         timers.elapsed(now + Duration::from_secs(100), TimeoutStep::Precommit),
         None
     );
+    let mut pacemaker = Pacemaker::new(policy()).unwrap();
+    pacemaker.timers = Some(timers);
+    assert_eq!(
+        pacemaker.deadline_at(context(), 0, TimeoutStep::Prevote),
+        Some(now + Duration::from_millis(20))
+    );
+    assert_eq!(
+        pacemaker.deadline_at(context(), 1, TimeoutStep::Prevote),
+        None
+    );
 }
 
 #[test]

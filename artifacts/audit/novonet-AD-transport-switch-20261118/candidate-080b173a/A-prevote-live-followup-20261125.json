@@ -1,0 +1,326 @@
+{
+  "request_commit": "e950a071",
+  "exact_client_sha256": "b6ff895dc1db934955da65abdb085206bc85e9464ff53e254cf21e40b8385b16",
+  "transaction": "68d83d0b5b11b205f5ca6d2ff674dea4adbedece3327353885073eb139bd6cd4",
+  "C_authentication": {
+    "endpoint": "192.168.71.73:41052",
+    "authenticated_key_sha256": "50f87820242802fe4ee7270e26da5fab5c8ba519bc0661d6ca7f3fe3daac5757",
+    "attempts": [
+      {
+        "status_utc": "2026-11-25T02:20:12.3524940+00:00",
+        "proposal_utc": "2026-11-25T02:20:12.6491048+00:00",
+        "height": 1,
+        "round": 580,
+        "proposal_height": 1,
+        "proposal_round": 580
+      }
+    ],
+    "status_utc": "2026-11-25T02:20:12.3524940+00:00",
+    "status": {
+      "current_height": 1,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "recovering": false
+    },
+    "receipt_utc": "2026-11-25T02:20:12.5125589+00:00",
+    "receipt": {
+      "state": "Received",
+      "indexed_height": 0
+    },
+    "independently_verified_finality": false,
+    "proposal_utc": "2026-11-25T02:20:12.6491048+00:00",
+    "proposal": {
+      "current_height": 1,
+      "current_round": 580,
+      "observation": {
+        "in_pending_pool": true,
+        "selection_gate": "successor_unavailable",
+        "in_local_offer": true,
+        "candidate": {
+          "value": "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926",
+          "body_id": "0x8038112267cb0468eee912d12ab181a15cf5038b6b9add6da26ebf828c9f7ba7",
+          "signed_proposal": null
+        },
+        "progress": {
+          "step": "Prevote",
+          "pending_journal": null,
+          "proposed_round": null,
+          "prevote_qc": null
+        }
+      }
+    }
+  },
+  "B_authentication": {
+    "authenticated_key_sha256": "f96eae84c6a866b54a3349bf4bb4fdf5a9ff21692d7d5f1a1336b0d4aa9e629d",
+    "status_utc": "2026-11-25T02:20:12.8351737+00:00",
+    "status": {
+      "current_height": 1,
+      "round": 580,
+      "indexed_height": 0,
+      "pending": 1,
+      "recovering": false
+    },
+    "receipt_utc": "2026-11-25T02:20:13.0041067+00:00",
+    "receipt": {
+      "state": "Received",
+      "indexed_height": 0
+    }
+  },
+  "validator_weights": {
+    "A": 1,
+    "C": 1,
+    "quorum": 3,
+    "B": 1,
+    "D": 1
+  },
+  "original_progress_samples": {
+    "B": [
+      {
+        "collected_utc": "2026-11-25T02:22:48.7421780+00:00",
+        "height": 1,
+        "round": 580,
+        "ticks": 804145983,
+        "recovering": false,
+        "pending_deliveries": 0,
+        "native_rejected_total": 26517,
+        "C_protocol_time_session": {
+          "rejected_samples": 0,
+          "ready": true,
+          "verified_samples": 21353
+        },
+        "C_height_1_delivery_counters": {
+          "admitted": {
+            "count_in_ring": 217,
+            "last": {
+              "seq": 12071377,
+              "elapsed_ns": 371618001668158,
+              "wall_unix_us": 1795573363931782,
+              "event": "admitted",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "delivered": {
+            "count_in_ring": 217,
+            "last": {
+              "seq": 12071379,
+              "elapsed_ns": 371618010217998,
+              "wall_unix_us": 1795573363940332,
+              "event": "delivered",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "received": {
+            "count_in_ring": 4,
+            "last": {
+              "seq": 12071133,
+              "elapsed_ns": 371611744882955,
+              "wall_unix_us": 1795573357674997,
+              "event": "received",
+              "height": 1,
+              "purposes": 0,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          }
+        },
+        "delivery_profile_scope": "bounded latest local ownership/transport events; purpose bits 1=realtime 2=recovery; height 0=not carried; transport DONE is not finality",
+        "delivery_profile_evicted": 12069334,
+        "critical_path_enabled": false,
+        "control_work_enabled": false
+      },
+      {
+        "collected_utc": "2026-11-25T02:22:51.7481967+00:00",
+        "height": 1,
+        "round": 580,
+        "ticks": 804152441,
+        "recovering": false,
+        "pending_deliveries": 1,
+        "native_rejected_total": 26518,
+        "C_protocol_time_session": {
+          "rejected_samples": 0,
+          "ready": true,
+          "verified_samples": 21356
+        },
+        "C_height_1_delivery_counters": {
+          "admitted": {
+            "count_in_ring": 215,
+            "last": {
+              "seq": 12071598,
+              "elapsed_ns": 371623010204471,
+              "wall_unix_us": 1795573368940318,
+              "event": "admitted",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "delivered": {
+            "count_in_ring": 215,
+            "last": {
+              "seq": 12071600,
+              "elapsed_ns": 371623018754557,
+              "wall_unix_us": 1795573368948869,
+              "event": "delivered",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "received": {
+            "count_in_ring": 4,
+            "last": {
+              "seq": 12071539,
+              "elapsed_ns": 371621536193676,
+              "wall_unix_us": 1795573367466308,
+              "event": "received",
+              "height": 1,
+              "purposes": 0,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          }
+        },
+        "delivery_profile_scope": "bounded latest local ownership/transport events; purpose bits 1=realtime 2=recovery; height 0=not carried; transport DONE is not finality",
+        "delivery_profile_evicted": 12069554,
+        "critical_path_enabled": false,
+        "control_work_enabled": false
+      }
+    ],
+    "A": [
+      {
+        "collected_utc": "2026-11-25T02:22:45.8591537+00:00",
+        "height": 1,
+        "round": 580,
+        "ticks": 69421941,
+        "recovering": false,
+        "pending_deliveries": 0,
+        "native_rejected_total": 5242,
+        "C_protocol_time_session": {
+          "rejected_samples": 0,
+          "ready": true,
+          "verified_samples": 5838
+        },
+        "C_height_1_delivery_counters": {
+          "admitted": {
+            "count_in_ring": 216,
+            "last": {
+              "seq": 1540285,
+              "elapsed_ns": 39518272244200,
+              "wall_unix_us": 1795573362564612,
+              "event": "admitted",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "delivered": {
+            "count_in_ring": 216,
+            "last": {
+              "seq": 1540287,
+              "elapsed_ns": 39518276224800,
+              "wall_unix_us": 1795573362568593,
+              "event": "delivered",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "received": {
+            "count_in_ring": 4,
+            "last": {
+              "seq": 1540023,
+              "elapsed_ns": 39511668399500,
+              "wall_unix_us": 1795573355960768,
+              "event": "received",
+              "height": 1,
+              "purposes": 0,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          }
+        },
+        "delivery_profile_scope": "bounded latest local ownership/transport events; purpose bits 1=realtime 2=recovery; height 0=not carried; transport DONE is not finality",
+        "delivery_profile_evicted": 1538245,
+        "critical_path_enabled": false,
+        "control_work_enabled": false
+      },
+      {
+        "collected_utc": "2026-11-25T02:22:50.8996885+00:00",
+        "height": 1,
+        "round": 580,
+        "ticks": 69434940,
+        "recovering": false,
+        "pending_deliveries": 0,
+        "native_rejected_total": 5242,
+        "C_protocol_time_session": {
+          "rejected_samples": 0,
+          "ready": true,
+          "verified_samples": 5841
+        },
+        "C_height_1_delivery_counters": {
+          "admitted": {
+            "count_in_ring": 214,
+            "last": {
+              "seq": 1540495,
+              "elapsed_ns": 39523288010400,
+              "wall_unix_us": 1795573367580379,
+              "event": "admitted",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "delivered": {
+            "count_in_ring": 214,
+            "last": {
+              "seq": 1540498,
+              "elapsed_ns": 39523298612500,
+              "wall_unix_us": 1795573367590981,
+              "event": "delivered",
+              "height": 1,
+              "purposes": 1,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          },
+          "received": {
+            "count_in_ring": 4,
+            "last": {
+              "seq": 1540454,
+              "elapsed_ns": 39522210203000,
+              "wall_unix_us": 1795573366502571,
+              "event": "received",
+              "height": 1,
+              "purposes": 0,
+              "peer": "1c054a44ee79b50bf5d059a2f8fc15dd45afcdf8fa10d44a5e12c07afab89a2a",
+              "fragment": "3d2817ab7e37b91309740e004dac1d45d6fa0969d3b88368d3aaa846173cc322"
+            }
+          }
+        },
+        "delivery_profile_scope": "bounded latest local ownership/transport events; purpose bits 1=realtime 2=recovery; height 0=not carried; transport DONE is not finality",
+        "delivery_profile_evicted": 1538455,
+        "critical_path_enabled": false,
+        "control_work_enabled": false
+      }
+    ]
+  },
+  "evidence_boundary": "Height-1 delivery objects are not identified by consensus round, phase, signer or vote value. C authenticated protocol-time responses and transport completion do not prove collector acceptance of a vote.",
+  "current_phase_verified_signers_and_weights_observed": false,
+  "actual_pacemaker_deadline_observed": false,
+  "current_vote_route_and_remote_collector_acceptance_observed": false,
+  "earliest_confirmed_gate": "C was in Prevote with no reported valid (same-value) prevote QC and no pending journal action. The original pacemaker starts the Prevote timer only after verified phase weight reaches quorum; actual phase weight and timer remain unknown.",
+  "transactions_resent": false,
+  "runtime_changes": false
+}

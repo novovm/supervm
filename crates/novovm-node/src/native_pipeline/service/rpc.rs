@@ -1518,6 +1518,7 @@ impl RpcLifecycle {
             asset_prepared_at_startup: asset_prepared_at_startup,asset_startup_us: asset_startup_us,
             scope: "local successful strict rows and prepare-consumed reused rows; UCA business batch calls include failures but exclude KAT; not unique transactions, nonce admission or finality"},
                 stage_profile: crate::native_pipeline::profile::report_snapshot(),
+                consensus_diagnostic: core.consensus_diagnostic(Instant::now()),
             },
             native_network_probe: core.network_probe_snapshot(),
             native_delivery_traffic: costs

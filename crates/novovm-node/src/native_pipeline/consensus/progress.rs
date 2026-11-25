@@ -342,6 +342,80 @@ impl RoundProgress {
         }
     }
 
+    fn phase_diagnostic(&self, phase: Phase, now: Instant) -> serde_json::Value {
+        use crate::native_pipeline::service::rpc::hex;
+        use serde_json::json;
+
+        const DETAIL_LIMIT: usize = 16;
+        let round = self.round();
+        let step = match phase {
+            Phase::Prevote => TimeoutStep::Prevote,
+            Phase::Precommit => TimeoutStep::Precommit,
+        };
+        let mut signers = Vec::new();
+        let mut values = BTreeMap::new();
+        let mut total_weight = 0;
+        let mut omitted_value_weight = 0;
+        let mut omitted_signers = 0;
+        for (vote, weight) in self.collector.current_phase_votes(phase) {
+            total_weight += weight;
+            if signers.len() < DETAIL_LIMIT {
+                signers.push(json!({
+                    "signer": hex(&vote.validator_id),
+                    "value": vote.value.as_ref().map(|value| hex(value)),
+                    "weight": weight
+                }));
+            } else {
+                omitted_signers += 1;
+            }
+            if let Some(count) = values.get_mut(&vote.value) {
+                *count += weight;
+            } else if vote.value.is_none() || values.len() < DETAIL_LIMIT {
+                values.insert(vote.value, weight);
+            } else {
+                omitted_value_weight += weight;
+            }
+        }
+        let value_weights: Vec<_> = values.into_iter().map(|(value, weight)| {
+            json!({"value": value.as_ref().map(|value| hex(value)), "weight": weight})
+        }).collect();
+        let deadline = self.pacemaker.deadline_at(self.context(), round, step);
+        let phase_quorum = self.collector.timeout_eligible(round, phase);
+        json!({
+            "verified_weight": total_weight,
+            "phase_quorum": phase_quorum,
+            "timer_eligible": phase_quorum && (step == TimeoutStep::Precommit || self.step() == step),
+            "timer_armed": deadline.is_some(),
+            "timer_elapsed": deadline.map(|at| now >= at),
+            "remaining_us": deadline.map(|at| at.saturating_duration_since(now).as_micros() as u64),
+            "signers": signers,
+            "omitted_signers": omitted_signers,
+            "value_weights": value_weights,
+            "omitted_value_weight": omitted_value_weight
+        })
+    }
+
+    pub(super) fn consensus_diagnostic(&self, now: Instant) -> serde_json::Value {
+        let progress = self.proposal_progress();
+        serde_json::json!({
+            "height": self.context().height,
+            "round": self.round(),
+            "step": progress.step,
+            "pending_journal": progress.pending_journal,
+            "proposed_round": progress.proposed_round,
+            "prevote_qc": progress.prevote_qc,
+            "outbox_pending": self.outbox.is_some(),
+            "recovering": self.recovering,
+            "frozen": self.is_frozen(),
+            "total_validator_weight": self.domain.validators.total_weight(),
+            "quorum_weight": self.domain.validators.quorum_weight(),
+            "pacemaker_last_poll_age_us": self.pacemaker.last_polled_at()
+                .map(|at| now.saturating_duration_since(at).as_micros() as u64),
+            "prevote": self.phase_diagnostic(Phase::Prevote, now),
+            "precommit": self.phase_diagnostic(Phase::Precommit, now)
+        })
+    }
+
     /// Read the existing candidate pool and self-verified proposal for this
     /// round. Match the exact transaction against the executed packet.
     pub(super) fn current_local_candidate(

@@ -144,6 +144,23 @@ impl Pacemaker {
         })
     }
 
+    /// Read the actual armed deadline, scoped to the acknowledged position.
+    pub fn deadline_at(&self, context: Context, round: u64, step: TimeoutStep) -> Option<Instant> {
+        let timers = self
+            .timers
+            .as_ref()
+            .filter(|timers| timers.context == context && timers.round == round)?;
+        match step {
+            TimeoutStep::Propose => Some(timers.propose),
+            TimeoutStep::Prevote => timers.prevote,
+            TimeoutStep::Precommit => timers.precommit,
+        }
+    }
+
+    pub fn last_polled_at(&self) -> Option<Instant> {
+        self.last_now
+    }
+
     /// Call after processing eligible proposal/QC/decision inputs so a ready
     /// decision is not intentionally delayed by a local failure deadline.
     /// `now` must be the local monotonic Instant, never a peer timestamp.

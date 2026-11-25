@@ -111,6 +111,14 @@ fn qualified_votes_and_collected_quorum_do_not_repeat_signature_work() {
         .unwrap()
         .is_none());
     collector.insert_verified(&qualified[2]).unwrap();
+    assert_eq!(
+        collector
+            .current_phase_votes(Phase::Prevote)
+            .map(|(vote, weight)| (vote.value, weight))
+            .collect::<Vec<_>>(),
+        vec![(Some(A), 1); 3]
+    );
+    assert_eq!(collector.current_phase_votes(Phase::Precommit).count(), 0);
     for _ in 0..8 {
         assert_eq!(
             collector.insert_verified(&qualified[0]).unwrap(),

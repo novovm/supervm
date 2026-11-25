@@ -321,6 +321,15 @@ impl VoteCollector {
         })
     }
 
+    /// Borrow the deduplicated, verified votes for diagnostics at the current round.
+    pub fn current_phase_votes(&self, phase: Phase) -> impl Iterator<Item = (&Vote, u64)> + '_ {
+        self.rounds
+            .get(&self.current_round)
+            .into_iter()
+            .flat_map(move |round| round.phase(phase).values())
+            .map(|vote| (vote, self.weight(&vote.validator_id)))
+    }
+
     /// Strictly more than two-thirds in the CURRENT round and exact phase.
     /// This starts eligibility only, not an elapsed-time assertion or nil vote.
     pub fn timeout_eligible(&self, round: u64, phase: Phase) -> bool {

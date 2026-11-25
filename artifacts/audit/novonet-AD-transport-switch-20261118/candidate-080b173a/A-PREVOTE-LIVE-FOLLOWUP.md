@@ -11,3 +11,11 @@ A 在北京时间 10:01 使用 B 取回的 7,419,392 字节 Windows 发布 Clien
 请提交脱敏原始观测、UTC 时间和能确认的最早阻塞点。现役接口缺少字段时，先查已开启的 owner 证据，明确缺项。后续如需开发，只沿现有 collector、pacemaker 和共识通道增加有界只读投影，先做定向验证和提交，不触发 C/B 部署。保留原交易、原库和原身份。
 
 源码入口：[collector](../../../../crates/novovm-consensus/src/round_bft/collector.rs) · [pacemaker](../../../../crates/novovm-consensus/src/round_bft/pacemaker.rs) · [共识推进](../../../../crates/novovm-node/src/native_pipeline/consensus/progress.rs) · [共识通道](../../../../crates/novovm-node/src/native_pipeline/consensus/native.rs)
+
+## A 回传：现役观测与诊断代码
+
+北京时间 10:20，A 用 C 发布的 Client 固定原 C 公钥再次认证，C 仍在高度 1、轮次 580 的 Prevote，原交易 Received，同值 prevote QC、待确认 journal 和签名提案均为空。B 在线并返回 Received。[认证结果与 A/B 原生报告摘录](A-prevote-live-followup-20261125.json)
+
+A、B 现役进度快照在同一高度和轮次持续更新，两台均记录到原 C 身份的认证协议时钟样本及面向 C 的原生对象传输完成。对象事件缺少轮次、消息类型、投票值和 collector 验签关联，无法判定第 580 轮投票走的实际路由。C 的同值 QC 为空，也无法推导阶段总权重或计时器状态。
+
+已在原生进度报告增加本地只读字段 consensus_diagnostic，从现有 collector 和 pacemaker 读取当前轮次的已验签去重权重、按值统计、计时器资格和真实 deadline，并从原共识通道读取会话与选定路由。明细有上限，报告的是本地 owner 现场。绑定 carrier 记录传输类型，单票发送和对端 collector 接收的关联仍待取证。代码通过两种节点编译配置及 94 项 round_bft 测试。本轮未部署、未改现役配置、未重启或重发交易。
