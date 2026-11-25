@@ -20,6 +20,7 @@ pub mod protocol_catalog;
 pub mod tx_wire;
 pub mod uca_application;
 pub mod uca_delegation;
+pub mod uca_registration;
 pub mod uca_spend;
 pub mod uca_spend_batch;
 pub mod uca_transaction;

@@ -118,6 +118,12 @@ passed. No remote A deployment or dual-host engine acceptance is claimed.
 - `validator-F` runs ACODE and owns the project tools. Its session can return the authenticated device node ID, public ML-DSA-65 device key and canonical project digest now. After receiving the provider pin and approved chain/genesis, it can return `--uca-scope` for the exact grant. Send public values through the existing authorized handoff channel. Keep private profiles, identities and engine credentials on their owning host.
 - The UCA grant owner publishes the matching ASAS grant. The provider verifies the published revision using its pinned read-only SDK profile. Acceptance requires a native UCA login from `validator-F` and a separate task through each official engine, with edit/build/test receipts produced on `validator-F`.
 
+## Existing-chain registration proof
+
+`novovm_protocol::uca_registration` defines the bounded canonical `NUIR` proof. `novovm_exec` verifies it with the original qualified ML-DSA-65 owner, using a distinct registration context and an explicit original chain ID, genesis and half-open height range. The initial registration name is `uca:` plus the lowercase hex of the existing ML-DSA-65 primary-key reference. `validator-F` can compare that name to its prepared selector on its own machine without exporting root key material. Existing assigned names retain their original bindings.
+
+This proof checks key possession. Native admission, the no-overwrite update at the published parent, a coordinated activation boundary across current validators, history replay, and the signed application grant remain required. The registration proof does not change any live policy or admit network input by itself.
+
 ### F preparation and C follow-up
 
 F has generated independent protected ML-DSA-65 transport and identity-purpose
