@@ -1,9 +1,9 @@
 use anyhow::{ensure, Result};
 use novovm_relay::asas_client::{ClientConfigV1, ClientOwnerV1};
-async fn run() -> Result<()> {
+fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && args[0] == "--client-contract" {
-        println!("{{\"version\":1,\"role\":\"asas-b-client\",\"transport\":\"novorudp\",\"startsAgent\":false,\"ucaLogin\":1}}");
+        println!("{{\"version\":1,\"role\":\"asas-b-client\",\"transport\":\"novorudp\",\"startsAgent\":false,\"ucaLogin\":1,\"credentialDirectory\":1}}");
         return Ok(());
     }
     ensure!(
@@ -16,17 +16,22 @@ async fn run() -> Result<()> {
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("profile digest required"))?;
     let config = ClientConfigV1::load(std::path::Path::new(&args[1]), digest)?;
+    #[cfg(target_os = "linux")]
+    if let Some(directory) = &config.credentials_directory {
+        // Main is still single-threaded: bind the original custody before AOEM/Tokio starts.
+        std::env::set_var("CREDENTIALS_DIRECTORY", directory);
+    }
     if args.len() == 5 {
         println!("{}", serde_json::to_string_pretty(&config.uca_selector()?)?);
         return Ok(());
     }
-    ClientOwnerV1::connect(&config).await?.serve_stdio().await
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(async { ClientOwnerV1::connect(&config).await?.serve_stdio().await })
 }
 fn main() {
-    let result = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .and_then(|runtime| runtime.block_on(run()).map_err(std::io::Error::other));
+    let result = run();
     if result.is_err() {
         eprintln!(
             "ASAS B client failed; inspect selected profile and original task; no automatic replay"

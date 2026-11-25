@@ -97,6 +97,7 @@ async fn peer(
     let config = ClientConfigV1 {
         version: 1,
         identity_path: "/fixture/not-loaded".into(),
+        credentials_directory: None,
         chain_id: 1,
         library: "/fixture/not-loaded".into(),
         library_sha256: "a".repeat(64),

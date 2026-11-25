@@ -69,6 +69,13 @@ the actual 32-byte `genesis` array. Existing chain ID, A public-key pin and B
 protected identity path remain unchanged. No private key or model token is
 imported through the UI.
 
+Linux profiles may pin `credentials_directory` to the private directory holding
+their original custody `owner-key`. The native CLI selects it before AOEM or
+Tokio starts; the extension never receives the credential bytes and does not
+inherit another application's credential environment. Its contract reports
+`credentialDirectory: 1`. The existing custody owner still checks UID, private
+permissions and symlinks. Windows profiles omit this Linux-only field.
+
 The existing authorization owner can obtain the exact public grant selector:
 
 ```sh
@@ -110,3 +117,25 @@ passed. No remote A deployment or dual-host engine acceptance is claimed.
 - The current Windows session cannot read the running `validator-C` service configuration or create the Codex login file symlink. The existing service operator should confirm the original NOVONET owner to use, the approved native read-only profile, and the public service key and endpoint. The provider-account operator should complete the Codex link with the existing credential owner and verify access under the runtime account.
 - `validator-F` runs ACODE and owns the project tools. Its session can return the authenticated device node ID, public ML-DSA-65 device key and canonical project digest now. After receiving the provider pin and approved chain/genesis, it can return `--uca-scope` for the exact grant. Send public values through the existing authorized handoff channel. Keep private profiles, identities and engine credentials on their owning host.
 - The UCA grant owner publishes the matching ASAS grant. The provider verifies the published revision using its pinned read-only SDK profile. Acceptance requires a native UCA login from `validator-F` and a separate task through each official engine, with edit/build/test receipts produced on `validator-F`.
+
+### F preparation and C follow-up
+
+F has generated independent protected ML-DSA-65 transport and identity-purpose
+keys through the original `novovmctl native-identity` owner and exported the
+native client's exact `--uca-scope`. Public material and C's next actions live
+in AOEM-CODE `docs/asas/validator-F-public.json` and
+`docs/asas/validator-C-next.md`; private keys and wrapping credentials stay on F.
+
+This does not register a UCA. `business/uca_identity.rs` currently requires a
+`GenesisInitializationV1` binding for application authorization; local
+`UnifiedAccount` creation is not an opening through the published native tree.
+The present F identity is not published. C must first query its pinned chain's
+actual identity/grant state and coordinate the native registration gap with the
+chain owner. Do not patch the live database, alter genesis, substitute another
+UCA, issue a synthetic revision or bypass admission to make ASAS appear ready.
+
+The C-advertised mailbox candidate timed out through F's actual ACODE connection
+entry; neither native UCA login nor remote programming passed. Native identity
+creation reused the existing CLI whose identity command source is unchanged;
+a current CLI rebuild failed on a truncated local RocksDB archive. That failed
+rebuild is not reported as passed. The ASAS B client build is independent of it.

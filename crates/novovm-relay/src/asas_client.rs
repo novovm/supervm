@@ -27,6 +27,8 @@ pub const IPC_LIMIT: usize = 1024 * 1024;
 pub struct ClientConfigV1 {
     pub version: u8,
     pub identity_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials_directory: Option<PathBuf>,
     pub chain_id: u64,
     pub library: PathBuf,
     pub library_sha256: String,
@@ -43,6 +45,20 @@ pub struct ClientUcaV1 {
     pub genesis: [u8; 32],
 }
 impl ClientConfigV1 {
+    fn identity(&self) -> Result<novovm_network::product_overlay::TransportIdentity> {
+        if let Some(directory) = &self.credentials_directory {
+            ensure!(
+                std::env::var_os("CREDENTIALS_DIRECTORY").as_deref() == Some(directory.as_os_str()),
+                "custody environment differs from pinned B profile"
+            );
+        }
+        crate::transport_identity::load_transport_identity(
+            &self.identity_path,
+            self.chain_id,
+            &self.library,
+            &self.library_sha256,
+        )
+    }
     /// Public authorization target only; does not publish a grant or log in.
     pub fn uca_selector(
         &self,
@@ -52,12 +68,7 @@ impl ClientConfigV1 {
             .uca
             .as_ref()
             .context("B UCA identity and genesis required")?;
-        let key = crate::transport_identity::load_transport_identity(
-            &self.identity_path,
-            self.chain_id,
-            &self.library,
-            &self.library_sha256,
-        )?;
+        let key = self.identity()?;
         Ok(
             novovm_protocol::uca_application::ApplicationGrantSelectorV1 {
                 chain_id: self.chain_id,
@@ -70,6 +81,16 @@ impl ClientConfigV1 {
         )
     }
     pub fn validate(&self) -> Result<()> {
+        if let Some(directory) = &self.credentials_directory {
+            ensure!(
+                cfg!(target_os = "linux")
+                    && directory.is_absolute()
+                    && !directory
+                        .components()
+                        .any(|part| matches!(part, std::path::Component::ParentDir)),
+                "explicit Linux custody directory required"
+            );
+        }
         ensure!(
             self.version == 1 && self.identity_path.is_absolute() && self.library.is_absolute(),
             "explicit B identity/runtime paths required"
@@ -146,12 +167,7 @@ fn wall_ms() -> Result<u64> {
 impl ClientOwnerV1 {
     pub async fn connect(config: &ClientConfigV1) -> Result<Self> {
         config.validate()?;
-        let key = crate::transport_identity::load_transport_identity(
-            &config.identity_path,
-            config.chain_id,
-            &config.library,
-            &config.library_sha256,
-        )?;
+        let key = config.identity()?;
         Self::connect_with_identity(config, key).await
     }
     pub(crate) async fn connect_with_identity(
@@ -426,6 +442,7 @@ mod tests {
         let config = ClientConfigV1 {
             version: 1,
             identity_path: "/fixture/not-loaded".into(),
+            credentials_directory: None,
             chain_id: 1,
             library: "/fixture/not-loaded.so".into(),
             library_sha256: "a".repeat(64),
