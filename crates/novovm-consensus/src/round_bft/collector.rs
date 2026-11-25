@@ -404,6 +404,48 @@ impl VoteCollector {
         self.admit_far_round_witness_with(votes.iter().map(|vote| (vote.vote(), Some(vote))))
     }
 
+    /// Rehydrate the ordinary current-round slots from a qualified witness.
+    /// A same-round witness carries individual votes and cannot advance the round.
+    pub fn recover_verified_current_votes(&mut self, votes: &[VerifiedVote]) -> Result<()> {
+        ensure!(
+            (1..=self.set.members().len()).contains(&votes.len()),
+            "invalid current-round recovery witness size"
+        );
+        let mut missing = 0;
+        let mut previous = None;
+        for verified in votes {
+            verified.ensure_verified_by(&self.set)?;
+            let vote = verified.vote();
+            ensure!(
+                vote.context == self.context
+                    && vote.round == self.current_round
+                    && previous.is_none_or(|id| id < vote.validator_id),
+                "current-round witness has a different position or repeats a signer"
+            );
+            previous = Some(vote.validator_id);
+            if let Some(known) = self
+                .rounds
+                .get(&self.current_round)
+                .and_then(|round| round.phase(vote.phase).get(&vote.validator_id))
+            {
+                ensure!(
+                    known.value == vote.value,
+                    "collector validator equivocation"
+                );
+            } else {
+                missing += 1;
+            }
+        }
+        ensure!(
+            missing <= self.limits.max_votes.saturating_sub(self.vote_count),
+            "collector vote budget exhausted"
+        );
+        for verified in votes {
+            self.insert_qualified(verified.vote())?;
+        }
+        Ok(())
+    }
+
     fn admit_far_round_witness_with<'a>(
         &mut self,
         mut votes: impl ExactSizeIterator<Item = (&'a Vote, Option<&'a VerifiedVote>)>,

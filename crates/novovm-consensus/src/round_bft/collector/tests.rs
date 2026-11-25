@@ -256,6 +256,50 @@ fn mixed_values_only_qualify_phase_timeout_and_never_a_block_quorum() {
 }
 
 #[test]
+fn same_round_recovery_rehydrates_verified_votes_without_advancing_round() {
+    let f = Fixture::new(&[1; 4]);
+    let mut restarted =
+        VoteCollector::new(f.context, f.set.clone(), 580, f.collector().limits).unwrap();
+    let local = f.vote(0, 580, Phase::Prevote, None);
+    restarted.insert(&local).unwrap();
+    let mut votes = [
+        f.vote(1, 580, Phase::Prevote, None),
+        f.vote(2, 580, Phase::Prevote, Some(A)),
+    ];
+    votes.sort_by_key(|vote| vote.validator_id);
+    let verified: Vec<_> = votes
+        .iter()
+        .map(|vote| vote.verify(&f.set).unwrap())
+        .collect();
+    assert!(restarted
+        .admit_verified_far_round_witness(&verified)
+        .is_err());
+    assert_eq!(restarted.phase_weight(580, Phase::Prevote), 1);
+    restarted.recover_verified_current_votes(&verified).unwrap();
+    restarted.recover_verified_current_votes(&verified).unwrap();
+    assert_eq!(restarted.phase_weight(580, Phase::Prevote), 3);
+    assert!(restarted.timeout_eligible(580, Phase::Prevote));
+    assert!(restarted
+        .quorum(580, Phase::Prevote, None)
+        .unwrap()
+        .is_none());
+    assert!(restarted
+        .quorum(580, Phase::Prevote, Some(A))
+        .unwrap()
+        .is_none());
+    assert_eq!(restarted.phase_weight(580, Phase::Precommit), 0);
+    assert!(restarted.catch_up().is_none());
+    assert_eq!(restarted.current_round(), 580);
+    let wrong_round = f
+        .vote(3, 581, Phase::Precommit, None)
+        .verify(&f.set)
+        .unwrap();
+    assert!(restarted
+        .recover_verified_current_votes(&[wrong_round])
+        .is_err());
+}
+
+#[test]
 fn duplicate_and_equivocation_never_add_weight_or_overwrite_the_first_vote() {
     let f = Fixture::new(&[1; 4]);
     let mut collector = f.collector();

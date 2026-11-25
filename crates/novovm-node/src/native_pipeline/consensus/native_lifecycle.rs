@@ -8,7 +8,7 @@ use super::{
     native::{NativeChannel, PreparedMessage, ReceiveEvent},
     progress::RoundProgress,
     transport::Message,
-    wire::{Hash, ValidatorSet},
+    wire::{Hash, Phase, ValidatorSet},
 };
 use crate::native_pipeline::{
     business::direct_nov_fee::DirectNovFeePolicy, consensus::transport::DecodeLimits,
@@ -119,6 +119,7 @@ pub struct NativeLifecycle {
     transaction_sequence: u64,
     asset_pull: asset_pull::PullState,
     outbox: Option<Fanout>,
+    round_recovery_votes: [Option<PreparedMessage>; 2],
     proposal_dispatch: Option<ProposalDispatchEvidence>,
     successor_outbox: Option<(Hash, Fanout)>,
     successor_announced: Option<Hash>,
@@ -286,6 +287,7 @@ impl NativeLifecycle {
             frozen: false,
             profile_last_io: None,
             rejected_messages: 0,
+            round_recovery_votes: [None, None],
             requested_bodies: 0,
             served_bodies: 0,
             expired_sends: 0,
@@ -496,7 +498,11 @@ impl NativeLifecycle {
         json!({
             "local_progress": self.progress.consensus_diagnostic(now),
             "configured_peers": peers,
-            "omitted_peers": peer_count.saturating_sub(PEER_LIMIT)
+            "omitted_peers": peer_count.saturating_sub(PEER_LIMIT),
+            "recovery_vote_fragments": {
+                "prevote": self.round_recovery_votes[0].as_ref().map(|vote| hex(&vote.fragment_id())),
+                "precommit": self.round_recovery_votes[1].as_ref().map(|vote| hex(&vote.fragment_id()))
+            }
         })
     }
 
@@ -849,6 +855,7 @@ impl NativeLifecycle {
             let height_changed = self.height != self.progress.context().height;
             self.height = self.progress.context().height;
             self.round = self.progress.round();
+            self.round_recovery_votes = [None, None];
             self.requested.retain(|_, claim| {
                 height_changed && claim.is_some_and(|context| context.height >= self.height)
             });
@@ -1109,7 +1116,7 @@ impl NativeLifecycle {
             }
         }
         self.poll_archives(pipeline)?;
-        self.poll_far_round_reply(now);
+        self.poll_round_recovery_reply(now);
         self.request_decisions(now)?;
         let missing = self.bodies.requests(&self.progress);
         self.requested

@@ -42,7 +42,7 @@ pub(super) struct ArchivePeer {
     reading: Option<Reading>,
     cached: Option<Cached>,
     decision_pending: bool,
-    far_round_reply_due: Option<Instant>,
+    round_reply_due: Option<Instant>,
     body_request: Option<Hash>,
     // A future body requested before its parent ACK must not lose its reply
     // responsibility when an ordinary archive request refreshes the hint.
@@ -346,20 +346,34 @@ impl NativeLifecycle {
         Ok(())
     }
 
-    pub(super) fn poll_far_round_reply(&mut self, now: Instant) {
+    pub(super) fn poll_round_recovery_reply(&mut self, now: Instant) {
         if self.peers.is_empty() || self.progress.is_recovering() {
             return;
         }
         let peer = (self.archive_turn + self.peers.len() - 1) % self.peers.len();
         let state = &mut self.archives[peer];
         if state.requested != Some(self.progress.context())
-            || state.far_round_reply_due.is_some_and(|due| now < due)
+            || state.round_reply_due.is_some_and(|due| now < due)
         {
             return;
         }
         // Optional reply to an existing exact-parent recovery request. Share
         // auxiliary delivery limits and never reserve durable outbox capacity.
-        state.far_round_reply_due = now.checked_add(Duration::from_secs(5));
+        state.round_reply_due = now.checked_add(Duration::from_secs(5));
+        // An exact-parent request may come from a peer with an empty collector
+        // after a restart. Reuse our original acknowledged votes for this round,
+        // even when neither side has enough signers to build a far-round reply.
+        for (slot, phase) in [Phase::Prevote, Phase::Precommit].into_iter().enumerate() {
+            if self.round_recovery_votes[slot].is_none() {
+                self.round_recovery_votes[slot] = self
+                    .progress
+                    .current_local_vote(phase)
+                    .and_then(|vote| self.channel.prepare(&Message::Vote(vote)).ok());
+            }
+            if let Some(prepared) = self.round_recovery_votes[slot].clone() {
+                self.enqueue_kind(peer, prepared, true);
+            }
+        }
         if let Some(reply) = self.progress.current_far_round_reply() {
             if let Ok(prepared) = self.channel.prepare(&reply) {
                 self.enqueue(peer, prepared);

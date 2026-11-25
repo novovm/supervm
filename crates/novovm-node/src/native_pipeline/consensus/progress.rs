@@ -13,7 +13,7 @@ use super::statement::ParentPoint;
 use super::transport::Message;
 use super::wire::{
     Context as VoteContext, Hash, Phase, ValidatorSet, VerifiedProposal, VerifiedQuorum,
-    VerifiedVote,
+    VerifiedVote, Vote,
 };
 use super::{DurableMessage, TimeoutStep, ValidatorJournal};
 use crate::native_pipeline::pipeline::{CandidatePipeline, DurableCandidate};
@@ -285,6 +285,16 @@ impl RoundProgress {
         self.collector
             .current_far_round_reply()
             .map(Message::FarRoundWitness)
+    }
+
+    pub(super) fn current_local_vote(&self, phase: Phase) -> Option<Vote> {
+        if self.is_frozen() || self.is_recovering() {
+            return None;
+        }
+        self.collector
+            .current_phase_votes(phase)
+            .find(|(vote, _)| vote.validator_id == self.local_validator())
+            .map(|(vote, _)| vote.clone())
     }
     pub fn step(&self) -> TimeoutStep {
         self.journal.step()
@@ -603,7 +613,14 @@ impl RoundProgress {
         evidence.ensure_matches(message, &self.domain)?;
         match (message, evidence) {
             (Message::FarRoundWitness(_), VerifiedEvidence::FarRoundWitness(votes)) => {
-                self.collector.admit_verified_far_round_witness(&votes)?;
+                if votes
+                    .first()
+                    .is_some_and(|first| first.vote().round == self.round())
+                {
+                    self.collector.recover_verified_current_votes(&votes)?;
+                } else {
+                    self.collector.admit_verified_far_round_witness(&votes)?;
+                }
             }
             (Message::Vote(vote), VerifiedEvidence::Vote(verified)) => {
                 if vote.context == self.context() {
