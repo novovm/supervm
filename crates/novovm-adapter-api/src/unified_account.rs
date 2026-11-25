@@ -131,6 +131,8 @@ pub enum UcaKeyProofType {
     /// Raw approvals remain separate audit evidence; this tag cannot authorize
     /// a change to an existing account by itself.
     GenesisInitializationV1,
+    /// Commitment to a verified, consensus-admitted native registration proof.
+    NativeRegistrationV1,
 }
 
 impl UcaKeyProofType {
@@ -139,6 +141,7 @@ impl UcaKeyProofType {
         match self {
             Self::SignatureV1 => "signature_v1",
             Self::GenesisInitializationV1 => "genesis_initialization_v1",
+            Self::NativeRegistrationV1 => "native_registration_v1",
         }
     }
 }

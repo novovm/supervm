@@ -53,6 +53,107 @@ fn captured(changes: &[StateChange], access: &IdentityAccessV1) -> (NodeHash, Ow
 }
 
 #[test]
+#[ignore = "requires explicitly qualified AOEM library"]
+fn native_registration_creates_one_original_identity_without_overwriting() -> Result<()> {
+    use crate::native_pipeline::{
+        business::uca_registration::{register_identity, registration_declarations},
+        execution::plan::BatchContext,
+    };
+    use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade};
+    use novovm_protocol::uca_registration::{
+        SignedUcaRegistrationV1, UcaRegistrationIntentV1, REGISTRATION_CONTEXT_V1,
+    };
+    let library = std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY").expect("set qualified library path");
+    let owner = AoemExecFacade::open(std::path::Path::new(&library), Default::default())?;
+    let runtime = owner.mldsa_runtime_v1(AoemMldsaParameterSet::MlDsa65)?;
+    let key = runtime.generate_keypair()?;
+    let reference = derive_primary_key_ref_from_binding_v1(UcaKeyAlgo::Mldsa65, &key.public_key);
+    let hex = reference
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let name = format!("uca:{hex}");
+    let access = IdentityAccessV1::new(7, &[2; 32], &name)?;
+    let intent = UcaRegistrationIntentV1 {
+        chain_id: 7,
+        genesis: [2; 32],
+        identity: novovm_protocol::native_query::UcaIdentityIdV1::new(&name).unwrap(),
+        primary_key_ref: reference.try_into().unwrap(),
+        valid_from_height: 2,
+        valid_until_height: 4,
+    };
+    let signature = runtime.sign(
+        &key.public_key,
+        &key.expanded_secret_key,
+        &intent.signing_bytes()?,
+        REGISTRATION_CONTEXT_V1,
+    )?;
+    let signed = SignedUcaRegistrationV1 {
+        intent,
+        public_key: key.public_key.to_vec(),
+        signature,
+    };
+    let proof = owner.verify_uca_registration_v1(signed.clone(), 7, [2; 32], 2)?;
+    let existing = identity_record_changes(7, &[2; 32], &account())?;
+    let original_tree = stage_state_update(&Memory::default(), empty_root(), &existing)?;
+    let root = original_tree.root();
+    let input = OwnedStateInput::capture(
+        &Memory(original_tree.nodes().clone()),
+        root,
+        &registration_declarations(proof.intent())?,
+        CaptureBudget {
+            keys: 33,
+            nodes: 2048,
+            bytes: 2 * 1024 * 1024,
+        },
+    )?;
+    let mut context = BatchContext {
+        chain_id: 7,
+        genesis_config_commitment: [2; 32],
+        protocol_commitment: [3; 32],
+        business_program: [4; 32],
+        semantic_version: 1,
+        effect_contract: [5; 32],
+        parent_block_hash: [6; 32],
+        parent_height: 1,
+        parent_state_root: root,
+        parent_receipt_root: [7; 32],
+        parent_state_version: 1,
+        receipt_codec: [8; 32],
+        height: 2,
+        slot: 0,
+        timestamp_unix_ms: 30,
+    };
+    let changes = register_identity(&proof, &input, &context)?;
+    assert!(!changes.is_empty());
+    let staged = input.stage(&changes)?;
+    let mut combined = existing;
+    combined.extend(changes);
+    let (published_root, published_input) = captured(&combined, &access);
+    assert_eq!(staged.root(), published_root);
+    let registered = access.read(&published_input, published_root, 2)?.unwrap();
+    assert_eq!(registered.status, IdentityStatusV1::Active);
+    assert_eq!(registered.primary_key_ref, proof.intent().primary_key_ref);
+    let original = IdentityAccessV1::new(7, &[2; 32], "uca-owner")?;
+    let (original_root, original_input) = captured(&combined, &original);
+    assert_eq!(original_root, published_root);
+    assert_eq!(
+        original
+            .read(&original_input, original_root, 2)?
+            .unwrap()
+            .updated_at_ms,
+        20
+    );
+    context.parent_state_root = published_root;
+    context.parent_height = 2;
+    context.height = 3;
+    let replay = owner.verify_uca_registration_v1(signed, 7, [2; 32], 3)?;
+    assert!(register_identity(&replay, &published_input, &context).is_err());
+    assert!(register_identity(&replay, &input, &context).is_err());
+    Ok(())
+}
+
+#[test]
 fn identity_read_uses_existing_mldsa_record_and_preserves_all_statuses_at_one_root() {
     let access = IdentityAccessV1::new(7, &[2; 32], "uca-owner").unwrap();
     assert_eq!(access.declarations().len(), 33);

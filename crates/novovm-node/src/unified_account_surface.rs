@@ -5196,6 +5196,9 @@ fn verify_primary_key_binding_proof_v1(
         UcaKeyProofType::GenesisInitializationV1 => {
             bail!("genesis initialization approval is not a legacy management proof");
         }
+        UcaKeyProofType::NativeRegistrationV1 => {
+            bail!("native registration approval requires the original consensus path");
+        }
     }
     let message =
         primary_key_proof_message_v1(account_id, action, key_algo, public_key, primary_key_ref);

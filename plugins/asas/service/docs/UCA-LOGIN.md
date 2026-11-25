@@ -124,6 +124,10 @@ passed. No remote A deployment or dual-host engine acceptance is claimed.
 
 This proof checks key possession. Native admission, the no-overwrite update at the published parent, a coordinated activation boundary across current validators, history replay, and the signed application grant remain required. The registration proof does not change any live policy or admit network input by itself.
 
+The native business layer prepares the bounded `/identity/` changes after checking the admitted proof against the block and the captured parent. It refuses an existing identity or any orphan page in the identity's declared range. The new proof tag is appended to the existing account codec, and the legacy `ua_createUca` surface cannot use it. The current finalized-state writer and ASAS grant check still require activation wiring before this effect can be used on the chain.
+
+Existing validator operators can acknowledge the upgrade work against the same chain ID, genesis and current validator-set commitment. After an executable upgrade is built, use the existing quorum rules and agree on one exact parent checkpoint and activation boundary. No activation height or validator signatures have been collected. `validator-F` is the ASAS consumer and does not acquire a validator vote by registering a UCA.
+
 ### F preparation and C follow-up
 
 F has generated independent protected ML-DSA-65 transport and identity-purpose

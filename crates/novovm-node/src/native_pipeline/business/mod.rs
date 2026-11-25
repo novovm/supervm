@@ -9,4 +9,5 @@ pub mod quoted_transfer;
 mod record_pages;
 pub mod uca_application;
 pub(crate) mod uca_identity;
+pub mod uca_registration;
 pub mod uca_spend_state;
