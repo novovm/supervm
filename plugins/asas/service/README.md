@@ -57,14 +57,13 @@ Auto has no blanket MCP allow rule or allow-on-classifier-refusal fallback. B's
 policy remains authoritative. Settings changes keep the original session and do
 not replay tasks; actual remote Claude inference remains unqualified.
 
-Latest entry requirement: B authenticates through the existing NOVOVM UCA purpose
-identity and common direct/relay route, not A's model credentials. This is not yet
-implemented by the current B adapter: `novovm-relay/src/asas_client.rs` only uses a
-pinned-key direct NovoRUDP handshake. UCA purpose authorization/revocation and
-the common relay selector still need wiring to their original owners. The
-`product_identity.rs` status interface currently has only a test implementation
-in this checkout; do not substitute an accept-all verifier or call transport
-key possession UCA login. ACODE's entry now distinguishes these states.
+UCA challenge admission is wired into the existing native A route and B adapter:
+[setup and boundaries](docs/UCA-LOGIN.md). A reads fresh published grants through
+the original node SDK; B signs with its protected device key. Service, device,
+revision and native session are bound; protected requests recheck revocation.
+Explicit-node compatibility is not UCA authentication. Common relay selection
+and real dual-host acceptance remain separate work; no accept-all identity
+bridge or B-supplied authorization result is used.
 
 ## Run A Development Contract
 

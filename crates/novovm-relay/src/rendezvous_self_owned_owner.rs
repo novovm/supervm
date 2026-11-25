@@ -908,10 +908,10 @@ impl Owner {
             let plugin: novovm_asas_plugin::Config =
                 serde_json::from_slice(&read_bounded(&path, 64 * 1024)?)?;
             let worker = novovm_asas_plugin::Worker::start(&plugin).await?;
-            Ok::<_, anyhow::Error>((worker, plugin.network_peers))
+            Ok::<_, anyhow::Error>((worker, plugin.network_peers, plugin.uca_authority))
         }
         .await;
-        let (worker, peers) = match start {
+        let (worker, peers, authority) = match start {
             Ok(value) => value,
             Err(_) => {
                 // Application failure cannot take down unrelated L3 mailbox,
@@ -924,7 +924,24 @@ impl Owner {
         // snapshot must not stop the unrelated transport/mailbox owner.
         let _ = status("local_worker_ready");
         let remote = !peers.is_empty() && self.policy.native_listener.is_some();
-        let (mut driver, route) = novovm_relay::asas_route::RouteDriverV1::new(worker, peers);
+        let route = if let Some(authority) = authority {
+            novovm_relay::asas_route::RouteDriverV1::with_uca(
+                worker,
+                peers,
+                &authority,
+                self.key.clone(),
+            )
+            .await
+        } else {
+            Ok(novovm_relay::asas_route::RouteDriverV1::new(worker, peers))
+        };
+        let (mut driver, route) = match route {
+            Ok(route) => route,
+            Err(_) => {
+                let _ = status("failed_closed");
+                return self.run_inner(stop).await;
+            }
+        };
         let _local_only_route = (!remote).then(|| route.clone());
         let run = self.run_inner_with_application(stop.clone(), remote.then_some(route));
         tokio::pin!(run);

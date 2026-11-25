@@ -2,6 +2,7 @@
 
 pub mod apfl_batch;
 pub mod apfl_column;
+pub mod asas_login;
 mod bincode_compat;
 
 pub mod block_binding;

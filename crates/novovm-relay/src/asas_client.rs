@@ -33,12 +33,50 @@ pub struct ClientConfigV1 {
     pub server_key: Vec<u8>,
     pub server_address: SocketAddr,
     pub bind_address: SocketAddr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uca: Option<ClientUcaV1>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClientUcaV1 {
+    pub identity: novovm_protocol::native_query::UcaIdentityIdV1,
+    pub genesis: [u8; 32],
 }
 impl ClientConfigV1 {
+    /// Public authorization target only; does not publish a grant or log in.
+    pub fn uca_selector(
+        &self,
+    ) -> Result<novovm_protocol::uca_application::ApplicationGrantSelectorV1> {
+        self.validate()?;
+        let uca = self
+            .uca
+            .as_ref()
+            .context("B UCA identity and genesis required")?;
+        let key = crate::transport_identity::load_transport_identity(
+            &self.identity_path,
+            self.chain_id,
+            &self.library,
+            &self.library_sha256,
+        )?;
+        Ok(
+            novovm_protocol::uca_application::ApplicationGrantSelectorV1 {
+                chain_id: self.chain_id,
+                genesis: uca.genesis,
+                identity: uca.identity.clone(),
+                application: novovm_protocol::asas_login::application_id(),
+                service: crate::asas_route::auth::key_ref(&self.server_key)?,
+                device: crate::asas_route::auth::key_ref(key.public_key())?,
+            },
+        )
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.version == 1 && self.identity_path.is_absolute() && self.library.is_absolute(),
             "explicit B identity/runtime paths required"
+        );
+        ensure!(
+            self.uca.as_ref().is_none_or(|uca| uca.genesis != [0; 32]),
+            "pinned UCA genesis required"
         );
         ensure!(
             self.library_sha256.len() == 64
@@ -100,6 +138,7 @@ pub struct ClientOwnerV1 {
     link: NativeObjectLink,
     application: NativeApplicationClientV1,
     readiness: tokio::net::UdpSocket,
+    login: Option<Value>,
 }
 fn wall_ms() -> Result<u64> {
     novovm_network::product_rendezvous_daemon::now_ms()
@@ -115,7 +154,7 @@ impl ClientOwnerV1 {
         )?;
         Self::connect_with_identity(config, key).await
     }
-    async fn connect_with_identity(
+    pub(crate) async fn connect_with_identity(
         config: &ClientConfigV1,
         key: novovm_network::product_overlay::TransportIdentity,
     ) -> Result<Self> {
@@ -124,7 +163,7 @@ impl ClientOwnerV1 {
         let readiness = tokio::net::UdpSocket::from_std(socket.try_clone()?)?;
         let endpoint = NativeEndpoint::connect_clients(
             socket,
-            key,
+            key.clone(),
             vec![NativePeer {
                 key: config.server_key.clone(),
                 address: config.server_address,
@@ -159,15 +198,80 @@ impl ClientOwnerV1 {
             "A node pin mismatch"
         );
         let application = NativeApplicationClientV1::attach(&mut link, 0, STREAM, domain())?;
-        Ok(Self {
+        let mut owner = Self {
             link,
             application,
             readiness,
-        })
+            login: None,
+        };
+        if let Some(uca) = &config.uca {
+            owner.login(config, uca, &key).await?;
+        }
+        Ok(owner)
     }
-    async fn request(&mut self, operation: &str, input: Value) -> Result<Value> {
+    async fn login(
+        &mut self,
+        config: &ClientConfigV1,
+        uca: &ClientUcaV1,
+        key: &novovm_network::product_overlay::TransportIdentity,
+    ) -> Result<()> {
+        use novovm_protocol::asas_login::{
+            application_id, LoginChallengeV1, LoginProofV1, CONTEXT,
+        };
+        let challenge: LoginChallengeV1 = serde_json::from_value(
+            self.request(
+                "login_begin",
+                json!({"identity":uca.identity,"public_key":key.public_key()}),
+            )
+            .await?,
+        )?;
+        let now = wall_ms()?;
         ensure!(
-            ["capabilities", "submit", "events", "result", "cancel"].contains(&operation),
+            challenge.selector.chain_id == config.chain_id
+                && challenge.selector.genesis == uca.genesis
+                && challenge.selector.identity == uca.identity
+                && challenge.selector.application == application_id()
+                && challenge.selector.service
+                    == crate::asas_route::auth::key_ref(&config.server_key)?
+                && challenge.selector.device == crate::asas_route::auth::key_ref(key.public_key())?
+                && Some(challenge.session) == self.link.session_id(0)
+                && now < challenge.expires_at_ms
+                && challenge.expires_at_ms <= now.saturating_add(30_000),
+            "A login challenge differs from pinned B scope"
+        );
+        let bytes = challenge.signing_bytes().map_err(anyhow::Error::msg)?;
+        let proof = LoginProofV1 {
+            challenge: challenge.clone(),
+            public_key: key.public_key().to_vec(),
+            signature: key.sign(&bytes, CONTEXT)?,
+        };
+        let response = self
+            .request("login_complete", serde_json::to_value(proof)?)
+            .await?;
+        ensure!(
+            response["version"] == 1
+                && response["status"] == "authenticated"
+                && response["identity"] == serde_json::to_value(&uca.identity)?
+                && response["revision"].as_str() == Some(challenge.revision.to_string().as_str())
+                && response["service"] == serde_json::to_value(challenge.selector.service)?
+                && response["device"] == serde_json::to_value(challenge.selector.device)?,
+            "A login completion binding mismatch"
+        );
+        self.login = Some(response);
+        Ok(())
+    }
+    pub(crate) async fn request(&mut self, operation: &str, input: Value) -> Result<Value> {
+        ensure!(
+            [
+                "capabilities",
+                "submit",
+                "events",
+                "result",
+                "cancel",
+                "login_begin",
+                "login_complete"
+            ]
+            .contains(&operation),
             "unknown B operation"
         );
         let payload = serde_json::to_vec(&json!({"operation":operation,"input":input}))?;
@@ -183,6 +287,12 @@ impl ClientOwnerV1 {
                     value["serverNodeId"] = self.link.peer_id(0)?.into();
                     value["localNodeId"] =
                         peer_id_from_mldsa65_public_key_v1(self.link.local_identity()).into();
+                    if let Some(login) = &self.login {
+                        ensure!(
+                            value.get("ucaLogin") == Some(login),
+                            "A login state changed"
+                        );
+                    }
                 }
                 return Ok(value);
             }
@@ -322,6 +432,7 @@ mod tests {
             server_key: a.public_key().to_vec(),
             server_address: address,
             bind_address: "127.0.0.1:0".parse()?,
+            uca: None,
         };
         let server = async {
             loop {

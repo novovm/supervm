@@ -66,6 +66,7 @@ async fn native_udp_to_real_node_is_principal_bound_and_does_not_require_acode_o
         service_config: config_path,
         shutdown_ms: 5000,
         network_peers: Default::default(),
+        uca_authority: None,
     };
     let worker = Worker::start(&config).await?;
     let keys = [

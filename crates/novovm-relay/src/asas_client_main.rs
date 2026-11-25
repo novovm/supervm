@@ -3,17 +3,23 @@ use novovm_relay::asas_client::{ClientConfigV1, ClientOwnerV1};
 async fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && args[0] == "--client-contract" {
-        println!("{{\"version\":1,\"role\":\"asas-b-client\",\"transport\":\"novorudp\",\"startsAgent\":false}}");
+        println!("{{\"version\":1,\"role\":\"asas-b-client\",\"transport\":\"novorudp\",\"startsAgent\":false,\"ucaLogin\":1}}");
         return Ok(());
     }
     ensure!(
-        args.len() == 4 && args[0] == "--profile" && args[2] == "--profile-sha256",
+        (args.len() == 4 || args.len() == 5 && args[4] == "--uca-scope")
+            && args[0] == "--profile"
+            && args[2] == "--profile-sha256",
         "explicit B profile/digest required"
     );
     let digest = args[3]
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("profile digest required"))?;
     let config = ClientConfigV1::load(std::path::Path::new(&args[1]), digest)?;
+    if args.len() == 5 {
+        println!("{}", serde_json::to_string_pretty(&config.uca_selector()?)?);
+        return Ok(());
+    }
     ClientOwnerV1::connect(&config).await?.serve_stdio().await
 }
 fn main() {

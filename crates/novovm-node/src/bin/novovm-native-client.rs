@@ -8,6 +8,13 @@ fn main() -> Result<()> {
     const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy]";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
+    if action == "--asas-authority" {
+        ensure!(args.len() == 3, "authority profile and digest required");
+        return operator::serve_authority(
+            Path::new(&args[0]),
+            args[2].to_str().context("authority profile digest required")?,
+        );
+    }
     let config = Path::new(&args[0]);
     let report = if action == "consensus-proposal" {
         ensure!(

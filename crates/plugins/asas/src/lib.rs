@@ -26,11 +26,37 @@ pub struct Config {
     pub shutdown_ms: u64,
     #[serde(default)]
     pub network_peers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uca_authority: Option<UcaAuthorityConfigV1>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UcaAuthorityConfigV1 {
+    pub executable: PathBuf,
+    pub executable_sha256: String,
+    pub config: PathBuf,
+    pub config_sha256: String,
 }
 
 impl Config {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.version == 1, "ASAS plugin configuration version");
+        if let Some(authority) = &self.uca_authority {
+            ensure!(
+                authority.executable.is_absolute() && authority.config.is_absolute(),
+                "explicit native authority client and pinned config required"
+            );
+            for digest in [&authority.executable_sha256, &authority.config_sha256] {
+                ensure!(
+                    digest.len() == 64
+                        && digest
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                    "native authority digest required"
+                );
+            }
+        }
         ensure!(
             self.network_peers.len() <= 64
                 && self.network_peers.iter().all(|(node, principal)| {
@@ -271,6 +297,7 @@ mod tests {
             service_config: root.join("asas.json"),
             shutdown_ms: 5000,
             network_peers: BTreeMap::new(),
+            uca_authority: None,
         }
     }
     #[test]

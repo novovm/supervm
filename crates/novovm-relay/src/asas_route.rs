@@ -18,6 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
+pub(crate) mod auth;
 
 pub const STREAM: u64 = u64::from_be_bytes(*b"NVASAS01");
 pub fn domain() -> [u8; 32] {
@@ -61,8 +62,16 @@ impl NativeApplicationHandlerV1 for Handler {
             );
             let mut request: Request = serde_json::from_slice(&input)?;
             ensure!(
-                ["capabilities", "submit", "events", "result", "cancel"]
-                    .contains(&request.operation.as_str()),
+                [
+                    "capabilities",
+                    "submit",
+                    "events",
+                    "result",
+                    "cancel",
+                    "login_begin",
+                    "login_complete"
+                ]
+                .contains(&request.operation.as_str()),
                 "ASAS unsupported network operation"
             );
             if request.operation == "events" {
@@ -91,6 +100,7 @@ pub struct RouteDriverV1 {
     worker: Worker,
     queue: mpsc::Receiver<Work>,
     available: Arc<AtomicBool>,
+    login: Option<auth::LoginGate>,
 }
 impl RouteDriverV1 {
     pub fn new(
@@ -109,6 +119,7 @@ impl RouteDriverV1 {
                 worker,
                 queue: receive,
                 available,
+                login: None,
             },
             NativeApplicationRouteV1 {
                 stream: STREAM,
@@ -116,6 +127,17 @@ impl RouteDriverV1 {
                 handler,
             },
         )
+    }
+    pub async fn with_uca(
+        worker: Worker,
+        peers: BTreeMap<String, String>,
+        config: &novovm_asas_plugin::UcaAuthorityConfigV1,
+        identity: novovm_network::product_overlay::TransportIdentity,
+    ) -> Result<(Self, NativeApplicationRouteV1)> {
+        let gate = auth::LoginGate::start(config, identity).await?;
+        let (mut driver, route) = Self::new(worker, peers);
+        driver.login = Some(gate);
+        Ok((driver, route))
     }
     pub async fn run(&mut self) -> Result<()> {
         let result = self.run_inner().await;
@@ -136,27 +158,50 @@ impl RouteDriverV1 {
                 continue;
             }
             let operation = work.request.operation;
-            let result = self
-                .worker
-                .request_from_node(
-                    &work.principal,
-                    Some(work.peer.id()),
-                    &operation,
-                    work.request.input,
-                )
-                .await
-                .and_then(|mut value| {
-                    ensure!(
-                        work.peer.is_current(),
-                        "ASAS session retired while executing; no replay"
-                    );
-                    if operation == "capabilities" {
-                        value["remoteRouteReady"] = true.into();
+            let result = async {
+                if let Some(gate) = &mut self.login {
+                    if let Some(response) = gate
+                        .request(&work.peer, &operation, &work.request.input)
+                        .await?
+                    {
+                        ensure!(work.peer.is_current(), "login session retired");
+                        return Ok(serde_json::to_vec(&response)?);
                     }
-                    let bytes = serde_json::to_vec(&value)?;
-                    ensure!(bytes.len() < MAX_FRAME_BYTES, "ASAS result budget");
-                    Ok(bytes)
-                });
+                } else {
+                    ensure!(
+                        !operation.starts_with("login_"),
+                        "UCA login not configured on A"
+                    );
+                }
+                self.worker
+                    .request_from_node(
+                        &work.principal,
+                        Some(work.peer.id()),
+                        &operation,
+                        work.request.input,
+                    )
+                    .await
+                    .and_then(|mut value| {
+                        ensure!(
+                            work.peer.is_current(),
+                            "ASAS session retired while executing; no replay"
+                        );
+                        if operation == "capabilities" {
+                            value["remoteRouteReady"] = true.into();
+                            value["ucaLogin"] = self
+                                .login
+                                .as_ref()
+                                .map(|gate| gate.status(&work.peer))
+                                .unwrap_or_else(
+                                    || serde_json::json!({"version":1,"status":"not_configured"}),
+                                );
+                        }
+                        let bytes = serde_json::to_vec(&value)?;
+                        ensure!(bytes.len() < MAX_FRAME_BYTES, "ASAS result budget");
+                        Ok(bytes)
+                    })
+            }
+            .await;
             let _ = work.reply.send(result);
         }
     }

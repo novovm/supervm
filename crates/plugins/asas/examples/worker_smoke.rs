@@ -44,6 +44,7 @@ fn main() -> Result<()> {
         service_config,
         shutdown_ms: 5000,
         network_peers: Default::default(),
+        uca_authority: None,
     };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()

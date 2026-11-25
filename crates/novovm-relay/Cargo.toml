@@ -20,6 +20,8 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 novovm-network = { path = "../novovm-network" }
 novovm-asas-plugin = { path = "../plugins/asas" }
 novovm-exec = { path = "../novovm-exec" }
+novovm-protocol = { path = "../novovm-protocol" }
+novovm-adapter-api = { path = "../novovm-adapter-api" }
 rand = "0.8"
 rustls = "0.23.45"
 rustls-native-certs = "0.8.4"

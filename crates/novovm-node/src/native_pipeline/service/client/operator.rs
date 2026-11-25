@@ -35,6 +35,8 @@ use std::{
 };
 
 const MAX_ROWS: usize = 1024;
+mod authority;
+pub use authority::serve_authority;
 const MAX_CLIENT_VALIDATORS: usize = 64;
 /// Local configuration budget shared with managed health inspection. A pretty
 /// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate ML-DSA-65
@@ -420,40 +422,15 @@ fn run_operation(config_path: &Path, operation: Operation) -> Result<Value> {
     let deadline = started + Duration::from_millis(config.timeout_ms);
     let result = match operation {
         Operation::Query(selector) => {
-            let request = client.prepare_query(selector)?;
-            let mut sent = false;
-            loop {
-                let now = Instant::now();
-                if now >= deadline {
-                    client.abandon_query(&request)?;
-                    anyhow::bail!("native query deadline; no fresh node observation");
-                }
-                let _ = client.poll(wall_ms()?, now, 64)?;
-                if !sent {
-                    sent = client.try_send_query(&request, now)?;
-                }
-                if let Some(reply) = client.poll_query_response(&request, now)? {
-                    let _ = client.poll(wall_ms()?, Instant::now(), 64)?;
-                    ensure!(
-                        !matches!(reply.answer, Answer::Error(_)),
-                        "native query unavailable: {:?}",
-                        reply.answer
-                    );
-                    if let Answer::Status(status) = &reply.answer {
-                        ensure!(!status.projection_failed, "node archive projection failed");
-                    }
-                    let mut view = json!({"kind":"node_observation", "answer":answer_view(reply.answer),
-                        "independently_verified_finality":false});
-                    if let Some((height, round, hash)) = reply.request.query.proposal_selector() {
-                        view["selector"] = json!({
-                            "height":height, "round":round,
-                            "tx_hash":crate::native_pipeline::service::rpc::hex(&hash)
-                        });
-                    }
-                    break view;
-                }
-                std::thread::sleep(Duration::from_millis(1));
+            let coordinates = selector.proposal_selector();
+            let answer = authority::query(&mut client, selector, deadline)?;
+            let mut view = json!({"kind":"node_observation", "answer":answer_view(answer),
+                "independently_verified_finality":false});
+            if let Some((height, round, hash)) = coordinates {
+                view["selector"] = json!({"height":height,"round":round,
+                    "tx_hash":crate::native_pipeline::service::rpc::hex(&hash)});
             }
+            view
         }
         Operation::Submit(batch) => {
             let rows = batch.len();

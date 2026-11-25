@@ -31,9 +31,13 @@ const REJECTED: &[u8; 8] = b"NVAPP01E";
 #[derive(Clone)]
 pub struct AuthenticatedApplicationPeerV1 {
     id: String,
+    session: [u8; 16],
     validity: NativeSessionValidity,
 }
 impl AuthenticatedApplicationPeerV1 {
+    pub fn session_id(&self) -> [u8; 16] {
+        self.session
+    }
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -135,6 +139,7 @@ impl Binding {
         Ok(Self {
             peer: AuthenticatedApplicationPeerV1 {
                 id: link.peer_id(peer)?.to_owned(),
+                session,
                 validity: link.session_validity(peer)?,
             },
             session,
