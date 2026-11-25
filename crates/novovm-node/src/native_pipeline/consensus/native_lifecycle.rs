@@ -474,8 +474,9 @@ impl NativeLifecycle {
         use serde_json::json;
 
         const PEER_LIMIT: usize = 16;
-        let peer_count = self.channel.peer_count();
-        let peers: Vec<_> = (0..peer_count.min(PEER_LIMIT)).map(|peer| {
+        let indices = self.channel.peer_indices();
+        let peer_count = indices.len();
+        let peers: Vec<_> = indices.into_iter().take(PEER_LIMIT).map(|peer| {
             let row = json!({
                 "validator": self.channel.validator_for_peer(peer).ok().as_ref().map(|id| hex(id)),
                 "session_established": self.channel.session_id(peer).is_some()
