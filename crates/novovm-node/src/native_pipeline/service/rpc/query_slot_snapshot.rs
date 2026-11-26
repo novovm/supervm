@@ -1436,6 +1436,7 @@ fn test_installed_checkpoint_policy(
     key: &[u8],
 ) -> Result<()> {
     use crate::native_pipeline::consensus::statement::finalized_header;
+    use sha2::{Digest, Sha256};
     use std::{fs, process::Stdio};
     let head = owner.rpc.node.controller.parent();
     let set = owner.rpc.node.validators.clone();
@@ -1525,6 +1526,39 @@ fn test_installed_checkpoint_policy(
     aged["verification"]["minimum_finalized_checkpoint"]["valid_until_unix_ms"] =
         serde_json::json!(now - 1);
     fs::write(&stale, serde_json::to_vec(&aged)?)?;
+    let cold = stage.join("expired-checkpoint-cold-device");
+    let cold_entry = |path: &Path, action: &str, pinned: bool| -> Result<std::process::Output> {
+        let mut command = Command::new(binary);
+        command.arg(path).arg(action);
+        if pinned {
+            command.arg(format!("{:x}", Sha256::digest(fs::read(path)?)));
+        }
+        let output = command
+            .env("LOCALAPPDATA", &cold)
+            .env("XDG_STATE_HOME", &cold)
+            .output()?;
+        ensure!(!cold.exists(), "{action} created device custody or cache");
+        Ok(output)
+    };
+    ensure!(
+        cold_entry(&pinned, "check-installed-profile", true)?
+            .status
+            .success(),
+        "unexpired installed checkpoint failed offline preflight"
+    );
+    for (action, requires_pin) in [
+        ("check-installed-profile", true),
+        ("follow-state", true),
+        ("sync-state", false),
+    ] {
+        let rejected = cold_entry(&stale, action, requires_pin)?;
+        ensure!(
+            !rejected.status.success()
+                && String::from_utf8_lossy(&rejected.stderr)
+                    .contains("installed checkpoint policy expired"),
+            "{action} accepted expired installed checkpoint"
+        );
+    }
     let old = run(owner, &stale, &data)?;
     ensure!(
         !old.status.success()

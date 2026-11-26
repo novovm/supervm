@@ -379,6 +379,7 @@ fn installed_chain_profile(
     let profile = read_installed_profile(path, sha256)?;
     let (domain, anchor) = profile.verification_domain()?;
     validate_parent(&anchor)?;
+    chain_sync::check_profile_checkpoint_deadline(&profile)?;
     IrohConfigV1::new(&profile.relays, profile.nameserver)?;
     Ok((profile, domain, anchor))
 }
