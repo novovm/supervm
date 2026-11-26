@@ -51,11 +51,17 @@ show)
   if test -n "${FOREIGN_FRAGMENT:-}"; then
     printf 'LoadState=loaded\\nFragmentPath=%s\\nDropInPaths=\\nActiveState=inactive\\n' "$FOREIGN_FRAGMENT"
   elif test -f "$TEST_UNIT"; then
-    printf 'LoadState=loaded\\nFragmentPath=%s\\nDropInPaths=%s\\nActiveState=active\\n' "$TEST_UNIT" "${TEST_DROPIN:-}"
+    active="${TEST_ACTIVE:-active}"
+    reload="${TEST_NEEDS_RELOAD:-no}"
+    if test -n "${TEST_STALE:-}" && test -f "$TEST_STALE"; then reload=yes; fi
+    if test -n "${TEST_MARKER:-}" && test -f "$TEST_MARKER"; then active="${TEST_ACK:-inactive}"; fi
+    printf 'LoadState=loaded\\nFragmentPath=%s\\nDropInPaths=%s\\nActiveState=%s\\nNeedDaemonReload=%s\\n' "$TEST_UNIT" "${TEST_DROPIN:-}" "$active" "$reload"
   else
     printf 'LoadState=not-found\\nFragmentPath=\\nDropInPaths=\\nActiveState=inactive\\n'; exit 4
   fi ;;
-daemon-reload) ;;
+daemon-reload)
+  if test -n "${TEST_RELOAD_FAIL:-}"; then : >"$TEST_STALE"; exit 61; fi
+  if test -n "${TEST_STALE:-}"; then rm -f "$TEST_STALE"; fi ;;
 enable) test "$3" = "--now"; test "$4" = "novovm-native-client.service" ;;
 *) exit 24 ;;
 esac
@@ -201,6 +207,120 @@ esac
         (dest / CORE).chmod(0o600)
         (dest / CORE).write_bytes(b"modified")
         self.assertIn("checksum differs", self.invoke(ok=False))
+
+    public = ("--public-read-snapshot-height", "42", "--public-read-max-state-nodes", "19")
+
+    def test_public_read_plan_needs_two_positive_u64_limits(self):
+        original = self.invoke("--plan")
+        self.assertEqual(original["arguments"][1:], ["follow-state", sha(self.entries[PROFILE])])
+        self.assertNotIn("public_read_stop_marker", original)
+        maximum = str(2**64 - 1)
+        public = self.invoke("--plan", *self.public[:1], maximum, self.public[2], maximum)
+        self.assertEqual(original["unit"], public["unit"])
+        self.assertEqual(public["arguments"][1:], ["run-public-read-snapshot", sha(self.entries[PROFILE]),
+                         maximum, maximum, public["public_read_stop_marker"]])
+        for incomplete in (self.public[:2], self.public[2:], ("--stop-public-read",)):
+            self.invoke(*incomplete, ok=False)
+        for invalid in ("0", "-1", str(2**64), "1.5"):
+            for options in ((self.public[0], invalid, *self.public[2:]), (*self.public[:3], invalid)):
+                self.invoke("--plan", *options, ok=False)
+        self.assertFalse(self.unit.exists())
+        self.assertFalse(Path(public["public_read_stop_marker"]).exists())
+        self.assertFalse(Path(original["release"]).exists())
+        self.assertFalse(self.log.exists())
+
+    def test_same_public_unit_stops_and_resumes_with_original_credential(self):
+        plan = self.invoke(*self.public)
+        text = self.unit.read_text()
+        self.assertIn('"run-public-read-snapshot"', text)
+        self.assertIn("Description=NOVOVM public read-only snapshot", text)
+        self.assertIn('Restart=on-failure', text)
+        self.assertIn('UMask=0077', text)
+        marker = Path(plan["public_read_stop_marker"])
+        self.assertIn(str(marker), text)
+        self.assertFalse(marker.exists())
+        key = Path(plan["release"]).parents[1] / "client-credentials/owner-key"
+        key_bytes, inode = key.read_bytes(), self.unit.stat().st_ino
+        self.env["TEST_MARKER"] = str(marker)
+        if shutil.which("systemd-analyze"):
+            subprocess.run(["systemd-analyze", "--user", "verify", str(self.unit)],
+                           env=self.env, capture_output=True, check=True)
+        self.invoke("--stop-public-read", *self.public)
+        self.assertTrue(marker.is_file())
+        self.assertEqual(0o600, marker.stat().st_mode & 0o777)
+        self.invoke("--stop-public-read", *self.public)
+        self.env["TEST_ACK"] = "active"
+        self.assertIn("pending", self.invoke(*self.public, ok=False))
+        self.assertTrue(marker.is_file())
+        self.env["TEST_ACK"] = "inactive"
+        self.invoke(*self.public)
+        self.assertFalse(marker.exists())
+        self.assertEqual(text, self.unit.read_text())
+        self.assertEqual(inode, self.unit.stat().st_ino)
+        self.assertEqual(key_bytes, key.read_bytes())
+        self.assertNotIn("--user stop", self.log.read_text())
+        self.assertNotIn("restart", self.log.read_text())
+
+    def test_allow_only_exact_stopped_follower_to_opt_in(self):
+        plan = self.invoke()
+        follower = self.unit.read_text()
+        key = Path(plan["release"]).parents[1] / "client-credentials/owner-key"
+        original = key.read_bytes()
+        self.assertIn("stop the installed follower", self.invoke(*self.public, ok=False))
+        self.assertEqual(follower, self.unit.read_text())
+        self.env["TEST_ACTIVE"] = "inactive"
+        self.env["TEST_DROPIN"] = "manual.conf"
+        self.assertIn("overrides", self.invoke(*self.public, ok=False))
+        del self.env["TEST_DROPIN"]
+        self.env["TEST_NEEDS_RELOAD"] = "yes"
+        self.assertIn("overrides", self.invoke(*self.public, ok=False))
+        del self.env["TEST_NEEDS_RELOAD"]
+        self.unit.write_text(follower + "# custom\n")
+        self.assertIn("another owner", self.invoke(*self.public, ok=False))
+        self.assertEqual(follower + "# custom\n", self.unit.read_text())
+        self.unit.write_text(follower)
+        plan = self.invoke(*self.public)
+        resident = self.unit.read_text()
+        self.assertIn("run-public-read-snapshot", resident)
+        self.assertEqual(original, key.read_bytes())
+        self.invoke(ok=False)
+        self.invoke(*self.public[:3], "20", ok=False)
+        self.invoke("--stop-public-read", *self.public[:3], "20", ok=False)
+        self.assertFalse(Path(plan["public_read_stop_marker"]).exists())
+        self.assertEqual(resident, self.unit.read_text())
+
+    def test_interrupted_reload_can_retry_only_the_exact_inactive_unit(self):
+        self.invoke()
+        self.env.update(TEST_ACTIVE="inactive", TEST_STALE=str(self.base / "needs-reload"),
+                        TEST_RELOAD_FAIL="1")
+        self.invoke(*self.public, ok=False)
+        exact = self.unit.read_text()
+        self.assertIn("run-public-read-snapshot", exact)
+        self.assertTrue(Path(self.env["TEST_STALE"]).is_file())
+        del self.env["TEST_RELOAD_FAIL"]
+        self.env["TEST_ACTIVE"] = "active"
+        self.assertIn("pending reload", self.invoke(*self.public, ok=False))
+        self.env["TEST_ACTIVE"] = "inactive"
+        self.invoke(*self.public)
+        self.assertEqual(exact, self.unit.read_text())
+        self.assertFalse(Path(self.env["TEST_STALE"]).exists())
+
+    def test_public_stop_requires_matching_unit_and_regular_marker(self):
+        self.assertIn("not found", self.invoke("--stop-public-read", *self.public, ok=False))
+        plan = self.invoke(*self.public)
+        marker = Path(plan["public_read_stop_marker"])
+        marker.parent.mkdir(parents=True)
+        marker.symlink_to(self.unit)
+        self.assertIn("symbolic link", self.invoke("--stop-public-read", *self.public, ok=False))
+        self.assertTrue(marker.is_symlink())
+        marker.unlink()
+        marker.mkdir()
+        self.assertIn("invalid public read stop marker", self.invoke("--stop-public-read", *self.public, ok=False))
+        marker.rmdir()
+        self.env["TEST_MARKER"] = str(marker)
+        self.env["TEST_ACK"] = "failed"
+        self.assertIn("failed", self.invoke("--stop-public-read", *self.public, ok=False))
+        self.assertTrue(marker.exists())
 
 
 if __name__ == "__main__":

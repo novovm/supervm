@@ -74,6 +74,15 @@ Windows 安装器默认由当前用户的登录任务运行 `follow-state`。已
 引导取得的租约仍受原有有效期约束。常驻任务提供明确选择的固定高度，继续同步请使用
 原 `follow-state`。原限时回环和限时公开读取命令仍可用于定向验收。
 
+Linux 普通用户安装器默认在登录时通过 `novovm-native-client.service` 运行 `follow-state`。
+设备已同步到所需高度后，可先用 `systemctl --user stop novovm-native-client.service`
+停止同一发行版本的跟随服务，再在原安装参数后增加
+`--public-read-snapshot-height 高度 --public-read-max-state-nodes 节点数`。
+两个值都是正的 64 位无符号整数。加 `--plan` 可预览启动命令与停止标记路径。
+已启用的常驻服务复用原私有凭据、通信身份和缓存。使用同一参数加 `--stop-public-read`
+会保留停止标记并等待服务退出。再次执行完全相同的显式安装可恢复服务。
+其他发行版本、已改动的 unit 或不同高度与预算需要按发行包的显式切换步骤处理。
+
 ## 2026-11-07 当前最高归属：NOVOVM / NOVOCHAT共用主网唯一NOVONET
 
 用户明确要求所有NOVOVM网络能力统一由主网唯一NOVONET管理，避免交易与聊天重复开发。

@@ -870,7 +870,13 @@ authenticated release manifest before running it as the intended Linux user:
 This starts novovm-native-client.service in that user's systemd manager and
 enables it on user login. The release goes under XDG_DATA_HOME, the unit under
 XDG_CONFIG_HOME, and the Client retains custody and checkpoints under XDG_STATE_HOME.
-A different release or existing unit requires an explicit cutover: review the
+For an already synchronized device, stop the matching follower with
+systemctl --user stop novovm-native-client.service, then add both
+--public-read-snapshot-height HEIGHT and --public-read-max-state-nodes LIMIT
+to the installer command to serve that verified height in the same unit.
+Add --plan to preview, or --stop-public-read to leave a persistent stop marker
+and wait for the matching unit to exit. Repeat the same opt-in to resume.
+A different release or modified unit requires an explicit cutover: review the
 old unit, disable it with systemctl --user disable --now novovm-native-client.service,
 remove only the reviewed unit file and reload the user manager before installing.
 Keep the private XDG_DATA_HOME/NOVOVM/client-credentials directory with the
