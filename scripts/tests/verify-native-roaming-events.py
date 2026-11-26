@@ -8,8 +8,10 @@ import struct
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from uuid import UUID
 
+import native_roaming_clock
 import native_roaming_packets
 
 
@@ -18,7 +20,7 @@ def require(ok, reason):
         raise ValueError(reason)
 
 
-def verify(events, before, after, client, peer, height, state_root, min_sequence, switch_utc_ms):
+def verify(events, before, after, client, peer, height, state_root, min_sequence, switch_utc_ms, clock=None):
     require(0 <= before < after < len(events), "invalid event order")
     starts = [i for i, row in enumerate(events) if row.get("event") == "starting"]
     require(starts == [0] and events[0].get("reopened_height") == 0, "not one cold start")
@@ -59,7 +61,15 @@ def verify(events, before, after, client, peer, height, state_root, min_sequence
     require(all(type(stamp) is int and stamp > 0 for stamp in times),
             "missing switch, state or verified locator timestamps")
     before_ms, switched, issued, verified, after_ms, expires = times
-    require(before_ms <= switched < issued <= verified <= after_ms < expires,
+    lower, upper = (clock["lower_ms"], clock["upper_ms"]) if clock else (0, 0)
+    if clock:
+        require(before_ms <= clock["send_ms"] <= clock["receive_ms"] <= switched
+                and 0 < after_ms - clock["send_ms"] <= 900_000,
+                "clock exchange must bracket the current pre-switch baseline and bounded recovery")
+        require(native_roaming_packets.same_digest(clock["issuer_sha256"], peer) and
+                native_roaming_packets.same_digest(clock["client_sha256"], client),
+                "locator issuer or Client differs from the clock manifest")
+    require(before_ms <= switched < issued + lower and issued + upper <= verified <= after_ms < expires + lower,
             "locator must be issued and accepted after the switch and valid when used")
     return {"event_checks_passed": True, "after_locator_sequence": seq,
             "locator_accepted_utc_ms": verified,
@@ -118,6 +128,96 @@ class OfflineVectors(unittest.TestCase):
         ):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, "locator"):
                 self.check([self.start, self.event, dict(self.accepted, **change), self.after])
+
+
+    def test_signed_locator_with_uncertain_offset(self):
+        clock = {"lower_ms": -8, "upper_ms": 7, "send_ms": 110, "receive_ms": 115,
+                 "issuer_sha256": "c" * 64, "client_sha256": "d" * 64}
+        def check(issued=209, accepted=216, after=220, expires=229, **change):
+            return verify([self.start, self.event, dict(self.accepted, locator_issued_at_ms=issued,
+                          utc_unix_ms=accepted, locator_expires_at_ms=expires),
+                          dict(self.after, utc_unix_ms=after)], 1, 3, "D" * 64, "C" * 64,
+                          2, "0x" + "f" * 64, 9, 200, dict(clock, **change))
+        self.assertTrue(check()["event_checks_passed"])
+        for bad in ({"issued": 208}, {"accepted": 215}, {"expires": 228}, {"receive_ms": 201},
+                    {"issuer_sha256": "f" * 64}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                check(**bad)
+
+
+class ClockVectors(unittest.TestCase):
+    # Timestamps from D's 14:08 diagnostic GET after the 14:05 Client had exited.
+    sent = "2026-11-26T14:08:29.7424292+00:00"
+    received = "2026-11-26T14:08:29.8025351+00:00"
+    date = "Thu, 26 Nov 2026 14:08:27 GMT"
+    elapsed = 60.1059
+
+    def test_archived_sample(self):
+        bounds = native_roaming_clock.offset_bounds(self.sent, self.received, self.date, self.elapsed)
+        self.assertEqual((bounds["lower_ms"], bounds["upper_ms"]), (1742, 2803))
+        for date, elapsed in ((self.date, 250), ("Fri, 26 Nov 2026 14:08:27 GMT", self.elapsed),
+                              ("Thu, 26 Nov 2026 14:08:27 +0000", self.elapsed)):
+            with self.subTest(date=date, elapsed=elapsed), self.assertRaises(ValueError):
+                native_roaming_clock.offset_bounds(self.sent, self.received, date, elapsed)
+
+    def test_original_files_and_partial_capture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            def put(name, value):
+                data = value if isinstance(value, bytes) else json.dumps(value).encode()
+                path = directory / name
+                path.write_bytes(data)
+                return native_roaming_packets.sha256_file(path)
+            gateway = "192.0.2.73:58087"
+            manifest = put("peer-clock-manifest.json", {"native_gateway": gateway,
+                "server_transport_sha256": "c" * 64, "client_transport_sha256": "d" * 64})
+            certificate = put("peer-clock-cert.der", b"offline pin vector")
+            body = put("peer-clock-witness.json", {"event": "first_scoped_wired_datagram",
+                "source": "192.0.2.59:64681", "destination": gateway,
+                "observed_utc_ms": 1795701948333, "manifest_sha256": manifest})
+            header = ("HTTP/1.0 200 OK\r\nDate: " + self.date + "\r\n\r\n").encode()
+            sample = dict(url="https://192.0.2.73:50708/wired-source", manifest_sha256=manifest,
+                certificate_der_sha256=certificate, body_sha256=body, request_start_utc=self.sent,
+                request_end_utc=self.received, elapsed_ms=self.elapsed)
+            def run(raw=header, start=self.sent, end=self.received, **change):
+                hdr = put("peer-clock.headers", raw)
+                put("peer-clock.json", dict(sample, headers_sha256=hdr, **change))
+                return native_roaming_clock.load(directory, manifest, certificate, gateway,
+                         native_roaming_packets.utc_ms(start), native_roaming_packets.utc_ms(end))
+            self.assertEqual(run()["lower_ms"], 1742)
+            for bad in ({"body_sha256": "0" * 64}, {"certificate_der_sha256": "0" * 64},
+                        {"manifest_sha256": "0" * 64}, {"url": "https://192.0.2.74:50708/wired-source"},
+                        {"raw": header + header}, {"raw": header.replace(b"200", b"302")},
+                        {"raw": header.replace(b"Date:", b"Date: invalid\r\nDate:")},
+                        {"start": "2026-11-26T14:05:50Z", "end": "2026-11-26T14:05:53Z"}):
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    run(**bad)
+            # A deliberately constructed single-run envelope exercises tuple and
+            # archive validation. It is independent of the real Client's lifetime.
+            run()
+            start = {"pid": 23, "utc": "2026-11-26T14:05:49Z"}
+            gateway_ip = "192.0.2.73"
+            flow = {"transport": "udp", "local_ip": "192.0.2.59", "local_port": 64681,
+                    "peer_ip": gateway_ip, "peer_port": 58087}
+            put("start.json", start)
+            put("route-before.json", {"pid": 23, "started_utc": start["utc"], "phase": "before",
+                "physical_adapter": True, "client_running_at_end": True, "route_status": "selected",
+                "source_ip": flow["local_ip"], "peer_ip": gateway_ip, "owned_sockets": [flow]})
+            args = argparse.Namespace(jsonl=directory / "stdout.jsonl", manifest_sha256=manifest,
+                peer_ca_sha256=certificate, before=0, switch_utc_ms=native_roaming_packets.utc_ms(self.received) + 10,
+                packet_evidence=directory / "packets.json")
+            events = [{"native_peer_address": gateway, "utc_unix_ms": 1795701953000}]
+            put("packets.json", {"before": flow})
+            self.assertEqual(capture_clock(args, events)["upper_ms"], 2803)
+            put("packets.json", {"before": dict(flow, local_port=64682)})
+            with self.assertRaisesRegex(ValueError, "packet tuple"):
+                capture_clock(args, events)
+            (directory / "peer-clock-cert.der").unlink()
+            with self.assertRaisesRegex(ValueError, "missing"):
+                run()
+            args = argparse.Namespace(jsonl=directory / "stdout.jsonl", manifest_sha256=None, peer_ca_sha256=None)
+            with self.assertRaisesRegex(ValueError, "independent"):
+                capture_clock(args, [])
 
 
 class PacketVectors(unittest.TestCase):
@@ -259,6 +359,50 @@ class LinkJournalVectors(unittest.TestCase):
             self.check()
 
 
+def capture_clock(args, events):
+    directory = args.jsonl.parent
+    journal = directory / "operator.jsonl"
+    ready = None
+    if journal.is_file():
+        rows = (json.loads(line) for line in journal.read_text(encoding="utf-8-sig").splitlines())
+        ready = next((r["data"] for r in rows if r["event"] == "wired_ready"), None)
+    mode = (ready or {}).get("clock_mode")
+    require(mode in (None, "external_sync", "pinned_http_date"), "unsupported clock source")
+    files = any(directory.glob("peer-clock*"))
+    if not (files or mode == "pinned_http_date" or args.manifest_sha256 or args.peer_ca_sha256):
+        return None
+    require(mode != "external_sync" and args.manifest_sha256 and args.peer_ca_sha256,
+            "pinned clock evidence requires independent manifest and certificate SHA-256 pins")
+    start = json.loads((directory / "start.json").read_bytes())
+    baseline = events[args.before]
+    clock = native_roaming_clock.load(directory, args.manifest_sha256, args.peer_ca_sha256,
+                                     baseline["native_peer_address"], native_roaming_packets.utc_ms(start["utc"]),
+                                     args.switch_utc_ms)
+    witness = clock["witness"]
+    if ready:
+        require(ready.get("peer_witness") == witness and mode == "pinned_http_date", "clock and console witness differ")
+    # A match corroborates the tuple. Overlap alone never assigns a datagram to a PID.
+    require(witness["observed_utc_ms"] + clock["upper_ms"] >= native_roaming_packets.utc_ms(start["utc"])
+            and witness["observed_utc_ms"] + clock["lower_ms"] <= baseline["utc_unix_ms"],
+            "C datagram lies outside Client baseline window")
+    marker = json.loads((directory / "route-before.json").read_bytes())
+    require(marker["pid"] == start["pid"] and marker["started_utc"] == start["utc"]
+            and marker["phase"] == "before" and marker["physical_adapter"] is True
+            and marker["client_running_at_end"] is True and marker["route_status"] == "selected",
+            "missing the live Client's physical baseline socket sample")
+    origin, target = (urlsplit("//" + witness[key]) for key in ("source", "destination"))
+    require(origin.hostname == marker["source_ip"] and target.hostname == marker["peer_ip"],
+            "C witness differs from Client's physical baseline route")
+    flow = {"transport": "udp", "local_ip": origin.hostname, "local_port": origin.port,
+            "peer_ip": target.hostname, "peer_port": target.port}
+    native_roaming_packets.owned_flow(marker, flow)
+    if args.packet_evidence:
+        before = json.loads(args.packet_evidence.read_bytes())["before"]
+        require(all(before[key] == value for key, value in flow.items()),
+                "physical packet tuple differs from the pinned C witness")
+    return clock
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
@@ -274,6 +418,8 @@ def main():
     parser.add_argument("--packet-evidence", type=Path,
                         help="optional packet manifest alongside the Client capture files")
     parser.add_argument("--link-journal", type=Path, help="optional D console physical media journal; requires packet evidence")
+    parser.add_argument("--manifest-sha256", help="independently pinned manifest of the clock-sampled run")
+    parser.add_argument("--peer-ca-sha256", help="independently pinned C HTTPS certificate DER SHA-256")
     args = parser.parse_args()
     if args.link_journal and not args.packet_evidence:
         parser.error("--link-journal requires --packet-evidence from the same run")
@@ -290,8 +436,13 @@ def main():
         parser.error("invalid state root")
     try:
         events = [json.loads(line) for line in args.jsonl.read_text(encoding="utf-8").splitlines()]
+        require(0 <= args.before < args.after < len(events), "invalid event indexes")
+        clock = capture_clock(args, events)
         result = verify(events, args.before, args.after, args.client, args.peer, args.height,
-                        args.state_root, args.min_sequence, args.switch_utc_ms)
+                        args.state_root, args.min_sequence, args.switch_utc_ms, clock)
+        result["clock_basis"] = "bounded_pinned_http_date" if clock else "external_synchronization_assumed"
+        if clock:
+            result["d_minus_c_ms"] = [clock["lower_ms"], clock["upper_ms"]]
         if args.packet_evidence:
             require(args.jsonl.resolve() == args.packet_evidence.with_name("stdout.jsonl").resolve(),
                     "event stream must come from the same Client capture directory")
@@ -306,7 +457,7 @@ def main():
             start = json.loads(args.jsonl.with_name("start.json").read_text(encoding="utf-8-sig"))
             result["physical_links"] = verify_links(rows, result["packet_evidence"], start, args.before,
                                                    args.after, args.switch_utc_ms, events)
-    except (OSError, ValueError, AttributeError, KeyError, TypeError, struct.error) as exc:
+    except (OSError, ValueError, AttributeError, KeyError, TypeError, OverflowError, struct.error) as exc:
         parser.exit(1, f"{exc}\n")
     print(json.dumps(result))
 

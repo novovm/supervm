@@ -14,6 +14,7 @@ param(
     [Parameter(ParameterSetName='Run')][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$PeerCaSha256,
     [Parameter(Mandatory,ParameterSetName='Run')][string]$HotspotPreflight,
     [Parameter(ParameterSetName='Run')][switch]$ProbeHotspotIfMissing,
+    [Parameter(ParameterSetName='Run')][switch]$ExternallySynchronizedClocks,
     [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][int]$WiredIndex,
     [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][int]$HotspotIndex,
     [Parameter(ParameterSetName='Run')][ValidateRange(60,300)][int]$MinSwitchSeconds = 90,
@@ -69,7 +70,9 @@ function Find-Baseline($Rows, $Native, [long]$StartedMs) {
     }
 }
 
-function Find-Recovery($Rows, $Base, [long]$DownMs, [long]$MinSequence) {
+function Find-Recovery($Rows, $Base, [long]$DownMs, [long]$MinSequence, $Clock) {
+    $lower = if ($Clock) { $Clock.lower_ms } else { 0 }
+    $upper = if ($Clock) { $Clock.upper_ms } else { 0 }
     for ($i = $Base.index + 1; $i -lt $Rows.Count; $i++) {
         $r = $Rows[$i]
         if ($r.event -cne 'verified_state' -or $r.transport -cne 'iroh' -or
@@ -83,8 +86,11 @@ function Find-Recovery($Rows, $Base, [long]$DownMs, [long]$MinSequence) {
         })
         if ($matches.Count -ne 1) { continue }
         $a = $matches[0]
-        if ($a.locator_issued_at_ms -gt $DownMs -and $a.utc_unix_ms -ge $a.locator_issued_at_ms -and
-            $r.utc_unix_ms -ge $a.utc_unix_ms -and $r.utc_unix_ms -lt $a.locator_expires_at_ms) {
+        if ($Clock -and ($Clock.send_ms -lt $Base.row.utc_unix_ms -or $Clock.receive_ms -gt $DownMs -or
+            $r.utc_unix_ms - $Clock.send_ms -gt 900000)) { continue }
+        if (($a.locator_issued_at_ms + $lower) -gt $DownMs -and
+            ($a.locator_issued_at_ms + $upper) -le $a.utc_unix_ms -and
+            $r.utc_unix_ms -ge $a.utc_unix_ms -and $r.utc_unix_ms -lt ($a.locator_expires_at_ms + $lower)) {
             return @{ row = $r; index = $i; accepted = $a }
         }
     }
@@ -136,15 +142,24 @@ function Get-LinkEdge($Previous,$Current) {
         upper_utc=$Current.UTC.ToString('o'); upper_unix_ms=$Current.UTC.ToUnixTimeMilliseconds() }
 }
 
-function Test-PeerWitness($Witness,$Route,$Start,$Baseline) {
+function Get-WitnessTiming($Witness,$Start,$Baseline,$Clock) {
+    if (!$Clock) { return 'not_measured' }
+    $from = $Witness.observed_utc_ms + $Clock.lower_ms
+    $to = $Witness.observed_utc_ms + $Clock.upper_ms
+    $startMs = [datetimeoffset]::Parse($Start.utc).ToUnixTimeMilliseconds()
+    if ($to -lt $startMs -or $from -gt $Baseline.row.utc_unix_ms) { return 'outside' }
+    if ($from -ge $startMs -and $to -le $Baseline.row.utc_unix_ms) { return 'contained' }
+    return 'order_unproven'
+}
+
+function Test-PeerWitness($Witness,$Route,$Start,$Baseline,$Clock) {
     $sender = [Net.IPEndPoint]::Parse($Witness.source)
     $src = $sender.Address.ToString()
     $ports = @($Route.owned_sockets | Where-Object { $_.transport -ceq 'udp' -and
         $_.local_port -eq $sender.Port -and $_.local_ip -in @($src,'0.0.0.0','::') })
     $Witness.event -ceq 'first_scoped_wired_datagram' -and (Test-Sha256 $Witness.manifest_sha256 $ManifestSha256) -and
         $Witness.destination -ceq $m.native_gateway -and $src -ceq $Route.source_ip -and $ports.Count -gt 0 -and
-        $Witness.observed_utc_ms -ge ([datetimeoffset]::Parse($Start.utc).ToUnixTimeMilliseconds()) -and
-        $Witness.observed_utc_ms -le $Baseline.row.utc_unix_ms
+        $Witness.observed_utc_ms -gt 0 -and (Get-WitnessTiming $Witness $Start $Baseline $Clock) -ne 'outside'
 }
 
 function Test-HotspotPreflight($Probe,$Source,$Gateway,$Now) {
@@ -159,21 +174,53 @@ function Test-HotspotPreflight($Probe,$Source,$Gateway,$Now) {
         [double]::Parse($Matches[4],[cultureinfo]::InvariantCulture) -gt 0 -and $age -ge 0 -and $age -le 900000
 }
 
-# Only the explicit opted-in future preflight sends one source-bound HTTPS HEAD.
-function Receive-PeerWitness {
-    if (!$PeerWitnessUri -or (Test-Path -LiteralPath $PeerWitness) -or [datetimeoffset]::UtcNow -lt $script:nextPeerPoll) { return }
-    $script:nextPeerPoll = [datetimeoffset]::UtcNow.AddSeconds(1)
-    $tmp = "$PeerWitness.$PID.pending"
-    if (Test-Path -LiteralPath $tmp) { throw 'Previous witness transfer preserved' }
-    try {
-        $http = & "$env:SystemRoot/System32/curl.exe" --disable --noproxy '*' --proto '=https' --silent --show-error --connect-timeout 2 --max-time 3 --max-filesize 4096 --cacert $PeerCaCertificate --output $tmp --write-out '%{http_code}' $PeerWitnessUri.AbsoluteUri
-        if ($LASTEXITCODE -ne 0) { throw 'Private witness transfer failed' }
-        if ($http -eq '503') { return }
-        if ($http -ne '200') { throw "Unexpected witness HTTP status $http" }
-        [IO.File]::Move($tmp,$PeerWitness)
-    } finally { if (Test-Path -LiteralPath $tmp) { [IO.File]::Delete($tmp) } }
+# curl's certificate report begins with the leaf presented by this connection.
+function Get-PeerLeafDer($Report, $Pin) {
+    $pem = [regex]::Match($Report,'(?m)^(?:Cert:)?-----BEGIN CERTIFICATE-----\s*([a-zA-Z0-9+/=\s]+?)-----END CERTIFICATE-----')
+    if (!$pem.Success) { throw 'Missing TLS peer leaf certificate' }
+    $der = [Convert]::FromBase64String($pem.Groups[1].Value)
+    if (!(Test-Sha256 ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($der))) $Pin)) { throw 'Presented TLS leaf differs from pinned certificate' }
+    return ,$der
 }
 
+function Receive-PeerWitness {
+    if (!$PeerWitnessUri -or $script:peerClock -or [datetimeoffset]::UtcNow -lt $script:nextPeerPoll) { return }
+    $script:nextPeerPoll = [datetimeoffset]::UtcNow.AddSeconds(1)
+    $tmp = "$PeerWitness.$PID.pending"
+    $head = Join-Path $ClientEvidence "peer-clock-$PID.pending"
+    if ((Test-Path -LiteralPath $tmp) -or (Test-Path -LiteralPath $head)) { throw 'Previous witness transfer preserved' }
+    try {
+        $sent = [datetimeoffset]::UtcNow
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        $reply = @(& "$env:SystemRoot/System32/curl.exe" --disable --noproxy '*' --proto '=https' --silent --show-error --connect-timeout 2 --max-time 3 --max-filesize 4096 --cacert $PeerCaCertificate --pinnedpubkey $peerSpkiPin --dump-header $head --output $tmp --write-out '%{http_code}\n%{certs}' $PeerWitnessUri.AbsoluteUri)
+        $received = [datetimeoffset]::UtcNow
+        $timer.Stop()
+        if ($LASTEXITCODE -ne 0) { throw 'Private witness transfer failed' }
+        $http = $reply[0]
+        if ($http -eq '503') { return }
+        if ($http -ne '200') { throw "Unexpected witness HTTP status $http" }
+        $peerCertDer = Get-PeerLeafDer ($reply -join "`n") $PeerCaSha256
+        $bodySha = (Get-FileHash -LiteralPath $tmp).Hash
+        $sample = @{request_start_utc=$sent.ToString('o');request_end_utc=$received.ToString('o');elapsed_ms=$timer.Elapsed.TotalMilliseconds;
+            url=$PeerWitnessUri.AbsoluteUri;certificate_der_sha256=$PeerCaSha256;manifest_sha256=$ManifestSha256;
+            headers_sha256=(Get-FileHash -LiteralPath $head).Hash;body_sha256=$bodySha}
+        [IO.File]::Move($head,(Join-Path $ClientEvidence 'peer-clock.headers'))
+        [IO.File]::Copy($tmp,(Join-Path $ClientEvidence 'peer-clock-witness.json'))
+        [IO.File]::Copy((Get-Item -LiteralPath $Manifest).FullName,(Join-Path $ClientEvidence 'peer-clock-manifest.json'))
+        [IO.File]::WriteAllBytes((Join-Path $ClientEvidence 'peer-clock-cert.der'),$peerCertDer)
+        [IO.File]::WriteAllText((Join-Path $ClientEvidence 'peer-clock.json'),($sample | ConvertTo-Json))
+        $clockJson = & python (Join-Path $PSScriptRoot 'native_roaming_clock.py') $ClientEvidence $ManifestSha256 $PeerCaSha256 $m.native_gateway $startedMs $received.ToUnixTimeMilliseconds()
+        if ($LASTEXITCODE -ne 0) { throw 'Pinned HTTP clock evidence failed verification' }
+        $script:peerClock = $clockJson | ConvertFrom-Json -AsHashtable
+        if (Test-Path -LiteralPath $PeerWitness) {
+            if (!(Test-Sha256 (Get-FileHash -LiteralPath $PeerWitness).Hash $bodySha)) { throw 'Saved peer witness differs from the pinned reply' }
+        } else { [IO.File]::Move($tmp,$PeerWitness) }
+    } finally {
+        foreach ($file in $tmp,$head) { if (Test-Path -LiteralPath $file) { [IO.File]::Delete($file) } }
+    }
+}
+
+# Only an explicitly authorized future hotspot preflight sends a source-bound HTTPS HEAD.
 function Save-HotspotPreflight($Configuration) {
     $source = @($Configuration.IPv4Address.IPAddress)
     $gateway = @($Configuration.IPv4DefaultGateway.NextHop)
@@ -222,6 +269,14 @@ if ($ReplayStartup) {
 if ($OfflineCheck) { . (Join-Path $PSScriptRoot "native-roaming-link-tests.ps1"); return }
 
 function Assert-LiveRun {
+    $monotonicBefore = $runTimer.Elapsed
+    $now = [datetimeoffset]::UtcNow
+    $monotonicAfter = $runTimer.Elapsed
+    $wallElapsed = ($now - $runClockStart).TotalMilliseconds
+    if ($wallElapsed -lt ($monotonicBefore.TotalMilliseconds - 50) -or
+        $wallElapsed -gt ($monotonicAfter.TotalMilliseconds + $runClockAnchorWidth + 50)) {
+        throw 'D wall clock changed during the observation'
+    }
     if ([datetimeoffset]::UtcNow -ge $deadline.AddSeconds(-8)) { throw 'Local test deadline' }
     if ([DRoamingConsole]::WTSGetActiveConsoleSessionId() -ne $session -or
         (Get-Process -Id $cap.admin_pid -ErrorAction Stop).StartTime.ToUniversalTime() -ne $captureStart -or
@@ -276,12 +331,18 @@ public static class DRoamingConsole {
     $start = Read-Json (Join-Path $ClientEvidence 'start.json')
     $m = Read-Json $Manifest
     $script:nextPeerPoll = [datetimeoffset]::MinValue
+    $script:peerClock = $null
+    if (!$PeerWitnessUri -and !$ExternallySynchronizedClocks) { throw 'Use a pinned HTTPS time sample or explicitly verified external clock synchronization' }
+    if ($PeerWitnessUri -and $ExternallySynchronizedClocks) { throw 'Select exactly one clock source' }
     $phase = 'peer_certificate'
     if ($PeerWitnessUri) {
         if ($PeerWitnessUri.Scheme -ne 'https' -or $PeerWitnessUri.UserInfo -or $PeerWitnessUri.Query -or $PeerWitnessUri.Fragment -or
             $PeerWitnessUri.AbsolutePath -cne '/wired-source' -or $PeerWitnessUri.Host -ne ([Net.IPEndPoint]::Parse($m.native_gateway).Address.ToString()) -or !$PeerCaCertificate -or !$PeerCaSha256) { throw 'Unexpected private witness endpoint or missing certificate pin' }
         $cert = [Security.Cryptography.X509Certificates.X509CertificateLoader]::LoadCertificateFromFile((Get-Item -LiteralPath $PeerCaCertificate).FullName)
-        try { if (!(Test-Sha256 $cert.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256) $PeerCaSha256)) { throw 'Peer certificate digest differs' } } finally { $cert.Dispose() }
+        try {
+            if (!(Test-Sha256 $cert.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256) $PeerCaSha256)) { throw 'Peer certificate digest differs' }
+            $peerSpkiPin = 'sha256//' + [Convert]::ToBase64String([Security.Cryptography.SHA256]::HashData($cert.PublicKey.ExportSubjectPublicKeyInfo()))
+        } finally { $cert.Dispose() }
     }
     $phase = 'startup_evidence'
     Assert-StartupEvidence $cap $start $m (Get-FileHash -LiteralPath $Manifest).Hash $CaptureEvidence
@@ -296,7 +357,7 @@ public static class DRoamingConsole {
     $phase = 'capture_owner'
     $captureStart = (Get-Process -Id $cap.admin_pid).StartTime.ToUniversalTime()
     $phase = 'physical_adapters'
-    foreach ($name in 'route-after.request','route-after.json','operator.jsonl') {
+    foreach ($name in 'route-after.request','route-after.json','operator.jsonl','peer-clock.headers','peer-clock-manifest.json','peer-clock-witness.json','peer-clock-cert.der','peer-clock.json') {
         if (Test-Path -LiteralPath (Join-Path $ClientEvidence $name)) { throw "Preserve existing $name" }
     }
     $guid = @{}
@@ -311,6 +372,9 @@ public static class DRoamingConsole {
     $journal = $journalPath
     $phase = 'observe_client_and_links'
     Write-Diagnostic 'startup_complete' @{pid=$start.pid}
+    $runClockStart = [datetimeoffset]::UtcNow
+    $runTimer = [Diagnostics.Stopwatch]::StartNew()
+    $runClockAnchorWidth = ([datetimeoffset]::UtcNow - $runClockStart).TotalMilliseconds
     $startedMs = [datetimeoffset]::Parse($start.utc).ToUnixTimeMilliseconds()
     Write-Host '保持有线和热点连接，正在验证基线。' -ForegroundColor Yellow
     do {
@@ -326,9 +390,9 @@ public static class DRoamingConsole {
                 $route = Read-Json $marker
                 if (!(Test-WiredRoute $route $start) -or [datetimeoffset]::Parse($route.observed_utc).ToUnixTimeMilliseconds() -lt $baseline.row.utc_unix_ms) { throw 'Wired route or socket marker did not match the Client' }
                 Receive-PeerWitness
-                if (Test-Path -LiteralPath $PeerWitness -PathType Leaf) {
+                if ((!$PeerWitnessUri -or $script:peerClock) -and (Test-Path -LiteralPath $PeerWitness -PathType Leaf)) {
                     $witness = Read-Json $PeerWitness
-                    if (!(Test-PeerWitness $witness $route $start $baseline)) { throw 'Peer UDP observation differs from this Client and run' }
+                    if (!(Test-PeerWitness $witness $route $start $baseline $script:peerClock)) { throw 'Peer UDP observation differs from this Client and run' }
                     break
                 }
             }
@@ -350,7 +414,8 @@ public static class DRoamingConsole {
         ($deadline - $links.UTC).TotalSeconds -lt $MinSwitchSeconds) { throw 'Switch gate no longer valid' }
     Journal 'wired_ready' @{pid=$start.pid;started_utc=$start.utc;line=$baseline.index;height=$m.height;state_root=$stateRoot;
         wired_index=$WiredIndex;hotspot_index=$HotspotIndex;wired_guid=$guid[$WiredIndex];hotspot_guid=$guid[$HotspotIndex];component_map=$cap.components;
-        peer_witness=$witness;hotspot_probe=$probe;initial_up_utc=$links.UTC.ToString('o')}
+        clock_mode=if($PeerWitnessUri){'pinned_http_date'}else{'external_sync'};
+        witness_timing=(Get-WitnessTiming $witness $start $baseline $script:peerClock);peer_witness=$witness;hotspot_probe=$probe;initial_up_utc=$links.UTC.ToString('o')}
     Write-Host "现在拔线，保留热点。最迟 $($deadline.AddSeconds(-8).ToLocalTime().ToString('HH:mm:ss')) 插回。不要等聊天消息。" -ForegroundColor Cyan
     $prompted = $true
     $previous = $links
@@ -373,7 +438,7 @@ public static class DRoamingConsole {
         $links = Read-PhysicalLinks
         if ($links.Wired -eq 'Down') { $lastDown = $links.Begin; $previous = $links }
         if ($links.Wired -ne 'Down' -or $links.Hotspot -ne 'Up') { throw 'Physical state changed before recovery evidence completed' }
-        $recovered = Find-Recovery @(Read-Events $ClientEvidence) $baseline $downMs $MinLocatorSequence
+        $recovered = Find-Recovery @(Read-Events $ClientEvidence) $baseline $downMs $MinLocatorSequence $script:peerClock
         if ($recovered) {
             Request-Marker 'route-after'
             $marker = Join-Path $ClientEvidence 'route-after.json'
