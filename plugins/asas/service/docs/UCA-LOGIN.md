@@ -135,6 +135,50 @@ negative match. It starts no network, does not alter the profile or key, exports
 no root material and creates no registration/grant signature. Ordinary ASAS
 connection never loads this root. A negative match must preserve the selector.
 
+## Offline Native Signing CLI
+
+`offlineUcaSigning: 1` adds explicit file-only signing to the same native B
+client. These commands never start its network path or submit a transaction:
+
+```sh
+novovm-asas-client --profile /absolute/B.json --profile-sha256 PROFILE_SHA256 --sign-registration /absolute/review.json --request-sha256 REVIEW_SHA256 --identity-key /absolute/identity.sealed --output /private/new.nuir
+novovm-asas-client --profile /absolute/B.json --profile-sha256 PROFILE_SHA256 --sign-application /absolute/review.json --request-sha256 REVIEW_SHA256 --identity-key /absolute/identity.sealed --output /private/new.nuap
+```
+
+Each reviewed JSON has exactly `version: 1`, a positive `execution_height`, and
+`intent`: the existing `UcaRegistrationIntentV1` or `ApplicationGrantIntentV1`
+JSON representation. Hash the exact reviewed bytes; paths are absolute and
+non-traversing. Unknown fields, duplicate known fields, wrong digests and
+invalid windows are rejected. No field or revision is inferred from a node.
+
+NUIR uses `AoemExecFacade::sign_uca_registration_v1`, the canonical registration
+message checks, root-derived identity and original ML-DSA context. NUAP uses
+the existing application signer and checks the entire pinned ASAS selector,
+root issuer, expected revision bounds and half-open command window. Authorize
+and revoke both use the original native encoding. Both signatures are verified
+locally before output. This does not prove current identity ownership, revision,
+activation, publication or finality; the original node state remains authoritative.
+
+The root is loaded only from the explicitly supplied identity-purpose sealed
+file via existing custody and the profile-pinned qualified AOEM library. No raw
+key input or generic signing command is added. Existing output files are refused;
+Linux requires its existing private owner directory and creates mode 0600 files.
+Windows retains the original private-file/reparse-point checks and deployment
+ACL responsibility; this iteration does not qualify Windows execution.
+
+Stdout contains only wire kind, byte count, SHA-256 and `submitted: false`.
+The output proof includes its protocol-required public key and signature; keep
+it in the approved private handoff channel, not Git or model input. No actual F
+root signature is authorized by implementing the CLI. Wait for C's verified
+consensus activation receipt and actual reviewed height window before production
+registration or application signatures.
+
+Targeted tests use freshly generated, protected test keys only. The ignored
+`asas_client::offline::tests::protected_test_keys_sign_reviewed_nuir_and_nuap_through_cli`
+requires explicit `NOVOVM_AOEM_TEST_LIBRARY` and `NOVOVM_ASAS_TEST_CLIENT` paths.
+It verifies real NUIR/NUAP signatures and CLI operation without a network or chain;
+it is not an ASAS login or live activation acceptance test.
+
 ## Existing-chain registration proof
 
 `novovm_protocol::uca_registration` defines the bounded canonical `NUIR` proof. `novovm_exec` verifies it with the original qualified ML-DSA-65 owner, using a distinct registration context and an explicit original chain ID, genesis and half-open height range. The initial registration name is `uca:` plus the lowercase hex of the existing ML-DSA-65 primary-key reference. `validator-F` can compare that name to its prepared selector on its own machine without exporting root key material. Existing assigned names retain their original bindings.

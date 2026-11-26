@@ -83,6 +83,13 @@ fn library_digest(path: &Path) -> Result<String> {
 /// Standalone owners have no loaded runtime to borrow. Require an explicit
 /// approved artifact and use the same facade/custody; never use a raw-key path.
 fn load_runtime(library: &Path, sha256: &str) -> Result<MldsaRuntime> {
+    load_qualified_runtime(library, sha256).map(|(_, runtime)| runtime)
+}
+
+pub(crate) fn load_qualified_runtime(
+    library: &Path,
+    sha256: &str,
+) -> Result<(AoemExecFacade, MldsaRuntime)> {
     ensure!(
         sha256.len() == 64
             && sha256
@@ -101,7 +108,7 @@ fn load_runtime(library: &Path, sha256: &str) -> Result<MldsaRuntime> {
         library_digest(&library)? == sha256,
         "AOEM changed during identity qualification"
     );
-    Ok(runtime)
+    Ok((facade, runtime))
 }
 
 pub fn load_transport_identity(

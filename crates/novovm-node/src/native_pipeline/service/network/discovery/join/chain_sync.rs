@@ -31,10 +31,7 @@ pub fn verify_installed_uca_execution(
     let profile = read_installed_profile(path, Some(profile_sha256))?;
     let (domain, anchor) = profile.verification_domain()?;
     validate_parent(&anchor)?;
-    let minimum = profile
-        .verification
-        .as_ref()
-        .and_then(|pins| pins.minimum_finalized_checkpoint);
+    let minimum = minimum_checkpoint(&profile);
     checkpoint_validity(minimum, wall_ms()?)?;
     let bytes = read_bundle(archive)?;
     let bundle = ReplayBundle::decode(&bytes)?;
@@ -136,9 +133,15 @@ pub fn export_activation_parent(
 }
 
 fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
-    let (profile, identity, seeds) = installed_inputs(path)?;
+    let profile = read_installed_profile(path, None)?;
     let (domain, anchor) = profile.verification_domain()?;
     validate_parent(&anchor)?;
+    if with_state {
+        check_profile_checkpoint_deadline(&profile)?;
+    }
+    let base = profile_base(path)?;
+    let identity = local_identity(&installed_state_base()?, base, &profile)?;
+    let seeds = read_seeds(base, &profile);
     let mut chain = open_checkpoint(&profile, &identity, &domain, anchor)?;
     if with_state {
         chain.checkpoint_validity(wall_ms()?)?;
@@ -441,6 +444,15 @@ impl VerifiedHeaders {
     fn checkpoint_validity(&self, now: u64) -> std::result::Result<(), PendingFinality> {
         checkpoint_validity(self.minimum, now)
     }
+}
+
+fn minimum_checkpoint(profile: &Profile) -> Option<MinimumFinalizedCheckpoint> {
+    profile.verification.as_ref()?.minimum_finalized_checkpoint
+}
+
+pub(super) fn check_profile_checkpoint_deadline(profile: &Profile) -> Result<()> {
+    checkpoint_validity(minimum_checkpoint(profile), wall_ms()?)?;
+    Ok(())
 }
 
 fn checkpoint_validity(

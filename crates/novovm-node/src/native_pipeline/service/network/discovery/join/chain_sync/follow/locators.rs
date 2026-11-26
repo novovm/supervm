@@ -9,6 +9,13 @@ pub(super) struct Locators {
     pub(super) records: BTreeMap<Vec<u8>, PeerSignedRelayRecordV1>,
 }
 
+pub(super) struct AcceptedLocator {
+    pub(super) peer_transport_sha256: String,
+    pub(super) sequence: u64,
+    pub(super) issued_at_ms: u64,
+    pub(super) expires_at_ms: u64,
+}
+
 impl Locators {
     pub(super) fn open(
         path: PathBuf,
@@ -53,8 +60,9 @@ impl Locators {
         Ok(Self { path, records })
     }
 
-    pub(super) fn observe(&mut self, found: DiscoveryReport) -> Result<()> {
+    pub(super) fn observe(&mut self, found: DiscoveryReport) -> Result<Vec<AcceptedLocator>> {
         let mut advanced = self.records.clone();
+        let mut accepted = Vec::new();
         for (key, candidate) in found.records {
             if let Some(current) = advanced.get(&key) {
                 if candidate.sequence < current.sequence
@@ -66,13 +74,22 @@ impl Locators {
                     candidate.sequence != current.sequence || candidate == *current,
                     "conflicting locator at a stored signed sequence"
                 );
+                if candidate == *current {
+                    continue;
+                }
             }
+            accepted.push(AcceptedLocator {
+                peer_transport_sha256: fingerprint(&candidate.relay_public_key),
+                sequence: candidate.sequence,
+                issued_at_ms: candidate.issued_at_ms,
+                expires_at_ms: candidate.expires_at_ms,
+            });
             advanced.insert(key, candidate);
         }
-        if advanced != self.records {
+        if !accepted.is_empty() {
             publish(&self.path, &advanced.values().collect::<Vec<_>>())?;
             self.records = advanced;
         }
-        Ok(())
+        Ok(accepted)
     }
 }

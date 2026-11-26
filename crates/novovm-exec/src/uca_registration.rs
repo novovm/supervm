@@ -1,5 +1,8 @@
 //! Registration proof admission through the existing qualified ML-DSA owner.
-use crate::{pq_signature::AoemMldsaParameterSet, AoemExecFacade};
+use crate::{
+    pq_signature::{AoemMldsaParameterSet, MldsaSigner},
+    AoemExecFacade,
+};
 use anyhow::{ensure, Result};
 use novovm_adapter_api::{uca_key_binding::derive_primary_key_ref_from_binding_v1, UcaKeyAlgo};
 use novovm_protocol::uca_registration::{
@@ -35,6 +38,32 @@ impl VerifiedUcaRegistrationV1 {
 }
 
 impl AoemExecFacade {
+    pub fn sign_uca_registration_v1(
+        &self,
+        intent: UcaRegistrationIntentV1,
+        public_key: &[u8],
+        secret: &[u8],
+        chain_id: u64,
+        genesis: [u8; 32],
+        height: u64,
+    ) -> Result<SignedUcaRegistrationV1> {
+        let mut signed = SignedUcaRegistrationV1 {
+            intent,
+            public_key: public_key.to_vec(),
+            signature: Vec::new(),
+        };
+        let message = registration_message(&signed, chain_id, genesis, height)?;
+        signed.signature = MldsaSigner::new(&self.dynlib, AoemMldsaParameterSet::MlDsa65)?.sign(
+            public_key,
+            secret,
+            &message,
+            REGISTRATION_CONTEXT_V1,
+        )?;
+        signed.encode()?;
+        self.verify_uca_registration_v1(signed.clone(), chain_id, genesis, height)?;
+        Ok(signed)
+    }
+
     pub fn verify_uca_registration_v1(
         &self,
         signed: SignedUcaRegistrationV1,

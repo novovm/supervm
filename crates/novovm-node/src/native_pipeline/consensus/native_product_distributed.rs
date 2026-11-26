@@ -307,10 +307,13 @@ fn native_distributed_validator_fixture() -> Result<()> {
     }
     let mut evidence = json!({
         "action":action, "plan_sha256":plan_sha256,"run_id":plan.run_id,"role":role,
-        "chain_id":plan.chain_id, "observed_unix":now()?,
+        "chain_id":plan.chain_id,
         "genesis":plain_hex(&genesis.genesis_config_commitment),
         "protocol":plain_hex(&genesis.protocol_commitment)
     });
+    if action != "query" {
+        evidence["observed_unix"] = json!(now()?);
+    }
     if matches!(action.as_str(), "create" | "existing") {
         isolated_directory(&directory, "validator slot")?;
         plan.require_window()?;
@@ -471,6 +474,7 @@ fn native_distributed_validator_fixture() -> Result<()> {
         send(&mut client, &raw)?;
         evidence["transport_completed"] = json!(true);
     } else {
+        let query_started = now()?;
         let Answer::Status(status) = queries::query(&mut client, Query::Status)? else {
             anyhow::bail!("expected authenticated Status");
         };
@@ -495,6 +499,15 @@ fn native_distributed_validator_fixture() -> Result<()> {
             evidence["nonce"] = json!(nonce);
             evidence["receipts"] = json!(receipts);
         }
+        // A responding child can start while the authenticated read is in flight.
+        let observed = now()?;
+        ensure!(
+            (plan.start_unix..plan.end_unix).contains(&query_started)
+                && (query_started..plan.end_unix).contains(&observed),
+            "authenticated query did not complete inside the agreed UTC window"
+        );
+        evidence["query_started_unix"] = json!(query_started);
+        evidence["observed_unix"] = json!(observed);
     }
     output(&report, evidence)
 }

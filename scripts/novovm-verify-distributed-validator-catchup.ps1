@@ -17,6 +17,11 @@ function Hex-Bytes($Value) {
     [Convert]::ToHexString([byte[]] $Value).ToLowerInvariant()
 }
 function Json($Value) { ConvertTo-Json -InputObject $Value -Depth 15 -Compress }
+function Query-Started($Row) {
+    $start = $Row.PSObject.Properties['query_started_unix']
+    if ($null -eq $start) { return $Row.observed_unix }
+    $start.Value
+}
 
 Assert-Test ((Get-FileHash -LiteralPath $PlanFile).Hash.ToLowerInvariant() -ceq $PlanSha256) 'Plan changed'
 $plan = Get-Content -LiteralPath $PlanFile -Raw | ConvertFrom-Json
@@ -33,6 +38,11 @@ function Checked-Run([string] $Name, [string] $Action, [string] $Role) {
         $row.action -ceq $Action -and $row.role -ceq $Role) "Wrong run, action, or role in $Name"
     if ($Action -ne 'archive') {
         Assert-Test ($row.observed_unix -ge $plan.start_unix -and $row.observed_unix -lt $plan.end_unix) "Out of window: $Name"
+    }
+    if ($Action -ceq 'query') {
+        $started = Query-Started $row
+        Assert-Test ($started -is [long] -and $row.observed_unix -is [long] -and
+            $started -ge $plan.start_unix -and $started -le $row.observed_unix) "Invalid query timestamps: $Name"
     }
     $row
 }
@@ -119,7 +129,7 @@ Assert-Test ($minoritySent.observed_unix -ge [Math]::Max($lateCatchup.stopped_un
 foreach ($role in @('A1','C1')) {
     $start = Checked-Run "$role-hold-start" 'query' $role
     $end = Checked-Run "$role-hold-end" 'query' $role
-    Assert-Test ($start.observed_unix -ge $minoritySent.observed_unix -and
+    Assert-Test ((Query-Started $start) -ge $minoritySent.observed_unix -and
         $end.observed_unix -ge ($start.observed_unix + 12) -and
         $end.observed_unix -lt $secondRestore.started_unix -and $lateRestore.started_unix -ge $secondRestore.started_unix) "Minority hold is too short: $role"
     foreach ($point in @($start,$end)) {

@@ -55,6 +55,7 @@ $artifactBytes = if ($windowsPackage) {
 [IO.File]::WriteAllBytes($core, $artifactBytes)
 $coreSha = (Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $fixture "aoem/$platform/manifest.json"), (@{profile='fullmax';platform=$platform} | ConvertTo-Json))
+[IO.File]::WriteAllText((Join-Path $fixture "aoem/$platform/CHECKSUMS.sha256"), "$coreSha  core/bin/$coreName")
 [IO.File]::WriteAllText((Join-Path $fixture 'aoem/aoem-sdk-manifest.json'),
   (@{platforms=@{$platformId=@{library_sha256=$coreSha}}} | ConvertTo-Json -Depth 4))
 foreach ($name in @('aoem/manifest/aoem-manifest.json', 'aoem/config/aoem-runtime-profile.json')) {
@@ -63,6 +64,7 @@ foreach ($name in @('aoem/manifest/aoem-manifest.json', 'aoem/config/aoem-runtim
 [IO.File]::WriteAllText((Join-Path $fixture 'crates/novovm-node/src/product_delivery_journal.rs'), 'novovm-product-delivery-journal/v1')
 $fixtureState = @{commit='1234567890123456789012345678901234567890';root=$fixture;buildCalls=0;contracts=@();qualificationCalls=0;qualificationMode='valid'}
 $fixtureState.nodeServiceMode = 'valid'
+$fixtureState.clientProfileMode = 'valid'
 function git {
   $global:LASTEXITCODE = 0
   if ($args[0] -eq 'status') { return }
@@ -106,6 +108,33 @@ function cargo {
 # invokes its exact Cargo-reported ctl, with no skip/injection option.
 $runtimeFixtureCommand = Join-Path $fixture "build/novovmctl$binarySuffix"
 if ($windowsPackage) {
+  $clientFixtureCommand = Join-Path $fixture "build/novovm-native-client$binarySuffix"
+  $clientProfilePreflight = {
+    param([Parameter(ValueFromRemainingArguments)]$ClientArguments)
+    if ($ClientArguments.Count -ne 3 -or $ClientArguments[1] -cne 'check-installed-profile' -or
+        (Get-FileHash -LiteralPath $ClientArguments[0]).Hash -ne $ClientArguments[2]) {
+      throw 'Profile validation must use the native Client and exact pinned profile'
+    }
+    if ($ClientArguments[0] -match '[\\/]\.?(?:[^\\/]+)\.staging\.[a-f0-9]+[\\/]') {
+      $stagedDiscovery = Split-Path -Parent $ClientArguments[0]
+      $stagedProfile = Get-Content -LiteralPath $ClientArguments[0] -Raw | ConvertFrom-Json
+      $stagedLibrary = Join-Path $stagedDiscovery $stagedProfile.library
+      if ((Split-Path -Leaf $ClientArguments[0]) -cne 'installed-discovery.json' -or
+          (Get-FileHash -LiteralPath $stagedLibrary).Hash -ne $stagedProfile.library_sha256) {
+        throw 'Native preflight must see the portable profile and its copied runtime'
+      }
+      foreach ($locator in @($stagedProfile.seeds | Where-Object locator | ForEach-Object locator)) {
+        if ((Get-FileHash -LiteralPath (Join-Path $stagedDiscovery $locator)).Hash -ne
+            (Get-FileHash -LiteralPath (Join-Path $fixtureState.root $locator)).Hash) {
+          throw 'Native preflight must see the exact copied locator bytes'
+        }
+      }
+    } elseif ($fixtureState.clientProfileMode -ne 'install-reject') {
+      throw 'Package preflight must run in staging before publication'
+    }
+    $global:LASTEXITCODE = if ($fixtureState.clientProfileMode -eq 'valid') { 0 } else { 22 }
+  }
+  Set-Item -LiteralPath ('Function:\global:' + $clientFixtureCommand) -Value $clientProfilePreflight
   $nodeFixtureCommand = Join-Path $fixture "build/novovm-node$binarySuffix"
   Set-Item -LiteralPath ('Function:\global:' + $nodeFixtureCommand) -Value {
     param([Parameter(ValueFromRemainingArguments)]$NodeArguments)
@@ -226,6 +255,13 @@ $lines = @(Get-Content -LiteralPath (Join-Path $output 'CHECKSUMS.sha256'))
 if ($lines.Count -ne $manifest.artifacts.Count) { throw 'Checksum inventory differs from manifest' }
 foreach ($entry in $manifest.artifacts) {
   if ($lines -cnotcontains "$($entry.sha256)  $($entry.path)") { throw "Missing checksum: $($entry.path)" }
+}
+$stagedPaths = @(Get-ChildItem -LiteralPath $output -File -Recurse -Force | ForEach-Object {
+  [IO.Path]::GetRelativePath($output, $_.FullName).Replace('\', '/')
+} | Where-Object { $_ -notin @('CHECKSUMS.sha256', 'release-manifest.json') })
+if ($manifest.artifacts.path -cnotcontains "aoem/$platform/CHECKSUMS.sha256" -or
+    (Compare-Object $stagedPaths @($manifest.artifacts.path) -CaseSensitive)) {
+  throw 'The outer package inventory must cover every payload file, including the nested AOEM checksum table'
 }
 foreach ($file in @(Get-ChildItem (Join-Path $output 'config') -File -Recurse) +
     @(Get-ChildItem (Join-Path $output 'systemd') -File -Recurse) +
@@ -450,9 +486,32 @@ if ($windowsPackage) {
     verification = @{ trusted_parent = @{height=0} }
     seeds = @(@{locator='bootstrap-first.json'}, @{locator='bootstrap-second.json'})
   }
-  [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 5))
   [IO.File]::WriteAllText((Join-Path $fixture 'bootstrap-first.json'), 'isolated locator fixture 1')
   [IO.File]::WriteAllText((Join-Path $fixture 'bootstrap-second.json'), 'isolated locator fixture 2')
+  $firstContact = @{endpoint_key=@(1);direct=@('127.0.0.1:43111');relays=@()}
+  $secondContact = @{endpoint_key=@(2);direct=@('127.0.0.1:43112');relays=@()}
+  foreach ($present in @('none', 'first', 'second')) {
+    $null = $discoveryConfig.seeds[0].Remove('contact')
+    $null = $discoveryConfig.seeds[1].Remove('contact')
+    if ($present -eq 'first') { $discoveryConfig.seeds[0].contact = $firstContact }
+    if ($present -eq 'second') { $discoveryConfig.seeds[1].contact = $secondContact }
+    [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 6))
+    $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()
+    $rejectedName = "artifacts/product-overlay/windows-client-missing-contact-$present"
+    try {
+      & $packager -Target $Target -PackageDir $rejectedName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
+      throw "Assembly accepted a Windows release without two fixed bootstrap contacts ($present)"
+    } catch {
+      if ($_.Exception.Message -notlike '*requires two pinned bootstrap contacts*') { throw }
+    }
+    if (Test-Path -LiteralPath (Join-Path $fixture $rejectedName)) {
+      throw 'Missing bootstrap contacts left a published package'
+    }
+  }
+  Write-Output 'PASS: issued Windows profiles without two pinned bootstrap contacts fail before publication'
+  $discoveryConfig.seeds[0].contact = $firstContact
+  $discoveryConfig.seeds[1].contact = $secondContact
+  [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 6))
   $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()
   $bundledName = 'artifacts/product-overlay/windows-client-bundled'
   try {
@@ -460,6 +519,19 @@ if ($windowsPackage) {
     throw 'Assembly accepted a wrong issuer profile digest'
   } catch {
     if ($_.Exception.Message -notlike '*differs from its pinned SHA-256*') { throw }
+  }
+  $fixtureState.clientProfileMode = 'reject'
+  $rejected = $false
+  try {
+    & $packager -Target $Target -PackageDir $bundledName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
+  } catch {
+    if ($_.Exception.Message -notlike '*Native Client rejected the issued discovery profile*') { throw }
+    $rejected = $true
+  } finally {
+    $fixtureState.clientProfileMode = 'valid'
+  }
+  if (!$rejected -or (Test-Path -LiteralPath (Join-Path $fixture $bundledName))) {
+    throw 'A native profile validation failure must prevent release publication'
   }
   & $packager -Target $Target -PackageDir $bundledName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
   $bundled = Join-Path $fixture $bundledName
@@ -473,6 +545,20 @@ if ($windowsPackage) {
       (Get-FileHash -LiteralPath $bundledProfile).Hash -ne $profilePin -or (Test-Path -LiteralPath $installed)) {
     throw 'Bundled installer plan lost the portable Client, verified issuer bytes or no-write behavior'
   }
+  $installedFixtureCommand = Join-Path $bundled "bin/novovm-native-client$binarySuffix"
+  Set-Item -LiteralPath ('Function:\global:' + $installedFixtureCommand) -Value $clientProfilePreflight
+  $fixtureState.clientProfileMode = 'install-reject'
+  & {
+    function Get-ScheduledTask { throw 'An invalid profile reached the task subsystem' }
+    try {
+      & $installer -Action Install -ReleaseManifestSha256 $pin | Out-Null
+      throw 'Installer proceeded after native profile validation failed'
+    } catch {
+      if ($_.Exception.Message -notlike '*Native Client rejected the issued discovery profile*') { throw }
+    }
+  }
+  $fixtureState.clientProfileMode = 'valid'
+  if (Test-Path -LiteralPath $installed) { throw 'Native profile failure left installed release files' }
   [IO.File]::AppendAllText((Join-Path $bundled 'config/discovery/bootstrap-first.json'), 'tampered')
   try {
     & $installer -Action Plan -ReleaseManifestSha256 $pin | Out-Null
@@ -482,8 +568,8 @@ if ($windowsPackage) {
   }
   Write-Output 'PASS: packaged Windows Client selects a pinned portable profile without caller-supplied paths and rejects a changed locator'
   $discoveryConfig.seeds = @(
-    @{contact=@{endpoint_key=@(1);direct=@('127.0.0.1:43111');relays=@()}},
-    @{contact=@{endpoint_key=@(2);direct=@('127.0.0.1:43112');relays=@()}}
+    @{contact=$firstContact},
+    @{contact=$secondContact}
   )
   [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 6))
   $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()

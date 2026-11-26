@@ -7,12 +7,16 @@ use crate::native_pipeline::{
         wire::{Validator, ValidatorSet},
     },
     service::{
-        client::operator::receipt_proof::{transaction_hash, ProofTarget},
+        client::operator::receipt_proof::{transaction_hash, validate_parent, ProofTarget},
         GenesisValidator,
     },
 };
-use novovm_network::iroh_transport::IrohControlV1;
-use novovm_relay::transport_identity::{load_transport_identity, provision_transport_identity};
+use novovm_network::{
+    iroh_transport::IrohControlV1, product_directory::verify_relay_record_authenticity_v1,
+};
+use novovm_relay::transport_identity::{
+    load_transport_identity, load_transport_verifier, provision_transport_identity,
+};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
@@ -304,6 +308,82 @@ pub fn discover_verified_receipt_from_profile(
     })
 }
 
+/// Validate the pinned release's chain and discovery inputs without accessing
+/// device custody or allocating a transport endpoint.
+pub fn check_installed_profile(path: &Path, sha256: &str) -> Result<serde_json::Value> {
+    let (profile, domain, anchor) = installed_chain_profile(path, Some(sha256))?;
+    validate_release_bootstraps(profile_base(path)?, &profile)?;
+    Ok(serde_json::json!({
+        "kind": "validated-installed-discovery-profile",
+        "chain_id": domain.chain_id,
+        "trusted_height": anchor.height,
+    }))
+}
+
+fn validate_release_bootstraps(base: &Path, profile: &Profile) -> Result<()> {
+    if profile.seeds.iter().all(|seed| seed.locator.is_none()) {
+        // Profile::validate already checks both fixed contacts.
+        return Ok(());
+    }
+
+    let verifier = load_transport_verifier(&base.join(&profile.library), &profile.library_sha256)?;
+    let now = wall_ms()?;
+    let mut endpoints = [BTreeSet::new(), BTreeSet::new()];
+    for (index, (seed, keys)) in profile.seeds.iter().zip(&mut endpoints).enumerate() {
+        if let Some(contact) = &seed.contact {
+            keys.insert(contact.endpoint_key);
+        }
+        if let Some(locator) = &seed.locator {
+            let record: PeerSignedRelayRecordV1 = read_document(&base.join(locator))
+                .with_context(|| format!("read installed bootstrap locator {}", index + 1))?;
+            ensure!(
+                record.relay_public_key == seed.transport_key
+                    && record.record_id == native_locator_id_v1(profile.pins()),
+                "bootstrap locator signer or chain domain differs from installed pin"
+            );
+            verify_relay_record_authenticity_v1(&record, &verifier)
+                .context("verify installed bootstrap locator signature")?;
+            ensure!(
+                record.issued_at_ms <= now,
+                "future installed bootstrap locator"
+            );
+            let route = IrohServiceEndpointV1::from_record(&record)?.address;
+            if record.expires_at_ms > now {
+                ensure!(
+                    route
+                        .relays
+                        .iter()
+                        .all(|relay| profile.relays.contains(relay)),
+                    "installed bootstrap locator uses an unapproved relay"
+                );
+                keys.insert(route.endpoint_key);
+            } else {
+                ensure!(
+                    seed.contact.is_some(),
+                    "expired installed bootstrap locator without fixed contact"
+                );
+            }
+        }
+    }
+    ensure!(
+        endpoints[0].is_disjoint(&endpoints[1]),
+        "installed discovery requires distinct source identities and endpoints"
+    );
+    Ok(())
+}
+
+fn installed_chain_profile(
+    path: &Path,
+    sha256: Option<&str>,
+) -> Result<(Profile, MessageDomain, ParentPoint)> {
+    let profile = read_installed_profile(path, sha256)?;
+    let (domain, anchor) = profile.verification_domain()?;
+    validate_parent(&anchor)?;
+    chain_sync::check_profile_checkpoint_deadline(&profile)?;
+    IrohConfigV1::new(&profile.relays, profile.nameserver)?;
+    Ok((profile, domain, anchor))
+}
+
 fn installed_profile(path: &Path) -> Result<(Profile, TransportIdentity)> {
     pinned_installed_profile(path, None)
 }
@@ -490,14 +570,31 @@ async fn collect(
         .await
 }
 
+struct SeedCandidates {
+    preferred: DialCandidate,
+    fallback: Option<DialCandidate>,
+}
+
+impl SeedCandidates {
+    fn routes(&self) -> impl Iterator<Item = &DialCandidate> {
+        std::iter::once(&self.preferred).chain(&self.fallback)
+    }
+}
+
 fn prepare_seed_candidates(
     profile: &Profile,
     identity: &TransportIdentity,
     seeds: SeedInputs,
-) -> Result<[Result<DialCandidate>; 2]> {
+) -> Result<[Result<SeedCandidates>; 2]> {
     let pins = profile.pins();
     let wall = wall_ms()?;
     let accept = |record: Result<PeerSignedRelayRecordV1>, seed: &SeedPin| {
+        let installed = |route: &IrohAddressV1| DialCandidate {
+            key: seed.transport_key.clone(),
+            route: route.clone(),
+            source: "installed_contact",
+            sequence: 0,
+        };
         record
             .and_then(|record| {
                 ensure!(
@@ -508,21 +605,27 @@ fn prepare_seed_candidates(
                     seed.contact.is_none() || record.expires_at_ms > wall,
                     "use the installed contact to renew an expired bootstrap locator"
                 );
-                let mut candidate = seed_candidate(record, pins, identity, wall)?;
-                if let Some(contact) = &seed.contact {
-                    add_installed_contact(&mut candidate.route, contact);
-                }
-                Ok(candidate)
+                let mut preferred = seed_candidate(record, pins, identity, wall)?;
+                let fallback = seed.contact.as_ref().and_then(|contact| {
+                    if contact.endpoint_key == preferred.route.endpoint_key {
+                        add_installed_contact(&mut preferred.route, contact);
+                        None
+                    } else {
+                        Some(installed(contact))
+                    }
+                });
+                Ok(SeedCandidates {
+                    preferred,
+                    fallback,
+                })
             })
             .or_else(|error| {
                 let Some(contact) = &seed.contact else {
                     return Err(error);
                 };
-                Ok(DialCandidate {
-                    key: seed.transport_key.clone(),
-                    route: contact.clone(),
-                    source: "installed_contact",
-                    sequence: 0,
+                Ok(SeedCandidates {
+                    preferred: installed(contact),
+                    fallback: None,
                 })
             })
     };
@@ -533,7 +636,9 @@ fn prepare_seed_candidates(
     );
     if let (Ok(first), Ok(second)) = (&first, &second) {
         ensure!(
-            first.route.endpoint_key != second.route.endpoint_key,
+            first.routes().all(|left| second
+                .routes()
+                .all(|right| left.route.endpoint_key != right.route.endpoint_key)),
             "installed discovery requires distinct source identities and endpoints"
         );
     }
@@ -597,19 +702,51 @@ async fn lookup_sources(
     scope: &IrohScopeV1,
     identity: TransportIdentity,
     pins: Pins,
-    [first, second]: [Result<DialCandidate>; 2],
+    [first, second]: [Result<SeedCandidates>; 2],
     lookups: Vec<Vec<u8>>,
     source_budget: Duration,
 ) -> Result<DiscoveryReport> {
     let failures = Arc::new(NetworkFailures::default());
-    let lookup = |candidate, identity, lookups, failures| async move {
-        let candidate: DialCandidate = candidate?;
-        let source = fingerprint(&candidate.key);
-        // A stalled source must not cancel a completed result from another source.
-        let records = tokio::time::timeout(
-            source_budget,
-            query(scope, identity, candidate, pins, None, lookups, failures),
-        )
+    let lookup = |candidate: Result<SeedCandidates>, identity, lookups, failures| async move {
+        let SeedCandidates {
+            preferred,
+            fallback,
+        } = candidate?;
+        let source = fingerprint(&preferred.key);
+        // Give a distinct installed contact time within the same source deadline.
+        // Only the first successful authenticated lookup supplies records.
+        let records = tokio::time::timeout(source_budget, async {
+            let Some(fallback) = fallback else {
+                return query(scope, identity, preferred, pins, None, lookups, failures).await;
+            };
+            let mut preferred = std::pin::pin!(query(
+                scope,
+                identity.clone(),
+                preferred,
+                pins,
+                None,
+                lookups.clone(),
+                failures.clone(),
+            ));
+            let mut fallback = std::pin::pin!(query(
+                scope, identity, fallback, pins, None, lookups, failures,
+            ));
+            // Expiring the head start leaves the preferred future alive.
+            let (result, remaining, finished) =
+                match tokio::time::timeout(source_budget / 2, &mut preferred).await {
+                    Ok(result) => (result, fallback.as_mut(), "signed locator"),
+                    Err(_) => tokio::select! {
+                        result = &mut preferred => (result, fallback.as_mut(), "signed locator"),
+                        result = &mut fallback => (result, preferred.as_mut(), "fixed contact"),
+                    },
+                };
+            match result {
+                Ok(records) => Ok(records),
+                Err(error) => remaining.await.with_context(|| {
+                    format!("remaining bootstrap route after {finished} failed: {error:#}")
+                }),
+            }
+        })
         .await
         .with_context(|| format!("bootstrap {source} exceeded its lookup deadline"))?
         .with_context(|| format!("bootstrap {source}"))?;

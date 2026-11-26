@@ -309,6 +309,37 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     } else {
         None
     };
+    let lan_install =
+        lan.is_some() && std::env::var("NOVOVM_QUERY_COPY_WINDOWS_INSTALL").as_deref() == Ok("1");
+    let roaming_relay = std::env::var_os("NOVOVM_QUERY_COPY_ROAMING_RELAY_PROFILE")
+        .map(|path| Config::load(Path::new(&path)))
+        .transpose()?;
+    let relay_preflight = std::env::var("NOVOVM_QUERY_COPY_RELAY_PREFLIGHT").as_deref() == Ok("1");
+    ensure!(
+        !relay_preflight || roaming_relay.is_some(),
+        "relay preflight requires an approved roaming relay configuration"
+    );
+    let (relays, nameserver) = if let Some(network) = &roaming_relay {
+        ensure!(
+            lan.as_ref().is_some_and(|lan| !lan.receipt_only)
+                && !lan_install
+                && std::env::var_os("NOVOVM_QUERY_COPY_LAN_DISCOVERY").is_none()
+                && !network.relays.is_empty(),
+            "roaming relay requires the restricted cross-device state-following harness"
+        );
+        (network.relays.clone(), network.nameserver)
+    } else {
+        (Vec::new(), "127.0.0.1".parse()?)
+    };
+    if lan_install {
+        let settings = lan.as_ref().unwrap();
+        let peer =
+            std::env::var("NOVOVM_QUERY_COPY_ISOLATED_IROH_PEER")?.parse::<std::net::Ipv4Addr>()?;
+        ensure!(
+            peer == settings.client && !settings.receipt_only,
+            "cold Windows LAN fixture requires a scoped direct Iroh peer"
+        );
+    }
     let hash = super::hex(&receipt_request_hash(&request)?);
     let old_profile: ClientConfig =
         serde_json::from_slice(&fs::read(input("NOVOVM_QUERY_COPY_FIRST_PROFILE")?)?)?;
@@ -316,7 +347,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         &old_profile.library,
         &old_profile.library_sha256,
     )?;
-    let mut owner = open_snapshot(true)?;
+    let mut owner = open_snapshot(!lan_install && roaming_relay.is_none())?;
     let head = owner.rpc.node.controller.parent();
     let (context, parent) = super::super::native_genesis_anchor(
         &owner.rpc.node.template,
@@ -358,8 +389,8 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     owner.novonet = Some(Driver::new_with_query_peers(
         Config {
             probe_control_file: None,
-            relays: Vec::new(),
-            nameserver: "127.0.0.1".parse()?,
+            relays: relays.clone(),
+            nameserver,
             bind_address: (bind_address, 0).into(),
             public_record_file: secondary.clone(),
             carrier_identity_file: None,
@@ -374,19 +405,37 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             udp_recovery_ms: 2000,
         },
         &mut owner.rpc.node,
-        lan.as_ref().map(|lan| vec![lan.client_key.clone()].into()),
+        lan.as_ref()
+            .filter(|_| !lan_install)
+            .map(|lan| vec![lan.client_key.clone()].into()),
     )?);
-    owner.until(|_| Ok(secondary.is_file()))?;
+    owner.until(|_| {
+        if !secondary.is_file() {
+            return Ok(false);
+        }
+        if roaming_relay.is_none() {
+            return Ok(true);
+        }
+        let record: PeerSignedRelayRecordV1 = serde_json::from_slice(&fs::read(&secondary)?)?;
+        Ok(!IrohServiceEndpointV1::from_record(&record)?
+            .address
+            .relays
+            .is_empty())
+    })?;
     let locator: PeerSignedRelayRecordV1 = serde_json::from_slice(&fs::read(&secondary)?)?;
     let endpoint = IrohServiceEndpointV1::from_record(&locator)?.address;
     ensure!(
-        !endpoint.direct.is_empty()
-            && endpoint
-                .direct
-                .iter()
-                .all(|entry| entry.ip() == bind_address)
-            && endpoint.relays.is_empty(),
-        "detached proof carrier must advertise only the configured interface"
+        endpoint
+            .direct
+            .iter()
+            .any(|entry| entry.ip() == bind_address)
+            && (roaming_relay.is_some()
+                || endpoint
+                    .direct
+                    .iter()
+                    .all(|entry| entry.ip() == bind_address))
+            && endpoint.relays.iter().all(|relay| relays.contains(relay)),
+        "detached proof carrier route differs from its configured interface or relays"
     );
     let key = owner.rpc.node.transport_identity().public_key().to_vec();
     ensure!(locator.relay_public_key == key, "locator identity differs");
@@ -433,10 +482,14 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         || std::env::var("NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS").as_deref() == Ok("1")
     {
         let first_contact = IrohServiceEndpointV1::from_record(&first)?.address;
+        let mut contact = endpoint;
+        if roaming_relay.is_some() {
+            contact.direct.clear();
+        }
         println!("cold Client uses two pinned contacts without installed locator files");
         serde_json::json!([
             { "contact": first_contact, "transport_key": first.relay_public_key },
-            { "contact": endpoint, "transport_key": key },
+            { "contact": contact, "transport_key": key },
         ])
     } else {
         serde_json::json!([
@@ -450,7 +503,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         serde_json::to_vec(&serde_json::json!({
             "chain_id": pins.0, "genesis": pins.1, "protocol": pins.2,
             "library": old_profile.library, "library_sha256": old_profile.library_sha256,
-            "nameserver": "127.0.0.1", "relays": [],
+            "nameserver": nameserver, "relays": relays,
             "seeds": seeds,
             "lookup_transport_keys": [key],
             "verification": {
@@ -462,7 +515,10 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         }))?,
     )?;
     if let Some(lan) = lan {
-        if std::env::var("NOVOVM_QUERY_COPY_LAN_DISCOVERY").as_deref() == Ok("1") {
+        if lan_install {
+            owner.rpc.node.public_state_sync = true;
+            lan.serve_installed_state(&mut owner, &profile, &key)?;
+        } else if std::env::var("NOVOVM_QUERY_COPY_LAN_DISCOVERY").as_deref() == Ok("1") {
             owner.rpc.node.public_asset_receipt_proofs = false;
             lan.serve_discovery(&mut owner, &profile, &key)?;
         } else if lan.receipt_only {
@@ -470,7 +526,11 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         } else {
             owner.rpc.node.public_asset_receipt_proofs = false;
             owner.rpc.node.public_state_sync = true;
-            lan.serve(&mut owner, &profile, &key)?;
+            if relay_preflight {
+                lan.serve_relay_preflight(&mut owner, &profile, &key)?;
+            } else {
+                lan.serve(&mut owner, &profile, &key, roaming_relay.is_some())?;
+            }
         }
         ensure!(
             owner.rpc.node.controller.parent() == head,
@@ -742,6 +802,17 @@ struct LanAcceptance {
     receipt_only: bool,
 }
 
+#[test]
+#[ignore = "requires a detached original-store copy and a real remote installed Client report"]
+fn detached_snapshot_checks_lan_install_report_after_shutdown() -> Result<()> {
+    let lan = LanAcceptance::load(&input("NOVOVM_QUERY_COPY_LAN")?)?;
+    let owner = open_snapshot(false)?;
+    let key = owner.rpc.node.transport_identity().public_key().to_vec();
+    let report = input("NOVOVM_QUERY_COPY_LAN_INSTALL_REPORT")?;
+    lan.verify_installed_state(&owner, &key, &report)?;
+    owner.rpc.node.shutdown()
+}
+
 impl LanAcceptance {
     fn load(path: &Path) -> Result<Self> {
         ensure!(path.metadata()?.len() <= 16_384, "LAN fixture input size");
@@ -756,7 +827,116 @@ impl LanAcceptance {
         Ok(settings)
     }
 
-    fn serve(&self, owner: &mut QueryOwner, profile: &Path, server_key: &[u8]) -> Result<()> {
+    fn serve_installed_state(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let stage = profile.parent().context("LAN installer acceptance stage")?;
+        let ready = stage.join("lan-ready.json");
+        let result = stage.join("lan-installed-state.json");
+        ensure!(
+            !ready.exists() && !result.exists(),
+            "stale LAN install evidence"
+        );
+        let profile_pin = prepare_lan_profile(profile, None)?;
+        let server_identity = format!("{:x}", Sha256::digest(server_key));
+        let head = owner.rpc.node.controller.parent();
+        let state_root = super::hex(&head.state_root);
+        let block_hash = super::hex(&head.block_hash);
+        let draft = ready.with_extension("tmp");
+        fs::write(
+            &draft,
+            serde_json::to_vec(&serde_json::json!({
+                "profile_sha256": profile_pin, "server_transport_sha256": server_identity,
+                "height": head.height, "state_root": state_root, "state_version": head.state_version,
+                "block_hash": block_hash,
+            }))?,
+        )?;
+        fs::rename(draft, ready)?;
+
+        let deadline = Instant::now() + Duration::from_secs(480);
+        while !result.is_file() {
+            ensure!(Instant::now() < deadline, "cross-device installer deadline");
+            owner.poll()?;
+            thread::sleep(Duration::from_millis(2));
+        }
+        self.verify_installed_state(owner, server_key, &result)
+    }
+
+    fn verify_installed_state(
+        &self,
+        owner: &QueryOwner,
+        server_key: &[u8],
+        result: &Path,
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        ensure!(
+            result.metadata()?.len() <= 16_384,
+            "LAN installer report size"
+        );
+        let report: Value = serde_json::from_slice(&fs::read(result)?)?;
+        let head = owner.rpc.node.controller.parent();
+        let state_root = super::hex(&head.state_root);
+        let block_hash = super::hex(&head.block_hash);
+        let prior_client = format!("{:x}", Sha256::digest(&self.client_key));
+        let server_identity = format!("{:x}", Sha256::digest(server_key));
+        let discovery = &report["discovery"];
+        let proof = &report["proof"];
+        let sources = discovery["authenticated_discovery_sources"]
+            .as_array()
+            .context("LAN installer discovery sources")?;
+        let records = discovery["signed_locator_candidates"]
+            .as_array()
+            .context("LAN installer locator evidence")?;
+        ensure!(
+            report["cold_started"] == true
+                && report["task_limited"] == true
+                && report["client_pid"].as_u64().is_some_and(|pid| pid > 0)
+                && discovery["transport_identity_sha256"]
+                    .as_str()
+                    .is_some_and(|identity| identity.len() == 64
+                        && identity != prior_client
+                        && identity != server_identity)
+                && discovery["transport_identity_sha256"] == report["local_transport_sha256"]
+                && sources.len() == 2
+                && sources[0] != sources[1]
+                && sources
+                    .iter()
+                    .any(|source| source.as_str() == Some(server_identity.as_str()))
+                && records.len() == 2
+                && sources.iter().all(|source| records.iter().any(|record| {
+                    record["transport_identity_sha256"] == *source
+                        && record["sequence"]
+                            .as_u64()
+                            .is_some_and(|sequence| sequence > 0)
+                }))
+                && proof["verification"] == "independent_uca_execution_replay"
+                && proof["height"] == head.height
+                && proof["state_version"] == head.state_version
+                && proof["state_root"] == state_root
+                && proof["block_hash"] == block_hash
+                && proof["receipt_batch_commitment"] == super::hex(&head.receipt_batch_commitment)
+                && owner.active_client().is_err(),
+            "remote installed Client did not prove new custody and verified state: {report}"
+        );
+        println!("cross-device Windows installation verified: {report}");
+        Ok(())
+    }
+
+    fn serve(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+        roaming_relay: bool,
+    ) -> Result<()> {
         use sha2::{Digest, Sha256};
         use std::{fs, io::ErrorKind, net::UdpSocket};
 
@@ -782,7 +962,7 @@ impl LanAcceptance {
         let client_identity = format!("{:x}", Sha256::digest(&self.client_key));
         let server_identity = format!("{:x}", Sha256::digest(server_key));
         let state_root = super::hex(&head.state_root);
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "native_gateway": gateway,
             "profile_sha256": profile_pin,
             "client_transport_sha256": client_identity,
@@ -791,13 +971,16 @@ impl LanAcceptance {
             "state_root": state_root,
             "state_version": head.state_version,
         });
+        if roaming_relay {
+            add_roaming_route_metadata(stage, &mut manifest)?;
+        }
         let manifest_draft = ready.with_extension("tmp");
         fs::write(&manifest_draft, serde_json::to_vec(&manifest)?)?;
         fs::rename(manifest_draft, ready)?;
 
         let deadline = Instant::now() + Duration::from_secs(480);
         let mut remote = None;
-        let mut observed_cut = false;
+        let mut cut_utc_ms = None;
         let mut buffer = [0; 65_536];
         while !results.is_file() {
             ensure!(
@@ -806,7 +989,12 @@ impl LanAcceptance {
             );
             owner.poll()?;
             let cut_active = cut.is_file() && !restore.is_file();
-            observed_cut |= cut_active;
+            if cut_active && cut_utc_ms.is_none() {
+                let observed =
+                    u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+                cut_utc_ms = Some(observed);
+                println!("isolated_native_cut_utc_ms={observed}");
+            }
             for _ in 0..128 {
                 let (size, source) = match external.recv_from(&mut buffer) {
                     Ok(value) => value,
@@ -831,7 +1019,7 @@ impl LanAcceptance {
             thread::sleep(Duration::from_millis(2));
         }
         ensure!(
-            observed_cut && restore.is_file() && remote.is_some(),
+            cut_utc_ms.is_some() && (roaming_relay || restore.is_file()) && remote.is_some(),
             "missing observed cut, restoration or remote traffic"
         );
         ensure!(
@@ -842,14 +1030,17 @@ impl LanAcceptance {
         let events = evidence["verified"]
             .as_array()
             .context("LAN verified events")?;
+        let transports = if roaming_relay {
+            ["native_novorudp", "iroh"].as_slice()
+        } else {
+            ["native_novorudp", "iroh", "native_novorudp"].as_slice()
+        };
         ensure!(
-            evidence["client_pid"].as_u64().is_some_and(|pid| pid > 0) && events.len() == 3,
-            "one remote Client must verify initial, fallback and restored state"
+            evidence["client_pid"].as_u64().is_some_and(|pid| pid > 0)
+                && events.len() == transports.len(),
+            "one remote Client must verify every required path"
         );
-        for (event, transport) in events
-            .iter()
-            .zip(["native_novorudp", "iroh", "native_novorudp"])
-        {
+        for (event, &transport) in events.iter().zip(transports) {
             ensure!(
                 event["event"] == "verified_state"
                     && event["transport"] == transport
@@ -865,7 +1056,87 @@ impl LanAcceptance {
                 "LAN Client verified a different route, state or identity: {event}"
             );
         }
-        println!("cross-device LAN cut and recovery verified: {evidence}");
+        if roaming_relay {
+            println!("cross-device relay query recovery verified: {evidence}");
+        } else {
+            println!("cross-device LAN cut and recovery verified: {evidence}");
+        }
+        Ok(())
+    }
+
+    fn serve_relay_preflight(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let stage = profile.parent().context("relay preflight stage")?;
+        let ready = stage.join("lan-ready.json");
+        let report = stage.join("relay-preflight.jsonl");
+        ensure!(
+            !ready.exists() && !report.exists(),
+            "stale relay preflight evidence"
+        );
+        let head = owner.rpc.node.controller.parent();
+        let mut manifest = serde_json::json!({
+            "profile_sha256": prepare_lan_profile(profile, None)?,
+            "client_transport_sha256": format!("{:x}", Sha256::digest(&self.client_key)),
+            "server_transport_sha256": format!("{:x}", Sha256::digest(server_key)),
+            "height": head.height,
+            "state_root": super::hex(&head.state_root),
+            "state_version": head.state_version,
+        });
+        add_roaming_route_metadata(stage, &mut manifest)?;
+        let draft = ready.with_extension("tmp");
+        fs::write(&draft, serde_json::to_vec(&manifest)?)?;
+        fs::rename(&draft, &ready)?;
+        let deadline = Instant::now() + Duration::from_secs(480);
+        while !report.is_file() {
+            ensure!(Instant::now() < deadline, "relay preflight deadline");
+            owner.poll()?;
+            thread::sleep(Duration::from_millis(2));
+        }
+        ensure!(
+            report.metadata()?.len() <= 65_536,
+            "relay preflight evidence size"
+        );
+        let original = fs::read_to_string(&report)?;
+        let events: Vec<Value> = original
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<std::result::Result<_, _>>()?;
+        let (first, rest) = events
+            .split_first()
+            .context("empty relay preflight report")?;
+        let (verified, seen) = rest.split_last().context("relay preflight state missing")?;
+        ensure!(
+            first["event"] == "starting"
+                && first["reopened_height"] == 0
+                && events.iter().all(|event| event["transport_identity_sha256"]
+                    == manifest["client_transport_sha256"])
+                && verified["event"] == "verified_state"
+                && verified["transport"] == "iroh"
+                && verified["height"] == manifest["height"]
+                && verified["state_root"] == manifest["state_root"]
+                && verified["state_version"] == manifest["state_version"]
+                && verified["peer_transport_sha256"] == manifest["server_transport_sha256"]
+                && verified["verified_nodes"].as_u64().is_some_and(|n| n > 0)
+                && verified["downloaded_nodes"] == verified["verified_nodes"]
+                && verified["locator_sequence"].as_u64().is_some_and(|n| n > 0)
+                && seen
+                    .iter()
+                    .any(|event| event["event"] == "verified_locator_accepted"
+                        && event["peer_transport_sha256"] == manifest["server_transport_sha256"]
+                        && event["locator_sequence"] == verified["locator_sequence"]),
+            "relay preflight did not verify the detached chain and its authenticated locator"
+        );
+        println!(
+            "fixed contact relay preflight verified, raw_stdout_sha256={:x}",
+            Sha256::digest(original.as_bytes())
+        );
         Ok(())
     }
 
@@ -988,6 +1259,18 @@ impl LanAcceptance {
         println!("cross-device discovery verified: {report}");
         Ok(())
     }
+}
+
+fn add_roaming_route_metadata(stage: &Path, manifest: &mut Value) -> Result<()> {
+    use novovm_network::{
+        product_directory::PeerSignedRelayRecordV1, product_service_lease::IrohServiceEndpointV1,
+    };
+    let record: PeerSignedRelayRecordV1 =
+        serde_json::from_slice(&std::fs::read(stage.join("local-secondary.json"))?)?;
+    let route = IrohServiceEndpointV1::from_record(&record)?.address;
+    manifest["isolated_iroh_direct"] = serde_json::to_value(route.direct)?;
+    manifest["approved_relays"] = serde_json::to_value(route.relays)?;
+    Ok(())
 }
 
 fn prepare_lan_profile(
@@ -1306,6 +1589,7 @@ fn test_installed_checkpoint_policy(
     key: &[u8],
 ) -> Result<()> {
     use crate::native_pipeline::consensus::statement::finalized_header;
+    use sha2::{Digest, Sha256};
     use std::{fs, process::Stdio};
     let head = owner.rpc.node.controller.parent();
     let set = owner.rpc.node.validators.clone();
@@ -1395,6 +1679,39 @@ fn test_installed_checkpoint_policy(
     aged["verification"]["minimum_finalized_checkpoint"]["valid_until_unix_ms"] =
         serde_json::json!(now - 1);
     fs::write(&stale, serde_json::to_vec(&aged)?)?;
+    let cold = stage.join("expired-checkpoint-cold-device");
+    let cold_entry = |path: &Path, action: &str, pinned: bool| -> Result<std::process::Output> {
+        let mut command = Command::new(binary);
+        command.arg(path).arg(action);
+        if pinned {
+            command.arg(format!("{:x}", Sha256::digest(fs::read(path)?)));
+        }
+        let output = command
+            .env("LOCALAPPDATA", &cold)
+            .env("XDG_STATE_HOME", &cold)
+            .output()?;
+        ensure!(!cold.exists(), "{action} created device custody or cache");
+        Ok(output)
+    };
+    ensure!(
+        cold_entry(&pinned, "check-installed-profile", true)?
+            .status
+            .success(),
+        "unexpired installed checkpoint failed offline preflight"
+    );
+    for (action, requires_pin) in [
+        ("check-installed-profile", true),
+        ("follow-state", true),
+        ("sync-state", false),
+    ] {
+        let rejected = cold_entry(&stale, action, requires_pin)?;
+        ensure!(
+            !rejected.status.success()
+                && String::from_utf8_lossy(&rejected.stderr)
+                    .contains("installed checkpoint policy expired"),
+            "{action} accepted expired installed checkpoint"
+        );
+    }
     let old = run(owner, &stale, &data)?;
     ensure!(
         !old.status.success()
@@ -1565,10 +1882,21 @@ fn test_installed_follow(
         has(records, "verified_state", "native_novorudp")
     })
     .context("initial authenticated native synchronization")?;
+    let cut_ms = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
     await_events(owner, false, &|records| {
         records.iter().any(|item| item["event"] == "retrying")
     })
     .context("lost native route with no available bootstrap records")?;
+    if signed_address {
+        use novovm_network::product_directory::PeerSignedRelayRecordV1;
+        owner
+            .until(|_| {
+                let current: PeerSignedRelayRecordV1 =
+                    serde_json::from_slice(&fs::read(live_seed)?)?;
+                Ok(current.issued_at_ms > cut_ms)
+            })
+            .context("wait for a signed locator issued after the isolated route cut")?;
+    }
     fs::copy(live_seed, &opened_seed)?;
     let recovered = if signed_address {
         let locator: novovm_network::product_directory::PeerSignedRelayRecordV1 =
@@ -1596,6 +1924,36 @@ fn test_installed_follow(
             ),
             "initial release route not observed"
         );
+        let recovered_index = records
+            .iter()
+            .position(|event| {
+                event["event"] == "verified_state"
+                    && event["native_peer_address"] == node_address
+                    && event["locator_sequence"].is_number()
+            })
+            .context("refreshed native state event missing")?;
+        let latest = &records[recovered_index];
+        let recovered_ms = latest["utc_unix_ms"].as_u64().context("state event time")?;
+        ensure!(
+            records[..recovered_index].iter().any(|event| {
+                event["event"] == "verified_locator_accepted"
+                    && event["peer_transport_sha256"] == latest["peer_transport_sha256"]
+                    && event["locator_sequence"] == latest["locator_sequence"]
+                    && event["locator_issued_at_ms"]
+                        .as_u64()
+                        .is_some_and(|issued| {
+                            issued > cut_ms
+                                && event["utc_unix_ms"].as_u64().is_some_and(|accepted| {
+                                    issued <= accepted && accepted <= recovered_ms
+                                })
+                        })
+                    && event["locator_expires_at_ms"]
+                        .as_u64()
+                        .is_some_and(|expiry| recovered_ms < expiry)
+            }),
+            "no verified post-cut locator matching the recovered route"
+        );
+        println!("isolated_native_cut_utc_ms={cut_ms}");
         records
     } else {
         await_events(owner, false, &|records| {
@@ -1668,7 +2026,7 @@ fn test_installed_follow(
         let result = Command::new(binary)
             .arg(profile)
             .arg("follow-state")
-            .arg(pin)
+            .arg(&pin)
             .env("LOCALAPPDATA", &device)
             .env("XDG_STATE_HOME", &device)
             .stdout(Stdio::null())
@@ -1699,6 +2057,75 @@ fn test_installed_follow(
         fs::write(&checkpoint, original)?;
         rejection?;
         println!("modified signed route checkpoint rejected on restart");
+
+        if let Some(archived_path) = std::env::var_os("NOVOVM_QUERY_COPY_EXPIRED_LOCATOR") {
+            use novovm_network::{
+                discovery_control::native_chain_query_address,
+                product_directory::PeerSignedRelayRecordV1,
+            };
+            let archived_bytes = fs::read(archived_path)?;
+            let archived: PeerSignedRelayRecordV1 = serde_json::from_slice(&archived_bytes)?;
+            let now = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+            ensure!(
+                archived.relay_public_key == key
+                    && archived.expires_at_ms <= now
+                    && native_chain_query_address(&archived)?
+                        .is_some_and(|address| address.ip().is_loopback() && address != old_address),
+                "expected an already expired signed native route for the detached server"
+            );
+            fs::rename(&opened_seed, stage.join("retained-fresh-bootstrap.json"))?;
+            let expired_checkpoint = serde_json::to_vec(&[&archived])?;
+            fs::write(&checkpoint, &expired_checkpoint)?;
+            let log = stage.join("follow-expired-locator.jsonl");
+            let stderr = stage.join("follow-expired-locator-stderr.log");
+            let mut restarted = IsolatedFollowChild(
+                Command::new(binary)
+                    .arg(profile)
+                    .arg("follow-state")
+                    .arg(&pin)
+                    .env("LOCALAPPDATA", &device)
+                    .env("XDG_STATE_HOME", &device)
+                    .stdout(Stdio::from(fs::File::create(&log)?))
+                    .stderr(Stdio::from(fs::File::create(&stderr)?))
+                    .spawn()?,
+            );
+            owner.until(|_| {
+                forward(true)?;
+                ensure!(
+                    restarted.0.try_wait()?.is_none(),
+                    "expired locator follower exited: {}",
+                    fs::read_to_string(&stderr).unwrap_or_default()
+                );
+                for line in fs::read_to_string(&log)?.split_inclusive('\n').filter(|line| line.ends_with('\n')) {
+                    let event: Value = serde_json::from_str(line)?;
+                    if event["event"] == "verified_state" {
+                        ensure!(
+                            event["height"] == tip.height
+                                && event["state_root"] == expected_root
+                                && event["transport"] == "native_novorudp"
+                                && event["peer_transport_sha256"] == serving_key
+                                && event["native_peer_address"] == old_address.to_string()
+                                && event["locator_sequence"].is_null()
+                                && event["transport_identity_sha256"] == identity,
+                            "expired locator recovery did not preserve authenticated state and custody: {event}"
+                        );
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
+            .context("expired locator prevented recovery to the fixed native route")?;
+            drop(restarted);
+            ensure!(
+                fs::read(&checkpoint)? == expired_checkpoint,
+                "expired signed sequence floor was discarded or replaced"
+            );
+            println!(
+                "expired signed locator sequence={} sha256={:x}; authenticated fixed NovoRUDP recovery with the same state and custody",
+                archived.sequence,
+                Sha256::digest(&archived_bytes)
+            );
+        }
     }
     Ok(())
 }

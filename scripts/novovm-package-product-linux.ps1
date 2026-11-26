@@ -83,8 +83,8 @@ function Get-WindowsClientJoinInputs([string]$Path, [string]$ProfileSha256, [str
     throw 'The issued Client profile must pin the packaged Windows AOEM and chain verification.'
   }
   $bootstrap = @($profile.seeds)
-  if ($bootstrap.Count -ne 2 -or @($bootstrap | Where-Object { !$_.locator -and !$_.contact }).Count) {
-    throw 'The issued Client profile requires two bootstrap sources with a locator or contact.'
+  if ($bootstrap.Count -ne 2 -or @($bootstrap | Where-Object { !$_.contact }).Count) {
+    throw 'The issued Client profile requires two pinned bootstrap contacts that survive locator expiry.'
   }
   $seeds = @($bootstrap | Where-Object locator | ForEach-Object locator)
   if (@($seeds | Sort-Object -Unique).Count -ne $seeds.Count -or
@@ -970,16 +970,25 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
         throw "Issued Client discovery input changed during packaging: $($inputFile.path)"
       }
     }
+    $stagedProfile = Join-Path $packagePath $clientJoinInputs[0].path
+    & $executables['novovm-native-client'] $stagedProfile check-installed-profile $WindowsClientProfileSha256 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw 'Native Client rejected the issued discovery profile; no package was published.'
+    }
   }
-  $entries = Get-ChildItem -LiteralPath $packagePath -File -Recurse |
-    Where-Object { $_.Name -ne "CHECKSUMS.sha256" -and $_.Name -ne "release-manifest.json" } |
+  # Only the outer inventory and manifest are self-referential. Runtime
+  # distributions may carry their own checksum tables as regular artifacts.
+  $outerInventory = Join-Path $packagePath 'CHECKSUMS.sha256'
+  $outerManifest = Join-Path $packagePath 'release-manifest.json'
+  $entries = Get-ChildItem -LiteralPath $packagePath -File -Recurse -Force |
+    Where-Object { $_.FullName -notin @($outerInventory, $outerManifest) } |
     ForEach-Object {
       $relative = $_.FullName.Substring($packageRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace([IO.Path]::DirectorySeparatorChar, [char]'/')
       $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
       [PSCustomObject]@{ path = $relative; sha256 = $hash; bytes = $_.Length }
     } | Sort-Object path
   $checksumLines = @($entries | ForEach-Object { "$($_.sha256)  $($_.path)" })
-  [IO.File]::WriteAllText((Join-Path $packagePath "CHECKSUMS.sha256"),
+  [IO.File]::WriteAllText($outerInventory,
     [string]::Join("`n", $checksumLines) + "`n", [Text.UTF8Encoding]::new($false))
   $endCommit = (git rev-parse HEAD).Trim()
   if ($LASTEXITCODE -ne 0 -or $endCommit -ne $commit) {
@@ -1048,7 +1057,7 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
     signed_evidence_included = $false
     note = "Generate signed runtime evidence after deployment; this build manifest is checksum-only."
     artifacts = $entries
-  } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $packagePath "release-manifest.json")
+  } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 $outerManifest
   Publish-LinuxPackage $repo $packagePath $destination -Replace:$Force
   Write-Host "Unified $platform artifacts assembled, not installed or started: $destination"
 }

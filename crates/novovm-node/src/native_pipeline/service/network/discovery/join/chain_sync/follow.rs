@@ -11,9 +11,8 @@ const RECOVER_NATIVE: Duration = Duration::from_secs(6);
 const QUERY_BUDGET: Duration = Duration::from_secs(20);
 
 pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
-    let (profile, identity) = pinned_installed_profile(path, profile_sha256)?;
-    let (domain, anchor) = profile.verification_domain()?;
-    validate_parent(&anchor)?;
+    let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
+    let identity = local_identity(&installed_state_base()?, profile_base(path)?, &profile)?;
     let chain = open_checkpoint(&profile, &identity, &domain, anchor)?;
     let cache = StateCache::open(chain.root.join("state-nodes"))?;
     let locators = Locators::open(chain.root.join("peer-locators.json"), &profile, &identity)?;
@@ -95,7 +94,7 @@ impl Follower {
                 if let Ok(report) =
                     collect(active, self.identity.clone(), &self.profile, seeds).await
                 {
-                    self.locators.observe(report)?;
+                    self.observe_locators(report)?;
                     if let Some(discovered_native) = self.probe_native(failed.as_ref()).await {
                         native = Some(discovered_native);
                         continue;
@@ -160,7 +159,10 @@ impl Follower {
                 .locators
                 .records
                 .get(&peer.transport_key)
-                .is_some_and(|r| native_chain_query_address(r).ok().flatten().is_some())
+                .is_some_and(|record| {
+                    record.expires_at_ms > now
+                        && native_chain_query_address(record).ok().flatten().is_some()
+                })
             {
                 continue;
             }
@@ -291,7 +293,7 @@ impl Follower {
                         )
                         .await
                         {
-                            self.locators.observe(report)?;
+                            self.observe_locators(report)?;
                         }
                     }
                     if let Some(native) = self.probe_native(None).await {
@@ -331,8 +333,22 @@ impl Follower {
         Ok(Some(state))
     }
 
+    fn observe_locators(&mut self, report: DiscoveryReport) -> Result<()> {
+        for accepted in self.locators.observe(report)? {
+            self.emit(serde_json::json!({
+                "event":"verified_locator_accepted",
+                "peer_transport_sha256":accepted.peer_transport_sha256,
+                "locator_sequence":accepted.sequence,
+                "locator_issued_at_ms":accepted.issued_at_ms,
+                "locator_expires_at_ms":accepted.expires_at_ms,
+            }))?;
+        }
+        Ok(())
+    }
+
     fn emit(&self, mut event: serde_json::Value) -> Result<()> {
         event["transport_identity_sha256"] = fingerprint(self.identity.public_key()).into();
+        event["utc_unix_ms"] = wall_ms()?.into();
         let mut stdout = std::io::stdout().lock();
         writeln!(stdout, "{event}")?;
         stdout.flush()?;
