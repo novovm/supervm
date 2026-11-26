@@ -205,6 +205,14 @@ C 将 42 份区块头证明和 19 份状态文件逐件与独立归档核对，6
 
 使用 `python scripts/tests/verify-native-dual-discovery.py read-transfer --help` 复核关停见证、备用启动前的逐文件摘要、Client 进程原件和最终缓存。该模式使用本机记录的关停回执接收顺序，以及同一时钟上的备用启动、签发和验真事件。工具核对初始和备用读取方公钥都未预置，首次目标验真由备用方供给，并按固定的独立归档索引重算每份最终文件。原 Client 日志 SHA-256 `f30c3a001ac9da87ef69e294d2665e02e3c4edc2ada17ed0b0759849fc434271`，部分缓存见证 SHA-256 `bdfeb3eb6059b583dc4151932ae7e614c191b3c956ec7656164bca76ab5602d8`，独立核验报告 SHA-256 `793381bc3a6c8737a59d83ab3ae71fed6781aa70606cd85a0d470d0330d31287`。独立生产上游和物理换网路径另需现场证据。
 
+### 781605ba 固定候选与异地入口预检
+
+A 使用正式打包入口完成 Windows x64 基础候选。ZIP 为 169,611,274 字节，回读核对 94 项清单载荷及 2 项外层元数据，覆盖 10 个正式二进制、SCM existing 合同及固定 AOEM 运行时资格。ZIP SHA-256 `22ce9c4179abca66111dcaedfea2bec094a029adbc1f7e29795424eda0ee5c17`，清单 `5dfe159ed7d79d43374069715773dc7e4309593abd3781baf955e2bb786638f6`，Client `8d38d2b00d9cc1c6a84ed01d74aec10be0ef653d6a637b67a93fe2eea5b3ef23`。外置隔离配置的包内 Client 预检退出 0。20:34:16 至 20:34:18 UTC，用同一包内 Client 和 AOEM 打开原高度 42 隔离缓存，287 个 UTF-16 单元的定位文件成功发布，回环读取启动，退出码 0，退出后定位文件已清理。原 stdout SHA-256 `8b9b9a7726fe6dbd4508fb6d0df4f59f31ac9ebae1e65c5d460f220a356358bd`。基础包的生产信任配置等待获准的正式双入口。
+
+C 在 Ubuntu 24.04 以仓库固定 Rust 1.94.0、固定 AOEM SHA-256 `21cf190ede73c2dc3040cf5ca51502a7bf56d1aeffbf7baeb31afdd5f71d0231` 运行同一标准入口。第一次构建 `novovm-product-relay` 遇 LLVM `SIGILL` 终止，原配置重试后生成 Linux x86-64 基础包。回读压缩包核对 95 项载荷和 2 项外层元数据，包内 Client 与 AOEM 对原链配置离线预检退出 0。包 SHA-256 `690081c693ad944021a7f98f0344cf80e3fea6b8e36672420826748845d4ce46`，清单 `21385f720a4553266282a7b8b17316608a47cb715b1cf43dc53a09555d5ecae9`，Client `bf7ebf5f18907b008a1d70ebded2af984aadd0881803070a32e6bee911f3317c`。B 当前为 x86-64、glibc 2.39，包内 31 个 ELF 的共享库和版本需求均在 B 的已装系统库中匹配。此项为静态兼容性证据。B 的现役进程保持运行。
+
+C 从 B 只读取得原链 `91129655606029` 的有效签名定位序号 47937，并在到期前核对签名及链域。定位中的 Iroh 端点身份与已固定联系点一致。20:35:40.297 至 20:35:51.632 UTC，C 从 Ubuntu 24.04 WSL 使用 `781605ba` 构建的 release Client，对 B 的公布地址仅尝试一次直连发现。Client 使用现有安装器的本机托管逻辑生成隔离身份，配置关闭中继且没有原生查询路由。QUIC 建立前 `carrier connect` 超时，退出 1，stderr SHA-256 `031215e71598199c4bfbd54b6e579071eb6015c42b546613527e2225d6dbfe69`。内层路由指向 WSL 的 eth0 及 NAT 网关，实际外层路径和超时位置仍待取证。B 仍在线并监听原 UDP 端口。
+
 延迟安装预检与状态跟随复用检查点的 UTC 到期判定。C 使用包含原链高度 2 检查点的同一过期归档配置复验，旧版预检通过，启动后因到期退出并留下隔离身份目录。新版在 `check-installed-profile`、`follow-state` 和 `sync-state` 三处均以退出码 1 拒绝，均未创建本机身份目录。同一高度和区块哈希的有效期内配置通过离线预检。过期配置 SHA-256 为 `c990758d539b470349e78d54637c68c69943ed0f4feb41273a871159b221288d`，新版离线对照摘要为 `26b5370c2ac84b89c3762268c643a8cff0d220844e15eaf12707b0d7fb4843d9`。
 
 C 用 LocalService 隔离原库复跑 `NOVOVM_QUERY_COPY_CHECKPOINT_POLICY=1`，有效配置完成高度 2 状态同步。错误检查点哈希在空设备和已有缓存上均被拒绝，检查点高度未到时保持等待。Windows 组装及安装预检失败传播回归通过。原库副本验收日志 SHA-256 为 `889366d1402d54fb8c5672874e47079193fe2177e24e4d8204d30a74d772697e`。
