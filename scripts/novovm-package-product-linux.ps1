@@ -873,6 +873,10 @@ XDG_CONFIG_HOME, and the Client retains custody and checkpoints under XDG_STATE_
 A different release or existing unit requires an explicit cutover: review the
 old unit, disable it with systemctl --user disable --now novovm-native-client.service,
 remove only the reviewed unit file and reload the user manager before installing.
+Keep the private XDG_DATA_HOME/NOVOVM/client-credentials directory with the
+device's backups. The installer creates its owner-key on first install and
+reuses it when opening the protected local transport identity. Restoring a
+device requires both that credential and its original XDG_STATE_HOME state.
 Preserve the local state and old release for recovery. Logout/boot availability
 depends on the user's systemd session and the host's existing linger policy.
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "README.md")

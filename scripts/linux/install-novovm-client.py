@@ -8,6 +8,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -116,7 +117,46 @@ def unit_arg(value):
     return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
 
 
-def unit_text(release, pin, state):
+def provision_owner_credential(directory, state):
+    # This is the local wrapping key for Linux transport custody, shared across
+    # installs by this user. It is separate from the immutable release.
+    plain(directory).mkdir(mode=0o700, parents=True, exist_ok=True)
+    meta = directory.stat()
+    require(
+        meta.st_uid == os.getuid() and stat.S_IMODE(meta.st_mode) == 0o700,
+        f"owner credential directory must be private (0700): {directory}",
+    )
+    key = plain(directory / "owner-key")
+    if not key.exists():
+        discovery = plain(state / "NOVOVM/native-discovery")
+        require(
+            not any(discovery.glob("*/transport.protected"))
+            and not any(discovery.glob("*/transport.sha256")),
+            f"existing transport identity requires the original owner credential at {key}",
+        )
+        with tempfile.NamedTemporaryFile(dir=directory, prefix=".owner-") as draft:
+            draft.write(os.urandom(32))
+            draft.flush()
+            os.fsync(draft.fileno())
+            try:
+                os.link(draft.name, key)
+            except FileExistsError:
+                pass
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    meta = key.lstat()
+    require(
+        stat.S_ISREG(meta.st_mode) and meta.st_uid == os.getuid()
+        and not meta.st_mode & 0o077 and meta.st_size == 32
+        and key.read_bytes() != bytes(32),
+        f"existing owner credential must be a private 32-byte file: {key}",
+    )
+
+
+def unit_text(release, pin, state, credential_dir):
     # ':' disables systemd command-line environment expansion, including literal $ in XDG paths.
     argv = " ".join(
         unit_arg(v) for v in (":" + str(release / CLIENT), release / PROFILE, "follow-state", pin)
@@ -125,6 +165,7 @@ def unit_text(release, pin, state):
     return (
         f"[Unit]\nDescription=NOVOVM verified state follower\n\n[Service]\nType=exec\n"
         f"Environment={unit_arg('XDG_STATE_HOME='+str(state))}\n"
+        f"Environment={unit_arg('CREDENTIALS_DIRECTORY='+str(credential_dir))}\n"
         f"Environment={unit_arg('NOVOVM_AOEM_PLUGIN_DIR='+str(plugin_dir))}\nUMask=0077\nExecStart={argv}\n"
         "Restart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=default.target\n"
     )
@@ -217,10 +258,12 @@ def main():
     os.umask(0o077)
     root = plain(args.package_root.absolute())
     files = release_files(root, pin)
-    dest = plain(base_dir("XDG_DATA_HOME", ".local/share") / "NOVOVM/client-releases" / pin)
+    data = base_dir("XDG_DATA_HOME", ".local/share") / "NOVOVM"
+    dest = plain(data / "client-releases" / pin)
+    credential_dir = plain(data / "client-credentials")
     unit = plain(base_dir("XDG_CONFIG_HOME", ".config") / "systemd/user" / UNIT)
     state = base_dir("XDG_STATE_HOME", ".local/state")
-    text = unit_text(dest, files[PROFILE], state)
+    text = unit_text(dest, files[PROFILE], state, credential_dir)
     if not args.plan:
         dest.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         lock_path = plain(dest.parent / ".install.lock")
@@ -228,6 +271,7 @@ def main():
             fcntl.flock(lock, fcntl.LOCK_EX)
             check_unit(unit, text)
             install_release(root, dest, files)
+            provision_owner_credential(credential_dir, state)
             if not unit.exists():
                 unit.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 with tempfile.NamedTemporaryFile(dir=unit.parent, mode="w") as draft:

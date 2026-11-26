@@ -132,10 +132,18 @@ esac
     def test_repeat_and_upgrade_ownership(self):
         plan = self.invoke()
         dest = Path(plan["release"])
+        credential = dest.parents[1] / "client-credentials/owner-key"
+        self.assertEqual(credential.parent.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(credential.stat().st_mode & 0o777, 0o600)
+        original_credential = credential.read_bytes()
+        self.assertEqual(len(original_credential), 32)
+        self.assertNotEqual(original_credential, bytes(32))
         self.assertEqual((dest / CORE).read_bytes(), self.entries[CORE])
         self.assertTrue((dest / "aoem/linux/core/plugins/plugin.so").is_file())
         unit = self.unit.read_text()
         self.assertIn("follow-state", unit)
+        self.assertIn("CREDENTIALS_DIRECTORY=", unit)
+        self.assertNotIn(original_credential.hex(), unit)
         self.assertIn(sha(self.entries[PROFILE]), unit)
         self.assertIn("WantedBy=default.target", unit)
         self.assertIn("data %% 1", unit)
@@ -152,6 +160,7 @@ esac
         (state / "identity-sentinel").write_bytes(b"existing user state")
         first_inode = self.unit.stat().st_ino
         self.invoke()
+        self.assertEqual(original_credential, credential.read_bytes())
         self.assertEqual(first_inode, self.unit.stat().st_ino)
         self.assertEqual((state / "identity-sentinel").read_bytes(), b"existing user state")
         self.assertNotIn("restart", self.log.read_text())
@@ -162,6 +171,26 @@ esac
         new_pin = self.issue()
         self.assertIn("another owner, release or settings", self.invoke(pin=new_pin, ok=False))
         self.assertEqual(unit, self.unit.read_text())
+
+    def test_missing_or_invalid_owner_credential_preserves_existing_identity(self):
+        plan = self.invoke("--plan")
+        credential = Path(plan["release"]).parents[1] / "client-credentials/owner-key"
+        self.assertFalse(credential.exists())
+        state = Path(plan["state_home"]) / "NOVOVM/native-discovery/domain"
+        state.mkdir(mode=0o700, parents=True)
+        identity = state / "transport.protected"
+        identity.write_bytes(b"existing protected identity")
+        self.assertIn("original owner credential", self.invoke(ok=False))
+        self.assertFalse(self.unit.exists())
+        self.assertFalse(credential.exists())
+        credential.write_bytes(bytes(32))
+        credential.chmod(0o600)
+        self.assertIn("private 32-byte", self.invoke(ok=False))
+        self.assertEqual(bytes(32), credential.read_bytes())
+        credential.write_bytes(os.urandom(32))
+        credential.chmod(0o644)
+        self.assertIn("private 32-byte", self.invoke(ok=False))
+        self.assertEqual(b"existing protected identity", identity.read_bytes())
 
     def test_reject_foreign_and_modified_installed_files(self):
         self.env["FOREIGN_FRAGMENT"] = "/etc/systemd/user/" + UNIT
