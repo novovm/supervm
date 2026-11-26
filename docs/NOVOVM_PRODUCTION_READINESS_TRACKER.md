@@ -225,6 +225,18 @@ C 从 B 只读取得原链 `91129655606029` 的有效签名定位序号 47937，
 
 C 用 LocalService 隔离原库复跑 `NOVOVM_QUERY_COPY_CHECKPOINT_POLICY=1`，有效配置完成高度 2 状态同步。错误检查点哈希在空设备和已有缓存上均被拒绝，检查点高度未到时保持等待。Windows 组装及安装预检失败传播回归通过。原库副本验收日志 SHA-256 为 `889366d1402d54fb8c5672874e47079193fe2177e24e4d8204d30a74d772697e`。
 
+### 3cc196d2 Windows 与 Linux 基础候选
+
+A 和 C 从 `3cc196d2042fff7513f3556c4576158c418c49ae` 用仓库固定 Rust 1.94.0 和标准打包脚本分别生成 Windows 与 Linux x86-64 基础候选，各包含 10 个正式二进制。生产双入口配置待现场验收后签发。
+
+A 的 ZIP 为 169,619,186 字节，回读核对 94 项清单载荷及 2 项外层元数据，SCM 合同为 `windows-scm-existing-v1`。ZIP SHA-256 `95a5661c7be1ec46b9a6c4533391a8b4004353bde469083bd018a819fbeb839d`，清单 `c7e7ed5102c79a830f7ff71a78c2f1fff3344d6ce8a82bc7024cfad753251d62`，包内 Client `ca5c1da09a5e7c50da078ca351c989d4a84f4f3a7739c5e71f37f396fc59da25`。用隔离配置执行包内预检，退出 0。
+
+C 的 tar.gz 为 409,935,229 字节，回读核对 95 项清单载荷及 2 项外层元数据。压缩包 SHA-256 `4c2754aeece3f312ba13ea0d03626e4981e1b869e515ce1306173c35e797e41f`，清单 `3e0302a6055e061022e619f12764efbcc195e49cdc4386b1726d91d98a0826a2`，包内 Client `c4d49d05ef9964e253d7a9d1005b3b1391f0bc0c8d3452383636ab7b940ecee6`。包内 31 个 ELF 的共享库和符号版本需求均与 B 实机只读复查的系统库匹配，静态报告 SHA-256 `f3a522fb508e2817f2aec7d0262a41eed3bed823f966ec3931de77fe680afb12`。
+
+C 使用包内 Client 与 AOEM 对原链配置离线预检，并重放高度 1、2 的原执行归档。区块哈希、状态根和回执承诺与原认证结果逐项一致。篡改的 QC 签票和状态见证在各自校验步骤被拒绝。离线报告 SHA-256 `262090c33b63dc2fe1c12643ec15b3366307944c17baf7e113831bc5d02585dd`。
+
+Windows 和 Linux 分别用包内 Client 通过 `clean_device_recovers_retired_address_before_signed_locator_expires`。八个旧地址全部无法连通，签名定位仍在有效期内，同一个 Iroh 端点和 NOVONET 身份经安装配置中的固定地址完成认证并取得序号 7。回归核对运行中续查、冷启动和重开后身份一致性。Windows 与 Linux 原始日志 SHA-256 分别为 `9e1864aacbdc82ae5c59a83668758a897195462a956aea0da43df0cc3cf8bef0` 和 `9dc42254ded9afccf5e3075cd46ba12456a2b5b4a714ca32fcde88ecd96c7848`。验收使用回环，B 和现役 C 保持在线。
+
 ### B 公布 UDP 入口取证
 
 B 现役节点监听 IPv4 UDP 42050。现役流量的报文头显示该端口已有双向通信。B 主机防火墙的有效 IPv4 INPUT 策略默认丢弃，允许已建立和相关连接。盘点时未见覆盖 UDP 42050 的新入站放行。C 的 Linux release Client 在 20:44:26 至 20:44:37 UTC 再次于 QUIC 建立前超时退出。该轮宽过滤抓包先被现役流量填满，无法将 Client 尝试对应到已抓报文。
