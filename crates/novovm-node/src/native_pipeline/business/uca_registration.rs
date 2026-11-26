@@ -3,16 +3,123 @@ use super::{
     record_pages,
     uca_spend_state::{identity_prefix, identity_record_changes},
 };
-use crate::native_pipeline::state::{
-    frontier::{DeclaredAccess, OwnedStateInput},
-    tree::StateChange,
+use crate::native_pipeline::{
+    execution::plan::{
+        BatchContext, BatchPlan, OwnedBatchInput, PlanBudget, UnpublishedBatchEffects,
+    },
+    state::{
+        frontier::{DeclaredAccess, OwnedStateInput},
+        tree::{NodeHash, StateChange},
+    },
 };
 use anyhow::{ensure, Result};
 use novovm_adapter_api::unified_account::{
     UcaAccount, UcaKeyAlgo, UcaKeyProofType, UcaPrimaryKeyBinding, UcaStatus,
 };
-use novovm_exec::uca_registration::VerifiedUcaRegistrationV1;
-use novovm_protocol::uca_registration::UcaRegistrationIntentV1;
+use novovm_exec::{uca_registration::VerifiedUcaRegistrationV1, AoemExecFacade};
+use novovm_protocol::uca_registration::{SignedUcaRegistrationV1, UcaRegistrationIntentV1};
+use sha2::{Digest, Sha256};
+
+pub const REGISTRATION_SEMANTIC_VERSION: u32 = 5;
+
+pub fn program_id() -> NodeHash {
+    Sha256::digest(b"novovm/uca/native-identity-and-application/v5").into()
+}
+
+pub fn receipt_codec() -> NodeHash {
+    Sha256::digest(b"novovm/uca/native-identity-and-application/receipt/v5").into()
+}
+
+pub fn effect_contract(policy: &super::direct_nov_fee::DirectNovFeePolicy) -> Result<NodeHash> {
+    let mut hash = Sha256::new();
+    hash.update(b"novovm/uca/native-identity-and-application/effects/v5\0");
+    hash.update(super::uca_application::application_effect_contract_v1(
+        policy,
+    )?);
+    hash.update(program_id());
+    hash.update(receipt_codec());
+    hash.update(b"NUIR1-NUIE1;MLDSA65-self-derived-root;one-registration;all-identity-pages-absent;no-spend-authority\0");
+    Ok(hash.finalize().into())
+}
+
+pub(crate) fn is_profile(context: &BatchContext) -> bool {
+    context.business_program == program_id()
+        && context.semantic_version == REGISTRATION_SEMANTIC_VERSION
+        && context.receipt_codec == receipt_codec()
+}
+
+pub(crate) fn receipt(proof_id: NodeHash) -> Vec<u8> {
+    let mut encoded = b"NUIE\x01".to_vec();
+    encoded.extend_from_slice(&proof_id);
+    encoded
+}
+
+/// A signature-checked registration plan bound to the resolved business profile.
+pub struct RegistrationPlan {
+    plan: BatchPlan,
+    proof: VerifiedUcaRegistrationV1,
+}
+
+impl RegistrationPlan {
+    pub fn prepare(
+        raw: Vec<u8>,
+        context: BatchContext,
+        policy: &super::direct_nov_fee::DirectNovFeePolicy,
+        budget: PlanBudget,
+        owner: &AoemExecFacade,
+    ) -> Result<Self> {
+        ensure!(
+            is_profile(&context) && context.effect_contract == effect_contract(policy)?,
+            "registration business contract mismatch"
+        );
+        ensure!(
+            raw.len() <= budget.transaction_bytes && raw.len() <= budget.body_bytes,
+            "registration body exceeds budget"
+        );
+        let signed = SignedUcaRegistrationV1::decode(&raw)?;
+        let proof = owner.verify_uca_registration_v1(
+            signed,
+            context.chain_id,
+            context.genesis_config_commitment,
+            context.height,
+        )?;
+        let plan = BatchPlan::new(
+            context,
+            vec![raw],
+            registration_declarations(proof.intent())?,
+            budget,
+        )?;
+        Ok(Self { plan, proof })
+    }
+
+    pub fn plan(&self) -> &BatchPlan {
+        &self.plan
+    }
+
+    pub fn execute(self, input: OwnedBatchInput) -> Result<ExecutedRegistration> {
+        ensure!(
+            input.plan().commitment() == self.plan.commitment(),
+            "registration witness belongs to a different plan"
+        );
+        let changes = register_identity(&self.proof, input.state_input(), input.plan().context())?;
+        Ok(ExecutedRegistration {
+            effects: input.stage(&changes)?,
+            receipt: receipt(self.proof.proof_id()),
+        })
+    }
+}
+
+/// The archive may only accept a complete, signature-checked registration effect.
+pub struct ExecutedRegistration {
+    effects: UnpublishedBatchEffects,
+    receipt: Vec<u8>,
+}
+
+impl ExecutedRegistration {
+    pub(crate) fn parts(self) -> (UnpublishedBatchEffects, Vec<u8>) {
+        (self.effects, self.receipt)
+    }
+}
 
 pub fn registration_declarations(intent: &UcaRegistrationIntentV1) -> Result<Vec<DeclaredAccess>> {
     let prefix = identity_prefix(intent.chain_id, &intent.genesis, intent.identity.as_str())?;

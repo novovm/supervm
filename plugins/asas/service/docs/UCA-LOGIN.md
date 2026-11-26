@@ -128,6 +128,12 @@ The native business layer prepares the bounded `/identity/` changes after checki
 
 Existing validator operators can acknowledge the upgrade work against the same chain ID, genesis and current validator-set commitment. After an executable upgrade is built, use the existing quorum rules and agree on one exact parent checkpoint and activation boundary. No activation height or validator signatures have been collected. `validator-F` is the ASAS consumer and does not acquire a validator vote by registering a UCA.
 
+The `round_bft::wire::activation` verifier uses the existing validator set and weighted quorum. Its separately framed statement binds the first upgraded block's height, original chain/genesis/protocol, parent block and decision, parent state and receipt roots, and both business profiles. Consent is not a block vote or a recovered canonical parent proof. There is no operator signing entry or live activation from this verifier alone.
+
+Registration candidates use a separate V5 profile and `NVCAND06` archive. Candidate reconstruction must verify the original signed command and recompute the identity effect and commitments from the pinned parent. The archive verifier checks the exact command receipt and access declarations and supplies no asset projection. The original live ingress, quorum activation owner and cold journal still need V5 wiring before a validator can vote on these candidates.
+
+`validator-F` confirmed that its existing protected root derives the prepared UCA name. Keep that original selector. For coordination, current validator operators should report the same finalized checkpoint and deployed binary identity once the full upgrade candidate is available. Start signing only after the exact transition is reviewed on each validator. Keep the current services on their existing policy during preparation.
+
 ### F preparation and C follow-up
 
 F has generated independent protected ML-DSA-65 transport and identity-purpose

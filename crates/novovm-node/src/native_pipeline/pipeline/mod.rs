@@ -12,6 +12,8 @@
 mod admission;
 mod authentication;
 mod compute;
+#[cfg(test)]
+pub(crate) use compute::tests::policy as test_fee_policy;
 mod driver;
 mod seed;
 pub use crate::native_pipeline::ingress::batch::{AdmissionInput, AdmissionRow};

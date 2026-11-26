@@ -56,8 +56,12 @@ fn captured(changes: &[StateChange], access: &IdentityAccessV1) -> (NodeHash, Ow
 #[ignore = "requires explicitly qualified AOEM library"]
 fn native_registration_creates_one_original_identity_without_overwriting() -> Result<()> {
     use crate::native_pipeline::{
-        business::uca_registration::{register_identity, registration_declarations},
-        execution::plan::BatchContext,
+        business::uca_registration::{
+            self as registration, register_identity, registration_declarations, RegistrationPlan,
+        },
+        execution::plan::{BatchContext, PlanBudget},
+        persistence::{PacketBudget, PreparedCandidate, StoredCandidate},
+        pipeline::test_fee_policy,
     };
     use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade};
     use novovm_protocol::uca_registration::{
@@ -144,6 +148,60 @@ fn native_registration_creates_one_original_identity_without_overwriting() -> Re
             .updated_at_ms,
         20
     );
+    let mut registration_context = context;
+    let policy = test_fee_policy();
+    registration_context.business_program = registration::program_id();
+    registration_context.semantic_version = registration::REGISTRATION_SEMANTIC_VERSION;
+    registration_context.receipt_codec = registration::receipt_codec();
+    registration_context.effect_contract = registration::effect_contract(&policy)?;
+    let budget = PlanBudget {
+        transactions: 1,
+        transaction_bytes: 8192,
+        body_bytes: 8192,
+        access_keys: 33,
+    };
+    let capture = CaptureBudget {
+        keys: 33,
+        nodes: 2048,
+        bytes: 2 * 1024 * 1024,
+    };
+    let reader = Memory(original_tree.nodes().clone());
+    let raw = signed.encode()?;
+    assert!(RegistrationPlan::prepare(raw.clone(), context, &policy, budget, &owner).is_err());
+    let plan = RegistrationPlan::prepare(raw, registration_context, &policy, budget, &owner)?;
+    let candidate_input = plan.plan().capture(&reader, capture)?;
+    let packet = PreparedCandidate::from_registration_executed(
+        plan.execute(candidate_input)?,
+        PacketBudget::default(),
+    )?;
+    assert_eq!(packet.state_root(), published_root);
+    let stored = StoredCandidate::load(packet.candidate_id(), PacketBudget::default(), |keys| {
+        Ok(keys
+            .iter()
+            .map(|key| packet.records().get(key).cloned())
+            .collect())
+    })?
+    .expect("registration candidate archive");
+    assert!(packet.matches(&stored));
+    assert!(stored.receipt_view(0).is_err());
+    let mut tampered = stored.raw_transactions()[0].clone();
+    *tampered.last_mut().unwrap() ^= 1;
+    assert!(
+        RegistrationPlan::prepare(tampered, *stored.context(), &policy, budget, &owner).is_err()
+    );
+    let replay_plan = RegistrationPlan::prepare(
+        stored.raw_transactions()[0].clone(),
+        *stored.context(),
+        &policy,
+        budget,
+        &owner,
+    )?;
+    let replay_input = replay_plan.plan().capture(&reader, capture)?;
+    let replayed = PreparedCandidate::from_registration_executed(
+        replay_plan.execute(replay_input)?,
+        PacketBudget::default(),
+    )?;
+    assert!(replayed.matches(&stored));
     context.parent_state_root = published_root;
     context.parent_height = 2;
     context.height = 3;

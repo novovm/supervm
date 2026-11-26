@@ -33,7 +33,9 @@ const DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND01";
 const UCA_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND03";
 const APPLICATION_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND04";
 const V4_ASSET_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND05";
+const REGISTRATION_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND06";
 mod application;
+mod registration;
 mod uca;
 const MARKER_MAGIC: &[u8; 8] = b"NVCOMP01";
 const MARKER_BYTES: usize = 8 + 32 + 8 + 4 + 32;
@@ -116,6 +118,26 @@ struct Resources {
 }
 
 impl PreparedCandidate {
+    pub fn from_registration_executed(
+        batch: crate::native_pipeline::business::uca_registration::ExecutedRegistration,
+        budget: PacketBudget,
+    ) -> Result<Self> {
+        let (effects, receipt) = batch.parts();
+        let receipts = [receipt];
+        let root = effects.update().root();
+        let receipt_commitment = receipt_hash(effects.context().receipt_codec, &receipts);
+        prepare_with_spend(
+            effects.plan(),
+            root,
+            &receipts,
+            effects.update().nodes(),
+            receipt_commitment,
+            statement_hash(effects.plan_commitment(), root, receipt_commitment),
+            budget,
+            None,
+        )
+    }
+
     /// Only complete typed application execution enters; never caller patches.
     /// Persisting this candidate still does not publish or authorize a login.
     pub fn from_application_executed(
@@ -404,8 +426,9 @@ impl StoredCandidate {
     /// construct an executed batch, durable candidate or signing permission.
     pub fn receipt_view(&self, index: usize) -> Result<ReceiptView> {
         ensure!(
-            !application::is_profile(self.context()) || self.spend_outputs.is_some(),
-            "application receipts are not asset receipts"
+            !(application::is_profile(self.context()) || registration::is_profile(self.context()))
+                || self.spend_outputs.is_some(),
+            "non-asset receipt cannot be projected as an asset receipt"
         );
         let bytes = self
             .receipts
@@ -563,6 +586,7 @@ fn prepare_with_spend(
     spend_outputs: Option<&[SpendOutput]>,
 ) -> Result<PreparedCandidate> {
     let v4 = application::is_profile(plan.context());
+    let registration = registration::is_profile(plan.context());
     let is_uca = spend_outputs.is_some();
     ensure!(
         v4 || uca::is_profile(plan.context()) == is_uca,
@@ -573,7 +597,9 @@ fn prepare_with_spend(
         "candidate node count exceeds budget"
     );
     let mut document = Encoder::new(budget.max_bytes);
-    document.put(if v4 && is_uca {
+    document.put(if registration {
+        REGISTRATION_DOCUMENT_MAGIC
+    } else if v4 && is_uca {
         V4_ASSET_DOCUMENT_MAGIC
     } else if is_uca {
         UCA_DOCUMENT_MAGIC
@@ -623,7 +649,11 @@ fn prepare_with_spend(
     // The immutable plan already owns its canonical body/access commitment.
     // Validate the same receipt/economic relations as cold recovery without
     // decoding a second full plan from bytes that this function just encoded.
-    let mut receipt_projection = Vec::with_capacity(if v4 && !is_uca { 0 } else { receipts.len() });
+    let mut receipt_projection = Vec::with_capacity(if (v4 || registration) && !is_uca {
+        0
+    } else {
+        receipts.len()
+    });
     validate_effects(
         plan,
         root,
@@ -864,7 +894,8 @@ fn decode_plan(input: &mut Reader<'_>, budget: PacketBudget) -> Result<BatchPlan
             && context.receipt_codec == receipt_codec()
             && context.semantic_version == SEMANTIC_VERSION)
             || uca::is_profile(&context)
-            || application::is_profile(&context),
+            || application::is_profile(&context)
+            || registration::is_profile(&context),
         "unsupported candidate business/receipt profile"
     );
     let count = input.count(budget.max_transactions, 9)?;
@@ -915,7 +946,8 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
         magic == DOCUMENT_MAGIC
             || magic == UCA_DOCUMENT_MAGIC
             || magic == APPLICATION_DOCUMENT_MAGIC
-            || magic == V4_ASSET_DOCUMENT_MAGIC,
+            || magic == V4_ASSET_DOCUMENT_MAGIC
+            || magic == REGISTRATION_DOCUMENT_MAGIC,
         "unsupported candidate document codec"
     );
     ensure!(input.hash()? == id, "candidate document identity mismatch");
@@ -923,7 +955,9 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
     let v4 = application::is_profile(plan.context());
     let is_uca = magic == UCA_DOCUMENT_MAGIC || magic == V4_ASSET_DOCUMENT_MAGIC;
     ensure!(
-        if v4 {
+        if registration::is_profile(plan.context()) {
+            magic == REGISTRATION_DOCUMENT_MAGIC
+        } else if v4 {
             magic == APPLICATION_DOCUMENT_MAGIC || magic == V4_ASSET_DOCUMENT_MAGIC
         } else {
             (magic == UCA_DOCUMENT_MAGIC && uca::is_profile(plan.context()))
@@ -1021,9 +1055,11 @@ fn validate_effects(
     let context = plan.context();
     let is_uca = uca::is_profile(context);
     let v4 = application::is_profile(context);
+    let registration = registration::is_profile(context);
     ensure!(
         is_uca
             || v4
+            || registration
             || (context.business_program == program_id()
                 && context.receipt_codec == receipt_codec()
                 && context.semantic_version == SEMANTIC_VERSION),
@@ -1041,6 +1077,8 @@ fn validate_effects(
         uca::validate_receipts(plan, receipts, outputs, budget, projection)?;
     } else if v4 {
         application::validate_receipts(plan, receipts, budget)?;
+    } else if registration {
+        registration::validate_receipts(plan, receipts)?;
     } else {
         validate_receipts(plan, receipts, budget, projection)?;
     }

@@ -42,7 +42,7 @@ impl AoemExecFacade {
         genesis: [u8; 32],
         height: u64,
     ) -> Result<VerifiedUcaRegistrationV1> {
-        let message = registration_message(&signed, chain_id, genesis, height)?;
+        let message = registration_transcript_v1(&signed, chain_id, genesis, height)?;
         self.mldsa_verifier_v1(AoemMldsaParameterSet::MlDsa65)?
             .verify(
                 &signed.public_key,
@@ -58,7 +58,8 @@ impl AoemExecFacade {
     }
 }
 
-fn registration_message(
+/// Scope and key binding only. Callers cannot use this to grant signature authority.
+pub fn registration_transcript_v1(
     signed: &SignedUcaRegistrationV1,
     chain_id: u64,
     genesis: [u8; 32],
