@@ -41,6 +41,40 @@ pub fn verified_receipt(config_path: &Path, parent_path: &Path, hash: &str) -> R
     }
 }
 
+/// Export the native certificate bytes. The activation reviewer verifies them
+/// against its own pinned preceding checkpoint before deriving a subject.
+pub fn activation_anchor(config_path: &Path, height: u64, output: &Path) -> Result<Value> {
+    use std::io::Write;
+    ensure!(height > 0, "activation anchor must be finalized");
+    let config_path = config_path.canonicalize()?;
+    let config = read_client_config(&config_path)?;
+    let (identity, domain) = config.identity(config_path.parent().context("config directory")?)?;
+    let mut client = config.connect(identity, domain)?;
+    let deadline = Instant::now() + Duration::from_millis(config.timeout_ms);
+    let mut download = Download::header(height);
+    loop {
+        let answer = authority::query_reply(&mut client, download.selector()?, deadline)?;
+        let busy = matches!(answer, Answer::Error(QueryError::Busy));
+        if let Some(bytes) = download.accept(answer)? {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(output)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            return Ok(json!({
+                "kind":"native_finalized_header_export",
+                "height":height,
+                "sha256":format!("{:x}", Sha256::digest(&bytes)),
+                "independently_verified_finality":false,
+            }));
+        }
+        if busy {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+}
+
 pub(crate) fn transaction_hash(hash: &str) -> Result<[u8; 32]> {
     let transaction: [u8; 32] = crate::native_pipeline::service::config::decode_hex(hash)?
         .try_into()
@@ -174,7 +208,6 @@ impl Download {
         }
     }
 
-    #[cfg(feature = "iroh-transport")]
     pub(crate) fn header(height: u64) -> Self {
         Self {
             header: true,

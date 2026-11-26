@@ -39,6 +39,9 @@ fn run() -> Result<(), CtlError> {
         TopCommand::EvmBlockAccessList(args) => commands::evm_block_access_list::run(args),
         TopCommand::EvmBlockAccessListScan(args) => commands::evm_block_access_list_scan::run(args),
         TopCommand::GovernanceStats(args) => commands::governance_stats::run(args),
+        TopCommand::NativeBusinessActivation(args) => {
+            commands::native_business_activation::run(args)
+        }
         TopCommand::NativeGenesis(args) => commands::native_genesis::run(args),
         TopCommand::NativeIdentity(args) => commands::native_identity::run(args),
         TopCommand::NativeNetworkProbe(args) => commands::native_network_probe::run(args),

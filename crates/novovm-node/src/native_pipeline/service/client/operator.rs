@@ -38,7 +38,7 @@ const MAX_ROWS: usize = 1024;
 mod authority;
 pub(crate) mod receipt_proof;
 pub use authority::serve_authority;
-pub use receipt_proof::verified_receipt;
+pub use receipt_proof::{activation_anchor, verified_receipt};
 const MAX_CLIENT_VALIDATORS: usize = 64;
 /// Local configuration budget shared with managed health inspection. A pretty
 /// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate ML-DSA-65

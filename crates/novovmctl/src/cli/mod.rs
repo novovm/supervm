@@ -35,6 +35,7 @@ pub enum TopCommand {
     EvmBlockAccessList(EvmBlockAccessListArgs),
     EvmBlockAccessListScan(EvmBlockAccessListScanArgs),
     GovernanceStats(GovernanceStatsArgs),
+    NativeBusinessActivation(crate::commands::native_business_activation::Args),
     NativeGenesis(native_genesis::NativeGenesisArgs),
     NativeIdentity(crate::commands::native_identity::NativeIdentityArgs),
     NativeNetworkProbe(crate::commands::native_network_probe::NativeNetworkProbeArgs),

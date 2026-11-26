@@ -13,13 +13,155 @@ use crate::native_pipeline::{
     execution::plan::BatchContext,
 };
 use anyhow::{ensure, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BusinessActivationConfig {
     pub activation: BusinessActivation,
     pub approvals: Vec<ActivationApproval>,
+}
+
+pub const MAX_ACTIVATION_HEADER_BYTES: usize = super::statement::finalized_header::MAX_BYTES;
+
+pub struct ReviewedBusinessActivation {
+    subject: BusinessActivation,
+    validators: ValidatorSet,
+    signing_key_file: std::path::PathBuf,
+}
+
+impl ReviewedBusinessActivation {
+    pub fn subject(&self) -> &BusinessActivation {
+        &self.subject
+    }
+
+    pub fn approve(&self, runtime: &novovm_exec::AoemExecFacade) -> Result<ActivationApproval> {
+        use novovm_consensus::round_bft::crypto::ConsensusSigner;
+        use novovm_relay::purpose_keys::load_validator;
+        let crypto = super::crypto::AoemConsensusCrypto::new(runtime)?;
+        let key = load_validator(
+            &self.signing_key_file,
+            self.subject.context.chain_id,
+            |public, secret, challenge| crypto.check_key_pair(public, secret, challenge),
+        )?;
+        let signer = self
+            .validators
+            .members()
+            .iter()
+            .find(|member| member.public_key() == key.public_key.as_slice())
+            .ok_or_else(|| anyhow::anyhow!("local key is not in the original validator set"))?
+            .id();
+        let signature = crypto
+            .signer(key)?
+            .sign_mldsa65(&self.subject.signing_bytes()?)?;
+        Ok(ActivationApproval { signer, signature })
+    }
+
+    pub fn assemble(
+        &self,
+        mut approvals: Vec<ActivationApproval>,
+    ) -> Result<BusinessActivationConfig> {
+        approvals.sort_by_key(|approval| approval.signer);
+        VerifiedBusinessActivation::verify(self.subject, &approvals, &self.validators)?;
+        Ok(BusinessActivationConfig {
+            activation: self.subject,
+            approvals,
+        })
+    }
+}
+
+/// Rebuild the subject from a certified parent and independently reviewed
+/// checkpoint under the resident node's original native genesis and fee policy.
+pub fn review_activation(
+    config: &crate::native_pipeline::service::config::ResidentConfig,
+    runtime: &novovm_exec::AoemExecFacade,
+    preceding: &ParentPoint,
+    header: &[u8],
+) -> Result<ReviewedBusinessActivation> {
+    use super::{crypto::AoemConsensusCrypto, statement::finalized_header, wire::Validator};
+    use crate::native_pipeline::business::{nov_transfer_batch as asset, uca_application as app};
+    use std::sync::Arc;
+    let initialization = config
+        .uca_initialization
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("activation requires the original UCA initialization"))?;
+    let genesis = &config.genesis;
+    let validators = ValidatorSet::new_with_verifier(
+        genesis.chain_id,
+        genesis.validator_epoch,
+        1,
+        genesis
+            .validators
+            .iter()
+            .map(|row| Validator::new(&row.public_key, row.weight))
+            .collect::<Result<Vec<_>>>()?,
+        Arc::new(AoemConsensusCrypto::new(runtime)?),
+    )?;
+    let context = Context {
+        chain_id: genesis.chain_id,
+        genesis_config_commitment: genesis.genesis_config_commitment,
+        protocol_commitment: genesis.protocol_commitment,
+        epoch: validators.epoch(),
+        validator_set_hash: validators.hash(),
+        height: preceding
+            .height
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("checkpoint height exhausted"))?,
+        parent_block_hash: preceding.block_hash,
+        parent_decision_hash: preceding.decision_hash,
+    };
+    let anchor = finalized_header::verify(header, &validators, context, preceding)?;
+    let point = anchor.point();
+    let previous = if initialization.application_authority_enabled() {
+        BusinessRules {
+            program: app::application_program_id_v1(),
+            semantic_version: app::APPLICATION_SEMANTIC_VERSION_V1,
+            effects: app::application_effect_contract_v1(&genesis.policy)?,
+            receipts: app::application_receipt_codec_v1(),
+        }
+    } else {
+        BusinessRules {
+            program: asset::uca_program_id(),
+            semantic_version: asset::SEMANTIC_VERSION,
+            effects: asset::uca_effect_contract(&genesis.policy)?,
+            receipts: asset::uca_receipt_codec(),
+        }
+    };
+    ensure!(
+        rules(anchor.execution_context()) == previous,
+        "certified anchor does not use the resident genesis business rules"
+    );
+    let activation = BusinessActivation {
+        context: Context {
+            height: point
+                .height
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("activation height exhausted"))?,
+            parent_block_hash: point.block_hash,
+            parent_decision_hash: point.decision_hash,
+            ..context
+        },
+        parent_state_root: point.state_root,
+        parent_receipt_root: point.receipt_batch_commitment,
+        parent_state_version: point.state_version,
+        previous,
+        next: registration_rules(&genesis.policy)?,
+    };
+    activation.signing_bytes()?;
+    Ok(ReviewedBusinessActivation {
+        subject: activation,
+        validators,
+        signing_key_file: config.signing_key_file.clone(),
+    })
+}
+
+fn registration_rules(policy: &DirectNovFeePolicy) -> Result<BusinessRules> {
+    Ok(BusinessRules {
+        program: uca_registration::program_id(),
+        semantic_version: uca_registration::REGISTRATION_SEMANTIC_VERSION,
+        effects: uca_registration::effect_contract(policy)?,
+        receipts: uca_registration::receipt_codec(),
+    })
 }
 
 pub(crate) struct BusinessSchedule {
@@ -63,13 +205,7 @@ impl BusinessSchedule {
                     == genesis.genesis_config_commitment
                 && activation.context.protocol_commitment == genesis.protocol_commitment
                 && activation.previous == rules(genesis)
-                && activation.next
-                    == (BusinessRules {
-                        program: uca_registration::program_id(),
-                        semantic_version: uca_registration::REGISTRATION_SEMANTIC_VERSION,
-                        effects: uca_registration::effect_contract(policy)?,
-                        receipts: uca_registration::receipt_codec(),
-                    }),
+                && activation.next == registration_rules(policy)?,
             "business activation does not match installed genesis and supported rules"
         );
         Ok(Self {

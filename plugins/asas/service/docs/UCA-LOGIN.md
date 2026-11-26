@@ -155,6 +155,12 @@ After the approved boundary is active, the original native client accepts `submi
 
 `validator-F` confirmed that its existing protected root derives the prepared UCA name. Keep that original selector. For coordination, current validator operators should report the same finalized checkpoint and deployed binary identity once the full upgrade candidate is available. Start signing only after the exact transition is reviewed on each validator. Keep the current services on their existing policy during preparation.
 
+### Existing validator approval
+
+Use the installed profile's verified header cache to export the preceding checkpoint with `novovm-native-client <installed-profile> activation-parent <preceding-height> <profile-sha256> <preceding.json>`. Fetch the next finalized header from the pinned native query endpoint with `novovm-native-client <client-config> activation-anchor <anchor-height> <anchor.bin>`. The latter exports certificate bytes. The approval tool independently verifies the certificate against the preceding checkpoint.
+
+Use `novovmctl native-business-activation --node-config <resident-config> --library-sha256 <digest> --preceding-parent <preceding.json> --preceding-parent-sha256 <digest> --finalized-anchor <anchor.bin> prepare` on each operator's original configuration. Compare the same public subject digest and exact canonical checkpoint across the current validator set. The `approve --subject-sha256 <digest> --output <approval.json>` subcommand uses only that node's existing protected validator-purpose key. The `assemble --subject-sha256 <digest> --approval <approval.json> ... --output <certificate.json>` subcommand verifies the original weighted quorum and writes the value for `business_activation`. These commands inspect and prepare public artifacts. Activation still requires the original node startup and consensus path at the exact boundary.
+
 ### F preparation and C follow-up
 
 F has generated independent protected ML-DSA-65 transport and identity-purpose

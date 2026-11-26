@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> [profile-sha256] | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> [profile-sha256] | sync-chain | sync-state | follow-state [profile-sha256] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin>";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -57,6 +57,29 @@ fn main() -> Result<()> {
                 .map(|arg| arg.to_str().context("non-UTF8 profile pin"))
                 .transpose()?,
         )?
+    } else if action == "activation-parent" {
+        ensure!(args.len() == 5, "{USAGE}");
+        #[cfg(feature = "iroh-transport")]
+        {
+            novovm_node::native_pipeline::service::network::export_activation_parent(
+                config,
+                args[3].to_str().context("non-UTF8 profile pin")?,
+                args[2]
+                    .to_str()
+                    .context("non-UTF8 parent height")?
+                    .parse()?,
+                Path::new(&args[4]),
+            )?
+        }
+        #[cfg(not(feature = "iroh-transport"))]
+        anyhow::bail!("activation parent export requires installed chain verification");
+    } else if action == "activation-anchor" {
+        ensure!(args.len() == 4, "{USAGE}");
+        let height = args[2]
+            .to_str()
+            .context("non-UTF8 anchor height")?
+            .parse()?;
+        operator::activation_anchor(config, height, Path::new(&args[3]))?
     } else if action == "verified-receipt" {
         ensure!(args.len() == 4, "{USAGE}");
         operator::verified_receipt(

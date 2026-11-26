@@ -1,16 +1,9 @@
 //! Existing-store activation via the original four validator and application paths.
 use super::*;
 use crate::native_pipeline::{
-    business::uca_registration as registration,
-    consensus::{
-        business_activation::BusinessActivationConfig,
-        wire::{
-            activation::{ActivationApproval, BusinessActivation, BusinessRules},
-            Validator,
-        },
-    },
+    consensus::{business_activation::review_activation, ArchiveRead},
+    service::client::operator::receipt_proof::Download,
 };
-use novovm_consensus::round_bft::crypto::ConsensusSigner;
 use novovm_protocol::{
     native_query::IdentityStateV1,
     uca_registration::{SignedUcaRegistrationV1, UcaRegistrationIntentV1, REGISTRATION_CONTEXT_V1},
@@ -19,8 +12,8 @@ use novovm_protocol::{
 pub(super) fn run(
     runtime: &AoemExecFacade,
     configs: &[ResidentConfig],
-    node_keys: &[config::test_custody::TestNodeKeys],
-    nodes: Vec<rpc::RpcLifecycle>,
+    mut nodes: Vec<rpc::RpcLifecycle>,
+    mut clients: Vec<client::NativeApplicationClient>,
     client_identity: novovm_network::product_overlay::TransportIdentity,
     prior: &[PublishedHead],
 ) -> Result<()> {
@@ -35,44 +28,53 @@ pub(super) fn run(
             }),
         "activation fixture must start on the already published checkpoint"
     );
-    let original = nodes[0].node.template;
-    let activation = BusinessActivation {
-        context: boundary,
-        parent_state_root: parent.state_root,
-        parent_receipt_root: parent.receipt_batch_commitment,
-        parent_state_version: parent.state_version,
-        previous: BusinessRules {
-            program: original.business_program,
-            semantic_version: original.semantic_version,
-            effects: original.effect_contract,
-            receipts: original.receipt_codec,
-        },
-        next: BusinessRules {
-            program: registration::program_id(),
-            semantic_version: registration::REGISTRATION_SEMANTIC_VERSION,
-            effects: registration::effect_contract(&configs[0].genesis.policy)?,
-            receipts: registration::receipt_codec(),
-        },
+    let mut archive = ArchiveRead::new(
+        parent.height,
+        parent,
+        boundary,
+        nodes[0].node.validators.clone(),
+    )?;
+    let deadline = Instant::now() + TIMEOUT;
+    let preceding = loop {
+        ensure!(
+            Instant::now() < deadline,
+            "activation fixture archive deadline"
+        );
+        if let Some(block) = archive.poll(&nodes[0].node.pipeline)? {
+            break block
+                .context("fixture finalized anchor not found")?
+                .parent();
+        }
+        tick(&mut nodes)?;
     };
-    let message = activation.signing_bytes()?;
-    let mut approvals = node_keys
+    let mut download = Download::header(parent.height);
+    let header = loop {
+        ensure!(
+            Instant::now() < deadline,
+            "activation fixture anchor download deadline"
+        );
+        let response = query(&mut nodes, &mut clients[0], download.selector()?)?;
+        if let Some(bytes) = download.accept(response)? {
+            break bytes;
+        }
+    };
+    let reviewed = review_activation(&configs[0], runtime, &preceding, &header)?;
+    assert_eq!(reviewed.subject().context, boundary);
+    assert_eq!(reviewed.subject().parent_state_root, parent.state_root);
+    assert!(reviewed.assemble(vec![]).is_err());
+    let mut corrupted = header.clone();
+    *corrupted.last_mut().context("test archive empty")? ^= 1;
+    assert!(review_activation(&configs[0], runtime, &preceding, &corrupted).is_err());
+    let approvals = configs
         .iter()
-        .map(|key| {
-            let signer = Validator::new(key.signer.public_key(), 1)?.id();
-            Ok(ActivationApproval {
-                signer,
-                signature: key.signer.sign_mldsa65(&message)?,
-            })
-        })
+        .map(|config| review_activation(config, runtime, &preceding, &header)?.approve(runtime))
         .collect::<Result<Vec<_>>>()?;
-    approvals.sort_by_key(|approval| approval.signer);
+    let bundle = reviewed.assemble(approvals)?;
     let mut configs = configs.to_vec();
     for config in &mut configs {
-        config.business_activation = Some(BusinessActivationConfig {
-            activation,
-            approvals: approvals.clone(),
-        });
+        config.business_activation = Some(bundle.clone());
     }
+    drop(clients);
     for node in nodes {
         node.node.shutdown()?;
     }

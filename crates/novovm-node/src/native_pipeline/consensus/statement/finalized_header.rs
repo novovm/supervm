@@ -22,7 +22,6 @@ struct Header {
 /// independently selected parent, validator set, proposal and Precommit QC.
 pub(crate) struct VerifiedHeader {
     point: ParentPoint,
-    #[cfg(any(test, feature = "iroh-transport"))]
     statement: BlockStatement,
 }
 
@@ -31,7 +30,6 @@ impl VerifiedHeader {
         self.point
     }
 
-    #[cfg(feature = "iroh-transport")]
     pub(crate) fn execution_context(&self) -> &BatchContext {
         self.statement.execution_context()
     }
@@ -247,9 +245,5 @@ pub(crate) fn verify(
     }
     .checked(set, parent)?;
     let point = statement.verified_point(set, proposal, precommits)?;
-    Ok(VerifiedHeader {
-        point,
-        #[cfg(any(test, feature = "iroh-transport"))]
-        statement,
-    })
+    Ok(VerifiedHeader { point, statement })
 }

@@ -391,7 +391,6 @@ pub(super) fn run(
     runtime: &AoemExecFacade,
     configs: &[ResidentConfig],
     keys: &[(Vec<u8>, zeroize::Zeroizing<Vec<u8>>)],
-    node_keys: &[config::test_custody::TestNodeKeys],
     mut nodes: Vec<rpc::RpcLifecycle>,
     mut clients: Vec<client::NativeApplicationClient>,
     ingress: usize,
@@ -618,12 +617,11 @@ pub(super) fn run(
     assets_unchanged(&revoked.assets, &resumed.assets);
     assert_ne!(resumed.heads[0].block_hash, revoked.heads[0].block_hash);
     assert_ne!(resumed.heads[0].state_root, revoked.heads[0].state_root);
-    drop(clients);
     activation::run(
         runtime,
         configs,
-        node_keys,
         nodes,
+        clients,
         client_identity,
         &resumed.heads,
     )?;

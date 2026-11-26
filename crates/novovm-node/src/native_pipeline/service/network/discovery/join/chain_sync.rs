@@ -81,6 +81,60 @@ pub fn verify_installed_uca_execution(
     }))
 }
 
+/// Re-verify the locally cached original prefix before exporting a checkpoint.
+pub fn export_activation_parent(
+    path: &Path,
+    profile_sha256: &str,
+    height: u64,
+    output: &Path,
+) -> Result<serde_json::Value> {
+    use novovm_relay::transport_identity::load_transport_verifier;
+    use sha2::{Digest, Sha256};
+    use std::io::Write;
+
+    let profile = read_installed_profile(path, Some(profile_sha256))?;
+    let (domain, anchor) = profile.verification_domain()?;
+    validate_parent(&anchor)?;
+    ensure!(
+        height >= anchor.height,
+        "activation parent precedes the installed trust anchor"
+    );
+    let minimum = profile
+        .verification
+        .as_ref()
+        .and_then(|pins| pins.minimum_finalized_checkpoint);
+    checkpoint_validity(minimum, wall_ms()?)?;
+    let mut point = anchor;
+    if height > anchor.height {
+        let library = profile_base(path)?.join(&profile.library);
+        let verifier = FinalityVerifier::new(
+            &domain,
+            load_transport_verifier(&library, &profile.library_sha256)?,
+        );
+        let root = checkpoint_root(&profile, anchor)?;
+        for (height, header) in cached_header_paths(&root)?.range(..=height) {
+            point = verify_cached_header(&verifier, point, *height, header, minimum)?;
+        }
+    }
+    ensure!(
+        point.height == height,
+        "activation parent missing from the verified local prefix"
+    );
+    checkpoint_validity(minimum, wall_ms()?)?;
+    let bytes = serde_json::to_vec(&point)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
+    file.write_all(&bytes)?;
+    file.sync_all()?;
+    Ok(serde_json::json!({
+        "kind":"pinned_native_chain_checkpoint",
+        "height":point.height,
+        "sha256":format!("{:x}", Sha256::digest(&bytes)),
+    }))
+}
+
 fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
     let (profile, identity, seeds) = installed_inputs(path)?;
     let (domain, anchor) = profile.verification_domain()?;

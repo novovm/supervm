@@ -3,6 +3,7 @@ pub mod evm_block_access_list;
 pub mod evm_block_access_list_scan;
 pub mod governance_stats;
 pub mod lifecycle;
+pub mod native_business_activation;
 pub mod native_genesis;
 pub mod native_identity;
 pub mod native_network_probe;

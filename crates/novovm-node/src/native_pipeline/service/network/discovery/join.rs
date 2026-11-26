@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
 pub use chain_sync::{
-    follow_installed_state, sync_installed_chain, sync_installed_state,
+    export_activation_parent, follow_installed_state, sync_installed_chain, sync_installed_state,
     verify_installed_uca_execution,
 };
 
