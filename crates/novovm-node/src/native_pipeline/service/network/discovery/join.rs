@@ -24,6 +24,9 @@ pub use chain_sync::{
 #[cfg(test)]
 mod tests;
 
+const INITIAL_SOURCE_BUDGET: Duration = Duration::from_secs(8);
+const REFRESH_SOURCE_BUDGET: Duration = Duration::from_secs(5);
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
@@ -462,7 +465,16 @@ async fn collect(
     owner
         .with_operation(
             IrohControlV1::new(Instant::now() + Duration::from_secs(10), || Ok(()))?,
-            |scope| Box::pin(lookup_sources(scope, identity, pins, candidates, lookups)),
+            |scope| {
+                Box::pin(lookup_sources(
+                    scope,
+                    identity,
+                    pins,
+                    candidates,
+                    lookups,
+                    INITIAL_SOURCE_BUDGET,
+                ))
+            },
         )
         .await
 }
@@ -551,14 +563,20 @@ async fn lookup_sources(
     pins: Pins,
     [first, second]: [Result<DialCandidate>; 2],
     lookups: Vec<Vec<u8>>,
+    source_budget: Duration,
 ) -> Result<DiscoveryReport> {
     let failures = Arc::new(NetworkFailures::default());
     let lookup = |candidate, identity, lookups, failures| async move {
         let candidate: DialCandidate = candidate?;
         let source = fingerprint(&candidate.key);
-        let records = query(scope, identity, candidate, pins, None, lookups, failures)
-            .await
-            .with_context(|| format!("bootstrap {source}"))?;
+        // A stalled source must not cancel a completed result from another source.
+        let records = tokio::time::timeout(
+            source_budget,
+            query(scope, identity, candidate, pins, None, lookups, failures),
+        )
+        .await
+        .with_context(|| format!("bootstrap {source} exceeded its lookup deadline"))?
+        .with_context(|| format!("bootstrap {source}"))?;
         Ok::<_, anyhow::Error>((source, records))
     };
     let (primary, secondary) = tokio::join!(
