@@ -76,6 +76,17 @@ pub fn verify_installed_uca_execution(
             "UCA replay archive conflicts with the certified local chain"
         );
     }
+    if let Some(checkpoint) = minimum.filter(|checkpoint| checkpoint.height > point.height) {
+        let mut descendant = point;
+        for (&height, path) in history.range((point.height + 1)..=checkpoint.height) {
+            descendant = verify_cached_header(&verifier, descendant, height, path, minimum)?;
+        }
+        ensure!(
+            descendant.height == checkpoint.height,
+            "UCA replay requires certified headers through the installed minimum checkpoint at height {}; run sync-chain first",
+            checkpoint.height
+        );
+    }
     bundle.verify(&header, &library, &profile.library_sha256)?;
     checkpoint_validity(minimum, wall_ms()?)?;
     use crate::native_pipeline::service::rpc::hex;

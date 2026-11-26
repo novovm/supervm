@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 mod historical_receipt;
 mod native_fallback;
 mod public_referral;
+mod uca_checkpoint;
 
 struct QueryOwner {
     rpc: RpcLifecycle,
