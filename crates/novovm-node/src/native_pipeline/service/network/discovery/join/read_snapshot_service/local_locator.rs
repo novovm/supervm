@@ -26,25 +26,7 @@ impl LocalLocator {
             "invalid local locator size"
         );
         let directory = path.parent().context("missing locator directory")?;
-        let lock_path = path.with_extension("lock");
-        check_regular(&lock_path)?;
-        let mut options = OpenOptions::new();
-        options.read(true).write(true).create(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            // Hold the lock inode through shutdown, deny delete sharing.
-            options.share_mode(0x1 | 0x2).custom_flags(0x0020_0000);
-        }
-        let mut lock = options.open(&lock_path)?;
-        ensure!(regular(&lock.metadata()?), "invalid local locator lock");
-        lock.try_lock()
-            .context("another process owns the local snapshot locator")?;
+        let mut lock = lock(&path)?;
 
         if check_regular(&path)? {
             // The marker only recognizes a locator previously published under
@@ -83,6 +65,30 @@ impl Drop for LocalLocator {
         // Still holding the lock. A successor cannot publish before removal.
         let _ = fs::remove_file(&self.path);
     }
+}
+
+pub(super) fn lock(path: &Path) -> Result<File> {
+    let lock_path = path.with_extension("lock");
+    check_regular(&lock_path)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Hold the lock inode through shutdown, deny delete sharing.
+        options.share_mode(0x1 | 0x2).custom_flags(0x0020_0000);
+    }
+    let lock = options.open(&lock_path)?;
+    ensure!(regular(&lock.metadata()?), "invalid local locator lock");
+    lock.try_lock()
+        .context("another process owns the local snapshot locator")?;
+
+    Ok(lock)
 }
 
 fn regular(metadata: &fs::Metadata) -> bool {

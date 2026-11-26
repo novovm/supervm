@@ -22,7 +22,7 @@ pub(in crate::native_pipeline::service) use join::test_slow_cached_receipt;
 pub use join::{
     check_installed_profile, discover_installed, discover_installed_from_profile,
     discover_verified_receipt, discover_verified_receipt_at,
-    discover_verified_receipt_from_profile, follow_installed_state, serve_installed_read_snapshot,
+    discover_verified_receipt_from_profile, follow_installed_state, serve_installed_public_read_snapshot, serve_installed_read_snapshot,
     sync_installed_chain, sync_installed_state, verify_installed_uca_execution, ReceiptLocation,
 };
 struct Seed<'a> {
@@ -36,6 +36,7 @@ struct Seed<'a> {
     next: Instant,
     quarantined: Option<u64>,
 }
+#[derive(Clone)]
 struct DialCandidate {
     key: Vec<u8>,
     route: IrohAddressV1,
@@ -114,6 +115,7 @@ struct LocalLocators {
 
 enum Exchange {
     Publisher(LocalLocators),
+    PublicReader(PublicReadPublication),
     Reader { sample_until: Option<Instant> },
 }
 
@@ -629,6 +631,15 @@ async fn query(
                         .await
                         .context("public read publication")?;
                 }
+            }
+            Exchange::PublicReader(read) => {
+                observation.stage("public read publication");
+                let ttl = read.expires_at_ms.saturating_sub(wall_ms()?).min(30_000);
+                ensure!(ttl > 0, "public reader lease expired before publication");
+                client
+                    .put_public_read_locator_v1(read.sequence, ttl as u32, read.bytes)
+                    .await
+                    .context("public read publication")?;
             }
             Exchange::Reader {
                 sample_until: Some(until),

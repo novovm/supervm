@@ -32,7 +32,7 @@ pub(in crate::native_pipeline::service) use discovery::test_slow_cached_receipt;
 pub use discovery::{
     check_installed_profile, discover_installed, discover_installed_from_profile,
     discover_verified_receipt, discover_verified_receipt_at,
-    discover_verified_receipt_from_profile, follow_installed_state, serve_installed_read_snapshot,
+    discover_verified_receipt_from_profile, follow_installed_state, serve_installed_public_read_snapshot, serve_installed_read_snapshot,
     sync_installed_chain, sync_installed_state, verify_installed_uca_execution, ReceiptLocation,
 };
 mod observation;
