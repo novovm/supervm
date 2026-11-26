@@ -71,25 +71,30 @@ pub struct IrohServiceEndpointV1 {
 }
 impl IrohServiceEndpointV1 {
     fn validate(&self) -> Result<()> {
-        strict_key(&self.address.endpoint_key)?;
         ensure!(self.instance != [0; 32], "empty service instance");
+        Self::validate_address(&self.address)
+    }
+    /// Check the shape of a service route without binding a socket or
+    /// conferring any lease or signer authority.
+    pub fn validate_address(address: &IrohAddressV1) -> Result<()> {
+        strict_key(&address.endpoint_key)?;
         ensure!(
-            self.address.direct.len() <= 8 && self.address.relays.len() <= 4,
+            address.direct.len() <= 8 && address.relays.len() <= 4,
             "service address budget"
         );
         ensure!(
-            !self.address.direct.is_empty() || !self.address.relays.is_empty(),
+            !address.direct.is_empty() || !address.relays.is_empty(),
             "empty service route"
         );
         ensure!(
-            self.address
+            address
                 .direct
                 .iter()
                 .all(|a| a.port() != 0 && !a.ip().is_unspecified() && !a.ip().is_multicast()),
             "invalid service address"
         );
         // Parse using the same carrier configuration, without binding a socket.
-        crate::iroh_transport::IrohConfigV1::new(&self.address.relays, "127.0.0.1".parse()?)?;
+        crate::iroh_transport::IrohConfigV1::new(&address.relays, "127.0.0.1".parse()?)?;
         Ok(())
     }
     pub fn endpoint(&self) -> Result<RelayEndpointV1> {

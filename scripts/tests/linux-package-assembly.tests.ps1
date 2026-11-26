@@ -481,5 +481,22 @@ if ($windowsPackage) {
     if ($_.Exception.Message -notlike '*differs from its pinned hash*bootstrap-first.json*') { throw }
   }
   Write-Output 'PASS: packaged Windows Client selects a pinned portable profile without caller-supplied paths and rejects a changed locator'
+  $discoveryConfig.seeds = @(
+    @{contact=@{endpoint_key=@(1);direct=@('127.0.0.1:43111');relays=@()}},
+    @{contact=@{endpoint_key=@(2);direct=@('127.0.0.1:43112');relays=@()}}
+  )
+  [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 6))
+  $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()
+  $contactName = 'artifacts/product-overlay/windows-client-contact-only'
+  & $packager -Target $Target -PackageDir $contactName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
+  $contactBundle = Join-Path $fixture $contactName
+  $contactPin = (Get-FileHash -LiteralPath (Join-Path $contactBundle 'release-manifest.json')).Hash
+  $contactInstaller = Join-Path $contactBundle 'resources/scripts/windows/install-novovm-client.ps1'
+  $contactPlan = & $contactInstaller -Action Plan -ReleaseManifestSha256 $contactPin | ConvertFrom-Json
+  if (@(Get-ChildItem -LiteralPath (Join-Path $contactBundle 'config/discovery') -File).Count -ne 1 -or
+      !$contactPlan.arguments.EndsWith($profilePin, [StringComparison]::Ordinal)) {
+    throw 'Bundled contacts must start without separate locator files'
+  }
+  Write-Output 'PASS: Windows package and installer support contact-only discovery profiles'
 }
 Write-Output "PASS: original unified assembly (10 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default, WSS-mainchain retirement and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"

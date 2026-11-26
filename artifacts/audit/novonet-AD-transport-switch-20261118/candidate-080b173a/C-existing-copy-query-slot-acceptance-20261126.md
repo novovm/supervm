@@ -111,3 +111,11 @@ Windows Client SHA-256 `0b440fd21d543b45121f323081457ea8b534c1960976efcd631ae49d
 复现使用 `NOVOVM_QUERY_COPY_WINDOWS_INSTALL=1`、原隔离测试和 `scripts/tests/windows-client-install.tests.ps1`。官方打包脚本的 Windows/Linux 装配回归通过，包含发行配置 SHA-256、两份引导文件及篡改拒绝。实际安装用例运行真实原打包产出的 Client、AOEM 和安装脚本逐文件核对，使用 C 隔离服务签名的入网资料及限于验收的清单，范围为同机 Windows 任务与回环网络。副本用例历时 40.15 秒。Windows 优化编译的访问违规阻断了本轮完整带发行入网资料的包生成。隔离验收覆盖当前交互用户与同一启动任务的重触发，跨设备、实网换路、系统重新登录和正式发行包还有独立关卡。
 
 Windows Client SHA-256 `0b440fd21d543b45121f323081457ea8b534c1960976efcd631ae49dce0d512e`。隔离清单 SHA-256 `ff1614b9b19300dde85af7b0cdc31cf68d0be42b09b7cde7b88303378c8cfee7`，隔离日志 SHA-256 `9a6c5e984ee4a26396c202cd6ab4a89c39b44d8ed38a6c9806de397ea3bb9a26`。
+
+## 安装引导地址失效后的冷入网
+
+C 的 `bootstrap-contact-f4de776fad5c` 原库副本在 LocalService 上通过回环测试。干净 Windows Client 只获得两组固定联系地址及传输公钥，首选源无法连通。它经第二源完成原 NOVONET 认证，取得当前签名定位，独立验回原交易的 15,537 字节 Receipt 证明。区块头同步到高度 2，随后下载并验证 97 个状态节点和 49 个叶子，重新打开时下载数为 0。篡改本地头文件和状态节点、不属于认证状态树的哈希及关闭披露时的请求均被拒绝。现役 C 前后均在 PID `30328` 运行，未操作 B。
+
+独立的真实 Client 与 AOEM 测试覆盖两份过期文件上的旧拨号地址都不可达。仅含旧文件的配置无法找到源，带固定联系地址的配置经第二个对端取回新签名定位。移除两份文件并使用新的本地数据目录后仍通过。原文件发行配置和重启持钥回归也通过。Windows 包装配模拟覆盖纯联系地址配置，当前公网独立入口和跨机换网继续单独验收。
+
+复现将 `NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS=1` 用于原库副本用例。独立测试使用 `clean_device_recovers_expired_bootstrap_files_through_pinned_contacts`，以 `NOVOVM_DISCOVERY_AOEM`、`NOVOVM_DISCOVERY_AOEM_SHA256` 和 `NOVOVM_DISCOVERY_CLIENT` 固定真实构建。Client SHA-256 `153bd1466f9064cfdf3ebe16a7f722fb4e98d53c10d5332c99a9709667cdc3b6`。原库日志 SHA-256 `390db1775a277df40165cec40ae679877c99dd6a2c3a7933cdb5e76b67a8e02d`，两项 Client 测试日志 SHA-256 `1d122e89681e67fddd4e09edcb999a4ed23f3fff1e1978ea140bd37b8190e739`。
