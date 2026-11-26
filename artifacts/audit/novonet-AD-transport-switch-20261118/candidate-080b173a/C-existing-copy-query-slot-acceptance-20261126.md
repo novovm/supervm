@@ -53,3 +53,13 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 同一用例完成用时 82.42 秒。查询协议测试 24 项、状态树回归 47 项、Client 回归 5 项通过。Windows 隔离构建对上述四个包继续采用 `opt-level=0`，`novovm-node` 的 `codegen-units` 改用 128 后通过构建，其余三个包用 256。状态下载是有界的手动 Client 入口。大状态分批同步、持续追赶、跨网热插拔和基于固定程序的首次同步证明待后续验收。
 
 验收日志 SHA-256 `9840bdd1e27ffb24ea5fa24ca9d39e87daf77ed2041be4ce498b39145b11ea16`。Client EXE SHA-256 `ecbcf9bfac6d732f16c1817b28fba10ab9d6bd8e11eca0df14fbb6f5b2616081`。
+
+## Windows Client 自动同步和路由恢复
+
+北京时间 11:13，C 的新隔离副本 `follow-state-23a85d888879` 在 `LocalService` 下让同一个全新 Windows Client 进程执行 `follow-state`。错误的发行配置哈希在创建本地身份前被拒绝。配置正确时，Client 从空数据目录本地持钥，经已固定对端公钥认证的原生 NovoRUDP 下载并验证高度 2 的 97 个状态节点和 49 个叶子。
+
+隔离回环转发器停止转发原生 UDP，两个引导文件一度均不可用。Client 保持进程并进入重试。测试恢复第二份签名引导文件，第一份持续缺失。同一 Client 通过第二份来源找到原服务公钥，经认证 Iroh 备用恢复。恢复原生报文后，Client 重新认证并切回原生 NovoRUDP。三段的对端公钥、设备身份、已验证高度、状态根和状态数据一致，累计下载数始终为 97。测试总用时 40.87 秒。现役 C 前后均为运行中的 PID `30328`，操作限于 C 的隔离副本。
+
+复现沿用同一 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier` 用例，设置 `NOVOVM_QUERY_COPY_FOLLOW=1`。不设置此开关时，独立 Receipt、区块头、状态树和篡改拒绝的原回归用例仍通过，耗时 82.24 秒。Windows 装包测试以隔离装配输入核验了安装脚本入包、精确的带哈希启动命令和错误配置哈希拒绝。现场清洁设备登录自启、实网换接口、动态获取新版原生地址和大状态同步仍待验收。
+
+自动恢复日志 SHA-256 `b9d24d3a43aca212d58e1b6d53b83c2cd1f0dabe69aa983ece06849bb77b0ac9`。事件 SHA-256 `166763039c664347175687c8b59891ae79dbf5af163bb88c0e03e764a4f7b212`。原用例回归日志 SHA-256 `87ef2f729164072ac47df0c53750f3c0e502cb13c1fa7d7749be37ce4e697898`。Client EXE SHA-256 `dcb03e00c6267b3d3cec8bd5c7da6654b731057d4ad5edd8851693ea71894103`。

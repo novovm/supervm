@@ -6,7 +6,9 @@ use crate::native_pipeline::{
     service::client::operator::receipt_proof::{validate_parent, Download, FinalityVerifier},
 };
 use novovm_protocol::native_query::{Answer, Query};
+mod follow;
 mod state;
+pub use follow::follow_installed_state;
 use state::{StateCache, StateProgress};
 
 const MAX_HEADERS_PER_PASS: u64 = 128;
@@ -23,14 +25,8 @@ fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
     let (profile, identity, seeds) = installed_inputs(path)?;
     let (domain, anchor) = profile.verification_domain()?;
     validate_parent(&anchor)?;
-    let root = state_path(&installed_state_base()?, &profile).join(format!(
-        "headers-{}-{}",
-        anchor.height,
-        fingerprint(&serde_json::to_vec(&anchor)?),
-    ));
-    let verifier = FinalityVerifier::new(&domain, identity.clone());
-    let mut chain = VerifiedHeaders::open(root, anchor, verifier)?;
-    let cache = with_state
+    let mut chain = open_checkpoint(&profile, &identity, &domain, anchor)?;
+    let mut cache = with_state
         .then(|| StateCache::open(chain.root.join("state-nodes")))
         .transpose()?;
     let reopened_height = chain.tip.height;
@@ -70,7 +66,7 @@ fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
                                         domain.clone(),
                                         &mut chain,
                                         cap,
-                                        cache.as_ref(),
+                                        cache.as_mut(),
                                     );
                                     match tokio::time::timeout(budget, attempt).await {
                                         Ok(Ok((peer, Some(state)))) => {
@@ -129,6 +125,24 @@ fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
     Ok(report)
 }
 
+fn open_checkpoint(
+    profile: &Profile,
+    identity: &TransportIdentity,
+    domain: &MessageDomain,
+    anchor: ParentPoint,
+) -> Result<VerifiedHeaders> {
+    let root = state_path(&installed_state_base()?, profile).join(format!(
+        "headers-{}-{}",
+        anchor.height,
+        fingerprint(&serde_json::to_vec(&anchor)?),
+    ));
+    VerifiedHeaders::open(
+        root,
+        anchor,
+        FinalityVerifier::new(domain, identity.clone()),
+    )
+}
+
 async fn sync_peer(
     scope: &IrohScopeV1,
     candidate: &PeerSignedRelayRecordV1,
@@ -136,33 +150,12 @@ async fn sync_peer(
     domain: MessageDomain,
     chain: &mut VerifiedHeaders,
     cap: u64,
-    cache: Option<&StateCache>,
+    cache: Option<&mut StateCache>,
 ) -> Result<(u64, Option<StateProgress>)> {
     let (mut stream, channel) = connect(scope, candidate, identity, &domain).await?;
     let mut session = QuerySession::attach(&mut stream, channel, domain)?;
-    let Answer::Status(advertised) = session.query(Query::Status).await? else {
-        anyhow::bail!("chain candidate returned no status");
-    };
-    ensure!(
-        !advertised.recovering && !advertised.projection_failed,
-        "chain candidate unavailable"
-    );
-    ensure!(
-        advertised.height >= chain.tip.height,
-        "chain candidate is behind verified local height"
-    );
-    while chain.tip.height < advertised.height.min(cap) {
-        let height = chain.tip.height + 1;
-        let bytes = session.fetch(Download::header(height)).await?;
-        chain.append(&bytes)?;
-    }
-    if chain.tip.height == advertised.height {
-        ensure!(
-            chain.tip.block_hash == advertised.block_hash
-                && chain.tip.state_root == advertised.state_root,
-            "peer advertised tip conflicts with certified header"
-        );
-    }
+    let advertised = peer_status(&mut session, chain.tip).await?;
+    sync_headers(&mut session, chain, cap, &advertised).await?;
     let state = if let Some(cache) = cache {
         ensure!(
             chain.tip.height == advertised.height,
@@ -173,6 +166,52 @@ async fn sync_peer(
         None
     };
     Ok((advertised.height, state))
+}
+
+async fn peer_status(
+    session: &mut QuerySession<'_>,
+    tip: ParentPoint,
+) -> Result<novovm_protocol::native_query::Status> {
+    let Answer::Status(advertised) = session.query(Query::Status).await? else {
+        anyhow::bail!("chain candidate returned no status");
+    };
+    ensure!(
+        !advertised.recovering && !advertised.projection_failed,
+        "chain candidate unavailable"
+    );
+    ensure!(
+        advertised.height >= tip.height,
+        "chain candidate is behind verified local height"
+    );
+    verify_same_height(tip, &advertised)?;
+    Ok(advertised)
+}
+
+async fn sync_headers(
+    session: &mut QuerySession<'_>,
+    chain: &mut VerifiedHeaders,
+    cap: u64,
+    advertised: &novovm_protocol::native_query::Status,
+) -> Result<()> {
+    while chain.tip.height < advertised.height.min(cap) {
+        let height = chain.tip.height + 1;
+        let bytes = session.fetch(Download::header(height)).await?;
+        chain.append(&bytes)?;
+    }
+    verify_same_height(chain.tip, advertised)
+}
+
+fn verify_same_height(
+    tip: ParentPoint,
+    advertised: &novovm_protocol::native_query::Status,
+) -> Result<()> {
+    if tip.height == advertised.height {
+        ensure!(
+            tip.block_hash == advertised.block_hash && tip.state_root == advertised.state_root,
+            "peer advertised tip conflicts with certified header"
+        );
+    }
+    Ok(())
 }
 
 struct VerifiedHeaders {

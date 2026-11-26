@@ -364,6 +364,7 @@ try {
   # Existing platform resources are copied without executing or reprovisioning
   # them. In particular B's owner/credential/SQLite identity must remain intact.
   $platformResources = if ($windowsPackage) { @(
+    'scripts/windows/install-novovm-client.ps1',
     'scripts/windows/install-novovm-relay.ps1',
     'scripts/windows/NovovmRelayFirewall.psm1',
     'scripts/windows/install-novovm-rendezvous.ps1',
@@ -855,6 +856,12 @@ For a new native APFL mailbox use install-novovm-rendezvous.ps1 with
 -UserSession -Action Install -NativeMailboxListener and both verified binary
 hashes. The adapter can prepare protected local custody before its first bind
 and start the existing task with -Start. See docs/NOVOVM_RENDEZVOUS_ENTRY.md.
+
+For an ordinary Windows device, run resources/scripts/windows/install-novovm-client.ps1
+with the issued discovery profile path, its ProfileSha256, and the independently
+pinned ReleaseManifestSha256. The task uses the current user at logon and starts
+immediately on installation. The native Client keeps its existing local key and
+follows independently verified state using the issued chain trust pins.
 
 All config examples remain unconfigured. Replace REVIEW_APPROVED_CHAIN_ID,
 REVIEW_FIXED_RELEASE and full 1952-byte public-key-array placeholders with the

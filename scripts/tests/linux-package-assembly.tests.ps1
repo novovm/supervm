@@ -339,6 +339,25 @@ if ($relayUnit -notmatch '(?m)^WorkingDirectory=/var/lib/novovm-relay$' -or
       $manifest.aoem_runtime.path -ne 'aoem/windows/core/bin/aoem_ffi.dll') {
     throw 'Windows candidate must contain its own runtime and no Linux startup units'
   }
+  $clientInstaller = Join-Path $output 'resources/scripts/windows/install-novovm-client.ps1'
+  $clientProfile = Join-Path $fixture 'issued profile.json'
+  [IO.File]::WriteAllText($clientProfile, '{}')
+  $profilePin = (Get-FileHash -LiteralPath $clientProfile).Hash.ToLowerInvariant()
+  $manifestPin = (Get-FileHash -LiteralPath (Join-Path $output 'release-manifest.json')).Hash
+  $plan = & $clientInstaller -Action Plan -ProfilePath $clientProfile -ProfileSha256 $profilePin `
+    -ReleaseManifestSha256 $manifestPin | ConvertFrom-Json
+  $clientBinary = Join-Path $output 'bin/novovm-native-client.exe'
+  if ($plan.program -ne $clientBinary -or $plan.startup -ne 'current-user-logon' -or
+      $plan.arguments -cne ('"' + $clientProfile + '" follow-state ' + $profilePin)) {
+    throw 'Windows automatic Client plan lost the pinned profile or its native package entry'
+  }
+  try {
+    & $clientInstaller -Action Plan -ProfilePath $clientProfile -ProfileSha256 ('0' * 64) `
+      -ReleaseManifestSha256 $manifestPin | Out-Null
+    throw 'Windows automatic Client accepted a mismatched profile pin'
+  } catch {
+    if ($_.Exception.Message -notlike '*differs from its pinned hash*') { throw }
+  }
   foreach ($entry in $manifest.build_contracts) {
     if (!(Test-Path (Join-Path $output "bin/$($entry.binary).exe"))) { throw 'Windows Cargo executable extension lost' }
   }

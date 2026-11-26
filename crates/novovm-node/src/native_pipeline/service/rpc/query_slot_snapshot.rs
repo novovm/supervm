@@ -396,6 +396,17 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("1") {
+        owner.rpc.node.public_asset_receipt_proofs = false;
+        owner.rpc.node.public_state_sync = true;
+        test_installed_follow(&mut owner, &binary, &profile, &secondary, &key)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head,
+            "follow altered the detached chain"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     let mut command = Command::new(&binary);
     let data = stage.join("clean-proving-device");
     ensure!(
@@ -574,6 +585,175 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     println!("disabled export, unrelated hash, and altered cached state node rejected");
     owner.novonet.as_mut().unwrap().close()?;
     owner.rpc.node.shutdown()
+}
+
+fn test_installed_follow(
+    owner: &mut QueryOwner,
+    binary: &Path,
+    profile: &Path,
+    live_seed: &Path,
+    key: &[u8],
+) -> Result<()> {
+    use sha2::{Digest, Sha256};
+    use std::{fs, io::ErrorKind, net::UdpSocket, process::Stdio};
+
+    let stage = profile.parent().context("follow stage")?;
+    let gateway = UdpSocket::bind("127.0.0.1:0")?;
+    gateway.set_nonblocking(true)?;
+    let node = owner.config.udp_addr;
+    let mut client_address = None;
+    let mut forward = |enabled: bool| -> Result<()> {
+        let mut buffer = [0; 65536];
+        for _ in 0..128 {
+            let (count, sender) = match gateway.recv_from(&mut buffer) {
+                Ok(datagram) => datagram,
+                Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(()),
+                Err(error) => return Err(error.into()),
+            };
+            if !enabled {
+                continue;
+            }
+            if sender == node {
+                if let Some(client) = client_address {
+                    gateway.send_to(&buffer[..count], client)?;
+                }
+            } else {
+                ensure!(
+                    sender.ip().is_loopback(),
+                    "test gateway attempted external traffic"
+                );
+                client_address = Some(sender);
+                gateway.send_to(&buffer[..count], node)?;
+            }
+        }
+        Ok(())
+    };
+    let opened_seed = stage.join("follow-bootstrap-secondary.json");
+    let mut installed: Value = serde_json::from_slice(&fs::read(profile)?)?;
+    installed["native_query_peers"] =
+        serde_json::json!([{"address":gateway.local_addr()?, "transport_key":key}]);
+    installed["seeds"][0]["locator"] = serde_json::json!(stage.join("missing-primary.json"));
+    installed["seeds"][1]["locator"] = serde_json::json!(opened_seed);
+    let profile_bytes = serde_json::to_vec(&installed)?;
+    let pin = format!("{:x}", Sha256::digest(&profile_bytes));
+    fs::write(profile, profile_bytes)?;
+
+    let device = stage.join("follow-clean-device");
+    ensure!(
+        !device.exists() && !opened_seed.exists(),
+        "follow test requires fresh files"
+    );
+    let wrong_pin = Command::new(binary)
+        .arg(profile)
+        .arg("follow-state")
+        .arg("0".repeat(64))
+        .env("LOCALAPPDATA", &device)
+        .env("XDG_STATE_HOME", &device)
+        .output()?;
+    ensure!(
+        !wrong_pin.status.success()
+            && !device.exists()
+            && String::from_utf8_lossy(&wrong_pin.stderr).contains("differs from its release pin"),
+        "invalid startup trust pin did not fail before creating custody"
+    );
+    let events_path = stage.join("follow-events.jsonl");
+    let events = fs::File::create(&events_path)?;
+    let stderr_path = stage.join("follow-client-stderr.log");
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let mut child = Child(
+        Command::new(binary)
+            .arg(profile)
+            .arg("follow-state")
+            .arg(pin)
+            .env("LOCALAPPDATA", &device)
+            .env("XDG_STATE_HOME", &device)
+            .stdout(Stdio::from(events))
+            .stderr(Stdio::from(fs::File::create(&stderr_path)?))
+            .spawn()?,
+    );
+    let pid = child.0.id();
+    let mut await_events = |owner: &mut QueryOwner,
+                            native: bool,
+                            predicate: &dyn Fn(&[Value]) -> bool|
+     -> Result<Vec<Value>> {
+        let mut collected = Vec::new();
+        owner.until(|_| {
+            forward(native)?;
+            ensure!(
+                child.0.try_wait()?.is_none(),
+                "auto-start Client exited: {}",
+                fs::read_to_string(&stderr_path).unwrap_or_default()
+            );
+            let log = fs::read_to_string(&events_path)?;
+            collected = log
+                .split_inclusive('\n')
+                .filter(|line| line.ends_with('\n'))
+                .map(serde_json::from_str)
+                .collect::<std::result::Result<_, _>>()?;
+            Ok(predicate(&collected))
+        })?;
+        Ok(collected)
+    };
+    let has = |records: &[Value], event: &str, route: &str| {
+        records
+            .iter()
+            .any(|item| item["event"] == event && item["transport"] == route)
+    };
+    await_events(owner, true, &|records| {
+        has(records, "verified_state", "native_novorudp")
+    })
+    .context("initial authenticated native synchronization")?;
+    await_events(owner, false, &|records| {
+        records.iter().any(|item| item["event"] == "retrying")
+    })
+    .context("lost native route with no available bootstrap records")?;
+    fs::copy(live_seed, &opened_seed)?;
+    await_events(owner, false, &|records| {
+        has(records, "verified_state", "iroh")
+    })
+    .context("autonomous fallback through the only available signed source")?;
+    let recovered = await_events(owner, true, &|records| {
+        records
+            .iter()
+            .filter(|item| {
+                item["event"] == "verified_state" && item["transport"] == "native_novorudp"
+            })
+            .count()
+            == 2
+    })
+    .context("recovery to the independently authenticated native route")?;
+
+    let ready: Vec<_> = recovered
+        .iter()
+        .filter(|event| event["event"] == "verified_state")
+        .collect();
+    let tip = owner.rpc.node.controller.parent();
+    let expected_root = super::hex(&tip.state_root);
+    let serving_key = format!("{:x}", Sha256::digest(key));
+    let identity = ready[0]["transport_identity_sha256"].clone();
+    ensure!(
+        ready.len() == 3
+            && identity.is_string()
+            && identity != serving_key
+            && ready.iter().all(|event| event["height"] == tip.height
+                && event["state_root"] == expected_root
+                && event["verified_nodes"] == ready[0]["verified_nodes"]
+                && event["downloaded_nodes"] == ready[0]["verified_nodes"]
+                && event["transport_identity_sha256"] == identity
+                && event["peer_transport_sha256"] == serving_key),
+        "route recovery did not preserve verified state and custody: {ready:?}"
+    );
+    println!(
+        "one installed Client recovered without restart, pid={pid}, events={}",
+        serde_json::to_string(&recovered)?
+    );
+    Ok(())
 }
 
 fn verify_archived_receipt(owner: &mut QueryOwner, request: &Path, observed: &Value) -> Result<()> {

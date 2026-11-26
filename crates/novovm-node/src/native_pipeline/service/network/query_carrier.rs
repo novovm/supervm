@@ -172,7 +172,24 @@ pub(super) async fn connect<'a>(
 
 pub(super) struct QuerySession<'a> {
     client: NativeApplicationClient,
-    pump: NativeCarrierPump<'a>,
+    pump: Option<NativeCarrierPump<'a>>,
+}
+
+impl QuerySession<'static> {
+    pub(super) fn connect_native(
+        identity: TransportIdentity,
+        node: novovm_network::novorudp::endpoint::NativePeer,
+        domain: MessageDomain,
+    ) -> Result<Self> {
+        let client = NativeApplicationClient::connect_udp_query(
+            identity,
+            node,
+            domain,
+            policy(),
+            wall_ms()?,
+        )?;
+        Ok(Self { client, pump: None })
+    }
 }
 
 impl<'a> QuerySession<'a> {
@@ -184,7 +201,10 @@ impl<'a> QuerySession<'a> {
         let (endpoint, pump) =
             NativeCarrierPump::attach_continuous_v7(stream, channel, vec![wire::STREAM])?;
         let client = NativeApplicationClient::from_query_endpoint(endpoint, domain, policy())?;
-        Ok(Self { client, pump })
+        Ok(Self {
+            client,
+            pump: Some(pump),
+        })
     }
 
     pub(super) async fn query(&mut self, selector: wire::Query) -> Result<Answer> {
@@ -199,7 +219,11 @@ impl<'a> QuerySession<'a> {
             if let Some(response) = self.client.poll_query_response(&request, now)? {
                 return Ok(response.answer);
             }
-            tick(&mut self.pump).await?;
+            if let Some(pump) = &mut self.pump {
+                tick(pump).await?;
+            } else {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
         }
     }
 

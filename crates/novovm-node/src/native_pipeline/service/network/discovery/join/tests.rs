@@ -38,6 +38,7 @@ fn clean_device_authenticates_through_second_source_and_preserves_custody() -> R
             },
         ],
         lookup_transport_keys: vec![responsive.public_key().to_vec()],
+        native_query_peers: Vec::new(),
         verification: None,
     };
     let pins = profile.pins();
