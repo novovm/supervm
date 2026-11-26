@@ -83,8 +83,8 @@ function Get-WindowsClientJoinInputs([string]$Path, [string]$ProfileSha256, [str
     throw 'The issued Client profile must pin the packaged Windows AOEM and chain verification.'
   }
   $bootstrap = @($profile.seeds)
-  if ($bootstrap.Count -ne 2 -or @($bootstrap | Where-Object { !$_.locator -and !$_.contact }).Count) {
-    throw 'The issued Client profile requires two bootstrap sources with a locator or contact.'
+  if ($bootstrap.Count -ne 2 -or @($bootstrap | Where-Object { !$_.contact }).Count) {
+    throw 'The issued Client profile requires two pinned bootstrap contacts that survive locator expiry.'
   }
   $seeds = @($bootstrap | Where-Object locator | ForEach-Object locator)
   if (@($seeds | Sort-Object -Unique).Count -ne $seeds.Count -or

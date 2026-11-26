@@ -486,9 +486,32 @@ if ($windowsPackage) {
     verification = @{ trusted_parent = @{height=0} }
     seeds = @(@{locator='bootstrap-first.json'}, @{locator='bootstrap-second.json'})
   }
-  [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 5))
   [IO.File]::WriteAllText((Join-Path $fixture 'bootstrap-first.json'), 'isolated locator fixture 1')
   [IO.File]::WriteAllText((Join-Path $fixture 'bootstrap-second.json'), 'isolated locator fixture 2')
+  $firstContact = @{endpoint_key=@(1);direct=@('127.0.0.1:43111');relays=@()}
+  $secondContact = @{endpoint_key=@(2);direct=@('127.0.0.1:43112');relays=@()}
+  foreach ($present in @('none', 'first', 'second')) {
+    $null = $discoveryConfig.seeds[0].Remove('contact')
+    $null = $discoveryConfig.seeds[1].Remove('contact')
+    if ($present -eq 'first') { $discoveryConfig.seeds[0].contact = $firstContact }
+    if ($present -eq 'second') { $discoveryConfig.seeds[1].contact = $secondContact }
+    [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 6))
+    $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()
+    $rejectedName = "artifacts/product-overlay/windows-client-missing-contact-$present"
+    try {
+      & $packager -Target $Target -PackageDir $rejectedName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
+      throw "Assembly accepted a Windows release without two fixed bootstrap contacts ($present)"
+    } catch {
+      if ($_.Exception.Message -notlike '*requires two pinned bootstrap contacts*') { throw }
+    }
+    if (Test-Path -LiteralPath (Join-Path $fixture $rejectedName)) {
+      throw 'Missing bootstrap contacts left a published package'
+    }
+  }
+  Write-Output 'PASS: issued Windows profiles without two pinned bootstrap contacts fail before publication'
+  $discoveryConfig.seeds[0].contact = $firstContact
+  $discoveryConfig.seeds[1].contact = $secondContact
+  [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 6))
   $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()
   $bundledName = 'artifacts/product-overlay/windows-client-bundled'
   try {
@@ -545,8 +568,8 @@ if ($windowsPackage) {
   }
   Write-Output 'PASS: packaged Windows Client selects a pinned portable profile without caller-supplied paths and rejects a changed locator'
   $discoveryConfig.seeds = @(
-    @{contact=@{endpoint_key=@(1);direct=@('127.0.0.1:43111');relays=@()}},
-    @{contact=@{endpoint_key=@(2);direct=@('127.0.0.1:43112');relays=@()}}
+    @{contact=$firstContact},
+    @{contact=$secondContact}
   )
   [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 6))
   $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()
