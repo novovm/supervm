@@ -6,6 +6,9 @@ use crate::native_pipeline::business::direct_nov_fee::{quote_transfer, TransferF
 use crate::native_pipeline::consensus::chain::ChainRecord;
 use novovm_consensus::round_bft::{journal::codec::decode_archived_decision, VerifiedDecision};
 
+#[path = "native_product_weighted_recovery.rs"]
+mod weighted;
+
 const OFFLINE_BATCHES: u64 = 40;
 const RESTART_BATCHES: u64 = 4;
 const LATE_START: Duration = Duration::from_secs(31);

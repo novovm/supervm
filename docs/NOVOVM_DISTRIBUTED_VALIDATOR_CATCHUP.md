@@ -69,6 +69,14 @@ A、C、D 三台物理 Windows 主机的四个隔离角色已完成本轮验收�
 
 离线计划回归入口为 `scripts/tests/distributed-catchup-weight-plan.tests.ps1`。输入已保存的真实等权三机证据目录、编译后的新 harness 及全新测试输出目录。该入口仅使用原计划中的公开材料生成复验计划，检查不同权重使创世承诺变化并拒绝错配，还会重新核对原等权运行。运行不等权实机验收时需要一组同新域绑定的隔离用途钥和新库。
 
+单机回环的行为回归从新域开始。先构建同源码的 `novovm-node`，设置 `NOVOVM_RESIDENT_NODE_BINARY` 和 `NOVOVM_AOEM_TEST_LIBRARY` 为已核验的绝对路径，`NOVOVM_AOEM_PLUGIN_DIR` 指向其匹配的插件目录。令 `NOVOVM_WEIGHTED_RECOVERY_DIRECTORY` 指向父目录已存在、目标尚未创建的独立目录，再运行以下唯一用例。
+
+    cargo test --locked --release -p novovm-node --features iroh-transport --lib weighted_pair_pending_once_and_existing_outbox -- --ignored --test-threads 1 --nocapture
+
+本用例在回环上运行四个原生产品进程，先以 nonce 0 建立高度 1，然后仅一次把 nonce 1 的两条测试输入交给 C1。A1、C1 在线时核对原高度与未终结回执，在 C1、A2 在线时核对高度 2 的原回执，再从四个停稳的库验实际签名人及其权重。输出目录含 `recovery-report.json` 及四份原决策 outbox；D1 重开前后的高度 1 决策与 outbox 逐字节比对。此回归和三机分布式资格验收分别取证。
+
+2026-11-27，C 的四个独立 Windows 进程在回环测试域 `7001552519` 完成这项回归。A1 与 C1 持有 3/7 权重，C1 收到原输入后，12.016 秒内的 278 次观测均保持高度 1。替换为 C1 与 A2 后，原输入在高度 2、第 1 轮终结。四个原库最后的区块哈希均为 `a8bc7ca859c0ce0171c58c93167ba597305e5d5191aec200f0026dc6db67dd93`。从四份归档逐一核验的签名人均为 A2 和 C1，权重合计 5。D1 重开后的高度 1 决定和 outbox 与停机时逐字节相同。本轮报告的 SHA-256 为 `39dd211c66e8bd31990087be6e15c88674b77634573634b1a257128d2779301e`。
+
 ### 等权流程与共用取证步骤
 
 | 阶段 | 操作与必须留下的证据 |

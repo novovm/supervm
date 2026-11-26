@@ -27,6 +27,8 @@ struct ProductNodes {
     endpoints: Vec<String>,
     processes: Vec<Option<Child>>,
     agent: ureq::Agent,
+    #[cfg(target_os = "linux")]
+    credential_directory: PathBuf,
 }
 
 impl ProductNodes {
@@ -47,10 +49,7 @@ impl ProductNodes {
         let launch = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let mut command = Command::new(&self.binary);
         #[cfg(target_os = "linux")]
-        command.env(
-            "CREDENTIALS_DIRECTORY",
-            &process_identities()?.credential_directory,
-        );
+        command.env("CREDENTIALS_DIRECTORY", &self.credential_directory);
         command
             .env_remove("NOVOVM_NATIVE_RESIDENT_CONFIG")
             .env_remove("NOVOVM_NATIVE_RESIDENT_START")
@@ -364,12 +363,12 @@ struct ProcessIdentities {
 fn process_identities() -> Result<&'static ProcessIdentities> {
     static IDENTITIES: OnceLock<std::result::Result<ProcessIdentities, String>> = OnceLock::new();
     IDENTITIES
-        .get_or_init(|| prepare_process_identities().map_err(|e| format!("{e:#}")))
+        .get_or_init(|| prepare_process_identities(CHAIN).map_err(|e| format!("{e:#}")))
         .as_ref()
         .map_err(|e| anyhow::anyhow!(e.clone()))
 }
 
-fn prepare_process_identities() -> Result<ProcessIdentities> {
+fn prepare_process_identities(chain: u64) -> Result<ProcessIdentities> {
     let directory = std::env::temp_dir().join(format!(
         "novovm-mldsa-process-custody-{}-{}",
         std::process::id(),
@@ -397,7 +396,7 @@ fn prepare_process_identities() -> Result<ProcessIdentities> {
     let mut transport_paths = Vec::new();
     for index in 0..4 {
         let keys = crate::native_pipeline::service::config::test_custody::generate_node_keys(
-            &directory, CHAIN, index, &crypto,
+            &directory, chain, index, &crypto,
         )?;
         signers.push(keys.signer);
         transports.push(keys.transport);
@@ -406,14 +405,14 @@ fn prepare_process_identities() -> Result<ProcessIdentities> {
     }
     let (client_transport, _) =
         crate::native_pipeline::service::config::test_custody::generate_transport_key(
-            &directory, CHAIN, "client", &crypto,
+            &directory, chain, "client", &crypto,
         )?;
     // The operator subprocess uses another socket while the observer stays
     // connected. Sharing its identity would replace that live peer session.
     let (_, operator_transport_path) =
         crate::native_pipeline::service::config::test_custody::generate_transport_key(
             &directory,
-            CHAIN,
+            chain,
             "operator-client",
             &crypto,
         )?;
@@ -542,21 +541,37 @@ fn setup_with_genesis(
     genesis: GenesisConfig,
     batch_size: usize,
 ) -> Result<(ProductNodes, Arc<ValidatorSet>)> {
+    setup_with_identities(
+        directory,
+        binary,
+        genesis,
+        batch_size,
+        process_identities()?,
+    )
+}
+
+fn setup_with_identities(
+    directory: &Path,
+    binary: PathBuf,
+    genesis: GenesisConfig,
+    batch_size: usize,
+    identities: &ProcessIdentities,
+) -> Result<(ProductNodes, Arc<ValidatorSet>)> {
     genesis.validate()?;
     ensure!(
         (1..=1024).contains(&batch_size),
         "invalid test RPC batch size"
     );
     let set = Arc::new(ValidatorSet::new_with_verifier(
-        CHAIN,
-        1,
+        genesis.chain_id,
+        genesis.validator_epoch,
         1,
         genesis
             .validators
             .iter()
             .map(|validator| Validator::new(&validator.public_key, validator.weight))
             .collect::<Result<Vec<_>>>()?,
-        process_crypto()?,
+        identities.crypto.clone(),
     )?);
     let library = library()?;
     let execution_backend = test_execution_backend()?;
@@ -577,8 +592,8 @@ fn setup_with_genesis(
         .collect::<std::io::Result<Vec<_>>>()?;
     for (index, listener) in listeners.iter().enumerate() {
         let address: SocketAddr = listener.local_addr()?;
-        let key_path = &process_identities()?.validator_paths[index];
-        let transport_key_path = &process_identities()?.transport_paths[index];
+        let key_path = &identities.validator_paths[index];
+        let transport_key_path = &identities.transport_paths[index];
         let config_path = directory.join(format!("node-{index}.json"));
         let config = json!({
             "profile":PROFILE,"library":library,"database":directory.join(format!("validator-{index}.rocksdb")),
@@ -587,7 +602,7 @@ fn setup_with_genesis(
             "execution_backend":execution_backend,
             "signature_backend":signature_backend,
             "udp_addr":udp[index], "peers": (0..4).filter(|peer| *peer != index).map(|peer|
-                json!({"public_key":validator_key(peer).public_key(),"address":udp[peer]})).collect::<Vec<_>>()
+                json!({"public_key":identities.signers[peer].public_key(),"address":udp[peer]})).collect::<Vec<_>>()
         });
         fs::write(&config_path, serde_json::to_vec_pretty(&config)?)?;
         configs.push(config_path);
@@ -601,6 +616,8 @@ fn setup_with_genesis(
             configs,
             endpoints,
             processes: (0..4).map(|_| None).collect(),
+            #[cfg(target_os = "linux")]
+            credential_directory: identities.credential_directory.clone(),
             agent: ureq::Agent::config_builder()
                 .proxy(None)
                 .max_redirects(5)
