@@ -1,4 +1,5 @@
 //! Explicit local serving until the existing discovery owner can authorize referrals.
+mod local_locator;
 use super::{
     bind_carrier, client_identity, fingerprint, installed_state_base, profile_base,
     read_installed_profile, state_path, wall_ms,
@@ -8,17 +9,17 @@ use crate::native_pipeline::service::network::{
     CARRIER_CONNECTION_CEILING,
 };
 use anyhow::{ensure, Context, Result};
+use local_locator::LocalLocator;
 use novovm_network::{
     carrier_stream::CarrierStreamV1,
     discovery_control::native_locator_id_v1,
     iroh_transport::{IrohConfigV1, IrohScopeV1},
-    product_directory::sign_relay_record_v1,
+    product_directory::{sign_relay_record_v1, validate_relay_record_v1, PeerSignedRelayRecordV1},
     product_overlay::TransportIdentity,
     product_service_lease::IrohServiceEndpointV1,
     service_concurrency::ServiceConcurrencyV1,
 };
 use std::{
-    fs,
     future::{poll_fn, Future},
     io::{self, Write},
     net::Ipv4Addr,
@@ -109,14 +110,6 @@ pub fn serve_installed_read_snapshot(
         })
 }
 
-struct LocalLocator(PathBuf);
-
-impl Drop for LocalLocator {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 fn local_locator(
     scope: &IrohScopeV1,
     identity: &TransportIdentity,
@@ -145,15 +138,14 @@ fn local_locator(
             .context("snapshot expiry overflow")?,
         now,
     )?;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .context("creating private local snapshot locator")?;
-    let guard = LocalLocator(path);
-    serde_json::to_writer(&mut file, &record)?;
-    file.sync_all()?;
-    Ok(guard)
+    LocalLocator::replace(path, &serde_json::to_vec(&record)?, |bytes| {
+        // Before the lock file existed, a live owner only left a signed locator.
+        serde_json::from_slice::<PeerSignedRelayRecordV1>(bytes).is_ok_and(|prior| {
+            prior.record_id == record.record_id
+                && prior.relay_public_key == identity.public_key()
+                && validate_relay_record_v1(&prior, now, identity).is_ok()
+        })
+    })
 }
 
 async fn serve(
