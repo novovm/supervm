@@ -28,7 +28,8 @@ use novovm_network::{
 mod diagnostic;
 mod discovery;
 pub use discovery::{
-    discover_installed, discover_verified_receipt, sync_installed_chain, sync_installed_state,
+    discover_installed, discover_verified_receipt, follow_installed_state, sync_installed_chain,
+    sync_installed_state,
 };
 mod observation;
 mod probe;

@@ -1,0 +1,239 @@
+//! Installed-device sync on the original query owner. A failed route never
+//! discards a certified header or a verified content-addressed state node.
+use super::*;
+use novovm_network::novorudp::endpoint::NativePeer;
+
+const POLL: Duration = Duration::from_secs(2);
+const RECOVER_NATIVE: Duration = Duration::from_secs(6);
+const QUERY_BUDGET: Duration = Duration::from_secs(20);
+
+pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
+    let (profile, identity) = pinned_installed_profile(path, profile_sha256)?;
+    let (domain, anchor) = profile.verification_domain()?;
+    validate_parent(&anchor)?;
+    let chain = open_checkpoint(&profile, &identity, &domain, anchor)?;
+    let cache = StateCache::open(chain.root.join("state-nodes"))?;
+    let follower = Follower {
+        base: profile_base(path)?.to_owned(),
+        profile,
+        identity,
+        domain,
+        chain,
+        cache,
+        snapshot: None,
+        reported: None,
+        retrying: false,
+    };
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(follower.run())
+}
+
+struct Follower {
+    base: PathBuf,
+    profile: Profile,
+    identity: TransportIdentity,
+    domain: MessageDomain,
+    chain: VerifiedHeaders,
+    cache: StateCache,
+    snapshot: Option<(ParentPoint, StateProgress)>,
+    reported: Option<(ParentPoint, Route)>,
+    retrying: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Carrier {
+    Native,
+    Iroh,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct Route {
+    carrier: Carrier,
+    peer: String,
+}
+
+type Native = (QuerySession<'static>, Route);
+
+impl Follower {
+    async fn run(mut self) -> Result<()> {
+        self.emit(
+            serde_json::json!({"event":"starting", "reopened_height":self.chain.tip.height}),
+        )?;
+        let mut owner = None;
+        let mut backoff = Duration::from_secs(1);
+        let mut native = self.probe_native().await;
+        loop {
+            if let Some((mut session, route)) = native.take() {
+                self.run_route(&mut session, route).await.ok();
+            }
+            if owner.is_none() {
+                let carrier = IrohConfigV1::new(&self.profile.relays, self.profile.nameserver)?;
+                owner = bind_carrier(carrier).await.ok();
+            }
+            if let Some(active) = &owner {
+                let seeds = read_seeds(&self.base, &self.profile);
+                if let Ok(report) =
+                    collect(active, self.identity.clone(), &self.profile, seeds).await
+                {
+                    let (returned, recovered_native) = active
+                        .with_continuous_service_v4(
+                            || Ok(()),
+                            |scope| {
+                                Box::pin(async move {
+                                    let native = self.follow_candidates(scope, report).await;
+                                    Ok((self, native))
+                                })
+                            },
+                        )
+                        .await?;
+                    self = returned;
+                    if recovered_native.is_some() {
+                        native = recovered_native;
+                        backoff = Duration::from_secs(1);
+                        continue;
+                    }
+                }
+                // Invalidate stale pooled routes and nudge the retained owner
+                // to inspect the actual local interfaces after a failed dial.
+                let refresh =
+                    IrohControlV1::new(Instant::now() + Duration::from_secs(2), || Ok(()))?;
+                let _ = active.network_change(refresh).await;
+            }
+            if !self.retrying {
+                self.emit(serde_json::json!({"event":"retrying", "verified_height":self.chain.tip.height}))?;
+                self.retrying = true;
+                self.reported = None;
+                backoff = Duration::from_secs(1);
+            }
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_secs(10));
+            native = self.probe_native().await;
+        }
+    }
+
+    async fn probe_native(&self) -> Option<Native> {
+        tokio::time::timeout(Duration::from_secs(4), async {
+            for peer in &self.profile.native_query_peers {
+                let node = NativePeer {
+                    key: peer.transport_key.clone(),
+                    address: peer.address,
+                };
+                let Ok(mut session) =
+                    QuerySession::connect_native(self.identity.clone(), node, self.domain.clone())
+                else {
+                    continue;
+                };
+                let result = tokio::time::timeout(
+                    Duration::from_millis(1250),
+                    peer_status(&mut session, self.chain.tip),
+                )
+                .await;
+                if matches!(result, Ok(Ok(_))) {
+                    return Some((
+                        session,
+                        Route {
+                            carrier: Carrier::Native,
+                            peer: fingerprint(&peer.transport_key),
+                        },
+                    ));
+                }
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn follow_candidates(
+        &mut self,
+        scope: &IrohScopeV1,
+        report: DiscoveryReport,
+    ) -> Option<Native> {
+        for candidate in report.records.into_values() {
+            if wall_ms().map_or(true, |now| candidate.expires_at_ms <= now) {
+                continue;
+            }
+            let Ok(Ok((mut stream, channel))) = tokio::time::timeout(
+                Duration::from_secs(8),
+                connect(scope, &candidate, self.identity.clone(), &self.domain),
+            )
+            .await
+            else {
+                continue;
+            };
+            let Ok(mut session) = QuerySession::attach(&mut stream, channel, self.domain.clone())
+            else {
+                continue;
+            };
+            let route = Route {
+                carrier: Carrier::Iroh,
+                peer: fingerprint(&candidate.relay_public_key),
+            };
+            if let Ok(Some(recovered_native)) = self.run_route(&mut session, route).await {
+                return Some(recovered_native);
+            }
+        }
+        None
+    }
+
+    async fn run_route(
+        &mut self,
+        session: &mut QuerySession<'_>,
+        route: Route,
+    ) -> Result<Option<Native>> {
+        let mut next_probe = Instant::now() + RECOVER_NATIVE;
+        loop {
+            if let Some(state) = tokio::time::timeout(QUERY_BUDGET, self.sync(session)).await?? {
+                let tip = self.chain.tip;
+                if self.reported.as_ref() != Some(&(tip, route.clone())) {
+                    self.emit(serde_json::json!({
+                        "event":"verified_state", "height":tip.height,
+                        "state_root": super::super::super::super::super::rpc::hex(&tip.state_root),
+                        "state_version":tip.state_version,
+                        "verified_nodes":state.nodes, "verified_leaves":state.leaves,
+                        "downloaded_nodes":state.downloaded,
+                        "transport":match route.carrier { Carrier::Native => "native_novorudp", Carrier::Iroh => "iroh" },
+                        "peer_transport_sha256":route.peer,
+                    }))?;
+                    self.reported = Some((tip, route.clone()));
+                    self.retrying = false;
+                }
+            }
+            if route.carrier == Carrier::Iroh && Instant::now() >= next_probe {
+                if let Some(native) = self.probe_native().await {
+                    return Ok(Some(native));
+                }
+                next_probe = Instant::now() + RECOVER_NATIVE;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
+    async fn sync(&mut self, session: &mut QuerySession<'_>) -> Result<Option<StateProgress>> {
+        let advertised = peer_status(session, self.chain.tip).await?;
+        let cap = self.chain.tip.height.saturating_add(MAX_HEADERS_PER_PASS);
+        sync_headers(session, &mut self.chain, cap, &advertised).await?;
+        let tip = self.chain.tip;
+        if tip.height != advertised.height {
+            return Ok(None);
+        }
+        if let Some((verified, state)) = self.snapshot.filter(|(verified, _)| *verified == tip) {
+            debug_assert_eq!(verified, tip);
+            return Ok(Some(state));
+        }
+        let state = self.cache.sync(session, tip).await?;
+        self.snapshot = Some((tip, state));
+        Ok(Some(state))
+    }
+
+    fn emit(&self, mut event: serde_json::Value) -> Result<()> {
+        event["transport_identity_sha256"] = fingerprint(self.identity.public_key()).into();
+        let mut stdout = std::io::stdout().lock();
+        writeln!(stdout, "{event}")?;
+        stdout.flush()?;
+        Ok(())
+    }
+}

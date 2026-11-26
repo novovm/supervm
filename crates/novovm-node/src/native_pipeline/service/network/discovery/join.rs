@@ -16,7 +16,7 @@ use novovm_relay::transport_identity::{load_transport_identity, provision_transp
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
-pub use chain_sync::{sync_installed_chain, sync_installed_state};
+pub use chain_sync::{follow_installed_state, sync_installed_chain, sync_installed_state};
 
 #[cfg(test)]
 mod tests;
@@ -35,8 +35,18 @@ struct Profile {
     seeds: [SeedPin; 2],
     /// Transport identity pins from the installed chain profile.
     lookup_transport_keys: Vec<Vec<u8>>,
+    /// Native query routes pinned by the same installed release as the bootstrap keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    native_query_peers: Vec<NativeQueryPeer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     verification: Option<VerificationPins>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeQueryPeer {
+    address: SocketAddr,
+    transport_key: Vec<u8>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -79,6 +89,24 @@ impl Profile {
                     .iter()
                     .all(|seed| is_transport_key(&seed.transport_key)),
             "installed discovery requires distinct bootstrap transport pins"
+        );
+        ensure!(
+            self.native_query_peers.len() <= self.lookup_transport_keys.len()
+                && self.native_query_peers.iter().all(|peer| {
+                    peer.address.port() != 0
+                        && !peer.address.ip().is_unspecified()
+                        && !peer.address.ip().is_multicast()
+                        && peer.address.ip() != IpAddr::from([255, 255, 255, 255])
+                        && self.lookup_transport_keys.contains(&peer.transport_key)
+                })
+                && self
+                    .native_query_peers
+                    .iter()
+                    .map(|peer| &peer.transport_key)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+                    == self.native_query_peers.len(),
+            "invalid installed native query routes"
         );
         Ok(())
     }
@@ -196,20 +224,51 @@ pub fn discover_verified_receipt(path: &Path, hash: &str) -> Result<serde_json::
     })
 }
 
-fn installed_inputs(
+fn installed_profile(path: &Path) -> Result<(Profile, TransportIdentity)> {
+    pinned_installed_profile(path, None)
+}
+
+fn pinned_installed_profile(
     path: &Path,
-) -> Result<(Profile, TransportIdentity, [PeerSignedRelayRecordV1; 2])> {
+    expected_sha256: Option<&str>,
+) -> Result<(Profile, TransportIdentity)> {
     let data = installed_state_base()?;
-    let profile: Profile = read_document(path)?;
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take((MAX_CONFIG + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= MAX_CONFIG,
+        "installed profile exceeds configuration budget"
+    );
+    if let Some(expected) = expected_sha256 {
+        ensure!(
+            fingerprint(&bytes).eq_ignore_ascii_case(expected),
+            "installed profile SHA-256 differs from its release pin"
+        );
+    }
+    let profile: Profile = serde_json::from_slice(&bytes)?;
     profile.validate()?;
-    let base = path
-        .parent()
-        .context("installed profile directory missing")?;
-    let seeds = [
-        read_document(&base.join(&profile.seeds[0].locator))?,
-        read_document(&base.join(&profile.seeds[1].locator))?,
-    ];
-    let identity = local_identity(&data, base, &profile)?;
+    let identity = local_identity(&data, profile_base(path)?, &profile)?;
+    Ok((profile, identity))
+}
+
+fn profile_base(path: &Path) -> Result<&Path> {
+    path.parent().context("installed profile directory missing")
+}
+
+type SeedInputs = [Result<PeerSignedRelayRecordV1>; 2];
+
+fn read_seeds(base: &Path, profile: &Profile) -> SeedInputs {
+    profile
+        .seeds
+        .each_ref()
+        .map(|seed| read_document(&base.join(&seed.locator)))
+}
+
+fn installed_inputs(path: &Path) -> Result<(Profile, TransportIdentity, SeedInputs)> {
+    let (profile, identity) = installed_profile(path)?;
+    let seeds = read_seeds(profile_base(path)?, &profile);
     Ok((profile, identity, seeds))
 }
 
@@ -298,7 +357,7 @@ async fn discover(
     carrier: IrohConfigV1,
     identity: TransportIdentity,
     profile: &Profile,
-    seeds: [PeerSignedRelayRecordV1; 2],
+    seeds: SeedInputs,
 ) -> Result<DiscoveryReport> {
     let owner = bind_carrier(carrier).await?;
     let report = collect(&owner, identity, profile, seeds).await;
@@ -321,30 +380,38 @@ async fn collect(
     owner: &IrohEndpointOwnerV1,
     identity: TransportIdentity,
     profile: &Profile,
-    seeds: [PeerSignedRelayRecordV1; 2],
+    seeds: SeedInputs,
 ) -> Result<DiscoveryReport> {
     let pins = profile.pins();
     let wall = wall_ms()?;
+    let accept = |record: Result<PeerSignedRelayRecordV1>, seed: &SeedPin| {
+        let record = record?;
+        ensure!(
+            record.relay_public_key == seed.transport_key,
+            "bootstrap locator signer differs from installed pin"
+        );
+        seed_candidate(record, pins, &identity, wall)
+    };
     let [first, second] = seeds;
-    ensure!(
-        first.relay_public_key == profile.seeds[0].transport_key
-            && second.relay_public_key == profile.seeds[1].transport_key,
-        "bootstrap locator signer differs from installed pin"
+    let (first, second) = (
+        accept(first, &profile.seeds[0]),
+        accept(second, &profile.seeds[1]),
     );
-    let first = seed_candidate(first, pins, &identity, wall);
-    let second = seed_candidate(second, pins, &identity, wall);
-    let (first, second) = (first?, second?);
-    ensure!(
-        first.route.endpoint_key != second.route.endpoint_key,
-        "installed discovery requires distinct source identities and endpoints"
-    );
+    if let (Ok(first), Ok(second)) = (&first, &second) {
+        ensure!(
+            first.route.endpoint_key != second.route.endpoint_key,
+            "installed discovery requires distinct source identities and endpoints"
+        );
+    }
     ensure!(
         profile
             .lookup_transport_keys
             .iter()
             .all(|key| key != identity.public_key())
-            && first.key != identity.public_key()
-            && second.key != identity.public_key(),
+            && profile
+                .seeds
+                .iter()
+                .all(|seed| seed.transport_key != identity.public_key()),
         "ordinary device custody overlaps an installed service pin"
     );
     let lookups = profile.lookup_transport_keys.clone();
@@ -389,22 +456,21 @@ async fn lookup_sources(
     scope: &IrohScopeV1,
     identity: TransportIdentity,
     pins: Pins,
-    [first, second]: [DialCandidate; 2],
+    [first, second]: [Result<DialCandidate>; 2],
     lookups: Vec<Vec<u8>>,
 ) -> Result<DiscoveryReport> {
-    let sources = [fingerprint(&first.key), fingerprint(&second.key)];
     let failures = Arc::new(NetworkFailures::default());
+    let lookup = |candidate, identity, lookups, failures| async move {
+        let candidate: DialCandidate = candidate?;
+        let source = fingerprint(&candidate.key);
+        let records = query(scope, identity, candidate, pins, None, lookups, failures)
+            .await
+            .with_context(|| format!("bootstrap {source}"))?;
+        Ok::<_, anyhow::Error>((source, records))
+    };
     let (primary, secondary) = tokio::join!(
-        query(
-            scope,
-            identity.clone(),
-            first,
-            pins,
-            None,
-            lookups.clone(),
-            failures.clone()
-        ),
-        query(scope, identity, second, pins, None, lookups, failures),
+        lookup(first, identity.clone(), lookups.clone(), failures.clone()),
+        lookup(second, identity, lookups, failures),
     );
     let mut report = DiscoveryReport {
         sources: Vec::new(),
@@ -412,11 +478,11 @@ async fn lookup_sources(
     };
     let mut errors = Vec::new();
     let wall = wall_ms()?;
-    for (source, result) in sources.into_iter().zip([primary, secondary]) {
-        let records = match result {
-            Ok(records) => records,
+    for result in [primary, secondary] {
+        let (source, records) = match result {
+            Ok(found) => found,
             Err(error) => {
-                errors.push(format!("{source}: {error:#}"));
+                errors.push(format!("{error:#}"));
                 continue;
             }
         };

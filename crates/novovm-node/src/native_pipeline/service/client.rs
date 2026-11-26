@@ -74,6 +74,42 @@ impl NativeApplicationClient {
         policy: NativeSendPolicy,
     ) -> Result<Self> {
         endpoint.validate_bound_carriers_v1(&[query::STREAM])?;
+        Self::query_only(endpoint, domain, policy)
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn connect_udp_query(
+        identity: TransportIdentity,
+        node: NativePeer,
+        domain: MessageDomain,
+        policy: NativeSendPolicy,
+        wall_ms: u64,
+    ) -> Result<Self> {
+        let bind = if node.address.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
+        let endpoint = NativeEndpoint::connect_client(
+            UdpSocket::bind(bind)?,
+            identity,
+            node,
+            NativeHandshakeBudget {
+                lifetime: INITIAL_HANDSHAKE_LIFETIME,
+                retry: Duration::from_millis(50),
+            },
+            wall_ms,
+            Instant::now(),
+        )?;
+        Self::query_only(endpoint, domain, policy)
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    fn query_only(
+        endpoint: NativeEndpoint,
+        domain: MessageDomain,
+        policy: NativeSendPolicy,
+    ) -> Result<Self> {
         let lane = crate::native_pipeline::consensus::native::query_lane(
             transport::fragment_domain(domain.chain_id, domain.genesis, domain.protocol),
         );

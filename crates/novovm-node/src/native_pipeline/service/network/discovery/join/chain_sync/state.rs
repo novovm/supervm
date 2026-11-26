@@ -8,8 +8,12 @@ use novovm_protocol::native_query::{
 
 const MAX_NEW_NODES_PER_ATTEMPT: usize = 4096;
 
-pub(super) struct StateCache(PathBuf);
+pub(super) struct StateCache {
+    root: PathBuf,
+    downloaded: usize,
+}
 
+#[derive(Clone, Copy)]
 pub(super) struct StateProgress {
     pub nodes: usize,
     pub leaves: usize,
@@ -19,20 +23,23 @@ pub(super) struct StateProgress {
 impl StateCache {
     pub(super) fn open(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(&root)?;
-        Ok(Self(root))
+        Ok(Self {
+            root,
+            downloaded: 0,
+        })
     }
 
     fn path(&self, hash: &NodeHash) -> PathBuf {
         use super::super::super::super::super::rpc::hex;
-        self.0.join(format!("{}.node", hex(hash)))
+        self.root.join(format!("{}.node", hex(hash)))
     }
 
     pub(super) async fn sync(
-        &self,
+        &mut self,
         session: &mut QuerySession<'_>,
         tip: ParentPoint,
     ) -> Result<StateProgress> {
-        let mut downloaded = 0;
+        let at_start = self.downloaded;
         if tip.state_root != empty_root() {
             let mut pending = vec![(tip.state_root, 0)];
             let mut ancestry = Vec::new();
@@ -44,7 +51,7 @@ impl StateCache {
                     bytes
                 } else {
                     ensure!(
-                        downloaded < MAX_NEW_NODES_PER_ATTEMPT,
+                        self.downloaded - at_start < MAX_NEW_NODES_PER_ATTEMPT,
                         "state download step budget reached"
                     );
                     let selector = StateNodeSelector {
@@ -61,7 +68,7 @@ impl StateCache {
                 })?;
                 if missing {
                     store_checkpoint(&self.path(&hash), &bytes)?;
-                    downloaded += 1;
+                    self.downloaded += 1;
                 }
                 if let Some([left, right]) = children {
                     ensure!(depth < 256, "state snapshot exceeds Patricia depth");
@@ -80,7 +87,7 @@ impl StateCache {
         Ok(StateProgress {
             nodes,
             leaves,
-            downloaded,
+            downloaded: self.downloaded,
         })
     }
 }
