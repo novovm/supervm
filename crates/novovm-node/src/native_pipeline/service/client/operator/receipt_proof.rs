@@ -4,7 +4,9 @@ use crate::native_pipeline::consensus::{
     wire::Context as ConsensusContext,
 };
 use novovm_consensus::round_bft::crypto::{ConsensusVerifier, MLDSA65_CONTEXT};
-use novovm_protocol::native_query::{ArchiveSelector, QueryError, MAX_ARCHIVE_PROOF_BYTES};
+use novovm_protocol::native_query::{
+    ArchiveChunk, ArchiveSelector, QueryError, MAX_ARCHIVE_PROOF_BYTES,
+};
 use sha2::{Digest, Sha256};
 
 struct ProofVerifier(TransportIdentity);
@@ -15,102 +17,166 @@ impl ConsensusVerifier for ProofVerifier {
     }
 }
 
-/// Fetch the next block's evidence and independently verify one asset receipt.
-/// The caller obtains the prior verified chain point from local trusted state,
-/// independently of the responding service and of this proof download.
+/// Fetch the next block's evidence using a separately verified local parent.
 pub fn verified_receipt(config_path: &Path, parent_path: &Path, hash: &str) -> Result<Value> {
-    use crate::native_pipeline::service::{config::decode_hex, rpc::hex};
-    let transaction: [u8; 32] = decode_hex(hash)?
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("expected a 32-byte transaction hash"))?;
-    ensure!(transaction != [0; 32], "missing transaction pin");
-    let parent: ParentPoint = serde_json::from_slice(&read_bounded(parent_path, 4096)?)?;
-    ensure!(
-        parent.state_root != [0; 32]
-            && parent.receipt_batch_commitment != [0; 32]
-            && (parent.height == 0) == (parent.block_hash == [0; 32])
-            && (parent.height == 0) == (parent.decision_hash == [0; 32]),
-        "invalid separately verified parent checkpoint"
-    );
+    let transaction = transaction_hash(hash)?;
+    let parent = serde_json::from_slice(&read_bounded(parent_path, 4096)?)?;
     let config_path = config_path.canonicalize()?;
     let config = read_client_config(&config_path)?;
     let (identity, domain) = config.identity(config_path.parent().context("config directory")?)?;
-    let set = (*domain.validators)
-        .clone()
-        .with_verifier(Arc::new(ProofVerifier(identity.clone())));
-    let context = ConsensusContext {
-        chain_id: domain.chain_id,
-        genesis_config_commitment: domain.genesis,
-        protocol_commitment: domain.protocol,
-        epoch: set.epoch(),
-        validator_set_hash: set.hash(),
-        height: parent
-            .height
-            .checked_add(1)
-            .context("parent height exhausted")?,
-        parent_block_hash: parent.block_hash,
-        parent_decision_hash: parent.decision_hash,
-    };
+    let target = ProofTarget::new(&domain, identity.clone(), parent, transaction)?;
     let mut client = config.connect(identity, domain)?;
-    let bytes = fetch(
-        &mut client,
-        context.height,
-        Instant::now() + Duration::from_millis(config.timeout_ms),
-    )?;
-    let proof = ReceiptFinalityProof::decode(&bytes)?;
-    let verified = proof.verify(&set, context, &parent, transaction)?;
-    let receipt = verified.receipt();
-    let block = verified.block();
-    Ok(json!({
-        "independently_verified_finality": true,
-        "tx_hash": hex(&receipt.tx_hash),
-        "success": receipt.success,
-        "nonce_after": receipt.nonce_after,
-        "charged_fee": receipt.charged_fee,
-        "height": block.height,
-        "block_hash": hex(&block.block_hash),
-        "state_root": hex(&block.state_root),
-        "proof_bytes": bytes.len(),
-    }))
+    let deadline = Instant::now() + Duration::from_millis(config.timeout_ms);
+    let mut download = Download::new(target.height());
+    loop {
+        let answer = authority::query_reply(&mut client, download.selector()?, deadline)?;
+        let busy = matches!(answer, Answer::Error(QueryError::Busy));
+        if let Some(bytes) = download.accept(answer)? {
+            return target.verify(&bytes);
+        }
+        if busy {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
 }
 
-fn fetch(client: &mut NativeApplicationClient, height: u64, deadline: Instant) -> Result<Vec<u8>> {
-    let mut expected_total = None;
-    let mut digest = [0; 32];
-    let mut bytes = Vec::new();
-    loop {
-        let request = ArchiveSelector {
-            height,
-            offset: u32::try_from(bytes.len())?,
-            digest,
+pub(crate) fn transaction_hash(hash: &str) -> Result<[u8; 32]> {
+    let transaction: [u8; 32] = crate::native_pipeline::service::config::decode_hex(hash)?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("expected a 32-byte transaction hash"))?;
+    ensure!(transaction != [0; 32], "missing transaction pin");
+    Ok(transaction)
+}
+
+pub(crate) struct ProofTarget {
+    context: ConsensusContext,
+    parent: ParentPoint,
+    set: ValidatorSet,
+    transaction: [u8; 32],
+}
+
+impl ProofTarget {
+    pub(crate) fn new(
+        domain: &MessageDomain,
+        identity: TransportIdentity,
+        parent: ParentPoint,
+        transaction: [u8; 32],
+    ) -> Result<Self> {
+        ensure!(
+            parent.state_root != [0; 32]
+                && parent.receipt_batch_commitment != [0; 32]
+                && (parent.height == 0) == (parent.block_hash == [0; 32])
+                && (parent.height == 0) == (parent.decision_hash == [0; 32]),
+            "invalid separately verified parent checkpoint"
+        );
+        let set = (*domain.validators)
+            .clone()
+            .with_verifier(Arc::new(ProofVerifier(identity)));
+        let context = ConsensusContext {
+            chain_id: domain.chain_id,
+            genesis_config_commitment: domain.genesis,
+            protocol_commitment: domain.protocol,
+            epoch: set.epoch(),
+            validator_set_hash: set.hash(),
+            height: parent
+                .height
+                .checked_add(1)
+                .context("parent height exhausted")?,
+            parent_block_hash: parent.block_hash,
+            parent_decision_hash: parent.decision_hash,
         };
-        let chunk = match authority::query_reply(client, Query::ReceiptProof(request), deadline)? {
+        Ok(Self {
+            context,
+            parent,
+            set,
+            transaction,
+        })
+    }
+
+    pub(crate) fn height(&self) -> u64 {
+        self.context.height
+    }
+
+    pub(crate) fn verify(&self, bytes: &[u8]) -> Result<Value> {
+        use crate::native_pipeline::service::rpc::hex;
+        let proof = ReceiptFinalityProof::decode(bytes)?;
+        let verified = proof.verify(&self.set, self.context, &self.parent, self.transaction)?;
+        let receipt = verified.receipt();
+        let block = verified.block();
+        Ok(json!({
+            "independently_verified_finality": true,
+            "tx_hash": hex(&receipt.tx_hash),
+            "success": receipt.success,
+            "nonce_after": receipt.nonce_after,
+            "charged_fee": receipt.charged_fee,
+            "height": block.height,
+            "block_hash": hex(&block.block_hash),
+            "state_root": hex(&block.state_root),
+            "proof_bytes": bytes.len(),
+        }))
+    }
+}
+
+pub(crate) struct Download {
+    height: u64,
+    expected_total: Option<usize>,
+    digest: [u8; 32],
+    bytes: Vec<u8>,
+}
+
+impl Download {
+    pub(crate) fn new(height: u64) -> Self {
+        Self {
+            height,
+            expected_total: None,
+            digest: [0; 32],
+            bytes: Vec::new(),
+        }
+    }
+
+    pub(crate) fn selector(&self) -> Result<Query> {
+        Ok(Query::ReceiptProof(ArchiveSelector {
+            height: self.height,
+            offset: u32::try_from(self.bytes.len())?,
+            digest: self.digest,
+        }))
+    }
+
+    pub(crate) fn accept(&mut self, answer: Answer) -> Result<Option<Vec<u8>>> {
+        let ArchiveChunk {
+            total_bytes,
+            digest,
+            data,
+        } = match answer {
             Answer::ReceiptProof(chunk) => chunk,
-            Answer::Error(QueryError::Busy) if bytes.is_empty() => {
-                std::thread::sleep(Duration::from_millis(25));
-                continue;
-            }
+            Answer::Error(QueryError::Busy) if self.bytes.is_empty() => return Ok(None),
             _ => anyhow::bail!("requested receipt proof unavailable"),
         };
-        let total = chunk.total_bytes as usize;
-        ensure!(total <= MAX_ARCHIVE_PROOF_BYTES, "receipt proof byte limit");
-        if let Some(expected) = expected_total {
+        let total = total_bytes as usize;
+        ensure!(
+            total <= MAX_ARCHIVE_PROOF_BYTES
+                && !data.is_empty()
+                && data.len() <= total.saturating_sub(self.bytes.len()),
+            "receipt proof byte limit"
+        );
+        if let Some(expected) = self.expected_total {
             ensure!(
-                expected == total && digest == chunk.digest,
+                expected == total && digest == self.digest,
                 "receipt proof changed during download"
             );
         } else {
-            expected_total = Some(total);
-            digest = chunk.digest;
+            self.expected_total = Some(total);
+            self.digest = digest;
         }
-        bytes.extend_from_slice(&chunk.data);
-        if bytes.len() == total {
-            let observed_digest: [u8; 32] = Sha256::digest(&bytes).into();
+        self.bytes.extend_from_slice(&data);
+        if self.bytes.len() == total {
+            let observed_digest: [u8; 32] = Sha256::digest(&self.bytes).into();
             ensure!(
-                observed_digest == digest,
+                observed_digest == self.digest,
                 "receipt proof digest differs from response"
             );
-            return Ok(bytes);
+            return Ok(Some(std::mem::take(&mut self.bytes)));
         }
+        Ok(None)
     }
 }

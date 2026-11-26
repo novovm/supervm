@@ -42621,7 +42621,7 @@ fn run_native_execution_tick_node_mode_v1(
         #[cfg(feature = "iroh-transport")]
         if let Some(drive) = &mut udp_drive {
             if let (Some(network), Some(product)) = (&mut drive.novonet, &mut drive.product) {
-                if let Err(error) = network.step(&mut product.node.controller, Instant::now()) {
+                if let Err(error) = network.step_product(product, Instant::now()) {
                     let drain = drive.product.take().unwrap().node.shutdown();
                     return Err(
                         error.context(format!("NOVONET stopped; original node drained: {drain:?}"))

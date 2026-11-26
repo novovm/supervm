@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash>";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -21,6 +21,12 @@ fn main() -> Result<()> {
     let report = if action == "discover" {
         ensure!(args.len() == 2, "{USAGE}");
         discover(config)?
+    } else if action == "discover-verified-receipt" {
+        ensure!(args.len() == 3, "{USAGE}");
+        discovered_receipt(
+            config,
+            args[2].to_str().context("non-UTF8 transaction hash")?,
+        )?
     } else if action == "verified-receipt" {
         ensure!(args.len() == 4, "{USAGE}");
         operator::verified_receipt(
@@ -56,5 +62,15 @@ fn discover(config: &Path) -> Result<serde_json::Value> {
 
 #[cfg(not(feature = "iroh-transport"))]
 fn discover(_config: &Path) -> Result<serde_json::Value> {
+    anyhow::bail!("installed discovery requires the NOVONET carrier feature")
+}
+
+#[cfg(feature = "iroh-transport")]
+fn discovered_receipt(config: &Path, hash: &str) -> Result<serde_json::Value> {
+    novovm_node::native_pipeline::service::network::discover_verified_receipt(config, hash)
+}
+
+#[cfg(not(feature = "iroh-transport"))]
+fn discovered_receipt(_config: &Path, _hash: &str) -> Result<serde_json::Value> {
     anyhow::bail!("installed discovery requires the NOVONET carrier feature")
 }

@@ -131,12 +131,28 @@ impl RpcLifecycle {
         let Some((peer, request)) = self.node.controller.take_client_query(now) else {
             return Ok(());
         };
-        let answer = if request.query == Query::Status {
+        let answer = self.answer_native_query(&request.query, now)?;
+        self.node
+            .controller
+            .reply_client_query(peer, Response { request, answer }, now)
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn answer_carrier_query(&mut self, query: &Query, now: Instant) -> Result<Answer> {
+        if matches!(query, Query::Status | Query::ReceiptProof(_)) {
+            self.answer_native_query(query, now)
+        } else {
+            Ok(Answer::Error(QueryError::Unavailable))
+        }
+    }
+
+    fn answer_native_query(&mut self, query: &Query, now: Instant) -> Result<Answer> {
+        Ok(if *query == Query::Status {
             Answer::Status(self.native_status())
         } else if self.node.controller.is_recovering() || self.projection_error.is_some() {
             Answer::Error(QueryError::Unavailable)
         } else {
-            match &request.query {
+            match query {
                 Query::Status => unreachable!(),
                 Query::ConsensusProposal {
                     height,
@@ -152,7 +168,7 @@ impl RpcLifecycle {
                         *height,
                         *round,
                         *hash,
-                        matches!(&request.query, Query::ConsensusProposalProgress { .. }),
+                        matches!(query, Query::ConsensusProposalProgress { .. }),
                     )
                     .unwrap_or(Answer::Error(QueryError::Unavailable)),
                 Query::Receipt { hash } if self.application_receipts.contains_key(hash) => {
@@ -199,7 +215,7 @@ impl RpcLifecycle {
                     } else {
                         let parent = self.node.controller.parent();
                         self.uca_queries.read_identity(
-                            request.query.clone(),
+                            query.clone(),
                             parent.state_root,
                             parent.height,
                             now,
@@ -216,7 +232,7 @@ impl RpcLifecycle {
                     } else {
                         let parent = self.node.controller.parent();
                         self.uca_queries.read_application(
-                            request.query.clone(),
+                            query.clone(),
                             parent.state_root,
                             parent.height,
                             now,
@@ -233,18 +249,11 @@ impl RpcLifecycle {
                         Answer::Error(QueryError::Unavailable)
                     } else {
                         let parent = self.node.controller.parent();
-                        self.uca_queries.read(
-                            request.query.clone(),
-                            parent.state_root,
-                            parent.height,
-                            now,
-                        )
+                        self.uca_queries
+                            .read(query.clone(), parent.state_root, parent.height, now)
                     }
                 }
             }
-        };
-        self.node
-            .controller
-            .reply_client_query(peer, Response { request, answer }, now)
+        })
     }
 }

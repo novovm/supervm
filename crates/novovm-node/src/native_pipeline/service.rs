@@ -67,6 +67,8 @@ pub enum StartMode {
 pub struct ResidentNode {
     pub profile: String,
     public_asset_receipt_proofs: bool,
+    #[cfg(feature = "iroh-transport")]
+    native_client_limit: usize,
     pub controller: NativeLifecycle,
     pub pipeline: CandidatePipeline,
     pub template: BatchContext,
@@ -222,6 +224,8 @@ impl ResidentNode {
             Ok(controller) => Ok(Self {
                 profile: config.profile.clone(),
                 public_asset_receipt_proofs: config.public_asset_receipt_proofs,
+                #[cfg(feature = "iroh-transport")]
+                native_client_limit: config.native_client_limit,
                 controller,
                 pipeline,
                 template,
