@@ -102,6 +102,8 @@ mod pending_recovery;
 pub use pending_recovery::{NilPrecommitRecovery, PendingAssetRecovery};
 mod history;
 mod native_query;
+#[cfg(all(test, windows, feature = "iroh-transport"))]
+mod query_slot_snapshot;
 mod nonce_cache;
 #[cfg(test)]
 mod selection_budget_tests;
