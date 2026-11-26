@@ -237,6 +237,125 @@ fn native_registration_creates_one_original_identity_without_overwriting() -> Re
     )?;
     let replayed = execute(replay_plan)?;
     assert!(replayed.matches(&stored));
+
+    use crate::native_pipeline::business::uca_application::{
+        ApplicationGrantAccessV1, ApplicationGrantBodyV1,
+    };
+    use novovm_protocol::uca_application::{
+        ApplicationGrantActionV1, ApplicationGrantIntentV1, ApplicationGrantSelectorV1,
+    };
+    let selector = ApplicationGrantSelectorV1 {
+        chain_id: context.chain_id,
+        genesis: context.genesis_config_commitment,
+        identity: signed.intent.identity.clone(),
+        application: [21; 32],
+        service: [22; 32],
+        device: [23; 32],
+    };
+    let grant = owner.application_grant_signer_v1()?.sign(
+        ApplicationGrantIntentV1 {
+            selector: selector.clone(),
+            issuer_key_ref: signed.intent.primary_key_ref,
+            expected_revision: 0,
+            valid_from_height: 3,
+            valid_until_height: 5,
+            action: ApplicationGrantActionV1::Authorize {
+                not_before_height: 3,
+                expires_at_height: 10,
+            },
+        },
+        &key.public_key,
+        &key.expanded_secret_key,
+    )?;
+    let fact = owner
+        .application_grant_verifier_v1()?
+        .verify(grant.clone())?
+        .into_signature_fact()?;
+    let registered_state = stage_state_update(&Memory::default(), empty_root(), &combined)?;
+    let reader = Memory(registered_state.nodes().clone());
+    let application_access = ApplicationGrantAccessV1::new(selector)?;
+    let grant_capture = CaptureBudget {
+        keys: 35,
+        ..capture
+    };
+    let state = OwnedStateInput::capture(
+        &reader,
+        published_root,
+        application_access.declarations(),
+        grant_capture,
+    )?;
+    assert!(application_access.read(&state, published_root, 2).is_err());
+
+    let grant_context = BatchContext {
+        parent_block_hash: [18; 32],
+        parent_height: 2,
+        parent_state_root: published_root,
+        parent_receipt_root: [19; 32],
+        parent_state_version: 2,
+        height: 3,
+        timestamp_unix_ms: 40,
+        ..registration_context
+    };
+    let request = Message::Body {
+        context: grant_context,
+        raw_transactions: vec![grant.encode()?],
+    };
+    transport::candidate_request(&request, &policy)?;
+    let mut session =
+        novovm_exec::resident::ComputeSession::open(std::path::Path::new(&library), 2)?;
+    let executed = ApplicationGrantBodyV1::prepare(
+        vec![grant],
+        &[fact],
+        &policy,
+        PlanBudget {
+            access_keys: 35,
+            ..budget
+        },
+    )?
+    .bind(grant_context)?
+    .capture(&reader, grant_capture)?
+    .execute(&mut session, std::time::Duration::from_secs(30))?;
+    let grant_packet =
+        PreparedCandidate::from_application_executed(executed, PacketBudget::default())?;
+    let archive = StoredCandidate::load(
+        grant_packet.candidate_id(),
+        PacketBudget::default(),
+        |keys| {
+            Ok(keys
+                .iter()
+                .map(|key| grant_packet.records().get(key).cloned())
+                .collect())
+        },
+    )?
+    .expect("application grant candidate archive");
+    assert_eq!(archive.application_receipt(0)?.revision, 1);
+    assert!(archive.receipt_view(0).is_err());
+    assert_eq!(transport::stored_body(&archive, limits)?, request);
+    let root_with_grant = archive.state_root();
+    let mut grant_nodes = reader.0;
+    grant_nodes.extend(
+        archive
+            .nodes()
+            .iter()
+            .map(|(key, value)| (*key, value.clone())),
+    );
+    let grant_state = OwnedStateInput::capture(
+        &Memory(grant_nodes),
+        root_with_grant,
+        application_access.declarations(),
+        grant_capture,
+    )?;
+    let grant_state = application_access
+        .read_under_rules(&grant_state, root_with_grant, 3, true)?
+        .query_state(3)?;
+    let novovm_protocol::native_query::ApplicationGrantStateV1::Present(grant) = grant_state else {
+        anyhow::bail!("grant must be observable at the new state root");
+    };
+    assert_eq!(
+        (grant.state_root, grant.revision, grant.revoked),
+        (root_with_grant, 1, false)
+    );
+
     context.parent_state_root = published_root;
     context.parent_height = 2;
     context.height = 3;

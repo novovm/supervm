@@ -38,6 +38,7 @@ fn batch_limits(limits: DecodeLimits) -> AssetSpendBatchLimitsV3 {
 fn uca_profile(context: &BatchContext) -> Result<()> {
     ensure!(
         native_v4(context)
+            || uca_registration::is_profile(context)
             || (context.business_program == uca_program_id()
                 && context.receipt_codec == uca_receipt_codec()
                 && context.semantic_version == SEMANTIC_VERSION),
@@ -279,7 +280,9 @@ pub(crate) fn candidate_request(
         Message::AssetBody { context, batch } => {
             uca_profile(context)?;
             ensure!(
-                if native_v4(context) {
+                if uca_registration::is_profile(context) {
+                    context.effect_contract == uca_registration::effect_contract(policy)?
+                } else if native_v4(context) {
                     native_v4_policy(context, policy)?
                 } else {
                     context.effect_contract == uca_effect_contract(policy)?
@@ -297,7 +300,17 @@ pub(crate) fn candidate_request(
                     context.effect_contract == uca_registration::effect_contract(policy)?,
                     "registration body policy mismatch"
                 );
-                return BatchRequest::from_registration(
+                if raw_transactions
+                    .first()
+                    .is_some_and(|raw| raw.starts_with(b"NUIR"))
+                {
+                    return BatchRequest::from_registration(
+                        raw_transactions.clone(),
+                        *context,
+                        policy.clone(),
+                    );
+                }
+                return BatchRequest::from_application(
                     raw_transactions.clone(),
                     *context,
                     policy.clone(),
@@ -336,9 +349,8 @@ fn legacy_profile(context: &BatchContext, policy: &DirectNovFeePolicy) -> Result
 /// receiving pipeline must still verify signatures and read its own parent.
 pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Result<Message> {
     let context = *stored.context();
-    if uca_registration::is_profile(&context)
-        || (native_v4(&context) && stored.spend_outputs().is_none())
-    {
+    let composite = native_v4(&context) || uca_registration::is_profile(&context);
+    if composite && stored.spend_outputs().is_none() {
         let message = Message::Body {
             context,
             raw_transactions: stored.raw_transactions().to_vec(),
@@ -346,7 +358,7 @@ pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Res
         super::encode(&message, limits)?;
         return Ok(message);
     }
-    if context.business_program == uca_program_id() || native_v4(&context) {
+    if context.business_program == uca_program_id() || composite {
         uca_profile(&context)?;
         Ok(Message::AssetBody {
             context,

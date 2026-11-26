@@ -22,15 +22,35 @@ impl IdentityAccessV1 {
     /// Application authority currently has no published monotonic identity
     /// generation. Reject rotated bindings until that owner exists; timestamps
     /// and a repeated public key must not stand in for a generation counter.
-    pub(super) fn require_initialization_binding(&self, input: &OwnedStateInput) -> Result<()> {
+    pub(super) fn require_original_binding(
+        &self,
+        input: &OwnedStateInput,
+        native_registration: bool,
+    ) -> Result<()> {
         use novovm_adapter_api::unified_account::UcaKeyProofType;
         let bytes = record_pages::read_with(|key| input.read(key), &self.prefix, 8192)?;
         let record: UcaAccount = postcard::from_bytes(&bytes)?;
         let binding = record
             .primary_key_binding
             .context("identity binding missing")?;
-        ensure!(binding.proof_type == UcaKeyProofType::GenesisInitializationV1 && binding.proof_payload.len() == 32,
-            "application authority requires initialization binding; rotated identity generation is not integrated");
+        let original = match binding.proof_type {
+            UcaKeyProofType::GenesisInitializationV1 => true,
+            UcaKeyProofType::NativeRegistrationV1 if native_registration => {
+                use std::fmt::Write;
+                let mut name = String::from("uca:");
+                for byte in &record.primary_key_ref {
+                    write!(&mut name, "{byte:02x}")?;
+                }
+                record.uca_id == name
+                    && binding.verified_at == record.created_at
+                    && binding.proof_payload.iter().any(|byte| *byte != 0)
+            }
+            _ => false,
+        };
+        ensure!(
+            original && binding.proof_payload.len() == 32,
+            "application authority requires an original binding under the active rules"
+        );
         Ok(())
     }
     pub(crate) fn new(chain: u64, genesis: &NodeHash, identity: &str) -> Result<Self> {

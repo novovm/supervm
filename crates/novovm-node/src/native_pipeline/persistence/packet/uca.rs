@@ -50,7 +50,9 @@ pub(super) fn validate_receipts(
     mut projection: Option<&mut Vec<ReceiptProjection>>,
 ) -> Result<()> {
     ensure!(
-        is_profile(plan.context()) || application::is_profile(plan.context()),
+        is_profile(plan.context())
+            || application::is_profile(plan.context())
+            || super::registration::is_profile(plan.context()),
         "unsupported UCA candidate profile"
     );
     ensure!(

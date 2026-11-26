@@ -408,7 +408,8 @@ impl StoredCandidate {
         index: usize,
     ) -> Result<novovm_protocol::uca_application::ApplicationGrantReceiptV1> {
         ensure!(
-            application::is_profile(self.context()) && self.spend_outputs.is_none(),
+            (application::is_profile(self.context()) || registration::is_profile(self.context()))
+                && self.spend_outputs.is_none(),
             "not an application candidate"
         );
         Ok(
@@ -578,11 +579,12 @@ fn prepare_with_spend(
     budget: PacketBudget,
     spend_outputs: Option<&[SpendOutput]>,
 ) -> Result<PreparedCandidate> {
-    let v4 = application::is_profile(plan.context());
-    let registration = registration::is_profile(plan.context());
+    let composite =
+        application::is_profile(plan.context()) || registration::is_profile(plan.context());
+    let registration = registration_body(plan)?;
     let is_uca = spend_outputs.is_some();
     ensure!(
-        v4 || uca::is_profile(plan.context()) == is_uca,
+        (composite || uca::is_profile(plan.context()) == is_uca) && !(registration && is_uca),
         "candidate UCA output/profile mismatch"
     );
     ensure!(
@@ -592,11 +594,11 @@ fn prepare_with_spend(
     let mut document = Encoder::new(budget.max_bytes);
     document.put(if registration {
         REGISTRATION_DOCUMENT_MAGIC
-    } else if v4 && is_uca {
+    } else if composite && is_uca {
         V4_ASSET_DOCUMENT_MAGIC
     } else if is_uca {
         UCA_DOCUMENT_MAGIC
-    } else if v4 {
+    } else if composite {
         APPLICATION_DOCUMENT_MAGIC
     } else {
         DOCUMENT_MAGIC
@@ -642,7 +644,7 @@ fn prepare_with_spend(
     // The immutable plan already owns its canonical body/access commitment.
     // Validate the same receipt/economic relations as cold recovery without
     // decoding a second full plan from bytes that this function just encoded.
-    let mut receipt_projection = Vec::with_capacity(if (v4 || registration) && !is_uca {
+    let mut receipt_projection = Vec::with_capacity(if composite && !is_uca {
         0
     } else {
         receipts.len()
@@ -945,12 +947,13 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
     );
     ensure!(input.hash()? == id, "candidate document identity mismatch");
     let plan = decode_plan(&mut input, budget)?;
-    let v4 = application::is_profile(plan.context());
+    let composite =
+        application::is_profile(plan.context()) || registration::is_profile(plan.context());
     let is_uca = magic == UCA_DOCUMENT_MAGIC || magic == V4_ASSET_DOCUMENT_MAGIC;
     ensure!(
-        if registration::is_profile(plan.context()) {
+        if registration_body(&plan)? {
             magic == REGISTRATION_DOCUMENT_MAGIC
-        } else if v4 {
+        } else if composite {
             magic == APPLICATION_DOCUMENT_MAGIC || magic == V4_ASSET_DOCUMENT_MAGIC
         } else {
             (magic == UCA_DOCUMENT_MAGIC && uca::is_profile(plan.context()))
@@ -1032,6 +1035,11 @@ fn decode_document(bytes: &[u8], id: NodeHash, budget: PacketBudget) -> Result<D
     })
 }
 
+fn registration_body(plan: &BatchPlan) -> Result<bool> {
+    Ok(registration::is_profile(plan.context())
+        && plan.canonical_transaction(0)?.starts_with(b"NUIR"))
+}
+
 // Shared structural/economic checks, not signature verification or authority.
 // Recovery reaches this only after independently decoding and hashing the plan;
 // preparation carries the original immutable plan produced by execution.
@@ -1047,19 +1055,19 @@ fn validate_effects(
     let (receipt_commitment, statement_commitment) = commitments;
     let context = plan.context();
     let is_uca = uca::is_profile(context);
-    let v4 = application::is_profile(context);
-    let registration = registration::is_profile(context);
+    let composite = application::is_profile(context) || registration::is_profile(context);
+    let registration = registration_body(plan)?;
     ensure!(
         is_uca
-            || v4
-            || registration
+            || composite
             || (context.business_program == program_id()
                 && context.receipt_codec == receipt_codec()
                 && context.semantic_version == SEMANTIC_VERSION),
         "unsupported candidate business/receipt profile"
     );
     ensure!(
-        v4 || is_uca == spend_outputs.is_some(),
+        (composite || is_uca == spend_outputs.is_some())
+            && !(registration && spend_outputs.is_some()),
         "candidate document/profile mismatch"
     );
     ensure!(
@@ -1068,10 +1076,10 @@ fn validate_effects(
     );
     if let Some(outputs) = spend_outputs {
         uca::validate_receipts(plan, receipts, outputs, budget, projection)?;
-    } else if v4 {
-        application::validate_receipts(plan, receipts, budget)?;
     } else if registration {
         registration::validate_receipts(plan, receipts)?;
+    } else if composite {
+        application::validate_receipts(plan, receipts, budget)?;
     } else {
         validate_receipts(plan, receipts, budget, projection)?;
     }

@@ -39,7 +39,7 @@ pub fn effect_contract(policy: &super::direct_nov_fee::DirectNovFeePolicy) -> Re
     )?);
     hash.update(program_id());
     hash.update(receipt_codec());
-    hash.update(b"NUIR1-NUIE1;MLDSA65-self-derived-root;one-registration;all-identity-pages-absent;no-spend-authority\0");
+    hash.update(b"NUIR1-NUIE1;MLDSA65-self-derived-root;one-registration;all-identity-pages-absent;no-spend-authority;application-original-binding\0");
     Ok(hash.finalize().into())
 }
 

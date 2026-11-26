@@ -24,7 +24,8 @@ pub(super) fn validate_receipts(
     budget: PacketBudget,
 ) -> Result<()> {
     ensure!(
-        is_profile(plan.context()) && receipts.len() == plan.transaction_count(),
+        (is_profile(plan.context()) || super::registration::is_profile(plan.context()))
+            && receipts.len() == plan.transaction_count(),
         "application receipt profile/count mismatch"
     );
     let context = plan.context();

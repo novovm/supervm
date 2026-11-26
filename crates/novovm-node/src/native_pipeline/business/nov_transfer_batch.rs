@@ -247,6 +247,17 @@ impl NovTransferBody {
         };
 
         let uca = matches!(&self.batch, BodyInput::Uca { .. });
+        if uca && super::uca_registration::is_profile(&context) {
+            ensure!(
+                context.effect_contract == super::uca_registration::effect_contract(&self.policy)?,
+                "fee/effect policy commitment mismatch"
+            );
+            return Ok(NovTransferPlan {
+                plan: self.batch.bind(context, self.declarations, self.budget)?,
+                policy: self.policy,
+                requests: self.requests,
+            });
+        }
         let v4_asset = uca && context.semantic_version == APPLICATION_SEMANTIC_VERSION_V1;
         ensure!(
             context.business_program

@@ -360,6 +360,33 @@ fn v4_asset_cold_codec_preserves_typed_outputs_and_asset_projections() -> Result
 }
 
 #[test]
+fn v5_asset_archive_preserves_the_original_receipt_and_nonce() -> Result<()> {
+    use crate::native_pipeline::business::uca_registration;
+    let mut fixture = asset_fixture(false)?;
+    fixture.plan = BatchPlan::new(
+        BatchContext {
+            business_program: uca_registration::program_id(),
+            semantic_version: uca_registration::REGISTRATION_SEMANTIC_VERSION,
+            receipt_codec: uca_registration::receipt_codec(),
+            ..*fixture.plan.context()
+        },
+        fixture.plan.canonical_transactions_for_test(),
+        fixture.plan.declared_access().to_vec(),
+        PacketBudget::default().plan(),
+    )?;
+    let packet = fixture.packet(PacketBudget::default())?;
+    let stored = cold(&packet)?;
+    assert!(packet.matches(&stored));
+    assert_eq!(stored.spend_outputs(), fixture.outputs.as_deref());
+    let receipt = stored.receipt_view(0)?;
+    assert_eq!(
+        packet.nonce_projection().get(&receipt.signer_identity),
+        Some(&receipt.nonce_after)
+    );
+    Ok(())
+}
+
+#[test]
 fn v4_application_keeps_no_asset_outputs_or_projections() -> Result<()> {
     let fixture = application_fixture()?;
     let packet = fixture.packet(PacketBudget::default())?;

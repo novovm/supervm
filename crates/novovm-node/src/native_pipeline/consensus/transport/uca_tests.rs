@@ -164,6 +164,34 @@ fn native_v4_routes_asset_and_application_bodies_without_relabeling_legacy() -> 
     Ok(())
 }
 
+#[test]
+fn native_v5_retains_the_original_asset_wire_and_policy() -> Result<()> {
+    let f = fixture()?;
+    let context = BatchContext {
+        business_program: uca_registration::program_id(),
+        semantic_version: uca_registration::REGISTRATION_SEMANTIC_VERSION,
+        receipt_codec: uca_registration::receipt_codec(),
+        effect_contract: uca_registration::effect_contract(&f.policy)?,
+        ..f.context
+    };
+    let asset = Message::AssetBody {
+        context,
+        batch: f.batch.clone(),
+    };
+    let encoded = super::super::encode(&asset, f.limits)?;
+    assert_eq!(super::super::decode(&encoded, f.limits)?, asset);
+    candidate_request(&asset, &f.policy)?;
+    let wrong = Message::AssetBody {
+        context: BatchContext {
+            effect_contract: uca_effect_contract(&f.policy)?,
+            ..context
+        },
+        batch: f.batch,
+    };
+    assert!(candidate_request(&wrong, &f.policy).is_err());
+    Ok(())
+}
+
 pub(in super::super) fn recovery_specimen() -> Result<(Message, DecodeLimits)> {
     let f = fixture()?;
     Ok((

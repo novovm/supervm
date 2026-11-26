@@ -1,7 +1,7 @@
 //! Typed application branch of the native business contract. Not a publisher.
 use super::*;
 use crate::native_pipeline::{
-    business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch},
+    business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch, uca_registration},
     execution::plan::{
         executed_statement_commitment, ordered_receipt_commitment, BatchContext, BatchPlan,
         BoundBatchCapture, OwnedBatchInput, PlanBudget, UnpublishedBatchEffects,
@@ -46,7 +46,7 @@ pub struct ApplicationGrantBodyV1 {
     raw: Vec<Vec<u8>>,
     accesses: Vec<ApplicationGrantAccessV1>,
     declarations: Vec<DeclaredAccess>,
-    effect_contract: NodeHash,
+    policy: DirectNovFeePolicy,
     budget: PlanBudget,
 }
 impl ApplicationGrantBodyV1 {
@@ -108,17 +108,21 @@ impl ApplicationGrantBodyV1 {
             raw,
             accesses,
             declarations: declarations.into_values().collect(),
-            effect_contract: application_effect_contract_v1(policy)?,
+            policy: policy.clone(),
             budget,
         })
     }
 
     pub fn bind(self, context: BatchContext) -> Result<ApplicationGrantPlanV1> {
         ensure!(
-            context.business_program == application_program_id_v1()
-                && context.semantic_version == APPLICATION_SEMANTIC_VERSION_V1
-                && context.receipt_codec == application_receipt_codec_v1()
-                && context.effect_contract == self.effect_contract,
+            if uca_registration::is_profile(&context) {
+                context.effect_contract == uca_registration::effect_contract(&self.policy)?
+            } else {
+                context.business_program == application_program_id_v1()
+                    && context.semantic_version == APPLICATION_SEMANTIC_VERSION_V1
+                    && context.receipt_codec == application_receipt_codec_v1()
+                    && context.effect_contract == application_effect_contract_v1(&self.policy)?
+            },
             "application native business contract mismatch"
         );
         ensure!(
@@ -272,10 +276,11 @@ impl ApplicationGrantInputV1 {
         let mut changes = Vec::new();
         let mut receipts = Vec::with_capacity(self.checked.len());
         for (access, checked) in self.accesses.iter().zip(&self.checked) {
-            let state = access.read(
+            let state = access.read_under_rules(
                 self.input.state_input(),
                 context.parent_state_root,
                 context.parent_height,
+                uca_registration::is_profile(&context),
             )?;
             let record = access.transition_record(
                 &state,

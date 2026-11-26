@@ -69,9 +69,20 @@ impl ApplicationGrantAccessV1 {
         parent_root: NodeHash,
         height: u64,
     ) -> Result<ApplicationGrantObservationV1> {
+        self.read_under_rules(input, parent_root, height, false)
+    }
+
+    pub(crate) fn read_under_rules(
+        &self,
+        input: &OwnedStateInput,
+        parent_root: NodeHash,
+        height: u64,
+        native_registration: bool,
+    ) -> Result<ApplicationGrantObservationV1> {
         let identity = self.identity.read(input, parent_root, height)?;
         if identity.is_some() {
-            self.identity.require_initialization_binding(input)?;
+            self.identity
+                .require_original_binding(input, native_registration)?;
         }
         let keys: Vec<_> = self.declarations[self.identity.declarations().len()..]
             .iter()
