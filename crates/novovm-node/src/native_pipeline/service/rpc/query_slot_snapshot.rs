@@ -304,6 +304,11 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     let binary = input("NOVOVM_QUERY_COPY_PROOF_CLIENT")?;
     let request = input("NOVOVM_QUERY_COPY_REQUEST")?;
     let stage = request.parent().context("isolated working directory")?;
+    let lan = if std::env::var_os("NOVOVM_QUERY_COPY_LAN").is_some() {
+        Some(LanAcceptance::load(&input("NOVOVM_QUERY_COPY_LAN")?)?)
+    } else {
+        None
+    };
     let hash = super::hex(&receipt_request_hash(&request)?);
     let old_profile: ClientConfig =
         serde_json::from_slice(&fs::read(input("NOVOVM_QUERY_COPY_FIRST_PROFILE")?)?)?;
@@ -347,38 +352,45 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     )?;
     fs::write(&primary, serde_json::to_vec(&first)?)?;
 
-    owner.novonet = Some(Driver::new(
+    let bind_address = lan
+        .as_ref()
+        .map_or(std::net::Ipv4Addr::LOCALHOST, |lan| lan.server);
+    owner.novonet = Some(Driver::new_with_query_peers(
         Config {
             probe_control_file: None,
             relays: Vec::new(),
             nameserver: "127.0.0.1".parse()?,
-            bind_address: "127.0.0.1:0".parse()?,
+            bind_address: (bind_address, 0).into(),
             public_record_file: secondary.clone(),
             carrier_identity_file: None,
             peer_records: Vec::new(),
             discovery: true,
             discovery_seeds: Vec::new(),
-            publish_native_query_address: std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref()
-                == Ok("2"),
+            publish_native_query_address: lan.is_none()
+                && std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("2"),
             relay_forwarding: false,
             fallback_after_ms: 1000,
             retry_ms: 500,
             udp_recovery_ms: 2000,
         },
         &mut owner.rpc.node,
+        lan.as_ref().map(|lan| vec![lan.client_key.clone()].into()),
     )?);
     owner.until(|_| Ok(secondary.is_file()))?;
     let locator: PeerSignedRelayRecordV1 = serde_json::from_slice(&fs::read(&secondary)?)?;
     let endpoint = IrohServiceEndpointV1::from_record(&locator)?.address;
     ensure!(
         !endpoint.direct.is_empty()
-            && endpoint.direct.iter().all(|entry| entry.ip().is_loopback())
+            && endpoint
+                .direct
+                .iter()
+                .all(|entry| entry.ip() == bind_address)
             && endpoint.relays.is_empty(),
-        "detached proof carrier must bind loopback only"
+        "detached proof carrier must advertise only the configured interface"
     );
     let key = owner.rpc.node.transport_identity().public_key().to_vec();
     ensure!(locator.relay_public_key == key, "locator identity differs");
-    if std::env::var("NOVOVM_QUERY_COPY_CARRIER_TAKEOVER").as_deref() == Ok("1") {
+    if lan.is_none() && std::env::var("NOVOVM_QUERY_COPY_CARRIER_TAKEOVER").as_deref() == Ok("1") {
         use crate::native_pipeline::consensus::native::MessageDomain;
         use crate::native_pipeline::service::client::operator::receipt_proof::ProofTarget;
         let (another, _) = novovm_relay::transport_identity::ephemeral_transport_identity(
@@ -417,7 +429,9 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         owner.novonet.as_mut().unwrap().close()?;
         return owner.rpc.node.shutdown();
     }
-    let seeds = if std::env::var("NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS").as_deref() == Ok("1") {
+    let seeds = if lan.is_some()
+        || std::env::var("NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS").as_deref() == Ok("1")
+    {
         let first_contact = IrohServiceEndpointV1::from_record(&first)?.address;
         println!("cold Client uses two pinned contacts without installed locator files");
         serde_json::json!([
@@ -447,6 +461,17 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if let Some(lan) = lan {
+        owner.rpc.node.public_asset_receipt_proofs = false;
+        owner.rpc.node.public_state_sync = true;
+        lan.serve(&mut owner, &profile, &key)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head,
+            "LAN acceptance changed the detached chain"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     if std::env::var("NOVOVM_QUERY_COPY_WINDOWS_INSTALL").as_deref() == Ok("1") {
         owner.rpc.node.public_asset_receipt_proofs = false;
         owner.rpc.node.public_state_sync = true;
@@ -683,6 +708,147 @@ impl Drop for IsolatedFollowChild {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LanAcceptance {
+    server: std::net::Ipv4Addr,
+    client: std::net::Ipv4Addr,
+    client_key: Vec<u8>,
+}
+
+impl LanAcceptance {
+    fn load(path: &Path) -> Result<Self> {
+        ensure!(path.metadata()?.len() <= 16_384, "LAN fixture input size");
+        let settings: Self = serde_json::from_slice(&std::fs::read(path)?)?;
+        ensure!(
+            settings.server.is_private()
+                && settings.client.is_private()
+                && settings.client != settings.server
+                && settings.client_key.len() == 1952,
+            "LAN fixture requires two private interfaces and one ML-DSA-65 public key"
+        );
+        Ok(settings)
+    }
+
+    fn serve(&self, owner: &mut QueryOwner, profile: &Path, server_key: &[u8]) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::{fs, io::ErrorKind, net::UdpSocket};
+
+        let stage = profile.parent().context("LAN acceptance stage")?;
+        let cut = stage.join("lan-cut");
+        let restore = stage.join("lan-restore");
+        let results = stage.join("lan-events.json");
+        let ready = stage.join("lan-ready.json");
+        ensure!(
+            [&cut, &restore, &results, &ready]
+                .into_iter()
+                .all(|file| !file.exists()),
+            "stale LAN acceptance control files"
+        );
+        let external = UdpSocket::bind((self.server, 0))?;
+        let gateway = external.local_addr()?;
+        external.set_nonblocking(true)?;
+        let internal = UdpSocket::bind("127.0.0.1:0")?;
+        internal.connect(owner.config.udp_addr)?;
+        internal.set_nonblocking(true)?;
+        let mut profile_data: Value = serde_json::from_slice(&fs::read(profile)?)?;
+        profile_data["native_query_peers"] =
+            serde_json::json!([{"address":gateway,"transport_key":server_key}]);
+        profile_data["library"] = serde_json::json!("../../aoem/windows/core/bin/aoem_ffi.dll");
+        let profile_bytes = serde_json::to_vec(&profile_data)?;
+        fs::write(profile, &profile_bytes)?;
+        let head = owner.rpc.node.controller.parent();
+        let client_identity = format!("{:x}", Sha256::digest(&self.client_key));
+        let server_identity = format!("{:x}", Sha256::digest(server_key));
+        let state_root = super::hex(&head.state_root);
+        let manifest = serde_json::json!({
+            "native_gateway": gateway,
+            "profile_sha256": format!("{:x}", Sha256::digest(&profile_bytes)),
+            "client_transport_sha256": client_identity,
+            "server_transport_sha256": server_identity,
+            "height": head.height,
+            "state_root": state_root,
+            "state_version": head.state_version,
+        });
+        let manifest_draft = ready.with_extension("tmp");
+        fs::write(&manifest_draft, serde_json::to_vec(&manifest)?)?;
+        fs::rename(manifest_draft, ready)?;
+
+        let deadline = Instant::now() + Duration::from_secs(480);
+        let mut remote = None;
+        let mut observed_cut = false;
+        let mut buffer = [0; 65_536];
+        while !results.is_file() {
+            ensure!(
+                Instant::now() < deadline,
+                "cross-device acceptance deadline"
+            );
+            owner.poll()?;
+            let cut_active = cut.is_file() && !restore.is_file();
+            observed_cut |= cut_active;
+            for _ in 0..128 {
+                let (size, source) = match external.recv_from(&mut buffer) {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(error.into()),
+                };
+                if !cut_active && source.ip() == self.client {
+                    remote = Some(source);
+                    internal.send(&buffer[..size])?;
+                }
+            }
+            for _ in 0..128 {
+                let size = match internal.recv(&mut buffer) {
+                    Ok(value) => value,
+                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                    Err(error) => return Err(error.into()),
+                };
+                if let Some(remote) = remote.filter(|_| !cut_active) {
+                    external.send_to(&buffer[..size], remote)?;
+                }
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        ensure!(
+            observed_cut && restore.is_file() && remote.is_some(),
+            "missing observed cut, restoration or remote traffic"
+        );
+        ensure!(
+            results.metadata()?.len() <= 65_536,
+            "LAN event evidence size"
+        );
+        let evidence: Value = serde_json::from_slice(&fs::read(results)?)?;
+        let events = evidence["verified"]
+            .as_array()
+            .context("LAN verified events")?;
+        ensure!(
+            evidence["client_pid"].as_u64().is_some_and(|pid| pid > 0) && events.len() == 3,
+            "one remote Client must verify initial, fallback and restored state"
+        );
+        for (event, transport) in events
+            .iter()
+            .zip(["native_novorudp", "iroh", "native_novorudp"])
+        {
+            ensure!(
+                event["event"] == "verified_state"
+                    && event["transport"] == transport
+                    && event["height"] == head.height
+                    && event["state_version"] == head.state_version
+                    && event["state_root"] == state_root
+                    && event["verified_leaves"]
+                        .as_u64()
+                        .is_some_and(|count| count > 1)
+                    && event["verified_nodes"] == events[0]["verified_nodes"]
+                    && event["transport_identity_sha256"] == client_identity
+                    && event["peer_transport_sha256"] == server_identity,
+                "LAN Client verified a different route, state or identity: {event}"
+            );
+        }
+        println!("cross-device LAN cut and recovery verified: {evidence}");
+        Ok(())
     }
 }
 

@@ -276,6 +276,14 @@ pub struct Driver {
 }
 impl Driver {
     pub fn new(config: Config, node: &mut ResidentNode) -> Result<Self> {
+        Self::new_with_query_peers(config, node, None)
+    }
+
+    pub(super) fn new_with_query_peers(
+        config: Config,
+        node: &mut ResidentNode,
+        query_peers: Option<Arc<[Vec<u8>]>>,
+    ) -> Result<Self> {
         let keys = (0..node.controller.peer_count())
             .map(|peer| node.controller.peer_transport_key(peer))
             .collect::<Result<Vec<_>>>()?;
@@ -310,6 +318,7 @@ impl Driver {
             observer,
             query_address,
             node.native_client_limit > 0,
+            query_peers,
         )?;
         if enabled {
             driver
@@ -328,6 +337,7 @@ impl Driver {
         observer: Option<Arc<NativeTransferDiagnosticsV1>>,
         query_address: Option<SocketAddr>,
         queries_enabled: bool,
+        query_peers: Option<Arc<[Vec<u8>]>>,
     ) -> Result<Self> {
         ensure!(
             !keys.is_empty()
@@ -364,6 +374,7 @@ impl Driver {
             query_carrier::Ingress {
                 requests,
                 slot: queries_enabled.then(|| Arc::new(query_carrier::QuerySlot::default())),
+                peers: query_peers,
             },
             stop.clone(),
             failures.clone(),
