@@ -187,6 +187,10 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                         for report in [&first, &restarted] {
                             assert_eq!(report["authenticated_discovery_sources"], sources);
                             assert_eq!(report["signed_locator_candidates"][0]["sequence"], 7);
+                            assert_eq!(
+                                report["signed_locators_by_source"],
+                                serde_json::json!({ (expected_source.as_str()): report["signed_locator_candidates"] })
+                            );
                         }
                         let fingerprint = &first["transport_identity_sha256"];
                         assert_eq!(*fingerprint, restarted["transport_identity_sha256"]);

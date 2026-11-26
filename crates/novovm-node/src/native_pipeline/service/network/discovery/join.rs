@@ -249,11 +249,8 @@ pub fn discover_installed(path: &Path) -> Result<serde_json::Value> {
         "chain_id": profile.chain_id,
         "transport_identity_sha256": fingerprint(identity.public_key()),
         "authenticated_discovery_sources": report.sources,
-        "signed_locator_candidates": report.records.values().map(|record| serde_json::json!({
-            "transport_identity_sha256": fingerprint(&record.relay_public_key),
-            "sequence": record.sequence,
-            "expires_at_ms": record.expires_at_ms,
-        })).collect::<Vec<_>>(),
+        "signed_locators_by_source": report.locators_by_source,
+        "signed_locator_candidates": report.records.values().map(LocatorSummary::from).collect::<Vec<_>>(),
     }))
 }
 
@@ -518,7 +515,25 @@ fn local_identity(data: &Path, base: &Path, profile: &Profile) -> Result<Transpo
 
 struct DiscoveryReport {
     sources: Vec<String>,
+    locators_by_source: BTreeMap<String, Vec<LocatorSummary>>,
     records: BTreeMap<Vec<u8>, PeerSignedRelayRecordV1>,
+}
+
+#[derive(Serialize)]
+struct LocatorSummary {
+    transport_identity_sha256: String,
+    sequence: u64,
+    expires_at_ms: u64,
+}
+
+impl From<&PeerSignedRelayRecordV1> for LocatorSummary {
+    fn from(record: &PeerSignedRelayRecordV1) -> Self {
+        Self {
+            transport_identity_sha256: fingerprint(&record.relay_public_key),
+            sequence: record.sequence,
+            expires_at_ms: record.expires_at_ms,
+        }
+    }
 }
 
 async fn discover(
@@ -758,6 +773,7 @@ async fn lookup_sources(
     );
     let mut report = DiscoveryReport {
         sources: Vec::new(),
+        locators_by_source: BTreeMap::new(),
         records: BTreeMap::new(),
     };
     let mut errors = Vec::new();
@@ -770,12 +786,14 @@ async fn lookup_sources(
                 continue;
             }
         };
-        report.sources.push(source);
+        report.sources.push(source.clone());
+        let returned = report.locators_by_source.entry(source).or_default();
         for record in records
             .into_iter()
             .filter(|record| record.expires_at_ms > wall)
         {
             use std::collections::btree_map::Entry;
+            returned.push(LocatorSummary::from(&record));
             match report.records.entry(record.relay_public_key.clone()) {
                 Entry::Vacant(entry) => {
                     entry.insert(record);
