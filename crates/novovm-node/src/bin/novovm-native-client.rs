@@ -5,18 +5,23 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy]";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy]\n       novovm-native-client <installed-discovery-profile.json> discover";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
         ensure!(args.len() == 3, "authority profile and digest required");
         return operator::serve_authority(
             Path::new(&args[0]),
-            args[2].to_str().context("authority profile digest required")?,
+            args[2]
+                .to_str()
+                .context("authority profile digest required")?,
         );
     }
     let config = Path::new(&args[0]);
-    let report = if action == "consensus-proposal" {
+    let report = if action == "discover" {
+        ensure!(args.len() == 2, "{USAGE}");
+        discover(config)?
+    } else if action == "consensus-proposal" {
         ensure!(
             args.len() == 5 || args.len() == 6 && args[5] == "--legacy",
             "{USAGE}"
@@ -35,4 +40,14 @@ fn main() -> Result<()> {
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+#[cfg(feature = "iroh-transport")]
+fn discover(config: &Path) -> Result<serde_json::Value> {
+    novovm_node::native_pipeline::service::network::discover_installed(config)
+}
+
+#[cfg(not(feature = "iroh-transport"))]
+fn discover(_config: &Path) -> Result<serde_json::Value> {
+    anyhow::bail!("installed discovery requires the NOVONET carrier feature")
 }

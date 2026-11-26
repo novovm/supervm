@@ -27,6 +27,7 @@ use novovm_network::{
 };
 mod diagnostic;
 mod discovery;
+pub use discovery::discover_installed;
 mod observation;
 mod probe;
 mod relay;

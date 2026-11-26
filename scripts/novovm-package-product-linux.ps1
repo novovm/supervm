@@ -210,9 +210,8 @@ try {
   # It must accept the same optional NOVONET fallback as the packaged node.
   $ctlFeatures = if ($windowsPackage) { @('iroh-transport') } else { @() }
   $buildContracts = @($nodeBins | ForEach-Object {
-    # Compile the qualified backup into the original node; configuration still
-    # defaults to UDP. Other tools retain their own existing feature contracts.
-    $nodeFeatures = if ($_ -eq 'novovm-node') { @('iroh-transport') } else { @() }
+    # The resident node and native Client share the product discovery carrier.
+    $nodeFeatures = if ($_ -in @('novovm-node', 'novovm-native-client')) { @('iroh-transport') } else { @() }
     [PSCustomObject]@{ package = 'novovm-node'; binary = $_; features = @($nodeFeatures); default_features = $true }
   }) + @(
     [PSCustomObject]@{ package = 'novovm-relay'; binary = 'novovm-rendezvous-service'; features = @('iroh-transport', 'tls-transport'); default_features = $true },
