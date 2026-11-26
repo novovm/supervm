@@ -398,6 +398,17 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if std::env::var("NOVOVM_QUERY_COPY_WINDOWS_INSTALL").as_deref() == Ok("1") {
+        owner.rpc.node.public_asset_receipt_proofs = false;
+        owner.rpc.node.public_state_sync = true;
+        serve_installed_windows_fixture(&mut owner, &profile, &primary, &secondary)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head && owner.active_client().is_err(),
+            "Windows installer acceptance changed the detached chain or consumed its UDP client slot"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     if std::env::var("NOVOVM_QUERY_COPY_UCA_REPLAY").as_deref() == Ok("1") {
         owner.rpc.node.public_asset_receipt_proofs = false;
         test_installed_uca_replay(&mut owner, &binary, &profile, parent.height)?;
@@ -624,6 +635,61 @@ impl Drop for IsolatedFollowChild {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+// The separate interactive-user installer consumes the issued bundle while this
+// LocalService fixture only serves finalized headers and state on loopback.
+fn serve_installed_windows_fixture(
+    owner: &mut QueryOwner,
+    profile: &Path,
+    primary: &Path,
+    secondary: &Path,
+) -> Result<()> {
+    use std::fs;
+    let stage = profile
+        .parent()
+        .context("Windows installer fixture directory")?;
+    let ready = stage.join("windows-install-ready.json");
+    let complete = stage.join("windows-install-complete.txt");
+    ensure!(
+        !ready.exists() && !complete.exists(),
+        "stale Windows install fixture"
+    );
+    let mut document: Value = serde_json::from_slice(&fs::read(profile)?)?;
+    document["library"] = serde_json::json!("../../aoem/windows/core/bin/aoem_ffi.dll");
+    document["seeds"][0]["locator"] =
+        serde_json::json!(primary.file_name().context("first seed")?);
+    document["seeds"][1]["locator"] =
+        serde_json::json!(secondary.file_name().context("second seed")?);
+    fs::write(profile, serde_json::to_vec(&document)?)?;
+    let head = owner.rpc.node.controller.parent();
+    fs::write(
+        &ready,
+        serde_json::to_vec(&serde_json::json!({
+            "height": head.height,
+            "block_hash": super::hex(&head.block_hash),
+            "state_root": super::hex(&head.state_root),
+            "state_version": head.state_version,
+        }))?,
+    )?;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !complete.is_file() {
+        ensure!(
+            Instant::now() < deadline,
+            "interactive Windows installer did not finish"
+        );
+        owner.poll()?;
+        thread::sleep(Duration::from_millis(2));
+    }
+    ensure!(
+        fs::read_to_string(complete)?.trim() == "verified",
+        "interactive Windows install did not verify state"
+    );
+    println!(
+        "interactive Windows Client completed loopback state verification at height {}",
+        head.height
+    );
+    Ok(())
 }
 
 fn test_installed_uca_replay(

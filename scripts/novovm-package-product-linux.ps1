@@ -3,6 +3,8 @@ param(
   [string]$PackageDir = "artifacts\product-overlay\linux-x86_64",
   [string]$AoemPackageRoot,
   [string]$AoemCoreSha256,
+  [string]$WindowsClientProfile,
+  [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$WindowsClientProfileSha256,
   [switch]$Force
 )
 
@@ -67,6 +69,36 @@ function Resolve-PackageDestination([string]$Repository, [string]$Directory) {
     throw "Package destination is not a directory: $candidate"
   }
   return $candidate
+}
+
+function Get-WindowsClientJoinInputs([string]$Path, [string]$ProfileSha256, [string]$AoemSha256) {
+  $profilePath = (Resolve-Path -LiteralPath $Path).ProviderPath
+  Assert-PlainPackagePath $profilePath
+  if ((Get-FileHash -LiteralPath $profilePath).Hash -ne $ProfileSha256) {
+    throw 'The issued Windows Client profile differs from its pinned SHA-256.'
+  }
+  $profile = Get-Content -Raw -LiteralPath $profilePath | ConvertFrom-Json
+  if ($profile.library -cne '../../aoem/windows/core/bin/aoem_ffi.dll' -or
+      $profile.library_sha256 -cne $AoemSha256 -or !$profile.verification) {
+    throw 'The issued Client profile must pin the packaged Windows AOEM and chain verification.'
+  }
+  $seeds = @($profile.seeds | ForEach-Object locator)
+  if ($seeds.Count -ne 2 -or $seeds[0] -eq $seeds[1] -or
+      @($seeds | Where-Object { $_ -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\.json$' -or
+        $_ -ieq 'installed-discovery.json' }).Count) {
+    throw 'The issued Client profile requires two distinct local locator filenames.'
+  }
+  $inputs = @([pscustomobject]@{
+    source = $profilePath; path = 'config/discovery/installed-discovery.json'; sha256 = $ProfileSha256
+  })
+  foreach ($name in $seeds) {
+    $locator = Join-Path (Split-Path -Parent $profilePath) $name
+    Assert-PlainPackagePath $locator
+    $inputs += [pscustomobject]@{
+      source = $locator; path = "config/discovery/$name"; sha256 = (Get-FileHash -LiteralPath $locator).Hash
+    }
+  }
+  return $inputs
 }
 
 function Get-ComparableRuntimeLibraryPath([string]$Path, [bool]$WindowsPath) {
@@ -160,6 +192,10 @@ try {
   }
   $windowsPackage = $Target -eq 'x86_64-pc-windows-msvc'
   if (!$windowsPackage -and $Target -ne 'x86_64-unknown-linux-gnu') { throw "Unsupported package target: $Target" }
+  if ([bool]$WindowsClientProfile -ne [bool]$WindowsClientProfileSha256 -or
+      ($WindowsClientProfile -and !$windowsPackage)) {
+    throw 'The optional issued Client profile and its SHA-256 belong together in a Windows package.'
+  }
   $platform = if ($windowsPackage) { 'windows' } else { 'linux' }
   $platformId = "$platform-x86_64"
   $coreName = if ($windowsPackage) { 'aoem_ffi.dll' } else { 'libaoem_ffi.so' }
@@ -279,6 +315,10 @@ try {
   }
   if ($AoemCoreSha256 -and $actualAoemSha -ne $AoemCoreSha256.ToLowerInvariant()) {
     throw 'Isolated AOEM core does not match the independently pinned checksum.'
+  }
+  $clientJoinInputs = @()
+  if ($WindowsClientProfile) {
+    $clientJoinInputs = @(Get-WindowsClientJoinInputs $WindowsClientProfile $WindowsClientProfileSha256 $actualAoemSha)
   }
   # A manifest hash/capability bit cannot prove the current native contract.
   # Run the just-built original owner before creating any package staging.
@@ -857,11 +897,13 @@ For a new native APFL mailbox use install-novovm-rendezvous.ps1 with
 hashes. The adapter can prepare protected local custody before its first bind
 and start the existing task with -Start. See docs/NOVOVM_RENDEZVOUS_ENTRY.md.
 
-For an ordinary Windows device, run resources/scripts/windows/install-novovm-client.ps1
-with the issued discovery profile path, its ProfileSha256, and the independently
-pinned ReleaseManifestSha256. The task uses the current user at logon and starts
-immediately on installation. The native Client keeps its existing local key and
-follows independently verified state using the issued chain trust pins.
+For an ordinary Windows device with a bundled issued profile, run
+resources/scripts/windows/install-novovm-client.ps1 with the independently pinned
+ReleaseManifestSha256. The installer verifies and copies the Client, runtime and
+issued discovery files to the current user's LocalAppData. The task uses that
+installed copy at logon and starts during installation. Packages assembled without
+the issued profile can still take an explicit ProfilePath and ProfileSha256.
+The Client keeps its local key and follows independently verified state.
 
 All config examples remain unconfigured. Replace REVIEW_APPROVED_CHAIN_ID,
 REVIEW_FIXED_RELEASE and full 1952-byte public-key-array placeholders with the
@@ -912,6 +954,18 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
       @(Get-Item -LiteralPath (Join-Path $packagePath 'README.md')))) {
     $content = [IO.File]::ReadAllText($template.FullName).Replace("`r`n", "`n")
     [IO.File]::WriteAllText($template.FullName, $content, [Text.UTF8Encoding]::new($false))
+  }
+  # Issuer bytes are already pinned. Keep them separate from template normalization.
+  if ($clientJoinInputs.Count) {
+    New-Item -ItemType Directory -Path (Join-Path $packagePath 'config/discovery') | Out-Null
+    foreach ($inputFile in $clientJoinInputs) {
+      Assert-PlainPackagePath $inputFile.source
+      $destinationFile = Join-Path $packagePath $inputFile.path
+      Copy-Item -LiteralPath $inputFile.source -Destination $destinationFile
+      if ((Get-FileHash -LiteralPath $destinationFile).Hash -ne $inputFile.sha256) {
+        throw "Issued Client discovery input changed during packaging: $($inputFile.path)"
+      }
+    }
   }
   $entries = Get-ChildItem -LiteralPath $packagePath -File -Recurse |
     Where-Object { $_.Name -ne "CHECKSUMS.sha256" -and $_.Name -ne "release-manifest.json" } |
