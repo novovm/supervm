@@ -86,6 +86,9 @@ pub struct Config {
     /// Locally selected bootstrap coordinates; they grant no consensus rights.
     #[serde(default)]
     pub discovery_seeds: Vec<PathBuf>,
+    /// Publish the original native query socket's concrete bound address.
+    #[serde(default)]
+    pub publish_native_query_address: bool,
     /// Opt-in resource provision/consumption under the original hop contract.
     #[serde(default)]
     pub relay_forwarding: bool,
@@ -291,7 +294,14 @@ impl Driver {
         }
         let observer = node.controller.network_probe_diagnostics();
         let enabled = config.probe_control_file.is_some() && config.relay_forwarding;
-        let driver = Self::with_material(config, identity, keys, pins, observer)?;
+        let query_address = if config.publish_native_query_address {
+            ensure!(config.discovery && node.native_client_limit > 0 && !node.native_udp_address.ip().is_unspecified(),
+                "published native query requires discovery, a query lane and a concrete bound UDP address");
+            Some(node.native_udp_address)
+        } else {
+            None
+        };
+        let driver = Self::with_material(config, identity, keys, pins, observer, query_address)?;
         if node.native_client_limit > 0 {
             driver.query_slots.add_permits(1);
         }
@@ -310,6 +320,7 @@ impl Driver {
         keys: Vec<Vec<u8>>,
         pins: (u64, [u8; 32], [u8; 32]),
         observer: Option<Arc<NativeTransferDiagnosticsV1>>,
+        query_address: Option<SocketAddr>,
     ) -> Result<Self> {
         ensure!(
             !keys.is_empty()
@@ -353,6 +364,7 @@ impl Driver {
             observer,
             diagnostic.clone(),
             resources.clone(),
+            query_address,
         ));
         let next_udp_probe = vec![
             started;
@@ -587,6 +599,7 @@ async fn run(
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
     diagnostic: diagnostic::Shared,
     resources: Arc<ServiceConcurrencyV1>,
+    query_address: Option<SocketAddr>,
 ) -> Result<()> {
     let check_stop = stop.clone();
     let mut carrier = config
@@ -642,6 +655,7 @@ async fn run(
                         &failures,
                         observer,
                         diagnostic,
+                        query_address,
                     )
                     .await
                 })
@@ -670,6 +684,7 @@ async fn serve<'a>(
     failures: &Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
     diagnostic: diagnostic::Shared,
+    query_address: Option<SocketAddr>,
 ) -> Result<()> {
     let resources = scope
         .service_concurrency()
@@ -757,7 +772,11 @@ async fn serve<'a>(
                     instance,
                     address: scope.address()?,
                 };
-                let mut endpoint = route.endpoint()?;
+                let mut endpoint = if let Some(address) = query_address {
+                    novovm_network::discovery_control::native_chain_query_endpoint(&route, address)?
+                } else {
+                    route.endpoint()?
+                };
                 endpoint.max_bytes_per_minute = RELAY_BYTES_PER_MINUTE;
                 let record = sign_relay_record_v1(
                     identity,

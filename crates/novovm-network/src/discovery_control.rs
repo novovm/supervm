@@ -60,8 +60,8 @@ const DIAGNOSTIC_LOOKUP_DELAY: Duration = Duration::from_secs(10);
 
 mod node_locator;
 pub use node_locator::{
-    decode_node_locator_v1, encode_node_locator_v1, native_locator_id_v1,
-    NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE,
+    decode_node_locator_v1, encode_node_locator_v1, native_chain_query_address,
+    native_chain_query_endpoint, native_locator_id_v1, NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE,
 };
 
 /// A typed transport IO error from a carrier operation. The private constructor

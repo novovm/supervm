@@ -188,6 +188,12 @@ impl ServiceEndpoints {
             .iter()
             .filter(|e| e.transport == RelayTransportV1::IrohRendezvousV1);
         let carrier = routes.next();
+        if let Some(endpoint) = carrier {
+            let (uri, chain_query) = split_chain_query_uri(&endpoint.uri)?;
+            ensure!(chain_query.is_none() || (record.record_id.starts_with(NATIVE_CHAIN_LOCATOR_PREFIX)
+                && record.endpoints.len() == 1 && !uri.strip_prefix(PREFIX).unwrap_or(uri).contains('/')),
+                "chain query address requires an original chain locator, without mailbox extensions");
+        }
         let iroh = carrier
             .map(IrohServiceEndpointV1::parse_endpoint)
             .transpose()?;

@@ -17,16 +17,39 @@ use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
 };
 
 const PREFIX: &str = "iroh-rendezvous-v1://";
+pub(crate) const NATIVE_CHAIN_LOCATOR_PREFIX: &str = "native-chain-locator-v1:";
+const CHAIN_QUERY_SUFFIX: &str = "/novonet-chain-query/v1/";
 const REQUEST: &[u8; 8] = b"NVLSRQ01";
 const LEASE_RESPONSE_CHUNK_V3: &[u8; 8] = b"NVLSRL03";
 pub const MAX_SERVICE_LEASE_MS: u64 = 120_000;
 pub const MAX_BOOTSTRAP_LEASE_MS: u64 = 600_000;
 // JSON byte arrays include a 1952-byte native key and 3309-byte signature.
 pub const MAX_SERVICE_LEASE_BYTES: usize = 32 * 1024;
+
+pub(crate) fn valid_chain_query_address(address: SocketAddr) -> bool {
+    address.port() != 0
+        && !address.ip().is_unspecified()
+        && !address.ip().is_multicast()
+        && address.ip() != IpAddr::from([255, 255, 255, 255])
+        && !matches!(address, SocketAddr::V6(v6) if v6.scope_id() != 0 || v6.flowinfo() != 0)
+}
+
+pub(crate) fn split_chain_query_uri(uri: &str) -> Result<(&str, Option<SocketAddr>)> {
+    let Some((carrier, raw)) = uri.split_once(CHAIN_QUERY_SUFFIX) else {
+        return Ok((uri, None));
+    };
+    let address: SocketAddr = raw.parse().context("invalid native chain query address")?;
+    ensure!(
+        valid_chain_query_address(address) && raw == address.to_string(),
+        "noncanonical native chain query address"
+    );
+    Ok((carrier, Some(address)))
+}
 
 #[path = "product_service_tls.rs"]
 mod tls_endpoint;
@@ -82,6 +105,16 @@ impl IrohServiceEndpointV1 {
             max_bytes_per_minute: 65536,
         })
     }
+    pub(crate) fn chain_query_endpoint(&self, address: SocketAddr) -> Result<RelayEndpointV1> {
+        ensure!(
+            valid_chain_query_address(address),
+            "invalid native chain query address"
+        );
+        let mut endpoint = self.endpoint()?;
+        endpoint.uri.push_str(CHAIN_QUERY_SUFFIX);
+        endpoint.uri.push_str(&address.to_string());
+        Ok(endpoint)
+    }
     pub fn from_record(record: &PeerSignedRelayRecordV1) -> Result<Self> {
         ServiceEndpoints::from_record(record)?
             .iroh
@@ -92,10 +125,8 @@ impl IrohServiceEndpointV1 {
             endpoint.transport == RelayTransportV1::IrohRendezvousV1 && endpoint.uri.len() <= 4096,
             "different service transport"
         );
-        let encoded = endpoint
-            .uri
-            .strip_prefix(PREFIX)
-            .context("service URI version")?;
+        let (uri, _) = split_chain_query_uri(&endpoint.uri)?;
+        let encoded = uri.strip_prefix(PREFIX).context("service URI version")?;
         // Additional spellings are exact, node-signed NVMBOX07/08
         // markers. Unknown versions/trailing data still fail base64/canonical
         // validation. Ordinary Iroh parsing does not confer native capability.

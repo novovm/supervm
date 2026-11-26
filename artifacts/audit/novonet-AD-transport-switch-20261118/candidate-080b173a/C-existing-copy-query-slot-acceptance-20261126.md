@@ -71,3 +71,13 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 仅两份权重在线时，每组连续 12,024 毫秒没有提交新区块。恢复第三份后，原待处理交易终结。第四份恢复后，每组四个节点均到高度 46，并就同一状态根及归档回执达成一致。真实 AOEM 的计时器、journal 确认和锁定追赶本机回归另行通过。验收范围为单机四进程等权集合。现役 C 复核为运行中的 PID `30328`。
 
 使用 `NOVOVM_RESIDENT_NODE_BINARY` 指定同版本的 Windows `novovm-node.exe`，用 `NOVOVM_AOEM_TEST_LIBRARY` 指定已核验的 AOEM DLL，依次运行忽略标记下的 `native_only_recovery_late_lowest_validator_original_database_and_minority` 和 `native_only_recovery_late_highest_validator_original_database_and_minority`。原生节点 EXE SHA-256 `9836ef9823294b2edbdef32db50c8abbc376a82066b05a3f244ceb8109b8ea3c`。两份复现报告 SHA-256 分别为 `1ec9df851dc40414a85d841b03fb8cf876bbc47ec09af1119ec0048ff25077a7` 和 `57592a2daaded9e46a29a1f9d13836d71766b46ae0e22715ed7879d0a92221ec`。
+
+## 签名原生查询地址变更后的自动恢复
+
+北京时间 11:34，在 C 的 `signed-address-27f1fb69696e` 新隔离副本启用 `publish_native_query_address`。空目录 Windows Client 经发行配置预置的回环转发端口 `49560` 达到高度 2。关闭该端口转发后，Client 进入重试。当第二份来源可用时，Client 通过原目录取得链域和服务公钥绑定的 `NVLOCR03` 定位，使用序号 1 上签名的真实节点 UDP 端口 `45192` 完成原生认证。旧端口在整个恢复期间保持停转。两次结果中 Client PID 均为 `39232`，设备身份、状态根与 49 个叶子一致，下载累计仍是 97 个节点。
+
+Client 将定位记录保存到原验证检查点。修改缓存中的端口后重启 Client，签名验证失败，拒绝使用改过的地址。回归 `signed-address-legacy-6b5b0802f879` 仍通过原生、Iroh 备用、原生重新接管。18 项目录回归通过，覆盖兼容原定位版本、地址字节篡改、版本替换、错误链域以及到期拒绝。新地址发布默认关闭。此阶段在绑定具体地址的隔离回环环境验收，实机换网、通配监听的接口发现与公网 NAT 地址验证待后续验证。
+
+复现使用同一隔离用例并设置 `NOVOVM_QUERY_COPY_FOLLOW=2`，原路径回归用 `1`。切换日志 SHA-256 `207b93be5a32e3a7b06eaa2b640d42d6065120209ec36e3f151e296c2916a37e`，事件 SHA-256 `1f0e8f9840315faf8da8e4ac9c292684ec414deb953895731ff582d81f1f66c3`，旧版路径回归日志 SHA-256 `1fd8e54bf084079b4603d9412baa79e2426d7d2e63df2b985dd961918a2f6737`。Client EXE SHA-256 `c9d57a36c9863629d725ee0a4aa83ceecf8877d51fcc7cdea338fb1c9bc85be0`。
+
+另以 `signed-address-receipt-36113dfaac73` 重跑原交易 Receipt、区块头和状态树校验。原交易仍在高度 1 独立验证取得成功及最终性，高度 2 的状态树和篡改拒绝回归通过。日志 SHA-256 `b5a907a6073a03232e571fc01eb8bbd552c021bd0c9ef285dd70b3b2763ff28f`。三次隔离操作前后现役 C 均为运行中的 PID `30328`。

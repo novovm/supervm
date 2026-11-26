@@ -92,6 +92,7 @@ impl Pair {
                     vec![root.join(format!("{}.json", 1 - side))]
                 },
                 discovery,
+                publish_native_query_address: false,
                 discovery_seeds: if discovery && side != 0 {
                     vec![root.join("0.json")]
                 } else {
@@ -113,6 +114,7 @@ impl Pair {
                     domain.genesis,
                     domain.protocol,
                 ),
+                None,
                 None,
             )?);
             let transport = UdpTransport::bind_for_chain(
@@ -210,6 +212,7 @@ impl Pair {
                         .collect(),
                     self.pins,
                     observers.map(|observers| observers[side].clone()),
+                    None,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -500,6 +503,7 @@ fn all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordin
             .collect(),
         peers.pins,
         None,
+        None,
     )?;
     peers.allow_fallback();
     let cache = configs[2]
@@ -710,6 +714,7 @@ fn retained_tick_reactor_reauthenticates_after_peer_owner_restart_without_reopen
         pair.identities[1].clone(),
         vec![pair.identities[0].public_key().to_vec()],
         pair.pins,
+        None,
         None,
     )?;
     pair.drivers[1] = replacement;
