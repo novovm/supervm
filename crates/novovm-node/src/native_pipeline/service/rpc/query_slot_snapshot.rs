@@ -378,6 +378,45 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     );
     let key = owner.rpc.node.transport_identity().public_key().to_vec();
     ensure!(locator.relay_public_key == key, "locator identity differs");
+    if std::env::var("NOVOVM_QUERY_COPY_CARRIER_TAKEOVER").as_deref() == Ok("1") {
+        use crate::native_pipeline::consensus::native::MessageDomain;
+        use crate::native_pipeline::service::client::operator::receipt_proof::ProofTarget;
+        let (another, _) = novovm_relay::transport_identity::ephemeral_transport_identity(
+            &old_profile.library,
+            &old_profile.library_sha256,
+        )?;
+        let domain = MessageDomain {
+            chain_id: pins.0,
+            genesis: pins.1,
+            protocol: pins.2,
+            validators: owner.rpc.node.validators.clone(),
+        };
+        let receipt = ProofTarget::new(
+            &domain,
+            unreachable.clone(),
+            parent,
+            receipt_request_hash(&request)?,
+        )?;
+        let worker = thread::spawn(move || {
+            super::super::network::test_same_identity_reconnect(
+                locator,
+                domain,
+                unreachable,
+                another,
+                receipt,
+            )
+        });
+        owner.until(|_| Ok(worker.is_finished()))?;
+        worker
+            .join()
+            .map_err(|_| anyhow::anyhow!("carrier reconnect fixture panicked"))??;
+        ensure!(
+            owner.rpc.node.controller.parent() == head && owner.active_client().is_err(),
+            "carrier reconnect affected the detached chain or legacy UDP query slots"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     let seeds = if std::env::var("NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS").as_deref() == Ok("1") {
         let first_contact = IrohServiceEndpointV1::from_record(&first)?.address;
         println!("cold Client uses two pinned contacts without installed locator files");

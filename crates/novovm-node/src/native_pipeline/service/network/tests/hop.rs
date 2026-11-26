@@ -231,6 +231,7 @@ fn run_relay_objects(relay_count: usize) -> Result<()> {
         peers.pins,
         Some(observers[middle].clone()),
         None,
+        false,
     )?;
     peers.drivers[source].views.lock().unwrap()[from].fallback = true;
     let restart = Instant::now() + Duration::from_secs(110);

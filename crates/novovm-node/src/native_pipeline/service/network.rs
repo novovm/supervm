@@ -34,6 +34,8 @@ pub use discovery::{
 mod observation;
 mod probe;
 mod query_carrier;
+#[cfg(test)]
+pub(super) use query_carrier::test_same_identity_reconnect;
 mod relay;
 use discovery::Discovery;
 use serde::{Deserialize, Serialize};
@@ -262,7 +264,6 @@ pub struct Driver {
     views: Arc<Mutex<Vec<PeerView>>>,
     connected: mpsc::Receiver<Connected>,
     queries: mpsc::Receiver<query_carrier::Read>,
-    query_slots: Arc<tokio::sync::Semaphore>,
     stop: Arc<AtomicBool>,
     started: Instant,
     config: Config,
@@ -301,10 +302,15 @@ impl Driver {
         } else {
             None
         };
-        let driver = Self::with_material(config, identity, keys, pins, observer, query_address)?;
-        if node.native_client_limit > 0 {
-            driver.query_slots.add_permits(1);
-        }
+        let driver = Self::with_material(
+            config,
+            identity,
+            keys,
+            pins,
+            observer,
+            query_address,
+            node.native_client_limit > 0,
+        )?;
         if enabled {
             driver
                 .diagnostic
@@ -321,6 +327,7 @@ impl Driver {
         pins: (u64, [u8; 32], [u8; 32]),
         observer: Option<Arc<NativeTransferDiagnosticsV1>>,
         query_address: Option<SocketAddr>,
+        queries_enabled: bool,
     ) -> Result<Self> {
         ensure!(
             !keys.is_empty()
@@ -344,7 +351,6 @@ impl Driver {
         // One result per configured connection, not a business/data send queue.
         let (sender, connected) = mpsc::sync_channel(keys.len());
         let (requests, queries) = mpsc::sync_channel(1);
-        let query_slots = Arc::new(tokio::sync::Semaphore::new(0));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -357,7 +363,7 @@ impl Driver {
             sender,
             query_carrier::Ingress {
                 requests,
-                slots: query_slots.clone(),
+                slot: queries_enabled.then(|| Arc::new(query_carrier::QuerySlot::default())),
             },
             stop.clone(),
             failures.clone(),
@@ -381,7 +387,6 @@ impl Driver {
             views,
             connected,
             queries,
-            query_slots,
             stop,
             started,
             config,
