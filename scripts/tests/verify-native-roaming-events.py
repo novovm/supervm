@@ -22,12 +22,12 @@ def verify(events, before, after, client, peer, height, state_root, min_sequence
     require(0 <= before < after < len(events), "invalid event order")
     starts = [i for i, row in enumerate(events) if row.get("event") == "starting"]
     require(starts == [0] and events[0].get("reopened_height") == 0, "not one cold start")
-    require(all(row.get("transport_identity_sha256") == client for row in events),
+    require(all(native_roaming_packets.same_digest(row.get("transport_identity_sha256"), client) for row in events),
             "local protected identity changed")
     for row in (events[before], events[after]):
         require(row.get("event") == "verified_state", "not an original verified-state event")
-        require(row.get("peer_transport_sha256") == peer, "unexpected remote identity")
-        require(row.get("height") == height and row.get("state_root") == state_root,
+        require(native_roaming_packets.same_digest(row.get("peer_transport_sha256"), peer), "unexpected remote identity")
+        require(row.get("height") == height and native_roaming_packets.same_digest(row.get("state_root"), state_root, "0x"),
                 "certified height or state root mismatch")
         require(type(row.get("verified_nodes")) is int and row["verified_nodes"] > 0
                 and type(row.get("verified_leaves")) is int and row["verified_leaves"] > 0,
@@ -45,7 +45,7 @@ def verify(events, before, after, client, peer, height, state_root, min_sequence
     accepted = [
         row for row in events[before + 1:after]
         if row.get("event") == "verified_locator_accepted"
-        and row.get("peer_transport_sha256") == peer
+        and native_roaming_packets.same_digest(row.get("peer_transport_sha256"), peer)
         and type(row.get("locator_sequence")) is int
         and row["locator_sequence"] == seq
     ]
@@ -68,19 +68,19 @@ def verify(events, before, after, client, peer, height, state_root, min_sequence
 
 class OfflineVectors(unittest.TestCase):
     def setUp(self):
-        self.start = {"event": "starting", "reopened_height": 0, "transport_identity_sha256": "D"}
-        self.event = {"event": "verified_state", "height": 2, "state_root": "root", "state_version": 2,
-                      "transport_identity_sha256": "D", "peer_transport_sha256": "C",
+        self.start = {"event": "starting", "reopened_height": 0, "transport_identity_sha256": "d" * 64}
+        self.event = {"event": "verified_state", "height": 2, "state_root": "0x" + "f" * 64, "state_version": 2,
+                      "transport_identity_sha256": "d" * 64, "peer_transport_sha256": "c" * 64,
                       "verified_nodes": 97, "verified_leaves": 49, "downloaded_nodes": 97,
                       "utc_unix_ms": 100}
-        self.accepted = {"event": "verified_locator_accepted", "transport_identity_sha256": "D",
-                         "peer_transport_sha256": "C", "locator_sequence": 9,
+        self.accepted = {"event": "verified_locator_accepted", "transport_identity_sha256": "d" * 64,
+                         "peer_transport_sha256": "c" * 64, "locator_sequence": 9,
                          "locator_issued_at_ms": 201, "utc_unix_ms": 202,
                          "locator_expires_at_ms": 300}
         self.after = dict(self.event, locator_sequence=9, utc_unix_ms=210)
 
     def check(self, events):
-        return verify(events, 1, len(events) - 1, "D", "C", 2, "root", 9, 200)
+        return verify(events, 1, len(events) - 1, "D" * 64, "C" * 64, 2, "0x" + "F" * 64, 9, 200)
 
     def test_cold_and_new_locator(self):
         self.assertTrue(
@@ -202,7 +202,7 @@ def verify_links(rows, packet, start, before, after, switch, events):
     require(ready["pid"] == recovery["pid"] == packet["client_pid"] == start["pid"]
             and ready["started_utc"] == start["utc"] and ready["line"] == before
             and recovery["line"] == after and ready["height"] == events[before]["height"]
-            and ready["state_root"] == events[before]["state_root"]
+            and native_roaming_packets.same_digest(ready["state_root"], events[before]["state_root"], "0x")
             and recovery["locator_sequence"] == events[after]["locator_sequence"],
             "physical journal differs from verified Client")
     require(UUID(ready["wired_guid"]) != UUID(ready["hotspot_guid"])
@@ -227,11 +227,11 @@ class LinkJournalVectors(unittest.TestCase):
     def setUp(self):
         def stamp(ms):
             return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
-        self.events = [{"height": 2, "state_root": "reference", "utc_unix_ms": 10},
+        self.events = [{"height": 2, "state_root": "0x" + "f" * 64, "utc_unix_ms": 10},
                        {"locator_sequence": 3, "utc_unix_ms": 30}]
         self.start = {"utc": stamp(1), "pid": 9}
         self.packet = {"client_pid": 9, "phases": {"before": {"component_id": 17}, "after": {"component_id": 16}}}
-        ready = {"pid": 9, "started_utc": stamp(1), "line": 0, "height": 2, "state_root": "reference",
+        ready = {"pid": 9, "started_utc": stamp(1), "line": 0, "height": 2, "state_root": "0x" + "f" * 64,
                  "wired_guid": "00000000-0000-0000-0000-000000000018", "hotspot_guid": "00000000-0000-0000-0000-000000000006",
                  "wired_index": 18, "hotspot_index": 6,
                  "component_map": [{"if_index": 18, "component_id": 17}, {"if_index": 6, "component_id": 16}]}
@@ -284,9 +284,9 @@ def main():
            ("jsonl", "before", "after", "client", "peer", "height", "state_root",
             "min_sequence", "switch_utc_ms")):
         parser.error("provide all event and reference fields, or use --self-test")
-    if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (args.client, args.peer)):
+    if not all(re.fullmatch(r"[0-9a-fA-F]{64}", value) for value in (args.client, args.peer)):
         parser.error("invalid identity fingerprint")
-    if not re.fullmatch(r"0x[0-9a-f]{64}", args.state_root):
+    if not re.fullmatch(r"0x[0-9a-fA-F]{64}", args.state_root):
         parser.error("invalid state root")
     try:
         events = [json.loads(line) for line in args.jsonl.read_text(encoding="utf-8").splitlines()]

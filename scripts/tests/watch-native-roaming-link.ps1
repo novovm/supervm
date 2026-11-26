@@ -1,22 +1,24 @@
 #Requires -Version 7.5
 [CmdletBinding(DefaultParameterSetName='Run')]
 param(
-    [Parameter(Mandatory,ParameterSetName='Run')][string]$ClientEvidence,
-    [Parameter(Mandatory,ParameterSetName='Run')][string]$CaptureEvidence,
-    [Parameter(Mandatory,ParameterSetName='Run')][string]$Manifest,
-    [Parameter(Mandatory,ParameterSetName='Run')][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ManifestSha256,
+    [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][string]$ClientEvidence,
+    [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][string]$CaptureEvidence,
+    [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][string]$Manifest,
+    [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ManifestSha256,
     [Parameter(Mandatory,ParameterSetName='Run')][ValidateRange(1,9000000000000000000)][long]$MinLocatorSequence,
     [Parameter(Mandatory,ParameterSetName='Run')][string]$Client,
-    [Parameter(Mandatory,ParameterSetName='Run')][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ClientSha256,
+    [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ClientSha256,
     [Parameter(Mandatory,ParameterSetName='Run')][string]$PeerWitness,
     [Parameter(ParameterSetName='Run')][uri]$PeerWitnessUri,
     [Parameter(ParameterSetName='Run')][string]$PeerCaCertificate,
     [Parameter(ParameterSetName='Run')][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$PeerCaSha256,
     [Parameter(Mandatory,ParameterSetName='Run')][string]$HotspotPreflight,
     [Parameter(ParameterSetName='Run')][switch]$ProbeHotspotIfMissing,
-    [Parameter(Mandatory,ParameterSetName='Run')][int]$WiredIndex,
-    [Parameter(Mandatory,ParameterSetName='Run')][int]$HotspotIndex,
+    [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][int]$WiredIndex,
+    [Parameter(Mandatory,ParameterSetName='Run')][Parameter(Mandatory,ParameterSetName='Replay')][int]$HotspotIndex,
     [Parameter(ParameterSetName='Run')][ValidateRange(60,300)][int]$MinSwitchSeconds = 90,
+    [Parameter(Mandatory,ParameterSetName='Replay')][switch]$ReplayStartup,
+    [Parameter(ParameterSetName='Replay')][string]$OriginalCaptureDirectory,
     [Parameter(Mandatory,ParameterSetName='Offline')][switch]$OfflineCheck
 )
 
@@ -24,6 +26,17 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 function Read-Json($Path) {
     Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable -DateKind String
+}
+
+function Test-Sha256($Left,$Right) {
+    $Left -is [string] -and $Right -is [string] -and
+        $Left -cmatch '\A[0-9a-fA-F]{64}\z' -and
+        [string]::Equals($Left,$Right,[StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-StateRoot($Left,$Right) {
+    $Left -is [string] -and $Right -is [string] -and $Left.StartsWith('0x') -and $Right.StartsWith('0x') -and
+        (Test-Sha256 $Left.Substring(2) $Right.Substring(2))
 }
 
 function Read-Events($Directory) {
@@ -38,7 +51,7 @@ function Read-Events($Directory) {
     $lines = @($raw.Split("`n"))
     for ($i = 0; $i -lt $lines.Count - 1; $i++) {
         $row = ConvertFrom-Json -InputObject $lines[$i] -AsHashtable -DateKind String
-        if ($row.transport_identity_sha256 -cne $localPin) { throw 'Unexpected Client identity in JSONL' }
+        if (!(Test-Sha256 $row.transport_identity_sha256 $localPin)) { throw 'Unexpected Client identity in JSONL' }
         if (($i -eq 0 -and ($row.event -cne 'starting' -or $row.reopened_height -ne 0)) -or
             ($i -gt 0 -and $row.event -ceq 'starting')) { throw 'Not one cold Client run' }
         $row
@@ -49,8 +62,8 @@ function Find-Baseline($Rows, $Native, [long]$StartedMs) {
     for ($i = 1; $i -lt $Rows.Count; $i++) {
         $r = $Rows[$i]
         if ($r.event -ceq 'verified_state' -and $r.transport -ceq 'native_novorudp' -and
-            $r.native_peer_address -ceq $Native -and $r.peer_transport_sha256 -ceq $peerPin -and
-            $r.height -eq $m.height -and $r.state_root -ceq $stateRoot -and $r.state_version -eq $m.state_version -and
+            $r.native_peer_address -ceq $Native -and (Test-Sha256 $r.peer_transport_sha256 $peerPin) -and
+            $r.height -eq $m.height -and (Test-StateRoot $r.state_root $stateRoot) -and $r.state_version -eq $m.state_version -and
             $r.verified_nodes -gt 0 -and $r.verified_leaves -gt 0 -and $r.downloaded_nodes -eq $r.verified_nodes -and
             $r.utc_unix_ms -ge $StartedMs) { return @{ row = $r; index = $i } }
     }
@@ -60,12 +73,12 @@ function Find-Recovery($Rows, $Base, [long]$DownMs, [long]$MinSequence) {
     for ($i = $Base.index + 1; $i -lt $Rows.Count; $i++) {
         $r = $Rows[$i]
         if ($r.event -cne 'verified_state' -or $r.transport -cne 'iroh' -or
-            $r.peer_transport_sha256 -cne $peerPin -or $r.height -ne $m.height -or $r.state_root -cne $stateRoot -or
+            !(Test-Sha256 $r.peer_transport_sha256 $peerPin) -or $r.height -ne $m.height -or !(Test-StateRoot $r.state_root $stateRoot) -or
             $r.state_version -ne $m.state_version -or $r.verified_nodes -ne $Base.row.verified_nodes -or $r.verified_leaves -ne $Base.row.verified_leaves -or
             $r.locator_sequence -lt $MinSequence -or
             ($null -ne $Base.row.locator_sequence -and $r.locator_sequence -le $Base.row.locator_sequence)) { continue }
         $matches = @($Rows[($Base.index+1)..$i] | Where-Object {
-            $_.event -ceq 'verified_locator_accepted' -and $_.peer_transport_sha256 -ceq $peerPin -and
+            $_.event -ceq 'verified_locator_accepted' -and (Test-Sha256 $_.peer_transport_sha256 $peerPin) -and
                 $_.locator_sequence -eq $r.locator_sequence
         })
         if ($matches.Count -ne 1) { continue }
@@ -128,7 +141,7 @@ function Test-PeerWitness($Witness,$Route,$Start,$Baseline) {
     $src = $sender.Address.ToString()
     $ports = @($Route.owned_sockets | Where-Object { $_.transport -ceq 'udp' -and
         $_.local_port -eq $sender.Port -and $_.local_ip -in @($src,'0.0.0.0','::') })
-    $Witness.event -ceq 'first_scoped_wired_datagram' -and $Witness.manifest_sha256 -ieq $ManifestSha256 -and
+    $Witness.event -ceq 'first_scoped_wired_datagram' -and (Test-Sha256 $Witness.manifest_sha256 $ManifestSha256) -and
         $Witness.destination -ceq $m.native_gateway -and $src -ceq $Route.source_ip -and $ports.Count -gt 0 -and
         $Witness.observed_utc_ms -ge ([datetimeoffset]::Parse($Start.utc).ToUnixTimeMilliseconds()) -and
         $Witness.observed_utc_ms -le $Baseline.row.utc_unix_ms
@@ -137,7 +150,7 @@ function Test-PeerWitness($Witness,$Route,$Start,$Baseline) {
 function Test-HotspotPreflight($Probe,$Source,$Gateway,$Now) {
     $age = $Now.ToUnixTimeMilliseconds() - [long]$Probe.observed_utc_ms
     $names = @($m.approved_relays | ForEach-Object { ([uri]$_).DnsSafeHost })
-    $Probe.relay_host -in $names -and $Probe.manifest_sha256 -ieq $ManifestSha256 -and $Probe.if_index -eq $HotspotIndex -and
+    $Probe.relay_host -in $names -and (Test-Sha256 $Probe.manifest_sha256 $ManifestSha256) -and $Probe.if_index -eq $HotspotIndex -and
         [guid]$Probe.interface_guid -eq $guid[$HotspotIndex] -and
         $Probe.source_ip -ceq $Source -and $Probe.gateway -ceq $Gateway -and
         $Probe.relay_ip -in $cap.approved_relay_ips -and $Probe.curl_exit -eq 0 -and
@@ -186,6 +199,26 @@ function Save-HotspotPreflight($Configuration) {
     try { $file.Write([Text.Encoding]::UTF8.GetBytes(($probe | ConvertTo-Json))) } finally { $file.Dispose() }
 }
 
+function Assert-StartupEvidence($Cap,$Start,$ManifestData,$ManifestFileDigest,$ExpectedCaptureDirectory) {
+    if (!(Test-Sha256 $ManifestFileDigest $ManifestSha256)) { throw 'Manifest file SHA-256 differs' }
+    if (!(Test-Sha256 $Cap.manifest_sha256 $ManifestSha256)) { throw 'Capture manifest SHA-256 differs' }
+    if (!(Test-Sha256 $Start.client_sha256 $ClientSha256)) { throw 'Client start executable SHA-256 differs' }
+    if (!(Test-Sha256 $Start.profile_sha256 $ManifestData.profile_sha256)) { throw 'Client start profile SHA-256 differs from the pinned manifest' }
+    if ($WiredIndex -eq $HotspotIndex -or !(Test-ComponentMap $Cap)) { throw 'Distinct physical capture components required' }
+    if (!(Test-Sha256 $ManifestData.client_transport_sha256 $ManifestData.client_transport_sha256) -or
+        !(Test-Sha256 $ManifestData.server_transport_sha256 $ManifestData.server_transport_sha256)) { throw 'Invalid manifest transport fingerprint' }
+    if ($ManifestData.height -le 0 -or !(Test-StateRoot $ManifestData.state_root $ManifestData.state_root)) { throw 'Invalid manifest height or state root' }
+    if ($Cap.etl -ine (Join-Path $ExpectedCaptureDirectory 'physical.etl')) { throw 'Unexpected capture ETL path' }
+    if ([datetimeoffset]::Parse($Cap.ready_utc) -gt [datetimeoffset]::Parse($Start.utc)) { throw 'Client started before capture readiness' }
+}
+
+if ($ReplayStartup) {
+    $captureDirectory = if ($OriginalCaptureDirectory) { $OriginalCaptureDirectory } else { $CaptureEvidence }
+    Assert-StartupEvidence (Read-Json (Join-Path $CaptureEvidence 'ready.json')) (Read-Json (Join-Path $ClientEvidence 'start.json')) (Read-Json $Manifest) (Get-FileHash -LiteralPath $Manifest).Hash $captureDirectory
+    'Archived capture, Client startup and pinned manifest bindings passed (offline).'
+    return
+}
+
 if ($OfflineCheck) { . (Join-Path $PSScriptRoot "native-roaming-link-tests.ps1"); return }
 
 function Assert-LiveRun {
@@ -216,6 +249,14 @@ $journal = $null
 $prompted = $false
 $lastDown = $null
 $previous = $null
+$phase = "visible_console"
+$diagnostic = Join-Path $ClientEvidence ("observer-startup-{0}.jsonl" -f $PID)
+$diagnosticFile = [IO.File]::Open($diagnostic,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+$diagnosticFile.Dispose()
+function Write-Diagnostic($Event,$Data) {
+    [ordered]@{event=$Event;phase=$phase;observed_utc=[datetime]::UtcNow.ToString('o');data=$Data} | ConvertTo-Json -Depth 4 -Compress | Add-Content -LiteralPath $diagnostic
+}
+Write-Diagnostic 'observer_started' @{pid=$PID}
 try {
     if (![Environment]::UserInteractive -or [Console]::IsOutputRedirected) {
         throw 'Open this helper in a visible local interactive console'
@@ -230,33 +271,31 @@ public static class DRoamingConsole {
     if ($session -eq 0 -or [DRoamingConsole]::WTSGetActiveConsoleSessionId() -ne $session) {
         throw 'Not the physical console session'
     }
+    $phase = 'read_capture_start_manifest'
     $cap = Read-Json (Join-Path $CaptureEvidence 'ready.json')
     $start = Read-Json (Join-Path $ClientEvidence 'start.json')
     $m = Read-Json $Manifest
     $script:nextPeerPoll = [datetimeoffset]::MinValue
+    $phase = 'peer_certificate'
     if ($PeerWitnessUri) {
         if ($PeerWitnessUri.Scheme -ne 'https' -or $PeerWitnessUri.UserInfo -or $PeerWitnessUri.Query -or $PeerWitnessUri.Fragment -or
             $PeerWitnessUri.AbsolutePath -cne '/wired-source' -or $PeerWitnessUri.Host -ne ([Net.IPEndPoint]::Parse($m.native_gateway).Address.ToString()) -or !$PeerCaCertificate -or !$PeerCaSha256) { throw 'Unexpected private witness endpoint or missing certificate pin' }
         $cert = [Security.Cryptography.X509Certificates.X509CertificateLoader]::LoadCertificateFromFile((Get-Item -LiteralPath $PeerCaCertificate).FullName)
-        try { if ($cert.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256) -ine $PeerCaSha256) { throw 'Peer certificate digest differs' } } finally { $cert.Dispose() }
+        try { if (!(Test-Sha256 $cert.GetCertHashString([Security.Cryptography.HashAlgorithmName]::SHA256) $PeerCaSha256)) { throw 'Peer certificate digest differs' } } finally { $cert.Dispose() }
     }
-    $localPin = $m.client_transport_sha256
-    $peerPin = $m.server_transport_sha256
+    $phase = 'startup_evidence'
+    Assert-StartupEvidence $cap $start $m (Get-FileHash -LiteralPath $Manifest).Hash $CaptureEvidence
+    $localPin = $m.client_transport_sha256.ToLowerInvariant()
+    $peerPin = $m.server_transport_sha256.ToLowerInvariant()
     $stateRoot = $m.state_root
-    $clientPin = $ClientSha256
+    $phase = 'local_files'
     $Client = (Get-Item -LiteralPath $Client).FullName
-    $captureStart = (Get-Process -Id $cap.admin_pid).StartTime.ToUniversalTime()
     $deadline = [datetimeoffset]::Parse($cap.deadline_utc)
-    if (!(Test-ComponentMap $cap) -or $cap.manifest_sha256 -ine $ManifestSha256 -or
-        (Get-FileHash -LiteralPath $Manifest).Hash -ine $ManifestSha256 -or
-        $start.client_sha256 -ine $clientPin -or $start.profile_sha256 -cne $m.profile_sha256 -or
-        (Get-FileHash -LiteralPath $client).Hash -ine $clientPin -or
-        $WiredIndex -eq $HotspotIndex -or $localPin -cnotmatch '^[a-f0-9]{64}$' -or $peerPin -cnotmatch '^[a-f0-9]{64}$' -or
-        $m.height -le 0 -or $stateRoot -cnotmatch '^0x[a-f0-9]{64}$' -or
-        $cap.etl -ine (Join-Path $CaptureEvidence 'physical.etl') -or !(Test-Path -LiteralPath $cap.etl -PathType Leaf) -or
-        [datetimeoffset]::Parse($cap.ready_utc) -gt [datetimeoffset]::Parse($start.utc)) {
-        throw 'Capture, Client, manifest, or scope mismatch'
-    }
+    if (!(Test-Path -LiteralPath $cap.etl -PathType Leaf)) { throw 'Local capture ETL missing' }
+    if (!(Test-Sha256 (Get-FileHash -LiteralPath $Client).Hash $ClientSha256)) { throw 'Local Client executable SHA-256 differs' }
+    $phase = 'capture_owner'
+    $captureStart = (Get-Process -Id $cap.admin_pid).StartTime.ToUniversalTime()
+    $phase = 'physical_adapters'
     foreach ($name in 'route-after.request','route-after.json','operator.jsonl') {
         if (Test-Path -LiteralPath (Join-Path $ClientEvidence $name)) { throw "Preserve existing $name" }
     }
@@ -270,6 +309,8 @@ public static class DRoamingConsole {
     $journalPath = Join-Path $ClientEvidence 'operator.jsonl'
     New-Item -ItemType File -Path $journalPath -ErrorAction Stop | Out-Null
     $journal = $journalPath
+    $phase = 'observe_client_and_links'
+    Write-Diagnostic 'startup_complete' @{pid=$start.pid}
     $startedMs = [datetimeoffset]::Parse($start.utc).ToUnixTimeMilliseconds()
     Write-Host '保持有线和热点连接，正在验证基线。' -ForegroundColor Yellow
     do {
@@ -354,6 +395,7 @@ public static class DRoamingConsole {
         Start-Sleep -Milliseconds 150
     } while ($true)
 } catch {
+    Write-Diagnostic 'observer_failed' @{reason=$_.Exception.Message;line=$_.InvocationInfo.ScriptLineNumber;type=$_.Exception.GetType().Name}
     if ($journal) { Journal 'observation_failed' @{reason=$_.Exception.Message} }
     throw
 } finally {
