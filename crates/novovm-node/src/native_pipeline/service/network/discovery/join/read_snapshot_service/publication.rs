@@ -466,6 +466,12 @@ mod tests {
         );
         let pins = profile.pins();
         let restart = std::env::var_os("NOVOVM_PUBLIC_READ_BOOTSTRAP_RESTART_TEST").is_some();
+        let fixed =
+            std::env::var("NOVOVM_PUBLIC_READ_BOOTSTRAP_FIXED_ENDPOINT").as_deref() == Ok("1");
+        ensure!(
+            !fixed || restart,
+            "fixed fixture requires protected bootstrap identity"
+        );
         let identity = if restart {
             novovm_relay::transport_identity::provision_transport_identity(
                 &stage.join("bootstrap.protected"),
@@ -476,7 +482,24 @@ mod tests {
         } else {
             ephemeral_transport_identity(&profile.library, &profile.library_sha256)?.0
         };
-        let config = IrohConfigV1::new(&relays, nameserver)?.with_relay_only()?;
+        let mut config = IrohConfigV1::new(&relays, nameserver)?.with_relay_only()?;
+        let fixed_pin = stage.join("fixed-endpoint.pin");
+        if fixed {
+            use novovm_relay::purpose_keys::carrier;
+            let custody = stage.join("fixed-carrier.protected");
+            if !custody.try_exists()? {
+                ensure!(
+                    !fixed_pin.try_exists()?,
+                    "fixture carrier custody missing after publication"
+                );
+                carrier::create(&custody, pins.0, identity.public_key())?;
+            }
+            config = config.with_owned_service_identity(carrier::read(
+                &custody,
+                pins.0,
+                identity.public_key(),
+            )?)?;
+        }
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build()?.block_on(async move {
                 let owner = IrohEndpointOwnerV1::bind(config, || Ok(())).await?;
@@ -490,6 +513,15 @@ mod tests {
                         ensure!(start.elapsed() < Duration::from_secs(25), "approved relay did not connect");
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
+                    if fixed {
+                        let bytes = address.endpoint_key;
+                        if fixed_pin.try_exists()? {
+                            ensure!(fs::read(&fixed_pin)? == bytes, "fixture carrier endpoint changed");
+                        } else {
+                            fs::write(stage.join("fixed-endpoint.tmp"), bytes)?;
+                            fs::rename(stage.join("fixed-endpoint.tmp"), &fixed_pin)?;
+                        }
+                    }
                     let now = Instant::now();
                     let until = now + Duration::from_secs(if restart { 360 } else { 110 });
                     let mut rotate_at = now + Duration::from_secs(100);
