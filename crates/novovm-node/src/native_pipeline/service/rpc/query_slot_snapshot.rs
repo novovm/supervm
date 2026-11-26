@@ -398,6 +398,16 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if std::env::var("NOVOVM_QUERY_COPY_UCA_REPLAY").as_deref() == Ok("1") {
+        owner.rpc.node.public_asset_receipt_proofs = false;
+        test_installed_uca_replay(&mut owner, &binary, &profile, parent.height)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head,
+            "UCA replay altered the detached chain"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     if std::env::var("NOVOVM_QUERY_COPY_CHECKPOINT_POLICY").as_deref() == Ok("1") {
         owner.rpc.node.public_asset_receipt_proofs = false;
         owner.rpc.node.public_state_sync = true;
@@ -614,6 +624,221 @@ impl Drop for IsolatedFollowChild {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+fn test_installed_uca_replay(
+    owner: &mut QueryOwner,
+    binary: &Path,
+    profile: &Path,
+    anchor_height: u64,
+) -> Result<()> {
+    use crate::native_pipeline::{
+        consensus::statement::{finalized_header, ParentPoint},
+        proof::{capture_budget, uca_replay},
+        state::frontier::CaptureStep,
+    };
+    use novovm_exec::resident::AoemLibrarySelection;
+    use sha2::{Digest, Sha256};
+    use std::fs;
+
+    let stage = profile.parent().context("UCA replay fixture directory")?;
+    let data = stage.join("uca-replay-device");
+    ensure!(
+        !data.exists(),
+        "UCA replay requires a clean Client directory"
+    );
+    let profile_bytes = fs::read(profile)?;
+    let pin = format!("{:x}", Sha256::digest(&profile_bytes));
+    let installation: Value = serde_json::from_slice(&profile_bytes)?;
+    let anchor: ParentPoint =
+        serde_json::from_value(installation["verification"]["trusted_parent"].clone())?;
+    let chain_id = installation["chain_id"]
+        .as_u64()
+        .context("fixture chain id")?;
+    let genesis: [u8; 32] = serde_json::from_value(installation["genesis"].clone())?;
+    let protocol: [u8; 32] = serde_json::from_value(installation["protocol"].clone())?;
+    let headers = data
+        .join("NOVOVM/native-discovery")
+        .join(format!(
+            "{chain_id}-{}-{}",
+            super::hex(&genesis),
+            super::hex(&protocol)
+        ))
+        .join(format!(
+            "headers-{anchor_height}-{:x}",
+            Sha256::digest(serde_json::to_vec(&anchor)?)
+        ));
+    let run = |owner: &mut QueryOwner, action: &str, archive: Option<&Path>| {
+        let mut command = Command::new(binary);
+        command
+            .arg(profile)
+            .arg(action)
+            .env("LOCALAPPDATA", &data)
+            .env("XDG_STATE_HOME", &data);
+        if let Some(archive) = archive {
+            command.arg(&pin).arg(archive);
+        }
+        let worker = thread::spawn(move || command.output());
+        owner.until(|_| Ok(worker.is_finished()))?;
+        Ok::<_, anyhow::Error>(
+            worker
+                .join()
+                .map_err(|_| anyhow::anyhow!("UCA replay Client panicked"))??,
+        )
+    };
+    let head = owner.rpc.node.controller.parent();
+    ensure!(
+        head.height >= anchor_height + 2,
+        "UCA replay needs a finalized prefix"
+    );
+    let verifier = AoemLibrarySelection::new(&owner.config.library, Default::default())?
+        .open_wire_facade()?
+        .asset_spend_verifier_v3()?;
+
+    for height in [anchor_height + 1, anchor_height + 2] {
+        let mut read = ArchiveRead::new(
+            height,
+            head,
+            owner.rpc.node.controller.context(),
+            owner.rpc.node.validators.clone(),
+        )?;
+        let mut block = None;
+        owner.until(|owner| {
+            if let Some(artifact) = read.poll(&owner.rpc.node.pipeline)? {
+                block = Some(artifact.context("archive lacks the requested UCA block")?);
+            }
+            Ok(block.is_some())
+        })?;
+        let block = block.context("missing UCA block")?;
+        let plan = uca_replay::prepare_plan(
+            &verifier,
+            *block.stored().context(),
+            block.stored().raw_transactions(),
+            owner.config.genesis.policy.clone(),
+        )
+        .with_context(|| format!("preparing original UCA input at height {height}"))?;
+        let mut capture = plan.begin_capture(capture_budget())?;
+        while capture.advance(256)? != CaptureStep::Complete {
+            if let Some(hashes) = capture.next_request()? {
+                let mut ticket = None;
+                owner.until(|owner| {
+                    ticket = owner
+                        .rpc
+                        .node
+                        .pipeline
+                        .try_read_state_nodes(hashes.clone())?;
+                    Ok(ticket.is_some())
+                })?;
+                let mut ticket = ticket.context("missing archived state read ticket")?;
+                let mut values = None;
+                owner.until(|_| {
+                    values = ticket.try_take()?;
+                    Ok(values.is_some())
+                })?;
+                capture.accept(values.context("missing archived state read reply")?)?;
+            }
+        }
+        let header = finalized_header::encode(&block)?;
+        let bytes = uca_replay::encode(&header, &capture.finish()?.uca_replay_input()?)?;
+        let archive = stage.join(format!("archive-height-{height}.nvreplay"));
+        fs::write(&archive, &bytes)?;
+
+        let writer_lock = if height > anchor_height + 1 {
+            let output = run(owner, "verify-uca-execution", Some(&archive))?;
+            let error = String::from_utf8_lossy(&output.stderr);
+            ensure!(
+                !output.status.success()
+                    && error.contains("is not present in the installed checkpoint history"),
+                "archive without a locally certified parent was not refused: {error}"
+            );
+            let output = run(owner, "sync-chain", None)?;
+            ensure!(
+                output.status.success(),
+                "could not verify the original header prefix: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let report: Value = serde_json::from_slice(&output.stdout)?;
+            ensure!(
+                report["verified_height"] == head.height,
+                "incomplete header prefix: {report}"
+            );
+            println!("UCA archive without a certified parent rejected before chain sync");
+            let lock = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(headers.join("writer.lock"))?;
+            lock.try_lock()?;
+            Some(lock)
+        } else {
+            None
+        };
+
+        let output = run(owner, "verify-uca-execution", Some(&archive))?;
+        ensure!(
+            output.status.success(),
+            "original UCA execution at height {height} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let point = block.point();
+        ensure!(
+            report["verification"] == "independent_uca_execution_replay"
+                && report["height"] == height
+                && report["parent_height"] == height - 1
+                && report["block_hash"] == super::hex(&point.block_hash)
+                && report["state_root"] == super::hex(&point.state_root)
+                && report["receipt_batch_commitment"]
+                    == super::hex(&point.receipt_batch_commitment)
+                && report["state_version"] == point.state_version,
+            "UCA replay differed from the certified archive: {report}"
+        );
+        println!("original archived UCA execution: {report}");
+        if writer_lock.is_some() {
+            println!("offline UCA replay succeeded with the checkpoint writer lock held");
+        } else {
+            ensure!(
+                !data.exists(),
+                "offline replay created local network custody or state"
+            );
+            println!("offline UCA replay created no Client data or transport key");
+        }
+
+        let corrupted = stage.join("corrupt-uca-replay.nvreplay");
+        let first_row = &block.stored().raw_transactions()[0];
+        let row_offset = bytes
+            .windows(first_row.len())
+            .position(|candidate| candidate == first_row)
+            .context("original signed row missing from replay archive")?;
+        for (index, label, expected) in [
+            (
+                12 + header.len() - 1,
+                "header",
+                "invalid round-bft vote signature",
+            ),
+            (
+                bytes.len() - 1,
+                "witness",
+                "state node content hash or byte bound mismatch",
+            ),
+            (
+                row_offset + first_row.len() - 1,
+                "spend signature",
+                "invalid AOEM ML-DSA signature",
+            ),
+        ] {
+            let mut invalid = bytes.clone();
+            invalid[index] ^= 1;
+            fs::write(&corrupted, invalid)?;
+            let output = run(owner, "verify-uca-execution", Some(&corrupted))?;
+            let error = String::from_utf8_lossy(&output.stderr);
+            ensure!(
+                !output.status.success() && error.contains(expected),
+                "altered UCA {label} did not fail at its verifier: {error}"
+            );
+            println!("altered UCA {label} rejected: {}", error.trim());
+        }
+    }
+    Ok(())
 }
 
 fn test_installed_checkpoint_policy(

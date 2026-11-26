@@ -21,6 +21,66 @@ pub fn sync_installed_state(path: &Path) -> Result<serde_json::Value> {
     sync_installed(path, true)
 }
 
+pub fn verify_installed_uca_execution(
+    path: &Path,
+    profile_sha256: &str,
+    archive: &Path,
+) -> Result<serde_json::Value> {
+    use crate::native_pipeline::proof::uca_replay::{read_bundle, ReplayBundle};
+    use novovm_relay::transport_identity::load_transport_verifier;
+    let profile = read_installed_profile(path, Some(profile_sha256))?;
+    let (domain, anchor) = profile.verification_domain()?;
+    validate_parent(&anchor)?;
+    let minimum = profile
+        .verification
+        .as_ref()
+        .and_then(|pins| pins.minimum_finalized_checkpoint);
+    checkpoint_validity(minimum, wall_ms()?)?;
+    let bytes = read_bundle(archive)?;
+    let bundle = ReplayBundle::decode(&bytes)?;
+    let parent_height = bundle
+        .height()
+        .checked_sub(1)
+        .context("UCA replay requires a successor block")?;
+    let library = profile_base(path)?.join(&profile.library);
+    let verifier = FinalityVerifier::new(
+        &domain,
+        load_transport_verifier(&library, &profile.library_sha256)?,
+    );
+    let root = checkpoint_root(&profile, anchor)?;
+    // The writer publishes immutable headers by rename, so readers can verify
+    // a committed prefix while follow-state holds the writer lock.
+    let history = cached_header_paths(&root)?;
+    let mut parent = anchor;
+    for (height, path) in history.range(..=parent_height) {
+        parent = verify_cached_header(&verifier, parent, *height, path, minimum)?;
+    }
+    ensure!(
+        parent.height == parent_height,
+        "certified parent height {parent_height} is not present in the installed checkpoint history"
+    );
+    let header = verifier.verify_header(bundle.header(), &parent)?;
+    let point = header.point();
+    if let Some(minimum) = minimum {
+        minimum.check(point)?;
+    }
+    if let Some(path) = history.get(&point.height) {
+        ensure!(
+            point == verify_cached_header(&verifier, parent, point.height, path, minimum)?,
+            "UCA replay archive conflicts with the certified local chain"
+        );
+    }
+    bundle.verify(&header, &library, &profile.library_sha256)?;
+    checkpoint_validity(minimum, wall_ms()?)?;
+    use crate::native_pipeline::service::rpc::hex;
+    Ok(serde_json::json!({
+        "verification":"independent_uca_execution_replay",
+        "height":point.height, "parent_height":parent.height,
+        "block_hash":hex(&point.block_hash), "state_root":hex(&point.state_root),
+        "receipt_batch_commitment":hex(&point.receipt_batch_commitment), "state_version":point.state_version,
+    }))
+}
+
 fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
     let (profile, identity, seeds) = installed_inputs(path)?;
     let (domain, anchor) = profile.verification_domain()?;
@@ -134,13 +194,8 @@ fn open_checkpoint(
     domain: &MessageDomain,
     anchor: ParentPoint,
 ) -> Result<VerifiedHeaders> {
-    let root = state_path(&installed_state_base()?, profile).join(format!(
-        "headers-{}-{}",
-        anchor.height,
-        fingerprint(&serde_json::to_vec(&anchor)?),
-    ));
     VerifiedHeaders::open(
-        root,
+        checkpoint_root(profile, anchor)?,
         anchor,
         FinalityVerifier::new(domain, identity.clone()),
         profile
@@ -148,6 +203,14 @@ fn open_checkpoint(
             .as_ref()
             .context("installed verification pins missing")?,
     )
+}
+
+fn checkpoint_root(profile: &Profile, anchor: ParentPoint) -> Result<PathBuf> {
+    Ok(state_path(&installed_state_base()?, profile).join(format!(
+        "headers-{}-{}",
+        anchor.height,
+        fingerprint(&serde_json::to_vec(&anchor)?),
+    )))
 }
 
 async fn sync_peer(
@@ -272,44 +335,15 @@ impl VerifiedHeaders {
             .open(root.join("writer.lock"))?;
         lock.try_lock()
             .context("another installed client owns the header checkpoint")?;
-        let mut paths = BTreeMap::new();
-        for entry in fs::read_dir(&root)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().and_then(|suffix| suffix.to_str()) != Some("proof") {
-                continue;
-            }
-            ensure!(
-                entry.file_type()?.is_file(),
-                "invalid header checkpoint entry"
-            );
-            let height: u64 = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .context("invalid header checkpoint name")?
-                .parse()?;
-            ensure!(
-                paths.insert(height, path).is_none(),
-                "duplicate header checkpoint height"
-            );
-        }
         let mut tip = anchor;
-        for (height, path) in paths {
-            ensure!(
-                tip.height.checked_add(1) == Some(height),
-                "header checkpoint has a height gap"
-            );
-            let mut bytes = Vec::new();
-            fs::File::open(path)?
-                .take((finalized_header::MAX_BYTES + 1) as u64)
-                .read_to_end(&mut bytes)?;
-            let header = verifier
-                .verify_header(&bytes, &tip)
-                .with_context(|| format!("verifying stored header at height {height}"))?;
-            if let Some(minimum) = pins.minimum_finalized_checkpoint {
-                minimum.check(header.point())?;
-            }
-            tip = header.point();
+        for (height, path) in cached_header_paths(&root)? {
+            tip = verify_cached_header(
+                &verifier,
+                tip,
+                height,
+                &path,
+                pins.minimum_finalized_checkpoint,
+            )?;
         }
         Ok(Self {
             root,
@@ -351,16 +385,75 @@ impl VerifiedHeaders {
     }
 
     fn checkpoint_validity(&self, now: u64) -> std::result::Result<(), PendingFinality> {
-        if let Some(minimum) = self
-            .minimum
-            .filter(|minimum| now >= minimum.valid_until_unix_ms)
-        {
-            return Err(PendingFinality::ExpiredCheckpoint {
-                valid_until_unix_ms: minimum.valid_until_unix_ms,
-            });
-        }
-        Ok(())
+        checkpoint_validity(self.minimum, now)
     }
+}
+
+fn checkpoint_validity(
+    minimum: Option<MinimumFinalizedCheckpoint>,
+    now: u64,
+) -> std::result::Result<(), PendingFinality> {
+    if let Some(minimum) = minimum.filter(|minimum| now >= minimum.valid_until_unix_ms) {
+        return Err(PendingFinality::ExpiredCheckpoint {
+            valid_until_unix_ms: minimum.valid_until_unix_ms,
+        });
+    }
+    Ok(())
+}
+
+fn cached_header_paths(root: &Path) -> Result<BTreeMap<u64, PathBuf>> {
+    let mut paths = BTreeMap::new();
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+        Err(error) => return Err(error.into()),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|suffix| suffix.to_str()) != Some("proof") {
+            continue;
+        }
+        ensure!(
+            entry.file_type()?.is_file(),
+            "invalid header checkpoint entry"
+        );
+        let height = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .context("invalid header checkpoint name")?
+            .parse()?;
+        ensure!(
+            paths.insert(height, path).is_none(),
+            "duplicate header checkpoint height"
+        );
+    }
+    Ok(paths)
+}
+
+fn verify_cached_header(
+    verifier: &FinalityVerifier,
+    parent: ParentPoint,
+    height: u64,
+    path: &Path,
+    minimum: Option<MinimumFinalizedCheckpoint>,
+) -> Result<ParentPoint> {
+    ensure!(
+        parent.height.checked_add(1) == Some(height),
+        "header checkpoint has a height gap"
+    );
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take((finalized_header::MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    let point = verifier
+        .verify_header(&bytes, &parent)
+        .with_context(|| format!("verifying stored header at height {height}"))?
+        .point();
+    if let Some(minimum) = minimum {
+        minimum.check(point)?;
+    }
+    Ok(point)
 }
 
 fn store_checkpoint(path: &Path, bytes: &[u8]) -> Result<()> {

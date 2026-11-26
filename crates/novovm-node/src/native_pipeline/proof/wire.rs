@@ -4,6 +4,8 @@
 use super::*;
 
 const MAGIC: &[u8; 8] = b"NVEXIN01";
+#[cfg(feature = "iroh-transport")]
+const UCA_REPLAY_MAGIC: &[u8; 8] = b"NVUCAE01";
 
 pub(super) struct Input<'a> {
     pub context: BatchContext,
@@ -16,6 +18,24 @@ pub(super) fn encode(
     plan: &BatchPlan,
     policy: &DirectNovFeePolicy,
     witness: &[u8],
+) -> Result<Vec<u8>> {
+    encode_kind(plan, policy, witness, MAGIC)
+}
+
+#[cfg(all(test, feature = "iroh-transport"))]
+pub(super) fn encode_uca_replay(
+    plan: &BatchPlan,
+    policy: &DirectNovFeePolicy,
+    witness: &[u8],
+) -> Result<Vec<u8>> {
+    encode_kind(plan, policy, witness, UCA_REPLAY_MAGIC)
+}
+
+fn encode_kind(
+    plan: &BatchPlan,
+    policy: &DirectNovFeePolicy,
+    witness: &[u8],
+    magic: &[u8; 8],
 ) -> Result<Vec<u8>> {
     policy.validate()?;
     ensure!(
@@ -49,7 +69,7 @@ pub(super) fn encode(
         .context("proof input overflow")?;
     ensure!(total <= MAX_INPUT_BYTES, "proof input exceeds bound");
     let mut out = Vec::with_capacity(total);
-    out.extend_from_slice(MAGIC);
+    out.extend_from_slice(magic);
     put_context(&mut out, plan.context());
     out.extend_from_slice(&u32::try_from(count)?.to_be_bytes());
     // Canonical raw bytes are required by NVEXIN01, not by the retained plan.
@@ -106,9 +126,18 @@ fn framed(out: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
 }
 
 pub(super) fn decode(input: &[u8]) -> Result<Input<'_>> {
+    decode_kind(input, MAGIC)
+}
+
+#[cfg(feature = "iroh-transport")]
+pub(super) fn decode_uca_replay(input: &[u8]) -> Result<Input<'_>> {
+    decode_kind(input, UCA_REPLAY_MAGIC)
+}
+
+fn decode_kind<'a>(input: &'a [u8], magic: &[u8; 8]) -> Result<Input<'a>> {
     ensure!(input.len() <= MAX_INPUT_BYTES, "proof input exceeds bound");
     let mut r = Reader { tail: input };
-    ensure!(r.take(8)? == MAGIC, "proof input version mismatch");
+    ensure!(r.take(8)? == magic, "proof input version mismatch");
     let context = BatchContext {
         chain_id: r.u64()?,
         genesis_config_commitment: r.hash()?,

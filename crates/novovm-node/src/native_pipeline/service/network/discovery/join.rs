@@ -16,7 +16,10 @@ use novovm_relay::transport_identity::{load_transport_identity, provision_transp
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
-pub use chain_sync::{follow_installed_state, sync_installed_chain, sync_installed_state};
+pub use chain_sync::{
+    follow_installed_state, sync_installed_chain, sync_installed_state,
+    verify_installed_uca_execution,
+};
 
 #[cfg(test)]
 mod tests;
@@ -270,6 +273,12 @@ fn pinned_installed_profile(
     expected_sha256: Option<&str>,
 ) -> Result<(Profile, TransportIdentity)> {
     let data = installed_state_base()?;
+    let profile = read_installed_profile(path, expected_sha256)?;
+    let identity = local_identity(&data, profile_base(path)?, &profile)?;
+    Ok((profile, identity))
+}
+
+fn read_installed_profile(path: &Path, expected_sha256: Option<&str>) -> Result<Profile> {
     let mut bytes = Vec::new();
     fs::File::open(path)?
         .take((MAX_CONFIG + 1) as u64)
@@ -286,8 +295,7 @@ fn pinned_installed_profile(
     }
     let profile: Profile = serde_json::from_slice(&bytes)?;
     profile.validate()?;
-    let identity = local_identity(&data, profile_base(path)?, &profile)?;
-    Ok((profile, identity))
+    Ok(profile)
 }
 
 fn profile_base(path: &Path) -> Result<&Path> {

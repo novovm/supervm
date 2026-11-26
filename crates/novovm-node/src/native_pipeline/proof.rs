@@ -23,6 +23,8 @@ use anyhow::{ensure, Context, Result};
 // not as a backend-specific product API or an implicit node service.
 #[cfg(test)]
 mod receipt;
+#[cfg(feature = "iroh-transport")]
+pub(crate) mod uca_replay;
 mod wire;
 #[cfg(test)]
 pub use receipt::{ExecutionProofPins, VerifiedExecutionReceipt};
@@ -160,6 +162,15 @@ pub(crate) fn encode_input(
     witness: &[u8],
 ) -> Result<Vec<u8>> {
     wire::encode(plan, policy, witness)
+}
+
+#[cfg(all(test, feature = "iroh-transport"))]
+pub(crate) fn encode_uca_replay_input(
+    plan: &BatchPlan,
+    policy: &DirectNovFeePolicy,
+    witness: &[u8],
+) -> Result<Vec<u8>> {
+    wire::encode_uca_replay(plan, policy, witness)
 }
 
 /// Run in the guest/proof worker only. It returns bytes, never an ExecutedNovBatch

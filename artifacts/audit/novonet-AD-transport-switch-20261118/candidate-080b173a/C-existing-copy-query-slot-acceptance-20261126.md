@@ -91,3 +91,13 @@ Client 将定位记录保存到原验证检查点。修改缓存中的端口后�
 检查点验收用时 26.50 秒。现役 C 前后均为运行中的 PID `30328`。Windows Client SHA-256 `9cecf085630e619d8af23f50a89932163bba27c88d3b0c8f5b6f550568f39c37`，本轮隔离日志 SHA-256 `8f14276d01f74995934a5f74656df0adf0efda70cbc4c9d91f5f54ed745d48ad`。Windows 测试编译器在 128 个代码生成单元时出现访问违规，隔离测试用 64 个单元重构通过。Client 使用 128 个单元成功构建。
 
 另外在 `checkpoint-policy-legacy-2575868d00a8` 以原无检查点配置回归自动恢复，42.21 秒通过，仍完整经历原生、Iroh 备用和原生重新接管，并复用原状态缓存。日志 SHA-256 `4e310090504603b87e343b34831f126c426c657b4f90bae2a54c13d0148fdfa6`。
+
+## 原 UCA 资产区块的离线执行核验
+
+北京时间 12:06，C 的 `uca-replay-2290f435b5ce` 隔离副本以 LocalService 按 10 个已核对 SHA-256 的 RocksDB 文件打开。验收以原签名交易和原父状态的读取见证构建高度 1、2 的隔离归档，分别为 34,237 和 34,571 字节。Windows Client 独立验原 Precommit QC 和资产交易签名，检查见证属于已经认证的父状态，用现有 AOEM 执行后核对状态根、回执批次承诺和完整执行声明。两块均与归档一致，高度 1 含原交易 `68d83d0b…9bd6cd4`。
+
+空 Client 目录可直接从发行创世锚点核验高度 1，且不会写入本地状态或生成通信钥。高度 2 在缺少已认证的高度 1 父状态时被拒绝，经原 `sync-chain` 验证区块头后通过。复测时由测试进程持有检查点写锁，离线 Client 仍能读取并复核。分别篡改 QC 签名、父状态节点和资产签名，两块均在对应环节拒绝。另用错误发行配置 SHA-256 验证在读取归档前拒绝。
+
+复现沿用 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier`，设置 `NOVOVM_QUERY_COPY_UCA_REPLAY=1`。Client 入口为 `novovm-native-client <发行发现配置> verify-uca-execution <配置SHA-256> <归档文件>`。真实副本用例用时 14.51 秒，另有 27 项相关回归通过。高度 1 和 2 的回执批次承诺分别为 `ecf5d727891d35eecb91539ed2d49f2ba762a57780918198b47a55e0e3f70c11` 和 `8dc7832a8074bfa97ce8a8bba7646e862fe9183e2138035de104bb77fcd72abf`。本阶段验收离线重算，UCA 零知识证明和节点间自动分发待接通。原始归档留在隔离目录。现役 C 前后均为运行中的 PID `30328`，未操作 B。
+
+Windows Client SHA-256 `0b440fd21d543b45121f323081457ea8b534c1960976efcd631ae49dce0d512e`。隔离日志 SHA-256 `7947612169445137dd026eb39bf5a90d53a5c22da84d8d7a0620a728494a5baf`。
