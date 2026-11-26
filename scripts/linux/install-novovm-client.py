@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -157,19 +158,57 @@ def provision_owner_credential(directory, state):
     )
 
 
+def client_environment(release, state, credential_dir):
+    return {
+        "XDG_STATE_HOME": str(state),
+        "CREDENTIALS_DIRECTORY": str(credential_dir),
+        "NOVOVM_AOEM_PLUGIN_DIR": str(release / "aoem/linux/core/plugins"),
+    }
+
+
 def unit_text(release, arguments, state, credential_dir):
     # ':' disables systemd command-line environment expansion, including literal $ in XDG paths.
     argv = " ".join(
         unit_arg(v) for v in (":" + str(release / CLIENT), *arguments)
     )
-    plugin_dir = release / "aoem/linux/core/plugins"
+    environment = "".join(
+        f"Environment={unit_arg(name+'='+value)}\n"
+        for name, value in client_environment(release, state, credential_dir).items()
+    )
     description = "NOVOVM verified state follower" if arguments[1] == "follow-state" else "NOVOVM public read-only snapshot"
     return (
         f"[Unit]\nDescription={description}\n\n[Service]\nType=exec\n"
-        f"Environment={unit_arg('XDG_STATE_HOME='+str(state))}\n"
-        f"Environment={unit_arg('CREDENTIALS_DIRECTORY='+str(credential_dir))}\n"
-        f"Environment={unit_arg('NOVOVM_AOEM_PLUGIN_DIR='+str(plugin_dir))}\nUMask=0077\nExecStart={argv}\n"
+        f"{environment}UMask=0077\nExecStart={argv}\n"
         "Restart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy=default.target\n"
+    )
+
+
+def install_receipt_command(path, release, profile_pin, state, credential_dir):
+    environment = client_environment(release, state, credential_dir)
+    exports = "".join(f"export {name}={shlex.quote(value)}\n" for name, value in environment.items())
+    program = shlex.join([str(release / CLIENT), str(release / PROFILE), "discover-verified-receipt"])
+    script = (
+        "#!/bin/sh\nset -eu\numask 077\n"
+        "if [ \"$#\" -eq 0 ]; then echo 'usage: novovm-receipt TX [--height N | --lookup-height]' >&2; exit 2; fi\n"
+        "tx=$1\nshift\n"
+        f"{exports}exec {program} \"$tx\" {profile_pin} --existing-identity \"$@\"\n"
+    )
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not plain(path).exists():
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent) as draft:
+            draft.write(script)
+            draft.flush()
+            os.fchmod(draft.fileno(), 0o500)
+            os.fsync(draft.fileno())
+            try:
+                os.link(draft.name, path)
+            except FileExistsError:
+                pass
+    info = plain(path).lstat()
+    require(
+        stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+        and stat.S_IMODE(info.st_mode) == 0o500 and path.read_text(encoding="utf-8") == script,
+        f"existing receipt command differs from this installation: {path}",
     )
 
 
@@ -339,6 +378,7 @@ def main():
     data = base_dir("XDG_DATA_HOME", ".local/share") / "NOVOVM"
     dest = plain(data / "client-releases" / pin)
     credential_dir = plain(data / "client-credentials")
+    receipt_command = plain(data / "client-commands" / pin / "novovm-receipt")
     unit = plain(base_dir("XDG_CONFIG_HOME", ".config") / "systemd/user" / UNIT)
     state = base_dir("XDG_STATE_HOME", ".local/state")
     profile_pin = files[PROFILE]
@@ -367,6 +407,7 @@ def main():
                 require(not pending_stop or active in ("inactive", "failed"), "public read stop is still pending")
                 install_release(root, dest, files)
                 provision_owner_credential(credential_dir, state)
+                install_receipt_command(receipt_command, dest, profile_pin, state, credential_dir)
                 if switching or not unit.exists():
                     write_unit(unit, text, old if switching else None)
                 subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
@@ -384,6 +425,7 @@ def main():
                 "profile_sha256": files[PROFILE],
                 "unit": str(unit),
                 "state_home": str(state),
+                "receipt_command": str(receipt_command),
                 "plan": args.plan,
                 "arguments": arguments,
                 **({"public_read_stop_marker": str(marker)} if marker else {}),

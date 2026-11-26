@@ -867,8 +867,13 @@ For a Linux ordinary Client release issued with -LinuxClientProfile and
 authenticated release manifest before running it as the intended Linux user:
   python3 resources/scripts/linux/install-novovm-client.py --release-manifest-sha256 HEX --plan
   python3 resources/scripts/linux/install-novovm-client.py --release-manifest-sha256 HEX
-This starts novovm-native-client.service in that user's systemd manager and
-enables it on user login. The release goes under XDG_DATA_HOME, the unit under
+This starts novovm-native-client.service in the user's systemd manager and
+enables it on user login. The installer returns receipt_command, the absolute
+path of the receipt command bound to that release and device state.
+Run the returned path with TX_HASH and optionally --height N or --lookup-height
+to verify a receipt using the installed device's existing transport identity.
+Only --lookup-height discloses the transaction hash to the authenticated archive.
+The release goes under XDG_DATA_HOME, the unit under
 XDG_CONFIG_HOME, and the Client retains custody and checkpoints under XDG_STATE_HOME.
 For an already synchronized device, stop the matching follower with
 systemctl --user stop novovm-native-client.service, then add both

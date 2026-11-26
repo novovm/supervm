@@ -129,11 +129,59 @@ esac
         self.assertTrue(plan["plan"])
         self.assertFalse(self.unit.exists())
         self.assertFalse(Path(plan["release"]).exists())
+        self.assertFalse(Path(plan["receipt_command"]).exists())
         self.assertFalse(self.log.exists())
         self.assertIn("pin", self.invoke(pin="0" * 64, ok=False))
         (self.package / "docs/package.txt").write_text("changed")
         self.assertIn("checksum differs", self.invoke(ok=False))
         self.assertFalse(self.log.exists())
+
+    def test_receipt_command_uses_the_installed_profile_custody_and_state(self):
+        self.env["XDG_DATA_HOME"] = str(self.base / "data's $literal %")
+        self.env["XDG_STATE_HOME"] = str(self.base / "state with spaces")
+        self.entries[CLIENT] = b"""#!/usr/bin/python3
+import hashlib, json, os, sys
+from pathlib import Path
+profile, action, *args = sys.argv[1:]
+if action == 'check-installed-profile':
+    sys.exit(int(hashlib.sha256(Path(profile).read_bytes()).hexdigest() != args[0]))
+print(json.dumps({'profile':profile,'action':action,'args':args,'state':os.environ['XDG_STATE_HOME'],
+                  'credential':os.environ['CREDENTIALS_DIRECTORY'],'plugins':os.environ['NOVOVM_AOEM_PLUGIN_DIR']}))
+sys.exit(int(os.environ.get('TEST_QUERY_EXIT', '0')))
+"""
+        self.pin = self.issue()
+        install = self.invoke()
+        cmd, dest = Path(install["receipt_command"]), Path(install["release"])
+        self.assertEqual(cmd.stat().st_mode & 0o777, 0o500)
+        credential = dest.parents[1] / "client-credentials"
+        old_key = (credential / "owner-key").stat()
+        old_unit = self.unit.stat()
+        controller = self.log.read_bytes()
+        clean = dict(self.env, XDG_STATE_HOME=str(self.base/"other state"),
+                     CREDENTIALS_DIRECTORY="/unrelated", NOVOVM_AOEM_PLUGIN_DIR="/unrelated")
+        tx = "0x" + "12" * 32
+        for opts in ([], ["--height", "42"], ["--lookup-height"]):
+            result = subprocess.run([cmd, tx, *opts], env=clean, capture_output=True, text=True, check=True)
+            output = json.loads(result.stdout)
+            self.assertEqual(output["action"], "discover-verified-receipt")
+            self.assertEqual(output["profile"], str(dest / PROFILE))
+            self.assertEqual(output["args"], [tx, install["profile_sha256"], "--existing-identity", *opts])
+            self.assertEqual(output["credential"], str(credential))
+            self.assertEqual(output["state"], self.env["XDG_STATE_HOME"])
+            self.assertEqual(output["plugins"], str(dest / "aoem/linux/core/plugins"))
+        self.assertEqual(subprocess.run([cmd], env=clean, capture_output=True).returncode, 2)
+        self.assertEqual(subprocess.run([cmd, tx], env=dict(clean, TEST_QUERY_EXIT="19"),
+                                        capture_output=True).returncode, 19)
+        self.assertEqual(self.log.read_bytes(), controller)
+        self.assertEqual(self.unit.stat().st_ino, old_unit.st_ino)
+        self.assertEqual((credential / "owner-key").stat().st_mtime_ns, old_key.st_mtime_ns)
+        inode = cmd.stat().st_ino
+        self.invoke()
+        self.assertEqual(cmd.stat().st_ino, inode)
+        cmd.chmod(0o700)
+        cmd.write_text("foreign command")
+        self.assertIn("existing receipt command differs", self.invoke(ok=False))
+        self.assertEqual(cmd.read_text(), "foreign command")
 
     def test_repeat_and_upgrade_ownership(self):
         plan = self.invoke()

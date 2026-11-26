@@ -322,12 +322,32 @@ pub fn discover_verified_receipt_at(
     profile_sha256: Option<&str>,
     location: ReceiptLocation,
 ) -> Result<serde_json::Value> {
+    verified_receipt_at(path, hash, profile_sha256, location, true)
+}
+
+/// An installed-device receipt query may only use custody established on that device.
+pub fn discover_existing_verified_receipt_at(
+    path: &Path,
+    hash: &str,
+    profile_sha256: &str,
+    location: ReceiptLocation,
+) -> Result<serde_json::Value> {
+    verified_receipt_at(path, hash, Some(profile_sha256), location, false)
+}
+
+fn verified_receipt_at(
+    path: &Path,
+    hash: &str,
+    profile_sha256: Option<&str>,
+    location: ReceiptLocation,
+    provision: bool,
+) -> Result<serde_json::Value> {
     let transaction = transaction_hash(hash)?;
     let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
     let data = installed_state_base()?;
     let search = chain_sync::ReceiptSearch::open(&data, &profile, anchor, transaction)?;
     let base = profile_base(path)?;
-    let identity = local_identity(&data, base, &profile)?;
+    let identity = client_identity(&data, base, &profile, provision)?;
     let verifier = Arc::new(FinalityVerifier::new(&domain, identity.clone()));
     search.execute(base, &profile, &identity, &domain, location, verifier)
 }
@@ -529,6 +549,9 @@ fn client_identity(
                 Err(error) => return Err(error.into()),
             }
             identity
+        }
+        Err(error) if !provision && error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(error).context("installed NOVONET identity pin is missing");
         }
         Err(error) => return Err(error.into()),
     };

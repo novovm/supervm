@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256] [--height N | --lookup-height] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin> | serve-read-snapshot or serve-public-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300] | run-public-read-snapshot <profile-sha256> <height> <max-state-nodes> [absolute-stop-file]";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256 [--existing-identity]] [--height N | --lookup-height] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin> | serve-read-snapshot or serve-public-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300] | run-public-read-snapshot <profile-sha256> <height> <max-state-nodes> [absolute-stop-file]";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -112,7 +112,7 @@ fn main() -> Result<()> {
         #[cfg(not(feature = "iroh-transport"))]
         anyhow::bail!("UCA execution replay requires installed chain verification");
     } else if action == "discover-verified-receipt" {
-        ensure!((3..=6).contains(&args.len()), "{USAGE}");
+        ensure!((3..=7).contains(&args.len()), "{USAGE}");
         discovered_receipt(
             config,
             args[2].to_str().context("non-UTF8 transaction hash")?,
@@ -186,7 +186,7 @@ fn discovered_receipt(
     options: &[std::ffi::OsString],
 ) -> Result<serde_json::Value> {
     use novovm_node::native_pipeline::service::network::{
-        discover_verified_receipt_at, ReceiptLocation,
+        discover_existing_verified_receipt_at, discover_verified_receipt_at, ReceiptLocation,
     };
     let options = options
         .iter()
@@ -196,7 +196,8 @@ fn discovered_receipt(
         [pin, remaining @ ..] if !pin.starts_with('-') => (Some(*pin), remaining),
         remaining => (None, remaining),
     };
-    let location = match selection {
+    let existing = selection.strip_prefix(&["--existing-identity"]);
+    let location = match existing.unwrap_or(selection) {
         [] => ReceiptLocation::AnchorSuccessor,
         ["--lookup-height"] => ReceiptLocation::QueryByHash,
         ["--height", value] => {
@@ -205,9 +206,20 @@ fn discovered_receipt(
                 .context("receipt height must be a positive integer")?;
             ReceiptLocation::Height(height.get())
         }
-        _ => anyhow::bail!("expected [profile-sha256] [--height N | --lookup-height]"),
+        _ => anyhow::bail!(
+            "expected [profile-sha256 [--existing-identity]] [--height N | --lookup-height]"
+        ),
     };
-    discover_verified_receipt_at(config, hash, pin, location)
+    if existing.is_some() {
+        discover_existing_verified_receipt_at(
+            config,
+            hash,
+            pin.context("existing identity requires a pinned profile")?,
+            location,
+        )
+    } else {
+        discover_verified_receipt_at(config, hash, pin, location)
+    }
 }
 
 #[cfg(not(feature = "iroh-transport"))]
