@@ -239,19 +239,31 @@ fn is_transport_key(key: &[u8]) -> bool {
 /// Read the installed trust profile and authenticate to available bootstrap
 /// sources using a local transport-purpose identity. Advertise no device locator.
 pub fn discover_installed(path: &Path) -> Result<serde_json::Value> {
-    let (profile, identity, seeds) = installed_inputs(path)?;
+    discover_installed_from_profile(path, None)
+}
+
+pub fn discover_installed_from_profile(
+    path: &Path,
+    profile_sha256: Option<&str>,
+) -> Result<serde_json::Value> {
+    let (profile, identity) = pinned_installed_profile(path, profile_sha256)?;
+    let seeds = read_seeds(profile_base(path)?, &profile);
     let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
     let report = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
         .block_on(discover(carrier, identity.clone(), &profile, seeds))?;
-    Ok(serde_json::json!({
+    let mut result = serde_json::json!({
         "chain_id": profile.chain_id,
         "transport_identity_sha256": fingerprint(identity.public_key()),
         "authenticated_discovery_sources": report.sources,
         "signed_locators_by_source": report.locators_by_source,
         "signed_locator_candidates": report.records.values().map(LocatorSummary::from).collect::<Vec<_>>(),
-    }))
+    });
+    if let Some(pin) = profile_sha256 {
+        result["profile_sha256"] = pin.to_ascii_lowercase().into();
+    }
+    Ok(result)
 }
 
 /// The discovery and native proof streams use the same owned carrier and local
@@ -381,10 +393,6 @@ fn installed_chain_profile(
     Ok((profile, domain, anchor))
 }
 
-fn installed_profile(path: &Path) -> Result<(Profile, TransportIdentity)> {
-    pinned_installed_profile(path, None)
-}
-
 fn pinned_installed_profile(
     path: &Path,
     expected_sha256: Option<&str>,
@@ -429,12 +437,6 @@ fn read_seeds(base: &Path, profile: &Profile) -> SeedInputs {
             .context("bootstrap locator file is not configured")?;
         read_document(&base.join(path))
     })
-}
-
-fn installed_inputs(path: &Path) -> Result<(Profile, TransportIdentity, SeedInputs)> {
-    let (profile, identity) = installed_profile(path)?;
-    let seeds = read_seeds(profile_base(path)?, &profile);
-    Ok((profile, identity, seeds))
 }
 
 fn installed_state_base() -> Result<PathBuf> {

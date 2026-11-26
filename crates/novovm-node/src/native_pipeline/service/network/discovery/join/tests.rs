@@ -167,11 +167,16 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                     tokio::task::spawn_blocking(move || -> Result<()> {
                         assert!(!data.exists());
                         if uses_contact && !slow {
-                            let rejected = run_client(&client, &legacy, &root.join("legacy-device"));
+                            let rejected = run_client(&client, &legacy, &root.join("legacy-device"), None);
                             assert!(format!("{:#}", rejected.unwrap_err()).contains("no authenticated NOVONET bootstrap"));
                         }
                         let started = Instant::now();
-                        let first = run_client(&client, &file, &data)?;
+                        let pin = fingerprint(&fs::read(&file)?);
+                        let rejected = run_client(&client, &file, &data, Some(&"0".repeat(64)));
+                        assert!(format!("{:#}", rejected.unwrap_err()).contains("differs from its release pin"));
+                        assert!(!data.exists());
+                        let first = run_client(&client, &file, &data, Some(&pin))?;
+                        assert_eq!(first["profile_sha256"], pin);
                         if rotated {
                             assert!(wall_ms()? < expiry, "rotation recovered after locator expiry");
                             println!(
@@ -182,7 +187,8 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                         if slow {
                             assert!(wall_ms()? < expiry, "slow signed locator expired during lookup");
                         }
-                        let restarted = run_client(&client, &file, &data)?;
+                        let restarted = run_client(&client, &file, &data, None)?;
+                        assert!(restarted.get("profile_sha256").is_none());
                         let sources = serde_json::json!([expected_source]);
                         for report in [&first, &restarted] {
                             assert_eq!(report["authenticated_discovery_sources"], sources);
@@ -198,7 +204,7 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                         if expired {
                             fs::remove_file(root.join("primary.json"))?;
                             fs::remove_file(root.join("secondary.json"))?;
-                            let cold = run_client(&client, &file, &root.join("contact-only-device"))?;
+                            let cold = run_client(&client, &file, &root.join("contact-only-device"), None)?;
                             assert_eq!(cold["authenticated_discovery_sources"], sources);
                             assert_eq!(cold["signed_locator_candidates"][0]["sequence"], 7);
                             println!("expired files with retired routes could not reach a source; second pinned contact retrieved a fresh signed locator with expired files and with both files absent");
@@ -310,10 +316,16 @@ async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> 
     Ok(())
 }
 
-fn run_client(client: &Path, profile: &Path, data: &Path) -> Result<serde_json::Value> {
+fn run_client(
+    client: &Path,
+    profile: &Path,
+    data: &Path,
+    pin: Option<&str>,
+) -> Result<serde_json::Value> {
     let output = Command::new(client)
         .arg(profile)
         .arg("discover")
+        .args(pin)
         .env("LOCALAPPDATA", data)
         .env("XDG_STATE_HOME", data)
         .output()?;

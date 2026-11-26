@@ -76,12 +76,16 @@ def directly_returned_sequences(row, candidates, sources, ended_ms, path):
     return direct
 
 
-def checked_report(path, expected_digest, chain_id, sources, ended, require_source_attribution=False):
+def checked_report(path, expected_digest, chain_id, sources, ended, require_source_attribution=False,
+                   profile_sha256=None):
     with path.open("rb") as stream:
         raw = stream.read(16_385)
     if not 0 < len(raw) <= 16_384 or hashlib.sha256(raw).hexdigest() != expected_digest:
         raise ValueError(f"{path.name}: original stdout size or SHA-256 mismatch")
-    row = json.loads(raw, object_pairs_hook=unique_object if require_source_attribution else None)
+    check_unique_keys = require_source_attribution or profile_sha256 is not None
+    row = json.loads(raw, object_pairs_hook=unique_object if check_unique_keys else None)
+    if profile_sha256 is not None and row.get("profile_sha256") != profile_sha256:
+        raise ValueError(f"{path.name}: Client did not confirm the expected profile SHA-256")
     identity = digest(row["transport_identity_sha256"])
     if type(row["chain_id"]) is not int or row["chain_id"] != chain_id:
         raise ValueError(f"{path.name}: unexpected chain")
@@ -116,11 +120,11 @@ def verify(args):
         raise ValueError("discovery runs did not bracket the recorded source closure")
     first_identity, first_sequences = checked_report(
         args.first, args.first_sha256, args.chain_id, sources, args.first_ended,
-        args.require_source_attribution,
+        args.require_source_attribution, args.profile_sha256,
     )
     second_identity, second_sequences = checked_report(
         args.second, args.second_sha256, args.chain_id, {args.surviving}, args.second_ended,
-        args.require_source_attribution,
+        args.require_source_attribution, args.profile_sha256,
     )
     if first_identity in sources or second_identity != first_identity:
         raise ValueError("discovery device identity overlapped a source or changed")
@@ -143,6 +147,8 @@ def main():
     parser.add_argument("--surviving", type=digest, required=True)
     parser.add_argument("--closed-at", type=utc, required=True)
     parser.add_argument("--chain-id", type=int, required=True)
+    parser.add_argument("--profile-sha256", type=digest,
+                        help="Require both Client runs to confirm this pinned profile SHA-256")
     parser.add_argument(
         "--require-source-attribution",
         action="store_true",
@@ -188,7 +194,7 @@ class SourceAttributionTests(TestCase):
         }
         return first, second
 
-    def verify_reports(self, first, second, strict=True):
+    def verify_reports(self, first, second, strict=True, profile_sha256=None):
         with TemporaryDirectory() as root:
             paths = [Path(root) / name for name in ("first.json", "second.json")]
             hashes = []
@@ -201,11 +207,21 @@ class SourceAttributionTests(TestCase):
                 first_ended=utc("2026-11-26T08:00:01Z"), closed_at=utc("2026-11-26T08:00:02Z"),
                 second_started=utc("2026-11-26T08:00:03Z"), second_ended=utc("2026-11-26T08:00:04Z"),
                 departed=self.departed, surviving=self.surviving, chain_id=91129655606029,
-                require_source_attribution=strict,
+                require_source_attribution=strict, profile_sha256=profile_sha256,
             ))
 
     def test_newer_forwarded_locator_does_not_set_the_direct_sequence_floor(self):
         self.assertEqual(self.verify_reports(*self.reports()), 8)
+
+    def test_both_runs_must_confirm_the_expected_release_profile(self):
+        first, second = self.reports()
+        expected = "e" * 64
+        first["profile_sha256"] = expected
+        for report in (second, {**second, "profile_sha256": "f" * 64}):
+            with self.assertRaisesRegex(ValueError, "expected profile SHA-256"):
+                self.verify_reports(first, report, profile_sha256=expected)
+        second["profile_sha256"] = expected
+        self.assertEqual(self.verify_reports(first, second, profile_sha256=expected), 8)
 
     def test_forwarding_cannot_replace_an_authenticated_sources_empty_result(self):
         first, second = self.reports()
