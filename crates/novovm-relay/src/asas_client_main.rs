@@ -3,11 +3,13 @@ use novovm_relay::asas_client::{ClientConfigV1, ClientOwnerV1};
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && args[0] == "--client-contract" {
-        println!("{{\"version\":1,\"role\":\"asas-b-client\",\"transport\":\"novorudp\",\"startsAgent\":false,\"ucaLogin\":1,\"credentialDirectory\":1}}");
+        println!("{{\"version\":1,\"role\":\"asas-b-client\",\"transport\":\"novorudp\",\"startsAgent\":false,\"ucaLogin\":1,\"credentialDirectory\":1,\"ucaRootMatch\":1}}");
         return Ok(());
     }
     ensure!(
-        (args.len() == 4 || args.len() == 5 && args[4] == "--uca-scope")
+        (args.len() == 4
+            || args.len() == 5 && args[4] == "--uca-scope"
+            || args.len() == 6 && args[4] == "--uca-root-match")
             && args[0] == "--profile"
             && args[2] == "--profile-sha256",
         "explicit B profile/digest required"
@@ -23,6 +25,13 @@ fn run() -> Result<()> {
     }
     if args.len() == 5 {
         println!("{}", serde_json::to_string_pretty(&config.uca_selector()?)?);
+        return Ok(());
+    }
+    if args.len() == 6 {
+        println!(
+            "{}",
+            serde_json::json!({"matches":config.uca_root_matches(std::path::Path::new(&args[5]))?})
+        );
         return Ok(());
     }
     tokio::runtime::Builder::new_current_thread()

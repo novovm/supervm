@@ -46,14 +46,30 @@ pub struct ClientUcaV1 {
 }
 impl ClientConfigV1 {
     fn identity(&self) -> Result<novovm_network::product_overlay::TransportIdentity> {
+        self.check_custody_environment()?;
+        crate::transport_identity::load_transport_identity(
+            &self.identity_path,
+            self.chain_id,
+            &self.library,
+            &self.library_sha256,
+        )
+    }
+    fn check_custody_environment(&self) -> Result<()> {
         if let Some(directory) = &self.credentials_directory {
             ensure!(
                 std::env::var_os("CREDENTIALS_DIRECTORY").as_deref() == Some(directory.as_os_str()),
                 "custody environment differs from pinned B profile"
             );
         }
-        crate::transport_identity::load_transport_identity(
-            &self.identity_path,
+        Ok(())
+    }
+    pub fn uca_root_matches(&self, root: &Path) -> Result<bool> {
+        self.validate()?;
+        self.check_custody_environment()?;
+        let uca = self.uca.as_ref().context("B UCA selection required")?;
+        crate::transport_identity::matches_uca_identity(
+            root,
+            uca.identity.as_str(),
             self.chain_id,
             &self.library,
             &self.library_sha256,
