@@ -11,8 +11,12 @@ use crate::native_pipeline::{
         GenesisValidator,
     },
 };
-use novovm_network::iroh_transport::IrohControlV1;
-use novovm_relay::transport_identity::{load_transport_identity, provision_transport_identity};
+use novovm_network::{
+    iroh_transport::IrohControlV1, product_directory::verify_relay_record_authenticity_v1,
+};
+use novovm_relay::transport_identity::{
+    load_transport_identity, load_transport_verifier, provision_transport_identity,
+};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
@@ -307,12 +311,65 @@ pub fn discover_verified_receipt_from_profile(
 /// Validate the pinned release's chain and discovery inputs without accessing
 /// device custody or allocating a transport endpoint.
 pub fn check_installed_profile(path: &Path, sha256: &str) -> Result<serde_json::Value> {
-    let (_, domain, anchor) = installed_chain_profile(path, Some(sha256))?;
+    let (profile, domain, anchor) = installed_chain_profile(path, Some(sha256))?;
+    validate_release_bootstraps(profile_base(path)?, &profile)?;
     Ok(serde_json::json!({
         "kind": "validated-installed-discovery-profile",
         "chain_id": domain.chain_id,
         "trusted_height": anchor.height,
     }))
+}
+
+fn validate_release_bootstraps(base: &Path, profile: &Profile) -> Result<()> {
+    if profile.seeds.iter().all(|seed| seed.locator.is_none()) {
+        // Profile::validate already checks both fixed contacts.
+        return Ok(());
+    }
+
+    let verifier = load_transport_verifier(&base.join(&profile.library), &profile.library_sha256)?;
+    let now = wall_ms()?;
+    let mut endpoints = [BTreeSet::new(), BTreeSet::new()];
+    for (index, (seed, keys)) in profile.seeds.iter().zip(&mut endpoints).enumerate() {
+        if let Some(contact) = &seed.contact {
+            keys.insert(contact.endpoint_key);
+        }
+        if let Some(locator) = &seed.locator {
+            let record: PeerSignedRelayRecordV1 = read_document(&base.join(locator))
+                .with_context(|| format!("read installed bootstrap locator {}", index + 1))?;
+            ensure!(
+                record.relay_public_key == seed.transport_key
+                    && record.record_id == native_locator_id_v1(profile.pins()),
+                "bootstrap locator signer or chain domain differs from installed pin"
+            );
+            verify_relay_record_authenticity_v1(&record, &verifier)
+                .context("verify installed bootstrap locator signature")?;
+            ensure!(
+                record.issued_at_ms <= now,
+                "future installed bootstrap locator"
+            );
+            let route = IrohServiceEndpointV1::from_record(&record)?.address;
+            if record.expires_at_ms > now {
+                ensure!(
+                    route
+                        .relays
+                        .iter()
+                        .all(|relay| profile.relays.contains(relay)),
+                    "installed bootstrap locator uses an unapproved relay"
+                );
+                keys.insert(route.endpoint_key);
+            } else {
+                ensure!(
+                    seed.contact.is_some(),
+                    "expired installed bootstrap locator without fixed contact"
+                );
+            }
+        }
+    }
+    ensure!(
+        endpoints[0].is_disjoint(&endpoints[1]),
+        "installed discovery requires distinct source identities and endpoints"
+    );
+    Ok(())
 }
 
 fn installed_chain_profile(

@@ -270,3 +270,156 @@ fn run_client(client: &Path, profile: &Path, data: &Path) -> Result<serde_json::
     );
     Ok(serde_json::from_slice(&output.stdout)?)
 }
+
+#[test]
+#[ignore = "requires the approved AOEM runtime; no sockets or device custody"]
+fn release_preflight_verifies_signed_bootstrap_locators_offline() -> Result<()> {
+    let library = PathBuf::from(std::env::var_os("NOVOVM_DISCOVERY_AOEM").context("AOEM path")?)
+        .canonicalize()?;
+    let digest = std::env::var("NOVOVM_DISCOVERY_AOEM_SHA256")?;
+    let (first, _) = ephemeral_transport_identity(&library, &digest)?;
+    let (second, _) = ephemeral_transport_identity(&library, &digest)?;
+    let (validator, _) = ephemeral_transport_identity(&library, &digest)?;
+    let root =
+        std::env::temp_dir().join(format!("novovm-preflight-{:016x}", rand::random::<u64>()));
+    fs::create_dir(&root)?;
+    let path = root.join("installed-discovery.json");
+    let chain_id = 170_415;
+    let validator_set = ValidatorSet::new(
+        chain_id,
+        1,
+        1,
+        vec![Validator::new(validator.public_key(), 1)?],
+    )?;
+    let mut profile = Profile {
+        chain_id,
+        genesis: [0x25; 32],
+        protocol: [0x91; 32],
+        library,
+        library_sha256: digest,
+        nameserver: "127.0.0.1".parse()?,
+        relays: Vec::new(),
+        seeds: [
+            SeedPin {
+                locator: Some("primary.json".into()),
+                contact: None,
+                transport_key: first.public_key().to_vec(),
+            },
+            SeedPin {
+                locator: Some("secondary.json".into()),
+                contact: None,
+                transport_key: second.public_key().to_vec(),
+            },
+        ],
+        lookup_transport_keys: vec![first.public_key().to_vec()],
+        native_query_peers: Vec::new(),
+        verification: Some(VerificationPins {
+            validator_epoch: 1,
+            validator_set_hash: validator_set.hash(),
+            validators: vec![GenesisValidator {
+                public_key: validator.public_key().to_vec(),
+                transport_public_key: first.public_key().to_vec(),
+                weight: 1,
+            }],
+            trusted_parent: ParentPoint {
+                height: 0,
+                block_hash: [0; 32],
+                state_root: [1; 32],
+                receipt_batch_commitment: [2; 32],
+                state_version: 0,
+                decision_hash: [0; 32],
+            },
+            minimum_finalized_checkpoint: None,
+        }),
+    };
+    let primary = IrohAddressV1 {
+        endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[67; 32])
+            .verifying_key()
+            .to_bytes(),
+        direct: vec!["127.0.0.1:43111".parse()?],
+        relays: Vec::new(),
+    };
+    let secondary = IrohAddressV1 {
+        endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[68; 32])
+            .verifying_key()
+            .to_bytes(),
+        direct: vec!["127.0.0.1:43112".parse()?],
+        relays: Vec::new(),
+    };
+    let pins = profile.pins();
+    let now = wall_ms()?;
+    let make_record = |identity: &TransportIdentity, pins, route: &IrohAddressV1, expires| {
+        sign_relay_record_v1(
+            identity,
+            native_locator_id_v1(pins),
+            vec![IrohServiceEndpointV1 {
+                instance: [0x78; 32],
+                address: route.clone(),
+            }
+            .endpoint()?],
+            now - 120_000,
+            expires,
+            1,
+        )
+        .map_err(anyhow::Error::from)
+    };
+    let write_locator = |name: &str, record: &PeerSignedRelayRecordV1| -> Result<()> {
+        fs::write(root.join(name), serde_json::to_vec(record)?)?;
+        Ok(())
+    };
+    let check = |profile: &Profile| {
+        let bytes = serde_json::to_vec(profile)?;
+        fs::write(&path, &bytes)?;
+        check_installed_profile(&path, &fingerprint(&bytes))
+    };
+
+    write_locator(
+        "secondary.json",
+        &make_record(&second, pins, &secondary, now + 120_000)?,
+    )?;
+    let current = make_record(&first, pins, &primary, now + 120_000)?;
+    write_locator("primary.json", &current)?;
+    assert_eq!(check(&profile)?["chain_id"], chain_id);
+
+    let expired = make_record(&first, pins, &secondary, now - 1)?;
+    write_locator("primary.json", &expired)?;
+    assert!(check(&profile).unwrap_err().to_string().contains("expired"));
+    profile.seeds[0].contact = Some(primary.clone());
+    assert_eq!(check(&profile)?["trusted_height"], 0);
+
+    let mut bad_signature = expired;
+    bad_signature.signature[0] ^= 1;
+    write_locator("primary.json", &bad_signature)?;
+    assert!(check(&profile)
+        .unwrap_err()
+        .to_string()
+        .contains("signature"));
+
+    for wrong in [
+        make_record(
+            &first,
+            (chain_id + 1, pins.1, pins.2),
+            &primary,
+            now + 120_000,
+        )?,
+        make_record(&second, pins, &primary, now + 120_000)?,
+    ] {
+        write_locator("primary.json", &wrong)?;
+        assert!(check(&profile)
+            .unwrap_err()
+            .to_string()
+            .contains("signer or chain domain"));
+    }
+
+    write_locator("primary.json", &current)?;
+    write_locator(
+        "secondary.json",
+        &make_record(&second, pins, &primary, now + 120_000)?,
+    )?;
+    assert!(check(&profile)
+        .unwrap_err()
+        .to_string()
+        .contains("distinct source"));
+    println!("approved AOEM verified current and historical locators, and rejected expiry without contact, bad signature, wrong signer/domain and overlapping endpoints");
+    Ok(())
+}

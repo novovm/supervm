@@ -115,6 +115,23 @@ if ($windowsPackage) {
         (Get-FileHash -LiteralPath $ClientArguments[0]).Hash -ne $ClientArguments[2]) {
       throw 'Profile validation must use the native Client and exact pinned profile'
     }
+    if ($ClientArguments[0] -match '[\\/]\.?(?:[^\\/]+)\.staging\.[a-f0-9]+[\\/]') {
+      $stagedDiscovery = Split-Path -Parent $ClientArguments[0]
+      $stagedProfile = Get-Content -LiteralPath $ClientArguments[0] -Raw | ConvertFrom-Json
+      $stagedLibrary = Join-Path $stagedDiscovery $stagedProfile.library
+      if ((Split-Path -Leaf $ClientArguments[0]) -cne 'installed-discovery.json' -or
+          (Get-FileHash -LiteralPath $stagedLibrary).Hash -ne $stagedProfile.library_sha256) {
+        throw 'Native preflight must see the portable profile and its copied runtime'
+      }
+      foreach ($locator in @($stagedProfile.seeds | Where-Object locator | ForEach-Object locator)) {
+        if ((Get-FileHash -LiteralPath (Join-Path $stagedDiscovery $locator)).Hash -ne
+            (Get-FileHash -LiteralPath (Join-Path $fixtureState.root $locator)).Hash) {
+          throw 'Native preflight must see the exact copied locator bytes'
+        }
+      }
+    } elseif ($fixtureState.clientProfileMode -ne 'install-reject') {
+      throw 'Package preflight must run in staging before publication'
+    }
     $global:LASTEXITCODE = if ($fixtureState.clientProfileMode -eq 'valid') { 0 } else { 22 }
   }
   Set-Item -LiteralPath ('Function:\global:' + $clientFixtureCommand) -Value $clientProfilePreflight
@@ -507,7 +524,7 @@ if ($windowsPackage) {
   }
   $installedFixtureCommand = Join-Path $bundled "bin/novovm-native-client$binarySuffix"
   Set-Item -LiteralPath ('Function:\global:' + $installedFixtureCommand) -Value $clientProfilePreflight
-  $fixtureState.clientProfileMode = 'reject'
+  $fixtureState.clientProfileMode = 'install-reject'
   & {
     function Get-ScheduledTask { throw 'An invalid profile reached the task subsystem' }
     try {
