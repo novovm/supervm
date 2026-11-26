@@ -945,6 +945,12 @@ impl LanAcceptance {
         let restore = stage.join("lan-restore");
         let results = stage.join("lan-events.json");
         let ready = stage.join("lan-ready.json");
+        let physical_switch =
+            std::env::var("NOVOVM_QUERY_COPY_PHYSICAL_SWITCH").as_deref() == Ok("1");
+        ensure!(
+            !physical_switch || roaming_relay,
+            "physical switch requires the scoped external relay fixture"
+        );
         ensure!(
             [&cut, &restore, &results, &ready]
                 .into_iter()
@@ -983,12 +989,16 @@ impl LanAcceptance {
         let mut cut_utc_ms = None;
         let mut buffer = [0; 65_536];
         while !results.is_file() {
-            ensure!(
-                Instant::now() < deadline,
-                "cross-device acceptance deadline"
-            );
+            if Instant::now() >= deadline {
+                ensure!(physical_switch, "cross-device acceptance deadline");
+                ensure!(remote.is_some(), "no native traffic from the scoped device");
+                println!(
+                    "physical switch fixture window closed; verify the device capture offline"
+                );
+                return Ok(());
+            }
             owner.poll()?;
-            let cut_active = cut.is_file() && !restore.is_file();
+            let cut_active = !physical_switch && cut.is_file() && !restore.is_file();
             if cut_active && cut_utc_ms.is_none() {
                 let observed =
                     u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
@@ -996,12 +1006,16 @@ impl LanAcceptance {
                 println!("isolated_native_cut_utc_ms={observed}");
             }
             for _ in 0..128 {
-                let (size, source) = match external.recv_from(&mut buffer) {
-                    Ok(value) => value,
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-                    Err(error) => return Err(error.into()),
+                let Some((size, source)) =
+                    receive_lan_datagram(&external, &mut buffer, physical_switch)
+                        .context("receive at the detached LAN gateway")?
+                else {
+                    break;
                 };
                 if !cut_active && source.ip() == self.client {
+                    if physical_switch && remote.is_none() {
+                        println!("first scoped wired UDP datagram from {source} to {gateway}");
+                    }
                     remote = Some(source);
                     internal.send(&buffer[..size])?;
                 }
@@ -1018,6 +1032,10 @@ impl LanAcceptance {
             }
             thread::sleep(Duration::from_millis(2));
         }
+        ensure!(
+            !physical_switch,
+            "physical switch evidence is verified offline"
+        );
         ensure!(
             cut_utc_ms.is_some() && (roaming_relay || restore.is_file()) && remote.is_some(),
             "missing observed cut, restoration or remote traffic"
@@ -1259,6 +1277,50 @@ impl LanAcceptance {
         println!("cross-device discovery verified: {report}");
         Ok(())
     }
+}
+
+fn receive_lan_datagram(
+    socket: &std::net::UdpSocket,
+    buffer: &mut [u8],
+    physical_switch: bool,
+) -> std::io::Result<Option<(usize, std::net::SocketAddr)>> {
+    match socket.recv_from(buffer) {
+        Ok(packet) => Ok(Some(packet)),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        // Winsock can deliver a previous send's ICMP port-unreachable here
+        // after the scoped Client has closed its UDP socket.
+        Err(error) if cfg!(windows) && physical_switch && error.raw_os_error() == Some(10054) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn physical_gateway_receives_after_the_previous_client_port_closes() -> Result<()> {
+    use std::net::UdpSocket;
+    let gateway = UdpSocket::bind("127.0.0.1:0")?;
+    gateway.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let client = UdpSocket::bind("127.0.0.1:0")?;
+    let closed = UdpSocket::bind("127.0.0.1:0")?.local_addr()?;
+    let mut buffer = [0; 8];
+    gateway.send_to(b"first", closed)?;
+    assert_eq!(
+        receive_lan_datagram(&gateway, &mut buffer, false)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(10054)
+    );
+    gateway.send_to(b"again", closed)?;
+    assert_eq!(receive_lan_datagram(&gateway, &mut buffer, true)?, None);
+    client.send_to(b"next", gateway.local_addr()?)?;
+    assert_eq!(
+        receive_lan_datagram(&gateway, &mut buffer, true)?,
+        Some((4, client.local_addr()?))
+    );
+    assert_eq!(&buffer[..4], b"next");
+    Ok(())
 }
 
 fn add_roaming_route_metadata(stage: &Path, manifest: &mut Value) -> Result<()> {
