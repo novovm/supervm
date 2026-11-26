@@ -490,8 +490,12 @@ mod tests {
                         ensure!(start.elapsed() < Duration::from_secs(25), "approved relay did not connect");
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
-                    let until = Instant::now() + Duration::from_secs(if restart { 360 } else { 110 });
-                    let store = Arc::new(Mutex::new(RendezvousStoreV1::new(rand::random(), until)?));
+                    let now = Instant::now();
+                    let until = now + Duration::from_secs(if restart { 360 } else { 110 });
+                    let mut rotate_at = now + Duration::from_secs(100);
+                    let store = Arc::new(Mutex::new(RendezvousStoreV1::new(
+                        rand::random(), now + Duration::from_secs(110),
+                    )?));
                     fs::write(stage.join("ready.tmp"), serde_json::to_vec(&serde_json::json!({
                         "contact": address, "transport_key": identity.public_key(),
                         "transport_sha256": fingerprint(identity.public_key()),
@@ -531,7 +535,16 @@ mod tests {
                     fs::rename(stage.join("ready.tmp"), stage.join("ready.json"))?;
                     let serve_streams = async {
                         loop {
-                            let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
+                            let mut stream: CarrierStreamV1<'_> = tokio::select! {
+                                _ = tokio::time::sleep_until(rotate_at.into()), if restart => {
+                                    let now = Instant::now();
+                                    *store.lock().map_err(|_| anyhow::anyhow!("fixture store poisoned"))? =
+                                        RendezvousStoreV1::new(rand::random(), now + Duration::from_secs(110))?;
+                                    rotate_at = now + Duration::from_secs(100);
+                                    continue;
+                                }
+                                stream = scope.accept_inbound() => stream?.into(),
+                            };
                             if matches!(tokio::time::timeout(Duration::from_secs(4), stream.read_frame()).await,
                                 Ok(Ok(entry)) if entry == DISCOVERY_ENTRY) {
                                 let _ = serve(stream, identity.clone(), pins, store.clone()).await;
