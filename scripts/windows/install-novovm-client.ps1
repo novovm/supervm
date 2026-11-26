@@ -139,6 +139,12 @@ $plan = [ordered]@{ task = $taskName; startup = 'current-user-logon'; program = 
     installed_release = $installedRelease }
 if ($Action -eq 'Plan') { $plan | ConvertTo-Json; return }
 
+$sourceProfile = if ($installedRelease) { Join-Path $root $profileEntry } else { $profile }
+& (Join-Path $root $entryPoint) $sourceProfile check-installed-profile $ProfileSha256 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Native Client rejected the issued discovery profile before installation.'
+}
+
 $existing = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
 if ($existing) {
     $user = $existing.Principal.UserId

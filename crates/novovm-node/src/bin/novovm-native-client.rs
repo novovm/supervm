@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> [profile-sha256] | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> [profile-sha256] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin>";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -33,6 +33,17 @@ fn main() -> Result<()> {
     let report = if action == "discover" {
         ensure!(args.len() == 2, "{USAGE}");
         discover(config)?
+    } else if action == "check-installed-profile" {
+        ensure!(args.len() == 3, "{USAGE}");
+        #[cfg(feature = "iroh-transport")]
+        {
+            novovm_node::native_pipeline::service::network::check_installed_profile(
+                config,
+                args[2].to_str().context("non-UTF8 profile pin")?,
+            )?
+        }
+        #[cfg(not(feature = "iroh-transport"))]
+        anyhow::bail!("installed discovery requires the NOVONET carrier feature");
     } else if matches!(action, "sync-chain" | "sync-state") {
         ensure!(args.len() == 2, "{USAGE}");
         sync_chain(config, action == "sync-state")?

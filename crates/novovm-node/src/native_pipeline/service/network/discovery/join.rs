@@ -7,7 +7,7 @@ use crate::native_pipeline::{
         wire::{Validator, ValidatorSet},
     },
     service::{
-        client::operator::receipt_proof::{transaction_hash, ProofTarget},
+        client::operator::receipt_proof::{transaction_hash, validate_parent, ProofTarget},
         GenesisValidator,
     },
 };
@@ -302,6 +302,28 @@ pub fn discover_verified_receipt_from_profile(
         closed?;
         Ok(proof)
     })
+}
+
+/// Validate the pinned release's chain and discovery inputs without accessing
+/// device custody or allocating a transport endpoint.
+pub fn check_installed_profile(path: &Path, sha256: &str) -> Result<serde_json::Value> {
+    let (_, domain, anchor) = installed_chain_profile(path, Some(sha256))?;
+    Ok(serde_json::json!({
+        "kind": "validated-installed-discovery-profile",
+        "chain_id": domain.chain_id,
+        "trusted_height": anchor.height,
+    }))
+}
+
+fn installed_chain_profile(
+    path: &Path,
+    sha256: Option<&str>,
+) -> Result<(Profile, MessageDomain, ParentPoint)> {
+    let profile = read_installed_profile(path, sha256)?;
+    let (domain, anchor) = profile.verification_domain()?;
+    validate_parent(&anchor)?;
+    IrohConfigV1::new(&profile.relays, profile.nameserver)?;
+    Ok((profile, domain, anchor))
 }
 
 fn installed_profile(path: &Path) -> Result<(Profile, TransportIdentity)> {

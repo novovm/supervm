@@ -323,6 +323,10 @@ try {
   $clientJoinInputs = @()
   if ($WindowsClientProfile) {
     $clientJoinInputs = @(Get-WindowsClientJoinInputs $WindowsClientProfile $WindowsClientProfileSha256 $actualAoemSha)
+    & $executables['novovm-native-client'] $clientJoinInputs[0].source check-installed-profile $WindowsClientProfileSha256 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw 'Native Client rejected the issued discovery profile; no package was published.'
+    }
   }
   # A manifest hash/capability bit cannot prove the current native contract.
   # Run the just-built original owner before creating any package staging.

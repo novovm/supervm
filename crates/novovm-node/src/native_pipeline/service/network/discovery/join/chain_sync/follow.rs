@@ -11,9 +11,8 @@ const RECOVER_NATIVE: Duration = Duration::from_secs(6);
 const QUERY_BUDGET: Duration = Duration::from_secs(20);
 
 pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
-    let (profile, identity) = pinned_installed_profile(path, profile_sha256)?;
-    let (domain, anchor) = profile.verification_domain()?;
-    validate_parent(&anchor)?;
+    let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
+    let identity = local_identity(&installed_state_base()?, profile_base(path)?, &profile)?;
     let chain = open_checkpoint(&profile, &identity, &domain, anchor)?;
     let cache = StateCache::open(chain.root.join("state-nodes"))?;
     let locators = Locators::open(chain.root.join("peer-locators.json"), &profile, &identity)?;

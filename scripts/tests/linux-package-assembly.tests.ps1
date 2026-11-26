@@ -63,6 +63,7 @@ foreach ($name in @('aoem/manifest/aoem-manifest.json', 'aoem/config/aoem-runtim
 [IO.File]::WriteAllText((Join-Path $fixture 'crates/novovm-node/src/product_delivery_journal.rs'), 'novovm-product-delivery-journal/v1')
 $fixtureState = @{commit='1234567890123456789012345678901234567890';root=$fixture;buildCalls=0;contracts=@();qualificationCalls=0;qualificationMode='valid'}
 $fixtureState.nodeServiceMode = 'valid'
+$fixtureState.clientProfileMode = 'valid'
 function git {
   $global:LASTEXITCODE = 0
   if ($args[0] -eq 'status') { return }
@@ -106,6 +107,16 @@ function cargo {
 # invokes its exact Cargo-reported ctl, with no skip/injection option.
 $runtimeFixtureCommand = Join-Path $fixture "build/novovmctl$binarySuffix"
 if ($windowsPackage) {
+  $clientFixtureCommand = Join-Path $fixture "build/novovm-native-client$binarySuffix"
+  $clientProfilePreflight = {
+    param([Parameter(ValueFromRemainingArguments)]$ClientArguments)
+    if ($ClientArguments.Count -ne 3 -or $ClientArguments[1] -cne 'check-installed-profile' -or
+        (Get-FileHash -LiteralPath $ClientArguments[0]).Hash -ne $ClientArguments[2]) {
+      throw 'Profile validation must use the native Client and exact pinned profile'
+    }
+    $global:LASTEXITCODE = if ($fixtureState.clientProfileMode -eq 'valid') { 0 } else { 22 }
+  }
+  Set-Item -LiteralPath ('Function:\global:' + $clientFixtureCommand) -Value $clientProfilePreflight
   $nodeFixtureCommand = Join-Path $fixture "build/novovm-node$binarySuffix"
   Set-Item -LiteralPath ('Function:\global:' + $nodeFixtureCommand) -Value {
     param([Parameter(ValueFromRemainingArguments)]$NodeArguments)
@@ -461,6 +472,19 @@ if ($windowsPackage) {
   } catch {
     if ($_.Exception.Message -notlike '*differs from its pinned SHA-256*') { throw }
   }
+  $fixtureState.clientProfileMode = 'reject'
+  $rejected = $false
+  try {
+    & $packager -Target $Target -PackageDir $bundledName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
+  } catch {
+    if ($_.Exception.Message -notlike '*Native Client rejected the issued discovery profile*') { throw }
+    $rejected = $true
+  } finally {
+    $fixtureState.clientProfileMode = 'valid'
+  }
+  if (!$rejected -or (Test-Path -LiteralPath (Join-Path $fixture $bundledName))) {
+    throw 'A native profile validation failure must prevent release publication'
+  }
   & $packager -Target $Target -PackageDir $bundledName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
   $bundled = Join-Path $fixture $bundledName
   $installer = Join-Path $bundled 'resources/scripts/windows/install-novovm-client.ps1'
@@ -473,6 +497,20 @@ if ($windowsPackage) {
       (Get-FileHash -LiteralPath $bundledProfile).Hash -ne $profilePin -or (Test-Path -LiteralPath $installed)) {
     throw 'Bundled installer plan lost the portable Client, verified issuer bytes or no-write behavior'
   }
+  $installedFixtureCommand = Join-Path $bundled "bin/novovm-native-client$binarySuffix"
+  Set-Item -LiteralPath ('Function:\global:' + $installedFixtureCommand) -Value $clientProfilePreflight
+  $fixtureState.clientProfileMode = 'reject'
+  & {
+    function Get-ScheduledTask { throw 'An invalid profile reached the task subsystem' }
+    try {
+      & $installer -Action Install -ReleaseManifestSha256 $pin | Out-Null
+      throw 'Installer proceeded after native profile validation failed'
+    } catch {
+      if ($_.Exception.Message -notlike '*Native Client rejected the issued discovery profile*') { throw }
+    }
+  }
+  $fixtureState.clientProfileMode = 'valid'
+  if (Test-Path -LiteralPath $installed) { throw 'Native profile failure left installed release files' }
   [IO.File]::AppendAllText((Join-Path $bundled 'config/discovery/bootstrap-first.json'), 'tampered')
   try {
     & $installer -Action Plan -ReleaseManifestSha256 $pin | Out-Null

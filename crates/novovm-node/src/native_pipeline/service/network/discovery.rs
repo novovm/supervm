@@ -17,9 +17,9 @@ const TAG: &[u8; 8] = b"NVDISC01";
 mod dial_tests;
 mod join;
 pub use join::{
-    discover_installed, discover_verified_receipt, discover_verified_receipt_from_profile,
-    follow_installed_state, sync_installed_chain, sync_installed_state,
-    verify_installed_uca_execution,
+    check_installed_profile, discover_installed, discover_verified_receipt,
+    discover_verified_receipt_from_profile, follow_installed_state, sync_installed_chain,
+    sync_installed_state, verify_installed_uca_execution,
 };
 struct Seed<'a> {
     path: PathBuf,
