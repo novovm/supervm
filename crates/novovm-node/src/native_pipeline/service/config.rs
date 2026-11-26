@@ -62,6 +62,9 @@ pub struct ResidentConfig {
     /// Zero preserves the old validator-only deployment contract.
     #[serde(default)]
     pub native_client_limit: usize,
+    /// Enables disclosure of the complete ordered asset receipts in a block.
+    #[serde(default)]
+    pub public_asset_receipt_proofs: bool,
     pub genesis: GenesisConfig,
     /// Explicitly pinned new-domain UCA initialization, not an asset ingress
     /// switch. Omission preserves the original development reference contract.
@@ -868,6 +871,7 @@ mod tests {
         genesis.genesis_config_commitment = genesis.derive_commitment()?;
         let config = ResidentConfig {
             native_client_limit: 0,
+            public_asset_receipt_proofs: false,
             learn_authenticated_peer_routes: false,
             novonet_config_file: None,
             profile: PROFILE.into(),

@@ -5,7 +5,9 @@ use novovm_protocol::native_query::{
     Answer, ConsensusProposalStatus, ProposalObservation, Query, QueryError, Response, Status,
 };
 mod identity;
+mod receipt_proofs;
 mod uca;
+pub(super) use receipt_proofs::ReceiptProofQueries;
 pub(super) use uca::{UcaBatchStateRead, UcaCaptureStats, UcaQueries, UcaReadResult};
 
 impl RpcLifecycle {
@@ -125,6 +127,7 @@ impl RpcLifecycle {
             crate::native_pipeline::profile::Phase::NativeQuery,
         );
         self.uca_queries.poll(&self.node.pipeline, now);
+        self.receipt_proofs.poll(&self.node, now);
         let Some((peer, request)) = self.node.controller.take_client_query(now) else {
             return Ok(());
         };
@@ -176,6 +179,7 @@ impl RpcLifecycle {
                         .map_err(anyhow::Error::msg)?,
                     indexed_height: self.indexed_height,
                 },
+                Query::ReceiptProof(selector) => self.receipt_proofs.answer(&self.node, *selector),
                 Query::NovBalance { account } => {
                     let account = Account::try_from(account.as_bytes().to_vec())
                         .map_err(anyhow::Error::msg)?;

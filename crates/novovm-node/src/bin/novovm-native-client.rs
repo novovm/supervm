@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy]\n       novovm-native-client <installed-discovery-profile.json> discover";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -21,6 +21,13 @@ fn main() -> Result<()> {
     let report = if action == "discover" {
         ensure!(args.len() == 2, "{USAGE}");
         discover(config)?
+    } else if action == "verified-receipt" {
+        ensure!(args.len() == 4, "{USAGE}");
+        operator::verified_receipt(
+            config,
+            Path::new(&args[2]),
+            args[3].to_str().context("non-UTF8 transaction hash")?,
+        )?
     } else if action == "consensus-proposal" {
         ensure!(
             args.len() == 5 || args.len() == 6 && args[5] == "--legacy",

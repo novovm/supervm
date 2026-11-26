@@ -19,6 +19,22 @@ pub(super) fn query(
     selector: Query,
     deadline: Instant,
 ) -> Result<Answer> {
+    let answer = query_reply(client, selector, deadline)?;
+    ensure!(
+        !matches!(answer, Answer::Error(_)),
+        "native query unavailable: {answer:?}"
+    );
+    if let Answer::Status(status) = &answer {
+        ensure!(!status.projection_failed, "node archive projection failed");
+    }
+    Ok(answer)
+}
+
+pub(super) fn query_reply(
+    client: &mut NativeApplicationClient,
+    selector: Query,
+    deadline: Instant,
+) -> Result<Answer> {
     let request = client.prepare_query(selector)?;
     let mut sent = false;
     loop {
@@ -33,14 +49,6 @@ pub(super) fn query(
         }
         if let Some(reply) = client.poll_query_response(&request, now)? {
             let _ = client.poll(wall_ms()?, Instant::now(), 64)?;
-            ensure!(
-                !matches!(reply.answer, Answer::Error(_)),
-                "native query unavailable: {:?}",
-                reply.answer
-            );
-            if let Answer::Status(status) = &reply.answer {
-                ensure!(!status.projection_failed, "node archive projection failed");
-            }
             return Ok(reply.answer);
         }
         std::thread::sleep(Duration::from_millis(1));

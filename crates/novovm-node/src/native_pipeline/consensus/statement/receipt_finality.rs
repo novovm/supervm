@@ -13,10 +13,10 @@ use crate::native_pipeline::{
 };
 use anyhow::{ensure, Context, Result};
 use novovm_consensus::round_bft::VerifiedDecision;
+use novovm_protocol::native_query::MAX_ARCHIVE_PROOF_BYTES as MAX_PROOF_BYTES;
 use serde::{Deserialize, Serialize};
 
 const MAGIC: &[u8; 8] = b"NVRCPF01";
-const MAX_PROOF_BYTES: usize = 32 * 1024 * 1024;
 const MAX_RECEIPTS: usize = 65_536;
 
 /// Untrusted evidence. Only `verify` associates a receipt with a pinned finalized chain.
