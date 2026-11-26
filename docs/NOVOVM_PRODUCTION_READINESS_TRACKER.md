@@ -8,6 +8,12 @@ C 从干净源码构建 Windows Client，使用真实 Iroh 和 AOEM 通过三项
 
 双服务验收可使用隔离原库用例的 `NOVOVM_QUERY_COPY_LAN_DISCOVERY=1`。每台服务机各自发布当期定位，以 `lan-discovery.json` 收取 Client 的认证来源和签名定位证据。C 已在同机隔离测试中验证空设备自动持钥、认证 C 服务、验签定位，测试退出 0，独立副本高度和查询槽保持。该模式关闭资产证明和状态节点查询，原载体查单保留固定的验收公钥。A、C、D 的独立实体上游切换另依[换网验收](NOVOVM_NATIVE_ROAMING_ACCEPTANCE.md)取证。
 
+D 独立构建 Windows Client，复跑了端点绑定与容量单测，以及有效定位旧地址退役的 AOEM 回环回归。两项退出 0。D 构建的 Client SHA-256 为 `7a74790f3e90b0e448dd143b00f0d410a32735f8672d2aab051891caf769caee`。
+
+07:20:46 至 07:20:57 UTC，D 用空隔离目录和独立核对过 SHA-256 的双来源配置首次发现。Client 退出 0，原始结果仅列 C 为已认证来源，收到 C 签发的序号 10 定位。原始 stdout 为 459 字节，SHA-256 `df26d3800d53e5526da08ec39ad9d9c6df70df4677dbd715b13cded38b0efd71`。D 的事后路由表显示两个地址均由同一个实体网口直达。本次缺少 D 到 A 的按端口收发记录，双来源验收未通过。C 的等待用例在收到双来源回执前超时，隔离端口已经关闭。
+
+A 在 READY 时核对了其隔离进程及 UDP 监听，并在 D 的命令结束后 07:21:24 UTC 仍刷新同一端点的序号 8 定位。A 的 WLAN 使用 Public 防火墙配置，入站默认阻止，事后核对未发现覆盖该测试程序和端口的允许规则。该窗口没有对应的抓包或防火墙丢包日志。下一轮先对 A 单独取证，再重复双来源用例。A 的临时任务和 UDP 监听均已退出。
+
 ## 2026-11-26 安装后 Receipt 查询核对发布配置摘要
 
 `novovm-native-client <profile> discover-verified-receipt <tx-hash> [profile-sha256]` 可在读取本地传输身份或联网前核对发布配置摘要。回执输出包含本地身份指纹、已认证引导来源和实际服务身份指纹。
