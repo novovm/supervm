@@ -16,7 +16,7 @@ const TAG: &[u8; 8] = b"NVDISC01";
 #[cfg(test)]
 mod dial_tests;
 mod join;
-pub use join::{discover_installed, discover_verified_receipt};
+pub use join::{discover_installed, discover_verified_receipt, sync_installed_chain};
 struct Seed<'a> {
     path: PathBuf,
     book: Option<ServiceLeaseBookV1>,
@@ -191,7 +191,11 @@ impl<'a> Discovery<'a> {
         self.revision = 0;
         Ok(true)
     }
-    pub(super) fn set_local(&mut self, record: &PeerSignedRelayRecordV1, now: Instant) -> Result<()> {
+    pub(super) fn set_local(
+        &mut self,
+        record: &PeerSignedRelayRecordV1,
+        now: Instant,
+    ) -> Result<()> {
         self.local = Some(encode_node_locator_v1(record, self.pins)?);
         // The owner publishes the local record and polls the public RPC in
         // this same turn. Make it eligible before accepting that first read.

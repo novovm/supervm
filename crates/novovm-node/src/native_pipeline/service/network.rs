@@ -27,7 +27,7 @@ use novovm_network::{
 };
 mod diagnostic;
 mod discovery;
-pub use discovery::{discover_installed, discover_verified_receipt};
+pub use discovery::{discover_installed, discover_verified_receipt, sync_installed_chain};
 mod observation;
 mod probe;
 mod query_carrier;

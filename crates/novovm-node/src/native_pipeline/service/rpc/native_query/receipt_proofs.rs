@@ -1,5 +1,5 @@
 use super::*;
-use crate::native_pipeline::consensus::statement::ReceiptFinalityProof;
+use crate::native_pipeline::consensus::statement::{finalized_header, ReceiptFinalityProof};
 use novovm_protocol::native_query::{ArchiveChunk, ArchiveSelector, ARCHIVE_CHUNK_BYTES};
 use sha2::{Digest, Sha256};
 
@@ -7,13 +7,14 @@ use sha2::{Digest, Sha256};
 /// owner. The buffer is derived from the original archive and carries no head
 /// or consensus authority. An admitted read drains even if its client leaves.
 #[derive(Default)]
-pub(in super::super) struct ReceiptProofQueries {
-    reading: Option<(u64, ArchiveRead)>,
+pub(in super::super) struct ArchiveQueries {
+    reading: Option<(u64, ProofKind, ArchiveRead)>,
     completed: Option<Completed>,
 }
 
 struct Completed {
     height: u64,
+    kind: ProofKind,
     expires: Instant,
     proof: Option<EncodedProof>,
 }
@@ -23,7 +24,13 @@ struct EncodedProof {
     bytes: Vec<u8>,
 }
 
-impl ReceiptProofQueries {
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum ProofKind {
+    AssetReceipt,
+    FinalizedHeader,
+}
+
+impl ArchiveQueries {
     pub(super) fn poll(&mut self, node: &ResidentNode, now: Instant) {
         if self
             .completed
@@ -32,7 +39,7 @@ impl ReceiptProofQueries {
         {
             self.completed = None;
         }
-        let Some((height, read)) = &mut self.reading else {
+        let Some((height, kind, read)) = &mut self.reading else {
             return;
         };
         let block = match read.poll(&node.pipeline) {
@@ -41,10 +48,13 @@ impl ReceiptProofQueries {
             Err(_) => None,
         };
         let proof = block.and_then(|block| {
-            let bytes = ReceiptFinalityProof::from_archive(&block)
-                .ok()?
-                .encode()
-                .ok()?;
+            let bytes = match kind {
+                ProofKind::AssetReceipt => {
+                    ReceiptFinalityProof::from_archive(&block).and_then(|proof| proof.encode())
+                }
+                ProofKind::FinalizedHeader => finalized_header::encode(&block),
+            }
+            .ok()?;
             Some(EncodedProof {
                 digest: Sha256::digest(&bytes).into(),
                 bytes,
@@ -52,21 +62,27 @@ impl ReceiptProofQueries {
         });
         self.completed = Some(Completed {
             height: *height,
+            kind: *kind,
             expires: now + Duration::from_secs(30),
             proof,
         });
         self.reading = None;
     }
 
-    pub(super) fn answer(&mut self, node: &ResidentNode, request: ArchiveSelector) -> Answer {
+    pub(super) fn answer(
+        &mut self,
+        node: &ResidentNode,
+        request: ArchiveSelector,
+        kind: ProofKind,
+    ) -> Answer {
         let unavailable = Answer::Error(QueryError::Unavailable);
-        if !node.public_asset_receipt_proofs {
+        if kind == ProofKind::AssetReceipt && !node.public_asset_receipt_proofs {
             return unavailable;
         }
         if let Some(done) = self
             .completed
             .as_ref()
-            .filter(|done| done.height == request.height)
+            .filter(|done| done.height == request.height && done.kind == kind)
         {
             let Some(proof) = &done.proof else {
                 return unavailable;
@@ -76,11 +92,15 @@ impl ReceiptProofQueries {
                 return unavailable;
             }
             let limit = (start + ARCHIVE_CHUNK_BYTES).min(proof.bytes.len());
-            return Answer::ReceiptProof(ArchiveChunk {
+            let chunk = ArchiveChunk {
                 digest: proof.digest,
                 total_bytes: proof.bytes.len() as u32,
                 data: proof.bytes[start..limit].to_vec(),
-            });
+            };
+            return match kind {
+                ProofKind::AssetReceipt => Answer::ReceiptProof(chunk),
+                ProofKind::FinalizedHeader => Answer::FinalizedHeader(chunk),
+            };
         }
         if request.offset != 0 {
             return unavailable;
@@ -102,7 +122,7 @@ impl ReceiptProofQueries {
             return unavailable;
         };
         self.completed = None;
-        self.reading = Some((request.height, read));
+        self.reading = Some((request.height, kind, read));
         busy
     }
 }

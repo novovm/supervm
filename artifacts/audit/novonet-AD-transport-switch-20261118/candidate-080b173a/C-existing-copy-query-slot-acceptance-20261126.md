@@ -35,3 +35,11 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 复现用例为 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier`，沿用 `NOVOVM_QUERY_COPY_CONFIG`、`NOVOVM_QUERY_COPY_REQUEST`、`NOVOVM_QUERY_COPY_FIRST_PROFILE` 和 `NOVOVM_QUERY_COPY_PROOF_CLIENT`。Client 入口为 `novovm-native-client <发行发现配置> discover-verified-receipt <交易哈希>`。现有 NOVONET owner 同一轮发布本机定位记录和开放查询，避免首次认证读到空候选。节点入口类型检查和三项原载体回归通过。测试使用回环网络和已固定的创世锚点，跨机切网、连续状态同步及共识追赶仍待验收。现役 C 未部署或重启，未接触 B。
 
 验收日志 SHA-256 `b2763ceaa8f02702a31fbd2b614c81e356c91d41bb706c2b58626a88449b6919`。Client EXE SHA-256 `2887548f508172b2ce2ae961880d1cf9ff707d95d18d8768a755d2743a4f8d73`。
+
+## 逐块验证区块头与认证状态根
+
+北京时间 10:46，`novovm-native-client <发行发现配置> sync-chain` 经自动发现的只读 NOVONET 会话从创世父状态同步至副本实际高度 2。Client 独立验证高度 1、2 的 Precommit QC 和父状态衔接，将通过的证据按高度持久保存。高度 2 的区块是 `7f2d438862e6bd2934862e4cafcb86dc3bf6ffa0a414d532014e420efa1aafc6`，认证状态根是 `418cb1c74c5121d43d4a392a309a052d0f6a8a513bc9377b6aa503d80591e439`，状态版本为 2。重开时从发行锚点重新验过本地证据，恢复到同一高度、区块和状态根。修改本地证据后，Client 在重新连接前拒绝恢复。
+
+以上步骤追加在 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier` 用例。区块头同步阶段关闭了整批资产回执导出。原交易独立验签、23 项查询协议测试、5 项 Client 回归及原生载体对象交付回归通过。Windows 编译器优化阶段出现访问违规，本次隔离验收对 `novovm-node`、`novovm-network`、`novovm-relay`、`novovm-adapter-evm-core` 使用了 `opt-level=0`、`codegen-units=256`。完整状态数据重放、持续同步和跨机网络切换待验收。现役 C 与 B 均未操作。
+
+验收日志 SHA-256 `4e4a04858dac142f9529c42a4b0ee699bf92709c0c1d0d522bb6f9c7461abdb8`。Client EXE SHA-256 `6fc10317aa5748e6a48cd816284c44abeb68ca21ffbf0ed2642a306a8838a8fa`。

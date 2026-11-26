@@ -4,7 +4,7 @@ use crate::native_pipeline::{
     business::nov_transfer_batch::{
         authorization_code, authorization_error, receipt_codec, uca_receipt_codec, SpendOutput,
     },
-    consensus::{chain::decision_id, wire, ArchiveBlock},
+    consensus::{wire, ArchiveBlock},
     execution::plan::executed_statement_commitment,
     persistence::{
         decode_asset_receipt_view,
@@ -12,7 +12,6 @@ use crate::native_pipeline::{
     },
 };
 use anyhow::{ensure, Context, Result};
-use novovm_consensus::round_bft::VerifiedDecision;
 use novovm_protocol::native_query::MAX_ARCHIVE_PROOF_BYTES as MAX_PROOF_BYTES;
 use serde::{Deserialize, Serialize};
 
@@ -202,13 +201,7 @@ impl ReceiptFinalityProof {
             hash: [0; 32],
         }
         .checked(set, parent)?;
-        VerifiedDecision::verify(
-            &wire::decode_proposal(&self.proposal)?,
-            &wire::decode_quorum(&self.precommits)?,
-            set,
-            expected_context,
-            statement.hash(),
-        )?;
+        let block = statement.verified_point(set, &self.proposal, &self.precommits)?;
 
         let mut matched = None;
         for bytes in &self.receipts {
@@ -224,14 +217,7 @@ impl ReceiptFinalityProof {
         Ok(VerifiedReceiptFinality {
             receipt: matched
                 .context("expected transaction missing from the committed receipt list")?,
-            block: ParentPoint {
-                height: expected_context.height,
-                block_hash: statement.hash(),
-                state_root: header.state_root,
-                receipt_batch_commitment,
-                state_version: statement.state_version(),
-                decision_hash: decision_id(&expected_context, statement.hash()),
-            },
+            block,
         })
     }
 

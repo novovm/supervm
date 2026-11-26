@@ -1,6 +1,6 @@
 use super::*;
 use crate::native_pipeline::consensus::{
-    statement::{ParentPoint, ReceiptFinalityProof},
+    statement::{finalized_header, ParentPoint, ReceiptFinalityProof},
     wire::Context as ConsensusContext,
 };
 use novovm_consensus::round_bft::crypto::{ConsensusVerifier, MLDSA65_CONTEXT};
@@ -51,7 +51,7 @@ pub(crate) fn transaction_hash(hash: &str) -> Result<[u8; 32]> {
 pub(crate) struct ProofTarget {
     context: ConsensusContext,
     parent: ParentPoint,
-    set: ValidatorSet,
+    verifier: FinalityVerifier,
     transaction: [u8; 32],
 }
 
@@ -62,33 +62,13 @@ impl ProofTarget {
         parent: ParentPoint,
         transaction: [u8; 32],
     ) -> Result<Self> {
-        ensure!(
-            parent.state_root != [0; 32]
-                && parent.receipt_batch_commitment != [0; 32]
-                && (parent.height == 0) == (parent.block_hash == [0; 32])
-                && (parent.height == 0) == (parent.decision_hash == [0; 32]),
-            "invalid separately verified parent checkpoint"
-        );
-        let set = (*domain.validators)
-            .clone()
-            .with_verifier(Arc::new(ProofVerifier(identity)));
-        let context = ConsensusContext {
-            chain_id: domain.chain_id,
-            genesis_config_commitment: domain.genesis,
-            protocol_commitment: domain.protocol,
-            epoch: set.epoch(),
-            validator_set_hash: set.hash(),
-            height: parent
-                .height
-                .checked_add(1)
-                .context("parent height exhausted")?,
-            parent_block_hash: parent.block_hash,
-            parent_decision_hash: parent.decision_hash,
-        };
+        validate_parent(&parent)?;
+        let verifier = FinalityVerifier::new(domain, identity);
+        let context = verifier.context(&parent)?;
         Ok(Self {
             context,
             parent,
-            set,
+            verifier,
             transaction,
         })
     }
@@ -100,7 +80,12 @@ impl ProofTarget {
     pub(crate) fn verify(&self, bytes: &[u8]) -> Result<Value> {
         use crate::native_pipeline::service::rpc::hex;
         let proof = ReceiptFinalityProof::decode(bytes)?;
-        let verified = proof.verify(&self.set, self.context, &self.parent, self.transaction)?;
+        let verified = proof.verify(
+            &self.verifier.set,
+            self.context,
+            &self.parent,
+            self.transaction,
+        )?;
         let receipt = verified.receipt();
         let block = verified.block();
         Ok(json!({
@@ -117,11 +102,60 @@ impl ProofTarget {
     }
 }
 
+pub(crate) fn validate_parent(parent: &ParentPoint) -> Result<()> {
+    ensure!(
+        parent.state_root != [0; 32]
+            && parent.receipt_batch_commitment != [0; 32]
+            && (parent.height == 0) == (parent.block_hash == [0; 32])
+            && (parent.height == 0) == (parent.decision_hash == [0; 32]),
+        "invalid separately verified parent checkpoint"
+    );
+    Ok(())
+}
+
+pub(crate) struct FinalityVerifier {
+    domain: (u64, [u8; 32], [u8; 32]),
+    set: ValidatorSet,
+}
+
+impl FinalityVerifier {
+    pub(crate) fn new(domain: &MessageDomain, identity: TransportIdentity) -> Self {
+        Self {
+            domain: (domain.chain_id, domain.genesis, domain.protocol),
+            set: (*domain.validators)
+                .clone()
+                .with_verifier(Arc::new(ProofVerifier(identity))),
+        }
+    }
+
+    fn context(&self, parent: &ParentPoint) -> Result<ConsensusContext> {
+        Ok(ConsensusContext {
+            chain_id: self.domain.0,
+            genesis_config_commitment: self.domain.1,
+            protocol_commitment: self.domain.2,
+            epoch: self.set.epoch(),
+            validator_set_hash: self.set.hash(),
+            height: parent
+                .height
+                .checked_add(1)
+                .context("parent height exhausted")?,
+            parent_block_hash: parent.block_hash,
+            parent_decision_hash: parent.decision_hash,
+        })
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn verify_header(&self, bytes: &[u8], parent: &ParentPoint) -> Result<ParentPoint> {
+        finalized_header::verify(bytes, &self.set, self.context(parent)?, parent)
+    }
+}
+
 pub(crate) struct Download {
     height: u64,
     expected_total: Option<usize>,
     digest: [u8; 32],
     bytes: Vec<u8>,
+    header: bool,
 }
 
 impl Download {
@@ -131,15 +165,29 @@ impl Download {
             expected_total: None,
             digest: [0; 32],
             bytes: Vec::new(),
+            header: false,
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn header(height: u64) -> Self {
+        Self {
+            header: true,
+            ..Self::new(height)
         }
     }
 
     pub(crate) fn selector(&self) -> Result<Query> {
-        Ok(Query::ReceiptProof(ArchiveSelector {
+        let selector = ArchiveSelector {
             height: self.height,
             offset: u32::try_from(self.bytes.len())?,
             digest: self.digest,
-        }))
+        };
+        Ok(if self.header {
+            Query::FinalizedHeader(selector)
+        } else {
+            Query::ReceiptProof(selector)
+        })
     }
 
     pub(crate) fn accept(&mut self, answer: Answer) -> Result<Option<Vec<u8>>> {
@@ -148,13 +196,19 @@ impl Download {
             digest,
             data,
         } = match answer {
-            Answer::ReceiptProof(chunk) => chunk,
+            Answer::ReceiptProof(chunk) if !self.header => chunk,
+            Answer::FinalizedHeader(chunk) if self.header => chunk,
             Answer::Error(QueryError::Busy) if self.bytes.is_empty() => return Ok(None),
-            _ => anyhow::bail!("requested receipt proof unavailable"),
+            _ => anyhow::bail!("requested archive proof unavailable"),
         };
         let total = total_bytes as usize;
+        let limit = if self.header {
+            finalized_header::MAX_BYTES
+        } else {
+            MAX_ARCHIVE_PROOF_BYTES
+        };
         ensure!(
-            total <= MAX_ARCHIVE_PROOF_BYTES
+            total <= limit
                 && !data.is_empty()
                 && data.len() <= total.saturating_sub(self.bytes.len()),
             "receipt proof byte limit"
