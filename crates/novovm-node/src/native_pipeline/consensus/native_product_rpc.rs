@@ -467,9 +467,13 @@ pub(super) fn complete_test_supply(allocations: &mut Vec<GenesisAllocation>) -> 
 }
 
 fn signed(seed: u8, nonce: u64, amount: u128) -> Result<Vec<u8>> {
+    signed_in_chain(CHAIN, seed, nonce, amount)
+}
+
+fn signed_in_chain(chain_id: u64, seed: u8, nonce: u64, amount: u128) -> Result<Vec<u8>> {
     let key = SigningKey::from_bytes(&[seed; 32]);
     let mut transaction = TransferV3 {
-        chain_id: CHAIN,
+        chain_id,
         from: account(seed).as_bytes().to_vec(),
         to: account(2).as_bytes().to_vec(),
         asset: "NOV".into(),
@@ -497,19 +501,26 @@ fn transaction_hashes(raw: &[Vec<u8>]) -> Result<Vec<String>> {
 }
 
 fn genesis() -> Result<GenesisConfig> {
-    let mut genesis = GenesisConfig {
-        chain_id: CHAIN,
-        validator_epoch: 1,
-        protocol_commitment: protocol_commitment(),
-        genesis_config_commitment: [0; 32],
-        timestamp_unix_ms: 1_900_000_000_000,
-        validators: (0..4)
+    fixture_genesis(
+        CHAIN,
+        (0..4)
             .map(|index| GenesisValidator {
                 public_key: validator_key(index).public_key().to_vec(),
                 transport_public_key: transport_key(index).public_key().to_vec(),
                 weight: 1,
             })
             .collect(),
+    )
+}
+
+fn fixture_genesis(chain_id: u64, validators: Vec<GenesisValidator>) -> Result<GenesisConfig> {
+    let mut genesis = GenesisConfig {
+        chain_id,
+        validator_epoch: 1,
+        protocol_commitment: protocol_commitment(),
+        genesis_config_commitment: [0; 32],
+        timestamp_unix_ms: 1_900_000_000_000,
+        validators,
         allocations: [1, 3]
             .into_iter()
             .map(|seed| GenesisAllocation {

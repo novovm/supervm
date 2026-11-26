@@ -209,7 +209,11 @@ impl ChainRecord {
         self.checked_outbox(bytes, set).map(|_| ())
     }
 
-    fn checked_outbox(&self, bytes: &[u8], set: &ValidatorSet) -> Result<(Proposal, Quorum)> {
+    pub(super) fn checked_outbox(
+        &self,
+        bytes: &[u8],
+        set: &ValidatorSet,
+    ) -> Result<(Proposal, Quorum)> {
         ensure!(
             archived_outbox_digest(bytes) == self.outbox_digest,
             "chain decision outbox digest mismatch"
