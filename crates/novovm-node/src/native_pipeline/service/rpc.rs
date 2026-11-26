@@ -492,7 +492,7 @@ pub struct RpcLifecycle {
     admission: admission::AdmissionState,
     history: history::ReceiptHistory,
     uca_queries: native_query::UcaQueries,
-    receipt_proofs: native_query::ReceiptProofQueries,
+    archive_queries: native_query::ArchiveQueries,
     application_selection: Option<application::ApplicationSelection>,
     prefer_application: bool,
 }
@@ -550,7 +550,7 @@ impl RpcLifecycle {
             admission: admission::AdmissionState::default(),
             history: history::ReceiptHistory::default(),
             uca_queries: native_query::UcaQueries::default(),
-            receipt_proofs: native_query::ReceiptProofQueries::default(),
+            archive_queries: native_query::ArchiveQueries::default(),
             application_selection: None,
             prefer_application: true,
         })

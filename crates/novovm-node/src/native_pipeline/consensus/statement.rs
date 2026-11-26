@@ -3,6 +3,7 @@
 //! ordered receipts, content document and parent decision, independent of the
 //! voting round or which validator subset later forms a certificate.
 
+pub(crate) mod finalized_header;
 mod receipt_finality;
 #[cfg(test)]
 mod tests;
@@ -12,6 +13,7 @@ use super::wire::{Context as ConsensusContext, Hash, ValidatorSet};
 use crate::native_pipeline::execution::plan::BatchContext;
 use crate::native_pipeline::persistence::{PreparedCandidate, StoredCandidate};
 use anyhow::{ensure, Context, Result};
+use novovm_consensus::round_bft::VerifiedDecision;
 use sha2::{Digest, Sha256};
 
 // The durable journal and execution archive share one exact parent layout.
@@ -143,6 +145,30 @@ impl BlockStatement {
             "executed statement does not extend exact current parent"
         );
         Ok(())
+    }
+
+    fn verified_point(
+        &self,
+        set: &ValidatorSet,
+        proposal: &[u8],
+        precommits: &[u8],
+    ) -> Result<ParentPoint> {
+        use super::{chain::decision_id, wire};
+        VerifiedDecision::verify(
+            &wire::decode_proposal(proposal)?,
+            &wire::decode_quorum(precommits)?,
+            set,
+            self.consensus,
+            self.hash,
+        )?;
+        Ok(ParentPoint {
+            height: self.consensus.height,
+            block_hash: self.hash,
+            state_root: self.state_root,
+            receipt_batch_commitment: self.receipt_batch_commitment,
+            state_version: self.state_version,
+            decision_hash: decision_id(&self.consensus, self.hash),
+        })
     }
 
     fn compute_hash(&self) -> Hash {

@@ -204,6 +204,7 @@ pub enum Query {
     },
     /// Bytes of the existing asset-receipt inclusion and finality proof.
     ReceiptProof(ArchiveSelector),
+    FinalizedHeader(ArchiveSelector),
 }
 
 impl Query {
@@ -545,6 +546,7 @@ pub enum Answer {
         progress: Option<ProposalProgress>,
     },
     ReceiptProof(ArchiveChunk),
+    FinalizedHeader(ArchiveChunk),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -595,11 +597,11 @@ fn is_proposal(query: &Query) -> bool {
     query.proposal_selector().is_some()
 }
 fn is_archive(query: &Query) -> bool {
-    matches!(query, Query::ReceiptProof(_))
+    matches!(query, Query::ReceiptProof(_) | Query::FinalizedHeader(_))
 }
 fn reply_limit(query: &Query) -> usize {
     match query {
-        Query::Receipts { .. } | Query::ReceiptProof(_) => MAX_BYTES,
+        Query::Receipts { .. } | Query::ReceiptProof(_) | Query::FinalizedHeader(_) => MAX_BYTES,
         Query::ConsensusProposal { .. } | Query::ConsensusProposalProgress { .. } => {
             MAX_PROPOSAL_REPLY_BYTES
         }
@@ -628,7 +630,7 @@ fn valid_request(request: &Request) -> bool {
             return false;
         }
     }
-    if let Query::ReceiptProof(selector) = &request.query {
+    if let Query::ReceiptProof(selector) | Query::FinalizedHeader(selector) = &request.query {
         return selector.is_valid();
     }
     true
@@ -676,7 +678,10 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
         (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
             hashes.len() == states.len()
         }
-        (Query::ReceiptProof(selector), Answer::ReceiptProof(chunk)) => chunk.matches(selector),
+        (Query::ReceiptProof(selector), Answer::ReceiptProof(chunk))
+        | (Query::FinalizedHeader(selector), Answer::FinalizedHeader(chunk)) => {
+            chunk.matches(selector)
+        }
         _ => false,
     }
 }

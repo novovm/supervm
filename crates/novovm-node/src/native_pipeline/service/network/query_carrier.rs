@@ -139,6 +139,20 @@ pub(super) async fn read_receipt(
     domain: MessageDomain,
     target: &ProofTarget,
 ) -> Result<serde_json::Value> {
+    let (mut stream, channel) = connect(scope, locator, identity, &domain).await?;
+    let mut queries = QuerySession::attach(&mut stream, channel, domain)?;
+    target.verify(&queries.fetch(Download::new(target.height())).await?)
+}
+
+pub(super) async fn connect<'a>(
+    scope: &'a IrohScopeV1,
+    locator: &PeerSignedRelayRecordV1,
+    identity: TransportIdentity,
+    domain: &MessageDomain,
+) -> Result<(
+    CarrierStreamV1<'a>,
+    novovm_network::transport_binding::BoundSecureChannelV1,
+)> {
     let pins = (domain.chain_id, domain.genesis, domain.protocol);
     let route = IrohServiceEndpointV1::from_record(locator)?.address;
     let mut stream: CarrierStreamV1<'_> = scope.connect(&route).await?.into();
@@ -153,30 +167,52 @@ pub(super) async fn read_receipt(
     )
     .await?;
     select_chain_service(&mut stream, &mut channel, SELECTOR, pins, true).await?;
-    let (endpoint, mut pump) =
-        NativeCarrierPump::attach_continuous_v7(&mut stream, channel, vec![wire::STREAM])?;
-    let mut client = NativeApplicationClient::from_query_endpoint(endpoint, domain, policy())?;
-    let mut download = Download::new(target.height());
-    loop {
-        let request = client.prepare_query(download.selector()?)?;
+    Ok((stream, channel))
+}
+
+pub(super) struct QuerySession<'a> {
+    client: NativeApplicationClient,
+    pump: NativeCarrierPump<'a>,
+}
+
+impl<'a> QuerySession<'a> {
+    pub(super) fn attach(
+        stream: &'a mut CarrierStreamV1<'_>,
+        channel: novovm_network::transport_binding::BoundSecureChannelV1,
+        domain: MessageDomain,
+    ) -> Result<Self> {
+        let (endpoint, pump) =
+            NativeCarrierPump::attach_continuous_v7(stream, channel, vec![wire::STREAM])?;
+        let client = NativeApplicationClient::from_query_endpoint(endpoint, domain, policy())?;
+        Ok(Self { client, pump })
+    }
+
+    pub(super) async fn query(&mut self, selector: wire::Query) -> Result<Answer> {
+        let request = self.client.prepare_query(selector)?;
         let mut sent = false;
-        let answer = loop {
+        loop {
             let now = Instant::now();
-            let _ = client.poll(wall_ms()?, now, 32)?;
+            let _ = self.client.poll(wall_ms()?, now, 32)?;
             if !sent {
-                sent = client.try_send_query(&request, now)?;
+                sent = self.client.try_send_query(&request, now)?;
             }
-            if let Some(response) = client.poll_query_response(&request, now)? {
-                break response.answer;
+            if let Some(response) = self.client.poll_query_response(&request, now)? {
+                return Ok(response.answer);
             }
-            tick(&mut pump).await?;
-        };
-        let busy = matches!(answer, Answer::Error(wire::QueryError::Busy));
-        if let Some(bytes) = download.accept(answer)? {
-            return target.verify(&bytes);
+            tick(&mut self.pump).await?;
         }
-        if busy {
-            tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    pub(super) async fn fetch(&mut self, mut download: Download) -> Result<Vec<u8>> {
+        loop {
+            let answer = self.query(download.selector()?).await?;
+            let busy = matches!(answer, Answer::Error(wire::QueryError::Busy));
+            if let Some(bytes) = download.accept(answer)? {
+                return Ok(bytes);
+            }
+            if busy {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
         }
     }
 }

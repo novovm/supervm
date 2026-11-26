@@ -307,6 +307,11 @@ fn answer_view(answer: Answer) -> Value {
             "total_bytes": chunk.total_bytes,
             "chunk_bytes": chunk.data.len(),
         }}),
+        Answer::FinalizedHeader(chunk) => json!({"FinalizedHeaderChunk": {
+            "digest": crate::native_pipeline::service::rpc::hex(&chunk.digest),
+            "total_bytes": chunk.total_bytes,
+            "chunk_bytes": chunk.data.len(),
+        }}),
         Answer::Receipt {
             state,
             indexed_height,

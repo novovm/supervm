@@ -395,17 +395,17 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
-    let mut command = Command::new(binary);
+    let mut command = Command::new(&binary);
     let data = stage.join("clean-proving-device");
     ensure!(
         !data.exists(),
         "proof must start without a local client identity"
     );
     command
-        .arg(profile)
+        .arg(&profile)
         .arg("discover-verified-receipt")
         .arg(&hash)
-        .env("LOCALAPPDATA", data);
+        .env("LOCALAPPDATA", &data);
     let worker = thread::spawn(move || command.output());
     owner.until(|_| Ok(worker.is_finished()))?;
     let output = worker
@@ -431,6 +431,79 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         "discovery did not verify the original proof via the carrier: {report}"
     );
     println!("clean-device carrier proof verified: {report}");
+
+    // Header synchronization serves signed roots while whole-receipt export is disabled.
+    owner.rpc.node.public_asset_receipt_proofs = false;
+    ensure!(
+        head.height > 1,
+        "isolated archive needs multiple finalized blocks"
+    );
+    let sync = |owner: &mut QueryOwner| -> Result<std::process::Output> {
+        let mut command = Command::new(&binary);
+        command
+            .arg(&profile)
+            .arg("sync-chain")
+            .env("LOCALAPPDATA", &data);
+        let worker = thread::spawn(move || command.output());
+        owner.until(|_| Ok(worker.is_finished()))?;
+        worker
+            .join()
+            .map_err(|_| anyhow::anyhow!("chain sync Client panicked"))?
+            .map_err(Into::into)
+    };
+    for expected_reopen in [parent.height, head.height] {
+        let output = sync(&mut owner)?;
+        ensure!(
+            output.status.success(),
+            "chain sync Client failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        ensure!(
+            report["reopened_height"] == expected_reopen
+                && report["verified_height"] == head.height
+                && report["verified_block_hash"] == super::hex(&head.block_hash)
+                && report["certified_state_root"] == super::hex(&head.state_root)
+                && report["verified_state_version"] == head.state_version
+                && report["reached_peer_advertised_height"] == true,
+            "chain sync did not match the verified archive: {report}"
+        );
+        println!("certified chain sync: {report}");
+    }
+    let header = data
+        .join("NOVOVM")
+        .join("native-discovery")
+        .join(format!(
+            "{}-{}-{}",
+            pins.0,
+            super::hex(&pins.1),
+            super::hex(&pins.2),
+        ))
+        .join(format!(
+            "headers-{}-{:x}",
+            parent.height,
+            Sha256::digest(serde_json::to_vec(&parent)?)
+        ))
+        .join(format!("{:020}.proof", head.height));
+    let original = fs::read(&header)?;
+    let mut changed = original.clone();
+    *changed
+        .last_mut()
+        .context("finalized header file is empty")? ^= 1;
+    fs::write(&header, changed)?;
+    let result = sync(&mut owner);
+    fs::write(&header, original)?;
+    let output = result?;
+    ensure!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("verifying stored header"),
+        "corrupted finalized header reopened as verified"
+    );
+    ensure!(
+        owner.rpc.node.controller.parent() == head,
+        "header sync altered the detached chain"
+    );
+    println!("altered local header rejected before reconnect");
     owner.novonet.as_mut().unwrap().close()?;
     owner.rpc.node.shutdown()
 }

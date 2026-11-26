@@ -15,6 +15,8 @@ use novovm_network::iroh_transport::IrohControlV1;
 use novovm_relay::transport_identity::{load_transport_identity, provision_transport_identity};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
+mod chain_sync;
+pub use chain_sync::sync_installed_chain;
 
 #[cfg(test)]
 mod tests;
@@ -80,6 +82,52 @@ impl Profile {
         );
         Ok(())
     }
+
+    fn verification_domain(&self) -> Result<(MessageDomain, ParentPoint)> {
+        let pins = self
+            .verification
+            .as_ref()
+            .context("installed proof pins missing")?;
+        ensure!(
+            (1..=64).contains(&pins.validators.len()),
+            "installed validator set size"
+        );
+        let validators = ValidatorSet::new(
+            self.chain_id,
+            pins.validator_epoch,
+            1,
+            pins.validators
+                .iter()
+                .map(|v| Validator::new(&v.public_key, v.weight))
+                .collect::<Result<Vec<_>>>()?,
+        )?;
+        ensure!(
+            validators.hash() == pins.validator_set_hash,
+            "installed validator set commitment differs"
+        );
+        ValidatorTransportBindings::new(
+            &validators,
+            pins.validators
+                .iter()
+                .map(|v| (v.public_key.clone(), v.transport_public_key.clone())),
+        )?;
+        ensure!(
+            self.lookup_transport_keys.iter().all(|key| pins
+                .validators
+                .iter()
+                .any(|v| &v.transport_public_key == key)),
+            "lookup key is outside the installed chain transport bindings"
+        );
+        Ok((
+            MessageDomain {
+                chain_id: self.chain_id,
+                genesis: self.genesis,
+                protocol: self.protocol,
+                validators: Arc::new(validators),
+            },
+            pins.trusted_parent,
+        ))
+    }
 }
 
 fn is_transport_key(key: &[u8]) -> bool {
@@ -113,47 +161,8 @@ pub fn discover_installed(path: &Path) -> Result<serde_json::Value> {
 pub fn discover_verified_receipt(path: &Path, hash: &str) -> Result<serde_json::Value> {
     let transaction = transaction_hash(hash)?;
     let (profile, identity, seeds) = installed_inputs(path)?;
-    let pins = profile
-        .verification
-        .as_ref()
-        .context("installed proof pins missing")?;
-    ensure!(
-        (1..=64).contains(&pins.validators.len()),
-        "installed validator set size"
-    );
-    let validators = ValidatorSet::new(
-        profile.chain_id,
-        pins.validator_epoch,
-        1,
-        pins.validators
-            .iter()
-            .map(|v| Validator::new(&v.public_key, v.weight))
-            .collect::<Result<Vec<_>>>()?,
-    )?;
-    ensure!(
-        validators.hash() == pins.validator_set_hash,
-        "installed validator set commitment differs"
-    );
-    ValidatorTransportBindings::new(
-        &validators,
-        pins.validators
-            .iter()
-            .map(|v| (v.public_key.clone(), v.transport_public_key.clone())),
-    )?;
-    ensure!(
-        profile.lookup_transport_keys.iter().all(|key| pins
-            .validators
-            .iter()
-            .any(|v| &v.transport_public_key == key)),
-        "lookup key is outside the installed chain transport bindings"
-    );
-    let domain = MessageDomain {
-        chain_id: profile.chain_id,
-        genesis: profile.genesis,
-        protocol: profile.protocol,
-        validators: Arc::new(validators),
-    };
-    let target = ProofTarget::new(&domain, identity.clone(), pins.trusted_parent, transaction)?;
+    let (domain, parent) = profile.verification_domain()?;
+    let target = ProofTarget::new(&domain, identity.clone(), parent, transaction)?;
     let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
         let owner = bind_carrier(carrier).await?;
@@ -220,13 +229,17 @@ fn fingerprint(key: &[u8]) -> String {
     format!("{:x}", Sha256::digest(key))
 }
 
-fn local_identity(data: &Path, base: &Path, profile: &Profile) -> Result<TransportIdentity> {
-    let root = data.join("NOVOVM").join("native-discovery").join(format!(
+fn state_path(data: &Path, profile: &Profile) -> PathBuf {
+    data.join("NOVOVM").join("native-discovery").join(format!(
         "{}-{}-{}",
         profile.chain_id,
         super::super::super::rpc::hex(&profile.genesis),
         super::super::super::rpc::hex(&profile.protocol),
-    ));
+    ))
+}
+
+fn local_identity(data: &Path, base: &Path, profile: &Profile) -> Result<TransportIdentity> {
+    let root = state_path(data, profile);
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
