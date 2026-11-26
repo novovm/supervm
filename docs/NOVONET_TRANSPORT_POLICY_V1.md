@@ -83,6 +83,23 @@ Linux 普通用户安装器默认在登录时通过 `novovm-native-client.servic
 会保留停止标记并等待服务退出。再次执行完全相同的显式安装可恢复服务。
 其他发行版本、已改动的 unit 或不同高度与预算需要按发行包的显式切换步骤处理。
 
+Linux 跨机冷同步验收在有独立 systemd 用户会话的测试账户运行。预先从发行方核对清单与配置摘要，
+从已验归档取得期望高度、状态根、节点和叶子数，并与提供方核对通信公钥指纹。两个引导及快照
+提供方要在测试窗口内可用。运行目录必须是新路径，其父目录已存在。
+
+```sh
+python3 scripts/tests/linux-client-cold-network.py \
+    --package-root "$PACKAGE" --manifest-sha256 "$MANIFEST_SHA" --profile-sha256 "$PROFILE_SHA" \
+    --publisher "$PUBLISHER_SHA" --height "$HEIGHT" --state-root "$STATE_ROOT" \
+    --nodes "$NODE_COUNT" --leaves "$LEAF_COUNT" --run-directory "$PRIVATE_RUN" --timeout 360
+```
+
+入口调用发行包内的原安装器，在同一服务进程内核对从高度零启动、接纳签名定位、从该发布者下载
+完整状态的事件，以及持久化的公开身份证明摘要、连续区块头和状态节点数量。已有同名用户服务会中止验收。
+结束后只清理本次 unit 及其启用链接。可分享文件为运行目录中的 `report.json`，同目录下的
+`data` 和 `state` 保存该测试账户的私有设备资料。一次成功证明通过至少一个认证引导取得了定位，
+两个独立站点分别可用及单站点退出需另行取证。
+
 ## 2026-11-07 当前最高归属：NOVOVM / NOVOCHAT共用主网唯一NOVONET
 
 用户明确要求所有NOVOVM网络能力统一由主网唯一NOVONET管理，避免交易与聊天重复开发。
