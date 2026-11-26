@@ -27,9 +27,10 @@ use novovm_network::{
 };
 mod diagnostic;
 mod discovery;
-pub use discovery::discover_installed;
+pub use discovery::{discover_installed, discover_verified_receipt};
 mod observation;
 mod probe;
+mod query_carrier;
 mod relay;
 use discovery::Discovery;
 use serde::{Deserialize, Serialize};
@@ -51,7 +52,6 @@ use tokio::sync::oneshot;
 
 const MAX_CONFIG: usize = 1024 * 1024;
 const SELECTOR: &[u8; 8] = b"NVCHAIN1";
-const SELECT_STREAM: u64 = u64::from_be_bytes(*b"NVCHAIN1");
 const OBJECT_ENTRY: &[u8; 8] = b"NVNETOB1";
 const DISCOVERY_ENTRY: &[u8; 8] = b"NVNETDS1";
 const RELAY_BYTES_PER_MINUTE: u64 =
@@ -255,6 +255,8 @@ pub struct Driver {
     runtime: tokio::runtime::Runtime,
     views: Arc<Mutex<Vec<PeerView>>>,
     connected: mpsc::Receiver<Connected>,
+    queries: mpsc::Receiver<query_carrier::Read>,
+    query_slots: Arc<tokio::sync::Semaphore>,
     stop: Arc<AtomicBool>,
     started: Instant,
     config: Config,
@@ -287,6 +289,9 @@ impl Driver {
         let observer = node.controller.network_probe_diagnostics();
         let enabled = config.probe_control_file.is_some() && config.relay_forwarding;
         let driver = Self::with_material(config, identity, keys, pins, observer)?;
+        if node.native_client_limit > 0 {
+            driver.query_slots.add_permits(1);
+        }
         if enabled {
             driver
                 .diagnostic
@@ -324,6 +329,8 @@ impl Driver {
         let resources = ServiceConcurrencyV1::from_host();
         // One result per configured connection, not a business/data send queue.
         let (sender, connected) = mpsc::sync_channel(keys.len());
+        let (requests, queries) = mpsc::sync_channel(1);
+        let query_slots = Arc::new(tokio::sync::Semaphore::new(0));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
@@ -334,6 +341,10 @@ impl Driver {
             pins,
             views.clone(),
             sender,
+            query_carrier::Ingress {
+                requests,
+                slots: query_slots.clone(),
+            },
             stop.clone(),
             failures.clone(),
             observer,
@@ -354,6 +365,8 @@ impl Driver {
             runtime,
             views,
             connected,
+            queries,
+            query_slots,
             stop,
             started,
             config,
@@ -364,6 +377,20 @@ impl Driver {
             failures,
             resources,
         })
+    }
+    pub fn step_product(
+        &mut self,
+        product: &mut super::rpc::RpcLifecycle,
+        now: Instant,
+    ) -> Result<()> {
+        self.step(&mut product.node.controller, now)?;
+        if let Ok(read) = self.queries.try_recv() {
+            if !read.answer.is_closed() {
+                let answer = product.answer_carrier_query(&read.request.query, now)?;
+                let _ = read.answer.send(answer);
+            }
+        }
+        Ok(())
     }
     pub fn step(&mut self, node: &mut NativeLifecycle, now: Instant) -> Result<()> {
         if let Some(control) = &mut self.probe_control {
@@ -551,6 +578,7 @@ async fn run(
     pins: (u64, [u8; 32], [u8; 32]),
     views: Arc<Mutex<Vec<PeerView>>>,
     connected: mpsc::SyncSender<Connected>,
+    queries: query_carrier::Ingress,
     stop: Arc<AtomicBool>,
     failures: Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
@@ -606,6 +634,7 @@ async fn run(
                         pins,
                         &views,
                         &connected,
+                        &queries,
                         &service_stop,
                         &failures,
                         observer,
@@ -633,6 +662,7 @@ async fn serve<'a>(
     pins: (u64, [u8; 32], [u8; 32]),
     views: &Arc<Mutex<Vec<PeerView>>>,
     connected: &mpsc::SyncSender<Connected>,
+    queries: &query_carrier::Ingress,
     stop: &Arc<AtomicBool>,
     failures: &Arc<NetworkFailures>,
     observer: Option<Arc<NativeTransferDiagnosticsV1>>,
@@ -737,7 +767,7 @@ async fn serve<'a>(
                 )?;
                 publish(&config.public_record_file, &record)?;
                 if let Some(discovery) = &mut discovery {
-                    discovery.set_local(&record)?;
+                    discovery.set_local(&record, now)?;
                 }
                 publish_at = now + Duration::from_secs(40);
             }
@@ -988,6 +1018,7 @@ async fn serve<'a>(
                             pins,
                             views.clone(),
                             connected.clone(),
+                            queries.clone(),
                             discovery.as_ref().map(|d| d.store.clone()),
                             config.relay_forwarding.then(|| relay::Ingress {
                                 scope,
@@ -1050,6 +1081,7 @@ async fn incoming_connection(
     pins: (u64, [u8; 32], [u8; 32]),
     views: Arc<Mutex<Vec<PeerView>>>,
     connected: mpsc::SyncSender<Connected>,
+    queries: query_carrier::Ingress,
     store: Option<Arc<Mutex<novovm_network::opaque_rendezvous::RendezvousStoreV1>>>,
     relay: Option<relay::Ingress<'_>>,
 ) -> Result<()> {
@@ -1076,6 +1108,9 @@ async fn incoming_connection(
             store.context("node discovery disabled")?,
         )
         .await;
+    }
+    if entry == query_carrier::ENTRY {
+        return query_carrier::accept(stream, identity, pins, queries).await;
     }
     ensure!(entry == OBJECT_ENTRY, "unknown NOVONET service entry");
     let (channel, remote) = tokio::time::timeout(
@@ -1121,9 +1156,25 @@ async fn object_connection(
     connected: mpsc::SyncSender<Connected>,
     adopted: Arc<AtomicBool>,
 ) -> Result<()> {
+    select_chain_service(&mut stream, &mut channel, SELECTOR, pins, initiator).await?;
+    let (endpoint, pump) = NativeCarrierPump::attach_continuous_v7(
+        &mut stream,
+        channel,
+        NativeChannel::carrier_streams(),
+    )?;
+    run_native_pump(endpoint, pump, peer, views, connected, adopted).await
+}
+
+async fn select_chain_service(
+    stream: &mut CarrierStreamV1<'_>,
+    channel: &mut novovm_network::transport_binding::BoundSecureChannelV1,
+    selector: &[u8; 8],
+    pins: (u64, [u8; 32], [u8; 32]),
+    initiator: bool,
+) -> Result<()> {
     // A versioned, AEAD-bound service selection under the original Finished
     // channel. No mailbox selector, chain override or JSON business payload.
-    let mut payload = SELECTOR.to_vec();
+    let mut payload = selector.to_vec();
     payload.extend_from_slice(&pins.0.to_be_bytes());
     payload.extend_from_slice(&pins.1);
     payload.extend_from_slice(&pins.2);
@@ -1131,7 +1182,7 @@ async fn object_connection(
         Kind::Data,
         channel.session_id(),
         0,
-        SELECT_STREAM,
+        u64::from_be_bytes(*selector),
         0,
         0,
         payload,
@@ -1158,12 +1209,7 @@ async fn object_connection(
             )?)
             .await?;
     }
-    let (endpoint, pump) = NativeCarrierPump::attach_continuous_v7(
-        &mut stream,
-        channel,
-        NativeChannel::carrier_streams(),
-    )?;
-    run_native_pump(endpoint, pump, peer, views, connected, adopted).await
+    Ok(())
 }
 async fn run_native_pump(
     endpoint: NativeEndpoint,

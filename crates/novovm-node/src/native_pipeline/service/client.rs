@@ -67,6 +67,29 @@ pub struct NativeApplicationClient {
     connected_at: Instant,
 }
 impl NativeApplicationClient {
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn from_query_endpoint(
+        endpoint: NativeEndpoint,
+        domain: MessageDomain,
+        policy: NativeSendPolicy,
+    ) -> Result<Self> {
+        endpoint.validate_bound_carriers_v1(&[query::STREAM])?;
+        let lane = crate::native_pipeline::consensus::native::query_lane(
+            transport::fragment_domain(domain.chain_id, domain.genesis, domain.protocol),
+        );
+        Ok(Self {
+            link: NativeObjectLink::new(endpoint, vec![lane], policy)?,
+            domain,
+            codec: super::native_decode_limits(1, true),
+            owner: Arc::new(()),
+            session: rand::random(),
+            sequence: 0,
+            query_pending: None,
+            #[cfg(test)]
+            connected_at: Instant::now(),
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn connect(
         socket: UdpSocket,

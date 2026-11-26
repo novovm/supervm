@@ -1,5 +1,16 @@
 //! First-run consumer of the same public NOVONET locator service as validators.
 use super::*;
+use crate::native_pipeline::{
+    consensus::{
+        native::{MessageDomain, ValidatorTransportBindings},
+        statement::ParentPoint,
+        wire::{Validator, ValidatorSet},
+    },
+    service::{
+        client::operator::receipt_proof::{transaction_hash, ProofTarget},
+        GenesisValidator,
+    },
+};
 use novovm_network::iroh_transport::IrohControlV1;
 use novovm_relay::transport_identity::{load_transport_identity, provision_transport_identity};
 use sha2::{Digest, Sha256};
@@ -22,6 +33,17 @@ struct Profile {
     seeds: [SeedPin; 2],
     /// Transport identity pins from the installed chain profile.
     lookup_transport_keys: Vec<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verification: Option<VerificationPins>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct VerificationPins {
+    validator_epoch: u64,
+    validator_set_hash: [u8; 32],
+    validators: Vec<GenesisValidator>,
+    trusted_parent: ParentPoint,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -68,18 +90,8 @@ fn is_transport_key(key: &[u8]) -> bool {
 /// Read the installed trust profile and authenticate to available bootstrap
 /// sources using a local transport-purpose identity. Advertise no device locator.
 pub fn discover_installed(path: &Path) -> Result<serde_json::Value> {
-    let data = installed_state_base()?;
-    let profile: Profile = read_document(path)?;
-    profile.validate()?;
-    let base = path
-        .parent()
-        .context("installed profile directory missing")?;
+    let (profile, identity, seeds) = installed_inputs(path)?;
     let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
-    let seeds = [
-        read_document(&base.join(&profile.seeds[0].locator))?,
-        read_document(&base.join(&profile.seeds[1].locator))?,
-    ];
-    let identity = local_identity(&data, base, &profile)?;
     let report = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
@@ -94,6 +106,102 @@ pub fn discover_installed(path: &Path) -> Result<serde_json::Value> {
             "expires_at_ms": record.expires_at_ms,
         })).collect::<Vec<_>>(),
     }))
+}
+
+/// The discovery and native proof streams use the same owned carrier and local
+/// identity. All proof pins come from the installed profile.
+pub fn discover_verified_receipt(path: &Path, hash: &str) -> Result<serde_json::Value> {
+    let transaction = transaction_hash(hash)?;
+    let (profile, identity, seeds) = installed_inputs(path)?;
+    let pins = profile
+        .verification
+        .as_ref()
+        .context("installed proof pins missing")?;
+    ensure!(
+        (1..=64).contains(&pins.validators.len()),
+        "installed validator set size"
+    );
+    let validators = ValidatorSet::new(
+        profile.chain_id,
+        pins.validator_epoch,
+        1,
+        pins.validators
+            .iter()
+            .map(|v| Validator::new(&v.public_key, v.weight))
+            .collect::<Result<Vec<_>>>()?,
+    )?;
+    ensure!(
+        validators.hash() == pins.validator_set_hash,
+        "installed validator set commitment differs"
+    );
+    ValidatorTransportBindings::new(
+        &validators,
+        pins.validators
+            .iter()
+            .map(|v| (v.public_key.clone(), v.transport_public_key.clone())),
+    )?;
+    ensure!(
+        profile.lookup_transport_keys.iter().all(|key| pins
+            .validators
+            .iter()
+            .any(|v| &v.transport_public_key == key)),
+        "lookup key is outside the installed chain transport bindings"
+    );
+    let domain = MessageDomain {
+        chain_id: profile.chain_id,
+        genesis: profile.genesis,
+        protocol: profile.protocol,
+        validators: Arc::new(validators),
+    };
+    let target = ProofTarget::new(&domain, identity.clone(), pins.trusted_parent, transaction)?;
+    let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
+    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
+        let owner = bind_carrier(carrier).await?;
+        let result = async {
+            let report = collect(&owner, identity.clone(), &profile, seeds).await?;
+            let result = owner.with_continuous_service_v4(|| Ok(()), |scope| Box::pin(async move {
+                let deadline = Instant::now() + Duration::from_secs(30);
+                let mut last = None;
+                for candidate in report.records.into_values() {
+                    if candidate.expires_at_ms <= wall_ms()? || Instant::now() >= deadline { continue }
+                    let budget = Duration::from_secs(10).min(deadline.saturating_duration_since(Instant::now()));
+                    let proof = super::super::query_carrier::read_receipt(scope, &candidate, identity.clone(), domain.clone(), &target);
+                    match tokio::time::timeout(budget, proof).await {
+                        Ok(Ok(mut verified)) => {
+                            verified["authenticated_discovery_sources"] = serde_json::json!(report.sources);
+                            verified["serving_transport_sha256"] = serde_json::json!(fingerprint(&candidate.relay_public_key));
+                            return Ok(verified);
+                        }
+                        Ok(Err(error)) => last = Some(error),
+                        Err(error) => last = Some(error.into()),
+                    }
+                }
+                Err(last.unwrap_or_else(|| anyhow::anyhow!("no usable authenticated proof candidate")))
+            })).await;
+            result
+        }.await;
+        let closed = owner.close().await;
+        let proof = result?;
+        closed?;
+        Ok(proof)
+    })
+}
+
+fn installed_inputs(
+    path: &Path,
+) -> Result<(Profile, TransportIdentity, [PeerSignedRelayRecordV1; 2])> {
+    let data = installed_state_base()?;
+    let profile: Profile = read_document(path)?;
+    profile.validate()?;
+    let base = path
+        .parent()
+        .context("installed profile directory missing")?;
+    let seeds = [
+        read_document(&base.join(&profile.seeds[0].locator))?,
+        read_document(&base.join(&profile.seeds[1].locator))?,
+    ];
+    let identity = local_identity(&data, base, &profile)?;
+    Ok((profile, identity, seeds))
 }
 
 fn installed_state_base() -> Result<PathBuf> {
@@ -179,6 +287,29 @@ async fn discover(
     profile: &Profile,
     seeds: [PeerSignedRelayRecordV1; 2],
 ) -> Result<DiscoveryReport> {
+    let owner = bind_carrier(carrier).await?;
+    let report = collect(&owner, identity, profile, seeds).await;
+    let closed = owner.close().await;
+    let report = report?;
+    closed?;
+    Ok(report)
+}
+
+async fn bind_carrier(carrier: IrohConfigV1) -> Result<IrohEndpointOwnerV1> {
+    tokio::time::timeout(
+        Duration::from_secs(8),
+        IrohEndpointOwnerV1::bind(carrier, || Ok(())),
+    )
+    .await
+    .context("NOVONET carrier start deadline")?
+}
+
+async fn collect(
+    owner: &IrohEndpointOwnerV1,
+    identity: TransportIdentity,
+    profile: &Profile,
+    seeds: [PeerSignedRelayRecordV1; 2],
+) -> Result<DiscoveryReport> {
     let pins = profile.pins();
     let wall = wall_ms()?;
     let [first, second] = seeds;
@@ -203,14 +334,8 @@ async fn discover(
             && second.key != identity.public_key(),
         "ordinary device custody overlaps an installed service pin"
     );
-    let owner = tokio::time::timeout(
-        Duration::from_secs(8),
-        IrohEndpointOwnerV1::bind(carrier, || Ok(())),
-    )
-    .await
-    .context("NOVONET carrier start deadline")??;
     let lookups = profile.lookup_transport_keys.clone();
-    let report = owner
+    owner
         .with_operation(
             IrohControlV1::new(Instant::now() + Duration::from_secs(10), || Ok(()))?,
             |scope| {
@@ -223,11 +348,7 @@ async fn discover(
                 ))
             },
         )
-        .await;
-    let closed = owner.close().await;
-    let report = report?;
-    closed?;
-    Ok(report)
+        .await
 }
 
 fn seed_candidate(

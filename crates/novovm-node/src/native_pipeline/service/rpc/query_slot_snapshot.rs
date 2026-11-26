@@ -12,11 +12,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 struct QueryOwner {
     rpc: RpcLifecycle,
     config: ResidentConfig,
+    novonet: Option<super::super::network::Driver>,
 }
 
 impl QueryOwner {
     fn poll(&mut self) -> Result<()> {
         let now = Instant::now();
+        if let Some(novonet) = &mut self.novonet {
+            novonet.step_product(&mut self.rpc, now)?;
+        }
         let wall_ms = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
         let node = &mut self.rpc.node;
         if node.controller.progress.is_recovering() {
@@ -200,6 +204,7 @@ fn open_snapshot(proofs_enabled: bool) -> Result<QueryOwner> {
     let mut owner = QueryOwner {
         rpc: RpcLifecycle::new(node, config.batch_size)?,
         config,
+        novonet: None,
     };
     owner
         .until(|owner| {
@@ -277,6 +282,157 @@ fn receipt_request_hash(request: &Path) -> Result<[u8; 32]> {
         anyhow::bail!("expected a receipt selector")
     };
     Ok(hash)
+}
+
+#[test]
+#[ignore = "requires detached original RocksDB and a discovery-capable Windows Client"]
+fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> Result<()> {
+    use super::super::{
+        client::operator::ClientConfig,
+        network::{Config, Driver},
+    };
+    use novovm_network::{
+        discovery_control::native_locator_id_v1,
+        iroh_transport::IrohAddressV1,
+        product_directory::{sign_relay_record_v1, PeerSignedRelayRecordV1},
+        product_service_lease::IrohServiceEndpointV1,
+    };
+    use sha2::{Digest, Sha256};
+    use std::{fs, net::UdpSocket};
+
+    let binary = input("NOVOVM_QUERY_COPY_PROOF_CLIENT")?;
+    let request = input("NOVOVM_QUERY_COPY_REQUEST")?;
+    let stage = request.parent().context("isolated working directory")?;
+    let hash = super::hex(&receipt_request_hash(&request)?);
+    let old_profile: ClientConfig =
+        serde_json::from_slice(&fs::read(input("NOVOVM_QUERY_COPY_FIRST_PROFILE")?)?)?;
+    let (unreachable, _) = novovm_relay::transport_identity::ephemeral_transport_identity(
+        &old_profile.library,
+        &old_profile.library_sha256,
+    )?;
+    let mut owner = open_snapshot(true)?;
+    let head = owner.rpc.node.controller.parent();
+    let (context, parent) = super::super::native_genesis_anchor(
+        &owner.rpc.node.template,
+        owner.config.genesis.validator_epoch,
+        &owner.rpc.node.validators,
+    );
+    let pins = (
+        context.chain_id,
+        context.genesis_config_commitment,
+        context.protocol_commitment,
+    );
+    let primary = stage.join("offline-primary.json");
+    let secondary = stage.join("local-secondary.json");
+    let sink = UdpSocket::bind("127.0.0.1:0")?;
+    let millis = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+    let first = sign_relay_record_v1(
+        &unreachable,
+        native_locator_id_v1(pins),
+        vec![IrohServiceEndpointV1 {
+            instance: [31; 32],
+            address: IrohAddressV1 {
+                endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[69; 32])
+                    .verifying_key()
+                    .to_bytes(),
+                direct: vec![sink.local_addr()?],
+                relays: Vec::new(),
+            },
+        }
+        .endpoint()?],
+        millis,
+        millis + 120_000,
+        1,
+    )?;
+    fs::write(&primary, serde_json::to_vec(&first)?)?;
+
+    owner.novonet = Some(Driver::new(
+        Config {
+            probe_control_file: None,
+            relays: Vec::new(),
+            nameserver: "127.0.0.1".parse()?,
+            bind_address: "127.0.0.1:0".parse()?,
+            public_record_file: secondary.clone(),
+            carrier_identity_file: None,
+            peer_records: Vec::new(),
+            discovery: true,
+            discovery_seeds: Vec::new(),
+            relay_forwarding: false,
+            fallback_after_ms: 1000,
+            retry_ms: 500,
+            udp_recovery_ms: 2000,
+        },
+        &mut owner.rpc.node,
+    )?);
+    owner.until(|_| Ok(secondary.is_file()))?;
+    let locator: PeerSignedRelayRecordV1 = serde_json::from_slice(&fs::read(&secondary)?)?;
+    let endpoint = IrohServiceEndpointV1::from_record(&locator)?.address;
+    ensure!(
+        !endpoint.direct.is_empty()
+            && endpoint.direct.iter().all(|entry| entry.ip().is_loopback())
+            && endpoint.relays.is_empty(),
+        "detached proof carrier must bind loopback only"
+    );
+    let key = owner.rpc.node.transport_identity().public_key().to_vec();
+    ensure!(locator.relay_public_key == key, "locator identity differs");
+    let profile = stage.join("installed-discovery.json");
+    fs::write(
+        &profile,
+        serde_json::to_vec(&serde_json::json!({
+            "chain_id": pins.0, "genesis": pins.1, "protocol": pins.2,
+            "library": old_profile.library, "library_sha256": old_profile.library_sha256,
+            "nameserver": "127.0.0.1", "relays": [],
+            "seeds": [
+                { "locator": primary, "transport_key": first.relay_public_key },
+                { "locator": secondary, "transport_key": key },
+            ],
+            "lookup_transport_keys": [key],
+            "verification": {
+                "validator_epoch": context.epoch,
+                "validator_set_hash": context.validator_set_hash,
+                "validators": owner.config.genesis.validators,
+                "trusted_parent": parent,
+            },
+        }))?,
+    )?;
+    let mut command = Command::new(binary);
+    let data = stage.join("clean-proving-device");
+    ensure!(
+        !data.exists(),
+        "proof must start without a local client identity"
+    );
+    command
+        .arg(profile)
+        .arg("discover-verified-receipt")
+        .arg(&hash)
+        .env("LOCALAPPDATA", data);
+    let worker = thread::spawn(move || command.output());
+    owner.until(|_| Ok(worker.is_finished()))?;
+    let output = worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("discovery proof Client panicked"))??;
+    ensure!(
+        output.status.success(),
+        "discovery proof Client failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    let fingerprint = format!("{:x}", Sha256::digest(&key));
+    ensure!(
+        report["authenticated_discovery_sources"] == serde_json::json!([fingerprint])
+            && report["serving_transport_sha256"] == fingerprint
+            && report["independently_verified_finality"] == true
+            && report["tx_hash"] == hash
+            && report["success"] == true
+            && report["block_hash"]
+                == "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926"
+            && owner.rpc.node.controller.parent() == head
+            && owner.active_client().is_err(),
+        "discovery did not verify the original proof via the carrier: {report}"
+    );
+    println!("clean-device carrier proof verified: {report}");
+    owner.novonet.as_mut().unwrap().close()?;
+    owner.rpc.node.shutdown()
 }
 
 fn verify_archived_receipt(owner: &mut QueryOwner, request: &Path, observed: &Value) -> Result<()> {

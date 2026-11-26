@@ -27,3 +27,11 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 旧资产回执采用线性承诺，完整证据包括区块内有序回执及 UCA 授权结果。节点使用 `public_asset_receipt_proofs` 配置项控制该批量披露，默认关闭。本次只在 C 隔离副本开启，未部署到现役。正式安装包固定可信锚点、发现后自动同步、跨机热切及链状态验收仍待进行。
 
 验收日志 SHA-256 `5d3ef3123683dd7916e06dce83c16e5223b2ad3f85b54651516754b323167b55`。Client EXE SHA-256 `b6ba98e1e616173fcde6ab82599ece297f5bda6c7045e43e35397f72028d6cb0`。
+
+## 从干净设备自动发现到独立验签
+
+北京时间 10:33，在新的 C 原库副本上运行原 NOVONET owner。Client 从空的本地数据目录启动，生成本机通信用途身份，发行配置固定原链域、验证者权重和创世父状态。首个签名引导源不可达，第二源经认证返回 C 副本自己签名的定位记录。Client 使用同一 NOVONET carrier owner，按候选公钥建立只读 NovoRUDP 查询会话，取得原交易的 15,537 字节证明并独立验签。结果为高度 1、成功、nonce 1、费用 4000000，区块及状态根与原证据一致。副本链头保持一致，原 UDP 客户端槽没有会话。
+
+复现用例为 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier`，沿用 `NOVOVM_QUERY_COPY_CONFIG`、`NOVOVM_QUERY_COPY_REQUEST`、`NOVOVM_QUERY_COPY_FIRST_PROFILE` 和 `NOVOVM_QUERY_COPY_PROOF_CLIENT`。Client 入口为 `novovm-native-client <发行发现配置> discover-verified-receipt <交易哈希>`。现有 NOVONET owner 同一轮发布本机定位记录和开放查询，避免首次认证读到空候选。节点入口类型检查和三项原载体回归通过。测试使用回环网络和已固定的创世锚点，跨机切网、连续状态同步及共识追赶仍待验收。现役 C 未部署或重启，未接触 B。
+
+验收日志 SHA-256 `b2763ceaa8f02702a31fbd2b614c81e356c91d41bb706c2b58626a88449b6919`。Client EXE SHA-256 `2887548f508172b2ce2ae961880d1cf9ff707d95d18d8768a755d2743a4f8d73`。

@@ -36,7 +36,7 @@ use std::{
 
 const MAX_ROWS: usize = 1024;
 mod authority;
-mod receipt_proof;
+pub(crate) mod receipt_proof;
 pub use authority::serve_authority;
 pub use receipt_proof::verified_receipt;
 const MAX_CLIENT_VALIDATORS: usize = 64;
