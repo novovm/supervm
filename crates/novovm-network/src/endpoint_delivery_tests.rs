@@ -163,3 +163,49 @@ fn endpoint_registration_is_bounded_and_dropping_frees_capacity() -> Result<()> 
     let _next = registry.register([99; 32], [2; 32], handler(Arc::new(AtomicUsize::new(0))))?;
     Ok(())
 }
+
+#[tokio::test]
+async fn independent_writers_use_one_destination_and_withdraw_separately() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let service = MailboxServiceV1::new(
+        MailboxStore::open(temp.path().join("mailbox.db"), Limits::default())?,
+        crate::test_identity::key(9),
+    );
+    let first = Arc::new(AtomicUsize::new(0));
+    let second = Arc::new(AtomicUsize::new(0));
+    let a =
+        service.register_endpoint_delivery_grant_v1([1; 32], [2; 32], handler(first.clone()))?;
+    let b =
+        service.register_endpoint_delivery_grant_v1([1; 32], [3; 32], handler(second.clone()))?;
+    assert!(service
+        .register_endpoint_delivery_v1([1; 32], [4; 32], handler(first.clone()))
+        .is_err());
+    assert!(matches!(
+        service.request_local_v1(request(2)).await?,
+        Reply::EndpointDeliveredV1 { .. }
+    ));
+    assert!(matches!(
+        service.request_local_v1(request(3)).await?,
+        Reply::EndpointDeliveredV1 { .. }
+    ));
+    let next =
+        service.register_endpoint_delivery_grant_v1([1; 32], [3; 32], handler(second.clone()))?;
+    drop(b);
+    drop(a);
+    assert!(matches!(
+        service.request_local_v1(request(2)).await?,
+        Reply::Rejected(Rejection::Unauthorized)
+    ));
+    assert!(matches!(
+        service.request_local_v1(request(3)).await?,
+        Reply::EndpointDeliveredV1 { .. }
+    ));
+    assert_eq!(first.load(Ordering::SeqCst), 1);
+    assert_eq!(second.load(Ordering::SeqCst), 2);
+    drop(next);
+    assert!(matches!(
+        service.request_local_v1(request(3)).await?,
+        Reply::Rejected(Rejection::Unavailable)
+    ));
+    Ok(())
+}
