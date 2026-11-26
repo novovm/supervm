@@ -462,9 +462,13 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         }))?,
     )?;
     if let Some(lan) = lan {
-        owner.rpc.node.public_asset_receipt_proofs = false;
-        owner.rpc.node.public_state_sync = true;
-        lan.serve(&mut owner, &profile, &key)?;
+        if lan.receipt_only {
+            lan.serve_receipt(&mut owner, &profile, &key, &hash)?;
+        } else {
+            owner.rpc.node.public_asset_receipt_proofs = false;
+            owner.rpc.node.public_state_sync = true;
+            lan.serve(&mut owner, &profile, &key)?;
+        }
         ensure!(
             owner.rpc.node.controller.parent() == head,
             "LAN acceptance changed the detached chain"
@@ -529,11 +533,28 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         !data.exists(),
         "proof must start without a local client identity"
     );
+    let profile_pin = format!("{:x}", Sha256::digest(fs::read(&profile)?));
+    let rejected = Command::new(&binary)
+        .arg(&profile)
+        .arg("discover-verified-receipt")
+        .arg(&hash)
+        .arg("0".repeat(64))
+        .env("LOCALAPPDATA", &data)
+        .env("XDG_STATE_HOME", &data)
+        .output()?;
+    ensure!(
+        !rejected.status.success()
+            && !data.exists()
+            && String::from_utf8_lossy(&rejected.stderr).contains("differs from its release pin"),
+        "wrong receipt profile pin reached custody or discovery"
+    );
     command
         .arg(&profile)
         .arg("discover-verified-receipt")
         .arg(&hash)
-        .env("LOCALAPPDATA", &data);
+        .arg(&profile_pin)
+        .env("LOCALAPPDATA", &data)
+        .env("XDG_STATE_HOME", &data);
     let worker = thread::spawn(move || command.output());
     owner.until(|_| Ok(worker.is_finished()))?;
     let output = worker
@@ -546,17 +567,14 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     );
     let report: Value = serde_json::from_slice(&output.stdout)?;
     let fingerprint = format!("{:x}", Sha256::digest(&key));
+    verify_original_discovered_receipt(&report, &hash, &fingerprint)?;
     ensure!(
-        report["authenticated_discovery_sources"] == serde_json::json!([fingerprint])
-            && report["serving_transport_sha256"] == fingerprint
-            && report["independently_verified_finality"] == true
-            && report["tx_hash"] == hash
-            && report["success"] == true
-            && report["block_hash"]
-                == "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926"
+        report["transport_identity_sha256"]
+            .as_str()
+            .is_some_and(|identity| identity.len() == 64 && identity != fingerprint)
             && owner.rpc.node.controller.parent() == head
             && owner.active_client().is_err(),
-        "discovery did not verify the original proof via the carrier: {report}"
+        "detached verification did not preserve the original chain and independent custody"
     );
     println!("clean-device carrier proof verified: {report}");
 
@@ -717,6 +735,8 @@ struct LanAcceptance {
     server: std::net::Ipv4Addr,
     client: std::net::Ipv4Addr,
     client_key: Vec<u8>,
+    #[serde(default)]
+    receipt_only: bool,
 }
 
 impl LanAcceptance {
@@ -754,19 +774,14 @@ impl LanAcceptance {
         let internal = UdpSocket::bind("127.0.0.1:0")?;
         internal.connect(owner.config.udp_addr)?;
         internal.set_nonblocking(true)?;
-        let mut profile_data: Value = serde_json::from_slice(&fs::read(profile)?)?;
-        profile_data["native_query_peers"] =
-            serde_json::json!([{"address":gateway,"transport_key":server_key}]);
-        profile_data["library"] = serde_json::json!("../../aoem/windows/core/bin/aoem_ffi.dll");
-        let profile_bytes = serde_json::to_vec(&profile_data)?;
-        fs::write(profile, &profile_bytes)?;
+        let profile_pin = prepare_lan_profile(profile, Some((gateway, server_key)))?;
         let head = owner.rpc.node.controller.parent();
         let client_identity = format!("{:x}", Sha256::digest(&self.client_key));
         let server_identity = format!("{:x}", Sha256::digest(server_key));
         let state_root = super::hex(&head.state_root);
         let manifest = serde_json::json!({
             "native_gateway": gateway,
-            "profile_sha256": format!("{:x}", Sha256::digest(&profile_bytes)),
+            "profile_sha256": profile_pin,
             "client_transport_sha256": client_identity,
             "server_transport_sha256": server_identity,
             "height": head.height,
@@ -850,6 +865,95 @@ impl LanAcceptance {
         println!("cross-device LAN cut and recovery verified: {evidence}");
         Ok(())
     }
+
+    fn serve_receipt(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+        hash: &str,
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let stage = profile.parent().context("LAN receipt acceptance stage")?;
+        let ready = stage.join("lan-ready.json");
+        let result = stage.join("lan-receipt.json");
+        ensure!(
+            !ready.exists() && !result.exists(),
+            "stale LAN receipt files"
+        );
+        let profile_pin = prepare_lan_profile(profile, None)?;
+        let client_identity = format!("{:x}", Sha256::digest(&self.client_key));
+        let server_identity = format!("{:x}", Sha256::digest(server_key));
+        let manifest_draft = ready.with_extension("tmp");
+        let manifest = serde_json::json!({
+            "profile_sha256": profile_pin,
+            "client_transport_sha256": client_identity,
+            "server_transport_sha256": server_identity,
+            "tx_hash": hash,
+        });
+        fs::write(&manifest_draft, serde_json::to_vec(&manifest)?)?;
+        fs::rename(manifest_draft, ready)?;
+        let deadline = Instant::now() + Duration::from_secs(360);
+        while !result.is_file() {
+            ensure!(
+                Instant::now() < deadline,
+                "cross-device receipt acceptance deadline"
+            );
+            owner.poll()?;
+            thread::sleep(Duration::from_millis(2));
+        }
+        ensure!(
+            result.metadata()?.len() <= 16_384,
+            "LAN receipt evidence size"
+        );
+        let report: Value = serde_json::from_slice(&fs::read(result)?)?;
+        verify_original_discovered_receipt(&report, hash, &server_identity)?;
+        ensure!(
+            report["transport_identity_sha256"] == client_identity
+                && owner.active_client().is_err(),
+            "LAN receipt Client changed custody or used the native query slot"
+        );
+        println!("cross-device installed Client receipt verified: {report}");
+        Ok(())
+    }
+}
+
+fn prepare_lan_profile(
+    profile: &Path,
+    native_gateway: Option<(std::net::SocketAddr, &[u8])>,
+) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::fs;
+
+    let mut profile_data: Value = serde_json::from_slice(&fs::read(profile)?)?;
+    if let Some((gateway, server_key)) = native_gateway {
+        profile_data["native_query_peers"] =
+            serde_json::json!([{"address":gateway,"transport_key":server_key}]);
+    }
+    profile_data["library"] = serde_json::json!("../../aoem/windows/core/bin/aoem_ffi.dll");
+    let profile_bytes = serde_json::to_vec(&profile_data)?;
+    fs::write(profile, &profile_bytes)?;
+    Ok(format!("{:x}", Sha256::digest(&profile_bytes)))
+}
+
+fn verify_original_discovered_receipt(report: &Value, hash: &str, server: &str) -> Result<()> {
+    ensure!(
+        report["authenticated_discovery_sources"] == serde_json::json!([server])
+            && report["serving_transport_sha256"] == server
+            && report["independently_verified_finality"] == true
+            && report["tx_hash"] == hash
+            && report["success"] == true
+            && report["height"] == 1
+            && report["block_hash"]
+                == "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926"
+            && report["state_root"]
+                == "0x4223c7609d20861ed8e549382ea279a685f3c3a742ee917d334ada9acb44cca0"
+            && report["proof_bytes"].as_u64().is_some_and(|size| size > 0),
+        "discovery did not verify the original proof via the carrier: {report}"
+    );
+    Ok(())
 }
 
 // The separate interactive-user installer consumes the issued bundle while this

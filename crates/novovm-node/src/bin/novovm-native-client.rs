@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> [profile-sha256] | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin>";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -49,10 +49,13 @@ fn main() -> Result<()> {
         #[cfg(not(feature = "iroh-transport"))]
         anyhow::bail!("UCA execution replay requires installed chain verification");
     } else if action == "discover-verified-receipt" {
-        ensure!(args.len() == 3, "{USAGE}");
+        ensure!((3..=4).contains(&args.len()), "{USAGE}");
         discovered_receipt(
             config,
             args[2].to_str().context("non-UTF8 transaction hash")?,
+            args.get(3)
+                .map(|arg| arg.to_str().context("non-UTF8 profile pin"))
+                .transpose()?,
         )?
     } else if action == "verified-receipt" {
         ensure!(args.len() == 4, "{USAGE}");
@@ -93,12 +96,24 @@ fn discover(_config: &Path) -> Result<serde_json::Value> {
 }
 
 #[cfg(feature = "iroh-transport")]
-fn discovered_receipt(config: &Path, hash: &str) -> Result<serde_json::Value> {
-    novovm_node::native_pipeline::service::network::discover_verified_receipt(config, hash)
+fn discovered_receipt(
+    config: &Path,
+    hash: &str,
+    profile_sha256: Option<&str>,
+) -> Result<serde_json::Value> {
+    novovm_node::native_pipeline::service::network::discover_verified_receipt_from_profile(
+        config,
+        hash,
+        profile_sha256,
+    )
 }
 
 #[cfg(not(feature = "iroh-transport"))]
-fn discovered_receipt(_config: &Path, _hash: &str) -> Result<serde_json::Value> {
+fn discovered_receipt(
+    _config: &Path,
+    _hash: &str,
+    _profile_sha256: Option<&str>,
+) -> Result<serde_json::Value> {
     anyhow::bail!("installed discovery requires the NOVONET carrier feature")
 }
 

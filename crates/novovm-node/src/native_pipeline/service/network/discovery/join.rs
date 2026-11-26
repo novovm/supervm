@@ -256,8 +256,18 @@ pub fn discover_installed(path: &Path) -> Result<serde_json::Value> {
 /// The discovery and native proof streams use the same owned carrier and local
 /// identity. All proof pins come from the installed profile.
 pub fn discover_verified_receipt(path: &Path, hash: &str) -> Result<serde_json::Value> {
+    discover_verified_receipt_from_profile(path, hash, None)
+}
+
+/// Check a release profile pin before loading custody or opening either stream.
+pub fn discover_verified_receipt_from_profile(
+    path: &Path,
+    hash: &str,
+    profile_sha256: Option<&str>,
+) -> Result<serde_json::Value> {
     let transaction = transaction_hash(hash)?;
-    let (profile, identity, seeds) = installed_inputs(path)?;
+    let (profile, identity) = pinned_installed_profile(path, profile_sha256)?;
+    let seeds = read_seeds(profile_base(path)?, &profile);
     let (domain, parent) = profile.verification_domain()?;
     let target = ProofTarget::new(&domain, identity.clone(), parent, transaction)?;
     let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
@@ -276,6 +286,7 @@ pub fn discover_verified_receipt(path: &Path, hash: &str) -> Result<serde_json::
                         Ok(Ok(mut verified)) => {
                             verified["authenticated_discovery_sources"] = serde_json::json!(report.sources);
                             verified["serving_transport_sha256"] = serde_json::json!(fingerprint(&candidate.relay_public_key));
+                            verified["transport_identity_sha256"] = serde_json::json!(fingerprint(identity.public_key()));
                             return Ok(verified);
                         }
                         Ok(Err(error)) => last = Some(error),

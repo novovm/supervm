@@ -1,5 +1,13 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-11-26 安装后 Receipt 查询核对发布配置摘要
+
+`novovm-native-client <profile> discover-verified-receipt <tx-hash> [profile-sha256]` 可在读取本地传输身份或联网前核对发布配置摘要。回执输出包含本地身份指纹、已认证引导来源和实际服务身份指纹。
+
+C 用原库隔离副本和 Windows Client 跑通两路联系人发现、认证读取及独立终结验签。错误配置摘要以退出码 1 拒绝，且没有创建本地身份目录。正确摘要返回交易 `68d83d0b…9bd6cd4` 在高度 1 的成功回执，区块及状态根与原归档一致，证明长度 15,537 字节。复现入口为 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier`。
+
+跨设备只读复跑使用该用例的 `NOVOVM_QUERY_COPY_LAN` 配置和 `receipt_only: true`。提供方检查远端回执中的查询身份、引导源、实际服务指纹和原链字段。首次 D 窗口在客户端启动前关闭，跨设备 Receipt 仍待实际运行。
+
 ## 2026-11-26 连续跟随时分别限制两路引导
 
 安装后 Client 在 Iroh 查询仍活跃时续查签名定位。每个引导入口分别受五秒查询期限约束，等待超时入口期间保留另一入口已验签的结果。冷发现继续使用原引导和原签验流程。
