@@ -145,7 +145,11 @@ impl FinalityVerifier {
     }
 
     #[cfg(feature = "iroh-transport")]
-    pub(crate) fn verify_header(&self, bytes: &[u8], parent: &ParentPoint) -> Result<ParentPoint> {
+    pub(crate) fn verify_header(
+        &self,
+        bytes: &[u8],
+        parent: &ParentPoint,
+    ) -> Result<finalized_header::VerifiedHeader> {
         finalized_header::verify(bytes, &self.set, self.context(parent)?, parent)
     }
 }

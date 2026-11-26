@@ -87,9 +87,9 @@ fn signed(seed: u8, nonce: u64) -> Vec<u8> {
     encode_transfer_v3(&tx).unwrap()
 }
 
-pub(super) struct Fixture {
-    pub(super) input: Vec<u8>,
-    pub(super) executed: ExecutedNovBatch,
+pub(crate) struct Fixture {
+    pub(crate) input: Vec<u8>,
+    pub(crate) executed: ExecutedNovBatch,
 }
 
 fn fixture_with(payer_balance: u128, settlements: u64) -> Fixture {
@@ -148,7 +148,7 @@ fn fixture_with(payer_balance: u128, settlements: u64) -> Fixture {
     }
 }
 
-pub(super) fn fixture() -> Fixture {
+pub(crate) fn fixture() -> Fixture {
     fixture_with(10_000, 7)
 }
 

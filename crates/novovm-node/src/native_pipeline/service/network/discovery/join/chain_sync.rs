@@ -26,6 +26,9 @@ fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
     let (domain, anchor) = profile.verification_domain()?;
     validate_parent(&anchor)?;
     let mut chain = open_checkpoint(&profile, &identity, &domain, anchor)?;
+    if with_state {
+        chain.checkpoint_validity(wall_ms()?)?;
+    }
     let mut cache = with_state
         .then(|| StateCache::open(chain.root.join("state-nodes")))
         .transpose()?;
@@ -140,6 +143,10 @@ fn open_checkpoint(
         root,
         anchor,
         FinalityVerifier::new(domain, identity.clone()),
+        profile
+            .verification
+            .as_ref()
+            .context("installed verification pins missing")?,
     )
 }
 
@@ -157,11 +164,14 @@ async fn sync_peer(
     let advertised = peer_status(&mut session, chain.tip).await?;
     sync_headers(&mut session, chain, cap, &advertised).await?;
     let state = if let Some(cache) = cache {
+        chain.state_readiness(wall_ms()?)?;
         ensure!(
             chain.tip.height == advertised.height,
             "pass verified headers only; rerun to continue state synchronization"
         );
-        Some(cache.sync(&mut session, chain.tip).await?)
+        let progress = cache.sync(&mut session, chain.tip).await?;
+        chain.state_readiness(wall_ms()?)?;
+        Some(progress)
     } else {
         None
     };
@@ -219,10 +229,40 @@ struct VerifiedHeaders {
     _lock: fs::File,
     verifier: FinalityVerifier,
     tip: ParentPoint,
+    minimum: Option<MinimumFinalizedCheckpoint>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum PendingFinality {
+    Checkpoint {
+        required_height: u64,
+        verified_height: u64,
+    },
+    ExpiredCheckpoint {
+        valid_until_unix_ms: u64,
+    },
+}
+
+impl std::fmt::Display for PendingFinality {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Checkpoint { required_height, verified_height } => write!(f,
+                "waiting for installed checkpoint at height {required_height}, verified height {verified_height}"),
+            Self::ExpiredCheckpoint { valid_until_unix_ms } => write!(f,
+                "installed checkpoint policy expired at UTC timestamp {valid_until_unix_ms}"),
+        }
+    }
+}
+impl std::error::Error for PendingFinality {}
+
 impl VerifiedHeaders {
-    fn open(root: PathBuf, anchor: ParentPoint, verifier: FinalityVerifier) -> Result<Self> {
+    fn open(
+        root: PathBuf,
+        anchor: ParentPoint,
+        verifier: FinalityVerifier,
+        pins: &VerificationPins,
+    ) -> Result<Self> {
         fs::create_dir_all(&root)?;
         let lock = fs::OpenOptions::new()
             .read(true)
@@ -263,20 +303,29 @@ impl VerifiedHeaders {
             fs::File::open(path)?
                 .take((finalized_header::MAX_BYTES + 1) as u64)
                 .read_to_end(&mut bytes)?;
-            tip = verifier
+            let header = verifier
                 .verify_header(&bytes, &tip)
                 .with_context(|| format!("verifying stored header at height {height}"))?;
+            if let Some(minimum) = pins.minimum_finalized_checkpoint {
+                minimum.check(header.point())?;
+            }
+            tip = header.point();
         }
         Ok(Self {
             root,
             _lock: lock,
             verifier,
             tip,
+            minimum: pins.minimum_finalized_checkpoint,
         })
     }
 
     fn append(&mut self, bytes: &[u8]) -> Result<()> {
-        let tip = self.verifier.verify_header(bytes, &self.tip)?;
+        let header = self.verifier.verify_header(bytes, &self.tip)?;
+        let tip = header.point();
+        if let Some(minimum) = self.minimum {
+            minimum.check(tip)?;
+        }
         let final_path = self.root.join(format!("{:020}.proof", tip.height));
         ensure!(
             !final_path.try_exists()?,
@@ -284,6 +333,32 @@ impl VerifiedHeaders {
         );
         store_checkpoint(&final_path, bytes)?;
         self.tip = tip;
+        Ok(())
+    }
+
+    fn state_readiness(&self, now: u64) -> std::result::Result<(), PendingFinality> {
+        self.checkpoint_validity(now)?;
+        if let Some(minimum) = self
+            .minimum
+            .filter(|minimum| self.tip.height < minimum.height)
+        {
+            return Err(PendingFinality::Checkpoint {
+                required_height: minimum.height,
+                verified_height: self.tip.height,
+            });
+        }
+        Ok(())
+    }
+
+    fn checkpoint_validity(&self, now: u64) -> std::result::Result<(), PendingFinality> {
+        if let Some(minimum) = self
+            .minimum
+            .filter(|minimum| now >= minimum.valid_until_unix_ms)
+        {
+            return Err(PendingFinality::ExpiredCheckpoint {
+                valid_until_unix_ms: minimum.valid_until_unix_ms,
+            });
+        }
         Ok(())
     }
 }

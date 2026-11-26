@@ -398,6 +398,17 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if std::env::var("NOVOVM_QUERY_COPY_CHECKPOINT_POLICY").as_deref() == Ok("1") {
+        owner.rpc.node.public_asset_receipt_proofs = false;
+        owner.rpc.node.public_state_sync = true;
+        test_installed_checkpoint_policy(&mut owner, &binary, &profile, &key)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head,
+            "checkpoint testing altered the detached chain"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     let follow_test = std::env::var("NOVOVM_QUERY_COPY_FOLLOW");
     if matches!(follow_test.as_deref(), Ok("1" | "2")) {
         owner.rpc.node.public_asset_receipt_proofs = false;
@@ -597,6 +608,159 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     owner.rpc.node.shutdown()
 }
 
+struct IsolatedFollowChild(std::process::Child);
+impl Drop for IsolatedFollowChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn test_installed_checkpoint_policy(
+    owner: &mut QueryOwner,
+    binary: &Path,
+    profile: &Path,
+    key: &[u8],
+) -> Result<()> {
+    use crate::native_pipeline::consensus::statement::finalized_header;
+    use std::{fs, process::Stdio};
+    let head = owner.rpc.node.controller.parent();
+    let set = owner.rpc.node.validators.clone();
+    let mut read = ArchiveRead::new(
+        head.height,
+        head,
+        owner.rpc.node.controller.context(),
+        set.clone(),
+    )?;
+    let mut block = None;
+    owner.until(|owner| {
+        if let Some(artifact) = read.poll(&owner.rpc.node.pipeline)? {
+            block = Some(artifact.context("archive lacks the installed checkpoint")?);
+        }
+        Ok(block.is_some())
+    })?;
+    let block = block.context("missing archived checkpoint")?;
+    let certified = finalized_header::verify(
+        &finalized_header::encode(&block)?,
+        &set,
+        block.context(),
+        &block.parent(),
+    )?;
+    ensure!(
+        certified.point() == head
+            && certified
+                .direct_nov_expected_journal(block.stored().context().effect_contract)
+                .is_err(),
+        "the archived UCA block must not be interpreted as a direct NOV execution proof input"
+    );
+    let stage = profile.parent().context("checkpoint fixture directory")?;
+    let timestamp = certified.timestamp_unix_ms();
+    let now = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+    let mut issued: Value = serde_json::from_slice(&fs::read(profile)?)?;
+    issued["native_query_peers"] =
+        serde_json::json!([{"address":owner.config.udp_addr, "transport_key":key}]);
+    issued["verification"]["minimum_finalized_checkpoint"] = serde_json::json!({"height":head.height, "block_hash":head.block_hash, "valid_until_unix_ms":now + 1_800_000});
+    let pinned = stage.join("installed-checkpoint.json");
+    let data = stage.join("checkpoint-device");
+    fs::write(&pinned, serde_json::to_vec(&issued)?)?;
+    let run =
+        |owner: &mut QueryOwner, config: &Path, data: &Path| -> Result<std::process::Output> {
+            let mut command = Command::new(binary);
+            command
+                .arg(config)
+                .arg("sync-state")
+                .env("LOCALAPPDATA", data)
+                .env("XDG_STATE_HOME", data);
+            let worker = thread::spawn(move || command.output());
+            owner.until(|_| Ok(worker.is_finished()))?;
+            Ok(worker
+                .join()
+                .map_err(|_| anyhow::anyhow!("checkpoint sync Client panicked"))??)
+        };
+    let good = run(owner, &pinned, &data)?;
+    ensure!(
+        good.status.success(),
+        "valid installed checkpoint refused: {}",
+        String::from_utf8_lossy(&good.stderr)
+    );
+    let report: Value = serde_json::from_slice(&good.stdout)?;
+    ensure!(
+        report["verified_height"] == head.height
+            && report["verified_state_nodes"]
+                .as_u64()
+                .is_some_and(|n| n > 0)
+            && report["certified_state_root"] == super::hex(&head.state_root),
+        "valid checkpoint did not verify the state: {report}"
+    );
+    let bad = stage.join("wrong-checkpoint.json");
+    let mut changed = issued.clone();
+    changed["verification"]["minimum_finalized_checkpoint"]["block_hash"] =
+        serde_json::to_value([0xa5u8; 32])?;
+    fs::write(&bad, serde_json::to_vec(&changed)?)?;
+    for directory in [data.clone(), stage.join("wrong-checkpoint-device")] {
+        let invalid = run(owner, &bad, &directory)?;
+        ensure!(
+            !invalid.status.success()
+                && String::from_utf8_lossy(&invalid.stderr)
+                    .contains("conflicts with the installed minimum checkpoint"),
+            "wrong pinned block was accepted using {}",
+            directory.display()
+        );
+    }
+    let stale = stage.join("stale-checkpoint.json");
+    let mut aged = issued.clone();
+    aged["verification"]["minimum_finalized_checkpoint"]["valid_until_unix_ms"] =
+        serde_json::json!(now - 1);
+    fs::write(&stale, serde_json::to_vec(&aged)?)?;
+    let old = run(owner, &stale, &data)?;
+    ensure!(
+        !old.status.success()
+            && String::from_utf8_lossy(&old.stderr).contains("installed checkpoint policy expired"),
+        "expired installed checkpoint made reused state ready"
+    );
+
+    let future = stage.join("future-checkpoint.json");
+    issued["verification"]["minimum_finalized_checkpoint"]["height"] =
+        serde_json::json!(head.height + 1);
+    fs::write(&future, serde_json::to_vec(&issued)?)?;
+    let events = stage.join("checkpoint-follow.jsonl");
+    let mut client = IsolatedFollowChild(
+        Command::new(binary)
+            .arg(&future)
+            .arg("follow-state")
+            .env("LOCALAPPDATA", &data)
+            .env("XDG_STATE_HOME", &data)
+            .stdout(Stdio::from(fs::File::create(&events)?))
+            .spawn()?,
+    );
+    owner.until(|_| {
+        ensure!(
+            client.0.try_wait()?.is_none(),
+            "checkpoint follower exited instead of waiting"
+        );
+        let seen = fs::read_to_string(&events)?;
+        for line in seen
+            .split_inclusive('\n')
+            .filter(|line| line.ends_with('\n'))
+        {
+            let event: Value = serde_json::from_str(line)?;
+            ensure!(
+                event["event"] != "verified_state",
+                "stale serving peer unlocked installed state"
+            );
+            if event["event"] == "waiting_for_required_finality" {
+                return Ok(
+                    event["reason"]["checkpoint"]["required_height"] == head.height + 1
+                        && event["reason"]["checkpoint"]["verified_height"] == head.height,
+                );
+            }
+        }
+        Ok(false)
+    })?;
+    println!("valid finalized checkpoint reached, certified_height={}, signed_execution_timestamp_ms={timestamp}; wrong checkpoint rejected on cold and cached paths; expired checkpoint and missing successor withheld state readiness; current UCA relation rejected as direct NOV", head.height);
+    Ok(())
+}
+
 fn test_installed_follow(
     owner: &mut QueryOwner,
     binary: &Path,
@@ -675,14 +839,7 @@ fn test_installed_follow(
     let events_path = stage.join("follow-events.jsonl");
     let events = fs::File::create(&events_path)?;
     let stderr_path = stage.join("follow-client-stderr.log");
-    struct Child(std::process::Child);
-    impl Drop for Child {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let mut child = Child(
+    let mut child = IsolatedFollowChild(
         Command::new(binary)
             .arg(profile)
             .arg("follow-state")
@@ -835,7 +992,7 @@ fn test_installed_follow(
             .stderr(Stdio::piped())
             .spawn();
         let rejection = (|| -> Result<()> {
-            let mut reject = Child(result?);
+            let mut reject = IsolatedFollowChild(result?);
             let mut status = None;
             owner.until(|_| {
                 status = reject.0.try_wait()?;
