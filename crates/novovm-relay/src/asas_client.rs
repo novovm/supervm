@@ -22,6 +22,7 @@ use std::{
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 pub const IPC_LIMIT: usize = 1024 * 1024;
+pub mod offline;
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfigV1 {
