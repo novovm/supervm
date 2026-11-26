@@ -118,6 +118,23 @@ passed. No remote A deployment or dual-host engine acceptance is claimed.
 - `validator-F` runs ACODE and owns the project tools. Its session can return the authenticated device node ID, public ML-DSA-65 device key and canonical project digest now. After receiving the provider pin and approved chain/genesis, it can return `--uca-scope` for the exact grant. Send public values through the existing authorized handoff channel. Keep private profiles, identities and engine credentials on their owning host.
 - The UCA grant owner publishes the matching ASAS grant. The provider verifies the published revision using its pinned read-only SDK profile. Acceptance requires a native UCA login from `validator-F` and a separate task through each official engine, with edit/build/test receipts produced on `validator-F`.
 
+## Offline Root Preflight
+
+The B native client's `ucaRootMatch: 1` contract supports this explicit local
+comparison before registration activation:
+
+```sh
+novovm-asas-client --profile /absolute/B.json --profile-sha256 ACTUAL_SHA256 --uca-root-match /absolute/identity.sealed
+```
+
+It reads the original protected identity-purpose key under the pinned profile's
+custody and qualified AOEM runtime, performs the original local pair check, and
+calls NOVOVM's existing UCA binding function. Output is only `{"matches":true}`
+or `{"matches":false}`. An unreadable/wrong-purpose key is an error, not a
+negative match. It starts no network, does not alter the profile or key, exports
+no root material and creates no registration/grant signature. Ordinary ASAS
+connection never loads this root. A negative match must preserve the selector.
+
 ## Existing-chain registration proof
 
 `novovm_protocol::uca_registration` defines the bounded canonical `NUIR` proof. `novovm_exec` verifies it with the original qualified ML-DSA-65 owner, using a distinct registration context and an explicit original chain ID, genesis and half-open height range. The initial registration name is `uca:` plus the lowercase hex of the existing ML-DSA-65 primary-key reference. `validator-F` can compare that name to its prepared selector on its own machine without exporting root key material. Existing assigned names retain their original bindings.

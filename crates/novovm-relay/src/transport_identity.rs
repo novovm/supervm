@@ -128,6 +128,41 @@ pub fn load_transport_identity(
     from_mldsa(runtime, key)
 }
 
+/// Offline comparison only; no root material, network request or registration proof is returned.
+pub(crate) fn matches_uca_identity(
+    key_path: &Path,
+    expected: &str,
+    chain_id: u64,
+    library: &Path,
+    sha256: &str,
+) -> Result<bool> {
+    let runtime = load_runtime(library, sha256)?;
+    let public = purpose_keys::inspect_mldsa(
+        key_path,
+        PurposeV1::Identity,
+        chain_id,
+        |public, secret, challenge| {
+            runtime.sign(
+                public,
+                secret,
+                challenge,
+                PurposeV1::Identity.pair_context(),
+            )?;
+            Ok(())
+        },
+    )?;
+    let reference = novovm_adapter_api::uca_key_binding::derive_primary_key_ref_from_binding_v1(
+        novovm_adapter_api::UcaKeyAlgo::Mldsa65,
+        &public.public_key,
+    );
+    let mut name = String::from("uca:");
+    for byte in reference {
+        use std::fmt::Write;
+        write!(&mut name, "{byte:02x}")?;
+    }
+    Ok(name == expected)
+}
+
 #[derive(Clone)]
 pub struct QualifiedTransportVerifier(OwnedMldsaVerifier);
 impl QualifiedTransportVerifier {
