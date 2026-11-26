@@ -67,6 +67,8 @@ Query 的 Role 是目标、Actor 是发起机本地操作员，Number 省略只�
     & $runner @common -Action Submit -Role A1 -Actor A1 -Number 0 -Evidence submit-0
     & $runner @common -Action Query -Role D1 -Actor A1 -Number 0 -Evidence D1-baseline
 
+新 Query 报告的 `query_started_unix` 是首次发起认证读取的 UTC 秒，`observed_unix` 是收到全部所请求的认证结果后的 UTC 秒。Verifier 要求两个时间都在计划窗口内，并继续用观测时刻核对目标进程的启动和停止边界。旧报告沿用其原 `observed_unix` 和原有边界检查，已归档的报告可原样复验。
+
 任何 Submit 都在原 APFL 发送前写一次性 nonce 标记。发送超时后用 Query 判定接收和最终状态，不能把不确定的提交当成可安全重发。若未能满足阶段条件，记录失败与时间并结束该轮；新尝试使用新 RunId、ChainId 与测试材料。测试钱包固定为原用例公开种子，签名载荷只绑定新测试域。
 
 协调者收取阶段 JSON、各端 ready JSON（归档为 ready-A1 等）及同一字节的派生创世（归档为 genesis.json）。各端保留经本地原 AOEM 验签的归档报告。集中检查核对报告衔接、相同 Receipt、QC 有效权重、每机持久化和旧 outbox 字节 SHA；签名由各端 Archive 根据其原库验证。所有文件保留原始字节，传输时核对 SHA-256。集中核验无需联网或访问各端数据库。
