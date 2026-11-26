@@ -6,16 +6,31 @@ use std::{net::UdpSocket, process::Command};
 #[test]
 #[ignore = "requires approved AOEM and the packaged native Client; uses loopback only"]
 fn clean_device_authenticates_through_second_source_and_preserves_custody() -> Result<()> {
-    run_first_contact(false)
+    run_first_contact(LocatorRoute::Reachable)
 }
 
 #[test]
 #[ignore = "requires approved AOEM and the packaged native Client; uses loopback only"]
 fn clean_device_recovers_expired_bootstrap_files_through_pinned_contacts() -> Result<()> {
-    run_first_contact(true)
+    run_first_contact(LocatorRoute::Expired)
 }
 
-fn run_first_contact(expired: bool) -> Result<()> {
+#[test]
+#[ignore = "requires approved AOEM and the packaged native Client; uses loopback only"]
+fn clean_device_recovers_retired_address_before_signed_locator_expires() -> Result<()> {
+    run_first_contact(LocatorRoute::Retired)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocatorRoute {
+    Reachable,
+    Expired,
+    Retired,
+}
+
+fn run_first_contact(route: LocatorRoute) -> Result<()> {
+    let expired = route == LocatorRoute::Expired;
+    let uses_contact = route != LocatorRoute::Reachable;
     let library = PathBuf::from(std::env::var_os("NOVOVM_DISCOVERY_AOEM").context("AOEM path")?)
         .canonicalize()?;
     let digest = std::env::var("NOVOVM_DISCOVERY_AOEM_SHA256")?;
@@ -90,7 +105,7 @@ fn run_first_contact(expired: bool) -> Result<()> {
                     vec![endpoint.clone()],
                     now, now + 120_000, 7,
                 )?;
-                let local_secondary = if expired {
+                let local_secondary = if uses_contact {
                     let mut obsolete_address = address.clone();
                     obsolete_address.direct = vec![sink.local_addr()?];
                     let obsolete = IrohServiceEndpointV1 {instance, address: obsolete_address}.endpoint()?;
@@ -107,7 +122,7 @@ fn run_first_contact(expired: bool) -> Result<()> {
                 let file = root.join("discovery.json");
                 let legacy = root.join("legacy.json");
                 fs::write(&legacy, serde_json::to_vec(&profile)?)?;
-                if expired {
+                if uses_contact {
                     profile.seeds[0].contact = Some(primary_contact);
                     profile.seeds[1].contact = Some(address);
                 }
@@ -119,7 +134,7 @@ fn run_first_contact(expired: bool) -> Result<()> {
                     }
                     tokio::task::spawn_blocking(move || -> Result<()> {
                         assert!(!data.exists());
-                        if expired {
+                        if uses_contact {
                             let rejected = run_client(&client, &legacy, &root.join("legacy-device"));
                             assert!(format!("{:#}", rejected.unwrap_err()).contains("no authenticated NOVONET bootstrap"));
                         }
@@ -140,6 +155,8 @@ fn run_first_contact(expired: bool) -> Result<()> {
                             assert_eq!(cold["authenticated_discovery_sources"], sources);
                             assert_eq!(cold["signed_locator_candidates"][0]["sequence"], 7);
                             println!("expired files with retired routes could not reach a source; second pinned contact retrieved a fresh signed locator with expired files and with both files absent");
+                        } else if uses_contact {
+                            println!("still-valid signed locator with a retired address used the pinned coordinates for the same Iroh and NOVONET identities");
                         }
                         println!("authenticated through secondary source, one signed candidate, stable transport identity across two Client processes");
                         Ok(())
@@ -171,6 +188,32 @@ fn run_first_contact(expired: bool) -> Result<()> {
         evidence_root.display()
     );
     result
+}
+
+#[test]
+fn installed_contact_preserves_endpoint_binding_and_bounded_coordinates() {
+    let signed: Vec<_> = (1..=8).map(|port| ([127, 0, 0, 1], port).into()).collect();
+    let contact_only = ([127, 0, 0, 1], 9).into();
+    let mut route = IrohAddressV1 {
+        endpoint_key: [7; 32],
+        direct: signed.clone(),
+        relays: vec![],
+    };
+    let mut installed = IrohAddressV1 {
+        endpoint_key: [9; 32],
+        direct: vec![signed[0], contact_only],
+        relays: vec![],
+    };
+    add_installed_contact(&mut route, &installed);
+    assert_eq!(route.direct, signed);
+    installed.endpoint_key = route.endpoint_key;
+    add_installed_contact(&mut route, &installed);
+    assert_eq!(route.direct, signed);
+    route.direct.pop();
+    add_installed_contact(&mut route, &installed);
+    assert_eq!(&route.direct[..7], &signed[..7]);
+    assert_eq!(route.direct[7], contact_only);
+    assert_eq!(route.direct.len(), 8);
 }
 
 async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> Result<()> {

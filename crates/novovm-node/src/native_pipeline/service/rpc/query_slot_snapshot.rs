@@ -462,7 +462,10 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         }))?,
     )?;
     if let Some(lan) = lan {
-        if lan.receipt_only {
+        if std::env::var("NOVOVM_QUERY_COPY_LAN_DISCOVERY").as_deref() == Ok("1") {
+            owner.rpc.node.public_asset_receipt_proofs = false;
+            lan.serve_discovery(&mut owner, &profile, &key)?;
+        } else if lan.receipt_only {
             lan.serve_receipt(&mut owner, &profile, &key, &hash)?;
         } else {
             owner.rpc.node.public_asset_receipt_proofs = false;
@@ -916,6 +919,73 @@ impl LanAcceptance {
             "LAN receipt Client changed custody or used the native query slot"
         );
         println!("cross-device installed Client receipt verified: {report}");
+        Ok(())
+    }
+
+    fn serve_discovery(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let stage = profile.parent().context("LAN discovery acceptance stage")?;
+        let ready = stage.join("lan-ready.json");
+        let result = stage.join("lan-discovery.json");
+        ensure!(
+            !ready.exists() && !result.exists(),
+            "stale LAN discovery files"
+        );
+        let profile_pin = prepare_lan_profile(profile, None)?;
+        let server_identity = format!("{:x}", Sha256::digest(server_key));
+        let manifest_draft = ready.with_extension("tmp");
+        fs::write(
+            &manifest_draft,
+            serde_json::to_vec(&serde_json::json!({
+                "profile_sha256": profile_pin,
+                "server_transport_sha256": server_identity,
+            }))?,
+        )?;
+        fs::rename(manifest_draft, ready)?;
+
+        let deadline = Instant::now() + Duration::from_secs(360);
+        while !result.is_file() {
+            ensure!(
+                Instant::now() < deadline,
+                "cross-device discovery acceptance deadline"
+            );
+            owner.poll()?;
+            thread::sleep(Duration::from_millis(2));
+        }
+        ensure!(
+            result.metadata()?.len() <= 16_384,
+            "LAN discovery evidence size"
+        );
+        let report: Value = serde_json::from_slice(&fs::read(result)?)?;
+        let candidates = report["signed_locator_candidates"]
+            .as_array()
+            .context("LAN discovery locator evidence")?;
+        ensure!(
+            report["transport_identity_sha256"]
+                .as_str()
+                .is_some_and(|identity| identity.len() == 64 && identity != server_identity)
+                && report["authenticated_discovery_sources"]
+                    .as_array()
+                    .is_some_and(|sources| {
+                        sources
+                            .iter()
+                            .any(|source| source.as_str() == Some(server_identity.as_str()))
+                    })
+                && candidates.iter().any(|candidate| {
+                    candidate["transport_identity_sha256"] == server_identity
+                        && candidate["sequence"].as_u64().is_some_and(|seq| seq > 0)
+                })
+                && owner.active_client().is_err(),
+            "remote Client did not authenticate and verify this isolated source: {report}"
+        );
+        println!("cross-device discovery verified: {report}");
         Ok(())
     }
 }
