@@ -657,10 +657,13 @@ fn serve_installed_windows_fixture(
     );
     let mut document: Value = serde_json::from_slice(&fs::read(profile)?)?;
     document["library"] = serde_json::json!("../../aoem/windows/core/bin/aoem_ffi.dll");
-    document["seeds"][0]["locator"] =
-        serde_json::json!(primary.file_name().context("first seed")?);
-    document["seeds"][1]["locator"] =
-        serde_json::json!(secondary.file_name().context("second seed")?);
+    for (seed, path) in [primary, secondary].into_iter().enumerate() {
+        let name = path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .context("UTF-8 locator filename required")?;
+        document["seeds"][seed]["locator"] = serde_json::json!(name);
+    }
     fs::write(profile, serde_json::to_vec(&document)?)?;
     let head = owner.rpc.node.controller.parent();
     fs::write(
