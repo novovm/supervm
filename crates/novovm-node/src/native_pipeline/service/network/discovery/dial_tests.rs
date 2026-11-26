@@ -44,7 +44,7 @@ fn unreachable_latest_and_seed_obey_original_deadline_and_release_owner() -> Res
                                     keys[0].clone(),
                                     candidate,
                                     pins,
-                                    vec![],
+                                    None,
                                     vec![],
                                     failures.clone(),
                                 )

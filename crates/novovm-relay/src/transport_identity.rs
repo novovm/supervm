@@ -111,21 +111,73 @@ pub fn load_transport_identity(
     sha256: &str,
 ) -> Result<TransportIdentity> {
     let runtime = load_runtime(library, sha256)?;
+    open_transport_identity(runtime, key_path, chain_id)
+}
+
+/// First-run custody for an ordinary device. Create only at an absent path;
+/// any existing file must pass original purpose, domain and pair checks.
+pub fn provision_transport_identity(
+    key_path: &Path,
+    chain_id: u64,
+    library: &Path,
+    sha256: &str,
+) -> Result<TransportIdentity> {
+    let runtime = load_runtime(library, sha256)?;
+    match std::fs::symlink_metadata(key_path) {
+        Ok(_) => (),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let created = purpose_keys::generate_mldsa(
+                key_path,
+                PurposeV1::Transport,
+                chain_id,
+                || {
+                    let key = runtime.generate_keypair()?;
+                    PurposeKeyMaterialV3::new(key.public_key, key.expanded_secret_key)
+                },
+                |public, secret, challenge| {
+                    check_transport_pair(&runtime, public, secret, challenge)
+                },
+            );
+            if let Err(error) = created {
+                // A concurrent owner may have completed creation. Accept only
+                // through the original protected reader and qualification.
+                return open_transport_identity(runtime, key_path, chain_id).map_err(
+                    |read_error| error.context(format!("open after create: {read_error:#}")),
+                );
+            }
+        }
+        Err(error) => return Err(error.into()),
+    }
+    open_transport_identity(runtime, key_path, chain_id)
+}
+
+fn open_transport_identity(
+    runtime: MldsaRuntime,
+    key_path: &Path,
+    chain_id: u64,
+) -> Result<TransportIdentity> {
     let key = purpose_keys::load_mldsa(
         key_path,
         PurposeV1::Transport,
         chain_id,
-        |public, secret, challenge| {
-            runtime.sign(
-                public,
-                secret,
-                challenge,
-                PurposeV1::Transport.pair_context(),
-            )?;
-            Ok(())
-        },
+        |public, secret, challenge| check_transport_pair(&runtime, public, secret, challenge),
     )?;
     from_mldsa(runtime, key)
+}
+
+fn check_transport_pair(
+    runtime: &MldsaRuntime,
+    public: &[u8],
+    secret: &[u8],
+    challenge: &[u8],
+) -> Result<()> {
+    runtime.sign(
+        public,
+        secret,
+        challenge,
+        PurposeV1::Transport.pair_context(),
+    )?;
+    Ok(())
 }
 
 /// Offline comparison only; no root material, network request or registration proof is returned.

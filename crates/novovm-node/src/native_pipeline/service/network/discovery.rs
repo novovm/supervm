@@ -15,6 +15,8 @@ type Lookup<'a> = Pin<Box<dyn Future<Output = Result<Vec<PeerSignedRelayRecordV1
 const TAG: &[u8; 8] = b"NVDISC01";
 #[cfg(test)]
 mod dial_tests;
+mod join;
+pub use join::discover_installed;
 struct Seed<'a> {
     path: PathBuf,
     book: Option<ServiceLeaseBookV1>,
@@ -385,7 +387,7 @@ impl<'a> Discovery<'a> {
                 identity,
                 candidate,
                 pins,
-                own,
+                Some(own),
                 lookups,
                 self.failures.clone(),
             )));
@@ -430,7 +432,7 @@ async fn query(
     identity: TransportIdentity,
     candidate: DialCandidate,
     pins: Pins,
-    own: Vec<u8>,
+    own: Option<Vec<u8>>,
     lookups: Vec<Vec<u8>>,
     failures: Arc<NetworkFailures>,
 ) -> Result<Vec<PeerSignedRelayRecordV1>> {
@@ -499,12 +501,14 @@ async fn query(
             .context("discovery domain selection")?;
         let mut client =
             DiscoveryClient::from_authenticated_node_locators_v1(&mut stream, channel, instance)?;
-        let publication_revision = wall_ms()?;
-        observation.stage("remote publication");
-        client
-            .put_node_locator_v1(publication_revision, 30_000, own)
-            .await
-            .context("discovery remote publication")?;
+        if let Some(own) = own {
+            let publication_revision = wall_ms()?;
+            observation.stage("remote publication");
+            client
+                .put_node_locator_v1(publication_revision, 30_000, own)
+                .await
+                .context("discovery remote publication")?;
+        }
         let mut found = Vec::new();
         observation.stage("remote lookup");
         for key in lookups {
