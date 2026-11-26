@@ -1,10 +1,14 @@
-"""Check selected follow-state events offline; physical path evidence is separate."""
+"""Check follow-state events and optional PktMon component evidence offline."""
 
 import argparse
 import json
 from pathlib import Path
 import re
+import struct
+import tempfile
 import unittest
+
+import native_roaming_packets
 
 
 def require(ok, reason):
@@ -114,6 +118,78 @@ class OfflineVectors(unittest.TestCase):
                 self.check([self.start, self.event, dict(self.accepted, **change), self.after])
 
 
+class PacketVectors(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.manifest = self.root / "packets.json"
+        self.started = "1970-01-01T00:00:01.000Z"
+        (self.root / "stdout.jsonl").write_text("{}\n", encoding="utf-8")
+        self.write("start.json", {"pid": 17, "utc": self.started})
+        self.write("end.json", {"pid": 17, "started_utc": self.started,
+                               "ended_utc": "1970-01-01T00:00:04.000Z", "stopped_owned_process": True})
+        self.witness = {"stdout_sha256": native_roaming_packets.sha256_file(self.root / "stdout.jsonl")}
+        for label, component, protocol, stamp in (("before", 17, "udp", 2), ("after", 16, "tcp", 3)):
+            local, peer = (f"192.0.2.{stamp}", 45600 + stamp), ("198.51.100.1", 443)
+            capture = self.root / f"{label}.pcapng"
+            capture.write_bytes(self.capture(protocol, local, peer, stamp * 1000 - 50))
+            self.witness[label] = {"component_id": component, "pcapng": capture.name,
+                                   "pcapng_sha256": native_roaming_packets.sha256_file(capture),
+                                   "transport": protocol, "local_ip": local[0], "local_port": local[1],
+                                   "peer_ip": peer[0], "peer_port": peer[1]}
+            observed = f"1970-01-01T00:00:0{stamp}.100Z"
+            marker = {"phase": label, "pid": 17, "started_utc": self.started, "peer_ip": peer[0],
+                      "observed_utc": observed, "completed_utc": observed, "client_running_at_end": True,
+                      "owned_sockets": [dict(self.witness[label])]}
+            self.write(f"route-{label}.json", marker)
+
+    def write(self, name, value):
+        (self.root / name).write_text(json.dumps(value), encoding="utf-8")
+
+    @staticmethod
+    def capture(protocol, local, peer, stamp):
+        def block(kind, body):
+            body += b"\0" * ((-len(body)) % 4)
+            size = len(body) + 12
+            return struct.pack("<II", kind, size) + body + struct.pack("<I", size)
+
+        result = block(0x0A0D0D0A, struct.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1))
+        result += block(1, struct.pack("<HHI", 1, 0, 65535))
+        for source, target in ((local, peer), (peer, local)):
+            frame = b"\0" * 12 + b"\x08\x00\x45" + b"\0" * 8
+            frame += bytes((6 if protocol == "tcp" else 17,)) + b"\0" * 2
+            frame += bytes(map(int, source[0].split("."))) + bytes(map(int, target[0].split(".")))
+            frame += struct.pack("!HH", source[1], target[1])
+            result += block(6, struct.pack("<IIIII", 0, 0, stamp * 1000, len(frame), len(frame)) + frame)
+        return result
+
+    def check(self):
+        self.write(self.manifest.name, self.witness)
+        return native_roaming_packets.verify(self.manifest, 2000, 3000, 2500)
+
+    def test_component_windows_and_pid(self):
+        self.assertTrue(self.check()["packet_flow_checks_passed"])
+
+    def test_wrong_client_pid(self):
+        path = self.root / "route-after.json"
+        marker = json.loads(path.read_text(encoding="utf-8"))
+        marker["pid"] = 18
+        self.write(path.name, marker)
+        with self.assertRaisesRegex(ValueError, "socket sample"):
+            self.check()
+
+    def test_unrelated_connection_to_same_relay(self):
+        self.witness["after"]["local_port"] += 1
+        with self.assertRaisesRegex(ValueError, "not owned"):
+            self.check()
+
+    def test_same_component_cannot_be_used_twice(self):
+        self.witness["after"]["component_id"] = self.witness["before"]["component_id"]
+        with self.assertRaisesRegex(ValueError, "distinct component"):
+            self.check()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
@@ -126,6 +202,8 @@ def main():
     parser.add_argument("--state-root")
     parser.add_argument("--min-sequence", type=int)
     parser.add_argument("--switch-utc-ms", type=int, help="observed switch time in Unix milliseconds")
+    parser.add_argument("--packet-evidence", type=Path,
+                        help="optional packet manifest alongside the Client capture files")
     args = parser.parse_args()
     if args.self_test:
         unittest.main(argv=[__file__], verbosity=2)
@@ -142,7 +220,14 @@ def main():
         events = [json.loads(line) for line in args.jsonl.read_text(encoding="utf-8").splitlines()]
         result = verify(events, args.before, args.after, args.client, args.peer, args.height,
                         args.state_root, args.min_sequence, args.switch_utc_ms)
-    except (OSError, ValueError, AttributeError) as exc:
+        if args.packet_evidence:
+            require(args.jsonl.resolve() == args.packet_evidence.with_name("stdout.jsonl").resolve(),
+                    "event stream must come from the same Client capture directory")
+            result["packet_evidence"] = native_roaming_packets.verify(
+                args.packet_evidence, events[args.before]["utc_unix_ms"],
+                events[args.after]["utc_unix_ms"], args.switch_utc_ms,
+            )
+    except (OSError, ValueError, AttributeError, KeyError, TypeError, struct.error) as exc:
         parser.exit(1, f"{exc}\n")
     print(json.dumps(result))
 

@@ -6,6 +6,8 @@ This is separate from the C/D same-LAN proxy interruption. Do not reuse its even
 
 Read-only PowerShell inventory used Get-NetAdapter -Physical, Get-NetIPConfiguration, Get-NetRoute and Get-NetTCPConnection -State Established. Marvell Ethernet (ifIndex 18, 1 Gbps, IPv4 192.168.71.59/24, gateway 192.168.71.1) was the sole Up physical interface. Other Ethernet/Wi-Fi interfaces were disconnected or absent. Interface 55 Meta is a software tunnel and has default routes; five observed Codex/ChatGPT process sockets used its local address 198.18.0.1 and seven loopback sockets were observed. This is not proof of their full underlying control route. No second independent control-safe network was verified. No active network test was run.
 
+Later on 2026-11-26, D verified that Ethernet and a phone's cellular hotspot were both up on distinct interfaces. Source-bound HTTPS connections to the same approved relay completed on both networks. The capture launch then returned a canceled UAC prompt, with no test Client process or packet capture. D prepared a one-elevation capture helper and independently built the pinned Windows Client. The end-to-end switch still requires a wired baseline, a recorded physical transition and a recovered authenticated state.
+
 ## Required setup and rollback
 
 - Prefer a separate Windows test machine with independent operator console, wired LAN and a second Wi-Fi hotspot/cellular uplink, with different upstreams. Alternatively, attach an independent uplink to D and move control to a verified independent console/path before starting. A tunnel, another address on the same NIC, or an AP using the same uplink is not sufficient. Do not disable D's sole physical link while relying on remote Codex.
@@ -28,3 +30,16 @@ python scripts/tests/verify-native-roaming-events.py --self-test
 Use the independently observed physical switch time in Unix milliseconds. The validator links the recovered state event to the exact peer and sequence of a `verified_locator_accepted` event. The Client emits that event after validating and persisting a new signed locator, with its signed issue and expiration times and a local UTC timestamp. Acceptance requires issuance after the switch, acceptance before recovery, and validity at recovery. A cached locator or a state event carrying only a sequence cannot satisfy this check. Physical path, process continuity, and the switch time still require their own raw evidence.
 
 To record Windows route selection to an approved peer IP, append `-PeerIp $ApprovedPeerIp` to the capture command. After the first verified-state event, create `route-before.request` in the private evidence directory. Wait for `route-before.json` before changing the network. After the switch and the next verified-state event, create `route-after.request` and wait for `route-after.json` before stopping. Both records carry UTC sampling bounds, Client PID and start time, and the selected source, interface, next hop and default gateways when available. Correlate those records with the Client events, signed-locator verification, and actual packet evidence on each physical interface.
+
+## Bind packets to the Client process
+
+Use `-BeforePeerIp` and `-AfterPeerIp` when the first route uses the C LAN address and the recovered route uses a public relay address. The route markers also record the running Client's established TCP tuples to that peer and UDP ports owned solely by that PID. Mark each phase promptly after its `verified_state` event and preserve `start.json`, `stdout.jsonl`, `route-before.json`, `route-after.json` and `end.json` together.
+
+Retain the original ETL and the PktMon component-to-physical-adapter inventory for the run. Export each physical component separately because the combined PCAPNG does not preserve the component attribution required here. [Microsoft PktMon `etl2pcap`](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/pktmon-etl2pcap)
+
+```powershell
+pktmon etl2pcap $Etl --component-id $WiredComponent --out (Join-Path $NewEvidence 'wired.pcapng')
+pktmon etl2pcap $Etl --component-id $HotspotComponent --out (Join-Path $NewEvidence 'hotspot.pcapng')
+```
+
+Place `packets.json` alongside the Client files. Set `stdout_sha256` to the event log digest. For each of `before` and `after`, set `component_id`, `pcapng`, `pcapng_sha256`, `transport` (`tcp` or `udp`), `local_ip`, `local_port`, `peer_ip` and `peer_port` from the relevant capture and Client socket sample. Append `--packet-evidence $PacketManifest` to the event verifier command. The verifier matches bidirectional packets to each owned flow, checks the phase windows and rejects copies of the same component export. Retain the original ETL and component mapping for independent review. Where a tunnel changes the tuple seen on the physical NIC, correlate its outer packets separately before accepting the physical path.

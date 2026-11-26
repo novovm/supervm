@@ -8,7 +8,9 @@ param(
     [Parameter(Mandatory)][string]$IsolatedLocalAppData,
     [Parameter(Mandatory)][string]$EvidenceDir,
     [ValidateRange(30,900)][int]$Seconds = 240,
-    [System.Net.IPAddress]$PeerIp
+    [System.Net.IPAddress]$PeerIp,
+    [System.Net.IPAddress]$BeforePeerIp,
+    [System.Net.IPAddress]$AfterPeerIp
 )
 $ErrorActionPreference = 'Stop'
 
@@ -33,6 +35,8 @@ function Get-RoamingRouteEvidence {
         default_gateways = @()
         physical_adapter = $null
         error = $null
+        owned_sockets = @()
+        socket_error = $null
     }
     try {
         if ($Process.HasExited) { throw 'Client was not running at the evidence marker' }
@@ -58,6 +62,27 @@ function Get-RoamingRouteEvidence {
     } catch {
         $record.error = $_.Exception.Message
     }
+    try {
+        if ($Process.HasExited) { throw 'Client was not running at the socket sample' }
+        $transport = Get-NetTCPConnection -ErrorAction Stop | Where-Object {
+            $_.OwningProcess -eq $Process.Id -and $_.RemoteAddress -eq $Peer.ToString() -and
+            $_.State -eq 'Established'
+        } | ForEach-Object {
+            @{ transport = 'tcp'; local_ip = $_.LocalAddress; local_port = $_.LocalPort;
+               peer_ip = $_.RemoteAddress; peer_port = $_.RemotePort }
+        }
+        $datagram = Get-NetUDPEndpoint -ErrorAction Stop | Group-Object LocalPort |
+            Where-Object {
+                # A port also owned by another PID does not identify this Client.
+                !($_.Group | Where-Object OwningProcess -ne $Process.Id)
+            } | ForEach-Object Group | ForEach-Object {
+                @{ transport = 'udp'; local_ip = $_.LocalAddress; local_port = $_.LocalPort }
+            }
+        $record.owned_sockets = @($transport | Where-Object { $_ }) +
+            @($datagram | Where-Object { $_ })
+    } catch {
+        $record.socket_error = $_.Exception.Message
+    }
     $record.client_running_at_end = !$Process.HasExited
     $record.completed_utc = [datetime]::UtcNow.ToString('o')
     $record
@@ -80,6 +105,9 @@ function Save-RoamingRouteMarker {
 
 $clientPath = (Get-Item -LiteralPath $Client).FullName
 $profilePath = (Get-Item -LiteralPath $Profile).FullName
+$beforePeer = $BeforePeerIp ?? $PeerIp
+$afterPeer = $AfterPeerIp ?? $PeerIp
+if ([bool]$beforePeer -ne [bool]$afterPeer) { throw 'Provide both phase peer IPs or one common PeerIp' }
 if ((Get-FileHash -LiteralPath $clientPath).Hash -ine $ClientSha256 -or
     (Get-FileHash -LiteralPath $profilePath).Hash -ine $ProfileSha256) {
     throw 'Executable or profile digest mismatch'
@@ -109,12 +137,12 @@ try {
     $elapsed = [Diagnostics.Stopwatch]::StartNew()
     while ($elapsed.Elapsed.TotalSeconds -lt $Seconds -and !$p.HasExited -and
         !(Test-Path -LiteralPath (Join-Path $out.FullName 'stop.request'))) {
-        if ($PeerIp) {
+        if ($beforePeer) {
             # Wait for route-before.json before switching, then signal route-after.request.
             # Route selection is not a packet observation; correlate with both endpoints or capture.
-            Save-RoamingRouteMarker $out.FullName 'before' $PeerIp $p $start
+            Save-RoamingRouteMarker $out.FullName 'before' $beforePeer $p $start
             if (Test-Path -LiteralPath (Join-Path $out.FullName 'route-before.json')) {
-                Save-RoamingRouteMarker $out.FullName 'after' $PeerIp $p $start
+                Save-RoamingRouteMarker $out.FullName 'after' $afterPeer $p $start
             }
         }
         Start-Sleep -Milliseconds 250
