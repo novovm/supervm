@@ -4,7 +4,9 @@ use super::*;
 use novovm_network::discovery_control::native_chain_query_address;
 use novovm_network::novorudp::endpoint::NativePeer;
 mod locators;
+mod native_round;
 use locators::Locators;
+use native_round::NativeRound;
 
 const POLL: Duration = Duration::from_secs(2);
 const RECOVER_NATIVE: Duration = Duration::from_secs(6);
@@ -75,15 +77,17 @@ impl Follower {
         )?;
         let mut owner = None;
         let mut backoff = Duration::from_secs(1);
-        let mut native = self.probe_native(None).await;
+        let mut native_round = NativeRound::default();
+        let mut native = self.probe_native(&native_round).await;
         loop {
-            let failed = if let Some((mut session, route)) = native.take() {
-                let failed = route.clone();
+            if let Some((mut session, route)) = native.take() {
+                let failed_peer = route.peer.clone();
+                let failed_address = route.native_address;
                 self.run_route(&mut session, route, None).await.ok();
-                Some(failed)
-            } else {
-                None
-            };
+                if let Some(address) = failed_address {
+                    native_round.record_failure(failed_peer, address);
+                }
+            }
             self.chain.checkpoint_validity(wall_ms()?)?;
             if owner.is_none() {
                 let carrier = IrohConfigV1::new(&self.profile.relays, self.profile.nameserver)?;
@@ -95,7 +99,7 @@ impl Follower {
                     collect(active, self.identity.clone(), &self.profile, seeds).await
                 {
                     self.observe_locators(report)?;
-                    if let Some(discovered_native) = self.probe_native(failed.as_ref()).await {
+                    if let Some(discovered_native) = self.probe_native(&native_round).await {
                         native = Some(discovered_native);
                         continue;
                     }
@@ -114,6 +118,7 @@ impl Follower {
                         .await?;
                     self = returned;
                     if recovered_native.is_some() {
+                        native_round = NativeRound::default();
                         native = recovered_native;
                         backoff = Duration::from_secs(1);
                         continue;
@@ -134,11 +139,12 @@ impl Follower {
             }
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(10));
-            native = self.probe_native(None).await;
+            native_round = NativeRound::default();
+            native = self.probe_native(&native_round).await;
         }
     }
 
-    async fn probe_native(&mut self, failed: Option<&Route>) -> Option<Native> {
+    async fn probe_native(&mut self, round: &NativeRound) -> Option<Native> {
         let now = wall_ms().ok()?;
         let mut options = Vec::new();
         for (key, record) in &self.locators.records {
@@ -184,9 +190,7 @@ impl Follower {
                 self.native_cursor = self.native_cursor.wrapping_add(1);
                 let native_address = Some(node.address);
                 let peer = fingerprint(&node.key);
-                if failed
-                    .is_some_and(|old| old.native_address == native_address && old.peer == peer)
-                {
+                if round.excludes(&peer, node.address) {
                     continue;
                 }
                 let Ok(mut session) =
@@ -259,7 +263,8 @@ impl Follower {
     ) -> Result<Option<Native>> {
         let mut next_probe = Instant::now() + RECOVER_NATIVE;
         loop {
-            if let Some(state) = tokio::time::timeout(QUERY_BUDGET, self.sync(session)).await?? {
+            let progress = tokio::time::timeout(QUERY_BUDGET, self.sync(session)).await??;
+            if let Some(state) = progress {
                 let tip = self.chain.tip;
                 if self.reported.as_ref() != Some(&(tip, route.clone())) {
                     self.emit(serde_json::json!({
@@ -296,8 +301,11 @@ impl Follower {
                             self.observe_locators(report)?;
                         }
                     }
-                    if let Some(native) = self.probe_native(None).await {
-                        return Ok(Some(native));
+                    // Finish verifying the current advertised tip before leaving a usable route.
+                    if progress.is_some() {
+                        if let Some(native) = self.probe_native(&NativeRound::default()).await {
+                            return Ok(Some(native));
+                        }
                     }
                     next_probe = Instant::now() + RECOVER_NATIVE;
                 }

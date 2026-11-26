@@ -9,6 +9,8 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod native_fallback;
+
 struct QueryOwner {
     rpc: RpcLifecycle,
     config: ResidentConfig,
@@ -549,6 +551,21 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("status-only") {
+        ensure!(
+            lan.is_none() && !independent,
+            "mixed routes require the detached loopback archive"
+        );
+        owner.rpc.node.public_asset_receipt_proofs = false;
+        owner.rpc.node.public_state_sync = true;
+        native_fallback::verify(&mut owner, &binary, &profile, &old_profile, &key, pins)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head && owner.active_client().is_err(),
+            "mixed routes altered the archive or its UDP admission"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     if let Some(lan) = lan {
         if lan_install {
             owner.rpc.node.public_state_sync = true;

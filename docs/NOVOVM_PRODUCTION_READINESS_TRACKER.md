@@ -22,6 +22,14 @@ C 复现了旧 Client 在安装预检时拒绝独立只读服务公钥的问题�
 
 C 在 LocalService 原库隔离副本上复跑 `query_slot_snapshot::clean_device_discovers_and_verifies_original_receipt_over_same_carrier`，指定 `NOVOVM_QUERY_COPY_NONVALIDATOR_PROVIDER=1` 与固定联系人模式。测试服务使用独立 AOEM 传输身份，公钥与四个验证者的投票钥及传输钥均不同。新 Client 核验原交易 `68d83d0b…9bd6cd4` 的 15,537 字节终结性证明，回执与此前原件一致。随后验证至高度 2，首次下载 97 个状态节点、49 个叶子，重新打开后完整复验且新增下载为零。日志 SHA-256 为 `59a39d21eca78f1da5d4dba85218baf7734fc9d31fbccb9290bde6b80ac4081c`。本项覆盖 Client 查询已固定的独立只读服务；普通装机节点自行发布并被其他设备发现，以及两个长期公网入口的现场验收，仍待验证。
 
+### 两个只响应 Status 的原生节点同时在线
+
+D 定位到 `follow-state` 的回退问题。两个 NovoRUDP 服务均接受同一 Client 重新认证、能回答 Status，但均无法提供终结区块头时，旧 Client 只跳过刚刚失败的地址，可连续在两端重复请求。新版按本轮已失败的对端和地址选择候选，并允许每个身份立即尝试一个新的签名地址。用尽候选后转向 Iroh；通过 Iroh 分批下载区块头时，先验真当前对端所报高度的状态，再尝试切回原生路径。
+
+C 用同一个隔离归档、同一配置摘要及三个同时在线的回环端点跑了两个干净 Windows Client。两条原生地址均启用与现役入口相同的认证重连。旧版在两端各收到 4 次 Status、2 次区块头拒绝，已接受归档定位；在这个重复窗口内未完成状态验真。新版在两端各收到 2 次 Status、1 次区块头拒绝，随后通过 Iroh 从高度 0 验至 2，下载并验证 97 个状态节点、49 个叶子。关闭服务端重连的初始对照中，旧版也能通过 Iroh 完成同步。原版与新版 Client 的 stdout 摘要分别是 `c30a1eb6cf87976b206685840c041449f0725768b0a69eb96967d766d8614849`、`1e4bda68ecb3c98ddc95bf0a4193e2bf550df4185e4f3ab33ec7b0fc2ca95ad7`，同窗口服务计数日志摘要是 `1bd39e362bdad56dd26714d87964079479baf063c4bf869d07a1b4866af84e7c`。
+
+复跑上述隔离归档测试时设 `NOVOVM_QUERY_COPY_FOLLOW=status-only`；用 `NOVOVM_QUERY_COPY_FALLBACK_BASELINE` 指定已支持独立读取公钥的旧 Client（`0f3b38ba`）。同一新版另通过两项原有回归：固定地址失效后，同一进程接受原身份签发的新 NovoRUDP 地址；另一运行完成 NovoRUDP → Iroh → NovoRUDP。两项均核对高度 2 与原状态根，物理网卡切换仍待现场验收。
+
 ## 2026-11-26 实体跨网取证准备
 
 11:25:00.358 UTC，D 在新窗口以 PID 32964 经 NovoRUDP 再次验真同一高度、节点数、叶子数和状态根。C 同时记录了来自 D 的 UDP 源端口 56064。D 的物理口 18 选路与有线组件 17 对应。ETL 中该元组有 86 条发包、0 条匹配的回包，热点组件 16 为 0。现场脚本未记录按键确认或有线 Down，未产生切换后状态事件。D 的 Client、抓包及筛选器均已收尾。C 独立保留并验签了在此窗口签发的序号 4 至 16 的 13 份定位，索引 SHA-256 为 `68f5985f5f1e705f1c7a47034d4a437569ffbcb9a67db6887c8c289690b6ac8c`。这些定位的签发无法单独证明 D 在蜂窝路径接收了定位。
