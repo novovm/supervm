@@ -676,8 +676,8 @@ fn prepare_seed_candidates(
                 );
                 let mut preferred = seed_candidate(record, pins, identity, wall)?;
                 let fallback = seed.contact.as_ref().and_then(|contact| {
-                    if contact.endpoint_key == preferred.route.endpoint_key {
-                        add_installed_contact(&mut preferred.route, contact);
+                    if let Some(route) = merge_installed_contact(&preferred.route, contact) {
+                        preferred.route = route;
                         None
                     } else {
                         Some(installed(contact))
@@ -725,25 +725,38 @@ fn prepare_seed_candidates(
     Ok([first, second])
 }
 
-/// Pair coordinates only for the same Iroh endpoint, before its one NOVOVM
-/// authentication. The installed hints stay local to this dial.
-fn add_installed_contact(route: &mut IrohAddressV1, contact: &IrohAddressV1) {
+/// Pair coordinates for the same endpoint when they all fit in a single dial.
+/// Keep the original routes available for bounded fallback on overflow.
+fn merge_installed_contact(
+    route: &IrohAddressV1,
+    contact: &IrohAddressV1,
+) -> Option<IrohAddressV1> {
     if route.endpoint_key != contact.endpoint_key {
-        return;
+        return None;
     }
-    append_coordinates(&mut route.direct, &contact.direct, 8);
-    append_coordinates(&mut route.relays, &contact.relays, 4);
+    Some(IrohAddressV1 {
+        endpoint_key: route.endpoint_key,
+        direct: merge_coordinates(&route.direct, &contact.direct, 8)?,
+        relays: merge_coordinates(&route.relays, &contact.relays, 4)?,
+    })
 }
 
-fn append_coordinates<T: Clone + PartialEq>(route: &mut Vec<T>, installed: &[T], limit: usize) {
-    for address in installed {
-        if route.len() >= limit {
-            break;
+fn merge_coordinates<T: Clone + PartialEq>(
+    signed: &[T],
+    installed: &[T],
+    limit: usize,
+) -> Option<Vec<T>> {
+    let mut merged = Vec::with_capacity(limit);
+    for address in signed.iter().chain(installed) {
+        if merged.contains(address) {
+            continue;
         }
-        if !route.contains(address) {
-            route.push(address.clone());
+        if merged.len() == limit {
+            return None;
         }
+        merged.push(address.clone());
     }
+    Some(merged)
 }
 
 fn seed_candidate(
@@ -825,7 +838,7 @@ async fn lookup_sources(
             fallback,
         } = candidate?;
         let source = fingerprint(&preferred.key);
-        // Give a distinct installed contact time within the same source deadline.
+        // Give the installed fallback time within the same source deadline.
         // Only the first successful authenticated lookup supplies records.
         let until = sample
             .then(|| Instant::now() + source_budget.saturating_sub(Duration::from_millis(100)));

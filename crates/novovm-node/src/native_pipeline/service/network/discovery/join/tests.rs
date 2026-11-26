@@ -86,6 +86,13 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
     };
     let pins = profile.pins();
     let sink = UdpSocket::bind("127.0.0.1:0")?;
+    let retired_sockets = if route == LocatorRoute::Retired {
+        (0..8)
+            .map(|_| UdpSocket::bind("127.0.0.1:0"))
+            .collect::<std::io::Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
     let carrier = IrohConfigV1::new(&[], loopback)?.with_bind_address("127.0.0.1:0".parse()?)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -123,7 +130,14 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                 )?;
                 let local_secondary = if uses_contact && !slow {
                     let mut obsolete_address = address.clone();
-                    obsolete_address.direct = vec![sink.local_addr()?];
+                    obsolete_address.direct = if route == LocatorRoute::Retired {
+                        retired_sockets
+                            .iter()
+                            .map(UdpSocket::local_addr)
+                            .collect::<std::io::Result<Vec<_>>>()?
+                    } else {
+                        vec![sink.local_addr()?]
+                    };
                     if rotated {
                         obsolete_address.endpoint_key = ed25519_dalek::SigningKey::from_bytes(&[69; 32])
                             .verifying_key()
@@ -209,7 +223,8 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                             assert_eq!(cold["signed_locator_candidates"][0]["sequence"], 7);
                             println!("expired files with retired routes could not reach a source; second pinned contact retrieved a fresh signed locator with expired files and with both files absent");
                         } else if uses_contact && !rotated && !slow {
-                            println!("still-valid signed locator with a retired address used the pinned coordinates for the same Iroh and NOVONET identities");
+                            assert!(wall_ms()? < expiry, "retired route recovered after locator expiry");
+                            println!("still-valid signed locator with eight retired addresses used the pinned contact for the same Iroh and NOVONET identities");
                         }
                         println!("authenticated through secondary source, one signed candidate, stable transport identity across two Client processes");
                         Ok(())
@@ -254,26 +269,33 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
 fn installed_contact_preserves_endpoint_binding_and_bounded_coordinates() {
     let signed: Vec<_> = (1..=8).map(|port| ([127, 0, 0, 1], port).into()).collect();
     let contact_only = ([127, 0, 0, 1], 9).into();
+    let signed_relays: Vec<_> = (1..=4)
+        .map(|i| format!("https://relay{i}.invalid/"))
+        .collect();
+    let contact_relay = "https://installed.invalid/".to_owned();
     let mut route = IrohAddressV1 {
         endpoint_key: [7; 32],
         direct: signed.clone(),
-        relays: vec![],
+        relays: signed_relays.clone(),
     };
     let mut installed = IrohAddressV1 {
         endpoint_key: [9; 32],
-        direct: vec![signed[0], contact_only],
-        relays: vec![],
+        direct: vec![signed[0], contact_only, contact_only],
+        relays: vec![contact_relay.clone()],
     };
-    add_installed_contact(&mut route, &installed);
-    assert_eq!(route.direct, signed);
+    assert!(merge_installed_contact(&route, &installed).is_none());
     installed.endpoint_key = route.endpoint_key;
-    add_installed_contact(&mut route, &installed);
-    assert_eq!(route.direct, signed);
+    assert!(merge_installed_contact(&route, &installed).is_none());
     route.direct.pop();
-    add_installed_contact(&mut route, &installed);
-    assert_eq!(&route.direct[..7], &signed[..7]);
-    assert_eq!(route.direct[7], contact_only);
-    assert_eq!(route.direct.len(), 8);
+    assert!(merge_installed_contact(&route, &installed).is_none());
+    route.relays.pop();
+    let merged = merge_installed_contact(&route, &installed).unwrap();
+    assert_eq!(merged.endpoint_key, route.endpoint_key);
+    assert_eq!(merged.direct, [&signed[..7], &[contact_only]].concat());
+    assert_eq!(
+        merged.relays,
+        [&signed_relays[..3], &[contact_relay][..]].concat()
+    );
 }
 
 async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> Result<()> {
