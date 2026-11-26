@@ -18,6 +18,16 @@
 
 A 已将 ZIP 及两份公钥声明放到本机受限目录，整包成员已逐个复算。C、D 的整包取件待可用的直达受限通道。A 的四进程本机回归达到高度 46、92 条最终回执，两份权重保持原链头 12.036 秒，原 outbox 字节一致。三台物理机的联合实测待四个 READY 和共同窗口。
 
+## 2026-11-26 三机验收回执
+
+A、C、D 三台物理 Windows 主机的四个隔离角色已完成本轮验收。固定计划 SHA-256 为 `ecf5e0a28d8a687f5449c567c4a200606054ab3b924d6258522b73939badacf5`，窗口为 06:20:35–06:50:35 UTC。
+
+- A1、A2、C1 在 D1 离线期间推进 40 个高度。D1 以原隔离测试库的 Existing 模式从高度 1 追到 41；区块哈希、状态根及 nonce 40 两条终结回执一致。高度 1 的决策记录和签名 outbox 复验摘要一致。
+- 两票阶段 A1、C1 的观测横跨 14 秒和 13 秒，链头保持在 41，已接收的测试 nonce 41 未终结。仅恢复 A2 后，同一次提交的两条回执在高度 42 终结。
+- 四份停止后的归档均验到高度 42、第 13 轮的同一区块 `f8db07a5ae5d2b3a2e716e89e49b8b827adabafbe3540639c2faa861157b0eee`，对应状态根 `2a974401e58a564f84003811d9a546284c96e4cc8482a8baea7464460befe4ec`，三名不同验证者的 Precommit QC 达到权重门槛 3。
+
+首轮 D1 最终认证查询的发起秒比该次启动报告早一秒。证据包保留首轮原件，并标明 D1 同隔离库的独立 Existing 复验所产生的启动、认证查询和归档原件。聚合副本使用这三份复验报告，原版 verifier 的断言保持原样。A 从 ZIP 重新解压运行得到 PASS。证据 ZIP SHA-256 为 `0dd8b93e983ce790fc8922326b79853b8bca5d205d87e89bd59c6745c1d12a09`，verifier stdout SHA-256 为 `4ce13e6cab972ad3120fc1b20a276140a66786bdd27cc215d32fcdba85725ffe`。原件和取件路径走受限交接。
+
 ## 入口与交接材料
 
 入口为 scripts/novovm-distributed-validator-catchup.ps1，证据核对为 scripts/novovm-verify-distributed-validator-catchup.ps1。用同一 Windows x86_64 Node、AOEM、novovmctl 及本测试 harness。harness 来自以下构建输出的 novovm_node-* 测试可执行文件。按现有 Windows 原生构建说明加载 MSVC/SDK 和 RocksDB 缓存。记录源提交、工具链、功能和真实构建输出哈希。
