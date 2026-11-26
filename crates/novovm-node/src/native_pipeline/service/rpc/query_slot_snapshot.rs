@@ -1011,6 +1011,7 @@ impl LanAcceptance {
         let restore = stage.join("lan-restore");
         let results = stage.join("lan-events.json");
         let ready = stage.join("lan-ready.json");
+        let wired_witness = stage.join("wired-source.json");
         let physical_switch =
             std::env::var("NOVOVM_QUERY_COPY_PHYSICAL_SWITCH").as_deref() == Ok("1");
         ensure!(
@@ -1020,7 +1021,8 @@ impl LanAcceptance {
         ensure!(
             [&cut, &restore, &results, &ready]
                 .into_iter()
-                .all(|file| !file.exists()),
+                .all(|file| !file.exists())
+                && (!physical_switch || !wired_witness.exists()),
             "stale LAN acceptance control files"
         );
         let external = UdpSocket::bind((self.server, 0))?;
@@ -1047,7 +1049,9 @@ impl LanAcceptance {
             add_roaming_route_metadata(stage, &mut manifest)?;
         }
         let manifest_draft = ready.with_extension("tmp");
-        fs::write(&manifest_draft, serde_json::to_vec(&manifest)?)?;
+        let manifest_bytes = serde_json::to_vec(&manifest)?;
+        let manifest_sha256 = format!("{:x}", Sha256::digest(&manifest_bytes));
+        fs::write(&manifest_draft, manifest_bytes)?;
         fs::rename(manifest_draft, ready)?;
 
         let deadline = Instant::now() + Duration::from_secs(480);
@@ -1080,6 +1084,17 @@ impl LanAcceptance {
                 };
                 if !cut_active && source.ip() == self.client {
                     if physical_switch && remote.is_none() {
+                        let now = u64::try_from(
+                            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+                        )?;
+                        let observation = serde_json::json!({
+                            "event": "first_scoped_wired_datagram", "source": source,
+                            "destination": gateway, "observed_utc_ms": now,
+                            "manifest_sha256": manifest_sha256,
+                        });
+                        let pending = wired_witness.with_extension("tmp");
+                        fs::write(&pending, serde_json::to_vec(&observation)?)?;
+                        fs::rename(pending, &wired_witness)?;
                         println!("first scoped wired UDP datagram from {source} to {gateway}");
                     }
                     remote = Some(source);
