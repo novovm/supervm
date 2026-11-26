@@ -700,7 +700,10 @@ impl RpcLifecycle {
         broadcast: bool,
     ) -> Result<Option<Hash>> {
         if matches!(input, AdmissionInput::Application(_)) {
-            ensure!(self.is_application_v4(), "application requires native V4");
+            ensure!(
+                self.supports_application(),
+                "application rules are not active"
+            );
             // Exact duplicates still pass the authoritative current-root check.
             return Ok(None);
         }
@@ -922,7 +925,14 @@ impl RpcLifecycle {
                             && (id.is_null() || id.is_string() || id.is_number()),
                         "invalid JSON-RPC request"
                     );
-                    one_hex_param(&request, if self.is_application_v4() { 8192 } else { 1024 })
+                    one_hex_param(
+                        &request,
+                        if self.supports_application() {
+                            8192
+                        } else {
+                            1024
+                        },
+                    )
                 })();
                 match parsed {
                     Err(err) => slots.push(ResponseSlot::Ready(error(id, &err.to_string()))),
@@ -932,7 +942,7 @@ impl RpcLifecycle {
                             break;
                         }
                         bytes += raw.len();
-                        let input = application::raw_input(self.is_application_v4(), raw);
+                        let input = application::raw_input(self.supports_application(), raw);
                         let application = matches!(input, AdmissionInput::Application(_));
                         if inputs.first().is_some_and(|first| {
                             matches!(first, AdmissionInput::Application(_)) != application
@@ -1014,6 +1024,26 @@ impl RpcLifecycle {
         let Some((message, mut index)) = self.incoming.take() else {
             return Ok(None);
         };
+        if index == 0 {
+            if let Message::Transactions {
+                raw_transactions, ..
+            } = message.as_ref()
+            {
+                if let [raw] = raw_transactions.as_slice() {
+                    if raw.starts_with(b"NUIR") {
+                        self.admission.incoming_origin = None;
+                        self.admission.made_progress = true;
+                        if self
+                            .receive_registration(raw, self.incoming_from_client)
+                            .is_err()
+                        {
+                            self.gossip_rejected += 1;
+                        }
+                        return Ok(None);
+                    }
+                }
+            }
+        }
         let count = match message.as_ref() {
             Message::Transactions {
                 raw_transactions, ..
@@ -1024,7 +1054,7 @@ impl RpcLifecycle {
         };
         let mut inputs = Vec::new();
         let application = matches!(message.as_ref(), Message::Transactions { raw_transactions, .. }
-            if self.is_application_v4() && raw_transactions.get(index).is_some_and(|raw| raw.starts_with(b"NUAP")));
+            if self.supports_application() && raw_transactions.get(index).is_some_and(|raw| raw.starts_with(b"NUAP")));
         let signature_rows = if application {
             self.batch_size.min(application::MAX_ROWS)
         } else if self.is_uca() {
@@ -1042,7 +1072,7 @@ impl RpcLifecycle {
                     raw_transactions, ..
                 } => {
                     let input = application::raw_input(
-                        self.is_application_v4(),
+                        self.supports_application(),
                         raw_transactions[index].clone(),
                     );
                     if matches!(input, AdmissionInput::Application(_)) != application {

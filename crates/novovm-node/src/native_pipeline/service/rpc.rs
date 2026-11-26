@@ -99,6 +99,7 @@ mod admitted_tests;
 mod application;
 mod gossip;
 mod pending_recovery;
+mod registration;
 pub use pending_recovery::{NilPrecommitRecovery, PendingAssetRecovery};
 mod history;
 mod native_query;
@@ -496,6 +497,7 @@ pub struct RpcLifecycle {
     state_node_queries: native_query::StateNodeQueries,
     application_selection: Option<application::ApplicationSelection>,
     prefer_application: bool,
+    registration_intake: Option<registration::RegistrationIntake>,
 }
 
 impl RpcLifecycle {
@@ -555,6 +557,7 @@ impl RpcLifecycle {
             state_node_queries: native_query::StateNodeQueries::default(),
             application_selection: None,
             prefer_application: true,
+            registration_intake: None,
         })
     }
 
@@ -632,7 +635,7 @@ impl RpcLifecycle {
             self.record_selection_gate("projection_pending", None, 0, None, None);
             return Ok(());
         }
-        if self.poll_application_selection()? {
+        if self.poll_registration()? || self.poll_application_selection()? {
             return Ok(());
         }
         let awaiting_admission = self.incoming.is_some()
@@ -666,8 +669,20 @@ impl RpcLifecycle {
                 || position.height == current_height
                     && position.round != self.node.controller.round()
         });
-        let successor = if (self.node.controller.is_local_leader()? || current_unselected)
-            && !self.node.controller.has_successor_target(current_height)
+        let may_select_current = self.node.controller.is_local_leader()? || current_unselected;
+        // The activation parent must be canonical. The speculative asset path
+        // still uses the original pinned profile, so defer V5 to current-height selection.
+        let upgraded_successor = self
+            .node
+            .pipeline
+            .business_schedule
+            .as_ref()
+            .is_some_and(|schedule| schedule.is_active_at(current_height.saturating_add(1)));
+        if upgraded_successor && !may_select_current {
+            return Ok(());
+        }
+        let successor = if upgraded_successor
+            || (may_select_current && !self.node.controller.has_successor_target(current_height))
         {
             None
         } else {
@@ -879,8 +894,7 @@ impl RpcLifecycle {
                 self.poll_application_selection()?;
                 return Ok(());
             }
-            let mut context = self.node.template;
-            context.height = position.height;
+            let mut context = self.node.business_context(position.height);
             context.slot = position.height;
             context.timestamp_unix_ms = context
                 .timestamp_unix_ms
@@ -1072,7 +1086,7 @@ impl RpcLifecycle {
         // cache hit. Cold/history/missed-slot paths retain the full validator.
         // Application packets deliberately have NO asset receipt projection.
         // Use the existing validated archive reader until a typed warm view exists.
-        let warm = !self.is_application_v4()
+        let warm = !application::is_application_context(&self.node.business_context(head.height))
             && self.archive.is_none()
             && self.indexed_height.checked_add(1) == Some(head.height)
             && self.node.controller.published_packet(head).is_some();
@@ -1093,10 +1107,23 @@ impl RpcLifecycle {
             Some(block.context("decided block missing during RPC projection")?)
         };
         let point = block.as_ref().map_or(head, |block| block.point());
-        if let Some(block) = block.as_ref().filter(|block| {
-            application::is_application_context(block.stored().context())
-                && block.stored().spend_outputs().is_none()
-        }) {
+        if block
+            .as_ref()
+            .is_some_and(|block| block.stored().is_registration())
+        {
+            self.indexed_height = point.height;
+            self.archive_projection_blocks = self.archive_projection_blocks.saturating_add(1);
+            self.archive = None;
+            crate::native_pipeline::profile::critical_projection_visible(
+                point.height,
+                point.block_hash,
+            );
+            return Ok(());
+        }
+        if let Some(block) = block
+            .as_ref()
+            .filter(|block| block.stored().is_application_grant())
+        {
             for index in 0..block.stored().receipt_bytes().len() {
                 let receipt = block.stored().application_receipt(index)?;
                 self.remove_application_pending(receipt.command_id);

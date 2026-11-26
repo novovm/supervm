@@ -307,6 +307,13 @@ impl NativeLifecycle {
         })
     }
 
+    pub(crate) fn registration_candidate_request(
+        &self,
+        body: &Message,
+    ) -> Result<crate::native_pipeline::pipeline::BatchRequest> {
+        super::transport::candidate_request(body, &self.bodies.policy)
+    }
+
     pub fn offer(&mut self, body: &Arc<Message>) -> Result<bool> {
         ensure!(!self.frozen, "native lifecycle frozen");
         self.bodies.offer(body, true, &self.progress)

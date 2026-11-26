@@ -234,6 +234,19 @@ impl NativeApplicationClient {
         })
     }
 
+    pub fn prepare_uca_registration(&mut self, raw: Vec<u8>) -> Result<PreparedApplicationInput> {
+        let signed = novovm_protocol::uca_registration::SignedUcaRegistrationV1::decode(&raw)?;
+        ensure!(
+            signed.intent.chain_id == self.domain.chain_id
+                && signed.intent.genesis == self.domain.genesis,
+            "registration input does not match the client's pinned chain"
+        );
+        self.prepare_input(|scope| Message::Transactions {
+            scope,
+            raw_transactions: vec![raw],
+        })
+    }
+
     fn prepare_input(
         &mut self,
         build: impl FnOnce(TransactionsScope) -> Message,

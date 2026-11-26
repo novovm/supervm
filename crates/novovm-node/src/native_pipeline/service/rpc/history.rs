@@ -165,9 +165,10 @@ fn completed_receipt(locator: Locator, block: Option<ArchiveBlock>) -> Result<Va
         "historical receipt archive returned another height"
     );
     for index in 0..block.stored().receipt_bytes().len() {
-        if application::is_application_context(block.stored().context())
-            && block.stored().spend_outputs().is_none()
-        {
+        if block.stored().is_registration() {
+            continue;
+        }
+        if block.stored().is_application_grant() {
             let receipt = block.stored().application_receipt(index)?;
             if receipt.command_id == locator.hash {
                 let mut result = application::receipt_json(&receipt, block.point());

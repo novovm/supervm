@@ -403,15 +403,25 @@ impl StoredCandidate {
         &self.receipts
     }
 
+    pub(crate) fn is_registration(&self) -> bool {
+        registration::is_profile(self.context())
+            && self
+                .raw_transactions()
+                .first()
+                .is_some_and(|raw| raw.starts_with(b"NUIR"))
+    }
+
+    pub(crate) fn is_application_grant(&self) -> bool {
+        (application::is_profile(self.context()) || registration::is_profile(self.context()))
+            && self.spend_outputs.is_none()
+            && !self.is_registration()
+    }
+
     pub fn application_receipt(
         &self,
         index: usize,
     ) -> Result<novovm_protocol::uca_application::ApplicationGrantReceiptV1> {
-        ensure!(
-            (application::is_profile(self.context()) || registration::is_profile(self.context()))
-                && self.spend_outputs.is_none(),
-            "not an application candidate"
-        );
+        ensure!(self.is_application_grant(), "not an application candidate");
         Ok(
             novovm_protocol::uca_application::ApplicationGrantReceiptV1::decode(
                 self.receipts

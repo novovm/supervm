@@ -91,7 +91,15 @@ impl AuthorityReadV1 {
                     }
                     AuthorityAccessV1::Application(access) => Answer::UcaApplicationGrant(
                         access
-                            .read(&input, self.root, self.height)?
+                            .read_under_rules(
+                                &input,
+                                self.root,
+                                self.height,
+                                pipeline
+                                    .business_schedule
+                                    .as_ref()
+                                    .is_some_and(|schedule| schedule.is_active_at(self.height)),
+                            )?
                             .query_state(self.height)?,
                     ),
                 };

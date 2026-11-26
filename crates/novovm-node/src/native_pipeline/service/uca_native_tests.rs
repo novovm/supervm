@@ -726,6 +726,7 @@ fn run_native_uca_service_fixture_with_versioned(
             &runtime,
             &configs,
             &keys,
+            &node_keys,
             nodes,
             clients,
             ingress,

@@ -20,7 +20,7 @@ impl RpcLifecycle {
     pub(super) fn is_uca(&self) -> bool {
         self.node.template.business_program
             == crate::native_pipeline::business::nov_transfer_batch::uca_program_id()
-            || self.is_application_v4()
+            || self.supports_application()
     }
 
     pub(super) fn input_body_limit(&self) -> usize {

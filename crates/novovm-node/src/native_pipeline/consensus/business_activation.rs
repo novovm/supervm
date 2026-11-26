@@ -36,6 +36,20 @@ fn rules(context: &BatchContext) -> BusinessRules {
 }
 
 impl BusinessSchedule {
+    pub(crate) fn is_active_at(&self, height: u64) -> bool {
+        height >= self.verified.subject().context.height
+    }
+
+    pub(crate) fn apply(&self, template: &mut BatchContext, height: u64) {
+        if self.is_active_at(height) {
+            let next = self.verified.subject().next;
+            template.business_program = next.program;
+            template.semantic_version = next.semantic_version;
+            template.effect_contract = next.effects;
+            template.receipt_codec = next.receipts;
+        }
+    }
+
     pub(crate) fn verify(
         config: &BusinessActivationConfig,
         genesis: &BatchContext,

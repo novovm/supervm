@@ -121,6 +121,15 @@ pub fn initialize_persistent_state(mut config: ResidentConfig) -> Result<Offline
 }
 
 impl ResidentNode {
+    pub(crate) fn business_context(&self, height: u64) -> BatchContext {
+        let mut context = self.template;
+        context.height = height;
+        if let Some(schedule) = &self.pipeline.business_schedule {
+            schedule.apply(&mut context, height);
+        }
+        context
+    }
+
     /// Historical convenience startup. Bind the original UDP owner exactly
     /// once, then use the same supplied-transport initialization as the node tick.
     /// The local route label is not a validator or client authentication identity.

@@ -61,7 +61,7 @@ struct Body {
 pub struct CandidateBodies {
     owner: Arc<()>,
     pin: BatchContext,
-    policy: DirectNovFeePolicy,
+    pub(super) policy: DirectNovFeePolicy,
     codec: DecodeLimits,
     limits: BodyLimits,
     bodies: BTreeMap<Hash, Body>,

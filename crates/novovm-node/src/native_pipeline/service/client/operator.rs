@@ -222,7 +222,13 @@ fn read_client_config(path: &Path) -> Result<ClientConfig> {
 
 enum Operation {
     Query(Query),
-    Submit(Arc<AssetSpendBatchV3>),
+    Submit(SignedInput),
+}
+
+enum SignedInput {
+    Asset(Arc<AssetSpendBatchV3>),
+    Application(Vec<u8>),
+    Registration(Vec<u8>),
 }
 
 fn receipt_view(state: native_query::ReceiptState) -> Value {
@@ -358,16 +364,26 @@ fn operation(action: &str, input: Option<&Path>) -> Result<Operation> {
             // The SDK supplies fresh session/sequence correlation, never replays it.
             Ok(Operation::Query(request.query))
         }
-        ("submit", Some(path)) => Ok(Operation::Submit(Arc::new(AssetSpendBatchV3::decode(
+        ("submit", Some(path)) => Ok(Operation::Submit(SignedInput::Asset(Arc::new(AssetSpendBatchV3::decode(
             &read_bounded(path, codec.message_bytes)?,
             AssetSpendBatchLimitsV3 {
                 transactions: MAX_ROWS,
                 transaction_bytes: MAX_SIGNED_SPEND_BYTES,
                 body_bytes: codec.body_bytes,
             },
-        )?))),
+        )?)))),
+        ("submit-registration", Some(path)) => {
+            let raw = read_bounded(path, codec.transaction_bytes)?;
+            novovm_protocol::uca_registration::SignedUcaRegistrationV1::decode(&raw)?;
+            Ok(Operation::Submit(SignedInput::Registration(raw)))
+        }
+        ("submit-application", Some(path)) => {
+            let raw = read_bounded(path, codec.transaction_bytes)?;
+            novovm_protocol::uca_application::SignedApplicationGrantV1::decode(&raw)?;
+            Ok(Operation::Submit(SignedInput::Application(raw)))
+        }
         _ => anyhow::bail!(
-            "expected status (no input), query <request.nvquery>, or submit <signed-batch.nuapfl>"
+            "expected status, query <request.nvquery>, submit <signed-batch.nuapfl>, submit-registration <signed.nuir>, or submit-application <signed.nuap>"
         ),
     }
 }
@@ -445,9 +461,15 @@ fn run_operation(config_path: &Path, operation: Operation) -> Result<Value> {
             }
             view
         }
-        Operation::Submit(batch) => {
-            let rows = batch.len();
-            let prepared = client.prepare_asset_spend(batch)?;
+        Operation::Submit(input) => {
+            let (prepared, rows) = match input {
+                SignedInput::Asset(batch) => {
+                    let rows = batch.len();
+                    (client.prepare_asset_spend(batch)?, rows)
+                }
+                SignedInput::Application(raw) => (client.prepare_application_grants(vec![raw])?, 1),
+                SignedInput::Registration(raw) => (client.prepare_uca_registration(raw)?, 1),
+            };
             let mut sent = false;
             loop {
                 let now = Instant::now();
@@ -670,7 +692,16 @@ mod tests {
     #[test]
     fn native_operator_requires_explicit_operation_and_input() {
         assert!(operation("status", None).is_ok());
-        for action in ["submit", "query", "reset", "create", "sign", "http"] {
+        for action in [
+            "submit",
+            "submit-registration",
+            "submit-application",
+            "query",
+            "reset",
+            "create",
+            "sign",
+            "http",
+        ] {
             assert!(operation(action, None).is_err());
         }
         assert!(operation("status", Some(Path::new("unused"))).is_err());

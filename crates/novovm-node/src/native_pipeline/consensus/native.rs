@@ -48,6 +48,12 @@ fn application_input(message: &transport::Message) -> bool {
         transport::Message::Transactions {
             raw_transactions, ..
         } => {
+            if let [raw] = raw_transactions.as_slice() {
+                if raw.starts_with(b"NUIR") {
+                    return novovm_protocol::uca_registration::SignedUcaRegistrationV1::decode(raw)
+                        .is_ok();
+                }
+            }
             !raw_transactions.is_empty()
                 && raw_transactions.iter().all(|raw| {
                     novovm_protocol::uca_application::SignedApplicationGrantV1::decode(raw).is_ok()
@@ -889,7 +895,7 @@ impl NativeChannel {
             let message = transport::decode(&bytes, self.codec)?;
             ensure!(
                 !application || application_input(&message),
-                "application lane accepts only signed asset or application inputs"
+                "application lane accepts only signed asset, registration or application inputs"
             );
             let evidence = message_evidence::verify(&message, &self.domain)?;
             Ok((message, evidence))

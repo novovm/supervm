@@ -21,9 +21,10 @@ pub(super) struct ApplicationPosition {
 pub(crate) fn is_application_context(
     context: &crate::native_pipeline::execution::plan::BatchContext,
 ) -> bool {
-    context.business_program == uca_application::application_program_id_v1()
-        && context.semantic_version == uca_application::APPLICATION_SEMANTIC_VERSION_V1
-        && context.receipt_codec == uca_application::application_receipt_codec_v1()
+    crate::native_pipeline::business::uca_registration::is_profile(context)
+        || (context.business_program == uca_application::application_program_id_v1()
+            && context.semantic_version == uca_application::APPLICATION_SEMANTIC_VERSION_V1
+            && context.receipt_codec == uca_application::application_receipt_codec_v1())
 }
 
 /// Dispatch only; NUAP shape and signatures are checked by the original owner.
@@ -132,9 +133,16 @@ impl ApplicationRead {
             }
             CaptureStep::Complete => {
                 let input_state = self.capture.take().expect("application capture").finish()?;
-                let state =
-                    self.access
-                        .read(&input_state, self.parent.state_root, self.parent.height)?;
+                let native_registration = pipeline
+                    .business_schedule
+                    .as_ref()
+                    .is_some_and(|schedule| schedule.is_active_at(self.parent.height));
+                let state = self.access.read_under_rules(
+                    &input_state,
+                    self.parent.state_root,
+                    self.parent.height,
+                    native_registration,
+                )?;
                 let checked = reattach(input, admitted)?;
                 // Reuse the exact transition checker; discard proposed changes.
                 // This read-only frontier cannot stage or publish those changes.
@@ -241,8 +249,12 @@ impl RpcLifecycle {
             self.application_receipts.remove(&hash);
         }
     }
-    pub(crate) fn is_application_v4(&self) -> bool {
-        is_application_context(&self.node.template)
+    pub(crate) fn supports_application(&self) -> bool {
+        is_application_context(
+            &self
+                .node
+                .business_context(self.node.controller.context().height),
+        )
     }
 
     pub(super) fn poll_application_admission(
@@ -274,8 +286,8 @@ impl RpcLifecycle {
             Ok((input, admitted)) => {
                 let result = (|| {
                     ensure!(
-                        self.is_application_v4() && self.projection_error.is_none(),
-                        "application V4 unavailable"
+                        self.supports_application() && self.projection_error.is_none(),
+                        "application rules unavailable"
                     );
                     let intent = admitted
                         .checked_application()
@@ -348,7 +360,7 @@ impl RpcLifecycle {
         broadcast: bool,
     ) -> Result<Hash> {
         ensure!(
-            self.is_application_v4() && self.node.pipeline.owns_admitted(&admitted),
+            self.supports_application() && self.node.pipeline.owns_admitted(&admitted),
             "application owner/profile mismatch"
         );
         let checked = reattach(&input, &admitted)?;
@@ -422,7 +434,7 @@ impl RpcLifecycle {
     /// Application candidates use only the actual published parent. No asset
     /// nonce overlay is reinterpreted as grant revisions for private lookahead.
     pub(super) fn poll_application_selection(&mut self) -> Result<bool> {
-        if !self.is_application_v4() {
+        if !self.supports_application() {
             return Ok(false);
         }
         let has_application = self
@@ -532,8 +544,7 @@ impl RpcLifecycle {
         if selection.selected.is_empty() {
             return Ok(false);
         }
-        let mut context = self.node.template;
-        context.height = position.height;
+        let mut context = self.node.business_context(position.height);
         context.slot = position.height;
         context.timestamp_unix_ms = context
             .timestamp_unix_ms

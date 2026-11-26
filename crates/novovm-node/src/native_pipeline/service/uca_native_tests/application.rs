@@ -1,5 +1,6 @@
 //! Real native input and published queries only; no pool, vote or tree injection.
 use super::*;
+mod activation;
 use novovm_protocol::{
     native_query::{
         ApplicationGrantStateV1, ApplicationGrantViewV1, IdentityStatusV1, UcaIdentityIdV1,
@@ -38,6 +39,14 @@ fn send_application(
     signed: &SignedApplicationGrantV1,
 ) -> Result<()> {
     let prepared = client.prepare_application_grants(vec![signed.encode()?])?;
+    send_input(nodes, client, &prepared)
+}
+
+fn send_input(
+    nodes: &mut [rpc::RpcLifecycle],
+    client: &mut client::NativeApplicationClient,
+    prepared: &client::PreparedApplicationInput,
+) -> Result<()> {
     let deadline = Instant::now() + TIMEOUT;
     let mut sent = false;
     loop {
@@ -57,7 +66,7 @@ fn send_application(
             }
         }
         if !sent {
-            sent = client.try_send(&prepared, now)?;
+            sent = client.try_send(prepared, now)?;
         }
         std::thread::sleep(Duration::from_millis(1));
     }
@@ -382,6 +391,7 @@ pub(super) fn run(
     runtime: &AoemExecFacade,
     configs: &[ResidentConfig],
     keys: &[(Vec<u8>, zeroize::Zeroizing<Vec<u8>>)],
+    node_keys: &[config::test_custody::TestNodeKeys],
     mut nodes: Vec<rpc::RpcLifecycle>,
     mut clients: Vec<client::NativeApplicationClient>,
     ingress: usize,
@@ -392,7 +402,7 @@ pub(super) fn run(
         "four real services/clients required"
     );
     ensure!(
-        nodes.iter().all(rpc::RpcLifecycle::is_application_v4),
+        nodes.iter().all(rpc::RpcLifecycle::supports_application),
         "application fixture did not select the V4 service template"
     );
     let validators = nodes[0].node.validators.clone();
@@ -609,9 +619,14 @@ pub(super) fn run(
     assert_ne!(resumed.heads[0].block_hash, revoked.heads[0].block_hash);
     assert_ne!(resumed.heads[0].state_root, revoked.heads[0].state_root);
     drop(clients);
-    for node in nodes {
-        node.node.shutdown()?;
-    }
+    activation::run(
+        runtime,
+        configs,
+        node_keys,
+        nodes,
+        client_identity,
+        &resumed.heads,
+    )?;
     println!("V4 application: four real services/DBs, native UDP grants, asset spend, future-nonce non-starvation, scoped revocation, cold recovery, unchanged-head refusals and post-restart reauthorization; no deployment or TPS claim");
     Ok(())
 }
