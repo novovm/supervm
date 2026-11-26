@@ -24,7 +24,7 @@ const WIRE_DOMAIN: &[u8] = b"novovm-replacement-raw-wire/v1\0";
 
 /// Claimed execution domain. The eventual ingress/compiler must compare it
 /// with the configured chain and installed program, not trust peer values.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BatchContext {
     pub chain_id: u64,
     pub genesis_config_commitment: NodeHash,

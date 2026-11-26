@@ -9,3 +9,11 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 可重复用例为 `native_pipeline::service::rpc::query_slot_snapshot::original_snapshot_reclaims_idle_slot_for_another_authenticated_receipt`。测试输入为五项 `NOVOVM_QUERY_COPY_*`，只接收带域标记的独立数据库副本及本机回环查询配置。
 
 验收日志 SHA-256 `f90224ad80a802eb0110dc095e1941afc75ae59de33592946e4e994c7b96a981`。测试 EXE SHA-256 `afda709321e55a39427f7fd1394573680784255278e1630cccac5628be52888b`。
+
+## 原交易的独立最终性校验
+
+北京时间 09:50，同一用例从未打开过的原库副本重新开始。旧查询空闲 30.000378 秒时仍占唯一槽位，第二个探针完成认证并得到原交易同一高度和区块的成功回执。用例从已定案归档导出证明，在本地固定的创世父状态和验证者集合上，重新计算有序回执及 UCA 授权结果的承诺、执行语句和区块哈希，对原提案和 Precommit QC 验签，再核对回执字段。验收拒绝了错误父状态、错误交易、伪改 QC 签名、回执字节、UCA 授权结果和额外尾部字节。
+
+证明使用现有线性承诺，需要原区块的完整有序回执见证。当前支持基础转账和现有 UCA 资产回执编码。本轮验证了原库副本中的归档导出与本地验签，Client 网络拉取、新设备同步和现役部署仍待验收。没有重启现役 C，没有补发或换钥，本轮未操作 B。
+
+本轮验收日志 SHA-256 `8f43f32350dc5ca0ddaa8c71e8f24f761381ca7e4b80fc6bfd4db4d8fd101022`。测试 EXE SHA-256 `5e73156170d679a81f025fd97655ddacf2a87f9ead4428ff0a676833ebf8bbf3`。

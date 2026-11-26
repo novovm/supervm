@@ -517,19 +517,16 @@ fn pipeline_config(config: &ResidentConfig) -> PipelineConfig {
     }
 }
 
-fn start_native(
-    config: &ResidentConfig,
-    pipeline: &CandidatePipeline,
-    template: BatchContext,
-    validators: Arc<ValidatorSet>,
-    identities: NodeIdentities,
-    transport: UdpTransport,
-) -> Result<NativeLifecycle> {
+fn native_genesis_anchor(
+    template: &BatchContext,
+    validator_epoch: u64,
+    validators: &ValidatorSet,
+) -> (ConsensusContext, ParentPoint) {
     let context = ConsensusContext {
         chain_id: template.chain_id,
         genesis_config_commitment: template.genesis_config_commitment,
         protocol_commitment: template.protocol_commitment,
-        epoch: config.genesis.validator_epoch,
+        epoch: validator_epoch,
         validator_set_hash: validators.hash(),
         height: 1,
         parent_block_hash: [0; 32],
@@ -543,6 +540,19 @@ fn start_native(
         state_version: 0,
         decision_hash: [0; 32],
     };
+    (context, parent)
+}
+
+fn start_native(
+    config: &ResidentConfig,
+    pipeline: &CandidatePipeline,
+    template: BatchContext,
+    validators: Arc<ValidatorSet>,
+    identities: NodeIdentities,
+    transport: UdpTransport,
+) -> Result<NativeLifecycle> {
+    let (context, parent) =
+        native_genesis_anchor(&template, config.genesis.validator_epoch, &validators);
     let mut opening = ValidatorJournal::open(
         pipeline,
         context,

@@ -3,8 +3,10 @@
 //! ordered receipts, content document and parent decision, independent of the
 //! voting round or which validator subset later forms a certificate.
 
+mod receipt_finality;
 #[cfg(test)]
 mod tests;
+pub use receipt_finality::{ReceiptFinalityProof, VerifiedReceiptFinality};
 
 use super::wire::{Context as ConsensusContext, Hash, ValidatorSet};
 use crate::native_pipeline::execution::plan::BatchContext;

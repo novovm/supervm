@@ -37,6 +37,7 @@ const REGISTRATION_DOCUMENT_MAGIC: &[u8; 8] = b"NVCAND06";
 mod application;
 mod registration;
 mod uca;
+pub(crate) use uca::receipt_hash_with_spend;
 const MARKER_MAGIC: &[u8; 8] = b"NVCOMP01";
 const MARKER_BYTES: usize = 8 + 32 + 8 + 4 + 32;
 const CHUNK_BYTES: usize = 64 * 1024;
@@ -434,15 +435,7 @@ impl StoredCandidate {
             .receipts
             .get(index)
             .context("receipt index out of bounds")?;
-        let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
-        ensure!(tail.is_empty(), "trailing receipt bytes");
-        Ok(ReceiptView {
-            tx_hash: receipt.tx_hash,
-            signer_identity: receipt.signer_identity,
-            nonce_after: receipt.delta.nonce_after,
-            success: receipt.failure.is_none() && receipt.fee_failure.is_none(),
-            charged_fee: receipt.delta.fee_funding_delta.to_string(),
-        })
+        decode_asset_receipt_view(bytes)
     }
     pub fn nodes(&self) -> &BTreeMap<NodeHash, Vec<u8>> {
         &self.nodes
@@ -1130,6 +1123,18 @@ pub struct ReceiptView {
     pub nonce_after: u64,
     pub success: bool,
     pub charged_fee: String,
+}
+
+pub(crate) fn decode_asset_receipt_view(bytes: &[u8]) -> Result<ReceiptView> {
+    let (receipt, tail): (ReceiptRef<'_>, _) = postcard::take_from_bytes(bytes)?;
+    ensure!(tail.is_empty(), "trailing receipt bytes");
+    Ok(ReceiptView {
+        tx_hash: receipt.tx_hash,
+        signer_identity: receipt.signer_identity,
+        nonce_after: receipt.delta.nonce_after,
+        success: receipt.failure.is_none() && receipt.fee_failure.is_none(),
+        charged_fee: receipt.delta.fee_funding_delta.to_string(),
+    })
 }
 
 // Borrow the variable-length account/string fields before allocating them.
