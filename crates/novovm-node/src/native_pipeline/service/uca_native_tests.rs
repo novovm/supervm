@@ -408,7 +408,27 @@ fn actual_native_uca_identity_readonly_query() -> Result<()> {
 #[test]
 #[ignore = "qualified AOEM; four original services, real UDP V4 application/asset publication and cold recovery, run alone"]
 fn actual_native_uca_application_publication_and_cold_recovery() -> Result<()> {
-    run_native_uca_service_fixture_with_versioned(false, None, None, false, false, true)
+    run_native_uca_service_fixture_with_versioned(
+        false,
+        None,
+        None,
+        false,
+        false,
+        FixtureFlow::ApplicationV3,
+    )
+}
+
+#[test]
+#[ignore = "qualified AOEM; four original V2 stores, verified boundary, native registration and grants"]
+fn actual_native_v2_existing_chain_uca_activation() -> Result<()> {
+    run_native_uca_service_fixture_with_versioned(
+        false,
+        None,
+        None,
+        false,
+        false,
+        FixtureFlow::ActivationV2,
+    )
 }
 
 #[test]
@@ -486,8 +506,15 @@ fn run_native_uca_service_fixture_with(
         amount_policy,
         learn_routes,
         identity_only,
-        false,
+        FixtureFlow::AssetsV2,
     )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FixtureFlow {
+    AssetsV2,
+    ApplicationV3,
+    ActivationV2,
 }
 
 fn run_native_uca_service_fixture_with_versioned(
@@ -496,8 +523,9 @@ fn run_native_uca_service_fixture_with_versioned(
     amount_policy: Option<DirectNovFeePolicy>,
     learn_routes: bool,
     identity_only: bool,
-    application_mode: bool,
+    flow: FixtureFlow,
 ) -> Result<()> {
+    let application_mode = flow == FixtureFlow::ApplicationV3;
     let library = PathBuf::from(
         std::env::var_os("NOVOVM_AOEM_TEST_LIBRARY")
             .context("explicit trusted library required")?,
@@ -860,6 +888,14 @@ fn run_native_uca_service_fixture_with_versioned(
         };
     let signer = runtime.asset_spend_signer_v3()?;
     let transfer = signer.sign(intent(0, 1, 100, 1)?, &keys[2].0, &keys[2].1)?;
+    if flow == FixtureFlow::ActivationV2 {
+        assert_eq!(configs[0].uca_initialization.as_ref().unwrap().version, 2);
+        assert!(!nodes[0].supports_application());
+        send(&mut nodes, &mut clients[ingress], &transfer, 0, 1)?;
+        let finalized = receipt(&mut nodes, &mut clients[ingress], &transfer)?;
+        fee(finalized, 1, 1)?;
+        return application::activate_v2(&runtime, &configs, nodes, clients, client_identity);
+    }
     let make_batch = |spends: &[SignedAssetSpendV3]| -> Result<Arc<AssetSpendBatchV3>> {
         let raws = spends
             .iter()

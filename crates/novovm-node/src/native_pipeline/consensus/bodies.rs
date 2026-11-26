@@ -205,14 +205,16 @@ impl CandidateBodies {
             "body parent/business pins mismatch"
         );
         ensure!(
-            if transport::native_v4(&self.pin) {
+            if transport::native_v4(context)
+                || crate::native_pipeline::business::uca_registration::is_profile(context)
+            {
                 matches!(
                     message.as_ref(),
                     Message::Body { .. } | Message::AssetBody { .. }
                 )
             } else {
                 matches!(message.as_ref(), Message::AssetBody { .. })
-                    == (self.pin.business_program == uca_program_id())
+                    == (context.business_program == uca_program_id())
             },
             "candidate body wire/profile mismatch"
         );

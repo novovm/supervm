@@ -387,6 +387,17 @@ fn reject_application_unchanged(
     Ok(())
 }
 
+pub(super) fn activate_v2(
+    runtime: &AoemExecFacade,
+    configs: &[ResidentConfig],
+    mut nodes: Vec<rpc::RpcLifecycle>,
+    mut clients: Vec<client::NativeApplicationClient>,
+    identity: novovm_network::product_overlay::TransportIdentity,
+) -> Result<()> {
+    let original = heads(&mut nodes, &mut clients, 1, 0)?;
+    activation::run(runtime, configs, nodes, clients, identity, &original)
+}
+
 pub(super) fn run(
     runtime: &AoemExecFacade,
     configs: &[ResidentConfig],
