@@ -20,10 +20,12 @@ use novovm_relay::transport_identity::{
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
+mod read_snapshot_service;
 pub use chain_sync::{
     follow_installed_state, sync_installed_chain, sync_installed_state,
     verify_installed_uca_execution,
 };
+pub use read_snapshot_service::serve_installed_read_snapshot;
 
 #[cfg(test)]
 mod tests;
@@ -479,6 +481,15 @@ fn state_path(data: &Path, profile: &Profile) -> PathBuf {
 }
 
 fn local_identity(data: &Path, base: &Path, profile: &Profile) -> Result<TransportIdentity> {
+    client_identity(data, base, profile, true)
+}
+
+fn client_identity(
+    data: &Path,
+    base: &Path,
+    profile: &Profile,
+    provision: bool,
+) -> Result<TransportIdentity> {
     let root = state_path(data, profile);
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
@@ -487,7 +498,9 @@ fn local_identity(data: &Path, base: &Path, profile: &Profile) -> Result<Transpo
         use std::os::unix::fs::DirBuilderExt;
         builder.mode(0o700);
     }
-    builder.create(&root)?;
+    if provision {
+        builder.create(&root)?;
+    }
     let key = root.join("transport.protected");
     let pin = root.join("transport.sha256");
     let library = base.join(&profile.library);
@@ -497,7 +510,7 @@ fn local_identity(data: &Path, base: &Path, profile: &Profile) -> Result<Transpo
             load_transport_identity(&key, profile.chain_id, &library, &profile.library_sha256)
                 .context("established local NOVONET custody missing or invalid")?
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Err(error) if provision && error.kind() == std::io::ErrorKind::NotFound => {
             let identity = provision_transport_identity(
                 &key,
                 profile.chain_id,

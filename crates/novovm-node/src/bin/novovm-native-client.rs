@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin> | serve-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300]";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -18,6 +18,39 @@ fn main() -> Result<()> {
         );
     }
     let config = Path::new(&args[0]);
+    if action == "serve-read-snapshot" {
+        ensure!((6..=7).contains(&args.len()), "{USAGE}");
+        #[cfg(feature = "iroh-transport")]
+        {
+            let pin = args[2].to_str().context("profile SHA-256")?;
+            let height = args[3].to_str().context("snapshot height")?.parse()?;
+            let max_nodes = args[4].to_str().context("snapshot node budget")?.parse()?;
+            let seconds = args[5]
+                .to_str()
+                .context("snapshot serving duration")?
+                .parse()?;
+            let verify_seconds = args
+                .get(6)
+                .map(|arg| {
+                    arg.to_str()
+                        .context("snapshot verification duration")?
+                        .parse::<u64>()
+                        .context("snapshot verification duration")
+                })
+                .transpose()?
+                .unwrap_or(300);
+            return novovm_node::native_pipeline::service::network::serve_installed_read_snapshot(
+                config,
+                pin,
+                height,
+                max_nodes,
+                seconds,
+                verify_seconds,
+            );
+        }
+        #[cfg(not(feature = "iroh-transport"))]
+        anyhow::bail!("read snapshot serving requires the NOVONET carrier feature");
+    }
     if action == "follow-state" {
         ensure!(args.len() <= 3, "{USAGE}");
         #[cfg(feature = "iroh-transport")]

@@ -13,6 +13,7 @@ mod read_route;
 pub(super) use novovm_network::iroh_transport::approved_read_relay;
 use read_route::{boxed_read, ReadRoute};
 pub(super) use read_route::{order_installed_candidates, read_installed_receipt};
+pub(crate) mod read_snapshot;
 mod state;
 pub use follow::follow_installed_state;
 use state::{StateCache, StateProgress};
@@ -227,7 +228,11 @@ fn open_checkpoint(
 }
 
 fn checkpoint_root(profile: &Profile, anchor: ParentPoint) -> Result<PathBuf> {
-    Ok(state_path(&installed_state_base()?, profile).join(format!(
+    checkpoint_root_in(&installed_state_base()?, profile, anchor)
+}
+
+fn checkpoint_root_in(data: &Path, profile: &Profile, anchor: ParentPoint) -> Result<PathBuf> {
+    Ok(state_path(data, profile).join(format!(
         "headers-{}-{}",
         anchor.height,
         fingerprint(&serde_json::to_vec(&anchor)?),
