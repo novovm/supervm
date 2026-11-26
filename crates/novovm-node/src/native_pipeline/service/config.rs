@@ -65,6 +65,9 @@ pub struct ResidentConfig {
     /// Enables disclosure of the complete ordered asset receipts in a block.
     #[serde(default)]
     pub public_asset_receipt_proofs: bool,
+    /// Enables export of raw native tree data reachable from the published state root.
+    #[serde(default)]
+    pub public_state_sync: bool,
     pub genesis: GenesisConfig,
     /// Explicitly pinned new-domain UCA initialization, not an asset ingress
     /// switch. Omission preserves the original development reference contract.
@@ -872,6 +875,7 @@ mod tests {
         let config = ResidentConfig {
             native_client_limit: 0,
             public_asset_receipt_proofs: false,
+            public_state_sync: false,
             learn_authenticated_peer_routes: false,
             novonet_config_file: None,
             profile: PROFILE.into(),

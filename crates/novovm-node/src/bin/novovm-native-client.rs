@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> | sync-chain";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> | sync-chain | sync-state";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -21,9 +21,9 @@ fn main() -> Result<()> {
     let report = if action == "discover" {
         ensure!(args.len() == 2, "{USAGE}");
         discover(config)?
-    } else if action == "sync-chain" {
+    } else if matches!(action, "sync-chain" | "sync-state") {
         ensure!(args.len() == 2, "{USAGE}");
-        sync_chain(config)?
+        sync_chain(config, action == "sync-state")?
     } else if action == "discover-verified-receipt" {
         ensure!(args.len() == 3, "{USAGE}");
         discovered_receipt(
@@ -79,11 +79,18 @@ fn discovered_receipt(_config: &Path, _hash: &str) -> Result<serde_json::Value> 
 }
 
 #[cfg(feature = "iroh-transport")]
-fn sync_chain(config: &Path) -> Result<serde_json::Value> {
-    novovm_node::native_pipeline::service::network::sync_installed_chain(config)
+fn sync_chain(config: &Path, with_state: bool) -> Result<serde_json::Value> {
+    use novovm_node::native_pipeline::service::network::{
+        sync_installed_chain, sync_installed_state,
+    };
+    if with_state {
+        sync_installed_state(config)
+    } else {
+        sync_installed_chain(config)
+    }
 }
 
 #[cfg(not(feature = "iroh-transport"))]
-fn sync_chain(_config: &Path) -> Result<serde_json::Value> {
+fn sync_chain(_config: &Path, _with_state: bool) -> Result<serde_json::Value> {
     anyhow::bail!("installed discovery requires the NOVONET carrier feature")
 }

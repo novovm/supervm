@@ -67,6 +67,7 @@ pub enum StartMode {
 pub struct ResidentNode {
     pub profile: String,
     public_asset_receipt_proofs: bool,
+    public_state_sync: bool,
     #[cfg(feature = "iroh-transport")]
     native_client_limit: usize,
     pub controller: NativeLifecycle,
@@ -224,6 +225,7 @@ impl ResidentNode {
             Ok(controller) => Ok(Self {
                 profile: config.profile.clone(),
                 public_asset_receipt_proofs: config.public_asset_receipt_proofs,
+                public_state_sync: config.public_state_sync,
                 #[cfg(feature = "iroh-transport")]
                 native_client_limit: config.native_client_limit,
                 controller,

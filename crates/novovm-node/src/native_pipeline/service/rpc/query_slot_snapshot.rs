@@ -200,6 +200,7 @@ fn open_snapshot(proofs_enabled: bool) -> Result<QueryOwner> {
         "resolved database is not the detached copy"
     );
     config.public_asset_receipt_proofs = proofs_enabled;
+    config.public_state_sync = false;
     let node = ResidentNode::start(config.clone(), StartMode::Existing)?;
     let mut owner = QueryOwner {
         rpc: RpcLifecycle::new(node, config.batch_size)?,
@@ -438,12 +439,9 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         head.height > 1,
         "isolated archive needs multiple finalized blocks"
     );
-    let sync = |owner: &mut QueryOwner| -> Result<std::process::Output> {
+    let sync = |owner: &mut QueryOwner, action: &str| -> Result<std::process::Output> {
         let mut command = Command::new(&binary);
-        command
-            .arg(&profile)
-            .arg("sync-chain")
-            .env("LOCALAPPDATA", &data);
+        command.arg(&profile).arg(action).env("LOCALAPPDATA", &data);
         let worker = thread::spawn(move || command.output());
         owner.until(|_| Ok(worker.is_finished()))?;
         worker
@@ -452,7 +450,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             .map_err(Into::into)
     };
     for expected_reopen in [parent.height, head.height] {
-        let output = sync(&mut owner)?;
+        let output = sync(&mut owner, "sync-chain")?;
         ensure!(
             output.status.success(),
             "chain sync Client failed: {}",
@@ -491,7 +489,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         .last_mut()
         .context("finalized header file is empty")? ^= 1;
     fs::write(&header, changed)?;
-    let result = sync(&mut owner);
+    let result = sync(&mut owner, "sync-chain");
     fs::write(&header, original)?;
     let output = result?;
     ensure!(
@@ -499,11 +497,81 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             && String::from_utf8_lossy(&output.stderr).contains("verifying stored header"),
         "corrupted finalized header reopened as verified"
     );
+    println!("altered local header rejected before reconnect");
+
+    let output = sync(&mut owner, "sync-state")?;
+    ensure!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr)
+                .contains("cannot serve the certified state snapshot"),
+        "raw state export was accessible with the disclosure flag disabled"
+    );
+    owner.rpc.node.public_state_sync = true;
+    let mut first_node_count = None;
+    for reopen in [false, true] {
+        let output = sync(&mut owner, "sync-state")?;
+        ensure!(
+            output.status.success(),
+            "state sync Client failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let nodes = report["verified_state_nodes"]
+            .as_u64()
+            .context("verified node count")?;
+        let leaves = report["verified_state_leaves"]
+            .as_u64()
+            .context("verified leaf count")?;
+        ensure!(
+            report["verified_height"] == head.height
+                && report["certified_state_root"] == super::hex(&head.state_root)
+                && report["verified_state_version"] == head.state_version
+                && leaves > 1
+                && nodes == leaves * 2 - 1
+                && if reopen {
+                    first_node_count == Some(nodes) && report["downloaded_state_nodes"] == 0
+                } else {
+                    report["downloaded_state_nodes"] == nodes
+                },
+            "state synchronization did not verify the exact detached tree: {report}"
+        );
+        first_node_count = Some(nodes);
+        println!("certified state sync: {report}");
+    }
+    let root_node = header
+        .parent()
+        .unwrap()
+        .join("state-nodes")
+        .join(format!("{}.node", super::hex(&head.state_root),));
+    let original = fs::read(&root_node)?;
+    use novovm_protocol::native_query::{Answer, Query, QueryError, StateNodeSelector};
+    let unrelated = Query::StateNode(StateNodeSelector {
+        height: head.height,
+        root: head.state_root,
+        hash: [0xff; 32],
+        ancestry: original.clone(),
+    });
+    ensure!(
+        owner.rpc.answer_carrier_query(&unrelated, Instant::now())?
+            == Answer::Error(QueryError::Unavailable),
+        "requested hash outside the finalized tree was not rejected"
+    );
+    let mut changed = original.clone();
+    *changed.last_mut().context("empty root node")? ^= 1;
+    fs::write(&root_node, changed)?;
+    let result = sync(&mut owner, "sync-state");
+    fs::write(&root_node, original)?;
+    let output = result?;
+    ensure!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("state node content hash"),
+        "corrupted state node reopened as verified"
+    );
     ensure!(
         owner.rpc.node.controller.parent() == head,
-        "header sync altered the detached chain"
+        "sync altered the detached chain"
     );
-    println!("altered local header rejected before reconnect");
+    println!("disabled export, unrelated hash, and altered cached state node rejected");
     owner.novonet.as_mut().unwrap().close()?;
     owner.rpc.node.shutdown()
 }

@@ -104,6 +104,7 @@ fn config(size: usize) -> ResidentConfig {
         novonet_config_file: None,
         native_client_limit: 1,
         public_asset_receipt_proofs: false,
+        public_state_sync: false,
         uca_initialization: None,
         workers: 1,
         execution_backend: Default::default(),

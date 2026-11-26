@@ -43,3 +43,13 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 以上步骤追加在 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier` 用例。区块头同步阶段关闭了整批资产回执导出。原交易独立验签、23 项查询协议测试、5 项 Client 回归及原生载体对象交付回归通过。Windows 编译器优化阶段出现访问违规，本次隔离验收对 `novovm-node`、`novovm-network`、`novovm-relay`、`novovm-adapter-evm-core` 使用了 `opt-level=0`、`codegen-units=256`。完整状态数据重放、持续同步和跨机网络切换待验收。现役 C 与 B 均未操作。
 
 验收日志 SHA-256 `4e4a04858dac142f9529c42a4b0ee699bf92709c0c1d0d522bb6f9c7461abdb8`。Client EXE SHA-256 `6fc10317aa5748e6a48cd816284c44abeb68ca21ffbf0ed2642a306a8838a8fa`。
+
+## 下载并逐节点验证原生状态树
+
+北京时间 11:02，在 C 的新隔离副本 `state-sync-21b46859f4d4` 上，以 `LocalService` 运行同一验收用例。打开前对照了 10 个 RocksDB 文件的 SHA-256。Windows Client 通过 `novovm-native-client <发行发现配置> sync-state` 在已验证的高度 2 上下载 97 个 Patricia 树节点，验证全部节点哈希、分支路径和 49 个叶子。状态根为 `418cb1c74c5121d43d4a392a309a052d0f6a8a513bc9377b6aa503d80591e439`，状态版本为 2。重开重新校验同一状态树，下载数为 0。测试同时重新验证高度 1 原交易的 Receipt 和最终性证明。
+
+状态导出开关默认关闭，本次只在隔离进程中开启。关闭时状态请求被拒绝。开启后，服务端只向同一原生查询路径提供能证明属于已发布状态树的节点，测试中无法证明可达的哈希被拒绝。修改本地根节点文件后，Client 拒绝恢复已验证状态。副本链头保持在原高度和原区块。验收前后现役 C 均为运行中的 PID `30328`，本轮操作限于 C 的隔离副本。
+
+同一用例完成用时 82.42 秒。查询协议测试 24 项、状态树回归 47 项、Client 回归 5 项通过。Windows 隔离构建对上述四个包继续采用 `opt-level=0`，`novovm-node` 的 `codegen-units` 改用 128 后通过构建，其余三个包用 256。状态下载是有界的手动 Client 入口。大状态分批同步、持续追赶、跨网热插拔和基于固定程序的首次同步证明待后续验收。
+
+验收日志 SHA-256 `9840bdd1e27ffb24ea5fa24ca9d39e87daf77ed2041be4ce498b39145b11ea16`。Client EXE SHA-256 `ecbcf9bfac6d732f16c1817b28fba10ab9d6bd8e11eca0df14fbb6f5b2616081`。

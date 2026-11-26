@@ -163,6 +163,61 @@ pub fn validate_state_node_bytes(hash: &NodeHash, bytes: &[u8]) -> Result<()> {
     decode_state_node(hash, bytes).map(|_| ())
 }
 
+pub(crate) fn state_node_children(hash: &NodeHash, bytes: &[u8]) -> Result<Option<[NodeHash; 2]>> {
+    Ok(match decode_state_node(hash, bytes)? {
+        Node::Leaf { .. } => None,
+        Node::Branch { left, right, .. } => Some([left, right]),
+    })
+}
+
+/// Authorize a raw node read by its canonical path from a published state root.
+pub(crate) fn verify_state_node_ancestry(
+    root: NodeHash,
+    target: NodeHash,
+    ancestry: &[u8],
+) -> Result<()> {
+    use novovm_protocol::native_query::STATE_BRANCH_BYTES;
+    anyhow::ensure!(root != empty_root(), "cannot read an empty tree");
+    let mut branches = ancestry.chunks_exact(STATE_BRANCH_BYTES);
+    anyhow::ensure!(
+        branches.remainder().is_empty() && branches.len() <= 256,
+        "invalid state ancestry length"
+    );
+    let mut branches = branches.by_ref().peekable();
+    let mut expected = root;
+    let mut path = [0; 32];
+    let mut min_bit = 0;
+    while let Some(bytes) = branches.next() {
+        let node = decode_state_node(&expected, bytes)?;
+        node.validate_path(&path, min_bit)?;
+        let Node::Branch {
+            bit,
+            prefix,
+            left,
+            right,
+        } = node
+        else {
+            bail!("state ancestry contains a leaf");
+        };
+        expected = branches.peek().map_or(target, |next| digest_node(next));
+        path = prefix;
+        if expected == right {
+            path[usize::from(bit / 8)] |= 0x80 >> (bit % 8);
+        } else {
+            anyhow::ensure!(
+                expected == left,
+                "state ancestry does not reach requested node"
+            );
+        }
+        min_bit = bit + 1;
+    }
+    anyhow::ensure!(
+        expected == target,
+        "state node is outside the published tree"
+    );
+    Ok(())
+}
+
 fn decode_state_node(hash: &NodeHash, bytes: &[u8]) -> Result<Node> {
     if bytes.len() > 35 + MAX_VALUE_BYTES || digest_node(bytes) != *hash {
         bail!("state node content hash or byte bound mismatch");
