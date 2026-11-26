@@ -73,3 +73,13 @@ pwsh -NoProfile -File scripts/tests/watch-native-roaming-link.ps1 -OfflineCheck
 Return the original `operator.jsonl`, C witness, TLS receipt, Client start/end/stdout, both route markers and sealed capture/component exports over the existing restricted channel. `wired_down_observed` bounds the physical change between the previous Up sample and the end of the first disconnected sample; use its conservative upper bound for the signature freshness test. A later `wired_up_observed` establishes physical restoration. `wired_up_without_observed_down` means no unplug was observed. A Down first seen during restoration, timeout or missing recovery cannot certify a successful roaming trial. For final acceptance add both `--packet-evidence $PacketManifest` and `--link-journal $ClientEvidence/operator.jsonl` to the existing offline verifier command. It checks the same PID, state event lines, switch upper bound, component IDs, physical restoration and bidirectional packet tuples; verify the stated component mapping against the sealed ETL.
 
 D's archived 11:25 UTC trial on 2026-11-26 verified the state on Ethernet. It recorded 86 matching outbound UDP frames on physical component 17, zero matching inbound frames there and zero matching frames on hotspot component 16. There was no observed Down. The earlier live ETL copy yielded no usable frames before closure. Waiting for a live ETL export is unnecessary for a prompt. The final packet check requires scoped bidirectional traffic on the identified components; a tunnel-selected socket, upper-stack receive event or apparent checksum offload cannot by itself attribute a missing receive direction to the physical adapter.
+
+
+The observer creates a separate `observer-startup-<pid>.jsonl` diagnostic before checking the console, files, capture owner or physical adapters. It records the first failing check even when the physical event journal was never created. Include that diagnostic on failure. SHA-256 pins must be exactly 64 hexadecimal digits; letter case is immaterial. To replay startup record bindings using copies of the original evidence on another Windows machine, run the command below in an ordinary shell. This mode does not start the Client, require live adapters, contact the exchange, or prove physical recovery.
+
+```powershell
+pwsh -NoProfile -File scripts/tests/watch-native-roaming-link.ps1 -ReplayStartup `
+    -ClientEvidence $ArchivedClientDir -CaptureEvidence $ArchivedCaptureDir -OriginalCaptureDirectory $CapturePathOnD `
+    -Manifest $OriginalManifest -ManifestSha256 $ManifestSha -ClientSha256 $ClientSha `
+    -WiredIndex $EthernetIndex -HotspotIndex $WifiIndex
+```

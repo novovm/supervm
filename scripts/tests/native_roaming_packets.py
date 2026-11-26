@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
+import re
 import struct
 
 
@@ -18,6 +19,12 @@ def utc_ms(value):
             "expected a UTC capture timestamp")
     elapsed = stamp - datetime(1970, 1, 1, tzinfo=timezone.utc)
     return (elapsed.days * 86_400 + elapsed.seconds) * 1000 + elapsed.microseconds // 1000
+
+
+def same_digest(left, right, prefix=""):
+    return (isinstance(left, str) and isinstance(right, str) and
+            re.fullmatch(prefix + r"[0-9a-fA-F]{64}", left) is not None and
+            re.fullmatch(prefix + r"[0-9a-fA-F]{64}", right) is not None and left.lower() == right.lower())
 
 
 def sha256_file(path):
@@ -127,7 +134,7 @@ def verify(path, before_ms, after_ms, switch_ms):
         return json.loads((bundle / filename).read_text(encoding="utf-8-sig"))
 
     witness = read(path.name)
-    require(sha256_file(bundle / "stdout.jsonl") == witness["stdout_sha256"],
+    require(same_digest(sha256_file(bundle / "stdout.jsonl"), witness["stdout_sha256"]),
             "Client event SHA-256 differs")
     start, end = read("start.json"), read("end.json")
     pid = start["pid"]
@@ -152,7 +159,7 @@ def verify(path, before_ms, after_ms, switch_ms):
                 "expected a component export in the evidence directory")
         capture = bundle / name
         digest = sha256_file(capture)
-        require(digest == phase["pcapng_sha256"], "component export SHA-256 differs")
+        require(same_digest(digest, phase["pcapng_sha256"]), "component export SHA-256 differs")
         protocol, local, peer = owned_flow(marker, phase)
         outgoing = incoming = 0
         for timestamp, frame in frames(capture):

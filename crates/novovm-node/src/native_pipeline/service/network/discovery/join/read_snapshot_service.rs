@@ -1,5 +1,6 @@
-//! Explicit local serving until the existing discovery owner can authorize referrals.
+//! Explicit read-only serving using the installed Client identity.
 mod local_locator;
+mod publication;
 use super::{
     bind_carrier, client_identity, fingerprint, installed_state_base, profile_base,
     read_installed_profile, state_path, wall_ms,
@@ -39,6 +40,45 @@ pub fn serve_installed_read_snapshot(
     seconds: u64,
     verify_seconds: u64,
 ) -> Result<()> {
+    serve_snapshot(
+        profile_path,
+        profile_sha256,
+        height,
+        max_state_nodes,
+        seconds,
+        verify_seconds,
+        false,
+    )
+}
+
+pub fn serve_installed_public_read_snapshot(
+    profile_path: &Path,
+    profile_sha256: &str,
+    height: u64,
+    max_state_nodes: NonZeroUsize,
+    seconds: u64,
+    verify_seconds: u64,
+) -> Result<()> {
+    serve_snapshot(
+        profile_path,
+        profile_sha256,
+        height,
+        max_state_nodes,
+        seconds,
+        verify_seconds,
+        true,
+    )
+}
+
+fn serve_snapshot(
+    profile_path: &Path,
+    profile_sha256: &str,
+    height: u64,
+    max_state_nodes: NonZeroUsize,
+    seconds: u64,
+    verify_seconds: u64,
+    public: bool,
+) -> Result<()> {
     ensure!(
         (1..=120).contains(&seconds),
         "local snapshot duration must be 1–120 seconds"
@@ -51,6 +91,10 @@ pub fn serve_installed_read_snapshot(
     let duration = Duration::from_secs(seconds);
     let data = installed_state_base()?;
     let profile = read_installed_profile(profile_path, Some(profile_sha256))?;
+    ensure!(
+        !public || profile.public_read_referrals(),
+        "public read serving requires verification pins and approved relays"
+    );
     let pins = profile.pins();
     let identity = client_identity(&data, profile_base(profile_path)?, &profile, false)?;
     let mut snapshot = super::chain_sync::read_snapshot::ReadSnapshot::open(
@@ -62,10 +106,28 @@ pub fn serve_installed_read_snapshot(
         verify_deadline,
     )?;
     let locator_path = state_path(&data, &profile).join("read-snapshot.local.json");
-    let carrier = IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
-        .with_bind_address((Ipv4Addr::LOCALHOST, 0).into())?
-        .with_service_concurrency(ServiceConcurrencyV1::from_host())
-        .with_connection_ceiling(CARRIER_CONNECTION_CEILING)?;
+    let _public_owner = if public {
+        Some(local_locator::lock(&locator_path)?)
+    } else {
+        None
+    };
+    let publication = if public {
+        Some(publication::Publication::new(
+            &profile,
+            profile_base(profile_path)?,
+            &identity,
+        )?)
+    } else {
+        None
+    };
+    let carrier = if public {
+        IrohConfigV1::new(&profile.relays, profile.nameserver)?.with_relay_only()?
+    } else {
+        IrohConfigV1::new(&[], Ipv4Addr::LOCALHOST.into())?
+            .with_bind_address((Ipv4Addr::LOCALHOST, 0).into())?
+    }
+    .with_service_concurrency(ServiceConcurrencyV1::from_host())
+    .with_connection_ceiling(CARRIER_CONNECTION_CEILING)?;
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
@@ -82,7 +144,18 @@ pub fn serve_installed_read_snapshot(
                 slot: Some(Arc::new(QuerySlot::default())),
                 peers: None,
             };
-            let served = owner
+            let served = if let Some(publication) = publication {
+                owner.with_relay_only_service_v1(async |scope| {
+                    let deadline = Instant::now() + duration;
+                    let publish = publication.run(scope, &identity, pins, height, deadline);
+                    tokio::select! {
+                        biased;
+                        result = publish => result,
+                        result = serve(scope, identity.clone(), pins, ingress, deadline + Duration::from_secs(1)) => result,
+                    }
+                }).await
+            } else {
+                owner
                 .with_continuous_service_v4(
                     || Ok(()),
                     |scope| {
@@ -103,7 +176,8 @@ pub fn serve_installed_read_snapshot(
                         })
                     },
                 )
-                .await;
+                .await
+            };
             let closed = owner.close().await;
             worker.await.context("snapshot query worker failed")?;
             served.and(closed)

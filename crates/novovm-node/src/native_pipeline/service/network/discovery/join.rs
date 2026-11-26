@@ -27,7 +27,9 @@ pub use chain_sync::{
     export_activation_parent, follow_installed_state, sync_installed_chain, sync_installed_state,
     verify_installed_uca_execution,
 };
-pub use read_snapshot_service::serve_installed_read_snapshot;
+pub use read_snapshot_service::{
+    serve_installed_public_read_snapshot, serve_installed_read_snapshot,
+};
 
 #[cfg(test)]
 mod tests;
