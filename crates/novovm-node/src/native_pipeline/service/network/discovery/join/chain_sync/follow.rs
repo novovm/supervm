@@ -281,15 +281,15 @@ impl Follower {
                     if let Ok(candidates) =
                         prepare_seed_candidates(&self.profile, &self.identity, installed)
                     {
-                        let refresh = lookup_sources(
+                        if let Ok(report) = lookup_sources(
                             scope,
                             self.identity.clone(),
                             self.profile.pins(),
                             candidates,
                             self.profile.lookup_transport_keys.clone(),
-                        );
-                        if let Ok(Ok(report)) =
-                            tokio::time::timeout(Duration::from_secs(5), refresh).await
+                            REFRESH_SOURCE_BUDGET,
+                        )
+                        .await
                         {
                             self.locators.observe(report)?;
                         }

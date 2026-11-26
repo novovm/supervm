@@ -113,47 +113,54 @@ fn run_first_contact(expired: bool) -> Result<()> {
                 }
                 fs::write(&file, serde_json::to_vec(&profile)?)?;
                 let expected_source = fingerprint(responsive.public_key());
-                let mut client_task = tokio::task::spawn_blocking(move || -> Result<()> {
-                    assert!(!data.exists());
-                    if expired {
-                        let rejected = run_client(&client, &legacy, &root.join("legacy-device"));
-                        assert!(format!("{:#}", rejected.unwrap_err()).contains("no authenticated NOVONET bootstrap"));
+                let client_task = async move {
+                    if !expired {
+                        verify_active_refresh(&profile, &root, &expected_source).await?;
                     }
-                    let first = run_client(&client, &file, &data)?;
-                    let restarted = run_client(&client, &file, &data)?;
-                    let sources = serde_json::json!([expected_source]);
-                    for report in [&first, &restarted] {
-                        assert_eq!(report["authenticated_discovery_sources"], sources);
-                        assert_eq!(report["signed_locator_candidates"][0]["sequence"], 7);
-                    }
-                    let fingerprint = &first["transport_identity_sha256"];
-                    assert_eq!(*fingerprint, restarted["transport_identity_sha256"]);
-                    assert_ne!(*fingerprint, sources[0]);
-                    if expired {
-                        fs::remove_file(root.join("primary.json"))?;
-                        fs::remove_file(root.join("secondary.json"))?;
-                        let cold = run_client(&client, &file, &root.join("contact-only-device"))?;
-                        assert_eq!(cold["authenticated_discovery_sources"], sources);
-                        assert_eq!(cold["signed_locator_candidates"][0]["sequence"], 7);
-                        println!("expired files with retired routes could not reach a source; second pinned contact retrieved a fresh signed locator with expired files and with both files absent");
-                    }
-                    println!("authenticated through secondary source, one signed candidate, stable transport identity across two Client processes");
-                    Ok(())
-                });
-                let mut revision = 0;
-                loop {
-                    tokio::select! {
-                        result = &mut client_task => break result?,
-                        stream = scope.accept_inbound() => {
-                            let mut stream: CarrierStreamV1<'_> = stream?.into();
-                            assert_eq!(stream.read_frame().await?, DISCOVERY_ENTRY);
-                            revision += 1;
-                            store.lock().unwrap().put_node_locator_v1(
-                                owner_id, revision, Duration::from_secs(30), locator.clone(), Instant::now(),
-                            )?;
-                            serve(stream, responsive.clone(), pins, store.clone()).await?;
+                    tokio::task::spawn_blocking(move || -> Result<()> {
+                        assert!(!data.exists());
+                        if expired {
+                            let rejected = run_client(&client, &legacy, &root.join("legacy-device"));
+                            assert!(format!("{:#}", rejected.unwrap_err()).contains("no authenticated NOVONET bootstrap"));
                         }
+                        let first = run_client(&client, &file, &data)?;
+                        let restarted = run_client(&client, &file, &data)?;
+                        let sources = serde_json::json!([expected_source]);
+                        for report in [&first, &restarted] {
+                            assert_eq!(report["authenticated_discovery_sources"], sources);
+                            assert_eq!(report["signed_locator_candidates"][0]["sequence"], 7);
+                        }
+                        let fingerprint = &first["transport_identity_sha256"];
+                        assert_eq!(*fingerprint, restarted["transport_identity_sha256"]);
+                        assert_ne!(*fingerprint, sources[0]);
+                        if expired {
+                            fs::remove_file(root.join("primary.json"))?;
+                            fs::remove_file(root.join("secondary.json"))?;
+                            let cold = run_client(&client, &file, &root.join("contact-only-device"))?;
+                            assert_eq!(cold["authenticated_discovery_sources"], sources);
+                            assert_eq!(cold["signed_locator_candidates"][0]["sequence"], 7);
+                            println!("expired files with retired routes could not reach a source; second pinned contact retrieved a fresh signed locator with expired files and with both files absent");
+                        }
+                        println!("authenticated through secondary source, one signed candidate, stable transport identity across two Client processes");
+                        Ok(())
+                    }).await?
+                };
+                let service = async {
+                    for revision in 1..=10 {
+                        let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
+                        assert_eq!(stream.read_frame().await?, DISCOVERY_ENTRY);
+                        store.lock().unwrap().put_node_locator_v1(
+                            owner_id, revision, Duration::from_secs(30), locator.clone(), Instant::now(),
+                        )?;
+                        serve(stream, responsive.clone(), pins, store.clone())
+                            .await
+                            .context("serving the responsive test source")?;
                     }
+                    anyhow::bail!("fixture bootstrap request budget exhausted")
+                };
+                tokio::select! {
+                    result = client_task => result,
+                    result = service => result,
                 }
             })).await;
         let closed = server.close().await;
@@ -164,6 +171,46 @@ fn run_first_contact(expired: bool) -> Result<()> {
         evidence_root.display()
     );
     result
+}
+
+async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> Result<()> {
+    let (identity, _) = ephemeral_transport_identity(&profile.library, &profile.library_sha256)?;
+    let candidates = prepare_seed_candidates(profile, &identity, read_seeds(root, profile))?;
+    let client = bind_carrier(
+        IrohConfigV1::new(&[], profile.nameserver)?.with_bind_address("127.0.0.1:0".parse()?)?,
+    )
+    .await?;
+    let started = Instant::now();
+    let report = client
+        .with_continuous_service_v4(
+            || Ok(()),
+            |scope| {
+                Box::pin(lookup_sources(
+                    scope,
+                    identity,
+                    profile.pins(),
+                    candidates,
+                    profile.lookup_transport_keys.clone(),
+                    REFRESH_SOURCE_BUDGET,
+                ))
+            },
+        )
+        .await;
+    let elapsed = started.elapsed();
+    let closed = client.close().await;
+    let report = report.context("refresh through the active Client owner")?;
+    closed.context("closing the active Client owner")?;
+    ensure!(
+        elapsed >= REFRESH_SOURCE_BUDGET
+            && report.sources == [source]
+            && report.records.len() == 1
+            && report.records.values().all(|record| record.sequence == 7),
+        "stalled first source did not leave the valid secondary locator available"
+    );
+    println!(
+        "active refresh retained signed locator sequence 7 after the first source exhausted its deadline in {elapsed:?}"
+    );
+    Ok(())
 }
 
 fn run_client(client: &Path, profile: &Path, data: &Path) -> Result<serde_json::Value> {

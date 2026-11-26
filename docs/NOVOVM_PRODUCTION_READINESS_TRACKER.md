@@ -1,5 +1,19 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-11-26 连续跟随时分别限制两路引导
+
+安装后 Client 在 Iroh 查询仍活跃时续查签名定位。每个引导入口分别受五秒查询期限约束，等待超时入口期间保留另一入口已验签的结果。冷发现继续使用原引导和原签验流程。
+
+定向回归将第一路指向已绑定但始终静默的 UDP 端口，第二路经真实 Iroh 和 AOEM 验签返回序号 7。续查在约 5.03 秒返回第二路的有效记录。复现使用 `clean_device_authenticates_through_second_source_and_preserves_custody` 和同目录过期引导用例，输入为 `NOVOVM_DISCOVERY_CLIENT`、`NOVOVM_DISCOVERY_AOEM` 及其固定摘要 `NOVOVM_DISCOVERY_AOEM_SHA256`。
+
+C 在原库的本机隔离副本上复跑同源码 Windows Client，以 `NOVOVM_QUERY_COPY_FOLLOW=1` 从高度 0 跟随到已确认高度 2。同一进程按 NovoRUDP、Iroh、NovoRUDP 的顺序验证同一状态根、97 个状态节点、49 个叶子和相同传输身份。验收日志 SHA-256 为 `4e32ff173138fafb74020b50977da57833b8044ef1e6c2bba3bf9a1f5cb2b5b9`。实体换网仍使用独立验收。
+
+## 2026-11-26 D 独立回放 C 原链归档
+
+C 从既有原库隔离副本发送高度 1 和 2 的原始执行归档，D 使用上次从空设备认证同步得到的本地头部和固定配置 SHA-256，以 `verify-uca-execution` 复核。两份归档的 QC、区块哈希、状态根和回执批承诺通过。C 交接的高度 1 文件 SHA-256 为 `9b773807f19c52e54ee169bed9b32090549e633a261690f8f76571ff7918b90e`，高度 2 为 `940d9ab340870f44d88e32b27d7f80a46e9fcd069642174d47eac827e922670d`。
+
+D 对高度 1 副本翻转最后一个字节，验证器在状态节点完整性检查阶段拒绝。两件原始归档的摘要，以及 D 本地 103 个隔离缓存文件的路径、大小、修改时间和 SHA-256 在验收前后一致。此记录对应归档回放和终结证明。D 通过安装后发现服务读取单笔原交易网络回执仍待验收。
+
 ## 2026-11-26 C/D 实体局域网冷同步与换路
 
 C 用 `LocalService` 打开原 RocksDB 的隔离副本，只读服务已确认链和状态。D 使用独立构建的 Windows Client、空链缓存和本机保护的验收传输钥。Iroh 查询入口沿原 Finished 认证，只接受固定的 D 验收公钥。C 端隔离代理只接收 D 的源地址，负责切断和恢复 NovoRUDP。两种传输通过同一实体局域网的不同端口工作。
