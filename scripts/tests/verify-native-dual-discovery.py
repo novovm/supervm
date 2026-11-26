@@ -1,9 +1,10 @@
-"""Check native Client discovery evidence before and after one source exits."""
+"""Check NOVOVM Client discovery and state-following evidence across source exit."""
 
 import argparse
 import hashlib
 import json
 import re
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -224,8 +225,134 @@ def verify(args):
     return surviving_sequence
 
 
+def unix_ms(value):
+    delta = value - utc("1970-01-01T00:00:00Z")
+    return (delta.days * 86400 + delta.seconds) * 1000 + delta.microseconds / 1000
+
+
+def verify_follow(args):
+    sources = {args.departed, args.surviving}
+    if len(sources) != 2 or args.provider in sources or args.chain_id < 1 or args.height < 1:
+        raise ValueError("expected distinct bootstrap/reader identities, a chain and a target height")
+    check_unpinned_provider(args.profile, args.profile_sha256, args.chain_id, sources, args.provider)
+    start, end = (
+        json.loads(path.read_bytes(), object_pairs_hook=unique_object)
+        for path in (args.start, args.end)
+    )
+    pid = start["pid"]
+    if type(pid) is not int or pid < 1 or end["pid"] != pid or type(end["pid"]) is not int:
+        raise ValueError("supervisor did not attest the same Client PID")
+    if start["client_sha256"] != args.client_sha256 or start["profile_sha256"] != args.profile_sha256:
+        raise ValueError("supervisor did not attest the expected Client and profile")
+    started, closed, ended = map(unix_ms, (utc(start["utc"]), args.closed_at, utc(end["utc"])))
+    if not started < closed < ended:
+        raise ValueError("Client witness window did not bracket the source closure")
+
+    with args.events.open("rb") as stream:
+        raw = stream.read(1_048_577)
+    if not 0 < len(raw) <= 1_048_576 or hashlib.sha256(raw).hexdigest() != args.events_sha256:
+        raise ValueError("original follow-state JSONL size or SHA-256 mismatch")
+    events = [json.loads(line, object_pairs_hook=unique_object) for line in raw.splitlines()]
+    if [i for i, row in enumerate(events) if row.get("event") == "starting"] != [0]:
+        raise ValueError("expected exactly one Client startup in the original log")
+    if type(events[0]["reopened_height"]) is not int or events[0]["reopened_height"] != 0:
+        raise ValueError("expected a cold Client startup")
+    client = digest(events[0]["transport_identity_sha256"])
+    if client in sources or client == args.provider:
+        raise ValueError("Client identity overlaps an infrastructure identity")
+
+    before = after = state = None
+    locators = {}
+    last_time, last_sequence = started, 0
+    for row in events:
+        stamp = row["utc_unix_ms"]
+        if type(stamp) is not int or not last_time <= stamp <= ended:
+            raise ValueError("follow-state events left the witness window or went backwards")
+        last_time = stamp
+        if row["transport_identity_sha256"] != client:
+            raise ValueError("Client identity changed during follow-state")
+        if row.get("peer_transport_sha256") != args.provider:
+            continue
+        if row["event"] == "verified_locator_accepted":
+            seq, issued, expires = (row[k] for k in (
+                "locator_sequence", "locator_issued_at_ms", "locator_expires_at_ms",
+            ))
+            if (any(type(value) is not int for value in (seq, issued, expires))
+                    or seq <= last_sequence or not 0 < issued <= stamp < expires):
+                raise ValueError("reader locator sequence or signed lifetime is invalid")
+            authors = row.get("locator_returned_by")
+            if (not isinstance(authors, list) or not authors or len(set(authors)) != len(authors)
+                    or not set(authors) <= sources):
+                raise ValueError("accepted locator lacks the expected authenticated source attribution")
+            last_sequence = seq
+            locators[seq] = (issued, stamp, expires, authors)
+            if stamp < closed and set(authors) == sources:
+                before = (seq, stamp)
+            if closed < issued:
+                if authors != [args.surviving]:
+                    raise ValueError("departed source returned a locator issued after its witnessed exit")
+                if before is not None and after is None:
+                    after = (seq, stamp)
+        elif row["event"] == "verified_state" and row["height"] == args.height:
+            if (type(row["height"]) is not int or row["block_hash"] != "0x" + args.block_hash
+                    or row["state_root"] != "0x" + args.state_root):
+                raise ValueError("verified state differs from the expected block and state root")
+            seq = row["locator_sequence"]
+            used = locators.get(seq) if type(seq) is int else None
+            if row["transport"] != "iroh" or used is None or not used[1] <= stamp < used[2]:
+                raise ValueError("verified state is not linked to a live accepted reader locator")
+            nodes, downloaded = row["verified_nodes"], row["downloaded_nodes"]
+            if (type(nodes) is not int or type(downloaded) is not int
+                    or not 0 <= downloaded <= nodes or nodes == 0):
+                raise ValueError("invalid verified-state download counts")
+            if state is None:
+                state = (stamp, seq, downloaded)
+    if before is None or after is None:
+        raise ValueError("missing dual-source baseline or fresh surviving-source locator")
+    if state is None:
+        raise ValueError("expected certified state was not verified")
+    return {
+        "checks_passed": True,
+        "follow_pid": pid,
+        "transport_identity_sha256": client,
+        "dual_source_sequence": before[0],
+        "surviving_source_sequence": after[0],
+        "target_height": args.height,
+        "target_first_verified_after_exit": state[0] > closed,
+        "target_used_fresh_survivor_locator": (
+            locators[state[1]][0] > closed and locators[state[1]][3] == [args.surviving]
+        ),
+        "target_first_verified_downloaded_nodes": state[2],
+    }
+
+
+def follow_main(argv):
+    parser = argparse.ArgumentParser(
+        description="Verify a single cold follow-state run across bootstrap exit",
+    )
+    for name in ("events", "start", "end", "profile"):
+        parser.add_argument("--" + name, type=Path, required=True)
+    for name in ("events-sha256", "client-sha256", "profile-sha256", "departed",
+                 "surviving", "provider", "block-hash", "state-root"):
+        parser.add_argument("--" + name, type=digest, required=True)
+    for name in ("chain-id", "height"):
+        parser.add_argument("--" + name, type=int, required=True)
+    parser.add_argument("--closed-at", type=utc, required=True,
+                        help="Independently witnessed source exit in the Client UTC frame")
+    args = parser.parse_args(argv)
+    try:
+        result = verify_follow(args)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        parser.exit(1, f"{exc}\n")
+    print(json.dumps(result))
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    if sys.argv[1:2] == ["follow"]:
+        return follow_main(sys.argv[2:])
+    parser = argparse.ArgumentParser(
+        description=__doc__, epilog="Use 'follow --help' to verify a continuous Client run.",
+    )
     parser.add_argument("--first", type=Path, required=True)
     parser.add_argument("--first-sha256", type=digest, required=True)
     parser.add_argument("--first-ended", type=utc, required=True)
@@ -514,6 +641,98 @@ class PublicReadTests(TestCase):
                 second[key] = value
                 with self.assertRaisesRegex(ValueError, error):
                     self.verify_reports(first, second, profile)
+
+
+class FollowFailoverTests(TestCase):
+    departed = key_fingerprint([1] * 1952)
+    surviving = key_fingerprint([2] * 1952)
+    provider = key_fingerprint([3] * 1952)
+    client = "d" * 64
+
+    def trace(self):
+        def event(kind, stamp, **fields):
+            return {"event": kind, "utc_unix_ms": stamp, "transport_identity_sha256": self.client,
+                    **fields}
+
+        def locator(sequence, stamp, sources):
+            return event("verified_locator_accepted", stamp, locator_sequence=sequence,
+                         locator_issued_at_ms=stamp - 100, locator_expires_at_ms=stamp + 1000,
+                         peer_transport_sha256=self.provider, locator_returned_by=sources)
+
+        return [
+            event("starting", 1000, reopened_height=0),
+            locator(5, 2000, [self.departed, self.surviving]),
+            locator(6, 3200, [self.surviving]),
+            event("verified_state", 3300, transport="iroh", height=42, locator_sequence=6,
+                  block_hash="0x" + "a" * 64, state_root="0x" + "b" * 64,
+                  peer_transport_sha256=self.provider, verified_nodes=19, downloaded_nodes=12),
+        ]
+
+    def verify_trace(self, events, **end_fields):
+        profile = {
+            "chain_id": 7251564206, "relays": ["https://approved.invalid/"],
+            "lookup_transport_keys": [],
+            "seeds": [{"transport_key": [1] * 1952}, {"transport_key": [2] * 1952}],
+            "verification": {"validators": [
+                {"public_key": [4] * 1952, "transport_public_key": [5] * 1952},
+            ]},
+        }
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile_bytes = json.dumps(profile).encode()
+            profile_pin = hashlib.sha256(profile_bytes).hexdigest()
+            raw = b"".join(json.dumps(event).encode() + b"\n" for event in events)
+            (root / "profile.json").write_bytes(profile_bytes)
+            (root / "stdout.jsonl").write_bytes(raw)
+            (root / "start.json").write_text(json.dumps({
+                "pid": 234, "utc": "1970-01-01T00:00:00.500Z",
+                "client_sha256": "e" * 64, "profile_sha256": profile_pin,
+            }))
+            (root / "end.json").write_text(json.dumps({
+                "pid": 234, "utc": "1970-01-01T00:00:04Z", **end_fields,
+            }))
+            return verify_follow(argparse.Namespace(
+                start=root / "start.json", end=root / "end.json", chain_id=profile["chain_id"],
+                profile=root / "profile.json", profile_sha256=profile_pin,
+                events=root / "stdout.jsonl", events_sha256=hashlib.sha256(raw).hexdigest(),
+                client_sha256="e" * 64, closed_at=utc("1970-01-01T00:00:03Z"),
+                departed=self.departed, surviving=self.surviving, provider=self.provider,
+                height=42, block_hash="a" * 64, state_root="b" * 64,
+            ))
+
+    def test_fresh_lease_and_state_are_linked_in_one_cold_client(self):
+        result = self.verify_trace(self.trace())
+        self.assertEqual(result["surviving_source_sequence"], 6)
+        self.assertTrue(result["target_first_verified_after_exit"])
+        self.assertTrue(result["target_used_fresh_survivor_locator"])
+
+    def test_unchanged_data_route_does_not_claim_a_fresh_state_transfer(self):
+        start, dual, survivor, state = self.trace()
+        state.update(utc_unix_ms=2300, locator_sequence=5)
+        result = self.verify_trace([start, dual, state, survivor])
+        self.assertFalse(result["target_first_verified_after_exit"])
+        self.assertFalse(result["target_used_fresh_survivor_locator"])
+
+    def test_reject_late_old_lease_or_missing_attribution(self):
+        for change in ({"locator_issued_at_ms": 2999}, {"locator_returned_by": []},
+                       {"locator_returned_by": [self.departed, self.surviving]}):
+            with self.subTest(change=change):
+                trace = self.trace()
+                trace[2].update(change)
+                with self.assertRaisesRegex(ValueError, "fresh surviving|attribution|witnessed exit"):
+                    self.verify_trace(trace)
+
+    def test_reject_wrong_process_restart_or_wrong_block(self):
+        with self.assertRaisesRegex(ValueError, "same Client PID"):
+            self.verify_trace(self.trace(), pid=235)
+        trace = self.trace()
+        trace.insert(2, dict(trace[0], utc_unix_ms=2500))
+        with self.assertRaisesRegex(ValueError, "exactly one Client startup"):
+            self.verify_trace(trace)
+        trace = self.trace()
+        trace[3]["block_hash"] = "0x" + "f" * 64
+        with self.assertRaisesRegex(ValueError, "expected block"):
+            self.verify_trace(trace)
 
 
 if __name__ == "__main__":
