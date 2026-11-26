@@ -230,11 +230,7 @@ def unix_ms(value):
     return (delta.days * 86400 + delta.seconds) * 1000 + delta.microseconds / 1000
 
 
-def verify_follow(args):
-    sources = {args.departed, args.surviving}
-    if len(sources) != 2 or args.provider in sources or args.chain_id < 1 or args.height < 1:
-        raise ValueError("expected distinct bootstrap/reader identities, a chain and a target height")
-    check_unpinned_provider(args.profile, args.profile_sha256, args.chain_id, sources, args.provider)
+def read_follow_trace(args):
     start, end = (
         json.loads(path.read_bytes(), object_pairs_hook=unique_object)
         for path in (args.start, args.end)
@@ -248,12 +244,7 @@ def verify_follow(args):
         raise ValueError("Client had an abnormal exit during observation")
     if start["client_sha256"] != args.client_sha256 or start["profile_sha256"] != args.profile_sha256:
         raise ValueError("supervisor did not attest the expected Client and profile")
-    started, closed, ended = map(unix_ms, (utc(start["utc"]), args.closed_at, utc(end["utc"])))
-    if not started < closed < ended:
-        raise ValueError("Client witness window did not bracket the source closure")
-    if args.issuer_ahead_ms < 0:
-        raise ValueError("issuer clock upper bound must be nonnegative")
-    fresh_after = closed + args.issuer_ahead_ms
+    started, ended = map(unix_ms, (utc(start["utc"]), utc(end["utc"])))
 
     with args.events.open("rb") as stream:
         raw = stream.read(1_048_577)
@@ -265,12 +256,7 @@ def verify_follow(args):
     if type(events[0]["reopened_height"]) is not int or events[0]["reopened_height"] != 0:
         raise ValueError("expected a cold Client startup")
     client = digest(events[0]["transport_identity_sha256"])
-    if client in sources or client == args.provider:
-        raise ValueError("Client identity overlaps an infrastructure identity")
-
-    before = after = state = None
-    locators = {}
-    last_time, last_sequence = started, 0
+    last_time = started
     for row in events:
         stamp = row["utc_unix_ms"]
         if type(stamp) is not int or not last_time <= stamp <= ended:
@@ -278,6 +264,29 @@ def verify_follow(args):
         last_time = stamp
         if row["transport_identity_sha256"] != client:
             raise ValueError("Client identity changed during follow-state")
+    return pid, client, started, ended, events
+
+
+def verify_follow(args):
+    sources = {args.departed, args.surviving}
+    if len(sources) != 2 or args.provider in sources or args.chain_id < 1 or args.height < 1:
+        raise ValueError("expected distinct bootstrap/reader identities, a chain and a target height")
+    check_unpinned_provider(args.profile, args.profile_sha256, args.chain_id, sources, args.provider)
+    pid, client, started, ended, events = read_follow_trace(args)
+    closed = unix_ms(args.closed_at)
+    if not started < closed < ended:
+        raise ValueError("Client witness window did not bracket the source closure")
+    if args.issuer_ahead_ms < 0:
+        raise ValueError("issuer clock upper bound must be nonnegative")
+    fresh_after = closed + args.issuer_ahead_ms
+    if client in sources or client == args.provider:
+        raise ValueError("Client identity overlaps an infrastructure identity")
+
+    before = after = state = None
+    locators = {}
+    last_sequence = 0
+    for row in events:
+        stamp = row["utc_unix_ms"]
         if row.get("peer_transport_sha256") != args.provider:
             continue
         if row["event"] == "verified_locator_accepted":
@@ -357,11 +366,113 @@ def follow_main(argv):
     print(json.dumps(result))
 
 
+def verify_read_transfer(args):
+    sources = {args.seed_a, args.seed_b}
+    readers = {args.primary_reader, args.standby_reader}
+    if len(sources | readers) != 4 or args.chain_id < 1 or args.height < 1:
+        raise ValueError("expected two distinct bootstrap pins and two distinct reader identities")
+    for reader in readers:
+        check_unpinned_provider(args.profile, args.profile_sha256, args.chain_id, sources, reader)
+    pid, client, started, ended, events = read_follow_trace(args)
+    if client in sources | readers:
+        raise ValueError("Client identity overlaps an infrastructure identity")
+    boundary, exit_witness, standby = (
+        json.loads(path.read_bytes(), object_pairs_hook=unique_object)
+        for path in (args.before, args.primary_exit, args.standby_start)
+    )
+    if (boundary["primary_exit"] != exit_witness or exit_witness["event"] != "provider-closed"
+            or exit_witness["exit"] != 0 or exit_witness["process_present"] is not False
+            or exit_witness["udp_endpoints"] != 0 or exit_witness["tcp_listeners"] != 0):
+        raise ValueError("primary exit witness did not certify process and listener closure")
+    process_ids = [pid, exit_witness["pid"], standby["pid"]]
+    if any(type(value) is not int or value < 1 for value in process_ids) or standby["pid"] == pid:
+        raise ValueError("expected distinct Client and standby processes")
+    partial, standby_start = map(unix_ms, (utc(boundary["utc"]), utc(standby["utc"])))
+    if not started < partial <= standby_start < ended:
+        raise ValueError("partial cache must be recorded after primary exit and before standby start")
+    if not any(row["event"] == "verified_locator_accepted"
+               and row.get("peer_transport_sha256") == args.primary_reader
+               and row["utc_unix_ms"] < partial for row in events):
+        raise ValueError("missing the initial primary reader locator")
+
+    states = [row for row in events if row["event"] == "verified_state" and row["height"] == args.height]
+    if (not states or states[0].get("peer_transport_sha256") != args.standby_reader
+            or states[0]["utc_unix_ms"] < standby_start):
+        raise ValueError("the standby did not first verify the target after cutover")
+    state = states[0]
+    if (state["transport"] != "iroh" or state["block_hash"] != "0x" + args.block_hash
+            or state["state_root"] != "0x" + args.state_root):
+        raise ValueError("standby state does not match the expected finalized target")
+    locators = [row for row in events if row["event"] == "verified_locator_accepted"
+                and row.get("peer_transport_sha256") == args.standby_reader]
+    if any(row["utc_unix_ms"] < standby_start for row in locators):
+        raise ValueError("standby reader was already available before cutover")
+    if not any(row["locator_sequence"] == state["locator_sequence"]
+               and standby_start <= row["locator_issued_at_ms"] <= row["utc_unix_ms"]
+               <= state["utc_unix_ms"] < row["locator_expires_at_ms"]
+               and row["locator_returned_by"] and set(row["locator_returned_by"]) <= sources
+               for row in locators):
+        raise ValueError("verified state has no live authenticated standby locator")
+
+    index_bytes = args.archive_index.read_bytes()
+    if hashlib.sha256(index_bytes).hexdigest() != args.archive_index_sha256:
+        raise ValueError("independent archive index SHA-256 mismatch")
+    rows = json.loads(index_bytes, object_pairs_hook=unique_object)["files"]
+    expected = {Path(row["file"]).name: digest(row["expected"]) for row in rows}
+    before = boundary["files"]
+    if (len(expected) != len(rows) or not 0 < len(before) < len(expected)
+            or any(expected.get(name) != pin for name, pin in before.items())):
+        raise ValueError("invalid, empty or already complete partial cache")
+    path = str(args.cache.resolve(strict=True))
+    if sys.platform == "win32" and not path.startswith("\\\\?\\"):
+        path = "\\\\?\\UNC\\" + path[2:] if path.startswith("\\\\") else "\\\\?\\" + path
+    actual = {}
+    for candidate in Path(path).rglob("*"):
+        if candidate.suffix not in (".proof", ".node"):
+            continue
+        if candidate.is_symlink() or candidate.name in actual:
+            raise ValueError("unexpected link or duplicate cache filename")
+        actual[candidate.name] = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    if actual != expected:
+        raise ValueError("final cache differs from the independent archive index")
+    missing = actual.keys() - before.keys()
+    nodes = sum(name.endswith(".node") for name in actual)
+    if type(state["verified_nodes"]) is not int or nodes < 1 or state["verified_nodes"] != nodes:
+        raise ValueError("verified state node count differs from the recovered cache")
+    return {
+        "checks_passed": True, "follow_pid": pid, "target_height": args.height,
+        "standby_locator_sequence": state["locator_sequence"], "preserved_files": len(before),
+        "new_headers": sum(name.endswith(".proof") for name in missing),
+        "new_state_nodes": sum(name.endswith(".node") for name in missing),
+        "matched_archive_files": len(actual),
+    }
+
+
+def read_transfer_main(argv):
+    parser = argparse.ArgumentParser(description="Verify a cold Client's transfer to a standby reader")
+    for name in ("events", "start", "end", "profile", "before", "primary-exit", "standby-start",
+                 "archive-index", "cache"):
+        parser.add_argument("--" + name, type=Path, required=True)
+    for name in ("events-sha256", "client-sha256", "profile-sha256", "archive-index-sha256",
+                 "seed-a", "seed-b", "primary-reader", "standby-reader", "block-hash", "state-root"):
+        parser.add_argument("--" + name, type=digest, required=True)
+    for name in ("chain-id", "height"):
+        parser.add_argument("--" + name, type=int, required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = verify_read_transfer(args)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        parser.exit(1, f"{exc}\n")
+    print(json.dumps(result))
+
+
 def main():
     if sys.argv[1:2] == ["follow"]:
         return follow_main(sys.argv[2:])
+    if sys.argv[1:2] == ["read-transfer"]:
+        return read_transfer_main(sys.argv[2:])
     parser = argparse.ArgumentParser(
-        description=__doc__, epilog="Use 'follow --help' to verify a continuous Client run.",
+        description=__doc__, epilog="Use 'follow --help' or 'read-transfer --help' to verify a continuous Client run.",
     )
     parser.add_argument("--first", type=Path, required=True)
     parser.add_argument("--first-sha256", type=digest, required=True)

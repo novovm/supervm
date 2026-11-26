@@ -25,7 +25,13 @@ impl LocalLocator {
             !bytes.is_empty() && bytes.len() <= MAX_LOCATOR_BYTES,
             "invalid local locator size"
         );
-        let directory = path.parent().context("missing locator directory")?;
+        // Use the same absolute, long-path-safe prefix for both names passed to
+        // tempfile's Windows rename operation.
+        let directory = path
+            .parent()
+            .context("missing locator directory")?
+            .canonicalize()?;
+        let path = directory.join(path.file_name().context("missing locator filename")?);
         let mut lock = lock(&path)?;
 
         if check_regular(&path)? {
@@ -44,7 +50,7 @@ impl LocalLocator {
                 "existing legacy snapshot locator still has a live lease"
             );
         }
-        let mut staged = tempfile::NamedTempFile::new_in(directory)?;
+        let mut staged = tempfile::NamedTempFile::new_in(&directory)?;
         staged.write_all(bytes)?;
         staged.as_file().sync_all()?;
         // On a process crash, the lock is released by the OS. The marker lets
@@ -183,6 +189,24 @@ mod tests {
         assert_eq!(fs::read(&path)?, b"legacy");
         let _owner = LocalLocator::replace(path.clone(), b"current", |_| false)?;
         assert_eq!(fs::read(&path)?, b"current");
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_locator_publishes_in_a_long_installed_path() -> Result<()> {
+        use std::os::windows::ffi::OsStrExt;
+
+        let temp = tempfile::tempdir()?;
+        let directory = temp.path().join("a".repeat(120)).join("b".repeat(120));
+        fs::create_dir_all(&directory)?;
+        let path = directory.join("locator.json");
+        assert!(path.as_os_str().encode_wide().count() > 260);
+        let owner = LocalLocator::replace(path.clone(), b"new locator", |_| false)?;
+        assert_eq!(fs::read(&path)?, b"new locator");
+        drop(owner);
+        assert!(!path.exists());
+        assert!(path.with_extension("lock").is_file());
         Ok(())
     }
 }
