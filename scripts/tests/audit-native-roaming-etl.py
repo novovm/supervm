@@ -52,7 +52,7 @@ def audit(lines, local, peer):
             matched[(*scope, flow_dir, size, captured, encap, fragmented)] += 1
 
     for line in lines:
-        if "PktGroupId" in line and "OriginalSize" in line and "LoggedSize" in line:
+        if "PktGroupId" in line:
             finish()
             meta = META.search(line)
             if not meta:
@@ -117,8 +117,10 @@ class OfflineAuditTests(unittest.TestCase):
         self.assertEqual(sum(row["count"] for row in result["without_one_decoded_ipv4_udp_tuple"]), 2)
 
     def test_bad_metadata_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "unrecognized"):
-            audit([self.tx.replace("Direction", "Other")], self.local, self.peer)
+        for missing in ("方向", "OriginalSize", "LoggedSize"):
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "unrecognized"):
+                audit([self.tx, self.rx.replace(missing, "Other"),
+                       "    192.0.2.2.60000 > 192.0.2.1.50000: UDP"], self.local, self.peer)
 
     def test_windows_etl_text_bom(self):
         self.assertEqual(text_encoding("事件".encode("utf-16")[:4]), "utf-16")
