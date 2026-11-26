@@ -43,7 +43,8 @@ struct Profile {
     relays: Vec<String>,
     /// Independently operated entry points for the original signed locator service.
     seeds: [SeedPin; 2],
-    /// Transport identity pins from the installed chain profile.
+    /// Release-pinned read services. Their signatures authenticate coordinates,
+    /// while the validator set certifies the blocks supplied by those services.
     lookup_transport_keys: Vec<Vec<u8>>,
     /// Native query routes pinned by the same installed release as the bootstrap keys.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -139,6 +140,18 @@ impl Profile {
                     .all(|seed| is_transport_key(&seed.transport_key)),
             "installed discovery requires distinct bootstrap transport pins"
         );
+        if let Some(verification) = &self.verification {
+            for key in self
+                .lookup_transport_keys
+                .iter()
+                .chain(self.seeds.iter().map(|seed| &seed.transport_key))
+            {
+                ensure!(
+                    verification.validators.iter().all(|v| &v.public_key != key),
+                    "discovery transport key overlaps a validator signing key"
+                );
+            }
+        }
         let mut endpoint_keys = BTreeSet::new();
         for seed in &self.seeds {
             ensure!(
@@ -209,13 +222,6 @@ impl Profile {
                 .iter()
                 .map(|v| (v.public_key.clone(), v.transport_public_key.clone())),
         )?;
-        ensure!(
-            self.lookup_transport_keys.iter().all(|key| pins
-                .validators
-                .iter()
-                .any(|v| &v.transport_public_key == key)),
-            "lookup key is outside the installed chain transport bindings"
-        );
         if let Some(minimum) = pins.minimum_finalized_checkpoint {
             minimum.validate(pins.trusted_parent)?;
         }

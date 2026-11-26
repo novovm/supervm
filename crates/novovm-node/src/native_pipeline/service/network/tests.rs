@@ -16,6 +16,33 @@ use std::net::UdpSocket;
 mod diagnostic;
 mod hop;
 
+// Use the production query and discovery driver with a read-only service
+// identity on loopback. The archive's validator set still verifies finality.
+impl Driver {
+    pub(in crate::native_pipeline::service) fn detached_read_provider(
+        config: Config,
+        node: &ResidentNode,
+        identity: TransportIdentity,
+    ) -> Result<Self> {
+        ensure!(
+            config.bind_address.ip().is_loopback()
+                && config.discovery_seeds.is_empty()
+                && config.peer_records.is_empty()
+                && config.relays.is_empty(),
+            "detached provider must be loopback only"
+        );
+        let keys = (0..node.controller.peer_count())
+            .map(|peer| node.controller.peer_transport_key(peer))
+            .collect::<Result<Vec<_>>>()?;
+        let pins = (
+            node.template.chain_id,
+            node.template.genesis_config_commitment,
+            node.template.protocol_commitment,
+        );
+        Self::with_material(config, identity, keys, pins, None, None, true, None)
+    }
+}
+
 #[test]
 fn network_failure_observation_retains_first_last_without_blocking_or_unbounded_history() {
     let failures = NetworkFailures::default();

@@ -447,6 +447,27 @@ fn release_preflight_verifies_signed_bootstrap_locators_offline() -> Result<()> 
     write_locator("primary.json", &current)?;
     assert_eq!(check(&profile)?["chain_id"], chain_id);
 
+    // A separately pinned read service may supply data without voting power.
+    profile
+        .lookup_transport_keys
+        .push(second.public_key().to_vec());
+    assert_eq!(check(&profile)?["chain_id"], chain_id);
+    let (domain, _) = profile.verification_domain()?;
+    assert_eq!(domain.validators.hash(), validator_set.hash());
+    assert_eq!(domain.validators.members().len(), 1);
+    assert_eq!(
+        domain.validators.members()[0].public_key(),
+        validator.public_key()
+    );
+    profile
+        .lookup_transport_keys
+        .push(validator.public_key().to_vec());
+    assert!(check(&profile)
+        .unwrap_err()
+        .to_string()
+        .contains("validator signing key"));
+    profile.lookup_transport_keys.pop();
+
     let expired = make_record(&first, pins, &secondary, now - 1)?;
     write_locator("primary.json", &expired)?;
     assert!(check(&profile).unwrap_err().to_string().contains("expired"));

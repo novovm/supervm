@@ -386,29 +386,65 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     let bind_address = lan
         .as_ref()
         .map_or(std::net::Ipv4Addr::LOCALHOST, |lan| lan.server);
-    owner.novonet = Some(Driver::new_with_query_peers(
-        Config {
-            probe_control_file: None,
-            relays: relays.clone(),
-            nameserver,
-            bind_address: (bind_address, 0).into(),
-            public_record_file: secondary.clone(),
-            carrier_identity_file: None,
-            peer_records: Vec::new(),
-            discovery: true,
-            discovery_seeds: Vec::new(),
-            publish_native_query_address: lan.is_none()
-                && std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("2"),
-            relay_forwarding: false,
-            fallback_after_ms: 1000,
-            retry_ms: 500,
-            udp_recovery_ms: 2000,
-        },
-        &mut owner.rpc.node,
-        lan.as_ref()
-            .filter(|_| !lan_install)
-            .map(|lan| vec![lan.client_key.clone()].into()),
-    )?);
+    let independent =
+        std::env::var("NOVOVM_QUERY_COPY_NONVALIDATOR_PROVIDER").as_deref() == Ok("1");
+    let config = Config {
+        probe_control_file: None,
+        relays: relays.clone(),
+        nameserver,
+        bind_address: (bind_address, 0).into(),
+        public_record_file: secondary.clone(),
+        carrier_identity_file: None,
+        peer_records: Vec::new(),
+        discovery: true,
+        discovery_seeds: Vec::new(),
+        publish_native_query_address: lan.is_none()
+            && std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("2"),
+        relay_forwarding: false,
+        fallback_after_ms: 1000,
+        retry_ms: 500,
+        udp_recovery_ms: 2000,
+    };
+    let key = if independent {
+        ensure!(
+            lan.is_none() && !config.publish_native_query_address,
+            "independent archive provider requires the isolated Iroh route"
+        );
+        let (provider, _) = novovm_relay::transport_identity::ephemeral_transport_identity(
+            &old_profile.library,
+            &old_profile.library_sha256,
+        )?;
+        let key = provider.public_key().to_vec();
+        ensure!(
+            owner
+                .config
+                .genesis
+                .validators
+                .iter()
+                .all(|v| v.transport_public_key != key && v.public_key != key),
+            "read provider overlaps a validator identity"
+        );
+        owner.novonet = Some(Driver::detached_read_provider(
+            config,
+            &owner.rpc.node,
+            provider,
+        )?);
+        println!(
+            "independent archive provider transport_sha256={:x}, validator_count={}",
+            Sha256::digest(&key),
+            owner.config.genesis.validators.len()
+        );
+        key
+    } else {
+        owner.novonet = Some(Driver::new_with_query_peers(
+            config,
+            &mut owner.rpc.node,
+            lan.as_ref()
+                .filter(|_| !lan_install)
+                .map(|lan| vec![lan.client_key.clone()].into()),
+        )?);
+        owner.rpc.node.transport_identity().public_key().to_vec()
+    };
     owner.until(|_| {
         if !secondary.is_file() {
             return Ok(false);
@@ -437,7 +473,6 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             && endpoint.relays.iter().all(|relay| relays.contains(relay)),
         "detached proof carrier route differs from its configured interface or relays"
     );
-    let key = owner.rpc.node.transport_identity().public_key().to_vec();
     ensure!(locator.relay_public_key == key, "locator identity differs");
     if lan.is_none() && std::env::var("NOVOVM_QUERY_COPY_CARRIER_TAKEOVER").as_deref() == Ok("1") {
         use crate::native_pipeline::consensus::native::MessageDomain;
