@@ -17,11 +17,13 @@ const TAG: &[u8; 8] = b"NVDISC01";
 #[cfg(test)]
 mod dial_tests;
 mod join;
+#[cfg(test)]
+pub(in crate::native_pipeline::service) use join::test_slow_cached_receipt;
 pub use join::{
     check_installed_profile, discover_installed, discover_installed_from_profile,
-    discover_verified_receipt, discover_verified_receipt_from_profile, follow_installed_state,
-    serve_installed_read_snapshot, sync_installed_chain, sync_installed_state,
-    verify_installed_uca_execution,
+    discover_verified_receipt, discover_verified_receipt_at,
+    discover_verified_receipt_from_profile, follow_installed_state, serve_installed_read_snapshot,
+    sync_installed_chain, sync_installed_state, verify_installed_uca_execution, ReceiptLocation,
 };
 struct Seed<'a> {
     path: PathBuf,

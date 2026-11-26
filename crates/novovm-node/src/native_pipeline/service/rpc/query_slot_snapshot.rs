@@ -9,6 +9,7 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod historical_receipt;
 mod native_fallback;
 mod public_referral;
 
@@ -553,6 +554,17 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if std::env::var("NOVOVM_QUERY_COPY_HISTORICAL_RECEIPTS").as_deref() == Ok("1") {
+        ensure!(lan.is_none() && independent && parent.height == 0, "historical receipt fixture requires a detached independent loopback server and a genesis anchor");
+        owner.rpc.node.public_state_sync = true;
+        historical_receipt::verify(&mut owner, &binary, &profile, &key, &hash)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head && owner.active_client().is_err(),
+            "historical read changed the detached archive or UDP admission"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     if std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("status-only") {
         ensure!(
             lan.is_none() && !independent,

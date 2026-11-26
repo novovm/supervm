@@ -7,7 +7,9 @@ use crate::native_pipeline::{
         wire::{Validator, ValidatorSet},
     },
     service::{
-        client::operator::receipt_proof::{transaction_hash, validate_parent, ProofTarget},
+        client::operator::receipt_proof::{
+            transaction_hash, validate_parent, FinalityVerifier, ProofTarget,
+        },
         GenesisValidator,
     },
 };
@@ -295,42 +297,36 @@ pub fn discover_verified_receipt_from_profile(
     hash: &str,
     profile_sha256: Option<&str>,
 ) -> Result<serde_json::Value> {
+    discover_verified_receipt_at(path, hash, profile_sha256, ReceiptLocation::AnchorSuccessor)
+}
+
+#[cfg(test)]
+mod historical_receipt_tests;
+#[cfg(test)]
+pub(in crate::native_pipeline::service) use historical_receipt_tests::test_slow_cached_receipt;
+
+/// Only QueryByHash discloses the transaction hash to the authenticated archive.
+#[derive(Clone, Copy)]
+pub enum ReceiptLocation {
+    AnchorSuccessor,
+    Height(u64),
+    QueryByHash,
+}
+
+pub fn discover_verified_receipt_at(
+    path: &Path,
+    hash: &str,
+    profile_sha256: Option<&str>,
+    location: ReceiptLocation,
+) -> Result<serde_json::Value> {
     let transaction = transaction_hash(hash)?;
-    let (profile, identity) = pinned_installed_profile(path, profile_sha256)?;
-    let seeds = read_seeds(profile_base(path)?, &profile);
-    let (domain, parent) = profile.verification_domain()?;
-    let target = ProofTarget::new(&domain, identity.clone(), parent, transaction)?;
-    let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
-    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
-        let owner = bind_carrier(carrier).await?;
-        let result = async {
-            let report = collect(&owner, identity.clone(), &profile, seeds).await?;
-            let result = owner.with_continuous_service_v4(|| Ok(()), |scope| Box::pin(async move {
-                let deadline = Instant::now() + Duration::from_secs(30);
-                let mut last = None;
-                for candidate in chain_sync::order_installed_candidates(report.records.into_values(), &profile) {
-                    if candidate.expires_at_ms <= wall_ms()? || Instant::now() >= deadline { continue }
-                    let budget = Duration::from_secs(10).min(deadline.saturating_duration_since(Instant::now()));
-                    let proof = chain_sync::read_installed_receipt(scope, &candidate, identity.clone(), domain.clone(), &target, &profile, budget).await;
-                    match proof {
-                        Ok(mut verified) => {
-                            verified["authenticated_discovery_sources"] = serde_json::json!(report.sources);
-                            verified["serving_transport_sha256"] = serde_json::json!(fingerprint(&candidate.relay_public_key));
-                            verified["transport_identity_sha256"] = serde_json::json!(fingerprint(identity.public_key()));
-                            return Ok(verified);
-                        }
-                        Err(error) => last = Some(error),
-                    }
-                }
-                Err(last.unwrap_or_else(|| anyhow::anyhow!("no usable authenticated proof candidate")))
-            })).await;
-            result
-        }.await;
-        let closed = owner.close().await;
-        let proof = result?;
-        closed?;
-        Ok(proof)
-    })
+    let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
+    let data = installed_state_base()?;
+    let search = chain_sync::ReceiptSearch::open(&data, &profile, anchor, transaction)?;
+    let base = profile_base(path)?;
+    let identity = local_identity(&data, base, &profile)?;
+    let verifier = Arc::new(FinalityVerifier::new(&domain, identity.clone()));
+    search.execute(base, &profile, &identity, &domain, location, verifier)
 }
 
 /// Validate the pinned release's chain and discovery inputs without accessing

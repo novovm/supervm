@@ -143,16 +143,22 @@ impl RpcLifecycle {
 
     #[cfg(feature = "iroh-transport")]
     pub(crate) fn answer_carrier_query(&mut self, query: &Query, now: Instant) -> Result<Answer> {
-        if matches!(
-            query,
+        match query {
             Query::Status
-                | Query::ReceiptProof(_)
-                | Query::FinalizedHeader(_)
-                | Query::StateNode(_)
-        ) {
-            self.answer_native_query(query, now)
-        } else {
-            Ok(Answer::Error(QueryError::Unavailable))
+            | Query::ReceiptProof(_)
+            | Query::FinalizedHeader(_)
+            | Query::StateNode(_) => self.answer_native_query(query, now),
+            Query::Receipt { .. } => {
+                // Expose the location of a durable receipt, never the admission or mempool state.
+                match self.answer_native_query(query, now)? {
+                    answer @ Answer::Receipt {
+                        state: ReceiptState::Finalized { .. },
+                        ..
+                    } => Ok(answer),
+                    _ => Ok(Answer::Error(QueryError::Unavailable)),
+                }
+            }
+            _ => Ok(Answer::Error(QueryError::Unavailable)),
         }
     }
 

@@ -10,9 +10,11 @@ mod follow;
 #[cfg(test)]
 pub(super) use follow::check_locator_role_transition;
 mod read_route;
+mod receipt;
 pub(super) use novovm_network::iroh_transport::approved_read_relay;
+pub(super) use read_route::order_installed_candidates;
 use read_route::{boxed_read, ReadRoute};
-pub(super) use read_route::{order_installed_candidates, read_installed_receipt};
+pub(super) use receipt::ReceiptSearch;
 pub(crate) mod read_snapshot;
 mod state;
 pub use follow::follow_installed_state;

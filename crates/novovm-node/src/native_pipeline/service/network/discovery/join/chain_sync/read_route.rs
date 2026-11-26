@@ -114,27 +114,32 @@ pub(in super::super) fn order_installed_candidates(
     ordered
 }
 
-pub(in super::super) async fn read_installed_receipt(
-    scope: &IrohScopeV1,
+pub(super) async fn query_archive<T: 'static>(
+    owner: &IrohEndpointOwnerV1,
     candidate: &PeerSignedRelayRecordV1,
     identity: TransportIdentity,
     domain: MessageDomain,
-    target: &ProofTarget,
     profile: &Profile,
     budget: Duration,
-) -> Result<serde_json::Value> {
-    ReadRoute::new(candidate, profile)?
-        .run(scope, Some(budget), async |scope, route| {
-            let (mut stream, channel) = connect_route(
-                scope,
-                &route,
-                &candidate.relay_public_key,
-                identity,
-                &domain,
-            )
-            .await?;
-            let mut session = QuerySession::attach(&mut stream, channel, domain)?;
-            target.verify(&session.fetch(Download::new(target.height())).await?)
-        })
+    query: impl AsyncFnOnce(&mut QuerySession<'_>) -> Result<T> + 'static,
+) -> Result<T> {
+    let route = ReadRoute::new(candidate, profile)?;
+    let peer = candidate.relay_public_key.clone();
+    owner
+        .with_continuous_service_v4(
+            || Ok(()),
+            move |scope| {
+                Box::pin(async move {
+                    route
+                        .run(scope, Some(budget), async |scope, address| {
+                            let (mut stream, channel) =
+                                connect_route(scope, &address, &peer, identity, &domain).await?;
+                            let mut session = QuerySession::attach(&mut stream, channel, domain)?;
+                            boxed_read(|| query(&mut session)).await
+                        })
+                        .await
+                })
+            },
+        )
         .await
 }
