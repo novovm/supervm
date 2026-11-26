@@ -71,7 +71,10 @@ impl PlanInput {
             Self::Reference(plan) => Ok(CapturedInput::Reference(
                 plan.capture_witness(wire, budget)?,
             )),
-            Self::Uca { .. } => anyhow::bail!("UCA proof relation not yet integrated"),
+            Self::Uca { plan, metadata } => Ok(CapturedInput::Uca {
+                input: plan.capture_witness(wire, budget)?,
+                metadata,
+            }),
         }
     }
     pub(super) fn begin_capture(self, budget: CaptureBudget) -> Result<CaptureInput> {
@@ -159,6 +162,14 @@ impl CapturedInput {
         match self {
             Self::Reference(v) => v.encode_witness(budget),
             Self::Uca { .. } => anyhow::bail!("UCA proof relation not yet integrated"),
+        }
+    }
+
+    #[cfg(all(test, feature = "iroh-transport"))]
+    pub(super) fn uca_replay_witness(&self, budget: CaptureBudget) -> Result<Vec<u8>> {
+        match self {
+            Self::Uca { input, .. } => input.encode_witness(budget),
+            Self::Reference(_) => anyhow::bail!("UCA replay requires a captured asset body"),
         }
     }
 }

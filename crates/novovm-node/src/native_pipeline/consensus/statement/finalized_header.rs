@@ -22,13 +22,30 @@ struct Header {
 /// independently selected parent, validator set, proposal and Precommit QC.
 pub(crate) struct VerifiedHeader {
     point: ParentPoint,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "iroh-transport"))]
     statement: BlockStatement,
 }
 
 impl VerifiedHeader {
     pub(crate) fn point(&self) -> ParentPoint {
         self.point
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn execution_context(&self) -> &BatchContext {
+        self.statement.execution_context()
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub(crate) fn check_replayed_candidate(
+        &self,
+        candidate: &crate::native_pipeline::persistence::PreparedCandidate,
+    ) -> Result<()> {
+        ensure!(
+            self.statement.matches_packet(candidate),
+            "independent UCA execution differs from the certified candidate"
+        );
+        Ok(())
     }
 
     #[cfg(test)]
@@ -232,7 +249,7 @@ pub(crate) fn verify(
     let point = statement.verified_point(set, proposal, precommits)?;
     Ok(VerifiedHeader {
         point,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "iroh-transport"))]
         statement,
     })
 }

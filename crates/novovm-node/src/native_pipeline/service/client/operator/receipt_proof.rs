@@ -4,14 +4,15 @@ use crate::native_pipeline::consensus::{
     wire::Context as ConsensusContext,
 };
 use novovm_consensus::round_bft::crypto::{ConsensusVerifier, MLDSA65_CONTEXT};
+use novovm_network::product_overlay::TransportVerifier;
 use novovm_protocol::native_query::{
     ArchiveChunk, ArchiveSelector, QueryError, MAX_ARCHIVE_PROOF_BYTES,
 };
 use sha2::{Digest, Sha256};
 
-struct ProofVerifier(TransportIdentity);
+struct ProofVerifier<V>(V);
 
-impl ConsensusVerifier for ProofVerifier {
+impl<V: TransportVerifier> ConsensusVerifier for ProofVerifier<V> {
     fn verify_mldsa65(&self, public: &[u8], message: &[u8], signature: &[u8]) -> Result<()> {
         self.0.verify(public, message, MLDSA65_CONTEXT, signature)
     }
@@ -119,12 +120,12 @@ pub(crate) struct FinalityVerifier {
 }
 
 impl FinalityVerifier {
-    pub(crate) fn new(domain: &MessageDomain, identity: TransportIdentity) -> Self {
+    pub(crate) fn new(domain: &MessageDomain, verifier: impl TransportVerifier + 'static) -> Self {
         Self {
             domain: (domain.chain_id, domain.genesis, domain.protocol),
             set: (*domain.validators)
                 .clone()
-                .with_verifier(Arc::new(ProofVerifier(identity))),
+                .with_verifier(Arc::new(ProofVerifier(verifier))),
         }
     }
 

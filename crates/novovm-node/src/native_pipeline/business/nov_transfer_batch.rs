@@ -429,6 +429,16 @@ impl NovCapturedInput {
         )
     }
 
+    #[cfg(all(test, feature = "iroh-transport"))]
+    pub(crate) fn uca_replay_input(&self) -> Result<Vec<u8>> {
+        use crate::native_pipeline::proof::{capture_budget, encode_uca_replay_input};
+        encode_uca_replay_input(
+            self.plan(),
+            &self.policy,
+            &self.input.uca_replay_witness(capture_budget())?,
+        )
+    }
+
     pub(crate) fn finalize_capture(self) -> Result<NovTransferInput> {
         let input = match self.input {
             CapturedInput::Reference(input) => input,

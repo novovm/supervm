@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> | sync-chain | sync-state | follow-state [profile-sha256]";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | consensus-proposal <height> <round> <tx-hash> [--legacy] | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> | sync-chain | sync-state | follow-state [profile-sha256] | verify-uca-execution <profile-sha256> <archive.bin>";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -36,6 +36,18 @@ fn main() -> Result<()> {
     } else if matches!(action, "sync-chain" | "sync-state") {
         ensure!(args.len() == 2, "{USAGE}");
         sync_chain(config, action == "sync-state")?
+    } else if action == "verify-uca-execution" {
+        ensure!(args.len() == 4, "{USAGE}");
+        #[cfg(feature = "iroh-transport")]
+        {
+            novovm_node::native_pipeline::service::network::verify_installed_uca_execution(
+                config,
+                args[2].to_str().context("non-UTF8 profile pin")?,
+                Path::new(&args[3]),
+            )?
+        }
+        #[cfg(not(feature = "iroh-transport"))]
+        anyhow::bail!("UCA execution replay requires installed chain verification");
     } else if action == "discover-verified-receipt" {
         ensure!(args.len() == 3, "{USAGE}");
         discovered_receipt(
