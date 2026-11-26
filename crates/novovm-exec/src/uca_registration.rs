@@ -52,7 +52,7 @@ impl AoemExecFacade {
             public_key: public_key.to_vec(),
             signature: Vec::new(),
         };
-        let message = registration_message(&signed, chain_id, genesis, height)?;
+        let message = registration_transcript_v1(&signed, chain_id, genesis, height)?;
         signed.signature = MldsaSigner::new(&self.dynlib, AoemMldsaParameterSet::MlDsa65)?.sign(
             public_key,
             secret,
@@ -153,17 +153,14 @@ mod tests {
             valid_from_height: 10,
             valid_until_height: 15,
         };
-        let signature = runtime.sign(
+        let signed = owner.sign_uca_registration_v1(
+            intent,
             &key.public_key,
             &key.expanded_secret_key,
-            &intent.signing_bytes()?,
-            REGISTRATION_CONTEXT_V1,
+            7,
+            [9; 32],
+            10,
         )?;
-        let signed = SignedUcaRegistrationV1 {
-            intent,
-            public_key: key.public_key.to_vec(),
-            signature,
-        };
         let wire = signed.encode()?;
         assert_eq!(SignedUcaRegistrationV1::decode(&wire)?, signed);
         assert!(SignedUcaRegistrationV1::decode(&wire[..wire.len() - 1]).is_err());
