@@ -10,6 +10,7 @@ pub mod packet;
 #[cfg(test)]
 pub(crate) mod proof;
 mod store;
+pub(crate) use packet::decode_asset_receipt_view;
 
 pub use packet::{PacketBudget, PreparedCandidate, StoredCandidate};
 pub use store::{CandidateStore, OpenMode, PersistedCandidate, StorageDomain, StoreConfig};

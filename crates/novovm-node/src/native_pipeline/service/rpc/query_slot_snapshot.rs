@@ -1,6 +1,8 @@
 //! Opt-in existing-store regression. Only the detached node's query and cold-read owners are polled.
 use super::{ResidentConfig, ResidentNode, RpcLifecycle, StartMode};
+use crate::native_pipeline::consensus::{statement::ReceiptFinalityProof, wire, ArchiveRead};
 use anyhow::{ensure, Context, Result};
+use novovm_protocol::native_query::{self, Frame, Query};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -200,5 +202,100 @@ fn original_snapshot_reclaims_idle_slot_for_another_authenticated_receipt() -> R
         "detached queries advanced consensus"
     );
     println!("idle_us={idle_us} old={old_route} new={new_route} receipt={result}");
+    verify_archived_receipt(&mut owner, &request, &result)?;
     owner.rpc.node.shutdown()
+}
+
+fn verify_archived_receipt(owner: &mut QueryOwner, request: &Path, observed: &Value) -> Result<()> {
+    let Frame::Request(request) =
+        native_query::decode(&std::fs::read(request)?).map_err(anyhow::Error::msg)?
+    else {
+        anyhow::bail!("expected a receipt request")
+    };
+    let Query::Receipt { hash } = request.query else {
+        anyhow::bail!("expected a receipt selector")
+    };
+    let expected = &observed["state"]["Finalized"];
+    let height = expected["height"]
+        .as_u64()
+        .context("finalized receipt height")?;
+    let core = &owner.rpc.node.controller;
+    let set = owner.rpc.node.validators.clone();
+    let mut archive = ArchiveRead::new(height, core.parent(), core.context(), set.clone())?;
+    let mut block = None;
+    owner.until(|owner| {
+        if let Some(found) = archive.poll(&owner.rpc.node.pipeline)? {
+            block = Some(found.context("verified archive missing")?);
+            return Ok(true);
+        }
+        Ok(false)
+    })?;
+    let block = block.context("finalized archive missing")?;
+    let bytes = ReceiptFinalityProof::from_archive(&block)?.encode()?;
+    let proof = ReceiptFinalityProof::decode(&bytes)?;
+    let (context, parent) = super::super::native_genesis_anchor(
+        &owner.rpc.node.template,
+        owner.config.genesis.validator_epoch,
+        &set,
+    );
+    ensure!(
+        height == context.height,
+        "expected the original receipt in the block after genesis"
+    );
+    let verified = proof.verify(&set, context, &parent, hash)?;
+    ensure!(
+        *verified.block() == block.point()
+            && serde_json::to_value(verified.block().block_hash)? == expected["block_hash"]
+            && serde_json::to_value(verified.receipt().success)? == expected["success"]
+            && serde_json::to_value(verified.receipt().nonce_after)? == expected["nonce_after"]
+            && expected["charged_fee"].as_str() == Some(verified.receipt().charged_fee.as_str()),
+        "independently verified proof differs from the original receipt"
+    );
+    let mut wrong_parent = parent;
+    wrong_parent.state_root[0] ^= 1;
+    ensure!(
+        proof.verify(&set, context, &wrong_parent, hash).is_err(),
+        "wrong parent passed proof verification"
+    );
+    let mut wrong_transaction = hash;
+    wrong_transaction[0] ^= 1;
+    ensure!(
+        proof
+            .verify(&set, context, &parent, wrong_transaction)
+            .is_err(),
+        "wrong transaction passed proof verification"
+    );
+    let certificate = wire::encode_quorum(block.certificate())?;
+    let signature_byte = bytes
+        .windows(certificate.len())
+        .position(|window| window == certificate)
+        .context("proof did not contain original certificate")?
+        + certificate.len()
+        - 1;
+    let output_bytes = block
+        .stored()
+        .spend_outputs()
+        .map_or(0, |outputs| outputs.len() * 32);
+    for offset in [
+        signature_byte,
+        bytes.len() - output_bytes - 1,
+        bytes.len() - 1,
+    ] {
+        let mut tampered = bytes.clone();
+        tampered[offset] ^= 1;
+        ensure!(
+            ReceiptFinalityProof::decode(&tampered)?
+                .verify(&set, context, &parent, hash)
+                .is_err(),
+            "modified signed proof contents passed verification"
+        );
+    }
+    let mut extra_bytes = bytes;
+    extra_bytes.push(0);
+    ensure!(
+        ReceiptFinalityProof::decode(&extra_bytes).is_err(),
+        "trailing proof data was accepted"
+    );
+    println!("receipt proof independently verified for height {height}; tampering rejected");
+    Ok(())
 }

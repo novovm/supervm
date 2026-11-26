@@ -18,7 +18,7 @@ pub(super) fn is_profile(context: &BatchContext) -> bool {
         && context.semantic_version == SEMANTIC_VERSION
 }
 
-pub(super) fn receipt_hash_with_spend(
+pub(crate) fn receipt_hash_with_spend(
     codec: NodeHash,
     receipts: &[Vec<u8>],
     outputs: Option<&[SpendOutput]>,
