@@ -107,34 +107,34 @@ function cargo {
 # Only this synthetic command path is stubbed. The production packager still
 # invokes its exact Cargo-reported ctl, with no skip/injection option.
 $runtimeFixtureCommand = Join-Path $fixture "build/novovmctl$binarySuffix"
-if ($windowsPackage) {
-  $clientFixtureCommand = Join-Path $fixture "build/novovm-native-client$binarySuffix"
-  $clientProfilePreflight = {
-    param([Parameter(ValueFromRemainingArguments)]$ClientArguments)
-    if ($ClientArguments.Count -ne 3 -or $ClientArguments[1] -cne 'check-installed-profile' -or
-        (Get-FileHash -LiteralPath $ClientArguments[0]).Hash -ne $ClientArguments[2]) {
-      throw 'Profile validation must use the native Client and exact pinned profile'
-    }
-    if ($ClientArguments[0] -match '[\\/]\.?(?:[^\\/]+)\.staging\.[a-f0-9]+[\\/]') {
-      $stagedDiscovery = Split-Path -Parent $ClientArguments[0]
-      $stagedProfile = Get-Content -LiteralPath $ClientArguments[0] -Raw | ConvertFrom-Json
-      $stagedLibrary = Join-Path $stagedDiscovery $stagedProfile.library
-      if ((Split-Path -Leaf $ClientArguments[0]) -cne 'installed-discovery.json' -or
-          (Get-FileHash -LiteralPath $stagedLibrary).Hash -ne $stagedProfile.library_sha256) {
-        throw 'Native preflight must see the portable profile and its copied runtime'
-      }
-      foreach ($locator in @($stagedProfile.seeds | Where-Object locator | ForEach-Object locator)) {
-        if ((Get-FileHash -LiteralPath (Join-Path $stagedDiscovery $locator)).Hash -ne
-            (Get-FileHash -LiteralPath (Join-Path $fixtureState.root $locator)).Hash) {
-          throw 'Native preflight must see the exact copied locator bytes'
-        }
-      }
-    } elseif ($fixtureState.clientProfileMode -ne 'install-reject') {
-      throw 'Package preflight must run in staging before publication'
-    }
-    $global:LASTEXITCODE = if ($fixtureState.clientProfileMode -eq 'valid') { 0 } else { 22 }
+$clientFixtureCommand = Join-Path $fixture "build/novovm-native-client$binarySuffix"
+$clientProfilePreflight = {
+  param([Parameter(ValueFromRemainingArguments)]$ClientArguments)
+  if ($ClientArguments.Count -ne 3 -or $ClientArguments[1] -cne 'check-installed-profile' -or
+      (Get-FileHash -LiteralPath $ClientArguments[0]).Hash -ne $ClientArguments[2]) {
+    throw 'Profile validation must use the native Client and exact pinned profile'
   }
-  Set-Item -LiteralPath ('Function:\global:' + $clientFixtureCommand) -Value $clientProfilePreflight
+  if ($ClientArguments[0] -match '[\\/]\.?(?:[^\\/]+)\.staging\.[a-f0-9]+[\\/]') {
+    $stagedDiscovery = Split-Path -Parent $ClientArguments[0]
+    $stagedProfile = Get-Content -LiteralPath $ClientArguments[0] -Raw | ConvertFrom-Json
+    $stagedLibrary = Join-Path $stagedDiscovery $stagedProfile.library
+    if ((Split-Path -Leaf $ClientArguments[0]) -cne 'installed-discovery.json' -or
+        (Get-FileHash -LiteralPath $stagedLibrary).Hash -ne $stagedProfile.library_sha256) {
+      throw 'Native preflight must see the portable profile and its copied runtime'
+    }
+    foreach ($locator in @($stagedProfile.seeds | Where-Object locator | ForEach-Object locator)) {
+      if ((Get-FileHash -LiteralPath (Join-Path $stagedDiscovery $locator)).Hash -ne
+          (Get-FileHash -LiteralPath (Join-Path $fixtureState.root $locator)).Hash) {
+        throw 'Native preflight must see the exact copied locator bytes'
+      }
+    }
+  } elseif ($fixtureState.clientProfileMode -ne 'install-reject') {
+    throw 'Package preflight must run in staging before publication'
+  }
+  $global:LASTEXITCODE = if ($fixtureState.clientProfileMode -eq 'valid') { 0 } else { 22 }
+}
+Set-Item -LiteralPath ('Function:\global:' + $clientFixtureCommand) -Value $clientProfilePreflight
+if ($windowsPackage) {
   $nodeFixtureCommand = Join-Path $fixture "build/novovm-node$binarySuffix"
   Set-Item -LiteralPath ('Function:\global:' + $nodeFixtureCommand) -Value {
     param([Parameter(ValueFromRemainingArguments)]$NodeArguments)
@@ -584,5 +584,29 @@ if ($windowsPackage) {
     throw 'Bundled contacts must start without separate locator files'
   }
   Write-Output 'PASS: Windows package and installer support contact-only discovery profiles'
+}
+if (!$windowsPackage) {
+  $profileFile = Join-Path $fixture 'linux-client.json'
+  $issued = @{
+    library = '../../aoem/linux/core/bin/libaoem_ffi.so'
+    library_sha256 = $coreSha
+    seeds = @(@{contact=@{endpoint_key=@(1)}}, @{contact=@{endpoint_key=@(2)};locator='linux-seed.json'})
+    verification = @{trusted_parent=@{height=0}}
+  }
+  [IO.File]::WriteAllText((Join-Path $fixture 'linux-seed.json'), 'isolated Linux locator fixture')
+  [IO.File]::WriteAllText($profileFile, ($issued | ConvertTo-Json -Depth 6))
+  $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash
+  $name = 'artifacts/product-overlay/linux-client-bundled'
+  try {
+    & $packager -Target $Target -PackageDir $name -LinuxClientProfile $profileFile -LinuxClientProfileSha256 ('0' * 64)
+    throw 'Linux package accepted a wrong discovery profile pin'
+  } catch { if ($_.Exception.Message -notlike '*differs from its pinned SHA-256*') { throw } }
+  & $packager -Target $Target -PackageDir $name -LinuxClientProfile $profileFile -LinuxClientProfileSha256 $profilePin
+  $bundle = Join-Path $fixture $name
+  if ((Get-FileHash -LiteralPath (Join-Path $bundle 'config/discovery/installed-discovery.json')).Hash -ne $profilePin -or
+      !(Test-Path -LiteralPath (Join-Path $bundle 'resources/scripts/linux/install-novovm-client.py'))) {
+    throw 'Linux Client discovery bytes or installer missing'
+  }
+  Write-Output 'PASS: pinned Linux discovery profile, original AOEM, bootstrap locator and user installer'
 }
 Write-Output "PASS: original unified assembly (10 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default, WSS-mainchain retirement and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"

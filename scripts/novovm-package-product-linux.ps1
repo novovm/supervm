@@ -5,6 +5,8 @@ param(
   [string]$AoemCoreSha256,
   [string]$WindowsClientProfile,
   [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$WindowsClientProfileSha256,
+  [string]$LinuxClientProfile,
+  [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$LinuxClientProfileSha256,
   [switch]$Force
 )
 
@@ -71,16 +73,16 @@ function Resolve-PackageDestination([string]$Repository, [string]$Directory) {
   return $candidate
 }
 
-function Get-WindowsClientJoinInputs([string]$Path, [string]$ProfileSha256, [string]$AoemSha256) {
+function Get-ClientJoinInputs([string]$Path, [string]$ProfileSha256, [string]$AoemSha256, [string]$Library) {
   $profilePath = (Resolve-Path -LiteralPath $Path).ProviderPath
   Assert-PlainPackagePath $profilePath
   if ((Get-FileHash -LiteralPath $profilePath).Hash -ne $ProfileSha256) {
-    throw 'The issued Windows Client profile differs from its pinned SHA-256.'
+    throw 'The issued Client profile differs from its pinned SHA-256.'
   }
   $profile = Get-Content -Raw -LiteralPath $profilePath | ConvertFrom-Json
-  if ($profile.library -cne '../../aoem/windows/core/bin/aoem_ffi.dll' -or
+  if ($profile.library -cne $Library -or
       $profile.library_sha256 -cne $AoemSha256 -or !$profile.verification) {
-    throw 'The issued Client profile must pin the packaged Windows AOEM and chain verification.'
+    throw 'The issued Client profile must pin the packaged AOEM and chain verification.'
   }
   $bootstrap = @($profile.seeds)
   if ($bootstrap.Count -ne 2 -or @($bootstrap | Where-Object { !$_.contact }).Count) {
@@ -200,6 +202,11 @@ try {
       ($WindowsClientProfile -and !$windowsPackage)) {
     throw 'The optional issued Client profile and its SHA-256 belong together in a Windows package.'
   }
+  if ([bool]$LinuxClientProfile -ne [bool]$LinuxClientProfileSha256 -or ($LinuxClientProfile -and $windowsPackage)) {
+    throw 'The optional issued Linux Client profile and its SHA-256 belong together in a Linux package.'
+  }
+  $issuedProfile = if ($windowsPackage) { $WindowsClientProfile } else { $LinuxClientProfile }
+  $issuedProfilePin = if ($windowsPackage) { $WindowsClientProfileSha256 } else { $LinuxClientProfileSha256 }
   $platform = if ($windowsPackage) { 'windows' } else { 'linux' }
   $platformId = "$platform-x86_64"
   $coreName = if ($windowsPackage) { 'aoem_ffi.dll' } else { 'libaoem_ffi.so' }
@@ -321,8 +328,8 @@ try {
     throw 'Isolated AOEM core does not match the independently pinned checksum.'
   }
   $clientJoinInputs = @()
-  if ($WindowsClientProfile) {
-    $clientJoinInputs = @(Get-WindowsClientJoinInputs $WindowsClientProfile $WindowsClientProfileSha256 $actualAoemSha)
+  if ($issuedProfile) {
+    $clientJoinInputs = @(Get-ClientJoinInputs $issuedProfile $issuedProfilePin $actualAoemSha "../../aoem/$platform/core/bin/$coreName")
   }
   # A manifest hash/capability bit cannot prove the current native contract.
   # Run the just-built original owner before creating any package staging.
@@ -415,6 +422,7 @@ try {
     'scripts/windows/rendezvous-user-install.ps1'
   ) } else { @(
     'config/rendezvous-linux/novonet-mailbox.service',
+    'scripts/linux/install-novovm-client.py',
     'config/rendezvous-linux/README.md',
     'scripts/linux/install-owned-mailbox.sh',
     'config/relay/supervm-relay.service',
@@ -853,6 +861,20 @@ the NOVOVM asset authority. No HTTP/JSON-RPC transaction listener is installed.
 AOEM is a bundled third-party, domain-neutral execution engine. NOVOVM
 authentication, transaction semantics, overlay routing, and product policy
 remain in the host; no NOVOVM-specific business logic is added to AOEM.
+
+For a Linux ordinary Client release issued with -LinuxClientProfile and
+-LinuxClientProfileSha256, verify the installer against an independently
+authenticated release manifest before running it as the intended Linux user:
+  python3 resources/scripts/linux/install-novovm-client.py --release-manifest-sha256 HEX --plan
+  python3 resources/scripts/linux/install-novovm-client.py --release-manifest-sha256 HEX
+This starts novovm-native-client.service in that user's systemd manager and
+enables it on user login. The release goes under XDG_DATA_HOME, the unit under
+XDG_CONFIG_HOME, and the Client retains custody and checkpoints under XDG_STATE_HOME.
+A different release or existing unit requires an explicit cutover: review the
+old unit, disable it with systemctl --user disable --now novovm-native-client.service,
+remove only the reviewed unit file and reload the user manager before installing.
+Preserve the local state and old release for recovery. Logout/boot availability
+depends on the user's systemd session and the host's existing linger policy.
 '@ | Set-Content -NoNewline -Encoding ascii (Join-Path $packagePath "README.md")
 
   if ($windowsPackage) {
@@ -971,7 +993,7 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
       }
     }
     $stagedProfile = Join-Path $packagePath $clientJoinInputs[0].path
-    & $executables['novovm-native-client'] $stagedProfile check-installed-profile $WindowsClientProfileSha256 | Out-Null
+    & $executables['novovm-native-client'] $stagedProfile check-installed-profile $issuedProfilePin | Out-Null
     if ($LASTEXITCODE -ne 0) {
       throw 'Native Client rejected the issued discovery profile; no package was published.'
     }
