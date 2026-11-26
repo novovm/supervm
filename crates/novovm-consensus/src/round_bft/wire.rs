@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+pub mod activation;
+
 pub type Hash = [u8; 32];
 pub const PROTOCOL: &str = "round-bft/v2/mldsa65";
 /// Local format bound, not a selected production validator count.
