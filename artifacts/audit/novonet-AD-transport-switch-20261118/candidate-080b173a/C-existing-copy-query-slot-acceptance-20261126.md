@@ -101,3 +101,13 @@ Client 将定位记录保存到原验证检查点。修改缓存中的端口后�
 复现沿用 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier`，设置 `NOVOVM_QUERY_COPY_UCA_REPLAY=1`。Client 入口为 `novovm-native-client <发行发现配置> verify-uca-execution <配置SHA-256> <归档文件>`。真实副本用例用时 14.51 秒，另有 27 项相关回归通过。高度 1 和 2 的回执批次承诺分别为 `ecf5d727891d35eecb91539ed2d49f2ba762a57780918198b47a55e0e3f70c11` 和 `8dc7832a8074bfa97ce8a8bba7646e862fe9183e2138035de104bb77fcd72abf`。本阶段验收离线重算，UCA 零知识证明和节点间自动分发待接通。原始归档留在隔离目录。现役 C 前后均为运行中的 PID `30328`，未操作 B。
 
 Windows Client SHA-256 `0b440fd21d543b45121f323081457ea8b534c1960976efcd631ae49dce0d512e`。隔离日志 SHA-256 `7947612169445137dd026eb39bf5a90d53a5c22da84d8d7a0620a728494a5baf`。
+
+## Windows 安装、免注册同步与冷恢复
+
+北京时间 12:35，C 的 `windows-install-94c6c01d58e7` 副本以 LocalService 启动独立回环服务。Windows 当前会话的非管理员进程只传入验收清单 SHA-256，运行原安装脚本，校验并将 Client、AOEM 和签名入网文件复制到该用户的 LocalAppData。系统计划任务限定当前交互用户和普通权限。新目录首次启动时由 Client 在本机持钥，经有效签名来源认证后获取高度 1、2 区块头与高度 2 的 97 个状态节点。已认证状态根为 `418cb1c74c5121d43d4a392a309a052d0f6a8a513bc9377b6aa503d80591e439`，安装的 Client 在运行中通过独立 UCA 重放再次核验区块承诺。
+
+重复运行安装器保留原 Client 进程与通信钥。团队移开验收解包目录和一份已验证状态节点，再触发同一 Windows 启动任务。新进程沿用同一 DPAPI 保护钥，重新认证连通，下载并验回同哈希的缺失节点。第一次 PID `39888`，第二次 PID `42788`。隔离日志记录了旧 Iroh 会话占槽和超时，Client 随后自动恢复。验收结束已注销三项临时任务，现役 C 前后均为 PID `30328`，未操作 B。
+
+复现使用 `NOVOVM_QUERY_COPY_WINDOWS_INSTALL=1`、原隔离测试和 `scripts/tests/windows-client-install.tests.ps1`。官方打包脚本的 Windows/Linux 装配回归通过，包含发行配置 SHA-256、两份引导文件及篡改拒绝。实际安装用例运行真实原打包产出的 Client、AOEM 和安装脚本逐文件核对，使用 C 隔离服务签名的入网资料及限于验收的清单，范围为同机 Windows 任务与回环网络。副本用例历时 40.15 秒。Windows 优化编译的访问违规阻断了本轮完整带发行入网资料的包生成。隔离验收覆盖当前交互用户与同一启动任务的重触发，跨设备、实网换路、系统重新登录和正式发行包还有独立关卡。
+
+Windows Client SHA-256 `0b440fd21d543b45121f323081457ea8b534c1960976efcd631ae49dce0d512e`。隔离清单 SHA-256 `ff1614b9b19300dde85af7b0cdc31cf68d0be42b09b7cde7b88303378c8cfee7`，隔离日志 SHA-256 `9a6c5e984ee4a26396c202cd6ab4a89c39b44d8ed38a6c9806de397ea3bb9a26`。

@@ -442,4 +442,44 @@ $isolated = Get-Content -Raw -LiteralPath (Join-Path $fixture 'artifacts/product
 if (!$isolated.aoem_runtime.isolated_package_input -or $isolated.aoem_runtime.sha256 -ne $coreSha) {
   throw 'The original assembly must bind and record its explicit isolated AOEM input'
 }
+if ($windowsPackage) {
+  $profileFile = Join-Path $fixture 'portable-client.json'
+  $discoveryConfig = @{
+    library = '../../aoem/windows/core/bin/aoem_ffi.dll'
+    library_sha256 = $coreSha
+    verification = @{ trusted_parent = @{height=0} }
+    seeds = @(@{locator='bootstrap-first.json'}, @{locator='bootstrap-second.json'})
+  }
+  [IO.File]::WriteAllText($profileFile, ($discoveryConfig | ConvertTo-Json -Depth 5))
+  [IO.File]::WriteAllText((Join-Path $fixture 'bootstrap-first.json'), 'isolated locator fixture 1')
+  [IO.File]::WriteAllText((Join-Path $fixture 'bootstrap-second.json'), 'isolated locator fixture 2')
+  $profilePin = (Get-FileHash -LiteralPath $profileFile).Hash.ToLowerInvariant()
+  $bundledName = 'artifacts/product-overlay/windows-client-bundled'
+  try {
+    & $packager -Target $Target -PackageDir $bundledName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 ('0' * 64)
+    throw 'Assembly accepted a wrong issuer profile digest'
+  } catch {
+    if ($_.Exception.Message -notlike '*differs from its pinned SHA-256*') { throw }
+  }
+  & $packager -Target $Target -PackageDir $bundledName -WindowsClientProfile $profileFile -WindowsClientProfileSha256 $profilePin
+  $bundled = Join-Path $fixture $bundledName
+  $installer = Join-Path $bundled 'resources/scripts/windows/install-novovm-client.ps1'
+  $pin = (Get-FileHash -LiteralPath (Join-Path $bundled 'release-manifest.json')).Hash.ToLowerInvariant()
+  $plan = & $installer -Action Plan -ReleaseManifestSha256 $pin | ConvertFrom-Json
+  $installed = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) "NOVOVM/client-releases/$pin"
+  $bundledProfile = Join-Path $bundled 'config/discovery/installed-discovery.json'
+  if ($plan.installed_release -ne $installed -or $plan.program -ne (Join-Path $installed 'bin/novovm-native-client.exe') -or
+      $plan.arguments -cne ('"' + (Join-Path $installed 'config/discovery/installed-discovery.json') + '" follow-state ' + $profilePin) -or
+      (Get-FileHash -LiteralPath $bundledProfile).Hash -ne $profilePin -or (Test-Path -LiteralPath $installed)) {
+    throw 'Bundled installer plan lost the portable Client, verified issuer bytes or no-write behavior'
+  }
+  [IO.File]::AppendAllText((Join-Path $bundled 'config/discovery/bootstrap-first.json'), 'tampered')
+  try {
+    & $installer -Action Plan -ReleaseManifestSha256 $pin | Out-Null
+    throw 'Installer accepted a modified bundled bootstrap locator'
+  } catch {
+    if ($_.Exception.Message -notlike '*differs from its pinned hash*bootstrap-first.json*') { throw }
+  }
+  Write-Output 'PASS: packaged Windows Client selects a pinned portable profile without caller-supplied paths and rejects a changed locator'
+}
 Write-Output "PASS: original unified assembly (10 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default, WSS-mainchain retirement and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"
