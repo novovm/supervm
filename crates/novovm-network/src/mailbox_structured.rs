@@ -7,7 +7,7 @@ use crate::mailbox_rpc::{
     MailboxNoticeV1, MailboxPrefetchV6, MailboxRejectionV1, MailboxReplyV1 as Reply,
     MailboxRequestV1 as Request, MailboxServiceV1, MailboxWatchV1,
 };
-use crate::mailbox_store::MailboxCursorV1;
+use crate::mailbox_store::{MailboxCursorV1, MailboxRetainedPositionV1};
 use crate::product_overlay::{MLDSA65_PUBLIC_KEY_BYTES, MLDSA65_SIGNATURE_BYTES, MLDSA65_SUITE};
 use anyhow::{ensure, Context, Result};
 use novovm_protocol::{
@@ -154,6 +154,10 @@ fn watches(bytes: &[u8]) -> Result<Vec<MailboxWatchV1>> {
     Ok(out)
 }
 
+fn bulk_request_tag(tag: u8) -> bool {
+    matches!(tag, 10..=13 | 15)
+}
+
 pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroizing<Vec<u8>>> {
     ensure!(
         !requests.is_empty() && requests.len() <= LIMITS.rows,
@@ -169,6 +173,7 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
             Request::ProbeBulkV1 => (10, 0),
             Request::PutBulkV1 { expires, .. } => (11, *expires),
             Request::FetchBulkV1 { .. } => (12, 0),
+            Request::FetchRetainedBulkV1 { .. } => (15, 0),
             Request::WatchFetchBulkV1 { wait_ms, .. } => (13, i64::from(*wait_ms)),
             Request::Register { expires, .. } => (1, *expires),
             Request::Put { expires, .. } => (2, *expires),
@@ -233,6 +238,18 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
                 f[5] = &scalars[i];
                 f[6] = ciphertext;
             }
+            Request::FetchRetainedBulkV1 {
+                mailbox,
+                read,
+                after,
+            } => {
+                f[1] = mailbox;
+                f[2] = read;
+                if let Some(after) = after {
+                    f[3] = &after.generation;
+                    f[4] = &after.after_object;
+                }
+            }
             Request::Fetch { mailbox, read }
             | Request::FetchBulkV1 { mailbox, read }
             | Request::Revoke { mailbox, read } => {
@@ -267,7 +284,7 @@ pub fn encode_requests(context: [u8; 32], requests: &[Request]) -> Result<Zeroiz
         rows.push(f);
     }
     build(
-        if tags.iter().any(|t| matches!(t[0], 10..=13)) {
+        if tags.iter().any(|t| bulk_request_tag(t[0])) {
             BULK_REQUEST_SCHEMA
         } else {
             REQUEST_SCHEMA
@@ -296,6 +313,14 @@ fn validate_request(f: &Fields<'_>) -> Result<()> {
             if f[0][0] == 14 {
                 ensure!(i64_value(f[5])? > 0, "endpoint delivery expiry");
             }
+        }
+        15 => {
+            let width = f[3].len();
+            ensure!(width == 0 || width == 32, "retained mailbox position width");
+            shape(
+                f,
+                [s(1), s(32), s(32), s(width), s(width), s(0), s(0), s(0)],
+            )?;
         }
         3 | 6 | 12 => shape(f, [s(1), s(32), s(32), s(0), s(0), s(0), s(0), s(0)])?,
         4 => shape(f, [s(1), s(32), s(32), s(0), s(32), s(0), s(0), s(32)])?,
@@ -326,7 +351,7 @@ impl<'a> RequestBatch<'a> {
             let f = fields(&v, row)?;
             validate_request(&f)?;
             ensure!(
-                matches!(f[0][0], 10..=13) == (schema == BULK_REQUEST_SCHEMA),
+                bulk_request_tag(f[0][0]) == (schema == BULK_REQUEST_SCHEMA),
                 "mailbox operation schema"
             );
         }
@@ -355,7 +380,7 @@ impl<'a> RequestBatch<'a> {
             let f = fields(&self.0, row)?;
             let bytes = match f[0][0] {
                 2 | 11 | 14 => f[6].len().saturating_mul(3).saturating_add(4096),
-                12 | 13 => BULK_LIMITS.wire_bytes.saturating_mul(2),
+                12 | 13 | 15 => BULK_LIMITS.wire_bytes.saturating_mul(2),
                 3 | 8 => LIMITS.wire_bytes.saturating_mul(2),
                 _ => 8192,
             };
@@ -385,6 +410,18 @@ impl<'a> RequestBatch<'a> {
             12 => Request::FetchBulkV1 {
                 mailbox: fixed(f[1])?,
                 read: fixed(f[2])?,
+            },
+            15 => Request::FetchRetainedBulkV1 {
+                mailbox: fixed(f[1])?,
+                read: fixed(f[2])?,
+                after: if f[3].is_empty() {
+                    None
+                } else {
+                    Some(MailboxRetainedPositionV1 {
+                        generation: fixed(f[3])?,
+                        after_object: fixed(f[4])?,
+                    })
+                },
             },
             13 => Request::WatchFetchBulkV1 {
                 boxes: watches(f[6])?,

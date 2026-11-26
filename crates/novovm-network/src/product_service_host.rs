@@ -2,6 +2,32 @@
 //! locally pinned trust are separate policies, sharing the same signed offers.
 use super::*;
 
+enum CarrierBulk {
+    Disabled,
+    Bulk,
+    Retained,
+}
+
+impl CarrierBulk {
+    fn from_record(record: &PeerSignedRelayRecordV1) -> Result<Self> {
+        if NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(record)? {
+            Ok(Self::Retained)
+        } else if NativeCarrierMailboxEndpointV8::supports_bulk_v1(record)? {
+            Ok(Self::Bulk)
+        } else {
+            Ok(Self::Disabled)
+        }
+    }
+
+    fn endpoint(self, value: NativeCarrierMailboxEndpointV8) -> Result<RelayEndpointV1> {
+        match self {
+            Self::Disabled => value.endpoint(),
+            Self::Bulk => value.endpoint_bulk_v1(),
+            Self::Retained => value.endpoint_retained_bulk_v1(),
+        }
+    }
+}
+
 const REQUEST_V2: &[u8; 8] = b"NVLSRQ02";
 const MAILBOX_REQUEST_V1: &[u8; 8] = b"NVMBOX01";
 const MAILBOX_REQUEST_V2: &[u8; 8] = b"NVMBOX02";
@@ -127,12 +153,33 @@ impl ServiceLeaseHostV1 {
         now: u64,
         expires: u64,
     ) -> Result<PeerSignedRelayRecordV1> {
-        self.rotate_native_carrier_mailbox_v8_mode(true, Some(enabled), now, expires)
+        let mode = if enabled {
+            CarrierBulk::Bulk
+        } else {
+            CarrierBulk::Disabled
+        };
+        self.rotate_native_carrier_mailbox_v8_mode(true, Some(mode), now, expires)
     }
+
+    /// Publication is opt-in. When disabled, keep the original bulk capability.
+    pub fn rotate_native_carrier_mailbox_retained_bulk_v1(
+        &self,
+        enabled: bool,
+        now: u64,
+        expires: u64,
+    ) -> Result<PeerSignedRelayRecordV1> {
+        let mode = if enabled {
+            CarrierBulk::Retained
+        } else {
+            CarrierBulk::Bulk
+        };
+        self.rotate_native_carrier_mailbox_v8_mode(true, Some(mode), now, expires)
+    }
+
     fn rotate_native_carrier_mailbox_v8_mode(
         &self,
         enabled: bool,
-        bulk: Option<bool>,
+        bulk: Option<CarrierBulk>,
         now: u64,
         expires: u64,
     ) -> Result<PeerSignedRelayRecordV1> {
@@ -146,9 +193,7 @@ impl ServiceLeaseHostV1 {
             .get(self.key.public_key())
             .context("service revoked")?;
         let route = IrohServiceEndpointV1::from_record(&entry.current)?;
-        let bulk = bulk.unwrap_or(NativeCarrierMailboxEndpointV8::supports_bulk_v1(
-            &entry.current,
-        )?);
+        let bulk = bulk.unwrap_or(CarrierBulk::from_record(&entry.current)?);
         if !enabled {
             ensure!(
                 NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_none(),
@@ -162,12 +207,8 @@ impl ServiceLeaseHostV1 {
             .context("Iroh service endpoint required")?;
         // Resource policy belongs to the node; toggling a codec cannot reset it.
         endpoint.uri = if enabled {
-            let value = NativeCarrierMailboxEndpointV8 { iroh: route };
-            if bulk {
-                value.endpoint_bulk_v1()?.uri
-            } else {
-                value.endpoint()?.uri
-            }
+            bulk.endpoint(NativeCarrierMailboxEndpointV8 { iroh: route })?
+                .uri
         } else {
             route.endpoint()?.uri
         };
@@ -458,11 +499,7 @@ impl ServiceLeaseHostV1 {
             let value = NativeCarrierMailboxEndpointV8 {
                 iroh: endpoint.clone(),
             };
-            if NativeCarrierMailboxEndpointV8::supports_bulk_v1(&entry.current)? {
-                value.endpoint_bulk_v1()?
-            } else {
-                value.endpoint()?
-            }
+            CarrierBulk::from_record(&entry.current)?.endpoint(value)?
         } else if NativeCarrierMailboxEndpointV7::from_record(&entry.current)?.is_some() {
             NativeCarrierMailboxEndpointV7 {
                 iroh: endpoint.clone(),

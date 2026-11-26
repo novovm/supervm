@@ -12,7 +12,7 @@ use novovm_network::{
         MailboxRejectionV1, MailboxReplyV1 as Reply, MailboxRequestV1 as Request, MailboxServiceV1,
         MailboxWatchV1,
     },
-    mailbox_store::MailboxStore,
+    mailbox_store::{MailboxRetainedPositionV1, MailboxStore},
     mailbox_structured::{native_session::*, LIMITS, STREAM},
     novorudp::{
         endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
@@ -823,6 +823,123 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 if *max_ciphertext as usize == novovm_network::mailbox_store::MAX_BULK_CIPHERTEXT)
             );
             assert!(other_lane.supports_bulk_v1());
+            let read = [33; 32];
+            let retained_box = [31; 32];
+            let write = [32; 32];
+            let register = handle
+                .request(
+                    3,
+                    vec![Request::Register {
+                        mailbox: retained_box,
+                        write,
+                        read,
+                        expires,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+                .await?;
+            assert!(matches!(register.as_slice(), [Reply::Registered]));
+            let bulk_body = vec![18; 70 * 1024];
+            for object in [[71; 32], [72; 32]] {
+                let stored = handle
+                    .request(
+                        3,
+                        vec![Request::PutBulkV1 {
+                            mailbox: retained_box,
+                            write,
+                            object,
+                            ciphertext: bulk_body.clone(),
+                            expires,
+                        }],
+                        until(),
+                        check.clone(),
+                    )
+                    .await?;
+                assert!(matches!(stored.as_slice(), [Reply::Stored(_)]));
+            }
+            let fetch_retained = |read, after| {
+                handle.request(
+                    3,
+                    vec![Request::FetchRetainedBulkV1 {
+                        mailbox: retained_box,
+                        read,
+                        after,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+            };
+            let disabled = fetch_retained(read, None)
+                .await
+                .err()
+                .context("missing capability")?;
+            assert_eq!(disabled.kind, NativeRequestErrorKind::Protocol);
+            assert!(!handle.is_stopped());
+            handle.enable_verified_retained_bulk_v1();
+            let first = fetch_retained(read, None).await?;
+            let [Reply::NoticeObjectV6 {
+                notices,
+                object: Some(first),
+            }] = first.as_slice()
+            else {
+                bail!("retained first object missing");
+            };
+            assert_eq!(first.object, [71; 32]);
+            assert_eq!(first.ciphertext, bulk_body);
+            let position = MailboxRetainedPositionV1 {
+                generation: notices[0].cursor.generation,
+                after_object: first.object,
+            };
+            let next = fetch_retained(read, Some(position)).await?;
+            assert!(matches!(
+                next.as_slice(),
+                [Reply::NoticeObjectV6 { notices: next, object: Some(row) }]
+                    if next[0].cursor == notices[0].cursor && row.object == [72; 32]
+            ));
+            let end = fetch_retained(
+                read,
+                Some(MailboxRetainedPositionV1 {
+                    after_object: [72; 32],
+                    ..position
+                }),
+            )
+            .await?;
+            assert!(matches!(
+                end.as_slice(),
+                [Reply::NoticeObjectV6 { notices, object: None }] if !notices[0].pending
+            ));
+            let refused = fetch_retained([34; 32], Some(position)).await?;
+            assert!(matches!(
+                refused.as_slice(),
+                [Reply::Rejected(MailboxRejectionV1::Unauthorized)]
+            ));
+            let stale = fetch_retained(
+                read,
+                Some(MailboxRetainedPositionV1 {
+                    generation: [0; 32],
+                    ..position
+                }),
+            )
+            .await?;
+            assert!(matches!(
+                stale.as_slice(),
+                [Reply::Rejected(MailboxRejectionV1::Invalid)]
+            ));
+            let head = handle
+                .request(
+                    3,
+                    vec![Request::FetchBulkV1 {
+                        mailbox: retained_box,
+                        read,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+                .await?;
+            assert!(matches!(
+                head.as_slice(), [Reply::Object { object, .. }] if *object == [71; 32]
+            ));
             let initial = handle
                 .request(
                     0,
@@ -1018,6 +1135,74 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
     stop.store(true, Ordering::Release);
     tokio::time::timeout(Duration::from_secs(5), &mut server).await??;
     result
+}
+
+#[test]
+fn signed_retained_bulk_capability_is_explicit_and_survives_renewal() -> Result<()> {
+    use novovm_network::{
+        iroh_transport::IrohAddressV1,
+        product_directory::validate_relay_record_v1,
+        product_service_lease::{IrohServiceEndpointV1, NativeCarrierMailboxEndpointV8},
+    };
+    let directory = tempfile::tempdir()?;
+    let mut endpoint = IrohServiceEndpointV1 {
+        instance: [51; 32],
+        address: IrohAddressV1 {
+            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[52; 32])
+                .verifying_key()
+                .to_bytes(),
+            direct: vec!["127.0.0.1:9".parse()?],
+            relays: vec![],
+        },
+    };
+    let at = now_ms()?;
+    let expires = at + 60_000;
+    let signer = key(17);
+    let legacy = NativeCarrierMailboxEndpointV8 {
+        iroh: endpoint.clone(),
+    };
+    let record = sign_relay_record_v1(
+        &signer,
+        "retained-bulk-fixture",
+        vec![legacy.endpoint_bulk_v1()?],
+        at,
+        expires,
+        1,
+    )?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&record)?);
+    assert!(!NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &record
+    )?);
+    let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record.clone()], at, key(90))?;
+    let checkpoint = book.checkpoint()?;
+    let file = ServiceLeaseFileV1::create(
+        &directory.path().join("retained-locator.bin"),
+        Zeroizing::new([91; 32]),
+        &checkpoint,
+    )?;
+    book.attach_persistence(file, &checkpoint)?;
+    let host = ServiceLeaseHostV1::new(signer, book)?;
+    let enabled = host.rotate_native_carrier_mailbox_retained_bulk_v1(true, at + 1, expires)?;
+    validate_relay_record_v1(&enabled, at + 1, &key(90))?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &enabled
+    )?);
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&enabled)?);
+    let mut forged = record;
+    forged.endpoints = enabled.endpoints;
+    assert!(validate_relay_record_v1(&forged, at + 1, &key(90)).is_err());
+    endpoint.instance = [53; 32];
+    let renewed = host.rotate_self_owned(&endpoint, at + 2, expires)?;
+    validate_relay_record_v1(&renewed, at + 2, &key(90))?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &renewed
+    )?);
+    let disabled = host.rotate_native_carrier_mailbox_retained_bulk_v1(false, at + 3, expires)?;
+    assert!(!NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &disabled
+    )?);
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&disabled)?);
+    Ok(())
 }
 
 #[tokio::test]

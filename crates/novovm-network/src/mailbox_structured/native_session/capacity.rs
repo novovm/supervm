@@ -194,9 +194,9 @@ pub fn request_retained_bytes_v1(requests: &[Request]) -> usize {
             | Request::EndpointDeliverV1 { ciphertext, .. } => {
                 ciphertext.len().saturating_mul(3).saturating_add(4096)
             }
-            Request::FetchBulkV1 { .. } | Request::WatchFetchBulkV1 { .. } => {
-                BULK_LIMITS.wire_bytes.saturating_mul(2)
-            }
+            Request::FetchBulkV1 { .. }
+            | Request::FetchRetainedBulkV1 { .. }
+            | Request::WatchFetchBulkV1 { .. } => BULK_LIMITS.wire_bytes.saturating_mul(2),
             Request::Fetch { .. } | Request::WatchFetchV6 { .. } => {
                 LIMITS.wire_bytes.saturating_mul(2)
             }

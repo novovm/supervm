@@ -110,6 +110,7 @@ struct Shared {
     controller: Arc<crate::service_concurrency::ServiceConcurrencyV1>,
     retained_limit: std::sync::atomic::AtomicUsize,
     bulk: AtomicBool,
+    retained_bulk: AtomicBool,
     state: Mutex<State>,
     wake: Arc<Notify>,
 }
@@ -276,6 +277,11 @@ impl NativeMailboxHandle {
     pub fn supports_bulk_v1(&self) -> bool {
         self.shared.bulk.load(Ordering::Acquire)
     }
+    /// Only after verifying the explicit retained-bulk marker on the
+    /// node-signed locator bound to this currently authenticated carrier.
+    pub fn enable_verified_retained_bulk_v1(&self) {
+        self.shared.retained_bulk.store(true, Ordering::Release);
+    }
     pub fn has_negotiated_capacity(&self) -> bool {
         self.shared.retained_limit.load(Ordering::Acquire) != 0
     }
@@ -322,6 +328,13 @@ impl NativeMailboxHandle {
         deadline: Instant,
         authority: NativeRequestAuthority,
     ) -> Result<NativeRequestFuture> {
+        if !self.shared.retained_bulk.load(Ordering::Acquire)
+            && requests
+                .iter()
+                .any(|r| matches!(r, Request::FetchRetainedBulkV1 { .. }))
+        {
+            return Err(NativeRequestError::new(NativeRequestErrorKind::Protocol));
+        }
         let now = Instant::now();
         let deadline = deadline.min(now + REQUEST_DEADLINE);
         if now >= deadline {
@@ -497,6 +510,7 @@ impl NativeMailboxDriver {
             controller,
             retained_limit: std::sync::atomic::AtomicUsize::new(0),
             bulk: AtomicBool::new(false),
+            retained_bulk: AtomicBool::new(false),
             state: Mutex::new(State {
                 slots: (0..SLOTS).map(|_| Slot::default()).collect(),
                 next: 0,
@@ -684,6 +698,9 @@ impl NativeMailboxDriver {
                 }
                 if self.shared.bulk.load(Ordering::Acquire) {
                     self.client.enable_verified_bulk_v1();
+                }
+                if self.shared.retained_bulk.load(Ordering::Acquire) {
+                    self.client.enable_verified_retained_bulk_v1();
                 }
                 match self.client.begin_until_cancellable(
                     index,
@@ -971,6 +988,7 @@ mod capacity_tests {
                 controller: controller.clone(),
                 retained_limit: std::sync::atomic::AtomicUsize::new(0),
                 bulk: AtomicBool::new(false),
+                retained_bulk: AtomicBool::new(false),
                 state: Mutex::new(State {
                     slots: (0..SLOTS).map(|_| Slot::default()).collect(),
                     next: 0,
@@ -1136,6 +1154,7 @@ mod capacity_tests {
                 super::super::native_session::adaptive_retained_bytes_v1(&controller),
             ),
             bulk: AtomicBool::new(false),
+            retained_bulk: AtomicBool::new(false),
             state: Mutex::new(State {
                 slots: (0..count).map(|_| Slot::default()).collect(),
                 next: 0,
@@ -1191,6 +1210,7 @@ mod capacity_tests {
             controller: controller.clone(),
             retained_limit: std::sync::atomic::AtomicUsize::new(1024 * 1024 * 1024),
             bulk: AtomicBool::new(false),
+            retained_bulk: AtomicBool::new(false),
             state: Mutex::new(State {
                 slots: (0..32).map(|_| Slot::default()).collect(),
                 next: 0,
