@@ -12,8 +12,23 @@ use native_round::NativeRound;
 
 const POLL: Duration = Duration::from_secs(2);
 const RECOVER_NATIVE: Duration = Duration::from_secs(6);
+const FOLLOW_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
+    // Discovery refresh runs while the state-query carrier is still on the
+    // call stack. Reserve the worker stack explicitly, including on Windows.
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("novovm-follow-state".into())
+            .stack_size(FOLLOW_STACK_BYTES)
+            .spawn_scoped(scope, || follow_on_worker(path, profile_sha256))
+            .context("start native state follower")?
+            .join()
+            .map_err(|_| anyhow::anyhow!("native state follower panicked"))?
+    })
+}
+
+fn follow_on_worker(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
     let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
     let identity = local_identity(&installed_state_base()?, profile_base(path)?, &profile)?;
     let chain = open_checkpoint(&profile, &identity, &domain, anchor)?;

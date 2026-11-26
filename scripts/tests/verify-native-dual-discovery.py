@@ -242,11 +242,18 @@ def verify_follow(args):
     pid = start["pid"]
     if type(pid) is not int or pid < 1 or end["pid"] != pid or type(end["pid"]) is not int:
         raise ValueError("supervisor did not attest the same Client PID")
+    exit_code = end["exit"]
+    supervised_stop = end.get("supervisor_stopped") is True and exit_code in (1, -15)
+    if type(exit_code) is not int or not (exit_code == 0 or supervised_stop):
+        raise ValueError("Client had an abnormal exit during observation")
     if start["client_sha256"] != args.client_sha256 or start["profile_sha256"] != args.profile_sha256:
         raise ValueError("supervisor did not attest the expected Client and profile")
     started, closed, ended = map(unix_ms, (utc(start["utc"]), args.closed_at, utc(end["utc"])))
     if not started < closed < ended:
         raise ValueError("Client witness window did not bracket the source closure")
+    if args.issuer_ahead_ms < 0:
+        raise ValueError("issuer clock upper bound must be nonnegative")
+    fresh_after = closed + args.issuer_ahead_ms
 
     with args.events.open("rb") as stream:
         raw = stream.read(1_048_577)
@@ -288,7 +295,7 @@ def verify_follow(args):
             locators[seq] = (issued, stamp, expires, authors)
             if stamp < closed and set(authors) == sources:
                 before = (seq, stamp)
-            if closed < issued:
+            if fresh_after < issued:
                 if authors != [args.surviving]:
                     raise ValueError("departed source returned a locator issued after its witnessed exit")
                 if before is not None and after is None:
@@ -317,10 +324,11 @@ def verify_follow(args):
         "transport_identity_sha256": client,
         "dual_source_sequence": before[0],
         "surviving_source_sequence": after[0],
+        "issuer_ahead_upper_ms": args.issuer_ahead_ms,
         "target_height": args.height,
         "target_first_verified_after_exit": state[0] > closed,
         "target_used_fresh_survivor_locator": (
-            locators[state[1]][0] > closed and locators[state[1]][3] == [args.surviving]
+            locators[state[1]][0] > fresh_after and locators[state[1]][3] == [args.surviving]
         ),
         "target_first_verified_downloaded_nodes": state[2],
     }
@@ -339,6 +347,8 @@ def follow_main(argv):
         parser.add_argument("--" + name, type=int, required=True)
     parser.add_argument("--closed-at", type=utc, required=True,
                         help="Independently witnessed source exit in the Client UTC frame")
+    parser.add_argument("--issuer-ahead-ms", type=int, default=0,
+                        help="Measured upper bound for the issuer clock ahead of Client UTC")
     args = parser.parse_args(argv)
     try:
         result = verify_follow(args)
@@ -668,7 +678,7 @@ class FollowFailoverTests(TestCase):
                   peer_transport_sha256=self.provider, verified_nodes=19, downloaded_nodes=12),
         ]
 
-    def verify_trace(self, events, **end_fields):
+    def verify_trace(self, events, issuer_ahead_ms=0, **end_fields):
         profile = {
             "chain_id": 7251564206, "relays": ["https://approved.invalid/"],
             "lookup_transport_keys": [],
@@ -689,13 +699,15 @@ class FollowFailoverTests(TestCase):
                 "client_sha256": "e" * 64, "profile_sha256": profile_pin,
             }))
             (root / "end.json").write_text(json.dumps({
-                "pid": 234, "utc": "1970-01-01T00:00:04Z", **end_fields,
+                "pid": 234, "utc": "1970-01-01T00:00:04Z", "exit": 1,
+                "supervisor_stopped": True, **end_fields,
             }))
             return verify_follow(argparse.Namespace(
                 start=root / "start.json", end=root / "end.json", chain_id=profile["chain_id"],
                 profile=root / "profile.json", profile_sha256=profile_pin,
                 events=root / "stdout.jsonl", events_sha256=hashlib.sha256(raw).hexdigest(),
                 client_sha256="e" * 64, closed_at=utc("1970-01-01T00:00:03Z"),
+                issuer_ahead_ms=issuer_ahead_ms,
                 departed=self.departed, surviving=self.surviving, provider=self.provider,
                 height=42, block_hash="a" * 64, state_root="b" * 64,
             ))
@@ -733,6 +745,16 @@ class FollowFailoverTests(TestCase):
         trace[3]["block_hash"] = "0x" + "f" * 64
         with self.assertRaisesRegex(ValueError, "expected block"):
             self.verify_trace(trace)
+
+    def test_reject_stack_overflow_even_if_the_required_events_were_emitted(self):
+        with self.assertRaisesRegex(ValueError, "abnormal exit"):
+            self.verify_trace(self.trace(), exit=0xc00000fd)
+
+    def test_fresh_issuance_must_clear_issuer_clock_upper_bound(self):
+        result = self.verify_trace(self.trace(), issuer_ahead_ms=90)
+        self.assertTrue(result["target_used_fresh_survivor_locator"])
+        with self.assertRaisesRegex(ValueError, "fresh surviving"):
+            self.verify_trace(self.trace(), issuer_ahead_ms=100)
 
 
 if __name__ == "__main__":
