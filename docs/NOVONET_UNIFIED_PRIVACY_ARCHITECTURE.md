@@ -58,7 +58,11 @@ NOVONET 只维护一条自适应通信执行链。NOVOCHAT 执行同一套隐私
 
 ### 普通节点启动与公开发现
 
-原 `novovm-native-client <发行发现配置> discover` 使用同一 `NVNETDS1` 服务。发行配置固定链标识、创世和协议承诺、AOEM 摘要、两个不同的引导签名者及待发现的通信用途公钥。干净设备为该链域在本机创建受保护的 ML-DSA-65 通信钥，后续打开核对同一身份。已建立的身份缺少密钥时停止启动。设备并发认证两个引导源，验签候选记录，不发布设备地址，也不获得投票权。
+原 `novovm-native-client <发行发现配置> discover` 使用同一 `NVNETDS1` 服务。发行配置固定链标识、创世和协议承诺、AOEM 摘要及两个不同的引导签名者。干净设备为该链域在本机创建受保护的 ML-DSA-65 通信钥，后续打开核对同一身份。已建立的身份缺少密钥时停止启动。设备并发认证两个引导源。普通 Client 查询时不公布自身地址。
+
+发行配置可以固定读取节点的通信用途公钥。具备终结性验证配置和获准中继时，`lookup_transport_keys` 也可以为空。每个已认证的引导会话最多抽取一个自愿公开的读取服务公钥，再按该公钥取回服务签发的短期定位。两步共用原发现协议、帧长与请求预算。只接受用途、链域、身份、签名和时效均相符的定位。对首次发现的服务，Client 通过发行配置允许的中继建立专用的仅中继连接，再向该服务核对持钥证明。区块终结性仍按原验证者集合验签，状态数据须还原到已验证的状态根。
+
+节点配置的 `publish_public_read_provider` 默认关闭。开启发布时，节点须同时提供发现、公开状态同步、认证查询及可用的获准中继。引导抽样只覆盖主动发布读取服务的身份，联系人和普通设备不参与抽样。
 
 2026-11-26 在 C 隔离环境运行 Windows Client 实际进程。首源不可达时，两次启动均通过第二源取得同一签名候选，身份指纹一致。另查了已建立密钥缺失和用另一个签名者记录替换主引导文件的拒绝行为。两项已有引导回归和 Windows、Linux 打包组装合同测试通过。可重复用例 `clean_device_authenticates_through_second_source_and_preserves_custody` 由 `NOVOVM_DISCOVERY_CLIENT`、`NOVOVM_DISCOVERY_AOEM` 和 `NOVOVM_DISCOVERY_AOEM_SHA256` 指定同平台 Client 与已固定摘要的 AOEM。Windows 使用 `iroh-transport` 构建，在本机为 `novovm-node` 使用 `opt-level=0` 和 `codegen-units=256`。验收日志 SHA-256 `310d72b200d4e869a763c58dd8b69d81ccf85264fda7c00a8953f470e5fe2293`。
 

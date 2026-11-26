@@ -291,9 +291,8 @@ async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> 
                 Box::pin(lookup_sources(
                     scope,
                     identity,
-                    profile.pins(),
+                    InstalledLookups::new(profile),
                     candidates,
-                    profile.lookup_transport_keys.clone(),
                     REFRESH_SOURCE_BUDGET,
                 ))
             },
@@ -446,6 +445,10 @@ fn release_preflight_verifies_signed_bootstrap_locators_offline() -> Result<()> 
     let current = make_record(&first, pins, &primary, now + 120_000)?;
     write_locator("primary.json", &current)?;
     assert_eq!(check(&profile)?["chain_id"], chain_id);
+
+    chain_sync::check_locator_role_transition(
+        &root, &profile, &first, &second, &validator, &current,
+    )?;
 
     // A separately pinned read service may supply data without voting power.
     profile

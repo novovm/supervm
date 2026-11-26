@@ -3,15 +3,16 @@
 use super::*;
 use novovm_network::{
     discovery_control::{
-        decode_node_locator_v1, encode_node_locator_v1, native_locator_id_v1, node_owner_id_v1,
-        serve_authenticated_node_locators_v1, DiscoveryClient,
+        decode_node_locator_v1, decode_public_read_locator_v1, encode_node_locator_v1,
+        encode_public_read_locator_v1, native_locator_id_v1, node_owner_id_v1,
+        serve_authenticated_node_locators_v1, DiscoveryClient, PublicReadReferralUnsupported,
     },
     opaque_rendezvous::RendezvousStoreV1,
     transport_binding::BoundSecureChannelV1,
 };
 
 type Pins = (u64, [u8; 32], [u8; 32]);
-type Lookup<'a> = Pin<Box<dyn Future<Output = Result<Vec<PeerSignedRelayRecordV1>>> + 'a>>;
+type Lookup<'a> = Pin<Box<dyn Future<Output = Result<LookupResult>> + 'a>>;
 const TAG: &[u8; 8] = b"NVDISC01";
 #[cfg(test)]
 mod dial_tests;
@@ -80,7 +81,7 @@ impl Seed<'_> {
             sequence,
         }))
     }
-    fn finish(&mut self, result: &Result<Vec<PeerSignedRelayRecordV1>>) {
+    fn finish(&mut self, result: &Result<LookupResult>) {
         match result {
             Ok(_) => self.fallback = false,
             Err(error) if terminal_session_rejection(error) => {
@@ -95,6 +96,24 @@ impl Seed<'_> {
         }
     }
 }
+#[derive(Clone)]
+struct PublicReadPublication {
+    bytes: Vec<u8>,
+    sequence: u64,
+    expires_at_ms: u64,
+}
+
+#[derive(Clone)]
+struct LocalLocators {
+    ordinary: Vec<u8>,
+    read_service: Option<PublicReadPublication>,
+}
+
+enum Exchange {
+    Publisher(LocalLocators),
+    Reader { sample_until: Option<Instant> },
+}
+
 pub(super) struct Discovery<'a> {
     scope: &'a IrohScopeV1,
     identity: TransportIdentity,
@@ -102,7 +121,7 @@ pub(super) struct Discovery<'a> {
     pins: Pins,
     pub(super) store: Arc<Mutex<RendezvousStoreV1>>,
     rotate_at: Instant,
-    local: Option<Vec<u8>>,
+    local: Option<LocalLocators>,
     publish_at: Instant,
     revision: u64,
     seeds: Vec<Seed<'a>>,
@@ -195,12 +214,40 @@ impl<'a> Discovery<'a> {
         self.revision = 0;
         Ok(true)
     }
+    pub(super) fn suspend_local(&mut self) {
+        if self.local.take().is_some() {
+            for seed in &mut self.seeds {
+                seed.job = None;
+            }
+        }
+    }
+
     pub(super) fn set_local(
         &mut self,
         record: &PeerSignedRelayRecordV1,
+        read_service: Option<&PeerSignedRelayRecordV1>,
         now: Instant,
     ) -> Result<()> {
-        self.local = Some(encode_node_locator_v1(record, self.pins)?);
+        let public = read_service
+            .map(|read| -> Result<_> {
+                ensure!(
+                    read.relay_public_key == record.relay_public_key
+                        && read.sequence == record.sequence
+                        && read.issued_at_ms == record.issued_at_ms
+                        && read.expires_at_ms <= record.expires_at_ms,
+                    "public read locator differs from its local owner or issuance"
+                );
+                Ok(PublicReadPublication {
+                    bytes: encode_public_read_locator_v1(read, self.pins)?,
+                    sequence: read.sequence,
+                    expires_at_ms: read.expires_at_ms,
+                })
+            })
+            .transpose()?;
+        self.local = Some(LocalLocators {
+            ordinary: encode_node_locator_v1(record, self.pins)?,
+            read_service: public,
+        });
         // The owner publishes the local record and polls the public RPC in
         // this same turn. Make it eligible before accepting that first read.
         self.publish_at = now;
@@ -299,7 +346,7 @@ impl<'a> Discovery<'a> {
         now: Instant,
         wall: u64,
     ) -> Result<Vec<PeerSignedRelayRecordV1>> {
-        let Some(bytes) = self.local.clone() else {
+        let Some(local) = self.local.clone() else {
             return Ok(Vec::new());
         };
         if now >= self.publish_at {
@@ -314,13 +361,32 @@ impl<'a> Discovery<'a> {
                     .map_err(|_| anyhow::anyhow!("discovery store poisoned"))?;
                 // The tick may predate a rotation or an intervening RPC. Use
                 // admission time under this SAME store's lock, not tick time.
-                store.put_node_locator_v1(
+                let ordinary = store.put_node_locator_v1(
                     node_owner_id_v1(self.identity.public_key())?,
                     self.revision,
                     Duration::from_secs(30),
-                    bytes.clone(),
+                    local.ordinary.clone(),
                     Instant::now(),
-                )
+                );
+                if let Some(read) = &local.read_service {
+                    let ttl = read.expires_at_ms.saturating_sub(wall).min(30_000);
+                    if ttl > 0 {
+                        if let Err(error) = store.put_public_read_locator_v1(
+                            self.identity.public_key(),
+                            read.sequence,
+                            Duration::from_millis(ttl),
+                            read.bytes.clone(),
+                            Instant::now(),
+                        ) {
+                            self.failures.record(
+                                "discovery_local_read_publication",
+                                None,
+                                &error.into(),
+                            );
+                        }
+                    }
+                }
+                ordinary
             };
             if let Err(error) = result {
                 self.failures
@@ -385,19 +451,21 @@ impl<'a> Discovery<'a> {
             };
             let identity = self.identity.clone();
             let pins = self.pins;
-            let own = bytes.clone();
+            let own = Exchange::Publisher(local.clone());
             let scope = self.scope;
             let count = self.keys.len().min(28);
             let lookups = (0..count)
                 .map(|i| self.keys[(self.lookup_turn + i) % self.keys.len()].clone())
                 .collect();
-            self.lookup_turn = (self.lookup_turn + count) % self.keys.len();
+            if count > 0 {
+                self.lookup_turn = (self.lookup_turn + count) % self.keys.len();
+            }
             seed.job = Some(Box::pin(query(
                 scope,
                 identity,
                 candidate,
                 pins,
-                Some(own),
+                own,
                 lookups,
                 self.failures.clone(),
             )));
@@ -426,7 +494,7 @@ impl<'a> Discovery<'a> {
             if let Poll::Ready(result) = job.as_mut().poll(cx) {
                 seed.finish(&result);
                 match result {
-                    Ok(found) => records.extend(found),
+                    Ok(found) => records.extend(found.records),
                     Err(error) => {
                         self.failures.record("discovery_lookup", None, &error);
                     }
@@ -442,10 +510,10 @@ async fn query(
     identity: TransportIdentity,
     candidate: DialCandidate,
     pins: Pins,
-    own: Option<Vec<u8>>,
+    exchange: Exchange,
     lookups: Vec<Vec<u8>>,
     failures: Arc<NetworkFailures>,
-) -> Result<Vec<PeerSignedRelayRecordV1>> {
+) -> Result<LookupResult> {
     use novovm_network::iroh_transport::{IrohConnectProgressV1, IrohConnectUnavailableV1};
     let mut observation =
         failures
@@ -511,15 +579,15 @@ async fn query(
             .context("discovery domain selection")?;
         let mut client =
             DiscoveryClient::from_authenticated_node_locators_v1(&mut stream, channel, instance)?;
-        if let Some(own) = own {
+        if let Exchange::Publisher(own) = &exchange {
             let publication_revision = wall_ms()?;
             observation.stage("remote publication");
             client
-                .put_node_locator_v1(publication_revision, 30_000, own)
+                .put_node_locator_v1(publication_revision, 30_000, own.ordinary.clone())
                 .await
                 .context("discovery remote publication")?;
         }
-        let mut found = Vec::new();
+        let mut found = LookupResult::default();
         observation.stage("remote lookup");
         for key in lookups {
             if let Some(record) = client
@@ -527,7 +595,7 @@ async fn query(
                 .await
                 .context("discovery remote lookup")?
             {
-                found.push(decode_node_locator_v1(
+                found.records.push(decode_node_locator_v1(
                     &record.ciphertext,
                     &key,
                     pins,
@@ -535,6 +603,37 @@ async fn query(
                     &identity,
                 )?);
             }
+        }
+        match exchange {
+            Exchange::Publisher(LocalLocators {
+                read_service: Some(read),
+                ..
+            }) => {
+                observation.stage("public read publication");
+                let ttl = read.expires_at_ms.saturating_sub(wall_ms()?).min(30_000);
+                if ttl > 0 {
+                    // Only a canonical rejection of the capability probe identifies a legacy peer.
+                    match client.sample_public_read_key_v1().await {
+                        Err(error) if error.is::<PublicReadReferralUnsupported>() => {
+                            return Ok(found)
+                        }
+                        result => {
+                            result.context("public read capability probe")?;
+                        }
+                    }
+                    client
+                        .put_public_read_locator_v1(read.sequence, ttl as u32, read.bytes)
+                        .await
+                        .context("public read publication")?;
+                }
+            }
+            Exchange::Reader {
+                sample_until: Some(until),
+            } => {
+                observation.stage("public read referral");
+                return finish_reader_lookup(client, &identity, pins, until, found).await;
+            }
+            _ => {}
         }
         observation.stage("close");
         client.close().await.context("discovery close")?;
@@ -565,6 +664,66 @@ async fn query(
         }
     };
     result
+}
+
+#[derive(Debug, Default)]
+struct LookupResult {
+    records: Vec<PeerSignedRelayRecordV1>,
+    referral_status: Option<&'static str>,
+}
+
+async fn finish_reader_lookup(
+    mut client: DiscoveryClient<'_, '_>,
+    identity: &TransportIdentity,
+    pins: Pins,
+    until: Instant,
+    mut found: LookupResult,
+) -> Result<LookupResult> {
+    // A slow optional operation must not discard completed pinned lookups.
+    let budget = until
+        .saturating_duration_since(Instant::now())
+        .min(Duration::from_secs(2));
+    let referral = tokio::time::timeout(budget, async {
+        let Some(key) = client.sample_public_read_key_v1().await? else {
+            return Ok(None);
+        };
+        let Some(record) = client.get_public_read_locator_v1(&key).await? else {
+            return Ok(None);
+        };
+        decode_public_read_locator_v1(&record.ciphertext, &key, pins, wall_ms()?, identity)
+            .map(Some)
+    })
+    .await;
+    let state = match referral {
+        Ok(Ok(record)) => {
+            let state = if record.is_some() {
+                "verified_locator"
+            } else {
+                "no_live_locator"
+            };
+            found.records.extend(record);
+            if let Ok(closed) = tokio::time::timeout(
+                until.saturating_duration_since(Instant::now()),
+                client.close(),
+            )
+            .await
+            {
+                closed.context("discovery close")?;
+            }
+            state
+        }
+        Ok(Err(error)) if error.is::<PublicReadReferralUnsupported>() => "unsupported",
+        Ok(Err(error)) if found.records.is_empty() => {
+            return Err(error.context("public read referral"))
+        }
+        Ok(Err(_)) => "failed",
+        Err(error) if found.records.is_empty() => {
+            return Err(anyhow::Error::new(error).context("public read referral deadline"))
+        }
+        Err(_) => "timed_out",
+    };
+    found.referral_status = Some(state);
+    Ok(found)
 }
 
 pub(super) async fn serve(
@@ -686,6 +845,7 @@ mod tests {
                                     discovery: true,
                                     discovery_seeds: Vec::new(),
                                     publish_native_query_address: false,
+                                    publish_public_read_provider: false,
                                     relay_forwarding: false,
                                     fallback_after_ms: 1000,
                                     retry_ms: 1000,
@@ -723,7 +883,7 @@ mod tests {
                                         wall + 120_000,
                                         sequence,
                                     )?;
-                                    discovery.set_local(&record, tick)?;
+                                    discovery.set_local(&record, None, tick)?;
                                     ensure!(discovery.maintain(tick, wall)?.is_empty());
                                     ensure!(discovery
                                         .store

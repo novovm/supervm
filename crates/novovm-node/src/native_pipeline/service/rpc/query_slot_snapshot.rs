@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod native_fallback;
+mod public_referral;
 
 struct QueryOwner {
     rpc: RpcLifecycle,
@@ -400,6 +401,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         peer_records: Vec::new(),
         discovery: true,
         discovery_seeds: Vec::new(),
+        publish_public_read_provider: false,
         publish_native_query_address: lan.is_none()
             && std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("2"),
         relay_forwarding: false,

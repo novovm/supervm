@@ -110,8 +110,12 @@ async fn fetch_node(
     session: &mut QuerySession<'_>,
     selector: StateNodeSelector,
 ) -> Result<StateNodePayload> {
+    let deadline = query_deadline();
     loop {
-        match session.query(Query::StateNode(selector.clone())).await? {
+        match session
+            .query_until(Query::StateNode(selector.clone()), deadline)
+            .await?
+        {
             Answer::StateNode(payload) => return Ok(payload),
             Answer::Error(QueryError::Busy) => tokio::time::sleep(Duration::from_millis(10)).await,
             _ => anyhow::bail!("authenticated peer cannot serve the certified state snapshot"),

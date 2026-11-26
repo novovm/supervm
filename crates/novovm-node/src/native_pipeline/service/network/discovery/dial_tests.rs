@@ -44,7 +44,7 @@ fn unreachable_latest_and_seed_obey_original_deadline_and_release_owner() -> Res
                                     keys[0].clone(),
                                     candidate,
                                     pins,
-                                    None,
+                                    Exchange::Reader { sample_until: None },
                                     vec![],
                                     failures.clone(),
                                 )
@@ -146,7 +146,7 @@ fn private_only_latest_retains_public_hint_without_sequence_authority_or_revocat
         "latest_signed_record"
     );
     seed.finish(&Err(anyhow::Error::new(BootstrapDialUnavailable)));
-    seed.finish(&Ok(Vec::new()));
+    seed.finish(&Ok(LookupResult::default()));
     assert!(!seed.fallback);
     seed.fallback = true;
     seed.finish(&Err(anyhow::Error::new(ServiceSelectionMismatch)));

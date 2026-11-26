@@ -5,12 +5,13 @@ use novovm_network::discovery_control::native_chain_query_address;
 use novovm_network::novorudp::endpoint::NativePeer;
 mod locators;
 mod native_round;
+#[cfg(test)]
+pub(in super::super) use locators::check_locator_role_transition;
 use locators::Locators;
 use native_round::NativeRound;
 
 const POLL: Duration = Duration::from_secs(2);
 const RECOVER_NATIVE: Duration = Duration::from_secs(6);
-const QUERY_BUDGET: Duration = Duration::from_secs(20);
 
 pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
     let (profile, domain, anchor) = installed_chain_profile(path, profile_sha256)?;
@@ -35,7 +36,7 @@ pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Resu
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
-        .block_on(follower.run())
+        .block_on(boxed_read(|| follower.run()))
 }
 
 struct Follower {
@@ -83,7 +84,9 @@ impl Follower {
             if let Some((mut session, route)) = native.take() {
                 let failed_peer = route.peer.clone();
                 let failed_address = route.native_address;
-                self.run_route(&mut session, route, None).await.ok();
+                boxed_read(|| self.run_route(&mut session, route, None))
+                    .await
+                    .ok();
                 if let Some(address) = failed_address {
                     native_round.record_failure(failed_peer, address);
                 }
@@ -104,13 +107,18 @@ impl Follower {
                         continue;
                     }
                 }
-                if !self.locators.records.is_empty() {
+                if self
+                    .locators
+                    .candidates(&self.profile, wall_ms()?)
+                    .next()
+                    .is_some()
+                {
                     let (returned, recovered_native) = active
                         .with_continuous_service_v4(
                             || Ok(()),
                             |scope| {
                                 Box::pin(async move {
-                                    let native = self.follow_candidates(scope).await;
+                                    let native = boxed_read(|| self.follow_candidates(scope)).await;
                                     Ok((self, native))
                                 })
                             },
@@ -147,12 +155,12 @@ impl Follower {
     async fn probe_native(&mut self, round: &NativeRound) -> Option<Native> {
         let now = wall_ms().ok()?;
         let mut options = Vec::new();
-        for (key, record) in &self.locators.records {
+        for record in self.locators.fixed(&self.profile) {
             if let Ok(Some(address)) = native_chain_query_address(record) {
                 if record.expires_at_ms > now {
                     options.push((
                         NativePeer {
-                            key: key.clone(),
+                            key: record.relay_public_key.clone(),
                             address,
                         },
                         Some(record.sequence),
@@ -161,15 +169,11 @@ impl Follower {
             }
         }
         for peer in &self.profile.native_query_peers {
-            if self
-                .locators
-                .records
-                .get(&peer.transport_key)
-                .is_some_and(|record| {
-                    record.expires_at_ms > now
-                        && native_chain_query_address(record).ok().flatten().is_some()
-                })
-            {
+            if self.locators.fixed(&self.profile).any(|record| {
+                record.relay_public_key == peer.transport_key
+                    && record.expires_at_ms > now
+                    && native_chain_query_address(record).ok().flatten().is_some()
+            }) {
                 continue;
             }
             options.push((
@@ -223,33 +227,50 @@ impl Follower {
     }
 
     async fn follow_candidates(&mut self, scope: &IrohScopeV1) -> Option<Native> {
-        let candidates = self.locators.records.values().cloned().collect::<Vec<_>>();
+        let candidates = order_installed_candidates(
+            self.locators
+                .candidates(&self.profile, wall_ms().ok()?)
+                .cloned(),
+            &self.profile,
+        );
         for candidate in candidates {
-            if wall_ms().map_or(true, |now| candidate.expires_at_ms <= now) {
+            // An earlier session may have refreshed or withdrawn these coordinates.
+            if !self
+                .locators
+                .candidates(&self.profile, wall_ms().ok()?)
+                .any(|record| record == &candidate)
+            {
                 continue;
             }
-            let Ok(Ok((mut stream, channel))) = tokio::time::timeout(
-                Duration::from_secs(8),
-                connect(scope, &candidate, self.identity.clone(), &self.domain),
-            )
-            .await
-            else {
+            let Ok(route) = ReadRoute::new(&candidate, &self.profile) else {
                 continue;
             };
-            let Ok(mut session) = QuerySession::attach(&mut stream, channel, self.domain.clone())
-            else {
-                continue;
-            };
-            let route = Route {
-                carrier: Carrier::Iroh,
-                peer: fingerprint(&candidate.relay_public_key),
-                native_address: None,
-                locator_sequence: Some(candidate.sequence),
-            };
-            if let Ok(Some(recovered_native)) =
-                self.run_route(&mut session, route, Some(scope)).await
-            {
-                return Some(recovered_native);
+            let result = route
+                .run(scope, None, async |dial_scope, address| {
+                    let (mut stream, channel) = tokio::time::timeout(
+                        Duration::from_secs(8),
+                        connect_route(
+                            dial_scope,
+                            &address,
+                            &candidate.relay_public_key,
+                            self.identity.clone(),
+                            &self.domain,
+                        ),
+                    )
+                    .await??;
+                    let mut session =
+                        QuerySession::attach(&mut stream, channel, self.domain.clone())?;
+                    let route = Route {
+                        carrier: Carrier::Iroh,
+                        peer: fingerprint(&candidate.relay_public_key),
+                        native_address: None,
+                        locator_sequence: Some(candidate.sequence),
+                    };
+                    boxed_read(|| self.run_route(&mut session, route, Some(scope))).await
+                })
+                .await;
+            if let Ok(Some(native)) = result {
+                return Some(native);
             }
         }
         None
@@ -263,7 +284,7 @@ impl Follower {
     ) -> Result<Option<Native>> {
         let mut next_probe = Instant::now() + RECOVER_NATIVE;
         loop {
-            let progress = tokio::time::timeout(QUERY_BUDGET, self.sync(session)).await??;
+            let progress = self.sync(session).await?;
             if let Some(state) = progress {
                 let tip = self.chain.tip;
                 if self.reported.as_ref() != Some(&(tip, route.clone())) {
@@ -291,9 +312,8 @@ impl Follower {
                         if let Ok(report) = lookup_sources(
                             scope,
                             self.identity.clone(),
-                            self.profile.pins(),
+                            InstalledLookups::new(&self.profile),
                             candidates,
-                            self.profile.lookup_transport_keys.clone(),
                             REFRESH_SOURCE_BUDGET,
                         )
                         .await
@@ -342,7 +362,10 @@ impl Follower {
     }
 
     fn observe_locators(&mut self, report: DiscoveryReport) -> Result<()> {
-        for accepted in self.locators.observe(report)? {
+        for accepted in self
+            .locators
+            .observe(report, &self.profile, self.identity.public_key())?
+        {
             self.emit(serde_json::json!({
                 "event":"verified_locator_accepted",
                 "peer_transport_sha256":accepted.peer_transport_sha256,

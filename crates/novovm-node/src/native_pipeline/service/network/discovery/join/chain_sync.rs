@@ -1,5 +1,5 @@
 //! Durable, independently verified block-header progress for an installed client.
-use super::super::super::query_carrier::{connect, QuerySession};
+use super::super::super::query_carrier::{connect_route, query_deadline, QuerySession};
 use super::*;
 use crate::native_pipeline::{
     consensus::statement::finalized_header,
@@ -7,6 +7,12 @@ use crate::native_pipeline::{
 };
 use novovm_protocol::native_query::{Answer, Query};
 mod follow;
+#[cfg(test)]
+pub(super) use follow::check_locator_role_transition;
+mod read_route;
+pub(super) use novovm_network::iroh_transport::approved_read_relay;
+use read_route::{boxed_read, ReadRoute};
+pub(super) use read_route::{order_installed_candidates, read_installed_receipt};
 mod state;
 pub use follow::follow_installed_state;
 use state::{StateCache, StateProgress};
@@ -113,10 +119,10 @@ fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
                                 let cap = reopened_height.saturating_add(MAX_HEADERS_PER_PASS);
                                 let mut last = None;
                                 let mut best_advertised = None;
-                                let mut candidates =
-                                    report.records.into_values().collect::<Vec<_>>();
-                                use rand::seq::SliceRandom;
-                                candidates.shuffle(&mut rand::thread_rng());
+                                let candidates = order_installed_candidates(
+                                    report.records.into_values(),
+                                    &profile,
+                                );
                                 for candidate in candidates {
                                     if candidate.expires_at_ms <= wall_ms()?
                                         || Instant::now() >= deadline
@@ -125,27 +131,39 @@ fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
                                     }
                                     let budget = Duration::from_secs(12)
                                         .min(deadline.saturating_duration_since(Instant::now()));
-                                    let attempt = sync_peer(
-                                        scope,
-                                        &candidate,
-                                        identity.clone(),
-                                        domain.clone(),
-                                        &mut chain,
-                                        cap,
-                                        cache.as_mut(),
-                                    );
-                                    match tokio::time::timeout(budget, attempt).await {
-                                        Ok(Ok((peer, Some(state)))) => {
+                                    let route = match ReadRoute::new(&candidate, &profile) {
+                                        Ok(route) => route,
+                                        Err(error) => {
+                                            last = Some(error);
+                                            continue;
+                                        }
+                                    };
+                                    let attempt = route
+                                        .run(scope, Some(budget), async |scope, address| {
+                                            sync_peer(
+                                                scope,
+                                                &address,
+                                                &candidate,
+                                                identity.clone(),
+                                                domain.clone(),
+                                                &mut chain,
+                                                cap,
+                                                cache.as_mut(),
+                                            )
+                                            .await
+                                        })
+                                        .await;
+                                    match attempt {
+                                        Ok((peer, Some(state))) => {
                                             return Ok((chain.tip, Some(peer), Some(state)));
                                         }
-                                        Ok(Ok((peer, None))) => {
+                                        Ok((peer, None)) => {
                                             best_advertised = best_advertised.max(Some(peer));
                                             if chain.tip.height == cap {
                                                 break;
                                             }
                                         }
-                                        Ok(Err(error)) => last = Some(error),
-                                        Err(error) => last = Some(error.into()),
+                                        Err(error) => last = Some(error),
                                     }
                                 }
                                 if !with_state
@@ -218,6 +236,7 @@ fn checkpoint_root(profile: &Profile, anchor: ParentPoint) -> Result<PathBuf> {
 
 async fn sync_peer(
     scope: &IrohScopeV1,
+    route: &IrohAddressV1,
     candidate: &PeerSignedRelayRecordV1,
     identity: TransportIdentity,
     domain: MessageDomain,
@@ -225,7 +244,8 @@ async fn sync_peer(
     cap: u64,
     cache: Option<&mut StateCache>,
 ) -> Result<(u64, Option<StateProgress>)> {
-    let (mut stream, channel) = connect(scope, candidate, identity, &domain).await?;
+    let (mut stream, channel) =
+        connect_route(scope, route, &candidate.relay_public_key, identity, &domain).await?;
     let mut session = QuerySession::attach(&mut stream, channel, domain)?;
     let advertised = peer_status(&mut session, chain.tip).await?;
     sync_headers(&mut session, chain, cap, &advertised).await?;

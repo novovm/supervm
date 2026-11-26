@@ -120,13 +120,18 @@ impl Profile {
         (self.chain_id, self.genesis, self.protocol)
     }
 
+    fn public_read_referrals(&self) -> bool {
+        self.verification.is_some() && !self.relays.is_empty()
+    }
+
     fn validate(&self) -> Result<()> {
         ensure!(
             self.chain_id != 0 && self.genesis != [0; 32] && self.protocol != [0; 32],
             "installed NOVONET chain pins missing"
         );
         ensure!(
-            (1..=28).contains(&self.lookup_transport_keys.len())
+            self.lookup_transport_keys.len() <= 28
+                && (!self.lookup_transport_keys.is_empty() || self.public_read_referrals())
                 && self.lookup_transport_keys.iter().all(|key| is_transport_key(key))
                 && self.lookup_transport_keys.iter().collect::<BTreeSet<_>>().len()
                     == self.lookup_transport_keys.len(),
@@ -259,21 +264,25 @@ pub fn discover_installed_from_profile(
         .enable_all()
         .build()?
         .block_on(discover(carrier, identity.clone(), &profile, seeds))?;
+    let read_id = novovm_network::discovery_control::public_read_locator_id_v1(profile.pins());
     let mut result = serde_json::json!({
         "chain_id": profile.chain_id,
         "transport_identity_sha256": fingerprint(identity.public_key()),
         "authenticated_discovery_sources": report.sources,
         "signed_locators_by_source": report.locators_by_source,
-        "signed_locator_candidates": report.records.values().map(LocatorSummary::from).collect::<Vec<_>>(),
+        "signed_locator_candidates": report.records.values().map(|record| LocatorSummary::new(record, &read_id)).collect::<Vec<_>>(),
     });
+    if !report.referral_status.is_empty() {
+        result["public_read_status_by_source"] = serde_json::json!(report.referral_status);
+    }
     if let Some(pin) = profile_sha256 {
         result["profile_sha256"] = pin.to_ascii_lowercase().into();
     }
     Ok(result)
 }
 
-/// The discovery and native proof streams use the same owned carrier and local
-/// identity. All proof pins come from the installed profile.
+/// Discovery and proof requests authenticate with the same local identity.
+/// Referrals use a relay-only connection. Proof pins come from the installed profile.
 pub fn discover_verified_receipt(path: &Path, hash: &str) -> Result<serde_json::Value> {
     discover_verified_receipt_from_profile(path, hash, None)
 }
@@ -297,19 +306,18 @@ pub fn discover_verified_receipt_from_profile(
             let result = owner.with_continuous_service_v4(|| Ok(()), |scope| Box::pin(async move {
                 let deadline = Instant::now() + Duration::from_secs(30);
                 let mut last = None;
-                for candidate in report.records.into_values() {
+                for candidate in chain_sync::order_installed_candidates(report.records.into_values(), &profile) {
                     if candidate.expires_at_ms <= wall_ms()? || Instant::now() >= deadline { continue }
                     let budget = Duration::from_secs(10).min(deadline.saturating_duration_since(Instant::now()));
-                    let proof = super::super::query_carrier::read_receipt(scope, &candidate, identity.clone(), domain.clone(), &target);
-                    match tokio::time::timeout(budget, proof).await {
-                        Ok(Ok(mut verified)) => {
+                    let proof = chain_sync::read_installed_receipt(scope, &candidate, identity.clone(), domain.clone(), &target, &profile, budget).await;
+                    match proof {
+                        Ok(mut verified) => {
                             verified["authenticated_discovery_sources"] = serde_json::json!(report.sources);
                             verified["serving_transport_sha256"] = serde_json::json!(fingerprint(&candidate.relay_public_key));
                             verified["transport_identity_sha256"] = serde_json::json!(fingerprint(identity.public_key()));
                             return Ok(verified);
                         }
-                        Ok(Err(error)) => last = Some(error),
-                        Err(error) => last = Some(error.into()),
+                        Err(error) => last = Some(error),
                     }
                 }
                 Err(last.unwrap_or_else(|| anyhow::anyhow!("no usable authenticated proof candidate")))
@@ -524,6 +532,8 @@ fn local_identity(data: &Path, base: &Path, profile: &Profile) -> Result<Transpo
 struct DiscoveryReport {
     sources: Vec<String>,
     locators_by_source: BTreeMap<String, Vec<LocatorSummary>>,
+    referral_status: BTreeMap<String, &'static str>,
+    conflicting_public_keys: BTreeMap<Vec<u8>, u64>,
     records: BTreeMap<Vec<u8>, PeerSignedRelayRecordV1>,
 }
 
@@ -532,11 +542,14 @@ struct LocatorSummary {
     transport_identity_sha256: String,
     sequence: u64,
     expires_at_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    purpose: Option<&'static str>,
 }
 
-impl From<&PeerSignedRelayRecordV1> for LocatorSummary {
-    fn from(record: &PeerSignedRelayRecordV1) -> Self {
+impl LocatorSummary {
+    fn new(record: &PeerSignedRelayRecordV1, public_read_id: &str) -> Self {
         Self {
+            purpose: (record.record_id == public_read_id).then_some("public_read"),
             transport_identity_sha256: fingerprint(&record.relay_public_key),
             sequence: record.sequence,
             expires_at_ms: record.expires_at_ms,
@@ -574,8 +587,7 @@ async fn collect(
     seeds: SeedInputs,
 ) -> Result<DiscoveryReport> {
     let candidates = prepare_seed_candidates(profile, &identity, seeds)?;
-    let pins = profile.pins();
-    let lookups = profile.lookup_transport_keys.clone();
+    let lookups = InstalledLookups::new(profile);
     owner
         .with_operation(
             IrohControlV1::new(Instant::now() + Duration::from_secs(10), || Ok(()))?,
@@ -583,9 +595,8 @@ async fn collect(
                 Box::pin(lookup_sources(
                     scope,
                     identity,
-                    pins,
-                    candidates,
                     lookups,
+                    candidates,
                     INITIAL_SOURCE_BUDGET,
                 ))
             },
@@ -721,15 +732,58 @@ fn seed_candidate(
         .context("installed bootstrap is unavailable")
 }
 
+struct InstalledLookups {
+    pins: Pins,
+    fixed: Vec<Vec<u8>>,
+    approved_relays: Vec<String>,
+    voting_keys: BTreeSet<Vec<u8>>,
+}
+
+impl InstalledLookups {
+    fn new(profile: &Profile) -> Self {
+        Self {
+            pins: profile.pins(),
+            fixed: profile.lookup_transport_keys.clone(),
+            approved_relays: if profile.public_read_referrals() {
+                profile.relays.clone()
+            } else {
+                Vec::new()
+            },
+            voting_keys: profile
+                .verification
+                .iter()
+                .flat_map(|v| &v.validators)
+                .map(|v| v.public_key.clone())
+                .collect(),
+        }
+    }
+
+    fn accepts_public_reader(&self, record: &PeerSignedRelayRecordV1, client_key: &[u8]) -> bool {
+        let peer = &record.relay_public_key;
+        peer != client_key
+            && !self.voting_keys.contains(peer)
+            && !self.fixed.contains(peer)
+            && IrohServiceEndpointV1::from_record(record).is_ok_and(|endpoint| {
+                endpoint
+                    .address
+                    .relays
+                    .iter()
+                    .any(|relay| chain_sync::approved_read_relay(&self.approved_relays, relay))
+            })
+    }
+}
+
 async fn lookup_sources(
     scope: &IrohScopeV1,
     identity: TransportIdentity,
-    pins: Pins,
+    plan: InstalledLookups,
     [first, second]: [Result<SeedCandidates>; 2],
-    lookups: Vec<Vec<u8>>,
     source_budget: Duration,
 ) -> Result<DiscoveryReport> {
     let failures = Arc::new(NetworkFailures::default());
+    let pins = plan.pins;
+    let sample = !plan.approved_relays.is_empty();
+    let client_key = identity.public_key().to_vec();
     let lookup = |candidate: Result<SeedCandidates>, identity, lookups, failures| async move {
         let SeedCandidates {
             preferred,
@@ -738,21 +792,41 @@ async fn lookup_sources(
         let source = fingerprint(&preferred.key);
         // Give a distinct installed contact time within the same source deadline.
         // Only the first successful authenticated lookup supplies records.
+        let until = sample
+            .then(|| Instant::now() + source_budget.saturating_sub(Duration::from_millis(100)));
+        let reader = || Exchange::Reader {
+            sample_until: until,
+        };
         let records = tokio::time::timeout(source_budget, async {
             let Some(fallback) = fallback else {
-                return query(scope, identity, preferred, pins, None, lookups, failures).await;
+                return query(
+                    scope,
+                    identity,
+                    preferred,
+                    pins,
+                    reader(),
+                    lookups,
+                    failures,
+                )
+                .await;
             };
             let mut preferred = std::pin::pin!(query(
                 scope,
                 identity.clone(),
                 preferred,
                 pins,
-                None,
+                reader(),
                 lookups.clone(),
                 failures.clone(),
             ));
             let mut fallback = std::pin::pin!(query(
-                scope, identity, fallback, pins, None, lookups, failures,
+                scope,
+                identity,
+                fallback,
+                pins,
+                reader(),
+                lookups,
+                failures,
             ));
             // Expiring the head start leaves the preferred future alive.
             let (result, remaining, finished) =
@@ -776,15 +850,23 @@ async fn lookup_sources(
         Ok::<_, anyhow::Error>((source, records))
     };
     let (primary, secondary) = tokio::join!(
-        lookup(first, identity.clone(), lookups.clone(), failures.clone()),
-        lookup(second, identity, lookups, failures),
+        lookup(
+            first,
+            identity.clone(),
+            plan.fixed.clone(),
+            failures.clone()
+        ),
+        lookup(second, identity, plan.fixed.clone(), failures),
     );
     let mut report = DiscoveryReport {
         sources: Vec::new(),
         locators_by_source: BTreeMap::new(),
+        referral_status: BTreeMap::new(),
+        conflicting_public_keys: BTreeMap::new(),
         records: BTreeMap::new(),
     };
     let mut errors = Vec::new();
+    let public_id = novovm_network::discovery_control::public_read_locator_id_v1(pins);
     let wall = wall_ms()?;
     for result in [primary, secondary] {
         let (source, records) = match result {
@@ -795,19 +877,42 @@ async fn lookup_sources(
             }
         };
         report.sources.push(source.clone());
+        if let Some(status) = records.referral_status {
+            report.referral_status.insert(source.clone(), status);
+        }
         let returned = report.locators_by_source.entry(source).or_default();
         for record in records
+            .records
             .into_iter()
             .filter(|record| record.expires_at_ms > wall)
         {
             use std::collections::btree_map::Entry;
-            returned.push(LocatorSummary::from(&record));
+            let public = record.record_id == public_id;
+            if public
+                && (!plan.accepts_public_reader(&record, &client_key)
+                    || report
+                        .conflicting_public_keys
+                        .contains_key(&record.relay_public_key))
+            {
+                continue;
+            }
+            returned.push(LocatorSummary::new(&record, &public_id));
             match report.records.entry(record.relay_public_key.clone()) {
                 Entry::Vacant(entry) => {
                     entry.insert(record);
                 }
                 Entry::Occupied(mut entry) if entry.get().sequence < record.sequence => {
                     entry.insert(record);
+                }
+                Entry::Occupied(entry)
+                    if public
+                        && entry.get().sequence == record.sequence
+                        && entry.get() != &record =>
+                {
+                    report
+                        .conflicting_public_keys
+                        .insert(record.relay_public_key, record.sequence);
+                    entry.remove();
                 }
                 Entry::Occupied(entry) => ensure!(
                     entry.get().sequence != record.sequence || entry.get() == &record,

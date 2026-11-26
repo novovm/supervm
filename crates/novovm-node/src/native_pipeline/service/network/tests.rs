@@ -19,6 +19,52 @@ mod hop;
 // Use the production query and discovery driver with a read-only service
 // identity on loopback. The archive's validator set still verifies finality.
 impl Driver {
+    pub(in crate::native_pipeline::service) fn detached_referral_service(
+        config: Config,
+        node: &ResidentNode,
+        identity: TransportIdentity,
+        bootstrap: &Path,
+    ) -> Result<Self> {
+        ensure!(
+            config.discovery
+                && config.bind_address.ip().is_loopback()
+                && config.peer_records.is_empty()
+                && config.probe_control_file.is_none()
+                && !config.relay_forwarding
+                && !config.publish_native_query_address
+                && config.carrier_identity_file.is_none()
+                && bootstrap.parent() == config.public_record_file.parent(),
+            "isolated referral scope"
+        );
+        let provider = config.publish_public_read_provider;
+        ensure!(
+            if provider {
+                config.discovery_seeds.as_slice() == [bootstrap]
+                    && !config.relays.is_empty()
+                    && node.public_state_sync
+                    && node.native_client_limit > 0
+            } else {
+                config.discovery_seeds.is_empty()
+                    && config.relays.is_empty()
+                    && config.public_record_file == bootstrap
+            },
+            "isolated referral service role"
+        );
+        // No consensus sender is attached. Use an independent test-only target for ordinary
+        // lookups, so the bootstrap and public provider never dial a live validator.
+        let keys = vec![identity.public_key().to_vec()];
+        let pins = (
+            node.template.chain_id,
+            node.template.genesis_config_commitment,
+            node.template.protocol_commitment,
+        );
+        Self::with_material(config, identity, keys, pins, None, None, provider, None)
+    }
+
+    pub(in crate::native_pipeline::service) fn poll_detached_bootstrap(&mut self) -> Result<()> {
+        self.poll_network()
+    }
+
     pub(in crate::native_pipeline::service) fn detached_read_provider(
         config: Config,
         node: &ResidentNode,
@@ -41,6 +87,42 @@ impl Driver {
         );
         Self::with_material(config, identity, keys, pins, None, None, true, None)
     }
+}
+
+#[test]
+fn opting_in_sanitizes_the_ordinary_and_public_read_signing_endpoint() -> Result<()> {
+    let approved = vec!["https://relay.example".into()];
+    let native = "127.0.0.1:38512".parse()?;
+    let route = IrohServiceEndpointV1 {
+        instance: [61; 32],
+        address: IrohAddressV1 {
+            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[62; 32])
+                .verifying_key()
+                .to_bytes(),
+            direct: vec![native],
+            relays: vec![
+                "https://relay.example/".into(),
+                "https://unknown.example/".into(),
+            ],
+        },
+    };
+    let expected = IrohServiceEndpointV1 {
+        address: IrohAddressV1 {
+            direct: vec![],
+            relays: vec!["https://relay.example/".into()],
+            ..route.address.clone()
+        },
+        ..route.clone()
+    };
+    let endpoint = publication_endpoint(route.clone(), Some(&approved), Some(native))?.unwrap();
+    assert_eq!(endpoint.uri, expected.endpoint()?.uri);
+    assert!(publication_endpoint(route.clone(), Some(&[]), Some(native))?.is_none());
+    let ordinary = publication_endpoint(route.clone(), None, Some(native))?.unwrap();
+    assert_eq!(
+        ordinary.uri,
+        novovm_network::discovery_control::native_chain_query_endpoint(&route, native)?.uri
+    );
+    Ok(())
 }
 
 #[test]
@@ -120,6 +202,7 @@ impl Pair {
                 },
                 discovery,
                 publish_native_query_address: false,
+                publish_public_read_provider: false,
                 discovery_seeds: if discovery && side != 0 {
                     vec![root.join("0.json")]
                 } else {

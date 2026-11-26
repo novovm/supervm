@@ -466,6 +466,18 @@ pub struct IrohConfigV1 {
     connection_ceiling: Option<usize>,
 }
 
+/// Compare URLs as parsed by Iroh, including its default port and trailing slash.
+/// Both inputs have already passed the carrier's HTTPS relay validation.
+pub fn approved_read_relay(relays: &[String], value: &str) -> bool {
+    let Ok(candidate) = value.parse::<RelayUrl>() else {
+        return false;
+    };
+    relays
+        .iter()
+        .filter_map(|item| item.parse::<RelayUrl>().ok())
+        .any(|approved| candidate == approved)
+}
+
 impl IrohConfigV1 {
     pub fn service_concurrency(&self) -> Option<Arc<ServiceConcurrencyV1>> {
         self.service_concurrency.clone()
@@ -923,6 +935,47 @@ impl IrohEndpointOwnerV1 {
     where
         F: for<'a> FnOnce(&'a IrohScopeV1) -> Pin<Box<dyn Future<Output = Result<T>> + 'a>>,
     {
+        self.scoped_operation(
+            control,
+            lane,
+            continuous_service,
+            listener_budget,
+            async move |scope| operation(scope).await,
+        )
+        .await
+    }
+
+    /// Borrow caller-owned verifier state while reading through an endpoint
+    /// that has no IP transports. The scope and its streams cannot escape.
+    pub async fn with_relay_only_service_v1<T>(
+        &self,
+        service: impl AsyncFnOnce(&IrohScopeV1) -> Result<T>,
+    ) -> Result<T> {
+        ensure!(
+            self.relay_only,
+            "public reader requires a relay-only endpoint"
+        );
+        self.scoped_operation(
+            IrohControlV1 {
+                check: Arc::new(|| Ok(())),
+                deadline: None,
+            },
+            None,
+            true,
+            None,
+            service,
+        )
+        .await
+    }
+
+    async fn scoped_operation<T>(
+        &self,
+        control: IrohControlV1,
+        lane: Option<u8>,
+        continuous_service: bool,
+        listener_budget: Option<Duration>,
+        operation: impl AsyncFnOnce(&IrohScopeV1) -> Result<T>,
+    ) -> Result<T> {
         self.check_runtime()?;
         if !continuous_service && listener_budget.is_none() {
             control.io_deadline()?;
@@ -1288,6 +1341,21 @@ impl IrohScopeV1 {
     pub fn address(&self) -> Result<IrohAddressV1> {
         self.control.check()?;
         Ok(self.filtered_address(self.endpoint.addr()))
+    }
+
+    /// Address suitable for public service publication, limited to currently
+    /// connected home relays. A configured or selected relay may still be offline.
+    pub fn connected_relay_address(&self) -> Result<IrohAddressV1> {
+        use iroh::Watcher;
+        let mut address = self.address()?;
+        let statuses = self.endpoint.home_relay_status().get();
+        address.direct.clear();
+        address.relays.retain(|url| {
+            statuses
+                .iter()
+                .any(|status| status.is_connected() && status.url().as_str() == url)
+        });
+        Ok(address)
     }
 
     fn filtered_address(&self, address: EndpointAddr) -> IrohAddressV1 {

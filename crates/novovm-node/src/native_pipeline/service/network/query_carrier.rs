@@ -5,11 +5,9 @@ use crate::native_pipeline::{
         native::{query_lane, MessageDomain},
         transport::fragment_domain,
     },
-    service::client::{
-        operator::receipt_proof::{Download, ProofTarget},
-        NativeApplicationClient,
-    },
+    service::client::{operator::receipt_proof::Download, NativeApplicationClient},
 };
+use novovm_network::transport_binding::BoundSecureChannelV1;
 use novovm_network::{
     iroh_transport::{
         iroh_stream_failure_kind_v1, IrohConnectionFailureKindV1, IrohStreamFailureKindV1,
@@ -21,9 +19,18 @@ use novovm_network::{
 };
 use novovm_protocol::native_query::{self as wire, Answer, Frame as QueryFrame, Request, Response};
 
+#[cfg(test)]
+use crate::native_pipeline::service::client::operator::receipt_proof::ProofTarget;
+
 pub(super) const ENTRY: &[u8; 8] = b"NVNETQR1";
 const SELECTOR: &[u8; 8] = b"NVQUERY1";
 const IDLE: Duration = Duration::from_secs(30);
+
+/// One response (or unchanged archive offset) can wait this long. A verified
+/// chunk or state node starts the next independent request with a fresh budget.
+pub(super) fn query_deadline() -> Instant {
+    Instant::now() + Duration::from_secs(20)
+}
 
 pub(super) struct Read {
     pub(super) request: Request,
@@ -207,18 +214,7 @@ async fn serve(
     }
 }
 
-pub(super) async fn read_receipt(
-    scope: &IrohScopeV1,
-    locator: &PeerSignedRelayRecordV1,
-    identity: TransportIdentity,
-    domain: MessageDomain,
-    target: &ProofTarget,
-) -> Result<serde_json::Value> {
-    let (mut stream, channel) = connect(scope, locator, identity, &domain).await?;
-    let mut queries = QuerySession::attach(&mut stream, channel, domain)?;
-    target.verify(&queries.fetch(Download::new(target.height())).await?)
-}
-
+#[cfg(test)]
 pub(super) async fn connect<'a>(
     scope: &'a IrohScopeV1,
     locator: &PeerSignedRelayRecordV1,
@@ -228,14 +224,24 @@ pub(super) async fn connect<'a>(
     CarrierStreamV1<'a>,
     novovm_network::transport_binding::BoundSecureChannelV1,
 )> {
-    let pins = (domain.chain_id, domain.genesis, domain.protocol);
     let route = IrohServiceEndpointV1::from_record(locator)?.address;
-    let mut stream: CarrierStreamV1<'_> = scope.connect(&route).await?.into();
+    connect_route(scope, &route, &locator.relay_public_key, identity, domain).await
+}
+
+pub(super) async fn connect_route<'a>(
+    scope: &'a IrohScopeV1,
+    route: &IrohAddressV1,
+    peer: &[u8],
+    identity: TransportIdentity,
+    domain: &MessageDomain,
+) -> Result<(CarrierStreamV1<'a>, BoundSecureChannelV1)> {
+    let pins = (domain.chain_id, domain.genesis, domain.protocol);
+    let mut stream: CarrierStreamV1<'_> = scope.connect(route).await?.into();
     stream.write_frame(ENTRY).await?;
     let mut channel = authenticate_structured_bound_session_observed(
         &mut stream,
         &identity,
-        locator.relay_public_key.clone(),
+        peer.to_vec(),
         true,
         &mut HandshakeReplayCacheV1::new(8),
         &mut |_, _| Ok(()),
@@ -283,10 +289,22 @@ impl<'a> QuerySession<'a> {
     }
 
     pub(super) async fn query(&mut self, selector: wire::Query) -> Result<Answer> {
+        self.query_until(selector, query_deadline()).await
+    }
+
+    pub(super) async fn query_until(
+        &mut self,
+        selector: wire::Query,
+        deadline: Instant,
+    ) -> Result<Answer> {
         let request = self.client.prepare_query(selector)?;
         let mut sent = false;
         loop {
             let now = Instant::now();
+            ensure!(
+                now < deadline,
+                "authenticated read made no progress before its deadline"
+            );
             let _ = self.client.poll(wall_ms()?, now, 32)?;
             if !sent {
                 sent = self.client.try_send_query(&request, now)?;
@@ -303,14 +321,17 @@ impl<'a> QuerySession<'a> {
     }
 
     pub(super) async fn fetch(&mut self, mut download: Download) -> Result<Vec<u8>> {
+        let mut deadline = query_deadline();
         loop {
-            let answer = self.query(download.selector()?).await?;
+            let answer = self.query_until(download.selector()?, deadline).await?;
             let busy = matches!(answer, Answer::Error(wire::QueryError::Busy));
             if let Some(bytes) = download.accept(answer)? {
                 return Ok(bytes);
             }
             if busy {
                 tokio::time::sleep(Duration::from_millis(25)).await;
+            } else {
+                deadline = query_deadline();
             }
         }
     }
