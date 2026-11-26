@@ -311,6 +311,26 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     };
     let lan_install =
         lan.is_some() && std::env::var("NOVOVM_QUERY_COPY_WINDOWS_INSTALL").as_deref() == Ok("1");
+    let roaming_relay = std::env::var_os("NOVOVM_QUERY_COPY_ROAMING_RELAY_PROFILE")
+        .map(|path| Config::load(Path::new(&path)))
+        .transpose()?;
+    let relay_preflight = std::env::var("NOVOVM_QUERY_COPY_RELAY_PREFLIGHT").as_deref() == Ok("1");
+    ensure!(
+        !relay_preflight || roaming_relay.is_some(),
+        "relay preflight requires an approved roaming relay configuration"
+    );
+    let (relays, nameserver) = if let Some(network) = &roaming_relay {
+        ensure!(
+            lan.as_ref().is_some_and(|lan| !lan.receipt_only)
+                && !lan_install
+                && std::env::var_os("NOVOVM_QUERY_COPY_LAN_DISCOVERY").is_none()
+                && !network.relays.is_empty(),
+            "roaming relay requires the restricted cross-device state-following harness"
+        );
+        (network.relays.clone(), network.nameserver)
+    } else {
+        (Vec::new(), "127.0.0.1".parse()?)
+    };
     if lan_install {
         let settings = lan.as_ref().unwrap();
         let peer =
@@ -327,7 +347,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         &old_profile.library,
         &old_profile.library_sha256,
     )?;
-    let mut owner = open_snapshot(!lan_install)?;
+    let mut owner = open_snapshot(!lan_install && roaming_relay.is_none())?;
     let head = owner.rpc.node.controller.parent();
     let (context, parent) = super::super::native_genesis_anchor(
         &owner.rpc.node.template,
@@ -369,8 +389,8 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     owner.novonet = Some(Driver::new_with_query_peers(
         Config {
             probe_control_file: None,
-            relays: Vec::new(),
-            nameserver: "127.0.0.1".parse()?,
+            relays: relays.clone(),
+            nameserver,
             bind_address: (bind_address, 0).into(),
             public_record_file: secondary.clone(),
             carrier_identity_file: None,
@@ -389,17 +409,33 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             .filter(|_| !lan_install)
             .map(|lan| vec![lan.client_key.clone()].into()),
     )?);
-    owner.until(|_| Ok(secondary.is_file()))?;
+    owner.until(|_| {
+        if !secondary.is_file() {
+            return Ok(false);
+        }
+        if roaming_relay.is_none() {
+            return Ok(true);
+        }
+        let record: PeerSignedRelayRecordV1 = serde_json::from_slice(&fs::read(&secondary)?)?;
+        Ok(!IrohServiceEndpointV1::from_record(&record)?
+            .address
+            .relays
+            .is_empty())
+    })?;
     let locator: PeerSignedRelayRecordV1 = serde_json::from_slice(&fs::read(&secondary)?)?;
     let endpoint = IrohServiceEndpointV1::from_record(&locator)?.address;
     ensure!(
-        !endpoint.direct.is_empty()
-            && endpoint
-                .direct
-                .iter()
-                .all(|entry| entry.ip() == bind_address)
-            && endpoint.relays.is_empty(),
-        "detached proof carrier must advertise only the configured interface"
+        endpoint
+            .direct
+            .iter()
+            .any(|entry| entry.ip() == bind_address)
+            && (roaming_relay.is_some()
+                || endpoint
+                    .direct
+                    .iter()
+                    .all(|entry| entry.ip() == bind_address))
+            && endpoint.relays.iter().all(|relay| relays.contains(relay)),
+        "detached proof carrier route differs from its configured interface or relays"
     );
     let key = owner.rpc.node.transport_identity().public_key().to_vec();
     ensure!(locator.relay_public_key == key, "locator identity differs");
@@ -446,10 +482,14 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         || std::env::var("NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS").as_deref() == Ok("1")
     {
         let first_contact = IrohServiceEndpointV1::from_record(&first)?.address;
+        let mut contact = endpoint;
+        if roaming_relay.is_some() {
+            contact.direct.clear();
+        }
         println!("cold Client uses two pinned contacts without installed locator files");
         serde_json::json!([
             { "contact": first_contact, "transport_key": first.relay_public_key },
-            { "contact": endpoint, "transport_key": key },
+            { "contact": contact, "transport_key": key },
         ])
     } else {
         serde_json::json!([
@@ -463,7 +503,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         serde_json::to_vec(&serde_json::json!({
             "chain_id": pins.0, "genesis": pins.1, "protocol": pins.2,
             "library": old_profile.library, "library_sha256": old_profile.library_sha256,
-            "nameserver": "127.0.0.1", "relays": [],
+            "nameserver": nameserver, "relays": relays,
             "seeds": seeds,
             "lookup_transport_keys": [key],
             "verification": {
@@ -486,7 +526,11 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         } else {
             owner.rpc.node.public_asset_receipt_proofs = false;
             owner.rpc.node.public_state_sync = true;
-            lan.serve(&mut owner, &profile, &key)?;
+            if relay_preflight {
+                lan.serve_relay_preflight(&mut owner, &profile, &key)?;
+            } else {
+                lan.serve(&mut owner, &profile, &key, roaming_relay.is_some())?;
+            }
         }
         ensure!(
             owner.rpc.node.controller.parent() == head,
@@ -886,7 +930,13 @@ impl LanAcceptance {
         Ok(())
     }
 
-    fn serve(&self, owner: &mut QueryOwner, profile: &Path, server_key: &[u8]) -> Result<()> {
+    fn serve(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+        roaming_relay: bool,
+    ) -> Result<()> {
         use sha2::{Digest, Sha256};
         use std::{fs, io::ErrorKind, net::UdpSocket};
 
@@ -912,7 +962,7 @@ impl LanAcceptance {
         let client_identity = format!("{:x}", Sha256::digest(&self.client_key));
         let server_identity = format!("{:x}", Sha256::digest(server_key));
         let state_root = super::hex(&head.state_root);
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "native_gateway": gateway,
             "profile_sha256": profile_pin,
             "client_transport_sha256": client_identity,
@@ -921,13 +971,16 @@ impl LanAcceptance {
             "state_root": state_root,
             "state_version": head.state_version,
         });
+        if roaming_relay {
+            add_roaming_route_metadata(stage, &mut manifest)?;
+        }
         let manifest_draft = ready.with_extension("tmp");
         fs::write(&manifest_draft, serde_json::to_vec(&manifest)?)?;
         fs::rename(manifest_draft, ready)?;
 
         let deadline = Instant::now() + Duration::from_secs(480);
         let mut remote = None;
-        let mut observed_cut = false;
+        let mut cut_utc_ms = None;
         let mut buffer = [0; 65_536];
         while !results.is_file() {
             ensure!(
@@ -936,7 +989,12 @@ impl LanAcceptance {
             );
             owner.poll()?;
             let cut_active = cut.is_file() && !restore.is_file();
-            observed_cut |= cut_active;
+            if cut_active && cut_utc_ms.is_none() {
+                let observed =
+                    u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+                cut_utc_ms = Some(observed);
+                println!("isolated_native_cut_utc_ms={observed}");
+            }
             for _ in 0..128 {
                 let (size, source) = match external.recv_from(&mut buffer) {
                     Ok(value) => value,
@@ -961,7 +1019,7 @@ impl LanAcceptance {
             thread::sleep(Duration::from_millis(2));
         }
         ensure!(
-            observed_cut && restore.is_file() && remote.is_some(),
+            cut_utc_ms.is_some() && (roaming_relay || restore.is_file()) && remote.is_some(),
             "missing observed cut, restoration or remote traffic"
         );
         ensure!(
@@ -972,14 +1030,17 @@ impl LanAcceptance {
         let events = evidence["verified"]
             .as_array()
             .context("LAN verified events")?;
+        let transports = if roaming_relay {
+            ["native_novorudp", "iroh"].as_slice()
+        } else {
+            ["native_novorudp", "iroh", "native_novorudp"].as_slice()
+        };
         ensure!(
-            evidence["client_pid"].as_u64().is_some_and(|pid| pid > 0) && events.len() == 3,
-            "one remote Client must verify initial, fallback and restored state"
+            evidence["client_pid"].as_u64().is_some_and(|pid| pid > 0)
+                && events.len() == transports.len(),
+            "one remote Client must verify every required path"
         );
-        for (event, transport) in events
-            .iter()
-            .zip(["native_novorudp", "iroh", "native_novorudp"])
-        {
+        for (event, &transport) in events.iter().zip(transports) {
             ensure!(
                 event["event"] == "verified_state"
                     && event["transport"] == transport
@@ -995,7 +1056,87 @@ impl LanAcceptance {
                 "LAN Client verified a different route, state or identity: {event}"
             );
         }
-        println!("cross-device LAN cut and recovery verified: {evidence}");
+        if roaming_relay {
+            println!("cross-device relay query recovery verified: {evidence}");
+        } else {
+            println!("cross-device LAN cut and recovery verified: {evidence}");
+        }
+        Ok(())
+    }
+
+    fn serve_relay_preflight(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let stage = profile.parent().context("relay preflight stage")?;
+        let ready = stage.join("lan-ready.json");
+        let report = stage.join("relay-preflight.jsonl");
+        ensure!(
+            !ready.exists() && !report.exists(),
+            "stale relay preflight evidence"
+        );
+        let head = owner.rpc.node.controller.parent();
+        let mut manifest = serde_json::json!({
+            "profile_sha256": prepare_lan_profile(profile, None)?,
+            "client_transport_sha256": format!("{:x}", Sha256::digest(&self.client_key)),
+            "server_transport_sha256": format!("{:x}", Sha256::digest(server_key)),
+            "height": head.height,
+            "state_root": super::hex(&head.state_root),
+            "state_version": head.state_version,
+        });
+        add_roaming_route_metadata(stage, &mut manifest)?;
+        let draft = ready.with_extension("tmp");
+        fs::write(&draft, serde_json::to_vec(&manifest)?)?;
+        fs::rename(&draft, &ready)?;
+        let deadline = Instant::now() + Duration::from_secs(480);
+        while !report.is_file() {
+            ensure!(Instant::now() < deadline, "relay preflight deadline");
+            owner.poll()?;
+            thread::sleep(Duration::from_millis(2));
+        }
+        ensure!(
+            report.metadata()?.len() <= 65_536,
+            "relay preflight evidence size"
+        );
+        let original = fs::read_to_string(&report)?;
+        let events: Vec<Value> = original
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<std::result::Result<_, _>>()?;
+        let (first, rest) = events
+            .split_first()
+            .context("empty relay preflight report")?;
+        let (verified, seen) = rest.split_last().context("relay preflight state missing")?;
+        ensure!(
+            first["event"] == "starting"
+                && first["reopened_height"] == 0
+                && events.iter().all(|event| event["transport_identity_sha256"]
+                    == manifest["client_transport_sha256"])
+                && verified["event"] == "verified_state"
+                && verified["transport"] == "iroh"
+                && verified["height"] == manifest["height"]
+                && verified["state_root"] == manifest["state_root"]
+                && verified["state_version"] == manifest["state_version"]
+                && verified["peer_transport_sha256"] == manifest["server_transport_sha256"]
+                && verified["verified_nodes"].as_u64().is_some_and(|n| n > 0)
+                && verified["downloaded_nodes"] == verified["verified_nodes"]
+                && verified["locator_sequence"].as_u64().is_some_and(|n| n > 0)
+                && seen
+                    .iter()
+                    .any(|event| event["event"] == "verified_locator_accepted"
+                        && event["peer_transport_sha256"] == manifest["server_transport_sha256"]
+                        && event["locator_sequence"] == verified["locator_sequence"]),
+            "relay preflight did not verify the detached chain and its authenticated locator"
+        );
+        println!(
+            "fixed contact relay preflight verified, raw_stdout_sha256={:x}",
+            Sha256::digest(original.as_bytes())
+        );
         Ok(())
     }
 
@@ -1118,6 +1259,18 @@ impl LanAcceptance {
         println!("cross-device discovery verified: {report}");
         Ok(())
     }
+}
+
+fn add_roaming_route_metadata(stage: &Path, manifest: &mut Value) -> Result<()> {
+    use novovm_network::{
+        product_directory::PeerSignedRelayRecordV1, product_service_lease::IrohServiceEndpointV1,
+    };
+    let record: PeerSignedRelayRecordV1 =
+        serde_json::from_slice(&std::fs::read(stage.join("local-secondary.json"))?)?;
+    let route = IrohServiceEndpointV1::from_record(&record)?.address;
+    manifest["isolated_iroh_direct"] = serde_json::to_value(route.direct)?;
+    manifest["approved_relays"] = serde_json::to_value(route.relays)?;
+    Ok(())
 }
 
 fn prepare_lan_profile(
