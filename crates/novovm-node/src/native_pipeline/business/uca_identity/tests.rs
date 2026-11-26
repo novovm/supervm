@@ -59,7 +59,7 @@ fn native_registration_creates_one_original_identity_without_overwriting() -> Re
         business::uca_registration::{
             self as registration, register_identity, registration_declarations, RegistrationPlan,
         },
-        execution::plan::{BatchContext, PlanBudget},
+        execution::plan::{BatchContext, BatchPlan, PlanBudget},
         persistence::{PacketBudget, PreparedCandidate, StoredCandidate},
         pipeline::test_fee_policy,
     };
@@ -168,8 +168,18 @@ fn native_registration_creates_one_original_identity_without_overwriting() -> Re
     let reader = Memory(original_tree.nodes().clone());
     let raw = signed.encode()?;
     assert!(RegistrationPlan::prepare(raw.clone(), context, &policy, budget, &owner).is_err());
-    let plan = RegistrationPlan::prepare(raw, registration_context, &policy, budget, &owner)?;
-    let candidate_input = plan.plan().capture(&reader, capture)?;
+    let capture_registration = |plan: &RegistrationPlan, raw: Vec<u8>| {
+        BatchPlan::new(
+            *plan.plan().context(),
+            vec![raw],
+            plan.plan().declared_access().to_vec(),
+            budget,
+        )?
+        .capture(&reader, capture)
+    };
+    let plan =
+        RegistrationPlan::prepare(raw.clone(), registration_context, &policy, budget, &owner)?;
+    let candidate_input = capture_registration(&plan, raw)?;
     let packet = PreparedCandidate::from_registration_executed(
         plan.execute(candidate_input)?,
         PacketBudget::default(),
@@ -196,7 +206,7 @@ fn native_registration_creates_one_original_identity_without_overwriting() -> Re
         budget,
         &owner,
     )?;
-    let replay_input = replay_plan.plan().capture(&reader, capture)?;
+    let replay_input = capture_registration(&replay_plan, stored.raw_transactions()[0].clone())?;
     let replayed = PreparedCandidate::from_registration_executed(
         replay_plan.execute(replay_input)?,
         PacketBudget::default(),
