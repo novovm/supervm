@@ -975,15 +975,19 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
       }
     }
   }
-  $entries = Get-ChildItem -LiteralPath $packagePath -File -Recurse |
-    Where-Object { $_.Name -ne "CHECKSUMS.sha256" -and $_.Name -ne "release-manifest.json" } |
+  # Only the outer inventory and manifest are self-referential. Runtime
+  # distributions may carry their own checksum tables as regular artifacts.
+  $outerInventory = Join-Path $packagePath 'CHECKSUMS.sha256'
+  $outerManifest = Join-Path $packagePath 'release-manifest.json'
+  $entries = Get-ChildItem -LiteralPath $packagePath -File -Recurse -Force |
+    Where-Object { $_.FullName -notin @($outerInventory, $outerManifest) } |
     ForEach-Object {
       $relative = $_.FullName.Substring($packageRoot.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace([IO.Path]::DirectorySeparatorChar, [char]'/')
       $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
       [PSCustomObject]@{ path = $relative; sha256 = $hash; bytes = $_.Length }
     } | Sort-Object path
   $checksumLines = @($entries | ForEach-Object { "$($_.sha256)  $($_.path)" })
-  [IO.File]::WriteAllText((Join-Path $packagePath "CHECKSUMS.sha256"),
+  [IO.File]::WriteAllText($outerInventory,
     [string]::Join("`n", $checksumLines) + "`n", [Text.UTF8Encoding]::new($false))
   $endCommit = (git rev-parse HEAD).Trim()
   if ($LASTEXITCODE -ne 0 -or $endCommit -ne $commit) {
@@ -1052,7 +1056,7 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
     signed_evidence_included = $false
     note = "Generate signed runtime evidence after deployment; this build manifest is checksum-only."
     artifacts = $entries
-  } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $packagePath "release-manifest.json")
+  } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 $outerManifest
   Publish-LinuxPackage $repo $packagePath $destination -Replace:$Force
   Write-Host "Unified $platform artifacts assembled, not installed or started: $destination"
 }

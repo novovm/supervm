@@ -55,6 +55,7 @@ $artifactBytes = if ($windowsPackage) {
 [IO.File]::WriteAllBytes($core, $artifactBytes)
 $coreSha = (Get-FileHash -LiteralPath $core -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $fixture "aoem/$platform/manifest.json"), (@{profile='fullmax';platform=$platform} | ConvertTo-Json))
+[IO.File]::WriteAllText((Join-Path $fixture "aoem/$platform/CHECKSUMS.sha256"), "$coreSha  core/bin/$coreName")
 [IO.File]::WriteAllText((Join-Path $fixture 'aoem/aoem-sdk-manifest.json'),
   (@{platforms=@{$platformId=@{library_sha256=$coreSha}}} | ConvertTo-Json -Depth 4))
 foreach ($name in @('aoem/manifest/aoem-manifest.json', 'aoem/config/aoem-runtime-profile.json')) {
@@ -237,6 +238,13 @@ $lines = @(Get-Content -LiteralPath (Join-Path $output 'CHECKSUMS.sha256'))
 if ($lines.Count -ne $manifest.artifacts.Count) { throw 'Checksum inventory differs from manifest' }
 foreach ($entry in $manifest.artifacts) {
   if ($lines -cnotcontains "$($entry.sha256)  $($entry.path)") { throw "Missing checksum: $($entry.path)" }
+}
+$stagedPaths = @(Get-ChildItem -LiteralPath $output -File -Recurse -Force | ForEach-Object {
+  [IO.Path]::GetRelativePath($output, $_.FullName).Replace('\', '/')
+} | Where-Object { $_ -notin @('CHECKSUMS.sha256', 'release-manifest.json') })
+if ($manifest.artifacts.path -cnotcontains "aoem/$platform/CHECKSUMS.sha256" -or
+    (Compare-Object $stagedPaths @($manifest.artifacts.path) -CaseSensitive)) {
+  throw 'The outer package inventory must cover every payload file, including the nested AOEM checksum table'
 }
 foreach ($file in @(Get-ChildItem (Join-Path $output 'config') -File -Recurse) +
     @(Get-ChildItem (Join-Path $output 'systemd') -File -Recurse) +
