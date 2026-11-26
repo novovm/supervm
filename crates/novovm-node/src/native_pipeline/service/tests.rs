@@ -103,6 +103,7 @@ fn config(size: usize) -> ResidentConfig {
         learn_authenticated_peer_routes: false,
         novonet_config_file: None,
         native_client_limit: 1,
+        public_asset_receipt_proofs: false,
         uca_initialization: None,
         workers: 1,
         execution_backend: Default::default(),

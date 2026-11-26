@@ -681,6 +681,7 @@ fn run_native_uca_service_fixture_with_versioned(
                     })
                     .collect(),
                 native_client_limit: 2,
+                public_asset_receipt_proofs: false,
                 learn_authenticated_peer_routes: false,
                 novonet_config_file: None,
                 genesis: genesis.clone(),

@@ -66,6 +66,7 @@ pub enum StartMode {
 
 pub struct ResidentNode {
     pub profile: String,
+    public_asset_receipt_proofs: bool,
     pub controller: NativeLifecycle,
     pub pipeline: CandidatePipeline,
     pub template: BatchContext,
@@ -220,6 +221,7 @@ impl ResidentNode {
         match result {
             Ok(controller) => Ok(Self {
                 profile: config.profile.clone(),
+                public_asset_receipt_proofs: config.public_asset_receipt_proofs,
                 controller,
                 pipeline,
                 template,

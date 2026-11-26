@@ -17,3 +17,13 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 证明使用现有线性承诺，需要原区块的完整有序回执见证。当前支持基础转账和现有 UCA 资产回执编码。本轮验证了原库副本中的归档导出与本地验签，Client 网络拉取、新设备同步和现役部署仍待验收。没有重启现役 C，没有补发或换钥，本轮未操作 B。
 
 本轮验收日志 SHA-256 `8f43f32350dc5ca0ddaa8c71e8f24f761381ca7e4b80fc6bfd4db4d8fd101022`。测试 EXE SHA-256 `5e73156170d679a81f025fd97655ddacf2a87f9ead4428ff0a676833ebf8bbf3`。
+
+## Client 经认证会话独立验证原交易
+
+北京时间 10:16，另一个未打开的原库副本以 `Existing` 和 LocalService 启动本机回环测试。独立 Windows Client 用 `novovm-native-client <客户端配置> verified-receipt <可信父状态> <交易哈希>` 取回 15,537 字节原证据，按本地固定的创世父状态和验证者集合验出同一区块、成功回执、nonce 1、费用 4000000。副本链头保持一致。可信父状态由测试从已批准的原创世材料独立准备。回执证据走原 NovoRUDP 查询流，单片上限 24 KiB，整个证据最多 32 MiB。请求绑定高度和偏移，后续片固定首片返回的整体摘要，Client 重新计算摘要并验 Precommit QC 与回执承诺。
+
+复现用例 `detached_archive_serves_original_receipt_to_independent_client_verifier`，在前述隔离数据上设置 `NOVOVM_QUERY_COPY_CONFIG`、`NOVOVM_QUERY_COPY_REQUEST`、`NOVOVM_QUERY_COPY_FIRST_PROFILE` 和 `NOVOVM_QUERY_COPY_PROOF_CLIENT`。本次使用与前述相同的 Windows 编译设置。23 项原生查询协议测试和 5 项 Client 回归通过，原查询槽回收与篡改拒绝用例再次通过。实际原证据适合单片，多片边界及拒绝错配由协议回归覆盖。
+
+旧资产回执采用线性承诺，完整证据包括区块内有序回执及 UCA 授权结果。节点使用 `public_asset_receipt_proofs` 配置项控制该批量披露，默认关闭。本次只在 C 隔离副本开启，未部署到现役。正式安装包固定可信锚点、发现后自动同步、跨机热切及链状态验收仍待进行。
+
+验收日志 SHA-256 `5d3ef3123683dd7916e06dce83c16e5223b2ad3f85b54651516754b323167b55`。Client EXE SHA-256 `b6ba98e1e616173fcde6ab82599ece297f5bda6c7045e43e35397f72028d6cb0`。

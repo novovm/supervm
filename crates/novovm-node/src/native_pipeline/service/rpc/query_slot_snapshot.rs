@@ -129,45 +129,11 @@ fn input(name: &str) -> Result<PathBuf> {
 #[test]
 #[ignore = "requires a detached original RocksDB copy and two purpose-bound query profiles"]
 fn original_snapshot_reclaims_idle_slot_for_another_authenticated_receipt() -> Result<()> {
-    let mut config = ResidentConfig::load(&input("NOVOVM_QUERY_COPY_CONFIG")?)?;
-    ensure!(
-        config.database.is_dir()
-            && config.database.file_name().and_then(|name| name.to_str())
-                == Some("query-reclaim-copy.rocksdb")
-            && config.database.join("NOVOVM-CANDIDATE-DOMAIN").is_file()
-            && config.udp_addr.ip().is_loopback()
-            && config
-                .peers
-                .iter()
-                .all(|peer| peer.address.ip().is_loopback())
-            && config.novonet_config_file.is_none()
-            && config.rpc_addr.is_none()
-            && config.native_client_limit == 1,
-        "requires an isolated copied store, loopback-only routes and one query slot"
-    );
-    config.database = std::fs::canonicalize(&config.database)?;
-    ensure!(
-        config.database.file_name().and_then(|name| name.to_str())
-            == Some("query-reclaim-copy.rocksdb"),
-        "resolved database is not the detached copy"
-    );
+    let mut owner = open_snapshot(false)?;
     let binary = input("NOVOVM_QUERY_COPY_CLIENT")?;
     let request = input("NOVOVM_QUERY_COPY_REQUEST")?;
     let first = input("NOVOVM_QUERY_COPY_FIRST_PROFILE")?;
     let second = input("NOVOVM_QUERY_COPY_SECOND_PROFILE")?;
-    let node = ResidentNode::start(config.clone(), StartMode::Existing)?;
-    let mut owner = QueryOwner {
-        rpc: RpcLifecycle::new(node, config.batch_size)?,
-        config,
-    };
-    owner
-        .until(|owner| {
-            let core = &owner.rpc.node.controller;
-            Ok(!core.is_recovering()
-                && owner.rpc.indexed_height > 0
-                && owner.rpc.indexed_height == core.parent().height)
-        })
-        .context("wait for the copied chain's verified receipt projection")?;
     let head = owner.rpc.node.controller.parent();
     let position = (
         owner.rpc.node.controller.progress.context(),
@@ -206,7 +172,102 @@ fn original_snapshot_reclaims_idle_slot_for_another_authenticated_receipt() -> R
     owner.rpc.node.shutdown()
 }
 
-fn verify_archived_receipt(owner: &mut QueryOwner, request: &Path, observed: &Value) -> Result<()> {
+fn open_snapshot(proofs_enabled: bool) -> Result<QueryOwner> {
+    let mut config = ResidentConfig::load(&input("NOVOVM_QUERY_COPY_CONFIG")?)?;
+    ensure!(
+        config.database.is_dir()
+            && config.database.file_name().and_then(|name| name.to_str())
+                == Some("query-reclaim-copy.rocksdb")
+            && config.database.join("NOVOVM-CANDIDATE-DOMAIN").is_file()
+            && config.udp_addr.ip().is_loopback()
+            && config
+                .peers
+                .iter()
+                .all(|peer| peer.address.ip().is_loopback())
+            && config.novonet_config_file.is_none()
+            && config.rpc_addr.is_none()
+            && config.native_client_limit == 1,
+        "requires an isolated copied store, loopback-only routes and one query slot"
+    );
+    config.database = std::fs::canonicalize(&config.database)?;
+    ensure!(
+        config.database.file_name().and_then(|name| name.to_str())
+            == Some("query-reclaim-copy.rocksdb"),
+        "resolved database is not the detached copy"
+    );
+    config.public_asset_receipt_proofs = proofs_enabled;
+    let node = ResidentNode::start(config.clone(), StartMode::Existing)?;
+    let mut owner = QueryOwner {
+        rpc: RpcLifecycle::new(node, config.batch_size)?,
+        config,
+    };
+    owner
+        .until(|owner| {
+            let core = &owner.rpc.node.controller;
+            Ok(!core.is_recovering()
+                && owner.rpc.indexed_height > 0
+                && owner.rpc.indexed_height == core.parent().height)
+        })
+        .context("wait for the copied chain's verified receipt projection")?;
+    Ok(owner)
+}
+
+#[test]
+#[ignore = "requires a detached original RocksDB copy and the proof-capable native Client"]
+fn detached_archive_serves_original_receipt_to_independent_client_verifier() -> Result<()> {
+    use std::io::Write;
+    let binary = input("NOVOVM_QUERY_COPY_PROOF_CLIENT")?;
+    let request = input("NOVOVM_QUERY_COPY_REQUEST")?;
+    let profile = input("NOVOVM_QUERY_COPY_FIRST_PROFILE")?;
+    let hash = receipt_request_hash(&request)?;
+    let mut owner = open_snapshot(true)?;
+    let head = owner.rpc.node.controller.parent();
+    let (context, parent) = super::super::native_genesis_anchor(
+        &owner.rpc.node.template,
+        owner.config.genesis.validator_epoch,
+        &owner.rpc.node.validators,
+    );
+    let pin = request.with_extension("trusted-parent.json");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pin)?
+        .write_all(&serde_json::to_vec(&parent)?)?;
+    let expected = super::hex(&hash);
+    let mut command = Command::new(binary);
+    command
+        .arg(profile)
+        .arg("verified-receipt")
+        .arg(pin)
+        .arg(&expected);
+    let worker = thread::spawn(move || command.output());
+    owner.until(|_| Ok(worker.is_finished()))?;
+    let output = worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("proof query worker panicked"))??;
+    ensure!(
+        output.status.success(),
+        "proof Client failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout)?;
+    ensure!(
+        report["independently_verified_finality"] == true
+            && report["success"] == true
+            && report["tx_hash"] == expected
+            && report["nonce_after"] == 1
+            && report["charged_fee"] == "4000000"
+            && report["height"] == context.height
+            && report["block_hash"]
+                == "0x9ea72a123a87bea55bb3d87c680b1960dfe458c5ce661d5b11bb81afaee47926"
+            && owner.rpc.node.controller.parent() == head,
+        "proof Client differs from the original finalized receipt: {report}"
+    );
+    println!("independent proof Client: {report}");
+    owner.rpc.node.shutdown()
+}
+
+fn receipt_request_hash(request: &Path) -> Result<[u8; 32]> {
     let Frame::Request(request) =
         native_query::decode(&std::fs::read(request)?).map_err(anyhow::Error::msg)?
     else {
@@ -215,6 +276,11 @@ fn verify_archived_receipt(owner: &mut QueryOwner, request: &Path, observed: &Va
     let Query::Receipt { hash } = request.query else {
         anyhow::bail!("expected a receipt selector")
     };
+    Ok(hash)
+}
+
+fn verify_archived_receipt(owner: &mut QueryOwner, request: &Path, observed: &Value) -> Result<()> {
+    let hash = receipt_request_hash(request)?;
     let expected = &observed["state"]["Finalized"];
     let height = expected["height"]
         .as_u64()

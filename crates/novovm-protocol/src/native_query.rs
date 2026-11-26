@@ -19,11 +19,17 @@ const MAGIC_V4: &[u8; 8] = b"NVQUERY4";
 const MAGIC_IDENTITY_V7: &[u8; 8] = b"NVQUERY7";
 const MAGIC_APPLICATION_V8: &[u8; 8] = b"NVQUERY8";
 const MAGIC_PROPOSAL_V9: &[u8; 8] = b"NVQUERY9";
+const MAGIC_ARCHIVE_V10: &[u8; 8] = b"NVQARC10";
 const MAX_PROPOSAL_REPLY_BYTES: usize = 4096;
 // Room for the canonical ML-DSA-65 round-BFT proposal, including its prefix.
 const MAX_SIGNED_PROPOSAL_BYTES: usize = 3840;
 const MAGIC_RESPONSE_V6: &[u8; 8] = b"NVQUERY6";
 pub type Hash = [u8; 32];
+pub const ARCHIVE_CHUNK_BYTES: usize = 24 * 1024;
+pub const MAX_ARCHIVE_PROOF_BYTES: usize = 32 * 1024 * 1024;
+
+mod archive;
+pub use archive::{ArchiveChunk, ArchiveSelector};
 
 #[cfg(test)]
 #[path = "native_query/application_tests.rs"]
@@ -196,6 +202,8 @@ pub enum Query {
         round: u64,
         hash: Hash,
     },
+    /// Bytes of the existing asset-receipt inclusion and finality proof.
+    ReceiptProof(ArchiveSelector),
 }
 
 impl Query {
@@ -536,6 +544,7 @@ pub enum Answer {
         status: ConsensusProposalStatus,
         progress: Option<ProposalProgress>,
     },
+    ReceiptProof(ArchiveChunk),
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Response {
@@ -585,9 +594,12 @@ fn is_application(frame: &Frame) -> bool {
 fn is_proposal(query: &Query) -> bool {
     query.proposal_selector().is_some()
 }
+fn is_archive(query: &Query) -> bool {
+    matches!(query, Query::ReceiptProof(_))
+}
 fn reply_limit(query: &Query) -> usize {
     match query {
-        Query::Receipts { .. } => MAX_BYTES,
+        Query::Receipts { .. } | Query::ReceiptProof(_) => MAX_BYTES,
         Query::ConsensusProposal { .. } | Query::ConsensusProposalProgress { .. } => {
             MAX_PROPOSAL_REPLY_BYTES
         }
@@ -615,6 +627,9 @@ fn valid_request(request: &Request) -> bool {
         if height == 0 || hash == [0; 32] {
             return false;
         }
+    }
+    if let Query::ReceiptProof(selector) = &request.query {
+        return selector.is_valid();
     }
     true
 }
@@ -661,6 +676,7 @@ fn answer_matches(request: &Request, answer: &Answer) -> bool {
         (Query::Receipts { hashes }, Answer::Receipts { states, .. }) => {
             hashes.len() == states.len()
         }
+        (Query::ReceiptProof(selector), Answer::ReceiptProof(chunk)) => chunk.matches(selector),
         _ => false,
     }
 }
@@ -698,6 +714,8 @@ pub fn encode(frame: Frame) -> Result<Vec<u8>, &'static str> {
     };
     let mut bytes = if response {
         MAGIC_RESPONSE_V6
+    } else if is_archive(&request(&frame).query) {
+        MAGIC_ARCHIVE_V10
     } else if is_proposal(&request(&frame).query) {
         MAGIC_PROPOSAL_V9
     } else if is_application(&frame) {
@@ -733,11 +751,12 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
     let identity = bytes.starts_with(MAGIC_IDENTITY_V7);
     let application = bytes.starts_with(MAGIC_APPLICATION_V8);
     let proposal = bytes.starts_with(MAGIC_PROPOSAL_V9);
+    let archive = bytes.starts_with(MAGIC_ARCHIVE_V10);
     let batch = if bytes.starts_with(MAGIC_V1) {
         false
     } else if bytes.starts_with(MAGIC_V2) {
         true
-    } else if uca || identity || application || proposal {
+    } else if uca || identity || application || proposal || archive {
         false
     } else {
         return Err("native query header/size");
@@ -756,6 +775,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, &'static str> {
         || is_identity(&frame) != identity
         || is_application(&frame) != application
         || is_proposal(&request(&frame).query) != proposal
+        || is_archive(&request(&frame).query) != archive
     {
         return Err("native query trailing bytes/binding");
     }

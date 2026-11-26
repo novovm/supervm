@@ -36,7 +36,9 @@ use std::{
 
 const MAX_ROWS: usize = 1024;
 mod authority;
+mod receipt_proof;
 pub use authority::serve_authority;
+pub use receipt_proof::verified_receipt;
 const MAX_CLIENT_VALIDATORS: usize = 64;
 /// Local configuration budget shared with managed health inspection. A pretty
 /// JSON array for 64 ML-DSA-65 public keys (1952 bytes each), separate ML-DSA-65
@@ -300,6 +302,11 @@ fn answer_view(answer: Answer) -> Value {
         Answer::UcaIdentity(state) => json!({"UcaIdentity":state}),
         Answer::UcaApplicationGrant(state) => json!({"UcaApplicationGrant":state}),
         Answer::Error(error) => json!({"Error":error}),
+        Answer::ReceiptProof(chunk) => json!({"ReceiptProofChunk": {
+            "digest": crate::native_pipeline::service::rpc::hex(&chunk.digest),
+            "total_bytes": chunk.total_bytes,
+            "chunk_bytes": chunk.data.len(),
+        }}),
         Answer::Receipt {
             state,
             indexed_height,

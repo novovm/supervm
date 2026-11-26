@@ -102,9 +102,9 @@ mod pending_recovery;
 pub use pending_recovery::{NilPrecommitRecovery, PendingAssetRecovery};
 mod history;
 mod native_query;
+mod nonce_cache;
 #[cfg(all(test, windows, feature = "iroh-transport"))]
 mod query_slot_snapshot;
-mod nonce_cache;
 #[cfg(test)]
 mod selection_budget_tests;
 mod uca;
@@ -492,6 +492,7 @@ pub struct RpcLifecycle {
     admission: admission::AdmissionState,
     history: history::ReceiptHistory,
     uca_queries: native_query::UcaQueries,
+    receipt_proofs: native_query::ReceiptProofQueries,
     application_selection: Option<application::ApplicationSelection>,
     prefer_application: bool,
 }
@@ -549,6 +550,7 @@ impl RpcLifecycle {
             admission: admission::AdmissionState::default(),
             history: history::ReceiptHistory::default(),
             uca_queries: native_query::UcaQueries::default(),
+            receipt_proofs: native_query::ReceiptProofQueries::default(),
             application_selection: None,
             prefer_application: true,
         })
