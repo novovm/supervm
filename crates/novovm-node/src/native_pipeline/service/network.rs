@@ -703,6 +703,12 @@ async fn serve<'a>(
     diagnostic: diagnostic::Shared,
     query_address: Option<SocketAddr>,
 ) -> Result<()> {
+    // An isolated acceptance copy may serve an unregistered device while
+    // keeping the test data restricted to that device's direct LAN path.
+    #[cfg(test)]
+    let isolated_peer = std::env::var_os("NOVOVM_QUERY_COPY_ISOLATED_IROH_PEER")
+        .map(|value| value.to_string_lossy().parse::<std::net::Ipv4Addr>())
+        .transpose()?;
     let resources = scope
         .service_concurrency()
         .context("native Carrier resource owner missing")?;
@@ -1049,7 +1055,18 @@ async fn serve<'a>(
             }
             match accepting.as_mut().poll(cx) {
                 Poll::Ready(Ok(stream)) => {
-                    if incoming.len() < scope.connection_capacity() {
+                    #[cfg(not(test))]
+                    let fixture_allows = true;
+                    #[cfg(test)]
+                    let fixture_allows = isolated_peer.is_none_or(|expected| {
+                        matches!(
+                            stream.selected_route_observation(),
+                            Some(("direct", address)) if address.parse::<SocketAddr>().is_ok_and(
+                                |address| address.ip().to_canonical() == std::net::IpAddr::V4(expected)
+                            )
+                        )
+                    });
+                    if fixture_allows && incoming.len() < scope.connection_capacity() {
                         incoming.push(Box::pin(incoming_connection(
                             stream.into(),
                             identity.clone(),

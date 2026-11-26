@@ -309,6 +309,17 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     } else {
         None
     };
+    let lan_install =
+        lan.is_some() && std::env::var("NOVOVM_QUERY_COPY_WINDOWS_INSTALL").as_deref() == Ok("1");
+    if lan_install {
+        let settings = lan.as_ref().unwrap();
+        let peer =
+            std::env::var("NOVOVM_QUERY_COPY_ISOLATED_IROH_PEER")?.parse::<std::net::Ipv4Addr>()?;
+        ensure!(
+            peer == settings.client && !settings.receipt_only,
+            "cold Windows LAN fixture requires a scoped direct Iroh peer"
+        );
+    }
     let hash = super::hex(&receipt_request_hash(&request)?);
     let old_profile: ClientConfig =
         serde_json::from_slice(&fs::read(input("NOVOVM_QUERY_COPY_FIRST_PROFILE")?)?)?;
@@ -316,7 +327,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         &old_profile.library,
         &old_profile.library_sha256,
     )?;
-    let mut owner = open_snapshot(true)?;
+    let mut owner = open_snapshot(!lan_install)?;
     let head = owner.rpc.node.controller.parent();
     let (context, parent) = super::super::native_genesis_anchor(
         &owner.rpc.node.template,
@@ -374,7 +385,9 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             udp_recovery_ms: 2000,
         },
         &mut owner.rpc.node,
-        lan.as_ref().map(|lan| vec![lan.client_key.clone()].into()),
+        lan.as_ref()
+            .filter(|_| !lan_install)
+            .map(|lan| vec![lan.client_key.clone()].into()),
     )?);
     owner.until(|_| Ok(secondary.is_file()))?;
     let locator: PeerSignedRelayRecordV1 = serde_json::from_slice(&fs::read(&secondary)?)?;
@@ -462,7 +475,10 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
         }))?,
     )?;
     if let Some(lan) = lan {
-        if std::env::var("NOVOVM_QUERY_COPY_LAN_DISCOVERY").as_deref() == Ok("1") {
+        if lan_install {
+            owner.rpc.node.public_state_sync = true;
+            lan.serve_installed_state(&mut owner, &profile, &key)?;
+        } else if std::env::var("NOVOVM_QUERY_COPY_LAN_DISCOVERY").as_deref() == Ok("1") {
             owner.rpc.node.public_asset_receipt_proofs = false;
             lan.serve_discovery(&mut owner, &profile, &key)?;
         } else if lan.receipt_only {
@@ -742,6 +758,17 @@ struct LanAcceptance {
     receipt_only: bool,
 }
 
+#[test]
+#[ignore = "requires a detached original-store copy and a real remote installed Client report"]
+fn detached_snapshot_checks_lan_install_report_after_shutdown() -> Result<()> {
+    let lan = LanAcceptance::load(&input("NOVOVM_QUERY_COPY_LAN")?)?;
+    let owner = open_snapshot(false)?;
+    let key = owner.rpc.node.transport_identity().public_key().to_vec();
+    let report = input("NOVOVM_QUERY_COPY_LAN_INSTALL_REPORT")?;
+    lan.verify_installed_state(&owner, &key, &report)?;
+    owner.rpc.node.shutdown()
+}
+
 impl LanAcceptance {
     fn load(path: &Path) -> Result<Self> {
         ensure!(path.metadata()?.len() <= 16_384, "LAN fixture input size");
@@ -754,6 +781,109 @@ impl LanAcceptance {
             "LAN fixture requires two private interfaces and one ML-DSA-65 public key"
         );
         Ok(settings)
+    }
+
+    fn serve_installed_state(
+        &self,
+        owner: &mut QueryOwner,
+        profile: &Path,
+        server_key: &[u8],
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        let stage = profile.parent().context("LAN installer acceptance stage")?;
+        let ready = stage.join("lan-ready.json");
+        let result = stage.join("lan-installed-state.json");
+        ensure!(
+            !ready.exists() && !result.exists(),
+            "stale LAN install evidence"
+        );
+        let profile_pin = prepare_lan_profile(profile, None)?;
+        let server_identity = format!("{:x}", Sha256::digest(server_key));
+        let head = owner.rpc.node.controller.parent();
+        let state_root = super::hex(&head.state_root);
+        let block_hash = super::hex(&head.block_hash);
+        let draft = ready.with_extension("tmp");
+        fs::write(
+            &draft,
+            serde_json::to_vec(&serde_json::json!({
+                "profile_sha256": profile_pin, "server_transport_sha256": server_identity,
+                "height": head.height, "state_root": state_root, "state_version": head.state_version,
+                "block_hash": block_hash,
+            }))?,
+        )?;
+        fs::rename(draft, ready)?;
+
+        let deadline = Instant::now() + Duration::from_secs(480);
+        while !result.is_file() {
+            ensure!(Instant::now() < deadline, "cross-device installer deadline");
+            owner.poll()?;
+            thread::sleep(Duration::from_millis(2));
+        }
+        self.verify_installed_state(owner, server_key, &result)
+    }
+
+    fn verify_installed_state(
+        &self,
+        owner: &QueryOwner,
+        server_key: &[u8],
+        result: &Path,
+    ) -> Result<()> {
+        use sha2::{Digest, Sha256};
+        use std::fs;
+
+        ensure!(
+            result.metadata()?.len() <= 16_384,
+            "LAN installer report size"
+        );
+        let report: Value = serde_json::from_slice(&fs::read(result)?)?;
+        let head = owner.rpc.node.controller.parent();
+        let state_root = super::hex(&head.state_root);
+        let block_hash = super::hex(&head.block_hash);
+        let prior_client = format!("{:x}", Sha256::digest(&self.client_key));
+        let server_identity = format!("{:x}", Sha256::digest(server_key));
+        let discovery = &report["discovery"];
+        let proof = &report["proof"];
+        let sources = discovery["authenticated_discovery_sources"]
+            .as_array()
+            .context("LAN installer discovery sources")?;
+        let records = discovery["signed_locator_candidates"]
+            .as_array()
+            .context("LAN installer locator evidence")?;
+        ensure!(
+            report["cold_started"] == true
+                && report["task_limited"] == true
+                && report["client_pid"].as_u64().is_some_and(|pid| pid > 0)
+                && discovery["transport_identity_sha256"]
+                    .as_str()
+                    .is_some_and(|identity| identity.len() == 64
+                        && identity != prior_client
+                        && identity != server_identity)
+                && discovery["transport_identity_sha256"] == report["local_transport_sha256"]
+                && sources.len() == 2
+                && sources[0] != sources[1]
+                && sources
+                    .iter()
+                    .any(|source| source.as_str() == Some(server_identity.as_str()))
+                && records.len() == 2
+                && sources.iter().all(|source| records.iter().any(|record| {
+                    record["transport_identity_sha256"] == *source
+                        && record["sequence"]
+                            .as_u64()
+                            .is_some_and(|sequence| sequence > 0)
+                }))
+                && proof["verification"] == "independent_uca_execution_replay"
+                && proof["height"] == head.height
+                && proof["state_version"] == head.state_version
+                && proof["state_root"] == state_root
+                && proof["block_hash"] == block_hash
+                && proof["receipt_batch_commitment"] == super::hex(&head.receipt_batch_commitment)
+                && owner.active_client().is_err(),
+            "remote installed Client did not prove new custody and verified state: {report}"
+        );
+        println!("cross-device Windows installation verified: {report}");
+        Ok(())
     }
 
     fn serve(&self, owner: &mut QueryOwner, profile: &Path, server_key: &[u8]) -> Result<()> {
