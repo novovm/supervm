@@ -76,17 +76,7 @@ pub fn verify_installed_uca_execution(
             "UCA replay archive conflicts with the certified local chain"
         );
     }
-    if let Some(checkpoint) = minimum.filter(|checkpoint| checkpoint.height > point.height) {
-        let mut descendant = point;
-        for (&height, path) in history.range((point.height + 1)..=checkpoint.height) {
-            descendant = verify_cached_header(&verifier, descendant, height, path, minimum)?;
-        }
-        ensure!(
-            descendant.height == checkpoint.height,
-            "UCA replay requires certified headers through the installed minimum checkpoint at height {}; run sync-chain first",
-            checkpoint.height
-        );
-    }
+    verify_through_minimum(&verifier, &history, point, minimum, "UCA replay")?;
     bundle.verify(&header, &library, &profile.library_sha256)?;
     checkpoint_validity(minimum, wall_ms()?)?;
     use crate::native_pipeline::service::rpc::hex;
@@ -96,6 +86,27 @@ pub fn verify_installed_uca_execution(
         "block_hash":hex(&point.block_hash), "state_root":hex(&point.state_root),
         "receipt_batch_commitment":hex(&point.receipt_batch_commitment), "state_version":point.state_version,
     }))
+}
+
+fn verify_through_minimum(
+    verifier: &FinalityVerifier,
+    history: &BTreeMap<u64, PathBuf>,
+    point: ParentPoint,
+    minimum: Option<MinimumFinalizedCheckpoint>,
+    artifact: &str,
+) -> Result<()> {
+    if let Some(checkpoint) = minimum.filter(|checkpoint| checkpoint.height > point.height) {
+        let mut descendant = point;
+        for (&height, path) in history.range((point.height + 1)..=checkpoint.height) {
+            descendant = verify_cached_header(verifier, descendant, height, path, minimum)?;
+        }
+        ensure!(
+            descendant.height == checkpoint.height,
+            "{artifact} requires certified headers through the installed minimum checkpoint at height {}; run sync-chain first",
+            checkpoint.height
+        );
+    }
+    Ok(())
 }
 
 /// Re-verify the locally cached original prefix before exporting a checkpoint.
@@ -116,35 +127,39 @@ pub fn export_activation_parent(
         height >= anchor.height,
         "activation parent precedes the installed trust anchor"
     );
-    let minimum = profile
-        .verification
-        .as_ref()
-        .and_then(|pins| pins.minimum_finalized_checkpoint);
+    let minimum = minimum_checkpoint(&profile);
     checkpoint_validity(minimum, wall_ms()?)?;
     let mut point = anchor;
-    if height > anchor.height {
+    if height > anchor.height || minimum.is_some_and(|pin| pin.height > anchor.height) {
         let library = profile_base(path)?.join(&profile.library);
         let verifier = FinalityVerifier::new(
             &domain,
             load_transport_verifier(&library, &profile.library_sha256)?,
         );
-        let root = checkpoint_root(&profile, anchor)?;
-        for (height, header) in cached_header_paths(&root)?.range(..=height) {
+        let history = cached_header_paths(&checkpoint_root(&profile, anchor)?)?;
+        for (height, header) in history.range(..=height) {
             point = verify_cached_header(&verifier, point, *height, header, minimum)?;
         }
+        ensure!(
+            point.height == height,
+            "activation parent missing from the verified local prefix"
+        );
+        verify_through_minimum(&verifier, &history, point, minimum, "activation parent")?;
     }
-    ensure!(
-        point.height == height,
-        "activation parent missing from the verified local prefix"
-    );
-    checkpoint_validity(minimum, wall_ms()?)?;
     let bytes = serde_json::to_vec(&point)?;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(output)?;
+    let directory = output
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let mut options = tempfile::Builder::new();
+    options.prefix(".activation-parent-");
+    #[cfg(unix)]
+    options.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o666));
+    let mut file = options.tempfile_in(directory)?;
     file.write_all(&bytes)?;
-    file.sync_all()?;
+    file.as_file().sync_all()?;
+    checkpoint_validity(minimum, wall_ms()?)?;
+    file.persist_noclobber(output)?;
     Ok(serde_json::json!({
         "kind":"pinned_native_chain_checkpoint",
         "height":point.height,
