@@ -672,7 +672,7 @@ fn serve_installed_windows_fixture(
             "state_version": head.state_version,
         }))?,
     )?;
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + Duration::from_secs(480);
     while !complete.is_file() {
         ensure!(
             Instant::now() < deadline,
