@@ -62,16 +62,31 @@ pub(in super::super::super::super) fn check_locator_role_transition(
     cache = Locators::open(path.clone(), &profile, local)?;
     assert_eq!(cache.candidates(&profile, now).count(), 0);
     assert!(ReadRoute::new(&fixed_withdrawn, &profile).is_err());
-    let observed = cache.observe(
-        report(std::slice::from_ref(&public_record)),
-        &profile,
-        local.public_key(),
-    )?;
+    let mut attributed = report(std::slice::from_ref(&public_record));
+    let provider_id = public_read_locator_id_v1(pins);
+    let first_source = fingerprint(&profile.seeds[0].transport_key);
+    let second_source = fingerprint(&profile.seeds[1].transport_key);
+    attributed.sources = vec![first_source.clone(), second_source.clone()];
+    attributed.locators_by_source = BTreeMap::from([
+        (
+            first_source.clone(),
+            vec![LocatorSummary::new(&public_record, &provider_id)],
+        ),
+        (
+            second_source,
+            vec![LocatorSummary::new(
+                &make_public(public, 2, 100_000)?,
+                &provider_id,
+            )],
+        ),
+    ]);
+    let observed = cache.observe(attributed, &profile, local.public_key())?;
     assert_eq!(
         observed.len(),
         1,
         "ordinary and public have separate sequence floors"
     );
+    assert_eq!(observed[0].returned_by, vec![first_source]);
     assert_eq!(cache.candidates(&profile, now).count(), 1);
     assert!(ReadRoute::new(&public_record, &profile).is_ok());
     profile.relays = vec!["https://another.example/".into()];

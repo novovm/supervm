@@ -290,6 +290,7 @@ impl Follower {
                 if self.reported.as_ref() != Some(&(tip, route.clone())) {
                     self.emit(serde_json::json!({
                         "event":"verified_state", "height":tip.height,
+                        "block_hash": super::super::super::super::super::rpc::hex(&tip.block_hash),
                         "state_root": super::super::super::super::super::rpc::hex(&tip.state_root),
                         "state_version":tip.state_version,
                         "verified_nodes":state.nodes, "verified_leaves":state.leaves,
@@ -372,6 +373,7 @@ impl Follower {
                 "locator_sequence":accepted.sequence,
                 "locator_issued_at_ms":accepted.issued_at_ms,
                 "locator_expires_at_ms":accepted.expires_at_ms,
+                "locator_returned_by":accepted.returned_by,
             }))?;
         }
         Ok(())

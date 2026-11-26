@@ -572,7 +572,7 @@ struct DiscoveryReport {
     records: BTreeMap<Vec<u8>, PeerSignedRelayRecordV1>,
 }
 
-#[derive(Serialize)]
+#[derive(PartialEq, Eq, Serialize)]
 struct LocatorSummary {
     transport_identity_sha256: String,
     sequence: u64,

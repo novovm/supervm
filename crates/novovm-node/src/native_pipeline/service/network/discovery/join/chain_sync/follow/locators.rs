@@ -42,6 +42,7 @@ pub(super) struct AcceptedLocator {
     pub(super) sequence: u64,
     pub(super) issued_at_ms: u64,
     pub(super) expires_at_ms: u64,
+    pub(super) returned_by: Vec<String>,
 }
 
 impl Locators {
@@ -226,11 +227,21 @@ impl Locators {
                     continue;
                 }
             }
+            // A bootstrap that returned an earlier sequence did not supply the
+            // winning record, even if it authenticated in this round.
+            let summary = LocatorSummary::new(&candidate, &public_id);
+            let returned_by = found
+                .locators_by_source
+                .iter()
+                .filter(|(_, records)| records.contains(&summary))
+                .map(|(source, _)| source.clone())
+                .collect();
             accepted.push(AcceptedLocator {
-                peer_transport_sha256: fingerprint(&key),
+                peer_transport_sha256: summary.transport_identity_sha256,
                 sequence: candidate.sequence,
                 issued_at_ms: candidate.issued_at_ms,
                 expires_at_ms: candidate.expires_at_ms,
+                returned_by,
             });
             if is_public {
                 observations.insert(key.clone(), Observation::Advertised);

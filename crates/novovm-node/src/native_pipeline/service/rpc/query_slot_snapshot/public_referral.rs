@@ -214,10 +214,12 @@ fn cold_client_uses_published_provider_without_a_provider_pin() -> Result<()> {
                         .iter()
                         .any(|e| e["event"] == "verified_locator_accepted"
                             && e["peer_transport_sha256"] == serving
-                            && e["locator_sequence"] == state["locator_sequence"])
+                            && e["locator_sequence"] == state["locator_sequence"]
+                            && e["locator_returned_by"] == serde_json::json!([source]))
                     && state["peer_transport_sha256"] == serving
                     && state["transport"] == "iroh"
                     && state["height"] == head.height
+                    && state["block_hash"] == super::super::hex(&head.block_hash)
                     && state["state_root"] == super::super::hex(&head.state_root)
                     && state["verified_nodes"].as_u64().is_some_and(|n| n > 0)
                     && state["downloaded_nodes"] == state["verified_nodes"]
