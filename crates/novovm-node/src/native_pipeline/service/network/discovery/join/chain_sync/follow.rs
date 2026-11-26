@@ -29,6 +29,7 @@ pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Resu
         snapshot: None,
         reported: None,
         retrying: false,
+        waiting_finality: None,
     };
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -48,6 +49,7 @@ struct Follower {
     snapshot: Option<(ParentPoint, StateProgress)>,
     reported: Option<(ParentPoint, Route)>,
     retrying: bool,
+    waiting_finality: Option<PendingFinality>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -68,6 +70,7 @@ type Native = (QuerySession<'static>, Route);
 
 impl Follower {
     async fn run(mut self) -> Result<()> {
+        self.chain.checkpoint_validity(wall_ms()?)?;
         self.emit(
             serde_json::json!({"event":"starting", "reopened_height":self.chain.tip.height}),
         )?;
@@ -82,6 +85,7 @@ impl Follower {
             } else {
                 None
             };
+            self.chain.checkpoint_validity(wall_ms()?)?;
             if owner.is_none() {
                 let carrier = IrohConfigV1::new(&self.profile.relays, self.profile.nameserver)?;
                 owner = bind_carrier(carrier).await.ok();
@@ -122,6 +126,7 @@ impl Follower {
                     IrohControlV1::new(Instant::now() + Duration::from_secs(2), || Ok(()))?;
                 let _ = active.network_change(refresh).await;
             }
+            self.chain.checkpoint_validity(wall_ms()?)?;
             if !self.retrying {
                 self.emit(serde_json::json!({"event":"retrying", "verified_height":self.chain.tip.height}))?;
                 self.retrying = true;
@@ -307,11 +312,21 @@ impl Follower {
         if tip.height != advertised.height {
             return Ok(None);
         }
+        if let Err(reason) = self.chain.state_readiness(wall_ms()?) {
+            if self.waiting_finality != Some(reason) {
+                self.emit(serde_json::json!({"event":"waiting_for_required_finality", "verified_height":tip.height, "reason":reason}))?;
+                self.waiting_finality = Some(reason);
+                self.reported = None;
+            }
+            return Err(reason.into());
+        }
+        self.waiting_finality = None;
         if let Some((verified, state)) = self.snapshot.filter(|(verified, _)| *verified == tip) {
             debug_assert_eq!(verified, tip);
             return Ok(Some(state));
         }
         let state = self.cache.sync(session, tip).await?;
+        self.chain.checkpoint_validity(wall_ms()?)?;
         self.snapshot = Some((tip, state));
         Ok(Some(state))
     }

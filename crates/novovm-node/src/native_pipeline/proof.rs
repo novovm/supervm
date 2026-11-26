@@ -76,6 +76,25 @@ pub struct ExecutionJournalV1 {
 }
 
 impl ExecutionJournalV1 {
+    #[cfg(test)]
+    pub(crate) fn from_direct_statement_commitments(
+        plan: NodeHash,
+        post_state: NodeHash,
+        receipts: NodeHash,
+        execution: NodeHash,
+        transactions: u64,
+        state_version: u64,
+    ) -> Self {
+        Self {
+            plan,
+            post_state,
+            receipts,
+            execution,
+            transactions,
+            state_version,
+        }
+    }
+
     /// Expected bytes from this pipeline's immutable, durably completed local
     /// candidate. This does not make its parent canonical or grant finality.
     pub fn from_candidate(
@@ -161,4 +180,4 @@ pub fn execute_to_journal(input: &[u8]) -> Result<ExecutionJournalV1> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

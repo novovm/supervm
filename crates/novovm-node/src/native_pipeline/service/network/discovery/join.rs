@@ -56,6 +56,40 @@ struct VerificationPins {
     validator_set_hash: [u8; 32],
     validators: Vec<GenesisValidator>,
     trusted_parent: ParentPoint,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    minimum_finalized_checkpoint: Option<MinimumFinalizedCheckpoint>,
+}
+
+/// The issuer pins an independently known block. Its hash binds the state,
+/// ordered receipt root and the exact execution statement.
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MinimumFinalizedCheckpoint {
+    height: u64,
+    block_hash: [u8; 32],
+    valid_until_unix_ms: u64,
+}
+
+impl MinimumFinalizedCheckpoint {
+    fn validate(self, anchor: ParentPoint) -> Result<()> {
+        ensure!(
+            self.height >= anchor.height
+                && self.height != 0
+                && self.block_hash != [0; 32]
+                && self.valid_until_unix_ms != 0,
+            "invalid minimum finalized checkpoint in the installed profile"
+        );
+        self.check(anchor)
+    }
+
+    fn check(self, point: ParentPoint) -> Result<()> {
+        ensure!(
+            point.height != self.height || point.block_hash == self.block_hash,
+            "finalized header conflicts with the installed minimum checkpoint at height {}",
+            self.height
+        );
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -146,6 +180,9 @@ impl Profile {
                 .any(|v| &v.transport_public_key == key)),
             "lookup key is outside the installed chain transport bindings"
         );
+        if let Some(minimum) = pins.minimum_finalized_checkpoint {
+            minimum.validate(pins.trusted_parent)?;
+        }
         Ok((
             MessageDomain {
                 chain_id: self.chain_id,
