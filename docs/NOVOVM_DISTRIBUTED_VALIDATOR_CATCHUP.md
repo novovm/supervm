@@ -54,6 +54,23 @@ A、C、D 三台物理 Windows 主机的四个隔离角色已完成本轮验收�
 
 ## 有限窗口内的顺序
 
+### 固定不等权的同人数验收
+
+默认计划保留四个权重各为 1 的原场景。新建隔离计划时使用 `-Action Plan -WeightScenario UnequalPairs`，固定 A1、A2、C1、D1 权重分别为 1、3、2、1。先固定计划 SHA-256，再由测试程序从同一份计划生成创世。将生成文件原样保存为证据目录中的 `genesis.json`，用 `novovm-verify-distributed-validator-catchup.ps1 -PlanOnly -PlanFile <计划> -PlanSha256 <计划摘要> -EvidenceDirectory <目录> -GenesisSha256 <独立获得的创世文件摘要>` 核对四份公钥、角色和权重。此步骤只输出 `PLAN_ONLY`。运行产生的 Precommit QC 验签绑定创世和成员集合，四份停止后的归档需核对同一决定。
+
+以下调整仅用于不等权场景。
+
+| 阶段 | 操作与观测 |
+| --- | --- |
+| D1 追赶 | 沿用下表的基线、D1 离线与原库追赶至高度 41 的流程。40 个高度推进期间三份在线权重合计 6，门槛为 5。 |
+| 两端权重 3 | 停 D1、停 A2，保留 A1 和 C1。A1 操作员向 **C1** 提交 nonce 41 一次（`-Role C1 -Actor A1`，证据仍为 `submit-41`）。C1 须保有两条原 `Received` 回执。两端各观察至少 12 秒，保留同一旧链头。 |
+| 两端权重 5 | 两端 hold 结束后停止 A1，待其停止报告落盘，再在后续 UTC 秒以 `Existing` 恢复 A2。保留 C1 和 A2，保持 A1 与 D1 离线，存 `C1-restored`，要求同一次提交的两条回执在新链头终结。 |
+| 全员复验 | 分别以 `A1-restore` 和 `D1-restore` 恢复最后两个原库。按下表查四端最终状态及停稳后的原始归档。归档 harness 用固定创世重建集合并验原 QC，聚合脚本依据归档的签名人标识从创世成员表逐一复算权重。四份终结 QC 均须由 C1、A2 签出，签名数为 2、权重为 5。 |
+
+离线计划回归入口为 `scripts/tests/distributed-catchup-weight-plan.tests.ps1`。输入已保存的真实等权三机证据目录、编译后的新 harness 及全新测试输出目录。该入口仅使用原计划中的公开材料生成复验计划，检查不同权重使创世承诺变化并拒绝错配，还会重新核对原等权运行。运行不等权实机验收时需要一组同新域绑定的隔离用途钥和新库。
+
+### 等权流程与共用取证步骤
+
 | 阶段 | 操作与必须留下的证据 |
 | --- | --- |
 | 建立基线 | 四角色 Create，命名 A1-create、A2-create、C1-create、D1-create。A1 操作员依次认证查询各远端 Status。向 A1 提交新域 nonce 0，存 submit-0。等 D1 的两条 Receipt 为 Finalized，记录 D1-baseline、其高度 h0。停 D1，归档 h0 为 D1-outbox-before。 |

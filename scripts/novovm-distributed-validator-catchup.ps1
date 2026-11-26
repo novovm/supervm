@@ -11,6 +11,7 @@ param(
     [string] $Address,
     [string] $PlanFile,
     [string[]] $PublicSlots,
+    [ValidateSet('Equal','UnequalPairs')][string] $WeightScenario = 'Equal',
     [long] $StartUnix,
     [long] $EndUnix,
     [string] $Node,
@@ -107,6 +108,9 @@ function Invoke-Harness([string] $Operation, [string] $Report) {
 
 $slots = @('A1','A2','C1','D1')
 if (-not $IsWindows) { throw 'This runner uses Windows test packages and current-user DPAPI' }
+if ($Action -ne 'Plan' -and $PSBoundParameters.ContainsKey('WeightScenario')) {
+    throw 'Choose the validator weights only when creating a new pinned plan.'
+}
 
 if ($Action -eq 'Plan') {
     Confirm-Domain
@@ -129,6 +133,9 @@ if ($Action -eq 'Plan') {
         }
         $public[$data.role] = @{
             role = $data.role; address = $data.address; validator = $data.validator; transport = $data.transport
+        }
+        if ($WeightScenario -eq 'UnequalPairs') {
+            $public[$data.role].weight = @{ A1 = 1; A2 = 3; C1 = 2; D1 = 1 }[$data.role]
         }
     }
     $PlanFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PlanFile)

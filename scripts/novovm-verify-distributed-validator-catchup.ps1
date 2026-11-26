@@ -3,7 +3,9 @@
 param(
     [Parameter(Mandatory)][string] $PlanFile,
     [Parameter(Mandatory)][ValidatePattern('^[a-f0-9]{64}$')][string] $PlanSha256,
-    [Parameter(Mandatory)][string] $EvidenceDirectory
+    [Parameter(Mandatory)][string] $EvidenceDirectory,
+    [switch] $PlanOnly,
+    [ValidatePattern('^[a-f0-9]{64}$')][string] $GenesisSha256
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -30,6 +32,42 @@ Assert-Test ($genesis.plan_sha256 -ceq $PlanSha256 -and $genesis.genesis.chain_i
 $genesisHash = (Get-FileHash -LiteralPath (Join-Path $EvidenceDirectory 'genesis.json')).Hash.ToLowerInvariant()
 $domain = Hex-Bytes $genesis.genesis.genesis_config_commitment
 $protocol = Hex-Bytes $genesis.genesis.protocol_commitment
+$roles = @('A1','A2','C1','D1')
+$members = @{}
+$roleWeights = [ordered]@{}
+$idDomain = [Text.Encoding]::ASCII.GetBytes("novovm-round-bft/v2/mldsa65/validator-id`0")
+Assert-Test ($plan.slots.Count -eq 4 -and $genesis.genesis.validators.Count -eq 4) 'Four pinned validator roles required'
+for ($i = 0; $i -lt $roles.Count; $i++) {
+    $slot = $plan.slots[$i]
+    $validator = $genesis.genesis.validators[$i]
+    $field = $slot.PSObject.Properties['weight']
+    $expected = if ($null -eq $field) { 1 } else { $field.Value }
+    Assert-Test ($slot.role -ceq $roles[$i] -and ($null -eq $field -or $expected -is [long])) 'Invalid plan role or weight'
+    Assert-Test ($validator.weight -is [long] -and $validator.weight -in @(1,2,3) -and $validator.weight -eq $expected -and
+        $validator.public_key.Count -eq 1952 -and (Hex-Bytes $slot.validator) -ceq (Hex-Bytes $validator.public_key) -and
+        $validator.transport_public_key.Count -eq 1952 -and
+        (Hex-Bytes $slot.transport) -ceq (Hex-Bytes $validator.transport_public_key)) 'Plan differs from genesis validator'
+    $id = Hex-Bytes ([Security.Cryptography.SHA256]::HashData([byte[]]($idDomain + $validator.public_key)))
+    Assert-Test (!$members.ContainsKey($id)) 'Duplicate validator key'
+    $members[$id] = $slot.role
+    $roleWeights[$slot.role] = $validator.weight
+}
+$layout = $roleWeights.Values -join ','
+Assert-Test ($layout -in @('1,1,1,1','1,3,2,1')) 'Unsupported weight schedule'
+$unequal = $layout -eq '1,3,2,1'
+$totalWeight = [long]($roleWeights.Values | Measure-Object -Sum).Sum
+$quorumWeight = [long]([Math]::Floor(2 * $totalWeight / 3) + 1)
+$weakWeight = $roleWeights.A1 + $roleWeights.C1
+$restoredWeight = $roleWeights.A2 + $roleWeights.C1
+Assert-Test ($weakWeight -lt $quorumWeight -and (!$unequal -or $restoredWeight -ge $quorumWeight)) 'Invalid isolation schedule'
+if ($GenesisSha256) { Assert-Test ($GenesisSha256 -ceq $genesisHash) 'Genesis file digest differs' }
+if ($PlanOnly) {
+    Assert-Test ([bool]$GenesisSha256) 'Supply the independent genesis file digest for plan review'
+    [ordered]@{result='PLAN_ONLY'; plan_sha256=$PlanSha256; genesis_sha256=$genesisHash; genesis=$domain
+        weights=$roleWeights; total_weight=$totalWeight; quorum_weight=$quorumWeight
+        a1_c1_weight=$weakWeight; a2_c1_weight=$restoredWeight} | ConvertTo-Json
+    return
+}
 
 function Checked-Run([string] $Name, [string] $Action, [string] $Role) {
     $row = Read-Json $Name
@@ -51,13 +89,22 @@ function Assert-Head($Left, $Right) {
         Assert-Test ((Json $Left.$field) -ceq (Json $Right.$field)) "Head mismatch: $field"
     }
 }
-function Assert-Archive($Record, $Status) {
+function Assert-Archive($Record, $Status, [string[]]$ExpectedRoles = @()) {
+    $signerRoles = @(foreach ($id in $Record.signers) {
+        Assert-Test ($id -cmatch '^[a-f0-9]{64}$' -and $members.ContainsKey($id)) 'Unknown QC signer'
+        $members[$id]
+    })
+    Assert-Test ($signerRoles.Count -gt 0 -and @($signerRoles | Sort-Object -Unique).Count -eq $signerRoles.Count) 'Duplicate or empty QC signers'
+    $weight = ($signerRoles | ForEach-Object { $roleWeights[$_] } | Measure-Object -Sum).Sum
+    if ($ExpectedRoles.Count) {
+        Assert-Test ((($ExpectedRoles | Sort-Object) -join ',') -ceq (($signerRoles | Sort-Object) -join ',')) 'QC signers differ from the online pair'
+    }
     Assert-Test ($Record.height -eq $Status.height -and $Record.block_hash -ceq (Hex-Bytes $Status.block_hash) -and
         $Record.state_root -ceq (Hex-Bytes $Status.state_root) -and
         $Record.receipt_batch_commitment -ceq (Hex-Bytes $Status.receipt_batch_commitment) -and
-        $Record.quorum_weight -eq 3 -and $Record.signed_weight -in @(3,4) -and
-        $Record.signatures -eq $Record.signed_weight -and
-        @($Record.signers | Sort-Object -Unique).Count -eq $Record.signatures -and
+        $Record.quorum_weight -is [long] -and $Record.quorum_weight -eq $quorumWeight -and
+        $Record.signed_weight -is [long] -and $Record.signed_weight -eq $weight -and
+        $weight -ge $quorumWeight -and $Record.signatures -is [long] -and $signerRoles.Count -eq $Record.signatures -and
         $Record.outbox_sha256 -cmatch '^[a-f0-9]{64}$') 'Missing durable head or its verified Precommit QC'
 }
 function Confirm-FinalReceipts($Row, $Submission) {
@@ -71,7 +118,6 @@ function Confirm-FinalReceipts($Row, $Submission) {
     }
 }
 
-$roles = @('A1','A2','C1','D1')
 foreach ($role in $roles) {
     $ready = Read-Json "ready-$role"
     $slot = @($plan.slots | Where-Object role -CEQ $role)[0]
@@ -89,6 +135,8 @@ $lateCatchup = Checked-Run 'D1-catchup' 'existing' 'D1'
 $secondFirst = Checked-Run 'A2-create' 'create' 'A2'
 $secondRestore = Checked-Run 'A2-restore' 'existing' 'A2'
 $lateRestore = Checked-Run 'D1-restore' 'existing' 'D1'
+$survivor = if ($unequal) { 'C1' } else { 'A1' }
+if ($unequal) { $aRestore = Checked-Run 'A1-restore' 'existing' 'A1' }
 $before = Checked-Run 'D1-baseline' 'query' 'D1'
 $healthy = Checked-Run 'A1-advanced' 'query' 'A1'
 $caught = Checked-Run 'D1-caught' 'query' 'D1'
@@ -105,7 +153,8 @@ Assert-Test ($old.record_sha256 -ceq $preserved.record_sha256 -and
     $old.outbox_sha256 -ceq $preserved.outbox_sha256) 'The original durable signing record/outbox changed'
 
 $submissions = @(0..41 | ForEach-Object {
-    $sent = Checked-Run "submit-$_" 'submit' 'A1'
+    $target = if ($_ -eq 41) { $survivor } else { 'A1' }
+    $sent = Checked-Run "submit-$_" 'submit' $target
     Assert-Test ($sent.operator -ceq 'A1' -and $sent.nonce -eq $_ -and $sent.transport_completed -eq $true -and
         $sent.marker_hashes.Count -eq 2 -and $sent.marker_hashes[0] -cne $sent.marker_hashes[1] -and
         @($sent.marker_hashes | Where-Object { $_ -cnotmatch '^[a-f0-9]{64}$' }).Count -eq 0) "Invalid original submission $_"
@@ -132,6 +181,11 @@ foreach ($role in @('A1','C1')) {
     Assert-Test ((Query-Started $start) -ge $minoritySent.observed_unix -and
         $end.observed_unix -ge ($start.observed_unix + 12) -and
         $end.observed_unix -lt $secondRestore.started_unix -and $lateRestore.started_unix -ge $secondRestore.started_unix) "Minority hold is too short: $role"
+    if ($unequal) {
+        Assert-Test ((Query-Started $start) -ge [Math]::Max($aLaunch.started_unix,$cLaunch.started_unix) -and
+            $end.observed_unix -le $aLaunch.stopped_unix -and $end.observed_unix -le $cLaunch.stopped_unix -and
+            $aLaunch.stopped_unix -lt $secondRestore.started_unix) 'Weak pair and restored pair overlapped or were not online'
+    }
     foreach ($point in @($start,$end)) {
         Assert-Head $healthy.status $point.status
         Assert-Test ($point.nonce -eq 41 -and $point.receipts.Count -eq 2) "Missing minority markers: $role"
@@ -141,17 +195,25 @@ foreach ($role in @('A1','C1')) {
         }
     }
 }
-$offered = Checked-Run 'A1-hold-start' 'query' 'A1'
-Assert-Test (@($offered.receipts | Where-Object state -CEQ 'Received').Count -eq 2) 'A1 did not retain both marker inputs during the minority hold'
-$restored = Checked-Run 'A1-restored' 'query' 'A1'
+$offered = Checked-Run "$survivor-hold-start" 'query' $survivor
+Assert-Test (@($offered.receipts | Where-Object state -CEQ 'Received').Count -eq 2) 'Surviving node did not retain both original marker inputs'
+$restored = Checked-Run "$survivor-restored" 'query' $survivor
 Confirm-FinalReceipts $restored $minoritySent
 Assert-Test ($restored.observed_unix -gt $secondRestore.started_unix -and $restored.observed_unix -lt $lateRestore.started_unix -and
-    $restored.status.height -gt $healthy.status.height) 'The third validator did not restore finality before D1 returned'
+    $restored.status.height -gt $healthy.status.height) 'Restored voting weight did not finalize before D1 returned'
+if ($unequal) {
+    Assert-Test ((Query-Started $restored) -ge $secondRestore.started_unix -and
+        $restored.observed_unix -le [Math]::Min($secondRestore.stopped_unix,$cLaunch.stopped_unix) -and
+        $restored.observed_unix -lt $aRestore.started_unix) 'Restored pair did not finalize alone'
+    foreach ($receipt in $restored.receipts) {
+        Assert-Test ($receipt.state.Finalized.height -eq $restored.status.height) 'Wrong height for restored-pair QC'
+    }
+}
 
 foreach ($role in $roles) {
     $final = Checked-Run "$role-final" 'query' $role
     $lastLaunch = switch ($role) {
-        'A1' { $aLaunch }
+        'A1' { if ($unequal) { $aRestore } else { $aLaunch } }
         'A2' { $secondRestore }
         'C1' { $cLaunch }
         'D1' { $lateRestore }
@@ -163,16 +225,23 @@ foreach ($role in $roles) {
     Assert-Test ((Json $restored.receipts) -ceq (Json $final.receipts)) "Final receipts differ on $role"
     $persisted = Checked-Run "$role-persisted" 'archive' $role
     Assert-Test ($persisted.observed_unix -ge $lastLaunch.stopped_unix) "Final archive predates stop: $role"
-    Assert-Archive $persisted.archive $final.status
+    if ($unequal) { Assert-Archive $persisted.archive $final.status @('C1','A2') }
+    else { Assert-Archive $persisted.archive $final.status }
 }
-[ordered] @{
+$result = [ordered] @{
     result = 'PASS'
     plan_sha256 = $PlanSha256
     chain_id = $plan.chain_id
     final_height = $restored.status.height
     block_hash = Hex-Bytes $restored.status.block_hash
     state_root = Hex-Bytes $restored.status.state_root
-    quorum_weight = 3
+    quorum_weight = $quorumWeight
     durable_roles = $roles
     retained_outbox_sha256 = $old.outbox_sha256
-} | ConvertTo-Json
+}
+if ($unequal) {
+    $result.total_weight = $totalWeight
+    $result.insufficient_pair = @{ roles=@('A1','C1'); online_weight=$weakWeight; height=$healthy.status.height }
+    $result.finalizing_pair = @{ roles=@('A2','C1'); signed_weight=$restoredWeight; height=$restored.status.height }
+}
+$result | ConvertTo-Json -Depth 4

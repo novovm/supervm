@@ -15,6 +15,12 @@ struct Slot {
     address: SocketAddr,
     validator: Vec<u8>,
     transport: Vec<u8>,
+    #[serde(default = "unit_weight")]
+    weight: u64,
+}
+
+fn unit_weight() -> u64 {
+    1
 }
 
 #[derive(Deserialize)]
@@ -94,6 +100,11 @@ impl Plan {
             "invalid binary pins"
         );
         ensure!(self.slots.len() == 4, "four test slots required");
+        let weights: Vec<_> = self.slots.iter().map(|slot| slot.weight).collect();
+        ensure!(
+            weights == [1, 1, 1, 1] || weights == [1, 3, 2, 1],
+            "unsupported isolation weight schedule"
+        );
         let mut addresses = HashSet::new();
         let mut keys = HashSet::new();
         for (role, slot) in ROLES.into_iter().zip(&self.slots) {
@@ -262,7 +273,7 @@ fn native_distributed_validator_fixture() -> Result<()> {
             .map(|slot| GenesisValidator {
                 public_key: slot.validator.clone(),
                 transport_public_key: slot.transport.clone(),
-                weight: 1,
+                weight: slot.weight,
             })
             .collect(),
     )?;
@@ -401,10 +412,6 @@ fn native_distributed_validator_fixture() -> Result<()> {
             .collect::<Result<Vec<_>>>()?,
         crypto,
     )?);
-    ensure!(
-        set.total_weight() == 4 && set.quorum_weight() == 3,
-        "test quorum changed"
-    );
     if action == "archive" {
         isolated_directory(&directory, "validator slot")?;
         let lock_path = directory.join("launch.lock");
@@ -535,9 +542,14 @@ fn distributed_fixture_rejects_reused_keys_wrong_topology_and_live_chain() -> Re
                 ),
                 validator: vec![index as u8; 1952],
                 transport: vec![index as u8 + 4; 1952],
+                weight: 1,
             })
             .collect(),
     };
+    plan.validate()?;
+    plan.slots[1].weight = 3;
+    assert!(plan.validate().is_err());
+    plan.slots[2].weight = 2;
     plan.validate()?;
     let first_ip = plan.slots[0].address.ip();
     plan.slots[3].address.set_ip(first_ip);
