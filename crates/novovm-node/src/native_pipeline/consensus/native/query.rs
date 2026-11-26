@@ -18,6 +18,7 @@ pub(super) struct QueryDelivery {
 
 const QUERY_SLOTS: usize = 8;
 const QUERY_TTL: Duration = Duration::from_secs(5);
+pub(super) const CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Diagnostic correlation only; never used for admission or delivery decisions.
 #[derive(Clone, Copy)]
@@ -141,6 +142,37 @@ pub(crate) fn lane(domain: [u8; 32]) -> NativeLaneConfig {
     }
 }
 impl NativeChannel {
+    pub(super) fn retire_idle_query_clients(&mut self, now: Instant) -> Result<()> {
+        let link = match &mut self.link {
+            ChannelLink::Original(link) => link,
+            #[cfg(test)]
+            ChannelLink::Objects(_) => return Ok(()),
+        };
+        let Some(admission) = link.client_admission_snapshot_v1(now) else {
+            return Ok(());
+        };
+        if !admission.authenticated_waiting {
+            return Ok(());
+        }
+
+        // Protect queries held outside the object link, including replies that
+        // have not obtained a transport slot yet.
+        let protected = self
+            .query_inbox
+            .entries
+            .iter()
+            .map(|request| request.peer)
+            .chain(self.query_replies.iter().map(|reply| reply.peer))
+            .collect();
+        if !link
+            .retire_idle_clients(now, CLIENT_IDLE_TIMEOUT, &protected, admission.capacity)?
+            .is_empty()
+        {
+            self.io_progress.advance();
+        }
+        Ok(())
+    }
+
     pub fn poll_query(&mut self, now: Instant) -> Result<Option<(usize, Request)>> {
         self.query_inbox
             .retire(now, |peer| self.link.session_id(peer));
@@ -165,8 +197,9 @@ impl NativeChannel {
         let Some(complete) = self.poll_complete(STREAM, now, 8)? else {
             return Ok(None);
         };
-        let peer = (0..self.link.peer_count())
-            .find(|p| self.link.peer_id(*p).ok() == Some(complete.peer.as_str()))
+        let peer = self
+            .link
+            .peer_index(&complete.peer)
             .context("native query peer missing")?;
         let session = self
             .link

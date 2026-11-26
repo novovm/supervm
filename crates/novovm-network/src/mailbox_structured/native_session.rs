@@ -213,11 +213,17 @@ pub struct NativeMailboxClient {
     node: Vec<u8>,
     slots: Vec<ClientSlot>,
     bulk_ready: bool,
+    retained_bulk_ready: bool,
     capacity: Option<ClientCapacity>,
 }
 impl NativeMailboxClient {
     pub fn enable_verified_bulk_v1(&mut self) {
         self.bulk_ready = true;
+    }
+
+    /// Requires the authenticated carrier's node-signed retained-bulk capability.
+    pub fn enable_verified_retained_bulk_v1(&mut self) {
+        self.retained_bulk_ready = true;
     }
 
     pub fn invalidate(&mut self) {
@@ -291,6 +297,7 @@ impl NativeMailboxClient {
             binding: Binding::claim(link, peer, NativeApplicationRole::Client)?,
             node,
             bulk_ready: false,
+            retained_bulk_ready: false,
             capacity: None,
             slots: (0..SLOTS)
                 .map(|_| ClientSlot {
@@ -428,9 +435,17 @@ impl NativeMailboxClient {
                     r,
                     Request::PutBulkV1 { .. }
                         | Request::FetchBulkV1 { .. }
+                        | Request::FetchRetainedBulkV1 { .. }
                         | Request::WatchFetchBulkV1 { .. }
                 )),
             "bulk capability not negotiated"
+        );
+        ensure!(
+            self.retained_bulk_ready
+                || !requests
+                    .iter()
+                    .any(|r| matches!(r, Request::FetchRetainedBulkV1 { .. })),
+            "retained bulk capability not negotiated"
         );
         let deadline = deadline.min(now + REQUEST_DEADLINE);
         ensure!(now < deadline, "mailbox deadline before preparation");
@@ -680,6 +695,34 @@ fn verify_reply(
                 <[u8; 32]>::from(Sha256::digest(ciphertext)) == *digest,
                 "mailbox object digest"
             );
+            Ok(())
+        }
+        (Request::FetchRetainedBulkV1 { after, .. }, Reply::NoticeObjectV6 { notices, object }) => {
+            let [notice] = notices.as_slice() else {
+                anyhow::bail!("retained mailbox notice shape");
+            };
+            ensure!(
+                notice.pending == object.is_some(),
+                "retained mailbox object presence"
+            );
+            if let Some(after) = after {
+                ensure!(
+                    notice.cursor.generation == after.generation,
+                    "retained mailbox generation"
+                );
+            }
+            if let Some(row) = object {
+                ensure!(
+                    row.box_index == 0
+                        && row.object != [0; 32]
+                        && row.expires > 0
+                        && after.is_none_or(|after| row.object > after.after_object)
+                        && !row.ciphertext.is_empty()
+                        && row.ciphertext.len() <= crate::mailbox_store::MAX_BULK_CIPHERTEXT
+                        && <[u8; 32]>::from(Sha256::digest(&row.ciphertext)) == row.digest,
+                    "retained mailbox object binding"
+                );
+            }
             Ok(())
         }
         (Request::Watch { boxes, .. }, Reply::Notice(notices)) => {

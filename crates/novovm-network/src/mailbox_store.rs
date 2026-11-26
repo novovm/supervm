@@ -170,6 +170,19 @@ pub struct MailboxCursorV1 {
     pub sequence: u64,
 }
 
+/// Position in a non-destructive scan. Object IDs are stable across SQLite
+/// maintenance. A position never grants read authority or acknowledges an item.
+#[derive(Clone, Copy)]
+pub struct MailboxRetainedPositionV1 {
+    pub generation: Id,
+    pub after_object: Id,
+}
+
+pub struct MailboxRetainedReadV1 {
+    pub observed: MailboxCursorV1,
+    pub object: Option<StoredEnvelope>,
+}
+
 /// Borrowed read authority and last observed durable position; never serialized.
 pub struct MailboxObservationQuery<'a> {
     pub mailbox: &'a Id,
@@ -806,6 +819,40 @@ impl MailboxStore {
             .into_iter()
             .next())
     }
+
+    /// Read one retained object after a stable position without consuming the
+    /// previous one. The observation is from the same transaction as the read.
+    /// A changed sequence allows the caller to detect inserts behind its scan
+    /// and make a fresh pass. Legacy Fetch keeps its existing queue ordering.
+    pub fn fetch_retained_bulk_v1(
+        &mut self,
+        id: &Id,
+        read: &Capability,
+        after: Option<MailboxRetainedPositionV1>,
+        now: i64,
+    ) -> Result<MailboxRetainedReadV1, StoreError> {
+        let tx = self.begin(now)?;
+        let (observed, _) = observe_in_transaction(&tx, id, read, now)?;
+        let after_object = match after {
+            Some(position) if position.generation == observed.generation => position.after_object,
+            Some(_) => return Err(StoreError::Invalid),
+            None => [0; 32], // A valid retained object ID is never zero.
+        };
+        // The existing (mailbox, id) primary key supports this seek. Never use
+        // rowid as a wire cursor or allocate a vector of bulk ciphertexts.
+        let object = tx
+            .query_row(
+                "SELECT id,payload,digest,expires FROM envelopes
+                 WHERE mailbox=?1 AND id>?2 AND consumed=0 AND expires>?3
+                 AND length(payload)<=?4 ORDER BY id LIMIT 1",
+                params![id, after_object, now, MAX_BULK_CIPHERTEXT as i64],
+                stored_envelope,
+            )
+            .optional()?;
+        tx.commit()?;
+        Ok(MailboxRetainedReadV1 { observed, object })
+    }
+
     fn fetch_bounded(
         &mut self,
         id: &Id,
@@ -910,16 +957,21 @@ fn fetch_in_transaction(
     // Recipients still handle out-of-order delivery across replicas.
     let mut statement = tx.prepare("SELECT id,payload,digest,expires FROM envelopes WHERE mailbox=?1 AND consumed=0 AND expires>?2 AND length(payload)<=?4 ORDER BY expires,rowid LIMIT ?3")?;
     let result = statement
-        .query_map(params![id, now, limit, object_limit as i64], |r| {
-            Ok(StoredEnvelope {
-                id: r.get(0)?,
-                ciphertext: r.get(1)?,
-                digest: r.get(2)?,
-                expires: r.get(3)?,
-            })
-        })?
+        .query_map(
+            params![id, now, limit, object_limit as i64],
+            stored_envelope,
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(result)
+}
+
+fn stored_envelope(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEnvelope> {
+    Ok(StoredEnvelope {
+        id: row.get(0)?,
+        ciphertext: row.get(1)?,
+        digest: row.get(2)?,
+        expires: row.get(3)?,
+    })
 }
 fn contribution_enabled(tx: &Transaction<'_>) -> Result<bool, StoreError> {
     let enabled: i64 = tx.query_row(
@@ -1022,6 +1074,113 @@ fn set_database_page_limit(db: &Connection, pages: i64) -> Result<(), StoreError
         return Err(StoreError::Invalid);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod retained_read_tests {
+    use super::*;
+
+    #[test]
+    fn reads_past_retained_bulk_head_after_reopen() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mailbox.db");
+        let mut store = MailboxStore::open(&path, Limits::default())?;
+        let grant = store.create(100, 300)?;
+        let bytes = vec![9; 70 * 1024];
+        store.put_bulk_v1(&grant.id, &grant.write, &[7; 32], &bytes, 300, 100)?;
+        store.put_bulk_v1(&grant.id, &grant.write, &[9; 32], &bytes, 300, 100)?;
+        let first = store.fetch_retained_bulk_v1(&grant.id, &grant.read, None, 101)?;
+        let first_object = first.object.unwrap();
+        assert_eq!(first_object.id, [7; 32]);
+        assert_eq!(first_object.ciphertext, bytes);
+        let position = MailboxRetainedPositionV1 {
+            generation: first.observed.generation,
+            after_object: first_object.id,
+        };
+
+        drop(store);
+        let mut store = MailboxStore::open(&path, Limits::default())?;
+        let next = store.fetch_retained_bulk_v1(&grant.id, &grant.read, Some(position), 102)?;
+        assert_eq!(next.observed, first.observed);
+        let last_object = next.object.unwrap();
+        assert_eq!(last_object.id, [9; 32]);
+        assert_eq!(last_object.ciphertext, bytes);
+        let last = MailboxRetainedPositionV1 {
+            after_object: last_object.id,
+            ..position
+        };
+        assert!(store
+            .fetch_retained_bulk_v1(&grant.id, &grant.read, Some(last), 102)?
+            .object
+            .is_none());
+        assert_eq!(
+            store
+                .fetch_bulk_v1(&grant.id, &grant.read, 102)?
+                .unwrap()
+                .id,
+            first_object.id
+        );
+
+        // New puts may sort before the cursor. The scan observes this change
+        // and the caller can start again without deleting or losing any item.
+        store.put_bulk_v1(&grant.id, &grant.write, &[2; 32], &bytes, 300, 103)?;
+        let continued = store.fetch_retained_bulk_v1(&grant.id, &grant.read, Some(last), 103)?;
+        assert!(continued.object.is_none());
+        assert!(continued.observed.sequence > first.observed.sequence);
+        assert_eq!(
+            store
+                .fetch_retained_bulk_v1(&grant.id, &grant.read, None, 103)?
+                .object
+                .unwrap()
+                .id,
+            [2; 32]
+        );
+
+        store.consume(
+            &grant.id,
+            &grant.read,
+            &first_object.id,
+            &first_object.digest,
+            104,
+        )?;
+        assert_eq!(
+            store
+                .fetch_retained_bulk_v1(&grant.id, &grant.read, Some(position), 104)?
+                .object
+                .unwrap()
+                .id,
+            last_object.id
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn retained_read_checks_mailbox_grant_before_position() -> Result<(), StoreError> {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = MailboxStore::open(dir.path().join("mailbox.db"), Limits::default())?;
+        let first = store.create(100, 60)?;
+        let other = store.create(100, 300)?;
+        let observed = store
+            .fetch_retained_bulk_v1(&first.id, &first.read, None, 101)?
+            .observed;
+        let position = MailboxRetainedPositionV1 {
+            generation: observed.generation,
+            after_object: [5; 32],
+        };
+        assert!(matches!(
+            store.fetch_retained_bulk_v1(&other.id, &first.read, Some(position), 101),
+            Err(StoreError::Unauthorized)
+        ));
+        assert!(matches!(
+            store.fetch_retained_bulk_v1(&other.id, &other.read, Some(position), 101),
+            Err(StoreError::Invalid)
+        ));
+        assert!(matches!(
+            store.fetch_retained_bulk_v1(&first.id, &first.read, Some(position), 160),
+            Err(StoreError::Unauthorized)
+        ));
+        Ok(())
+    }
 }
 
 #[cfg(test)]

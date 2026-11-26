@@ -14,7 +14,7 @@ use crate::{
     mailbox_receipt::StoreReceiptV1,
     mailbox_store::{
         Capability, ContributionStatusV1, MailboxCursorV1, MailboxGrant, MailboxObservationQuery,
-        MailboxPrefetchMode, MailboxStore, StoreError,
+        MailboxPrefetchMode, MailboxRetainedPositionV1, MailboxStore, StoreError,
     },
     product_directory::{validate_relay_record_v1, PeerSignedRelayRecordV1},
     product_service_lease::{NativeCarrierMailboxEndpointV7, NativeMailboxEndpointV7},
@@ -70,6 +70,13 @@ pub enum MailboxRequestV1 {
     FetchBulkV1 {
         mailbox: [u8; 32],
         read: [u8; 32],
+    },
+    /// Native NVMBOX07 only. The cursor does not consume a retained object.
+    #[serde(skip)]
+    FetchRetainedBulkV1 {
+        mailbox: [u8; 32],
+        read: [u8; 32],
+        after: Option<MailboxRetainedPositionV1>,
     },
     #[serde(skip)]
     WatchFetchBulkV1 {
@@ -150,6 +157,7 @@ impl Drop for MailboxRequestV1 {
             | Self::EndpointDeliverV1 { write, .. } => write.zeroize(),
             Self::Fetch { read, .. }
             | Self::FetchBulkV1 { read, .. }
+            | Self::FetchRetainedBulkV1 { read, .. }
             | Self::Consume { read, .. }
             | Self::Renew { read, .. }
             | Self::Revoke { read, .. } => read.zeroize(),
@@ -639,9 +647,9 @@ impl MailboxServiceV1 {
     ) -> Result<MailboxReplyV1> {
         let counter = match &request {
             MailboxRequestV1::Put { .. } | MailboxRequestV1::PutBulkV1 { .. } => &self.timings.put,
-            MailboxRequestV1::Fetch { .. } | MailboxRequestV1::FetchBulkV1 { .. } => {
-                &self.timings.fetch
-            }
+            MailboxRequestV1::Fetch { .. }
+            | MailboxRequestV1::FetchBulkV1 { .. }
+            | MailboxRequestV1::FetchRetainedBulkV1 { .. } => &self.timings.fetch,
             MailboxRequestV1::Consume { .. } => &self.timings.consume,
             MailboxRequestV1::Watch { .. }
             | MailboxRequestV1::WatchFetchV6 { .. }
@@ -655,7 +663,9 @@ impl MailboxServiceV1 {
         };
         let is_fetch = matches!(
             &request,
-            MailboxRequestV1::Fetch { .. } | MailboxRequestV1::FetchBulkV1 { .. }
+            MailboxRequestV1::Fetch { .. }
+                | MailboxRequestV1::FetchBulkV1 { .. }
+                | MailboxRequestV1::FetchRetainedBulkV1 { .. }
         );
         let sample = counter.start();
         let reply = self.execute_inner(request, timing).await?;
@@ -663,6 +673,9 @@ impl MailboxServiceV1 {
             let fetched = if is_fetch {
                 match &reply {
                     MailboxReplyV1::Object { ciphertext, .. } => ciphertext.len(),
+                    MailboxReplyV1::NoticeObjectV6 {
+                        object: Some(row), ..
+                    } => row.ciphertext.len(),
                     _ => 0,
                 }
             } else {
@@ -829,6 +842,30 @@ impl MailboxServiceV1 {
                         Ok(MailboxReplyV1::Stored(StoreReceiptV1::committed(
                             &signer, *mailbox, *object, ciphertext, *expires,
                         )?))
+                    }
+                    MailboxRequestV1::FetchRetainedBulkV1 {
+                        mailbox,
+                        read,
+                        after,
+                    } => {
+                        let retained = store.fetch_retained_bulk_v1(
+                            mailbox,
+                            &Capability::from_bytes(*read)?,
+                            *after,
+                            now,
+                        )?;
+                        let notices = vec![MailboxNoticeV1 {
+                            cursor: retained.observed,
+                            pending: retained.object.is_some(),
+                        }];
+                        let object = retained.object.map(|row| MailboxPrefetchV6 {
+                            box_index: 0,
+                            object: row.id,
+                            ciphertext: row.ciphertext,
+                            digest: row.digest,
+                            expires: row.expires,
+                        });
+                        Ok(MailboxReplyV1::NoticeObjectV6 { notices, object })
                     }
                     MailboxRequestV1::Fetch { mailbox, read }
                     | MailboxRequestV1::FetchBulkV1 { mailbox, read } => {

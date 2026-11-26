@@ -3,13 +3,22 @@
 use super::{NetworkError, NodeId, ProtocolMessage, UdpIngressV1, UdpTransport};
 use crate::novorudp::{
     diagnostics::NativeTransferDiagnosticsV1,
-    endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
+    endpoint::{
+        NativeClientAdmissionSnapshotV1, NativeEndpoint, NativeHandshakeBudget, NativePeer,
+        NativePeerRetirement,
+    },
     fragments::{CompletedMessage, OutgoingMessage},
     object_link::{NativeLaneConfig, NativeLinkPoll, NativeObjectLink, NativeSendPolicy},
 };
 use crate::product_overlay::TransportIdentity;
 use anyhow::{ensure, Context, Result};
-use std::{collections::BTreeSet, io, net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    collections::BTreeSet,
+    io,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 pub struct NativeUdpIngressConfigV1 {
     pub identity: TransportIdentity,
@@ -169,6 +178,28 @@ impl AuthenticatedUdpIngressV1 {
     }
     pub fn peer_count(&self) -> usize {
         self.link.peer_count()
+    }
+    pub fn peer_index(&self, identity: &str) -> Option<usize> {
+        self.link.peer_index(identity)
+    }
+    pub fn peer_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.link.peer_indices()
+    }
+    pub fn client_admission_snapshot_v1(
+        &self,
+        now: Instant,
+    ) -> Option<NativeClientAdmissionSnapshotV1> {
+        self.link.client_admission_snapshot_v1(now)
+    }
+    pub fn retire_idle_clients(
+        &mut self,
+        now: Instant,
+        idle_for: Duration,
+        protected: &BTreeSet<usize>,
+        capacity: usize,
+    ) -> Result<Vec<NativePeerRetirement>> {
+        self.link
+            .retire_idle_clients(now, idle_for, protected, capacity)
     }
     /// Explicit pinned-peer lifecycle, selected before the first I/O poll.
     /// Generic receive-only consumers retain their original readiness contract.

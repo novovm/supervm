@@ -6,6 +6,7 @@ use std::net::SocketAddr;
 
 pub(super) const SUFFIX: &str = "/novonet-mailbox/v7";
 pub(super) const SUFFIX_BULK_V1: &str = "/novonet-mailbox/v8/bulk-v1";
+pub(super) const SUFFIX_RETAINED_BULK_V1: &str = "/novonet-mailbox/v8/bulk-retained-v1";
 pub(super) const SUFFIX_V8: &str = "/novonet-mailbox/v8";
 
 /// Explicit NVMBOX07 capability on the existing Iroh carrier. The marker is
@@ -47,6 +48,26 @@ impl NativeCarrierMailboxEndpointV8 {
         ensure!(endpoint.uri.len() <= 4096, "native bulk URI budget");
         Ok(endpoint)
     }
+    /// Publish only after coordinated deployment of the retained read operation.
+    pub fn endpoint_retained_bulk_v1(&self) -> Result<RelayEndpointV1> {
+        let mut endpoint = self.iroh.endpoint()?;
+        endpoint.uri.push_str(SUFFIX_RETAINED_BULK_V1);
+        ensure!(
+            endpoint.uri.len() <= 4096,
+            "native retained bulk URI budget"
+        );
+        Ok(endpoint)
+    }
+
+    /// Check after signed-record validation and match the authenticated carrier.
+    pub fn supports_retained_bulk_v1(record: &PeerSignedRelayRecordV1) -> Result<bool> {
+        Ok(Self::from_record(record)?.is_some()
+            && record.endpoints.iter().any(|e| {
+                e.transport == RelayTransportV1::IrohRendezvousV1
+                    && e.uri.ends_with(SUFFIX_RETAINED_BULK_V1)
+            }))
+    }
+
     /// Call only after original signed-record validation; old V8 is not bulk.
     pub fn from_record_supports_bulk_v1(record: &PeerSignedRelayRecordV1) -> Result<bool> {
         Self::supports_bulk_v1(record)
@@ -54,7 +75,8 @@ impl NativeCarrierMailboxEndpointV8 {
     pub fn supports_bulk_v1(record: &PeerSignedRelayRecordV1) -> Result<bool> {
         Ok(Self::from_record(record)?.is_some()
             && record.endpoints.iter().any(|e| {
-                e.transport == RelayTransportV1::IrohRendezvousV1 && e.uri.ends_with(SUFFIX_BULK_V1)
+                e.transport == RelayTransportV1::IrohRendezvousV1
+                    && (e.uri.ends_with(SUFFIX_BULK_V1) || e.uri.ends_with(SUFFIX_RETAINED_BULK_V1))
             }))
     }
 
@@ -180,7 +202,9 @@ impl ServiceEndpoints {
         };
         let native_carrier_v8 = match (&iroh, carrier) {
             (Some(iroh), Some(endpoint))
-                if endpoint.uri.ends_with(SUFFIX_V8) || endpoint.uri.ends_with(SUFFIX_BULK_V1) =>
+                if endpoint.uri.ends_with(SUFFIX_V8)
+                    || endpoint.uri.ends_with(SUFFIX_BULK_V1)
+                    || endpoint.uri.ends_with(SUFFIX_RETAINED_BULK_V1) =>
             {
                 Some(NativeCarrierMailboxEndpointV8 { iroh: iroh.clone() })
             }

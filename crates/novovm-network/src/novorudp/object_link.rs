@@ -302,7 +302,8 @@ impl NativeObjectLink {
         &mut self,
         peers: crate::endpoint_observation::ObservationSourcesV2,
     ) -> Result<super::endpoint::observer_refresh::Observation> {
-        self.endpoint.observe_listener_mapping(peers, Instant::now())
+        self.endpoint
+            .observe_listener_mapping(peers, Instant::now())
     }
 
     /// Explicit local test observer. It cannot change peer/session or IO state.
@@ -426,6 +427,10 @@ impl NativeObjectLink {
         self.endpoint.client_admission_snapshot_v1(now)
     }
 
+    pub fn peer_index(&self, identity: &str) -> Option<usize> {
+        self.peers.get(identity).copied()
+    }
+
     pub fn peer_count(&self) -> usize {
         self.endpoint.peer_count()
     }
@@ -443,7 +448,9 @@ impl NativeObjectLink {
         capacity: usize,
     ) -> Result<Vec<NativePeerRetirement>> {
         ensure!(!idle_for.is_zero(), "zero client idle observation");
-        if !self.endpoint.update_client_capacity(capacity)? {
+        if !self.endpoint.update_client_capacity(capacity)?
+            || !self.endpoint.needs_client_capacity(now)
+        {
             return Ok(Vec::new());
         }
         let mut retired = Vec::new();

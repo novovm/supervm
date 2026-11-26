@@ -12,7 +12,7 @@ use novovm_network::{
         MailboxRejectionV1, MailboxReplyV1 as Reply, MailboxRequestV1 as Request, MailboxServiceV1,
         MailboxWatchV1,
     },
-    mailbox_store::MailboxStore,
+    mailbox_store::{MailboxRetainedPositionV1, MailboxStore},
     mailbox_structured::{native_session::*, LIMITS, STREAM},
     novorudp::{
         endpoint::{NativeEndpoint, NativeHandshakeBudget, NativePeer},
@@ -560,8 +560,16 @@ async fn round(
 /// The existing caller owns and polls ONE link; request handles only wake it.
 /// This bounded test pump is not another production runtime or mobile scheduler.
 async fn drive_requests(
+    link: NativeObjectLink,
+    driver: novovm_network::mailbox_structured::native_requests::NativeMailboxDriver,
+) -> Result<()> {
+    drive_requests_observed(link, driver, &AtomicBool::new(false)).await
+}
+
+async fn drive_requests_observed(
     mut link: NativeObjectLink,
     mut driver: novovm_network::mailbox_structured::native_requests::NativeMailboxDriver,
+    receiving: &AtomicBool,
 ) -> Result<()> {
     use novovm_network::mailbox_structured::native_requests::NativeRequestErrorKind;
     let wake = driver.wake();
@@ -582,7 +590,10 @@ async fn drive_requests(
             driver.transport_complete(&done);
         }
         while let Some(body) = link.poll_complete(STREAM, now, 64)? {
-            driver.receive(&link, body, now)?;
+            receiving.store(true, Ordering::Release);
+            let result = driver.receive(&link, body, now);
+            receiving.store(false, Ordering::Release);
+            result?;
         }
         driver.progress(&mut link, now)?;
         tokio::select! {
@@ -799,6 +810,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             until(),
             check.clone(),
         );
+        let receiving = Arc::new(AtomicBool::new(false));
         let operations = async {
             assert!(matches!(first.await?.as_slice(), [Reply::Registered]));
             assert!(!handle.supports_bulk_v1());
@@ -811,6 +823,123 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 if *max_ciphertext as usize == novovm_network::mailbox_store::MAX_BULK_CIPHERTEXT)
             );
             assert!(other_lane.supports_bulk_v1());
+            let read = [33; 32];
+            let retained_box = [31; 32];
+            let write = [32; 32];
+            let register = handle
+                .request(
+                    3,
+                    vec![Request::Register {
+                        mailbox: retained_box,
+                        write,
+                        read,
+                        expires,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+                .await?;
+            assert!(matches!(register.as_slice(), [Reply::Registered]));
+            let bulk_body = vec![18; 70 * 1024];
+            for object in [[71; 32], [72; 32]] {
+                let stored = handle
+                    .request(
+                        3,
+                        vec![Request::PutBulkV1 {
+                            mailbox: retained_box,
+                            write,
+                            object,
+                            ciphertext: bulk_body.clone(),
+                            expires,
+                        }],
+                        until(),
+                        check.clone(),
+                    )
+                    .await?;
+                assert!(matches!(stored.as_slice(), [Reply::Stored(_)]));
+            }
+            let fetch_retained = |read, after| {
+                handle.request(
+                    3,
+                    vec![Request::FetchRetainedBulkV1 {
+                        mailbox: retained_box,
+                        read,
+                        after,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+            };
+            let disabled = fetch_retained(read, None)
+                .await
+                .err()
+                .context("missing capability")?;
+            assert_eq!(disabled.kind, NativeRequestErrorKind::Protocol);
+            assert!(!handle.is_stopped());
+            handle.enable_verified_retained_bulk_v1();
+            let first = fetch_retained(read, None).await?;
+            let [Reply::NoticeObjectV6 {
+                notices,
+                object: Some(first),
+            }] = first.as_slice()
+            else {
+                bail!("retained first object missing");
+            };
+            assert_eq!(first.object, [71; 32]);
+            assert_eq!(first.ciphertext, bulk_body);
+            let position = MailboxRetainedPositionV1 {
+                generation: notices[0].cursor.generation,
+                after_object: first.object,
+            };
+            let next = fetch_retained(read, Some(position)).await?;
+            assert!(matches!(
+                next.as_slice(),
+                [Reply::NoticeObjectV6 { notices: next, object: Some(row) }]
+                    if next[0].cursor == notices[0].cursor && row.object == [72; 32]
+            ));
+            let end = fetch_retained(
+                read,
+                Some(MailboxRetainedPositionV1 {
+                    after_object: [72; 32],
+                    ..position
+                }),
+            )
+            .await?;
+            assert!(matches!(
+                end.as_slice(),
+                [Reply::NoticeObjectV6 { notices, object: None }] if !notices[0].pending
+            ));
+            let refused = fetch_retained([34; 32], Some(position)).await?;
+            assert!(matches!(
+                refused.as_slice(),
+                [Reply::Rejected(MailboxRejectionV1::Unauthorized)]
+            ));
+            let stale = fetch_retained(
+                read,
+                Some(MailboxRetainedPositionV1 {
+                    generation: [0; 32],
+                    ..position
+                }),
+            )
+            .await?;
+            assert!(matches!(
+                stale.as_slice(),
+                [Reply::Rejected(MailboxRejectionV1::Invalid)]
+            ));
+            let head = handle
+                .request(
+                    3,
+                    vec![Request::FetchBulkV1 {
+                        mailbox: retained_box,
+                        read,
+                    }],
+                    until(),
+                    check.clone(),
+                )
+                .await?;
+            assert!(matches!(
+                head.as_slice(), [Reply::Object { object, .. }] if *object == [71; 32]
+            ));
             let initial = handle
                 .request(
                     0,
@@ -951,6 +1080,10 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 .err()
                 .context("expected typed request failure")?;
             assert_eq!(rejected.kind, NativeRequestErrorKind::Authority);
+            assert!(matches!(
+                &handle.request(3, vec![fetch(3)], until(), check.clone()).await?[0],
+                Reply::Object { object, .. } if *object == [8; 32]
+            ));
             // A request already out of time cannot reset its deadline on admission.
             let late = handle
                 .request(2, vec![fetch(3)], Instant::now(), check.clone())
@@ -958,11 +1091,40 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 .err()
                 .context("expected typed request failure")?;
             assert_eq!(late.kind, NativeRequestErrorKind::Deadline);
+
+            // Model an independent caller revoked at either reply authority
+            // check. A healthy caller must still receive on the same session.
+            for (slot, deny_after_validation) in [(2, false), (3, true)] {
+                let receiving = receiving.clone();
+                let checked = AtomicBool::new(false);
+                let revoked_at_reply: NativeRequestAuthority = Arc::new(move || {
+                    if receiving.load(Ordering::Acquire)
+                        && (!deny_after_validation || checked.swap(true, Ordering::AcqRel))
+                    {
+                        bail!("test caller revoked while receiving");
+                    }
+                    Ok(())
+                });
+                let rejected = handle
+                    .request(slot, vec![fetch(3)], until(), revoked_at_reply)
+                    .await
+                    .err()
+                    .context("expected request authority failure at reply")?;
+                assert_eq!(rejected.kind, NativeRequestErrorKind::Authority);
+                assert!(!handle.is_stopped());
+                assert!(matches!(
+                    &handle.request(0, vec![fetch(3)], until(), check.clone()).await?[0],
+                    Reply::Object { object, .. } if *object == [8; 32]
+                ));
+            }
             Ok::<_, anyhow::Error>(())
         };
         tokio::select! {
             result = operations => result,
-            result = drive_requests(link, driver) => { result?; bail!("native request owner ended") }
+            result = drive_requests_observed(link, driver, &receiving) => {
+                result?;
+                bail!("native request owner ended")
+            }
         }
     };
     tokio::pin!(server);
@@ -973,6 +1135,74 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
     stop.store(true, Ordering::Release);
     tokio::time::timeout(Duration::from_secs(5), &mut server).await??;
     result
+}
+
+#[test]
+fn signed_retained_bulk_capability_is_explicit_and_survives_renewal() -> Result<()> {
+    use novovm_network::{
+        iroh_transport::IrohAddressV1,
+        product_directory::validate_relay_record_v1,
+        product_service_lease::{IrohServiceEndpointV1, NativeCarrierMailboxEndpointV8},
+    };
+    let directory = tempfile::tempdir()?;
+    let mut endpoint = IrohServiceEndpointV1 {
+        instance: [51; 32],
+        address: IrohAddressV1 {
+            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[52; 32])
+                .verifying_key()
+                .to_bytes(),
+            direct: vec!["127.0.0.1:9".parse()?],
+            relays: vec![],
+        },
+    };
+    let at = now_ms()?;
+    let expires = at + 60_000;
+    let signer = key(17);
+    let legacy = NativeCarrierMailboxEndpointV8 {
+        iroh: endpoint.clone(),
+    };
+    let record = sign_relay_record_v1(
+        &signer,
+        "retained-bulk-fixture",
+        vec![legacy.endpoint_bulk_v1()?],
+        at,
+        expires,
+        1,
+    )?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&record)?);
+    assert!(!NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &record
+    )?);
+    let mut book = ServiceLeaseBookV1::new_self_owned(trust(), vec![record.clone()], at, key(90))?;
+    let checkpoint = book.checkpoint()?;
+    let file = ServiceLeaseFileV1::create(
+        &directory.path().join("retained-locator.bin"),
+        Zeroizing::new([91; 32]),
+        &checkpoint,
+    )?;
+    book.attach_persistence(file, &checkpoint)?;
+    let host = ServiceLeaseHostV1::new(signer, book)?;
+    let enabled = host.rotate_native_carrier_mailbox_retained_bulk_v1(true, at + 1, expires)?;
+    validate_relay_record_v1(&enabled, at + 1, &key(90))?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &enabled
+    )?);
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&enabled)?);
+    let mut forged = record;
+    forged.endpoints = enabled.endpoints;
+    assert!(validate_relay_record_v1(&forged, at + 1, &key(90)).is_err());
+    endpoint.instance = [53; 32];
+    let renewed = host.rotate_self_owned(&endpoint, at + 2, expires)?;
+    validate_relay_record_v1(&renewed, at + 2, &key(90))?;
+    assert!(NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &renewed
+    )?);
+    let disabled = host.rotate_native_carrier_mailbox_retained_bulk_v1(false, at + 3, expires)?;
+    assert!(!NativeCarrierMailboxEndpointV8::supports_retained_bulk_v1(
+        &disabled
+    )?);
+    assert!(NativeCarrierMailboxEndpointV8::supports_bulk_v1(&disabled)?);
+    Ok(())
 }
 
 #[tokio::test]

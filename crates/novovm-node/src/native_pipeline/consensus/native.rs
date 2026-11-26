@@ -295,6 +295,16 @@ impl NativeChannel {
         if link.peer_count() != 0 {
             link.enable_configured_reconnect_v1()?;
         }
+        if applications {
+            // Enable authenticated waiting before the first offer can arrive.
+            let capacity = link.peer_count() + client_slots;
+            let _ = link.retire_idle_clients(
+                Instant::now(),
+                query::CLIENT_IDLE_TIMEOUT,
+                &BTreeSet::new(),
+                capacity,
+            )?;
+        }
         let link = ChannelLink::Original(link);
         Ok(Self::with_link(
             link,
@@ -487,6 +497,13 @@ impl NativeChannel {
     }
     pub fn peer_count(&self) -> usize {
         self.link.peer_count()
+    }
+    pub(crate) fn peer_indices(&self) -> Vec<usize> {
+        match &self.link {
+            ChannelLink::Original(link) => link.peer_indices().collect(),
+            #[cfg(test)]
+            ChannelLink::Objects(link) => link.peer_indices().collect(),
+        }
     }
     pub fn peer_id(&self, peer: usize) -> Result<&str> {
         self.link.peer_id(peer)
@@ -784,7 +801,9 @@ impl NativeChannel {
             .protocol_rejected
             .saturating_add(rejected_protocol as u64);
         drop(protocol);
-        self.poll_query_deliveries(native, now)
+        let report = self.poll_query_deliveries(native, now)?;
+        self.retire_idle_query_clients(now)?;
+        Ok(report)
     }
     /// The caller must have a bounded free output slot BEFORE this call.
     /// Separate lanes are polled fairly; large body hashing never turns into
@@ -831,8 +850,7 @@ impl NativeChannel {
         };
         if stream == STREAMS[2] {
             if let Some(observer) = &self.input_trace {
-                let peer = (0..self.peer_count())
-                    .find(|peer| self.peer_id(*peer).is_ok_and(|name| name == complete.peer));
+                let peer = self.link.peer_index(&complete.peer);
                 if let Some(session) = peer.and_then(|peer| self.session_id(peer)) {
                     let tag = transfer_tag_v1(session, stream, complete.id);
                     profile::asset_event("input_transport_complete", 0, || {
@@ -954,6 +972,13 @@ impl ChannelLink {
             Self::Original(link) => link.peer_count(),
             #[cfg(test)]
             Self::Objects(link) => link.peer_count(),
+        }
+    }
+    fn peer_index(&self, identity: &str) -> Option<usize> {
+        match self {
+            Self::Original(link) => link.peer_index(identity),
+            #[cfg(test)]
+            Self::Objects(link) => link.peer_index(identity),
         }
     }
     fn peer_id(&self, peer: usize) -> Result<&str> {
