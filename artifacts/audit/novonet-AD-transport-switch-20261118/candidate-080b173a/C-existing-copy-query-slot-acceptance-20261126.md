@@ -63,3 +63,11 @@ Windows `rustc` 优化构建发生访问违规。测试用 `profile.release.pack
 复现沿用同一 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier` 用例，设置 `NOVOVM_QUERY_COPY_FOLLOW=1`。不设置此开关时，独立 Receipt、区块头、状态树和篡改拒绝的原回归用例仍通过，耗时 82.24 秒。Windows 装包测试以隔离装配输入核验了安装脚本入包、精确的带哈希启动命令和错误配置哈希拒绝。现场清洁设备登录自启、实网换接口、动态获取新版原生地址和大状态同步仍待验收。
 
 自动恢复日志 SHA-256 `b9d24d3a43aca212d58e1b6d53b83c2cd1f0dabe69aa983ece06849bb77b0ac9`。事件 SHA-256 `166763039c664347175687c8b59891ae79dbf5af163bb88c0e03e764a4f7b212`。原用例回归日志 SHA-256 `87ef2f729164072ac47df0c53750f3c0e502cb13c1fa7d7749be37ce4e697898`。Client EXE SHA-256 `dcb03e00c6267b3d3cec8bd5c7da6654b731057d4ad5edd8851693ea71894103`。
+
+## 法定权重恢复、原库追赶与少数派停止提交
+
+北京时间 11:20，两组测试分别以公钥排序最小和最大的节点作为晚回归者。每组在 C 本机隔离目录运行四个新构建的原生节点进程，通过原 NovoRUDP 和真实 AOEM 执行。四个等权验证者的法定门槛为 3。在线的三个节点先一致推进到高度 40，晚回归者随后从自己的原库恢复，并在追赶中被中断后重新启动。两组均保留原库、配置、钥和原签名出站记录，测试交易补发计数为 0。
+
+仅两份权重在线时，每组连续 12,024 毫秒没有提交新区块。恢复第三份后，原待处理交易终结。第四份恢复后，每组四个节点均到高度 46，并就同一状态根及归档回执达成一致。真实 AOEM 的计时器、journal 确认和锁定追赶本机回归另行通过。验收范围为单机四进程等权集合。现役 C 复核为运行中的 PID `30328`。
+
+使用 `NOVOVM_RESIDENT_NODE_BINARY` 指定同版本的 Windows `novovm-node.exe`，用 `NOVOVM_AOEM_TEST_LIBRARY` 指定已核验的 AOEM DLL，依次运行忽略标记下的 `native_only_recovery_late_lowest_validator_original_database_and_minority` 和 `native_only_recovery_late_highest_validator_original_database_and_minority`。原生节点 EXE SHA-256 `9836ef9823294b2edbdef32db50c8abbc376a82066b05a3f244ceb8109b8ea3c`。两份复现报告 SHA-256 分别为 `1ec9df851dc40414a85d841b03fb8cf876bbc47ec09af1119ec0048ff25077a7` 和 `57592a2daaded9e46a29a1f9d13836d71766b46ae0e22715ed7879d0a92221ec`。
