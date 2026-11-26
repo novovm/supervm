@@ -712,6 +712,10 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             NativeRequestErrorKind::Protocol
         );
         drop(rejected_link);
+        assert_eq!(
+            rejected_handle.request_slot_failure(0).unwrap_err().kind,
+            NativeRequestErrorKind::Protocol
+        );
         assert!(!rejected_handle.supports_bulk_v1());
         let mut cancel_link = Client::connect_link(&route, 89).await?;
         let (mut cancel_driver, cancel_handle) =
@@ -791,6 +795,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             NativeRequestErrorKind::Deadline
         );
         // Admission is synchronous and bounded even if these futures are never polled.
+        assert_eq!(handle.request_slot_failure(3)?, None);
         let queued = handle.request(3, vec![fetch(3)], until(), check.clone());
         let capacity = handle
             .request(3, vec![fetch(3)], until(), check.clone())
@@ -798,6 +803,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             .err()
             .context("expected typed request failure")?;
         assert_eq!(capacity.kind, NativeRequestErrorKind::Capacity);
+        assert_eq!(handle.request_slot_failure(3)?, None);
         drop(queued); // no wire operation, so no server/client sequence consumption
         let first = handle.request(
             3,
@@ -1065,6 +1071,11 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 .request(2, vec![put(expires, 8)], until(), check.clone())
                 .await?;
             assert!(matches!(&second[0], Reply::Stored(_)));
+            assert_eq!(
+                handle.request_slot_failure(1)?,
+                Some(NativeRequestErrorKind::Cancelled)
+            );
+            assert_eq!(handle.request_slot_failure(2)?, None);
             // This Put releases the server's already admitted canceled Watch;
             // its late authenticated reply must not poison unrelated slots.
             tokio::time::sleep(Duration::from_millis(40)).await;
@@ -1091,6 +1102,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 .err()
                 .context("expected typed request failure")?;
             assert_eq!(late.kind, NativeRequestErrorKind::Deadline);
+            assert_eq!(handle.request_slot_failure(2)?, None);
 
             // Model an independent caller revoked at either reply authority
             // check. A healthy caller must still receive on the same session.
@@ -1112,6 +1124,11 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                     .context("expected request authority failure at reply")?;
                 assert_eq!(rejected.kind, NativeRequestErrorKind::Authority);
                 assert!(!handle.is_stopped());
+                assert_eq!(
+                    handle.request_slot_failure(slot)?,
+                    Some(NativeRequestErrorKind::Authority)
+                );
+                assert_eq!(handle.request_slot_failure(0)?, None);
                 assert!(matches!(
                     &handle.request(0, vec![fetch(3)], until(), check.clone()).await?[0],
                     Reply::Object { object, .. } if *object == [8; 32]

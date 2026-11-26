@@ -292,6 +292,20 @@ impl NativeMailboxHandle {
             .lock()
             .map_or(true, |state| state.closed.is_some())
     }
+    /// A request error alone does not say whether its slot can serve another caller.
+    /// An open slot may still be occupied. This snapshot never reserves a slot,
+    /// advances its sequence, or grants authority for a new request.
+    pub fn request_slot_failure(&self, index: usize) -> Result<Option<NativeRequestErrorKind>> {
+        let state = self.shared.lock()?;
+        if let Some(kind) = state.closed {
+            return Err(NativeRequestError::new(kind));
+        }
+        let slot = state
+            .slots
+            .get(index)
+            .ok_or_else(|| NativeRequestError::new(NativeRequestErrorKind::Capacity))?;
+        Ok(slot.failed)
+    }
     pub fn request(
         &self,
         slot: usize,
