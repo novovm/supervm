@@ -4,6 +4,20 @@
 
 四进程原用例在 native_product_rpc.rs 分配回环地址和子进程，native_product_recovery.rs 验证停机、以 existing 追赶、少数派停滞和 outbox。旧跨机 UDP soak 可以独立收发，但没有该原生共识状态机及 QC。这里沿用原产品启动、原客户端及原归档验签，借鉴 novovm-four-host-lan-qualification.ps1 的按角色、按哈希和按 UTC 窗口预检方式。
 
+## 首轮准备交接
+
+本轮 RunId 为 `efe90ae9628d470cadea1e41d0cc10c2`，ChainId 为 `7251564206`。当前只做 Keys 和工件签收。A1、A2 的本机端口已预检，DPAPI 测试用途钥已生成。C1 已回报候选端口可绑定，可用同一域和下表的 Ctl、AOEM 在测试账户下执行 Keys。C1 和 D1 各回传 public.json 及其 SHA-256。收齐公钥后再编制计划与约定 UTC 窗口。
+
+| Windows x86_64 工件 | SHA-256 |
+| --- | --- |
+| 产品 Node，bd91c9f3 | `104c8a2f4fb1cfd5938821604a304cfbc72828893b1854beed504b2d07370757` |
+| novovmctl，de16d525 | `1672b55dc497c100e6a04f25ed95446d19eb4e4a04c05486530388d8695610ff` |
+| 测试 Harness，5d4e1a7c | `ab3bcd394faba0c53aa4f920f814524573a26900040022d0b1355d9faa06ee28` |
+| AOEM | `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa` |
+| 隔离验收 ZIP，80,049,014 字节 | `4c543ae74e2bf7082693565af91a5e0514c4184dad18c0496727ff3f641967e7` |
+
+A 已将 ZIP 及两份公钥声明放到本机受限目录，整包成员已逐个复算。C、D 的整包取件待可用的直达受限通道。A 的四进程本机回归达到高度 46、92 条最终回执，两份权重保持原链头 12.036 秒，原 outbox 字节一致。三台物理机的联合实测待四个 READY 和共同窗口。
+
 ## 入口与交接材料
 
 入口为 scripts/novovm-distributed-validator-catchup.ps1，证据核对为 scripts/novovm-verify-distributed-validator-catchup.ps1。用同一 Windows x86_64 Node、AOEM、novovmctl 及本测试 harness。harness 来自以下构建输出的 novovm_node-* 测试可执行文件。按现有 Windows 原生构建说明加载 MSVC/SDK 和 RocksDB 缓存。记录源提交、工具链、功能和真实构建输出哈希。
