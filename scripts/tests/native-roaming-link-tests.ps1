@@ -96,6 +96,15 @@ $upAgain=@{Wired='Up';Begin=$utc.AddMilliseconds(20);UTC=$utc.AddMilliseconds(30
 Confirm (!(Get-LinkEdge $up $upAgain)) 'all-Up cannot prove unplug'
 Confirm ((Get-LinkEdge $up $down).upper_unix_ms -eq $ms+10) 'disconnect upper bound'
 Confirm ((Get-LinkEdge $down $upAgain).current -eq 'Up') 'restoration transition'
+$down.Physical=@(
+    @{ifIndex=18;Status='Disconnected';MediaConnectionState='Disconnected';InterfaceAdminStatus=1}
+    @{ifIndex=6;Status='Up';MediaConnectionState='Connected';InterfaceAdminStatus=1}
+    @{ifIndex=31;Status='Up';MediaConnectionState='Connected';InterfaceAdminStatus=1}
+)
+$inventory=Get-PhysicalLinkInventory $down
+Confirm ($inventory.adapters.Count -eq 3 -and $inventory.adapters[2].if_index -eq 31 -and
+    $inventory.adapters[2].media_state -eq 'Connected') 'include other active physical adapters'
+Confirm ([datetimeoffset]::Parse($inventory.sample_end_utc) -eq $down.UTC) 'retain adapter sample time bound'
 Confirm ((Get-MediaStatus @{InterfaceAdminStatus=1;Status='Disconnected';MediaConnectionState='Disconnected'}) -eq 'Down') 'media disconnect'
 $refused=$false; try { Get-MediaStatus @{InterfaceAdminStatus=2} } catch { $refused=$true }; Confirm $refused 'disabled is not unplugged'
 'Offline observer checks passed. No physical switch was performed.'

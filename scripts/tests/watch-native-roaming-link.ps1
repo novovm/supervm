@@ -122,7 +122,7 @@ function Get-MediaStatus($Nic) {
 
 function Read-PhysicalLinks {
     $begin = [datetimeoffset]::UtcNow
-    $rows = @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object ifIndex -in $WiredIndex,$HotspotIndex)
+    $rows = @(Get-NetAdapter -Physical -IncludeHidden -ErrorAction Stop)
     $states = @{}
     foreach ($i in $WiredIndex,$HotspotIndex) {
         $nic = @($rows | Where-Object ifIndex -eq $i)
@@ -130,7 +130,18 @@ function Read-PhysicalLinks {
             $nic[0].InterfaceAdminStatus -ne 1) { throw "Physical adapter missing, replaced or disabled: $i" }
         $states[$i] = Get-MediaStatus $nic[0]
     }
-    @{ Begin=$begin; UTC=[datetimeoffset]::UtcNow; Wired=$states[$WiredIndex]; Hotspot=$states[$HotspotIndex] }
+    @{ Begin=$begin; UTC=[datetimeoffset]::UtcNow; Wired=$states[$WiredIndex]; Hotspot=$states[$HotspotIndex]; Physical=$rows }
+}
+
+function Get-PhysicalLinkInventory($Sample) {
+    @{
+        sample_begin_utc=$Sample.Begin.ToString('o')
+        sample_end_utc=$Sample.UTC.ToString('o')
+        adapters=@(foreach ($nic in $Sample.Physical) {
+            @{if_index=[int]$nic.ifIndex; status=[string]$nic.Status; media_state=[string]$nic.MediaConnectionState;
+                admin_status=[int]$nic.InterfaceAdminStatus}
+        })
+    }
 }
 
 function Get-LinkEdge($Previous,$Current) {
@@ -423,7 +434,8 @@ public static class DRoamingConsole {
     Journal 'wired_ready' @{pid=$start.pid;started_utc=$start.utc;line=$baseline.index;height=$m.height;state_root=$stateRoot;
         wired_index=$WiredIndex;hotspot_index=$HotspotIndex;wired_guid=$guid[$WiredIndex];hotspot_guid=$guid[$HotspotIndex];component_map=$cap.components;
         clock_mode=if($PeerWitnessUri){'pinned_http_date'}else{'external_sync'};
-        witness_timing=(Get-WitnessTiming $witness $start $baseline $script:peerClock);peer_witness=$witness;hotspot_probe=$probe;initial_up_utc=$links.UTC.ToString('o')}
+        witness_timing=(Get-WitnessTiming $witness $start $baseline $script:peerClock);peer_witness=$witness;hotspot_probe=$probe;
+        initial_up_utc=$links.UTC.ToString('o');physical_links=(Get-PhysicalLinkInventory $links)}
     Write-Host "现在拔线，保留热点。最迟 $($deadline.AddSeconds(-8).ToLocalTime().ToString('HH:mm:ss')) 插回。不要等聊天消息。" -ForegroundColor Cyan
     $prompted = $true
     $previous = $links
@@ -440,7 +452,8 @@ public static class DRoamingConsole {
     $previous = $links
     $lastDown = $links.Begin
     $downMs = $links.UTC.ToUnixTimeMilliseconds()
-    Journal 'wired_down_observed' @{last_up_utc=$edge.lower_utc;first_down_utc=$links.UTC.ToString('o');upper_bound_unix_ms=$downMs}
+    Journal 'wired_down_observed' @{last_up_utc=$edge.lower_utc;first_down_utc=$links.UTC.ToString('o');
+        upper_bound_unix_ms=$downMs;physical_links=(Get-PhysicalLinkInventory $links)}
     do {
         Assert-LiveRun
         $links = Read-PhysicalLinks
@@ -452,6 +465,8 @@ public static class DRoamingConsole {
             $marker = Join-Path $ClientEvidence 'route-after.json'
             if (Test-Path -LiteralPath $marker) {
                 $after = Read-Json $marker
+                Journal 'recovery_link_sample' @{pid=$start.pid;line=$recovered.index;
+                    physical_links=(Get-PhysicalLinkInventory $links)}
                 if ($after.pid -ne $start.pid -or $after.started_utc -cne $start.utc -or
                     $after.route_status -cne 'selected' -or $after.physical_adapter -ne $true -or
                     $after.phase -cne 'after' -or $after.source_ip -cne $probe.source_ip -or
@@ -487,7 +502,8 @@ public static class DRoamingConsole {
                 $previous = $s
                 if ($s.Wired -eq 'Up') {
                     $event = if ($lastDown) { 'wired_up_observed' } else { 'wired_up_without_observed_down' }
-                    Journal $event @{last_down_utc=if($lastDown){$lastDown.ToString('o')};first_up_utc=$s.UTC.ToString('o');hotspot=$s.Hotspot}
+                    Journal $event @{last_down_utc=if($lastDown){$lastDown.ToString('o')};first_up_utc=$s.UTC.ToString('o');
+                        hotspot=$s.Hotspot;physical_links=(Get-PhysicalLinkInventory $s)}
                     $restored = $true
                     $hotspotRestored = $s.Hotspot -eq 'Up'
                     break
