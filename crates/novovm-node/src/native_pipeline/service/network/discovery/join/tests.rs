@@ -21,15 +21,31 @@ fn clean_device_recovers_retired_address_before_signed_locator_expires() -> Resu
     run_first_contact(LocatorRoute::Retired)
 }
 
+#[test]
+#[ignore = "requires approved AOEM and the native Client; uses loopback only"]
+fn clean_device_recovers_rotated_endpoint_before_signed_locator_expires() -> Result<()> {
+    run_first_contact(LocatorRoute::Rotated)
+}
+
+#[test]
+#[ignore = "requires approved AOEM and the native Client; uses loopback only"]
+fn clean_device_preserves_slow_signed_locator_with_unreachable_contact() -> Result<()> {
+    run_first_contact(LocatorRoute::Slow)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LocatorRoute {
     Reachable,
     Expired,
     Retired,
+    Rotated,
+    Slow,
 }
 
 fn run_first_contact(route: LocatorRoute) -> Result<()> {
     let expired = route == LocatorRoute::Expired;
+    let rotated = route == LocatorRoute::Rotated;
+    let slow = route == LocatorRoute::Slow;
     let uses_contact = route != LocatorRoute::Reachable;
     let library = PathBuf::from(std::env::var_os("NOVOVM_DISCOVERY_AOEM").context("AOEM path")?)
         .canonicalize()?;
@@ -105,9 +121,15 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                     vec![endpoint.clone()],
                     now, now + 120_000, 7,
                 )?;
-                let local_secondary = if uses_contact {
+                let local_secondary = if uses_contact && !slow {
                     let mut obsolete_address = address.clone();
                     obsolete_address.direct = vec![sink.local_addr()?];
+                    if rotated {
+                        obsolete_address.endpoint_key = ed25519_dalek::SigningKey::from_bytes(&[69; 32])
+                            .verifying_key()
+                            .to_bytes();
+                        assert_ne!(obsolete_address.endpoint_key, address.endpoint_key);
+                    }
                     let obsolete = IrohServiceEndpointV1 {instance, address: obsolete_address}.endpoint()?;
                     sign_relay_record_v1(
                         &responsive, native_locator_id_v1(pins), vec![obsolete], issued, expiry, 6,
@@ -124,21 +146,42 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                 fs::write(&legacy, serde_json::to_vec(&profile)?)?;
                 if uses_contact {
                     profile.seeds[0].contact = Some(primary_contact);
-                    profile.seeds[1].contact = Some(address);
+                    profile.seeds[1].contact = Some(if slow {
+                        IrohAddressV1 {
+                            endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[69; 32])
+                                .verifying_key()
+                                .to_bytes(),
+                            direct: vec![sink.local_addr()?],
+                            relays: Vec::new(),
+                        }
+                    } else {
+                        address
+                    });
                 }
                 fs::write(&file, serde_json::to_vec(&profile)?)?;
                 let expected_source = fingerprint(responsive.public_key());
                 let client_task = async move {
-                    if !expired {
+                    if !expired && !rotated && !slow {
                         verify_active_refresh(&profile, &root, &expected_source).await?;
                     }
                     tokio::task::spawn_blocking(move || -> Result<()> {
                         assert!(!data.exists());
-                        if uses_contact {
+                        if uses_contact && !slow {
                             let rejected = run_client(&client, &legacy, &root.join("legacy-device"));
                             assert!(format!("{:#}", rejected.unwrap_err()).contains("no authenticated NOVONET bootstrap"));
                         }
+                        let started = Instant::now();
                         let first = run_client(&client, &file, &data)?;
+                        if rotated {
+                            assert!(wall_ms()? < expiry, "rotation recovered after locator expiry");
+                            println!(
+                                "still-valid old endpoint recovered through the distinct installed contact in {:?}",
+                                started.elapsed()
+                            );
+                        }
+                        if slow {
+                            assert!(wall_ms()? < expiry, "slow signed locator expired during lookup");
+                        }
                         let restarted = run_client(&client, &file, &data)?;
                         let sources = serde_json::json!([expected_source]);
                         for report in [&first, &restarted] {
@@ -155,7 +198,7 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                             assert_eq!(cold["authenticated_discovery_sources"], sources);
                             assert_eq!(cold["signed_locator_candidates"][0]["sequence"], 7);
                             println!("expired files with retired routes could not reach a source; second pinned contact retrieved a fresh signed locator with expired files and with both files absent");
-                        } else if uses_contact {
+                        } else if uses_contact && !rotated && !slow {
                             println!("still-valid signed locator with a retired address used the pinned coordinates for the same Iroh and NOVONET identities");
                         }
                         println!("authenticated through secondary source, one signed candidate, stable transport identity across two Client processes");
@@ -166,12 +209,19 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                     for revision in 1..=10 {
                         let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
                         assert_eq!(stream.read_frame().await?, DISCOVERY_ENTRY);
+                        if slow {
+                            let delay = INITIAL_SOURCE_BUDGET / 2 + Duration::from_secs(1);
+                            tokio::time::sleep(delay).await;
+                            println!("signed route held its pre-authentication response for {delay:?}");
+                        }
                         store.lock().unwrap().put_node_locator_v1(
                             owner_id, revision, Duration::from_secs(30), locator.clone(), Instant::now(),
                         )?;
-                        serve(stream, responsive.clone(), pins, store.clone())
-                            .await
-                            .context("serving the responsive test source")?;
+                        let served = serve(stream, responsive.clone(), pins, store.clone()).await;
+                        // The old half-budget Client cancels this stream before the delay.
+                        if !slow {
+                            served.context("serving the responsive test source")?;
+                        }
                     }
                     anyhow::bail!("fixture bootstrap request budget exhausted")
                 };
