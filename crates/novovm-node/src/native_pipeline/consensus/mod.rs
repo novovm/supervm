@@ -21,4 +21,6 @@ pub use journal::{DurableMessage, JournalOpening, TimeoutStep, ValidatorJournal}
 pub use novovm_consensus::round_bft::{collector, pacemaker, wire};
 
 #[cfg(test)]
+mod epoch_qc_aoem_tests;
+#[cfg(test)]
 mod tests;

@@ -36,4 +36,20 @@ python scripts/tests/founder_seal_policy_vectors.py
 
 夹具测试通过的含义仅为：合法交接、旧集合越权、权重不足和重复签者、错误父状态和提前激活、证明移植、缺最终性、重复封盘或缺退出证据、旧钥恢复、合法后继密码迁移及迁移试图取消封盘得到预定裁决。正例与负例使用虚构身份、权重、链与套件，认证、终局和退出证据为假定输入。它不是签名验证器、生产实现或正式参数。
 
-后续实现验收须另接现有 QC、批准的专用授权编码和原持久化所有者，用真正签名的隔离向量验证错误域/套件、双集合冲突、激活写入中断、封盘后冷恢复和旧二进制拒绝。未验证这些能力前不宣布正式封盘或自治通过。
+## 真实 QC 的隔离回归
+
+[独立 Rust 测试](../crates/novovm-node/src/native_pipeline/consensus/epoch_qc_aoem_tests.rs)通过原 AOEM 适配器在内存生成临时 ML-DSA-65 密钥，以原 wire 构造、编码、解码和验签入口检查：
+
+- 同一份原始 QC 在原上下文验签通过；仅换 epoch 或仅换集合承诺都拒绝。
+- 将所有票的上下文改成目标 epoch 或集合，保留旧签名再校验，即使参与权重足够，也因密码学签名无效而拒绝。
+- 一张独立验签有效的票权重不足时，QC 验证仍拒绝；后继上下文重新真实签名可通过，原历史仍可验。
+
+将本机已核验的对应平台 AOEM 库路径设置为 `NOVOVM_AOEM_TEST_LIBRARY`，显式运行：
+
+```powershell
+cargo test --locked -p novovm-node --lib aoem_qc_binds_epoch_set_and_weight -- --ignored --nocapture
+```
+
+D 于 2026-11-26 在 Windows x86_64 使用已核验的 AOEM DLL（SHA-256 `f9e8ded21753dfd32573de7bf66da8a785120444e810ba9fa865bfa4d639fcaa`）实跑：1 passed，0 failed，0 ignored。原纯规格向量另跑 13 passed。
+
+这验证现有 QC 的密码学上下文隔离，不验证治理授权对象或集合激活。后续仍须接批准的专用授权编码和原持久化所有者，验收错误域/套件、双集合冲突、激活写入中断、封盘后冷恢复及旧二进制拒绝。未验证这些能力前不宣布正式封盘或自治通过。
