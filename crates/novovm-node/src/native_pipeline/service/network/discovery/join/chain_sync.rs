@@ -1,14 +1,25 @@
 //! Durable, independently verified block-header progress for an installed client.
+use super::super::super::query_carrier::{connect, QuerySession};
 use super::*;
 use crate::native_pipeline::{
     consensus::statement::finalized_header,
     service::client::operator::receipt_proof::{validate_parent, Download, FinalityVerifier},
 };
 use novovm_protocol::native_query::{Answer, Query};
+mod state;
+use state::{StateCache, StateProgress};
 
 const MAX_HEADERS_PER_PASS: u64 = 128;
 
 pub fn sync_installed_chain(path: &Path) -> Result<serde_json::Value> {
+    sync_installed(path, false)
+}
+
+pub fn sync_installed_state(path: &Path) -> Result<serde_json::Value> {
+    sync_installed(path, true)
+}
+
+fn sync_installed(path: &Path, with_state: bool) -> Result<serde_json::Value> {
     let (profile, identity, seeds) = installed_inputs(path)?;
     let (domain, anchor) = profile.verification_domain()?;
     validate_parent(&anchor)?;
@@ -19,6 +30,9 @@ pub fn sync_installed_chain(path: &Path) -> Result<serde_json::Value> {
     ));
     let verifier = FinalityVerifier::new(&domain, identity.clone());
     let mut chain = VerifiedHeaders::open(root, anchor, verifier)?;
+    let cache = with_state
+        .then(|| StateCache::open(chain.root.join("state-nodes")))
+        .transpose()?;
     let reopened_height = chain.tip.height;
     let carrier = IrohConfigV1::new(&profile.relays, profile.nameserver)?;
     let progress = tokio::runtime::Builder::new_current_thread()
@@ -56,9 +70,13 @@ pub fn sync_installed_chain(path: &Path) -> Result<serde_json::Value> {
                                         domain.clone(),
                                         &mut chain,
                                         cap,
+                                        cache.as_ref(),
                                     );
                                     match tokio::time::timeout(budget, attempt).await {
-                                        Ok(Ok(peer)) => {
+                                        Ok(Ok((peer, Some(state)))) => {
+                                            return Ok((chain.tip, Some(peer), Some(state)));
+                                        }
+                                        Ok(Ok((peer, None))) => {
                                             best_advertised = best_advertised.max(Some(peer));
                                             if chain.tip.height == cap {
                                                 break;
@@ -68,11 +86,15 @@ pub fn sync_installed_chain(path: &Path) -> Result<serde_json::Value> {
                                         Err(error) => last = Some(error.into()),
                                     }
                                 }
-                                if best_advertised.is_some() || chain.tip.height > reopened_height {
+                                if !with_state
+                                    && (best_advertised.is_some()
+                                        || chain.tip.height > reopened_height)
+                                {
                                     return Ok((
                                         chain.tip,
                                         best_advertised
                                             .filter(|height| *height >= chain.tip.height),
+                                        None,
                                     ));
                                 }
                                 Err(last.unwrap_or_else(|| {
@@ -89,8 +111,8 @@ pub fn sync_installed_chain(path: &Path) -> Result<serde_json::Value> {
             closed?;
             Ok::<_, anyhow::Error>(progress)
         })?;
-    let (tip, peer) = progress;
-    Ok(serde_json::json!({
+    let (tip, peer, state) = progress;
+    let mut report = serde_json::json!({
         "reopened_height": reopened_height,
         "verified_height": tip.height,
         "verified_block_hash": super::super::super::super::rpc::hex(&tip.block_hash),
@@ -98,7 +120,13 @@ pub fn sync_installed_chain(path: &Path) -> Result<serde_json::Value> {
         "verified_state_version": tip.state_version,
         "peer_advertised_height": peer,
         "reached_peer_advertised_height": peer == Some(tip.height),
-    }))
+    });
+    if let Some(state) = state {
+        report["verified_state_nodes"] = state.nodes.into();
+        report["verified_state_leaves"] = state.leaves.into();
+        report["downloaded_state_nodes"] = state.downloaded.into();
+    }
+    Ok(report)
 }
 
 async fn sync_peer(
@@ -108,8 +136,8 @@ async fn sync_peer(
     domain: MessageDomain,
     chain: &mut VerifiedHeaders,
     cap: u64,
-) -> Result<u64> {
-    use super::super::super::query_carrier::{connect, QuerySession};
+    cache: Option<&StateCache>,
+) -> Result<(u64, Option<StateProgress>)> {
     let (mut stream, channel) = connect(scope, candidate, identity, &domain).await?;
     let mut session = QuerySession::attach(&mut stream, channel, domain)?;
     let Answer::Status(advertised) = session.query(Query::Status).await? else {
@@ -135,7 +163,16 @@ async fn sync_peer(
             "peer advertised tip conflicts with certified header"
         );
     }
-    Ok(advertised.height)
+    let state = if let Some(cache) = cache {
+        ensure!(
+            chain.tip.height == advertised.height,
+            "pass verified headers only; rerun to continue state synchronization"
+        );
+        Some(cache.sync(&mut session, chain.tip).await?)
+    } else {
+        None
+    };
+    Ok((advertised.height, state))
 }
 
 struct VerifiedHeaders {
@@ -206,18 +243,23 @@ impl VerifiedHeaders {
             !final_path.try_exists()?,
             "header checkpoint already exists"
         );
-        let pending = final_path.with_extension(format!("{:016x}.pending", rand::random::<u64>()));
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pending)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&pending, &final_path)?;
-        #[cfg(unix)]
-        fs::File::open(&self.root)?.sync_all()?;
+        store_checkpoint(&final_path, bytes)?;
         self.tip = tip;
         Ok(())
     }
+}
+
+fn store_checkpoint(path: &Path, bytes: &[u8]) -> Result<()> {
+    let pending = path.with_extension(format!("{:016x}.pending", rand::random::<u64>()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&pending)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&pending, path)?;
+    #[cfg(unix)]
+    fs::File::open(path.parent().context("checkpoint directory missing")?)?.sync_all()?;
+    Ok(())
 }

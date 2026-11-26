@@ -493,6 +493,7 @@ pub struct RpcLifecycle {
     history: history::ReceiptHistory,
     uca_queries: native_query::UcaQueries,
     archive_queries: native_query::ArchiveQueries,
+    state_node_queries: native_query::StateNodeQueries,
     application_selection: Option<application::ApplicationSelection>,
     prefer_application: bool,
 }
@@ -551,6 +552,7 @@ impl RpcLifecycle {
             history: history::ReceiptHistory::default(),
             uca_queries: native_query::UcaQueries::default(),
             archive_queries: native_query::ArchiveQueries::default(),
+            state_node_queries: native_query::StateNodeQueries::default(),
             application_selection: None,
             prefer_application: true,
         })

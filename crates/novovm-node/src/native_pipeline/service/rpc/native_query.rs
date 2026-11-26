@@ -6,9 +6,11 @@ use novovm_protocol::native_query::{
 };
 mod identity;
 mod receipt_proofs;
+mod state_nodes;
 mod uca;
 pub(super) use receipt_proofs::ArchiveQueries;
 use receipt_proofs::ProofKind;
+pub(super) use state_nodes::StateNodeQueries;
 pub(super) use uca::{UcaBatchStateRead, UcaCaptureStats, UcaQueries, UcaReadResult};
 
 impl RpcLifecycle {
@@ -129,6 +131,7 @@ impl RpcLifecycle {
         );
         self.uca_queries.poll(&self.node.pipeline, now);
         self.archive_queries.poll(&self.node, now);
+        self.state_node_queries.poll(now);
         let Some((peer, request)) = self.node.controller.take_client_query(now) else {
             return Ok(());
         };
@@ -142,7 +145,10 @@ impl RpcLifecycle {
     pub(crate) fn answer_carrier_query(&mut self, query: &Query, now: Instant) -> Result<Answer> {
         if matches!(
             query,
-            Query::Status | Query::ReceiptProof(_) | Query::FinalizedHeader(_)
+            Query::Status
+                | Query::ReceiptProof(_)
+                | Query::FinalizedHeader(_)
+                | Query::StateNode(_)
         ) {
             self.answer_native_query(query, now)
         } else {
@@ -206,6 +212,9 @@ impl RpcLifecycle {
                 Query::FinalizedHeader(selector) => {
                     self.archive_queries
                         .answer(&self.node, *selector, ProofKind::FinalizedHeader)
+                }
+                Query::StateNode(selector) => {
+                    self.state_node_queries.answer(&self.node, selector, now)
                 }
                 Query::NovBalance { account } => {
                     let account = Account::try_from(account.as_bytes().to_vec())

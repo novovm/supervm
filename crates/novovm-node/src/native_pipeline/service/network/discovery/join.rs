@@ -16,7 +16,7 @@ use novovm_relay::transport_identity::{load_transport_identity, provision_transp
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, fs, io::Write};
 mod chain_sync;
-pub use chain_sync::sync_installed_chain;
+pub use chain_sync::{sync_installed_chain, sync_installed_state};
 
 #[cfg(test)]
 mod tests;

@@ -312,6 +312,7 @@ fn answer_view(answer: Answer) -> Value {
             "total_bytes": chunk.total_bytes,
             "chunk_bytes": chunk.data.len(),
         }}),
+        Answer::StateNode(node) => json!({"StateNode": {"bytes": node.0.len()}}),
         Answer::Receipt {
             state,
             indexed_height,

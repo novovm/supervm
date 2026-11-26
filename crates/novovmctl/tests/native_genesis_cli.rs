@@ -420,6 +420,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
             .collect(),
         native_client_limit: 1,
         public_asset_receipt_proofs: false,
+        public_state_sync: false,
         learn_authenticated_peer_routes: false,
         novonet_config_file: None,
         genesis: startup_genesis,

@@ -39,7 +39,7 @@ impl ArchiveChunk {
     }
 }
 
-mod bytes {
+pub(super) mod bytes {
     use super::*;
 
     pub fn serialize<S: serde::Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
@@ -47,24 +47,35 @@ mod bytes {
     }
 
     pub fn deserialize<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Vec<u8>, D::Error> {
-        struct ChunkVisitor;
+        deserialize_bounded::<D, 1, ARCHIVE_CHUNK_BYTES>(decoder)
+    }
 
-        impl<'de> serde::de::Visitor<'de> for ChunkVisitor {
+    pub(crate) fn deserialize_bounded<
+        'de,
+        D: serde::Deserializer<'de>,
+        const MIN: usize,
+        const MAX: usize,
+    >(
+        decoder: D,
+    ) -> Result<Vec<u8>, D::Error> {
+        struct BytesVisitor<const MIN: usize, const MAX: usize>;
+
+        impl<'de, const MIN: usize, const MAX: usize> serde::de::Visitor<'de> for BytesVisitor<MIN, MAX> {
             type Value = Vec<u8>;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                formatter.write_str("bounded nonempty archive chunk")
+                write!(formatter, "between {MIN} and {MAX} native query bytes")
             }
 
             fn visit_bytes<E: serde::de::Error>(self, data: &[u8]) -> Result<Self::Value, E> {
-                if data.is_empty() || data.len() > ARCHIVE_CHUNK_BYTES {
-                    return Err(E::custom("archive chunk length"));
+                if !(MIN..=MAX).contains(&data.len()) {
+                    return Err(E::custom("native query bytes length"));
                 }
                 Ok(data.to_vec())
             }
         }
 
-        decoder.deserialize_bytes(ChunkVisitor)
+        decoder.deserialize_bytes(BytesVisitor::<MIN, MAX>)
     }
 }
 
