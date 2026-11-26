@@ -358,6 +358,8 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             peer_records: Vec::new(),
             discovery: true,
             discovery_seeds: Vec::new(),
+            publish_native_query_address: std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref()
+                == Ok("2"),
             relay_forwarding: false,
             fallback_after_ms: 1000,
             retry_ms: 500,
@@ -396,10 +398,18 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
-    if std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("1") {
+    let follow_test = std::env::var("NOVOVM_QUERY_COPY_FOLLOW");
+    if matches!(follow_test.as_deref(), Ok("1" | "2")) {
         owner.rpc.node.public_asset_receipt_proofs = false;
         owner.rpc.node.public_state_sync = true;
-        test_installed_follow(&mut owner, &binary, &profile, &secondary, &key)?;
+        test_installed_follow(
+            &mut owner,
+            &binary,
+            &profile,
+            &secondary,
+            &key,
+            follow_test.as_deref() == Ok("2"),
+        )?;
         ensure!(
             owner.rpc.node.controller.parent() == head,
             "follow altered the detached chain"
@@ -593,6 +603,7 @@ fn test_installed_follow(
     profile: &Path,
     live_seed: &Path,
     key: &[u8],
+    signed_address: bool,
 ) -> Result<()> {
     use sha2::{Digest, Sha256};
     use std::{fs, io::ErrorKind, net::UdpSocket, process::Stdio};
@@ -601,6 +612,11 @@ fn test_installed_follow(
     let gateway = UdpSocket::bind("127.0.0.1:0")?;
     gateway.set_nonblocking(true)?;
     let node = owner.config.udp_addr;
+    let old_address = gateway.local_addr()?;
+    ensure!(
+        old_address != node,
+        "old route must use a different bound port"
+    );
     let mut client_address = None;
     let mut forward = |enabled: bool| -> Result<()> {
         let mut buffer = [0; 65536];
@@ -670,7 +686,7 @@ fn test_installed_follow(
         Command::new(binary)
             .arg(profile)
             .arg("follow-state")
-            .arg(pin)
+            .arg(&pin)
             .env("LOCALAPPDATA", &device)
             .env("XDG_STATE_HOME", &device)
             .stdout(Stdio::from(events))
@@ -714,20 +730,49 @@ fn test_installed_follow(
     })
     .context("lost native route with no available bootstrap records")?;
     fs::copy(live_seed, &opened_seed)?;
-    await_events(owner, false, &|records| {
-        has(records, "verified_state", "iroh")
-    })
-    .context("autonomous fallback through the only available signed source")?;
-    let recovered = await_events(owner, true, &|records| {
-        records
-            .iter()
-            .filter(|item| {
-                item["event"] == "verified_state" && item["transport"] == "native_novorudp"
+    let recovered = if signed_address {
+        let locator: novovm_network::product_directory::PeerSignedRelayRecordV1 =
+            serde_json::from_slice(&fs::read(&opened_seed)?)?;
+        ensure!(
+            novovm_network::discovery_control::native_chain_query_address(&locator)? == Some(node),
+            "signed locator did not use the actual native server socket"
+        );
+        let node_address = node.to_string();
+        let records = await_events(owner, false, &|records| {
+            records.iter().any(|event| {
+                event["event"] == "verified_state"
+                    && event["transport"] == "native_novorudp"
+                    && event["native_peer_address"] == node_address
+                    && event["locator_sequence"]
+                        .as_u64()
+                        .is_some_and(|s| s >= locator.sequence)
             })
-            .count()
-            == 2
-    })
-    .context("recovery to the independently authenticated native route")?;
+        })
+        .context("new signed native address was not authenticated")?;
+        ensure!(
+            records.iter().any(
+                |event| event["native_peer_address"] == old_address.to_string()
+                    && event["locator_sequence"].is_null()
+            ),
+            "initial release route not observed"
+        );
+        records
+    } else {
+        await_events(owner, false, &|records| {
+            has(records, "verified_state", "iroh")
+        })
+        .context("autonomous fallback through the only available signed source")?;
+        await_events(owner, true, &|records| {
+            records
+                .iter()
+                .filter(|item| {
+                    item["event"] == "verified_state" && item["transport"] == "native_novorudp"
+                })
+                .count()
+                == 2
+        })
+        .context("recovery to the independently authenticated native route")?
+    };
 
     let ready: Vec<_> = recovered
         .iter()
@@ -738,8 +783,11 @@ fn test_installed_follow(
     let serving_key = format!("{:x}", Sha256::digest(key));
     let identity = ready[0]["transport_identity_sha256"].clone();
     ensure!(
-        ready.len() == 3
-            && identity.is_string()
+        (if signed_address {
+            (2..=3).contains(&ready.len())
+        } else {
+            ready.len() == 3
+        }) && identity.is_string()
             && identity != serving_key
             && ready.iter().all(|event| event["height"] == tip.height
                 && event["state_root"] == expected_root
@@ -753,6 +801,65 @@ fn test_installed_follow(
         "one installed Client recovered without restart, pid={pid}, events={}",
         serde_json::to_string(&recovered)?
     );
+    drop(child);
+    if signed_address {
+        let discovery = device.join("NOVOVM/native-discovery");
+        let domain = fs::read_dir(discovery)?
+            .next()
+            .context("installed domain")??
+            .path();
+        let checkpoint = fs::read_dir(domain)?
+            .filter_map(|entry| entry.ok())
+            .find_map(|entry| {
+                let path = entry.path().join("peer-locators.json");
+                path.is_file().then_some(path)
+            })
+            .context("signed route checkpoint was not persisted")?;
+        let original = fs::read(&checkpoint)?;
+        let mut changed: Value = serde_json::from_slice(&original)?;
+        let uri = changed[0]["endpoints"][0]["uri"]
+            .as_str()
+            .context("cached query URI")?;
+        let (prefix, _) = uri
+            .rsplit_once('/')
+            .context("signed native address suffix")?;
+        changed[0]["endpoints"][0]["uri"] = serde_json::json!(format!("{prefix}/{old_address}"));
+        fs::write(&checkpoint, serde_json::to_vec(&changed)?)?;
+        let result = Command::new(binary)
+            .arg(profile)
+            .arg("follow-state")
+            .arg(pin)
+            .env("LOCALAPPDATA", &device)
+            .env("XDG_STATE_HOME", &device)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn();
+        let rejection = (|| -> Result<()> {
+            let mut reject = Child(result?);
+            let mut status = None;
+            owner.until(|_| {
+                status = reject.0.try_wait()?;
+                Ok(status.is_some())
+            })?;
+            let mut error = String::new();
+            use std::io::Read;
+            reject
+                .0
+                .stderr
+                .take()
+                .context("diagnostic stream")?
+                .read_to_string(&mut error)?;
+            ensure!(
+                !status.context("restarted Client did not finish")?.success()
+                    && error.contains("authenticating installed locator checkpoint"),
+                "changed on-disk address passed independent signature verification on restart"
+            );
+            Ok(())
+        })();
+        fs::write(&checkpoint, original)?;
+        rejection?;
+        println!("modified signed route checkpoint rejected on restart");
+    }
     Ok(())
 }
 

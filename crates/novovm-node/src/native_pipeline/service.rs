@@ -70,6 +70,8 @@ pub struct ResidentNode {
     public_state_sync: bool,
     #[cfg(feature = "iroh-transport")]
     native_client_limit: usize,
+    #[cfg(feature = "iroh-transport")]
+    native_udp_address: std::net::SocketAddr,
     pub controller: NativeLifecycle,
     pub pipeline: CandidatePipeline,
     pub template: BatchContext,
@@ -203,6 +205,8 @@ impl ResidentNode {
             slot: 0,
             timestamp_unix_ms: config.genesis.timestamp_unix_ms,
         };
+        #[cfg(feature = "iroh-transport")]
+        let native_udp_address = transport.local_addr()?;
         let pipeline = CandidatePipeline::start_with_initial_state(
             pipeline_config,
             match mode {
@@ -228,6 +232,8 @@ impl ResidentNode {
                 public_state_sync: config.public_state_sync,
                 #[cfg(feature = "iroh-transport")]
                 native_client_limit: config.native_client_limit,
+                #[cfg(feature = "iroh-transport")]
+                native_udp_address,
                 controller,
                 pipeline,
                 template,

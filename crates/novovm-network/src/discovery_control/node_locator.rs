@@ -10,14 +10,18 @@ use crate::{
         peer_id_from_mldsa65_public_key_v1, TransportVerifier, MLDSA65_PUBLIC_KEY_BYTES,
         MLDSA65_SIGNATURE_BYTES, MLDSA65_SUITE,
     },
-    product_service_lease::IrohServiceEndpointV1,
+    product_service_lease::{
+        split_chain_query_uri, IrohServiceEndpointV1, NATIVE_CHAIN_LOCATOR_PREFIX,
+    },
 };
 use anyhow::{ensure, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use sha2::{Digest, Sha256};
+use std::net::SocketAddr;
 
 const MAGIC_V1: &[u8; 8] = b"NVLOCR01";
 const MAGIC_V2: &[u8; 8] = b"NVLOCR02";
+const MAGIC_V3: &[u8; 8] = b"NVLOCR03";
 const V1_RELAY_BYTES_PER_MINUTE: u64 = 64 * 1024;
 /// Approved native-node allowance. The compact profile must preserve this
 /// signed field; changing the implicit V1 value would invalidate old records.
@@ -37,9 +41,32 @@ pub fn native_locator_id_v1(pins: Pins) -> String {
     hash.update(pins.1);
     hash.update(pins.2);
     format!(
-        "native-chain-locator-v1:{}",
+        "{NATIVE_CHAIN_LOCATOR_PREFIX}{}",
         URL_SAFE_NO_PAD.encode(hash.finalize())
     )
+}
+
+/// Sign the real native query socket alongside the existing discovery carrier.
+pub fn native_chain_query_endpoint(
+    route: &IrohServiceEndpointV1,
+    address: SocketAddr,
+) -> Result<RelayEndpointV1> {
+    let mut endpoint = route.chain_query_endpoint(address)?;
+    endpoint.max_bytes_per_minute = NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE;
+    Ok(endpoint)
+}
+
+/// Read the native route from a locator whose chain pins and signature were verified.
+pub fn native_chain_query_address(record: &PeerSignedRelayRecordV1) -> Result<Option<SocketAddr>> {
+    let [endpoint] = record.endpoints.as_slice() else {
+        anyhow::bail!("native locator endpoint count");
+    };
+    ensure!(
+        record.record_id.starts_with(NATIVE_CHAIN_LOCATOR_PREFIX)
+            && endpoint.transport == RelayTransportV1::IrohRendezvousV1,
+        "native query locator kind"
+    );
+    Ok(split_chain_query_uri(&endpoint.uri)?.1)
 }
 
 pub fn encode_node_locator_v1(record: &PeerSignedRelayRecordV1, pins: Pins) -> Result<Vec<u8>> {
@@ -55,12 +82,19 @@ pub fn encode_node_locator_v1(record: &PeerSignedRelayRecordV1, pins: Pins) -> R
     let [signed_endpoint] = record.endpoints.as_slice() else {
         anyhow::bail!("native locator requires exactly one endpoint");
     };
-    let magic = match signed_endpoint.max_bytes_per_minute {
-        V1_RELAY_BYTES_PER_MINUTE => MAGIC_V1,
-        NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE => MAGIC_V2,
+    let address = native_chain_query_address(record)?;
+    let magic = match (signed_endpoint.max_bytes_per_minute, address) {
+        (V1_RELAY_BYTES_PER_MINUTE, None) => MAGIC_V1,
+        (NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE, None) => MAGIC_V2,
+        (NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE, Some(_)) => MAGIC_V3,
         _ => anyhow::bail!("native locator allowance has no compact profile"),
     };
-    let mut endpoint = IrohServiceEndpointV1::from_record(record)?.endpoint()?;
+    let carrier = IrohServiceEndpointV1::from_record(record)?;
+    let mut endpoint = if let Some(address) = address {
+        native_chain_query_endpoint(&carrier, address)?
+    } else {
+        carrier.endpoint()?
+    };
     endpoint.max_bytes_per_minute = signed_endpoint.max_bytes_per_minute;
     ensure!(
         record.endpoints == [endpoint.clone()],
@@ -101,7 +135,7 @@ pub fn decode_node_locator_v1(
     // A changed profile marker cannot promote or downgrade a signed record.
     let max_bytes_per_minute = match &wire[..8] {
         magic if magic == MAGIC_V1 => V1_RELAY_BYTES_PER_MINUTE,
-        magic if magic == MAGIC_V2 => NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE,
+        magic if magic == MAGIC_V2 || magic == MAGIC_V3 => NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE,
         _ => anyhow::bail!("native locator version"),
     };
     let length = u16::from_be_bytes(wire[32..34].try_into()?) as usize;
@@ -128,7 +162,11 @@ pub fn decode_node_locator_v1(
         signature: wire[HEADER + length..].to_vec(),
     };
     validate_relay_record_v1(&record, now, verifier)?;
-    IrohServiceEndpointV1::from_record(&record)?;
+    // Preserve the exact signed projection and reject version/suffix substitution.
+    ensure!(
+        encode_node_locator_v1(&record, pins)? == wire,
+        "noncanonical native locator or version"
+    );
     Ok(record)
 }
 
@@ -139,6 +177,59 @@ mod tests {
         iroh_transport::IrohAddressV1, product_directory::sign_relay_record_v1,
         product_overlay::TransportIdentity,
     };
+
+    #[test]
+    fn signed_native_query_address_is_bound_to_the_original_locator() -> Result<()> {
+        let key = TransportIdentity::from_bytes(&[104; 32]);
+        let pins = (7, [8; 32], [9; 32]);
+        let route = IrohServiceEndpointV1 {
+            instance: [10; 32],
+            address: IrohAddressV1 {
+                endpoint_key: ed25519_dalek::SigningKey::from_bytes(&[11; 32])
+                    .verifying_key()
+                    .to_bytes(),
+                direct: vec!["127.0.0.1:9000".parse()?],
+                relays: vec![],
+            },
+        };
+        for ip in ["127.0.0.1:51011", "[::1]:51012"] {
+            let address = ip.parse()?;
+            let record = sign_relay_record_v1(
+                &key,
+                native_locator_id_v1(pins),
+                vec![native_chain_query_endpoint(&route, address)?],
+                1000,
+                2000,
+                4,
+            )?;
+            let wire = encode_node_locator_v1(&record, pins)?;
+            assert_eq!(&wire[..8], MAGIC_V3);
+            let decoded = decode_node_locator_v1(&wire, key.public_key(), pins, 1000, &key)?;
+            assert_eq!(decoded, record);
+            assert_eq!(native_chain_query_address(&decoded)?, Some(address));
+            let decoded_route = IrohServiceEndpointV1::from_record(&decoded)?;
+            assert_eq!(decoded_route.instance, route.instance);
+            assert_eq!(
+                decoded_route.address.endpoint_key,
+                route.address.endpoint_key
+            );
+            assert_eq!(decoded_route.address.direct, route.address.direct);
+            assert_eq!(decoded_route.address.relays, route.address.relays);
+            let mut bad_version = wire.clone();
+            bad_version[..8].copy_from_slice(MAGIC_V2);
+            assert!(
+                decode_node_locator_v1(&bad_version, key.public_key(), pins, 1000, &key).is_err()
+            );
+            let mut bad_address = wire;
+            let last_address_digit = bad_address.len() - MLDSA65_SIGNATURE_BYTES - 1;
+            bad_address[last_address_digit] ^= 1;
+            assert!(
+                decode_node_locator_v1(&bad_address, key.public_key(), pins, 1000, &key).is_err()
+            );
+        }
+        assert!(native_chain_query_endpoint(&route, "0.0.0.0:51011".parse()?).is_err());
+        Ok(())
+    }
     #[test]
     fn compact_profiles_preserve_signed_allowances_and_reject_profile_substitution() -> Result<()> {
         let key = TransportIdentity::from_bytes(&[103; 32]);

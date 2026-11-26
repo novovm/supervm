@@ -684,6 +684,7 @@ mod tests {
                                     peer_records: Vec::new(),
                                     discovery: true,
                                     discovery_seeds: Vec::new(),
+                                    publish_native_query_address: false,
                                     relay_forwarding: false,
                                     fallback_after_ms: 1000,
                                     retry_ms: 1000,

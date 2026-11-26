@@ -382,6 +382,22 @@ async fn collect(
     profile: &Profile,
     seeds: SeedInputs,
 ) -> Result<DiscoveryReport> {
+    let candidates = prepare_seed_candidates(profile, &identity, seeds)?;
+    let pins = profile.pins();
+    let lookups = profile.lookup_transport_keys.clone();
+    owner
+        .with_operation(
+            IrohControlV1::new(Instant::now() + Duration::from_secs(10), || Ok(()))?,
+            |scope| Box::pin(lookup_sources(scope, identity, pins, candidates, lookups)),
+        )
+        .await
+}
+
+fn prepare_seed_candidates(
+    profile: &Profile,
+    identity: &TransportIdentity,
+    seeds: SeedInputs,
+) -> Result<[Result<DialCandidate>; 2]> {
     let pins = profile.pins();
     let wall = wall_ms()?;
     let accept = |record: Result<PeerSignedRelayRecordV1>, seed: &SeedPin| {
@@ -390,7 +406,7 @@ async fn collect(
             record.relay_public_key == seed.transport_key,
             "bootstrap locator signer differs from installed pin"
         );
-        seed_candidate(record, pins, &identity, wall)
+        seed_candidate(record, pins, identity, wall)
     };
     let [first, second] = seeds;
     let (first, second) = (
@@ -414,21 +430,7 @@ async fn collect(
                 .all(|seed| seed.transport_key != identity.public_key()),
         "ordinary device custody overlaps an installed service pin"
     );
-    let lookups = profile.lookup_transport_keys.clone();
-    owner
-        .with_operation(
-            IrohControlV1::new(Instant::now() + Duration::from_secs(10), || Ok(()))?,
-            |scope| {
-                Box::pin(lookup_sources(
-                    scope,
-                    identity,
-                    pins,
-                    [first, second],
-                    lookups,
-                ))
-            },
-        )
-        .await
+    Ok([first, second])
 }
 
 fn seed_candidate(
