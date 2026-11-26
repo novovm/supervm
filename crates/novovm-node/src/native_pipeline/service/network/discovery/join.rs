@@ -508,7 +508,11 @@ fn prepare_seed_candidates(
                     seed.contact.is_none() || record.expires_at_ms > wall,
                     "use the installed contact to renew an expired bootstrap locator"
                 );
-                seed_candidate(record, pins, identity, wall)
+                let mut candidate = seed_candidate(record, pins, identity, wall)?;
+                if let Some(contact) = &seed.contact {
+                    add_installed_contact(&mut candidate.route, contact);
+                }
+                Ok(candidate)
             })
             .or_else(|error| {
                 let Some(contact) = &seed.contact else {
@@ -545,6 +549,27 @@ fn prepare_seed_candidates(
         "ordinary device custody overlaps an installed service pin"
     );
     Ok([first, second])
+}
+
+/// Pair coordinates only for the same Iroh endpoint, before its one NOVOVM
+/// authentication. The installed hints stay local to this dial.
+fn add_installed_contact(route: &mut IrohAddressV1, contact: &IrohAddressV1) {
+    if route.endpoint_key != contact.endpoint_key {
+        return;
+    }
+    append_coordinates(&mut route.direct, &contact.direct, 8);
+    append_coordinates(&mut route.relays, &contact.relays, 4);
+}
+
+fn append_coordinates<T: Clone + PartialEq>(route: &mut Vec<T>, installed: &[T], limit: usize) {
+    for address in installed {
+        if route.len() >= limit {
+            break;
+        }
+        if !route.contains(address) {
+            route.push(address.clone());
+        }
+    }
 }
 
 fn seed_candidate(
