@@ -1,5 +1,21 @@
 # NOVOVM 生产部署目标与验收台账
 
+## 2026-11-26 C/D 实体局域网冷同步与换路
+
+C 用 `LocalService` 打开原 RocksDB 的隔离副本，只读服务已确认链和状态。D 使用独立构建的 Windows Client、空链缓存和本机保护的验收传输钥。Iroh 查询入口沿原 Finished 认证，只接受固定的 D 验收公钥。C 端隔离代理只接收 D 的源地址，负责切断和恢复 NovoRUDP。两种传输通过同一实体局域网的不同端口工作。
+
+| C 签收时间（UTC） | D 实际结果 |
+| --- | --- |
+| 05:20:39.848 | NovoRUDP 冷同步到高度 2，从空缓存下载并验证 97 个状态节点和 49 个叶子 |
+| 05:21:10.082 | 测试代理断路后约 30 秒，自动转到已验签的 Iroh |
+| 05:21:21.355 | 恢复测试代理后约 11 秒，自动回切 NovoRUDP |
+
+D 三次报告来自同一 Client 进程，均验证高度 2、状态版本 2、同一状态根和同一对传输身份。C 校验 D 原始事件且确认隔离原库链头未变，验收项退出码为 0。证据文件 `lan-events.json` 的 SHA-256 为 `3e258c18ebbeffc509faa6a7ce0d1cb24759cb5b4e6c6f3e281e8ceb1e79bff3`。回归入口为 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier`，设置 `NOVOVM_QUERY_COPY_LAN` 指向本机验收 JSON，字段为 `server`、`client` 和 `client_key`。原有两个首源失效和过期定位记录回归也通过。
+
+复跑时，从 C 的 `lan-ready.json` 核对配置摘要，在 D 启动单一 `follow-state` 进程。C 收到 D 的首条 NovoRUDP 事件后写入 `lan-cut`，收到 Iroh 事件后写入 `lan-restore`，最后将同一进程的 PID 和三条事件写入 `lan-events.json`。三个文件均位于隔离快照的工作目录。验收进程会核对证据并在八分钟内退出。
+
+本次测量覆盖真实双机通信、关闭与恢复隔离传输路径。实体网卡掉线、跨网恢复、已批准的两个独立发行引导端点，以及真实多验证者自动追赶仍分别验收。
+
 ## 2026-10-31 原APFL资产正文引用已实施，大负载TPS改善、12K仍未恢复
 
 代码`72aadbe9`沿原NativeChannel/NovoRUDP增加后继正文引用，原pool按完整有序材料重建并核对

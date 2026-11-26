@@ -34,6 +34,7 @@ pub(super) struct Read {
 pub(super) struct Ingress {
     pub(super) requests: mpsc::SyncSender<Read>,
     pub(super) slot: Option<Arc<QuerySlot>>,
+    pub(super) peers: Option<Arc<[Vec<u8>]>>,
 }
 
 /// The single long-lived read stream may be resumed by its authenticated
@@ -108,11 +109,15 @@ pub(super) async fn accept(
     ingress: Ingress,
 ) -> Result<()> {
     let slot = ingress.slot.context("carrier queries disabled")?;
+    let peer_policy = ingress.peers.as_deref().map_or(
+        ServicePeerPolicyV1::AnyAuthenticated,
+        ServicePeerPolicyV1::Pinned,
+    );
     let (mut channel, remote) = tokio::time::timeout(Duration::from_secs(8), async {
         authenticate_structured_service_client_observed(
             &mut stream,
             &identity,
-            ServicePeerPolicyV1::AnyAuthenticated,
+            peer_policy,
             &mut HandshakeReplayCacheV1::new(8),
             &mut |_, _| Ok(()),
         )
