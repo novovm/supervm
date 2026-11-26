@@ -91,11 +91,22 @@ if ($ProfilePath) {
         $document.library_sha256 -cne $runtimePin) {
         throw 'Bundled discovery profile does not pin the packaged AOEM runtime.'
     }
-    $seeds = @($document.seeds | ForEach-Object locator)
-    if ($seeds.Count -ne 2 -or $seeds[0] -eq $seeds[1] -or
+    $bootstrap = @($document.seeds)
+    if ($bootstrap.Count -ne 2 -or @($bootstrap | Where-Object {
+        $locator = $_.PSObject.Properties['locator']
+        $contact = $_.PSObject.Properties['contact']
+        (!$locator -or !$locator.Value) -and (!$contact -or !$contact.Value)
+    }).Count) {
+        throw 'Bundled discovery profile requires two bootstrap sources with a locator or contact.'
+    }
+    $seeds = @($bootstrap | ForEach-Object {
+        $locator = $_.PSObject.Properties['locator']
+        if ($locator -and $locator.Value) { $locator.Value }
+    })
+    if (@($seeds | Sort-Object -Unique).Count -ne $seeds.Count -or
         @($seeds | Where-Object { $_ -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\.json$' -or
             $_ -ieq 'installed-discovery.json' }).Count) {
-        throw 'Bundled discovery profile requires two distinct local locator filenames.'
+        throw 'Bundled discovery profile requires distinct portable locator filenames.'
     }
     $files[$profileEntry] = $ProfileSha256
     $files['release-manifest.json'] = $manifestHash

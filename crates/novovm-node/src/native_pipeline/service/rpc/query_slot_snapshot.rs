@@ -378,6 +378,19 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     );
     let key = owner.rpc.node.transport_identity().public_key().to_vec();
     ensure!(locator.relay_public_key == key, "locator identity differs");
+    let seeds = if std::env::var("NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS").as_deref() == Ok("1") {
+        let first_contact = IrohServiceEndpointV1::from_record(&first)?.address;
+        println!("cold Client uses two pinned contacts without installed locator files");
+        serde_json::json!([
+            { "contact": first_contact, "transport_key": first.relay_public_key },
+            { "contact": endpoint, "transport_key": key },
+        ])
+    } else {
+        serde_json::json!([
+            { "locator": primary, "transport_key": first.relay_public_key },
+            { "locator": secondary, "transport_key": key },
+        ])
+    };
     let profile = stage.join("installed-discovery.json");
     fs::write(
         &profile,
@@ -385,10 +398,7 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             "chain_id": pins.0, "genesis": pins.1, "protocol": pins.2,
             "library": old_profile.library, "library_sha256": old_profile.library_sha256,
             "nameserver": "127.0.0.1", "relays": [],
-            "seeds": [
-                { "locator": primary, "transport_key": first.relay_public_key },
-                { "locator": secondary, "transport_key": key },
-            ],
+            "seeds": seeds,
             "lookup_transport_keys": [key],
             "verification": {
                 "validator_epoch": context.epoch,

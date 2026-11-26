@@ -82,11 +82,15 @@ function Get-WindowsClientJoinInputs([string]$Path, [string]$ProfileSha256, [str
       $profile.library_sha256 -cne $AoemSha256 -or !$profile.verification) {
     throw 'The issued Client profile must pin the packaged Windows AOEM and chain verification.'
   }
-  $seeds = @($profile.seeds | ForEach-Object locator)
-  if ($seeds.Count -ne 2 -or $seeds[0] -eq $seeds[1] -or
+  $bootstrap = @($profile.seeds)
+  if ($bootstrap.Count -ne 2 -or @($bootstrap | Where-Object { !$_.locator -and !$_.contact }).Count) {
+    throw 'The issued Client profile requires two bootstrap sources with a locator or contact.'
+  }
+  $seeds = @($bootstrap | Where-Object locator | ForEach-Object locator)
+  if (@($seeds | Sort-Object -Unique).Count -ne $seeds.Count -or
       @($seeds | Where-Object { $_ -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\.json$' -or
         $_ -ieq 'installed-discovery.json' }).Count) {
-    throw 'The issued Client profile requires two distinct local locator filenames.'
+    throw 'The issued Client profile requires distinct portable locator filenames.'
   }
   $inputs = @([pscustomobject]@{
     source = $profilePath; path = 'config/discovery/installed-discovery.json'; sha256 = $ProfileSha256
@@ -900,7 +904,7 @@ and start the existing task with -Start. See docs/NOVOVM_RENDEZVOUS_ENTRY.md.
 For an ordinary Windows device with a bundled issued profile, run
 resources/scripts/windows/install-novovm-client.ps1 with the independently pinned
 ReleaseManifestSha256. The installer verifies and copies the Client, runtime and
-issued discovery files to the current user's LocalAppData. The task uses that
+issued discovery profile and any listed locator files to the current user's LocalAppData. The task uses that
 installed copy at logon and starts during installation. Packages assembled without
 the issued profile can still take an explicit ProfilePath and ProfileSha256.
 The Client keeps its local key and follows independently verified state.

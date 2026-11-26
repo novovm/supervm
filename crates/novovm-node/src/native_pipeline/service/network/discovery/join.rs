@@ -34,7 +34,7 @@ struct Profile {
     library_sha256: String,
     nameserver: IpAddr,
     relays: Vec<String>,
-    /// Independently distributed public signed bootstrap locator files.
+    /// Independently operated entry points for the original signed locator service.
     seeds: [SeedPin; 2],
     /// Transport identity pins from the installed chain profile.
     lookup_transport_keys: Vec<Vec<u8>>,
@@ -98,7 +98,12 @@ impl MinimumFinalizedCheckpoint {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct SeedPin {
-    locator: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    locator: Option<PathBuf>,
+    /// A release-pinned dial route. The remote still proves possession of
+    /// transport_key and returns only currently valid signed locator records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contact: Option<IrohAddressV1>,
     transport_key: Vec<u8>,
 }
 
@@ -127,6 +132,27 @@ impl Profile {
                     .all(|seed| is_transport_key(&seed.transport_key)),
             "installed discovery requires distinct bootstrap transport pins"
         );
+        let mut endpoint_keys = BTreeSet::new();
+        for seed in &self.seeds {
+            ensure!(
+                seed.locator
+                    .as_ref()
+                    .is_some_and(|path| !path.as_os_str().is_empty())
+                    || seed.contact.is_some(),
+                "installed bootstrap requires a locator or pinned contact"
+            );
+            if let Some(contact) = &seed.contact {
+                IrohServiceEndpointV1::validate_address(contact)?;
+                ensure!(
+                    endpoint_keys.insert(contact.endpoint_key)
+                        && contact
+                            .relays
+                            .iter()
+                            .all(|relay| self.relays.contains(relay)),
+                    "installed bootstrap contacts require distinct endpoints and approved relays"
+                );
+            }
+        }
         ensure!(
             self.native_query_peers.len() <= self.lookup_transport_keys.len()
                 && self.native_query_peers.iter().all(|peer| {
@@ -305,10 +331,13 @@ fn profile_base(path: &Path) -> Result<&Path> {
 type SeedInputs = [Result<PeerSignedRelayRecordV1>; 2];
 
 fn read_seeds(base: &Path, profile: &Profile) -> SeedInputs {
-    profile
-        .seeds
-        .each_ref()
-        .map(|seed| read_document(&base.join(&seed.locator)))
+    profile.seeds.each_ref().map(|seed| {
+        let path = seed
+            .locator
+            .as_ref()
+            .context("bootstrap locator file is not configured")?;
+        read_document(&base.join(path))
+    })
 }
 
 fn installed_inputs(path: &Path) -> Result<(Profile, TransportIdentity, SeedInputs)> {
@@ -446,12 +475,29 @@ fn prepare_seed_candidates(
     let pins = profile.pins();
     let wall = wall_ms()?;
     let accept = |record: Result<PeerSignedRelayRecordV1>, seed: &SeedPin| {
-        let record = record?;
-        ensure!(
-            record.relay_public_key == seed.transport_key,
-            "bootstrap locator signer differs from installed pin"
-        );
-        seed_candidate(record, pins, identity, wall)
+        record
+            .and_then(|record| {
+                ensure!(
+                    record.relay_public_key == seed.transport_key,
+                    "bootstrap locator signer differs from installed pin"
+                );
+                ensure!(
+                    seed.contact.is_none() || record.expires_at_ms > wall,
+                    "use the installed contact to renew an expired bootstrap locator"
+                );
+                seed_candidate(record, pins, identity, wall)
+            })
+            .or_else(|error| {
+                let Some(contact) = &seed.contact else {
+                    return Err(error);
+                };
+                Ok(DialCandidate {
+                    key: seed.transport_key.clone(),
+                    route: contact.clone(),
+                    source: "installed_contact",
+                    sequence: 0,
+                })
+            })
     };
     let [first, second] = seeds;
     let (first, second) = (

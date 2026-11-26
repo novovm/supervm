@@ -43,6 +43,12 @@ Privacy-only 的发送、收件和回执只走合格隐私路径。缺少合格�
   `valid_until_unix_ms`。原生 Client 会逐块认证到该检查点，重开缓存时也复核其区块哈希。
   `sync-state` 与 `follow-state` 在达到有效的发行检查点后才报告状态就绪。有效期使用发行配置的
   UTC 截止时间，区块中的确定性执行时间只参与原共识与执行承诺。
+- 每个安装配置的 `seeds` 项可携带 `locator` 文件、`contact` 或两者，继续固定
+  `transport_key`。`contact` 提供配置固定的 Iroh `endpoint_key`、`direct` 和
+  `relays`。本地记录缺失、过期或未通过验签时，Client 经已配置的联系地址认证对端，
+  从原 NOVONET 目录取得签名有效且未过期的定位，再接入链查询。两项引导分别固定不同的
+  传输公钥和联系端点。服务方可用已有 `carrier_identity_file` 与稳定端口或已批准中继
+  保留联系地址。只配置 `contact` 的发行包可随同一个已固定哈希的发行配置启动。
 - `novovm-native-client <发行发现配置> verify-uca-execution <配置SHA-256> <归档文件>`
   使用发行锚点或本地已验签的连续区块头，离线核验归档中的 UCA 资产交易、父状态见证和
   Precommit QC。Client 调用现有 AOEM 重算结果，并逐项匹配区块签署的执行承诺。验证只读本地
