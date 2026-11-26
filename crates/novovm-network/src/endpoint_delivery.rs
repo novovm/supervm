@@ -2,6 +2,7 @@
 //! No custody database or storage receipt: the application owns E2EE and ACKs.
 use anyhow::{ensure, Result};
 use futures_util::future::BoxFuture;
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     sync::{
@@ -51,10 +52,14 @@ struct Route {
     handler: EndpointDeliveryHandlerV1,
     active: Arc<AtomicBool>,
 }
+// Exclusive mailbox registrations rotate their single writer. A device
+// destination can instead hold independently revocable write grants.
+type RouteKey = ([u8; 32], Option<[u8; 32]>);
+
 #[derive(Default)]
 struct State {
     generation: u64,
-    routes: BTreeMap<[u8; 32], Route>,
+    routes: BTreeMap<RouteKey, Route>,
 }
 #[derive(Default)]
 pub(crate) struct EndpointDeliveryRegistryV1(Arc<Mutex<State>>);
@@ -62,7 +67,7 @@ pub(crate) struct EndpointDeliveryRegistryV1(Arc<Mutex<State>>);
 /// Dropping the owner registration withdraws only its own generation.
 pub struct EndpointDeliveryRegistrationV1 {
     state: Weak<Mutex<State>>,
-    mailbox: [u8; 32],
+    key: RouteKey,
     generation: u64,
     active: Arc<AtomicBool>,
 }
@@ -73,10 +78,10 @@ impl Drop for EndpointDeliveryRegistrationV1 {
             if let Ok(mut state) = state.lock() {
                 if state
                     .routes
-                    .get(&self.mailbox)
+                    .get(&self.key)
                     .is_some_and(|r| r.generation == self.generation)
                 {
-                    state.routes.remove(&self.mailbox);
+                    state.routes.remove(&self.key);
                 }
             }
         }
@@ -89,6 +94,26 @@ impl EndpointDeliveryRegistryV1 {
         write: [u8; 32],
         handler: EndpointDeliveryHandlerV1,
     ) -> Result<EndpointDeliveryRegistrationV1> {
+        self.register_route(mailbox, write, handler, None)
+    }
+
+    pub(crate) fn register_grant(
+        &self,
+        destination: [u8; 32],
+        write: [u8; 32],
+        handler: EndpointDeliveryHandlerV1,
+    ) -> Result<EndpointDeliveryRegistrationV1> {
+        let tag = Sha256::digest(write).into();
+        self.register_route(destination, write, handler, Some(tag))
+    }
+
+    fn register_route(
+        &self,
+        mailbox: [u8; 32],
+        write: [u8; 32],
+        handler: EndpointDeliveryHandlerV1,
+        tag: Option<[u8; 32]>,
+    ) -> Result<EndpointDeliveryRegistrationV1> {
         let write = Zeroizing::new(write);
         ensure!(
             mailbox != [0; 32] && *write != [0; 32],
@@ -98,8 +123,15 @@ impl EndpointDeliveryRegistryV1 {
             .0
             .lock()
             .map_err(|_| anyhow::anyhow!("endpoint delivery registry unavailable"))?;
+        let key = (mailbox, tag);
+        if let Some(((address, existing), _)) = state.routes.range((mailbox, None)..).next() {
+            ensure!(
+                *address != mailbox || existing.is_some() == tag.is_some(),
+                "endpoint delivery address registration mode"
+            );
+        }
         ensure!(
-            state.routes.contains_key(&mailbox) || state.routes.len() < MAX_ROUTES,
+            state.routes.contains_key(&key) || state.routes.len() < MAX_ROUTES,
             "endpoint delivery route capacity"
         );
         let generation = state
@@ -109,7 +141,7 @@ impl EndpointDeliveryRegistryV1 {
         state.generation = generation;
         let active = Arc::new(AtomicBool::new(true));
         if let Some(old) = state.routes.insert(
-            mailbox,
+            key,
             Route {
                 generation,
                 write,
@@ -121,7 +153,7 @@ impl EndpointDeliveryRegistryV1 {
         }
         Ok(EndpointDeliveryRegistrationV1 {
             state: Arc::downgrade(&self.0),
-            mailbox,
+            key,
             generation,
             active,
         })
@@ -142,8 +174,22 @@ impl EndpointDeliveryRegistryV1 {
                 .0
                 .lock()
                 .map_err(|_| anyhow::anyhow!("endpoint delivery registry unavailable"))?;
-            let Some(route) = state.routes.get(&request.mailbox) else {
+            let mailbox = request.mailbox;
+            let Some(((address, mode), first)) = state.routes.range((mailbox, None)..).next()
+            else {
                 return Ok(EndpointDeliveryResultV1::Unavailable);
+            };
+            if *address != mailbox {
+                return Ok(EndpointDeliveryResultV1::Unavailable);
+            };
+            let route = if mode.is_none() {
+                first
+            } else {
+                let tag = Sha256::digest(write).into();
+                let Some(route) = state.routes.get(&(mailbox, Some(tag))) else {
+                    return Ok(EndpointDeliveryResultV1::Rejected);
+                };
+                route
             };
             if !bool::from(route.write.as_ref().ct_eq(write)) {
                 return Ok(EndpointDeliveryResultV1::Rejected);

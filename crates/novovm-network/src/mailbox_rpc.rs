@@ -359,6 +359,18 @@ impl MailboxServiceV1 {
         self.endpoint_delivery.register(mailbox, write, handler)
     }
 
+    /// Register one writer on a shared live-device destination. Replacing or
+    /// dropping its guard leaves all other grants on that destination live.
+    pub fn register_endpoint_delivery_grant_v1(
+        &self,
+        destination: [u8; 32],
+        write: [u8; 32],
+        handler: crate::endpoint_delivery::EndpointDeliveryHandlerV1,
+    ) -> Result<crate::endpoint_delivery::EndpointDeliveryRegistrationV1> {
+        self.endpoint_delivery
+            .register_grant(destination, write, handler)
+    }
+
     /// Local owner publication only. The directory journal remains authoritative;
     /// this is a single current snapshot for authenticated native clients.
     pub fn update_native_record_v7(&self, record: PeerSignedRelayRecordV1) -> Result<()> {
