@@ -9,7 +9,7 @@ mod uca_recovery;
 use super::*;
 use novovm_protocol::native_query::{AccountId, Answer, Balance, Query, ReceiptState, Status};
 
-fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer> {
+pub(super) fn query(client: &mut NativeApplicationClient, selector: Query) -> Result<Answer> {
     query_until(
         client,
         selector,

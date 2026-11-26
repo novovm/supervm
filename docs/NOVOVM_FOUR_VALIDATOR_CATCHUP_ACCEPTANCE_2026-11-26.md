@@ -38,6 +38,8 @@ cargo test --locked -p novovm-node --features iroh-transport --lib aoem_qc_binds
 
 多机复验沿上述顺序，最小环境为四台各自独立的隔离进程或主机、四份新测试库及测试身份、同一固定测试创世、可双向认证的测试端口、一个仅提交新测试输入的钱包和每台节点的 UTC 日志。只中断隔离节点；形成权重门槛的证据来自实际验签和投票归集。跨机结果需逐端回传来源、原签名 outbox 摘要及四端最终状态，通讯切换验收与共识追赶分别取证。
 
+[A/C/D 三机验收入口](NOVOVM_DISTRIBUTED_VALIDATOR_CATCHUP.md)允许 A 托管两个隔离进程，C、D 各托管一个。各端在统一窗口前单独执行 READY。
+
 ## 构建与日志指纹
 
 - 真实 Node EXE SHA-256 `104c8a2f4fb1cfd5938821604a304cfbc72828893b1854beed504b2d07370757`

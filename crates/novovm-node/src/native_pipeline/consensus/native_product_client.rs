@@ -16,6 +16,9 @@ use novovm_network::novorudp::{
 };
 use std::net::UdpSocket;
 
+#[cfg(windows)]
+#[path = "native_product_distributed.rs"]
+mod distributed;
 #[path = "native_product_queries.rs"]
 mod queries;
 pub(super) use queries::QueryTimeout;
@@ -37,6 +40,22 @@ fn connect(
     set: Arc<ValidatorSet>,
 ) -> Result<NativeApplicationClient> {
     let config: ResidentConfig = serde_json::from_slice(&fs::read(&nodes.configs[ingress])?)?;
+    connect_fixture(
+        &config,
+        set,
+        process_identities()?.client_transport.clone(),
+        transport_key(ingress).public_key(),
+        "127.0.0.1:0".parse()?,
+    )
+}
+
+fn connect_fixture(
+    config: &ResidentConfig,
+    set: Arc<ValidatorSet>,
+    key: TransportIdentity,
+    peer_key: &[u8],
+    bind_addr: SocketAddr,
+) -> Result<NativeApplicationClient> {
     let asset_accounts = config.uca_initialization.is_some();
     let codec = native_decode_limits(
         if asset_accounts { config.batch_size } else { 2 },
@@ -44,7 +63,6 @@ fn connect(
     );
     let message_bytes = codec.message_bytes;
     // This device key is NOT in genesis and is never added to a node allowlist.
-    let key = process_identities()?.client_transport.clone();
     ensure!(
         config.genesis.validators.iter().all(|v| {
             v.public_key != key.public_key() && v.transport_public_key != key.public_key()
@@ -52,10 +70,10 @@ fn connect(
         "fixture client is a validator"
     );
     NativeApplicationClient::connect(
-        UdpSocket::bind("127.0.0.1:0")?,
+        UdpSocket::bind(bind_addr)?,
         key,
         NativePeer {
-            key: transport_key(ingress).public_key().to_vec(),
+            key: peer_key.to_vec(),
             address: config.udp_addr,
         },
         MessageDomain {
