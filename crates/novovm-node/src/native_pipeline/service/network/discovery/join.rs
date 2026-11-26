@@ -28,7 +28,8 @@ pub use chain_sync::{
     verify_installed_uca_execution,
 };
 pub use read_snapshot_service::{
-    serve_installed_public_read_snapshot, serve_installed_read_snapshot,
+    run_installed_public_read_snapshot, serve_installed_public_read_snapshot,
+    serve_installed_read_snapshot,
 };
 
 #[cfg(test)]

@@ -3,8 +3,10 @@ param(
     [string]$ProfilePath,
     [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ProfileSha256,
     [Parameter(Mandatory)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$ReleaseManifestSha256,
-    [ValidateSet('Install','Plan')][string]$Action = 'Install',
-    [string]$PackageRoot = (Join-Path $PSScriptRoot '..\..\..')
+    [ValidateSet('Install','Plan','StopPublicRead')][string]$Action = 'Install',
+    [string]$PackageRoot = (Join-Path $PSScriptRoot '..\..\..'),
+    [UInt64]$PublicReadSnapshotHeight,
+    [UInt64]$PublicReadMaxStateNodes
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -132,20 +134,41 @@ if ($ProfilePath) {
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $taskName = 'NOVOVM-Native-Client-' + $identity.User.Value
-$arguments = '"' + $profile + '" follow-state ' + $ProfileSha256.ToLowerInvariant()
+$profilePin = $ProfileSha256.ToLowerInvariant()
+$followArguments = '"' + $profile + '" follow-state ' + $profilePin
+$publicRead = $PSBoundParameters.ContainsKey('PublicReadSnapshotHeight')
+if ($publicRead -ne $PSBoundParameters.ContainsKey('PublicReadMaxStateNodes') -or
+    ($publicRead -and (!$PublicReadSnapshotHeight -or !$PublicReadMaxStateNodes))) {
+    throw 'Public reading requires both an explicit finalized height and a positive state node limit.'
+}
+if ($Action -eq 'StopPublicRead' -and !$publicRead) { throw 'Specify the installed public read height and node limit.' }
+$arguments = $followArguments
+$stopMarker = $null
+if ($publicRead) {
+    $local = [Environment]::GetFolderPath('LocalApplicationData')
+    if (![IO.Path]::IsPathRooted($local)) { throw 'Current user LocalAppData directory required.' }
+    $stopMarker = Join-Path $local "NOVOVM/client-control/public-read-$profilePin.stop"
+    $arguments = '"' + $profile + '" run-public-read-snapshot ' + $profilePin + ' ' +
+        $PublicReadSnapshotHeight.ToString([Globalization.CultureInfo]::InvariantCulture) + ' ' +
+        $PublicReadMaxStateNodes.ToString([Globalization.CultureInfo]::InvariantCulture) + ' "' + $stopMarker + '"'
+}
 $directory = Split-Path -Parent $program
 $plan = [ordered]@{ task = $taskName; startup = 'current-user-logon'; program = $program;
     arguments = $arguments; working_directory = $directory; principal_sid = $identity.User.Value;
     installed_release = $installedRelease }
+if ($publicRead) { $plan.public_read_stop_marker = $stopMarker }
 if ($Action -eq 'Plan') { $plan | ConvertTo-Json; return }
 
-$sourceProfile = if ($installedRelease) { Join-Path $root $profileEntry } else { $profile }
-& (Join-Path $root $entryPoint) $sourceProfile check-installed-profile $ProfileSha256 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw 'Native Client rejected the issued discovery profile before installation.'
+if ($Action -eq 'Install') {
+    $sourceProfile = if ($installedRelease) { Join-Path $root $profileEntry } else { $profile }
+    & (Join-Path $root $entryPoint) $sourceProfile check-installed-profile $ProfileSha256 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Native Client rejected the issued discovery profile before installation.'
+    }
 }
 
 $existing = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
+$switchToPublicRead = $false
 if ($existing) {
     $user = $existing.Principal.UserId
     $sid = if ($user -match '^S-1-') { $user } else {
@@ -153,15 +176,50 @@ if ($existing) {
     }
     if ($sid -ne $identity.User.Value -or [int]$existing.Principal.LogonType -ne 3 -or
         [int]$existing.Principal.RunLevel -ne 0 -or @($existing.Actions).Count -ne 1 -or
-        $existing.Actions[0].Execute -ne $program -or $existing.Actions[0].Arguments -cne $arguments -or
+        $existing.Actions[0].Execute -ne $program -or
         $existing.Actions[0].WorkingDirectory -ne $directory -or @($existing.Triggers).Count -ne 1 -or
         $existing.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') {
         throw 'Existing task uses different startup settings. Preserve and review it before replacing it.'
     }
+    if ($existing.Actions[0].Arguments -cne $arguments) {
+        $switchToPublicRead = $Action -eq 'Install' -and $publicRead -and
+            $existing.State -eq 'Ready' -and $existing.Actions[0].Arguments -ceq $followArguments
+        if (!$switchToPublicRead) {
+            throw 'Existing task uses different arguments. Stop a running sync task before opting in.'
+        }
+    }
+}
+$marker = if ($stopMarker) { Get-Item -LiteralPath $stopMarker -Force -ErrorAction SilentlyContinue }
+if ($marker -and ($marker.PSIsContainer -or ($marker.Attributes -band [IO.FileAttributes]::ReparsePoint))) {
+    throw 'Invalid public read stop marker.'
+}
+if ($Action -eq 'StopPublicRead') {
+    if (!$existing) { throw 'Installed public read task was not found.' }
+    if (!$marker) {
+        New-Item -ItemType Directory -Path (Split-Path -Parent $stopMarker) -Force | Out-Null
+        $file = [IO.File]::Open($stopMarker, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+        $file.Dispose()
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ((Get-ScheduledTask -TaskName $taskName -TaskPath '\').State -eq 'Running') {
+        if ([DateTime]::UtcNow -ge $deadline) { throw 'Public read task has not yet acknowledged stop.' }
+        Start-Sleep -Milliseconds 250
+    }
+    $plan | ConvertTo-Json
+    return
+}
+if ($marker) {
+    if ($existing -and $existing.State -eq 'Running') { throw 'Public read stop is still pending.' }
+    Remove-Item -LiteralPath $stopMarker
 }
 if ($installedRelease) { Install-ClientFiles $root $installedRelease $files }
-if (!$existing) {
+if (!$existing -or $switchToPublicRead) {
     $nativeAction = New-ScheduledTaskAction -Execute $program -Argument $arguments -WorkingDirectory $directory
+}
+if ($switchToPublicRead) {
+    Set-ScheduledTask -TaskName $taskName -TaskPath '\' -Action $nativeAction | Out-Null
+}
+if (!$existing) {
     $principal = New-ScheduledTaskPrincipal -UserId $identity.Name -LogonType Interactive -RunLevel Limited
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity.Name
     $settings = New-ScheduledTaskSettingsSet -Hidden -StartWhenAvailable -AllowStartIfOnBatteries `

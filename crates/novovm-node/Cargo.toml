@@ -7,7 +7,7 @@ autobins = false
 
 [features]
 default = []
-iroh-transport = ["novovm-network/iroh-transport", "novovm-relay/iroh-transport", "dep:tempfile"]
+iroh-transport = ["novovm-network/iroh-transport", "novovm-relay/iroh-transport", "dep:tempfile", "tokio/signal"]
 # Explicit historical comparison only; never a native release listener.
 historical-http = []
 

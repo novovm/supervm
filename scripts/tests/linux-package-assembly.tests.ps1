@@ -545,6 +545,24 @@ if ($windowsPackage) {
       (Get-FileHash -LiteralPath $bundledProfile).Hash -ne $profilePin -or (Test-Path -LiteralPath $installed)) {
     throw 'Bundled installer plan lost the portable Client, verified issuer bytes or no-write behavior'
   }
+  $residentPlan = & $installer -Action Plan -ReleaseManifestSha256 $pin `
+    -PublicReadSnapshotHeight 42 -PublicReadMaxStateNodes 19 | ConvertFrom-Json
+  if ($residentPlan.task -ne $plan.task -or $residentPlan.program -ne $plan.program -or
+      $residentPlan.arguments -cne ('"' + (Join-Path $installed 'config/discovery/installed-discovery.json') +
+      '" run-public-read-snapshot ' + $profilePin + ' 42 19 "' + $residentPlan.public_read_stop_marker + '"') -or
+      $plan.PSObject.Properties['public_read_stop_marker'] -or
+      (Test-Path -LiteralPath $residentPlan.public_read_stop_marker) -or
+      (Test-Path -LiteralPath $installed)) {
+    throw 'Explicit public read plan must use the same task and pinned installation without writing files'
+  }
+  $partialOptInRejected = $false
+  try {
+    & $installer -Action Plan -ReleaseManifestSha256 $pin -PublicReadSnapshotHeight 42 | Out-Null
+  } catch {
+    if ($_.Exception.Message -notlike '*requires both an explicit finalized height*') { throw }
+    $partialOptInRejected = $true
+  }
+  if (!$partialOptInRejected) { throw 'Partial public read opt-in was accepted' }
   $installedFixtureCommand = Join-Path $bundled "bin/novovm-native-client$binarySuffix"
   Set-Item -LiteralPath ('Function:\global:' + $installedFixtureCommand) -Value $clientProfilePreflight
   $fixtureState.clientProfileMode = 'install-reject'

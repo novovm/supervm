@@ -1,13 +1,15 @@
 //! Short public read leases on the existing authenticated discovery RPC.
 use super::super::super::{query, DialCandidate, Exchange, Pins, PublicReadPublication};
 use super::super::{
-    fingerprint, prepare_seed_candidates, read_seeds, wall_ms, Profile, SeedCandidates,
+    fingerprint, prepare_seed_candidates, read_seeds, seed_candidate, wall_ms, Profile,
+    SeedCandidates,
 };
 use crate::native_pipeline::service::network::{publication_endpoint, NetworkFailures};
 use anyhow::{ensure, Result};
 use novovm_network::{
     discovery_control::{encode_public_read_locator_v1, public_read_locator_id_v1},
     iroh_transport::{approved_read_relay, IrohScopeV1},
+    product_directory::PeerSignedRelayRecordV1,
     product_overlay::TransportIdentity,
     product_service_lease::IrohServiceEndpointV1,
 };
@@ -24,27 +26,34 @@ const SIGNED_LEASE: Duration = Duration::from_secs(120);
 const RENEW: Duration = Duration::from_secs(15);
 const RETRY: Duration = Duration::from_secs(2);
 
-pub(super) struct Publication {
-    sources: [Vec<DialCandidate>; 2],
-    relays: Vec<String>,
+pub(super) struct Publication<'a> {
+    base: &'a Path,
+    profile: &'a Profile,
+    resident: bool,
     checkpoint_expires: Option<u64>,
 }
 
-impl Publication {
+impl<'a> Publication<'a> {
     pub(super) fn new(
-        profile: &Profile,
-        base: &Path,
+        profile: &'a Profile,
+        base: &'a Path,
         identity: &TransportIdentity,
+        resident: bool,
     ) -> Result<Self> {
-        let sources = prepare_seed_candidates(profile, identity, read_seeds(base, profile))?
-            .map(|candidate| eligible_routes(candidate.ok(), &profile.relays));
+        let sources = prepare_seed_candidates(profile, identity, read_seeds(base, profile))?;
         ensure!(
-            sources.iter().any(|routes| !routes.is_empty()),
+            resident
+                || sources.into_iter().any(|candidate| !eligible_routes(
+                    candidate.ok(),
+                    &profile.relays
+                )
+                .is_empty()),
             "public read serving requires an authenticated bootstrap over an approved relay"
         );
         Ok(Self {
-            sources,
-            relays: profile.relays.clone(),
+            base,
+            profile,
+            resident,
             checkpoint_expires: profile
                 .verification
                 .as_ref()
@@ -59,15 +68,22 @@ impl Publication {
         identity: &TransportIdentity,
         pins: Pins,
         height: u64,
-        deadline: Instant,
+        deadline: Option<Instant>,
     ) -> Result<()> {
         let instance = rand::random();
         let failures = Arc::new(NetworkFailures::default());
         let mut acknowledgements = false;
+        let keys = self
+            .profile
+            .seeds
+            .each_ref()
+            .map(|seed| seed.transport_key.clone());
+        let mut learned: [Option<PeerSignedRelayRecordV1>; 2] = [None, None];
         loop {
             let turn = Instant::now();
             let now = wall_ms()?;
-            let remaining = deadline.saturating_duration_since(Instant::now());
+            let remaining =
+                deadline.map_or(SIGNED_LEASE, |end| end.saturating_duration_since(turn));
             let ttl = u64::try_from(remaining.min(SIGNED_LEASE).as_millis())?;
             let expires = now
                 .checked_add(ttl)
@@ -82,11 +98,31 @@ impl Publication {
                     instance,
                     address: scope.connected_relay_address()?,
                 },
-                Some(&self.relays),
+                Some(&self.profile.relays),
                 None,
             )?;
             let mut accepted = 0;
-            if let Some(endpoint) = endpoint {
+            let mut seeds = read_seeds(self.base, self.profile);
+            for (index, seed) in seeds.iter_mut().enumerate() {
+                if let Some(record) = learned[index]
+                    .as_ref()
+                    .filter(|record| record.expires_at_ms > now)
+                {
+                    let current_disk_record = seed.as_ref().is_ok_and(|disk| {
+                        disk.sequence >= record.sequence
+                            && disk.relay_public_key == keys[index]
+                            && disk.expires_at_ms > now
+                            && seed_candidate(disk.clone(), pins, identity, now).is_ok()
+                    });
+                    if !current_disk_record {
+                        *seed = Ok(record.clone());
+                    }
+                }
+            }
+            let sources = prepare_seed_candidates(self.profile, identity, seeds);
+            if let (Some(endpoint), Ok(sources)) = (endpoint, sources) {
+                let sources =
+                    sources.map(|candidate| eligible_routes(candidate.ok(), &self.profile.relays));
                 let record = super::sign_relay_record_v1(
                     identity,
                     public_read_locator_id_v1(pins),
@@ -103,27 +139,47 @@ impl Publication {
                 let first = publish_to_source(
                     scope,
                     identity,
-                    &self.sources[0],
+                    &sources[0],
                     pins,
                     lease.clone(),
+                    self.resident.then_some(keys[1].as_slice()),
                     failures.clone(),
                 );
                 let second = publish_to_source(
                     scope,
                     identity,
-                    &self.sources[1],
+                    &sources[1],
                     pins,
                     lease,
+                    self.resident.then_some(keys[0].as_slice()),
                     failures.clone(),
                 );
                 let wall_limit = turn + Duration::from_millis(expires - now);
-                let limit = deadline.min(wall_limit);
-                if let Ok((first, second)) =
-                    tokio::time::timeout_at(limit.into(), async { tokio::join!(first, second) })
-                        .await
+                let limit = deadline.map_or(wall_limit, |end| end.min(wall_limit));
+                let (first, second) = tokio::join!(
+                    tokio::time::timeout_at(limit.into(), first),
+                    tokio::time::timeout_at(limit.into(), second),
+                );
+                let mut confirmed = Vec::new();
+                for (index, confirmation) in [second.ok().flatten(), first.ok().flatten()]
+                    .into_iter()
+                    .enumerate()
                 {
-                    accepted = usize::from(first) + usize::from(second);
+                    if let Some((source, records)) = confirmation {
+                        confirmed.push(source);
+                        if let Some(record) = records.into_iter().find(|record| {
+                            record.relay_public_key == keys[index] && record.expires_at_ms > now
+                        }) {
+                            if learned[index]
+                                .as_ref()
+                                .is_none_or(|old| record.sequence > old.sequence)
+                            {
+                                learned[index] = Some(record);
+                            }
+                        }
+                    }
                 }
+                accepted = confirmed.len();
                 if accepted != 0 {
                     acknowledgements = true;
                     println!(
@@ -132,23 +188,25 @@ impl Publication {
                             "event":"public_read_lease_published", "height":height,
                             "transport_identity_sha256":fingerprint(identity.public_key()),
                             "sequence":record.sequence, "expires_at_ms":expires,
-                            "acknowledged_sources":accepted, "scope":"relay_only",
+                            "acknowledged_sources":accepted,
+                            "acknowledged_source_sha256":confirmed,
+                            "scope":"relay_only",
                         })
                     );
                 }
             }
             let wait = if accepted == 0 { RETRY } else { RENEW };
-            let stop = deadline.min(
-                turn + Duration::from_millis(
+            let retry = turn
+                + Duration::from_millis(
                     self.checkpoint_expires
                         .map_or(u64::MAX, |pin| pin.saturating_sub(now))
                         .min(wait.as_millis() as u64),
-                ),
-            );
+                );
+            let stop = deadline.map_or(retry, |end| end.min(retry));
             tokio::time::sleep_until(stop.into()).await;
         }
         ensure!(
-            acknowledgements,
+            self.resident || acknowledgements,
             "no authenticated bootstrap acknowledged a public read lease"
         );
         Ok(())
@@ -177,25 +235,31 @@ async fn publish_to_source(
     routes: &[DialCandidate],
     pins: Pins,
     lease: PublicReadPublication,
+    lookup: Option<&[u8]>,
     failures: Arc<NetworkFailures>,
-) -> bool {
+) -> Option<(String, Vec<PeerSignedRelayRecordV1>)> {
     for candidate in routes {
-        if query(
-            scope,
-            identity.clone(),
-            candidate.clone(),
-            pins,
-            Exchange::PublicReader(lease.clone()),
-            Vec::new(),
-            failures.clone(),
-        )
-        .await
-        .is_ok()
-        {
-            return true;
+        let request = |keys| {
+            query(
+                scope,
+                identity.clone(),
+                candidate.clone(),
+                pins,
+                Exchange::PublicReader(lease.clone()),
+                keys,
+                failures.clone(),
+            )
+        };
+        let result = request(lookup.map(<[u8]>::to_vec).into_iter().collect()).await;
+        let result = match result {
+            Err(_) if lookup.is_some() => request(Vec::new()).await,
+            value => value,
+        };
+        if let Ok(found) = result {
+            return Some((fingerprint(&candidate.key), found.records));
         }
     }
-    false
+    None
 }
 
 #[cfg(test)]
@@ -311,9 +375,11 @@ mod tests {
                                             std::slice::from_ref(&publish_route),
                                             pins,
                                             lease,
+                                            None,
                                             Arc::new(NetworkFailures::default())
                                         )
-                                        .await,
+                                        .await
+                                        .is_some(),
                                         "publication not acknowledged"
                                     );
                                     Ok(signed)
@@ -399,8 +465,17 @@ mod tests {
             "expected isolated height-42 test domain"
         );
         let pins = profile.pins();
-        let (identity, _) =
-            ephemeral_transport_identity(&profile.library, &profile.library_sha256)?;
+        let restart = std::env::var_os("NOVOVM_PUBLIC_READ_BOOTSTRAP_RESTART_TEST").is_some();
+        let identity = if restart {
+            novovm_relay::transport_identity::provision_transport_identity(
+                &stage.join("bootstrap.protected"),
+                pins.0,
+                &profile.library,
+                &profile.library_sha256,
+            )?
+        } else {
+            ephemeral_transport_identity(&profile.library, &profile.library_sha256)?.0
+        };
         let config = IrohConfigV1::new(&relays, nameserver)?.with_relay_only()?;
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build()?.block_on(async move {
@@ -415,12 +490,44 @@ mod tests {
                         ensure!(start.elapsed() < Duration::from_secs(25), "approved relay did not connect");
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     };
-                    let until = Instant::now() + Duration::from_secs(110);
+                    let until = Instant::now() + Duration::from_secs(if restart { 360 } else { 110 });
                     let store = Arc::new(Mutex::new(RendezvousStoreV1::new(rand::random(), until)?));
                     fs::write(stage.join("ready.tmp"), serde_json::to_vec(&serde_json::json!({
                         "contact": address, "transport_key": identity.public_key(),
                         "transport_sha256": fingerprint(identity.public_key()),
                     }))?)?;
+                    if restart {
+                        let now = wall_ms()?;
+                        let record = sign_relay_record_v1(
+                            &identity,
+                            novovm_network::discovery_control::native_locator_id_v1(pins),
+                            vec![IrohServiceEndpointV1 { instance: rand::random(), address }.endpoint()?],
+                            now,
+                            now + 120_000,
+                            now,
+                        )?;
+                        fs::write(stage.join("locator.tmp"), serde_json::to_vec(&record)?)?;
+                        fs::rename(stage.join("locator.tmp"), stage.join("locator.json"))?;
+                        let introducer = stage.join("introducer.json");
+                        if introducer.is_file() {
+                            use super::super::super::super::LocalLocators;
+                            use novovm_network::discovery_control::encode_node_locator_v1;
+                            let contact: serde_json::Value = serde_json::from_slice(&fs::read(introducer)?)?;
+                            let candidate = DialCandidate {
+                                key: serde_json::from_value(contact["transport_key"].clone())?,
+                                route: serde_json::from_value(contact["contact"].clone())?,
+                                source: "installed_contact",
+                                sequence: 0,
+                            };
+                            let ordinary = encode_node_locator_v1(&record, pins)?;
+                            query(
+                                scope, identity.clone(), candidate, pins,
+                                Exchange::Publisher(LocalLocators { ordinary, read_service: None }),
+                                Vec::new(), Arc::new(NetworkFailures::default()),
+                            ).await?;
+                            println!("isolated restarted bootstrap authenticated its rotated locator to the primary");
+                        }
+                    }
                     fs::rename(stage.join("ready.tmp"), stage.join("ready.json"))?;
                     let serve_streams = async {
                         loop {

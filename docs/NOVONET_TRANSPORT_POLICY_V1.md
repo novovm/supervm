@@ -60,6 +60,20 @@ Privacy-only 的发送、收件和回执只走合格隐私路径。缺少合格�
   Precommit QC。Client 调用现有 AOEM 重算结果，并逐项匹配区块签署的执行承诺。验证只读本地
   检查点，可与 `follow-state` 并行。归档包含原始签名交易和父状态数据，验收归档留在隔离目录。
 
+### 已同步 Client 的公开只读服务
+
+Windows 安装器默认由当前用户的登录任务运行 `follow-state`。已同步的设备可以用
+`-PublicReadSnapshotHeight <高度> -PublicReadMaxStateNodes <节点数>` 显式选择由同一个
+任务提供指定高度的已验快照。既有同步任务需要先停止才能切换。前台使用
+`novovm-native-client <profile> run-public-read-snapshot <profile-sha256> <高度> <节点数>`。
+公开读取任务校验原缓存并复用本机通信身份，只经发行配置允许的中继公布短租约。它会
+认证引导、采纳该域内由对应固定公钥签署的更新坐标，并定期续租。
+
+停止已安装的公开读取任务时，使用相同安装参数和 `-Action StopPublicRead`。前台可以
+用 Ctrl+C。任务退出会关闭读取端点。最低终结检查点到期也会停止签发并关闭端点。已从
+引导取得的租约仍受原有有效期约束。常驻任务提供明确选择的固定高度，继续同步请使用
+原 `follow-state`。原限时回环和限时公开读取命令仍可用于定向验收。
+
 ## 2026-11-07 当前最高归属：NOVOVM / NOVOCHAT共用主网唯一NOVONET
 
 用户明确要求所有NOVOVM网络能力统一由主网唯一NOVONET管理，避免交易与聊天重复开发。
