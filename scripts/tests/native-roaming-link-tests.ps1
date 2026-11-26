@@ -1,4 +1,16 @@
 # Offline vectors only. No adapters, processes, probes or captures are opened.
+$dnsAnswers = @(
+    [pscustomobject]@{Type='CNAME';NameHost='target.example.test'}
+    [pscustomobject]@{Type='A';IPAddress='203.0.113.3'}
+    [pscustomobject]@{Type='A';IPAddress='203.0.113.2'}
+)
+if ((Select-ApprovedRelayIPv4 $dnsAnswers @('203.0.113.2')) -cne '203.0.113.2') {
+    throw 'Approved IPv4 address was lost after a DNS alias'
+}
+if (Select-ApprovedRelayIPv4 $dnsAnswers @('203.0.113.4')) {
+    throw 'DNS answer outside the scoped capture addresses was accepted'
+}
+
 $leafBytes=[Text.Encoding]::UTF8.GetBytes('offline certificate report pin check')
 $leafPin=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($leafBytes))
 $report="Cert:-----BEGIN CERTIFICATE-----`n$([Convert]::ToBase64String($leafBytes))`n-----END CERTIFICATE-----"

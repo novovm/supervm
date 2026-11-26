@@ -220,6 +220,14 @@ function Receive-PeerWitness {
     }
 }
 
+function Select-ApprovedRelayIPv4($Answers, $ApprovedIPs) {
+    foreach ($answer in $Answers) {
+        # Resolve-DnsName can return CNAME records alongside the requested A records.
+        $address = $answer.PSObject.Properties['IPAddress']
+        if ($address -and $address.Value -cin $ApprovedIPs) { return [string]$address.Value }
+    }
+}
+
 # Only an explicitly authorized future hotspot preflight sends a source-bound HTTPS HEAD.
 function Save-HotspotPreflight($Configuration) {
     $source = @($Configuration.IPv4Address.IPAddress)
@@ -229,8 +237,8 @@ function Save-HotspotPreflight($Configuration) {
     foreach ($candidate in $m.approved_relays) {
         $uri = [uri]$candidate
         if ($uri.Scheme -ne 'https' -or $uri.Port -ne 443) { continue }
-        $addresses = @(Resolve-DnsName -DnsOnly -Type A -Name $uri.DnsSafeHost | Where-Object { $_.IPAddress -in $cap.approved_relay_ips })
-        if ($addresses.Count) { $relay = $uri.DnsSafeHost; $ip = $addresses[0].IPAddress; break }
+        $ip = Select-ApprovedRelayIPv4 @(Resolve-DnsName -DnsOnly -Type A -Name $uri.DnsSafeHost) $cap.approved_relay_ips
+        if ($ip) { $relay = $uri.DnsSafeHost; break }
     }
     if (!$relay) { throw 'No approved relay matches the scoped capture addresses' }
     $routes = @(Find-NetRoute -RemoteIPAddress $ip -LocalIPAddress $source[0])
