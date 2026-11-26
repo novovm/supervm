@@ -21,10 +21,10 @@ pwsh -NoProfile -File scripts/tests/capture-native-roaming.ps1 -Client $PinnedCl
 # Stop early from the control console only after collecting evidence:
 New-Item -ItemType File -Path (Join-Path $NewEvidence 'stop.request')
 
-python scripts/tests/verify-native-roaming-events.py --jsonl $StdoutJsonl --before $BeforeLine0 --after $AfterLine0 --client $ClientFingerprint --peer $PeerFingerprint --height $Height --state-root $Root --min-sequence $PostSwitchLocatorSequence
+python scripts/tests/verify-native-roaming-events.py --jsonl $StdoutJsonl --before $BeforeLine0 --after $AfterLine0 --client $ClientFingerprint --peer $PeerFingerprint --height $Height --state-root $Root --min-sequence $PostSwitchLocatorSequence --switch-utc-ms $PhysicalSwitchUnixMilliseconds
 python scripts/tests/verify-native-roaming-events.py --self-test
 ```
 
-The validator consumes original follow-state JSONL fields from chain_sync/follow.rs. It deliberately rejects an after-event without a qualifying signed-locator sequence, even when a static route verifies the expected root. It cannot attest physical path, PID, or locator issuance time by reading JSONL alone. This draft is not a cross-network test pass.
+Use the independently observed physical switch time in Unix milliseconds. The validator links the recovered state event to the exact peer and sequence of a `verified_locator_accepted` event. The Client emits that event after validating and persisting a new signed locator, with its signed issue and expiration times and a local UTC timestamp. Acceptance requires issuance after the switch, acceptance before recovery, and validity at recovery. A cached locator or a state event carrying only a sequence cannot satisfy this check. Physical path, process continuity, and the switch time still require their own raw evidence.
 
 To record Windows route selection to an approved peer IP, append `-PeerIp $ApprovedPeerIp` to the capture command. After the first verified-state event, create `route-before.request` in the private evidence directory. Wait for `route-before.json` before changing the network. After the switch and the next verified-state event, create `route-after.request` and wait for `route-after.json` before stopping. Both records carry UTC sampling bounds, Client PID and start time, and the selected source, interface, next hop and default gateways when available. Correlate those records with the Client events, signed-locator verification, and actual packet evidence on each physical interface.

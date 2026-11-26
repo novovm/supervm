@@ -94,7 +94,7 @@ impl Follower {
                 if let Ok(report) =
                     collect(active, self.identity.clone(), &self.profile, seeds).await
                 {
-                    self.locators.observe(report)?;
+                    self.observe_locators(report)?;
                     if let Some(discovered_native) = self.probe_native(failed.as_ref()).await {
                         native = Some(discovered_native);
                         continue;
@@ -290,7 +290,7 @@ impl Follower {
                         )
                         .await
                         {
-                            self.locators.observe(report)?;
+                            self.observe_locators(report)?;
                         }
                     }
                     if let Some(native) = self.probe_native(None).await {
@@ -330,8 +330,22 @@ impl Follower {
         Ok(Some(state))
     }
 
+    fn observe_locators(&mut self, report: DiscoveryReport) -> Result<()> {
+        for accepted in self.locators.observe(report)? {
+            self.emit(serde_json::json!({
+                "event":"verified_locator_accepted",
+                "peer_transport_sha256":accepted.peer_transport_sha256,
+                "locator_sequence":accepted.sequence,
+                "locator_issued_at_ms":accepted.issued_at_ms,
+                "locator_expires_at_ms":accepted.expires_at_ms,
+            }))?;
+        }
+        Ok(())
+    }
+
     fn emit(&self, mut event: serde_json::Value) -> Result<()> {
         event["transport_identity_sha256"] = fingerprint(self.identity.public_key()).into();
+        event["utc_unix_ms"] = wall_ms()?.into();
         let mut stdout = std::io::stdout().lock();
         writeln!(stdout, "{event}")?;
         stdout.flush()?;

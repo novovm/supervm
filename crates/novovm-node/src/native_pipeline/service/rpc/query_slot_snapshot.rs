@@ -1695,10 +1695,21 @@ fn test_installed_follow(
         has(records, "verified_state", "native_novorudp")
     })
     .context("initial authenticated native synchronization")?;
+    let cut_ms = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
     await_events(owner, false, &|records| {
         records.iter().any(|item| item["event"] == "retrying")
     })
     .context("lost native route with no available bootstrap records")?;
+    if signed_address {
+        use novovm_network::product_directory::PeerSignedRelayRecordV1;
+        owner
+            .until(|_| {
+                let current: PeerSignedRelayRecordV1 =
+                    serde_json::from_slice(&fs::read(live_seed)?)?;
+                Ok(current.issued_at_ms > cut_ms)
+            })
+            .context("wait for a signed locator issued after the isolated route cut")?;
+    }
     fs::copy(live_seed, &opened_seed)?;
     let recovered = if signed_address {
         let locator: novovm_network::product_directory::PeerSignedRelayRecordV1 =
@@ -1726,6 +1737,36 @@ fn test_installed_follow(
             ),
             "initial release route not observed"
         );
+        let recovered_index = records
+            .iter()
+            .position(|event| {
+                event["event"] == "verified_state"
+                    && event["native_peer_address"] == node_address
+                    && event["locator_sequence"].is_number()
+            })
+            .context("refreshed native state event missing")?;
+        let latest = &records[recovered_index];
+        let recovered_ms = latest["utc_unix_ms"].as_u64().context("state event time")?;
+        ensure!(
+            records[..recovered_index].iter().any(|event| {
+                event["event"] == "verified_locator_accepted"
+                    && event["peer_transport_sha256"] == latest["peer_transport_sha256"]
+                    && event["locator_sequence"] == latest["locator_sequence"]
+                    && event["locator_issued_at_ms"]
+                        .as_u64()
+                        .is_some_and(|issued| {
+                            issued > cut_ms
+                                && event["utc_unix_ms"].as_u64().is_some_and(|accepted| {
+                                    issued <= accepted && accepted <= recovered_ms
+                                })
+                        })
+                    && event["locator_expires_at_ms"]
+                        .as_u64()
+                        .is_some_and(|expiry| recovered_ms < expiry)
+            }),
+            "no verified post-cut locator matching the recovered route"
+        );
+        println!("isolated_native_cut_utc_ms={cut_ms}");
         records
     } else {
         await_events(owner, false, &|records| {
