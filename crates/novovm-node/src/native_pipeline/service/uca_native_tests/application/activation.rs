@@ -191,10 +191,54 @@ pub(super) fn run(
         assert_eq!(grant.not_before_height, grant_height);
         assert_eq!(grant.expires_at_height, grant_height + 20);
     }
+    let revoke_height = grant_height + 1;
+    let revoke = runtime.application_grant_signer_v1()?.sign(
+        ApplicationGrantIntentV1 {
+            expected_revision: 1,
+            valid_from_height: revoke_height,
+            action: ApplicationGrantActionV1::Revoke,
+            ..application.intent.clone()
+        },
+        &key.public_key,
+        &key.expanded_secret_key,
+    )?;
+    send_application(&mut nodes, &mut clients[ingress], &revoke)?;
+    let revoked = heads(&mut nodes, &mut clients, revoke_height, 0)?;
+    assert_ne!(revoked[0].state_root, published[0].state_root);
+    for grant in grant_views(&mut nodes, &mut clients, &selector, revoke_height)? {
+        assert_eq!(grant.revision, 2);
+        assert!(grant.revoked);
+        assert_eq!(grant.state_root, revoked[0].state_root);
+    }
+
+    // The original authorization is still within its signed height window,
+    // so rejection here depends on the published revision rather than expiry.
+    let Answer::Status(before) = query(&mut nodes, &mut clients[ingress], Query::Status)? else {
+        anyhow::bail!("native stale-authorization baseline unavailable");
+    };
+    assert!(before.current_height < application.intent.valid_until_height);
+    send_application(&mut nodes, &mut clients[ingress], &application)?;
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        ensure!(
+            Instant::now() < deadline,
+            "stale native authorization was not rejected"
+        );
+        if let Answer::Status(status) = query(&mut nodes, &mut clients[ingress], Query::Status)? {
+            assert_eq!(
+                (status.height, status.state_root),
+                (revoke_height, revoked[0].state_root)
+            );
+            if status.rejected_inputs > before.rejected_inputs {
+                break;
+            }
+        }
+    }
+    assert_eq!(heads(&mut nodes, &mut clients, revoke_height, 0)?, revoked);
     drop(clients);
     for node in nodes {
         node.node.shutdown()?;
     }
-    println!("Existing-store V5 activation and native UCA/NUAP publication survived a four-validator cold reopen");
+    println!("Existing-store V5 activation, authorization, cold reopen and stale grant rejection verified on four validators");
     Ok(())
 }
