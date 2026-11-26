@@ -106,6 +106,7 @@ fn config(size: usize) -> ResidentConfig {
         public_asset_receipt_proofs: false,
         public_state_sync: false,
         uca_initialization: None,
+        business_activation: None,
         workers: 1,
         execution_backend: Default::default(),
         signature_backend: Default::default(),

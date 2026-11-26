@@ -60,6 +60,7 @@ pub(super) fn inert_pipeline(
     (
         CandidatePipeline {
             config,
+            business_schedule: None,
             sender: Some(sender),
             worker: Some(thread::spawn(|| Ok(()))),
             io: None,
@@ -521,6 +522,7 @@ fn real_paused_compute_does_not_block_control_or_aoem_storage_queries() -> Resul
     let queries = io.read_client()?;
     let metadata = io.metadata_client()?;
     let pipeline = CandidatePipeline {
+        business_schedule: None,
         config: cfg,
         sender: Some(sender),
         worker: Some(worker),

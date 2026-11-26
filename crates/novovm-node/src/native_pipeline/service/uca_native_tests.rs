@@ -687,6 +687,7 @@ fn run_native_uca_service_fixture_with_versioned(
                 novonet_config_file: None,
                 genesis: genesis.clone(),
                 uca_initialization: Some(material.clone()),
+                business_activation: None,
                 workers: 2,
                 execution_backend: Default::default(),
                 signature_backend: config::test_signature_backend()?,

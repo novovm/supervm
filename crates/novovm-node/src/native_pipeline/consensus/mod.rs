@@ -7,6 +7,7 @@
 // Required source binding, quorum and recovery checks exercise these native
 // owners; archived passes/failures do not qualify the current deployment.
 pub mod bodies;
+pub mod business_activation;
 mod chain;
 pub mod crypto;
 mod journal;

@@ -95,6 +95,7 @@ pub fn initialize_persistent_state(mut config: ResidentConfig) -> Result<Offline
         config.profile == config::ORIGINAL_PROFILE
             && config.key_storage == NodeKeyStorage::ProtectedV1
             && config.uca_initialization.is_some()
+            && config.business_activation.is_none()
             && config.rpc_addr.is_none(),
         "offline initialization requires native_execution_tick, protected custody, approved UCA initialization and no RPC"
     );
@@ -207,7 +208,24 @@ impl ResidentNode {
         };
         #[cfg(feature = "iroh-transport")]
         let native_udp_address = transport.local_addr()?;
-        let pipeline = CandidatePipeline::start_with_initial_state(
+        let schedule = config
+            .business_activation
+            .as_ref()
+            .map(|activation| {
+                ensure!(
+                    mode == StartMode::Existing && config.uca_initialization.is_some(),
+                    "business activation requires the existing UCA chain database"
+                );
+                super::consensus::business_activation::BusinessSchedule::verify(
+                    activation,
+                    &template,
+                    &config.genesis.policy,
+                    &validators,
+                )
+            })
+            .transpose()?
+            .map(Arc::new);
+        let mut pipeline = CandidatePipeline::start_with_initial_state(
             pipeline_config,
             match mode {
                 StartMode::CreateNew => OpenMode::CreateNew,
@@ -215,6 +233,7 @@ impl ResidentNode {
             },
             initial,
         )?;
+        pipeline.business_schedule = schedule;
         #[cfg(feature = "iroh-transport")]
         let transport_identity = identities.transport.clone();
         let result = start_native(

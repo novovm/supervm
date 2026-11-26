@@ -73,6 +73,9 @@ pub struct ResidentConfig {
     /// switch. Omission preserves the original development reference contract.
     #[serde(default)]
     pub uca_initialization: Option<uca_genesis::UcaInitializationConfigV2>,
+    #[serde(default)]
+    pub business_activation:
+        Option<crate::native_pipeline::consensus::business_activation::BusinessActivationConfig>,
     /// AOEM ingress workers, not the V2 semantic callback pool size. The latter
     /// uses AOEM_SEMANTIC_GRAPH_V2_WORKERS (or available parallelism) at context
     /// creation. Co-located validators need an explicit process resource budget;
@@ -898,6 +901,7 @@ mod tests {
                 .collect(),
             genesis,
             uca_initialization: None,
+            business_activation: None,
             workers: 2,
             execution_backend: Default::default(),
             signature_backend: Default::default(),

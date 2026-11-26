@@ -537,8 +537,7 @@ impl CandidateBodies {
     }
 }
 
-// Original controller parent/business checks, unchanged. Slot/time are part of
-// the body identity and execution statement, never inferred from arrival time.
+// Slot/time are part of the body identity and execution statement.
 fn matches_context(body: &BatchContext, pin: &BatchContext, progress: &RoundProgress) -> bool {
     let context = progress.context();
     let parent = progress.parent();
@@ -551,8 +550,12 @@ fn matches_context(body: &BatchContext, pin: &BatchContext, progress: &RoundProg
         && body.parent_state_root == parent.state_root
         && body.parent_receipt_root == parent.receipt_batch_commitment
         && body.parent_state_version == parent.state_version
-        && body.business_program == pin.business_program
-        && body.semantic_version == pin.semantic_version
-        && body.effect_contract == pin.effect_contract
-        && body.receipt_codec == pin.receipt_codec
+        && if let Some(schedule) = &progress.business_schedule {
+            schedule.matches(body, context, parent)
+        } else {
+            body.business_program == pin.business_program
+                && body.semantic_version == pin.semantic_version
+                && body.effect_contract == pin.effect_contract
+                && body.receipt_codec == pin.receipt_codec
+        }
 }

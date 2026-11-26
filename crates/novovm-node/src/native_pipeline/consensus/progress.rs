@@ -5,6 +5,7 @@
 //! Native I/O and AOEM work progress independently; only locally executed,
 //! owner-bound durable candidates may authorize a value vote.
 
+use super::business_activation::{matches_configured, BusinessSchedule};
 use super::collector::{CollectorLimits, VoteCollector};
 use super::journal::{CandidateLocator, ReplayEvidence, ReplayRecord, MAX_REPLAY_RECORDS};
 use super::message_evidence::{self, MessageDomain, VerifiedEvidence};
@@ -161,6 +162,7 @@ fn collector_limits_with_future_custody(
 /// journal ACK. The caller must retain a taken message until transport custody
 /// or an explicit retry/error; take_message is NOT delivery acknowledgement.
 pub struct RoundProgress {
+    pub(super) business_schedule: Option<Arc<BusinessSchedule>>,
     journal: ValidatorJournal,
     domain: MessageDomain,
     owner: Arc<()>,
@@ -225,6 +227,7 @@ impl RoundProgress {
         let mut this = Self {
             collector: VoteCollector::new(context, validators, journal.round(), vote_limits)?,
             pacemaker: Pacemaker::new(timeouts)?,
+            business_schedule: pipeline.business_schedule.clone(),
             journal,
             domain,
             owner: pipeline.owner_identity(),
@@ -543,6 +546,15 @@ impl RoundProgress {
             &self.domain.validators,
             &self.parent(),
         )?;
+        ensure!(
+            matches_configured(
+                self.business_schedule.as_deref(),
+                statement.execution_context(),
+                self.context(),
+                self.parent(),
+            ),
+            "candidate business rules are outside the approved activation boundary"
+        );
         let value = statement.hash();
         ensure!(
             !self.recovering

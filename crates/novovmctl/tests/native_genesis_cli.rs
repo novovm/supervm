@@ -425,6 +425,7 @@ fn maximum_shape_pretty_manifest_uses_text_budget_and_preserves_canonical_bound(
         novonet_config_file: None,
         genesis: startup_genesis,
         uca_initialization: Some(initialization),
+        business_activation: None,
         workers: 2,
         execution_backend: Default::default(),
         signature_backend: Default::default(),

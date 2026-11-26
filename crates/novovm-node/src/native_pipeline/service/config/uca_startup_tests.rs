@@ -203,6 +203,7 @@ fn actual_uca_startup_with_custody() -> Result<()> {
         novonet_config_file: None,
         genesis,
         uca_initialization: Some(material),
+        business_activation: None,
         workers: 2,
         execution_backend: Default::default(),
         signature_backend: Default::default(),

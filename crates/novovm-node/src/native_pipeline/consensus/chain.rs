@@ -737,6 +737,15 @@ impl ChainRecovery {
                 };
                 let stored = reply.context("decided chain candidate missing")?;
                 record.verify_candidate(&stored, &self.set)?;
+                ensure!(
+                    super::business_activation::matches_configured(
+                        pipeline.business_schedule.as_deref(),
+                        stored.context(),
+                        record.context(),
+                        self.current_parent,
+                    ),
+                    "archived block violates configured business activation"
+                );
                 let head = self.expected_head.as_ref().context("chain head missing")?;
                 ensure!(
                     record.point.height <= head.height,

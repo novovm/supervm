@@ -583,6 +583,8 @@ pub(crate) struct SignatureWork {
 
 pub struct CandidatePipeline {
     config: PipelineConfig,
+    pub(crate) business_schedule:
+        Option<Arc<super::consensus::business_activation::BusinessSchedule>>,
     sender: Option<mpsc::SyncSender<DriverMessage>>,
     worker: Option<JoinHandle<Result<()>>>,
     io: Option<Arc<IoService>>,
@@ -680,6 +682,7 @@ impl CandidatePipeline {
         let metadata = io.metadata_client()?;
         Ok(Self {
             config,
+            business_schedule: None,
             sender: Some(sender),
             worker: Some(worker),
             io: Some(io),
