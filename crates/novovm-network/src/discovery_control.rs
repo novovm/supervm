@@ -24,6 +24,8 @@ const DOMAIN: &[u8] = b"novochat.endpoint-rpc.v1\0";
 const STREAM: u64 = 0x4e434453;
 const HEADER: usize = 8 + 16 + 32 + 1 + 32 + 8 + 4 + 2;
 const MAX_BODY: usize = 4096;
+// Bound the complete plaintext RPC, including its domain and fixed header.
+const MAX_PUBLIC_READ_BODY: usize = 4096 - DOMAIN.len() - HEADER;
 const MAX_REQUESTS: u64 = 32;
 const REQUEST: &[u8; 8] = b"NCDISC01";
 const RESPONSE: &[u8; 8] = b"NCDISR01";
@@ -33,6 +35,9 @@ const ACK: u8 = 3;
 const CLOSE: u8 = 4;
 const NODE_PUT: u8 = 5;
 const NODE_GET: u8 = 6;
+const PUBLIC_READ_PUT: u8 = 7;
+const PUBLIC_READ_SAMPLE: u8 = 8;
+const PUBLIC_READ_GET: u8 = 9;
 const RECEIPT: u8 = 11;
 const RECORD: u8 = 12;
 const MISSING: u8 = 13;
@@ -40,6 +45,13 @@ const ACKED: u8 = 14;
 const NOT_ACKED: u8 = 15;
 const CLOSED: u8 = 16;
 const REJECTED: u8 = 17;
+const PUBLIC_READ_KEY: u8 = 18;
+
+/// A node that explicitly rejects the canonical optional sample RPC. The
+/// rejecting node has closed this stream; only earlier verified reads survive.
+#[derive(Debug, thiserror::Error)]
+#[error("public read referral sampling unavailable on this authenticated source")]
+pub struct PublicReadReferralUnsupported(());
 
 /// Only the discovery client's own authentication budget can construct this
 /// marker. It does not classify carrier, identity, observer or RPC failures as
@@ -60,8 +72,9 @@ const DIAGNOSTIC_LOOKUP_DELAY: Duration = Duration::from_secs(10);
 
 mod node_locator;
 pub use node_locator::{
-    decode_node_locator_v1, encode_node_locator_v1, native_chain_query_address,
-    native_chain_query_endpoint, native_locator_id_v1, NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE,
+    decode_node_locator_v1, decode_public_read_locator_v1, encode_node_locator_v1,
+    encode_public_read_locator_v1, native_chain_query_address, native_chain_query_endpoint,
+    native_locator_id_v1, public_read_locator_id_v1, NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE,
 };
 
 /// A typed transport IO error from a carrier operation. The private constructor
@@ -252,6 +265,7 @@ pub struct DiscoveryClient<'a, 'scope> {
     sequence: u64,
     failed: bool,
     node_locators: bool,
+    sampled_public_reader: bool,
 }
 impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
     /// Compose the original RPC with the caller's completed native handshake
@@ -271,6 +285,7 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
             sequence: 1,
             failed: false,
             node_locators: true,
+            sampled_public_reader: false,
         })
     }
     pub async fn connect(
@@ -342,6 +357,7 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
             sequence: 0,
             failed: false,
             node_locators: false,
+            sampled_public_reader: false,
         })
     }
     async fn request(
@@ -358,7 +374,15 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
         );
         ensure!(
             if self.node_locators {
-                matches!(kind, NODE_PUT | NODE_GET | CLOSE)
+                matches!(
+                    kind,
+                    NODE_PUT
+                        | NODE_GET
+                        | PUBLIC_READ_PUT
+                        | PUBLIC_READ_SAMPLE
+                        | PUBLIC_READ_GET
+                        | CLOSE
+                )
             } else {
                 matches!(kind, PUT | GET | ACK | CLOSE)
             },
@@ -393,6 +417,15 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
             reply.instance == self.instance && reply.request == request,
             "discovery reply binding differs"
         );
+        if matches!(kind, PUBLIC_READ_PUT | PUBLIC_READ_GET | PUBLIC_READ_SAMPLE) {
+            ensure!(
+                reply.body.len() <= MAX_PUBLIC_READ_BODY,
+                "public read response exceeds limit"
+            );
+        }
+        if kind == PUBLIC_READ_SAMPLE && reply.kind == REJECTED && reply.is_empty() {
+            return Err(PublicReadReferralUnsupported(()).into());
+        }
         ensure!(reply.kind != REJECTED, "discovery node rejected request");
         Ok(reply)
     }
@@ -416,6 +449,57 @@ impl<'a, 'scope> DiscoveryClient<'a, 'scope> {
         bytes: Vec<u8>,
     ) -> Result<()> {
         self.put_inner(NODE_PUT, [0; 32], revision, ttl_ms, bytes)
+            .await
+    }
+
+    /// Publish a purpose-signed read service on this authenticated owner slot.
+    /// Its storage revision is the same sequence authenticated by the signature.
+    pub async fn put_public_read_locator_v1(
+        &mut self,
+        signed_sequence: u64,
+        ttl_ms: u32,
+        bytes: Vec<u8>,
+    ) -> Result<()> {
+        ensure!(
+            bytes.len() <= MAX_PUBLIC_READ_BODY,
+            "public read locator exceeds limit"
+        );
+        self.put_inner(PUBLIC_READ_PUT, [0; 32], signed_sequence, ttl_ms, bytes)
+            .await
+    }
+
+    /// A key is only a lookup hint. Verify its purpose-bound locator before dialing.
+    pub async fn sample_public_read_key_v1(&mut self) -> Result<Option<Vec<u8>>> {
+        ensure!(
+            !self.sampled_public_reader,
+            "public reader already sampled in this session"
+        );
+        self.sampled_public_reader = true;
+        let reply = self
+            .request(PUBLIC_READ_SAMPLE, [0; 32], 0, 0, Vec::new())
+            .await?;
+        let key = if reply.kind == MISSING {
+            ensure!(reply.is_empty(), "nonempty missing public reader");
+            None
+        } else {
+            ensure!(
+                reply.kind == PUBLIC_READ_KEY
+                    && reply.revision == 0
+                    && reply.ttl_ms == 0
+                    && reply.slot == node_owner_id_v1(&reply.body)?,
+                "invalid public reader key"
+            );
+            Some(reply.body)
+        };
+        self.failed = false;
+        Ok(key)
+    }
+
+    pub async fn get_public_read_locator_v1(
+        &mut self,
+        publisher: &[u8],
+    ) -> Result<Option<RendezvousRecordV1>> {
+        self.get_inner(PUBLIC_READ_GET, node_owner_id_v1(publisher)?)
             .await
     }
 
@@ -613,8 +697,8 @@ where
 }
 
 /// Same framed RPC/store/budgets, after native authentication and explicit
-/// encrypted node-locator service selection. It never enumerates identities,
-/// grants consensus rights or opens the private-contact namespace.
+/// encrypted node-locator service selection. An optional sample returns one
+/// explicitly public read service. Private and ordinary lookup slots are excluded.
 pub async fn serve_authenticated_node_locators_v1(
     stream: &mut CarrierStreamV1<'_>,
     channel: BoundSecureChannelV1,
@@ -637,15 +721,8 @@ pub async fn serve_authenticated_node_locators_v1(
 }
 
 pub fn node_owner_id_v1(public_key: &[u8]) -> Result<[u8; 32]> {
-    ensure!(
-        public_key.len() == crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES
-            && public_key.iter().any(|byte| *byte != 0),
-        "native discovery publisher key shape"
-    );
-    let mut hash = Sha256::new();
-    hash.update(b"NOVONET/discovery-owner/ML-DSA-65/v2\0");
-    hash.update(public_key);
-    Ok(hash.finalize().into())
+    crate::opaque_rendezvous::publisher_id(public_key)
+        .context("native discovery publisher key shape")
 }
 
 async fn serve_finished_rpc<D>(
@@ -668,28 +745,30 @@ where
     let owner_id = node_owner_id_v1(&owner)?;
     let node_locators = locator_authority.is_some();
     let offset = u64::from(node_locators);
+    let mut sampled_public_reader = false;
     for sequence in (1 + offset)..=(MAX_REQUESTS + offset) {
         let request = receive(stream, &mut channel, sequence, REQUEST).await?;
         let mut locator = None;
         if let Some((domain, verifier)) = locator_authority {
-            if request.kind == NODE_PUT
+            if matches!(request.kind, NODE_PUT | PUBLIC_READ_PUT)
+                && (request.kind != PUBLIC_READ_PUT || request.body.len() <= MAX_PUBLIC_READ_BODY)
                 && request.slot == [0; 32]
                 && request.revision > 0
                 && (1..=30_000).contains(&request.ttl_ms)
             {
-                let wall: u64 = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)?
-                    .as_millis()
-                    .try_into()?;
-                if let Ok(record) =
+                let observed = Instant::now();
+                let observed_wall = SystemTime::now().duration_since(UNIX_EPOCH)?;
+                let wall = observed_wall.as_millis().try_into()?;
+                let decoded = if request.kind == PUBLIC_READ_PUT {
+                    decode_public_read_locator_v1(&request.body, &owner, domain, wall, verifier)
+                } else {
                     decode_node_locator_v1(&request.body, &owner, domain, wall, verifier)
-                {
-                    locator = Some((
-                        record.sequence,
-                        request
-                            .ttl_ms
-                            .min((record.expires_at_ms - wall).min(30_000) as u32),
-                    ));
+                };
+                if let Ok(record) = decoded {
+                    let ttl = Duration::from_millis(record.expires_at_ms)
+                        .saturating_sub(observed_wall)
+                        .min(Duration::from_millis(u64::from(request.ttl_ms)));
+                    locator = Some((record.sequence, observed + ttl));
                 }
             }
         }
@@ -749,39 +828,58 @@ where
             let now = Instant::now();
             // Even CLOSE and malformed operations do not bypass instance expiry.
             store.stats(now)?;
+            // Signature verification and lock contention consume the advertised lease.
+            let locator = locator
+                .map(|(seq, expiry)| (seq, expiry.saturating_duration_since(now)))
+                .filter(|(_, remaining)| remaining.as_millis() > 0);
             let mut reply = request.empty(REJECTED);
             match request.kind {
-                PUT | NODE_PUT
-                    if (request.kind == NODE_PUT) == node_locators
+                PUT | NODE_PUT | PUBLIC_READ_PUT
+                    if (request.kind != PUT) == node_locators
                         && (!node_locators || request.slot == [0; 32])
                         && request.revision > 0
                         && (1..=30_000).contains(&request.ttl_ms)
                         && (!node_locators || locator.is_some()) =>
                 {
                     let ttl = Duration::from_millis(u64::from(request.ttl_ms));
-                    let stored = if let Some((sequence, ttl_ms)) = locator {
+                    let stored = if let Some((sequence, remaining)) = locator {
                         // Existing public entries in this instance have already
                         // passed the signed codec. The unsigned RPC revision cannot
                         // roll their signed sequence back or overwrite an equal
                         // sequence with different signed content.
-                        let prior = store.node_locator_v1(owner_id, now)?;
-                        if prior.as_ref().is_some_and(|prior| {
-                            let prior_sequence = node_locator::signed_sequence(&prior.ciphertext);
-                            prior_sequence.is_none_or(|prior_sequence| {
-                                prior_sequence > sequence
-                                    || (prior_sequence == sequence
-                                        && prior.ciphertext != request.body)
-                            })
-                        }) {
-                            Err(crate::opaque_rendezvous::RendezvousErrorV1::InvalidRecord)
+                        if request.kind == PUBLIC_READ_PUT {
+                            if sequence == request.revision {
+                                store.put_public_read_locator_v1(
+                                    &owner,
+                                    sequence,
+                                    remaining,
+                                    request.body,
+                                    now,
+                                )
+                            } else {
+                                Err(crate::opaque_rendezvous::RendezvousErrorV1::InvalidRecord)
+                            }
                         } else {
-                            store.put_node_locator_v1(
-                                owner_id,
-                                request.revision,
-                                Duration::from_millis(u64::from(ttl_ms)),
-                                request.body,
-                                now,
-                            )
+                            let prior = store.node_locator_v1(owner_id, now)?;
+                            if prior.as_ref().is_some_and(|prior| {
+                                let prior_sequence =
+                                    node_locator::signed_sequence(&prior.ciphertext);
+                                prior_sequence.is_none_or(|prior_sequence| {
+                                    prior_sequence > sequence
+                                        || (prior_sequence == sequence
+                                            && prior.ciphertext != request.body)
+                                })
+                            }) {
+                                Err(crate::opaque_rendezvous::RendezvousErrorV1::InvalidRecord)
+                            } else {
+                                store.put_node_locator_v1(
+                                    owner_id,
+                                    request.revision,
+                                    remaining,
+                                    request.body,
+                                    now,
+                                )
+                            }
                         }
                     } else {
                         store.put(
@@ -800,16 +898,28 @@ where
                         reply.ttl_ms = receipt.remaining_ttl_ms.try_into()?;
                     }
                 }
-                GET | NODE_GET
-                    if (request.kind == NODE_GET) == node_locators
+                PUBLIC_READ_SAMPLE
+                    if node_locators && !sampled_public_reader && request.is_empty() =>
+                {
+                    sampled_public_reader = true;
+                    if let Some(key) = store.sample_public_read_key_v1(now)? {
+                        reply.kind = PUBLIC_READ_KEY;
+                        reply.slot = node_owner_id_v1(&key)?;
+                        reply.body = key;
+                    } else {
+                        reply.kind = MISSING;
+                    }
+                }
+                GET | NODE_GET | PUBLIC_READ_GET
+                    if (request.kind != GET) == node_locators
                         && request.revision == 0
                         && request.ttl_ms == 0
                         && request.body.is_empty() =>
                 {
-                    let found = if node_locators {
-                        store.node_locator_v1(request.slot, now)?
-                    } else {
-                        store.get(request.slot, now)?
+                    let found = match request.kind {
+                        PUBLIC_READ_GET => store.public_read_locator_v1(request.slot, now)?,
+                        NODE_GET => store.node_locator_v1(request.slot, now)?,
+                        _ => store.get(request.slot, now)?,
                     };
                     if let Some(record) = found {
                         reply.kind = RECORD;
@@ -847,6 +957,15 @@ where
         // Preserve an already established protocol rejection even if the peer
         // disconnects before receiving it. An IO failure sending REJECTED must
         // not turn a malformed request into a diagnostic aborted session.
+        if matches!(
+            request.kind,
+            PUBLIC_READ_PUT | PUBLIC_READ_GET | PUBLIC_READ_SAMPLE
+        ) {
+            ensure!(
+                response.body.len() <= MAX_PUBLIC_READ_BODY,
+                "public read response exceeds limit"
+            );
+        }
         let sent = send(stream, &mut channel, sequence, &response, RESPONSE).await;
         ensure!(response.kind != REJECTED, "invalid discovery request");
         sent?;
@@ -876,6 +995,25 @@ mod tests {
 
     #[tokio::test]
     async fn real_public_rpc_binds_publisher_and_cannot_read_or_ack_private_slots() -> Result<()> {
+        public_rpc_fixture(PublicRpcFixture::Current).await
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum PublicRpcFixture {
+        Current,
+        Legacy,
+        MalformedRejection,
+        LegacyImmediateClose,
+    }
+
+    #[tokio::test]
+    async fn real_pinned_lookup_survives_only_canonical_legacy_sample_rejection() -> Result<()> {
+        public_rpc_fixture(PublicRpcFixture::Legacy).await?;
+        public_rpc_fixture(PublicRpcFixture::MalformedRejection).await?;
+        public_rpc_fixture(PublicRpcFixture::LegacyImmediateClose).await
+    }
+
+    async fn public_rpc_fixture(fixture: PublicRpcFixture) -> Result<()> {
         let _permit = SERIAL.acquire().await?;
         let client_identity = TransportIdentity::from_bytes(&[111; 32]);
         let node_identity = TransportIdentity::from_bytes(&[112; 32]);
@@ -897,12 +1035,14 @@ mod tests {
         let check = store.clone();
         let (node_tx, node_rx) = oneshot::channel();
         let (client_tx, client_rx) = oneshot::channel();
+        let (done_tx, done_rx) = oneshot::channel();
         let node = with_iroh_scope_v1(
             local_config(),
             IrohControlV1::new(deadline, || Ok(()))?,
             move |scope| {
                 Box::pin(async move {
-                    node_tx.send(scope.address()?).unwrap();
+                    let address = scope.address()?;
+                    node_tx.send(address.clone()).unwrap();
                     let peer: IrohAddressV1 = client_rx.await?;
                     let mut stream: CarrierStreamV1<'_> =
                         scope.accept(peer.endpoint_key).await?.into();
@@ -926,6 +1066,55 @@ mod tests {
                             &channel.seal_novorudp_frame(&frame)?,
                         )?)
                         .await?;
+                    if fixture != PublicRpcFixture::Current {
+                        // The deployed fixed-key protocol serves NODE_GET, then answers an
+                        // unknown request with its canonical empty REJECTED and drops the stream.
+                        let get = receive(&mut stream, &mut channel, 2, REQUEST).await?;
+                        ensure!(
+                            get.kind == NODE_GET
+                                && get.slot == node_owner_id_v1(node_identity.public_key())?
+                        );
+                        let now = u64::try_from(
+                            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+                        )?;
+                        let endpoint = crate::product_service_lease::IrohServiceEndpointV1 {
+                            instance,
+                            address,
+                        }
+                        .endpoint()?;
+                        let signed = crate::product_directory::sign_relay_record_v1(
+                            &node_identity,
+                            native_locator_id_v1(domain),
+                            vec![endpoint],
+                            now,
+                            now + 5000,
+                            11,
+                        )?;
+                        let mut record = get.empty(RECORD);
+                        record.body = encode_node_locator_v1(&signed, domain)?;
+                        record.slot = Sha256::digest(&record.body).into();
+                        record.revision = 11;
+                        record.ttl_ms = 5000;
+                        send(&mut stream, &mut channel, 2, &record, RESPONSE).await?;
+                        let sample = receive(&mut stream, &mut channel, 3, REQUEST).await?;
+                        ensure!(sample.kind == PUBLIC_READ_SAMPLE && sample.is_empty());
+                        let mut rejection = sample.empty(REJECTED);
+                        if fixture == PublicRpcFixture::MalformedRejection {
+                            rejection.body.push(1);
+                        }
+                        send(&mut stream, &mut channel, 3, &rejection, RESPONSE).await?;
+                        if fixture == PublicRpcFixture::LegacyImmediateClose {
+                            drop(stream);
+                            let _ = done_rx.await;
+                        } else {
+                            // Observe the delivered reply before the transport can race it
+                            // with a connection close. The immediate-close case exercises
+                            // the original server's exact write-then-drop ordering.
+                            let _ = done_rx.await;
+                            drop(stream);
+                        }
+                        return Ok(());
+                    }
                     let result = serve_authenticated_node_locators_v1(
                         &mut stream,
                         channel,
@@ -983,13 +1172,62 @@ mod tests {
                         channel,
                         instance,
                     )?;
+                    if fixture != PublicRpcFixture::Current {
+                        let fixed = client
+                            .get_node_locator_v1(&node_pin)
+                            .await?
+                            .context("legacy pinned record missing")?;
+                        let now = u64::try_from(
+                            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+                        )?;
+                        let verified = decode_node_locator_v1(
+                            &fixed.ciphertext,
+                            &node_pin,
+                            domain,
+                            now,
+                            &client_identity,
+                        )?;
+                        let error = client
+                            .sample_public_read_key_v1()
+                            .await
+                            .expect_err("unexpected sample");
+                        let canonical_rejection = error.is::<PublicReadReferralUnsupported>();
+                        match fixture {
+                            PublicRpcFixture::Legacy => ensure!(canonical_rejection, "{error:#}"),
+                            PublicRpcFixture::MalformedRejection => ensure!(
+                                !canonical_rejection
+                                    && error.to_string() == "discovery node rejected request",
+                                "{error:#}"
+                            ),
+                            PublicRpcFixture::LegacyImmediateClose => ensure!(
+                                canonical_rejection || is_service_transport_failure(&error),
+                                "{error:#}"
+                            ),
+                            PublicRpcFixture::Current => unreachable!(),
+                        }
+                        ensure!(
+                            client.failed
+                                && verified.sequence == 11
+                                && verified.relay_public_key == node_pin
+                        );
+                        // An explicit rejection ends the old stream. Neither a new read nor a
+                        // publication may be sent against the consumed sequence.
+                        ensure!(client.get_node_locator_v1(&node_pin).await.is_err());
+                        ensure!(client
+                            .put_public_read_locator_v1(1, 1000, vec![1])
+                            .await
+                            .is_err());
+                        ensure!(client.sequence == 3);
+                        done_tx.send(()).unwrap();
+                        return Ok(());
+                    }
                     ensure!(client.get(owner).await.is_err());
                     ensure!(client.ack(owner, 1, private.digest).await.is_err());
                     let now =
                         u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
-                    let endpoint =
-                        crate::product_service_lease::IrohServiceEndpointV1 { instance, address }
-                            .endpoint()?;
+                    let route =
+                        crate::product_service_lease::IrohServiceEndpointV1 { instance, address };
+                    let endpoint = route.endpoint()?;
                     let signed = crate::product_directory::sign_relay_record_v1(
                         &client_identity,
                         native_locator_id_v1(domain),
@@ -1011,6 +1249,48 @@ mod tests {
                             == published
                     );
                     ensure!(client.get_node_locator_v1(&node_pin).await?.is_none());
+                    ensure!(client
+                        .get_public_read_locator_v1(client_identity.public_key())
+                        .await?
+                        .is_none());
+                    let mut read_route = route;
+                    read_route.address.direct.clear();
+                    read_route.address.relays = vec!["https://relay.example/".into()];
+                    let mut read_endpoint = read_route.endpoint()?;
+                    read_endpoint.max_bytes_per_minute = NATIVE_LOCATOR_V2_RELAY_BYTES_PER_MINUTE;
+                    let public_read = crate::product_directory::sign_relay_record_v1(
+                        &client_identity,
+                        public_read_locator_id_v1(domain),
+                        vec![read_endpoint],
+                        now,
+                        now + 5000,
+                        12,
+                    )?;
+                    let read_wire = encode_public_read_locator_v1(&public_read, domain)?;
+                    client
+                        .put_public_read_locator_v1(public_read.sequence, 5000, read_wire.clone())
+                        .await?;
+                    let key = client
+                        .sample_public_read_key_v1()
+                        .await?
+                        .context("no public read service")?;
+                    ensure!(key == client_identity.public_key());
+                    let record = client
+                        .get_public_read_locator_v1(&key)
+                        .await?
+                        .context("read locator absent")?;
+                    ensure!(
+                        record.ciphertext == read_wire && record.revision == public_read.sequence
+                    );
+                    ensure!(
+                        decode_public_read_locator_v1(
+                            &record.ciphertext,
+                            &key,
+                            domain,
+                            now,
+                            &client_identity
+                        )? == public_read
+                    );
                     let stale = crate::product_directory::sign_relay_record_v1(
                         &client_identity,
                         native_locator_id_v1(domain),
@@ -1029,8 +1309,11 @@ mod tests {
             },
         );
         let (server, client) = tokio::join!(node, client);
-        server?;
-        client?;
+        client.context("public RPC fixture client")?;
+        server.context("public RPC fixture server")?;
+        if fixture != PublicRpcFixture::Current {
+            return Ok(());
+        }
         let mut store = check.lock().unwrap();
         ensure!(
             store
@@ -1046,7 +1329,7 @@ mod tests {
                 .revision
                 == 1
         );
-        ensure!(store.stats(Instant::now())?.live_records == 2);
+        ensure!(store.stats(Instant::now())?.live_records == 3);
         Ok(())
     }
 

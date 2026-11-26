@@ -19,7 +19,7 @@ use novovm_network::{
     },
     product_directory::{
         sign_relay_record_v1, validate_relay_record_v1, PeerSignedRelayRecordV1,
-        RelayCandidatePoolConfigV1, RelayCandidatePoolV1,
+        RelayCandidatePoolConfigV1, RelayCandidatePoolV1, RelayEndpointV1,
     },
     product_overlay::TransportIdentity,
     product_service_lease::{IrohServiceEndpointV1, SelfOwnedTrustV1, ServiceLeaseBookV1},
@@ -27,11 +27,13 @@ use novovm_network::{
 };
 mod diagnostic;
 mod discovery;
+#[cfg(test)]
+pub(in crate::native_pipeline::service) use discovery::test_slow_cached_receipt;
 pub use discovery::{
-    check_installed_profile, discover_installed, discover_verified_receipt,
-    discover_verified_receipt_from_profile,
-    export_activation_parent, follow_installed_state, sync_installed_chain, sync_installed_state,
-    verify_installed_uca_execution,
+    check_installed_profile, discover_installed, discover_installed_from_profile,
+    discover_verified_receipt, discover_verified_receipt_at,
+    discover_verified_receipt_from_profile, export_activation_parent, follow_installed_state, serve_installed_read_snapshot,
+    sync_installed_chain, sync_installed_state, verify_installed_uca_execution, ReceiptLocation,
 };
 mod observation;
 mod probe;
@@ -93,6 +95,9 @@ pub struct Config {
     /// Publish the original native query socket's concrete bound address.
     #[serde(default)]
     pub publish_native_query_address: bool,
+    /// Offer this node's public state service to clients that do not know its key.
+    #[serde(default)]
+    pub publish_public_read_provider: bool,
     /// Opt-in resource provision/consumption under the original hop contract.
     #[serde(default)]
     pub relay_forwarding: bool,
@@ -286,6 +291,12 @@ impl Driver {
         node: &mut ResidentNode,
         query_peers: Option<Arc<[Vec<u8>]>>,
     ) -> Result<Self> {
+        ensure!(
+            !config.publish_public_read_provider
+                || (config.discovery && !config.relays.is_empty() && node.public_state_sync
+                    && node.native_client_limit > 0 && query_peers.is_none()),
+            "public read provider publication requires discovery, an approved relay and state queries open to authenticated clients"
+        );
         let keys = (0..node.controller.peer_count())
             .map(|peer| node.controller.peer_transport_key(peer))
             .collect::<Result<Vec<_>>>()?;
@@ -688,6 +699,31 @@ async fn run(
     }
 }
 
+// Both discovery namespaces are indexed by the same authenticated transport key.
+fn publication_endpoint(
+    mut route: IrohServiceEndpointV1,
+    public_read_relays: Option<&[String]>,
+    query_address: Option<SocketAddr>,
+) -> Result<Option<RelayEndpointV1>> {
+    let mut endpoint = if let Some(approved) = public_read_relays {
+        route.address.direct.clear();
+        route
+            .address
+            .relays
+            .retain(|relay| novovm_network::iroh_transport::approved_read_relay(approved, relay));
+        if route.address.relays.is_empty() {
+            return Ok(None);
+        }
+        route.endpoint()?
+    } else if let Some(address) = query_address {
+        novovm_network::discovery_control::native_chain_query_endpoint(&route, address)?
+    } else {
+        route.endpoint()?
+    };
+    endpoint.max_bytes_per_minute = RELAY_BYTES_PER_MINUTE;
+    Ok(Some(endpoint))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn serve<'a>(
     scope: &'a IrohScopeV1,
@@ -744,6 +780,13 @@ async fn serve<'a>(
     ));
     let mut attempts = vec![0usize; keys.len()];
     let record_kind = novovm_network::discovery_control::native_locator_id_v1(pins);
+    let public_read_kind = config
+        .publish_public_read_provider
+        .then(|| novovm_network::discovery_control::public_read_locator_id_v1(pins));
+    // The rendezvous store grants each distinct publication up to 30 seconds.
+    // Identical revisions retain their original expiry; issue a fresh sequence
+    // in time for the next ten-second remote publication tick.
+    let renewal = Duration::from_secs(if public_read_kind.is_some() { 15 } else { 40 });
     let mut discovery = config
         .discovery
         .then(|| Discovery::new(scope, config, identity, keys, pins, failures.clone()))
@@ -789,33 +832,48 @@ async fn serve<'a>(
                 }
             }
             if now >= publish_at {
-                sequence = sequence
-                    .checked_add(1)
-                    .context("NOVONET locator sequence exhausted")?;
                 let route = IrohServiceEndpointV1 {
                     instance,
-                    address: scope.address()?,
+                    address: if public_read_kind.is_some() {
+                        scope.connected_relay_address()?
+                    } else {
+                        scope.address()?
+                    },
                 };
-                let mut endpoint = if let Some(address) = query_address {
-                    novovm_network::discovery_control::native_chain_query_endpoint(&route, address)?
+                if let Some(endpoint) = publication_endpoint(
+                    route,
+                    public_read_kind.as_ref().map(|_| config.relays.as_slice()),
+                    query_address,
+                )? {
+                    sequence = sequence
+                        .checked_add(1)
+                        .context("NOVONET locator sequence exhausted")?;
+                    let expires = wall
+                        .checked_add(120_000)
+                        .context("locator clock overflow")?;
+                    let sign = |kind: &str| {
+                        sign_relay_record_v1(
+                            identity,
+                            kind,
+                            vec![endpoint.clone()],
+                            wall,
+                            expires,
+                            sequence,
+                        )
+                    };
+                    let record = sign(&record_kind)?;
+                    publish(&config.public_record_file, &record)?;
+                    if let Some(discovery) = &mut discovery {
+                        let public_read = public_read_kind.as_deref().map(sign).transpose()?;
+                        discovery.set_local(&record, public_read.as_ref(), now)?;
+                    }
+                    publish_at = now + renewal;
                 } else {
-                    route.endpoint()?
-                };
-                endpoint.max_bytes_per_minute = RELAY_BYTES_PER_MINUTE;
-                let record = sign_relay_record_v1(
-                    identity,
-                    &record_kind,
-                    vec![endpoint],
-                    wall,
-                    wall.checked_add(120_000)
-                        .context("locator clock overflow")?,
-                    sequence,
-                )?;
-                publish(&config.public_record_file, &record)?;
-                if let Some(discovery) = &mut discovery {
-                    discovery.set_local(&record, now)?;
+                    if let Some(discovery) = &mut discovery {
+                        discovery.suspend_local();
+                    }
+                    publish_at = now + Duration::from_secs(1);
                 }
-                publish_at = now + Duration::from_secs(40);
             }
             for path in &config.peer_records {
                 let Ok(record) = read_document::<PeerSignedRelayRecordV1>(path) else {

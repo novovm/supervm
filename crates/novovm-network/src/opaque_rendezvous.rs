@@ -7,6 +7,8 @@
 //! schedules expiry checks or drops the store. A record is opaque ciphertext:
 //! neither ownership nor a receipt proves the enclosed address/identity valid.
 //! No record, slot capability, owner, digest or instance is exposed by Debug.
+use crate::product_overlay::MLDSA65_PUBLIC_KEY_BYTES;
+use rand::seq::IteratorRandom;
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -85,6 +87,29 @@ struct Entry {
     digest: [u8; 32],
     expires_at: Instant,
     ciphertext: Option<Box<[u8]>>,
+    public_read_key: Option<Box<[u8]>>,
+}
+
+impl Entry {
+    fn live_bytes(&self) -> usize {
+        self.ciphertext.as_ref().map_or(0, |body| body.len())
+            + self.public_read_key.as_ref().map_or(0, |key| key.len())
+    }
+
+    fn retire(&mut self) {
+        self.ciphertext = None;
+        self.public_read_key = None;
+    }
+}
+
+pub(crate) fn publisher_id(key: &[u8]) -> Result<[u8; 32], RendezvousErrorV1> {
+    if key.len() != MLDSA65_PUBLIC_KEY_BYTES || key.iter().all(|&byte| byte == 0) {
+        return Err(RendezvousErrorV1::InvalidCapability);
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"NOVONET/discovery-owner/ML-DSA-65/v2\0");
+    hash.update(key);
+    Ok(hash.finalize().into())
 }
 
 /// At most 64 metadata entries and 64 KiB of live payloads are retained. Input
@@ -139,7 +164,7 @@ impl RendezvousStoreV1 {
     ) -> Result<RendezvousReceiptV1, RendezvousErrorV1> {
         self.observe(now)?;
         let slot_hash = self.slot_hash(slot)?;
-        self.put_hashed(owner, slot_hash, revision, ttl, ciphertext, now)
+        self.put_hashed((owner, slot_hash), revision, ttl, ciphertext, None, now)
     }
 
     /// Explicit public routing metadata, owned by the authenticated publisher.
@@ -156,16 +181,39 @@ impl RendezvousStoreV1 {
     ) -> Result<RendezvousReceiptV1, RendezvousErrorV1> {
         self.observe(now)?;
         let slot_hash = self.node_slot_hash(owner)?;
-        self.put_hashed(owner, slot_hash, revision, ttl, bytes, now)
+        self.put_hashed((owner, slot_hash), revision, ttl, bytes, None, now)
+    }
+
+    /// Only a purpose-signed public read service is admitted here by the
+    /// authenticated RPC. Its key and locator expire together in the same slot.
+    pub fn put_public_read_locator_v1(
+        &mut self,
+        publisher: &[u8],
+        signed_sequence: u64,
+        ttl: Duration,
+        bytes: Vec<u8>,
+        now: Instant,
+    ) -> Result<RendezvousReceiptV1, RendezvousErrorV1> {
+        self.observe(now)?;
+        let owner = publisher_id(publisher)?;
+        let slot = self.public_read_slot_hash(owner)?;
+        self.put_hashed(
+            (owner, slot),
+            signed_sequence,
+            ttl,
+            bytes,
+            Some(publisher),
+            now,
+        )
     }
 
     fn put_hashed(
         &mut self,
-        owner: [u8; 32],
-        slot_hash: [u8; 32],
+        (owner, slot_hash): ([u8; 32], [u8; 32]),
         revision: u64,
         ttl: Duration,
         ciphertext: Vec<u8>,
+        public_read_key: Option<&[u8]>,
         now: Instant,
     ) -> Result<RendezvousReceiptV1, RendezvousErrorV1> {
         if owner == [0; 32] {
@@ -227,17 +275,18 @@ impl RendezvousStoreV1 {
             }
         }
         let usage = self.usage()?;
-        let old_size =
-            existing.and_then(|index| self.entries[index].ciphertext.as_ref().map(|v| v.len()));
+        let old_size = existing.map_or(0, |index| self.entries[index].live_bytes());
         let live_records = usage
             .live_records
-            .checked_sub(usize::from(old_size.is_some()))
+            .checked_sub(usize::from(old_size > 0))
             .and_then(|value| value.checked_add(1))
             .ok_or(RendezvousErrorV1::CounterExhausted)?;
         let live_bytes = usage
             .live_bytes
-            .checked_sub(old_size.unwrap_or(0))
-            .and_then(|value| value.checked_add(ciphertext.len()))
+            .checked_sub(old_size)
+            .and_then(|value| {
+                value.checked_add(ciphertext.len() + public_read_key.map_or(0, <[u8]>::len))
+            })
             .ok_or(RendezvousErrorV1::CounterExhausted)?;
         if live_records > RENDEZVOUS_MAX_LIVE_RECORDS_V1
             || live_bytes > RENDEZVOUS_MAX_LIVE_BYTES_V1
@@ -258,6 +307,10 @@ impl RendezvousStoreV1 {
             digest,
             expires_at,
             ciphertext: Some(payload),
+            public_read_key: public_read_key
+                .map(copy_bounded)
+                .transpose()?
+                .map(Vec::into_boxed_slice),
         };
         let result = receipt(&entry, now);
         match existing {
@@ -290,6 +343,32 @@ impl RendezvousStoreV1 {
         self.observe(now)?;
         let slot_hash = self.node_slot_hash(owner)?;
         self.get_hashed(slot_hash, now)
+    }
+
+    pub fn public_read_locator_v1(
+        &mut self,
+        owner: [u8; 32],
+        now: Instant,
+    ) -> Result<Option<RendezvousRecordV1>, RendezvousErrorV1> {
+        self.observe(now)?;
+        Ok(self
+            .get_hashed(self.public_read_slot_hash(owner)?, now)?
+            .filter(|record| record.remaining_ttl_ms > 0))
+    }
+
+    /// Sample one live opt-in key, with no stable index, cursor or caller hint.
+    pub fn sample_public_read_key_v1(
+        &mut self,
+        now: Instant,
+    ) -> Result<Option<Vec<u8>>, RendezvousErrorV1> {
+        self.observe(now)?;
+        self.entries
+            .iter()
+            .filter(|entry| remaining_ms(entry.expires_at, now) > 0)
+            .filter_map(|entry| entry.public_read_key.as_deref())
+            .choose(&mut rand::thread_rng())
+            .map(copy_bounded)
+            .transpose()
     }
 
     fn get_hashed(
@@ -336,7 +415,7 @@ impl RendezvousStoreV1 {
         if entry.revision != revision || entry.digest != digest || entry.ciphertext.is_none() {
             return Ok(false);
         }
-        entry.ciphertext = None;
+        entry.retire();
         Ok(true)
     }
 
@@ -357,11 +436,23 @@ impl RendezvousStoreV1 {
     }
 
     fn node_slot_hash(&self, owner: [u8; 32]) -> Result<[u8; 32], RendezvousErrorV1> {
+        self.publisher_slot_hash(b"NOVONET/public-node-locator/v1\0", owner)
+    }
+
+    fn public_read_slot_hash(&self, owner: [u8; 32]) -> Result<[u8; 32], RendezvousErrorV1> {
+        self.publisher_slot_hash(b"NOVONET/public-read-locator/v1\0", owner)
+    }
+
+    fn publisher_slot_hash(
+        &self,
+        domain: &[u8],
+        owner: [u8; 32],
+    ) -> Result<[u8; 32], RendezvousErrorV1> {
         if owner == [0; 32] {
             return Err(RendezvousErrorV1::InvalidCapability);
         }
         let mut hash = Sha256::new();
-        hash.update(b"NOVONET/public-node-locator/v1\0");
+        hash.update(domain);
         hash.update(self.instance);
         hash.update(owner);
         Ok(hash.finalize().into())
@@ -381,14 +472,14 @@ impl RendezvousStoreV1 {
         if let Some(error) = failure {
             self.terminal = Some(error);
             for entry in &mut self.entries {
-                entry.ciphertext = None;
+                entry.retire();
             }
             return Err(error);
         }
         self.last_now = now;
         for entry in &mut self.entries {
             if now >= entry.expires_at {
-                entry.ciphertext = None;
+                entry.retire();
             }
         }
         Ok(())
@@ -400,14 +491,14 @@ impl RendezvousStoreV1 {
             ..RendezvousStatsV1::default()
         };
         for entry in &self.entries {
-            if let Some(ciphertext) = &entry.ciphertext {
+            if entry.ciphertext.is_some() {
                 stats.live_records = stats
                     .live_records
                     .checked_add(1)
                     .ok_or(RendezvousErrorV1::CounterExhausted)?;
                 stats.live_bytes = stats
                     .live_bytes
-                    .checked_add(ciphertext.len())
+                    .checked_add(entry.live_bytes())
                     .ok_or(RendezvousErrorV1::CounterExhausted)?;
             }
         }
@@ -443,6 +534,63 @@ fn receipt(entry: &Entry, now: Instant) -> RendezvousReceiptV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_read_sample_requires_a_live_opt_in_and_shares_the_byte_budget() {
+        let (mut store, now) = fixture();
+        let key = vec![13; MLDSA65_PUBLIC_KEY_BYTES];
+        let owner = publisher_id(&key).unwrap();
+        let ttl = Duration::from_secs(2);
+        store.put(owner, owner, 1, ttl, vec![1; 10], now).unwrap();
+        store
+            .put_node_locator_v1(owner, 1, ttl, vec![2; 20], now)
+            .unwrap();
+        assert!(store.sample_public_read_key_v1(now).unwrap().is_none());
+        assert!(store.public_read_locator_v1(owner, now).unwrap().is_none());
+
+        let receipt = store
+            .put_public_read_locator_v1(&key, 3, ttl, vec![3; 30], now)
+            .unwrap();
+        assert_eq!(store.stats(now).unwrap().live_bytes, 60 + key.len());
+        assert!(!store.ack(owner, 3, receipt.digest, now).unwrap());
+        assert_eq!(store.sample_public_read_key_v1(now).unwrap().unwrap(), key);
+        assert_eq!(
+            store
+                .public_read_locator_v1(owner, now)
+                .unwrap()
+                .unwrap()
+                .ciphertext,
+            vec![3; 30]
+        );
+        assert_eq!(
+            store
+                .node_locator_v1(owner, now)
+                .unwrap()
+                .unwrap()
+                .ciphertext,
+            vec![2; 20]
+        );
+        assert_eq!(
+            store.get(owner, now).unwrap().unwrap().ciphertext,
+            vec![1; 10]
+        );
+
+        let after = now + ttl;
+        assert!(store.sample_public_read_key_v1(after).unwrap().is_none());
+        assert_eq!(store.stats(after).unwrap().live_bytes, 0);
+        assert_eq!(
+            store
+                .put_public_read_locator_v1(&key, 3, ttl, vec![3; 30], after)
+                .err(),
+            Some(RendezvousErrorV1::RetiredRevision)
+        );
+        assert_eq!(
+            store
+                .put_public_read_locator_v1(&key, 2, ttl, vec![3; 30], after)
+                .err(),
+            Some(RendezvousErrorV1::StaleRevision)
+        );
+    }
 
     #[test]
     fn public_locator_and_private_slots_share_quota_but_not_ownership_or_ack_namespace() {

@@ -9,6 +9,10 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod historical_receipt;
+mod native_fallback;
+mod public_referral;
+
 struct QueryOwner {
     rpc: RpcLifecycle,
     config: ResidentConfig,
@@ -386,29 +390,66 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
     let bind_address = lan
         .as_ref()
         .map_or(std::net::Ipv4Addr::LOCALHOST, |lan| lan.server);
-    owner.novonet = Some(Driver::new_with_query_peers(
-        Config {
-            probe_control_file: None,
-            relays: relays.clone(),
-            nameserver,
-            bind_address: (bind_address, 0).into(),
-            public_record_file: secondary.clone(),
-            carrier_identity_file: None,
-            peer_records: Vec::new(),
-            discovery: true,
-            discovery_seeds: Vec::new(),
-            publish_native_query_address: lan.is_none()
-                && std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("2"),
-            relay_forwarding: false,
-            fallback_after_ms: 1000,
-            retry_ms: 500,
-            udp_recovery_ms: 2000,
-        },
-        &mut owner.rpc.node,
-        lan.as_ref()
-            .filter(|_| !lan_install)
-            .map(|lan| vec![lan.client_key.clone()].into()),
-    )?);
+    let independent =
+        std::env::var("NOVOVM_QUERY_COPY_NONVALIDATOR_PROVIDER").as_deref() == Ok("1");
+    let config = Config {
+        probe_control_file: None,
+        relays: relays.clone(),
+        nameserver,
+        bind_address: (bind_address, 0).into(),
+        public_record_file: secondary.clone(),
+        carrier_identity_file: None,
+        peer_records: Vec::new(),
+        discovery: true,
+        discovery_seeds: Vec::new(),
+        publish_public_read_provider: false,
+        publish_native_query_address: lan.is_none()
+            && std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("2"),
+        relay_forwarding: false,
+        fallback_after_ms: 1000,
+        retry_ms: 500,
+        udp_recovery_ms: 2000,
+    };
+    let key = if independent {
+        ensure!(
+            lan.is_none() && !config.publish_native_query_address,
+            "independent archive provider requires the isolated Iroh route"
+        );
+        let (provider, _) = novovm_relay::transport_identity::ephemeral_transport_identity(
+            &old_profile.library,
+            &old_profile.library_sha256,
+        )?;
+        let key = provider.public_key().to_vec();
+        ensure!(
+            owner
+                .config
+                .genesis
+                .validators
+                .iter()
+                .all(|v| v.transport_public_key != key && v.public_key != key),
+            "read provider overlaps a validator identity"
+        );
+        owner.novonet = Some(Driver::detached_read_provider(
+            config,
+            &owner.rpc.node,
+            provider,
+        )?);
+        println!(
+            "independent archive provider transport_sha256={:x}, validator_count={}",
+            Sha256::digest(&key),
+            owner.config.genesis.validators.len()
+        );
+        key
+    } else {
+        owner.novonet = Some(Driver::new_with_query_peers(
+            config,
+            &mut owner.rpc.node,
+            lan.as_ref()
+                .filter(|_| !lan_install)
+                .map(|lan| vec![lan.client_key.clone()].into()),
+        )?);
+        owner.rpc.node.transport_identity().public_key().to_vec()
+    };
     owner.until(|_| {
         if !secondary.is_file() {
             return Ok(false);
@@ -437,7 +478,6 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             && endpoint.relays.iter().all(|relay| relays.contains(relay)),
         "detached proof carrier route differs from its configured interface or relays"
     );
-    let key = owner.rpc.node.transport_identity().public_key().to_vec();
     ensure!(locator.relay_public_key == key, "locator identity differs");
     if lan.is_none() && std::env::var("NOVOVM_QUERY_COPY_CARRIER_TAKEOVER").as_deref() == Ok("1") {
         use crate::native_pipeline::consensus::native::MessageDomain;
@@ -514,6 +554,32 @@ fn clean_device_discovers_and_verifies_original_receipt_over_same_carrier() -> R
             },
         }))?,
     )?;
+    if std::env::var("NOVOVM_QUERY_COPY_HISTORICAL_RECEIPTS").as_deref() == Ok("1") {
+        ensure!(lan.is_none() && independent && parent.height == 0, "historical receipt fixture requires a detached independent loopback server and a genesis anchor");
+        owner.rpc.node.public_state_sync = true;
+        historical_receipt::verify(&mut owner, &binary, &profile, &key, &hash)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head && owner.active_client().is_err(),
+            "historical read changed the detached archive or UDP admission"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
+    if std::env::var("NOVOVM_QUERY_COPY_FOLLOW").as_deref() == Ok("status-only") {
+        ensure!(
+            lan.is_none() && !independent,
+            "mixed routes require the detached loopback archive"
+        );
+        owner.rpc.node.public_asset_receipt_proofs = false;
+        owner.rpc.node.public_state_sync = true;
+        native_fallback::verify(&mut owner, &binary, &profile, &old_profile, &key, pins)?;
+        ensure!(
+            owner.rpc.node.controller.parent() == head && owner.active_client().is_err(),
+            "mixed routes altered the archive or its UDP admission"
+        );
+        owner.novonet.as_mut().unwrap().close()?;
+        return owner.rpc.node.shutdown();
+    }
     if let Some(lan) = lan {
         if lan_install {
             owner.rpc.node.public_state_sync = true;
@@ -945,10 +1011,18 @@ impl LanAcceptance {
         let restore = stage.join("lan-restore");
         let results = stage.join("lan-events.json");
         let ready = stage.join("lan-ready.json");
+        let wired_witness = stage.join("wired-source.json");
+        let physical_switch =
+            std::env::var("NOVOVM_QUERY_COPY_PHYSICAL_SWITCH").as_deref() == Ok("1");
+        ensure!(
+            !physical_switch || roaming_relay,
+            "physical switch requires the scoped external relay fixture"
+        );
         ensure!(
             [&cut, &restore, &results, &ready]
                 .into_iter()
-                .all(|file| !file.exists()),
+                .all(|file| !file.exists())
+                && (!physical_switch || !wired_witness.exists()),
             "stale LAN acceptance control files"
         );
         let external = UdpSocket::bind((self.server, 0))?;
@@ -975,7 +1049,9 @@ impl LanAcceptance {
             add_roaming_route_metadata(stage, &mut manifest)?;
         }
         let manifest_draft = ready.with_extension("tmp");
-        fs::write(&manifest_draft, serde_json::to_vec(&manifest)?)?;
+        let manifest_bytes = serde_json::to_vec(&manifest)?;
+        let manifest_sha256 = format!("{:x}", Sha256::digest(&manifest_bytes));
+        fs::write(&manifest_draft, manifest_bytes)?;
         fs::rename(manifest_draft, ready)?;
 
         let deadline = Instant::now() + Duration::from_secs(480);
@@ -983,12 +1059,16 @@ impl LanAcceptance {
         let mut cut_utc_ms = None;
         let mut buffer = [0; 65_536];
         while !results.is_file() {
-            ensure!(
-                Instant::now() < deadline,
-                "cross-device acceptance deadline"
-            );
+            if Instant::now() >= deadline {
+                ensure!(physical_switch, "cross-device acceptance deadline");
+                ensure!(remote.is_some(), "no native traffic from the scoped device");
+                println!(
+                    "physical switch fixture window closed; verify the device capture offline"
+                );
+                return Ok(());
+            }
             owner.poll()?;
-            let cut_active = cut.is_file() && !restore.is_file();
+            let cut_active = !physical_switch && cut.is_file() && !restore.is_file();
             if cut_active && cut_utc_ms.is_none() {
                 let observed =
                     u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
@@ -996,12 +1076,27 @@ impl LanAcceptance {
                 println!("isolated_native_cut_utc_ms={observed}");
             }
             for _ in 0..128 {
-                let (size, source) = match external.recv_from(&mut buffer) {
-                    Ok(value) => value,
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => break,
-                    Err(error) => return Err(error.into()),
+                let Some((size, source)) =
+                    receive_lan_datagram(&external, &mut buffer, physical_switch)
+                        .context("receive at the detached LAN gateway")?
+                else {
+                    break;
                 };
                 if !cut_active && source.ip() == self.client {
+                    if physical_switch && remote.is_none() {
+                        let now = u64::try_from(
+                            SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+                        )?;
+                        let observation = serde_json::json!({
+                            "event": "first_scoped_wired_datagram", "source": source,
+                            "destination": gateway, "observed_utc_ms": now,
+                            "manifest_sha256": manifest_sha256,
+                        });
+                        let pending = wired_witness.with_extension("tmp");
+                        fs::write(&pending, serde_json::to_vec(&observation)?)?;
+                        fs::rename(pending, &wired_witness)?;
+                        println!("first scoped wired UDP datagram from {source} to {gateway}");
+                    }
                     remote = Some(source);
                     internal.send(&buffer[..size])?;
                 }
@@ -1018,6 +1113,10 @@ impl LanAcceptance {
             }
             thread::sleep(Duration::from_millis(2));
         }
+        ensure!(
+            !physical_switch,
+            "physical switch evidence is verified offline"
+        );
         ensure!(
             cut_utc_ms.is_some() && (roaming_relay || restore.is_file()) && remote.is_some(),
             "missing observed cut, restoration or remote traffic"
@@ -1259,6 +1358,50 @@ impl LanAcceptance {
         println!("cross-device discovery verified: {report}");
         Ok(())
     }
+}
+
+fn receive_lan_datagram(
+    socket: &std::net::UdpSocket,
+    buffer: &mut [u8],
+    physical_switch: bool,
+) -> std::io::Result<Option<(usize, std::net::SocketAddr)>> {
+    match socket.recv_from(buffer) {
+        Ok(packet) => Ok(Some(packet)),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        // Winsock can deliver a previous send's ICMP port-unreachable here
+        // after the scoped Client has closed its UDP socket.
+        Err(error) if cfg!(windows) && physical_switch && error.raw_os_error() == Some(10054) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn physical_gateway_receives_after_the_previous_client_port_closes() -> Result<()> {
+    use std::net::UdpSocket;
+    let gateway = UdpSocket::bind("127.0.0.1:0")?;
+    gateway.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let client = UdpSocket::bind("127.0.0.1:0")?;
+    let closed = UdpSocket::bind("127.0.0.1:0")?.local_addr()?;
+    let mut buffer = [0; 8];
+    gateway.send_to(b"first", closed)?;
+    assert_eq!(
+        receive_lan_datagram(&gateway, &mut buffer, false)
+            .unwrap_err()
+            .raw_os_error(),
+        Some(10054)
+    );
+    gateway.send_to(b"again", closed)?;
+    assert_eq!(receive_lan_datagram(&gateway, &mut buffer, true)?, None);
+    client.send_to(b"next", gateway.local_addr()?)?;
+    assert_eq!(
+        receive_lan_datagram(&gateway, &mut buffer, true)?,
+        Some((4, client.local_addr()?))
+    );
+    assert_eq!(&buffer[..4], b"next");
+    Ok(())
 }
 
 fn add_roaming_route_metadata(stage: &Path, manifest: &mut Value) -> Result<()> {

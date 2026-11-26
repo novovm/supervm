@@ -113,6 +113,10 @@ impl ProofTarget {
     }
 
     pub(crate) fn verify(&self, bytes: &[u8]) -> Result<Value> {
+        Ok(self.verify_point(bytes)?.1)
+    }
+
+    pub(crate) fn verify_point(&self, bytes: &[u8]) -> Result<(ParentPoint, Value)> {
         use crate::native_pipeline::service::rpc::hex;
         let proof = ReceiptFinalityProof::decode(bytes)?;
         let verified = proof.verify(
@@ -123,17 +127,20 @@ impl ProofTarget {
         )?;
         let receipt = verified.receipt();
         let block = verified.block();
-        Ok(json!({
-            "independently_verified_finality": true,
-            "tx_hash": hex(&receipt.tx_hash),
-            "success": receipt.success,
-            "nonce_after": receipt.nonce_after,
-            "charged_fee": receipt.charged_fee,
-            "height": block.height,
-            "block_hash": hex(&block.block_hash),
-            "state_root": hex(&block.state_root),
-            "proof_bytes": bytes.len(),
-        }))
+        Ok((
+            *block,
+            json!({
+                "independently_verified_finality": true,
+                "tx_hash": hex(&receipt.tx_hash),
+                "success": receipt.success,
+                "nonce_after": receipt.nonce_after,
+                "charged_fee": receipt.charged_fee,
+                "height": block.height,
+                "block_hash": hex(&block.block_hash),
+                "state_root": hex(&block.state_root),
+                "proof_bytes": bytes.len(),
+            }),
+        ))
     }
 }
 

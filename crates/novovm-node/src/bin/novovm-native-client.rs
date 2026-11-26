@@ -5,7 +5,7 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover | discover-verified-receipt <tx-hash> [profile-sha256] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin>";
+    const USAGE: &str = "usage: novovm-native-client <client-config.json> status | query <request.nvquery> | submit <signed-batch.nuapfl> | submit-registration <signed.nuir> | submit-application <signed.nuap> | consensus-proposal <height> <round> <tx-hash> [--legacy] | activation-anchor <height> <output> | verified-receipt <trusted-parent.json> <tx-hash>\n       novovm-native-client <installed-discovery-profile.json> discover [profile-sha256] | discover-verified-receipt <tx-hash> [profile-sha256] [--height N | --lookup-height] | check-installed-profile <profile-sha256> | sync-chain | sync-state | follow-state [profile-sha256] | activation-parent <height> <profile-sha256> <output> | verify-uca-execution <profile-sha256> <archive.bin> | serve-read-snapshot <profile-sha256> <height> <max-state-nodes> <serve-seconds> [verify-seconds=300]";
     ensure!(args.len() >= 2, "{USAGE}");
     let action = args[1].to_str().context("non-UTF8 action")?;
     if action == "--asas-authority" {
@@ -18,6 +18,39 @@ fn main() -> Result<()> {
         );
     }
     let config = Path::new(&args[0]);
+    if action == "serve-read-snapshot" {
+        ensure!((6..=7).contains(&args.len()), "{USAGE}");
+        #[cfg(feature = "iroh-transport")]
+        {
+            let pin = args[2].to_str().context("profile SHA-256")?;
+            let height = args[3].to_str().context("snapshot height")?.parse()?;
+            let max_nodes = args[4].to_str().context("snapshot node budget")?.parse()?;
+            let seconds = args[5]
+                .to_str()
+                .context("snapshot serving duration")?
+                .parse()?;
+            let verify_seconds = args
+                .get(6)
+                .map(|arg| {
+                    arg.to_str()
+                        .context("snapshot verification duration")?
+                        .parse::<u64>()
+                        .context("snapshot verification duration")
+                })
+                .transpose()?
+                .unwrap_or(300);
+            return novovm_node::native_pipeline::service::network::serve_installed_read_snapshot(
+                config,
+                pin,
+                height,
+                max_nodes,
+                seconds,
+                verify_seconds,
+            );
+        }
+        #[cfg(not(feature = "iroh-transport"))]
+        anyhow::bail!("read snapshot serving requires the NOVONET carrier feature");
+    }
     if action == "follow-state" {
         ensure!(args.len() <= 3, "{USAGE}");
         #[cfg(feature = "iroh-transport")]
@@ -31,8 +64,13 @@ fn main() -> Result<()> {
         anyhow::bail!("installed discovery requires the NOVONET carrier feature");
     }
     let report = if action == "discover" {
-        ensure!(args.len() == 2, "{USAGE}");
-        discover(config)?
+        ensure!(args.len() <= 3, "{USAGE}");
+        discover(
+            config,
+            args.get(2)
+                .map(|arg| arg.to_str().context("non-UTF8 profile pin"))
+                .transpose()?,
+        )?
     } else if action == "check-installed-profile" {
         ensure!(args.len() == 3, "{USAGE}");
         #[cfg(feature = "iroh-transport")]
@@ -60,13 +98,11 @@ fn main() -> Result<()> {
         #[cfg(not(feature = "iroh-transport"))]
         anyhow::bail!("UCA execution replay requires installed chain verification");
     } else if action == "discover-verified-receipt" {
-        ensure!((3..=4).contains(&args.len()), "{USAGE}");
+        ensure!((3..=6).contains(&args.len()), "{USAGE}");
         discovered_receipt(
             config,
             args[2].to_str().context("non-UTF8 transaction hash")?,
-            args.get(3)
-                .map(|arg| arg.to_str().context("non-UTF8 profile pin"))
-                .transpose()?,
+            &args[3..],
         )?
     } else if action == "activation-parent" {
         ensure!(args.len() == 5, "{USAGE}");
@@ -120,12 +156,12 @@ fn main() -> Result<()> {
 }
 
 #[cfg(feature = "iroh-transport")]
-fn discover(config: &Path) -> Result<serde_json::Value> {
-    novovm_node::native_pipeline::service::network::discover_installed(config)
+fn discover(config: &Path, pin: Option<&str>) -> Result<serde_json::Value> {
+    novovm_node::native_pipeline::service::network::discover_installed_from_profile(config, pin)
 }
 
 #[cfg(not(feature = "iroh-transport"))]
-fn discover(_config: &Path) -> Result<serde_json::Value> {
+fn discover(_config: &Path, _pin: Option<&str>) -> Result<serde_json::Value> {
     anyhow::bail!("installed discovery requires the NOVONET carrier feature")
 }
 
@@ -133,20 +169,38 @@ fn discover(_config: &Path) -> Result<serde_json::Value> {
 fn discovered_receipt(
     config: &Path,
     hash: &str,
-    profile_sha256: Option<&str>,
+    options: &[std::ffi::OsString],
 ) -> Result<serde_json::Value> {
-    novovm_node::native_pipeline::service::network::discover_verified_receipt_from_profile(
-        config,
-        hash,
-        profile_sha256,
-    )
+    use novovm_node::native_pipeline::service::network::{
+        discover_verified_receipt_at, ReceiptLocation,
+    };
+    let options = options
+        .iter()
+        .map(|arg| arg.to_str().context("non-UTF8 receipt option"))
+        .collect::<Result<Vec<_>>>()?;
+    let (pin, selection) = match options.as_slice() {
+        [pin, remaining @ ..] if !pin.starts_with('-') => (Some(*pin), remaining),
+        remaining => (None, remaining),
+    };
+    let location = match selection {
+        [] => ReceiptLocation::AnchorSuccessor,
+        ["--lookup-height"] => ReceiptLocation::QueryByHash,
+        ["--height", value] => {
+            let height = value
+                .parse::<std::num::NonZeroU64>()
+                .context("receipt height must be a positive integer")?;
+            ReceiptLocation::Height(height.get())
+        }
+        _ => anyhow::bail!("expected [profile-sha256] [--height N | --lookup-height]"),
+    };
+    discover_verified_receipt_at(config, hash, pin, location)
 }
 
 #[cfg(not(feature = "iroh-transport"))]
 fn discovered_receipt(
     _config: &Path,
     _hash: &str,
-    _profile_sha256: Option<&str>,
+    _options: &[std::ffi::OsString],
 ) -> Result<serde_json::Value> {
     anyhow::bail!("installed discovery requires the NOVONET carrier feature")
 }

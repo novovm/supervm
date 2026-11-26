@@ -167,11 +167,16 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                     tokio::task::spawn_blocking(move || -> Result<()> {
                         assert!(!data.exists());
                         if uses_contact && !slow {
-                            let rejected = run_client(&client, &legacy, &root.join("legacy-device"));
+                            let rejected = run_client(&client, &legacy, &root.join("legacy-device"), None);
                             assert!(format!("{:#}", rejected.unwrap_err()).contains("no authenticated NOVONET bootstrap"));
                         }
                         let started = Instant::now();
-                        let first = run_client(&client, &file, &data)?;
+                        let pin = fingerprint(&fs::read(&file)?);
+                        let rejected = run_client(&client, &file, &data, Some(&"0".repeat(64)));
+                        assert!(format!("{:#}", rejected.unwrap_err()).contains("differs from its release pin"));
+                        assert!(!data.exists());
+                        let first = run_client(&client, &file, &data, Some(&pin))?;
+                        assert_eq!(first["profile_sha256"], pin);
                         if rotated {
                             assert!(wall_ms()? < expiry, "rotation recovered after locator expiry");
                             println!(
@@ -182,7 +187,8 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                         if slow {
                             assert!(wall_ms()? < expiry, "slow signed locator expired during lookup");
                         }
-                        let restarted = run_client(&client, &file, &data)?;
+                        let restarted = run_client(&client, &file, &data, None)?;
+                        assert!(restarted.get("profile_sha256").is_none());
                         let sources = serde_json::json!([expected_source]);
                         for report in [&first, &restarted] {
                             assert_eq!(report["authenticated_discovery_sources"], sources);
@@ -198,7 +204,7 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                         if expired {
                             fs::remove_file(root.join("primary.json"))?;
                             fs::remove_file(root.join("secondary.json"))?;
-                            let cold = run_client(&client, &file, &root.join("contact-only-device"))?;
+                            let cold = run_client(&client, &file, &root.join("contact-only-device"), None)?;
                             assert_eq!(cold["authenticated_discovery_sources"], sources);
                             assert_eq!(cold["signed_locator_candidates"][0]["sequence"], 7);
                             println!("expired files with retired routes could not reach a source; second pinned contact retrieved a fresh signed locator with expired files and with both files absent");
@@ -285,9 +291,8 @@ async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> 
                 Box::pin(lookup_sources(
                     scope,
                     identity,
-                    profile.pins(),
+                    InstalledLookups::new(profile),
                     candidates,
-                    profile.lookup_transport_keys.clone(),
                     REFRESH_SOURCE_BUDGET,
                 ))
             },
@@ -310,10 +315,16 @@ async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> 
     Ok(())
 }
 
-fn run_client(client: &Path, profile: &Path, data: &Path) -> Result<serde_json::Value> {
+fn run_client(
+    client: &Path,
+    profile: &Path,
+    data: &Path,
+    pin: Option<&str>,
+) -> Result<serde_json::Value> {
     let output = Command::new(client)
         .arg(profile)
         .arg("discover")
+        .args(pin)
         .env("LOCALAPPDATA", data)
         .env("XDG_STATE_HOME", data)
         .output()?;
@@ -434,6 +445,31 @@ fn release_preflight_verifies_signed_bootstrap_locators_offline() -> Result<()> 
     let current = make_record(&first, pins, &primary, now + 120_000)?;
     write_locator("primary.json", &current)?;
     assert_eq!(check(&profile)?["chain_id"], chain_id);
+
+    chain_sync::check_locator_role_transition(
+        &root, &profile, &first, &second, &validator, &current,
+    )?;
+
+    // A separately pinned read service may supply data without voting power.
+    profile
+        .lookup_transport_keys
+        .push(second.public_key().to_vec());
+    assert_eq!(check(&profile)?["chain_id"], chain_id);
+    let (domain, _) = profile.verification_domain()?;
+    assert_eq!(domain.validators.hash(), validator_set.hash());
+    assert_eq!(domain.validators.members().len(), 1);
+    assert_eq!(
+        domain.validators.members()[0].public_key(),
+        validator.public_key()
+    );
+    profile
+        .lookup_transport_keys
+        .push(validator.public_key().to_vec());
+    assert!(check(&profile)
+        .unwrap_err()
+        .to_string()
+        .contains("validator signing key"));
+    profile.lookup_transport_keys.pop();
 
     let expired = make_record(&first, pins, &secondary, now - 1)?;
     write_locator("primary.json", &expired)?;

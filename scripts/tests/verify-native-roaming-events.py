@@ -7,6 +7,8 @@ import re
 import struct
 import tempfile
 import unittest
+from datetime import datetime, timezone
+from uuid import UUID
 
 import native_roaming_packets
 
@@ -190,6 +192,73 @@ class PacketVectors(unittest.TestCase):
             self.check()
 
 
+def verify_links(rows, packet, start, before, after, switch, events):
+    require([row["event"] for row in rows] == ["wired_ready", "wired_down_observed",
+            "recovery_observed", "restore_prompted", "wired_up_observed"],
+            "incomplete or failed physical media journal")
+    ready, down, recovery, _, up = [row["data"] for row in rows]
+    times = [native_roaming_packets.utc_ms(row["observed_utc"]) for row in rows]
+    require(times == sorted(times), "physical journal time regressed")
+    require(ready["pid"] == recovery["pid"] == packet["client_pid"] == start["pid"]
+            and ready["started_utc"] == start["utc"] and ready["line"] == before
+            and recovery["line"] == after and ready["height"] == events[before]["height"]
+            and ready["state_root"] == events[before]["state_root"]
+            and recovery["locator_sequence"] == events[after]["locator_sequence"],
+            "physical journal differs from verified Client")
+    require(UUID(ready["wired_guid"]) != UUID(ready["hotspot_guid"])
+            and ready["wired_index"] != ready["hotspot_index"], "distinct physical adapters required")
+    for phase, idx in (("before", "wired_index"), ("after", "hotspot_index")):
+        ids = [row["component_id"] for row in ready["component_map"]
+               if row["if_index"] == ready[idx]]
+        require(ids == [packet["phases"][phase]["component_id"]], "physical component mismatch")
+    require(events[before]["utc_unix_ms"] <= times[0] <= switch <= times[1]
+            and native_roaming_packets.utc_ms(down["last_up_utc"]) <= switch
+            and switch == down["upper_bound_unix_ms"] == native_roaming_packets.utc_ms(down["first_down_utc"])
+            and switch < events[after]["utc_unix_ms"] <= times[2]
+            and switch <= native_roaming_packets.utc_ms(up["last_down_utc"])
+            <= native_roaming_packets.utc_ms(up["first_up_utc"]) <= times[4]
+            and times[3] <= native_roaming_packets.utc_ms(up["first_up_utc"]) and up["hotspot"] == "Up",
+            "physical Down, recovery or restored Up timestamps differ")
+    return {"media_transitions_checked": True, "client_pid": ready["pid"],
+            "disconnect_upper_bound_ms": switch, "restored_utc": up["first_up_utc"]}
+
+
+class LinkJournalVectors(unittest.TestCase):
+    def setUp(self):
+        def stamp(ms):
+            return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
+        self.events = [{"height": 2, "state_root": "reference", "utc_unix_ms": 10},
+                       {"locator_sequence": 3, "utc_unix_ms": 30}]
+        self.start = {"utc": stamp(1), "pid": 9}
+        self.packet = {"client_pid": 9, "phases": {"before": {"component_id": 17}, "after": {"component_id": 16}}}
+        ready = {"pid": 9, "started_utc": stamp(1), "line": 0, "height": 2, "state_root": "reference",
+                 "wired_guid": "00000000-0000-0000-0000-000000000018", "hotspot_guid": "00000000-0000-0000-0000-000000000006",
+                 "wired_index": 18, "hotspot_index": 6,
+                 "component_map": [{"if_index": 18, "component_id": 17}, {"if_index": 6, "component_id": 16}]}
+        self.rows = [{"event": name, "observed_utc": stamp(ms), "data": payload} for name, ms, payload in (
+            ("wired_ready", 11, ready), ("wired_down_observed", 21, {"last_up_utc": stamp(18),
+                "first_down_utc": stamp(20), "upper_bound_unix_ms": 20}),
+            ("recovery_observed", 31, {"pid": 9, "line": 1, "locator_sequence": 3}),
+            ("restore_prompted", 32, {}), ("wired_up_observed", 42, {"last_down_utc": stamp(39),
+                "first_up_utc": stamp(41), "hotspot": "Up"}))]
+
+    def check(self):
+        return verify_links(self.rows, self.packet, self.start, 0, 1, 20, self.events)
+
+    def test_physical_observation(self):
+        self.assertTrue(self.check()["media_transitions_checked"])
+
+    def test_unobserved_disconnect(self):
+        self.rows.pop(1)
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            self.check()
+
+    def test_wrong_packet_component(self):
+        self.packet["phases"]["after"]["component_id"] = 17
+        with self.assertRaisesRegex(ValueError, "component"):
+            self.check()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
@@ -204,7 +273,10 @@ def main():
     parser.add_argument("--switch-utc-ms", type=int, help="observed switch time in Unix milliseconds")
     parser.add_argument("--packet-evidence", type=Path,
                         help="optional packet manifest alongside the Client capture files")
+    parser.add_argument("--link-journal", type=Path, help="optional D console physical media journal; requires packet evidence")
     args = parser.parse_args()
+    if args.link_journal and not args.packet_evidence:
+        parser.error("--link-journal requires --packet-evidence from the same run")
     if args.self_test:
         unittest.main(argv=[__file__], verbosity=2)
         return
@@ -227,6 +299,13 @@ def main():
                 args.packet_evidence, events[args.before]["utc_unix_ms"],
                 events[args.after]["utc_unix_ms"], args.switch_utc_ms,
             )
+        if args.link_journal:
+            require(args.link_journal.resolve() == args.jsonl.with_name("operator.jsonl").resolve(),
+                    "expected this capture's own physical media journal")
+            rows = [json.loads(line) for line in args.link_journal.read_text(encoding="utf-8-sig").splitlines()]
+            start = json.loads(args.jsonl.with_name("start.json").read_text(encoding="utf-8-sig"))
+            result["physical_links"] = verify_links(rows, result["packet_evidence"], start, args.before,
+                                                   args.after, args.switch_utc_ms, events)
     except (OSError, ValueError, AttributeError, KeyError, TypeError, struct.error) as exc:
         parser.exit(1, f"{exc}\n")
     print(json.dumps(result))
