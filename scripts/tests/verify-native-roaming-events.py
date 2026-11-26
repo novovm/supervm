@@ -348,6 +348,11 @@ class LinkJournalVectors(unittest.TestCase):
     def test_physical_observation(self):
         self.assertTrue(self.check()["media_transitions_checked"])
 
+    def test_physical_inventory_keeps_successful_journal_compatible(self):
+        for index in (0, 1, 2, 4):
+            self.rows[index]["data"]["physical_links"] = {"adapters": [{"if_index": 6, "status": "Up"}]}
+        self.assertTrue(self.check()["media_transitions_checked"])
+
     def test_unobserved_disconnect(self):
         self.rows.pop(1)
         with self.assertRaisesRegex(ValueError, "incomplete"):

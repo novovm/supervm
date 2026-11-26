@@ -465,18 +465,18 @@ public static class DRoamingConsole {
             $marker = Join-Path $ClientEvidence 'route-after.json'
             if (Test-Path -LiteralPath $marker) {
                 $after = Read-Json $marker
-                Journal 'recovery_link_sample' @{pid=$start.pid;line=$recovered.index;
-                    physical_links=(Get-PhysicalLinkInventory $links)}
+                $physicalLinks = Get-PhysicalLinkInventory $links
                 if ($after.pid -ne $start.pid -or $after.started_utc -cne $start.utc -or
                     $after.route_status -cne 'selected' -or $after.physical_adapter -ne $true -or
                     $after.phase -cne 'after' -or $after.source_ip -cne $probe.source_ip -or
                     $after.peer_ip -notin $cap.approved_relay_ips -or
                     [datetimeoffset]::Parse($after.observed_utc).ToUnixTimeMilliseconds() -lt $recovered.row.utc_unix_ms -or
                     $after.interface_index -ne $HotspotIndex -or $after.client_running_at_end -ne $true) {
+                    Journal 'recovery_link_sample' @{pid=$start.pid;line=$recovered.index;physical_links=$physicalLinks}
                     throw 'Hotspot route corroboration does not match the original Client'
                 }
                 Journal 'recovery_observed' @{pid=$start.pid;line=$recovered.index;locator_sequence=$recovered.row.locator_sequence;
-                    verification='client_events_and_route_only';packet_verification='separate'}
+                    verification='client_events_and_route_only';packet_verification='separate';physical_links=$physicalLinks}
                 break
             }
         }
