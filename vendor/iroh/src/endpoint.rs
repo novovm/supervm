@@ -143,6 +143,7 @@ pub struct Builder {
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     transports: Vec<TransportConfig>,
+    restrict_relay_dials_to_map: bool,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
     path_selector: Arc<dyn PathSelector>,
@@ -212,6 +213,7 @@ impl Builder {
             dns_resolver: None,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
+            restrict_relay_dials_to_map: false,
             hooks: Default::default(),
             path_selector: Arc::new(BiasedRttPathSelector::default()),
             portmapper_config: Default::default(),
@@ -272,6 +274,7 @@ impl Builder {
 
         let sock_opts = socket::Options {
             transports: self.transports,
+            restrict_relay_dials_to_map: self.restrict_relay_dials_to_map,
             secret_key,
             address_lookup_user_data: self.address_lookup_user_data,
             proxy_url: self.proxy_url,
@@ -510,6 +513,13 @@ impl Builder {
     pub fn clear_ip_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Ip { .. }));
+        self
+    }
+
+    /// Allow relay connections only to URLs in the local relay map at bind time.
+    /// This does not disable direct IP transports or constrain relay DNS answers.
+    pub fn restrict_relay_dials_to_map(mut self) -> Self {
+        self.restrict_relay_dials_to_map = true;
         self
     }
 

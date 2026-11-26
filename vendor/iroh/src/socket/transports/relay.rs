@@ -427,6 +427,7 @@ mod tests {
                 .expect("infallible"),
             metrics: Default::default(),
             relay_map: RelayMap::empty(),
+            approved_relay_urls: None,
         };
         RelayTransport::new(config, CancellationToken::new())
     }

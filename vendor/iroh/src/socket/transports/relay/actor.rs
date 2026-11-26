@@ -965,6 +965,7 @@ pub(crate) struct Config {
     /// Per-relay configuration. Consulted when starting a connection to
     /// look up the auth token and any future per-relay options.
     pub relay_map: RelayMap,
+    pub approved_relay_urls: Option<BTreeSet<RelayUrl>>,
 }
 
 /// Connection state of the home relay.
@@ -1236,7 +1237,7 @@ impl RelayActor {
         let url = item.url.clone();
         let handle = self
             .active_relay_handle_for_endpoint(&item.url, &item.remote_endpoint)
-            .await;
+            .await?;
         match handle.datagrams_send_queue.try_send(item) {
             Ok(()) => None,
             Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -1294,7 +1295,7 @@ impl RelayActor {
         }))
         .await;
         // Ensure we have an ActiveRelayActor for the current home relay.
-        self.active_relay_handle(home_url);
+        let _ = self.active_relay_handle(home_url);
     }
 
     /// Returns the handle for the [`ActiveRelayActor`] to reach `remote_endpoint`.
@@ -1306,9 +1307,13 @@ impl RelayActor {
         &mut self,
         url: &RelayUrl,
         remote_endpoint: &EndpointId,
-    ) -> ActiveRelayHandle {
+    ) -> Option<ActiveRelayHandle> {
+        if !self.relay_allowed(url) {
+            debug!(%url, "Dropping datagram for relay outside the local allowlist");
+            return None;
+        }
         if let Some(handle) = self.active_relays.get(url) {
-            return handle.clone();
+            return Some(handle.clone());
         }
 
         let mut found_relay: Option<RelayUrl> = None;
@@ -1344,10 +1349,21 @@ impl RelayActor {
         self.active_relay_handle(url)
     }
 
-    /// Returns the handle of the [`ActiveRelayActor`].
-    fn active_relay_handle(&mut self, url: RelayUrl) -> ActiveRelayHandle {
+    fn relay_allowed(&self, url: &RelayUrl) -> bool {
+        self.config
+            .approved_relay_urls
+            .as_ref()
+            .is_none_or(|approved| approved.contains(url))
+    }
+
+    /// Returns the handle of the [`ActiveRelayActor`] if the URL is allowed.
+    fn active_relay_handle(&mut self, url: RelayUrl) -> Option<ActiveRelayHandle> {
+        if !self.relay_allowed(&url) {
+            debug!(%url, "Skipping relay outside the local allowlist");
+            return None;
+        }
         match self.active_relays.get(&url) {
-            Some(e) => e.clone(),
+            Some(e) => Some(e.clone()),
             None => {
                 let handle = self.start_active_relay(url.clone());
                 if Some(&url) == self.config.my_relay.get().as_ref().map(RelayStatus::url)
@@ -1359,7 +1375,7 @@ impl RelayActor {
                 }
                 self.active_relays.insert(url, handle.clone());
                 self.log_active_relay();
-                handle
+                Some(handle)
             }
         }
     }
@@ -1465,7 +1481,7 @@ impl RelayActor {
 
         // Make sure home relay exists
         if let Some(status) = self.config.my_relay.get() {
-            self.active_relay_handle(status.url().clone());
+            let _ = self.active_relay_handle(status.url().clone());
         }
         self.log_active_relay();
     }
@@ -1557,13 +1573,8 @@ mod tests {
     };
     use crate::{dns::DnsResolver, metrics::SocketMetrics, test_utils};
 
-    /// Abort stands in for the runtime drop that triggers this in the wild:
-    /// `join_next` yields a cancelled `JoinError` either way.
-    #[tokio::test]
-    #[traced_test]
-    async fn close_all_active_relays_survives_a_cancelled_task() {
-        let (relay_datagram_recv_queue, _recv_rx) = mpsc::channel(1);
-        let config = Config {
+    fn offline_test_config() -> Config {
+        Config {
             my_relay: Default::default(),
             secret_key: SecretKey::from_bytes(&[0u8; 32]),
             dns_resolver: DnsResolver::new(),
@@ -1574,7 +1585,65 @@ mod tests {
                 .expect("infallible"),
             metrics: Default::default(),
             relay_map: RelayMap::empty(),
+            approved_relay_urls: None,
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn restricted_relay_actor_only_schedules_approved_urls() {
+        let approved: RelayUrl = "https://approved.invalid".parse().unwrap();
+        let other: RelayUrl = "https://other.invalid".parse().unwrap();
+        let remote = SecretKey::from_bytes(&[1; 32]).public();
+        let mut config = offline_test_config();
+        config.relay_map = RelayMap::from_iter([approved.clone()]);
+        config.approved_relay_urls = Some(config.relay_map.urls());
+        let (tx, _rx) = mpsc::channel(1);
+        let mut actor = RelayActor::new(config, tx.clone(), CancellationToken::new());
+
+        let item = RelaySendItem {
+            remote_endpoint: remote,
+            url: other.clone(),
+            datagrams: Datagrams::from(b"offline test"),
         };
+        assert!(actor.try_send_datagram(item).await.is_none());
+        assert!(actor.active_relay_handle(other.clone()).is_none());
+        assert!(actor.active_relays.is_empty());
+        assert!(actor.active_relay_tasks.is_empty());
+        assert!(
+            actor
+                .active_relay_handle_for_endpoint(&approved, &remote)
+                .await
+                .is_some()
+        );
+        assert_eq!(actor.active_relay_tasks.len(), 1);
+        assert!(actor.active_relays.contains_key(&approved));
+        assert!(
+            actor
+                .active_relay_handle_for_endpoint(&other, &remote)
+                .await
+                .is_none()
+        );
+        assert_eq!(actor.active_relay_tasks.len(), 1);
+        drop(actor);
+
+        let mut ordinary = RelayActor::new(offline_test_config(), tx, CancellationToken::new());
+        assert!(
+            ordinary
+                .active_relay_handle_for_endpoint(&other, &remote)
+                .await
+                .is_some()
+        );
+        assert!(ordinary.active_relays.contains_key(&other));
+        // The scheduled tasks never get polled on this current-thread runtime.
+    }
+
+    /// Abort stands in for the runtime drop that triggers this in the wild:
+    /// `join_next` yields a cancelled `JoinError` either way.
+    #[tokio::test]
+    #[traced_test]
+    async fn close_all_active_relays_survives_a_cancelled_task() {
+        let (relay_datagram_recv_queue, _recv_rx) = mpsc::channel(1);
+        let config = offline_test_config();
         let mut actor =
             RelayActor::new(config, relay_datagram_recv_queue, CancellationToken::new());
 

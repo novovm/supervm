@@ -162,6 +162,7 @@ impl From<mpsc::error::SendError<RemoteStateMessage>> for RemoteStateActorStoppe
 pub(crate) struct Options {
     /// The configuration for the different transports.
     pub(crate) transports: Vec<TransportConfig>,
+    pub(crate) restrict_relay_dials_to_map: bool,
 
     /// Secret key for this endpoint.
     pub(crate) secret_key: SecretKey,
@@ -878,6 +879,7 @@ impl EndpointInner {
         let Options {
             secret_key,
             transports: transport_configs,
+            restrict_relay_dials_to_map,
             address_lookup_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -931,6 +933,7 @@ impl EndpointInner {
             tls_config: tls_config.clone(),
             metrics: metrics.socket.clone(),
             relay_map: relay_map.clone(),
+            approved_relay_urls: restrict_relay_dials_to_map.then(|| relay_map.urls()),
         };
 
         let shutdown_state = ShutdownState::default();
@@ -2209,6 +2212,7 @@ mod tests {
         };
         let server_config = static_config.create_server_config(vec![]);
         Options {
+            restrict_relay_dials_to_map: false,
             transports: vec![
                 TransportConfig::default_ipv4(),
                 TransportConfig::default_ipv6(),
@@ -2626,6 +2630,7 @@ mod tests {
 
         let dns_resolver = DnsResolver::new();
         let opts = Options {
+            restrict_relay_dials_to_map: false,
             transports: vec![
                 TransportConfig::default_ipv4(),
                 TransportConfig::default_ipv6(),

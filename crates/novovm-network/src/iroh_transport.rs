@@ -1191,7 +1191,7 @@ async fn bind_carrier_endpoint(
         builder = builder.secret_key(key.clone());
     }
     if config.relay_only {
-        builder = builder.clear_ip_transports();
+        builder = builder.clear_ip_transports().restrict_relay_dials_to_map();
     } else if let Some(address) = config.bind_address {
         builder = builder.clear_ip_transports().bind_addr(address)?;
     }
