@@ -560,8 +560,16 @@ async fn round(
 /// The existing caller owns and polls ONE link; request handles only wake it.
 /// This bounded test pump is not another production runtime or mobile scheduler.
 async fn drive_requests(
+    link: NativeObjectLink,
+    driver: novovm_network::mailbox_structured::native_requests::NativeMailboxDriver,
+) -> Result<()> {
+    drive_requests_observed(link, driver, &AtomicBool::new(false)).await
+}
+
+async fn drive_requests_observed(
     mut link: NativeObjectLink,
     mut driver: novovm_network::mailbox_structured::native_requests::NativeMailboxDriver,
+    receiving: &AtomicBool,
 ) -> Result<()> {
     use novovm_network::mailbox_structured::native_requests::NativeRequestErrorKind;
     let wake = driver.wake();
@@ -582,7 +590,10 @@ async fn drive_requests(
             driver.transport_complete(&done);
         }
         while let Some(body) = link.poll_complete(STREAM, now, 64)? {
-            driver.receive(&link, body, now)?;
+            receiving.store(true, Ordering::Release);
+            let result = driver.receive(&link, body, now);
+            receiving.store(false, Ordering::Release);
+            result?;
         }
         driver.progress(&mut link, now)?;
         tokio::select! {
@@ -799,6 +810,7 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
             until(),
             check.clone(),
         );
+        let receiving = Arc::new(AtomicBool::new(false));
         let operations = async {
             assert!(matches!(first.await?.as_slice(), [Reply::Registered]));
             assert!(!handle.supports_bulk_v1());
@@ -951,6 +963,10 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 .err()
                 .context("expected typed request failure")?;
             assert_eq!(rejected.kind, NativeRequestErrorKind::Authority);
+            assert!(matches!(
+                &handle.request(3, vec![fetch(3)], until(), check.clone()).await?[0],
+                Reply::Object { object, .. } if *object == [8; 32]
+            ));
             // A request already out of time cannot reset its deadline on admission.
             let late = handle
                 .request(2, vec![fetch(3)], Instant::now(), check.clone())
@@ -958,11 +974,40 @@ async fn native_async_handles_share_one_session_without_watch_serialization() ->
                 .err()
                 .context("expected typed request failure")?;
             assert_eq!(late.kind, NativeRequestErrorKind::Deadline);
+
+            // Model an independent caller revoked at either reply authority
+            // check. A healthy caller must still receive on the same session.
+            for (slot, deny_after_validation) in [(2, false), (3, true)] {
+                let receiving = receiving.clone();
+                let checked = AtomicBool::new(false);
+                let revoked_at_reply: NativeRequestAuthority = Arc::new(move || {
+                    if receiving.load(Ordering::Acquire)
+                        && (!deny_after_validation || checked.swap(true, Ordering::AcqRel))
+                    {
+                        bail!("test caller revoked while receiving");
+                    }
+                    Ok(())
+                });
+                let rejected = handle
+                    .request(slot, vec![fetch(3)], until(), revoked_at_reply)
+                    .await
+                    .err()
+                    .context("expected request authority failure at reply")?;
+                assert_eq!(rejected.kind, NativeRequestErrorKind::Authority);
+                assert!(!handle.is_stopped());
+                assert!(matches!(
+                    &handle.request(0, vec![fetch(3)], until(), check.clone()).await?[0],
+                    Reply::Object { object, .. } if *object == [8; 32]
+                ));
+            }
             Ok::<_, anyhow::Error>(())
         };
         tokio::select! {
             result = operations => result,
-            result = drive_requests(link, driver) => { result?; bail!("native request owner ended") }
+            result = drive_requests_observed(link, driver, &receiving) => {
+                result?;
+                bail!("native request owner ended")
+            }
         }
     };
     tokio::pin!(server);

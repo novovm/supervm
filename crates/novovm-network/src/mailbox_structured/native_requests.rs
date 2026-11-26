@@ -645,11 +645,14 @@ impl NativeMailboxDriver {
                 if let Err(error) = (queued.authority)() {
                     if let Ok(mut state) = self.shared.state.lock() {
                         let slot = &mut state.slots[index];
-                        slot.failed = Some(NativeRequestErrorKind::Authority);
-                        if let Some(entry) = &mut slot.entry {
+                        if queued.reply.is_closed() {
+                            slot.entry = None;
+                        } else if let Some(entry) = &mut slot.entry {
                             entry.phase = Phase::Complete;
                         }
                     }
+                    // No request was begun and no sequence was consumed.
+                    // A different authorized caller can still use this slot.
                     let _ = queued.reply.send(Err(NativeRequestError::caused(
                         NativeRequestErrorKind::Authority,
                         error,
@@ -824,11 +827,18 @@ impl NativeMailboxDriver {
         let deadline = active.deadline;
         let cancelled = active.cancelled.clone();
         if let Err(error) = authority() {
-            self.fail(id.slot, NativeRequestErrorKind::Authority);
-            return Err(NativeRequestError::caused(
-                NativeRequestErrorKind::Authority,
-                error,
-            ));
+            self.fail_with_error(
+                id.slot,
+                NativeRequestError::caused(NativeRequestErrorKind::Authority, error),
+            );
+            // The response still belongs to the original authenticated stream.
+            // Inspect it as a retired reply without returning business data.
+            self.client
+                .reply_request(link, &body)
+                .map_err(|error| {
+                    NativeRequestError::caused(NativeRequestErrorKind::Protocol, error)
+                })?;
+            return Ok(());
         }
         let receive_at = Instant::now().max(now);
         if receive_at >= deadline || cancelled.is_cancelled() {
@@ -888,9 +898,14 @@ impl NativeMailboxDriver {
                 Ok(())
             }
             Err(error) => {
-                let kind = denied.get().unwrap_or(NativeRequestErrorKind::Protocol);
-                self.fail(id.slot, kind);
-                Err(NativeRequestError::caused(kind, error))
+                if let Some(kind) = denied.get() {
+                    // Request authority changed during verification. The
+                    // session remains authenticated; only this slot retires.
+                    self.fail_with_error(id.slot, NativeRequestError::caused(kind, error));
+                    Ok(())
+                } else {
+                    Err(NativeRequestError::caused(NativeRequestErrorKind::Protocol, error))
+                }
             }
         }
     }
