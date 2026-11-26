@@ -1839,7 +1839,7 @@ fn test_installed_follow(
         let result = Command::new(binary)
             .arg(profile)
             .arg("follow-state")
-            .arg(pin)
+            .arg(&pin)
             .env("LOCALAPPDATA", &device)
             .env("XDG_STATE_HOME", &device)
             .stdout(Stdio::null())
@@ -1870,6 +1870,75 @@ fn test_installed_follow(
         fs::write(&checkpoint, original)?;
         rejection?;
         println!("modified signed route checkpoint rejected on restart");
+
+        if let Some(archived_path) = std::env::var_os("NOVOVM_QUERY_COPY_EXPIRED_LOCATOR") {
+            use novovm_network::{
+                discovery_control::native_chain_query_address,
+                product_directory::PeerSignedRelayRecordV1,
+            };
+            let archived_bytes = fs::read(archived_path)?;
+            let archived: PeerSignedRelayRecordV1 = serde_json::from_slice(&archived_bytes)?;
+            let now = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+            ensure!(
+                archived.relay_public_key == key
+                    && archived.expires_at_ms <= now
+                    && native_chain_query_address(&archived)?
+                        .is_some_and(|address| address.ip().is_loopback() && address != old_address),
+                "expected an already expired signed native route for the detached server"
+            );
+            fs::rename(&opened_seed, stage.join("retained-fresh-bootstrap.json"))?;
+            let expired_checkpoint = serde_json::to_vec(&[&archived])?;
+            fs::write(&checkpoint, &expired_checkpoint)?;
+            let log = stage.join("follow-expired-locator.jsonl");
+            let stderr = stage.join("follow-expired-locator-stderr.log");
+            let mut restarted = IsolatedFollowChild(
+                Command::new(binary)
+                    .arg(profile)
+                    .arg("follow-state")
+                    .arg(&pin)
+                    .env("LOCALAPPDATA", &device)
+                    .env("XDG_STATE_HOME", &device)
+                    .stdout(Stdio::from(fs::File::create(&log)?))
+                    .stderr(Stdio::from(fs::File::create(&stderr)?))
+                    .spawn()?,
+            );
+            owner.until(|_| {
+                forward(true)?;
+                ensure!(
+                    restarted.0.try_wait()?.is_none(),
+                    "expired locator follower exited: {}",
+                    fs::read_to_string(&stderr).unwrap_or_default()
+                );
+                for line in fs::read_to_string(&log)?.split_inclusive('\n').filter(|line| line.ends_with('\n')) {
+                    let event: Value = serde_json::from_str(line)?;
+                    if event["event"] == "verified_state" {
+                        ensure!(
+                            event["height"] == tip.height
+                                && event["state_root"] == expected_root
+                                && event["transport"] == "native_novorudp"
+                                && event["peer_transport_sha256"] == serving_key
+                                && event["native_peer_address"] == old_address.to_string()
+                                && event["locator_sequence"].is_null()
+                                && event["transport_identity_sha256"] == identity,
+                            "expired locator recovery did not preserve authenticated state and custody: {event}"
+                        );
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            })
+            .context("expired locator prevented recovery to the fixed native route")?;
+            drop(restarted);
+            ensure!(
+                fs::read(&checkpoint)? == expired_checkpoint,
+                "expired signed sequence floor was discarded or replaced"
+            );
+            println!(
+                "expired signed locator sequence={} sha256={:x}; authenticated fixed NovoRUDP recovery with the same state and custody",
+                archived.sequence,
+                Sha256::digest(&archived_bytes)
+            );
+        }
     }
     Ok(())
 }

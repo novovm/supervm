@@ -159,7 +159,10 @@ impl Follower {
                 .locators
                 .records
                 .get(&peer.transport_key)
-                .is_some_and(|r| native_chain_query_address(r).ok().flatten().is_some())
+                .is_some_and(|record| {
+                    record.expires_at_ms > now
+                        && native_chain_query_address(record).ok().flatten().is_some()
+                })
             {
                 continue;
             }
