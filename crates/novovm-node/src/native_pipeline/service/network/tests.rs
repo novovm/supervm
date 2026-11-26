@@ -116,6 +116,7 @@ impl Pair {
                 ),
                 None,
                 None,
+                false,
             )?);
             let transport = UdpTransport::bind_for_chain(
                 novovm_protocol::NodeId(side as u64 + 1),
@@ -213,6 +214,7 @@ impl Pair {
                     self.pins,
                     observers.map(|observers| observers[side].clone()),
                     None,
+                    false,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
@@ -504,6 +506,7 @@ fn all_native_owners_cold_reopen_from_frozen_bootstraps_and_changed_seed_coordin
         peers.pins,
         None,
         None,
+        false,
     )?;
     peers.allow_fallback();
     let cache = configs[2]
@@ -716,6 +719,7 @@ fn retained_tick_reactor_reauthenticates_after_peer_owner_restart_without_reopen
         pair.pins,
         None,
         None,
+        false,
     )?;
     pair.drivers[1] = replacement;
     pair.drivers[1].views.lock().unwrap()[0] = PeerView {

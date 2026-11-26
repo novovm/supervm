@@ -119,3 +119,11 @@ C 的 `bootstrap-contact-f4de776fad5c` 原库副本在 LocalService 上通过回
 独立的真实 Client 与 AOEM 测试覆盖两份过期文件上的旧拨号地址都不可达。仅含旧文件的配置无法找到源，带固定联系地址的配置经第二个对端取回新签名定位。移除两份文件并使用新的本地数据目录后仍通过。原文件发行配置和重启持钥回归也通过。Windows 包装配模拟覆盖纯联系地址配置，当前公网独立入口和跨机换网继续单独验收。
 
 复现将 `NOVOVM_QUERY_COPY_BOOTSTRAP_CONTACTS=1` 用于原库副本用例。独立测试使用 `clean_device_recovers_expired_bootstrap_files_through_pinned_contacts`，以 `NOVOVM_DISCOVERY_AOEM`、`NOVOVM_DISCOVERY_AOEM_SHA256` 和 `NOVOVM_DISCOVERY_CLIENT` 固定真实构建。Client SHA-256 `153bd1466f9064cfdf3ebe16a7f722fb4e98d53c10d5332c99a9709667cdc3b6`。原库日志 SHA-256 `390db1775a277df40165cec40ae679877c99dd6a2c3a7933cdb5e76b67a8e02d`，两项 Client 测试日志 SHA-256 `1d122e89681e67fddd4e09edcb999a4ed23f3fff1e1978ea140bd37b8190e739`。
+
+## Iroh 备用查询槽同身份接管
+
+北京时间 13:04，以 LocalService 打开 C 的原库独立副本 `iroh-slot-339e841e8f6a`，复制前后核对 10 个 RocksDB 文件。测试保持旧 Iroh 查询会话打开。另一个认证身份通过选择链查询服务后被占槽检查拒绝。同一身份声明错误链域也被拒绝。两项反例之后，旧会话仍能取得并独立核验原交易 `68d83d0b…9bd6cd4` 的高度 1 最终性回执。
+
+相同传输身份随后通过另一个独立绑定的 Iroh 套接字重新认证并选择正确链域。从重连开始到再次取回并独立验真同一原 Receipt 用时 80 毫秒。旧会话随后无法再取回回执，结束旧会话后新会话仍取得同一份证明。RPC 仍使用一项查询队列，其他身份继续等待占用结束。复现参数为 `NOVOVM_QUERY_COPY_CARRIER_TAKEOVER=1`，复用 `clean_device_discovers_and_verifies_original_receipt_over_same_carrier`。测试在同机回环运行。现役 C 前后均为 PID `30328`，未操作 B。本记录为代码与隔离验收，现役部署及真实换网分别验收。
+
+测试 EXE SHA-256 `f3cba041ac5156fc9e525fb6733fd307ebe4f5d9fa65009bf139947c30c75cf2`。隔离日志 SHA-256 `745fa9894647bdc82358de4031e8d3d3ce75575bd3a627e09bcbe8a8ea149d84`。
