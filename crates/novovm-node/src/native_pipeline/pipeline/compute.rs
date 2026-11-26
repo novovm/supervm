@@ -52,6 +52,7 @@ pub(crate) enum CandidateInput {
     Admitted(super::AdmittedBatch),
     Uca { source: BatchSource },
     Application { source: BatchSource },
+    Registration(BatchSource),
 }
 
 impl CandidateInput {
@@ -59,12 +60,17 @@ impl CandidateInput {
         match self {
             Self::Unverified(source) => source,
             Self::Admitted(batch) => batch.source(),
-            Self::Uca { source, .. } | Self::Application { source } => source,
+            Self::Uca { source, .. }
+            | Self::Application { source }
+            | Self::Registration(source) => source,
         }
     }
     pub(super) fn ensure_owner(&self, owner: &Arc<()>) -> Result<()> {
         match self {
-            Self::Unverified(_) | Self::Uca { .. } | Self::Application { .. } => Ok(()),
+            Self::Unverified(_)
+            | Self::Uca { .. }
+            | Self::Application { .. }
+            | Self::Registration(_) => Ok(()),
             Self::Admitted(batch) => batch.ensure_owner(owner),
         }
     }
@@ -75,6 +81,7 @@ impl CandidateInput {
             Self::Admitted(_) => anyhow::bail!("raw-only allocation fixture"),
             Self::Uca { .. } => anyhow::bail!("raw-only allocation fixture"),
             Self::Application { .. } => anyhow::bail!("typed application input"),
+            Self::Registration(_) => anyhow::bail!("typed registration input"),
         }
     }
 }
@@ -101,6 +108,7 @@ impl std::ops::DerefMut for CandidateInput {
             Self::Admitted(_) => panic!("authenticated input is immutable"),
             Self::Uca { .. } => panic!("typed UCA input is immutable"),
             Self::Application { .. } => panic!("typed application input is immutable"),
+            Self::Registration(_) => panic!("typed registration input is immutable"),
         }
     }
 }
@@ -423,7 +431,7 @@ impl ComputeOwner {
         let sender = self
             .integer
             .as_ref()
-            .filter(|_| !input.is_application())
+            .filter(|_| input.is_asset())
             .map_or(&self.sender, |lane| &lane.sender);
         match sender.try_send(Command::Execute {
             queued: profile::mark(),
@@ -500,8 +508,32 @@ fn prepare(
     application_facade: &mut Option<novovm_exec::uca_application::ApplicationGrantVerifierV1>,
     config: &ComputeConfig,
     request: PrepareRequest,
+    registration_facade: &mut Option<novovm_exec::AoemExecFacade>,
 ) -> Result<NovTransferPlan> {
     domain_matches(config.domain, &request.context)?;
+    if let CandidateInput::Registration(BatchSource::Raw(raw)) = request.raw_transactions {
+        let [proof] = <[Vec<u8>; 1]>::try_from(raw)
+            .map_err(|_| anyhow::anyhow!("registration candidate requires one proof"))?;
+        if registration_facade.is_none() {
+            let library = novovm_exec::resident::AoemLibrarySelection::new(
+                &config.library,
+                novovm_exec::AoemExecOpenOptions {
+                    ingress_workers: Some(config.workers),
+                },
+            )?;
+            *registration_facade = Some(library.open_wire_facade()?);
+        }
+        return crate::native_pipeline::business::uca_registration::RegistrationPlan::prepare(
+            proof,
+            request.context,
+            &request.policy,
+            config.plan,
+            registration_facade
+                .as_ref()
+                .context("registration verifier unavailable")?,
+        )
+        .map(NovTransferPlan::Registration);
+    }
     let body = authenticate(
         session,
         uca_facade,
@@ -526,6 +558,7 @@ fn authenticate(
         crate::native_pipeline::profile::Phase::Authentication,
     );
     let batch = match request.raw_transactions {
+        CandidateInput::Registration(_) => anyhow::bail!("registration requires a bound context"),
         CandidateInput::Application { source } => {
             let BatchSource::Raw(raw) = source else {
                 anyhow::bail!("application body requires its own raw command contract");
@@ -891,6 +924,21 @@ fn execute(
     input: NovCapturedInput,
 ) -> Result<ComputedCandidate> {
     domain_matches(config.domain, input.plan().context())?;
+    if let NovCapturedInput::Registration(input) = input {
+        return Ok(ComputedCandidate {
+            packet: PreparedCandidate::from_registration_executed(input.execute()?, config.packet)?,
+            observation: ExecutionObservation {
+                apfl_view_transactions: 0,
+                components: 1,
+                credit_only_accounts: 0,
+                recomputed_transactions: 1,
+                gpu_rows: 0,
+                gpu_waves: 0,
+                peak_callbacks: 0,
+            },
+            seed: None,
+        });
+    }
     if let NovCapturedInput::Application(input) = input {
         let rows = input.plan().transaction_count();
         let executed = input.execute(session, config.timeout)?;
@@ -943,6 +991,7 @@ fn run_owner(
     failed: &AtomicBool,
 ) {
     let mut application_facade = None;
+    let mut registration_facade = None;
     // The required verifier was qualified on this same owner before ready.
     // Reference-only pipelines retain lazy qualification if a test submits UCA.
     while let Ok(queued) = receiver.recv() {
@@ -1036,6 +1085,7 @@ fn run_owner(
                         &mut application_facade,
                         config,
                         *request,
+                        &mut registration_facade,
                     )
                 });
                 let _ = reply.send(result);

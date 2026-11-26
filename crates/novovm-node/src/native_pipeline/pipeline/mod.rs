@@ -138,6 +138,22 @@ pub struct BatchRequest {
 }
 
 impl BatchRequest {
+    pub(crate) fn from_registration(
+        raw_transactions: Vec<Vec<u8>>,
+        context: BatchContext,
+        policy: DirectNovFeePolicy,
+    ) -> Result<Self> {
+        ensure!(
+            raw_transactions.len() == 1,
+            "registration candidate requires one proof"
+        );
+        Self::from_input(
+            compute::CandidateInput::Registration(BatchSource::Raw(raw_transactions)),
+            context,
+            policy,
+        )
+    }
+
     pub fn from_application(
         raw_transactions: Vec<Vec<u8>>,
         context: BatchContext,

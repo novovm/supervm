@@ -56,12 +56,18 @@ fn captured(changes: &[StateChange], access: &IdentityAccessV1) -> (NodeHash, Ow
 #[ignore = "requires explicitly qualified AOEM library"]
 fn native_registration_creates_one_original_identity_without_overwriting() -> Result<()> {
     use crate::native_pipeline::{
-        business::uca_registration::{
-            self as registration, register_identity, registration_declarations, RegistrationPlan,
+        business::{
+            native_business::{Captured, Plan},
+            uca_registration::{
+                self as registration, register_identity, registration_declarations,
+                RegistrationPlan,
+            },
         },
-        execution::plan::{BatchContext, BatchPlan, PlanBudget},
+        consensus::transport::{self, DecodeLimits, Message},
+        execution::plan::{BatchContext, PlanBudget},
         persistence::{PacketBudget, PreparedCandidate, StoredCandidate},
         pipeline::test_fee_policy,
+        state::frontier::CaptureStep,
     };
     use novovm_exec::{pq_signature::AoemMldsaParameterSet, AoemExecFacade};
     use novovm_protocol::uca_registration::{
@@ -168,22 +174,29 @@ fn native_registration_creates_one_original_identity_without_overwriting() -> Re
     let reader = Memory(original_tree.nodes().clone());
     let raw = signed.encode()?;
     assert!(RegistrationPlan::prepare(raw.clone(), context, &policy, budget, &owner).is_err());
-    let capture_registration = |plan: &RegistrationPlan, raw: Vec<u8>| {
-        BatchPlan::new(
-            *plan.plan().context(),
-            vec![raw],
-            plan.plan().declared_access().to_vec(),
-            budget,
-        )?
-        .capture(&reader, capture)
+    let execute = |plan| -> Result<_> {
+        let mut witness = Plan::Registration(plan).begin_capture(capture)?;
+        loop {
+            match witness.advance(64)? {
+                CaptureStep::Complete => break,
+                CaptureStep::More => (),
+                CaptureStep::NeedRead => {
+                    let keys = witness.next_request()?.expect("frontier requests nodes");
+                    let nodes = keys
+                        .iter()
+                        .map(|key| reader.read_node(key))
+                        .collect::<Result<Vec<_>>>()?;
+                    witness.accept(nodes)?;
+                }
+            }
+        }
+        let Captured::Registration(input) = witness.finish()? else {
+            anyhow::bail!("registration changed representation after capture");
+        };
+        PreparedCandidate::from_registration_executed(input.execute()?, PacketBudget::default())
     };
-    let plan =
-        RegistrationPlan::prepare(raw.clone(), registration_context, &policy, budget, &owner)?;
-    let candidate_input = capture_registration(&plan, raw)?;
-    let packet = PreparedCandidate::from_registration_executed(
-        plan.execute(candidate_input)?,
-        PacketBudget::default(),
-    )?;
+    let plan = RegistrationPlan::prepare(raw, registration_context, &policy, budget, &owner)?;
+    let packet = execute(plan)?;
     assert_eq!(packet.state_root(), published_root);
     let stored = StoredCandidate::load(packet.candidate_id(), PacketBudget::default(), |keys| {
         Ok(keys
@@ -199,18 +212,30 @@ fn native_registration_creates_one_original_identity_without_overwriting() -> Re
     assert!(
         RegistrationPlan::prepare(tampered, *stored.context(), &policy, budget, &owner).is_err()
     );
+    let limits = DecodeLimits {
+        transactions: 1,
+        transaction_bytes: 8192,
+        body_bytes: 8192,
+        message_bytes: 16384,
+    };
+    let body = transport::stored_body(&stored, limits)?;
+    let body = transport::decode(&transport::encode(&body, limits)?, limits)?;
+    transport::candidate_request(&body, &policy)?;
+    let Message::Body {
+        context: replay_context,
+        mut raw_transactions,
+    } = body
+    else {
+        anyhow::bail!("registration archive must restore the original raw transport body");
+    };
     let replay_plan = RegistrationPlan::prepare(
-        stored.raw_transactions()[0].clone(),
-        *stored.context(),
+        raw_transactions.pop().expect("registration command"),
+        replay_context,
         &policy,
         budget,
         &owner,
     )?;
-    let replay_input = capture_registration(&replay_plan, stored.raw_transactions()[0].clone())?;
-    let replayed = PreparedCandidate::from_registration_executed(
-        replay_plan.execute(replay_input)?,
-        PacketBudget::default(),
-    )?;
+    let replayed = execute(replay_plan)?;
     assert!(replayed.matches(&stored));
     context.parent_state_root = published_root;
     context.parent_height = 2;

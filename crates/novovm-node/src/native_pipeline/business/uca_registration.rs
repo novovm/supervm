@@ -5,10 +5,11 @@ use super::{
 };
 use crate::native_pipeline::{
     execution::plan::{
-        BatchContext, BatchPlan, OwnedBatchInput, PlanBudget, UnpublishedBatchEffects,
+        BatchContext, BatchPlan, BoundBatchCapture, OwnedBatchInput, PlanBudget,
+        UnpublishedBatchEffects,
     },
     state::{
-        frontier::{DeclaredAccess, OwnedStateInput},
+        frontier::{CaptureBudget, DeclaredAccess, OwnedStateInput},
         tree::{NodeHash, StateChange},
     },
 };
@@ -96,17 +97,23 @@ impl RegistrationPlan {
         &self.plan
     }
 
-    pub fn execute(self, input: OwnedBatchInput) -> Result<ExecutedRegistration> {
-        ensure!(
-            input.plan().commitment() == self.plan.commitment(),
-            "registration witness belongs to a different plan"
-        );
-        let changes = register_identity(&self.proof, input.state_input(), input.plan().context())?;
-        Ok(ExecutedRegistration {
-            effects: input.stage(&changes)?,
-            receipt: receipt(self.proof.proof_id()),
-        })
+    pub(crate) fn begin_capture(
+        self,
+        budget: CaptureBudget,
+    ) -> Result<(BoundBatchCapture, VerifiedUcaRegistrationV1)> {
+        Ok((self.plan.begin_capture(budget)?, self.proof))
     }
+}
+
+pub(super) fn execute_captured(
+    proof: VerifiedUcaRegistrationV1,
+    input: OwnedBatchInput,
+) -> Result<ExecutedRegistration> {
+    let changes = register_identity(&proof, input.state_input(), input.plan().context())?;
+    Ok(ExecutedRegistration {
+        effects: input.stage(&changes)?,
+        receipt: receipt(proof.proof_id()),
+    })
 }
 
 /// The archive may only accept a complete, signature-checked registration effect.

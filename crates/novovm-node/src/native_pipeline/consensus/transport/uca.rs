@@ -6,7 +6,7 @@ use crate::native_pipeline::business::uca_application::{
     APPLICATION_SEMANTIC_VERSION_V1,
 };
 use crate::native_pipeline::{
-    business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch::*},
+    business::{direct_nov_fee::DirectNovFeePolicy, nov_transfer_batch::*, uca_registration},
     persistence::StoredCandidate,
     pipeline::BatchRequest,
 };
@@ -292,6 +292,17 @@ pub(crate) fn candidate_request(
             context,
             raw_transactions,
         } => {
+            if uca_registration::is_profile(context) {
+                ensure!(
+                    context.effect_contract == uca_registration::effect_contract(policy)?,
+                    "registration body policy mismatch"
+                );
+                return BatchRequest::from_registration(
+                    raw_transactions.clone(),
+                    *context,
+                    policy.clone(),
+                );
+            }
             if native_v4_policy(context, policy)? {
                 return BatchRequest::from_application(
                     raw_transactions.clone(),
@@ -325,7 +336,9 @@ fn legacy_profile(context: &BatchContext, policy: &DirectNovFeePolicy) -> Result
 /// receiving pipeline must still verify signatures and read its own parent.
 pub(crate) fn stored_body(stored: &StoredCandidate, limits: DecodeLimits) -> Result<Message> {
     let context = *stored.context();
-    if native_v4(&context) && stored.spend_outputs().is_none() {
+    if uca_registration::is_profile(&context)
+        || (native_v4(&context) && stored.spend_outputs().is_none())
+    {
         let message = Message::Body {
             context,
             raw_transactions: stored.raw_transactions().to_vec(),
