@@ -158,23 +158,18 @@ fn deadline_ready_proposal(backlog: bool) -> Result<()> {
             codec(),
         )?);
     }
-    // This is the existing bounded retained-control slot, after transport
-    // custody but before consensus admission. Production still verifies it.
-    let mut first = proposal;
-    if backlog {
-        let Message::Proposal { proposal, .. } = &mut first else {
-            unreachable!()
-        };
-        proposal.signature[0] ^= 1;
-    }
-    nodes[ready].retain_control_for_deadline_test(ids[leader], first)?;
+    // The retained slot holds qualified evidence after transport custody.
+    // A valid proposal attributed to another authenticated validator reaches
+    // this slot but fails the original proposer binding at consensus admission.
+    let first_sender = if backlog { absent } else { leader };
+    nodes[ready].retain_control_for_deadline_test(ids[first_sender], proposal)?;
     let expired = start + Duration::from_secs(5);
     for (i, expected) in [(ready, Some(value)), (absent, None)] {
         nodes[i].poll(&services.0[i], expired)?;
         if i == ready && backlog {
             ensure!(
                 nodes[i].rejected_messages == 1,
-                "bad first signature was not rejected"
+                "control from a non-proposer peer was not rejected"
             );
         }
         // Poll the same journal to obtain its real ACK without letting the

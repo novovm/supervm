@@ -433,6 +433,9 @@ impl RoundProgress {
 
     pub(super) fn consensus_diagnostic(&self, now: Instant) -> serde_json::Value {
         let progress = self.proposal_progress();
+        let propose_deadline =
+            self.pacemaker
+                .deadline_at(self.context(), self.round(), TimeoutStep::Propose);
         serde_json::json!({
             "height": self.context().height,
             "round": self.round(),
@@ -447,6 +450,13 @@ impl RoundProgress {
             "quorum_weight": self.domain.validators.quorum_weight(),
             "pacemaker_last_poll_age_us": self.pacemaker.last_polled_at()
                 .map(|at| now.saturating_duration_since(at).as_micros() as u64),
+            "propose": {
+                "timer_eligible": self.step() == TimeoutStep::Propose,
+                "timer_armed": propose_deadline.is_some(),
+                "timer_elapsed": propose_deadline.map(|at| now >= at),
+                "remaining_us": propose_deadline
+                    .map(|at| at.saturating_duration_since(now).as_micros() as u64)
+            },
             "prevote": self.phase_diagnostic(Phase::Prevote, now),
             "precommit": self.phase_diagnostic(Phase::Precommit, now)
         })

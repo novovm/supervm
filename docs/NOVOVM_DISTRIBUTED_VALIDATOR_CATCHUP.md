@@ -53,6 +53,8 @@ C 独立复算并检查了 A 保存的 12 次认证读取。03:31:56–03:32:06 
 
 最后一次等待与首次终结查询的记录秒相差 67 秒。保留的 A2 Existing 快照从终结后开始，现有原件无法给出确切终结时点，也无法把等待时间分摊到各轮计时、投递或重新建立会话。补充原件 ZIP SHA-256 `6fffbc3e365e84da3fd5cccfc35d1b34168e7c1c84a863c3c8b802434960a36a`，复核摘要 SHA-256 `f8eecdafa040ad216ab7f920f79602c59e19d88eebc2db846a707fa270ec0eaf`。
 
+复测时保留两端常驻进度文件的多次原始快照。新版的 `consensus_diagnostic.local_progress.propose` 在本地单调时钟上报告当前高度和轮次的提议计时器，包括当前阶段是否适用、是否已启动、是否到期及剩余微秒数。结合同时采到的提议人、签票权重、认证路径和 journal 状态，可区分计时器等待与消息未入账。换轮后首次轮询前没有新轮次计时值。Windows 定向回归以真实 AOEM 覆盖原 journal ACK、时钟到期和待处理提议先于超时两种顺序，四项通过。测试日志 SHA-256 为 `3e345302c663981831dacbd74dd9d183139d29563fd9b1475e6ab7b1ac17ece4`。
+
 ## 入口与交接材料
 
 入口为 scripts/novovm-distributed-validator-catchup.ps1，证据核对为 scripts/novovm-verify-distributed-validator-catchup.ps1。用同一 Windows x86_64 Node、AOEM、novovmctl 及本测试 harness。harness 来自以下构建输出的 novovm_node-* 测试可执行文件。按现有 Windows 原生构建说明加载 MSVC/SDK 和 RocksDB 缓存。记录源提交、工具链、功能和真实构建输出哈希。

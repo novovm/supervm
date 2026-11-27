@@ -103,8 +103,19 @@ fn native_nil_precommit_recovery_requires_quorum_and_advances_only_after_ack() -
     ensure!(journal.recover_nil_precommit(&exact)? == 3);
     ensure!(journal.recover_nil_precommit(&exact)? == 3);
     let now = Instant::now();
+    let unopened = journal.consensus_diagnostic(now);
+    ensure!(unopened["propose"]["timer_eligible"] == true);
+    ensure!(unopened["propose"]["timer_armed"] == false);
+    ensure!(unopened["propose"]["remaining_us"].is_null());
     journal.poll_after_receive(pipeline, now)?;
     let snapshot = journal.consensus_diagnostic(now);
+    ensure!(snapshot["propose"]["timer_armed"] == true);
+    ensure!(snapshot["propose"]["timer_elapsed"] == false);
+    let propose_wait = Duration::from_secs(5 + round);
+    ensure!(snapshot["propose"]["remaining_us"] == propose_wait.as_micros() as u64);
+    let deadline_snapshot = journal.consensus_diagnostic(now + propose_wait);
+    ensure!(deadline_snapshot["propose"]["timer_elapsed"] == true);
+    ensure!(deadline_snapshot["propose"]["remaining_us"] == 0);
     ensure!(snapshot["precommit"]["verified_weight"] == 3);
     ensure!(snapshot["precommit"]["timer_armed"] == true);
     journal.poll_after_receive(pipeline, now + Duration::from_secs(6))?;
@@ -119,6 +130,9 @@ fn native_nil_precommit_recovery_requires_quorum_and_advances_only_after_ack() -
         std::thread::yield_now();
     }
     ensure!(journal.round() == round + 1 && journal.head().is_none());
+    let next_round = journal.consensus_diagnostic(now + Duration::from_secs(6));
+    ensure!(next_round["propose"]["timer_armed"] == false);
+    ensure!(next_round["propose"]["remaining_us"].is_null());
     ensure!(
         journal.pending_message().is_none(),
         "nil recovery emitted a vote"
