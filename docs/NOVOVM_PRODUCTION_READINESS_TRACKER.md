@@ -154,6 +154,12 @@ Linux 标准包的主动换源门禁本轮未通过。05:41:10.532 UTC，C 验�
 | Windows 隔离清单 | `d6eae2e6c3c6ccd35098d6db082c063e2029d2a149c4daa6739de3421b76e8cf` |
 | Windows 标准 Client | `e602d58268eb94fd364af27def9f2f9dcee97c6e3a3be0cf81339906801d10b9` |
 
+### 引导定位请求的时限修订
+
+按首次接入与运行中刷新统一使用每来源 8 秒的上限。公开提供方的抽样和定位读取共用来源的剩余时限。定位验签完成后，关闭流只等待短时确认，已验证的结果可继续使用。连接、新定位的签名和链域检查仍由原流程执行。
+
+C 用 Rust 1.94.0 编译隔离 Client。首轮 LLVM SIGSEGV，调整为本机 `opt-level=1` 和 256 MiB 的编译栈后成功。Client SHA-256 `5373bb44144b4532537804d178808f9ab207fdc4746f884028a11ff079c08a67`。发行配置预检通过。回环用例 `clean_device_authenticates_through_second_source_and_preserves_custody` 通过，第一来源耗尽 8 秒后第二来源定位通过验签，同一设备身份可再次认证。`public_read_lease_reaches_zero_pin_reader_over_authenticated_discovery` 也通过。修订版标准包的跨机主动换源仍待复验。
+
 ## 2026-11-26 发现入口与只读归档节点分工验收
 
 A 在本机回环只开放一个固定发现联系人。它返回另一个服务身份签发的定位。全新 Windows Client 从高度 0 经 Iroh 验真到高度 42，下载并验证 19 个状态节点、10 个叶子。C 对照两个进程的原始输出，确认返回定位的来源、定位签名人和最终提供状态的对端，并将状态根与[原三机归档](NOVOVM_DISTRIBUTED_VALIDATOR_CATCHUP.md)核对一致。发现与跟随各使用空目录及独立客户端身份。原始 stdout 的 SHA-256 分别为 `a7f94b00669703f1d1acd28935735d04d5de2fcd24ed4b26108e46b81544110d`、`9b804e298ba9812a6776c15acac670f61fb8d9ec40837d1cdd2d5374df8a2d03`。

@@ -346,7 +346,7 @@ impl Follower {
                             self.identity.clone(),
                             InstalledLookups::new(&self.profile),
                             candidates,
-                            REFRESH_SOURCE_BUDGET,
+                            INSTALLED_SOURCE_BUDGET,
                         )
                         .await
                         {

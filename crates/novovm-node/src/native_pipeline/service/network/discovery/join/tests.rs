@@ -236,7 +236,7 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                         let mut stream: CarrierStreamV1<'_> = scope.accept_inbound().await?.into();
                         assert_eq!(stream.read_frame().await?, DISCOVERY_ENTRY);
                         if slow {
-                            let delay = INITIAL_SOURCE_BUDGET / 2 + Duration::from_secs(1);
+                            let delay = INSTALLED_SOURCE_BUDGET / 2 + Duration::from_secs(1);
                             tokio::time::sleep(delay).await;
                             println!("signed route held its pre-authentication response for {delay:?}");
                         }
@@ -318,7 +318,7 @@ async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> 
                     identity,
                     InstalledLookups::new(profile),
                     candidates,
-                    REFRESH_SOURCE_BUDGET,
+                    INSTALLED_SOURCE_BUDGET,
                 ))
             },
         )
@@ -328,7 +328,7 @@ async fn verify_active_refresh(profile: &Profile, root: &Path, source: &str) -> 
     let report = report.context("refresh through the active Client owner")?;
     closed.context("closing the active Client owner")?;
     ensure!(
-        elapsed >= REFRESH_SOURCE_BUDGET
+        elapsed >= INSTALLED_SOURCE_BUDGET
             && report.sources == [source]
             && report.records.len() == 1
             && report.records.values().all(|record| record.sequence == 7),

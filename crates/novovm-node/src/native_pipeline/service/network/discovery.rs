@@ -695,11 +695,9 @@ async fn finish_reader_lookup(
     until: Instant,
     mut found: LookupResult,
 ) -> Result<LookupResult> {
-    // A slow optional operation must not discard completed pinned lookups.
-    let budget = until
-        .saturating_duration_since(Instant::now())
-        .min(Duration::from_secs(2));
-    let referral = tokio::time::timeout(budget, async {
+    // Sampling and retrieving the locator take two round trips. Both share
+    // the authenticated source deadline with the preceding pinned lookups.
+    let referral = tokio::time::timeout_at(until.into(), async {
         let Some(key) = client.sample_public_read_key_v1().await? else {
             return Ok(None);
         };
@@ -718,14 +716,16 @@ async fn finish_reader_lookup(
                 "no_live_locator"
             };
             found.records.extend(record);
-            if let Ok(closed) = tokio::time::timeout(
-                until.saturating_duration_since(Instant::now()),
+            // A signed locator is complete before the closing handshake.
+            // Give the peer a short opportunity to close without delaying
+            // or discarding the verified result on a slow link.
+            let _ = tokio::time::timeout(
+                until
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(100)),
                 client.close(),
             )
-            .await
-            {
-                closed.context("discovery close")?;
-            }
+            .await;
             state
         }
         Ok(Err(error)) if error.is::<PublicReadReferralUnsupported>() => "unsupported",

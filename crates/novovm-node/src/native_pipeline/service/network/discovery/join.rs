@@ -35,8 +35,7 @@ pub use read_snapshot_service::{
 #[cfg(test)]
 mod tests;
 
-const INITIAL_SOURCE_BUDGET: Duration = Duration::from_secs(8);
-const REFRESH_SOURCE_BUDGET: Duration = Duration::from_secs(5);
+const INSTALLED_SOURCE_BUDGET: Duration = Duration::from_secs(8);
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -675,7 +674,7 @@ async fn collect(
                     identity,
                     lookups,
                     candidates,
-                    INITIAL_SOURCE_BUDGET,
+                    INSTALLED_SOURCE_BUDGET,
                 ))
             },
         )
