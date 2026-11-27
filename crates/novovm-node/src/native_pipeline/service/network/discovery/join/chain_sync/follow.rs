@@ -2,6 +2,7 @@
 //! discards a certified header or a verified content-addressed state node.
 use super::*;
 use novovm_network::discovery_control::native_chain_query_address;
+use novovm_network::iroh_transport::IrohPathObserverV1;
 use novovm_network::novorudp::endpoint::NativePeer;
 use std::collections::VecDeque;
 mod locators;
@@ -106,7 +107,7 @@ impl Follower {
             if let Some((mut session, route)) = native.take() {
                 let failed_peer = route.peer.clone();
                 let failed_address = route.native_address;
-                boxed_read(|| self.run_route(&mut session, route, None))
+                boxed_read(|| self.run_route(&mut session, route, None, None))
                     .await
                     .ok();
                 if let Some(address) = failed_address {
@@ -282,6 +283,7 @@ impl Follower {
                         ),
                     )
                     .await??;
+                    let path = stream.iroh_path_observer();
                     let mut session =
                         QuerySession::attach(&mut stream, channel, self.domain.clone())?;
                     let route = Route {
@@ -290,7 +292,7 @@ impl Follower {
                         native_address: None,
                         locator_sequence: Some(candidate.sequence),
                     };
-                    boxed_read(|| self.run_route(&mut session, route, Some(scope))).await
+                    boxed_read(|| self.run_route(&mut session, route, Some(scope), path)).await
                 })
                 .await;
             match result {
@@ -311,9 +313,11 @@ impl Follower {
         session: &mut QuerySession<'_>,
         route: Route,
         scope: Option<&IrohScopeV1>,
+        path: Option<IrohPathObserverV1>,
     ) -> Result<RouteChange> {
         let mut next_probe = Instant::now() + RECOVER_NATIVE;
         let mut alternate_cursor = 0;
+        let mut observed_path = None;
         loop {
             let progress = self.sync(session).await?;
             if let Some(state) = progress {
@@ -333,6 +337,18 @@ impl Follower {
                     }))?;
                     self.reported = Some((tip, route.clone()));
                     self.retrying = false;
+                }
+                if let Some(selected) = path.as_ref().and_then(IrohPathObserverV1::selected) {
+                    if observed_path.as_ref() != Some(&selected) {
+                        self.emit(serde_json::json!({
+                            "event": "verified_carrier_path",
+                            "height": tip.height,
+                            "peer_transport_sha256": route.peer,
+                            "locator_sequence": route.locator_sequence,
+                            "path": selected,
+                        }))?;
+                        observed_path = Some(selected);
+                    }
                 }
             }
             if let Some(scope) = scope {

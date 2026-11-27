@@ -13,7 +13,8 @@ use anyhow::{bail, ensure, Context, Result};
 use iroh::{
     dns::{DnsResolver, NameserverConfig},
     endpoint::{
-        presets, Connection, PortmapperConfig, QuicTransportConfig, RecvStream, SendStream,
+        presets, Connection, LocalTransportAddr, PortmapperConfig, QuicTransportConfig, RecvStream,
+        SendStream,
     },
     Endpoint, EndpointAddr, EndpointId, NetReportConfig, RelayMode, RelayUrl, TransportAddr,
 };
@@ -28,6 +29,48 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+/// A local snapshot of the selected Iroh data path. A relay has no socket
+/// address for the underlying network interface in this API.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum IrohSelectedPathV1 {
+    Direct {
+        local_ip: Option<IpAddr>,
+        remote_address: SocketAddr,
+    },
+    Relay {
+        relay_sha256: String,
+    },
+}
+
+/// Read the existing connection while framed IO borrows the stream.
+pub struct IrohPathObserverV1(Connection);
+
+impl IrohPathObserverV1 {
+    pub fn selected(&self) -> Option<IrohSelectedPathV1> {
+        if self.0.close_reason().is_some() {
+            return None;
+        }
+        let paths = self.0.paths();
+        let path = paths.iter().find(|path| path.is_selected())?;
+        match (path.local_addr(), path.remote_addr()) {
+            (LocalTransportAddr::Ip(local_ip), TransportAddr::Ip(remote_address)) => {
+                Some(IrohSelectedPathV1::Direct {
+                    local_ip: *local_ip,
+                    remote_address: *remote_address,
+                })
+            }
+            (LocalTransportAddr::Relay(_), TransportAddr::Relay(relay)) => {
+                use sha2::{Digest, Sha256};
+                Some(IrohSelectedPathV1::Relay {
+                    relay_sha256: format!("{:x}", Sha256::digest(relay.to_string().as_bytes())),
+                })
+            }
+            _ => None,
+        }
+    }
+}
 
 /// Bounded, address-free connection progress. Observations never grant authority.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2123,6 +2166,10 @@ impl IrohStreamV1<'_> {
         self.reused
     }
 
+    pub fn path_observer(&self) -> IrohPathObserverV1 {
+        IrohPathObserverV1(self.connection.clone())
+    }
+
     pub fn selected_path(&self) -> Result<&'static str> {
         self.check()?;
         for path in self.connection.paths().iter() {
@@ -4145,6 +4192,7 @@ mod tests {
             Box::pin(async move {
                 b_tx.send(scope.address()?).unwrap();
                 let mut stream = scope.connect(&a_rx.await?).await?;
+                let observer = stream.path_observer();
                 let binding = stream.binding_material()?;
                 for i in 0..8u8 {
                     let frame = vec![i; 13000];
@@ -4152,6 +4200,17 @@ mod tests {
                     ensure!(stream.read_frame().await? == frame, "reliable echo differs");
                 }
                 let path = stream.selected_path()?;
+                let Some(IrohSelectedPathV1::Direct {
+                    local_ip,
+                    remote_address,
+                }) = observer.selected()
+                else {
+                    bail!("missing selected direct path");
+                };
+                ensure!(
+                    local_ip.is_none_or(|ip| ip.is_loopback()) && remote_address.ip().is_loopback(),
+                    "selected path does not describe the real loopback link"
+                );
                 let (observed_path, rtt) = stream.selected_rtt().context("selected RTT missing")?;
                 ensure!(
                     observed_path == path && !rtt.is_zero(),

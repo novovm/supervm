@@ -3,7 +3,9 @@
 //! an exporter, peer identity, or an alleged verified binding.
 
 #[cfg(feature = "iroh-transport")]
-use crate::iroh_transport::{IrohReadHalfV1, IrohStreamIoFailureV1, IrohStreamV1, IrohWriteHalfV1};
+use crate::iroh_transport::{
+    IrohPathObserverV1, IrohReadHalfV1, IrohStreamIoFailureV1, IrohStreamV1, IrohWriteHalfV1,
+};
 #[cfg(all(feature = "iroh-transport", feature = "mailbox-seal"))]
 use crate::relay::hop::private::{PrivateCircuit, PrivateReadHalf, PrivateWriteHalf};
 #[cfg(feature = "tls-transport")]
@@ -249,6 +251,17 @@ impl CarrierStreamV1<'_> {
             Stream::Iroh(stream) => stream.selected_path(),
             #[cfg(feature = "tls-transport")]
             Stream::Tls(stream) => stream.selected_path(),
+        }
+    }
+
+    #[cfg(feature = "iroh-transport")]
+    pub fn iroh_path_observer(&self) -> Option<IrohPathObserverV1> {
+        match &self.inner {
+            Stream::Iroh(stream) => Some(stream.path_observer()),
+            #[cfg(feature = "mailbox-seal")]
+            Stream::Private(_) => None,
+            #[cfg(feature = "tls-transport")]
+            Stream::Tls(_) => None,
         }
     }
 
