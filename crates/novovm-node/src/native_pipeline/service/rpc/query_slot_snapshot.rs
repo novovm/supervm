@@ -1932,6 +1932,9 @@ fn test_installed_follow(
             let (count, sender) = match gateway.recv_from(&mut buffer) {
                 Ok(datagram) => datagram,
                 Err(error) if error.kind() == ErrorKind::WouldBlock => return Ok(()),
+                // Windows can report a queued ICMP error for a prior child
+                // that closed its socket after verifying state.
+                Err(error) if error.kind() == ErrorKind::ConnectionReset => continue,
                 Err(error) => return Err(error.into()),
             };
             if !enabled {
@@ -1960,7 +1963,7 @@ fn test_installed_follow(
     installed["seeds"][1]["locator"] = serde_json::json!(opened_seed);
     let profile_bytes = serde_json::to_vec(&installed)?;
     let pin = format!("{:x}", Sha256::digest(&profile_bytes));
-    fs::write(profile, profile_bytes)?;
+    fs::write(profile, &profile_bytes)?;
 
     let device = stage.join("follow-clean-device");
     ensure!(
@@ -2198,15 +2201,115 @@ fn test_installed_follow(
             );
             Ok(())
         })();
-        fs::write(&checkpoint, original)?;
+        fs::write(&checkpoint, &original)?;
         rejection?;
         println!("modified signed route checkpoint rejected on restart");
 
+        use novovm_network::{
+            discovery_control::{native_chain_query_address, native_chain_query_endpoint},
+            product_directory::{sign_relay_record_v1, PeerSignedRelayRecordV1},
+            product_service_lease::IrohServiceEndpointV1,
+        };
+        let mut installed: Value = serde_json::from_slice(&profile_bytes)?;
+        for (index, seed) in installed["seeds"]
+            .as_array_mut()
+            .context("installed seeds")?
+            .iter_mut()
+            .enumerate()
+        {
+            let seed = seed.as_object_mut().context("installed seed")?;
+            let missing = stage.join(format!("missing-fixed-recovery-source-{index}.json"));
+            ensure!(!missing.exists(), "fixed recovery source must be absent");
+            seed.insert("locator".into(), serde_json::json!(missing));
+            seed.remove("contact");
+        }
+        let fixed_profile = stage.join("follow-fixed-recovery-profile.json");
+        let fixed_profile_bytes = serde_json::to_vec(&installed)?;
+        let fixed_pin = format!("{:x}", Sha256::digest(&fixed_profile_bytes));
+        fs::write(&fixed_profile, fixed_profile_bytes)?;
+
+        let mut verify_cached_route = |owner: &mut QueryOwner,
+                                       label: &str,
+                                       locator: &PeerSignedRelayRecordV1|
+         -> Result<()> {
+            let now = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+            let still_live = locator.expires_at_ms > now;
+            let cached = serde_json::to_vec(&[locator])?;
+            fs::write(&checkpoint, &cached)?;
+            let log = stage.join(format!("follow-{label}.jsonl"));
+            let stderr = stage.join(format!("follow-{label}-stderr.log"));
+            let mut restarted = IsolatedFollowChild(
+                Command::new(binary)
+                    .arg(&fixed_profile)
+                    .arg("follow-state")
+                    .arg(&fixed_pin)
+                    .env("LOCALAPPDATA", &device)
+                    .env("XDG_STATE_HOME", &device)
+                    .stdout(Stdio::from(fs::File::create(&log)?))
+                    .stderr(Stdio::from(fs::File::create(&stderr)?))
+                    .spawn()?,
+            );
+            owner.until(|_| {
+                    forward(true)?;
+                    ensure!(
+                        restarted.0.try_wait()?.is_none(),
+                        "{label} follower exited: {}",
+                        fs::read_to_string(&stderr).unwrap_or_default()
+                    );
+                    for line in fs::read_to_string(&log)?.split_inclusive('\n').filter(|line| line.ends_with('\n')) {
+                        let event: Value = serde_json::from_str(line)?;
+                        if event["event"] == "verified_state" {
+                            ensure!(
+                                event["height"] == tip.height
+                                    && event["state_root"] == expected_root
+                                    && event["transport"] == "native_novorudp"
+                                    && event["peer_transport_sha256"] == serving_key
+                                    && event["native_peer_address"] == old_address.to_string()
+                                    && event["locator_sequence"].is_null()
+                                    && event["transport_identity_sha256"] == identity
+                                    && (!still_live || event["utc_unix_ms"].as_u64().is_some_and(|t| t < locator.expires_at_ms)),
+                                "{label} fixed route did not preserve authenticated state and custody: {event}"
+                            );
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
+                })
+                .with_context(|| format!("{label} prevented recovery to the fixed native route"))?;
+            drop(restarted);
+            ensure!(
+                fs::read(&checkpoint)? == cached,
+                "{label} lost its signed cache floor"
+            );
+            Ok(())
+        };
+
+        let retired = UdpSocket::bind("127.0.0.1:0")?;
+        retired.set_nonblocking(true)?;
+        let retired_address = retired.local_addr()?;
+        let [previous]: [PeerSignedRelayRecordV1; 1] = serde_json::from_slice(&original)?;
+        let mut carrier = IrohServiceEndpointV1::from_record(&previous)?;
+        carrier.address.direct = vec![retired_address];
+        let now = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
+        let still_live = sign_relay_record_v1(
+            &owner.rpc.node.transport_identity(),
+            previous.record_id,
+            vec![native_chain_query_endpoint(&carrier, retired_address)?],
+            now,
+            now + 120_000,
+            previous
+                .sequence
+                .checked_add(1)
+                .context("locator sequence exhausted")?,
+        )?;
+        verify_cached_route(owner, "live-retired-locator", &still_live)?;
+        ensure!(
+            retired.recv_from(&mut [0; 65536])?.0 > 0,
+            "signed address was never attempted"
+        );
+        println!("still-valid retired signed locator sequence={} retained, authenticated fixed NovoRUDP recovery with the same state and custody", still_live.sequence);
+
         if let Some(archived_path) = std::env::var_os("NOVOVM_QUERY_COPY_EXPIRED_LOCATOR") {
-            use novovm_network::{
-                discovery_control::native_chain_query_address,
-                product_directory::PeerSignedRelayRecordV1,
-            };
             let archived_bytes = fs::read(archived_path)?;
             let archived: PeerSignedRelayRecordV1 = serde_json::from_slice(&archived_bytes)?;
             let now = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?;
@@ -2218,52 +2321,7 @@ fn test_installed_follow(
                 "expected an already expired signed native route for the detached server"
             );
             fs::rename(&opened_seed, stage.join("retained-fresh-bootstrap.json"))?;
-            let expired_checkpoint = serde_json::to_vec(&[&archived])?;
-            fs::write(&checkpoint, &expired_checkpoint)?;
-            let log = stage.join("follow-expired-locator.jsonl");
-            let stderr = stage.join("follow-expired-locator-stderr.log");
-            let mut restarted = IsolatedFollowChild(
-                Command::new(binary)
-                    .arg(profile)
-                    .arg("follow-state")
-                    .arg(&pin)
-                    .env("LOCALAPPDATA", &device)
-                    .env("XDG_STATE_HOME", &device)
-                    .stdout(Stdio::from(fs::File::create(&log)?))
-                    .stderr(Stdio::from(fs::File::create(&stderr)?))
-                    .spawn()?,
-            );
-            owner.until(|_| {
-                forward(true)?;
-                ensure!(
-                    restarted.0.try_wait()?.is_none(),
-                    "expired locator follower exited: {}",
-                    fs::read_to_string(&stderr).unwrap_or_default()
-                );
-                for line in fs::read_to_string(&log)?.split_inclusive('\n').filter(|line| line.ends_with('\n')) {
-                    let event: Value = serde_json::from_str(line)?;
-                    if event["event"] == "verified_state" {
-                        ensure!(
-                            event["height"] == tip.height
-                                && event["state_root"] == expected_root
-                                && event["transport"] == "native_novorudp"
-                                && event["peer_transport_sha256"] == serving_key
-                                && event["native_peer_address"] == old_address.to_string()
-                                && event["locator_sequence"].is_null()
-                                && event["transport_identity_sha256"] == identity,
-                            "expired locator recovery did not preserve authenticated state and custody: {event}"
-                        );
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            })
-            .context("expired locator prevented recovery to the fixed native route")?;
-            drop(restarted);
-            ensure!(
-                fs::read(&checkpoint)? == expired_checkpoint,
-                "expired signed sequence floor was discarded or replaced"
-            );
+            verify_cached_route(owner, "expired-locator", &archived)?;
             println!(
                 "expired signed locator sequence={} sha256={:x}; authenticated fixed NovoRUDP recovery with the same state and custody",
                 archived.sequence,

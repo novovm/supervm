@@ -184,10 +184,12 @@ impl Follower {
             }
         }
         for peer in &self.profile.native_query_peers {
+            // Deduplicate the same socket. A still-valid locator for a
+            // different socket leaves the installed address eligible.
             if self.locators.fixed(&self.profile).any(|record| {
                 record.relay_public_key == peer.transport_key
                     && record.expires_at_ms > now
-                    && native_chain_query_address(record).ok().flatten().is_some()
+                    && native_chain_query_address(record).ok().flatten() == Some(peer.address)
             }) {
                 continue;
             }
