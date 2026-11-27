@@ -489,6 +489,8 @@ B 现役节点监听 IPv4 UDP 42050。现役流量的报文头显示该端口已
 
 C 使用标准 release 参数构建 Windows Client，并用 `clean_device_authenticates_through_second_source_and_preserves_custody` 和已核验的 AOEM DLL 通过真实回环验收。静默的第一来源没有路径条目，两次 Client 进程均只记录成功的第二来源，直连坐标匹配服务端实际地址，采样时间落在查询窗口内，设备身份和签名定位保持一致。`clean_device_recovers_rotated_endpoint_before_signed_locator_expires` 也通过，记录的是成功接入的新端点。严格 Clippy 在基线 `cc75b4c0` 与本改动均报告相同的七项错误。本轮证据范围为回环，B 公网放行及独立外网认证待现场执行。
 
+B 的外网复测保留一次 `discover` 的原 stdout、退出码及 Client 始末 UTC。用 `python scripts/tests/verify-native-dual-discovery.py direct --help` 指定独立核对的发行配置摘要、预期引导指纹、公网 IPv4 和 UDP 42050。工具同时检查目标引导自己返回了有效签名定位，并拒绝中继、其他端口、超出窗口的观测或失败退出。C 已用真实端点轮换回环的原 stdout 验证，固定联系地址 `127.0.0.1:52350` 通过，同一份报告指定 `42050` 被拒绝。生产入口签收还需要 B 侧报文以及独立外网来源证据。
+
 ### C 现役 Windows 服务退出与定位缓存取证
 
 11 月 27 日 01:38:39、01:42:27、01:47:29 UTC，SCM 三次记录 `9f223abf` 服务以通用自定义码 1 退出。服务管理器在前两次退出后分别等 5 秒和 15 秒重启，第三次退出后服务保持停止。原 RocksDB 日志记录最终退出前数据库完成关闭，日志未发现明确的 RocksDB 损坏或磁盘写入错误。原日志 SHA-256 为 `a857801584a0c7247ab0b0a6e57000231581f0cf0eb835d4927cd90a77929c86`。

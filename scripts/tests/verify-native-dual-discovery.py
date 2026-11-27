@@ -6,8 +6,10 @@ import json
 import re
 import sys
 from datetime import datetime, timedelta
+from ipaddress import ip_address
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest import TestCase
 
 
@@ -145,19 +147,26 @@ def check_unpinned_provider(profile_path, profile_sha256, chain_id, sources, pro
         raise ValueError(f"{profile_path.name}: expected public reader is already pinned")
 
 
-def checked_report(path, expected_digest, chain_id, sources, ended, require_source_attribution=False,
-                   profile_sha256=None, public_read_provider=None):
+def discovery_report(path, expected_digest, chain_id, profile_sha256, strict_json):
     with path.open("rb") as stream:
         raw = stream.read(16_385)
     if not 0 < len(raw) <= 16_384 or hashlib.sha256(raw).hexdigest() != expected_digest:
         raise ValueError(f"{path.name}: original stdout size or SHA-256 mismatch")
-    check_unique_keys = require_source_attribution or profile_sha256 is not None
-    row = json.loads(raw, object_pairs_hook=unique_object if check_unique_keys else None)
+    row = json.loads(raw, object_pairs_hook=unique_object if strict_json else None)
     if profile_sha256 is not None and row.get("profile_sha256") != profile_sha256:
         raise ValueError(f"{path.name}: Client did not confirm the expected profile SHA-256")
     identity = digest(row["transport_identity_sha256"])
     if type(row["chain_id"]) is not int or row["chain_id"] != chain_id:
         raise ValueError(f"{path.name}: unexpected chain")
+    return row, identity
+
+
+def checked_report(path, expected_digest, chain_id, sources, ended, require_source_attribution=False,
+                   profile_sha256=None, public_read_provider=None):
+    row, identity = discovery_report(
+        path, expected_digest, chain_id, profile_sha256,
+        require_source_attribution or profile_sha256 is not None,
+    )
     authenticated = row["authenticated_discovery_sources"]
     if not isinstance(authenticated, list) or sorted(authenticated) != sorted(sources):
         raise ValueError(f"{path.name}: unexpected authenticated sources")
@@ -181,6 +190,72 @@ def checked_report(path, expected_digest, chain_id, sources, ended, require_sour
             raise ValueError(f"{path.name}: locator expired by Client exit")
         sequences[signer] = sequence
     return identity, sequences
+
+
+def verify_direct(args):
+    if args.chain_id < 1 or not 0 < args.port <= 65_535 or args.started >= args.ended:
+        raise ValueError("invalid chain, UDP port or Client observation window")
+    if args.client_exit != 0:
+        raise ValueError("discovery Client did not exit successfully")
+    row, identity = discovery_report(
+        args.stdout, args.stdout_sha256, args.chain_id, args.profile_sha256, True,
+    )
+    authenticated = row["authenticated_discovery_sources"]
+    if not isinstance(authenticated, list):
+        raise ValueError("expected authenticated discovery sources")
+    sources = {digest(source) for source in authenticated}
+    if len(sources) != len(authenticated) or args.source not in sources or identity in sources:
+        raise ValueError("expected distinct sources and an authenticated target")
+
+    start_ms = int(args.started.timestamp() * 1000)
+    end_ms = int(args.ended.timestamp() * 1000)
+    row_paths = row.get("discovery_paths_at_authentication_by_source")
+    if (not isinstance(row_paths, dict) or not row_paths.keys() <= sources
+            or args.source not in row_paths):
+        raise ValueError("missing or unattributed authenticated path for target")
+    observed = row_paths[args.source]
+    stamp = observed["observed_unix_ms"]
+    if type(stamp) is not int or not start_ms <= stamp <= end_ms:
+        raise ValueError("authenticated path observation is outside the Client window")
+    path = observed["path"]
+    if path["kind"] != "direct":
+        raise ValueError("authenticated path for target did not use direct UDP")
+    endpoint = path["remote_address"]
+    if not isinstance(endpoint, str):
+        raise ValueError("expected a direct UDP endpoint")
+    host, separator, port = endpoint.rpartition(":")
+    if (not separator or port != str(args.port)
+            or ip_address(host.removeprefix("[").removesuffix("]")) != args.address):
+        raise ValueError("authenticated direct path used a different UDP endpoint")
+
+    candidates = locator_rows(row["signed_locator_candidates"], args.stdout, include_purpose=True)
+    returned = attributed_rows(row, sources, args.stdout, include_purpose=True)
+    locator = returned[args.source].get(args.source)
+    if locator is None or locator[1] <= end_ms or locator[2] is not None:
+        raise ValueError("authenticated target did not return its own live node locator")
+    require_newest_merge(candidates, returned, args.stdout, include_purpose=True)
+    return {"authenticated_source": args.source, "direct_remote_address": endpoint,
+            "observed_unix_ms": stamp, "locator_sequence": locator[0]}
+
+
+def direct_main(argv):
+    parser = argparse.ArgumentParser(
+        description="Verify the selected UDP endpoint in one authenticated Client discovery report.",
+    )
+    parser.add_argument("--stdout", type=Path, required=True)
+    for name in ("stdout-sha256", "profile-sha256", "source"):
+        parser.add_argument("--" + name, type=digest, required=True)
+    for name in ("started", "ended"):
+        parser.add_argument("--" + name, type=utc, required=True)
+    for name in ("chain-id", "port", "client-exit"):
+        parser.add_argument("--" + name, type=int, required=True)
+    parser.add_argument("--address", type=ip_address, required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = verify_direct(args)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        parser.exit(1, f"{exc}\n")
+    print(json.dumps(result))
 
 
 def verify(args):
@@ -467,12 +542,15 @@ def read_transfer_main(argv):
 
 
 def main():
+    if sys.argv[1:2] == ["direct"]:
+        return direct_main(sys.argv[2:])
     if sys.argv[1:2] == ["follow"]:
         return follow_main(sys.argv[2:])
     if sys.argv[1:2] == ["read-transfer"]:
         return read_transfer_main(sys.argv[2:])
     parser = argparse.ArgumentParser(
-        description=__doc__, epilog="Use 'follow --help' or 'read-transfer --help' to verify a continuous Client run.",
+        description=__doc__,
+        epilog="Use 'direct --help', 'follow --help' or 'read-transfer --help' for other evidence.",
     )
     parser.add_argument("--first", type=Path, required=True)
     parser.add_argument("--first-sha256", type=digest, required=True)
@@ -866,6 +944,60 @@ class FollowFailoverTests(TestCase):
         self.assertTrue(result["target_used_fresh_survivor_locator"])
         with self.assertRaisesRegex(ValueError, "fresh surviving"):
             self.verify_trace(self.trace(), issuer_ahead_ms=100)
+
+
+class DirectDiscoveryTests(TestCase):
+    def check_report(self, changes=None, exit_code=0):
+        source = "a" * 64
+        profile_sha256 = "b" * 64
+        locator = SourceAttributionTests.locator(source, 17)
+        row = {
+            "chain_id": 42,
+            "profile_sha256": profile_sha256,
+            "transport_identity_sha256": "c" * 64,
+            "authenticated_discovery_sources": [source],
+            "signed_locator_candidates": [locator],
+            "signed_locators_by_source": {source: [locator]},
+            "discovery_paths_at_authentication_by_source": {source: {
+                "observed_unix_ms": 1_000,
+                "path": {"kind": "direct", "remote_address": "192.0.2.8:42050"},
+            }},
+        }
+        if changes is not None:
+            changes(row, source)
+        raw = json.dumps(row).encode()
+        with TemporaryDirectory() as storage:
+            stdout = Path(storage) / "stdout.json"
+            stdout.write_bytes(raw)
+            return verify_direct(SimpleNamespace(
+                stdout=stdout, stdout_sha256=hashlib.sha256(raw).hexdigest(),
+                profile_sha256=profile_sha256, chain_id=42, source=source,
+                started=utc("1970-01-01T00:00:00Z"), ended=utc("1970-01-01T00:00:02Z"),
+                address=ip_address("192.0.2.8"), port=42050, client_exit=exit_code,
+            ))
+
+    def test_authenticates_expected_direct_endpoint(self):
+        self.assertEqual(self.check_report()["locator_sequence"], 17)
+
+    def test_relay_wrong_endpoint_and_outside_window_are_rejected(self):
+        for observation, error in (
+            ({"path": {"kind": "relay"}}, "did not use direct UDP"),
+            ({"path": {"kind": "direct", "remote_address": "192.0.2.8:443"}}, "different UDP endpoint"),
+            ({"observed_unix_ms": 2_001}, "outside the Client window"),
+        ):
+            def update_path(row, source):
+                row["discovery_paths_at_authentication_by_source"][source].update(observation)
+
+            with self.subTest(observation=observation), self.assertRaisesRegex(ValueError, error):
+                self.check_report(update_path)
+
+    def test_locator_must_come_from_the_same_authenticated_peer(self):
+        with self.assertRaisesRegex(ValueError, "did not return its own live node locator"):
+            self.check_report(lambda row, source: row["signed_locators_by_source"][source].clear())
+
+    def test_failed_client_exit_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "did not exit successfully"):
+            self.check_report(exit_code=1)
 
 
 if __name__ == "__main__":
