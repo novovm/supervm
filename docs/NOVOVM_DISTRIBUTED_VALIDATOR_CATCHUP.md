@@ -28,6 +28,12 @@ A、C、D 三台物理 Windows 主机的四个隔离角色已完成本轮验收�
 
 首轮 D1 最终认证查询的发起秒比该次启动报告早一秒。证据包保留首轮原件，并标明 D1 同隔离库的独立 Existing 复验所产生的启动、认证查询和归档原件。聚合副本使用这三份复验报告，原版 verifier 的断言保持原样。A 从 ZIP 重新解压运行得到 PASS。证据 ZIP SHA-256 为 `0dd8b93e983ce790fc8922326b79853b8bca5d205d87e89bd59c6745c1d12a09`，verifier stdout SHA-256 为 `4ce13e6cab972ad3120fc1b20a276140a66786bdd27cc215d32fcdba85725ffe`。原件和取件路径走受限交接。
 
+## 2026-11-27 三机不等权准备
+
+D 的有线仍断开，当前 Wi-Fi 到 A、C 均选择同网段直连路由。D 与 C 的网关邻居缓存摘要一致。以上为本机只读选路和邻居证据，跨机 UDP 认证待现场实测。
+
+C 将已通过不等权单机行为验收的 `095f932c` Node、通过不等权计划回归的同提交 Harness、原三机 `novovmctl` 和 AOEM 整理为隔离测试包。另含当前 runner、verifier 及工件清单。包内落地文件通过候选摘要、Harness 入口、Node `existing` 合同和 AOEM 原生验签预检。ZIP 的七个成员逐项回读验证，共 78547880 字节，SHA-256 `1feccd23e3525f75e8ff732241051bc7868dece2308cb350ec21389f0c6f31d7`，清单 SHA-256 `e5c11ed146e76a0ce21b0967b44a570d86d0f02d925d02028f24bf02897f7282`。工件在 C 本机，A、D 签收及共同窗口仍待完成。
+
 ## 入口与交接材料
 
 入口为 scripts/novovm-distributed-validator-catchup.ps1，证据核对为 scripts/novovm-verify-distributed-validator-catchup.ps1。用同一 Windows x86_64 Node、AOEM、novovmctl 及本测试 harness。harness 来自以下构建输出的 novovm_node-* 测试可执行文件。按现有 Windows 原生构建说明加载 MSVC/SDK 和 RocksDB 缓存。记录源提交、工具链、功能和真实构建输出哈希。
