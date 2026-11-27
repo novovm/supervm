@@ -122,16 +122,74 @@ def confirm_advance(rows, baseline, final, old, new):
             and advance["locator_sequence"] == final["locator_sequence"]
             and baseline["utc_unix_ms"] < advance["utc_unix_ms"] <= final["utc_unix_ms"],
             "route change did not link the two verified states")
-    for item in (baseline, final):
-        require(any(row["event"] == "verified_locator_accepted"
-                    and row["peer_transport_sha256"] == item["peer_transport_sha256"]
-                    and row["locator_sequence"] == item["locator_sequence"]
-                    and row["utc_unix_ms"] <= min(item["utc_unix_ms"], advance["utc_unix_ms"])
-                    for row in rows), "expected the corresponding authenticated locator")
-    require(not any(row["event"] == "retrying"
-                    and baseline["utc_unix_ms"] < row["utc_unix_ms"] <= final["utc_unix_ms"]
-                    for row in rows), "connection retried between the verified states")
+    transition = advance["utc_unix_ms"]
+    require(locator_for_state(rows, baseline)["locator_expires_at_ms"] > transition,
+            "baseline locator expired before the proof-triggered change")
+    require(locator_for_state(rows, final)["utc_unix_ms"] <= transition,
+            "successor locator was accepted after the proof-triggered change")
+    require(not retries_between(rows, baseline, final),
+            "connection retried between the verified states")
     return advance
+
+
+def locator_for_state(rows, item):
+    for row in rows:
+        if (row["event"] == "verified_locator_accepted"
+                and row["peer_transport_sha256"] == item["peer_transport_sha256"]
+                and row["locator_sequence"] == item["locator_sequence"]
+                and row["locator_issued_at_ms"] <= row["utc_unix_ms"] <= item["utc_unix_ms"]
+                < row["locator_expires_at_ms"]):
+            return row
+    raise ValueError("expected an authenticated locator valid at the verified state")
+
+
+def retries_between(rows, baseline, final):
+    return [row for row in rows if row["event"] == "retrying"
+            and baseline["utc_unix_ms"] < row["utc_unix_ms"]
+            and (final is None or row["utc_unix_ms"] <= final["utc_unix_ms"])]
+
+
+def transition_report(rows, baseline, final, old, new, checkpoint):
+    first_locator = locator_for_state(rows, baseline)
+    retries = retries_between(rows, baseline, final)
+    advances = [row for row in rows if row["event"] == "certified_route_advance"]
+    advance = None
+    outcome = "successor_state_unverified"
+    if final is not None:
+        require(baseline["utc_unix_ms"] < final["utc_unix_ms"], "states are out of order")
+        locator_for_state(rows, final)
+        if retries and not advances:
+            outcome = ("reconnected_after_locator_expiry"
+                       if retries[0]["utc_unix_ms"] >= first_locator["locator_expires_at_ms"]
+                       else "reconnected_before_locator_expiry")
+        else:
+            advance = confirm_advance(rows, baseline, final, old, new)
+            outcome = "certified_route_advance"
+    proofs = {}
+    for stage in ((old, new) if final is not None else (old,)):
+        height = stage["height"]
+        proofs[str(height)] = digest(checkpoint / f"{height:020d}.proof")
+        require(proofs[str(height)] == stage["proof_sha256"], "archive proof differs")
+    return {"outcome": outcome, "baseline": baseline, "advance": advance, "final": final,
+            "retries": retries, "observed_advance_count": len(advances),
+            "baseline_locator_expires_at_ms": first_locator["locator_expires_at_ms"],
+            "proof_sha256": proofs}
+
+
+def replay(plan, stdout, pin, checkpoint):
+    require(stdout.is_file() and not stdout.is_symlink(), "expected a regular Client stdout file")
+    raw = stdout.read_bytes()
+    require(HEX.fullmatch(pin) and hashlib.sha256(raw).hexdigest() == pin, "Client stdout pin differs")
+    require(raw.endswith(b"\n"), "Client stdout has a partial last event")
+    rows = [json.loads(line) for line in raw.splitlines()]
+    old, new = plan["old"], plan["new"]
+    reopened_height = old["height"] if plan.get("seed_checkpoint") else 0
+    identity = event_identity(rows, reopened_height)
+    baseline, final = state_event(rows, old), state_event(rows, new)
+    require(baseline is not None, "the baseline verified state is required")
+    report = transition_report(rows, baseline, final, old, new, checkpoint)
+    report.update(evidence_kind="archived_client_trace", identity=identity, stdout_sha256=pin)
+    return report
 
 
 def save(path, value):
@@ -191,21 +249,14 @@ def trial(plan, evidence):
                 else:
                     final = state_event(rows, new)
                     if final is not None:
-                        advance = confirm_advance(rows, baseline, final, old, new)
                         checkpoint, = domain.glob("headers-0-*")
-                        proofs = {}
-                        for stage in (old, new):
-                            height = stage["height"]
-                            proofs[str(height)] = digest(checkpoint / f"{height:020d}.proof")
-                            require(proofs[str(height)] == stage["proof_sha256"], "archive proof differs")
-                        report = {"pid": child.pid, "identity": identity, "baseline": baseline,
-                                  "advance": advance, "final": final, "proof_sha256": proofs,
-                                  "manifest_sha256": plan["manifest_sha256"],
-                                  "client_sha256": plan["client_sha256"],
-                                  "profile_sha256": plan["profile_sha256"]}
+                        report = transition_report(rows, baseline, final, old, new, checkpoint)
                         break
                 time.sleep(0.25)
-            require(report is not None, "certified route advance was not observed before timeout")
+            if report is None:
+                require(baseline is not None, "verified baseline was not observed before timeout")
+                checkpoint, = domain.glob("headers-0-*")
+                report = transition_report(rows, baseline, None, old, new, checkpoint)
         finally:
             if child.poll() is None:
                 child.terminate()
@@ -215,19 +266,34 @@ def trial(plan, evidence):
                     child.kill()
                     child.wait()
             save(evidence / "exit.json", {"pid": child.pid, "returncode": child.returncode})
-    report["stdout_sha256"] = digest(stdout)
+    report.update(evidence_kind="supervised_client_run", pid=child.pid, identity=identity,
+                  manifest_sha256=plan["manifest_sha256"], client_sha256=plan["client_sha256"],
+                  profile_sha256=plan["profile_sha256"], stdout_sha256=digest(stdout))
     save(evidence / "report.json", report)
     print(json.dumps(report))
+    return report["outcome"] == "certified_route_advance"
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("plan", type=Path)
     parser.add_argument("run_directory", type=Path)
+    parser.add_argument("--replay-stdout", type=Path)
+    parser.add_argument("--replay-stdout-sha256")
+    parser.add_argument("--checkpoint", type=Path)
     args = parser.parse_args()
     os.umask(0o077)
-    trial(json.loads(args.plan.read_bytes()), args.run_directory.absolute())
+    plan = json.loads(args.plan.read_bytes())
+    if any((args.replay_stdout, args.replay_stdout_sha256, args.checkpoint)):
+        if not all((args.replay_stdout, args.replay_stdout_sha256, args.checkpoint)):
+            parser.error("replay requires --replay-stdout, --replay-stdout-sha256 and --checkpoint")
+        report = replay(plan, args.replay_stdout, args.replay_stdout_sha256, args.checkpoint)
+        args.run_directory.mkdir(mode=0o700)
+        save(args.run_directory / "report.json", report)
+        print(json.dumps(report))
+        return 0 if report["outcome"] == "certified_route_advance" else 1
+    return 0 if trial(plan, args.run_directory.absolute()) else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
