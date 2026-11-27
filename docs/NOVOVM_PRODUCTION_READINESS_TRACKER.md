@@ -186,6 +186,8 @@ C 回读 Linux 压缩包的 95 个清单文件及两件外层校验资料，复�
 
 C 将包内 31 个 ELF 的系统依赖和符号版本与 B 的既有只读 ABI 快照对照，未发现缺项。本轮只读取归档快照，静态核验报告 SHA-256 `43edfabe19e604675ac46489d9c2b767ea6f31322aab983aea5ee3216b36b9f8`。
 
+11 月 27 日 02:08 至 02:09 UTC，C 用既有 `01e79b47` 回环测试夹具驱动 `9e0d6588` Linux 基础包内的原生 Client 和 AOEM。干净目录在第一个引导超时后认证第二个引导，取得序号 7 的签名定位，两次 Client 进程复用同一设备传输身份。仍在有效期内的签名定位包含八个已退役地址时，Client 用固定联系地址连接同一 Iroh 和 NOVONET 身份。两项使用原单 DNS 测试配置，耗时 31.47 秒和 42.76 秒。回执 SHA-256 `c0d6e95a1e749049577d2616d9e66707b12bc5fbb35e123d3fcc1e1faf9edfd8`。
+
 ### 生产双引导验收取证
 
 生产双源和单源退出的两次发现都用 `novovm-native-client <profile> discover <profile-sha256>`。摘要来自独立核对的发行清单。Client 在创建本机传输身份前核对实际读取的配置，并在成功回执中记录 `profile_sha256`。复核两份原始 stdout 时同时传 `--require-source-attribution --profile-sha256 <同一摘要>`，防止两次运行中途切换信任配置。旧版无摘要回执仍可按当时的证据范围复查。
