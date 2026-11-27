@@ -7,6 +7,8 @@ param(
   [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$WindowsClientProfileSha256,
   [string]$LinuxClientProfile,
   [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$LinuxClientProfileSha256,
+  [string]$VerifiedBasePackageRoot,
+  [ValidatePattern('^[a-fA-F0-9]{64}$')][string]$VerifiedBaseManifestSha256,
   [switch]$Force
 )
 
@@ -107,6 +109,28 @@ function Get-ClientJoinInputs([string]$Path, [string]$ProfileSha256, [string]$Ao
   return $inputs
 }
 
+function Set-ClientJoinInputs([string]$Package, [object[]]$Inputs, [string]$Client, [string]$ProfilePin) {
+  New-Item -ItemType Directory -Path (Join-Path $Package 'config/discovery') | Out-Null
+  foreach ($inputFile in $Inputs) {
+    Assert-PlainPackagePath $inputFile.source
+    $destinationFile = Join-Path $Package $inputFile.path
+    Copy-Item -LiteralPath $inputFile.source -Destination $destinationFile
+    if ((Get-FileHash -LiteralPath $destinationFile).Hash -ne $inputFile.sha256) {
+      throw "Issued Client discovery input changed during packaging: $($inputFile.path)"
+    }
+  }
+  & $Client (Join-Path $Package $Inputs[0].path) check-installed-profile $ProfilePin | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Native Client rejected the issued discovery profile; no package was published.'
+  }
+}
+
+function Write-PackageInventory([string]$Package, [object[]]$Entries) {
+  $lines = @($Entries | ForEach-Object { "$($_.sha256)  $($_.path)" })
+  [IO.File]::WriteAllText((Join-Path $Package 'CHECKSUMS.sha256'),
+    [string]::Join("`n", $lines) + "`n", [Text.UTF8Encoding]::new($false))
+}
+
 function Get-ComparableRuntimeLibraryPath([string]$Path, [bool]$WindowsPath) {
   # Rust canonicalize() uses extended Windows paths. Preserve the file identity
   # while comparing the same DOS/UNC path chosen by the PowerShell owner.
@@ -186,6 +210,81 @@ function Publish-LinuxPackage([string]$Repository, [string]$Staged, [string]$Des
   if ($previous) { Write-Host "Previous package retained for rollback: $previous" }
 }
 
+function Publish-ProfileFromVerifiedBase(
+    [string]$Repository, [string]$Base, [string]$BasePin, [string]$Destination,
+    [string]$Profile, [string]$ProfilePin, [switch]$Replace) {
+  $Base = Resolve-PackageDestination $Repository $Base
+  if ($Base -eq $Destination -or !(Test-Path -LiteralPath $Base -PathType Container)) {
+    throw 'Profile issuance requires a distinct existing base package.'
+  }
+  $manifestName = 'release-manifest.json'
+  $inventoryName = 'CHECKSUMS.sha256'
+  $baseBytes = [IO.File]::ReadAllBytes((Join-Path $Base $manifestName))
+  $actualBasePin = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($baseBytes)).ToLowerInvariant()
+  if ($actualBasePin -ne $BasePin) { throw 'Base package manifest differs from its pinned SHA-256.' }
+  $manifest = [Text.Encoding]::UTF8.GetString($baseBytes).TrimStart([char]0xfeff) | ConvertFrom-Json -AsHashtable
+  $core = 'aoem/linux/core/bin/libaoem_ffi.so'
+  $client = 'bin/novovm-native-client'
+  if ($manifest.scope -cne 'novovm_unified_linux_release_v3' -or
+      $manifest.target -cne 'x86_64-unknown-linux-gnu' -or
+      $manifest.git_commit -cnotmatch '^[a-f0-9]{40}$' -or
+      $manifest.aoem_runtime.path -cne $core -or !$manifest.aoem_runtime.verification_qualified) {
+    throw 'Profile issuance requires a standard Linux base manifest with qualified AOEM.'
+  }
+
+  $entries = @{}
+  foreach ($entry in $manifest.artifacts) {
+    $name = $entry.path
+    if ($name -isnot [string] -or $name -cnotmatch '^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$' -or
+        @($name -split '/' | Where-Object { $_ -in @('.', '..') }).Count -or
+        $name -in @($manifestName, $inventoryName) -or $entries.ContainsKey($name) -or
+        $entry.sha256 -cnotmatch '^[a-f0-9]{64}$') {
+      throw "Invalid base package artifact entry: $name"
+    }
+    if ($name -like 'config/discovery/*') { throw 'The verified base must have no issued discovery profile.' }
+    $entries.Add($name, $entry)
+  }
+  if (!$entries.ContainsKey($client) -or !$entries.ContainsKey($core) -or
+      $entries[$core].sha256 -cne $manifest.aoem_runtime.sha256 -or
+      !(Test-Path -LiteralPath (Join-Path $Base $inventoryName) -PathType Leaf) -or
+      @(Get-ChildItem -LiteralPath $Base -Force -File -Recurse).Count -ne ($entries.Count + 2)) {
+    throw 'Base package files differ from its manifest inventory.'
+  }
+  $inputs = @(Get-ClientJoinInputs $Profile $ProfilePin $entries[$core].sha256 "../../$core")
+  $stage = Resolve-PackageDestination $Repository ($Destination + '.staging.' + [Guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $stage | Out-Null
+  foreach ($entry in $manifest.artifacts) {
+    $source = Join-Path $Base $entry.path
+    Assert-PlainPackagePath $source
+    $copied = Join-Path $stage $entry.path
+    New-Item -ItemType Directory -Path (Split-Path -Parent $copied) -Force | Out-Null
+    Copy-Item -LiteralPath $source -Destination $copied
+    if ((Get-Item -LiteralPath $copied).Length -ne $entry.bytes -or
+        (Get-FileHash -LiteralPath $copied).Hash -ne $entry.sha256) {
+      throw "Base package artifact differs from its manifest: $($entry.path)"
+    }
+  }
+
+  Set-ClientJoinInputs $stage $inputs (Join-Path $stage $client) $ProfilePin
+  foreach ($inputFile in $inputs) {
+    $entries.Add($inputFile.path, [ordered]@{
+      path = $inputFile.path
+      sha256 = $inputFile.sha256.ToLowerInvariant()
+      bytes = (Get-Item -LiteralPath (Join-Path $stage $inputFile.path)).Length
+    })
+  }
+  $manifest.artifacts = @($entries.Values | Sort-Object { $_.path })
+  $manifest.generated_at_utc = [DateTime]::UtcNow.ToString('o')
+  $manifest.client_profile_issuance = [ordered]@{
+    base_manifest_sha256 = $actualBasePin
+    profile_sha256 = $ProfilePin.ToLowerInvariant()
+  }
+  Write-PackageInventory $stage $manifest.artifacts
+  $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $stage $manifestName)
+  Publish-LinuxPackage $Repository $stage $Destination -Replace:$Replace
+  Write-Host "Issued Linux Client profile from verified base package: $Destination"
+}
+
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Push-Location $repo
 try {
@@ -217,6 +316,15 @@ try {
   }
   if ($dirty.Count -ne 0) {
     throw "Release packaging requires a clean Git worktree so binaries and git_commit describe the same source. Commit or remove local changes first."
+  }
+  if ($VerifiedBasePackageRoot -or $VerifiedBaseManifestSha256) {
+    if ($windowsPackage -or !$LinuxClientProfile -or !$VerifiedBasePackageRoot -or
+        !$VerifiedBaseManifestSha256 -or $AoemPackageRoot -or $AoemCoreSha256) {
+      throw 'Verified-base issuance requires a Linux Client profile and a base package with its pinned manifest. AOEM comes from that base.'
+    }
+    Publish-ProfileFromVerifiedBase $repo $VerifiedBasePackageRoot $VerifiedBaseManifestSha256 `
+      $destination $issuedProfile $issuedProfilePin -Replace:$Force
+    return
   }
   $commit = (git rev-parse HEAD).Trim()
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
@@ -998,20 +1106,7 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
   }
   # Issuer bytes are already pinned. Keep them separate from template normalization.
   if ($clientJoinInputs.Count) {
-    New-Item -ItemType Directory -Path (Join-Path $packagePath 'config/discovery') | Out-Null
-    foreach ($inputFile in $clientJoinInputs) {
-      Assert-PlainPackagePath $inputFile.source
-      $destinationFile = Join-Path $packagePath $inputFile.path
-      Copy-Item -LiteralPath $inputFile.source -Destination $destinationFile
-      if ((Get-FileHash -LiteralPath $destinationFile).Hash -ne $inputFile.sha256) {
-        throw "Issued Client discovery input changed during packaging: $($inputFile.path)"
-      }
-    }
-    $stagedProfile = Join-Path $packagePath $clientJoinInputs[0].path
-    & $executables['novovm-native-client'] $stagedProfile check-installed-profile $issuedProfilePin | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      throw 'Native Client rejected the issued discovery profile; no package was published.'
-    }
+    Set-ClientJoinInputs $packagePath $clientJoinInputs $executables['novovm-native-client'] $issuedProfilePin
   }
   # Only the outer inventory and manifest are self-referential. Runtime
   # distributions may carry their own checksum tables as regular artifacts.
@@ -1024,9 +1119,7 @@ ML-DSA-65 identity authentication is not post-quantum key agreement.
       $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
       [PSCustomObject]@{ path = $relative; sha256 = $hash; bytes = $_.Length }
     } | Sort-Object path
-  $checksumLines = @($entries | ForEach-Object { "$($_.sha256)  $($_.path)" })
-  [IO.File]::WriteAllText($outerInventory,
-    [string]::Join("`n", $checksumLines) + "`n", [Text.UTF8Encoding]::new($false))
+  Write-PackageInventory $packagePath $entries
   $endCommit = (git rev-parse HEAD).Trim()
   if ($LASTEXITCODE -ne 0 -or $endCommit -ne $commit) {
     throw "Source commit changed while packaging; existing package remains untouched."

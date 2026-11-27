@@ -626,5 +626,31 @@ if (!$windowsPackage) {
     throw 'Linux Client discovery bytes or installer missing'
   }
   Write-Output 'PASS: pinned Linux discovery profile, original AOEM, bootstrap locator and user installer'
+
+  $outputPin = (Get-FileHash -LiteralPath (Join-Path $output 'release-manifest.json')).Hash
+  $reissue = 'artifacts/product-overlay/rejected-base-reissue'
+  $reissueArgs = @{
+    Target = $Target; PackageDir = $reissue; VerifiedBasePackageRoot = $output
+    LinuxClientProfile = $profileFile; LinuxClientProfileSha256 = $profilePin
+  }
+  $buildCallsBefore = $fixtureState.buildCalls
+  try {
+    & $packager @reissueArgs -VerifiedBaseManifestSha256 ('0' * 64)
+    throw 'Profile issuance accepted an incorrect base manifest pin'
+  } catch { if ($_.Exception.Message -notlike '*Base package manifest differs from its pinned SHA-256*') { throw } }
+  $readme = Join-Path $output 'README.md'
+  $originalReadme = [IO.File]::ReadAllBytes($readme)
+  $changedReadme = $originalReadme.Clone()
+  $changedReadme[0] = $changedReadme[0] -bxor 1
+  try {
+    [IO.File]::WriteAllBytes($readme, $changedReadme)
+    & $packager @reissueArgs -VerifiedBaseManifestSha256 $outputPin
+    throw 'Profile issuance accepted a same-size unverified base artifact'
+  } catch { if ($_.Exception.Message -notlike '*Base package artifact differs from its manifest: README.md*') { throw } }
+  finally { [IO.File]::WriteAllBytes($readme, $originalReadme) }
+  if ($fixtureState.buildCalls -ne $buildCallsBefore -or (Test-Path -LiteralPath (Join-Path $fixture $reissue))) {
+    throw 'Invalid base issuance invoked Cargo or published a release'
+  }
+  Write-Output 'PASS: base issuance rejects altered manifest and payload bytes before build or publication'
 }
 Write-Output "PASS: original unified assembly (10 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default, WSS-mainchain retirement and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"
