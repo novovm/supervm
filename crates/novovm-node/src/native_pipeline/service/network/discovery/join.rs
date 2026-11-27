@@ -286,6 +286,7 @@ pub fn discover_installed_from_profile(
         "chain_id": profile.chain_id,
         "transport_identity_sha256": fingerprint(identity.public_key()),
         "authenticated_discovery_sources": report.sources,
+        "discovery_paths_at_authentication_by_source": report.paths_at_authentication,
         "signed_locators_by_source": report.locators_by_source,
         "signed_locator_candidates": report.records.values().map(|record| LocatorSummary::new(record, &read_id)).collect::<Vec<_>>(),
     });
@@ -575,6 +576,7 @@ fn client_identity(
 
 struct DiscoveryReport {
     sources: Vec<String>,
+    paths_at_authentication: BTreeMap<String, AuthenticatedDiscoveryPath>,
     locators_by_source: BTreeMap<String, Vec<LocatorSummary>>,
     referral_status: BTreeMap<String, &'static str>,
     conflicting_locator_keys: BTreeMap<Vec<u8>, u64>,
@@ -950,6 +952,7 @@ async fn lookup_sources(
     );
     let mut report = DiscoveryReport {
         sources: Vec::new(),
+        paths_at_authentication: BTreeMap::new(),
         locators_by_source: BTreeMap::new(),
         referral_status: BTreeMap::new(),
         conflicting_locator_keys: BTreeMap::new(),
@@ -967,6 +970,9 @@ async fn lookup_sources(
             }
         };
         report.sources.push(source.clone());
+        if let Some(path) = records.path_at_authentication {
+            report.paths_at_authentication.insert(source.clone(), path);
+        }
         if let Some(status) = records.referral_status {
             report.referral_status.insert(source.clone(), status);
         }

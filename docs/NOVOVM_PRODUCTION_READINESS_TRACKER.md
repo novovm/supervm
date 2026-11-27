@@ -485,6 +485,10 @@ B 现役节点监听 IPv4 UDP 42050。现役流量的报文头显示该端口已
 
 11 月 27 日 07:44 UTC，A 复核 B 现役服务在线，IPv4 UDP 42050 有监听，UFW 新入站仍无覆盖规则。A 的现有交接里没有已获准的长期公网固定端点。C 同轮只读核对到本机只有一张物理网卡连通，现役 Windows SCM 服务状态为 Stopped。C 的既有公网映射仍缺长期与独立入口证明。D 于 07:42:56 UTC 确认当时只有 WLAN 物理网卡连通，网络清单中未能证明蜂窝独立上游。到已获准中继的普通路由仍由 Meta 接管，现有日志缺少 Client 与隧道外层连接之间的映射。此次只读核对没有改变防火墙、隧道或节点服务。
 
+11 月 27 日，原生 Client 的 `discover` 在 `discovery_paths_at_authentication_by_source` 中按已认证的引导指纹记录路径。时间取自完成绑定认证和链域选择之后，直连记录实际选中的远端套接字，中继记录中继摘要，路径不可知时省略该来源的路径条目。该本机采样用于与 B 的报文时间和端口交叉核对，物理出口和实际收包仍由现场取证验证。
+
+C 使用标准 release 参数构建 Windows Client，并用 `clean_device_authenticates_through_second_source_and_preserves_custody` 和已核验的 AOEM DLL 通过真实回环验收。静默的第一来源没有路径条目，两次 Client 进程均只记录成功的第二来源，直连坐标匹配服务端实际地址，采样时间落在查询窗口内，设备身份和签名定位保持一致。`clean_device_recovers_rotated_endpoint_before_signed_locator_expires` 也通过，记录的是成功接入的新端点。严格 Clippy 在基线 `cc75b4c0` 与本改动均报告相同的七项错误。本轮证据范围为回环，B 公网放行及独立外网认证待现场执行。
+
 ### C 现役 Windows 服务退出与定位缓存取证
 
 11 月 27 日 01:38:39、01:42:27、01:47:29 UTC，SCM 三次记录 `9f223abf` 服务以通用自定义码 1 退出。服务管理器在前两次退出后分别等 5 秒和 15 秒重启，第三次退出后服务保持停止。原 RocksDB 日志记录最终退出前数据库完成关闭，日志未发现明确的 RocksDB 损坏或磁盘写入错误。原日志 SHA-256 为 `a857801584a0c7247ab0b0a6e57000231581f0cf0eb835d4927cd90a77929c86`。

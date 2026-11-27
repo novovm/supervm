@@ -34,6 +34,7 @@ pub(in super::super::super::super) fn check_locator_role_transition(
     };
     let report = |records: &[PeerSignedRelayRecordV1]| DiscoveryReport {
         sources: Vec::new(),
+        paths_at_authentication: BTreeMap::new(),
         locators_by_source: BTreeMap::new(),
         referral_status: BTreeMap::new(),
         conflicting_locator_keys: BTreeMap::new(),

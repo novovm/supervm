@@ -7,6 +7,7 @@ use novovm_network::{
         encode_public_read_locator_v1, native_locator_id_v1, node_owner_id_v1,
         serve_authenticated_node_locators_v1, DiscoveryClient, PublicReadReferralUnsupported,
     },
+    iroh_transport::IrohSelectedPathV1,
     opaque_rendezvous::RendezvousStoreV1,
     transport_binding::BoundSecureChannelV1,
 };
@@ -585,6 +586,19 @@ async fn query(
         let instance = select(&mut stream, &mut channel, pins, None)
             .await
             .context("discovery domain selection")?;
+        let mut found = LookupResult::default();
+        if matches!(exchange, Exchange::Reader { .. }) {
+            // Sample the selected path on this authenticated connection. The
+            // observation never grants trust or substitutes for packet evidence.
+            found.path_at_authentication = stream
+                .iroh_path_observer()
+                .and_then(|observer| observer.selected())
+                .zip(wall_ms().ok())
+                .map(|(path, observed_unix_ms)| AuthenticatedDiscoveryPath {
+                    path,
+                    observed_unix_ms,
+                });
+        }
         let mut client =
             DiscoveryClient::from_authenticated_node_locators_v1(&mut stream, channel, instance)?;
         if let Exchange::Publisher(own) = &exchange {
@@ -595,7 +609,6 @@ async fn query(
                 .await
                 .context("discovery remote publication")?;
         }
-        let mut found = LookupResult::default();
         observation.stage("remote lookup");
         for key in lookups {
             if let Some(record) = client
@@ -687,6 +700,13 @@ async fn query(
 struct LookupResult {
     records: Vec<PeerSignedRelayRecordV1>,
     referral_status: Option<&'static str>,
+    path_at_authentication: Option<AuthenticatedDiscoveryPath>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct AuthenticatedDiscoveryPath {
+    observed_unix_ms: u64,
+    path: IrohSelectedPathV1,
 }
 
 async fn finish_reader_lookup(

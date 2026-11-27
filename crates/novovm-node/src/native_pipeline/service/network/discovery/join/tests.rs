@@ -122,6 +122,7 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                 )?;
                 let mut address = scope.address()?;
                 address.direct.retain(|entry| entry.ip().is_loopback());
+                let expected_addresses = address.direct.clone();
                 let endpoint = IrohServiceEndpointV1 { instance, address: address.clone() }.endpoint()?;
                 let secondary = sign_relay_record_v1(
                     &responsive,
@@ -190,6 +191,7 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                         let rejected = run_client(&client, &file, &data, Some(&"0".repeat(64)));
                         assert!(format!("{:#}", rejected.unwrap_err()).contains("differs from its release pin"));
                         assert!(!data.exists());
+                        let reports_started = wall_ms()?;
                         let first = run_client(&client, &file, &data, Some(&pin))?;
                         assert_eq!(first["profile_sha256"], pin);
                         if rotated {
@@ -203,10 +205,21 @@ fn run_first_contact(route: LocatorRoute) -> Result<()> {
                             assert!(wall_ms()? < expiry, "slow signed locator expired during lookup");
                         }
                         let restarted = run_client(&client, &file, &data, None)?;
+                        let reports_finished = wall_ms()?;
                         assert!(restarted.get("profile_sha256").is_none());
                         let sources = serde_json::json!([expected_source]);
                         for report in [&first, &restarted] {
                             assert_eq!(report["authenticated_discovery_sources"], sources);
+                            let paths = report["discovery_paths_at_authentication_by_source"]
+                                .as_object().context("authenticated discovery paths")?;
+                            assert_eq!(paths.len(), 1);
+                            let observed = paths.get(&expected_source).context("secondary source path")?;
+                            let stamp = observed["observed_unix_ms"].as_u64().context("path observation time")?;
+                            assert!((reports_started..=reports_finished).contains(&stamp));
+                            let path = &observed["path"];
+                            assert_eq!(path["kind"], "direct");
+                            let remote = path["remote_address"].as_str().context("direct path address")?.parse()?;
+                            assert!(expected_addresses.contains(&remote));
                             assert_eq!(report["signed_locator_candidates"][0]["sequence"], 7);
                             assert_eq!(
                                 report["signed_locators_by_source"],
