@@ -110,28 +110,37 @@ def check_profile(cfg, publisher):
     return sources
 
 
-def verified_event(rows, args):
+def verified_event(rows, args, both_sources=()):
     if not rows:
         return None
     identity = rows[0].get("transport_identity_sha256", "")
     require(HEX.fullmatch(identity) and identity != args.publisher, "invalid follower identity")
+    require(identity not in both_sources, "follower reused a bootstrap identity")
     require(rows[0]["event"] == "starting" and rows[0].get("reopened_height") == 0
             and sum(r["event"] == "starting" for r in rows) == 1, "expected one empty-device startup")
     require(all(r.get("transport_identity_sha256") == identity for r in rows), "follower identity changed")
     sequences = set()
+    dual_sequences = set()
     for row in rows:
         if row.get("peer_transport_sha256") != args.publisher:
             continue
         seq = row.get("locator_sequence")
         if row["event"] == "verified_locator_accepted" and type(seq) is int and seq > 0:
             sequences.add(seq)
+            returned_by = row.get("locator_returned_by")
+            if both_sources and isinstance(returned_by, list) and len(returned_by) == 2 and (
+                all(isinstance(source, str) for source in returned_by)
+                and set(returned_by) == set(both_sources)
+            ):
+                dual_sequences.add(seq)
         if row["event"] == "verified_state" and row.get("height") == args.height:
             require(row.get("transport") == "iroh" and row.get("native_peer_address") is None
                     and type(seq) is int and seq in sequences, "missing preceding authenticated Iroh locator")
             require(row.get("state_root") == "0x" + args.state_root and
                     (row.get("verified_nodes"), row.get("downloaded_nodes"), row.get("verified_leaves"))
                     == (args.nodes, args.nodes, args.leaves), "state commitment or full download differs")
-            return row
+            if not both_sources or seq in dual_sequences:
+                return row
     return None
 
 
@@ -173,6 +182,7 @@ def witness(args, run, report):
     require(sha(profile) == args.profile_sha256, "wrong installed profile")
     cfg = json.loads(profile)
     report["bootstrap_public_sha256"] = check_profile(cfg, args.publisher)
+    sources = report["bootstrap_public_sha256"] if args.require_both_sources else ()
     installer = root / INSTALLER
     api = runpy.run_path(str(installer))
     config = api["base_dir"]("XDG_CONFIG_HOME", ".config")
@@ -209,12 +219,13 @@ def witness(args, run, report):
                     == release / "bin/novovm-native-client", "follower invocation or binary changed")
             rows = journal(info)
             report["events"] = rows
-            if verified_event(rows, args):
+            if verified_event(rows, args, sources):
                 report["disk"] = disk_evidence(state, cfg, args, rows[0]["transport_identity_sha256"])
                 require(properties() == info, "service changed during verification")
                 return
             time.sleep(1)
-        raise ValueError("timed out before full verified remote state")
+        detail = " through a locator returned by both authenticated contacts" if args.require_both_sources else ""
+        raise ValueError("timed out before full verified remote state" + detail)
     except (Exception, KeyboardInterrupt) as error:
         report["observation_error"] = str(error)
         raise
@@ -236,6 +247,8 @@ def main():
     for name in ("height", "nodes", "leaves"):
         parser.add_argument("--" + name, type=positive, required=True)
     parser.add_argument("--timeout", type=positive, default=360, help="observation period in seconds")
+    parser.add_argument("--require-both-sources", action="store_true",
+                        help="require both installed contacts to return the exact locator used for state verification")
     args = parser.parse_args()
     require(sys.platform == "linux" and os.getuid() != 0, "a non-root Linux login is required")
     os.umask(0o077)

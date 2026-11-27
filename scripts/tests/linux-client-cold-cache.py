@@ -65,9 +65,11 @@ def verify(args):
     require(files[INSTALL["PROFILE"]] == args.profile_sha256, "installed profile checksum differs")
     cfg = json.loads(profile.read_bytes())
     parameters = SimpleNamespace(**{k: report[k] for k in ("height", "nodes", "leaves", "publisher", "state_root")})
-    require(COLD["check_profile"](cfg, parameters.publisher) == report["bootstrap_public_sha256"],
+    sources = COLD["check_profile"](cfg, parameters.publisher)
+    require(sources == report["bootstrap_public_sha256"],
             "cold witness bootstrap identities differ")
-    event = COLD["verified_event"](report["events"], parameters)
+    strict = args.require_both_sources or report.get("require_both_sources") is True
+    event = COLD["verified_event"](report["events"], parameters, sources if strict else ())
     require(event is not None, "cold witness did not verify the remote state")
     identity = event["transport_identity_sha256"]
     state = plain(run / "state")
@@ -99,7 +101,7 @@ def verify(args):
             "archive_sha256": args.archive_sha256, "headers_byte_identical": parameters.height,
             "nodes_byte_identical": parameters.nodes, "block_hash": args.block_hash,
             "state_root": parameters.state_root, "activation_parent": receipt,
-            "local_transport_public_sha256": identity}
+            "local_transport_public_sha256": identity, "dual_source_locator_verified": strict}
 
 
 def main():
@@ -108,6 +110,8 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     for name in ("manifest-sha256", "profile-sha256", "block-hash", "archive-sha256", "report-sha256"):
         parser.add_argument("--" + name, type=COLD["digest_option"], required=True)
+    parser.add_argument("--require-both-sources", action="store_true",
+                        help="also verify exact locator attribution for reports recorded before this check was added")
     args = parser.parse_args()
     try:
         print(json.dumps(verify(args), indent=2))

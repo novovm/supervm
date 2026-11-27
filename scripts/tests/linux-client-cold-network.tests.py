@@ -33,6 +33,18 @@ class ColdNetwork(unittest.TestCase):
         self.assertIsNone(verify([self.start, self.locator], self.args))
         self.assertEqual(verify([self.start, self.locator, self.state], self.args), self.state)
 
+    def test_dual_source_requires_the_locator_used_for_verified_state(self):
+        verify = CHECK["verified_event"]
+        sources = ["a" * 64, "b" * 64]
+        matching = dict(self.locator, locator_returned_by=sources[::-1])
+        self.assertEqual(verify([self.start, matching, self.state], self.args, sources), self.state)
+        for attributed in (sources[:1], sources[:1] * 2, [sources[0], "c" * 64]):
+            with self.subTest(attributed=attributed):
+                locator = dict(self.locator, locator_returned_by=attributed)
+                other_sequence = dict(matching, locator_sequence=8)
+                trace = [self.start, locator, other_sequence, self.state]
+                self.assertIsNone(verify(trace, self.args, sources))
+
     def test_reject_changed_identity_reused_state_or_unbound_route(self):
         for changes in ({"transport_identity_sha256": "4" * 64}, {"downloaded_nodes": 0},
                         {"state_root": "0x" + "0" * 64}, {"locator_sequence": 8},
