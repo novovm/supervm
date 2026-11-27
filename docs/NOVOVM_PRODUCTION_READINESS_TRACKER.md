@@ -237,6 +237,16 @@ C 使用包内 Client 与 AOEM 对原链配置离线预检，并重放高度 1�
 
 Windows 和 Linux 分别用包内 Client 通过 `clean_device_recovers_retired_address_before_signed_locator_expires`。八个旧地址全部无法连通，签名定位仍在有效期内，同一个 Iroh 端点和 NOVONET 身份经安装配置中的固定地址完成认证并取得序号 7。回归核对运行中续查、冷启动和重开后身份一致性。Windows 与 Linux 原始日志 SHA-256 分别为 `9e1864aacbdc82ae5c59a83668758a897195462a956aea0da43df0cc3cf8bef0` 和 `9dc42254ded9afccf5e3075cd46ba12456a2b5b4a714ca32fcde88ecd96c7848`。验收使用回环，B 和现役 C 保持在线。
 
+### 01e79b47 纳入 NovoRUDP 回退修复的候选
+
+C 从 `01e79b47abc866db24720706b501e80346be5868` 用固定 Rust 1.94.0 与标准脚本构建 Linux x86-64 基础包，纳入 `e682e505`。压缩包 409,939,613 字节，SHA-256 `3b8e7d68ffe654ea648ad9897f5b4c21b7e7bf45270fc7ddfada8356bd5c30a0`，清单 `b0e46074d03e4a6cc73c00eea69fa95c6b23e465b34faeb1035e47cea604f817`，包内 Client `e9d0facddb04f8b70a403655629b4a8522eb2d218d2066dbdf8ed60fe55b4ee1`。逐项回读 95 个载荷文件和 2 项外层元数据。包内 31 个 ELF 的依赖与 B 此前封存的系统库清单匹配，静态报告 SHA-256 `5e0efef784d8d4ff9a7a576ec2beaa20d2fde96f4e209c34162d2ec4d01d0f24`。
+
+A 从同一提交构建 Windows x64 基础包。ZIP 为 169,619,849 字节，摘要 `ddd41ea1e82046cf49aa8fafadb06544d2fdc1698a064c29f2bce4b4bb3a83c1`，清单 `398efb617cd6fdc5362299478b6e9c3312421442fe71c8a547324606e146f714`，包内 Client `bd4b483d41cd5fbef6a46f5be46eb175e709b48da125adb32f4541237de78442`。回读覆盖 94 项载荷和 2 项外层元数据、10 个正式二进制、固定 AOEM 与 SCM existing 合同。包内 Client 对外置隔离配置执行原生预检，退出 0。
+
+包内 Client 与 AOEM 在原链固定信任下重放高度 1、2，区块哈希、状态根与回执承诺均与原证据一致。篡改签票和状态见证分别在签名校验及状态节点校验处被拒绝，离线报告 SHA-256 `52f0fcb02f2f3270e12794b57cda1b4542dd9bf0e32551a0cb2770dfe38ad8e0`。Linux 安装器 10 项契约回归通过。包内版本与受测源码一致，用基础包执行 `--plan` 时，在发现配置缺失处退出 1，未创建安装状态。基础包供验包和隔离验证，生产双入口发行配置仍待现场验收。
+
+Windows 和 Linux 分别用包内 Client 通过 `clean_device_recovers_retired_address_before_signed_locator_expires`。回环环境中，八个旧 Iroh 地址失效后，同一传输身份经固定引导地址取得序号 7 的有效签名定位。Windows 与 Linux 原始日志 SHA-256 依次为 `68a97a38aba3e85bc131694bfca26b7bae8f86aad3f1f4bf74d467d2f308f595` 和 `98d9e842d0ddf372a38ee767ed19ed4f6fa6beed120835e9c705133c86ac18c8`。A 已登记新版 Linux 基础包的取件路径、整包大小和摘要，整包签收仍待跨机取件。
+
 ### B 公布 UDP 入口取证
 
 B 现役节点监听 IPv4 UDP 42050。现役流量的报文头显示该端口已有双向通信。B 主机防火墙的有效 IPv4 INPUT 策略默认丢弃，允许已建立和相关连接。盘点时未见覆盖 UDP 42050 的新入站放行。C 的 Linux release Client 在 20:44:26 至 20:44:37 UTC 再次于 QUIC 建立前超时退出。该轮宽过滤抓包先被现役流量填满，无法将 Client 尝试对应到已抓报文。
