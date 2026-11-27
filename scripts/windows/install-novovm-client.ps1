@@ -170,9 +170,9 @@ if ($Action -eq 'Install') {
 $existing = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
 $switchToPublicRead = $false
 if ($existing) {
-    # CIM can abbreviate the account name. The exported definition preserves
-    # the principal identifier registered with the scheduler.
-    $definition = [xml](Export-ScheduledTask -InputObject $existing)
+    # CIM can abbreviate the account name, even when exported by InputObject.
+    # Export by name and path to read the registered principal identifier.
+    $definition = [xml](Export-ScheduledTask -TaskName $taskName -TaskPath '\')
     $namespaces = [System.Xml.XmlNamespaceManager]::new($definition.NameTable)
     $namespaces.AddNamespace('task', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
     $principals = $definition.SelectNodes('/task:Task/task:Principals/task:Principal', $namespaces)

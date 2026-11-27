@@ -631,8 +631,10 @@ if ($windowsPackage) {
     }
     function Get-ScheduledTask { $task }
     function Export-ScheduledTask {
-      param($InputObject)
-      if (![object]::ReferenceEquals($task, $InputObject)) { throw 'Export must describe the observed task' }
+      param($TaskName, $TaskPath)
+      if ($TaskName -ne $task.TaskName -or $TaskPath -ne '\') {
+        throw 'Export must read the registered definition by exact task name and path'
+      }
       "<Task xmlns='http://schemas.microsoft.com/windows/2004/02/mit/task'><Principals><Principal>$userXml</Principal></Principals></Task>"
     }
     function Register-ScheduledTask { throw 'Repeat install must not register a task' }
