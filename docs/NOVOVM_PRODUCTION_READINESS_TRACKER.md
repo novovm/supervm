@@ -247,6 +247,8 @@ A 从同一提交构建 Windows x64 基础包。ZIP 为 169,619,849 字节，摘
 
 Windows 和 Linux 分别用包内 Client 通过 `clean_device_recovers_retired_address_before_signed_locator_expires`。回环环境中，八个旧 Iroh 地址失效后，同一传输身份经固定引导地址取得序号 7 的有效签名定位。Windows 与 Linux 原始日志 SHA-256 依次为 `68a97a38aba3e85bc131694bfca26b7bae8f86aad3f1f4bf74d467d2f308f595` 和 `98d9e842d0ddf372a38ee767ed19ed4f6fa6beed120835e9c705133c86ac18c8`。A 已登记新版 Linux 基础包的取件路径、整包大小和摘要，整包签收仍待跨机取件。
 
+C 用同一标准脚本的 `-LinuxClientProfile` 生成回环隔离验证包。普通用户 UID 1000 用真实 systemd 用户服务从空目录首装，首次启动高度 0，设备持钥文件权限 `0600`。重复安装保留同一服务调用。恢复 A 已封存的 42 份原区块头证明和 19 份状态节点文件后，Client 验证高度 42 的原区块哈希与状态根，并以同一受保护设备身份重开。两段运行的自动重启次数均为 0，测试服务已清理。实际安装程序与 Linux 基础包的 Client SHA-256 一致。本轮数据由原归档恢复，公网同步另行验收。隔离发行清单 SHA-256 `f59a9a3f29351bdeb4a73c53b6c66e3f39a7806d41173336fe6e7f4418ce15d7`，首装和恢复证据 SHA-256 `c274d86c6d6c418fa3263385e0005bb021798f29f31a33e9f140284126c21f5e`。
+
 ### B 公布 UDP 入口取证
 
 B 现役节点监听 IPv4 UDP 42050。现役流量的报文头显示该端口已有双向通信。B 主机防火墙的有效 IPv4 INPUT 策略默认丢弃，允许已建立和相关连接。盘点时未见覆盖 UDP 42050 的新入站放行。C 的 Linux release Client 在 20:44:26 至 20:44:37 UTC 再次于 QUIC 建立前超时退出。该轮宽过滤抓包先被现役流量填满，无法将 Client 尝试对应到已抓报文。
