@@ -343,7 +343,8 @@ impl<'a> Discovery<'a> {
         }
         let records = checkpoint.into_values().collect::<Vec<_>>();
         if !records.is_empty() && records != self.cached {
-            publish(&self.cache_path, &records)?;
+            publish(&self.cache_path, &records)
+                .context("persist signed NOVONET bootstrap checkpoint")?;
             self.cached = records;
         }
         Ok(())

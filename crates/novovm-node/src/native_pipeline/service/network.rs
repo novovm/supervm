@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     future::{poll_fn, Future},
-    io::Read,
+    io::{Read, Write},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
@@ -1365,12 +1365,39 @@ async fn run_native_pump(
     }
 }
 fn publish<T: serde::Serialize>(path: &Path, record: &T) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    let parent = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .context("missing NOVONET locator filename")?;
+    let bytes = serde_json::to_vec(record).context("encode NOVONET locator")?;
+    std::fs::create_dir_all(parent).context("create NOVONET locator directory")?;
+    // Both names must use the same long-path-safe Windows prefix during replacement.
+    let directory = parent
+        .canonicalize()
+        .context("resolve NOVONET locator directory")?;
+    let mut staging = tempfile::Builder::new();
+    staging.prefix(".locator-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Keep the public locator's existing mode, subject to the process umask.
+        staging.permissions(std::fs::Permissions::from_mode(0o666));
     }
-    let stage = path.with_extension("locator.pending");
-    std::fs::write(&stage, serde_json::to_vec(record)?)?;
-    std::fs::rename(stage, path)?;
+    let mut staged = staging
+        .tempfile_in(&directory)
+        .context("stage NOVONET locator")?;
+    staged.write_all(&bytes).context("write NOVONET locator")?;
+    staged
+        .as_file()
+        .sync_all()
+        .context("sync NOVONET locator")?;
+    staged
+        .persist(directory.join(name))
+        .map_err(|error| error.error)
+        .context("replace NOVONET locator")?;
     Ok(())
 }
 

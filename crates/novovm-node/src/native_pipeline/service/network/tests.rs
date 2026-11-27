@@ -16,6 +16,58 @@ use std::net::UdpSocket;
 mod diagnostic;
 mod hop;
 
+#[cfg(windows)]
+#[test]
+fn locator_publication_ignores_locked_legacy_stage() -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("locator.discovery-cache.json");
+    let legacy = path.with_extension("locator.pending");
+    std::fs::write(&legacy, [])?;
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&legacy)?;
+
+    // The old publisher always truncated this name before installing a locator.
+    assert_eq!(
+        std::fs::write(&legacy, b"old write")
+            .unwrap_err()
+            .raw_os_error(),
+        Some(32)
+    );
+    publish(&path, &7)?;
+    publish(&path, &8)?;
+    assert_eq!(std::fs::read(&path)?, b"8");
+    assert_eq!(lock.metadata()?.len(), 0);
+    assert_eq!(std::fs::read_dir(directory.path())?.count(), 2);
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn locator_publication_failed_replace_preserves_committed_file() -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("locator.json");
+    publish(&path, &7)?;
+    let reader = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&path)?;
+
+    let error = publish(&path, &8).unwrap_err();
+    assert_eq!(error.to_string(), "replace NOVONET locator");
+    assert_eq!(std::fs::read(&path)?, b"7");
+    assert_eq!(std::fs::read_dir(directory.path())?.count(), 1);
+    drop(reader);
+    publish(&path, &8)?;
+    assert_eq!(std::fs::read(&path)?, b"8");
+    Ok(())
+}
+
 // Use the production query and discovery driver with a read-only service
 // identity on loopback. The archive's validator set still verifies finality.
 impl Driver {
