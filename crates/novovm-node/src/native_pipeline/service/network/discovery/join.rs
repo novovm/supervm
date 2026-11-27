@@ -578,8 +578,41 @@ struct DiscoveryReport {
     sources: Vec<String>,
     locators_by_source: BTreeMap<String, Vec<LocatorSummary>>,
     referral_status: BTreeMap<String, &'static str>,
-    conflicting_public_keys: BTreeMap<Vec<u8>, u64>,
+    conflicting_locator_keys: BTreeMap<Vec<u8>, u64>,
     records: BTreeMap<Vec<u8>, PeerSignedRelayRecordV1>,
+}
+
+impl DiscoveryReport {
+    fn record_locator(&mut self, source: &str, record: PeerSignedRelayRecordV1, public_id: &str) {
+        use std::collections::btree_map::Entry;
+
+        if self
+            .conflicting_locator_keys
+            .contains_key(&record.relay_public_key)
+        {
+            return;
+        }
+        self.locators_by_source
+            .entry(source.to_owned())
+            .or_default()
+            .push(LocatorSummary::new(&record, public_id));
+        match self.records.entry(record.relay_public_key.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(record);
+            }
+            Entry::Occupied(mut entry) if entry.get().sequence < record.sequence => {
+                entry.insert(record);
+            }
+            Entry::Occupied(entry)
+                if entry.get().sequence == record.sequence && entry.get() != &record =>
+            {
+                self.conflicting_locator_keys
+                    .insert(record.relay_public_key, record.sequence);
+                entry.remove();
+            }
+            Entry::Occupied(_) => {}
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Serialize)]
@@ -920,7 +953,7 @@ async fn lookup_sources(
         sources: Vec::new(),
         locators_by_source: BTreeMap::new(),
         referral_status: BTreeMap::new(),
-        conflicting_public_keys: BTreeMap::new(),
+        conflicting_locator_keys: BTreeMap::new(),
         records: BTreeMap::new(),
     };
     let mut errors = Vec::new();
@@ -938,45 +971,16 @@ async fn lookup_sources(
         if let Some(status) = records.referral_status {
             report.referral_status.insert(source.clone(), status);
         }
-        let returned = report.locators_by_source.entry(source).or_default();
+        report.locators_by_source.entry(source.clone()).or_default();
         for record in records
             .records
             .into_iter()
             .filter(|record| record.expires_at_ms > wall)
         {
-            use std::collections::btree_map::Entry;
-            let public = record.record_id == public_id;
-            if public
-                && (!plan.accepts_public_reader(&record, &client_key)
-                    || report
-                        .conflicting_public_keys
-                        .contains_key(&record.relay_public_key))
-            {
+            if record.record_id == public_id && !plan.accepts_public_reader(&record, &client_key) {
                 continue;
             }
-            returned.push(LocatorSummary::new(&record, &public_id));
-            match report.records.entry(record.relay_public_key.clone()) {
-                Entry::Vacant(entry) => {
-                    entry.insert(record);
-                }
-                Entry::Occupied(mut entry) if entry.get().sequence < record.sequence => {
-                    entry.insert(record);
-                }
-                Entry::Occupied(entry)
-                    if public
-                        && entry.get().sequence == record.sequence
-                        && entry.get() != &record =>
-                {
-                    report
-                        .conflicting_public_keys
-                        .insert(record.relay_public_key, record.sequence);
-                    entry.remove();
-                }
-                Entry::Occupied(entry) => ensure!(
-                    entry.get().sequence != record.sequence || entry.get() == &record,
-                    "conflicting signed discovery records at the same sequence"
-                ),
-            }
+            report.record_locator(&source, record, &public_id);
         }
     }
     ensure!(

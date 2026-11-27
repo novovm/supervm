@@ -36,7 +36,7 @@ pub(in super::super::super::super) fn check_locator_role_transition(
         sources: Vec::new(),
         locators_by_source: BTreeMap::new(),
         referral_status: BTreeMap::new(),
-        conflicting_public_keys: BTreeMap::new(),
+        conflicting_locator_keys: BTreeMap::new(),
         records: records
             .iter()
             .cloned()
@@ -58,6 +58,60 @@ pub(in super::super::super::super) fn check_locator_role_transition(
     publish(&path, &[original_fixed, &fixed_withdrawn])?;
     let mut cache = Locators::open(path.clone(), &profile, local)?;
     assert_eq!(cache.candidates(&profile, now).count(), 2);
+
+    let same_sequence = |identity: &TransportIdentity, original: &PeerSignedRelayRecordV1| {
+        sign_relay_record_v1(
+            identity,
+            native_locator_id_v1(pins),
+            original.endpoints.clone(),
+            original.issued_at_ms,
+            original.expires_at_ms - 1,
+            original.sequence,
+        )
+    };
+    let disputed_fixed = same_sequence(fixed, original_fixed)?;
+    let later_other = sign_relay_record_v1(
+        public,
+        native_locator_id_v1(pins),
+        fixed_withdrawn.endpoints.clone(),
+        fixed_withdrawn.issued_at_ms,
+        fixed_withdrawn.expires_at_ms,
+        fixed_withdrawn.sequence + 1,
+    )?;
+    let public_id = public_read_locator_id_v1(pins);
+    let source1 = fingerprint(fixed.public_key());
+    let source2 = fingerprint(public.public_key());
+    let mut merged = report(&[]);
+    merged.record_locator(&source1, original_fixed.clone(), &public_id);
+    merged.record_locator(&source2, disputed_fixed.clone(), &public_id);
+    merged.record_locator(&source2, later_other.clone(), &public_id);
+    assert_eq!(
+        merged.conflicting_locator_keys.get(fixed.public_key()),
+        Some(&original_fixed.sequence)
+    );
+    assert_eq!(merged.records.values().collect::<Vec<_>>(), [&later_other]);
+    let mut cold = Locators::open(root.join("cold-disputed-fixed.json"), &profile, local)?;
+    assert_eq!(cold.observe(merged, &profile, local.public_key())?.len(), 1);
+    assert_eq!(
+        cold.candidates(&profile, now).collect::<Vec<_>>(),
+        [&later_other]
+    );
+
+    assert_eq!(
+        cache
+            .observe(
+                report(&[disputed_fixed, later_other.clone()]),
+                &profile,
+                local.public_key()
+            )?
+            .len(),
+        1
+    );
+    assert_eq!(cache.fixed.get(fixed.public_key()), Some(original_fixed));
+    assert_eq!(cache.fixed.get(public.public_key()), Some(&later_other));
+
+    // Retain the original checkpoint for the role transition below.
+    publish(&path, &[original_fixed, &fixed_withdrawn])?;
     profile.lookup_transport_keys.clear();
     cache = Locators::open(path.clone(), &profile, local)?;
     assert_eq!(cache.candidates(&profile, now).count(), 0);
@@ -149,7 +203,7 @@ pub(in super::super::super::super) fn check_locator_role_transition(
     );
     let mut conflict = report(&[]);
     conflict
-        .conflicting_public_keys
+        .conflicting_locator_keys
         .insert(other.public_key().to_vec(), 2);
     cache.observe(conflict, &profile, local.public_key())?;
     cache.observe(report(&[second_sample]), &profile, local.public_key())?;

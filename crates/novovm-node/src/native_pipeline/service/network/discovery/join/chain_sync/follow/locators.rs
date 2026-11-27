@@ -160,7 +160,7 @@ impl Locators {
         // withdrawal information; each verified advertisement lasts its signed lease.
         let mut observations = self.observations.clone();
         observations.retain(|key, _| public.contains_key(key));
-        for (key, sequence) in found.conflicting_public_keys {
+        for (key, sequence) in found.conflicting_locator_keys {
             if public.get(&key).is_some_and(|r| r.sequence <= sequence) {
                 let status = observations
                     .entry(key)
@@ -218,9 +218,11 @@ impl Locators {
                 }
                 if candidate.sequence == current.sequence {
                     if candidate != *current {
-                        // An equivocating public signer must not interrupt unrelated services.
-                        ensure!(is_public, "conflicting locator at a stored signed sequence");
-                        observations.insert(key, Observation::Conflict(candidate.sequence));
+                        // A conflicting record cannot replace an accepted fixed pin.
+                        // An unpinned reader needs a later unambiguous advertisement.
+                        if is_public {
+                            observations.insert(key, Observation::Conflict(candidate.sequence));
+                        }
                     } else if is_public {
                         observations.insert(key, Observation::Advertised);
                     }
