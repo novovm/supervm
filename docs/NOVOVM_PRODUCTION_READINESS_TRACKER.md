@@ -81,6 +81,10 @@ A 用第三个普通读取身份从空缓存验证到高度 42，取得 42 份�
 
 可重复入口为 `scripts/tests/linux-client-public-read.py`。C 服务见证 SHA-256 `425639ad1f2281fbef45f27a1116f8506c029a005ad967882279e616e4db5485`。C 对 A 的原始冷读及双源回执交叉复核 SHA-256 `5edc0e005038d7d30c2f2b9cc5c8409677b36782a0798896edf9f02cca99e510`。A 的原件匹配记录 SHA-256 `f2a9758e4b0c05c1a5308efc34dc752f98f3bac5d8f8a31b7d9f1fc14d7593f2`。租约到期后原始响应 SHA-256 `d5ec421c2bafabac66830b581861b0b46048799a3b20309a4ed47ec0d4eac5f2`。
 
+### 6b8cef40 Linux Client 原交易归档复验
+
+C 在 Ubuntu 24.04 用同一 `6b8cef40` 的实际 release Client 和固定 Linux AOEM，按原链信任起点在空隔离目录重放高度 1 的原执行归档。重算出的区块哈希、状态根和回执承诺均与此前通过认证查询的原证据一致，错误配置摘要被拒绝。原执行归档 SHA-256 `9b773807f19c52e54ee169bed9b32090549e633a261690f8f76571ff7918b90e`，该次编译产物 SHA-256 `34ba22dcf058fdfc19b544a030ab23b6ae30c09a0f165c6c879f03e2448288e8`，复验见证 SHA-256 `f094df3252eb7888f3c8475966b4ffc74dca9ca315127c267a976f6ca3fe6c09`。验证范围是离线签名归档与执行重放。
+
 ## 2026-11-26 发现入口与只读归档节点分工验收
 
 A 在本机回环只开放一个固定发现联系人。它返回另一个服务身份签发的定位。全新 Windows Client 从高度 0 经 Iroh 验真到高度 42，下载并验证 19 个状态节点、10 个叶子。C 对照两个进程的原始输出，确认返回定位的来源、定位签名人和最终提供状态的对端，并将状态根与[原三机归档](NOVOVM_DISTRIBUTED_VALIDATOR_CATCHUP.md)核对一致。发现与跟随各使用空目录及独立客户端身份。原始 stdout 的 SHA-256 分别为 `a7f94b00669703f1d1acd28935735d04d5de2fcd24ed4b26108e46b81544110d`、`9b804e298ba9812a6776c15acac670f61fb8d9ec40837d1cdd2d5374df8a2d03`。
