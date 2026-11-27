@@ -162,7 +162,41 @@ Windows 的 `ff89af88` 联网试验在 D 于 05:48:38.510 UTC 验真高度 41，
 
 按首次接入与运行中刷新统一使用每来源 8 秒的上限。公开提供方的抽样和定位读取共用来源的剩余时限。定位验签完成后，关闭流只等待短时确认，已验证的结果可继续使用。连接、新定位的签名和链域检查仍由原流程执行。
 
-C 用 Rust 1.94.0 编译隔离 Client。首轮 LLVM SIGSEGV，调整为本机 `opt-level=1` 和 256 MiB 的编译栈后成功。Client SHA-256 `5373bb44144b4532537804d178808f9ab207fdc4746f884028a11ff079c08a67`。发行配置预检通过。回环用例 `clean_device_authenticates_through_second_source_and_preserves_custody` 通过，第一来源耗尽 8 秒后第二来源定位通过验签，同一设备身份可再次认证。`public_read_lease_reaches_zero_pin_reader_over_authenticated_discovery` 也通过。修订版标准包的跨机主动换源仍待复验。
+C 用 Rust 1.94.0 编译隔离 Client。首轮 LLVM SIGSEGV，调整为本机 `opt-level=1` 和 256 MiB 的编译栈后成功。Client SHA-256 `5373bb44144b4532537804d178808f9ab207fdc4746f884028a11ff079c08a67`。发行配置预检通过。回环用例 `clean_device_authenticates_through_second_source_and_preserves_custody` 通过，第一来源耗尽 8 秒后第二来源定位通过验签，同一设备身份可再次认证。`public_read_lease_reaches_zero_pin_reader_over_authenticated_discovery` 也通过。后续跨机复验使用下述默认 release 工件。自 `d6c3d131` 起，Linux 构建和打包由 A 承担，C 负责验包及隔离运行。
+
+### d6c3d131 Linux 标准包自动分路复验
+
+A 复用同一套 Cargo 缓存，按标准 release 完成 10 个 Linux x86-64 程序。C 从受限内网接收原包，核验全部 97 个文件与原清单，并用官方流程签发隔离配置，保留 95 件基础工件的摘要。A 的本机定时器在第一份 H41 发布确认后 55.109 秒启动 H42，第二引导于 07:18:28.281 UTC 确认首份 H42 定位。
+
+C 普通用户 Client PID 45165 在 07:18:47.837 UTC 验签 H42 的下一块证明并换源，于 07:19:07.769 UTC 验真 H42。触发早于旧定位到期，身份和 PID 连续，基线至终态零重连。A 的 H41 PID 4804 在 C 验收后继续签发定位，四个隔离进程于 07:22:30.693 UTC 退出 0，相关套接字清空。C 逐字节比对了 42 份落盘区块头和 H42 的 19 个状态文件，并用包内 Client 独立验出相同父状态。
+
+| 证据 | SHA-256 |
+| --- | --- |
+| A 的标准基础包 | `b760ee694dd1ac35da74714581111b27d8630b707447a5b6c5b58804294cddbe` |
+| C 签发的隔离清单 | `423113f16fb115292da4ebc73ffc8c7dfda6291111c2cf63389a4bd6980c527b` |
+| Linux 标准 Client | `bced8da456d0e4f21adf27805933e0a481b409a4005d3a69fcdefb60ac31fe4a` |
+| C 同进程主动换源报告 | `d1d76a4a5704143063218ee5369d56eac657c75d1a82ded35ee3c71b615de215` |
+| C 落盘及离线父状态复验 | `b9b36852343fd77aa0570f643071dc5c9281bdbafedaa6657a153f888e0af97f` |
+
+### d6c3d131 Windows 标准包自动分路复验
+
+D 按标准 release 流程构建 Windows x86-64，并从核验后的标准基础包签发隔离配置。D 使用已验证的 H41 缓存和本机设备身份启动普通用户 Client。独立窗口内，A 的第一引导于 07:27:27.948 UTC 首次确认 H41，H42 于 07:28:23.066 UTC 自动启动，第二引导于 07:28:35.233 UTC 确认首份 H42 定位。H41 的原进程持续在线，A 的四个隔离进程于 07:32:41.684 UTC 退出 0，相关套接字清空。
+
+D 普通用户 Client PID 31656 于 07:28:25.879 UTC 在线验真 H41，07:29:37.298 UTC 凭后继区块证明主动换源，07:29:55.710 UTC 验真 H42 的 19 个状态节点和 10 个叶。H41 定位在 07:30:05.814 UTC 到期。基线至终态为同进程、同设备身份，重连次数为零。D 核对两个落盘证明的固定摘要后退出 0。
+
+D 用本机的独立归档逐项复验了 42 份区块头证明和 19 个状态节点。C 接收 D 的原始日志与报告，以固定摘要和独立归档重放，结果仍为 `certified_route_advance`。C 对收到的隔离 ZIP 重新核对原清单及 95 件负载，含标准 Client、AOEM 和发行配置。
+
+| 证据 | SHA-256 |
+| --- | --- |
+| D 的 Windows 标准基础包 | `364edd02096a71a7240a6dc473842f1b1105d42e3f5343bfb95d054deccd7711` |
+| Windows 隔离发行包 | `8628532318256c929da83f0d30cb76b18c7065b5d5344abb44bd667fa25fe3a5` |
+| Windows 隔离发行清单 | `275312602b5fb9d247ca08500247eaf5522f2badae65a351439744edb68fa975` |
+| Windows 标准 Client | `ee3ecff045d24269fee6887ab222e92f0affdb05d891879910560b7f9863b259` |
+| D 主动换源原始日志 | `d6d0b503f51dcb93b2e29f06e4ace531f31c7fdb6a1ea80c0a51d3f12280d41f` |
+| D 验收器报告 | `967692c774c338e79901a66b64fc406e3baa8e3e6e9183acf02d273cc47a87e8` |
+| C 回放 D 的原始日志 | `c85a135d20ef046c6accf67cd84f341934f953351434c9bbdaf55d10a84da487` |
+
+Linux 与 Windows 的这两轮窗口覆盖已有本地 H41 状态的客户端主动切换不同读取提供方。双入口公网长期运行及实体有线与蜂窝切换证据继续单独验收。
 
 ## 2026-11-26 发现入口与只读归档节点分工验收
 
