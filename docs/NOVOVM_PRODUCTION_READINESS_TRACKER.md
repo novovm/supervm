@@ -261,6 +261,8 @@ D 定位到 `follow-state` 的回退问题。两个 NovoRUDP 服务均接受同�
 
 回切同样需要数据可用性的见证。运行中的 Iroh 已验证状态时，同高 NovoRUDP 必须经认证返回能校验为当前状态根的原始节点，高报则先提供连接到当前链头的下一份终结性证明。探测使用有界时限，失败时保留正在工作的 Iroh 会话。C 用同一隔离原库和真实本地通信验证两种行为。标准旧 Client `d6c3d131` 首先经 Iroh 验真高度 2，然后在两条原生路线均只能回答 Status 时过早回切。修订版收到两次状态节点不可用后留在 Iroh，直到第一条原生路线返回正确的根节点才自动切回。同一 Client PID 和身份连续，高度及状态根一致。旧、新事件 SHA-256 分别为 `0ae82e07f32e6e81dc8fbcd67d87ba41e1907ef04b8aa2eaa740d18220134e57` 和 `ee6df37aabd9d595af3a34b54f95210a34d2ae2d002ae86fe460851081fdb2ab`。此对照覆盖同高原生回切，现役 C 与 B 未操作。
 
+Client 主动换到更高的 Iroh 或 NovoRUDP 来源前，共用同一检查。候选须在当前认证连接上返回有效的后继区块证明，以及它所报快照的状态根节点。候选领先多块时，状态根读取只证明该连接能提供所报快照的根节点，后续区块和全树仍走原验签流程。缺状态的 Iroh 探测失败不会推动本地检查点。C 的 Windows release 构建通过，定向用例 `advancing_route_requires_the_state_root_on_the_authenticated_path` 使用真实回环、隔离归档中的 H41/H42 区块头和 H42 状态，先让候选返回有效区块头但拒绝读状态，再通过同一认证连接开放根节点。第一次探测被拒绝且没有写入 H42 检查点，第二次收到与原归档逐字节一致的 H42 证明。复跑使用 `NOVOVM_SUCCESSOR_FIXTURE` 指向含 `profile.json` 和 `device` 缓存的独立目录。本轮覆盖换源前探测，实体双上游切换仍待现场验收。
+
 C 用同一个隔离归档、同一配置摘要及三个同时在线的回环端点跑了两个干净 Windows Client。两条原生地址均启用与现役入口相同的认证重连。旧版在两端各收到 4 次 Status、2 次区块头拒绝，已接受归档定位；在这个重复窗口内未完成状态验真。新版在两端各收到 2 次 Status、1 次区块头拒绝，随后通过 Iroh 从高度 0 验至 2，下载并验证 97 个状态节点、49 个叶子。关闭服务端重连的初始对照中，旧版也能通过 Iroh 完成同步。原版与新版 Client 的 stdout 摘要分别是 `c30a1eb6cf87976b206685840c041449f0725768b0a69eb96967d766d8614849`、`1e4bda68ecb3c98ddc95bf0a4193e2bf550df4185e4f3ab33ec7b0fc2ca95ad7`，同窗口服务计数日志摘要是 `1bd39e362bdad56dd26714d87964079479baf063c4bf869d07a1b4866af84e7c`。
 
 复跑上述隔离归档测试时设 `NOVOVM_QUERY_COPY_FOLLOW=status-only`；用 `NOVOVM_QUERY_COPY_FALLBACK_BASELINE` 指定已支持独立读取公钥的旧 Client（`0f3b38ba`）。同一新版另通过两项原有回归：固定地址失效后，同一进程接受原身份签发的新 NovoRUDP 地址；另一运行完成 NovoRUDP → Iroh → NovoRUDP。两项均核对高度 2 与原状态根，物理网卡切换仍待现场验收。

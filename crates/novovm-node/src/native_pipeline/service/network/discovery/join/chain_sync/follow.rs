@@ -8,6 +8,8 @@ use std::collections::VecDeque;
 mod locators;
 mod native_round;
 #[cfg(test)]
+mod successor_tests;
+#[cfg(test)]
 pub(in super::super) use locators::check_locator_role_transition;
 use locators::Locators;
 use native_round::NativeRound;
@@ -274,22 +276,44 @@ impl Follower {
         if advertised.height == tip.height {
             // The local cache cannot establish that this authenticated route
             // serves any state. Request the committed root over that route.
-            state::verify_remote_root(session, tip).await?;
+            state::verify_remote_root(session, tip.height, tip.state_root).await?;
         } else {
-            // A claimed higher tip alone cannot displace the working Iroh route.
-            let next = tip
-                .height
-                .checked_add(1)
-                .context("chain height exhausted")?;
-            let proof = session.fetch(Download::header(next)).await?;
-            let point = self.chain.verifier.verify_header(&proof, &tip)?.point();
-            if let Some(minimum) = self.chain.minimum {
-                minimum.check(point)?;
-            }
-            verify_same_height(point, advertised)?;
+            self.probe_successor(session, advertised).await?;
         }
         self.chain.checkpoint_validity(wall_ms()?)?;
         Ok(())
+    }
+
+    async fn probe_successor(
+        &self,
+        session: &mut QuerySession<'_>,
+        advertised: &novovm_protocol::native_query::Status,
+    ) -> Result<Vec<u8>> {
+        let tip = self.chain.tip;
+        ensure!(
+            advertised.height > tip.height,
+            "no successor on candidate route"
+        );
+        let next = tip
+            .height
+            .checked_add(1)
+            .context("chain height exhausted")?;
+        let proof = session.fetch(Download::header(next)).await?;
+        let point = self.chain.verifier.verify_header(&proof, &tip)?.point();
+        if let Some(minimum) = self.chain.minimum {
+            minimum.check(point)?;
+        }
+        verify_same_height(point, advertised)?;
+        // A peer can relay a valid certificate without serving any state.
+        // Ask for the root it serves at its advertised tip, since snapshots
+        // may serve only their newest height. For tips more than one block
+        // ahead this is an availability check, not a finality decision.
+        let certified_empty = point.height == advertised.height
+            && point.state_root == crate::native_pipeline::state::tree::empty_root();
+        if !certified_empty {
+            state::verify_remote_root(session, advertised.height, advertised.state_root).await?;
+        }
+        Ok(proof)
     }
 
     async fn follow_candidates(&mut self, scope: &IrohScopeV1) -> Option<Native> {
@@ -457,9 +481,6 @@ impl Follower {
         let Ok(route) = ReadRoute::new(&candidate, &self.profile) else {
             return Ok(None);
         };
-        let Some(next_height) = self.chain.tip.height.checked_add(1) else {
-            return Ok(None);
-        };
         let proof = route
             .run(
                 scope,
@@ -475,15 +496,16 @@ impl Follower {
                     .await?;
                     let mut session =
                         QuerySession::attach(&mut stream, channel, self.domain.clone())?;
-                    session.fetch(Download::header(next_height)).await
+                    let advertised = peer_status(&mut session, self.chain.tip).await?;
+                    self.probe_successor(&mut session, &advertised).await
                 },
             )
             .await;
         let Ok(proof) = proof else {
             return Ok(None);
         };
-        // Advertised heights do not justify leaving a healthy connection. The
-        // next proof must extend our certified parent under the installed rules.
+        // A failed availability probe leaves both the current route and the
+        // persisted header checkpoint unchanged.
         self.chain.checkpoint_validity(wall_ms()?)?;
         if self.chain.append(&proof).is_err() {
             return Ok(None);
