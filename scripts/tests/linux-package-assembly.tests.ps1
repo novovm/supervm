@@ -684,30 +684,45 @@ if (!$windowsPackage) {
   }
   Write-Output 'PASS: pinned Linux discovery profile, original AOEM, bootstrap locator and user installer'
 
-  $outputPin = (Get-FileHash -LiteralPath (Join-Path $output 'release-manifest.json')).Hash
-  $reissue = 'artifacts/product-overlay/rejected-base-reissue'
-  $reissueArgs = @{
-    Target = $Target; PackageDir = $reissue; VerifiedBasePackageRoot = $output
-    LinuxClientProfile = $profileFile; LinuxClientProfileSha256 = $profilePin
-  }
-  $buildCallsBefore = $fixtureState.buildCalls
-  try {
-    & $packager @reissueArgs -VerifiedBaseManifestSha256 ('0' * 64)
-    throw 'Profile issuance accepted an incorrect base manifest pin'
-  } catch { if ($_.Exception.Message -notlike '*Base package manifest differs from its pinned SHA-256*') { throw } }
-  $readme = Join-Path $output 'README.md'
-  $originalReadme = [IO.File]::ReadAllBytes($readme)
-  $changedReadme = $originalReadme.Clone()
-  $changedReadme[0] = $changedReadme[0] -bxor 1
-  try {
-    [IO.File]::WriteAllBytes($readme, $changedReadme)
-    & $packager @reissueArgs -VerifiedBaseManifestSha256 $outputPin
-    throw 'Profile issuance accepted a same-size unverified base artifact'
-  } catch { if ($_.Exception.Message -notlike '*Base package artifact differs from its manifest: README.md*') { throw } }
-  finally { [IO.File]::WriteAllBytes($readme, $originalReadme) }
-  if ($fixtureState.buildCalls -ne $buildCallsBefore -or (Test-Path -LiteralPath (Join-Path $fixture $reissue))) {
-    throw 'Invalid base issuance invoked Cargo or published a release'
-  }
-  Write-Output 'PASS: base issuance rejects altered manifest and payload bytes before build or publication'
 }
+$outputPin = (Get-FileHash -LiteralPath (Join-Path $output 'release-manifest.json')).Hash
+$reissue = 'artifacts/product-overlay/rejected-base-reissue'
+$reissueArgs = @{
+  Target = $Target; PackageDir = $reissue; VerifiedBasePackageRoot = $output
+}
+$platformProfileArg = if ($windowsPackage) { 'WindowsClientProfile' } else { 'LinuxClientProfile' }
+$reissueArgs[$platformProfileArg] = $profileFile
+$reissueArgs["${platformProfileArg}Sha256"] = $profilePin
+$buildCallsBefore = $fixtureState.buildCalls
+try {
+  & $packager @reissueArgs -VerifiedBaseManifestSha256 ('0' * 64)
+  throw 'Profile issuance accepted an incorrect base manifest pin'
+} catch { if ($_.Exception.Message -notlike '*Base package manifest differs from its pinned SHA-256*') { throw } }
+
+$crossTargetArgs = @{
+  Target = if ($windowsPackage) { 'x86_64-unknown-linux-gnu' } else { 'x86_64-pc-windows-msvc' }
+  PackageDir = $reissue; VerifiedBasePackageRoot = $output
+}
+$crossProfileArg = if ($windowsPackage) { 'LinuxClientProfile' } else { 'WindowsClientProfile' }
+$crossTargetArgs[$crossProfileArg] = $profileFile
+$crossTargetArgs["${crossProfileArg}Sha256"] = $profilePin
+try {
+  & $packager @crossTargetArgs -VerifiedBaseManifestSha256 $outputPin
+  throw 'Profile issuance accepted a verified base for another target'
+} catch { if ($_.Exception.Message -notlike '*requires a standard base manifest for the selected target*') { throw } }
+
+$readme = Join-Path $output 'README.md'
+$originalReadme = [IO.File]::ReadAllBytes($readme)
+$changedReadme = $originalReadme.Clone()
+$changedReadme[0] = $changedReadme[0] -bxor 1
+try {
+  [IO.File]::WriteAllBytes($readme, $changedReadme)
+  & $packager @reissueArgs -VerifiedBaseManifestSha256 $outputPin
+  throw 'Profile issuance accepted a same-size unverified base artifact'
+} catch { if ($_.Exception.Message -notlike '*Base package artifact differs from its manifest: README.md*') { throw } }
+finally { [IO.File]::WriteAllBytes($readme, $originalReadme) }
+if ($fixtureState.buildCalls -ne $buildCallsBefore -or (Test-Path -LiteralPath (Join-Path $fixture $reissue))) {
+  throw 'Invalid base issuance invoked Cargo or published a release'
+}
+Write-Output "PASS: $Target base issuance rejects altered manifest, wrong target and edited payload before build or publication"
 Write-Output "PASS: original unified assembly (10 binary contracts), verification-only runtime preflight plus 7 failure propagation cases, manifest, checksums, original resources, unconfigured management, explicit duplex default, WSS-mainchain retirement and changed-hardlink rejection. Synthetic artifacts only; retained: $fixture"

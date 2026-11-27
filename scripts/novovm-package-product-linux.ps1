@@ -212,7 +212,7 @@ function Publish-LinuxPackage([string]$Repository, [string]$Staged, [string]$Des
 
 function Publish-ProfileFromVerifiedBase(
     [string]$Repository, [string]$Base, [string]$BasePin, [string]$Destination,
-    [string]$Profile, [string]$ProfilePin, [switch]$Replace) {
+    [string]$Profile, [string]$ProfilePin, [string]$ExpectedTarget, [switch]$Replace) {
   $Base = Resolve-PackageDestination $Repository $Base
   if ($Base -eq $Destination -or !(Test-Path -LiteralPath $Base -PathType Container)) {
     throw 'Profile issuance requires a distinct existing base package.'
@@ -223,13 +223,16 @@ function Publish-ProfileFromVerifiedBase(
   $actualBasePin = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($baseBytes)).ToLowerInvariant()
   if ($actualBasePin -ne $BasePin) { throw 'Base package manifest differs from its pinned SHA-256.' }
   $manifest = [Text.Encoding]::UTF8.GetString($baseBytes).TrimStart([char]0xfeff) | ConvertFrom-Json -AsHashtable
-  $core = 'aoem/linux/core/bin/libaoem_ffi.so'
-  $client = 'bin/novovm-native-client'
-  if ($manifest.scope -cne 'novovm_unified_linux_release_v3' -or
-      $manifest.target -cne 'x86_64-unknown-linux-gnu' -or
+  $windows = $ExpectedTarget -ceq 'x86_64-pc-windows-msvc'
+  $platform = if ($windows) { 'windows' } else { 'linux' }
+  $scope = if ($windows) { 'novovm_unified_windows_release_v1' } else { 'novovm_unified_linux_release_v3' }
+  $core = if ($windows) { 'aoem/windows/core/bin/aoem_ffi.dll' } else { 'aoem/linux/core/bin/libaoem_ffi.so' }
+  $client = if ($windows) { 'bin/novovm-native-client.exe' } else { 'bin/novovm-native-client' }
+  if ($manifest.scope -cne $scope -or
+      $manifest.target -cne $ExpectedTarget -or
       $manifest.git_commit -cnotmatch '^[a-f0-9]{40}$' -or
       $manifest.aoem_runtime.path -cne $core -or !$manifest.aoem_runtime.verification_qualified) {
-    throw 'Profile issuance requires a standard Linux base manifest with qualified AOEM.'
+    throw 'Profile issuance requires a standard base manifest for the selected target with qualified AOEM.'
   }
 
   $entries = @{}
@@ -282,7 +285,7 @@ function Publish-ProfileFromVerifiedBase(
   Write-PackageInventory $stage $manifest.artifacts
   $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -LiteralPath (Join-Path $stage $manifestName)
   Publish-LinuxPackage $Repository $stage $Destination -Replace:$Replace
-  Write-Host "Issued Linux Client profile from verified base package: $Destination"
+  Write-Host "Issued $platform Client profile from verified base package: $Destination"
 }
 
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
@@ -318,12 +321,12 @@ try {
     throw "Release packaging requires a clean Git worktree so binaries and git_commit describe the same source. Commit or remove local changes first."
   }
   if ($VerifiedBasePackageRoot -or $VerifiedBaseManifestSha256) {
-    if ($windowsPackage -or !$LinuxClientProfile -or !$VerifiedBasePackageRoot -or
+    if (!$issuedProfile -or !$VerifiedBasePackageRoot -or
         !$VerifiedBaseManifestSha256 -or $AoemPackageRoot -or $AoemCoreSha256) {
-      throw 'Verified-base issuance requires a Linux Client profile and a base package with its pinned manifest. AOEM comes from that base.'
+      throw 'Verified-base issuance requires a target Client profile and a base package with its pinned manifest. AOEM comes from that base.'
     }
     Publish-ProfileFromVerifiedBase $repo $VerifiedBasePackageRoot $VerifiedBaseManifestSha256 `
-      $destination $issuedProfile $issuedProfilePin -Replace:$Force
+      $destination $issuedProfile $issuedProfilePin $Target -Replace:$Force
     return
   }
   $commit = (git rev-parse HEAD).Trim()
