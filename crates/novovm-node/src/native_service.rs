@@ -164,6 +164,18 @@ impl Control {
 
 pub type Tick = fn(Request, Control) -> Result<()>;
 
+#[cfg(windows)]
+fn windows_storage_exit_code(error: &anyhow::Error) -> Option<u32> {
+    error.chain().find_map(|cause| {
+        let error = cause.downcast_ref::<std::io::Error>()?;
+        if error.kind() == std::io::ErrorKind::StorageFull {
+            error.raw_os_error()?.try_into().ok()
+        } else {
+            None
+        }
+    })
+}
+
 pub fn dispatch(request: Request, tick: Tick) -> Result<()> {
     #[cfg(windows)]
     {
@@ -309,10 +321,11 @@ mod windows {
         status.controls_accepted = ServiceControlAccept::empty();
         status.checkpoint = 0;
         status.wait_hint = Duration::ZERO;
-        status.exit_code = if result.is_ok() {
-            ServiceExitCode::Win32(0)
-        } else {
-            ServiceExitCode::ServiceSpecific(1)
+        status.exit_code = match &result {
+            Ok(()) => ServiceExitCode::Win32(0),
+            Err(error) => windows_storage_exit_code(error)
+                .map(ServiceExitCode::Win32)
+                .unwrap_or(ServiceExitCode::ServiceSpecific(1)),
         };
         handle.set_service_status(status)?;
         result
@@ -322,6 +335,22 @@ mod windows {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn scm_reports_the_os_disk_full_code_through_error_context() {
+        let disk_full = anyhow::Error::from(std::io::Error::from_raw_os_error(112))
+            .context("persist bootstrap checkpoint")
+            .context("NOVONET stopped after draining the node");
+        assert_eq!(windows_storage_exit_code(&disk_full), Some(112));
+
+        let sharing_violation = anyhow::Error::from(std::io::Error::from_raw_os_error(32));
+        assert_eq!(windows_storage_exit_code(&sharing_violation), None);
+        assert_eq!(
+            windows_storage_exit_code(&anyhow::anyhow!("other failure")),
+            None
+        );
+    }
 
     #[test]
     fn contract_query_is_explicit_offline_and_platform_qualified() {
