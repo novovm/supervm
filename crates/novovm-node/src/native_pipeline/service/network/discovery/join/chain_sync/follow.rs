@@ -102,7 +102,7 @@ impl Follower {
         let mut owner = None;
         let mut backoff = Duration::from_secs(1);
         let mut native_round = NativeRound::default();
-        let mut native = self.probe_native(&native_round).await;
+        let mut native = self.probe_native(&native_round, false).await;
         loop {
             if let Some((mut session, route)) = native.take() {
                 let failed_peer = route.peer.clone();
@@ -125,7 +125,7 @@ impl Follower {
                     collect(active, self.identity.clone(), &self.profile, seeds).await
                 {
                     self.observe_locators(report)?;
-                    if let Some(discovered_native) = self.probe_native(&native_round).await {
+                    if let Some(discovered_native) = self.probe_native(&native_round, false).await {
                         native = Some(discovered_native);
                         continue;
                     }
@@ -171,11 +171,15 @@ impl Follower {
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(10));
             native_round = NativeRound::default();
-            native = self.probe_native(&native_round).await;
+            native = self.probe_native(&native_round, false).await;
         }
     }
 
-    async fn probe_native(&mut self, round: &NativeRound) -> Option<Native> {
+    async fn probe_native(
+        &mut self,
+        round: &NativeRound,
+        replacing_healthy_iroh: bool,
+    ) -> Option<Native> {
         let now = wall_ms().ok()?;
         let mut options = Vec::new();
         for record in self.locators.fixed(&self.profile) {
@@ -227,10 +231,19 @@ impl Follower {
                 else {
                     continue;
                 };
-                let result = tokio::time::timeout(
-                    Duration::from_millis(1250),
-                    peer_status(&mut session, self.chain.tip),
-                )
+                let budget = if replacing_healthy_iroh {
+                    Duration::from_secs(2)
+                } else {
+                    Duration::from_millis(1250)
+                };
+                let result = tokio::time::timeout(budget, async {
+                    let advertised = peer_status(&mut session, self.chain.tip).await?;
+                    if replacing_healthy_iroh {
+                        self.prove_native_recovery(&mut session, &advertised)
+                            .await?;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })
                 .await;
                 if matches!(result, Ok(Ok(_))) {
                     return Some((
@@ -249,6 +262,34 @@ impl Follower {
         .await
         .ok()
         .flatten()
+    }
+
+    async fn prove_native_recovery(
+        &self,
+        session: &mut QuerySession<'_>,
+        advertised: &novovm_protocol::native_query::Status,
+    ) -> Result<()> {
+        let tip = self.chain.tip;
+        self.chain.checkpoint_validity(wall_ms()?)?;
+        if advertised.height == tip.height {
+            // The local cache cannot establish that this authenticated route
+            // serves any state. Request the committed root over that route.
+            state::verify_remote_root(session, tip).await?;
+        } else {
+            // A claimed higher tip alone cannot displace the working Iroh route.
+            let next = tip
+                .height
+                .checked_add(1)
+                .context("chain height exhausted")?;
+            let proof = session.fetch(Download::header(next)).await?;
+            let point = self.chain.verifier.verify_header(&proof, &tip)?.point();
+            if let Some(minimum) = self.chain.minimum {
+                minimum.check(point)?;
+            }
+            verify_same_height(point, advertised)?;
+        }
+        self.chain.checkpoint_validity(wall_ms()?)?;
+        Ok(())
     }
 
     async fn follow_candidates(&mut self, scope: &IrohScopeV1) -> Option<Native> {
@@ -385,7 +426,8 @@ impl Follower {
                             }))?;
                             return Ok(RouteChange::CertifiedIroh(candidate));
                         }
-                        if let Some(native) = self.probe_native(&NativeRound::default()).await {
+                        if let Some(native) = self.probe_native(&NativeRound::default(), true).await
+                        {
                             return Ok(RouteChange::Native(native));
                         }
                     }

@@ -106,6 +106,25 @@ impl StateNodeReader for StateCache {
     }
 }
 
+pub(super) async fn verify_remote_root(
+    session: &mut QuerySession<'_>,
+    tip: ParentPoint,
+) -> Result<()> {
+    ensure!(
+        tip.state_root != empty_root(),
+        "empty state has no node to verify"
+    );
+    let selector = StateNodeSelector {
+        height: tip.height,
+        root: tip.state_root,
+        hash: tip.state_root,
+        ancestry: Vec::new(),
+    };
+    let StateNodePayload(bytes) = fetch_node(session, selector).await?;
+    state_node_children(&tip.state_root, &bytes)?;
+    Ok(())
+}
+
 async fn fetch_node(
     session: &mut QuerySession<'_>,
     selector: StateNodeSelector,

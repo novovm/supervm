@@ -20,6 +20,9 @@ struct StatusPeer {
     pending: Option<(usize, Arc<OutgoingMessage>)>,
     statuses: usize,
     rejected_headers: usize,
+    rejected_state: usize,
+    served_state: usize,
+    serve_state: bool,
 }
 
 impl StatusPeer {
@@ -55,6 +58,9 @@ impl StatusPeer {
             pending: None,
             statuses: 0,
             rejected_headers: 0,
+            rejected_state: 0,
+            served_state: 0,
+            serve_state: false,
         })
     }
 
@@ -86,6 +92,17 @@ impl StatusPeer {
                 }
                 Query::FinalizedHeader(_) => {
                     self.rejected_headers += 1;
+                    Answer::Error(QueryError::Unavailable)
+                }
+                Query::StateNode(_) if self.serve_state => {
+                    let answer = owner.rpc.answer_carrier_query(&request.query, now)?;
+                    if matches!(answer, Answer::StateNode(_)) {
+                        self.served_state += 1;
+                    }
+                    answer
+                }
+                Query::StateNode(_) => {
+                    self.rejected_state += 1;
                     Answer::Error(QueryError::Unavailable)
                 }
                 _ => anyhow::bail!("unexpected request to Status-only provider"),
@@ -140,6 +157,12 @@ pub(super) fn verify(
     let pin = format!("{:x}", Sha256::digest(&bytes));
     fs::write(profile, bytes)?;
     let provider = format!("{:x}", Sha256::digest(provider_key));
+    let recovered_provider = format!(
+        "{:x}",
+        Sha256::digest(serde_json::from_value::<Vec<u8>>(
+            peers[0].pin["transport_key"].clone()
+        )?)
+    );
     let head = owner.rpc.node.controller.parent();
     let baseline = std::env::var_os("NOVOVM_QUERY_COPY_FALLBACK_BASELINE").map(PathBuf::from);
     for (exe, legacy) in baseline
@@ -167,9 +190,13 @@ pub(super) fn verify(
         );
         let mut accepted = false;
         let mut verified = false;
+        let mut recovered = false;
         for peer in &mut peers {
             peer.statuses = 0;
             peer.rejected_headers = 0;
+            peer.rejected_state = 0;
+            peer.served_state = 0;
+            peer.serve_state = false;
         }
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
@@ -191,19 +218,36 @@ pub(super) fn verify(
                 if event["event"] == "verified_state" {
                     ensure!(
                         accepted
-                            && event["transport"] == "iroh"
-                            && event["peer_transport_sha256"] == provider
                             && event["height"] == head.height
                             && event["state_root"] == super::super::hex(&head.state_root)
-                            && event["verified_nodes"].as_u64().is_some_and(|n| n > 0)
-                            && event["downloaded_nodes"] == event["verified_nodes"],
+                            && event["verified_nodes"].as_u64().is_some_and(|n| n > 0),
                         "unexpected verified state: {event}"
                     );
-                    verified = true;
+                    if event["transport"] == "iroh" {
+                        ensure!(
+                            event["peer_transport_sha256"] == provider
+                                && event["downloaded_nodes"] == event["verified_nodes"],
+                            "Iroh did not download the original archive"
+                        );
+                        verified = true;
+                    } else {
+                        ensure!(
+                            verified
+                                && peers[0].serve_state
+                                && peers[0].served_state > 0
+                                && event["transport"] == "native_novorudp"
+                                && event["peer_transport_sha256"] == recovered_provider,
+                            "Client left Iroh for an authenticated Status-only route"
+                        );
+                        recovered = true;
+                    }
                 }
             }
-            if verified
-                || peers.iter().all(|p| p.rejected_headers >= 2)
+            if verified && peers.iter().all(|p| p.rejected_state >= 1) {
+                peers[0].serve_state = true;
+            }
+            if recovered
+                || (legacy && peers.iter().all(|p| p.rejected_headers >= 2))
                 || Instant::now() >= deadline
             {
                 break;
@@ -212,9 +256,17 @@ pub(super) fn verify(
         }
         let counts: Vec<_> = peers
             .iter()
-            .map(|p| (&p.pin["address"], p.statuses, p.rejected_headers))
+            .map(|p| {
+                (
+                    &p.pin["address"],
+                    p.statuses,
+                    p.rejected_headers,
+                    p.rejected_state,
+                    p.served_state,
+                )
+            })
             .collect();
-        println!("{label}: pid={}, native (address, statuses, rejected_headers)={counts:?} accepted_archive={accepted} verified_archive={verified} profile_sha256={pin}",child.0.id());
+        println!("{label}: pid={}, native (address, statuses, rejected_headers, rejected_state, served_state)={counts:?} accepted_archive={accepted} verified_archive={verified} recovered_native={recovered} profile_sha256={pin}",child.0.id());
         ensure!(
             accepted
                 && peers
@@ -228,7 +280,10 @@ pub(super) fn verify(
                 "baseline did not repeat both failed native routes"
             );
         } else {
-            ensure!(verified, "Client repeated the failed native routes without synchronizing through the Iroh archive");
+            ensure!(
+                verified && recovered,
+                "Client did not keep Iroh until the primary native provider could serve its state"
+            );
         }
     }
     Ok(())
