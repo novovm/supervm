@@ -3,6 +3,7 @@
 use super::*;
 use novovm_network::discovery_control::native_chain_query_address;
 use novovm_network::novorudp::endpoint::NativePeer;
+use std::collections::VecDeque;
 mod locators;
 mod native_round;
 #[cfg(test)]
@@ -12,6 +13,7 @@ use native_round::NativeRound;
 
 const POLL: Duration = Duration::from_secs(2);
 const RECOVER_NATIVE: Duration = Duration::from_secs(6);
+const IROH_SUCCESSOR_BUDGET: Duration = Duration::from_secs(10);
 const FOLLOW_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn follow_installed_state(path: &Path, profile_sha256: Option<&str>) -> Result<()> {
@@ -84,6 +86,11 @@ struct Route {
 }
 
 type Native = (QuerySession<'static>, Route);
+
+enum RouteChange {
+    Native(Native),
+    CertifiedIroh(PeerSignedRelayRecordV1),
+}
 
 impl Follower {
     async fn run(mut self) -> Result<()> {
@@ -244,13 +251,13 @@ impl Follower {
     }
 
     async fn follow_candidates(&mut self, scope: &IrohScopeV1) -> Option<Native> {
-        let candidates = order_installed_candidates(
+        let mut candidates = VecDeque::from(order_installed_candidates(
             self.locators
                 .candidates(&self.profile, wall_ms().ok()?)
                 .cloned(),
             &self.profile,
-        );
-        for candidate in candidates {
+        ));
+        while let Some(candidate) = candidates.pop_front() {
             // An earlier session may have refreshed or withdrawn these coordinates.
             if !self
                 .locators
@@ -286,8 +293,14 @@ impl Follower {
                     boxed_read(|| self.run_route(&mut session, route, Some(scope))).await
                 })
                 .await;
-            if let Ok(Some(native)) = result {
-                return Some(native);
+            match result {
+                Ok(RouteChange::Native(native)) => return Some(native),
+                Ok(RouteChange::CertifiedIroh(preferred)) => {
+                    candidates
+                        .retain(|record| record.relay_public_key != preferred.relay_public_key);
+                    candidates.push_front(preferred);
+                }
+                Err(_) => {}
             }
         }
         None
@@ -298,8 +311,9 @@ impl Follower {
         session: &mut QuerySession<'_>,
         route: Route,
         scope: Option<&IrohScopeV1>,
-    ) -> Result<Option<Native>> {
+    ) -> Result<RouteChange> {
         let mut next_probe = Instant::now() + RECOVER_NATIVE;
+        let mut alternate_cursor = 0;
         loop {
             let progress = self.sync(session).await?;
             if let Some(state) = progress {
@@ -341,8 +355,22 @@ impl Follower {
                     }
                     // Finish verifying the current advertised tip before leaving a usable route.
                     if progress.is_some() {
+                        if let Some(candidate) = boxed_read(|| {
+                            self.probe_iroh_successor(scope, &route, &mut alternate_cursor)
+                        })
+                        .await?
+                        {
+                            self.emit(serde_json::json!({
+                                "event": "certified_route_advance",
+                                "height": self.chain.tip.height,
+                                "from_peer_transport_sha256": route.peer,
+                                "peer_transport_sha256": fingerprint(&candidate.relay_public_key),
+                                "locator_sequence": candidate.sequence,
+                            }))?;
+                            return Ok(RouteChange::CertifiedIroh(candidate));
+                        }
                         if let Some(native) = self.probe_native(&NativeRound::default()).await {
-                            return Ok(Some(native));
+                            return Ok(RouteChange::Native(native));
                         }
                     }
                     next_probe = Instant::now() + RECOVER_NATIVE;
@@ -350,6 +378,59 @@ impl Follower {
             }
             tokio::time::sleep(POLL).await;
         }
+    }
+
+    async fn probe_iroh_successor(
+        &mut self,
+        scope: &IrohScopeV1,
+        current: &Route,
+        cursor: &mut usize,
+    ) -> Result<Option<PeerSignedRelayRecordV1>> {
+        let candidates = self
+            .locators
+            .candidates(&self.profile, wall_ms()?)
+            .filter(|record| fingerprint(&record.relay_public_key) != current.peer)
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let candidate = candidates[*cursor % candidates.len()].clone();
+        *cursor = cursor.wrapping_add(1);
+        let Ok(route) = ReadRoute::new(&candidate, &self.profile) else {
+            return Ok(None);
+        };
+        let Some(next_height) = self.chain.tip.height.checked_add(1) else {
+            return Ok(None);
+        };
+        let proof = route
+            .run(
+                scope,
+                Some(IROH_SUCCESSOR_BUDGET),
+                async |dial_scope, address| {
+                    let (mut stream, channel) = connect_route(
+                        dial_scope,
+                        &address,
+                        &candidate.relay_public_key,
+                        self.identity.clone(),
+                        &self.domain,
+                    )
+                    .await?;
+                    let mut session =
+                        QuerySession::attach(&mut stream, channel, self.domain.clone())?;
+                    session.fetch(Download::header(next_height)).await
+                },
+            )
+            .await;
+        let Ok(proof) = proof else {
+            return Ok(None);
+        };
+        // Advertised heights do not justify leaving a healthy connection. The
+        // next proof must extend our certified parent under the installed rules.
+        self.chain.checkpoint_validity(wall_ms()?)?;
+        if self.chain.append(&proof).is_err() {
+            return Ok(None);
+        }
+        Ok(Some(candidate))
     }
 
     async fn sync(&mut self, session: &mut QuerySession<'_>) -> Result<Option<StateProgress>> {
