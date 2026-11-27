@@ -47,6 +47,12 @@ A、C、D 三台物理机的四个隔离角色用上述固定计划与创世运�
 - A1、D1 随后从各自原库恢复，四端认证读取和离线归档均核对至高度 42、第 14 轮。区块为 `f058967fbd7e800fdb2ba54eb58b422a92212195450f4414002d48b5b0a62156`，状态根为 `0fd0ec0e7f8347c19b95ed23873c5887ea9e6166237c33ab27883964f97b53aa`。四份原库归档各自验得 A2、C1 两枚 Precommit QC 签票，加权 5/7，门槛 5。
 
 C 汇总了 74 份原始验证输入，用测试包内的固定 verifier 得到 PASS。证据 ZIP 为 108103 字节，SHA-256 `ea5ca6434a2fd0f5beef0412becc3a52bde913ab8a60c7eda383dd8a21c1b19b`，首次 verifier 输出 SHA-256 `225f7c6efc5f66dbe1d69df3d5e1675c8953636d2b2de98f8c78a567033fc702`。解压后逐文件复算，并用包内 verifier 再次得到相同结果。隔离测试进程已退出。原档、验收工具和取件路径走受限交接。
+### 权重恢复的观测区间
+
+C 独立复算并检查了 A 保存的 12 次认证读取。03:31:56–03:32:06 UTC 为高度 42、第 12 轮，03:32:08–03:32:22 UTC 为第 13 轮。两段都保持已提交高度 41，两个原哈希均为 Received。从固定创世和排序后的验证者 ID 复算，第 12、13、14 轮的提议人依次为 A2、D1、C1。D1 在第 13 轮所属的观测窗口内离线。离线归档验得第 14 轮的终结证书。
+
+最后一次等待与首次终结查询的记录秒相差 67 秒。保留的 A2 Existing 快照从终结后开始，现有原件无法给出确切终结时点，也无法把等待时间分摊到各轮计时、投递或重新建立会话。补充原件 ZIP SHA-256 `6fffbc3e365e84da3fd5cccfc35d1b34168e7c1c84a863c3c8b802434960a36a`，复核摘要 SHA-256 `f8eecdafa040ad216ab7f920f79602c59e19d88eebc2db846a707fa270ec0eaf`。
+
 ## 入口与交接材料
 
 入口为 scripts/novovm-distributed-validator-catchup.ps1，证据核对为 scripts/novovm-verify-distributed-validator-catchup.ps1。用同一 Windows x86_64 Node、AOEM、novovmctl 及本测试 harness。harness 来自以下构建输出的 novovm_node-* 测试可执行文件。按现有 Windows 原生构建说明加载 MSVC/SDK 和 RocksDB 缓存。记录源提交、工具链、功能和真实构建输出哈希。

@@ -10,6 +10,10 @@ Later on 2026-11-26, D verified that Ethernet and a phone's cellular hotspot wer
 
 C and A exercised the alternate carrier in a separate run. The detached C fixture used its existing approved relay list, accepted state queries from A's dedicated test key and temporarily blocked UDP ingress to the fixture's own Iroh socket. A started with a fixed relay contact and no native query peer. It verified a signed locator, downloaded all 97 state nodes and verified the certified height 2 root. Both test processes observed the approved relay TCP endpoint. Their local sockets used the Windows tunnel address, so this run qualifies the authenticated relay path. The physical-interface evidence is collected on D in the separate switch run.
 
+## D preflight, 2026-11-27
+
+At 03:44:04 UTC D had one connected physical WLAN. Ethernet was disconnected. The live WLAN and the retained Ethernet route were in the same private subnet with the same gateway. The ordinary route to the approved relay address selected Meta. Windows selected WLAN when the lookup specified its local source address. This read-only inventory establishes route selection. The relay reachability, outer packet interface and second independent physical upstream remain to be verified.
+
 ## Required setup and rollback
 
 For an operator unplugging D's cable, start the detached C state-following fixture with its approved relay configuration and `NOVOVM_QUERY_COPY_PHYSICAL_SWITCH=1`. Its native UDP gateway stays available throughout the eight-minute window. D records the physical link-down time locally and retains the original Client log, socket samples, ETL and component exports. C records the first scoped UDP source and closes its serving window independently. Verify the physical recovery offline using the commands below after reconnecting D. A successful fixture exit only records that C served the window.
