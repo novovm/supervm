@@ -208,6 +208,8 @@ A 用普通用户探针核对账号表示。CIM 的 `Principal.UserId` 会读回
 
 02:33 UTC，A 用 `bab4aa39` 的安装脚本和清单固定的 `9e0d6588` 包内 Client，复验先前隔离测试状态。普通用户两次执行 Install 均退出 0，复装保留同一进程。通过计划任务受控重启后，Client 仍打开高度 42，设备公钥保持一致。三次导出的任务定义摘要一致，确认任务归属使用当前用户 Windows SID、Limited 权限、Interactive 登录和原动作合同。测试任务和进程清理完成。实机时间线 SHA-256 `31517a9c0b0ed77058289e0a09d361d053975335555f653eac7c5a5e381d84c6`。
 
+02:41 UTC，A 完成从 `bab4aa39b86abfa66a036102154daf293aee9e75` 标准构建的 `novovm-windows-x86_64-A-bab4aa39-base.zip`，共 169621712 字节，回读核验 96 个文件。AOEM 运行资格、Windows SCM `existing` 合同及新版包内 Client 的离线配置预检均通过。包内安装器与 Git 原件的 SHA-256 均为 `efc135afa04b6871aa3451d54f5ba551612e5ba4ba73046d97398dc2d1885f44`，实机复验脚本和该原件的差异仅为工作区 CRLF 换行。整包 SHA-256 `354efe2fed8d2dccc81ac652bd252b592eb0fd81b5c2fc51f504c07887edc474`，清单 SHA-256 `44030638e173d8af41a04a76fd076dc061d5796349ce6ece990dfdfd20912aed`，包内 Client SHA-256 `05307f506a8095264abfd8ab53f471ef23c31b3b0d4756da74b0d93ce3714508`。
+
 ### 生产双引导验收取证
 
 生产双源和单源退出的两次发现都用 `novovm-native-client <profile> discover <profile-sha256>`。摘要来自独立核对的发行清单。Client 在创建本机传输身份前核对实际读取的配置，并在成功回执中记录 `profile_sha256`。复核两份原始 stdout 时同时传 `--require-source-attribution --profile-sha256 <同一摘要>`，防止两次运行中途切换信任配置。旧版无摘要回执仍可按当时的证据范围复查。
