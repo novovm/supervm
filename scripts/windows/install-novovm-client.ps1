@@ -170,7 +170,20 @@ if ($Action -eq 'Install') {
 $existing = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction SilentlyContinue
 $switchToPublicRead = $false
 if ($existing) {
-    $user = $existing.Principal.UserId
+    # CIM can abbreviate the account name. The exported definition preserves
+    # the principal identifier registered with the scheduler.
+    $definition = [xml](Export-ScheduledTask -InputObject $existing)
+    $namespaces = [System.Xml.XmlNamespaceManager]::new($definition.NameTable)
+    $namespaces.AddNamespace('task', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+    $principals = $definition.SelectNodes('/task:Task/task:Principals/task:Principal', $namespaces)
+    if ($principals.Count -ne 1) {
+        throw 'Existing task must have a single verifiable user principal.'
+    }
+    $users = $principals[0].SelectNodes('task:UserId', $namespaces)
+    if ($users.Count -ne 1 -or [string]::IsNullOrWhiteSpace($users[0].InnerText)) {
+        throw 'Existing task must have a single verifiable user principal.'
+    }
+    $user = $users[0].InnerText
     $sid = if ($user -match '^S-1-') { $user } else {
         [Security.Principal.NTAccount]::new($user).Translate([Security.Principal.SecurityIdentifier]).Value
     }

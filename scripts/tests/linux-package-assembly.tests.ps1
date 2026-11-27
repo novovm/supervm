@@ -602,6 +602,61 @@ if ($windowsPackage) {
     throw 'Bundled contacts must start without separate locator files'
   }
   Write-Output 'PASS: Windows package and installer support contact-only discovery profiles'
+
+  $repeatArgs = @{
+    ReleaseManifestSha256 = $contactPin
+    ProfilePath = Join-Path $contactBundle 'config/discovery/installed-discovery.json'
+    ProfileSha256 = $profilePin
+  }
+  $repeatPlan = & $contactInstaller -Action Plan @repeatArgs | ConvertFrom-Json
+  Set-Item -LiteralPath ('Function:\global:' + $repeatPlan.program) -Value {
+    param([Parameter(ValueFromRemainingArguments)]$NativeArguments)
+    if ($NativeArguments.Count -ne 3 -or $NativeArguments[1] -cne 'check-installed-profile' -or
+        (Get-FileHash -LiteralPath $NativeArguments[0]).Hash -ne $NativeArguments[2]) {
+      throw 'Repeat install must still preflight the pinned profile'
+    }
+    $global:LASTEXITCODE = 0
+  }
+  & {
+    $task = [pscustomobject]@{
+      TaskName = $repeatPlan.task
+      State = 'Running'
+      Principal = [pscustomobject]@{ UserId = 'fixture-short-account'; LogonType = 3; RunLevel = 0 }
+      Actions = @([pscustomobject]@{
+        Execute = $repeatPlan.program
+        WorkingDirectory = $repeatPlan.working_directory
+        Arguments = $repeatPlan.arguments
+      })
+      Triggers = @([pscustomobject]@{ CimClass = [pscustomobject]@{ CimClassName = 'MSFT_TaskLogonTrigger' } })
+    }
+    function Get-ScheduledTask { $task }
+    function Export-ScheduledTask {
+      param($InputObject)
+      if (![object]::ReferenceEquals($task, $InputObject)) { throw 'Export must describe the observed task' }
+      "<Task xmlns='http://schemas.microsoft.com/windows/2004/02/mit/task'><Principals><Principal>$userXml</Principal></Principals></Task>"
+    }
+    function Register-ScheduledTask { throw 'Repeat install must not register a task' }
+    function Set-ScheduledTask { throw 'Repeat install must not modify a task' }
+    function Start-ScheduledTask { throw 'Repeat install must not restart a running task' }
+
+    $userXml = "<UserId>$($repeatPlan.principal_sid)</UserId>"
+    $repeated = & $contactInstaller -Action Install @repeatArgs | ConvertFrom-Json
+    if ($repeated.program -ne $repeatPlan.program -or $repeated.task -ne $task.TaskName) {
+      throw 'Repeat install did not preserve the running task and program'
+    }
+    $otherSid = if ($repeatPlan.principal_sid -eq 'S-1-5-18') { 'S-1-5-19' } else { 'S-1-5-18' }
+    $userXml = "<UserId>$otherSid</UserId>"
+    try {
+      & $contactInstaller -Action Install @repeatArgs
+      throw 'Repeat install accepted another user SID in the task definition'
+    } catch { if ($_.Exception.Message -notlike '*Existing task uses different startup settings*') { throw } }
+    $userXml = '<GroupId>S-1-5-32-545</GroupId>'
+    try {
+      & $contactInstaller -Action Install @repeatArgs
+      throw 'Repeat install accepted a task without a user ID'
+    } catch { if ($_.Exception.Message -notlike '*single verifiable user principal*') { throw } }
+  }
+  Write-Output 'PASS: Windows repeat install checks the exported task owner and preserves the running task'
 }
 if (!$windowsPackage) {
   $profileFile = Join-Path $fixture 'linux-client.json'
