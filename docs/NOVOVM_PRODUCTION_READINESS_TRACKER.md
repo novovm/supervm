@@ -165,7 +165,11 @@ C 在 Windows 回环验收链域用真实 AOEM 签发尚在有效期内的定位
 
 同一安装配置用于认证发现、首次及持续状态同步、只读证明服务和 Receipt 读取。DNS 仅用于地址解析。引导传输身份、签名定位和链证明继续分别验证。双入口现场验收仍须核对各站点实际使用的中继、DNS 和上游，并保留干净设备认证和验真同步证据。
 
-C 在 Ubuntu 24.04 隔离环境运行 `secondary_pinned_dns_answers_when_primary_silently_drops`。第一台环回 UDP 解析器收包后不应答，第二台解析器返回有效 A 记录，查询耗时约 0.10 秒。Iroh 端点配置匹配回归及 Linux 原生 Client 的 `cargo check` 通过。安装预检测试在编译阶段遇到本机 Rust 编译器崩溃，尚未执行到用例。Windows 候选包和公网双入口仍待实测。
+C 在 Ubuntu 24.04 隔离环境运行 `secondary_pinned_dns_answers_when_primary_silently_drops`。第一台环回 UDP 解析器收包后不应答，第二台解析器返回有效 A 记录，查询耗时约 0.10 秒。Iroh 端点配置匹配回归及 Linux 原生 Client 的 `cargo check` 通过。
+
+A 在 Windows 独立 checkout 构建 `9e0d6588`。备用 DNS 回归耗时 0.11 秒，原始 stdout SHA-256 `376029d1b05ffbb24b7b76298fb719dc864b8dfddd719d94a40752f20100390f`。使用核准 AOEM 的安装预检通过旧配置和新增解析器的有效配置，拒绝错误摘要和重复解析器。签名定位和链域正反例同样通过，原始 stdout SHA-256 `a0defa2d92289fd2f941106b9fbba5a69e61a536094ccb992f5a959cf449bcc5`。
+
+C 的标准编译在本机 rustc/LLVM 崩溃。C 用同一提交、已核准 AOEM 和针对 `novovm-node` 的本机低优化编译完成隔离可执行文件验证。Client 对原链固定联系配置接受旧字段和不同的备用解析器，拒绝旧摘要、重复和组播解析器。带备用解析器的配置重放原链高度 1 的原始资产回执，再次得出相同区块哈希、状态根和回执承诺，未创建本机设备状态。证据 SHA-256 `df9d83a236efb44cd3c4e543ad8565bf14e717d4962a433f117da72f4fa7bd21`。新版正式候选包和公网双入口仍待验收。
 
 ### 生产双引导验收取证
 
