@@ -128,6 +128,10 @@ C 默认优化构建遇到 LLVM SIGILL。本轮使用固定 Rust 1.94.0、固定
 | C 分路 Client 日志 | `2cecd05089e4d1a25bb1008e7f3ed3b2fc999980341519448bd7843ce5fdb02a` |
 | C 受控 Client 退出记录 | `355ed8b6d9e33776e691f5083b8626965bf07fed7189b2a1239b1d5aa9a635c9` |
 
+使用 `python3 scripts/tests/client-certified-advance.py <计划.json> <新验收目录>` 可在普通 Windows 或 Linux 账户复跑。验收目录放在测试账户独享的位置。计划固定 `package_root`、`source_commit`、`manifest_sha256`、`profile_sha256` 和 `client_sha256`。分别在 `old` 和 `new` 中填写 `height`、`provider` 公钥指纹、`block_hash`、`state_root`、`proof_sha256`、`nodes` 和 `leaves`，摘要使用无前缀小写十六进制。原始证据须由独立归档提供。可选 `seed_checkpoint` 指向上一轮验真的 `headers-0-…` 目录，程序仅复制区块证明和状态节点，并沿用发行包的本机持钥流程。
+
+先让两个隔离引导在线，并仅开启旧提供方。程序输出基线高度和 PID 后启动新提供方，旧进程保持在线直至结束。用提供方进程日志证明两者重叠在线，用 `report.json`、`client.jsonl` 和 `exit.json` 核对同进程换源、前后签名定位、落盘证明和终态。测试账户的凭据及本地身份文件留在设备。
+
 ## 2026-11-26 发现入口与只读归档节点分工验收
 
 A 在本机回环只开放一个固定发现联系人。它返回另一个服务身份签发的定位。全新 Windows Client 从高度 0 经 Iroh 验真到高度 42，下载并验证 19 个状态节点、10 个叶子。C 对照两个进程的原始输出，确认返回定位的来源、定位签名人和最终提供状态的对端，并将状态根与[原三机归档](NOVOVM_DISTRIBUTED_VALIDATOR_CATCHUP.md)核对一致。发现与跟随各使用空目录及独立客户端身份。原始 stdout 的 SHA-256 分别为 `a7f94b00669703f1d1acd28935735d04d5de2fcd24ed4b26108e46b81544110d`、`9b804e298ba9812a6776c15acac670f61fb8d9ec40837d1cdd2d5374df8a2d03`。
